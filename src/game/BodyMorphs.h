@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -167,10 +168,18 @@ namespace BodyMorphs
 		kClear,    // it went meanwhile: take them out of LooksMenu's store again
 	};
 
+	// At most this many form IDs go into the co-save's record of IDs LooksMenu may still hold a friend's looks under
+	// (StandIns::Saved; game/LooksSave.h).
+	constexpr std::size_t MAX_SAVED = 512;
+
 	// The stand-ins we set sliders or overlays on, by form ID. LooksMenu keeps a reference's sliders and overlays by form
 	// ID until told to forget them (into the save, too), and the game hands a deleted stand-in's form ID to the next
 	// reference it makes: a raider spawned later would have a friend's body and tattoos. So a stand-in's are taken out when
 	// it goes, but never while its sets are still queued, since a set answered after the removal would put them back.
+	// The removal is itself queued: a save written before it is answered (a save takes every stand-in out just before it)
+	// keeps them in LooksMenu's store. So the IDs whose removal is not answered yet stay listed (uncleared), go into the
+	// save with the stand-ins still being set (Saved), and after a load are cleared on whatever reference has the ID by
+	// then (Scrubbable), once.
 	class StandIns
 	{
 	public:
@@ -214,9 +223,94 @@ namespace BodyMorphs
 		[[nodiscard]] bool Has(std::uint32_t a_actor) const { return entries.contains(a_actor); }
 		[[nodiscard]] std::size_t Count() const { return entries.size(); }
 
+		// A removal of the sliders and overlays under this ID was queued (a stand-in's as it went, or a scrub's): listed
+		// until it is answered.
+		void Clearing(std::uint32_t a_id) { uncleared[a_id] = Clear::kQueued; }
+
+		// Every call of that removal is answered (or cancelled by the VM, which is taken as done too): no longer listed.
+		void Cleared(std::uint32_t a_id) { uncleared.erase(a_id); }
+
+		// A stand-in is placed under an ID still listed (after a load, the game hands a new stand-in the old one's ID first):
+		// LooksMenu may hold another's looks under it, which it would wear. True if so: the old looks are to be removed
+		// first (Clearing), and its own set only once that is answered (Released), since a set answered before the removal
+		// would be removed with them.
+		bool Placing(std::uint32_t a_id)
+		{
+			if (!uncleared.contains(a_id)) {
+				return false;
+			}
+			held.insert(a_id);
+			return true;
+		}
+
+		// The removal under the ID is answered (or given up): true if a stand-in placed under it waited for that, and its
+		// own looks are to be set now.
+		bool Released(std::uint32_t a_id) { return held.erase(a_id) > 0; }
+
+		// No removal could be queued for the ID (the reference was gone, or had no script object), or it was never
+		// answered: left listed, to be cleared on whatever reference has the ID later (Scrubbable).
+		void Unanswered(std::uint32_t a_id) { uncleared[a_id] = Clear::kLeft; }
+
+		// The IDs whose removal is not under way, and that are not a stand-in we are setting now: to be cleared on the
+		// reference that has the ID, if any, which the game looks up (and leaves be if it is one of our stand-ins).
+		[[nodiscard]] std::vector<std::uint32_t> Scrubbable() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& [id, clear] : uncleared) {
+				if (clear == Clear::kLeft && !entries.contains(id)) {
+					out.push_back(id);
+				}
+			}
+			return out;
+		}
+
+		[[nodiscard]] bool Listed(std::uint32_t a_id) const { return uncleared.contains(a_id); }
+		[[nodiscard]] std::size_t Uncleared() const { return uncleared.size(); }
+
+		// What a save written now must remember: every ID LooksMenu may hold a friend's looks under as it writes its own
+		// store into the same save (the uncleared ones, and every stand-in we set any on), sorted, at most MAX_SAVED.
+		[[nodiscard]] std::vector<std::uint32_t> Saved() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& listed : uncleared) {
+				out.push_back(listed.first);
+			}
+			for (const auto& entry : entries) {
+				out.push_back(entry.first);
+			}
+			std::ranges::sort(out);
+			const auto repeats = std::ranges::unique(out);
+			out.erase(repeats.begin(), repeats.end());
+			if (out.size() > MAX_SAVED) {
+				out.resize(MAX_SAVED);
+			}
+			return out;
+		}
+
+		// A save's record was read: its IDs are to be cleared wherever they turn up (none of them is a stand-in of ours
+		// now, and no removal of them is under way).
+		void Restore(const std::vector<std::uint32_t>& a_ids)
+		{
+			uncleared.clear();
+			for (const auto id : a_ids) {
+				uncleared[id] = Clear::kLeft;
+			}
+		}
+
+		// The co-save is reverted (before a load, or for a new game): nothing listed, until a record is read.
+		void Revert()
+		{
+			uncleared.clear();
+			held.clear();
+		}
+
 		// A save was loaded: LooksMenu dropped what it kept for references not in that save, and every stand-in went
-		// before the load.
-		void Reset() { entries.clear(); }
+		// before the load. What that save may hold is listed from its record (Restore), not here.
+		void Reset()
+		{
+			entries.clear();
+			held.clear();
+		}
 
 	private:
 		struct Entry
@@ -224,6 +318,13 @@ namespace BodyMorphs
 			bool setting = false;
 			bool leaving = false;
 		};
+		enum class Clear
+		{
+			kQueued,  // a removal is under way
+			kLeft,    // none is: cleared when a reference with the ID turns up
+		};
 		std::map<std::uint32_t, Entry> entries;
+		std::map<std::uint32_t, Clear> uncleared;
+		std::set<std::uint32_t>        held;  // stand-ins placed under a listed ID, waiting for its removal
 	};
 }

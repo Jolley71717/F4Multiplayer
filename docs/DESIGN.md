@@ -152,6 +152,21 @@
   the friend's own head). LooksMenu's sculpting is the vanilla face data, carried since protocol 32.
   Not carried: F4EE's node transforms, which it offers no script or plugin call for. None of this
   has been tried live: the rig has no LooksMenu (the calls follow F4EE's published source).
+  Dev command `looks <playerId>` tells what was set on that friend's stand-in (sliders, overlays
+  added and refused), its skin armor, and asks LooksMenu what it holds for it (GetMorphs, GetAll;
+  answered into the log). Saves: the removal when a stand-in goes is itself a queued call, and a
+  save takes every stand-in out just before it is written, so LooksMenu's own co-save data (written
+  in the same save) could keep a friend's looks under the stand-in's runtime form ID, which a later
+  reference in that save may get. So `BodyMorphs::StandIns` lists each ID until its RemoveAll calls
+  are all answered, and the co-save record `LOOK` v1 (`src/game/LooksSave.h`, at most 512 runtime
+  IDs, tested) holds those and every stand-in still being set as a save is written. After loading
+  it, `LooksMenu::Frame` looks the listed IDs up once a second; a reference with one that is not a
+  stand-in of ours gets RemoveAll (no script object made for it for its first 5 passes), then
+  UpdateMorphs and Update, and the ID leaves the list once answered. A friend's stand-in placed under
+  a listed ID (the likeliest reference to get one after a load) has RemoveAll queued first and its own
+  sliders and overlays set only once that is answered. An ID with no reference yet stays listed, into
+  the next save too. Without LooksMenu no record is written. Not yet checked against F4EE's source:
+  whether its load drops entries for forms missing then (which would make most of this moot).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders a friend in the past
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto

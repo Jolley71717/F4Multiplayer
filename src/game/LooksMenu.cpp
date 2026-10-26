@@ -1,7 +1,10 @@
 #include "game/LooksMenu.h"
 
 #include "game/BodyMorphs.h"
+#include "game/LooksSave.h"
 #include "game/Papyrus.h"
+#include "game/Puppets.h"
+#include "game/RemotePlayers.h"
 
 #include <mutex>
 
@@ -82,17 +85,62 @@ namespace LooksMenu
 			bool                                        overlays = false;
 		};
 
+		// A removal queued (RemoveAll) for a stand-in that went, or for a reference that has the form ID of one a save kept
+		// in LooksMenu's store (a scrub): the ID stays listed until every call is answered (BodyMorphs::StandIns).
+		struct Clearing
+		{
+			RE::ObjectRefHandle                         actor;
+			std::uint32_t                               id = 0;
+			std::shared_ptr<std::atomic<std::uint32_t>> waiting;
+			Clock::time_point                           at{};
+			bool                                        scrub = false;  // not a stand-in: its 3D is rebuilt once answered
+		};
+
+		// What was set on one stand-in, for the dev command looks (the Add answers counted on the VM's threads).
+		struct Applied
+		{
+			bool                       female = false;
+			std::uint32_t              morphs = 0;
+			std::uint32_t              overlays = 0;
+			std::atomic<std::uint32_t> added{ 0 };
+			std::atomic<std::uint32_t> refused{ 0 };
+		};
+
+		// Listed IDs are looked for once a second (a few hash lookups; the list is nearly always empty).
+		constexpr auto SCRUB_INTERVAL = std::chrono::seconds(1);
+		// A reference found with a listed ID and no script object is first left to get one of its own for this many
+		// passes, then given one (as stand-ins are: it is made at runtime too), or LooksMenu could never be asked.
+		constexpr std::uint32_t SCRUB_BOUND_WAIT = 5;
+
 		std::optional<bool>         installed;
 		BodyMorphs::Reading         reading;
 		std::shared_ptr<Read>       read;
 		BodyMorphs::StandIns        standIns;
 		std::vector<Setting>        settings;
+		std::vector<Clearing>       clearings;
+		std::map<std::uint32_t, std::shared_ptr<Applied>> appliedTo;
+		std::map<std::uint32_t, std::uint32_t>            unbound;  // passes a listed ID's reference had no script object
+
+		// A friend's looks for a stand-in placed under a listed ID, set once the old ones under it are removed.
+		struct Held
+		{
+			RE::ObjectRefHandle              actor;
+			bool                             female = false;
+			std::vector<Protocol::BodyMorph> morphs;
+			std::vector<Protocol::Overlay>   overlays;
+		};
+		std::map<std::uint32_t, Held> heldLooks;
+		void                          SetHeld(std::uint32_t a_id);
+		void ApplyNow(RE::Actor* a_standIn, bool a_female, const std::vector<Protocol::BodyMorph>& a_morphs, const std::vector<Protocol::Overlay>& a_overlays);
+		Clock::time_point           lastScrub{};
 		std::uint32_t               reads = 0;
 		std::uint32_t               readsFailed = 0;
 		std::uint32_t               applied = 0;
 		std::atomic<std::uint32_t>  overlaysAdded{ 0 };    // counted as Add answers, on the VM's threads
 		std::atomic<std::uint32_t>  overlaysRefused{ 0 };
 		std::uint32_t               cleared = 0;
+		std::uint32_t               clearsUnanswered = 0;
+		std::uint32_t               scrubbed = 0;
 		bool                        toldNoEntry = false;
 
 		// The actor as BodyGen takes it. A stand-in is made at runtime and may have no script object yet.
@@ -101,24 +149,65 @@ namespace LooksMenu
 			return Papyrus::BoundObject(a_actor, "Actor", true);
 		}
 
-		// Its sliders and overlays out of LooksMenu's store, under both sexes.
-		bool RemoveAll(RE::Actor* a_actor)
+		// Its sliders and overlays out of LooksMenu's store, under both sexes: what is left to answer of the calls queued, or
+		// null if none could be.
+		std::shared_ptr<std::atomic<std::uint32_t>> RemoveAll(const RE::BSTSmartPointer<RE::BSScript::Object>& a_object)
 		{
-			const auto object = ActorObject(a_actor);
-			if (!object) {
-				return false;
+			if (!a_object) {
+				return {};
 			}
+			auto waiting = std::make_shared<std::atomic<std::uint32_t>>(4);
 			bool queued = false;
 			for (const bool female : { false, true }) {
 				for (const auto [script, function] : { std::pair{ SCRIPT, std::string_view{ "RemoveAllMorphs" } }, std::pair{ OVERLAYS, std::string_view{ "RemoveAll" } } }) {
-					queued |= Papyrus::CallStatic(script, function, [&](Args& a_out) {
-						a_out = Args{ 2 };
-						a_out[0] = object;
-						a_out[1] = female;
-					});
+					const auto answer = MakeAnswer([waiting](const Variable*) { --*waiting; });
+					if (Papyrus::CallStatic(script, function, [&](Args& a_out) {
+							a_out = Args{ 2 };
+							a_out[0] = a_object;
+							a_out[1] = female;
+						}, answer)) {
+						queued = true;
+					} else {
+						--*waiting;
+					}
 				}
 			}
-			return queued;
+			return queued ? waiting : nullptr;
+		}
+
+		// Takes what LooksMenu keeps under the actor's form ID out of its store, the ID listed until that is answered (and
+		// left listed, to be cleared later, if it can't be queued).
+		bool Clear(RE::Actor* a_actor, const RE::BSTSmartPointer<RE::BSScript::Object>& a_object, bool a_scrub)
+		{
+			const auto id = a_actor->GetFormID();
+			auto waiting = RemoveAll(a_object);
+			if (!waiting) {
+				standIns.Unanswered(id);
+				return false;
+			}
+			standIns.Clearing(id);
+			clearings.push_back({ a_actor->GetHandle(), id, std::move(waiting), Clock::now(), a_scrub });
+			return true;
+		}
+
+		// Its body and overlays built again from what LooksMenu now holds for it, if it has 3D.
+		void Rebuild(RE::Actor* a_actor, const RE::BSTSmartPointer<RE::BSScript::Object>& a_object, bool a_morphs, bool a_overlays)
+		{
+			if (!a_actor || !a_actor->Get3D() || !a_object) {
+				return;
+			}
+			if (a_morphs) {
+				Papyrus::CallStatic(SCRIPT, "UpdateMorphs", [&](Args& a_out) {
+					a_out = Args{ 1 };
+					a_out[0] = a_object;
+				});
+			}
+			if (a_overlays) {
+				Papyrus::CallStatic(OVERLAYS, "Update", [&](Args& a_out) {
+					a_out = Args{ 1 };
+					a_out[0] = a_object;
+				});
+			}
 		}
 
 		float FloatField(RE::BSScript::Struct& a_entry, std::string_view a_name, float a_default)
@@ -379,25 +468,13 @@ namespace LooksMenu
 					// Its 3D built before the sets were answered has none of them: rebuilt, and the overlays laid on it
 					// (one not built yet takes them as it is).
 					if (actor && actor->Get3D()) {
-						const auto object = ActorObject(actor);
-						if (object) {
-							if (a_setting.morphs) {
-								Papyrus::CallStatic(SCRIPT, "UpdateMorphs", [&](Args& a_out) {
-									a_out = Args{ 1 };
-									a_out[0] = object;
-								});
-							}
-							if (a_setting.overlays) {
-								Papyrus::CallStatic(OVERLAYS, "Update", [&](Args& a_out) {
-									a_out = Args{ 1 };
-									a_out[0] = object;
-								});
-							}
-						}
+						Rebuild(actor, ActorObject(actor), a_setting.morphs, a_setting.overlays);
 					}
 					break;
 				case BodyMorphs::Then::kClear:
-					if (actor && RemoveAll(actor)) {
+					if (!actor) {
+						standIns.Unanswered(a_setting.id);  // gone already: cleared on whatever reference has the ID later
+					} else if (Clear(actor, ActorObject(actor), false)) {
 						++cleared;
 					}
 					break;
@@ -406,6 +483,65 @@ namespace LooksMenu
 				}
 				return true;
 			});
+		}
+
+		void FrameClearings(Clock::time_point a_now)
+		{
+			std::erase_if(clearings, [&](const Clearing& a_clearing) {
+				const bool answered = a_clearing.waiting->load() == 0;
+				if (!answered && a_now - a_clearing.at < BodyMorphs::ANSWER_TIMEOUT) {
+					return false;
+				}
+				if (!answered) {
+					++clearsUnanswered;
+					standIns.Unanswered(a_clearing.id);
+					REX::WARN("LooksMenu: taking the looks under {:08X} out of LooksMenu's store got no answer; tried again on whatever reference has that ID", a_clearing.id);
+					if (standIns.Released(a_clearing.id)) {
+						SetHeld(a_clearing.id);  // set as before this list: it wears what LooksMenu kept too
+					}
+					return true;
+				}
+				standIns.Cleared(a_clearing.id);
+				if (standIns.Released(a_clearing.id)) {
+					SetHeld(a_clearing.id);
+				}
+				if (a_clearing.scrub) {
+					// It may have built its 3D wearing them: built again without.
+					++scrubbed;
+					unbound.erase(a_clearing.id);
+					const auto ref = a_clearing.actor.get();
+					const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+					if (actor) {
+						Rebuild(actor, Papyrus::BoundObject(actor, "Actor", false), true, true);
+					}
+					REX::INFO("LooksMenu: took a friend's looks a save kept under {:08X} off the reference that has that ID now", a_clearing.id);
+				}
+				return true;
+			});
+		}
+
+		// After a load of a save made while a stand-in's looks were still in LooksMenu's store: the reference the game has
+		// since given that form ID (a raider spawned, say) is cleared of them, once. One of our stand-ins is left be: it
+		// takes them off itself as it goes.
+		void FrameScrub(Clock::time_point a_now)
+		{
+			if (standIns.Uncleared() == 0 || a_now - lastScrub < SCRUB_INTERVAL) {
+				return;
+			}
+			lastScrub = a_now;
+			for (const auto id : standIns.Scrubbable()) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (!actor || actor->IsDeleted() || Puppets::IsPuppet(actor) || RemotePlayers::PlayerIdFor(id) != 0 || RemotePlayers::OnItsWayOut(actor)) {
+					continue;
+				}
+				auto object = Papyrus::BoundObject(actor, "Actor", false);
+				if (!object && ++unbound[id] > SCRUB_BOUND_WAIT && actor->IsCreated()) {
+					object = ActorObject(actor);
+				}
+				if (object) {
+					Clear(actor, object, true);
+				}
+			}
 		}
 	}
 
@@ -427,6 +563,8 @@ namespace LooksMenu
 		const auto now = Clock::now();
 		FrameRead(now);
 		FrameSettings(now);
+		FrameClearings(now);
+		FrameScrub(now);
 	}
 
 	bool Settled()
@@ -446,7 +584,45 @@ namespace LooksMenu
 
 	void Apply(RE::Actor* a_standIn, bool a_female, const std::vector<Protocol::BodyMorph>& a_morphs, const std::vector<Protocol::Overlay>& a_overlays)
 	{
-		if (!a_standIn || (a_morphs.empty() && a_overlays.empty()) || !Installed()) {
+		if (!a_standIn || !Installed()) {
+			return;
+		}
+		// Placed under an ID a save may have kept another stand-in's looks under: those go first, and these once that is
+		// answered (SetHeld). One whose removal can't be queued is set as before, over them.
+		const auto id = a_standIn->GetFormID();
+		if (standIns.Placing(id)) {
+			if (Clear(a_standIn, ActorObject(a_standIn), false)) {
+				REX::INFO("LooksMenu: stand-in {:08X} has an ID a save may keep other looks under; those are taken off first", id);
+				heldLooks[id] = Held{ a_standIn->GetHandle(), a_female, a_morphs, a_overlays };
+				return;
+			}
+			standIns.Released(id);
+		}
+		ApplyNow(a_standIn, a_female, a_morphs, a_overlays);
+	}
+
+	namespace
+	{
+		void SetHeld(std::uint32_t a_id)
+		{
+			const auto it = heldLooks.find(a_id);
+			if (it == heldLooks.end()) {
+				return;
+			}
+			const auto held = std::move(it->second);
+			heldLooks.erase(it);
+			const auto ref = held.actor.get();
+			if (const auto actor = ref ? ref->As<RE::Actor>() : nullptr) {
+				ApplyNow(actor, held.female, held.morphs, held.overlays);
+			}
+		}
+	}
+
+	namespace
+	{
+	void ApplyNow(RE::Actor* a_standIn, bool a_female, const std::vector<Protocol::BodyMorph>& a_morphs, const std::vector<Protocol::Overlay>& a_overlays)
+	{
+		if (a_morphs.empty() && a_overlays.empty()) {
 			return;
 		}
 		const auto object = ActorObject(a_standIn);
@@ -454,6 +630,10 @@ namespace LooksMenu
 			return;
 		}
 		const auto waiting = std::make_shared<std::atomic<std::uint32_t>>(static_cast<std::uint32_t>(a_morphs.size() + a_overlays.size()));
+		const auto summary = std::make_shared<Applied>();
+		summary->female = a_female;
+		summary->morphs = static_cast<std::uint32_t>(a_morphs.size());
+		summary->overlays = static_cast<std::uint32_t>(a_overlays.size());
 		for (const auto& morph : a_morphs) {
 			const auto answer = MakeAnswer([waiting](const Variable*) { --*waiting; });
 			const bool queued = Papyrus::CallStatic(SCRIPT, "SetMorph", [&](Args& a_out) {
@@ -475,11 +655,13 @@ namespace LooksMenu
 				--*waiting;
 				continue;
 			}
-			const auto answer = MakeAnswer([waiting](const Variable* a_uid) {
+			const auto answer = MakeAnswer([waiting, summary](const Variable* a_uid) {
 				if (a_uid && a_uid->is<std::int32_t>() && RE::BSScript::get<std::int32_t>(*a_uid) != 0) {
 					++overlaysAdded;
+					++summary->added;
 				} else {
 					++overlaysRefused;
+					++summary->refused;
 				}
 				--*waiting;
 			});
@@ -495,12 +677,21 @@ namespace LooksMenu
 		}
 		standIns.Setting(a_standIn->GetFormID());
 		settings.push_back({ a_standIn->GetHandle(), a_standIn->GetFormID(), waiting, Clock::now(), !a_morphs.empty(), !a_overlays.empty() });
+		appliedTo[a_standIn->GetFormID()] = summary;
 		++applied;
+	}
 	}
 
 	void Remove(RE::Actor* a_standIn)
 	{
-		if (a_standIn && standIns.Leaving(a_standIn->GetFormID()) && RemoveAll(a_standIn)) {
+		if (!a_standIn) {
+			return;
+		}
+		appliedTo.erase(a_standIn->GetFormID());
+		if (heldLooks.erase(a_standIn->GetFormID()) > 0) {
+			standIns.Released(a_standIn->GetFormID());  // gone before its own were set: the removal queued for it stands
+		}
+		if (standIns.Leaving(a_standIn->GetFormID()) && Clear(a_standIn, ActorObject(a_standIn), false)) {
 			++cleared;
 		}
 	}
@@ -511,6 +702,102 @@ namespace LooksMenu
 		read.reset();
 		standIns.Reset();
 		settings.clear();
+		clearings.clear();  // answers for the world before the load: what that save may hold is listed from its record
+		appliedTo.clear();
+		unbound.clear();
+		heldLooks.clear();
+	}
+
+	std::vector<std::uint8_t> SaveRecord()
+	{
+		if (!installed.value_or(false)) {
+			return {};
+		}
+		const auto ids = standIns.Saved();
+		if (!ids.empty()) {
+			REX::INFO("LooksMenu: the save remembers {} form ID(s) LooksMenu may still keep a friend's looks under, to clear after a load", ids.size());
+		}
+		return LooksSave::Encode(ids);
+	}
+
+	void LoadRecord(std::span<const std::uint8_t> a_bytes)
+	{
+		const auto ids = LooksSave::Decode(a_bytes);
+		if (!ids) {
+			REX::WARN("LooksMenu: the save's record of friends' looks could not be read ({} bytes); left as it is", a_bytes.size());
+			return;
+		}
+		standIns.Restore(*ids);
+		REX::INFO("LooksMenu: the save may keep a friend's looks under {} form ID(s): cleared off whatever reference has one", ids->size());
+	}
+
+	void RevertRecord()
+	{
+		standIns.Revert();
+	}
+
+	std::string Look(RE::Actor* a_standIn)
+	{
+		if (!a_standIn) {
+			return "error: no stand-in";
+		}
+		if (!Installed()) {
+			return "looksmenu: not installed";
+		}
+		const auto id = a_standIn->GetFormID();
+		const auto npc = a_standIn->GetNPC();
+		const auto skin = npc && npc->formSkin ? npc->formSkin->GetFormID() : 0;
+		bool       female = npc && npc->IsFemale();
+		std::string out;
+		if (const auto it = appliedTo.find(id); it != appliedTo.end()) {
+			const auto& summary = *it->second;
+			female = summary.female;
+			out = std::format("stand-in {:08X}: set {} sliders and {} overlays (added {}, refused {}: their overlay mod missing here)", id, summary.morphs, summary.overlays, summary.added.load(),
+				summary.refused.load());
+		} else {
+			out = std::format("stand-in {:08X}: nothing set (their face carried no sliders or overlays)", id);
+		}
+		out += std::format(" skin={:08X} female={} listed={}", skin, female, standIns.Listed(id));
+		// What LooksMenu holds for it, answered into the log (a VM thread's).
+		const auto object = ActorObject(a_standIn);
+		if (!object) {
+			return out + "; no script object to ask LooksMenu with";
+		}
+		const auto morphs = MakeAnswer([id](const Variable* a_names) {
+			std::string names;
+			std::size_t count = 0;
+			if (a_names && a_names->is<RE::BSScript::Array>()) {
+				if (const auto array = RE::BSScript::get<RE::BSScript::Array>(*a_names)) {
+					for (std::uint32_t i = 0; i < array->size(); ++i) {
+						if ((*array)[i].is<RE::BSFixedString>()) {
+							names += std::format("{}{}", count++ ? ", " : "", RE::BSScript::get<RE::BSFixedString>((*array)[i]).c_str());
+						}
+					}
+				}
+			}
+			REX::INFO("LooksMenu: stand-in {:08X} holds {} slider(s){}{}", id, count, count ? ": " : "", names);
+		});
+		const auto overlays = MakeAnswer([id](const Variable* a_all) {
+			std::string templates;
+			std::size_t count = 0;
+			if (a_all && a_all->is<RE::BSScript::Array>()) {
+				if (const auto array = RE::BSScript::get<RE::BSScript::Array>(*a_all)) {
+					for (std::uint32_t i = 0; i < array->size(); ++i) {
+						if (const auto entry = ReadEntry((*array)[i])) {
+							templates += std::format("{}{}", count++ ? ", " : "", entry->templateId);
+						}
+					}
+				}
+			}
+			REX::INFO("LooksMenu: stand-in {:08X} wears {} overlay(s){}{}", id, count, count ? ": " : "", templates);
+		});
+		const auto args = [&](Args& a_out) {
+			a_out = Args{ 2 };
+			a_out[0] = object;
+			a_out[1] = female;
+		};
+		const bool asked = Papyrus::CallStatic(SCRIPT, "GetMorphs", args, morphs) && Papyrus::CallStatic(OVERLAYS, "GetAll", args, overlays);
+		return out + (asked ? "; what LooksMenu holds for it goes to the log" : "; LooksMenu could not be asked");
 	}
 
 	std::string Describe()
@@ -518,7 +805,7 @@ namespace LooksMenu
 		if (!installed.value_or(false)) {
 			return "looksmenu: no";
 		}
-		return std::format("looksmenu: sliders={} overlays={} reads={} failed={} applied={} added={} refused={} cleared={} standins={}", reading.Morphs().size(), reading.Overlays().size(), reads,
-			readsFailed, applied, overlaysAdded.load(), overlaysRefused.load(), cleared, standIns.Count());
+		return std::format("looksmenu: sliders={} overlays={} reads={} failed={} applied={} added={} refused={} cleared={} unanswered={} uncleared={} scrubbed={} standins={}", reading.Morphs().size(),
+			reading.Overlays().size(), reads, readsFailed, applied, overlaysAdded.load(), overlaysRefused.load(), cleared, clearsUnanswered, standIns.Uncleared(), scrubbed, standIns.Count());
 	}
 }

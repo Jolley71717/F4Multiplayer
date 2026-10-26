@@ -4,6 +4,7 @@
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/LooksMenu.h"
 #include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
@@ -221,6 +222,10 @@ namespace
 	constexpr std::uint32_t RADIANT_VERSION = 1;
 	constexpr std::uint32_t RADIANT_MAX_LENGTH = 1u << 18;  // RadiantRules::Encode writes at most about 80 KB
 
+	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
+	constexpr std::uint32_t LOOKS_VERSION = 1;
+	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
 		WorldSync::SaveResyncPoint(a_intfc);
@@ -231,6 +236,10 @@ namespace
 		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
 		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
 			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
+		}
+		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
+		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
+			a_intfc->WriteRecordData(looks.data(), static_cast<std::uint32_t>(looks.size()));
 		}
 	}
 
@@ -252,6 +261,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					RadiantSync::LoadRecord(bytes);
 				}
+			} else if (type == LOOKS_RECORD && version == LOOKS_VERSION && length <= LOOKS_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					LooksMenu::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -261,6 +275,7 @@ namespace
 		WorldSync::RevertResyncPoint();
 		Drops::RevertRecord();
 		RadiantSync::RevertRecord();
+		LooksMenu::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
