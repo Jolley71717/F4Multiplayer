@@ -150,7 +150,8 @@ TEST("character binding: a New Game that reaches Vault 111's opening is held onl
 TEST("character binding: only the game's own Vault 111 start is a vault start; an unnamed alternate start in the vault is held for its name")
 {
 	using Story::Opening;
-	// The game's own start (the pre-war world, or Out of Time running): the vault holds it, named or not, and it ends
+	// The game's own start (Out of Time running; the pre-war world alone is not, as an alternate start may make the
+	// character at its mirror and move on unnamed): the vault holds it, named or not, and it ends
 	// the unnamed hold.
 	CHECK(Story::Decide(true, true, true).opening == Opening::kVault);
 	CHECK(Story::Decide(true, true, true).vaultStart);

@@ -51,15 +51,12 @@ namespace Story
 		}
 
 		// The game's own start, not just its places: an alternate start never runs Out of Time, so PastTheVault stays false
-		// and a walk into Vault 111 is in those places too. The vanilla start is in the pre-war world first, then in Out of
-		// Time.
+		// and a walk into Vault 111 is in those places too. Only Out of Time running says so, not the pre-war world: some
+		// alternate starts make the character at its mirror and move the player on unnamed, and the pre-war world counted
+		// would end their unnamed hold for good. An unnamed vanilla start is held there as unnamed instead, until the cryo
+		// pod.
 		bool InVanillaStart()
 		{
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			const auto cell = player ? player->GetParentCell() : nullptr;
-			if (cell && cell->worldSpace && cell->worldSpace->GetFormID() == PREWAR_WORLDSPACE) {
-				return true;
-			}
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(OUT_OF_TIME);
 			return quest && (quest->data.flags & QUEST_RUNNING);
 		}

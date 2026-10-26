@@ -32,8 +32,8 @@ namespace Story
 	// Why InOpening is true.
 	[[nodiscard]] Opening Why();
 
-	// In Vault 111's opening (kVault) of the game's own start: in the pre-war world, or with Out of Time
-	// running. Not an alternate start's walk into the vault's places (Out of Time never starts there).
+	// In Vault 111's opening (kVault) of the game's own start: Out of Time running (not the pre-war world alone, where
+	// some alternate starts make the character). Not an alternate start's walk into the vault's places (Out of Time never starts there).
 	[[nodiscard]] bool InVaultStart();
 
 	struct Hold
@@ -42,7 +42,7 @@ namespace Story
 		bool    vaultStart = false;  // InVaultStart: Session tells CharacterBinding (Tracker::OnVaultOpening)
 	};
 	// Frame's rule, free of the game. a_vaultPlaces: in the pre-war world or Vault 111 before Out of Time is done.
-	// a_ownStart: the game's own start (the pre-war world, or Out of Time running). a_unnamed: a new character with no
+	// a_ownStart: the game's own start (Out of Time running). a_unnamed: a new character with no
 	// name yet. An unnamed alternate start that walks into the vault is held for its name, and is no vault start: that
 	// would end its unnamed hold for good, and it would host under the last character's ID once out.
 	[[nodiscard]] constexpr Hold Decide(bool a_vaultPlaces, bool a_ownStart, bool a_unnamed)

@@ -911,8 +911,10 @@ character's session (`session.unnamed_waits`). The notice offers no load as a wa
 for a name stays held until a save of it is loaded, and that save carries the old ID, which nothing can tell
 apart, so the host would then host it under the last character's session file. Whether the game's own
 character edit gives such a character a new ID is untried. Teleporting unnamed says so
-(`party.cant_teleport_unnamed`), not Vault 111. A new game in Vault 111's opening of the game's own start (in
-the pre-war world, or with Out of Time running: `Story::InVaultStart`) is not held as unnamed
+(`party.cant_teleport_unnamed`), not Vault 111. A new game in Vault 111's opening of the game's own start (Out
+of Time running: `Story::InVaultStart`; not the pre-war world alone, where some alternate starts make the
+character at its mirror and move the player on unnamed, and an unnamed vanilla start is held there as unnamed
+until the cryo pod) is not held as unnamed
 (`Tracker::OnVaultOpening`): the vault holds it as it always did and lets it go when the player leaves, so a
 Vault 111 start is held no longer than before even if the game gave the new ID before the new-game message
 (naming would then change nothing). An alternate start that walks into the vault's places doesn't count (Out of
