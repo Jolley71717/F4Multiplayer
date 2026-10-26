@@ -168,6 +168,19 @@ namespace BodyMorphs
 		kClear,    // it went meanwhile: take them out of LooksMenu's store again
 	};
 
+	// What of a stand-in's 3D is built again once the old looks under its ID are removed (StandIns::Released): it may have
+	// built it wearing them, and its own sets rebuild only what they set (Then::kUpdate), so the rest is rebuilt now.
+	struct Rebuilds
+	{
+		bool morphs = false;
+		bool overlays = false;
+	};
+
+	inline Rebuilds RebuildOnRelease(bool a_ownMorphs, bool a_ownOverlays)
+	{
+		return { .morphs = !a_ownMorphs, .overlays = !a_ownOverlays };
+	}
+
 	// At most this many form IDs go into the co-save's record of IDs LooksMenu may still hold a friend's looks under
 	// (StandIns::Saved; game/LooksSave.h).
 	constexpr std::size_t MAX_SAVED = 512;
@@ -287,21 +300,15 @@ namespace BodyMorphs
 			return out;
 		}
 
-		// A save's record was read: its IDs are to be cleared wherever they turn up (none of them is a stand-in of ours
-		// now, and no removal of them is under way).
+		// The game says a save was loaded (or a new game began): the loaded save's record (none for a new game, or a save
+		// without one) is all that is listed. Its IDs are to be cleared wherever they turn up (none of them is a stand-in
+		// of ours now, and no removal of them is under way); what was listed before the load answered for the old world.
 		void Restore(const std::vector<std::uint32_t>& a_ids)
 		{
 			uncleared.clear();
 			for (const auto id : a_ids) {
 				uncleared[id] = Clear::kLeft;
 			}
-		}
-
-		// The co-save is reverted (before a load, or for a new game): nothing listed, until a record is read.
-		void Revert()
-		{
-			uncleared.clear();
-			held.clear();
 		}
 
 		// A save was loaded: LooksMenu dropped what it kept for references not in that save, and every stand-in went

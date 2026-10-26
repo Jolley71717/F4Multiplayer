@@ -116,6 +116,7 @@ namespace LooksMenu
 		BodyMorphs::Reading         reading;
 		std::shared_ptr<Read>       read;
 		BodyMorphs::StandIns        standIns;
+		LooksSave::Loaded           loadedRecord;  // listed in OnGameLoaded
 		std::vector<Setting>        settings;
 		std::vector<Clearing>       clearings;
 		std::map<std::uint32_t, std::shared_ptr<Applied>> appliedTo;
@@ -130,7 +131,7 @@ namespace LooksMenu
 			std::vector<Protocol::Overlay>   overlays;
 		};
 		std::map<std::uint32_t, Held> heldLooks;
-		void                          SetHeld(std::uint32_t a_id);
+		void                          SetHeld(std::uint32_t a_id, bool a_cleared);
 		void ApplyNow(RE::Actor* a_standIn, bool a_female, const std::vector<Protocol::BodyMorph>& a_morphs, const std::vector<Protocol::Overlay>& a_overlays);
 		Clock::time_point           lastScrub{};
 		std::uint32_t               reads = 0;
@@ -497,13 +498,13 @@ namespace LooksMenu
 					standIns.Unanswered(a_clearing.id);
 					REX::WARN("LooksMenu: taking the looks under {:08X} out of LooksMenu's store got no answer; tried again on whatever reference has that ID", a_clearing.id);
 					if (standIns.Released(a_clearing.id)) {
-						SetHeld(a_clearing.id);  // set as before this list: it wears what LooksMenu kept too
+						SetHeld(a_clearing.id, false);  // set as before this list: it wears what LooksMenu kept too
 					}
 					return true;
 				}
 				standIns.Cleared(a_clearing.id);
 				if (standIns.Released(a_clearing.id)) {
-					SetHeld(a_clearing.id);
+					SetHeld(a_clearing.id, true);
 				}
 				if (a_clearing.scrub) {
 					// It may have built its 3D wearing them: built again without.
@@ -603,7 +604,8 @@ namespace LooksMenu
 
 	namespace
 	{
-		void SetHeld(std::uint32_t a_id)
+		// a_cleared: the old looks were removed, and what the held ones won't rebuild is rebuilt now (BodyMorphs::RebuildOnRelease).
+		void SetHeld(std::uint32_t a_id, bool a_cleared)
 		{
 			const auto it = heldLooks.find(a_id);
 			if (it == heldLooks.end()) {
@@ -613,6 +615,10 @@ namespace LooksMenu
 			heldLooks.erase(it);
 			const auto ref = held.actor.get();
 			if (const auto actor = ref ? ref->As<RE::Actor>() : nullptr) {
+				if (a_cleared) {
+					const auto rebuild = BodyMorphs::RebuildOnRelease(!held.morphs.empty(), !held.overlays.empty());
+					Rebuild(actor, ActorObject(actor), rebuild.morphs, rebuild.overlays);
+				}
 				ApplyNow(actor, held.female, held.morphs, held.overlays);
 			}
 		}
@@ -706,6 +712,7 @@ namespace LooksMenu
 		appliedTo.clear();
 		unbound.clear();
 		heldLooks.clear();
+		standIns.Restore(loadedRecord.Take());  // after clearings: an answer from before the load can't unlist the record's IDs
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
@@ -722,18 +729,18 @@ namespace LooksMenu
 
 	void LoadRecord(std::span<const std::uint8_t> a_bytes)
 	{
-		const auto ids = LooksSave::Decode(a_bytes);
-		if (!ids) {
-			REX::WARN("LooksMenu: the save's record of friends' looks could not be read ({} bytes); left as it is", a_bytes.size());
+		// On the load's thread: listed once the game says it loaded (OnGameLoaded), as frames may run meanwhile.
+		const auto count = loadedRecord.Read(a_bytes);
+		if (!count) {
+			REX::WARN("LooksMenu: the save's record of friends' looks could not be read ({} bytes); ignored", a_bytes.size());
 			return;
 		}
-		standIns.Restore(*ids);
-		REX::INFO("LooksMenu: the save may keep a friend's looks under {} form ID(s): cleared off whatever reference has one", ids->size());
+		REX::INFO("LooksMenu: the save may keep a friend's looks under {} form ID(s): cleared off whatever reference has one after the load", *count);
 	}
 
 	void RevertRecord()
 	{
-		standIns.Revert();
+		loadedRecord.Revert();
 	}
 
 	std::string Look(RE::Actor* a_standIn)

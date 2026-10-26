@@ -39,7 +39,8 @@ namespace LooksMenu
 
 	// The co-save (on the save's or load's thread, frames held out): the form IDs LooksMenu may still keep a friend's looks
 	// under as the save is written (a stand-in's removal still queued then; BodyMorphs::StandIns::Saved), read back with
-	// the save and cleared off whatever reference has one after the load. Empty: none to write (always without LooksMenu).
+	// the save and cleared off whatever reference has one after the load (listed in OnGameLoaded, since a load that outlasts
+	// the hold runs frames meanwhile). Empty: none to write (always without LooksMenu).
 	std::vector<std::uint8_t> SaveRecord();
 	void                      LoadRecord(std::span<const std::uint8_t> a_bytes);
 	void                      RevertRecord();

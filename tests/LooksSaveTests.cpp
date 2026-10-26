@@ -9,6 +9,7 @@
 #include "game/LooksSave.h"
 
 #include <cstring>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -153,9 +154,11 @@ TEST("looks save: the record holds only runtime references' IDs, and one naming 
 TEST("looks save: the list's rules clear a listed ID found on another reference after a load once, and it leaves the list")
 {
 	World world;
-	world.standIns.Revert();  // the load reverts the co-save first, then reads the record
-	world.standIns.Restore({ STAND_IN, OTHER });
+	LooksSave::Loaded record;
+	record.Revert();  // the load reverts the co-save first, then reads the record
+	REQUIRE(record.Read(LooksSave::Encode({ STAND_IN, OTHER })) == std::optional<std::size_t>{ 2 });
 	world.standIns.Reset();  // then the game says it loaded: the list is the record's
+	world.standIns.Restore(record.Take());
 	CHECK(world.standIns.Uncleared() == 2);
 
 	world.Scrub();
@@ -229,15 +232,75 @@ TEST("looks save: the list's rules leave a listed ID that is one of our stand-in
 TEST("looks save: revert empties the list, and the game's load keeps what the record listed")
 {
 	BodyMorphs::StandIns standIns;
+	LooksSave::Loaded    record;
 	standIns.Setting(STAND_IN);
 	standIns.Clearing(OTHER);
-	standIns.Revert();
-	CHECK(standIns.Uncleared() == 0);
+	record.Read(LooksSave::Encode({ OTHER }));  // an earlier load's record, never taken
+	record.Revert();
 	standIns.Reset();
+	standIns.Restore(record.Take());
+	CHECK(standIns.Uncleared() == 0);
 	CHECK(SavedAndRead(standIns).empty());  // a new game, or a save with no record: nothing owed
 
-	standIns.Restore({ OTHER });
+	record.Revert();
+	REQUIRE(record.Read(LooksSave::Encode({ OTHER })));
 	standIns.Reset();
+	standIns.Restore(record.Take());
 	CHECK(standIns.Listed(OTHER));
 	CHECK(standIns.Scrubbable() == Ids{ OTHER });
+	CHECK(record.Take().empty());  // taken once
+}
+
+TEST("looks save: a record that can't be read lists nothing after the load")
+{
+	LooksSave::Loaded record;
+	record.Revert();
+	REQUIRE(record.Read(LooksSave::Encode({ OTHER })));
+	CHECK(!record.Read(std::vector<std::uint8_t>{ 1 }));  // a damaged record read after it: none
+	BodyMorphs::StandIns standIns;
+	standIns.Clearing(STAND_IN);
+	standIns.Reset();
+	standIns.Restore(record.Take());
+	CHECK(standIns.Uncleared() == 0);
+}
+
+TEST("looks save: a load's record is listed only once the game says it loaded, so an answer from before the load can't unlist it")
+{
+	// Save, then load that save: the stand-in's removal is still queued as the load's thread reads the record, and frames
+	// may run on (a load that outlasts the hold) and see it answered.
+	BodyMorphs::StandIns standIns;
+	LooksSave::Loaded    record;
+	standIns.Setting(STAND_IN);
+	REQUIRE(standIns.Answered(STAND_IN) == Then::kUpdate);
+	REQUIRE(standIns.Leaving(STAND_IN));
+	standIns.Clearing(STAND_IN);
+	const auto saved = LooksSave::Encode(standIns.Saved());
+
+	record.Revert();  // the load's thread
+	REQUIRE(record.Read(saved));
+	CHECK(standIns.Listed(STAND_IN));  // the list is the main thread's, untouched by the load's
+	standIns.Cleared(STAND_IN);  // a frame meanwhile: the old world's removal answered
+	CHECK(!standIns.Listed(STAND_IN));
+
+	standIns.Reset();  // the game says it loaded (LooksMenu::OnGameLoaded, after its clearings are dropped)
+	standIns.Restore(record.Take());
+	CHECK(standIns.Listed(STAND_IN));  // the loaded save's LooksMenu store may hold the looks again
+	CHECK(standIns.Scrubbable() == Ids{ STAND_IN });
+}
+
+TEST("looks save: a stand-in placed under a listed ID has whatever its own looks leave out rebuilt once the old ones are removed")
+{
+	// Its 3D may have been built wearing the old body and tattoos; its own sets rebuild only what they set (kUpdate).
+	const auto none = BodyMorphs::RebuildOnRelease(false, false);
+	CHECK(none.morphs);
+	CHECK(none.overlays);
+	const auto sliders = BodyMorphs::RebuildOnRelease(true, false);
+	CHECK(!sliders.morphs);  // rebuilt once its sliders are set
+	CHECK(sliders.overlays);
+	const auto overlays = BodyMorphs::RebuildOnRelease(false, true);
+	CHECK(overlays.morphs);
+	CHECK(!overlays.overlays);
+	const auto both = BodyMorphs::RebuildOnRelease(true, true);
+	CHECK(!both.morphs);
+	CHECK(!both.overlays);
 }

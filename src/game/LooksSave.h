@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 // The co-save's record of the form IDs LooksMenu may still hold a friend's sliders and overlays under as a save is written
@@ -69,4 +71,39 @@ namespace LooksSave
 		ids.erase(repeats.begin(), repeats.end());
 		return ids;
 	}
+
+	// A load's record, between the load's thread and the main thread: the co-save is reverted and read on the load's
+	// thread while frames may still run (a load that outlasts the hold), so it is kept here and listed only once the game
+	// says it loaded (Take), after what answers for the world before the load is dropped.
+	class Loaded
+	{
+	public:
+		// The co-save is reverted (before a load, or for a new game): no record, until one is read.
+		void Revert()
+		{
+			std::scoped_lock l{ lock };
+			ids.clear();
+		}
+
+		// The save's record: how many IDs it lists, or nothing if it can't be read (when there is none).
+		std::optional<std::size_t> Read(std::span<const std::uint8_t> a_bytes)
+		{
+			auto read = Decode(a_bytes);
+			const auto count = read ? std::optional{ read->size() } : std::nullopt;
+			std::scoped_lock l{ lock };
+			ids = read ? std::move(*read) : std::vector<std::uint32_t>{};
+			return count;
+		}
+
+		// What the loaded save's record listed, once.
+		std::vector<std::uint32_t> Take()
+		{
+			std::scoped_lock l{ lock };
+			return std::exchange(ids, {});
+		}
+
+	private:
+		std::mutex                 lock;
+		std::vector<std::uint32_t> ids;
+	};
 }
