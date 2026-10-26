@@ -17,20 +17,23 @@ namespace MenuBadges
 		constexpr std::size_t MAX_NODES = 256;
 
 		// The model: the database's own node for the file, asked for once, the first time a friend is to wear it, and
-		// kept for the rest of the run. Nothing of it is changed but where it hangs and, while it hangs, its local
-		// transform, which is given back as it comes off (the engine clones that node whenever it shows the model).
+		// kept for the rest of the run. Nothing of it is changed but where it hangs: the engine clones that node whenever it
+		// shows the model (a Pip-Boy's preview, one lying in the world), and the copy takes its transform as it is then.
 		RE::NiPointer<RE::NiNode> model;
 		std::string               modelPath;
 		bool                      modelAsked = false;
 		std::string               modelProblem;  // why there is none, or why it is never hung
 		float                     modelRadius = 0.0f;
 
+		// Our own node, made once, which the engine never shares: it hangs from the stand-in's root with the turn, height
+		// and size on it, and the model hangs under it untouched.
+		RE::NiPointer<RE::NiNode> holder;
+
 		// What it hangs from, kept alive by us while it hangs: the stand-in's 3D root, so its skeleton outlives a rebuild
-		// of its 3D until the model is off it, and a new root is never at the address of the one we compare with.
+		// of its 3D until the badge is off it, and a new root is never at the address of the one we compare with.
 		struct Hung
 		{
 			RE::NiPointer<RE::NiNode> root;
-			RE::NiTransform           own;  // the model's local transform before it was hung
 		};
 		std::optional<Hung>   hung;
 		StandInBadge::Track   track;
@@ -115,23 +118,57 @@ namespace MenuBadges
 			return model.get();
 		}
 
-		// Off the root it hangs from, its own transform given back. One moved elsewhere meanwhile is left where it is.
+		// Off the root it hangs from, and the model off our node. One moved elsewhere meanwhile is left where it is.
 		void TakeOff(std::string_view a_why)
 		{
 			if (!hung) {
 				return;
 			}
-			const bool onRoot = model && hung->root && model->parent == hung->root.get();
+			const bool onRoot = holder && hung->root && holder->parent == hung->root.get();
 			if (onRoot) {
-				hung->root->DetachChild(model.get());
+				hung->root->DetachChild(holder.get());
 			} else {
 				++notOnRoot;
 			}
-			if (model && !model->parent) {
-				model->local = hung->own;
+			if (model && holder && model->parent == holder.get()) {
+				holder->DetachChild(model.get());
 			}
 			hung.reset();
 			Log(std::format("took the badge off: {}{}", a_why, onRoot ? "" : " (it was no longer on the root)"));
+		}
+
+		// Whether it is still where it was hung: our node on the root, the model on our node.
+		bool StillHung()
+		{
+			return hung && hung->root && holder && model && holder->parent == hung->root.get() && model->parent == holder.get();
+		}
+
+		// Over the head and turned to our camera, at its size: our node's local transform under a_root.
+		void Place(RE::Actor* a_actor, RE::NiNode* a_root)
+		{
+			const auto& at = a_root->world.translate;
+			const auto  head = Equipment::ChildNode(a_root, HEAD_BONE);
+			RE::NiPoint3 camera = a_actor->data.location;
+			if (const auto playerCamera = RE::PlayerCamera::GetSingleton(); playerCamera && playerCamera->cameraRoot) {
+				camera = playerCamera->cameraRoot->world.translate;
+			}
+			StandInBadge::Matrix rootTurn{};
+			for (std::size_t row = 0; row < 3; ++row) {
+				for (std::size_t column = 0; column < 3; ++column) {
+					rootTurn[row][column] = a_root->world.rotate.entry[row][column];
+				}
+			}
+			const auto turn = StandInBadge::Turn(StandInBadge::FacingYaw(rootTurn, camera.x - at.x, camera.y - at.y));
+			auto&      local = holder->local;
+			for (std::size_t row = 0; row < 3; ++row) {
+				for (std::size_t column = 0; column < 3; ++column) {
+					local.rotate.entry[row][column] = turn[row][column];
+				}
+			}
+			local.translate = { 0.0f, 0.0f, StandInBadge::Height(head != nullptr, head ? head->world.translate.z : 0.0f, at.z, a_root->world.scale) };
+			// The model's radius in our node's units (its own local scale in it), from what the engine last worked out.
+			modelRadius = StandInBadge::OwnRadius(model->worldBound.fRadius, holder->world.scale);
+			local.scale = StandInBadge::LocalScale(modelRadius, a_root->world.scale);
 		}
 
 		bool Hang(RE::Actor* a_actor, RE::NiAVObject* a_root)
@@ -143,47 +180,28 @@ namespace MenuBadges
 				Log(std::format("no badge hung on {:08X}: {}", a_actor->GetFormID(), !root ? "its 3D is no node" : badge ? "the model hangs elsewhere" : "no model"));
 				return false;
 			}
-			const auto own = badge->local;
-			root->AttachChild(badge, true);
-			if (badge->parent != root) {
-				badge->local = own;
-				Log(std::format("no badge hung on {:08X}: its root did not take the model", a_actor->GetFormID()));
+			if (!holder) {
+				holder = RE::NiPointer<RE::NiNode>{ new RE::NiNode(1) };
+			}
+			if (const auto parent = holder->parent) {
+				parent->DetachChild(holder.get());  // left on a root by something else: ours to move
+			}
+			holder->AttachChild(badge, true);
+			// Where it is to be before it goes on, so the first frame does not draw it where it last was.
+			Place(a_actor, root);
+			root->AttachChild(holder.get(), true);
+			if (holder->parent != root || badge->parent != holder.get()) {
+				if (badge->parent == holder.get()) {
+					holder->DetachChild(badge);
+				}
+				Log(std::format("no badge hung on {:08X}: its root did not take it", a_actor->GetFormID()));
 				return false;
 			}
-			hung = Hung{ RE::NiPointer<RE::NiNode>{ root }, own };
+			RE::NiUpdateData update{};
+			holder->Update(update);  // our node and the model under it, in the world now
+			hung = Hung{ RE::NiPointer<RE::NiNode>{ root } };
 			Log(std::format("hung the badge on {:08X}", a_actor->GetFormID()));
 			return true;
-		}
-
-		// Over the head and turned to our camera, at its size: the model's local transform under the root.
-		void Place(RE::Actor* a_actor)
-		{
-			const auto root = hung ? hung->root.get() : nullptr;
-			if (!root || !model || model->parent != root) {
-				return;
-			}
-			const auto& at = root->world.translate;
-			const auto  head = Equipment::ChildNode(root, HEAD_BONE);
-			RE::NiPoint3 camera = a_actor->data.location;
-			if (const auto playerCamera = RE::PlayerCamera::GetSingleton(); playerCamera && playerCamera->cameraRoot) {
-				camera = playerCamera->cameraRoot->world.translate;
-			}
-			StandInBadge::Matrix rootTurn{};
-			for (std::size_t row = 0; row < 3; ++row) {
-				for (std::size_t column = 0; column < 3; ++column) {
-					rootTurn[row][column] = root->world.rotate.entry[row][column];
-				}
-			}
-			const auto turn = StandInBadge::Turn(StandInBadge::FacingYaw(rootTurn, camera.x - at.x, camera.y - at.y));
-			auto&      local = model->local;
-			for (std::size_t row = 0; row < 3; ++row) {
-				for (std::size_t column = 0; column < 3; ++column) {
-					local.rotate.entry[row][column] = turn[row][column];
-				}
-			}
-			local.translate = { 0.0f, 0.0f, StandInBadge::Height(head != nullptr, head ? head->world.translate.z : 0.0f, at.z, root->world.scale) };
-			modelRadius = StandInBadge::OwnRadius(model->worldBound.fRadius, model->world.scale);
-			local.scale = StandInBadge::LocalScale(modelRadius, root->world.scale);
 		}
 	}
 
@@ -213,6 +231,7 @@ namespace MenuBadges
 				facts.standIn = candidates[pick].standIn;
 				facts.root = reinterpret_cast<std::uintptr_t>(root);
 				facts.model = Model() != nullptr;
+				facts.lost = track.hung && !StillHung();  // dressed again on the same root, say: on again
 			}
 		}
 		switch (StandInBadge::Frame(track, facts)) {
@@ -220,7 +239,7 @@ namespace MenuBadges
 			TakeOff(!on ? "turned off" : !facts.standIn ? "nobody in the Pip-Boy within reach" : "no model");
 			return;
 		case StandInBadge::Do::kRehang:
-			TakeOff("another stand-in, or its 3D rebuilt");
+			TakeOff(facts.lost ? "taken off by something else" : "another stand-in, or its 3D rebuilt");
 			[[fallthrough]];
 		case StandInBadge::Do::kHang:
 			if (!Hang(wearer, root)) {
@@ -231,8 +250,8 @@ namespace MenuBadges
 		case StandInBadge::Do::kNothing:
 			break;
 		}
-		if (track.hung && wearer) {
-			Place(wearer);
+		if (track.hung && wearer && StillHung()) {
+			Place(wearer, hung->root.get());
 		}
 	}
 
@@ -254,12 +273,12 @@ namespace MenuBadges
 
 	std::string Describe()
 	{
-		std::string out = std::format("menuBadges: on={} model='{}' {} radius={:.1f} wearing={:08X} hangs={} takeOffs={} rehangs={} failures={} notOnRoot={} (one at a time: the database's one node)",
+		std::string out = std::format("menuBadges: on={} model='{}' {} radius={:.1f} wearing={:08X} hangs={} takeOffs={} rehangs={} lost={} failures={} notOnRoot={} (one at a time: the database's one node)",
 			Config::Get().menuBadges, modelPath, !modelAsked ? "not loaded yet" : modelProblem.empty() ? "loaded" : modelProblem, modelRadius, track.hung ? track.standIn : 0,
-			track.hangs, track.takeOffs, track.rehangs, track.failures, notOnRoot);
-		if (track.hung && model) {
+			track.hangs, track.takeOffs, track.rehangs, track.lost, track.failures, notOnRoot);
+		if (track.hung && model && holder) {
 			const auto& at = model->world.translate;
-			out += std::format(" at=({:.0f},{:.0f},{:.0f}) scale={:.2f} culled={}", at.x, at.y, at.z, model->local.scale, model->GetAppCulled());
+			out += std::format(" at=({:.0f},{:.0f},{:.0f}) scale={:.2f} culled={}", at.x, at.y, at.z, holder->local.scale, model->GetAppCulled());
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		for (const auto& info : RemotePlayers::List()) {

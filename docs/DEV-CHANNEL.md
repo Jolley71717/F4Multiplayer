@@ -59,8 +59,8 @@ game's own code can:
 - **The badge over a friend in the Pip-Boy** (off unless the ini has `bMenuBadges = true`; DESIGN.md, Menus):
   `menubadges` names the Pip-Boy's world model and whether it loaded (or why it is not used: no world model, did not
   load, has collision), its own radius, the stand-in wearing it (`wearing=`, one at a time), where it is and its scale,
-  how often it was hung, taken off, hung again on a new root and refused by the engine (`hangs takeOffs rehangs
-  failures`), and each friend's menu, glyph and distance. The log has `MenuBadges:` lines for each hang and take-off
+  how often it was hung, taken off, hung again (on a new root, or `lost` of those: after something else took it off)
+  and refused by the engine (`hangs takeOffs rehangs lost failures`), and each friend's menu, glyph and distance. The log has `MenuBadges:` lines for each hang and take-off
   (the first 40).
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game

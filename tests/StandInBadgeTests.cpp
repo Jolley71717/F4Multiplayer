@@ -68,6 +68,30 @@ TEST("menu badge: another stand-in, or the same one's 3D rebuilt, has it hung ag
 	CHECK(StandInBadge::Frame(track, Wearing(2, 0x3000)) == Do::kHang);
 }
 
+TEST("menu badge: one taken off by something else on the same root is hung again, not left off until the menu closes")
+{
+	Track track;
+	CHECK(StandInBadge::Frame(track, Wearing(1, 0x1000)) == Do::kHang);
+	auto lost = Wearing(1, 0x1000);
+	lost.lost = true;
+	CHECK(StandInBadge::Frame(track, lost) == Do::kRehang);
+	CHECK(StandInBadge::Frame(track, Wearing(1, 0x1000)) == Do::kNothing);
+	CHECK(track.rehangs == 1);
+	CHECK(track.lost == 1);
+	// Lost on a frame it moves to another stand-in anyway: one rehang, counted as the move.
+	auto moved = Wearing(2, 0x2000);
+	moved.lost = true;
+	CHECK(StandInBadge::Frame(track, moved) == Do::kRehang);
+	CHECK(track.rehangs == 2);
+	CHECK(track.lost == 1);
+	// Lost as the menu closes: just off.
+	auto closed = Nobody();
+	closed.lost = true;
+	CHECK(StandInBadge::Frame(track, closed) == Do::kTakeOff);
+	CHECK(StandInBadge::Frame(track, closed) == Do::kNothing);
+	CHECK(track.hangs == 1);
+}
+
 TEST("menu badge: off, or with no model, nothing is hung, and turning it off takes it off")
 {
 	Track track;
@@ -270,4 +294,51 @@ TEST("menu badge: every way a stand-in goes that takes the grenade out of its ha
 	}
 	CHECK(drops >= 1);     // a stand-in deleted
 	CHECK(dropAlls >= 2);  // before a save or a load, and the session's end
+}
+
+namespace
+{
+	std::string BadgeCode()
+	{
+		const auto root = SourceTree::Root();
+		if (!root) {
+			return {};
+		}
+		for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
+			if (file == "src/game/MenuBadges.cpp") {
+				return std::string{ code };
+			}
+		}
+		return {};
+	}
+}
+
+// The model is the database's one node, which the engine clones whenever it shows a Pip-Boy (the inventory's preview, one
+// lying in the world): a copy takes its transform as it is then, so only our own node's transform is ever set.
+TEST("menu badge: the shared Pip-Boy model's transform is never changed, only that of our own node it hangs under")
+{
+	const auto code = BadgeCode();
+	REQUIRE(!code.empty());
+	for (auto at = code.find("->local"); at != std::string::npos; at = code.find("->local", at + 1)) {
+		const auto start = code.rfind('\n', at);
+		const auto line = std::string_view{ code }.substr(start == std::string::npos ? 0 : start + 1, at - (start == std::string::npos ? 0 : start + 1));
+		if (!line.ends_with("holder")) {
+			Test::Fail(__FILE__, __LINE__, std::format("MenuBadges.cpp touches a transform other than our node's: '{}->local'", line));
+		}
+	}
+	CHECK(Count(code, "model->world =") == 0);
+	CHECK(Count(code, "badge->world =") == 0);
+	CHECK(Count(code, "new RE::NiNode(") == 1);
+}
+
+TEST("menu badge: our node is placed before it goes on the root, so the first frame does not draw it where it last was")
+{
+	const auto code = BadgeCode();
+	REQUIRE(!code.empty());
+	const auto place = code.find("Place(a_actor, root);");
+	const auto attach = code.find("root->AttachChild(holder.get()");
+	REQUIRE(place != std::string::npos);
+	REQUIRE(attach != std::string::npos);
+	CHECK(place < attach);
+	CHECK(code.find("holder->Update(", attach) != std::string::npos);
 }

@@ -16,8 +16,10 @@
 //
 // The model is the Pip-Boy form's own (00021B3B, its world model), loaded through the engine's model database, which
 // keeps one node per file and hands that same node to every caller (WeaponFire's throwable does the same; a clone of
-// one crashed, docs/GRENADE-IN-HAND.md). A node has one parent, so one badge shows at a time: over the nearest friend in
-// their Pip-Boy. Other menu kinds keep only their name tag until there is a model for them.
+// one crashed, docs/GRENADE-IN-HAND.md). The engine clones that node whenever it shows the model, so nothing of it changes
+// but its parent: it hangs, as it is, under a node of our own, which carries the turn, height and size. A node has one
+// parent, so one badge shows at a time: over the nearest friend in their Pip-Boy. Other menu kinds keep only their name
+// tag until there is a model for them.
 namespace StandInBadge
 {
 	using MenuIconPlace::Glyph;
@@ -69,6 +71,7 @@ namespace StandInBadge
 		std::uint32_t  standIn = 0;    // the stand-in Pick chose, 0 for none
 		std::uintptr_t root = 0;       // its 3D root now (an address, only compared), 0 while it has none
 		bool           model = false;  // the model is loaded and free to hang
+		bool           lost = false;   // while hung: it is no longer where it was hung (taken off by something else)
 	};
 
 	// Where it hangs.
@@ -81,6 +84,7 @@ namespace StandInBadge
 		std::uint32_t  takeOffs = 0;
 		std::uint32_t  rehangs = 0;
 		std::uint32_t  failures = 0;
+		std::uint32_t  lost = 0;  // of the rehangs, those after something else took it off
 	};
 
 	enum class Do
@@ -105,7 +109,8 @@ namespace StandInBadge
 
 	// What becomes of the badge this frame. Hung once, not each frame; taken off when nobody is to wear it (the menu
 	// closed, out of reach, gone, turned off, no model); hung again when another stand-in is to wear it, or its 3D was
-	// rebuilt (dressed again, in or out of a frame), as the new root is another node.
+	// rebuilt (dressed again, in or out of a frame), as the new root is another node, or something else took it off the
+	// root it still has.
 	constexpr Do Frame(Track& a_track, const Facts& a_facts)
 	{
 		const bool wanted = a_facts.on && a_facts.standIn && a_facts.root && a_facts.model;
@@ -123,7 +128,10 @@ namespace StandInBadge
 			++a_track.hangs;
 			return Do::kHang;
 		}
-		if (a_track.standIn != a_facts.standIn || a_track.root != a_facts.root) {
+		if (a_track.standIn != a_facts.standIn || a_track.root != a_facts.root || a_facts.lost) {
+			if (a_track.standIn == a_facts.standIn && a_track.root == a_facts.root) {
+				++a_track.lost;
+			}
 			a_track.standIn = a_facts.standIn;
 			a_track.root = a_facts.root;
 			++a_track.rehangs;
