@@ -334,7 +334,10 @@ namespace ProtocolSamples
 		s.push_back({ "StorageView(closed)", Encode(StorageView{ REF_A, false }), D(DecodeStorageView) });
 		s.push_back({ "StorageOwners", Encode(StorageOwners{ { { REF_A, 1, 0 }, { REF_B, 1, 17 } } }), D(DecodeStorageOwners) });
 		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
-		s.push_back({ "StorageForfeit", Encode(ContainerChange{ REF_A, 0x0000000F, -3 }, MT::kStorageForfeit), D(DecodeContainerChange) });
+		s.push_back({ "StorageSettle", Encode(StorageSettle{ 3, 120, 40, { 41, 57 }, { { REF_A, 0x0000000F, -3 }, { REF_B, 0x0004835D, 2 } } }), D(DecodeStorageSettle) });
+		s.push_back({ "StorageSettle(nothing)", Encode(StorageSettle{ 1, 0, 0, {}, {} }), D(DecodeStorageSettle) });
+		s.push_back({ "StorageCaughtUp", Encode(StorageCaughtUp{ 2 }), D(DecodeStorageCaughtUp) });
+		s.push_back({ "StorageReversals", Encode(StorageReversals{ { { 41, 2, -3 }, { 57, 2, 5 } } }), D(DecodeStorageReversals) });
 		s.push_back({ "StorageRefusal", Encode(StorageRefusal{ REF_A, 0x0001F276, -5, STORAGE_NOT_NUMBERED, StorageReason::kNotHeld }), D(DecodeStorageRefusal) });
 		s.push_back({ "StorageRefusal(short)", Encode(StorageRefusal{ REF_A, 0x0001F276, -2, 17, StorageReason::kShort }), D(DecodeStorageRefusal) });
 		s.push_back({ "StorageRefusal(closed)", Encode(StorageRefusal{ REF_A, 0, 0, STORAGE_NOT_NUMBERED, StorageReason::kClosed }), D(DecodeStorageRefusal) });
@@ -457,7 +460,9 @@ namespace ProtocolSamples
 		case MT::kReportStorage:
 		case MT::kViewStorage:
 		case MT::kReportStorageShort:
-		case MT::kStorageForfeit:
+		case MT::kStorageSettle:
+		case MT::kStorageCaughtUp:
+		case MT::kStorageReversals:
 		case MT::kStorageContents:
 		case MT::kStorageOwners:
 		case MT::kStorageRefused:

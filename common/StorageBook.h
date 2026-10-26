@@ -35,6 +35,11 @@
 // A take that went through and then found the keeper's container short (its world reloaded before the server heard)
 // comes back from the keeper's game as a shortfall (Short): the taker's game is told to give back what was missing.
 //
+// A friend's world that lacks one of their numbered moves (a load from before it) is put right in the true copy, never
+// in their inventory (Settle): the move is undone there, once, by a change by nobody, and done again if a later load's
+// world has it after all. A move their game made that the session never numbered (lost with the connection) goes through
+// late, at the container they viewed last (Check's a_late).
+//
 // Kept free of the server's loop so it can be tested (tests/StorageBookTests.cpp).
 namespace StorageBook
 {
@@ -83,6 +88,7 @@ namespace StorageBook
 		static constexpr std::size_t MAX_CONTAINERS = 4096;
 		static constexpr std::size_t MAX_VIEWERS = 8;            // per container (a session has a few players)
 		static constexpr std::size_t MAX_SHORTS_REMEMBERED = 4096;  // numbered takes already answered for a shortfall
+		static constexpr std::size_t MAX_REVERSED = 1u << 16;    // friends' moves the true copy undid (a settle), kept with the session
 
 		explicit Book(std::size_t a_maxContainers = MAX_CONTAINERS) :
 			maxContainers(a_maxContainers)
@@ -163,8 +169,12 @@ namespace StorageBook
 		// ---- moves ----------------------------------------------------------------------------------------------
 
 		// Whether a player's move at a container may be numbered. a_canHold: whether the keeper's game has the item (a
-		// friend's put of a mod's item it lacks would vanish there).
-		Verdict Check(std::uint32_t a_player, const Protocol::ContainerChange& a_change, const std::function<bool(std::uint32_t a_keeper, std::uint32_t a_item)>& a_canHold = {}) const
+		// friend's put of a mod's item it lacks would vanish there). a_late: a move their game made before its connection
+		// went and the session never numbered (a settle's): it needs no view, only to be at the container they viewed last;
+		// a take goes through whatever the book holds (it was made against the true copy as it was shown; the keeper's world
+		// finds a shortfall), and either goes through while the listing is stale (the keeper's world applies it).
+		Verdict Check(std::uint32_t a_player, const Protocol::ContainerChange& a_change, const std::function<bool(std::uint32_t a_keeper, std::uint32_t a_item)>& a_canHold = {},
+			bool a_late = false) const
 		{
 			const auto it = entries.find(a_change.container);
 			if (it == entries.end()) {
@@ -173,6 +183,18 @@ namespace StorageBook
 			const auto& entry = it->second;
 			if (entry.keeper == a_player) {
 				return Verdict::kKeeper;
+			}
+			if (a_late) {
+				if (LastViewed(a_player) != a_change.container) {
+					return Verdict::kNotViewing;
+				}
+				if (a_change.item == Protocol::CONTAINER_EMPTIED) {
+					return Verdict::kNotHeld;
+				}
+				if (a_change.count < 0) {
+					return Verdict::kAccept;
+				}
+				return a_canHold && !a_canHold(entry.keeper, a_change.item) ? Verdict::kCantHold : Verdict::kAccept;
 			}
 			if (!entry.fresh) {
 				return Verdict::kClosed;
@@ -207,29 +229,102 @@ namespace StorageBook
 			return Move(it->second, a_change.change);
 		}
 
-		// A friend's game couldn't take back from its player what one of its moves at a_change.container should have (count
-		// < 0, Protocol's kStorageForfeit): how much the true copy gives up instead, to be numbered as a take by nobody. While
-		// the listing is fresh no more than the book holds (the rest was taken by others meanwhile); while stale all of it
-		// (the keeper's world applies what is there). 0 for a container nobody keeps, or one the sender keeps.
-		[[nodiscard]] std::int32_t Forfeit(std::uint32_t a_player, const Protocol::ContainerChange& a_change) const
-		{
-			const auto it = entries.find(a_change.container);
-			if (it == entries.end() || it->second.keeper == a_player || a_change.count >= 0 || a_change.item == Protocol::CONTAINER_EMPTIED) {
-				return 0;
-			}
-			const auto wanted = -static_cast<std::int64_t>(a_change.count);
-			if (!it->second.fresh) {
-				return static_cast<std::int32_t>(wanted);
-			}
-			const auto held = it->second.held.find(a_change.item);
-			return static_cast<std::int32_t>(held != it->second.held.end() ? (std::min)(held->second, wanted) : 0);
-		}
-
 		// The first change numbered while a_container was kept (0 when nobody keeps it).
 		[[nodiscard]] std::uint32_t Since(std::uint32_t a_container) const
 		{
 			const auto it = entries.find(a_container);
 			return it != entries.end() ? it->second.since : 0;
+		}
+
+		// ---- settling (Protocol::StorageSettle) -------------------------------------------------------------------
+
+		// A friend's numbered move a_index, which their world lacks (a_has false: undo it in the true copy) or has (true: do
+		// again one undone before). What the true copy is to do, to be numbered as a change by nobody; nothing when it is as
+		// their world has it already, or the move isn't one of a_player's own at storage another game keeps. Each is undone
+		// at most once until done again, and doing it again does the opposite of what the undoing did: a modified game can
+		// take out of a chest no more than its own puts there put in.
+		// A take made before the container was claimed (index < since) is never undone: it was ordinary loot, which the
+		// keeper's copy and the friend's loaded copy both had already. A put before the claim is: the keeper's copy has it,
+		// and so does the loaded player.
+		// A take out of the true copy (a put undone, a take done again) is no more than the book holds while it is listed
+		// (the rest went to others meanwhile); while it is stale, all of it (the keeper's world applies what is there).
+		std::optional<Protocol::ContainerChange> Settle(std::uint32_t a_player, std::uint32_t a_index, bool a_has, std::span<const Protocol::IndexedContainerChange> a_log)
+		{
+			if (a_index >= a_log.size() || a_player == 0) {
+				return std::nullopt;
+			}
+			const auto& move = a_log[a_index];
+			const auto  it = entries.find(move.change.container);
+			if (move.playerId != a_player || !Protocol::IsValid(move.change) || move.change.item == Protocol::CONTAINER_EMPTIED || it == entries.end() ||
+				it->second.keeper == a_player || (move.change.count < 0 && a_index < it->second.since)) {
+				return std::nullopt;
+			}
+			const auto reversal = reversed.find(a_index);
+			std::int64_t count = 0;
+			if (!a_has && reversal == reversed.end()) {
+				if (reversed.size() >= MAX_REVERSED) {
+					return std::nullopt;
+				}
+				count = -static_cast<std::int64_t>(move.change.count);
+			} else if (a_has && reversal != reversed.end()) {
+				count = -static_cast<std::int64_t>(reversal->second.count);
+			} else {
+				return std::nullopt;
+			}
+			if (count < 0 && it->second.fresh) {
+				const auto held = it->second.held.find(move.change.item);
+				count = -(std::min)(-count, held != it->second.held.end() ? held->second : 0);
+			}
+			if (a_has) {
+				reversed.erase(reversal);
+			} else {
+				reversed[a_index] = { a_player, static_cast<std::int32_t>(count) };
+			}
+			if (count == 0) {
+				return std::nullopt;
+			}
+			return Protocol::ContainerChange{ move.change.container, move.change.item, static_cast<std::int32_t>(count) };
+		}
+
+		// a_player's moves the true copy undid, numbered from a_from up to a_to: those a settle that doesn't call them lacking
+		// does again.
+		[[nodiscard]] std::vector<std::uint32_t> ReversedOf(std::uint32_t a_player, std::uint32_t a_from, std::uint32_t a_to) const
+		{
+			std::vector<std::uint32_t> out;
+			for (auto it = reversed.lower_bound(a_from); it != reversed.end() && it->first < a_to; ++it) {
+				if (it->second.player == a_player) {
+					out.push_back(it->first);
+				}
+			}
+			return out;
+		}
+
+		[[nodiscard]] bool Reversed(std::uint32_t a_index) const { return reversed.contains(a_index); }
+
+		// For the session file, and back from it.
+		[[nodiscard]] std::vector<Protocol::StorageReversal> Reversals() const
+		{
+			std::vector<Protocol::StorageReversal> out;
+			out.reserve(reversed.size());
+			for (const auto& [index, reversal] : reversed) {
+				out.push_back({ index, reversal.player, reversal.count });
+			}
+			return out;
+		}
+
+		void Restore(const Protocol::StorageReversal& a_reversal, std::size_t a_logSize)
+		{
+			if (a_reversal.playerId != 0 && a_reversal.index < a_logSize && (reversed.size() < MAX_REVERSED || reversed.contains(a_reversal.index))) {
+				reversed[a_reversal.index] = { a_reversal.playerId, a_reversal.count };
+			}
+		}
+
+		// The container a player viewed last (their view may have closed since): their moves the session never numbered (a
+		// settle's late ones, lost with the connection) go through there and only there.
+		[[nodiscard]] std::optional<std::uint32_t> LastViewed(std::uint32_t a_player) const
+		{
+			const auto it = lastViewed.find(a_player);
+			return it != lastViewed.end() ? std::optional{ it->second } : std::nullopt;
 		}
 
 		// The keeper's game applied numbered take a_index (a friend's) and its container held a_missing fewer than taken.
@@ -276,6 +371,9 @@ namespace StorageBook
 				}
 				entry.viewers.push_back(a_player);
 			}
+			if (lastViewed.size() < MAX_CONTAINERS || lastViewed.contains(a_player)) {
+				lastViewed[a_player] = a_container;
+			}
 			return { Viewed::Kind::kShown, Contents(a_container, entry, a_next) };
 		}
 
@@ -284,6 +382,18 @@ namespace StorageBook
 			if (const auto it = entries.find(a_container); it != entries.end()) {
 				std::erase(it->second.viewers, a_player);
 			}
+		}
+
+		// Every view of a player's closes (their world is to settle first): the containers.
+		std::vector<std::uint32_t> CloseViews(std::uint32_t a_player)
+		{
+			std::vector<std::uint32_t> closed;
+			for (auto& [container, entry] : entries) {
+				if (std::erase(entry.viewers, a_player) != 0) {
+					closed.push_back(container);
+				}
+			}
+			return closed;
 		}
 
 		// What a container holds, as of a_next, for its viewers (after the keeper listed it again).
@@ -350,6 +460,8 @@ namespace StorageBook
 		{
 			entries.clear();
 			shorts.clear();
+			reversed.clear();
+			lastViewed.clear();
 		}
 
 	private:
@@ -398,5 +510,12 @@ namespace StorageBook
 		std::size_t                             maxContainers;
 		std::map<std::uint32_t, Entry>          entries;
 		std::set<std::uint32_t>                 shorts;  // numbered changes a shortfall was answered for (the oldest forgotten first)
+		struct Reversal
+		{
+			std::uint32_t player = 0;
+			std::int32_t  count = 0;  // what the undoing did to the true copy
+		};
+		std::map<std::uint32_t, Reversal>       reversed;    // friends' numbered moves the true copy undid (Settle), by index
+		std::unordered_map<std::uint32_t, std::uint32_t> lastViewed;  // player -> the container they viewed last (this run)
 	};
 }

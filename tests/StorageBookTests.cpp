@@ -297,19 +297,150 @@ TEST("storage book: a put of a new item into a chest of the most stacks a listin
 	CHECK(book.Check(FRIEND, Put(WATER, 1)) == Verdict::kCantHold);
 }
 
-TEST("storage book: a forfeit gives up no more than the chest holds while listed, all of it while stale, and none of the keeper's own")
+TEST("storage book: a settle undoes a friend's own numbered move once, in the true copy, and does it again once their world has it")
 {
 	Log  log;
 	auto book = Opened(log);
-	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 3)) == 3);
-	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 9)) == 5);  // the rest was taken by others meanwhile
-	CHECK(book.Forfeit(FRIEND, Take(WATER, 2)) == 0);    // none there to give up
-	CHECK(book.Forfeit(FRIEND, Put(STIMPAK, 2)) == 0);   // a forfeit only ever takes
-	CHECK(book.Forfeit(HOST, Take(STIMPAK, 1)) == 0);    // the keeper's game takes from its own chest itself
-	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 1, BOX)) == 0);  // nobody keeps it
-	CHECK(book.Forfeit(FRIEND, Take(Protocol::CONTAINER_EMPTIED, 1)) == 0);
+	const auto put = log.Add(FRIEND, Put(WATER, 3));
+	CHECK(book.Numbered(put));
+	const auto take = log.Add(FRIEND, Take(STIMPAK, 2));
+	CHECK(book.Numbered(take));
+	CHECK(book.Held(CHEST, WATER) == 3);
+	CHECK(book.Held(CHEST, STIMPAK) == 3);
+
+	// Their world lacks both: the put comes out of the true copy, the take goes back in.
+	const auto unput = book.Settle(FRIEND, put.index, false, log.changes);
+	REQUIRE(unput);
+	CHECK((*unput == Take(WATER, 3)));
+	book.Numbered(log.Add(0, *unput));
+	const auto untake = book.Settle(FRIEND, take.index, false, log.changes);
+	REQUIRE(untake);
+	CHECK((*untake == Put(STIMPAK, 2)));
+	book.Numbered(log.Add(0, *untake));
+	CHECK(book.Held(CHEST, WATER) == 0);
+	CHECK(book.Held(CHEST, STIMPAK) == 5);
+	CHECK(book.Reversed(put.index));
+	CHECK((book.ReversedOf(FRIEND, 0, log.Next()) == std::vector<std::uint32_t>{ put.index, take.index }));
+	CHECK(book.ReversedOf(OTHER, 0, log.Next()).empty());
+
+	// Once each: lacking again changes nothing.
+	CHECK(!book.Settle(FRIEND, put.index, false, log.changes));
+	CHECK(!book.Settle(FRIEND, take.index, false, log.changes));
+
+	// A later save loaded has them after all: done again, as the undoing did the opposite.
+	const auto reput = book.Settle(FRIEND, put.index, true, log.changes);
+	REQUIRE(reput);
+	CHECK((*reput == Put(WATER, 3)));
+	CHECK(!book.Reversed(put.index));
+	CHECK(!book.Settle(FRIEND, put.index, true, log.changes));  // has it, and nothing was undone: nothing to do
+}
+
+TEST("storage book: a settle names only the sender's own moves at storage another game keeps")
+{
+	Log  log;
+	auto book = Opened(log);
+	const auto hostTake = log.Add(HOST, Take(STIMPAK, 1));
+	book.Numbered(hostTake);
+	const auto otherPut = log.Add(OTHER, Put(WATER, 4));
+	book.Numbered(otherPut);
+	const auto box = log.Add(FRIEND, Put(WATER, 1, BOX));  // nobody keeps it
+	const auto emptied = log.Add(FRIEND, Take(Protocol::CONTAINER_EMPTIED, 1));
+	CHECK(!book.Settle(FRIEND, hostTake.index, false, log.changes));
+	CHECK(!book.Settle(FRIEND, otherPut.index, false, log.changes));
+	CHECK(!book.Settle(FRIEND, box.index, false, log.changes));
+	CHECK(!book.Settle(FRIEND, emptied.index, false, log.changes));
+	CHECK(!book.Settle(FRIEND, log.Next(), false, log.changes));  // past the log
+	CHECK(!book.Settle(HOST, hostTake.index, false, log.changes));  // the keeper's own: its world is the truth
+	CHECK(!book.Settle(0, hostTake.index, false, log.changes));
+	CHECK(book.Reversals().empty());
+	CHECK(book.Held(CHEST, WATER) == 4);
+}
+
+TEST("storage book: a put undone gives up no more than the chest holds while listed, all of it while stale")
+{
+	Log  log;
+	auto book = Opened(log);
+	const auto put = log.Add(FRIEND, Put(WATER, 3));
+	book.Numbered(put);
+	book.Numbered(log.Add(OTHER, Take(WATER, 2)));  // another friend took two meanwhile
+	const auto unput = book.Settle(FRIEND, put.index, false, log.changes);
+	REQUIRE(unput);
+	CHECK((*unput == Take(WATER, 1)));
+	book.Numbered(log.Add(0, *unput));
+	CHECK(book.Held(CHEST, WATER) == 0);
+	// Done again, only what the undoing took comes back.
+	const auto reput = book.Settle(FRIEND, put.index, true, log.changes);
+	REQUIRE(reput);
+	CHECK((*reput == Put(WATER, 1)));
+
+	Log  stale;
+	auto other = Opened(stale);
+	const auto put2 = stale.Add(FRIEND, Put(WATER, 3));
+	other.Numbered(put2);
+	other.Stale(HOST);
+	const auto all = other.Settle(FRIEND, put2.index, false, stale.changes);
+	REQUIRE(all);
+	CHECK((*all == Take(WATER, 3)));  // the keeper's world applies what is there
+}
+
+TEST("storage book: a take before the claim is never undone, a put before it is")
+{
+	Log  log;
+	const auto take = log.Add(FRIEND, Take(STIMPAK, 1));
+	const auto put = log.Add(FRIEND, Put(WATER, 2));
+	Book book;
+	book.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 4 }, { WATER, 2 } }), log.changes);
+	CHECK(book.Since(CHEST) == 2);
+	CHECK(!book.Settle(FRIEND, take.index, false, log.changes));
+	const auto unput = book.Settle(FRIEND, put.index, false, log.changes);
+	REQUIRE(unput);
+	CHECK((*unput == Take(WATER, 2)));
+}
+
+TEST("storage book: the moves undone come back from the session file, and none is undone twice after it")
+{
+	Log  log;
+	auto book = Opened(log);
+	const auto put = log.Add(FRIEND, Put(WATER, 3));
+	book.Numbered(put);
+	REQUIRE(book.Settle(FRIEND, put.index, false, log.changes));
+	const auto saved = book.Reversals();
+	REQUIRE(saved.size() == 1);
+	CHECK((saved[0] == Protocol::StorageReversal{ put.index, FRIEND, -3 }));
+
+	Book restored;
+	for (const auto& owner : book.Owners()) {
+		restored.Restore(owner);
+	}
+	restored.Restore(saved[0], log.changes.size());
+	restored.Restore({ 999, FRIEND, -1 }, log.changes.size());  // past the log: not kept
+	restored.Restore({ put.index, 0, -1 }, log.changes.size());  // by nobody: not a move to undo
+	CHECK(restored.Reversals() == saved);
+	CHECK(!restored.Settle(FRIEND, put.index, false, log.changes));
+	const auto reput = restored.Settle(FRIEND, put.index, true, log.changes);
+	REQUIRE(reput);
+	CHECK((*reput == Put(WATER, 3)));
+}
+
+TEST("storage book: a late move needs no view, only the container the player viewed last; a late take goes through whatever it holds")
+{
+	Log  log;
+	auto book = Opened(log);
+	book.List(HOST, true, Listing(BOX, log.Next(), { { WATER, 1 } }), log.changes);
+	CHECK(book.LastViewed(FRIEND) == CHEST);
+	CHECK(book.LastViewed(OTHER) == std::nullopt);
+	CHECK((book.CloseViews(FRIEND) == std::vector<std::uint32_t>{ CHEST }));
+	CHECK(book.Viewers(CHEST).empty());
+	CHECK(book.Check(FRIEND, Take(STIMPAK, 1)) == Verdict::kNotViewing);
+	CHECK(book.Check(FRIEND, Take(STIMPAK, 1), {}, true) == Verdict::kAccept);
+	CHECK(book.Check(FRIEND, Take(STIMPAK, 9), {}, true) == Verdict::kAccept);  // the keeper's world finds the shortfall
+	CHECK(book.Check(FRIEND, Put(WATER, 1, BOX), {}, true) == Verdict::kNotViewing);  // not where they were
+	CHECK(book.Check(OTHER, Put(WATER, 1), {}, true) == Verdict::kNotViewing);
+	CHECK(book.Check(FRIEND, Take(Protocol::CONTAINER_EMPTIED, 1), {}, true) == Verdict::kNotHeld);
+	CHECK(book.Check(FRIEND, Put(WATER, 1), [](std::uint32_t, std::uint32_t) { return false; }, true) == Verdict::kCantHold);
 	book.Stale(HOST);
-	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 9)) == 9);  // the keeper's world applies what is there
+	CHECK(book.Check(FRIEND, Put(WATER, 1), {}, true) == Verdict::kAccept);  // the keeper's world applies it
+	CHECK(book.Check(FRIEND, Put(WATER, 1)) == Verdict::kClosed);
 }
 
 TEST("storage book: a container is kept from the first change numbered after its claim, and that survives the session file")

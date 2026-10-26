@@ -375,7 +375,6 @@ namespace FormTranslate
 			Apply<ActorHealth>(a_packet, ctx, DecodeActorHealth, [&](ActorHealth& m) { return ctx.Key(m.refId); }, typed);
 			break;
 		case MessageType::kReportContainer:
-		case MessageType::kStorageForfeit:
 			Apply<ContainerChange>(a_packet, ctx, DecodeContainerChange, [&](ContainerChange& m) { return ctx.Change(m); }, typed);
 			break;
 		case MessageType::kContainerChanged:
@@ -602,6 +601,17 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportStorageShort:
 			break;  // a change's number and a count
+		case MessageType::kStorageSettle:
+			// Our numbered moves (numbers), and the moves of ours the session never numbered: one whose item the session can't
+			// name is left out (it never went out in the first place: Storage::Unsent undid it).
+			Apply<StorageSettle>(a_packet, ctx, DecodeStorageSettle, [&](StorageSettle& m) {
+				ctx.Entries(m.late, [&](ContainerChange& a_change) { return ctx.Change(a_change); });
+				return true;
+			}, plain);
+			break;
+		case MessageType::kStorageCaughtUp:
+		case MessageType::kStorageReversals:
+			break;  // counts and numbers
 		}
 		return out;
 	}

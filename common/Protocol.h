@@ -148,7 +148,7 @@ namespace Protocol
 		kReportStorage = 68,       // the host's game: what one of its storage containers holds that the session shares (StorageListing)
 		kViewStorage = 69,         // the sender opened or closed a storage container another game keeps (StorageView)
 		kReportStorageShort = 70,  // the host's game: a friend's take its storage container held less of than was taken (StorageShort)
-		kStorageForfeit = 71,      // a friend's game: what one of its moves at storage another game keeps couldn't take back from its player comes out of the true copy (ContainerChange)
+		kStorageSettle = 71,       // a game caught up after a load or a hello: which of its own numbered moves at storage another game keeps its world lacks, and the moves the session never numbered (StorageSettle)
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
@@ -199,6 +199,8 @@ namespace Protocol
 		kStorageContents = 168,   // what a storage container holds in the game that keeps it, for the player viewing it (StorageListing)
 		kStorageOwners = 169,     // whose game keeps the one true copy of storage containers (StorageOwners)
 		kStorageRefused = 170,    // a move of ours at a storage container that didn't go through, or our view of it closed (StorageRefusal)
+		kStorageCaughtUp = 171,   // the world state just sent answers the requests up to this one: our storage moves are settled next (StorageCaughtUp)
+		kStorageReversals = 172,  // the session file only, never sent: the moves of friends at storage the true copy undid (StorageReversals)
 		kPlayerFace = 129,        // another player's face and body shape
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
@@ -637,11 +639,58 @@ namespace Protocol
 		bool operator==(const StorageOwners&) const = default;
 	};
 
-	// kStorageForfeit (a ContainerChange, count < 0): a friend's game undid or did again one of its moves at storage another
-	// game keeps and its player no longer had all of what was to come out of their inventory (moved to a workbench or a
-	// companion, used, or in a world loaded since). What it lacked comes out of the true copy instead: the server numbers a
-	// take of it by nobody (player 0), which every game applies as another's take, so no item is left made out of nothing.
-	// Never answered.
+	// Settling (after a load or a hello). A friend's player can move items out of their own inventory before anything
+	// reaches it, but can't touch the true copy except through the server, so what a load or a lost connection leaves
+	// wrong is put right in the true copy, never in their inventory: their world keeps what its save has.
+	// - The server answers each hello and world request with a world state, then kStorageCaughtUp: `asked`, how many of
+	//   the connection's requests (the hello first) that world state answers. Until the game's kStorageSettle for its
+	//   latest request comes, the server answers its storage views closed and refuses its moves at storage another game
+	//   keeps (a game whose catch-up is owed can't take what its load is about to undo).
+	// - kStorageSettle, once the catch-up for its latest request has come: the game's own numbered moves at storage another
+	//   game keeps that its world lacks (`lacking`, all it knows of: the loaded save's, and those its catch-ups judged
+	//   since), and its moves the session never numbered (`late`: made before the request, unanswered after its catch-up:
+	//   lost with the connection). The server undoes each lacking move in the true copy (a put becomes a take by nobody, no
+	//   more than the book holds; a take a put by nobody), once, and does again one it undid that the world has after all
+	//   (between `lacksFrom` and `next`, not in `lacking`: a later save loaded). A late move goes through as a move at the
+	//   container the player viewed last, without a view.
+	inline constexpr std::size_t MAX_STORAGE_LACKING = 4096;            // a settle's lacking moves (the game forgets the oldest past it)
+	inline constexpr std::size_t MAX_STORAGE_REVERSALS_PER_PACKET = 4096;  // the session file's record of them
+
+	struct StorageCaughtUp
+	{
+		std::uint32_t asked = 0;
+
+		bool operator==(const StorageCaughtUp&) const = default;
+	};
+
+	struct StorageSettle
+	{
+		std::uint32_t                asked = 0;      // the kStorageCaughtUp it answers
+		std::uint32_t                next = 0;       // the first numbered change our world lacks
+		std::uint32_t                lacksFrom = 0;  // `lacking` holds every lacking move of ours from here on (older ones forgotten)
+		std::vector<std::uint32_t>   lacking;        // at most MAX_STORAGE_LACKING, ascending
+		std::vector<ContainerChange> late;           // at most MAX_STORAGE_MOVES_UNANSWERED
+
+		bool operator==(const StorageSettle&) const = default;
+	};
+
+	// A friend's numbered move (index) the true copy undid: what the undoing did to it (count: < 0 taken out, > 0 put back),
+	// so doing it again does the opposite. The session file keeps them (kStorageReversals), so none is undone twice.
+	struct StorageReversal
+	{
+		std::uint32_t index = 0;
+		std::uint32_t playerId = 0;
+		std::int32_t  count = 0;
+
+		bool operator==(const StorageReversal&) const = default;
+	};
+
+	struct StorageReversals
+	{
+		std::vector<StorageReversal> entries;  // at most MAX_STORAGE_REVERSALS_PER_PACKET
+
+		bool operator==(const StorageReversals&) const = default;
+	};
 
 	// kReportStorageShort: the host's game applied a friend's numbered take (index) and its container held `missing` fewer
 	// than taken (its world was reloaded since the server last heard what it holds).
@@ -2916,6 +2965,122 @@ namespace Protocol
 			entry.ownerId = r.U32();
 			entry.since = r.U32();
 			if (!r.Ok() || !IsShareableRef(entry.container) || entry.ownerId == 0) {
+				return std::nullopt;
+			}
+			msg.entries.push_back(entry);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageCaughtUp& a_msg)
+	{
+		Writer w{ MessageType::kStorageCaughtUp };
+		w.U32(a_msg.asked);
+		return w.Data();
+	}
+
+	inline std::optional<StorageCaughtUp> DecodeStorageCaughtUp(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageCaughtUp msg;
+		msg.asked = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageSettle& a_msg)
+	{
+		Writer w{ MessageType::kStorageSettle };
+		w.U32(a_msg.asked);
+		w.U32(a_msg.next);
+		w.U32(a_msg.lacksFrom);
+		const auto lacking = (std::min)(a_msg.lacking.size(), MAX_STORAGE_LACKING);
+		w.U16(static_cast<std::uint16_t>(lacking));
+		for (std::size_t i = 0; i < lacking; ++i) {
+			w.U32(a_msg.lacking[i]);
+		}
+		const auto late = (std::min)(a_msg.late.size(), MAX_STORAGE_MOVES_UNANSWERED);
+		w.U16(static_cast<std::uint16_t>(late));
+		for (std::size_t i = 0; i < late; ++i) {
+			w.U32(a_msg.late[i].container);
+			w.U32(a_msg.late[i].item);
+			w.U32(static_cast<std::uint32_t>(a_msg.late[i].count));
+		}
+		return w.Data();
+	}
+
+	inline std::optional<StorageSettle> DecodeStorageSettle(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageSettle msg;
+		msg.asked = r.U32();
+		msg.next = r.U32();
+		msg.lacksFrom = r.U32();
+		const auto lacking = r.U16();
+		if (!r.Ok() || lacking > MAX_STORAGE_LACKING) {
+			return std::nullopt;
+		}
+		msg.lacking.reserve(lacking);
+		for (std::uint16_t i = 0; i < lacking; ++i) {
+			msg.lacking.push_back(r.U32());
+		}
+		const auto late = r.U16();
+		if (!r.Ok() || late > MAX_STORAGE_MOVES_UNANSWERED) {
+			return std::nullopt;
+		}
+		msg.late.reserve(late);
+		for (std::uint16_t i = 0; i < late; ++i) {
+			ContainerChange change;
+			change.container = r.U32();
+			change.item = r.U32();
+			change.count = static_cast<std::int32_t>(r.U32());
+			if (!r.Ok() || !IsValid(change)) {
+				return std::nullopt;
+			}
+			msg.late.push_back(change);
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageReversals& a_msg)
+	{
+		Writer w{ MessageType::kStorageReversals };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_STORAGE_REVERSALS_PER_PACKET);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.entries[i].index);
+			w.U32(a_msg.entries[i].playerId);
+			w.U32(static_cast<std::uint32_t>(a_msg.entries[i].count));
+		}
+		return w.Data();
+	}
+
+	inline std::optional<StorageReversals> DecodeStorageReversals(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageReversals msg;
+		const auto       count = r.U16();
+		if (!r.Ok() || count > MAX_STORAGE_REVERSALS_PER_PACKET) {
+			return std::nullopt;
+		}
+		msg.entries.reserve(count);
+		for (std::uint16_t i = 0; i < count; ++i) {
+			StorageReversal entry;
+			entry.index = r.U32();
+			entry.playerId = r.U32();
+			entry.count = static_cast<std::int32_t>(r.U32());
+			if (!r.Ok() || entry.playerId == 0 || entry.count < -MAX_ITEM_COUNT || entry.count > MAX_ITEM_COUNT) {
 				return std::nullopt;
 			}
 			msg.entries.push_back(entry);

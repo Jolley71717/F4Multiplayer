@@ -39,9 +39,12 @@ namespace SessionFile
 	// damaged in it (Snapshot::destructions, as kDestructions packets). The traps' own test builds wrote 34 with the traps
 	// alone, which reads as one without destructions; the destructibles' own test builds wrote 35, which no build reads.
 	// 36 adds to 34 where the loose objects players moved came to rest (Snapshot::objectPlaces, as kObjectRested packets).
-	// 37 adds to 36 whose game keeps each shared storage container (Snapshot::storageOwners, as kStorageOwners packets). A
-	// session with none is written as 36.
-	inline constexpr std::uint16_t FORMAT = 37;
+	// 38 adds to 36 whose game keeps each shared storage container (Snapshot::storageOwners, as kStorageOwners packets, each
+	// with the change it was claimed at) and the friends' moves the true copy undid for their loaded worlds
+	// (Snapshot::storageReversals, as kStorageReversals packets). A session with neither is written as 36. 37 was shared
+	// storage's own test builds' (owners alone, without the change each was claimed at), which no build reads.
+	inline constexpr std::uint16_t FORMAT = 38;
+	inline constexpr std::uint16_t STORAGE_TEST = 37;
 	inline constexpr std::uint16_t OBJECT_PLACES = 36;
 	inline constexpr std::uint16_t TRAPS_AND_DESTRUCTIONS = 34;
 	inline constexpr std::uint16_t DESTRUCTIBLES_TEST = 35;
@@ -54,7 +57,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 38 (35 was the destructibles' test builds').
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 39 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -70,7 +73,7 @@ namespace SessionFile
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT && a_format != DESTRUCTIBLES_TEST);
+		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT && a_format != DESTRUCTIBLES_TEST && a_format != STORAGE_TEST);
 	}
 
 	struct Snapshot
@@ -111,11 +114,13 @@ namespace SessionFile
 		// Whose game keeps each shared storage container (common/StorageBook.h): closed to friends after a restart until that
 		// game lists it again, never taken by another.
 		std::vector<Protocol::StorageOwner>                 storageOwners;
+		// Friends' numbered moves the true copy undid for their loaded worlds (StorageBook::Settle): none is undone twice.
+		std::vector<Protocol::StorageReversal>              storageReversals;
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty() && objectPlaces.empty() && storageOwners.empty();
+			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty();
 		}
 	};
 
@@ -132,7 +137,7 @@ namespace SessionFile
 		};
 		put(MAGIC);
 		// The layout that holds it: a session with no shared storage is still one an older build reads.
-		put(a_snapshot.storageOwners.empty() ? OBJECT_PLACES : FORMAT);
+		put(a_snapshot.storageOwners.empty() && a_snapshot.storageReversals.empty() ? OBJECT_PLACES : FORMAT);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
 		put(a_snapshot.nextId);
@@ -199,6 +204,10 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.storageOwners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.storageOwners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
 			packet(Protocol::Encode(Protocol::StorageOwners{ { a_snapshot.storageOwners.begin() + i, a_snapshot.storageOwners.begin() + end } }));
+		}
+		for (std::size_t i = 0; i < a_snapshot.storageReversals.size(); i += Protocol::MAX_STORAGE_REVERSALS_PER_PACKET) {
+			const auto end = (std::min)(a_snapshot.storageReversals.size(), i + Protocol::MAX_STORAGE_REVERSALS_PER_PACKET);
+			packet(Protocol::Encode(Protocol::StorageReversals{ { a_snapshot.storageReversals.begin() + i, a_snapshot.storageReversals.begin() + end } }));
 		}
 		return out;
 	}
@@ -340,6 +349,14 @@ namespace SessionFile
 					return std::nullopt;
 				}
 				snapshot.storageOwners.insert(snapshot.storageOwners.end(), owners->entries.begin(), owners->entries.end());
+				break;
+			}
+			case Protocol::MessageType::kStorageReversals: {
+				const auto reversals = HasStorageOwners(version) ? Protocol::DecodeStorageReversals(packet) : std::nullopt;
+				if (!reversals) {
+					return std::nullopt;
+				}
+				snapshot.storageReversals.insert(snapshot.storageReversals.end(), reversals->entries.begin(), reversals->entries.end());
 				break;
 			}
 			default:
