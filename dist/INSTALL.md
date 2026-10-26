@@ -124,13 +124,26 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `bSharedStorage` (false, experimental): on, a container in a home or a settlement (one a player owns, or one in a
   settlement they own) has one copy for everyone, the host's. A guest who opens theirs sees what is in the host's, and
   what one player takes is gone for everyone. Only ammo, aid and junk are shared this way; weapons, armor, keys and
-  notes stay in each player's own copy. The ammo, aid and junk a guest's own copy held are put aside while it shows the
-  host's, and are back in their copy when they close it: they can't be taken while the host keeps that container. A
-  container is shared once the host has been near it in the session; until then it works as with this off. After the
-  host loads a save, a guest's menu on one closes with a notice until the host comes near it again. A take that loses a
-  race to a friend's, or that the session never answers, is given back; a guest who reloads keeps what the container
-  got (a put is taken from them again, a take given again). Off, each player keeps their own copy, and loot taken from
-  one is taken from the others' copies too.
+  notes stay in each player's own copy. Off, each player keeps their own copy, and loot taken from one is taken from
+  the others' copies too.
+  - A container becomes shared once the host has been near it in the session. Until then it works as with this off.
+  - A guest's own stash: the ammo, aid and junk a guest had in their own copy of a container before it was shared
+    stay in their copy, but out of reach. While the host keeps that container the guest sees the host's things in it,
+    not their own. Their own things come back when the host turns this setting off, or when the guest plays that save
+    alone.
+  - Turning it on in a session you played with 0.9.x: what a guest put into one of the host's containers back then is
+    still in the guest's own copy (their stash, out of reach as above), so it leaves the host's copy the first time the
+    host comes near that container. Chests at a shared base can look emptier than before. Nothing is lost: what
+    guests put in waits in their own copy, and what the host put in stays.
+  - Loading a save: a guest who loads an earlier save has nothing taken from them or given to them. The host's copy
+    is put right instead, to match what the guest's loaded game did. A move a guest made as their connection dropped
+    is sent again when they rejoin.
+  - After the host loads a save, a guest's menu on a shared container closes with a notice until the host comes near
+    it again. A take that loses a race to another player's take is undone: the guest gets nothing, and the item stays
+    in the container.
+  - Turning it off again: each player has their own copy again. The session remembers which containers were shared,
+    so turning it back on carries on where it left off. A session that has used this setting can't be opened by an
+    older version of the mod.
   A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),

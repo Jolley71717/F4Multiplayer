@@ -686,9 +686,12 @@ counts every item across the host's chest and the players' inventories in each s
   listings stale: the friends viewing one are told it closed (`kStorageRefused`, item 0, `kClosed`), and every move there
   is refused until the host's game lists it again. A gap asked again stales listings that were still right; the host's
   scan lists them again within seconds, and telling a reload from a gap would need the protocol to say which, so it
-  stays. The owners are saved with the session and come back stale, and only while the rule is on; the session file
-  is written as layout 38 (the owners and the moves the true copy undid) only when there are any, so a session that
-  never used the rule stays readable by 0.9.x. Layout 37 was this branch's test builds' and is set aside: start the
+  stays. The owners are saved with the session and come back stale. They are read and written whatever the rule: a run
+  with it off keeps them as they were and never asks the book (no container has a keeper; views and shortfalls are
+  ignored), so turning it on again finds each container claimed since it was, and the claim's take-back (below) never
+  runs a second time over moves made while the host kept it. The session file is written as layout 38 (the owners and
+  the moves the true copy undid) only when there are any, so a session that never used the rule stays readable by
+  0.9.x; one that did stays at 38, and an older build can't read it, the rule off or on. Layout 37 was this branch's test builds' and is set aside: start the
   first 0.10.0 session from a fresh file.
 - *A friend's view.* As a friend's container menu shows a container another game keeps (the container menu's show,
   Equipment's hook), the shared stacks their copy held are set aside: taken out of the copy and kept in memory, never
@@ -753,9 +756,12 @@ counts every item across the host's chest and the players' inventories in each s
   172, layout 38), so none is undone twice across a restart. The server logs "storage undid N and did again M of
   player P's moves" with the run's total, and "held N fewer" when the true copy had less than a change out of it
   needed. Each change counts against the settler's own share of the container log, as their moves do (30000 by
-  default; the host's game has none): flipping their moves between two saves can't fill the log for everyone. Past
-  the share, or with the log full, the rest waits and the player stays unsettled (no view, no move at storage others
-  keep) until a later settle can finish; the server logs "can't all be put right". A late move goes through `takeContainerChange` as a move made at the
+  default; the host's game has none): flipping their moves between two saves can't fill the log for everyone. A settle
+  is all or none: its changes are planned first (before what the book holds caps them, so the count is never short),
+  and if they don't all fit in the share (or the log) none is made and the player stays unsettled (no view, no move
+  at storage others keep) until a later settle can; the server logs "can't all be put right (N changes". A settle
+  cut part way could put a take's items back and leave the matching put's in, in the chest and the player's world at
+  once. A late move goes through `takeContainerChange` as a move made at the
   container the player viewed last (this run): it needs no view, a take is numbered whatever the book holds (it was
   made against the true copy as shown; the host's world finds a shortfall, below) and a put must be holdable, and
   either goes through while the listing is stale. A late move anywhere else is refused (`kNotViewing`).
@@ -792,10 +798,19 @@ counts every item across the host's chest and the players' inventories in each s
   - A short that comes after a settle undid the take (the book showed more than the host's world held, the host was
     away, and the friend loaded a save from before the take): the undo put back the whole take, the short corrects
     only the log, so the chest ends with what was missing as well. It needs an unreported change in the host's world.
-  - Turning `bSharedStorage` off and on again: a run with the rule off neither reads nor writes the owners or the
-    moves undone (the file is written as 36), so the next claim is a first claim again. A take undone before is then
-    never done again (a dupe), and the friends' puts made while it was kept are taken back as if made before the
-    claim (a loss). It needs the host to restart the server twice with the setting changed.
+  - Settle changes and claim take-backs are numbered as changes by nobody, so a restart, which counts each player's
+    share from the log by who made each change, doesn't count them: each run gives a player their whole share of
+    undoing and doing again. Honest players never come near it; a modified game could fill the session's log over a
+    few restarts, which stops loot sharing for that session. Keeping a count per player would need the session file
+    to hold it.
+  - A gap the ledger gave up on (WorldSync's "gave up on container changes") hides the moves in it, so none of them
+    is called lacking: the settle after it does again any of the player's undone moves in that range whether their
+    world has them or not (a take done again that their world lacks loses it, a put a dupe). It needs a skipped gap
+    holding one of their own undone moves.
+  - A claim's take-back counts as a friend's every put by a player other than the host's game as it is now. A host
+    whose identity changed (its identity file reset, a new PC) has its own earlier puts taken out of its world. And a
+    numbered put the host's world never got (dropped from a full queue, or undone by an unreported change) is taken
+    back all the same, out of the host's own units of that item where the listing holds them.
   - A late take refused because the player viewed another container since (an unanswered take at one, a view of
     another, then the settle): it is taken back from the player as any refusal, and what they moved away stays.
     Getting there needs a move past the budgets or a disconnect timed between two views.
@@ -1818,7 +1833,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kNpcIdentity` | the player running the NPC | owner only; the first runner's report stands (a later runner's is ignored) until the NPC dies, nobody runs it or that player leaves; an actor id, a level of at most 1000, slots only with the NPC it was placed as, at most 32 factions, none 0 or twice | only for our copy of an NPC another game runs, while we mirror it: a roll only when ours is leveled, was placed as the same NPC and every one of the roll's NPCs is one our lists can give; factions only on our copy of a friend's spawn, never PlayerFaction or our companion's; 3 tries | no (a plugin NPC made their roll goes into our save as it) |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
-| `kReportStorage`, `kViewStorage`, `kReportStorageShort`, `kStorageSettle` | the hosting game (a listing, a shortfall); any game (a view, a settle) | the rule on and the event budget; a listing only from the server's local player, at most 1024 stacks, its changes added from its number on (clamped to the log); a view only of a kept container that isn't stale, at most 8 viewers each, and only from a player whose last world state is settled (else answered closed); a shortfall only for a numbered take of that container by a player (never one by nobody), answered once (and the take corrected in the log to what was there); a settle only one per world request, for the last one, once that world state has gone: it undoes in the true copy only the sender's own numbered moves at a container another game keeps, up to the log's length, each once until a later settle says their world has it (none from before the claim), a put undone no more than the book holds while fresh, numbered as a change by nobody and counted against the settler's share of the container log (past it the player stays unsettled); a first claim takes back out of the true copy what friends put in it before, net (no more than everyone's moves added or the listing holds); its late moves at most 2304, budgeted as moves, only at the container the player viewed last; a friend's container change at a kept container is budgeted first (2304, 500/s; refusals the same; views 16, 8/s), is refused while their settle is pending, then needs their view and must be held (and the item mappable to the host's plugins), else it is refused and never numbered | the owners only from the server; contents only for the container we view; a refusal only undoes a move of ours still on its way; a `kStorageCaughtUp` only settles when it names our last request and the ledger waits for nothing; nothing is ever done on our player after a load or a rejoin | the owners and the moves undone (layout 38 when there are any; owners come back stale) |
+| `kReportStorage`, `kViewStorage`, `kReportStorageShort`, `kStorageSettle` | the hosting game (a listing, a shortfall); any game (a view, a settle) | the rule on and the event budget; a listing only from the server's local player, at most 1024 stacks, its changes added from its number on (clamped to the log); a view only of a kept container that isn't stale, at most 8 viewers each, and only from a player whose last world state is settled (else answered closed); a shortfall only for a numbered take of that container by a player (never one by nobody), answered once (and the take corrected in the log to what was there); a settle only one per world request, for the last one, once that world state has gone: it undoes in the true copy only the sender's own numbered moves at a container another game keeps, up to the log's length, each once until a later settle says their world has it (none from before the claim), a put undone no more than the book holds while fresh, numbered as a change by nobody and counted against the settler's share of the container log, all of a settle or none of it (past it the player stays unsettled); a first claim takes back out of the true copy what friends put in it before, net (no more than everyone's moves added or the listing holds); its late moves at most 2304, budgeted as moves, only at the container the player viewed last; a friend's container change at a kept container is budgeted first (2304, 500/s; refusals the same; views 16, 8/s), is refused while their settle is pending, then needs their view and must be held (and the item mappable to the host's plugins), else it is refused and never numbered | the owners only from the server; contents only for the container we view; a refusal only undoes a move of ours still on its way; a `kStorageCaughtUp` only settles when it names our last request and the ledger waits for nothing; nothing is ever done on our player after a load or a rejoin | the owners and the moves undone, whatever the rule (layout 38 when there are any; owners come back stale) |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |
