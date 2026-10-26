@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -153,6 +154,16 @@ namespace ObjectMovers
 	};
 
 	inline constexpr std::size_t MAX_PLACES = 2048;  // objects whose rest the session keeps
+	inline constexpr std::size_t MAX_PLACES_SHARE = MAX_PLACES / 4;
+
+	// The objects one player's game may give a kept place to in a run, a_setting (Server::Options::maxObjectPlacesPerPlayer,
+	// the server's --max-share) at most a quarter of what the session keeps (a_kept; MAX_PLACES_SHARE for MAX_PLACES): a
+	// full Places forgets the place kept longest, so a share near a_kept would let one joiner's made-up objects push out
+	// the host's.
+	inline constexpr std::size_t PlacesShare(std::size_t a_setting, std::size_t a_kept = MAX_PLACES)
+	{
+		return std::min(a_setting, a_kept / 4);
+	}
 
 	// Where each object a player moved came to rest last (a rest the Book let through), kept with the session and saved
 	// with it: a game that loads the object later (a friend arriving, a save loaded) is told it with the world state, so

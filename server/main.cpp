@@ -2,7 +2,8 @@
 //                                              [--max-world-entries N] [--max-share N] [--loopback-only]
 // --max-world-entries: how much each of the session's tables may hold (at most the default, 60000).
 // --max-share: how much one player other than the host may add to each table this run (kills, pickups,
-// doors, quest stages, loot and building alike). Both are for trying the limits (tools\soak.ps1 -Abuse).
+// doors, quest stages, loot and building alike; moved objects' places at most 512 whatever is given). Both are for trying
+// the limits (tools\soak.ps1 -Abuse).
 // The session's rules, as the game's ini sets them when it hosts (dist/F4Multiplayer.ini): --no-revive (bRevive = false),
 // --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
 // (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat

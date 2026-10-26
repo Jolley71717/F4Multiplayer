@@ -236,6 +236,29 @@ TEST("moved objects places: a kept place near us is put down once our game has t
 	CHECK(waiting.Find(0x00100000 + static_cast<std::uint32_t>(ObjectShare::WaitingPlaces::MAX)) != nullptr);
 }
 
+TEST("moved objects places: a flood of one friend's rests for objects we never load keeps the session's places and the others' waiting")
+{
+	ObjectShare::WaitingPlaces waiting;
+	auto                       caughtUp = Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -50, 20, 4 });
+	waiting.Add(caughtUp);  // a catch-up: playerId 0
+	auto hosts = Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 70, 0, 0 });
+	hosts.playerId = 1;  // the host's live rest, its cell not loaded here
+	waiting.Add(hosts);
+	auto made = Rest(0x7F000000, Protocol::ObjectRestKind::kRest);
+	made.playerId = 2;
+	for (std::uint32_t i = 0; i <= ObjectShare::WaitingPlaces::MAX * 2; ++i) {
+		made.refId = 0x7F000000 + i;
+		waiting.Add(made);
+	}
+	CHECK(waiting.Size() <= ObjectShare::WaitingPlaces::MAX);
+	REQUIRE(waiting.Find(TIRE));
+	CHECK(Near(waiting.Find(TIRE)->position, { -50, 20, 4 }));
+	REQUIRE(waiting.Find(BROOM));
+	CHECK(waiting.Find(BROOM)->playerId == 1);
+	CHECK(Near(waiting.Find(BROOM)->position, { 70, 0, 0 }));
+	CHECK(waiting.Find(made.refId) != nullptr);  // the newest still waits
+}
+
 // --- the holder's frame -------------------------------------------------------------------------------------------
 
 TEST("moved objects frame: an object ahead of a holder facing +x is ahead in their frame, and back")
@@ -1144,9 +1167,55 @@ TEST("moved objects server: a joiner's game gives places to so many objects a ru
 	CHECK(!kept.contains(MADE_UP + 3));
 }
 
-TEST("moved objects server: a joiner's share of places is well under what the session keeps")
+TEST("moved objects server: a joiner's share of places is well under what the session keeps, whatever --max-share gives")
 {
 	CHECK(Server::Options{}.maxObjectPlacesPerPlayer * 2 <= ObjectMovers::MAX_PLACES);
+	CHECK(ObjectMovers::PlacesShare(Server::Options{}.maxObjectPlacesPerPlayer) == Server::Options{}.maxObjectPlacesPerPlayer);
+	// --max-share sets it with the other shares (15000, 10000 by default): any higher is held to the cap, a lower one kept.
+	CHECK(ObjectMovers::PlacesShare(5000) * 2 <= ObjectMovers::MAX_PLACES);
+	CHECK(ObjectMovers::PlacesShare(ObjectMovers::MAX_PLACES) * 2 <= ObjectMovers::MAX_PLACES);
+	CHECK(ObjectMovers::PlacesShare(3) == 3);
+	CHECK(ObjectMovers::PlacesShare(5000, 8) == 2);  // a quarter of what the session keeps
+}
+
+TEST("moved objects server: a joiner's share of places set as high as the session keeps is held to a quarter, so the host's stay")
+{
+	constexpr std::uint64_t HOST_IDENTITY = 0x4057;
+	constexpr std::uint32_t MADE_UP = 0x7F000001;
+	Server::Options         options;
+	options.hostIdentity = HOST_IDENTITY;
+	options.maxObjectPlaces = 8;  // MAX_PLACES scaled down: the share it allows is 2
+	options.maxObjectPlacesPerPlayer = 5000;  // --max-share 5000
+	Fixture f{ options };
+	f.fake->SetLocal(1);
+	JoinAs(f, 1, "Host", HOST_IDENTITY);
+	const auto mallory = JoinAs(f, 2, "Mallory");
+	Clear(f, { 1, 2 });
+	CHECK(f.LogLines("2 moved object places of 8").size() == 1);
+
+	f.fake->Deliver(1, RestPacket(Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -50, 20, 4 })));
+	for (std::uint32_t i = 0; i < 3; ++i) {
+		f.fake->Deliver(1, RestPacket(Rest(0x0001B001 + i, Protocol::ObjectRestKind::kRest)));
+	}
+	// Ten made-up ones: with the setting as given they would fill the session and push the host's out.
+	for (std::uint32_t i = 0; i < 10; ++i) {
+		f.fake->Deliver(2, RestPacket(Rest(MADE_UP + i, Protocol::ObjectRestKind::kRest)));
+	}
+	Clear(f, { 1, 2 });  // handled by now
+	CHECK(f.LogLines(std::format("player {} has added 2 moved object place entries this run", mallory)).size() == 1);
+
+	JoinAs(f, 3, "Carol");
+	std::set<std::uint32_t> kept;
+	for (const auto& place : Resteds(Received(f, 3))) {
+		kept.insert(place.refId);
+	}
+	CHECK(kept.size() == 6);
+	CHECK(kept.contains(TIRE));
+	for (std::uint32_t i = 0; i < 3; ++i) {
+		CHECK(kept.contains(0x0001B001 + i));
+	}
+	CHECK(kept.contains(MADE_UP + 1));
+	CHECK(!kept.contains(MADE_UP + 2));
 }
 
 TEST("moved objects server: the places are saved with the session, and a joiner after a restart gets them")

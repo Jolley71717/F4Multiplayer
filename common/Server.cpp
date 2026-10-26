@@ -330,6 +330,10 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	// The story's choice too: a joiner whose story progress never reaches the host's game is first asked for this line.
 	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story)", options.port,
 		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own"));
+	const auto kept = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
+	log(std::format("server: a joiner's share this run: {} world entries, {} container changes, {} built objects, {} moved object places of {}",
+		options.maxWorldEntriesPerPlayer, options.maxContainerChangesPerPlayer, options.maxWorkshopItemsPerPlayer,
+		ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, kept), kept));
 	return true;
 }
 
@@ -414,7 +418,8 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
-	ObjectMovers::Places                                  objectPlaces;  // where each came to rest last, for a game that loads it later. Saved.
+	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
+	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
@@ -804,7 +809,7 @@ void Server::Run()
 		}
 		const auto share = a_table == kContainers   ? options.maxContainerChangesPerPlayer :
 		                   a_table == kWorkshop     ? options.maxWorkshopItemsPerPlayer :
-		                   a_table == kObjectPlaces ? options.maxObjectPlacesPerPlayer :
+		                   a_table == kObjectPlaces ? ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, maxObjectPlaces) :
 		                                              options.maxWorldEntriesPerPlayer;
 		if (budget.added[a_table] < share) {
 			return true;

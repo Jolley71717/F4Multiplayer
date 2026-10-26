@@ -953,8 +953,10 @@ namespace ObjectShare
 	}
 
 	// The session's places our game could not put an object at yet (not loaded, in another space, being moved), one each,
-	// the newest. A newer move of the object (ours or a friend's, applied) ends its wait. At most MAX: a flood of places for
-	// objects we never load starts it over rather than grow.
+	// the newest. A newer move of the object (ours or a friend's, applied) ends its wait. At most MAX: a flood of one
+	// friend's rests for objects we never load (a joiner's made-up ones) drops the rests waiting of the friend with the most,
+	// the flooder's, and keeps the catch-ups (playerId 0, at most the session's MAX_PLACES) and everyone else's, so the
+	// host's places, kept or live, still go down when we reach their cells.
 	class WaitingPlaces
 	{
 	public:
@@ -966,7 +968,19 @@ namespace ObjectShare
 				return;  // flying: where it comes to rest follows
 			}
 			if (places.size() >= MAX && !places.contains(a_rest.refId)) {
-				places.clear();
+				std::unordered_map<std::uint32_t, std::size_t> byPlayer;
+				for (const auto& [ref, rest] : places) {
+					if (rest.playerId != 0) {
+						++byPlayer[rest.playerId];
+					}
+				}
+				const auto most = std::ranges::max_element(byPlayer, {}, [](const auto& a_count) { return a_count.second; });
+				if (most != byPlayer.end()) {
+					std::erase_if(places, [player = most->first](const auto& a_place) { return a_place.second.playerId == player; });
+				}
+				if (places.size() >= MAX) {
+					places.clear();
+				}
 			}
 			places[a_rest.refId] = a_rest;
 		}
