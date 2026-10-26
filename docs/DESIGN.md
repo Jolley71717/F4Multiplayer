@@ -1445,7 +1445,10 @@ pieces, and both games show the result.
   game's own powering sends (`Powered` / `Unpowered`: a lamp's glow, a fan turning), and the lights in its 3D
   switched (`TESObjectLIGH::SwitchLight`, which the game calls for every piece: a construction light is an activator
   with a light in its model). Shown again whenever the copy is drawn anew (its cell loaded
-  again, the copy made again), tried 8 times if the game doesn't take it. Not through the game's own power
+  again, the copy made again), tried 8 times if the game doesn't take it (a 3D not in the scene yet is waited for),
+  and shown once more when that 3D has lasted 2 s, counted with the redraws (6 a minute). Suspected, not yet seen on
+  the rig: the game's own setup of a new 3D runs after the first show and leaves a copy dark, which is why a friend's
+  lights stayed dark for whoever came to a camp already lit. Not through the game's own power
   handler: that fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio
   beacon's) would act on them as if the piece were ours.
 

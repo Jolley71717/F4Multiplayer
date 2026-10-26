@@ -388,12 +388,86 @@ TEST("workshop power: a copy the game keeps drawing anew is shown a few times, t
 		model += 0x10;
 		shows += mirror.Refresh(game, t);
 	}
-	CHECK(shows == 1u + MAX_REDRAWS);  // the first draw, then MAX_REDRAWS anew
+	CHECK(shows == 1u + MAX_REDRAWS);  // the first draw, then MAX_REDRAWS anew: no 3D lasted to be shown once more
 	CHECK(mirror.RedrawsCapped() > 0);
 	// Once the window is over it is shown again.
 	t += REDRAW_WINDOW;
 	game.drawn[{ BUILDER, LIGHT }] = model + 0x10;
 	CHECK(mirror.Refresh(game, t) == 1);
+}
+
+TEST("workshop power: a copy drawn anew is shown once more when it has settled, so the game's own setup can't leave it dark")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  key{ BUILDER, LIGHT };
+	auto       t = Clock::now();
+	const auto showsFor = [&](Clock::duration a_for) {
+		std::size_t shows = 0;
+		for (const auto end = t + a_for; t < end; t += REFRESH) {
+			shows += mirror.Refresh(game, t);
+		}
+		return shows;
+	};
+	mirror.Set(BUILDER, { LIGHT, true });  // a friend comes to a camp already lit
+	game.drawn[key] = 0x1000;
+	CHECK(showsFor(REFRESH) == 1);
+	game.shown.clear();                 // the game's setup of the new 3D left it dark
+	CHECK(showsFor(SETTLE - REFRESH) == 0);  // not settled yet
+	CHECK(showsFor(REFRESH) == 1);
+	CHECK(game.shown.at(key));
+	CHECK(showsFor(2min) == 0);  // once: no more for the same 3D, nor for the snapshots saying the same
+	mirror.Set(BUILDER, { LIGHT, true });
+	CHECK(showsFor(SETTLE * 2) == 0);
+	// Their generator goes off: the same 3D is shown so at once, with no show after.
+	mirror.Set(BUILDER, { LIGHT, false });
+	CHECK(showsFor(SETTLE * 2) == 1);
+	CHECK(!game.shown.at(key));
+	// Its cell loaded again, and a save loaded: each a show, and one more when settled.
+	game.drawn[key] = 0x2000;
+	CHECK(showsFor(SETTLE * 2) == 2);
+	mirror.Invalidate();
+	CHECK(showsFor(SETTLE * 2) == 2);
+}
+
+TEST("workshop power: a copy made anew just slower than it settles is shown no more than the redraw cap allows")
+{
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { LIGHT, true });
+	std::size_t    shows = 0;
+	std::uintptr_t model = 0x1000;
+	const auto     every = (SETTLE + REFRESH) / REFRESH;
+	for (int i = 0; i < 200; ++i, t += REFRESH) {  // 50 s, under a window: a new 3D each SETTLE + REFRESH
+		if (i % every == 0) {
+			game.drawn[{ BUILDER, LIGHT }] = model;
+			model += 0x10;
+		}
+		shows += mirror.Refresh(game, t);
+	}
+	CHECK(shows == 1u + MAX_REDRAWS);  // the first draw, then MAX_REDRAWS shows again, settled ones counted
+	CHECK(mirror.RedrawsCapped() > 0);
+}
+
+TEST("workshop power: a copy given up on is not shown once more when it settles")
+{
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { PYLON, true });
+	game.drawn[{ BUILDER, PYLON }] = 0x1000;
+	game.graphReady = false;
+	for (std::uint8_t i = 0; i < MAX_TRIES; ++i, t += REFRESH) {
+		CHECK(mirror.Refresh(game, t) == 0);
+	}
+	CHECK(mirror.GivenUp() == 1);
+	game.graphReady = true;
+	std::size_t shows = 0;
+	for (const auto end = t + SETTLE * 2; t < end; t += REFRESH) {
+		shows += mirror.Refresh(game, t);
+	}
+	CHECK(shows == 0u);
 }
 
 TEST("workshop power: a builder who left has their copies shown no more, until their game speaks again")

@@ -1828,10 +1828,13 @@ namespace WorkshopSync
 				return ref;
 			}
 
+			// Not drawn while its 3D isn't in the scene yet (no parent node): nothing of it is seen, and Mirror waits for it
+			// without spending a try, however long its cell takes to come in.
 			std::uintptr_t Drawn(const WorkshopPower::Key& a_key)
 			{
 				const auto ref = CopyOf(a_key);
-				return ref ? reinterpret_cast<std::uintptr_t>(ref->Get3D()) : 0;
+				const auto model = ref ? ref->Get3D() : nullptr;
+				return model && model->parent ? reinterpret_cast<std::uintptr_t>(model) : 0;
 			}
 
 			bool Show(const WorkshopPower::Key& a_key, bool a_on)

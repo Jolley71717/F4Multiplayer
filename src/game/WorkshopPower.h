@@ -282,15 +282,22 @@ namespace WorkshopPower
 	inline constexpr std::size_t MAX_MIRRORED = 8192;
 	inline constexpr auto        REFRESH = 250ms;  // how often the copies are looked at (a copy just drawn, a graph not ready)
 	inline constexpr std::uint8_t MAX_TRIES = 8;   // a copy whose game won't take it is let be (until it is drawn anew)
-	// A copy drawn anew more often than this in REDRAW_WINDOW is let be until the window is over: each show switches its
-	// lights and sends its graph "Powered" or "Unpowered", which a switch, a lamp or a machine answers with its sound, and
-	// a copy whose 3D the game kept making anew was shown again four times a second with no end.
+	// A copy shown again (drawn anew, or settled: SETTLE) more often than this in REDRAW_WINDOW is let be until the window
+	// is over: each show switches its lights and sends its graph "Powered" or "Unpowered", which a switch, a lamp or a
+	// machine answers with its sound, and a copy whose 3D the game kept making anew was shown again four times a second
+	// with no end.
 	inline constexpr std::uint8_t MAX_REDRAWS = 6;
 	inline constexpr auto         REDRAW_WINDOW = 60s;
+	// A new 3D is shown once more when it has been there this long. Suspected, not yet seen on the rig: the game's own
+	// setup of a 3D just made (its cell attaching, its graph loading) runs after the first show and leaves a piece on no
+	// grid dark, so a friend who came to a camp already lit saw their copies stay dark. A 3D made anew sooner than this
+	// is never shown twice.
+	inline constexpr auto SETTLE = 2s;
 
 	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once its 3D is
-	// there and the game took it (a graph not loaded yet doesn't), and again whenever it is drawn anew (it came back into
-	// a loaded cell, or was made again): a new 3D starts as the model has it, unpowered.
+	// there and the game took it (a graph not loaded yet doesn't), once more when that 3D has settled (SETTLE), and again
+	// whenever it is drawn anew (it came back into a loaded cell, or was made again): a new 3D starts as the model has it,
+	// unpowered.
 	class Mirror
 	{
 	public:
@@ -308,7 +315,10 @@ namespace WorkshopPower
 				return true;
 			}
 			if (it->second.powered != a_entry.powered) {
-				it->second = Want{ a_entry.powered };
+				it->second.powered = a_entry.powered;  // shown again; a 3D already there and settled isn't shown twice
+				it->second.shown = false;
+				it->second.tries = 0;
+				it->second.frozen = false;
 			} else if (it->second.frozen) {
 				it->second.frozen = false;  // their game is back: shown afresh
 				it->second.shown = false;
@@ -330,12 +340,13 @@ namespace WorkshopPower
 			}
 		}
 
-		// Every copy is shown again (a save was loaded: the copies are new references).
+		// Every copy is shown again, and once more when settled (a save was loaded: the copies are new references).
 		void Invalidate()
 		{
 			for (auto& [key, want] : wants) {
 				want.shown = false;
 				want.tries = 0;
+				want.settle = true;
 			}
 		}
 
@@ -363,30 +374,37 @@ namespace WorkshopPower
 					continue;
 				}
 				const auto drawn = a_engine.Drawn(key);
-				if (drawn == 0 || (want.shown && want.drawn == drawn)) {
+				if (drawn == 0) {
+					continue;
+				}
+				if (want.shown && want.drawn == drawn) {
+					if (!want.settle || a_now < want.settleAt) {
+						continue;
+					}
+					want.settle = false;  // once, however the game takes it
+					if (Redrawn(want, a_now) && a_engine.Show(key, want.powered)) {
+						++shown;
+					}
 					continue;
 				}
 				if (want.drawn != drawn) {
 					const bool anew = want.drawn != 0;
 					want.drawn = drawn;
 					want.tries = 0;
-					if (anew) {
-						if (a_now - want.redrawsSince >= REDRAW_WINDOW) {
-							want.redrawsSince = a_now;
-							want.redraws = 0;
-						}
-						if (++want.redraws > MAX_REDRAWS) {
-							want.shown = true;  // let be until the window is over and it is drawn anew again
-							++redrawsCapped;
-							continue;
-						}
+					want.settle = true;
+					if (anew && !Redrawn(want, a_now)) {
+						want.shown = true;  // let be until the window is over and it is drawn anew again
+						want.settle = false;
+						continue;
 					}
 				}
 				if (a_engine.Show(key, want.powered)) {
 					want.shown = true;
+					want.settleAt = a_now + SETTLE;
 					++shown;
 				} else if (++want.tries >= MAX_TRIES) {
 					want.shown = true;  // the game won't take it (no graph, or already so): not asked again until drawn anew
+					want.settle = false;
 					++givenUp;
 				}
 			}
@@ -420,7 +438,24 @@ namespace WorkshopPower
 			bool           frozen = false;          // its builder left (Freeze)
 			std::uint8_t   redraws = 0;             // drawn anew since redrawsSince
 			Clock::time_point redrawsSince{};
+			bool           settle = false;          // its 3D is to be shown once more, at settleAt (SETTLE after its first show)
+			Clock::time_point settleAt{};
 		};
+
+		// A show again of a copy already shown (drawn anew, or settled) counted in its window: false if that is one too
+		// many (MAX_REDRAWS), and it is let be.
+		bool Redrawn(Want& a_want, Clock::time_point a_now)
+		{
+			if (a_now - a_want.redrawsSince >= REDRAW_WINDOW) {
+				a_want.redrawsSince = a_now;
+				a_want.redraws = 0;
+			}
+			if (++a_want.redraws > MAX_REDRAWS) {
+				++redrawsCapped;
+				return false;
+			}
+			return true;
+		}
 
 		std::map<Key, Want> wants;
 		std::size_t         dropped = 0;
