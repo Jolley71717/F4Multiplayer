@@ -189,19 +189,22 @@ namespace Face
 		}
 		if (const auto morphs = a_npc->morphSliderValues) {
 			for (const auto& [id, v] : *morphs) {
-				if (face.morphs.size() >= Protocol::MAX_FACE_MORPHS) {
-					break;
-				}
 				face.morphs.push_back({ id, v });
 			}
 			// In one order whatever the map's: the face is compared each check, and a differing one goes out again.
-			std::ranges::sort(face.morphs, {}, &Protocol::FaceMorph::id);
+			// Sorted before the cut, so a face over the limit loses the same (highest) ids each time.
+			// Read runs every second: said once per change in the count.
+			static std::size_t morphsLeftOut = 0;
+			const auto         left = FaceHeads::SortAndCap(face.morphs, Protocol::MAX_FACE_MORPHS, &Protocol::FaceMorph::id);
+			if (left != morphsLeftOut) {
+				morphsLeftOut = left;
+				if (left) {
+					REX::WARN("Face: {} sculpt sliders, {} over the limit of {} are not sent", face.morphs.size() + left, left, Protocol::MAX_FACE_MORPHS);
+				}
+			}
 		}
 		if (const auto bones = a_npc->facialBoneRegionSliderValues) {
 			for (const auto& [region, t] : *bones) {
-				if (face.bones.size() >= Protocol::MAX_FACE_BONES) {
-					break;
-				}
 				Protocol::FaceBone b;
 				b.region = region;
 				b.position[0] = t.position.x, b.position[1] = t.position.y, b.position[2] = t.position.z;
@@ -209,7 +212,14 @@ namespace Face
 				b.scale[0] = t.scale.x, b.scale[1] = t.scale.y, b.scale[2] = t.scale.z;
 				face.bones.push_back(b);
 			}
-			std::ranges::sort(face.bones, {}, &Protocol::FaceBone::region);
+			static std::size_t bonesLeftOut = 0;
+			const auto         left = FaceHeads::SortAndCap(face.bones, Protocol::MAX_FACE_BONES, &Protocol::FaceBone::region);
+			if (left != bonesLeftOut) {
+				bonesLeftOut = left;
+				if (left) {
+					REX::WARN("Face: {} bone regions, {} over the limit of {} are not sent", face.bones.size() + left, left, Protocol::MAX_FACE_BONES);
+				}
+			}
 		}
 		if (const auto tints = a_npc->tintingData) {
 			for (const auto entry : tints->entriesA) {
