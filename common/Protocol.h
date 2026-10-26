@@ -33,7 +33,9 @@ namespace Protocol
 	// kReportDestruction, kDestructions: a car, a barrel or a gas pump a player shot is as wrecked in every game, and goes
 	// off once) and what a leveled NPC was rolled as in the game that runs it (kReportNpcIdentity, kNpcIdentity:
 	// NpcIdentity). 51, 52 and 54 were those branches' own test builds (traps', destructibles', NPC identity's).
-	inline constexpr std::uint16_t VERSION = 50;
+	// 55: 0.10.0's changes together, one number for the whole release: each wire change merged for it from here on
+	// rides on it, and is listed in docs/DESIGN.md's protocol line as it lands. 0.9.2 (50) is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 55;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
