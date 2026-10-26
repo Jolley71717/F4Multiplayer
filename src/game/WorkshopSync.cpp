@@ -15,6 +15,7 @@
 #include "game/WorkshopSettle.h"
 
 #include "game/DeferredDelete.h"
+#include "game/Equipment.h"
 #include "game/Hud.h"
 #include "game/MenuWatch.h"
 #include "game/Papyrus.h"
@@ -220,6 +221,9 @@ namespace WorkshopSync
 			}
 			if ((base->GetFormID() >> 24) == 0xFF) {
 				return false;  // a base made at runtime exists only here
+			}
+			if (!WorkshopApply::Shared(true, Equipment::IsPowerArmorFrame(base))) {
+				return false;  // a frame moved in workshop mode: RemotePlayers shares it, as parked
 			}
 			std::optional<Protocol::WireShape> wire;
 			if (IsWire(base) && a_op == Protocol::WorkshopOp::kPlaced) {
@@ -990,7 +994,8 @@ namespace WorkshopSync
 
 		// What workshop mode can build: furniture, walls, lights, containers, crops, turrets... A
 		// message from another player is untrusted, so bases the workshop never places (explosions,
-		// hazards, projectiles, unique NPCs) are refused: they would go off, or persist, in our save.
+		// hazards, projectiles, unique NPCs) are refused: they would go off, or persist, in our save. Nor a power
+		// armor frame (WorkshopApply::Shared): no copy of one, and ours stays where it is when a friend moves theirs.
 		bool Buildable(const RE::TESBoundObject* a_base)
 		{
 			using T = RE::ENUM_FORM_ID;
@@ -999,7 +1004,6 @@ namespace WorkshopSync
 			case T::kSCOL:
 			case T::kMSTT:
 			case T::kACTI:
-			case T::kFURN:
 			case T::kCONT:
 			case T::kDOOR:
 			case T::kLIGH:
@@ -1008,6 +1012,8 @@ namespace WorkshopSync
 			case T::kFLOR:
 			case T::kTREE:
 				return true;
+			case T::kFURN:
+				return WorkshopApply::Shared(true, Equipment::IsPowerArmorFrame(a_base));
 			case T::kNPC_: {
 				// Workshop mode builds turrets (and, with Automatron, robots); any other actor from a workshop
 				// message is someone placing creatures or people on us. Those keywords are the race's (a
@@ -1052,6 +1058,10 @@ namespace WorkshopSync
 		{
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
 			const bool wire = IsWire(base) && a_item.wire;  // a wire is drawn from its shape: one without is nothing to draw
+			if (base && Equipment::IsPowerArmorFrame(base)) {
+				++unplaceable;
+				return WorkshopApply::Placeable::kFrame;
+			}
 			if (!base || (!wire && !Buildable(base))) {
 				++unplaceable;
 				if (unplaceableBases.size() < 64 && unplaceableBases.insert(a_item.base).second) {
@@ -1246,6 +1256,15 @@ namespace WorkshopSync
 			{
 				const auto existing = WorkshopSync::FindExisting(a_item);
 				return existing ? std::optional<Copy>{ Copy{ existing->GetHandle(), Clock::now() } } : std::nullopt;
+			}
+
+			// Keep gave it the keyword (since 0.9.0); nothing else of ours, nor the game, gives a frame that one. Not a
+			// frame that holds anything: Delete hands back only a container's, and a player may have fitted that one out
+			// (or it is their own suit an earlier session took over), so it stays, pieces and all.
+			bool MadeByUs(const Copy& a_copy)
+			{
+				const auto ref = a_copy.ref.get();
+				return ref && Blocked(*ref) && !HoldsItems(ref.get());
 			}
 
 			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }
@@ -2222,7 +2241,8 @@ namespace WorkshopSync
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
-		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack);
+		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
+		       std::format(" framesCleared={}", counts.framesCleared);
 	}
 
 	std::string DescribeRef(RE::TESObjectREFR* a_ref)
