@@ -131,6 +131,14 @@ namespace RemotePlayers
 	// Whether someone our game sends out of this frame copy is in it, getting in, or on their way out: nothing buries it
 	// then (FriendFrame::ChooseLeave). A save keeps it as it is, saved with the frame they wear (Spawns' DiscardCopies too).
 	[[nodiscard]] bool SomeoneSentOutOf(RE::TESObjectREFR* a_frame);
+	// A copy a save or load coming keeps with someone being sent out of it (Spawns' DiscardCopies): noted, and after loading
+	// the save made then, waited on again (the companion wears it still). BeforeSave keeps what the save kept.
+	void NoteKeptThroughSave(RE::TESObjectREFR* a_frame);
+	void BeforeSave();
+	// The co-save's record of them: written with each save, read back with that save alone (cleared by any load or new game).
+	[[nodiscard]] std::vector<std::uint8_t> SaveRecord();
+	void LoadRecord(const std::vector<std::uint8_t>& a_bytes);
+	void RevertRecord();
 	// As a load comes (after DespawnAll): who was being sent out of a copy, and the copies just got out of, are forgotten
 	// (their ids name the loaded game's forms), and a send-out call still queued in the VM is not to take effect after it.
 	void BeforeLoad();

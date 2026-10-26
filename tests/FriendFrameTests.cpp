@@ -99,3 +99,34 @@ TEST("friend frame: nothing buries a copy with anyone in it; a save keeps one a 
 	CHECK(ChooseLeave({ .ours = true }) == Leave::kRelease);                    // our player's own suit, from before this build
 	CHECK(ChooseLeave({ .ours = true, .sendingOut = true }) == Leave::kRelease);
 }
+
+TEST("friend frame: a copy kept through a save is waited on again after loading it only while its id still names that frame")
+{
+	using FriendFrame::SameCopy;
+	CHECK(SameCopy(0x1A2B, 0x1A2B, true, false));
+	CHECK(!SameCopy(0x1A2B, 0x3C4D, true, false));  // the id names another form now
+	CHECK(!SameCopy(0x1A2B, 0, true, false));       // or none
+	CHECK(!SameCopy(0x1A2B, 0x1A2B, false, false));  // not made at runtime: the game's own
+	CHECK(!SameCopy(0x1A2B, 0x1A2B, true, true));    // gone
+	CHECK(!SameCopy(0, 0, true, false));             // nothing was noted
+	// Waited on again, our player is kept out of it and the companion in it sent out, as before the save.
+	auto copy = COPY;
+	copy.waitingFor = FRIEND;
+	CHECK(FriendFrame::SendsOut({ .runsHere = true }, FriendFrame::KeptOutFor(copy)));
+}
+
+TEST("friend frame: the copies a save kept are written into its co-save and read back exactly, or not at all")
+{
+	using FriendFrame::Decode;
+	using FriendFrame::Encode;
+	using FriendFrame::KeptCopy;
+	const std::vector<KeptCopy> kept{ { 0xFF0013BB, 0x1A2B, 2 }, { 0xFF001276, 0x3C4D, 3 } };
+	CHECK(Decode(Encode(kept)) == kept);
+	CHECK(Encode({}).empty());  // no record for a save that kept none: a load of it reads none back
+	CHECK(Decode({}).empty());
+	auto bytes = Encode(kept);
+	bytes.pop_back();
+	CHECK(Decode(bytes).empty());  // cut short: nothing is guessed
+	CHECK(Decode(std::vector<std::uint8_t>(12 * (FriendFrame::MAX_KEPT_COPIES + 1))).empty());
+	CHECK(Encode(std::vector<KeptCopy>(FriendFrame::MAX_KEPT_COPIES + 5)).size() == 12 * FriendFrame::MAX_KEPT_COPIES);
+}
