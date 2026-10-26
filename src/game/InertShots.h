@@ -26,10 +26,14 @@ namespace InertShots
 	// is stale, or settled in a cell no longer attached, is ended (disabled, deleted, its record dropped).
 	void Frame();
 
-	// Before every save and every load, after DespawnAll: every live inert shot is ended now, so none is written into the
-	// save nor left for the load (SaveGuard's own hand-over is for what Track knows of; these go the engine's own way, as
-	// a projectile that hit something does). How many were ended.
-	std::uint32_t BeforeSaveOrLoad();
+	// Before every save, after DespawnAll: every live inert shot is ended now (disabled, deleted, its record dropped), so none
+	// is written into the save. How many were ended.
+	std::uint32_t BeforeSave();
+
+	// Before every load, after DespawnAll: every live inert shot is handed to the load (SaveGuard::HandOver), given its
+	// record back so the load frees it, or let go of now when it takes none. Ended instead, it would stay in memory through
+	// the load, deleted and with a base of this run alone: the load frees only what has a record. How many were handed over.
+	std::uint32_t BeforeLoad();
 
 	// A relayed explosion was placed from a record that spawns projectiles (WeaponFire::ApplyExplosion): for a moment an
 	// unowned launch of that spawn record is swapped for its inert copy too (InertShot::SwapsSpawned). Null is fine.

@@ -33,6 +33,8 @@ namespace InertShots
 		std::atomic<std::uint32_t> spawnedSwapped{ 0 };  // ... unowned children of a relayed explosion, swapped (ExpectSpawned)
 		std::uint32_t              endedStale = 0;       // live shots ended by Frame: stale, or in a cell no longer attached
 		std::uint32_t              endedForSave = 0;     // ... ended before a save or a load
+		std::uint32_t              handedToLoad = 0;     // ... handed to a load, which freed them
+		std::atomic<std::uint32_t> refusedFull{ 0 };   // launches refused for want of room in the live list
 		std::uint32_t              dropped = 0;          // ... let go of: the engine deleted them (they hit something)
 		std::uint32_t              droppedEarlyLogged = 0;
 		std::uint32_t              aliveLogged = 0;
@@ -76,9 +78,14 @@ namespace InertShots
 		void Keep(const Live& a_live)
 		{
 			std::scoped_lock l{ liveLock };
-			if (live.size() < MAX_LIVE) {
-				live.push_back(a_live);
-			}
+			live.push_back(a_live);
+		}
+
+		// Whether there is room to keep one more: a launch with none is refused (as the hold), so no inert shot flies untracked.
+		bool HasRoom()
+		{
+			std::scoped_lock l{ liveLock };
+			return live.size() < MAX_LIVE;
 		}
 
 		// The inert copies, one per projectile record, never freed (forms live as long as the game, as MuzzleFlash's art
@@ -157,6 +164,18 @@ namespace InertShots
 			const bool onMain = std::this_thread::get_id() == mainThread;
 			if (!onMain) {
 				++offMain;
+			}
+			if (!HasRoom()) {
+				// The live list is full (MAX_LIVE in flight at once: near impossible, each ends on impact or by 12 s). As the hold:
+				// nothing leaves the gun, so no inert shot ever flies untracked.
+				++refusedFull;
+				if (a_out) {
+					a_out->reset();
+				}
+				if (logged.fetch_add(1) < 20) {
+					REX::WARN("InertShots: {:08X}'s launch of {:08X} refused: {} inert shots in flight already", shooterId, base->GetFormID(), MAX_LIVE);
+				}
+				return a_out;
 			}
 			const auto copy = CopyOf(base);
 			if (!copy) {
@@ -300,7 +319,7 @@ namespace InertShots
 		}
 	}
 
-	std::uint32_t BeforeSaveOrLoad()
+	std::uint32_t BeforeSave()
 	{
 		std::uint32_t ended = 0;
 		for (const auto& shot : TakeLive()) {
@@ -311,9 +330,25 @@ namespace InertShots
 		}
 		if (ended) {
 			endedForSave += ended;
-			REX::INFO("InertShots: {} inert shot{} in flight ended before the save or load: none goes into it", ended, ended == 1 ? "" : "s");
+			REX::INFO("InertShots: {} inert shot{} in flight ended before the save: none goes into it", ended, ended == 1 ? "" : "s");
 		}
 		return ended;
+	}
+
+	std::uint32_t BeforeLoad()
+	{
+		std::uint32_t handed = 0;
+		for (const auto& shot : TakeLive()) {
+			if (const auto ref = shot.handle.get(); ref && !ref->IsDeleted()) {
+				SaveGuard::HandOver(ref.get(), "an inert shot in flight");
+				++handed;
+			}
+		}
+		if (handed) {
+			handedToLoad += handed;
+			REX::INFO("InertShots: {} inert shot{} in flight handed to the load, which frees {}", handed, handed == 1 ? "" : "s", handed == 1 ? "it" : "them");
+		}
+		return handed;
 	}
 
 	void ExpectSpawned(RE::BGSProjectile* a_spawn)
@@ -342,7 +377,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertDropped={} inertSpawned={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
-			flying, endedStale, endedForSave, dropped, spawnedSwapped.load());
+		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load());
 	}
 }

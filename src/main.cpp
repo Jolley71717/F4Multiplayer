@@ -382,7 +382,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
-					InertShots::BeforeSaveOrLoad();  // after DespawnAll: no inert shot of a stand-in's is left for the load
+					InertShots::BeforeLoad();  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
 					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
 					RemotePlayers::BeforeLoad();  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
 				},
@@ -398,7 +398,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
-					InertShots::BeforeSaveOrLoad();  // no inert shot, whose base exists at runtime only, is written into the save
+					InertShots::BeforeSave();  // no inert shot, whose base exists at runtime only, is written into the save
 					SaveGuard::BeforeSave();
 					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
 				},

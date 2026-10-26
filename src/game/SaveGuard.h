@@ -70,6 +70,12 @@ namespace SaveGuard
 	// SaveStrays::Remains). So is each stray of ours the last load brought back.
 	void BeforeLoad();
 
+	// Just before a load, for a created reference of ours that Track was never told of (an inert shot, InertShots): handed
+	// to the load as BeforeLoad hands ours over (SaveStrays::Handover): given its record back so the load frees it, or let
+	// go of now with the engine's own call when it takes none (deleted, not persistent). Ending it instead would leave it in
+	// memory through the load, as the load frees only what has a record. a_what names it in the log.
+	void HandOver(RE::TESObjectREFR* a_ref, std::string_view a_what);
+
 	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.
 	std::uint32_t AfterLoad();
 
