@@ -688,7 +688,7 @@ namespace Party
 		std::string TeleportBlocked(RE::PlayerCharacter* a_player)
 		{
 			if (Story::InOpening()) {
-				return "party.cant_teleport_opening";
+				return Story::Why() == Story::Opening::kUnnamed ? "party.cant_teleport_unnamed" : "party.cant_teleport_opening";
 			}
 			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
 				return "party.cant_teleport_talking";

@@ -3,6 +3,7 @@
 #include "Test.h"
 
 #include "game/CharacterBinding.h"
+#include "game/Story.h"
 
 #include <chrono>
 #include <filesystem>
@@ -144,6 +145,47 @@ TEST("character binding: a New Game that reaches Vault 111's opening is held onl
 	// The next new game is its own.
 	tracker.OnLoad(waiting, true, NEW);
 	CHECK(tracker.Unnamed(NEW));
+}
+
+TEST("character binding: only the game's own Vault 111 start is a vault start; an unnamed alternate start in the vault is held for its name")
+{
+	using Story::Opening;
+	// The game's own start (the pre-war world, or Out of Time running): the vault holds it, named or not, and it ends
+	// the unnamed hold.
+	CHECK(Story::Decide(true, true, true).opening == Opening::kVault);
+	CHECK(Story::Decide(true, true, true).vaultStart);
+	CHECK(Story::Decide(true, true, false).opening == Opening::kVault);
+	CHECK(Story::Decide(true, true, false).vaultStart);
+	// An alternate start's walk into the vault's places: never a vault start (its unnamed hold would end for good).
+	CHECK(!Story::Decide(true, false, true).vaultStart);
+	CHECK(Story::Decide(true, false, true).opening == Opening::kUnnamed);
+	CHECK(!Story::Decide(true, false, false).vaultStart);
+	CHECK(Story::Decide(true, false, false).opening == Opening::kVault);  // named: paused there, as before
+	// Elsewhere.
+	CHECK(Story::Decide(false, false, true).opening == Opening::kUnnamed);
+	CHECK(Story::Decide(false, false, false).opening == Opening::kNone);
+	CHECK(!Story::Decide(false, true, true).vaultStart);  // the start's quest with the player out of its places
+}
+
+TEST("character binding: an unnamed alternate start that walks through Vault 111 is still unnamed once out, as Story decides it")
+{
+	CharacterBinding::Tracker    tracker;
+	const CharacterBinding::Link waiting{ true, false, false };
+	tracker.OnLoad(waiting, true, COOP);  // New Game with an alternate start: the last character's ID
+	// Session's frame: Story's hold, then the vault start passed on.
+	const auto frame = [&](bool a_vaultPlaces, bool a_ownStart) {
+		const auto hold = Story::Decide(a_vaultPlaces, a_ownStart, tracker.Unnamed(COOP));
+		if (hold.vaultStart) {
+			tracker.OnVaultOpening();
+		}
+		return tracker.Check(waiting, { COOP, true, hold.opening != Story::Opening::kNone });
+	};
+	CHECK(frame(false, false) == Step::kNone);
+	CHECK(frame(true, false) == Step::kNone);  // in the vault
+	CHECK(tracker.Unnamed(COOP));
+	CHECK(frame(false, false) == Step::kNone);  // out: still held, no hosting under the last character's ID
+	CHECK(tracker.Unnamed(COOP));
+	CHECK(frame(false, false) == Step::kNone);
 }
 
 TEST("character binding: a load whose end never comes is never taken for naming")

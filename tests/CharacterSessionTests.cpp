@@ -297,6 +297,69 @@ TEST("character session: a friend with an alternate start who joins before namin
 	CHECK(!me.joining);
 }
 
+TEST("character session: an unnamed alternate start that walks into Vault 111 and out again still doesn't host under the previous character's ID")
+{
+	Machine machine;
+	Game    host{ machine, HOST, HOST_COOP };
+	host.wantHost = true;
+	host.Tick();
+	REQUIRE(host.welcome);
+	host.StopHosting();  // the co-op session is written
+	const auto coopPath = FileOf(machine, HOST_COOP);
+	REQUIRE(std::filesystem::exists(coopPath));
+	const auto coopTime = std::filesystem::last_write_time(coopPath);
+
+	// A start that never asks for a name, then the trip from Sanctuary to loot the vault: Out of Time never started.
+	host.AlternateStart();
+	host.Tick();
+	host.EnterVault();
+	CHECK(host.InOpening());
+	host.Tick();
+	host.Tick();
+	CHECK(!host.hosting);
+	host.LeaveVault();
+	CHECK(host.InOpening());  // still unnamed: the vault's places are not the start that would end it
+	host.Tick();
+	host.Tick();
+	CHECK(!host.hosting);
+	CHECK(!machine.server);
+	CHECK(std::filesystem::last_write_time(coopPath) == coopTime);
+
+	// Named later: its own session.
+	host.NameCharacter(HOST_NEW);
+	host.Tick();
+	CHECK(host.hosting);
+	host.StopHosting();
+	CHECK(std::filesystem::exists(FileOf(machine, HOST_NEW)));
+	CHECK(std::filesystem::last_write_time(coopPath) == coopTime);
+}
+
+TEST("character session: a friend's unnamed alternate start stays held after a walk through Vault 111, and its name still binds it")
+{
+	Machine machine;
+	Game    host{ machine, HOST, HOST_COOP };
+	Game    me{ machine, FRIEND, FRIEND_COOP };
+	host.wantHost = true;
+	host.Tick();
+	REQUIRE(host.welcome);
+
+	me.AlternateStart();
+	me.JoinFriend();
+	REQUIRE(me.welcome);
+	me.EnterVault();
+	me.Tick();
+	me.LeaveVault();
+	me.Tick();
+	CHECK(me.InOpening());
+	me.NameCharacter(FRIEND_NEW);
+	me.Tick();
+	CHECK(!me.InOpening());
+	me.Load(me.MakeSave());
+	CHECK(me.joining);
+	me.Load({ FRIEND_COOP, 7, me.loot.Point().sessionId, 1, {} });
+	CHECK(!me.joining);
+}
+
 TEST("character session: a Vault 111 New Game is let out with the vault even if naming never changed the ID")
 {
 	Machine machine;

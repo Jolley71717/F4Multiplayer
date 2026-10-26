@@ -904,12 +904,21 @@ before naming in an alternate start's own room was made to leave on the next loa
 alternate start (a room of the mod's own, or the Commonwealth) is left alone until named, and a host doesn't
 start hosting (`host.err_opening_unnamed`): hosting opens the loaded ID's session file, which would have been
 the last character's, taken in whole by the new world and written into with its kills and loot. After two
-minutes unnamed outside Vault 111, a player set to host or join is told once per new game that the session
-waits for the name or a load (`session.unnamed_waits`): a start that never asks for a name stays held until a
-save of it is loaded (its save carries the old ID, which nothing can tell apart). A new game that has been in
-Vault 111's opening is not held as unnamed (`Tracker::OnVaultOpening`): the vault holds it as it always did and
-lets it go when the player leaves, so a Vault 111 start is held no longer than before even if the game gave the
-new ID before the new-game message (naming would then change nothing). A load's start (`kPreLoadGame`,
+minutes held as unnamed (`kUnnamed`: anywhere but the game's own Vault 111 start, an alternate start's walk
+into the vault included), a player set to host or join is told once per new game that the session
+waits for the name, and that a save made before it has the last character's ID and would play in that
+character's session (`session.unnamed_waits`). The notice offers no load as a way out: a start that never asks
+for a name stays held until a save of it is loaded, and that save carries the old ID, which nothing can tell
+apart, so the host would then host it under the last character's session file. Whether the game's own
+character edit gives such a character a new ID is untried. Teleporting unnamed says so
+(`party.cant_teleport_unnamed`), not Vault 111. A new game in Vault 111's opening of the game's own start (in
+the pre-war world, or with Out of Time running: `Story::InVaultStart`) is not held as unnamed
+(`Tracker::OnVaultOpening`): the vault holds it as it always did and lets it go when the player leaves, so a
+Vault 111 start is held no longer than before even if the game gave the new ID before the new-game message
+(naming would then change nothing). An alternate start that walks into the vault's places doesn't count (Out of
+Time never starts there, so `Story` sees them as the opening's): unnamed, it stays held for its name there
+(`Story::Opening::kUnnamed`, not `kVault`) and after it leaves. The rule is `Story::Decide`, free of the game
+and tested on its own. A load's start (`kPreLoadGame`,
 `Session::OnBeforeLoad`) ends the unnamed state too: should its end never come (frames go on after
 SaveLoadHold's 60 s limit with no `OnLoad`), the save's ID is not taken for a name outside the opening. The dev channel is exempt:
 the rig's character from `coc` at the main menu never gets a name, and its session files are its own

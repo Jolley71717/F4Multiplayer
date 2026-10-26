@@ -195,7 +195,8 @@ namespace CharacterBinding
 		// The ID a new game started under, until Check sees the name confirmed or a save loads.
 		[[nodiscard]] std::optional<std::uint64_t> UnnamedId() const { return unnamed; }
 
-		// The game is in Vault 111's opening (Story::Opening::kVault).
+		// The game is in Vault 111's opening of its own start (Story::InVaultStart). Never for an alternate start that walks
+		// into the vault: out again, it would no longer count as unnamed and would host under the last character's ID.
 		void OnVaultOpening() { vaultSeen = true; }
 
 		// A load begins (F4SE's kPreLoadGame): the ID from here on is a save's, never a name. Should the load's end never
@@ -206,7 +207,7 @@ namespace CharacterBinding
 	private:
 		std::uint64_t                hosted = 0;  // the character whose session our server holds
 		std::optional<std::uint64_t> unnamed;     // since a new game: the ID it had then, until named (UnnamedId)
-		bool                         vaultSeen = false;  // since the last load or new game: Vault 111's opening was seen
+		bool                         vaultSeen = false;  // since the last load or new game: Vault 111's start was seen
 		std::optional<std::uint64_t> bound;       // the character that joined the server we're set to reach
 		std::optional<std::uint64_t> joined;      // the session it joined
 	};

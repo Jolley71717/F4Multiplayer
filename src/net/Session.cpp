@@ -1167,8 +1167,8 @@ namespace Session
 		// First: the rest of the session checks it. A new character with no name yet is held wherever it is, but on the dev
 		// channel: the rig's coc character never gets a name, and its files are its own.
 		Story::Frame(!Config::Get().devChannel && InGame() && binding.Unnamed(CurrentCharacter()));
-		if (Story::Why() == Story::Opening::kVault) {
-			binding.OnVaultOpening();  // a Vault 111 start is held as it always was, and no longer
+		if (Story::InVaultStart()) {
+			binding.OnVaultOpening();  // a Vault 111 start is held as it always was, and no longer (not a walk into the vault)
 		}
 		if (Story::Why() != Story::Opening::kUnnamed) {
 			unnamedSince.reset();

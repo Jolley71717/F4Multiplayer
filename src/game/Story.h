@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 // The story: whether the main story and faction quests are shared, and whether the player is still
 // in the game's opening (before leaving Vault 111), where nothing from the session reaches their
 // game. Main thread only.
@@ -23,11 +26,31 @@ namespace Story
 	enum class Opening
 	{
 		kNone,
-		kVault,    // Vault 111's opening
+		kVault,    // Vault 111's opening (but an unnamed alternate start there is kUnnamed: see InVaultStart)
 		kUnnamed,  // a new character with no name yet, elsewhere (CharacterBinding::Tracker::Unnamed)
 	};
 	// Why InOpening is true.
 	[[nodiscard]] Opening Why();
+
+	// In Vault 111's opening (kVault) of the game's own start: in the pre-war world, or with Out of Time
+	// running. Not an alternate start's walk into the vault's places (Out of Time never starts there).
+	[[nodiscard]] bool InVaultStart();
+
+	struct Hold
+	{
+		Opening opening = Opening::kNone;
+		bool    vaultStart = false;  // InVaultStart: Session tells CharacterBinding (Tracker::OnVaultOpening)
+	};
+	// Frame's rule, free of the game. a_vaultPlaces: in the pre-war world or Vault 111 before Out of Time is done.
+	// a_ownStart: the game's own start (the pre-war world, or Out of Time running). a_unnamed: a new character with no
+	// name yet. An unnamed alternate start that walks into the vault is held for its name, and is no vault start: that
+	// would end its unnamed hold for good, and it would host under the last character's ID once out.
+	[[nodiscard]] constexpr Hold Decide(bool a_vaultPlaces, bool a_ownStart, bool a_unnamed)
+	{
+		const bool vaultStart = a_vaultPlaces && a_ownStart;
+		const auto opening = a_vaultPlaces && (vaultStart || !a_unnamed) ? Opening::kVault : a_unnamed ? Opening::kUnnamed : Opening::kNone;
+		return { opening, vaultStart };
+	}
 
 	// Updates InOpening. Every frame, before the rest of the session: right after loading a save
 	// it must already be right. a_unnamed: the loaded character is a new one not named yet.
