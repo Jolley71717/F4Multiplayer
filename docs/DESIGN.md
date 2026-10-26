@@ -664,8 +664,49 @@ who took their copy's roll of the same item before the put reached them doesn't 
 respawns (it holds more of something than when it was emptied) it may be told empty again. An older build sees the player's ref as no item and leaves it.
 `net status` counts `emptied=` sent/applied/stacks taken and `emptiedKept=`, the items a marker left for the session's puts.
 Storage skips only the marker: puts and takes there go between the games as anywhere else, as in 0.9.1, so a friend's take
-from their copy takes as many of the item from ours, whether ours got them from the session or not. Shared storage, the
-owner's game holding the one true copy of a stash and the others seeing that, is planned.
+from their copy takes as many of the item from ours, whether ours got them from the session or not. That is still so with
+the host's `bSharedStorage` off (the default); on, storage has one true copy (below).
+
+**Shared storage (0.10.0, the host's `bSharedStorage`, off by default; welcome flag bit 32).** A home's or a settlement's
+container has one true copy: the host's game's. The server keeps what each such container holds (`common/StorageBook.h`)
+and checks every friend's move there against it; the games' side is `src/game/StorageView.h` (game-free) and
+`src/game/Storage.cpp` (the engine). All of it is tested without the game: `tests/StorageBookTests.cpp`,
+`tests/StorageViewTests.cpp`, and both ends through the real server in `tests/StorageGameTests.cpp` (LootGame.h), which
+counts every item across the host's chest and the players' inventories in each scenario.
+
+- *Who keeps a container.* Only the hosting game (the server's local player) claims, by listing a container
+  (`kReportStorage` 68: its shared stacks, LootScope's ammo, aid and junk, and the ledger's next number it is as of). Its
+  scan lists, every 2 s and at most 16 at a time, the loaded storage containers within 8192 units of its player that are
+  not a workbench or a vendor's chest, once each since the session began, its world last loaded or it last asked the
+  server for changes. Nothing is listed while its ledger is still asking (the listing would miss changes). The server
+  adds the friends' changes numbered after the listing's number, and tells everyone the owner (`kStorageOwners` 169).
+  The design had the first claim win; the host alone is simpler and safer: a friend's game is never anybody's truth, a
+  listing from another game is ignored, and a host whose ID changed (a reconnect) takes its old entries over.
+- *Stale.* The host's hello, its world request (a load, or a gap asked again) and its leaving make all its listings
+  stale: the friends viewing one are told it closed (`kStorageRefused`, item 0, `kClosed`), and every move there is
+  refused until the host's game lists it again. The owners are saved with the session (layout 37) and come back stale,
+  and only while the rule is on.
+- *A friend's view.* As a friend's container menu shows a container another game keeps (the container menu's show,
+  Equipment's hook), the shared stacks their copy held move to their player (OwnGear's `kStorageUndo`, the one change
+  made to the local player), and `kViewStorage` (69) open is sent. The answer (`kStorageContents` 168: the stacks and the
+  number they are as of) is shown in the copy, with the player's own moves still on their way added. Others' changes
+  numbered from there go into the copy while the view lasts; before it, after it and in a copy nobody views, none do.
+  At the close (the menu's close event, a save or a load, the session's end) the moves made in the menu go out first,
+  then the shared stacks leave the copy and `kViewStorage` close is sent. Weapons, armor, keys and notes never take part:
+  they stay in each player's copy as before.
+- *Moves.* A friend's take or put at a kept container goes out as any loot, and the server refuses it (`kStorageRefused`
+  170, never numbered) when there is no view, the container is stale, the take is more than it holds, or the host's game
+  can't hold the item (`FormIds::Mapper` with the host's plugins); one accepted but then dropped by the server's own limits
+  (the event budget, a full log, the player's share) is refused too. The friend's game undoes a refused move: a take
+  comes back out of the player (what they used meanwhile is counted, `usedUp=`), a put goes back to them, and the view
+  asks for the contents again so the copy is redrawn. Two friends taking the last stack: the first numbered wins.
+- *Shortfalls.* The host's game applies friends' takes as loot. One its container held fewer of than taken (its world
+  changed unreported: a script, a load the server didn't know of yet) goes back as `kReportStorageShort` (70), the
+  container is listed again, and the server sends the taker a `kShort` refusal for what was missing.
+- *Storage nobody keeps yet* (the host hasn't been near it since the session began) is each player's own while the
+  rule is on: no move there is reported and none applied, so no friend's copy fills with the session's things.
+- `net status` and the dev channel's `storage` show the counts (`views=`, `refusedTakes=`, `shortTakes=`, `listed=`,
+  `shorts=`, `ownRefused=` which must stay 0).
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
 shareable ref, goes out as a pickup (kReportPickup, no new message). A receiver whose ref is flora runs
@@ -1619,7 +1660,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release (none yet)). The sections below record each review as it was written.
+Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageContents 168, kStorageOwners 169, kStorageRefused 170 and welcome flag bit 32). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -1647,6 +1688,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kNpcIdentity` | the player running the NPC | owner only; the first runner's report stands (a later runner's is ignored) until the NPC dies, nobody runs it or that player leaves; an actor id, a level of at most 1000, slots only with the NPC it was placed as, at most 32 factions, none 0 or twice | only for our copy of an NPC another game runs, while we mirror it: a roll only when ours is leveled, was placed as the same NPC and every one of the roll's NPCs is one our lists can give; factions only on our copy of a friend's spawn, never PlayerFaction or our companion's; 3 tries | no (a plugin NPC made their roll goes into our save as it) |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
+| `kReportStorage`, `kViewStorage`, `kReportStorageShort` | the hosting game (a listing, a shortfall); any game (a view) | the rule on and the event budget; a listing only from the server's local player, at most 1024 stacks, its changes added from its number on (clamped to the log); a view only of a kept container that isn't stale, at most 8 viewers each; a shortfall only for a numbered take of that container, answered once; a friend's container change at a kept container needs their view and must be held (and the item mappable to the host's plugins), else it is refused and never numbered | the owners only from the server; contents only for the container we view; a refusal only undoes a move of ours we remember (a load forgets them), and only on our player through OwnGear's `kStorageUndo` | the owners (layout 37, stale) |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |

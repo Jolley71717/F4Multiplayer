@@ -121,6 +121,14 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `bShareGuestBuilds` (false): off, what a guest built in their own save before joining does not come into the host's
   world: only building done during the session is shared. On, a guest's earlier settlement building comes into the
   host's world too. Two saves with different building at the same settlement then show both.
+- `bSharedStorage` (false, experimental): on, a container in a home or a settlement (one a player owns, or one in a
+  settlement they own) has one copy for everyone, the host's. A guest who opens theirs sees what is in the host's, and
+  what one player takes is gone for everyone. Only ammo, aid and junk are shared this way; weapons, armor, keys and
+  notes stay in each player's own copy. When a guest first opens one, the ammo, aid and junk their own copy held go to
+  their inventory. A container is shared once the host has been near it in the session; until then, and after the host
+  loads a save until they come near it again, each player's copy is their own. A take that loses a race to a friend's
+  is given back. Off, each player keeps their own copy, and loot taken from one is taken from the others' copies too.
+  A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
   `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
@@ -298,6 +306,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
+  With the host's `bSharedStorage` on, a home's and a settlement's containers (not the workbench) have one
+  copy for everyone, the host's (see [Host settings](#host-settings)).
 - **Cars, barrels and other things that blow up:** a car, an explosive barrel, a fuel tank or a gas pump one of you
   shoots goes off in every game, once, and stays wrecked in every game: a friend who arrives later, or a reload, finds
   the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
