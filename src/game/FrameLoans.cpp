@@ -54,6 +54,8 @@ namespace FrameLoans
 			std::uint32_t base = 0;
 			std::uint32_t stack = 0;  // its stack's number among its base's in the frame's inventory
 			float         health = -1.0f;
+			// Its stack's extra data then (none for a plain stack): how the return finds that very stack again.
+			RE::BSTSmartPointer<RE::ExtraDataList> extra;
 		};
 
 		// One of our frames lent (or offered: kLendFrame sent, kFrameLent not in yet), by its spawn id.
@@ -75,6 +77,15 @@ namespace FrameLoans
 			Clock::time_point since{};
 		};
 		std::vector<Move>    moves;
+		// What came back of our frame lent, for when it has an inventory here again (PutBack).
+		struct PendingBack
+		{
+			std::uint32_t                       local = 0;
+			std::vector<Source>                 kit;
+			std::vector<Protocol::ReturnedItem> items;
+			Clock::time_point                   since{};
+		};
+		std::vector<PendingBack> backs;
 		constexpr auto       MOVE_LIMIT = std::chrono::minutes(30);  // a spot never come near again: it stays where it stood
 		constexpr std::size_t MAX_MOVES = 16;
 
@@ -107,7 +118,7 @@ namespace FrameLoans
 		Clock::time_point lastSaidAt{};
 		constexpr auto    SAY_AGAIN = std::chrono::seconds(3);
 
-		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, movedBack = 0, cleanedUp = 0;
+		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesTaken = 0, movedBack = 0, cleanedUp = 0;
 
 		// A notice, not again while it is the last one said a moment ago (a press is asked about more than once).
 		void Say(const std::string& a_text)
@@ -342,7 +353,7 @@ namespace FrameLoans
 			if (player && copy && player->lastUsedPowerArmor.get().get() == copy.get()) {
 				player->lastUsedPowerArmor = RE::ObjectRefHandle{};
 			}
-			const auto items = FrameLoan::ComposeReturn(borrowed.tags, found);
+			const auto items = FrameLoan::ComposeReturn(borrowed.tags, found, !copy);
 			if (a_send && !borrowed.ownerless) {
 				Protocol::FrameReturn back;
 				back.spawnId = borrowed.spawnId;
@@ -401,6 +412,7 @@ namespace FrameLoans
 				Protocol::DroppedItem item;
 				std::uint32_t         stack = 0;
 				bool                  core = false;
+				RE::BSTSmartPointer<RE::ExtraDataList> extra;
 			};
 			std::vector<FrameLoan::KitStack>      stacks;
 			std::vector<std::optional<Candidate>> candidates;
@@ -419,7 +431,7 @@ namespace FrameLoans
 						                  std::ranges::all_of(item->mods, [](const Protocol::ItemMod& a_mod) { return Protocol::IsShareableRef(a_mod.mod); });
 						stacks.push_back({ .piece = !core, .core = core, .fits = fits });
 						if (fits) {
-							candidates.push_back(Candidate{ std::move(*item), index, core });
+							candidates.push_back(Candidate{ std::move(*item), index, core, stack->extra });
 						} else {
 							candidates.push_back(std::nullopt);
 						}
@@ -437,50 +449,97 @@ namespace FrameLoans
 					.health = candidate.item.health,
 					.name = candidate.item.name,
 					.core = candidate.core });
-				a_sources.push_back({ .slot = slot, .base = candidate.item.base, .stack = candidate.stack, .health = candidate.item.health });
+				a_sources.push_back({ .slot = slot, .base = candidate.item.base, .stack = candidate.stack, .health = candidate.item.health, .extra = candidate.extra });
 			}
 			return kit;
 		}
 
-		// Each lent piece (and the core) of our frame worn down to what came back, never up (FrameLoan::HealthAfter).
-		void WearDown(RE::TESObjectREFR* a_frame, const Lent& a_lent, const std::vector<Protocol::ReturnedItem>& a_items)
+		// The stack in our frame a lent item came from: the one with its extra data then, else one of its base at the
+		// condition it was lent at, else the one at its number then (the engine may have merged or split stacks since).
+		std::optional<Hit> SourceStack(RE::TESObjectREFR* a_frame, const Source& a_source, RE::BSTSmartPointer<RE::ExtraDataList>& a_extra)
 		{
 			const auto list = a_frame ? a_frame->inventoryList : nullptr;
 			if (!list) {
-				REX::WARN("FrameLoans: our frame {:08X} has no inventory loaded; the wear that came back is not put on it", a_frame ? a_frame->GetFormID() : 0);
-				return;
+				return std::nullopt;
 			}
-			std::vector<std::pair<RE::BSTSmartPointer<RE::ExtraDataList>, float>> changes;
-			{
-				RE::BSAutoReadLock l{ list->rwLock };
-				for (const auto& back : a_items) {
-					const auto source = std::ranges::find(a_lent.kit, back.slot, &Source::slot);
-					if (source == a_lent.kit.end()) {
-						continue;
+			const auto healthOf = [](RE::ExtraDataList* a_list) { return a_list && a_list->HasType(RE::EXTRA_DATA_TYPE::kHealth) ? a_list->GetHealthPerc() : -1.0f; };
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (!entry.object || entry.object->GetFormID() != a_source.base) {
+					continue;
+				}
+				std::optional<Hit> byHealth, byIndex;
+				std::uint32_t      index = 0;
+				for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get(), ++index) {
+					const Hit hit{ .object = entry.object, .stack = index, .count = static_cast<std::int32_t>(stack->count) };
+					if (a_source.extra && stack->extra.get() == a_source.extra.get()) {
+						a_extra = stack->extra;
+						return hit;
 					}
-					const auto health = FrameLoan::HealthAfter(source->health, back);
-					if (!health) {
-						continue;
+					const float health = healthOf(stack->extra.get());
+					if (!byHealth && std::abs(health - a_source.health) < 0.0001f) {
+						byHealth = hit;
+						a_extra = stack->extra;
 					}
-					for (auto& entry : list->data) {
-						if (!entry.object || entry.object->GetFormID() != source->base) {
-							continue;
+					if (!byIndex && index == a_source.stack) {
+						byIndex = hit;
+						if (!byHealth) {
+							a_extra = stack->extra;
 						}
-						std::uint32_t index = 0;
-						for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get(), ++index) {
-							if (index == source->stack && stack->extra.get()) {
-								changes.emplace_back(stack->extra, *health);
-							}
-						}
-						break;
 					}
 				}
+				return byHealth ? byHealth : byIndex;
 			}
-			for (auto& [extra, health] : changes) {
-				extra->SetHealthPerc(health);
-				++piecesWorn;
+			return std::nullopt;
+		}
+
+		// What came back of the lent items put on our frame (FrameLoan::AfterReturn): each worn down to what came back, never
+		// up, and each that did not come back taken out of it (its copy is somewhere in the borrower's world now). One item
+		// of its stack only: one of a stack of the same (fusion cores at full charge share one) is split off with its own
+		// extra data first, so the others keep theirs. False when our frame has no inventory here yet: tried again.
+		bool PutBack(RE::TESObjectREFR* a_frame, const std::vector<Source>& a_kit, const std::vector<Protocol::ReturnedItem>& a_items)
+		{
+			if (!a_frame || !a_frame->inventoryList) {
+				return false;
 			}
-			REX::INFO("FrameLoans: {} of our frame {:08X}'s lent items came back worn down", changes.size(), a_frame->GetFormID());
+			std::uint32_t wornDown = 0, removed = 0;
+			for (const auto& source : a_kit) {
+				const auto back = std::ranges::find(a_items, source.slot, &Protocol::ReturnedItem::slot);
+				const auto after = FrameLoan::AfterReturn(source.health, back != a_items.end() ? &*back : nullptr);
+				if (after.what == FrameLoan::Back::kKeep) {
+					continue;
+				}
+				RE::BSTSmartPointer<RE::ExtraDataList> extra;
+				auto                                    hit = SourceStack(a_frame, source, extra);
+				if (!hit) {
+					REX::WARN("FrameLoans: lent item {} ({:08X}) is no longer in our frame {:08X}", source.slot, source.base, a_frame->GetFormID());
+					continue;
+				}
+				if (after.what == FrameLoan::Back::kRemove) {
+					hit->count = 1;
+					RemoveStack(a_frame, *hit);
+					++removed;
+					continue;
+				}
+				if (hit->count == 1 && extra) {
+					extra->SetHealthPerc(after.health);
+				} else {
+					auto item = ItemCopies::ItemOf(hit->object, extra.get());
+					if (!item) {
+						continue;
+					}
+					item->count = 1;
+					item->health = after.health;
+					hit->count = 1;
+					RemoveStack(a_frame, *hit);
+					a_frame->AddObjectToContainer(hit->object, ItemCopies::ExtraFor(*item, hit->object), 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
+				}
+				++wornDown;
+			}
+			piecesWorn += wornDown;
+			piecesTaken += removed;
+			REX::INFO("FrameLoans: of our frame {:08X}'s lent items, {} came back worn down and {} did not come back (taken out of it)", a_frame->GetFormID(), wornDown, removed);
+			return true;
 		}
 
 		void OnReturnedToUs(const Protocol::FrameReturn& a_return)
@@ -502,8 +561,13 @@ namespace FrameLoans
 				return;
 			}
 			++givenBack;
-			if (frame) {
-				WearDown(frame, loan, a_return.items);
+			if (!PutBack(frame, loan.kit, a_return.items)) {
+				// Not loaded here now: put on it once it is (Frame), before anyone here can take from it.
+				if (backs.size() >= MAX_MOVES) {
+					backs.erase(backs.begin());
+				}
+				backs.push_back({ .local = loan.local, .kit = loan.kit, .items = a_return.items, .since = Clock::now() });
+				REX::INFO("FrameLoans: our frame {:08X} has no inventory here now; what came back is put on it once it has", loan.local);
 			}
 			if (frame && FrameLoan::ChoosePlace(a_return) == FrameLoan::Place::kMove) {
 				if (moves.size() >= MAX_MOVES) {
@@ -637,6 +701,14 @@ namespace FrameLoans
 			return true;
 		}
 		return true;
+	}
+
+	bool IsLentItem(std::uint32_t a_base, std::string_view a_name)
+	{
+		if (borrowed.stage == Stage::kNone || borrowed.stage == Stage::kAsked) {
+			return false;
+		}
+		return std::ranges::any_of(borrowed.tags, [&](const FrameLoan::Tag& a_tag) { return FrameLoan::IsTagged(a_tag, a_base, a_name); });
 	}
 
 	bool KeepsThroughSave(const RE::TESObjectREFR* a_copy)
@@ -839,6 +911,17 @@ namespace FrameLoans
 				break;
 			}
 		}
+		// Ours given back while it had no inventory here: what came back put on it once it has.
+		std::erase_if(backs, [&](const PendingBack& a_back) {
+			if (PutBack(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_back.local), a_back.kit, a_back.items)) {
+				return true;
+			}
+			if (now - a_back.since >= MOVE_LIMIT) {
+				REX::WARN("FrameLoans: our frame {:08X} never had an inventory here again; what came back of its loan is not put on it", a_back.local);
+				return true;
+			}
+			return false;
+		});
 		// Ours given back: moved to where its borrower left it once that spot is in our sight.
 		std::erase_if(moves, [&](const Move& a_move) {
 			if (now - a_move.since >= MOVE_LIMIT) {
@@ -888,6 +971,7 @@ namespace FrameLoans
 		borrowed = {};
 		lent.clear();
 		moves.clear();
+		backs.clear();  // the frames they were for are the loaded world's now
 		std::optional<FrameLoan::Record> record;
 		{
 			std::scoped_lock l{ recordLock };

@@ -101,6 +101,27 @@ TEST("frame loan: the return says of each lent item whether it was found and at 
 	// A slot named twice is answered once.
 	const auto doubled = ComposeReturn({ { .slot = 1, .base = 1 }, { .slot = 1, .base = 2 } }, {});
 	CHECK(doubled.size() == 1);
+	// Our copy gone (unloaded with its cell, what it held with it): one not found went with it, and is left out.
+	const auto gone = ComposeReturn(tags, { { .slot = 3, .health = 0.5f } }, true);
+	REQUIRE(gone.size() == 1);
+	CHECK((gone[0] == Protocol::ReturnedItem{ .slot = 3, .found = true, .health = 0.5f }));
+}
+
+TEST("frame loan: the owner keeps an item the return says nothing of, wears down one that came back, and takes out one that did not")
+{
+	using FrameLoan::AfterBack;
+	using FrameLoan::AfterReturn;
+	using FrameLoan::Back;
+	using Protocol::ReturnedItem;
+	CHECK((AfterReturn(0.8f, nullptr) == AfterBack{}));  // its copy never made (a mod the borrower lacks)
+	const ReturnedItem worn{ .slot = 0, .found = true, .health = 0.5f };
+	CHECK((AfterReturn(0.8f, &worn) == AfterBack{ .what = Back::kWear, .health = 0.5f }));
+	const ReturnedItem better{ .slot = 0, .found = true, .health = 0.9f };
+	CHECK((AfterReturn(0.8f, &better) == AfterBack{}));
+	// Dropped, sold, stored or used up in the borrower's world: the owner keeping theirs would make it two.
+	const ReturnedItem lost{ .slot = 0, .found = false, .health = -1.0f };
+	CHECK(AfterReturn(0.8f, &lost).what == Back::kRemove);
+	CHECK(AfterReturn(-1.0f, &lost).what == Back::kRemove);
 }
 
 TEST("frame loan: the owner lends while they lend, the frame is theirs here, nobody is in it and nobody has it")

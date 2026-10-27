@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Power armor lent between players (the rules: FrameLoan.h). A friend presses E on our copy of a frame their game made
@@ -30,6 +31,10 @@ namespace FrameLoans
 	// Our player pressed E on a_frame, our copy of a_owner's frame shared as a_spawnId (RemotePlayers' frame gate): false
 	// lets them in (lent to us, the kit in it); true keeps them out, and the HUD says why or that we asked.
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner);
+
+	// An item of a_base named a_name is one of the copies of a friend's lent pieces our player holds now (Drops never gives
+	// one away: it goes back at the return).
+	[[nodiscard]] bool IsLentItem(std::uint32_t a_base, std::string_view a_name);
 
 	// A save or a load is coming (Spawns::DiscardCopies): the copy our player wears on loan is kept as it is.
 	[[nodiscard]] bool KeepsThroughSave(const RE::TESObjectREFR* a_copy);

@@ -172,9 +172,11 @@ namespace FrameLoan
 		float        health = -1.0f;
 	};
 
-	// The return's word on each lent item, in slot order: found, with its condition (the lowest, should one be found
-	// twice), or not found (left out by FormTranslate as our game lacked it, or put somewhere the return does not look).
-	inline std::vector<Protocol::ReturnedItem> ComposeReturn(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found)
+	// The return's word on each lent item our copies were made of, in slot order: found, with its condition (the lowest,
+	// should one be found twice), or not found: it left our copy and our player (dropped, sold, stored, a core used up), and
+	// the owner takes theirs out (AfterReturn). With our copy gone (a_copyGone: unloaded with its cell, what was in it with
+	// it) one not found is left out instead: it went with the copy, and the owner keeps theirs.
+	inline std::vector<Protocol::ReturnedItem> ComposeReturn(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found, bool a_copyGone = false)
 	{
 		std::vector<Protocol::ReturnedItem> out;
 		for (const auto& tag : a_tags) {
@@ -193,6 +195,9 @@ namespace FrameLoan
 				} else if (health >= 0.0f && (item.health < 0.0f || health < item.health)) {
 					item.health = health;
 				}
+			}
+			if (!item.found && a_copyGone) {
+				continue;
 			}
 			out.push_back(item);
 		}
@@ -258,7 +263,7 @@ namespace FrameLoan
 	}
 
 	// The condition the owner's piece (or core) is left at after the return: the lower of what was lent and what came
-	// back, so a borrower can only wear it down. None when nothing is to change: not found (it stays as lent), no word
+	// back, so a borrower can only wear it down. None when nothing is to change: not found (see AfterReturn), no word
 	// of its condition, or none lower. A lent item with no condition of its own (a_lent -1) is at its full condition.
 	inline std::optional<float> HealthAfter(float a_lent, const Protocol::ReturnedItem& a_back)
 	{
@@ -267,6 +272,39 @@ namespace FrameLoan
 		}
 		const float lent = a_lent >= 0.0f ? (std::min)(a_lent, 1.0f) : 1.0f;
 		return a_back.health < lent ? std::optional<float>{ a_back.health } : std::nullopt;
+	}
+
+	// What becomes of one lent item of the owner's as a return comes in. Kept as it is when the return says nothing of it
+	// (the borrower's game never made its copy: a mod it lacks), worn down when it came back lower (HealthAfter), and taken
+	// out of the owner's frame when it did not come back at all: its copy left the borrower's frame and player (dropped,
+	// sold, stored, a core used up), so the owner keeping theirs would make it two.
+	enum class Back
+	{
+		kKeep,
+		kWear,
+		kRemove,
+	};
+
+	struct AfterBack
+	{
+		Back  what = Back::kKeep;
+		float health = -1.0f;  // kWear's
+
+		bool operator==(const AfterBack&) const = default;
+	};
+
+	inline AfterBack AfterReturn(float a_lent, const Protocol::ReturnedItem* a_back)
+	{
+		if (!a_back) {
+			return {};
+		}
+		if (!a_back->found) {
+			return { .what = Back::kRemove };
+		}
+		if (const auto health = HealthAfter(a_lent, *a_back)) {
+			return { .what = Back::kWear, .health = *health };
+		}
+		return {};
 	}
 
 	// Where the owner's frame is put as the loan ends: moved to where the borrower left it (kMove), or left where it

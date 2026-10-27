@@ -3,6 +3,7 @@
 #include "game/DropBook.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/Hud.h"
 #include "game/ItemCopies.h"
 #include "game/OpenMenus.h"
@@ -765,6 +766,15 @@ namespace Drops
 				const auto item = ItemOf(ref.get(), a_pending.count, a_pending.nonce);
 				if (!item) {
 					++notGiven;
+					return true;
+				}
+				// A copy of a friend's lent piece (FrameLoans): never given, as it is not ours. Left lying in our world, and
+				// its owner takes theirs out at the return, as for one sold or stored.
+				if (FrameLoans::IsLentItem(item->base, item->name)) {
+					++notGiven;
+					if (Log()) {
+						REX::INFO("Drops: {:08X} ({:08X}) dropped is a copy of a friend's lent piece; not given", ref->GetFormID(), item->base);
+					}
 					return true;
 				}
 				Send(Protocol::Encode(*item, Protocol::MessageType::kReportDrop));
