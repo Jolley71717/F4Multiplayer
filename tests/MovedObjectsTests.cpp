@@ -259,6 +259,77 @@ TEST("moved objects places: a flood of one friend's rests for objects we never l
 	CHECK(waiting.Find(made.refId) != nullptr);  // the newest still waits
 }
 
+// A catch-up waited (it came while loading, or before we were near); then a friend moved the object on from where the
+// session has it. Our copy still lay where our save had it, across the map: judged from it, the friend's move was too
+// far and dropped, the catch-up with it, and the object stayed in its old place in our game for good.
+TEST("moved objects places: a friend's move of an object whose place still waits here is judged from that place, and never loses it")
+{
+	using ObjectShare::Verdict;
+	const Vec3 saved{ 400, 20600, 30 };  // where our save has the broom: 20000 from where the friend leaves it
+	auto       caughtUp = Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 100, 600, 30 });
+	auto       moved = Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 400, 600, 30 });
+	moved.playerId = 1;
+
+	// From the waiting place, not our copy.
+	CHECK(Near(ObjectShare::FromWhereItLies(saved, &caughtUp, moved.cell, moved.worldspace, moved.position), 300.0f));
+	CHECK(Near(ObjectShare::FromWhereItLies(saved, nullptr, moved.cell, moved.worldspace, moved.position), 20000.0f));
+	// Whichever is nearer: our copy may be in the friend's hands already.
+	CHECK(Near(ObjectShare::FromWhereItLies({ 410, 600, 30 }, &caughtUp, moved.cell, moved.worldspace, moved.position), 10.0f));
+	// A place in another space says nothing of where it lies in this one.
+	auto inside = caughtUp;
+	inside.worldspace = 0;
+	inside.cell = 0x0001F2A3;
+	CHECK(Near(ObjectShare::FromWhereItLies(saved, &inside, moved.cell, moved.worldspace, moved.position), 20000.0f));
+
+	ObjectShare::Facts facts{ .loaded = true, .sameSpace = true, .fromUs = 500.0f,
+		.fromPlace = ObjectShare::FromWhereItLies(saved, &caughtUp, moved.cell, moved.worldspace, moved.position) };
+	CHECK(ObjectShare::JudgeRest(facts) == Verdict::kApply);
+	facts.fromPlace = ObjectShare::FromWhereItLies(saved, nullptr, moved.cell, moved.worldspace, moved.position);
+	CHECK(ObjectShare::JudgeRest(facts) == Verdict::kTooFar);  // as it was: a made-up jump across the map
+
+	// A move not applied: what waits after it.
+	CHECK(!ObjectShare::StillWaiting(Verdict::kApply, moved, &caughtUp));
+	CHECK(!ObjectShare::StillWaiting(Verdict::kOurs, moved, &caughtUp));  // our player holds it: their move is the newer
+	const auto notHere = ObjectShare::StillWaiting(Verdict::kNotHere, moved, &caughtUp);
+	REQUIRE(notHere);
+	CHECK(notHere->playerId == 1);  // their rest, the newer
+	CHECK(Near(notHere->position, moved.position));
+	const auto tooFar = ObjectShare::StillWaiting(Verdict::kTooFar, moved, &caughtUp);  // too far even from the place
+	REQUIRE(tooFar);
+	CHECK(tooFar->playerId == 0);  // the session's place still waits
+	CHECK(Near(tooFar->position, caughtUp.position));
+	CHECK(!ObjectShare::StillWaiting(Verdict::kTooFar, moved, nullptr));
+	// A let-go not applied here: what waited stays, so the rest that follows is judged from it.
+	const auto letGo = Rest(BROOM, Protocol::ObjectRestKind::kLetGo, 3, { 150, 600, 80 }, { 0, 300, 50 });
+	const auto flying = ObjectShare::StillWaiting(Verdict::kNotHere, letGo, &caughtUp);
+	REQUIRE(flying);
+	CHECK(flying->kind == Protocol::ObjectRestKind::kRest);
+	CHECK(Near(flying->position, caughtUp.position));
+	CHECK(!ObjectShare::StillWaiting(Verdict::kNotHere, letGo, nullptr));
+
+	// The whole way through, as MovedObjects::OnRested takes them: the catch-up waits, the friend's let-go comes while
+	// our game can't apply it, then their rest, once our game has the broom near.
+	ObjectShare::WaitingPlaces waiting;
+	waiting.Add(caughtUp);
+	const auto take = [&](const Protocol::ObjectRest& a_move, ObjectShare::Facts a_facts) {
+		std::optional<Protocol::ObjectRest> waited;
+		if (const auto place = waiting.Find(a_move.refId)) {
+			waited = *place;
+		}
+		waiting.Erase(a_move.refId);
+		a_facts.fromPlace = ObjectShare::FromWhereItLies(saved, waited ? &*waited : nullptr, a_move.cell, a_move.worldspace, a_move.position);
+		const auto verdict = ObjectShare::JudgeRest(a_facts);
+		if (const auto still = ObjectShare::StillWaiting(verdict, a_move, waited ? &*waited : nullptr)) {
+			waiting.Add(*still);
+		}
+		return verdict;
+	};
+	CHECK(take(letGo, {}) == Verdict::kNotHere);
+	REQUIRE(waiting.Find(BROOM));
+	CHECK(take(moved, { .loaded = true, .sameSpace = true, .fromUs = 500.0f }) == Verdict::kApply);
+	CHECK(waiting.Empty());
+}
+
 // --- the holder's frame -------------------------------------------------------------------------------------------
 
 TEST("moved objects frame: an object ahead of a holder facing +x is ahead in their frame, and back")
@@ -1238,4 +1309,30 @@ TEST("moved objects server: the places are saved with the session, and a joiner 
 		CHECK(places[0].playerId == 0);
 		CHECK(Near(places[0].position, { -50, 20, 4 }));
 	}
+}
+
+TEST("moved objects server: a game that loads a save, or rejoins, is told the places again, each object's newest")
+{
+	constexpr std::uint64_t BOB_IDENTITY = 0xB0B;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob", BOB_IDENTITY);
+	Clear(f, { 1, 2 });
+	// Alice knocks the tire over with Bob away, then again.
+	f.fake->Deliver(1, RestPacket(Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -50, 20, 4 })));
+	f.fake->Deliver(1, RestPacket(Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -80, 25, 4 })));
+	Clear(f, { 1, 2 });
+	const auto told = [](const Packets& a_packets) {
+		const auto places = Resteds(a_packets);
+		return places.size() == 1 && places[0].refId == TIRE && places[0].playerId == 0 && Near(places[0].position, { -80, 25, 4 });
+	};
+
+	// Bob loads a save from before it: the world state he asks for carries the place.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0 }));
+	CHECK(told(Received(f, 2)));
+	// Bob leaves and comes back.
+	f.fake->Drop(2);
+	REQUIRE(f.fake->Settle());
+	JoinAs(f, 3, "Bob", BOB_IDENTITY);
+	CHECK(told(Received(f, 3)));
 }
