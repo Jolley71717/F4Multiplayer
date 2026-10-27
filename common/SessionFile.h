@@ -47,7 +47,12 @@ namespace SessionFile
 	// 39 adds to 38 the container each drop was put in (Protocol::DroppedItem::holder: a gift, src/game/GiftBook.h), and
 	// keeps a gift's offer (takerId Protocol::DROP_OFFERED). A session with no gift is written as 38 or 36, its drops without
 	// a holder, so an older build still reads it; a drop in a file before 39 lies loose.
-	inline constexpr std::uint16_t FORMAT = 39;
+	// 40 adds to 39 the characters whose worlds each drop left and went into (DroppedItem::ownerCharacter and
+	// takerCharacter), and takes 39's place: a session with a gift is written as 40. One without stays 38 or 36, so an
+	// older build still reads it, and its drops' characters hold only while the server runs (a restart forgets them: a
+	// character not known, which any matches). A 39 file (0.10.0's test builds) reads as one with no characters.
+	inline constexpr std::uint16_t FORMAT = 40;
+	inline constexpr std::uint16_t CHARACTERS = 40;
 	inline constexpr std::uint16_t GIFTS = 39;
 	inline constexpr std::uint16_t STORAGE = 38;
 	inline constexpr std::uint16_t STORAGE_TEST = 37;
@@ -63,7 +68,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 40 (35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 41 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -77,12 +82,13 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasObjectPlaces(std::uint16_t a_format) { return a_format >= OBJECT_PLACES; }
 	[[nodiscard]] constexpr bool HasStorageOwners(std::uint16_t a_format) { return a_format >= STORAGE; }
 	[[nodiscard]] constexpr bool HasHolders(std::uint16_t a_format) { return a_format >= GIFTS; }
+	[[nodiscard]] constexpr bool HasCharacters(std::uint16_t a_format) { return a_format >= CHARACTERS; }
 
 	// The layout a snapshot is written in: the oldest that holds it, so a session without gifts or shared storage is still
 	// one an older build reads.
 	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_gifts, bool a_storage)
 	{
-		return a_gifts ? GIFTS : a_storage ? STORAGE : OBJECT_PLACES;
+		return a_gifts ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
 	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
@@ -205,7 +211,7 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
 			const Protocol::DropList list{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } };
-			packet(HasHolders(layout) ? Protocol::Encode(list) : Protocol::EncodeBeforeHolders(list));
+			packet(HasCharacters(layout) ? Protocol::EncodeWithCharacters(list) : HasHolders(layout) ? Protocol::Encode(list) : Protocol::EncodeBeforeHolders(list));
 		}
 		for (std::size_t i = 0; i < a_snapshot.traps.size(); i += Protocol::MAX_TRAPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.traps.size(), i + Protocol::MAX_TRAPS_PER_PACKET);
@@ -326,7 +332,10 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kDropList: {
-				const auto list = !HasDrops(version) ? std::nullopt : HasHolders(version) ? Protocol::DecodeDropList(packet) : Protocol::DecodeDropListBeforeHolders(packet);
+				const auto list = !HasDrops(version)    ? std::nullopt :
+				                  HasCharacters(version) ? Protocol::DecodeDropListWithCharacters(packet) :
+				                  HasHolders(version)    ? Protocol::DecodeDropList(packet) :
+				                                           Protocol::DecodeDropListBeforeHolders(packet);
 				if (!list) {
 					return std::nullopt;
 				}

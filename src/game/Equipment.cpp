@@ -1206,6 +1206,40 @@ namespace Equipment
 			}
 			return result;
 		}
+
+		// The container menu draws its two lists from the inventories when it opens and again after a transfer it makes
+		// itself (or as the player switches between them); an item put in or taken out from outside the menu (a gift's copy,
+		// a take granted or held back) is only drawn at the next of those. So its own frame (AdvanceMovie, on the UI's
+		// thread, the menu's own code and data) draws both lists again when asked: UpdateList, as the engine itself calls it.
+		constexpr std::size_t ADVANCE_MOVIE_INDEX = 0x04;
+		using AdvanceMovieFn = void (*)(RE::IMenu*, float, std::uint64_t);
+		AdvanceMovieFn             originalContainerAdvance = nullptr;
+		std::atomic<bool>          containerRedraw{ false };
+		std::atomic<std::uint32_t> containerRedraws{ 0 };
+
+		void ContainerAdvanceHook(RE::IMenu* a_menu, float a_timeDelta, std::uint64_t a_time)
+		{
+			if (containerRedraw.exchange(false)) {
+				const auto menu = static_cast<RE::ContainerMenu*>(a_menu);
+				menu->UpdateList(true);
+				menu->UpdateList(false);
+				++containerRedraws;
+			}
+			originalContainerAdvance(a_menu, a_timeDelta, a_time);
+		}
+	}
+
+	void RedrawContainerMenu()
+	{
+		// Only while it is open: a request left over would redraw the next menu for nothing (harmless, but not asked).
+		if (originalContainerAdvance && OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+			containerRedraw = true;
+		}
+	}
+
+	std::uint32_t ContainerMenuRedraws()
+	{
+		return containerRedraws;
 	}
 
 	void InstallFrameGate()
@@ -1216,7 +1250,10 @@ namespace Equipment
 		const auto slot = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * PROCESS_MESSAGE_INDEX;
 		originalContainerMessage = *reinterpret_cast<ProcessMessageFn*>(slot);
 		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ContainerMessageHook));
-		REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer)");
+		const auto advance = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * ADVANCE_MOVIE_INDEX;
+		originalContainerAdvance = *reinterpret_cast<AdvanceMovieFn*>(advance);
+		REL::WriteSafeData(advance, reinterpret_cast<std::uintptr_t>(&ContainerAdvanceHook));
+		REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer; its lists drawn again on a gift's change)");
 	}
 
 	void InstallFrameUse()

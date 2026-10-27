@@ -2344,6 +2344,7 @@ void Server::Run()
 		if (!record) {
 			return;
 		}
+		drops.SetCharacter(a_player.id, record->character);  // their drops and takes from now on are that world's, held or not
 		if (const auto now = Clock::now(); now - a_player.dropRecordAt >= DROP_RECORD_INTERVAL) {
 			a_player.heldDropRecord.reset();
 			answerDropRecord(a_player, *record, now);

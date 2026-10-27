@@ -92,7 +92,13 @@ namespace Drops
 	// The co-save (on the save's or load's thread): our record, written with the save and read back with it.
 	std::vector<std::uint8_t> SaveRecord();
 	void                      LoadRecord(std::span<const std::uint8_t> a_bytes);
-	void                      RevertRecord();
+	void                      RevertRecord();  // the world's key too
+
+	// Whose world our record speaks for (CharacterBinding::World): its key, in the co-save beside the record (on the save's
+	// or load's thread), and after the load or new game is done (main thread; a_character: the loaded character's ID).
+	std::vector<std::uint8_t> SaveWorld();
+	void                      LoadWorld(std::span<const std::uint8_t> a_bytes);
+	void                      OnWorldStarted(bool a_newGame, std::uint64_t a_character);
 
 	// The session ended: copies deleted, everything but the record forgotten (it describes our world).
 	void Reset();

@@ -28,9 +28,9 @@ namespace
 		return item;
 	}
 
-	Protocol::DropRecord Record(std::vector<std::uint64_t> a_made, std::vector<std::uint32_t> a_taken, std::uint64_t a_session = SESSION)
+	Protocol::DropRecord Record(std::vector<std::uint64_t> a_made, std::vector<std::uint32_t> a_taken, std::uint64_t a_session = SESSION, std::uint64_t a_character = 0)
 	{
-		return { a_session, std::move(a_made), std::move(a_taken) };
+		return { a_session, std::move(a_made), std::move(a_taken), a_character };
 	}
 
 	// a_owner drops a_item and their game swaps it for a copy: it lies there for anyone. Its drop ID.
@@ -287,7 +287,7 @@ TEST("drop store: an item its owner took back, then a save from before the drop:
 	CHECK(other.Find(id2) != nullptr);
 }
 
-// A world with no record of the session (a new game, a save from before it), then the save that has it: each load makes
+// A world with no record of the session (a save of the same character from before it), then the save that has it: each load makes
 // the book agree with the world loaded last, so nothing is lost or copied by going through the wrong one first.
 TEST("drop store: a world without the record, then the save with it: what it gave lies there again, what it took is its own again")
 {
@@ -456,7 +456,7 @@ TEST("drop store: a gift's offer goes into the session file and comes back as an
 	snapshot.sessionId = SESSION;
 	snapshot.drops = all;
 	const auto bytes = SessionFile::Encode(snapshot);
-	CHECK(LayoutOf(bytes) == SessionFile::GIFTS);
+	CHECK(LayoutOf(bytes) == SessionFile::CHARACTERS);
 	const auto read = SessionFile::Decode(bytes);
 	REQUIRE(read);
 	CHECK(read->drops == all);
@@ -490,9 +490,9 @@ TEST("drop store: a gift's offer goes into the session file and comes back as an
 	CHECK(odd.LyingCount() == 0);
 }
 
-// Layout 39 holds each drop's container. A session with no gift is still written in the layout an older build reads,
+// Layout 39 holds each drop's container, and 40 its characters too. A session with no gift is still written in the layout an older build reads,
 // and a file of an older layout reads its drops as loose; one that says it is older but holds holders is damage.
-TEST("session file: a session with gifts takes layout 39; one without stays 36 or 38, and an older file's drops lie loose")
+TEST("session file: a session with gifts takes layout 40; one without stays 36 or 38, and an older file's drops lie loose")
 {
 	SessionFile::Snapshot snapshot;
 	snapshot.contentHash = 1;
@@ -519,8 +519,9 @@ TEST("session file: a session with gifts takes layout 39; one without stays 36 o
 	gifts.drops.back().dropId = 2;
 	gifts.drops.back().ownerId = BOB;
 	const auto bytes = SessionFile::Encode(gifts);
-	CHECK(LayoutOf(bytes) == SessionFile::GIFTS);
+	CHECK(LayoutOf(bytes) == SessionFile::CHARACTERS);
 	CHECK(SessionFile::Readable(SessionFile::GIFTS));
+	CHECK(SessionFile::Readable(SessionFile::CHARACTERS));
 	const auto read = SessionFile::Decode(bytes);
 	REQUIRE(read);
 	CHECK(read->drops == gifts.drops);
@@ -529,5 +530,137 @@ TEST("session file: a session with gifts takes layout 39; one without stays 36 o
 	const std::uint16_t storage = SessionFile::STORAGE;
 	std::memcpy(older.data() + 4, &storage, sizeof(storage));
 	CHECK(!SessionFile::Decode(older));
-	CHECK(!SessionFile::Readable(40));  // a later build's
+	CHECK(!SessionFile::Readable(41));  // a later build's
+}
+
+// ---- whose world: a drop's characters (DropRecord::character) ---------------------------------------------------
+
+namespace
+{
+	constexpr std::uint64_t ALICE_OLD = 0x0000'0000'A11C'E001;  // Alice's first character's world
+	constexpr std::uint64_t ALICE_NEW = 0x0000'0000'A11C'E002;  // the one she started over with
+	constexpr std::uint64_t BOBS = 0x0000'0000'0000'B0B0;
+}
+
+// Found on the rig: a host who started over as a fresh character (no save loaded) had the gifts their old character
+// took laid down again, so each was in the old character's saves and in the chest (4 items became 6). A new character's
+// world never had them; the old character's own save from before the take still lacks them.
+TEST("drop store: a new character's record lays down nothing an older one took and takes back nothing it gave; that one's own older save still does")
+{
+	DropStore store;
+	store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_OLD), SESSION);  // her welcome
+	store.Reconcile(BOB, Record({}, {}, SESSION, BOBS), SESSION);
+	const auto bobs = Laid(store, BOB, Gift(21));
+	REQUIRE(store.Take(ALICE, bobs));                 // her old character took Bob's gun
+	const auto hers = Laid(store, ALICE, Gift(11));  // and gave one, lying there
+
+	// She starts over: nothing in her world, no record.
+	const auto fresh = store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION);
+	CHECK(fresh.returned.empty());
+	CHECK(fresh.withdrawn.empty());
+	CHECK(fresh.unoffered.empty());
+	CHECK(fresh.dupRisk == 0);
+	CHECK(!fresh.changed);
+	CHECK(store.TakerOf(bobs) == ALICE);
+	CHECK(store.Find(hers) != nullptr);
+	CHECK(store.CharacterOf(ALICE) == ALICE_NEW);
+
+	// Her old character's save from before both: Bob's gun isn't in it (it lies there again), her own is (withdrawn).
+	const auto old = store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_OLD), SESSION);
+	REQUIRE(old.returned.size() == 1);
+	CHECK(old.returned[0].dropId == bobs);
+	REQUIRE(old.withdrawn.size() == 1);
+	CHECK(old.withdrawn[0].dropId == hers);
+	CHECK(old.withdrawn[0].takerId == 0);
+
+	// The new character takes Bob's gun: it is that world's. The old one's save doesn't lay it down; the new one's from
+	// before the take does.
+	store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION);
+	REQUIRE(store.Take(ALICE, bobs));
+	CHECK(store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_OLD), SESSION).returned.empty());
+	const auto before = store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION);
+	REQUIRE(before.returned.size() == 1);
+	CHECK(before.returned[0].dropId == bobs);
+	// And a save of it after the take keeps it (withdrawn into the new world again, as it took it).
+	const auto after = store.Reconcile(ALICE, Record({}, { bobs }, SESSION, ALICE_NEW), SESSION);
+	REQUIRE(after.withdrawn.size() == 1);
+	CHECK(after.withdrawn[0].takerId == ALICE);
+	CHECK(store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_OLD), SESSION).returned.empty());
+}
+
+TEST("drop store: a gift's offer one character of its giver made waits for that character's record; another's leaves it")
+{
+	DropStore store;
+	store.SetCharacter(ALICE, ALICE_OLD);
+	const auto offer = store.Add(ALICE, Gift(11)).drop->dropId;
+	CHECK(store.DropOffers(ALICE) == 0);  // her link went: a gift's offer stays
+	const auto fresh = store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION);
+	CHECK(fresh.unoffered.empty());
+	CHECK(fresh.confirmed.empty());
+	CHECK(store.OfferCount() == 1);
+	const auto old = store.Reconcile(ALICE, Record({ 11 }, {}, SESSION, ALICE_OLD), SESSION);
+	REQUIRE(old.confirmed.size() == 1);
+	CHECK(old.confirmed[0].dropId == offer);
+	CHECK(store.Take(BOB, offer));
+}
+
+// A record or a file from before characters (0) is any character's: the book does as it did.
+TEST("drop store: a character not known, on the record or on the drop, matches any")
+{
+	CHECK(DropStore::SameCharacter(0, ALICE_OLD));
+	CHECK(DropStore::SameCharacter(ALICE_OLD, 0));
+	CHECK(DropStore::SameCharacter(ALICE_OLD, ALICE_OLD));
+	CHECK(!DropStore::SameCharacter(ALICE_OLD, ALICE_NEW));
+
+	DropStore  store;
+	const auto bobs = Laid(store, BOB, Gift(21));
+	REQUIRE(store.Take(ALICE, bobs));  // no record of hers yet: not known whose world took it
+	CHECK(store.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION).returned.size() == 1);
+	store.SetCharacter(ALICE, ALICE_OLD);
+	REQUIRE(store.Take(ALICE, bobs));
+	CHECK(store.Reconcile(ALICE, Record({}, {}, SESSION), SESSION).returned.size() == 1);  // an older build's record
+}
+
+// The host restarted (its server with it): the file keeps whose worlds each gift left and went into, so a new character
+// after the restart still gets back nothing the old one took.
+TEST("session file: a drop's characters go into the session file with the gifts and come back")
+{
+	DropStore store;
+	store.SetCharacter(ALICE, ALICE_OLD);
+	store.SetCharacter(BOB, BOBS);
+	const auto lying = Laid(store, BOB, Gift(21));
+	const auto taken = Laid(store, BOB, Gift(22));
+	REQUIRE(store.Take(ALICE, taken));
+	const auto offer = store.Add(ALICE, Gift(11)).drop->dropId;
+
+	SessionFile::Snapshot snapshot;
+	snapshot.contentHash = 1;
+	snapshot.sessionId = SESSION;
+	snapshot.drops = store.All();
+	const auto bytes = SessionFile::Encode(snapshot);
+	CHECK(LayoutOf(bytes) == SessionFile::CHARACTERS);
+	const auto read = SessionFile::Decode(bytes);
+	REQUIRE(read);
+	CHECK(read->drops == snapshot.drops);
+	auto older = bytes;
+	const std::uint16_t gifts = SessionFile::GIFTS;
+	std::memcpy(older.data() + 4, &gifts, sizeof(gifts));
+	CHECK(!SessionFile::Decode(older));  // 39's drops have no characters: this is damage
+
+	DropStore again;
+	for (const auto& drop : read->drops) {
+		again.Restore(drop);
+	}
+	REQUIRE(again.Find(lying) != nullptr);
+	CHECK(again.Find(lying)->ownerCharacter == BOBS);
+	const auto fresh = again.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION);
+	CHECK(fresh.returned.empty());
+	CHECK(fresh.unoffered.empty());
+	CHECK(again.TakerOf(taken) == ALICE);
+	CHECK(again.OfferCount() == 1);
+	const auto old = again.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_OLD), SESSION);
+	REQUIRE(old.returned.size() == 1);
+	CHECK(old.returned[0].dropId == taken);
+	REQUIRE(old.unoffered.size() == 1);
+	CHECK(old.unoffered[0].dropId == offer);
 }

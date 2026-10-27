@@ -218,6 +218,11 @@ namespace
 	constexpr std::uint32_t DROP_RECORD = 'DROP';
 	constexpr std::uint32_t DROP_VERSION = 1;
 	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
+	// Whose world the drop record speaks for (CharacterBinding::World): its key alone, so a build that knows no key reads
+	// the save's 'DROP' record as it always did.
+	constexpr std::uint32_t WORLD_RECORD = 'CHAR';
+	constexpr std::uint32_t WORLD_VERSION = 1;
+	constexpr std::uint32_t WORLD_LENGTH = 8;
 
 	constexpr std::uint32_t RADIANT_RECORD = 'RADI';
 	constexpr std::uint32_t RADIANT_VERSION = 1;
@@ -245,6 +250,9 @@ namespace
 		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
 			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
 		}
+		if (const auto world = Drops::SaveWorld(); a_intfc->OpenRecord(WORLD_RECORD, WORLD_VERSION)) {
+			a_intfc->WriteRecordData(world.data(), static_cast<std::uint32_t>(world.size()));
+		}
 		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
 		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
 			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
@@ -271,6 +279,11 @@ namespace
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Drops::LoadRecord(bytes);
+				}
+			} else if (type == WORLD_RECORD && version == WORLD_VERSION && length == WORLD_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Drops::LoadWorld(bytes);
 				}
 			} else if (type == KEPT_RECORD && version == KEPT_VERSION && length <= KEPT_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);

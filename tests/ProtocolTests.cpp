@@ -1853,6 +1853,44 @@ TEST("protocol: a drop list of the layout before holders reads as loose drops, a
 	CHECK(Protocol::EncodeBeforeHolders(Protocol::DropList{}) == Protocol::Encode(Protocol::DropList{}));  // nothing to hold
 }
 
+// A drop's owner's and taker's characters are the server's own (its book and session file since SessionFile::CHARACTERS):
+// never on the wire, and the file's list reads only as the file's.
+TEST("protocol: a drop's characters go only into the session file's list, which no other layout reads")
+{
+	Protocol::DroppedItem drop{ .dropId = 3, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 1, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .takerId = 5,
+		.holder = 0x0001D9F6, .ownerCharacter = 0x1111222233334444ull, .takerCharacter = 0x8000000000ABCDEFull };
+	const Protocol::DropList list{ true, { drop } };
+	const auto               file = Protocol::DecodeDropListWithCharacters(Protocol::EncodeWithCharacters(list));
+	REQUIRE(file);
+	CHECK(*file == list);
+	const auto wire = Protocol::DecodeDropList(Protocol::Encode(list));
+	REQUIRE(wire);
+	CHECK(wire->drops[0].ownerCharacter == 0);
+	CHECK(wire->drops[0].takerCharacter == 0);
+	const auto placed = Protocol::DecodeDroppedItem(Protocol::Encode(drop, Protocol::MessageType::kDropPlaced));
+	REQUIRE(placed);
+	CHECK(placed->ownerCharacter == 0);
+	CHECK(placed->takerCharacter == 0);
+	CHECK(!Protocol::DecodeDropList(Protocol::EncodeWithCharacters(list)));
+	CHECK(!Protocol::DecodeDropListWithCharacters(Protocol::Encode(list)));
+}
+
+// A drop record says whose world it is, last, and a record without it is refused like any other cut one.
+TEST("protocol: a drop record carries its world's character")
+{
+	const Protocol::DropRecord record{ 0x1122334455667788ull, { 7, 8 }, { 3 }, 0x0123456789ABCDEFull };
+	const auto                 bytes = Protocol::Encode(record);
+	const auto                 read = Protocol::DecodeDropRecord(bytes);
+	REQUIRE(read);
+	CHECK(*read == record);
+	for (std::size_t cut = 1; cut <= 8; ++cut) {
+		CHECK(!Protocol::DecodeDropRecord(std::vector<std::uint8_t>(bytes.begin(), bytes.end() - static_cast<std::ptrdiff_t>(cut))));
+	}
+	auto longer = bytes;
+	longer.push_back(0);
+	CHECK(!Protocol::DecodeDropRecord(longer));
+}
+
 // The host's bContainerGifts is welcome flag bit 64, alone: no other rule moves with it, and a welcome without it is off.
 TEST("protocol: the container gifts rule is the welcome's flag bit 64")
 {

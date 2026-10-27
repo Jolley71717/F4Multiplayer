@@ -1634,6 +1634,7 @@ namespace Session
 		Destructibles::Reset();
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
+		Drops::OnWorldStarted(a_newGame, CurrentCharacter());  // whose world the record speaks for (sent below)
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session

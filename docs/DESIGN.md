@@ -1012,6 +1012,20 @@ So players give each other items by dropping them, and the server decides who ha
   made after the load are recorded. The answer is the list of what lies about (`kDropList`). A record of another session counts as
   empty. What lies about and who took what is kept in the session file (layout 33; 30 in the drops' own test builds), so it survives the
   host's server restarting.
+- Whose world (0.10.0): only one character's saves hold what its world gave and took. Each world has a key of
+  its own (`CharacterBinding::World`), kept in its saves (co-save record `CHAR` v1, 8 bytes, beside `DROP` so an
+  older build reads that as before) and said last in its `kDropRecord` (`DropRecord::character`; a drop with none, from a session
+  file from before, is any character's). The engine's character ID can't be it: every coc character from the main menu has 0, and a
+  new game has the last character's until named. A new game gets a fresh key; a save its own, or, from before
+  keys, one made from its character's ID (all that character's older saves agree); a world nothing loaded or
+  started (coc from the main menu) a fresh one when first asked. The server keeps on each drop the characters
+  whose worlds it left and went into (`ownerCharacter`, `takerCharacter`, never sent), and a record of another
+  character's world lays down nothing an older character took, takes back nothing it gave (its drops lie on) and
+  leaves its gifts' offers waiting (`DropStore::SameCharacter`). So a player who starts over doesn't get back
+  what their old character took (found on the rig: a host restarting as a fresh character, 4 items became 6),
+  while that character's own save from before a take still does. The characters are saved with a session that
+  holds a gift (layout 40); one without keeps them while the server runs (a restart forgets them: as before,
+  any character).
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
   and to drop it near them instead (not for a put in a gift's place with the host's `bContainerGifts` on: see Giving
   through a container).
@@ -1102,14 +1116,23 @@ container's menu open, and only then.
   closes (or is found gone for 1 s), as their gift goes, before every save and load and as the session ends: no save
   holds one. OwnGear `kGiftCopy` lets them into a container's inventory only. The engine's changes made here are kept
   out of WorldSync's watch (`Gifts::Applying`).
+- **Drawn at once.** The container menu draws its two lists as it opens and after a transfer it makes itself (or as
+  the player switches between them), never for an item put in or taken out from outside it: a copy added just after
+  it opened (as every copy is) and a take granted or held back while it was open showed only at the player's next
+  key press (rig, #180). Every add and remove Gifts makes asks the open menu to draw both lists again
+  (`Equipment::RedrawContainerMenu`): the container menu's frame (its vtable's AdvanceMovie, hooked beside its
+  messages, on the UI's thread in the menu's own code) calls the menu's own `UpdateList` for each side, as the engine
+  does after a transfer, at most once a frame. `net status` counts them (`redraws=`).
 - **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
   before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
-  it: it lies there again.
-- **Saved.** The session file takes layout 39 while the server remembers any gift (a holder on a drop): one lying
+  it: it lies there again. Only that character's saves: a player who starts over as a new character (or a coc one
+  from the main menu) gets back none of the gifts the old one took, and the old one's gifts lie on (Giving items,
+  "Whose world").
+- **Saved.** The session file takes layout 40 (39 in 0.10.0's test builds, without the drops' characters) while the server remembers any gift (a holder on a drop): one lying
   there, offered, or taken, as the server remembers the last 4096 takes (a taken gift keeps its holder: a give-back
-  lays it down in its container again). So a session in which one gun was ever given is written as 39 until that many
+  lays it down in its container again). So a session in which one gun was ever given is written as 40 until that many
   takes later; one where none was is written in the layout an older build reads (38 with shared storage's owners,
-  else 36). An older build can't read a 39 file; 0.10.0 reads every older layout, their drops as loose ones.
+  else 36). An older build can't read a 40 file; 0.10.0 reads every older layout: 39's drops with no characters, those before 39 as loose ones.
 - **The record's cap.** Gifts share the drops' record (`MAX_DROP_RECORD`, 4096 `made` and 4096 `taken` a session,
   the oldest forgotten), and fill it sooner: every gift given is a `made`, every take (one's own take-backs too) a
   `taken`. Past that, the record misreads its oldest: a gift given that early and never taken is withdrawn from the
@@ -1915,7 +1938,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64). The sections below record each review as it was written.
+Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; and whose world a drop record speaks for, `DropRecord::character`, last on it). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

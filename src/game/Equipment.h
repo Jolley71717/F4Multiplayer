@@ -184,8 +184,15 @@ namespace Equipment
 	// thread: the container menu's hook closes Transfer on one as the menu is shown (on the UI's thread).
 	void SetTransfersKeptOut(std::vector<RE::ObjectRefHandle> a_handles);
 
-	// Hooks the container menu's messages in its vtable, for a frame's Transfer (kTransfer). Once, at load.
+	// Hooks the container menu's messages in its vtable, for a frame's Transfer (kTransfer), and its frame, for
+	// RedrawContainerMenu. Once, at load.
 	void InstallFrameGate();
+
+	// Any thread: the open container menu draws both its lists again on its next frame (on the UI's thread), after an item
+	// was put in or taken out from outside the menu, which it doesn't draw by itself until the player's next move in it.
+	// Nothing if no container menu is open. ContainerMenuRedraws: how many it drew (for `net status`).
+	void          RedrawContainerMenu();
+	std::uint32_t ContainerMenuRedraws();
 
 	// What that hook mended and logged, for the paframes dev command.
 	std::string DescribeFrameMends();

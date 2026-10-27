@@ -3,13 +3,16 @@
 #include "SessionFile.h"
 
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 // A saved session belongs to the host's character: the game gives every character an ID (made when the
 // player confirms the name in the opening, and kept in each of its saves), and the host's server keeps
@@ -30,6 +33,76 @@ namespace CharacterBinding
 	// their quicksaves load back as 1. Comparing the whole ID took a quickload for another character (seen on the rig,
 	// 0 hosted, 0000000100000000 loaded) and restarted hosting, into a fresh session file.
 	[[nodiscard]] constexpr std::uint64_t Character(std::uint64_t a_playerId) { return a_playerId & 0xFFFFFFFFull; }
+
+	// Which character's world a game plays, for the items players give each other (Drops' record and the server's book,
+	// common/DropStore.h): only that character's saves hold what its world gave and took, so a new character doesn't get
+	// back what an older one took, while that older one's own save from before the take still does. The engine's ID can't
+	// say which world it is: every coc character from the main menu has the same one (0), and a new game has the last
+	// character's until its name is confirmed. So each world has a key of its own, kept in its saves (the co-save's 'CHAR'
+	// record) and said in its record to the server (Protocol::DropRecord::character). It gets one as it starts: a new game
+	// a fresh one; a loaded save the one it kept, or, a save from before keys, one made from its character's ID (the same for
+	// all of that character's older saves); a world no load and no new game started (coc from the main menu) a fresh one
+	// the first time it is asked. Free of the game so it can be tested; Drops keeps one (any thread, under its lock).
+	class World
+	{
+	public:
+		// F4SE's revert, before a load and as a new game starts: nothing is known of the world to come.
+		void Revert()
+		{
+			key = 0;
+			saved = 0;
+		}
+
+		// The loaded save's co-save record: its key. One that isn't a key is no record (a save from before keys).
+		void Loaded(std::span<const std::uint8_t> a_bytes)
+		{
+			std::uint64_t value = 0;
+			if (a_bytes.size() == sizeof(value)) {
+				std::memcpy(&value, a_bytes.data(), sizeof(value));
+			}
+			saved = value;
+		}
+
+		// The load (or, a_newGame, the new game) is done. a_character: the loaded character's ID (Character); a_random: a
+		// random number, for a fresh key.
+		void Started(bool a_newGame, std::uint64_t a_character, std::uint64_t a_random)
+		{
+			key = a_newGame ? Fresh(a_random) : saved != 0 ? saved : FromCharacter(a_character);
+			saved = 0;
+		}
+
+		// The world's key, given now if nothing started it (a_random: as Started's).
+		[[nodiscard]] std::uint64_t Key(std::uint64_t a_random)
+		{
+			if (key == 0) {
+				key = Fresh(a_random);
+			}
+			return key;
+		}
+
+		// The co-save's record for a save made now.
+		[[nodiscard]] std::vector<std::uint8_t> Save(std::uint64_t a_random)
+		{
+			const auto                value = Key(a_random);
+			std::vector<std::uint8_t> out(sizeof(value));
+			std::memcpy(out.data(), &value, sizeof(value));
+			return out;
+		}
+
+		// A save from before keys: its character's ID, marked so no fresh key is ever the same.
+		[[nodiscard]] static constexpr std::uint64_t FromCharacter(std::uint64_t a_character) { return OLD | Character(a_character); }
+		[[nodiscard]] static constexpr std::uint64_t Fresh(std::uint64_t a_random)
+		{
+			const auto value = a_random & ~OLD;
+			return value != 0 ? value : 1;
+		}
+
+	private:
+		static constexpr std::uint64_t OLD = 1ull << 63;
+
+		std::uint64_t key = 0;
+		std::uint64_t saved = 0;  // the loaded save's (0: none), until Started
+	};
 
 	// The file of a_character's session. The dev channel's test rig uses files of its own, so its test
 	// kills never reach a real session (and it never reads one).
