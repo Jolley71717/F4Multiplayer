@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T04:09:27+00:00",
+ "updated": "2026-10-27T04:18:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -8,7 +8,7 @@
   "Reviewed",
   "Rig-tested",
   "Merged",
-  "rc soak",
+  "Long playtest",
   "Shipped"
  ],
  "items": [
@@ -30,6 +30,7 @@
    "stage": 5,
    "note": "Fixed in 0.9.2, with a clean-up for the next release; waiting for the long test before it ships.",
    "pr": 172,
+   "partial": "0.9.2",
    "desc": "On 0.9.1, power armor frames kept duplicating and turning up in random places around Sanctuary. 0.9.2 stopped a load from keeping the copies of friends' frames. The next release also stops a frame moved in workshop mode from being shared as a building, and removes the copies older versions made that way. Extra frames already in your world from 0.9.1 can be removed in the console: click one, then type disable and markfordelete."
   },
   {
@@ -88,6 +89,7 @@
    "stage": 5,
    "note": "Fixed in 0.9.0 and again for the next release for the causes we found; the original case was never reproduced.",
    "pr": 153,
+   "partial": "0.9.0",
    "desc": "Some players got 'You cannot use this at this time' when trying to enter a power armor frame. We could not reproduce the exact case, but found two things that cause the message: a frame left leaning, and a seat the game still thought was yours. 0.9.0 handles both, and the next release also stands a leaning frame back up so it can be entered again. It has not been tried in a real game with a leaning frame."
   },
   {
@@ -97,6 +99,7 @@
    "priority": 3,
    "stage": 0,
    "note": "The raised wrist and name tag shipped in 0.9.0; the icon above the head is still off by default.",
+   "partial": "0.9.0",
    "desc": "Players asked to see a friend's Pip-Boy, the raise animation, and an icon over their head while they are in a menu. Since 0.9.0 a friend in the Pip-Boy raises their wrist, and their name tag says [Pip-Boy] or [in a menu]. The icon exists but is off by default (bMenuIcons) because it only drew partly. Showing the Pip-Boy itself is tracked separately."
   },
   {
@@ -104,7 +107,7 @@
    "title": "A dedicated server doesn't retry a failed session save",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": "Found and understood; the fix is small but not built yet.",
    "desc": "The dedicated server saves its session by replacing the session file. On Windows that can fail if another program, such as antivirus, has the file open. The time of day doesn't count as a change, so a failed save is not tried again until something else changes and the saved time can be out of date. We plan to retry a failed save at the next check."
   },
@@ -115,6 +118,7 @@
    "priority": 3,
    "stage": 0,
    "note": "Partly done: F10 shows each friend's distance and direction, but not on the marker itself.",
+   "partial": "0.9.0",
    "desc": "Players asked for a friend's distance on their compass marker. Text drawn by the mod does not show up on the compass, which is why markers are plain shapes. Since 0.9.0, pressing F10 (iKeyWhere) prints each friend's distance and direction on screen, and pings name what they point at with its distance. We are still looking for a way to put the number on the marker."
   },
   {
@@ -124,6 +128,7 @@
    "priority": 2,
    "stage": 1,
    "note": "Mostly fixed in 0.9.2; an enemy that is already loaded still looks different until it loads again.",
+   "partial": "0.9.2",
    "desc": "A player saw a legendary black bloatfly and a legendary ghoul in their game while a friend saw normal ones, because each game rolls its own version of an enemy. Since 0.9.2 the game that runs the enemy shares its roll, and the other games use it the next time the enemy loads. An enemy that is already loaded keeps looking different until it loads again, for example after leaving and coming back."
   },
   {
@@ -220,6 +225,7 @@
    "stage": 5,
    "note": "Fixed in 0.9.0 for new saves; the next release also repairs enemies an older save kept as ghosts.",
    "pr": 154,
+   "partial": "0.9.0",
    "desc": "After a player died and reloaded, they often could not hurt enemies. Enemies are made untouchable for a moment during a friend's explosion, and a save written at that moment kept them that way. 0.9.0 stops that from being saved, and the next release repairs enemies an older save kept in that state. We tested the repair on two real games but not yet with a real old save."
   },
   {
@@ -238,6 +244,7 @@
    "priority": 1,
    "stage": 1,
    "note": "Partly fixed in 0.9.2; the report was vague, so other causes can't be ruled out.",
+   "partial": "0.9.2",
    "desc": "With the story shared (sStory = Shared), one player finished Codsworth's search for Shaun in Sanctuary while the host had to repeat the talk and the search. 0.9.2 fixes a story-stage ordering problem that matches the report. We can't rule out other causes, so more details are welcome."
   },
   {
@@ -248,6 +255,7 @@
    "stage": 5,
    "note": "Mostly fixed since 0.9.0, with more for the next release; waiting for the long test.",
    "pr": 171,
+   "partial": "0.9.0",
    "desc": "Some structures built in workshop mode did not show up for the other player. 0.9.0 added power wires, building done before the session started, and moved settlement pieces. The next release adds a host setting, bShareGuestBuilds (off by default), so a guest's earlier building only comes into the host's world when the host turns it on, and a second friend reporting the same piece makes no second copy. Tested on two real games; the three-player case and large settlements are still to check."
   },
   {
@@ -287,6 +295,7 @@
    "stage": 5,
    "note": "Shipped in 0.9.0; the next release also tells joiners the host's rules. Waiting for the long test.",
    "pr": 158,
+   "partial": "0.9.0",
    "desc": "Players asked for ways to keep side-by-side play from making everyone invincible. 0.9.0 added host settings for how long a downed player bleeds out, how long a revive takes and the health it gives, how many revives per fight or per time window, a cooldown, and whether helpers can revive during a fight. The next release also tells a joiner the host's rules when they join, and a rule change waits until a downed player is back up."
   },
   {
@@ -324,6 +333,7 @@
    "priority": 1,
    "stage": 1,
    "note": "Partly fixed in 0.9.1 and 0.9.2; mirelurks and legendary or powerful enemies may still be a problem.",
+   "partial": "0.9.1 and 0.9.2",
    "desc": "On 0.9.0 often only one player could hurt an enemy; the others' shots did nothing or healed back. 0.9.1 fixed the main cause, and 0.9.2 fixed a late health update that healed hits back. Reports about mirelurks and powerful or legendary enemies are still open: we think a tougher version of the enemy in one game can absorb the shots. Reports with the game's log are welcome."
   },
   {
@@ -429,6 +439,7 @@
    "stage": 5,
    "note": "Shipped in 0.9.0 but not yet tried with LooksMenu installed; the next release adds a save fix.",
    "pr": 174,
+   "partial": "0.9.0",
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
   },
   {
@@ -448,6 +459,7 @@
    "priority": 2,
    "stage": 1,
    "note": "Partly fixed in 0.9.2; not yet tried in a real game.",
+   "partial": "0.9.2",
    "desc": "If players quit while in power armor and start a session later, others saw them without a suit until they got out and back in. 0.9.2 fixes the sending side, so a player who loads a save in power armor is seen in it. We have not tried it in a real game, and there may be other reasons a frame is missing on the receiving side."
   },
   {
@@ -475,6 +487,7 @@
    "priority": 1,
    "stage": 1,
    "note": "Partly fixed in 0.9.1 and 0.9.2; an enemy whose side differs between games isn't fully covered.",
+   "partial": "0.9.1 and 0.9.2",
    "desc": "One player's game showed an enemy as a hostile scavenger while the host's showed a friendly settler, and the host's shots healed it. 0.9.2 makes such an enemy the same in every game, and 0.9.1 fixed a heal-back after a takeover. The fixes have not been tried in a real game, and an enemy already in the world whose side differs between games is not covered."
   },
   {
@@ -494,6 +507,7 @@
    "stage": 5,
    "note": "Fixed in 0.9.0, with a further fix for the next release; waiting for the long test.",
    "pr": 162,
+   "partial": "0.9.0",
    "desc": "A player reported that throwing a Molotov seemed to hand the ability to damage an enemy to the other player. Burn damage was being healed back by the other player's next hit, and the thrower's blast counted twice. 0.9.0 fixed the main cause by having the game that runs the enemy share its health whenever it changes. The next release also stops a thrower's own hit in the same second from counting twice."
   },
   {
@@ -521,6 +535,7 @@
    "priority": 1,
    "stage": 1,
    "note": "Mostly fixed in 0.9.0 and 0.9.2; the exact Vault 114 cog door hasn't been tested.",
+   "partial": "0.9.0 and 0.9.2",
    "desc": "Vault 114's cog door opened for the host but stayed shut for a friend, because a script opens it. 0.9.0 shares Vault 114's gear door and gates opened from terminals and card readers, and 0.9.2 shares chained doors, quietly scripted doors, two-state gates and doors NPCs open. These passed two-game tests, but the exact Vault 114 door was not tested and one of its two parts may not be covered. Doors that also start scenes or move NPCs stay each player's own."
   },
   {
@@ -537,8 +552,9 @@
    "title": "Show friends on the Pip-Boy world and local maps",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": "Built and passing automatic checks, but not yet tried in a real game.",
+   "stage": 2,
+   "note": "Built and passing automatic checks; not yet tried in a real game.",
+   "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
   },
   {
@@ -549,6 +565,7 @@
    "stage": 5,
    "note": "Hints off since 0.9.0; the next release adds a hand-off so enemies don't freeze while someone is in a menu.",
    "pr": 168,
+   "partial": "0.9.0",
    "desc": "Players asked that tutorial hints not pop up in a session and that menus not freeze things for friends. 0.9.0 turns tutorial hints off during a session (bHideTutorials) and they come back afterward. The next release handles one effect of a menu pausing your game: after five seconds in a menu, the enemies your game runs are handed to a friend nearby so they no longer freeze on the friend's screen. A menu that doesn't pause is tracked separately."
   },
   {
@@ -567,6 +584,7 @@
    "priority": 2,
    "stage": 0,
    "note": "Much of it shipped in 0.9.0; settlement attacks and quests with on-the-spot enemies remain each player's own.",
+   "partial": "0.9.0",
    "desc": "Players asked for the other factions' repeatable jobs to be shared. 0.9.0 shares most Minutemen settlement requests, several Brotherhood, Institute and Railroad jobs, and Diamond City wanted posters, so each player gets the same quest and is paid once. The setting bSharedRadiants turns it off. Quests whose enemies or helpers are made on the spot, such as settlement attacks, the Castle's defense, rescues and escorts, still stay each player's own."
   },
   {
@@ -634,6 +652,7 @@
    "priority": 2,
    "stage": 1,
    "note": "Partly fixed in 0.9.2; we haven't checked the aim while firing in a real game.",
+   "partial": "0.9.2",
    "desc": "A player said that when a friend shoots, it looks as if they are shooting at you. 0.9.2 fixed the most likely cause: a friend's character fired real shots at your character. Their shots now follow where they actually aim. We have not checked the aim during firing in both directions."
   },
   {
@@ -680,6 +699,7 @@
    "priority": 2,
    "stage": 1,
    "note": "Shipped in 0.9.2 and tested for most cases; picking up mines and a bear trap closing on a player weren't tested.",
+   "partial": "0.9.2",
    "desc": "Players asked for world traps to go off the same way for everyone. Since 0.9.2, mines, tripwires, bear traps and grenade bouquets go off once in every game, including for a friend who arrives later. Picking up a mine and a bear trap closing on a player have not been tested yet."
   }
  ]
