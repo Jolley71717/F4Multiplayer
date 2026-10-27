@@ -18,7 +18,8 @@
 // and the load call on their own thread.
 namespace FrameLoans
 {
-	// The spawn id of the frame our copy a_local is of, while it is lent to us (our wear names it by that); 0 otherwise.
+	// The spawn id of the frame our copy a_local is of, while it is lent to us (our wear names it by that); 0 otherwise,
+	// and 0 once its owner is gone (their spawn went with them).
 	[[nodiscard]] std::uint32_t WornSpawnOf(std::uint32_t a_local);
 
 	// The friend our own frame a_local is lent to (or offered to, the server's word on it not in yet); 0 if none.

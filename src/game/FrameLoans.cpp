@@ -683,7 +683,8 @@ namespace FrameLoans
 
 	std::uint32_t WornSpawnOf(std::uint32_t a_local)
 	{
-		const bool ours = borrowed.stage == Stage::kLent || borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut;
+		// Not once its owner is gone (ownerless): their spawn ended with them, and no game has a frame of it to hide.
+		const bool ours = (borrowed.stage == Stage::kLent || borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut) && !borrowed.ownerless;
 		return ours && a_local != 0 && a_local == borrowed.copy ? borrowed.spawnId : 0;
 	}
 
