@@ -145,6 +145,25 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
     so turning it back on carries on where it left off. A session that has used this setting can't be opened by an
     older version of the mod.
   A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
+- `bContainerGifts` (false, experimental): on, a weapon or a piece of armor a player puts in a container gives it to
+  the others. Any container works except a workbench, a vendor's and a companion's, and a container built in a
+  settlement. The item then shows in that container for every player who opens it, and the first who takes it has it.
+  Off, what a player puts in a container stays in their own copy of it, as in 0.9.x: drop an item to give it instead.
+  - Taking a gift: it goes into your inventory a moment after you press Take, once the session says you were first.
+    If a friend was first, you get nothing and a notice says so. Until someone takes it, its giver can take it back
+    the same way.
+  - Each item is given on its own: putting in three guns gives three gifts. Mods, a legendary effect, a name and a
+    power armor piece's condition go with it. An item with a mod from a plugin a friend lacks doesn't show for them.
+    Quest items and items made by a mod at runtime are not given (a notice says so once).
+  - With `bSharedStorage` on or off it works the same: shared storage never shares weapons and armor, so they are
+    given this way in any container.
+  - Loading a save: a friend who loads a save from before taking a gift has it back in the container for everyone.
+    A giver who loads a save from before putting the item in has it back in their own copy, and it is gone for the
+    others. The one case not put right: a giver who loads a save from before putting it in, after a friend took it,
+    has it too (both have it; the host's log counts it).
+  - A connection that drops while a take is on its way loses nothing: the item is in the container again after you
+    rejoin, or in your inventory if the session says you took it. The dedicated server takes it as
+    `--container-gifts`. A session that holds gifts can't be opened by an older version of the mod.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
   `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
