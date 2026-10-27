@@ -481,7 +481,9 @@ namespace Storage
 		WorldSync::QueueEvent(Protocol::Encode(Protocol::StorageShort{ a_index, a_missing }));
 		side.Unlist(a_change.container);  // listed again, as it is now
 		side.NoteShort();
-		REX::INFO("Storage: change {} took {} of {:08X} from {:08X}, which held {} fewer here", a_index, -a_change.count, a_change.item, a_change.container, a_missing);
+		REX::INFO("Storage: change {} took {} of {:08X} from {:08X}, but this world's copy of it holds {} fewer than that (a world loaded since, or an item this game doesn't share); "
+				  "the taker's game is asked to give those back",
+			a_index, -a_change.count, a_change.item, a_change.container, a_missing);
 	}
 
 	void UnlistAll()

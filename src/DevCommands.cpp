@@ -11,6 +11,7 @@
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/Drops.h"
+#include "game/Gifts.h"
 #include "game/EnemyList.h"
 #include "game/EnemySpawn.h"
 #include "game/Downed.h"
@@ -485,7 +486,9 @@ namespace DevCommands
 		}
 
 		// paframes [radius]: the power armor frames near the local player, each with whether the engine would let our player
-		// into it and why not (Equipment::DescribeFrameUse), its distance and which game's it is (NpcSync::Owner).
+		// into it and why not (Equipment::DescribeFrameUse), its distance, which game's it is (NpcSync::Owner), whether it
+		// carries the keyword the workshop copies get (marked: a copy an older version left, FrameShare::Ghost) and whether
+		// anything is in it.
 		std::string PowerArmorFrames(std::string_view a_args)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -500,8 +503,8 @@ namespace DevCommands
 				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
 					return RE::BSContainer::ForEachResult::kContinue;
 				}
-				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
-					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership));
+				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={} marked={} holds={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
+					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership), WorkshopSync::IsCopyMarked(*a_ref), WorkshopSync::HoldsAnything(a_ref));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
@@ -3431,6 +3434,18 @@ namespace DevCommands
 			return Destructibles::Command(joined);
 		}
 
+		// gifts: weapons and armor given through a container (Gifts.h): status; list; view <ref> / close (what the container menu's
+		// show and close do); count <ref> <item>; take / put <ref> <item> [count] (a transfer as the menu makes one).
+		std::string GiftsCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Gifts::Command(joined);
+		}
+
 		// storage: shared storage (Storage.h): status; owners; keeper <ref>; view <ref> / close (what the container menu's show and close do);
 		// count <ref> <item>; take / put <ref> <item> [count] (a transfer between our player and the container, as the menu makes one).
 		std::string StorageCommand(std::string_view a_args)
@@ -3622,6 +3637,7 @@ namespace DevCommands
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
 			Entry{ "destruct", DestructCommand },
+			Entry{ "gifts", GiftsCommand },
 			Entry{ "storage", StorageCommand },
 		};
 	}

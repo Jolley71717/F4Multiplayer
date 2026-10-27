@@ -21,6 +21,7 @@
 #include "game/CopyWatch.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/Gifts.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/FrameClock.h"
@@ -444,6 +445,7 @@ namespace Session
 					RadiantSync::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
+					Gifts::OnWelcome(msg->playerId, msg->rules.containerGifts);
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
@@ -689,17 +691,24 @@ namespace Session
 				break;
 			case MessageType::kDropPlaced:
 				if (const auto msg = Protocol::DecodeDroppedItem(a_data)) {
-					Drops::OnPlaced(*msg);
+					if (msg->holder != 0) {
+						Gifts::OnPlaced(*msg);  // a gift, in a container
+					} else {
+						Drops::OnPlaced(*msg);
+					}
 				}
 				break;
 			case MessageType::kDropGone:
 				if (const auto msg = Protocol::DecodeDropGone(a_data)) {
-					Drops::OnGone(*msg);
+					if (!Gifts::OnGone(*msg)) {
+						Drops::OnGone(*msg);
+					}
 				}
 				break;
 			case MessageType::kDropList:
 				if (const auto msg = Protocol::DecodeDropList(a_data)) {
-					Drops::OnList(*msg);
+					Drops::OnList(*msg);  // each takes its own: the loose drops and the gifts
+					Gifts::OnList(*msg);
 				}
 				break;
 			case MessageType::kMarkersFound:
@@ -907,6 +916,7 @@ namespace Session
 			formPluginsLogged.clear();
 			localId = 0;
 			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
+			Gifts::Reset();  // our copies of gifts leave the container; nothing is given back (the server waits for our record)
 			Traps::Reset();
 			RadiantSync::SetLocalPlayer(0);
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
@@ -1494,6 +1504,14 @@ namespace Session
 				SendOut(std::move(packet), true);
 			}
 		}
+		if (welcomed && InGame()) {
+			Gifts::Frame();
+		}
+		for (auto& packet : Gifts::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		// The world's traps (out of the opening: its world isn't the session's).
 		if (welcomed && InGame() && !Story::InOpening()) {
 			Traps::Frame();
@@ -1579,6 +1597,14 @@ namespace Session
 				}
 			}
 		});
+		step("the gifts", [] {
+			Gifts::BeforeSaveOrLoad();  // no copy of a gift is saved; a take of one our player just made is claimed
+			for (auto& packet : Gifts::TakeOutgoing()) {
+				if (welcomed) {
+					SendOut(std::move(packet), true);
+				}
+			}
+		});
 		step("the spawns", [] { Spawns::DiscardCopies(); });  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
 		step("the stand-ins", [] { RemotePlayers::DespawnAll(); });
 		step("the mirrors", [] { NpcSync::ReleaseMirrors(); });
@@ -1631,6 +1657,7 @@ namespace Session
 		Destructibles::Reset();
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
+		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
 		if (a_newGame) {
@@ -1674,7 +1701,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
