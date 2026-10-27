@@ -162,8 +162,10 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
     others. The one case not put right: a giver who loads a save from before putting it in, after a friend took it,
     has it too (both have it; the host's log counts it).
   - A connection that drops while a take is on its way loses nothing: the item is in the container again after you
-    rejoin, or in your inventory if the session says you took it. The dedicated server takes it as
-    `--container-gifts`. A session that holds gifts can't be opened by an older version of the mod.
+    rejoin, or in your inventory if the session says you took it. A giver whose connection drops just as
+    the item is given finds it given once they rejoin (until then nobody can take it), or still in the container if
+    it never reached the session. The dedicated server takes it as `--container-gifts`. A session that holds gifts
+    can't be opened by an older version of the mod.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
   `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
@@ -348,7 +350,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
 - **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
   your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
-  Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,
+  Weapons and armor put in a container stay in your game only, so drop them instead, unless the host turns on
+  `bContainerGifts` (see [Host settings](#host-settings)): then one put in a container is given to whoever takes it
+  first. Keys, notes,
   holotapes, bobbleheads, magazines and quest items can't be given (each player collects their own).
   Items left lying about are kept with the host's session.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
