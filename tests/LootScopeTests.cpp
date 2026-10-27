@@ -565,6 +565,83 @@ TEST("loot sync: a take from a chest the friend's game holds without an inventor
 	CHECK(bob.LeftOut() == leftOut + 1);
 }
 
+TEST("loot sync: a chest rolled as our player opens it gets the friend's waiting take and emptying as the menu opens, each once; one opened before its roll keeps them")
+{
+	constexpr std::uint32_t CHEST_3 = 0x0002C005;
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->Join(f, "P");
+	}
+
+	// Alice takes part of one chest and loots another bare, both in a place Bob's game holds without their inventories.
+	alice.holders[CHEST_2] = { { AMMO_38, 10 }, { STEEL, 2 } };
+	alice.holders[CHEST_3] = { { STEEL, 4 } };
+	bob.unstocked.insert(CHEST_2);
+	bob.unstocked.insert(CHEST_3);
+	alice.Take(f, CHEST_2, AMMO_38, 10);
+	alice.Take(f, CHEST_3, STEEL, 4);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 3);  // the two takes, and the emptying
+	const auto applied = bob.applied;
+
+	// Bob opens the first: his game rolls it as it opens, and the take goes in as the menu opens, with no frame (no sweep) between.
+	bob.unstocked.erase(CHEST_2);
+	bob.holders[CHEST_2] = { { AMMO_38, 6 }, { CAPS, 3 } };
+	bob.OpenMenu(f, CHEST_2);
+	CHECK(bob.In(CHEST_2, AMMO_38) == 0);
+	CHECK(bob.In(CHEST_2, CAPS) == 3);
+	CHECK(bob.applied == applied + 1);
+	CHECK(bob.loot.Stats().openApplied == 1);
+	CHECK(bob.loot.Waiting().size() == 2);  // the other chest's
+
+	// The frames after it (the sweep) and opening it again put nothing in twice.
+	bob.Wait(f, std::chrono::seconds{ 3 });
+	bob.CloseMenu(f);
+	bob.OpenMenu(f, CHEST_2);
+	bob.CloseMenu(f);
+	CHECK(bob.applied == applied + 1);
+	CHECK(bob.loot.Stats().openApplied == 1);
+	CHECK(bob.In(CHEST_2, CAPS) == 3);
+
+	// Nor does a save and a reload of it: the take is in the saved world, and out of the save's record.
+	const auto saved = bob.SaveGame(f);
+	CHECK(saved.waiting.size() == 2);
+	bob.LoadGame(f, saved);
+	bob.Receive(f);
+	CHECK(bob.applied == applied + 1);
+	CHECK(bob.In(CHEST_2, AMMO_38) == 0);
+	CHECK(bob.In(CHEST_2, CAPS) == 3);
+	CHECK(bob.loot.Waiting().size() == 2);
+
+	// The second, opened before its roll is there: nothing goes in, and its take and emptying keep waiting for the roll.
+	bob.OpenMenu(f, CHEST_3);
+	bob.CloseMenu(f);
+	CHECK(bob.loot.Waiting().size() == 2);
+	CHECK(bob.applied == applied + 1);
+	CHECK(bob.loot.Stats().openApplied == 1);
+
+	// Opened once rolled: both go in, in order, as it opens. His roll has more steel than Alice's had: her take leaves 2,
+	// and the emptying after it takes those (the rest of what she took: so under either emptied rule).
+	bob.unstocked.erase(CHEST_3);
+	bob.holders[CHEST_3] = { { STEEL, 6 }, { PIPE_PISTOL, 1 } };
+	bob.OpenMenu(f, CHEST_3);
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.loot.Stats().openApplied == 3);
+	CHECK(bob.applied == applied + 3);  // the take, and the emptying's one stack
+	CHECK(bob.In(CHEST_3, STEEL) == 0);
+	CHECK(bob.In(CHEST_3, PIPE_PISTOL) == 1);
+	CHECK(bob.loot.Stats().emptiedApplied == 1);
+	CHECK(bob.loot.Stats().emptiedStacks == 1);
+	bob.CloseMenu(f);
+	bob.Wait(f, std::chrono::seconds{ 3 });
+	CHECK(bob.In(CHEST_3, STEEL) == 0);
+	CHECK(bob.applied == applied + 3);
+	CHECK(bob.loot.Stats().emptiedApplied == 1);
+}
+
 TEST("loot sync: a friend who reloads a save from before the emptying, or joins after it, finds the chest bare; what was put back after it is there")
 {
 	Fixture f;

@@ -2688,6 +2688,22 @@ namespace WorldSync
 		loot.Live(a_change, Clock::now(), engine);
 	}
 
+	void OnMenuShown(RE::ObjectRefHandle a_container)
+	{
+		// Only the handle is taken here (off the main thread). The menu may have drawn its list by the time this runs (a
+		// frame or so): a take that goes in now shows at once anyway, as a friend's change to a chest our player has open
+		// does (the console's removeitem, which the open menu follows).
+		MainThread::Post([a_container] {
+			const auto ref = a_container.get();
+			if (!ref || !CanApply()) {
+				return;
+			}
+			engine.inWorld = true;
+			loot.Opened(ref->GetFormID(), engine);
+			engine.inWorld.reset();
+		});
+	}
+
 	void ApplyRemotePickup(std::uint32_t a_refId)
 	{
 		OfferPickup(a_refId, CanApply());
@@ -3073,6 +3089,6 @@ namespace WorldSync
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied);
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);
 	}
 }

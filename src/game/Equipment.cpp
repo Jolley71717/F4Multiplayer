@@ -11,6 +11,7 @@
 #include "game/Gifts.h"
 #include "game/Storage.h"
 #include "game/TextureFlush.h"
+#include "game/WorldSync.h"
 
 #include <algorithm>
 #include <array>
@@ -1204,6 +1205,7 @@ namespace Equipment
 				}
 				MainThread::Post([target, closed] { CheckTransfer(target, closed); });
 				if (!closed) {
+					WorldSync::OnMenuShown(target);  // what waits for it goes in now, as when it loads (a chest rolls as it opens)
 					Storage::OnMenuShown(target);  // a friend's storage: its true copy shown in ours
 					Gifts::OnMenuShown(target);    // the gifts lying in it shown in our copy
 				}

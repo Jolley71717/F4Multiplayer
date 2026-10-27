@@ -686,7 +686,10 @@ way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go
 take waits too while this game holds the chest in a cell but hasn't made its inventory yet (a place not
 loaded, or still loading): it would find nothing to take, and the roll made as the place loads would still
 hold what the friend took. So does a put, in order with the takes: going in first, it would make the inventory
-ahead of the roll, and the takes and the emptying after it would go into that instead. A
+ahead of the roll, and the takes and the emptying after it would go into that instead. A chest of a
+place our game held this way makes its roll as our player opens it, so opening it counts as its load: what
+waits for it goes in on the next frame after the menu opens (`Loot::Opened`, `openApplied=`), not when the 2 s
+sweep comes to it, which left the whole roll in the menu for up to a second. A
 change to a chest our player has open goes in at once: the container menu shows the new contents, and
 taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
