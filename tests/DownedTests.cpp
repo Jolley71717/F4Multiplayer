@@ -47,13 +47,37 @@ namespace
 		bool sneaking = false;        // the sneak stance
 		bool sneakHiddenDown = false; // the game's IsSneaking answers false while down, whatever the stance
 		bool unsneakIgnored = false;  // our stand out of sneak does not take
+		bool graphSneaking = false;   // the behaviour graph's own sneak, which the sneak key's start and stop must agree with
+		bool stanceOnlyGetUp = false; // the game's end of the down stands them by the stance alone (SetSneaking), the graph left in sneak
+		bool graphStopIgnored = false;  // the graph is still in the get-up and does not take a sneak stop
+		int  graphStops = 0;
+
+		// Up from a down, however it ends.
+		void Up()
+		{
+			down = false;
+			if (stanceOnlyGetUp) {
+				sneaking = false;
+			}
+		}
 
 		// The game stands them up on a path the stay-down flag does not hold back.
 		void StoodUpByGame()
 		{
 			if (down && !dead) {
-				down = false;
+				Up();
 			}
+		}
+
+		// The sneak key: the stance says whether a start or a stop is asked of the graph, which refuses one it is already in.
+		bool PressSneak()
+		{
+			if (sneaking != graphSneaking) {
+				return false;
+			}
+			sneaking = !sneaking;
+			graphSneaking = sneaking;
+			return true;
 		}
 
 		void LethalHit()
@@ -108,7 +132,7 @@ namespace
 			if (body.standUpIn > 0 && --body.standUpIn == 0) {
 				body.standUpIn = -1;
 				if (body.down && !body.dead && !body.stayDown) {
-					body.down = false;
+					body.Up();
 					body.fullHealth = true;
 				}
 			}
@@ -146,13 +170,19 @@ namespace
 				++body.getUpsAsked;
 				body.stayDown = false;
 				if (!body.getUpIgnored && body.down && !body.dead) {
-					body.down = false;
+					body.Up();
 					body.fullHealth = true;
 				}
 			}
 			if (step.unsneak) {
+				// Downed.cpp Unsneak: the stance, and the graph told its sneak stop.
 				body.sneaking = body.sneaking && body.unsneakIgnored;
+				body.graphSneaking = body.graphSneaking && body.graphStopIgnored;
 				++unsneaks;
+			}
+			if (step.graphSneakStop) {
+				body.graphSneaking = body.graphSneaking && body.graphStopIgnored;
+				++body.graphStops;
 			}
 			gotUp += step.gotUp;
 			settled += step.settled;
@@ -1862,6 +1892,137 @@ TEST("downed get-up: the sneak they went down in is read as last seen up, whatev
 	standing.Run(then, DownRules::GET_UP_SETTLE + 1s);
 	CHECK(standing.unsneaks == 0);
 	CHECK(standing.sneakKept == 0);
+}
+
+TEST("downed get-up: stood by the stance alone, the graph left in its sneak, it is told to stop and the sneak key works again")
+{
+	// The game's end of the down unsneaks by the stance alone: the graph stayed in sneak, and the key asked a start of it
+	// that it refused, until a load.
+	Game game;
+	auto now = Start();
+	game.body.sneaking = true;
+	game.body.graphSneaking = true;
+	game.body.stanceOnlyGetUp = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	CHECK(game.gotUp == 1);
+	CHECK(game.unsneaks == 0);  // the stance is standing already
+	CHECK(game.sneakKept == 0);
+	CHECK(game.body.graphStops == 1);
+	CHECK(!game.body.graphSneaking);
+	CHECK(game.body.PressSneak());  // the key sneaks again
+	CHECK(game.body.sneaking);
+	game.Run(now, DownRules::GET_UP_SETTLE + 1s);
+	CHECK(game.settled == 1);
+	CHECK(game.body.graphStops == 1);  // their sneak since: not stopped
+	CHECK(game.body.graphSneaking);
+	CHECK(game.body.PressSneak());
+	CHECK(!game.body.sneaking);
+	CHECK(game.self.graphSneakStops == 1);
+
+	// Without the stop the key does nothing: the model's own check.
+	Game stuck;
+	stuck.body.graphSneaking = true;
+	CHECK(!stuck.body.PressSneak());
+	CHECK(!stuck.body.sneaking);
+}
+
+TEST("downed get-up: stood by the stance alone, a sneak and a stand of their own before the get-up has played out are not followed by a stop")
+{
+	// Their key, twice: the stance is back where it was at the get-up, but the graph's stand is theirs, and a stop then
+	// could cut off a sneak they start a moment later.
+	Game game;
+	auto now = Start();
+	game.body.sneaking = true;
+	game.body.graphSneaking = true;
+	game.body.stanceOnlyGetUp = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	CHECK(game.body.graphStops == 1);
+	CHECK(game.body.PressSneak());
+	game.Run(now, 200ms);
+	CHECK(game.body.PressSneak());
+	CHECK(!game.body.sneaking);
+	game.Run(now, DownRules::GET_UP_SETTLE);
+	CHECK(game.settled == 1);
+	CHECK(game.body.graphStops == 1);
+	CHECK(game.self.graphSneakStops == 1);
+}
+
+TEST("downed get-up: a sneak stop the graph does not take as they get up is told once more when the get-up has played out")
+{
+	Game game;
+	auto now = Start();
+	game.body.sneaking = true;
+	game.body.graphSneaking = true;
+	game.body.stanceOnlyGetUp = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.body.graphStopIgnored = true;  // still in the get-up
+	game.Run(now, 1s);
+	CHECK(game.body.graphStops == 1);
+	CHECK(game.body.graphSneaking);
+	CHECK(!game.body.PressSneak());  // the key refused
+	game.body.graphStopIgnored = false;
+	game.Run(now, DownRules::GET_UP_SETTLE);
+	CHECK(game.settled == 1);
+	CHECK(game.body.graphStops == 2);
+	CHECK(!game.body.graphSneaking);
+	CHECK(game.body.PressSneak());
+	CHECK(game.body.sneaking);
+	game.Run(now, 10s);
+	CHECK(game.body.graphStops == 2);
+	CHECK(game.self.graphSneakStops == 2);
+}
+
+TEST("downed get-up: stood out of sneak by us, the graph is told its stop once more when the get-up has played out")
+{
+	// Our stand (Unsneak) tells the graph its stop as they get up, when the graph may still be in the get-up.
+	Game game;
+	auto now = Start();
+	game.body.sneaking = true;
+	game.body.graphSneaking = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.body.graphStopIgnored = true;
+	game.Run(now, 1s);
+	CHECK(game.unsneaks == 1);
+	CHECK(!game.body.sneaking);
+	CHECK(game.body.graphSneaking);
+	CHECK(game.body.graphStops == 0);  // the stand told it
+	game.body.graphStopIgnored = false;
+	game.Run(now, DownRules::GET_UP_SETTLE);
+	CHECK(game.settled == 1);
+	CHECK(game.unsneaks == 1);
+	CHECK(game.body.graphStops == 1);
+	CHECK(!game.body.graphSneaking);
+	CHECK(game.body.PressSneak());
+}
+
+TEST("downed get-up: down standing, the graph is never told a sneak stop")
+{
+	Game game;
+	auto now = Start();
+	game.body.stanceOnlyGetUp = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, DownRules::GET_UP_SETTLE + 2s);
+	CHECK(game.settled == 1);
+	CHECK(game.body.graphStops == 0);
+	CHECK(game.self.graphSneakStops == 0);
+	CHECK(game.body.PressSneak());
 }
 
 TEST("downed get-up: the log's stand-up count is this get-up's, not the session's")
