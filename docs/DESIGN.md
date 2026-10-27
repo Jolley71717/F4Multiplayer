@@ -1699,6 +1699,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   are still sneaking (the stance survives a down), stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
+  One who went down sneaking and gets up standing was stood by the game's stance alone
+  (`Actor::SetSneaking` sends the graph no event): the graph stayed in its sneak, and the sneak key,
+  which asks the graph for the start the stance calls for, was refused until a load. The graph is told
+  `sneakStop` as they get up and again 2 s later unless the stance changed since (graphSneakStop,
+  tested). `controls` ends with a `sneak:` line naming what holds the key back (`SneakKey.h`, tested).
   Friends are not sent the crouch flag while the player is down or getting up, and a stand-in that
   gets up is told its sneak state again 2 s later, so it is not left crouched.
   45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)
