@@ -42,6 +42,9 @@ namespace FrameLoans
 			std::vector<FrameLoan::Tag> tags;       // the lent items as our copies of them are named
 			bool                        released = false;   // let go of by the save guard while worn: saved with our player
 			bool                        ownerless = false;  // its owner left (or the session ended) while we wore it: it goes at exit
+			// Our player's own fusion cores (none of the lent ones) as they got in, by base: the engine moves one into the frame
+			// as the lent one runs down, and at most what they lost so is given back from it (GiveRest).
+			std::unordered_map<std::uint32_t, std::int32_t> ownCores;
 		};
 		Borrowed borrowed;
 
@@ -274,20 +277,60 @@ namespace FrameLoans
 			REX::WARN("FrameLoans: lent items in {:08X} did not all go", a_ref->GetFormID());
 		}
 
-		// A fusion core our copy still holds that is none of the lent items goes to our player: one our player put in as the
-		// lent one ran down. Never a piece: none of our player's own can have got into it (its Transfer and the station stay
-		// closed), and a lent one that was not found again would be a second of the owner's.
+		constexpr std::uint32_t FUSION_CORE = 0x00075FE4;  // Fallout4.esm: AmmoFusionCore
+
+		// How many of a_base a_ref holds, every stack of it.
+		std::int32_t CountOf(RE::TESObjectREFR* a_ref, std::uint32_t a_base)
+		{
+			const auto list = a_ref ? a_ref->inventoryList : nullptr;
+			if (!list) {
+				return 0;
+			}
+			std::int32_t count = 0;
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (!item.object || item.object->GetFormID() != a_base) {
+					continue;
+				}
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					count += static_cast<std::int32_t>(stack->count);
+				}
+			}
+			return count;
+		}
+
+		// Our player's own fusion cores as they get in (Borrowed::ownCores): the vanilla core and each lent core's base.
+		void NoteOwnCores(RE::PlayerCharacter* a_player)
+		{
+			borrowed.ownCores.clear();
+			borrowed.ownCores[FUSION_CORE] = CountOf(a_player, FUSION_CORE);
+			for (const auto& tag : borrowed.tags) {
+				if (tag.core) {
+					borrowed.ownCores[tag.base] = CountOf(a_player, tag.base);
+				}
+			}
+		}
+
+		// Our player's own fusion cores the engine moved into our copy as the lent one ran down go back to them: of each
+		// base, at most as many as they have fewer of now than as they got in, and only what the copy still holds of it. Run
+		// once the lent items are gathered (none of those is counted). Nothing else of the copy goes to them: whatever more
+		// it holds goes with it.
 		void GiveRest(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player)
 		{
-			for (int i = 0; i < MAX_STACKS; ++i) {
-				const auto hit = FindStack(a_copy, [](RE::TESBoundObject* a_object, RE::ExtraDataList*) -> std::optional<Hit> {
-					return a_object->GetFormType() == RE::ENUM_FORM_ID::kAMMO ? std::optional<Hit>{ Hit{} } : std::nullopt;
-				});
-				if (!hit) {
-					return;
+			for (const auto& [base, before] : borrowed.ownCores) {
+				const auto lost = before - CountOf(a_player, base);
+				const auto there = CountOf(a_copy, base);
+				const auto give = (std::min)(lost, there);
+				const auto form = RE::TESForm::GetFormByID(base);
+				const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+				if (give <= 0 || !object) {
+					continue;
 				}
-				REX::INFO("FrameLoans: {:08X} x{}, our player's own, goes from the borrowed frame to them", hit->object->GetFormID(), hit->count);
-				RemoveStack(a_copy, *hit, a_player);
+				REX::INFO("FrameLoans: {} of {:08X}, our player's own fusion cores, go from the borrowed frame back to them", give, base);
+				RE::TESObjectREFR::RemoveItemData data{ object, give };
+				data.otherContainer = a_player;
+				data.reason = RE::ITEM_REMOVE_REASON::kStoreContainer;
+				a_copy->RemoveItem(data);
 			}
 		}
 
@@ -610,7 +653,6 @@ namespace FrameLoans
 			}
 			Gather(player, job.record.tags, found);
 			if (copy) {
-				GiveRest(copy, player);
 				if (player->lastUsedPowerArmor.get().get() == copy) {
 					player->lastUsedPowerArmor = RE::ObjectRefHandle{};
 				}
@@ -812,7 +854,11 @@ namespace FrameLoans
 		}
 		// Copies of its kit in our copy, each named as its owner's: never stacked with our player's own, and found again at
 		// the return.
+		// Emptied first: a frame never looked into is filled from its base's container as it is first opened (as for a
+		// stand-in's, Equipment::SwitchIntoPowerArmor), and those would be pieces and a core from nowhere.
+		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", copy->GetFormID()).c_str());
 		const auto owner = RemotePlayers::NameOf(a_lending.ownerId);
+		bool       coreMade = false;
 		for (const auto& item : a_lending.kit) {
 			Protocol::DroppedItem made;
 			made.base = item.base;
@@ -823,8 +869,17 @@ namespace FrameLoans
 			const auto form = RE::TESForm::GetFormByID(item.base);
 			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
 			if (!object || !ItemCopies::Placeable(made)) {
-				continue;  // the return says it was not found: the owner's stays as it is
+				continue;  // the return says nothing of it: the owner's stays as it is
 			}
+			// Only what a frame is lent with (FrameLoan::PickKit): power armor pieces, and one fusion core (ammunition), each
+			// slot once. Anything else a kit names is not made.
+			const bool core = object->GetFormType() == RE::ENUM_FORM_ID::kAMMO;
+			const bool kind = item.core ? core && !coreMade : !core && Equipment::IsPowerArmorPiece(object) && !Equipment::IsFrameItem(object);
+			if (!kind || std::ranges::any_of(borrowed.tags, [&](const FrameLoan::Tag& a_tag) { return a_tag.slot == item.slot; })) {
+				REX::WARN("FrameLoans: player {}'s kit names {:08X} in slot {}, which a frame is not lent with; not made", a_lending.ownerId, item.base, item.slot);
+				continue;
+			}
+			coreMade = coreMade || item.core;
 			const std::string own = item.name.empty() ? std::string{ RE::TESFullName::GetFullName(*form) } : item.name;
 			made.name = std::string{ Protocol::Utf8Prefix(Text::Format("party.lent_item", { { "player", owner }, { "item", own } }), Protocol::MAX_ITEM_NAME_LENGTH) };
 			copy->AddObjectToContainer(object, ItemCopies::ExtraFor(made, object), 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
@@ -891,6 +946,7 @@ namespace FrameLoans
 				if (borrowed.stage == Stage::kLent) {
 					++worn;
 					REX::INFO("FrameLoans: our player got into {:08X}, player {}'s frame lent to us", borrowed.copy, borrowed.owner);
+					NoteOwnCores(Player());
 				}
 				borrowed.stage = Stage::kWorn;
 				borrowed.since = now;
