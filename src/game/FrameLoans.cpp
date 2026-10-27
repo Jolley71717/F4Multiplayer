@@ -91,6 +91,7 @@ namespace FrameLoans
 			std::vector<Source>                 kit;
 			std::vector<Protocol::ReturnedItem> items;
 			Clock::time_point                   since{};
+			bool                                warned = false;  // waiting a long while: logged once
 		};
 		std::vector<PendingBack> backs;
 		constexpr auto       MOVE_LIMIT = std::chrono::minutes(30);  // a spot never come near again: it stays where it stood
@@ -126,7 +127,7 @@ namespace FrameLoans
 		Clock::time_point lastSaidAt{};
 		constexpr auto    SAY_AGAIN = std::chrono::seconds(3);
 
-		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesTaken = 0, movedBack = 0, cleanedUp = 0;
+		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesTaken = 0, piecesGiven = 0, movedBack = 0, cleanedUp = 0;
 
 		// A notice, not again while it is the last one said a moment ago (a press is asked about more than once).
 		void Say(const std::string& a_text)
@@ -166,8 +167,35 @@ namespace FrameLoans
 			}
 			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
 			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-			const auto worn = Equipment::PowerArmorFrameOf(player);
-			return (occupied && occupied->GetFormID() == a_frame) || (worn && worn->GetFormID() == a_frame);
+			const auto frame = Equipment::PowerArmorFrameOf(player);
+			return (occupied && occupied->GetFormID() == a_frame) || (frame && frame->GetFormID() == a_frame);
+		}
+
+		// Our copy of the frame lent to us: by the handle it was pressed on, or by its id. The engine frees a reference as its
+		// cell unloads and makes it anew from its record as the cell loads again (the one our player wears, or one they got
+		// out of and walked away from), and the old handle names nothing then, though the copy stands there with the lent
+		// items in it. Taken by its id only while what stands under it is still that copy: ours by the save guard's books,
+		// or, let go of them while worn (released), a created frame of its base, not deleted. The handle is set to it again.
+		RE::NiPointer<RE::TESObjectREFR> CopyRef()
+		{
+			if (auto held = borrowed.handle.get()) {
+				return held;
+			}
+			if (borrowed.copy == 0) {
+				return {};
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(borrowed.copy);
+			if (!ref || ref->IsDeleted()) {
+				return {};
+			}
+			const auto base = ref->GetObjectReference();
+			const bool ours = borrowed.released ? ref->IsCreated() && base && base->GetFormID() == borrowed.base : SaveGuard::Placed(ref);
+			if (!ours) {
+				return {};
+			}
+			borrowed.handle = ref->GetHandle();
+			REX::INFO("FrameLoans: our copy {:08X} of the frame lent to us is found again by its id (its handle named nothing)", borrowed.copy);
+			return RE::NiPointer<RE::TESObjectREFR>(ref);
 		}
 
 		std::optional<RemoteEdits::Spot> SpotOf(const RE::TESObjectREFR* a_ref)
@@ -197,10 +225,20 @@ namespace FrameLoans
 			return text && !text->displayName.empty() ? std::string{ text->displayName.c_str() } : std::string{};
 		}
 
-		// A frame's power armor piece, or a fusion core (ammunition: what a frame holds of it).
+		// The fusion core a frame runs on (Fallout4.esm's AmmoFusionCore; the console's `player.additem 75FE4`). The engine
+		// strips editor ids at runtime, so it is known by its id. Never any other ammunition: a frame holds whatever its owner
+		// stored in it (the Transfer menu), and a stack of rounds is not a core.
+		constexpr std::uint32_t FUSION_CORE = 0x00075FE4;
+
+		bool IsCore(const RE::TESBoundObject* a_object)
+		{
+			return a_object && a_object->GetFormType() == RE::ENUM_FORM_ID::kAMMO && a_object->GetFormID() == FUSION_CORE;
+		}
+
+		// A frame's power armor piece, or a fusion core.
 		bool PieceOrCore(const RE::TESBoundObject* a_object)
 		{
-			return a_object && (a_object->GetFormType() == RE::ENUM_FORM_ID::kAMMO || Equipment::IsPowerArmorPiece(a_object));
+			return IsCore(a_object) || (a_object && Equipment::IsPowerArmorPiece(a_object));
 		}
 
 		struct Hit
@@ -285,8 +323,6 @@ namespace FrameLoans
 			REX::WARN("FrameLoans: lent items in {:08X} did not all go", a_ref->GetFormID());
 		}
 
-		constexpr std::uint32_t FUSION_CORE = 0x00075FE4;  // Fallout4.esm: AmmoFusionCore
-
 		// How many of a_base a_ref holds, every stack of it.
 		std::int32_t CountOf(RE::TESObjectREFR* a_ref, std::uint32_t a_base)
 		{
@@ -319,10 +355,13 @@ namespace FrameLoans
 			}
 		}
 
-		// Our player's own fusion cores the engine moved into our copy as the lent one ran down go back to them: of each
-		// base, at most as many as they have fewer of now than as they got in, and only what the copy still holds of it. Run
-		// once the lent items are gathered (none of those is counted). Nothing else of the copy goes to them: whatever more
-		// it holds goes with it.
+		// What of our player's own the engine moved into our copy goes back to them, once the lent items are gathered (none
+		// of those is counted): their own fusion cores, as the lent one ran down (of each base, at most as many as they have
+		// fewer of now than as they got in, and only what the copy still holds of it), and their own power armor pieces,
+		// put on the frame from the Pip-Boy in place of lent ones (those came off onto our player, and are gathered from
+		// there), which the engine puts into the frame as they get out: every piece left in it, as the lent ones are gone by
+		// now, and the copy was emptied before the kit went in (OnFrameLent), so no piece in it is from anywhere else.
+		// Nothing else of the copy goes to them: whatever more it holds goes with it.
 		void GiveRest(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player)
 		{
 			if (!Equipment::MayChange(a_player, OwnGear::Change::kLoan) || !Equipment::MayChange(a_copy, OwnGear::Change::kLoan)) {
@@ -343,6 +382,18 @@ namespace FrameLoans
 				data.reason = RE::ITEM_REMOVE_REASON::kStoreContainer;
 				a_copy->RemoveItem(data);
 			}
+			for (int i = 0; i < MAX_STACKS; ++i) {
+				const auto hit = FindStack(a_copy, [&](RE::TESBoundObject* a_object, RE::ExtraDataList*) -> std::optional<Hit> {
+					return Equipment::IsPowerArmorPiece(a_object) && !Equipment::IsFrameItem(a_object) ? std::optional<Hit>{ Hit{} } : std::nullopt;
+				});
+				if (!hit) {
+					return;
+				}
+				REX::INFO("FrameLoans: {} of {:08X}, our player's own power armor piece(s) left on the borrowed frame, go back to them", hit->count, hit->object->GetFormID());
+				RemoveStack(a_copy, *hit, a_player);
+				piecesGiven += static_cast<std::uint32_t>((std::max)(hit->count, 1));
+			}
+			REX::WARN("FrameLoans: our player's own pieces in {:08X} did not all go back to them", a_copy->GetFormID());
 		}
 
 		// A frame of ours nobody is in, gone (one the session's book of spawns no longer holds).
@@ -371,7 +422,7 @@ namespace FrameLoans
 		// moved or wore down).
 		void Finish(bool a_send, bool a_ended, const char* a_why)
 		{
-			const auto copy = borrowed.handle.get();
+			const auto copy = CopyRef();
 			const auto player = Player();
 			// Our player in it after all (got in as the loan ended unworn): never taken from under them. The owner's game is
 			// told it ended (its frame stays as it was), and ours goes, with the copies, as they get out.
@@ -428,10 +479,22 @@ namespace FrameLoans
 			const auto foundCount = std::ranges::count_if(items, &Protocol::ReturnedItem::found);
 			REX::INFO("FrameLoans: player {}'s frame {:08X} (our copy {:08X}) given back ({}): {} of {} lent items found{}", borrowed.owner, borrowed.spawnId, borrowed.copy, a_why, foundCount, borrowed.tags.size(),
 				borrowed.ownerless ? "; its owner is gone, so it goes" : "");
-			if (copy) {
-				if (borrowed.released) {
-					SaveGuard::Track(copy.get());  // ours again: kept out of saves as every copy is
+			if (borrowed.released) {
+				// Ours again: kept out of saves as every copy is. One not found now (freed with its cell, its record kept: the lent
+				// items are in it still) is put back on the books by its id, and forgotten as any copy lost is, its record
+				// dropped so that no save keeps it and no cell loading again brings it back; Spawns does that itself for one it
+				// still holds (Refresh), and a form of that id again is found by Spawns, never kept by us.
+				if (copy) {
+					SaveGuard::Track(copy.get());
+				} else {
+					SaveGuard::Track(borrowed.copy, borrowed.base);
+					if (Spawns::LocalOf(borrowed.spawnId) != borrowed.copy) {
+						SaveGuard::Forget(borrowed.copy);
+					}
+					REX::INFO("FrameLoans: our copy {:08X} of the frame lent to us is not found as the loan ends; it is ours to keep out of saves again, and forgotten", borrowed.copy);
 				}
+			}
+			if (copy) {
 				const bool spawnsCopy = Spawns::LocalOf(borrowed.spawnId) == copy->GetFormID();
 				if (!(spawnsCopy && Spawns::DropLentCopy(borrowed.spawnId)) && !PlayerIn(copy.get())) {
 					DeleteFrame(copy.get());
@@ -477,7 +540,7 @@ namespace FrameLoans
 					if (!PieceOrCore(object) || Equipment::IsFrameItem(object)) {
 						continue;
 					}
-					const bool    core = object->GetFormType() == RE::ENUM_FORM_ID::kAMMO;
+					const bool    core = IsCore(object);
 					std::uint32_t index = 0;
 					for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get(), ++index) {
 						auto       item = ItemCopies::ItemOf(object, stack->extra.get());
@@ -550,11 +613,15 @@ namespace FrameLoans
 		// What came back of the lent items put on our frame (FrameLoan::AfterReturn): each worn down to what came back, never
 		// up, and each that did not come back taken out of it (its copy is somewhere in the borrower's world now). One item
 		// of its stack only: one of a stack of the same (fusion cores at full charge share one) is split off with its own
-		// extra data first, so the others keep theirs. False when our frame has no inventory here yet: tried again.
+		// extra data first, so the others keep theirs. False when our frame has no inventory here yet, or our player is in it
+		// (its pieces are on them, and the own-gear rule never changes a frame they are in): tried again.
 		bool PutBack(RE::TESObjectREFR* a_frame, const std::vector<Source>& a_kit, const std::vector<Protocol::ReturnedItem>& a_items)
 		{
-			if (!a_frame || !a_frame->inventoryList) {
+			if (!a_frame || !a_frame->inventoryList || PlayerIn(a_frame)) {
 				return false;
+			}
+			if (!Equipment::MayChange(a_frame, OwnGear::Change::kLoan)) {
+				return false;  // a frame of ours made here, nobody in it: refused only while gone (counted and logged there)
 			}
 			std::uint32_t wornDown = 0, removed = 0;
 			for (const auto& source : a_kit) {
@@ -843,7 +910,33 @@ namespace FrameLoans
 		}
 		// Ours, lent.
 		if (a_lending.ownerId == us && us != 0) {
-			if (const auto it = lent.find(a_lending.spawnId); it != lent.end() && a_lending.refusal == Protocol::LoanRefusal::kNone && !it->second.granted) {
+			if (a_lending.refusal != Protocol::LoanRefusal::kNone) {
+				return;
+			}
+			auto it = lent.find(a_lending.spawnId);
+			if (it == lent.end()) {
+				// Our offer, confirmed after LEND_WAIT (ours again meanwhile; a loading screen of ours held the word up): taken up all
+				// the same, since the borrower's game fills its copy on this very word and wears it. Ignored, the return would be
+				// ignored too, and a piece whose copy stayed in their world (dropped, sold) would be in our frame as well. The
+				// kit as the server kept it: each item found again by its base and the condition it was lent at (SourceStack),
+				// not by its stack then. Only for a frame still ours and shared under that spawn.
+				const auto local = Spawns::LocalOf(a_lending.spawnId);
+				if (local == 0 || Spawns::OwnIdOf(local) != a_lending.spawnId) {
+					REX::WARN("FrameLoans: frame {:08X} is lent to player {} on our word, but it is no frame of ours shared now; the return will not be put on it", a_lending.spawnId, a_lending.borrowerId);
+					return;
+				}
+				std::vector<Source> kit;
+				for (const auto& item : a_lending.kit) {
+					kit.push_back({ .slot = item.slot, .base = item.base, .stack = 0, .health = item.health });
+				}
+				it = lent.emplace(a_lending.spawnId, Lent{ .local = local, .borrower = a_lending.borrowerId, .granted = true, .kit = std::move(kit), .since = Clock::now() }).first;
+				++lentOut;
+				REX::INFO("FrameLoans: our frame {:08X} ({:08X}) is lent to player {}, confirmed late (our offer had been given up); the {} items are found again by base and condition at the return", a_lending.spawnId, local,
+					a_lending.borrowerId, it->second.kit.size());
+				Say(Text::Format("party.frame_borrowed", { { "player", RemotePlayers::NameOf(a_lending.borrowerId) } }));
+				return;
+			}
+			if (!it->second.granted) {
 				it->second.granted = true;
 				++lentOut;
 				REX::INFO("FrameLoans: our frame {:08X} ({:08X}) is lent to player {}", a_lending.spawnId, it->second.local, a_lending.borrowerId);
@@ -964,7 +1057,7 @@ namespace FrameLoans
 			RunCleanup(now);
 		}
 		if (borrowed.stage != Stage::kNone) {
-			const auto copy = borrowed.handle.get();
+			const auto copy = CopyRef();
 			const FrameLoan::WearFacts facts{ .copyThere = copy && !copy->IsDeleted(), .in = PlayerIn(borrowed.copy), .inArmor = Equipment::InPowerArmor(Player()) };
 			switch (FrameLoan::NextStep(borrowed.stage, now - borrowed.since, facts)) {
 			case FrameLoan::Step::kGiveUp:
@@ -1011,14 +1104,16 @@ namespace FrameLoans
 			REX::INFO("FrameLoans: our frame {:08X} offered to player {} was never confirmed; ours again", a_entry.first, a_entry.second.borrower);
 			return true;
 		});
-		// Ours given back while it had no inventory here: what came back put on it once it has.
-		std::erase_if(backs, [&](const PendingBack& a_back) {
+		// Ours given back while it had no inventory here, or our player was in it: what came back put on it once it can be,
+		// however long that takes (a piece that did not come back is in the borrower's world now: left in our frame as well,
+		// it would be two). Until a load (the loaded world's frame is as it was saved).
+		std::erase_if(backs, [&](PendingBack& a_back) {
 			if (PutBack(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_back.local), a_back.kit, a_back.items)) {
 				return true;
 			}
-			if (now - a_back.since >= MOVE_LIMIT) {
-				REX::WARN("FrameLoans: our frame {:08X} never had an inventory here again; what came back of its loan is not put on it", a_back.local);
-				return true;
+			if (!a_back.warned && now - a_back.since >= MOVE_LIMIT) {
+				a_back.warned = true;
+				REX::WARN("FrameLoans: our frame {:08X} has had no inventory here (or our player in it) since its loan's return; what came back of it waits", a_back.local);
 			}
 			return false;
 		});
@@ -1120,7 +1215,8 @@ namespace FrameLoans
 
 	std::string Describe()
 	{
-		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} asked={} refused={} lent={} worn={} returned={} ended={} ours: lent={} back={} worn={} moved={} cleaned={}", static_cast<int>(borrowed.stage),
-			borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds, lentOut, givenBack, piecesWorn, movedBack, cleanedUp);
+		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} ours: lent={} back={} worn={} taken={} moved={} cleaned={}",
+			static_cast<int>(borrowed.stage), borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), backs.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds,
+			piecesGiven, lentOut, givenBack, piecesWorn, piecesTaken, movedBack, cleanedUp);
 	}
 }

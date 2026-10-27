@@ -407,13 +407,18 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   as the owner's, into its copy (held as it is while lent: `SpawnBook::FrameFacts::lent`), and the next press gets
   their player in. While they wear it their status names it by its spawn id and every game hides its own reference
   of it (the frame hide); the owner's game neither shares it nor tells it parked. As they get out (2 s settled, and out
-  of power armor) the copies are gathered from the frame and the player and removed (the cores only as many as the
-  player lost of their own), their copy goes, and `kReturnFrame` says where it stands and each piece's condition: the
-  owner's game wears its pieces down to that (never up), removes a piece that did not come back (dropped, sold, or in a
-  copy that went), and moves its frame there once the spot is in sight (`NpcSync::MoveOwnFrame`; the server keeps the
-  spot within 1024 units of the borrower's last state, or it is that state). Every change to an inventory goes through
-  `OwnGear` (`kLoan`), and Drops never gives a lent copy away. A frame not got into within 60 s, or before a save, goes
-  back unworn; an offer the server never confirms is the owner's again after 15 s. A loan ends without a return when
+  of power armor) the copies are gathered from the frame and the player and removed, what else of the player's own the
+  frame holds goes back to them (their cores, as many as they lost to it; their own pieces, put on from the Pip-Boy),
+  their copy goes (found by its handle or, the engine having made it anew with its cell, by its id; one not found is put
+  back under the save guard by its id and forgotten), and `kReturnFrame` says where it stands and each piece's condition:
+  the owner's game wears its pieces down to that (never up), removes a piece that did not come back (dropped, sold, or in
+  a copy that went), and moves its frame there once the spot is in sight (`NpcSync::MoveOwnFrame`; the server keeps the
+  spot within 1024 units of the borrower's last state, or it is that state). What came back waits for as long as the
+  frame has no inventory here or the owner's player is in it. Every change to an inventory goes through `OwnGear`
+  (`kLoan`), and Drops never gives a lent copy away. The core is the vanilla fusion core by its id, never other ammunition
+  stored in the frame. A frame not got into within 60 s, or before a save, goes back unworn; an offer the server never
+  confirms is the owner's again after 15 s, and a confirmation that comes later is taken up all the same (the kit as the
+  server kept it, each piece found again by base and condition). A loan ends without a return when
   either player leaves, the spawn ends, or the borrower loads a save (`kFrameReturned` with `ended`; an ask not yet
   answered ends the same way, so the owner's game forgets it): the frame stays where it stood, and a borrower still in
   it keeps it until they get out. A save made in a borrowed frame keeps it and notes it in the co-save's `LOAN` record;

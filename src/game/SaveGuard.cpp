@@ -546,6 +546,13 @@ namespace SaveGuard
 		}
 	}
 
+	void Track(std::uint32_t a_id, std::uint32_t a_base)
+	{
+		if (a_id != 0) {
+			book.Track(a_id, a_base);
+		}
+	}
+
 	bool Placed(const RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref) {
