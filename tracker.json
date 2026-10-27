@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T19:02:33+00:00",
+ "updated": "2026-10-27T20:59:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -38,8 +38,9 @@
    "title": "Log pointers and 3D state around the save-time respawn, to name the ref in an engine use-after-free",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 214
   },
   {
    "id": "1ap3",
@@ -638,7 +639,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 2,
-   "note": "Rig: flung cans still end apart; being fixed",
+   "note": "Rig: still apart after a grenade with a friend in the pile; looking deeper",
    "pr": 213
   },
   {
@@ -646,8 +647,8 @@
    "title": "A friend's game loaded an older save than expected",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "Rig: the game's save-on-travel setting still isn't read; being fixed",
+   "stage": 5,
+   "note": "",
    "pr": 186,
    "desc": "A player reported that their friend ended up with a save from about ten minutes earlier instead of the latest one. Progress may have been lost, so this is a high priority. We need to know which save was loaded (quick, auto or exit save) and the logs from both games."
   },
@@ -834,6 +835,22 @@
    "stage": 7,
    "note": "Fixed in 0.9.0, tested on two real games.",
    "desc": "A player reported that harvesting plants was not synced. Picking a plant moves nothing into the inventory the usual way, so the mod never saw it. 0.9.0 shares it: a plant a friend picks is picked in your game too, and two players picking the same plant harvest it once."
+  },
+  {
+   "id": "yeyc",
+   "title": "Pre-save flush re-logs refs marked for deletion at every later save",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "ygna",
+   "title": "Travel autosave: read bSaveOnTravel from the Prefs collection's bare key before the ini file",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "yqm3",
