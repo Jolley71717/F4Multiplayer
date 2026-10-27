@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T13:13:16+00:00",
+ "updated": "2026-10-27T14:30:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -87,7 +87,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 5,
-   "note": "Fixed in 0.9.0 and again for the next release for the causes we found; the original case was never reproduced.",
+   "note": "Merged again: one cause fixed and the log now says why a frame is refused; the original case still not reproduced.",
    "pr": 153,
    "partial": "0.9.0",
    "desc": "Some players got 'You cannot use this at this time' when trying to enter a power armor frame. We could not reproduce the exact case, but found two things that cause the message: a frame left leaning, and a seat the game still thought was yours. 0.9.0 handles both, and the next release also stands a leaning frame back up so it can be entered again. It has not been tried in a real game with a leaning frame."
@@ -117,8 +117,8 @@
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "The chest redraw is fixed a second way after the rig test; reviewed.",
+   "stage": 2,
+   "note": "The rig test found the redraw held back by mistake; being fixed.",
    "pr": 202
   },
   {
@@ -254,8 +254,8 @@
    "title": "After being helped up from going down while sneaking, the sneak key stops working",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Likely cause found and fixed; reviewed; needs a real game to confirm.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games.",
    "pr": 210
   },
   {
@@ -481,8 +481,8 @@
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Fixed: a friend's Take All now only takes what they took from your copy; reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games.",
    "pr": 203,
    "desc": "Each game rolls its own loot for world containers and corpses. Before, when one player took everything from one, the others lost their whole copy of it too, but if one item was left they kept it all. Now a friend emptying a container takes from your copy only what is left of the items they actually took. Your own roll's other items, items your mods add, and anything you put there yourself stay."
   },
@@ -512,8 +512,8 @@
    "title": "Friends appear out of power armor after the game was quit in it",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Remaining case found and fixed: a friend in a frame your game can't place now shows in armor; reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games.",
    "pr": 206,
    "partial": "0.9.2",
    "desc": "If players quit while in power armor and start a session later, others saw them without a suit until they got out and back in. 0.9.2 fixes the sending side, so a player who loads a save in power armor is seen in it. We have not tried it in a real game, and there may be other reasons a frame is missing on the receiving side."
@@ -581,8 +581,9 @@
    "title": "An enemy spawned in the host's game can't be taken over by the joiner",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "By design the host's game keeps its spawned enemies; hits always land. The log now says so; reviewed.",
+   "pr": 211
   },
   {
    "id": "ou8y",
@@ -624,6 +625,14 @@
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
   },
   {
+   "id": "q89a",
+   "title": "Knocked clutter ends in different places when friends stand by it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "qx9n",
    "title": "A friend's game loaded an older save than expected",
    "kind": "bug",
@@ -649,8 +658,8 @@
    "title": "Leftover power armor frame copies pile up at one spot",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Two ways copies were left behind are fixed, and old ones are cleaned up on load; reviewed.",
+   "stage": 5,
+   "note": "Merged: no more leftover copies, and a player's own frames are kept; tested in two games.",
    "pr": 209
   },
   {
@@ -795,8 +804,8 @@
    "title": "An opened chest briefly shows loot a friend already took",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fixed: a friend's earlier takes now go in as you open it; reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; in testing the takes were already in before the chest was opened.",
    "pr": 208
   },
   {
@@ -822,8 +831,8 @@
    "title": "A knocked object that rolls on shows in the wrong place for a friend",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fixed: an object that moves again soon after it stopped is followed until it really stops; reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; tested with the friend away from the object.",
    "pr": 207
   },
   {
