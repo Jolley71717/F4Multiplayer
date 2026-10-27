@@ -480,6 +480,7 @@ namespace
 					WeaponFire::BeforeLoad();  // first: the shields Session ends below would send setghost 0 into the load
 					Session::OnBeforeLoad();
 					Session::OnBeforeSaveOrLoad();
+					FrameLoans::BeforeLoad();  // the extra data of the pieces we lent is let go while the old world is still there
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
 					InertShots::BeforeLoad();  // after DespawnAll: every inert shot in flight is handed to the load, which frees it

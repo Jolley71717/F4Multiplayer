@@ -69,6 +69,11 @@ namespace FrameLoans
 	void                      LoadRecord(const std::vector<std::uint8_t>& a_bytes);
 	void                      RevertRecord();
 
+	// A load is about to begin (kPreLoadGame, after Session::OnBeforeSaveOrLoad): the loans of our frames, the gives back
+	// waiting and the moves waiting are let go now, while the engine's data they hold on to (the extra data of the lent
+	// pieces) is still whole. Nothing changes in what the game does: they end with the load anyway.
+	void BeforeLoad();
+
 	// A save was loaded (or a new game begun): the loans of the old world are over, and a loaded LOAN record is cleaned up.
 	void OnGameLoaded();
 

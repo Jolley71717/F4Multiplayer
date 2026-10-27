@@ -1198,6 +1198,16 @@ namespace FrameLoans
 		recordLoaded.reset();
 	}
 
+	void BeforeLoad()
+	{
+		if (!lent.empty() || !backs.empty() || !moves.empty()) {
+			REX::INFO("FrameLoans: the load ends {} loans of our frames, and lets go of {} gives back and {} moves waiting", lent.size(), backs.size(), moves.size());
+		}
+		lent.clear();
+		backs.clear();
+		moves.clear();
+	}
+
 	void OnGameLoaded()
 	{
 		// The old world's loans are over: the server ends them as our game asks for the world again, and lets our
