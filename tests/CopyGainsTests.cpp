@@ -123,3 +123,49 @@ TEST("copy gains: without a maximum the gain is judged by rounding alone, and a 
 	CHECK(book.Check(GHOUL, 80.1f, T0 + milliseconds{ 2000 }) == 0.0f);
 	CHECK(book.Check(GHOUL, 80.1f, T0 + milliseconds{ 2000 } + CopyHealth::JUDGE_AFTER) < 0.0f);
 }
+
+TEST("copy gains: a report held after our hits stands where it said once the copy's own heal got there first, not below it")
+{
+	Book book;
+	CHECK(book.Check(GHOUL, 100.0f, T0, 100.0f) == 0.0f);
+	book.OurHit(GHOUL, T0 + milliseconds{ 50 }, 20.0f);
+	CHECK(book.Check(GHOUL, 80.0f, T0 + milliseconds{ 50 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(GHOUL) == 20.0f);
+	// The owner's report from before our hit reached it: held, the copy left at 80.
+	CHECK(book.Heard(GHOUL, 80.0f, 100.0f, T0 + milliseconds{ 100 }) == 80.0f);
+	CHECK(book.Holds(GHOUL));
+	// Once our hits are over, the copy's own heal (its mutation) has it at the report's figure already: the report stands
+	// there, and nothing is taken back. Before, the gain was taken back to 80, below the owner's 100 until its next report.
+	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 1100 }, 100.0f) == 0.0f);
+	CHECK(!book.Holds(GHOUL));
+	CHECK(Near(book.Health(GHOUL), 100.0f));
+	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 1100 } + CopyHealth::JUDGE_AFTER, 100.0f) == 0.0f);
+	// Past the report's figure: only what it has beyond that is its own.
+	book.Set(GHOUL, 80.0f);
+	book.OurHit(GHOUL, T0 + milliseconds{ 2000 }, 5.0f);
+	CHECK(book.Check(GHOUL, 75.0f, T0 + milliseconds{ 2000 }, 100.0f) == 0.0f);
+	CHECK(book.Heard(GHOUL, 75.0f, 90.0f, T0 + milliseconds{ 2050 }) == 85.0f);
+	CHECK(book.Holds(GHOUL));
+	CHECK(book.Check(GHOUL, 95.0f, T0 + milliseconds{ 3100 }, 100.0f) == 0.0f);
+	CHECK(book.Check(GHOUL, 95.0f, T0 + milliseconds{ 3100 } + CopyHealth::JUDGE_AFTER, 100.0f) == -5.0f);
+}
+
+TEST("copy gains: our hit in the tenth of a second after the copy's own heal still goes to the owner's game, off the health it gained")
+{
+	Book book;
+	CHECK(book.Check(GHOUL, 45.0f, T0, 100.0f) == 0.0f);
+	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 50 }, 100.0f) == 0.0f);  // the mutation
+	book.OurHit(GHOUL, T0 + milliseconds{ 100 }, 20.0f);
+	CHECK(book.Check(GHOUL, 80.0f, T0 + milliseconds{ 100 }, 100.0f) == 0.0f);
+	// Judged: the 20 our hit took off the gained health is ours, and the rest of the gain goes.
+	CHECK(book.Check(GHOUL, 80.0f, T0 + milliseconds{ 50 } + CopyHealth::JUDGE_AFTER, 100.0f) == -55.0f);
+	CHECK(book.TakeOurs(GHOUL) == 20.0f);
+	book.Set(GHOUL, 25.0f);
+	CHECK(book.Check(GHOUL, 25.0f, T0 + milliseconds{ 300 }, 100.0f) == 0.0f);
+
+	// A fall from the peak with no hit of ours around is nobody's: the whole gain goes, nothing is sent.
+	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 5000 }, 100.0f) == 0.0f);
+	CHECK(book.Check(GHOUL, 90.0f, T0 + milliseconds{ 5050 }, 100.0f) == 0.0f);
+	CHECK(book.Check(GHOUL, 90.0f, T0 + milliseconds{ 5000 } + CopyHealth::JUDGE_AFTER, 100.0f) == -65.0f);
+	CHECK(book.TakeOurs(GHOUL) == 0.0f);
+}

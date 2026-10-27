@@ -261,6 +261,10 @@ namespace CopyHealth
 					entry.dropSince.reset();
 					return held - a_health;
 				}
+				// The copy is at the report's health already, or past it (its own heal got there first): the report's is
+				// where it stands, and only what it has beyond that is a gain of its own (below). Left at what it stood at
+				// before the report, the gain was taken back to that, below the owner's health until its next report.
+				entry.health = held;
 			}
 			// A gain no report gave it (a report Sets where it stands first): the copy's own, of something in our world
 			// alone: a legendary mutation of a copy that is legendary only here (the owner's roll is ours from its next
@@ -272,11 +276,23 @@ namespace CopyHealth
 				entry.dropSince.reset();
 				if (!entry.raiseSince) {
 					entry.raiseSince = a_now;
+					entry.peak = a_health;
 				}
+				entry.peak = (std::max)(entry.peak, a_health);
 				if (a_now - *entry.raiseSince < JUDGE_AFTER) {
 					return 0.0f;
 				}
 				entry.raiseSince.reset();
+				// What it fell from the most it read, with a hit of ours around, is ours as any drop is (TakeOurs): the hit
+				// landed on the gained health. Else a shot in the tenth of a second after the mutation was taken back with
+				// the heal, and never reached the NPC's game.
+				if (const float fell = entry.peak - a_health; fell > SLACK && entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now) {
+					const float take = Unknown(entry) ? fell : (std::min)(fell, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
+					entry.ours += take;
+					entry.unacked += take;
+					*entry.health -= take;
+				}
 				const float to = (std::max)(*entry.health, MIN_LEFT);
 				if (to >= a_health - SLACK) {
 					entry.health = a_health;
@@ -371,6 +387,7 @@ namespace CopyHealth
 			}
 			entry.health = health;
 			entry.dropSince.reset();
+			entry.raiseSince.reset();  // a report is where it stands: no gain of its own is pending
 			return health;
 		}
 
@@ -422,6 +439,7 @@ namespace CopyHealth
 			float                            unacked = 0.0f;  // taken by hits of ours that the owner's reports may not have yet
 			std::optional<float>             held;  // a report's health not set yet (Heard)
 			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
+			float                            peak = 0.0f;     // ... and the most it has read since then
 			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
 		};
 
