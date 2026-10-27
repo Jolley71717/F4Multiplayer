@@ -8,6 +8,7 @@
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
+#include "SaveRetry.h"
 #include "SessionFile.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
@@ -603,11 +604,13 @@ void Server::Run()
 	// written with any other change, on the host's game saves and when the server stops.
 	std::uint64_t revision = 0;
 	std::uint64_t lastSavedRevision = 0;
-	bool          saveFailing = false;  // said once, not at every check, until a save goes through
-	const auto    touched = [&] { ++revision; };
-	const auto    saveSession = [&] {
+	// A save that failed is tried again on its own, with a growing wait, whether or not anything else changed since:
+	// the time of day alone is never a change, so a save the host's game asked for would otherwise be lost.
+	SaveRetry  saveRetry{ options.saveInterval };
+	const auto touched = [&] { ++revision; };
+	const auto saveSession = [&] {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
-			return;
+			return true;
 		}
 		SessionFile::Snapshot snapshot;
 		snapshot.contentHash = sessionContentHash;
@@ -642,15 +645,16 @@ void Server::Run()
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
-			if (!std::exchange(saveFailing, true)) {
-				log(std::format("server: could not save the session to {}; trying again at every check", sessionPath.filename().string()));
+			if (saveRetry.Failed(Clock::now())) {
+				log(std::format("server: could not save the session to {}; trying again until it works", sessionPath.filename().string()));
 			}
-			return;  // tried again at the next check
+			return false;  // tried again once the wait is over
 		}
-		if (std::exchange(saveFailing, false)) {
+		if (saveRetry.Succeeded()) {
 			log("server: the session is saved again");
 		}
 		lastSavedRevision = saved;
+		return true;
 	};
 	Clock::time_point nextSave = Clock::now() + options.saveInterval;
 
@@ -3646,18 +3650,25 @@ void Server::Run()
 		}
 
 		// The session goes to disk when it changed (checked every saveInterval), when asked (the host's game
-		// saves, or its connection goes) and when the server stops.
+		// saves, or its connection goes), when a save failed and its wait is over, and when the server stops.
 		if (saveRequested.exchange(false)) {
-			nextSave = Clock::now() + options.saveInterval;
+			nextSave = now + options.saveInterval;
 			saveSession();
-		} else if (Clock::now() >= nextSave) {
-			nextSave = Clock::now() + options.saveInterval;
-			if (revision != lastSavedRevision) {
+		} else if (saveRetry.Due(now)) {
+			nextSave = now + options.saveInterval;
+			saveSession();
+		} else if (now >= nextSave) {
+			nextSave = now + options.saveInterval;
+			// While a save is failing the retry above decides when to try, not each check.
+			if (revision != lastSavedRevision && !saveRetry.Failing()) {
 				saveSession();
 			}
 		}
 	}
-	saveSession();
+	// One last try, whatever the wait: the file may be free again by now.
+	if (!saveSession()) {
+		log("server: could not save the session when the server stopped; the last save that worked is what it keeps");
+	}
 
 	for (auto& transport : transports) {
 		transport->Close();
