@@ -422,7 +422,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   either player leaves, the spawn ends, or the borrower loads a save (`kFrameReturned` with `ended`; an ask not yet
   answered ends the same way, so the owner's game forgets it): the frame stays where it stood, and a borrower still in
   it keeps it until they get out. A save made in a borrowed frame keeps it and notes it in the co-save's `LOAN` record;
-  loaded again, the player is sent out (again until they are) and the copies go. Not yet: a loan does not carry over a
+  loaded again, the player is sent out (again until they are), the copies go, and their own pieces and cores in the
+  frame go back to them. Not yet: a loan does not carry over a
   load, a lent piece may still be sold to a vendor (the owner's goes at the return), and a piece no other game can name
   (one with a runtime mod) is not lent.
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy

@@ -355,6 +355,8 @@ namespace FrameLoans
 			}
 		}
 
+		void GiveOwn(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player, bool a_cores);
+
 		// What of our player's own the engine moved into our copy goes back to them, once the lent items are gathered (none
 		// of those is counted): their own fusion cores, as the lent one ran down (of each base, at most as many as they have
 		// fewer of now than as they got in, and only what the copy still holds of it), and their own power armor pieces,
@@ -382,18 +384,30 @@ namespace FrameLoans
 				data.reason = RE::ITEM_REMOVE_REASON::kStoreContainer;
 				a_copy->RemoveItem(data);
 			}
+			GiveOwn(a_copy, a_player, false);
+		}
+
+		// Our player's own power armor pieces left in our copy (and, a_cores, their own fusion cores: after a load, with no
+		// count of what they got in with) go back to them. Run once the lent items are gathered: none of what is left is
+		// one of those, the copy was emptied before the kit went in, and nothing gets into it but off our player.
+		void GiveOwn(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player, bool a_cores)
+		{
+			if (!Equipment::MayChange(a_player, OwnGear::Change::kLoan) || !Equipment::MayChange(a_copy, OwnGear::Change::kLoan)) {
+				return;
+			}
 			for (int i = 0; i < MAX_STACKS; ++i) {
 				const auto hit = FindStack(a_copy, [&](RE::TESBoundObject* a_object, RE::ExtraDataList*) -> std::optional<Hit> {
-					return Equipment::IsPowerArmorPiece(a_object) && !Equipment::IsFrameItem(a_object) ? std::optional<Hit>{ Hit{} } : std::nullopt;
+					const bool own = (Equipment::IsPowerArmorPiece(a_object) && !Equipment::IsFrameItem(a_object)) || (a_cores && IsCore(a_object));
+					return own ? std::optional<Hit>{ Hit{} } : std::nullopt;
 				});
 				if (!hit) {
 					return;
 				}
-				REX::INFO("FrameLoans: {} of {:08X}, our player's own power armor piece(s) left on the borrowed frame, go back to them", hit->count, hit->object->GetFormID());
+				REX::INFO("FrameLoans: {} of {:08X}, our player's own, left in the borrowed frame, go back to them", hit->count, hit->object->GetFormID());
 				RemoveStack(a_copy, *hit, a_player);
 				piecesGiven += static_cast<std::uint32_t>((std::max)(hit->count, 1));
 			}
-			REX::WARN("FrameLoans: our player's own pieces in {:08X} did not all go back to them", a_copy->GetFormID());
+			REX::WARN("FrameLoans: our player's own items in {:08X} did not all go back to them", a_copy->GetFormID());
 		}
 
 		// A frame of ours nobody is in, gone (one the session's book of spawns no longer holds).
@@ -487,16 +501,22 @@ namespace FrameLoans
 				if (copy) {
 					SaveGuard::Track(copy.get());
 				} else {
+					// Forgotten here even while Spawns still lists it: its own handle died with ours, and its Refresh then let the
+					// id go unheard (released, it was not on the books), so it would never drop the record.
 					SaveGuard::Track(borrowed.copy, borrowed.base);
-					if (Spawns::LocalOf(borrowed.spawnId) != borrowed.copy) {
-						SaveGuard::Forget(borrowed.copy);
-					}
+					SaveGuard::Forget(borrowed.copy);
 					REX::INFO("FrameLoans: our copy {:08X} of the frame lent to us is not found as the loan ends; it is ours to keep out of saves again, and forgotten", borrowed.copy);
 				}
 			}
 			if (copy) {
+				// Spawns buries it as it drops it, when the handle Spawns holds still names it; one Spawns lost (its handle died
+				// with its cell, and ours found it again by its id) is deleted here, or it would stand on, a frame to keep.
 				const bool spawnsCopy = Spawns::LocalOf(borrowed.spawnId) == copy->GetFormID();
-				if (!(spawnsCopy && Spawns::DropLentCopy(borrowed.spawnId)) && !PlayerIn(copy.get())) {
+				const bool spawnsHolds = spawnsCopy && std::ranges::any_of(Spawns::FrameCopies(), [&](const RE::ObjectRefHandle& a_handle) { return a_handle.get().get() == copy.get(); });
+				if (spawnsCopy) {
+					Spawns::DropLentCopy(borrowed.spawnId);
+				}
+				if (!spawnsHolds && !PlayerIn(copy.get()) && !NpcSync::InFrame(copy.get())) {
 					DeleteFrame(copy.get());
 				}
 			}
@@ -736,6 +756,7 @@ namespace FrameLoans
 			}
 			Gather(player, job.record.tags, found);
 			if (copy) {
+				GiveOwn(copy, player, true);  // their own pieces and cores, moved into it as they were sent out
 				if (player->lastUsedPowerArmor.get().get() == copy) {
 					player->lastUsedPowerArmor = RE::ObjectRefHandle{};
 				}
