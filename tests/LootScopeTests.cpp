@@ -618,18 +618,22 @@ TEST("loot sync: a chest rolled as our player opens it gets the friend's waiting
 	CHECK(bob.applied == applied + 1);
 	CHECK(bob.loot.Stats().openApplied == 1);
 
-	// Opened once rolled: both go in, in order, as it opens.
+	// Opened once rolled: both go in, in order, as it opens. His roll has more steel than Alice's had: her take leaves 2,
+	// and the emptying after it takes those (the rest of what she took: so under either emptied rule).
 	bob.unstocked.erase(CHEST_3);
-	bob.holders[CHEST_3] = { { STEEL, 1 }, { AMMO_38, 8 }, { PIPE_PISTOL, 1 } };
+	bob.holders[CHEST_3] = { { STEEL, 6 }, { PIPE_PISTOL, 1 } };
 	bob.OpenMenu(f, CHEST_3);
 	CHECK(bob.loot.Waiting().empty());
 	CHECK(bob.loot.Stats().openApplied == 3);
+	CHECK(bob.applied == applied + 3);  // the take, and the emptying's one stack
 	CHECK(bob.In(CHEST_3, STEEL) == 0);
-	CHECK(bob.In(CHEST_3, AMMO_38) == 0);  // the emptying took his roll's own
 	CHECK(bob.In(CHEST_3, PIPE_PISTOL) == 1);
+	CHECK(bob.loot.Stats().emptiedApplied == 1);
+	CHECK(bob.loot.Stats().emptiedStacks == 1);
 	bob.CloseMenu(f);
 	bob.Wait(f, std::chrono::seconds{ 3 });
 	CHECK(bob.In(CHEST_3, STEEL) == 0);
+	CHECK(bob.applied == applied + 3);
 	CHECK(bob.loot.Stats().emptiedApplied == 1);
 }
 
