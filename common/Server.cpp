@@ -1907,12 +1907,15 @@ void Server::Run()
 		if (cut) {
 			work.clear();
 		}
+		constexpr std::size_t kShortfallLinesPerSettle = 8;
+		std::size_t           shortfalls = 0;
 		for (const auto& [index, has] : work) {
 			// What the move calls for before the true copy's own count caps it. Nothing for a move already undone (or not the
 			// settler's own to undo here): the true copy does nothing for it, and that is no shortfall.
 			const auto wanted = storage.Settle(a_player.id, index, has, containerChanges, false);
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
-			if (wanted && wanted->count < 0 && (change ? change->count : 0) > wanted->count) {
+			// A settle may hold thousands of moves (MAX_STORAGE_LACKING): the first few get a line each, the rest are counted.
+			if (wanted && wanted->count < 0 && (change ? change->count : 0) > wanted->count && ++shortfalls <= kShortfallLinesPerSettle) {
 				log(std::format("server: storage {:08X} held {} fewer of {:08X} than {} player {}'s move #{} needed to take out; only what it held went", containerChanges[index].change.container,
 					(change ? change->count : 0) - wanted->count, containerChanges[index].change.item, has ? "doing again" : "undoing", a_player.id, index));
 			}
@@ -1935,6 +1938,10 @@ void Server::Run()
 					send(key, packet, true);
 				}
 			}
+		}
+		if (shortfalls > kShortfallLinesPerSettle) {
+			log(std::format("server: and {} more of player {}'s moves found storage holding less than they needed to take out", shortfalls - kShortfallLinesPerSettle,
+				a_player.id));
 		}
 		a_player.storageSettled = !cut;
 		if (cut) {
