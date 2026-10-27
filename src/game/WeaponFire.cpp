@@ -90,11 +90,17 @@ namespace WeaponFire
 		ThrowReplays::Book         throwReplays;  // under replayLock
 		std::atomic<std::uint32_t> releasesHeld{ 0 };
 		std::atomic<std::uint32_t> releasesLogged{ 0 };
+		std::unordered_map<std::uint32_t, ThrowReplays::Clock::time_point> lastReplays;  // actor -> its last replayed throw (dev: SweepHand's log), under replayLock
 
 		void ArmReplayedThrow(std::uint32_t a_actorId)
 		{
 			std::scoped_lock l{ replayLock };
-			throwReplays.Arm(a_actorId, ThrowReplays::Clock::now());
+			const auto now = ThrowReplays::Clock::now();
+			throwReplays.Arm(a_actorId, now);
+			if (lastReplays.size() >= ThrowReplays::MAX_ARMED) {
+				lastReplays.clear();
+			}
+			lastReplays[a_actorId] = now;
 		}
 
 		// Whether the actor's graph never let go of its replayed throw; it is waited for no longer.
@@ -1331,6 +1337,10 @@ namespace WeaponFire
 		std::uint32_t                                                handsLogged = 0;
 		constexpr std::uint32_t                                      MAX_HAND_LOGS = 60;
 		std::atomic<Clock::time_point>                               playerSampleAt{};
+		std::unordered_map<std::uint32_t, Clock::time_point>         sweepAt;      // stand-in -> when its hand is looked at next (SweepHand)
+		std::uint32_t                                                handsSwept = 0;  // grenades found drawn in a stand-in's hand between throws, culled
+		std::uint32_t                                                sweepsLogged = 0;
+		constexpr std::uint32_t                                      MAX_SWEEP_LOGS = 20;
 
 		// The weapon's model as the engine's model database keeps it, loaded as the engine loads a reference's model
 		// (from the archives if it is not in memory yet: a small file, on this thread), and kept for the next throw.
@@ -1507,6 +1517,7 @@ namespace WeaponFire
 	{
 		MuzzleFlash::Drop(a_actorFormId);  // called before the actor is deleted, like this
 		TakeOff(a_actorFormId, HandThrowable::Drop::kDeleted);
+		sweepAt.erase(a_actorFormId);
 	}
 
 	void DropHandThrowables()
@@ -1515,8 +1526,65 @@ namespace WeaponFire
 		for (const auto actorId : handBook.Actors()) {
 			TakeOff(actorId, HandThrowable::Drop::kDeleted);
 		}
+		sweepAt.clear();
 		std::scoped_lock l{ handCueLock };
 		handCues.clear();
+	}
+
+	void SweepHand(RE::Actor* a_standIn)
+	{
+		if (!a_standIn) {
+			return;
+		}
+		const auto id = a_standIn->GetFormID();
+		const auto now = Clock::now();
+		if (const auto it = sweepAt.find(id); it != sweepAt.end() && now < it->second) {
+			return;
+		}
+		if (sweepAt.size() >= 64) {
+			sweepAt.clear();  // stand-ins come and go with new form IDs; a spacing lost is one early look
+		}
+		sweepAt[id] = now + HandThrowable::SWEEP_EVERY;
+		HandThrowable::Between seen;
+		const auto root = !a_standIn->IsDead(false) ? a_standIn->Get3D() : nullptr;
+		const auto hand = Equipment::ChildNode(root, HandThrowable::HAND);
+		seen.loaded = hand != nullptr;
+		const auto engines = Equipment::DirectChild(hand, HandThrowable::ENGINE_NODE);
+		const auto enginesNode = engines ? engines->IsNode() : nullptr;
+		seen.drawn = engines && !engines->GetAppCulled();
+		if (enginesNode) {
+			for (const auto& child : enginesNode->children) {  // the array runs to its capacity: empty slots are null
+				seen.holds = seen.holds || child.get() != nullptr;
+			}
+		}
+		seen.ours = handBook.Holds(id);
+		std::optional<Clock::duration> sinceReplay;
+		{
+			std::scoped_lock l{ replayLock };
+			seen.windingUp = throwReplays.WindingUp(id, now, HandThrowable::WIND_UP);
+			if (const auto it = lastReplays.find(id); it != lastReplays.end()) {
+				sinceReplay = now - it->second;
+			}
+		}
+		if (!HandThrowable::ShouldCull(seen)) {
+			return;
+		}
+		engines->SetAppCulled(true);
+		++handsSwept;
+		if (sweepsLogged < MAX_SWEEP_LOGS) {
+			++sweepsLogged;
+			// What had it out: how long after its last replayed throw, with its weapon in which state (RE::WEAPON_STATE).
+			std::string inside;
+			for (const auto& child : enginesNode->children) {
+				if (const auto object = child.get()) {
+					inside += std::format(" '{}'{}", object->name.c_str() ? object->name.c_str() : "", object->GetAppCulled() ? "(culled)" : "");
+				}
+			}
+			const auto weapon = Equipment::HeldThrowable(a_standIn);
+			const auto since = sinceReplay ? std::format("{} ms after its last replayed throw", std::chrono::duration_cast<std::chrono::milliseconds>(*sinceReplay).count()) : std::string{ "no replayed throw yet" };
+			REX::INFO("WeaponFire: {:08X}'s left hand showed its {} between throws ({}, weapon state {}, throwable {:08X}, holding{}); culled again ({} so far)", id, HandThrowable::ENGINE_NODE, since,
+				std::to_underlying(static_cast<const RE::ActorState&>(*a_standIn).weaponState) & 0x7, weapon ? weapon->GetFormID() : 0, inside, handsSwept);  // the field's own bits (DrawMatch::StateOf)
+		}
 	}
 
 	void QueueHandCue(std::uint32_t a_actorId, HandThrowable::Cue a_cue)
@@ -1534,7 +1602,9 @@ namespace WeaponFire
 
 	std::string DescribeHandThrowables()
 	{
-		return HandThrowables() ? std::format("{}/{}{}", handsHung, handsDropped, HandModelFallback() ? "+model" : "") : "off";
+		// Grenades culled again in a stand-in's hand between throws (SweepHand), with the drawing on or off.
+		const auto swept = handsSwept != 0 ? std::format(" handsSwept={}", handsSwept) : std::string{};
+		return (HandThrowables() ? std::format("{}/{}{}", handsHung, handsDropped, HandModelFallback() ? "+model" : "") : std::string{ "off" }) + swept;
 	}
 
 	void UpdateHandThrowables()
