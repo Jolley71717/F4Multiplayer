@@ -694,7 +694,7 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 TEST("server world: two players shooting one raider leave it with whoever hit it first while they keep hitting it; it changes hands once the first stops")
 {
 	Server::Options options;
-	options.takeoverCooldown = 800ms;
+	options.takeoverCooldown = 1000ms;  // the gaps below leave half of it for a slow test run
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	const auto bob = JoinAs(f, 2, "Bob");
@@ -715,7 +715,7 @@ TEST("server world: two players shooting one raider leave it with whoever hit it
 
 	// Alice shoots it too: her game claims it again with her hit (NpcSync::OnLocalInteraction), as it does while she
 	// talks to one, and reports its health. Nobody is told anything.
-	std::this_thread::sleep_for(400ms);
+	std::this_thread::sleep_for(600ms);
 	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
 	f.fake->Deliver(1, Health(NPC, 0.7f));
 	CHECK(Owners(Received(f, 1)).empty());
@@ -731,7 +731,7 @@ TEST("server world: two players shooting one raider leave it with whoever hit it
 	CHECK(Count(toAliceAgain, MT::kActorDamaged) == 1);
 
 	// Alice stops shooting: the cooldown after her last hit over, Bob's next shot takes it over, as before.
-	std::this_thread::sleep_for(900ms);
+	std::this_thread::sleep_for(1100ms);
 	bobShoots();
 	CHECK(HasOwner(Owners(Received(f, 2)), NPC, bob));
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
