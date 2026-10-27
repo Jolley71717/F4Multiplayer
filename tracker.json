@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T14:30:49+00:00",
+ "updated": "2026-10-27T16:02:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -117,7 +117,7 @@
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 5,
    "note": "The rig test found the redraw held back by mistake; being fixed.",
    "pr": 202
   },
@@ -365,7 +365,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 3,
-   "note": "Written behind the owner's setting bLendPowerArmor; waiting to be built, reviewed and tried on two real games.",
+   "note": "Held: one crash in rig testing, being looked at",
    "pr": 182,
    "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
   },
@@ -581,7 +581,7 @@
    "title": "An enemy spawned in the host's game can't be taken over by the joiner",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "By design the host's game keeps its spawned enemies; hits always land. The log now says so; reviewed.",
    "pr": 211
   },
@@ -629,15 +629,16 @@
    "title": "Knocked clutter ends in different places when friends stand by it",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 213
   },
   {
    "id": "qx9n",
    "title": "A friend's game loaded an older save than expected",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 3,
    "note": "The rig test found the travel autosave read the wrong setting; being fixed.",
    "pr": 186,
    "desc": "A player reported that their friend ended up with a save from about ten minutes earlier instead of the latest one. Progress may have been lost, so this is a high priority. We need to know which save was loaded (quick, auto or exit save) and the logs from both games."
@@ -726,7 +727,7 @@
    "title": "A new character gets back gifts the old one took",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
+   "stage": 5,
    "note": "Fixed; checked in two games; waits on the chest redraw fix in the same change.",
    "pr": 202
   },
