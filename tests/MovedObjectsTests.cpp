@@ -744,6 +744,206 @@ TEST("moved objects knocks: walked into is near the player's feet")
 	CHECK(!ObjectShare::Near({ 0, 0, 0 }, { 0, 0, 500 }));
 }
 
+// --- rolling on after a rest ---------------------------------------------------------------------------------------
+// A ball our player kicked slowed to what looked like a rest (reported), then rolled on, far from our player by then and
+// long after the kick: nothing said it was ours any more, so it was never reported again and the friend's copy stayed
+// at the early rest, 230 units off. The follow-on keeps it ours until it truly rests.
+
+namespace
+{
+	constexpr std::uint32_t BALL = 0x0001A003;
+
+	// The object rolls from a_from to a_to over a_looks scans (250 ms apart), a_how at every look. What our game says.
+	std::vector<Protocol::ObjectRest> Roll(ObjectShare::KnockWatch& a_watch, Clock::time_point& a_at, Vec3 a_from, Vec3 a_to, int a_looks, Seen a_how = {})
+	{
+		std::vector<Protocol::ObjectRest> out;
+		a_how.refId = BALL;
+		for (int i = 1; i <= a_looks; ++i) {
+			const float f = static_cast<float>(i) / static_cast<float>(a_looks);
+			a_how.pose = At({ a_from[0] + (a_to[0] - a_from[0]) * f, a_from[1] + (a_to[1] - a_from[1]) * f, a_from[2] + (a_to[2] - a_from[2]) * f });
+			const std::array seen{ a_how };
+			for (auto& rest : a_watch.Scan(seen, a_at += 250ms)) {
+				out.push_back(rest);
+			}
+		}
+		return out;
+	}
+
+	// The ball kicked by our player at the origin, rolled to a_pause and stopped there long enough to rest: what it said.
+	std::vector<Protocol::ObjectRest> KickedTo(ObjectShare::KnockWatch& a_watch, Clock::time_point& a_at, Vec3 a_pause)
+	{
+		ScanFor(a_watch, a_at, 1, { .refId = BALL, .pose = At({ 0, 0, 0 }) });
+		auto out = Roll(a_watch, a_at, { 0, 0, 0 }, { 20, 0, 0 }, 1, { .byUs = true });
+		for (auto& rest : Roll(a_watch, a_at, { 20, 0, 0 }, a_pause, 4)) {
+			out.push_back(rest);
+		}
+		for (auto& rest : ScanFor(a_watch, a_at, 4, { .refId = BALL, .pose = At(a_pause) })) {
+			out.push_back(rest);
+		}
+		return out;
+	}
+}
+
+TEST("knocks rolling on: a ball that rolls on after its rest is reported again where it truly rests")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	const auto              first = KickedTo(watch, t, { 60, 0, 0 });
+	REQUIRE(first.size() == 1);
+	CHECK(Near(first[0].position, { 60, 0, 0 }));
+	// Two seconds later it rolls on, 230 units, with nobody near and the kick long forgotten.
+	ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 60, 0, 0 }) });
+	CHECK(Roll(watch, t, { 60, 0, 0 }, { 290, 0, 0 }, 12).empty());  // still rolling: nothing yet
+	const auto second = ScanFor(watch, t, 4, { .refId = BALL, .pose = At({ 290, 0, 0 }) });
+	REQUIRE(second.size() == 1);
+	CHECK(second[0].refId == BALL);
+	CHECK(Near(second[0].position, { 290, 0, 0 }));
+	// Then it lies still: nothing more.
+	CHECK(ScanFor(watch, t, 40, { .refId = BALL, .pose = At({ 290, 0, 0 }) }).empty());
+	CHECK(watch.Reported() == 2);
+}
+
+TEST("knocks rolling on: one still rolling when we gave up on it is reported again once it stops")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	ScanFor(watch, t, 1, { .refId = BALL, .pose = At({ 0, 0, 0 }) });
+	// Kicked, and it rolls on and on down a long hill, past MOVING_GIVE_UP.
+	const int looks = static_cast<int>(ObjectShare::MOVING_GIVE_UP / 250ms) + 8;
+	auto      said = Roll(watch, t, { 0, 0, 0 }, { 10, 0, 0 }, 1, { .byUs = true });
+	for (auto& rest : Roll(watch, t, { 10, 0, 0 }, { 10.0f * looks, 0, 0 }, looks)) {
+		said.push_back(rest);
+	}
+	REQUIRE(said.size() == 1);  // given up on while it still rolled
+	CHECK(said[0].position[0] < 10.0f * looks - 50.0f);
+	const auto last = ScanFor(watch, t, 4, { .refId = BALL, .pose = At({ 10.0f * looks, 0, 0 }) });
+	REQUIRE(last.size() == 1);
+	CHECK(Near(last[0].position, { 10.0f * looks, 0, 0 }));
+}
+
+TEST("knocks rolling on: a slow roll, under a unit a look, is not a rest")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	ScanFor(watch, t, 1, { .refId = BALL, .pose = At({ 0, 0, 0 }) });
+	auto said = Roll(watch, t, { 0, 0, 0 }, { 10, 0, 0 }, 1, { .byUs = true });
+	// 0.8 units a look for 3 s: each look is within STILL_DISTANCE of the last, never of where it last moved.
+	for (auto& rest : Roll(watch, t, { 10, 0, 0 }, { 19.6f, 0, 0 }, 12)) {
+		said.push_back(rest);
+	}
+	CHECK(said.empty());
+	CHECK(watch.Moving() == 1);
+	for (auto& rest : ScanFor(watch, t, 4, { .refId = BALL, .pose = At({ 19.6f, 0, 0 }) })) {
+		said.push_back(rest);
+	}
+	REQUIRE(said.size() == 1);
+	CHECK(Near(said[0].position, { 19.6f, 0, 0 }));
+}
+
+TEST("knocks rolling on: a friend's place for it never echoes back, however our copy rolls on")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+	// A friend's rest for it came (their player kicked it on): our copy is put there, and our physics rolls it further.
+	watch.Placed(BALL, At({ 120, 0, 0 }), t);
+	CHECK(Roll(watch, t, { 120, 0, 0 }, { 200, 0, 0 }, 8).empty());
+	CHECK(ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 200, 0, 0 }) }).empty());
+	// Long after the quiet too: it is not ours any more.
+	CHECK(Roll(watch, t, { 200, 0, 0 }, { 260, 0, 0 }, 4).empty());
+	CHECK(ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 260, 0, 0 }) }).empty());
+	CHECK(watch.Reported() == 1);
+}
+
+TEST("knocks rolling on: a friend by it as it moves again, a hand on it, or a long wait, and it is not ours")
+{
+	{
+		// A friend's stand-in walked into it: their game reports that move, ours says nothing.
+		ObjectShare::KnockWatch watch;
+		auto                    t = Clock::now();
+		REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+		CHECK(Roll(watch, t, { 60, 0, 0 }, { 160, 0, 0 }, 4, { .others = true }).empty());
+		CHECK(ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 160, 0, 0 }) }).empty());
+	}
+	{
+		// The friend comes by while it rolls on.
+		ObjectShare::KnockWatch watch;
+		auto                    t = Clock::now();
+		REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+		auto said = Roll(watch, t, { 60, 0, 0 }, { 100, 0, 0 }, 2);
+		for (auto& rest : Roll(watch, t, { 100, 0, 0 }, { 160, 0, 0 }, 2, { .others = true })) {
+			said.push_back(rest);
+		}
+		for (auto& rest : ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 160, 0, 0 }) })) {
+			said.push_back(rest);
+		}
+		CHECK(said.empty());
+	}
+	{
+		// Someone picked it up: what it does after is theirs, whoever's hands they were.
+		ObjectShare::KnockWatch watch;
+		auto                    t = Clock::now();
+		REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+		ScanFor(watch, t, 2, { .refId = BALL, .pose = At({ 60, 0, 50 }), .busy = true });
+		ScanFor(watch, t, 20, { .refId = BALL, .pose = At({ 60, 0, 50 }) });
+		CHECK(Roll(watch, t, { 60, 0, 50 }, { 160, 0, 0 }, 4).empty());
+		CHECK(ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 160, 0, 0 }) }).empty());
+	}
+	{
+		// Moved again long after its rest: whatever moved it, it was not our kick.
+		ObjectShare::KnockWatch watch;
+		auto                    t = Clock::now();
+		REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+		ScanFor(watch, t, static_cast<int>(ObjectShare::FOLLOW_ON / 250ms) + 1, { .refId = BALL, .pose = At({ 60, 0, 0 }) });
+		CHECK(Roll(watch, t, { 60, 0, 0 }, { 160, 0, 0 }, 4).empty());
+		CHECK(ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 160, 0, 0 }) }).empty());
+	}
+	CHECK(ObjectShare::AnswersElsewhere(0x00140001, 2, 1));   // a friend runs the NPC
+	CHECK(!ObjectShare::AnswersElsewhere(0x00140001, 1, 1));  // we do
+	CHECK(!ObjectShare::AnswersElsewhere(0x00140001, 0, 1));  // nobody yet
+	CHECK(!ObjectShare::AnswersElsewhere(0, 2, 1));           // not shared
+}
+
+TEST("knocks rolling on: two games, one kick: only the kicker's game reports it, each time it comes to rest")
+{
+	// Alice kicked it. Bob's copy is put at each rest of hers (Placed) and rolls on in his physics too; his game says
+	// nothing, and hers says where it truly rests.
+	ObjectShare::KnockWatch alice, bob;
+	auto                    ta = Clock::now(), tb = ta;
+	ScanFor(bob, tb, 1, { .refId = BALL, .pose = At({ 0, 0, 0 }) });
+	const auto first = KickedTo(alice, ta, { 60, 0, 0 });
+	REQUIRE(first.size() == 1);
+	bob.Placed(BALL, At(first[0].position), tb);
+	ScanFor(alice, ta, 4, { .refId = BALL, .pose = At({ 60, 0, 0 }) });
+	CHECK(Roll(bob, tb, { 60, 0, 0 }, { 280, 0, 0 }, 12).empty());
+	CHECK(Roll(alice, ta, { 60, 0, 0 }, { 290, 0, 0 }, 12).empty());
+	const auto second = ScanFor(alice, ta, 4, { .refId = BALL, .pose = At({ 290, 0, 0 }) });
+	REQUIRE(second.size() == 1);
+	CHECK(ScanFor(bob, tb, 4, { .refId = BALL, .pose = At({ 280, 0, 0 }) }).empty());
+	bob.Placed(BALL, At(second[0].position), tb);
+	CHECK(ScanFor(bob, tb, 40, { .refId = BALL, .pose = At({ 290, 0, 0 }) }).empty());
+	CHECK(bob.Reported() == 0);
+	CHECK(alice.Reported() == 2);
+}
+
+TEST("knocks rolling on: one that never stops is reported once a MOVING_GIVE_UP at most")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	ScanFor(watch, t, 1, { .refId = BALL, .pose = At({ 0, 0, 0 }) });
+	auto       said = Roll(watch, t, { 0, 0, 0 }, { 10, 0, 0 }, 1, { .byUs = true });
+	const int  looks = 4 * 60;  // a minute of rolling round and round
+	for (int i = 0; i < looks; ++i) {
+		const float a = static_cast<float>(i) * 0.05f;
+		const std::array seen{ Seen{ .refId = BALL, .pose = At({ 200.0f * std::cos(a), 200.0f * std::sin(a), 0 }) } };
+		for (auto& rest : watch.Scan(seen, t += 250ms)) {
+			said.push_back(rest);
+		}
+	}
+	CHECK(!said.empty());
+	CHECK(said.size() <= static_cast<std::size_t>(60s / ObjectShare::MOVING_GIVE_UP) + 1);
+}
+
 // --- knocked about by NPCs and blasts -----------------------------------------------------------------------------
 // A loose object an NPC shoves or an explosion throws lands differently in each game; only our own player's knocks used
 // to be reported, so a friend's chair or a table of clutter stayed where it was in their game. The game that runs the NPC

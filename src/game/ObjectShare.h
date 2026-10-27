@@ -563,6 +563,7 @@ namespace ObjectShare
 	inline constexpr auto   MOVING_GIVE_UP = std::chrono::seconds(15);
 	inline constexpr auto   FORGET_AFTER = std::chrono::seconds(3);  // not seen in a scan that long
 	inline constexpr auto   QUIET_AFTER_PLACED = std::chrono::seconds(4);  // a friend's move: ours of it are theirs
+	inline constexpr auto   FOLLOW_ON = std::chrono::seconds(10);  // ours, at rest, moves again this soon: it rolled on, still ours
 	inline constexpr std::size_t MAX_WATCHED = 512;
 	inline constexpr double KNOCK_BURST = 8.0;  // rests our game reports: a few at once, then KNOCKS_PER_SECOND
 	inline constexpr double KNOCKS_PER_SECOND = 3.0;
@@ -596,6 +597,14 @@ namespace ObjectShare
 	constexpr bool Answers(std::uint32_t a_id, std::uint32_t a_owner, std::uint32_t a_local)
 	{
 		return a_id != 0 && a_local != 0 && a_owner == a_local;
+	}
+
+	// Whether another game answers for an actor: the session knows it and the server made another player its owner. What
+	// it shoves is that game's to report, so an object of ours rolling on (KnockWatch's follow-on) that it stands by is
+	// not ours to claim any more.
+	constexpr bool AnswersElsewhere(std::uint32_t a_id, std::uint32_t a_owner, std::uint32_t a_local)
+	{
+		return a_id != 0 && a_owner != 0 && a_owner != a_local;
 	}
 
 	// --- blasts ---------------------------------------------------------------------------------------------------------
@@ -713,6 +722,15 @@ namespace ObjectShare
 	// friend's blast reaches (theirs) is never ours, whatever else moved it. What a friend's move put somewhere (Placed), and what is in anyone's hands or flying from
 	// them (busy), is never ours to report either. A blast is reported for at most BLAST_MAX_REPORTS objects; one the
 	// budget has no room for yet waits BLAST_DEFER for it.
+	//
+	// It rests when it moved less than STILL_DISTANCE (and turned less than STILL_TURN) for SETTLE_TIME, or after
+	// MOVING_GIVE_UP. A ball rolls on after that now and then: slowing on a rise, then rolling back, or still rolling when
+	// we gave up. Whatever moved it is long gone by then (our player walked on, the hit is old), so one of ours that moves
+	// again within FOLLOW_ON of the rest our game reported is still ours (the follow-on), and is reported again where it
+	// truly rests. Nothing new is looked at for it: the same scan sees it. A friend's move of it (Placed), a hand on it
+	// (busy), a friend's blast (theirs), or a friend's stand-in or another game's NPC by it as it moves again (others: the
+	// move may be theirs to report) ends the follow-on, so a friend's place never echoes back and two games never both
+	// claim it.
 	class KnockWatch
 	{
 	public:
@@ -725,6 +743,7 @@ namespace ObjectShare
 			bool          byNpc = false;
 			std::uint32_t blast = 0;
 			bool          theirs = false;
+			bool          others = false;  // a friend's stand-in, or an NPC another game runs, stands by it
 		};
 
 		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, Clock::time_point a_now)
@@ -748,6 +767,8 @@ namespace ObjectShare
 					w.rest = w.last = seen.pose;
 					w.moving = false;
 					w.owed = false;
+					w.again = false;
+					w.followUntil = {};
 					w.quietUntil = (std::max)(w.quietUntil, a_now + QUIET_AFTER_PLACED);
 					continue;
 				}
@@ -759,6 +780,7 @@ namespace ObjectShare
 						w.byNpc = seen.byNpc;
 						w.blast = seen.blast;
 						w.theirs = seen.theirs;
+						w.again = a_now < w.followUntil && !seen.others;
 						w.movingSince = w.stillSince = a_now;
 						w.last = seen.pose;
 					} else if (w.owed) {
@@ -768,6 +790,7 @@ namespace ObjectShare
 						} else if (a_now >= w.quietUntil && Take(w.blast, a_now)) {
 							out.push_back(Rest(seen));
 							w.owed = false;
+							w.followUntil = a_now + FOLLOW_ON;
 						}
 					}
 					continue;
@@ -775,19 +798,24 @@ namespace ObjectShare
 				w.byUs = w.byUs || seen.byUs;
 				w.byNpc = w.byNpc || seen.byNpc;
 				w.theirs = w.theirs || seen.theirs;
+				w.again = w.again && !seen.others;
 				if (w.blast == 0) {
 					w.blast = seen.blast;
 				}
+				// Still: within STILL_DISTANCE of where it was when it last moved, not merely of the last look, so a slow
+				// roll (under a unit a look) is moving, not at rest.
 				if (Distance(seen.pose.position, w.last.position) > STILL_DISTANCE || Turned(seen.pose.angles, w.last.angles) > STILL_TURN) {
 					w.stillSince = a_now;
+					w.last = seen.pose;
 				}
-				w.last = seen.pose;
 				if (a_now - w.stillSince < SETTLE_TIME && a_now - w.movingSince < MOVING_GIVE_UP) {
 					continue;
 				}
 				w.moving = false;
-				w.rest = seen.pose;
-				if (!w.theirs && (w.byUs || w.byNpc || w.blast != 0) && a_now >= w.quietUntil) {
+				w.rest = w.last = seen.pose;
+				if (!w.theirs && (w.byUs || w.byNpc || w.blast != 0 || w.again) && a_now >= w.quietUntil) {
+					// Ours: if it moves again soon, that is still ours (the follow-on), reported or owed.
+					w.followUntil = a_now + FOLLOW_ON;
 					if (Take(w.blast, a_now)) {
 						out.push_back(Rest(seen));
 					} else if (w.blast != 0 && BlastRoom(w.blast)) {
@@ -796,7 +824,7 @@ namespace ObjectShare
 						w.owedUntil = a_now + BLAST_DEFER;
 					}
 				}
-				w.byUs = w.byNpc = w.theirs = false;
+				w.byUs = w.byNpc = w.theirs = w.again = false;
 				if (!w.owed) {
 					w.blast = 0;
 				}
@@ -813,10 +841,11 @@ namespace ObjectShare
 			w.rest = w.last = a_pose;
 			w.moving = false;
 			w.owed = false;
-			w.byUs = w.byNpc = w.theirs = false;
+			w.byUs = w.byNpc = w.theirs = w.again = false;
 			w.blast = 0;
 			w.seenAt = a_now;
 			w.quietUntil = a_now + QUIET_AFTER_PLACED;
+			w.followUntil = {};  // theirs now: our physics moving it on is not ours to report
 		}
 
 		[[nodiscard]] std::size_t Watching() const { return watched.size(); }
@@ -841,13 +870,15 @@ namespace ObjectShare
 			bool              byUs = false;
 			bool              byNpc = false;
 			bool              theirs = false;
-			bool              owed = false;  // at rest, to be reported when the budget has room
+			bool              owed = false;   // at rest, to be reported when the budget has room
+			bool              again = false;  // moving on after a rest of ours (the follow-on): ours
 			std::uint32_t     blast = 0;
 			Clock::time_point movingSince{};
 			Clock::time_point stillSince{};
 			Clock::time_point seenAt{};
 			Clock::time_point quietUntil{};
 			Clock::time_point owedUntil{};
+			Clock::time_point followUntil{};  // ours if it moves again before then
 		};
 
 		// Whether the blast (0: none) may have another rest reported.

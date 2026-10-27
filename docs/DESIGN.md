@@ -1301,7 +1301,12 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
 - Knocked about: four times a second our game looks at up to 256 loose objects within 1500 units. One that moved with no
   hand on it and came to rest is reported (kRest) when our player moved it (stood within 160 units of it, or hit it in
   the last 3 s: TESHitEvent), 8 at once and 3 a second at most, whether or not a friend is near (the session keeps it,
-  below). What a friend's move put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+  below). What a friend's move put somewhere is quiet for 4 s (our physics settling it is not ours to report). At rest
+  means it moved under a unit (and turned under 0.02 rad) from where it last moved for 0.6 s, or 15 s went by. One of
+  ours that moves again within 10 s of that rest (a ball rolling on after it slowed, or still rolling when we gave up)
+  is still ours and is reported again where it truly rests (`KnockWatch`'s follow-on: the same scan, nothing more looked
+  at), unless a friend's move put it there, someone picked it up, a friend's blast reached it, or a friend's stand-in or
+  another game's NPC stands within 200 units of it as it moves (their game's to report).
 - Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
   the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,
   `maxObjectPlacesPerPlayer`, never more whatever `--max-share` says, so made-up ones can't push out the host's), saves it with the session (layout 36, as kObjectRested
