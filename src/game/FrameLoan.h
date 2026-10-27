@@ -151,6 +151,14 @@ namespace FrameLoan
 		return !a_copy || (a_sinceOut && *a_sinceOut >= EXIT_SETTLE);
 	}
 
+	// Whether our status tells the frame we got out of last as our parked one. Not a frame of ours lent out (it stands hidden
+	// here), nor the copy lent to us (a_borrowedCopy): it is its owner's spawn, which their game and every other already
+	// place and move, and a parked copy of it told as ours would stand beside it for the EXIT_SETTLE after we get out.
+	constexpr bool TellsParked(bool a_lentOut, bool a_borrowedCopy)
+	{
+		return !a_lentOut && !a_borrowedCopy;
+	}
+
 	// One lent item as the borrower's game named it: what to gather at the return.
 	struct Tag
 	{

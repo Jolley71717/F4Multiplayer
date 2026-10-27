@@ -204,6 +204,15 @@ TEST("frame loan: the LOAN record reads back as written, and nothing of a damage
 	CHECK(cut && cut->tags.size() == 1 && cut->tags[0].name.size() == FrameLoan::MAX_TAG_NAME);
 }
 
+TEST("frame loan: the frame we got out of is told as parked unless it is lent out or the copy lent to us")
+{
+	using FrameLoan::TellsParked;
+	CHECK(TellsParked(false, false));
+	CHECK(!TellsParked(true, false));
+	CHECK(!TellsParked(false, true));
+	CHECK(!TellsParked(true, true));
+}
+
 TEST("frame loan: the clean-up after a load waits the exit settle once our player is out")
 {
 	using FrameLoan::CleanupDue;

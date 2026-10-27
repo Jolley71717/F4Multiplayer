@@ -11,6 +11,7 @@
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/FadeWatch.h"
+#include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
@@ -555,9 +556,10 @@ namespace Party
 			status.powerArmorFrameRef = wear.frameRef;
 			// Out of it: the frame we got out of last, where it stands (see ArmorFrames::TellParked). Friends show a copy
 			// there, in the station we parked it in or wherever we left it.
-			// Not while it is lent (FrameLoans): it stands hidden here, and the borrower wears it.
+			// Not while it is lent (FrameLoans): it stands hidden here, and the borrower wears it. Nor the copy lent to us, which
+			// we only just got out of: it is the owner's spawn, and every other game already stands it there.
 			const auto last = LastFrameOf(player);
-			status.parked = FrameLoans::LentOut(last.ref) ? std::nullopt : ArmorFrames::TellParked(status.powerArmor, last);
+			status.parked = FrameLoan::TellsParked(FrameLoans::LentOut(last.ref), FrameLoans::BorrowedCopy(last.ref)) ? ArmorFrames::TellParked(status.powerArmor, last) : std::nullopt;
 			// Whether we lend our own frames to friends who ask (bLendPowerArmor).
 			status.lends = Config::Get().lendPowerArmor;
 			// The chair, bed, workbench or terminal we use: friends put our stand-in in the same one (not a frame: above).

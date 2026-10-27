@@ -29,6 +29,10 @@ namespace FrameLoans
 	// Our copy of the spawn a_id is lent to us: held as it is for the loan (SpawnBook::FrameFacts::lent).
 	[[nodiscard]] bool LentToUs(std::uint32_t a_id);
 
+	// a_local is our copy of the frame lent to us, while the loan lasts (not while it is only asked for): the frame our
+	// player gets out of last is it for the settle after they are out, and it is not their parked frame to tell.
+	[[nodiscard]] bool BorrowedCopy(std::uint32_t a_local);
+
 	// Our player pressed E on a_frame, our copy of a_owner's frame shared as a_spawnId (RemotePlayers' frame gate): false
 	// lets them in (lent to us, the kit in it); true keeps them out, and the HUD says why or that we asked.
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner);

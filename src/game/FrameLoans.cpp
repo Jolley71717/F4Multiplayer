@@ -807,6 +807,11 @@ namespace FrameLoans
 		return a_id != 0 && a_id == borrowed.spawnId && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
 	}
 
+	bool BorrowedCopy(std::uint32_t a_local)
+	{
+		return a_local != 0 && a_local == borrowed.copy && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
+	}
+
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner)
 	{
 		if (!a_frame) {
