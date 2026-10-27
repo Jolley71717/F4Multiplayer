@@ -105,8 +105,7 @@ namespace
 	constexpr auto XP_REPORT_INTERVAL = std::chrono::milliseconds(500);
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
-	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
-	constexpr auto TAKEOVER_COOLDOWN = std::chrono::seconds(5);
+	// A player who hits or talks to an NPC another player runs takes it over, at most every Options::takeoverCooldown.
 	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
 	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
 	// A flooder's budget refills and runs out again twice a second: the log says so at most this often.
@@ -2002,8 +2001,11 @@ void Server::Run()
 	// - nobody yet: the first player to claim it;
 	// - a companion follows its player, so that player takes it over, unless it is also another
 	//   player's companion (then the first keeps it);
-	// - a player fighting or talking to it takes it over, unless it is someone's companion or
-	//   changed hands moments ago (two players fighting it would otherwise trade it constantly).
+	// - a player fighting or talking to it takes it over, unless it is someone's companion, or it changed hands or
+	//   its runner claimed it again (with a hit of theirs, or while they talk to it) within Options::takeoverCooldown:
+	//   two players fighting it would otherwise trade it every cooldown, and its AI started over in the taker's game
+	//   each time. It stays with whoever hit it first until they stop hitting it; the other's hits reach it as damage
+	//   (handleHealth's kReportDamage), as any non-runner's do.
 	const auto ownedBy = [&](std::uint32_t a_playerId) {
 		return static_cast<std::size_t>(std::ranges::count_if(actorOwners, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; }));
 	};
@@ -2112,7 +2114,8 @@ void Server::Run()
 					++*companions;
 				}
 				it->second.reason = (std::max)(it->second.reason, claim.reason);
-				// The owner talking to it: nobody takes it over mid-conversation.
+				// The owner talking to it, or hitting it (NpcSync::OnLocalInteraction claims it again with each hit, 2 s
+				// apart at most): nobody takes it over mid-conversation, nor mid-fight while its runner keeps hitting it.
 				if (claim.reason == Reason::kInteract) {
 					it->second.since = now;
 				}
@@ -2120,7 +2123,7 @@ void Server::Run()
 			} else if (claim.reason == Reason::kCompanion) {
 				grant = it->second.reason != Reason::kCompanion;
 			} else if (claim.reason == Reason::kInteract) {
-				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= TAKEOVER_COOLDOWN;
+				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= options.takeoverCooldown;
 			}
 			if (grant) {
 				if (it != actorOwners.end()) {

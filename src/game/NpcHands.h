@@ -8,8 +8,9 @@
 // Who runs each NPC, as the server tells it (NpcSync::ApplyOwners), and how often that changes. Every change of hands
 // restarts the NPC's AI in the game that takes it, from where that game's copy stood (a delay and a trip behind the
 // game that had it), and makes a copy of the one that had it, which then jumps to where the new runner's stands: an
-// NPC two players both shoot (each hit takes it over, Server.cpp's TAKEOVER_COOLDOWN between), or one on the edge of a
-// distance hand-off, stops and sets off again at each change. Counted for `net status` (`hands=`) and the log: a change
+// NPC two players both shoot used to (each hit took it over, Server.cpp's cooldown between: now the runner's own hits
+// claim it again and keep it, NpcSync::OnLocalInteraction), and one on the edge of a distance hand-off still does,
+// stopping and setting off again at each change. Counted for `net status` (`hands=`) and the log: a change
 // within QUICK of the last is a quick one. A release (nobody runs it) is remembered for QUICK, so the claim that follows
 // a hand-off counts as the change it is. Pure, so it can be tested.
 namespace NpcHands
