@@ -1023,9 +1023,10 @@ So players give each other items by dropping them, and the server decides who ha
   character's world lays down nothing an older character took, takes back nothing it gave (its drops lie on) and
   leaves its gifts' offers waiting (`DropStore::SameCharacter`). So a player who starts over doesn't get back
   what their old character took (found on the rig: a host restarting as a fresh character, 4 items became 6),
-  while that character's own save from before a take still does. The characters are saved with a session that
-  holds a gift (layout 40); one without keeps them while the server runs (a restart forgets them: as before,
-  any character).
+  while that character's own save from before a take still does. The characters are saved with the session
+  (layout 40, once it holds a gift or any drop whose characters are known: a loose drop's taker forgotten with a
+  restart would have their new character lay it down again); a drop a 39 file brought has none (as before, any
+  character).
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
   and to drop it near them instead (not for a put in a gift's place with the host's `bContainerGifts` on: see Giving
   through a container).
@@ -1122,7 +1123,9 @@ container's menu open, and only then.
   key press (rig, #180). Every add and remove Gifts makes asks the open menu to draw both lists again
   (`Equipment::RedrawContainerMenu`): the container menu's frame (its vtable's AdvanceMovie, hooked beside its
   messages, on the UI's thread in the menu's own code) calls the menu's own `UpdateList` for each side, as the engine
-  does after a transfer, at most once a frame. `net status` counts them (`redraws=`).
+  does after a transfer, at most once a frame. Not while the menu's quantity box is up (the transfer it ends in names
+  its item by its place in the list, which a redraw can change): the request waits for the box to close. A request
+  made of a menu that closes isn't owed to the next. `net status` counts them (`redraws=`).
 - **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
   before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
   it: it lies there again. Only that character's saves: a player who starts over as a new character (or a coc one
@@ -1130,7 +1133,8 @@ container's menu open, and only then.
   "Whose world").
 - **Saved.** The session file takes layout 40 (39 in 0.10.0's test builds, without the drops' characters) while the server remembers any gift (a holder on a drop): one lying
   there, offered, or taken, as the server remembers the last 4096 takes (a taken gift keeps its holder: a give-back
-  lays it down in its container again). So a session in which one gun was ever given is written as 40 until that many
+  lays it down in its container again), or any drop whose characters it knows (every drop made since keys, loose
+  ones too: see "Whose world"). So a session in which one gun was ever given or dropped is written as 40 until that many
   takes later; one where none was is written in the layout an older build reads (38 with shared storage's owners,
   else 36). An older build can't read a 40 file; 0.10.0 reads every older layout: 39's drops with no characters, those before 39 as loose ones.
 - **The record's cap.** Gifts share the drops' record (`MAX_DROP_RECORD`, 4096 `made` and 4096 `taken` a session,

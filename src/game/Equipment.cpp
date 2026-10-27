@@ -1146,6 +1146,7 @@ namespace Equipment
 		std::mutex                       keptOutLock;
 		std::vector<RE::ObjectRefHandle> transfersKeptOutNow;  // the copies our player is kept out of
 		std::atomic<std::uint32_t>       transfersClosedAtShow{ 0 };
+		std::atomic<bool>                containerRedraw{ false };  // the open menu is to draw its lists again (RedrawContainerMenu)
 
 		bool KeptOutNow(const RE::ObjectRefHandle& a_target)
 		{
@@ -1190,6 +1191,9 @@ namespace Equipment
 		RE::UI_MESSAGE_RESULTS ContainerMessageHook(RE::IMenu* a_menu, RE::UIMessage& a_message)
 		{
 			const auto result = originalContainerMessage(a_menu, a_message);
+			if (a_message.type == RE::UI_MESSAGE_TYPE::kHide) {
+				containerRedraw = false;  // a redraw asked of this menu isn't owed to the next
+			}
 			if (a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
 				const auto target = static_cast<RE::ContainerMenu*>(a_menu)->containerRef;
 				// Only the handle is compared here: no game object is read off the main thread.
@@ -1214,13 +1218,28 @@ namespace Equipment
 		constexpr std::size_t ADVANCE_MOVIE_INDEX = 0x04;
 		using AdvanceMovieFn = void (*)(RE::IMenu*, float, std::uint64_t);
 		AdvanceMovieFn             originalContainerAdvance = nullptr;
-		std::atomic<bool>          containerRedraw{ false };
 		std::atomic<std::uint32_t> containerRedraws{ 0 };
+
+		// Whether the menu's quantity box (how many of a stack to move: a clip of the menu's own movie, shown by it) is up.
+		// The transfer it ends in names its item by the item's place in the list, which drawing the list again can change
+		// (a copy put in sorts before it): so no redraw while it is up; the request waits for it to close. A movie without
+		// the clip (a UI mod's) has no box to wait for.
+		bool QuantityBoxShowing(RE::ContainerMenu* a_menu)
+		{
+			const auto& box = a_menu->quantityMenu_mc;
+			if (!box || !box->IsDisplayObject()) {
+				return false;
+			}
+			Scaleform::GFx::Value::DisplayInfo info;
+			return box->GetDisplayInfo(&info) && info.GetVisible();
+		}
 
 		void ContainerAdvanceHook(RE::IMenu* a_menu, float a_timeDelta, std::uint64_t a_time)
 		{
-			if (containerRedraw.exchange(false)) {
-				const auto menu = static_cast<RE::ContainerMenu*>(a_menu);
+			const auto menu = static_cast<RE::ContainerMenu*>(a_menu);
+			// The flag is taken only once the box is down: a request made after it is taken waits for the next frame, so
+			// a change made while the lists are drawn is drawn then.
+			if (containerRedraw.load() && !QuantityBoxShowing(menu) && containerRedraw.exchange(false)) {
 				menu->UpdateList(true);
 				menu->UpdateList(false);
 				++containerRedraws;

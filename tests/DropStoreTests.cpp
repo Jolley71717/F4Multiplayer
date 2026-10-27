@@ -664,3 +664,41 @@ TEST("session file: a drop's characters go into the session file with the gifts 
 	REQUIRE(old.unoffered.size() == 1);
 	CHECK(old.unoffered[0].dropId == offer);
 }
+
+// A loose drop's characters go into the file too, not only a gift's: a file that forgot them (38, as a session with no
+// gift was written) would have a new character of the taker's lay the drop down again after the host's restart, a copy of
+// the one in the old character's saves (the same as the gifts' rig finding). A drop with no character known (an older
+// file's) still leaves the layout an older build reads.
+TEST("session file: a loose drop's characters go into the session file, so a new character after a restart gets back nothing the old one took")
+{
+	DropStore store;
+	store.SetCharacter(ALICE, ALICE_OLD);
+	store.SetCharacter(BOB, BOBS);
+	const auto taken = Laid(store, BOB, Gun(21));
+	REQUIRE(store.Take(ALICE, taken));
+	CHECK(store.All()[0].holder == 0);
+
+	SessionFile::Snapshot snapshot;
+	snapshot.contentHash = 1;
+	snapshot.sessionId = SESSION;
+	snapshot.drops = store.All();
+	const auto bytes = SessionFile::Encode(snapshot);
+	CHECK(LayoutOf(bytes) == SessionFile::CHARACTERS);
+	const auto read = SessionFile::Decode(bytes);
+	REQUIRE(read);
+	CHECK(read->drops == snapshot.drops);
+
+	DropStore again;
+	for (const auto& drop : read->drops) {
+		again.Restore(drop);
+	}
+	CHECK(again.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_NEW), SESSION).returned.empty());
+	CHECK(again.TakerOf(taken) == ALICE);
+	CHECK(again.Reconcile(ALICE, Record({}, {}, SESSION, ALICE_OLD), SESSION).returned.size() == 1);
+
+	// The same drop with no character known: the layout an older build reads, as before.
+	auto unknown = snapshot;
+	unknown.drops[0].ownerCharacter = 0;
+	unknown.drops[0].takerCharacter = 0;
+	CHECK(LayoutOf(SessionFile::Encode(unknown)) == SessionFile::OBJECT_PLACES);
+}

@@ -48,9 +48,10 @@ namespace SessionFile
 	// keeps a gift's offer (takerId Protocol::DROP_OFFERED). A session with no gift is written as 38 or 36, its drops without
 	// a holder, so an older build still reads it; a drop in a file before 39 lies loose.
 	// 40 adds to 39 the characters whose worlds each drop left and went into (DroppedItem::ownerCharacter and
-	// takerCharacter), and takes 39's place: a session with a gift is written as 40. One without stays 38 or 36, so an
-	// older build still reads it, and its drops' characters hold only while the server runs (a restart forgets them: a
-	// character not known, which any matches). A 39 file (0.10.0's test builds) reads as one with no characters.
+	// takerCharacter), and takes 39's place: a session with a gift, or with any drop whose characters are known (every
+	// drop made since keys: a loose one's taker, forgotten with a restart, would have a new character of theirs lay it
+	// down again, a copy of the one in the old character's saves), is written as 40. One with neither stays 38 or 36, so
+	// an older build still reads it. A 39 file (0.10.0's test builds) reads as one with no characters.
 	inline constexpr std::uint16_t FORMAT = 40;
 	inline constexpr std::uint16_t CHARACTERS = 40;
 	inline constexpr std::uint16_t GIFTS = 39;
@@ -84,11 +85,11 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasHolders(std::uint16_t a_format) { return a_format >= GIFTS; }
 	[[nodiscard]] constexpr bool HasCharacters(std::uint16_t a_format) { return a_format >= CHARACTERS; }
 
-	// The layout a snapshot is written in: the oldest that holds it, so a session without gifts or shared storage is still
-	// one an older build reads.
-	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_gifts, bool a_storage)
+	// The layout a snapshot is written in: the oldest that holds it, so a session without gifts or drops with known
+	// characters (a_characters) or shared storage is still one an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage)
 	{
-		return a_gifts ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
+		return a_characters ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
 	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
@@ -156,9 +157,12 @@ namespace SessionFile
 			out.insert(out.end(), a_packet.begin(), a_packet.end());
 		};
 		put(MAGIC);
-		// The layout that holds it: a session with no gifts and no shared storage is still one an older build reads.
-		const bool gifts = std::ranges::any_of(a_snapshot.drops, [](const Protocol::DroppedItem& a_drop) { return a_drop.holder != 0; });
-		const auto layout = LayoutFor(gifts, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty());
+		// The layout that holds it: a session with no gifts, no drop whose characters are known and no shared storage is
+		// still one an older build reads.
+		const bool characters = std::ranges::any_of(a_snapshot.drops, [](const Protocol::DroppedItem& a_drop) {
+			return a_drop.holder != 0 || a_drop.ownerCharacter != 0 || a_drop.takerCharacter != 0;
+		});
+		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty());
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
