@@ -2,6 +2,7 @@
 
 #include "MainThread.h"
 #include "Protocol.h"
+#include "game/ClickWatch.h"
 #include "game/GearPlan.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
@@ -360,6 +361,7 @@ namespace Equipment
 		const auto piece = [](std::uint32_t a_item) { return IsPowerArmorPiece(RE::TESForm::GetFormByID(a_item)); };
 		const auto equip = GearPlan::Equip(Read(a_actor), a_items, InPowerArmor(a_actor), has, piece, SlotsOf);
 		for (const auto item : equip) {
+			ClickWatch::Note(ClickRates::Source::kEquip);
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		// The one exception to "nothing is given": a replayed throw needs the grenade in the hand, and spends it.
@@ -493,6 +495,7 @@ namespace Equipment
 			if (copy != StandInGear::Copy::kKeep) {
 				Give(a_actor, a_item, theirs);
 			}
+			ClickWatch::Note(ClickRates::Source::kEquip);
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, a_item).c_str());
 			return false;
 		}
@@ -754,6 +757,7 @@ namespace Equipment
 				continue;
 			}
 			Give(a_puppet, item, StandInGear::ModsOf(a_mods, item));
+			ClickWatch::Note(ClickRates::Source::kEquip);
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		HoldThrowable(a_puppet, a_items);

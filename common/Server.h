@@ -138,6 +138,30 @@ public:
 		}
 	}
 
+	// The server's clock, which a test can move on (AdvanceClock) or stop (HoldClock). Nanoseconds.
+	struct ClockControl
+	{
+		std::atomic<std::int64_t> skew{ 0 };  // added to the machine's steady clock
+		std::atomic<std::int64_t> held{ 0 };  // the steady clock's reading the clock was stopped at; 0 while it runs
+	};
+
+	// For tests: moves the server's clock on by a_by, as if that long had passed (a cooldown, a refill, a grace period),
+	// without waiting. Unless it is held, time still passes on its own as well. Any thread.
+	void AdvanceClock(std::chrono::milliseconds a_by)
+	{
+		testClock.skew += std::chrono::duration_cast<std::chrono::nanoseconds>(a_by).count();
+	}
+
+	// For tests: stops the server's clock where it is, so it moves only by AdvanceClock. A test of what happens inside a
+	// window (a rate limit's second) then can't be made late by a busy PC, and lets the window out by advancing, not by
+	// sleeping. What the server does by time alone (dropping a connection that never said hello, rolling a second's
+	// budgets) waits for the advance, so a test that holds the clock sends few heartbeats (ten a second are answered).
+	void HoldClock()
+	{
+		const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		testClock.held = now != 0 ? now : 1;
+	}
+
 	[[nodiscard]] bool Running() const { return running; }
 
 private:
@@ -156,6 +180,7 @@ private:
 	std::atomic<bool>                             running{ false };
 	std::atomic<bool>                             stopRequested{ false };
 	std::atomic<bool>                             saveRequested{ false };
+	ClockControl                                  testClock;
 	std::mutex                                    consoleMutex;
 	std::vector<std::string>                      consoleLines;
 };

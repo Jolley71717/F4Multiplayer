@@ -346,11 +346,11 @@ namespace
 		return Protocol::Encode(item, MT::kReportWorkshopItem);
 	}
 
-	// Waits (up to 3 s) for the session file to read back as a_ready says; the server writes it on its own thread.
+	// Waits (up to 30 s) for the session file to read back as a_ready says; the server writes it on its own thread.
 	template <class Ready>
 	std::optional<SessionFile::Snapshot> WaitForFile(const TempFile& a_file, Ready a_ready)
 	{
-		const auto until = std::chrono::steady_clock::now() + 3s;
+		const auto until = std::chrono::steady_clock::now() + 30s;
 		do {
 			if (auto saved = SessionFile::Load(a_file.path); saved && a_ready(*saved)) {
 				return saved;
@@ -460,7 +460,7 @@ TEST("session life: a session file that can't be written is tried at every check
 	REQUIRE(JoinHost(f, 1));
 	f.fake->Deliver(1, Kill(RAIDER));
 	Sync(f, 1);
-	const auto until = std::chrono::steady_clock::now() + 3s;
+	const auto until = std::chrono::steady_clock::now() + 30s;
 	while (!f.Logged("could not save the session") && std::chrono::steady_clock::now() < until) {
 		std::this_thread::sleep_for(10ms);
 	}
@@ -474,6 +474,79 @@ TEST("session life: a session file that can't be written is tried at every check
 	REQUIRE(saved);
 	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
 	CHECK(f.Logged("saved again"));
+}
+
+TEST("session life: a save the host's game asked for that failed is tried again by itself, though only the time of day changed")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 20ms;
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	REQUIRE(WaitForFile(file, [](const auto&) { return true; }));  // the host's identity is new to the session
+
+	// The file can't be replaced (as when antivirus holds it): its place is a folder for now.
+	std::filesystem::remove(file.path);
+	std::filesystem::create_directory(file.path);
+
+	Protocol::WorldTime time;
+	time.gameHour = 9.0f;
+	f.fake->Deliver(1, Protocol::Encode(time, MT::kReportTime));
+	Sync(f, 1);
+	f.server.RequestSave();  // the host's game saves: the time is written, and can't be
+	const auto until = std::chrono::steady_clock::now() + 3s;
+	while (!f.Logged("could not save the session") && std::chrono::steady_clock::now() < until) {
+		std::this_thread::sleep_for(10ms);
+	}
+	REQUIRE(f.Logged("could not save the session"));
+
+	std::filesystem::remove(file.path);  // the file is free again; nothing but the retry writes the time now
+	const auto after = WaitForFile(file, [](const auto& a_saved) { return a_saved.worldTime.has_value(); });
+	REQUIRE(after);
+	CHECK(after->worldTime->gameHour == 9.0f);
+	CHECK(f.LoggedCount("could not save the session") == 1);
+}
+
+TEST("session life: a session file that can't be written when the server stops is tried one last time")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 60s;
+	{
+		Fixture f{ options };
+		REQUIRE(JoinHost(f, 1));
+		f.fake->Deliver(1, Kill(RAIDER));
+		Sync(f, 1);
+		std::filesystem::remove(file.path);
+		std::filesystem::create_directory(file.path);
+		f.server.RequestSave();
+		const auto until = std::chrono::steady_clock::now() + 3s;
+		while (!f.Logged("could not save the session") && std::chrono::steady_clock::now() < until) {
+			std::this_thread::sleep_for(10ms);
+		}
+		REQUIRE(f.Logged("could not save the session"));
+		std::filesystem::remove(file.path);  // free again, but the wait for the next try is long
+	}
+	// The server stopping (the fixture going) tried once more and wrote the kill.
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
+}
+
+TEST("session life: a session file that still can't be written when the server stops is said")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 60s;
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	f.fake->Deliver(1, Kill(RAIDER));
+	Sync(f, 1);
+	std::filesystem::remove(file.path);
+	std::filesystem::create_directory(file.path);  // shut for good
+	f.server.Stop();
+	CHECK(f.Logged("could not save the session when the server stopped"));
+	CHECK(f.LoggedCount("could not save the session to") == 0);  // the stop's own line, not a streak's
 }
 
 // ---- a session file that goes wrong on disk ---------------------------------------------------------

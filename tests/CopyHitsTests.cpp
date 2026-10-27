@@ -460,3 +460,113 @@ TEST("copy hits: a drop with a hit of our companion's around it is kept, one wit
 	CHECK(book.Check(RAIDER_2, 70.0f, t0 + FRAME) == 0.0f);
 	CHECK(book.Check(RAIDER_2, 70.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 30.0f);
 }
+
+TEST("copy hits: a legendary weapon's bleed or burn put on a copy by our hit stays ours for its ticks, which fire no hit event, and goes to the NPC's game")
+{
+	// Before, each tick after the first second was "a drop with no hit of ours" and was given back: a Wounding or
+	// Incendiary weapon healed its own damage back as the player watched, and the NPC's game never took it.
+	using std::chrono::milliseconds;
+	using std::chrono::seconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+
+	// The shot (its event's figure 20) and its enchantment's hit (no figure, a spell's with no weapon): the effect is on.
+	book.OurHit(RAIDER_1, t0, 20.0f);
+	book.OurHit(RAIDER_1, t0);
+	book.OurEffect(RAIDER_1, t0);
+	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 20.0f);
+
+	// A tick a second and a half later, long after the hit's grace: ours, nothing given back.
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 5.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 75.0f });
+
+	// And so on to the end of the effect's window; a drop after it is something else's again.
+	float health = 75.0f;
+	for (auto at = t0 + milliseconds{ 2500 }; at <= t0 + CopyHealth::EFFECT_WINDOW; at += seconds{ 1 }) {
+		health -= 5.0f;
+		CHECK(book.Check(RAIDER_1, health, at) == 0.0f);
+		CHECK(book.Check(RAIDER_1, health, at + CopyHealth::JUDGE_AFTER) == 0.0f);
+		CHECK(book.TakeOurs(RAIDER_1) == 5.0f);
+	}
+	CHECK(book.Check(RAIDER_1, health - 5.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, health - 5.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+}
+
+TEST("copy hits: a bleed of ours on a copy stops being ours once something else hits the copy, and what a friend's grenade took beyond our hits is given back")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 20.0f);
+	book.OurEffect(RAIDER_1, t0);
+	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 20.0f);
+
+	// A fire in our world (a hazard's hit, no cause) reaches the copy: from then on a drop with no hit behind it may be
+	// the fire's as well as the bleed's, so it is given back as before.
+	book.OtherHit(RAIDER_1, t0 + milliseconds{ 2000 });
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 2500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+
+	// A friend's grenade set off here (its blow the owner's: OwnersBlow) beside our own shot: our shot's figure is ours,
+	// the rest the grenade's, given back; the NPC's own game deals the grenade's blow.
+	CopyHealth::Book other;
+	other.Set(RAIDER_2, 100.0f);
+	other.OurHit(RAIDER_2, t0, 20.0f);
+	other.OurEffect(RAIDER_2, t0);
+	other.OtherHit(RAIDER_2, t0 + milliseconds{ 20 });
+	other.OwnersBlow(RAIDER_2, t0 + milliseconds{ 20 });
+	CHECK(other.Check(RAIDER_2, 30.0f, t0 + FRAME) == 0.0f);
+	CHECK(other.TakeOurs(RAIDER_2) == 20.0f);
+	CHECK(other.Check(RAIDER_2, 30.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 50.0f);
+	CHECK(other.TakeOurs(RAIDER_2) == 0.0f);
+}
+
+TEST("copy hits: a report from the NPC's game during our bleed stands, and a tick given back never raises the copy above it")
+{
+	// The owner's game shares the NPC's health as it takes our damage (and whatever else it took there): a report that
+	// lowers the copy is set at once, and nothing we give back undoes damage the owner really took.
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 20.0f);
+	book.OurEffect(RAIDER_1, t0);
+	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 20.0f);
+
+	// The owner took a friend's shot there too: 80 -> 60 by its report, set as it comes.
+	CHECK(book.Heard(RAIDER_1, 80.0f, 60.0f, t0 + milliseconds{ 1200 }) == 60.0f);
+	book.Set(RAIDER_1, 60.0f);
+	// Our next tick is from there, ours.
+	CHECK(book.Check(RAIDER_1, 55.0f, t0 + milliseconds{ 1500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 55.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 5.0f);
+
+	// A fire's hit ends the effect's claim: the next drop is given back, to where the copy stood, no higher.
+	book.OtherHit(RAIDER_1, t0 + milliseconds{ 2000 });
+	CHECK(book.Check(RAIDER_1, 50.0f, t0 + milliseconds{ 2500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 50.0f, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	book.Set(RAIDER_1, 55.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 55.0f });
+
+	// A report that would raise the copy within the effect's window is held for what our ticks took that may still be
+	// on its way, as after a hit; one after the window is set at once.
+	CopyHealth::Book late;
+	late.Set(RAIDER_2, 100.0f);
+	late.OurHit(RAIDER_2, t0, 20.0f);
+	late.OurEffect(RAIDER_2, t0);
+	CHECK(late.Check(RAIDER_2, 80.0f, t0 + FRAME) == 0.0f);
+	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
+	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + milliseconds{ 1700 }) == 75.0f);  // the owner's report from before the tick: held
+	CHECK(late.Holds(RAIDER_2));
+	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 100 }) == 80.0f);
+}

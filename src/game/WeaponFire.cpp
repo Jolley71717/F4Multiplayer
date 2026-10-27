@@ -1,7 +1,9 @@
 #include "game/WeaponFire.h"
 
 #include "game/BlastShield.h"
+#include "game/ClickWatch.h"
 #include "game/CopyWatch.h"
+#include "game/GhostLedger.h"
 #include "game/Destructibles.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
@@ -13,6 +15,7 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/RollingLog.h"
 #include "game/ThrowReplays.h"
 #include "game/Traps.h"
 
@@ -25,6 +28,8 @@ namespace WeaponFire
 	// Defined with the explosion watch below.
 	void          ArmGhostWatch(std::uint32_t a_actorId);
 	std::uint32_t GhostsRemoved();
+	// Defined with the blast shields below: the ledger's counts and how many ghosts of ours are still open.
+	std::pair<GhostLedger::Book::Counts, std::size_t> LedgerCounts();
 	// Defined with the grenade in the stand-in's hand below.
 	void        QueueHandCue(std::uint32_t a_actorId, HandThrowable::Cue a_cue);
 	void        ArmPlayerThrowSample();
@@ -90,11 +95,17 @@ namespace WeaponFire
 		ThrowReplays::Book         throwReplays;  // under replayLock
 		std::atomic<std::uint32_t> releasesHeld{ 0 };
 		std::atomic<std::uint32_t> releasesLogged{ 0 };
+		std::unordered_map<std::uint32_t, ThrowReplays::Clock::time_point> lastReplays;  // actor -> its last replayed throw (dev: SweepHand's log), under replayLock
 
 		void ArmReplayedThrow(std::uint32_t a_actorId)
 		{
 			std::scoped_lock l{ replayLock };
-			throwReplays.Arm(a_actorId, ThrowReplays::Clock::now());
+			const auto now = ThrowReplays::Clock::now();
+			throwReplays.Arm(a_actorId, now);
+			if (lastReplays.size() >= ThrowReplays::MAX_ARMED) {
+				lastReplays.clear();
+			}
+			lastReplays[a_actorId] = now;
 		}
 
 		// Whether the actor's graph never let go of its replayed throw; it is waited for no longer.
@@ -297,7 +308,8 @@ namespace WeaponFire
 		std::uint32_t            ghostsStuck = 0;     // ... still ghosts five frames after we took the ghost off
 		std::uint32_t            ghostsHiddenFromSaves = 0;  // ghosts of ours whose flag was turned off for a save (HideGhostsFromSave)
 		std::uint32_t            ghostsRetried = 0;  // ... and setghost 0 sent again for them (ReadBackGhosts)
-		std::uint32_t            ghostsRepaired = 0;  // ghosts a loaded save brought, taken off (RepairGhostsFromSave)
+		std::uint32_t            ghostsRepaired = 0;  // ghosts an older save left, taken off (RepairGhosts)
+		std::uint32_t            copiesSpared = 0;    // copies another game runs left no ghost: health to spare for the explosion (BlastShield::Lethal)
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -540,6 +552,7 @@ namespace WeaponFire
 			if (!handle.Play()) {
 				return false;
 			}
+			ClickWatch::Note(ClickRates::Source::kShotSound);
 			lastLooped = handle.IsEnvelopeLoop();
 			if (lastLooped) {
 				loopingShots.Add(a_actor->GetFormID(), handle, now);
@@ -725,6 +738,7 @@ namespace WeaponFire
 		}
 		// Emotes: an idle, played the way the console does (the stand-in takes it while standing still).
 		if (const auto idle = EmoteIdle(a_action)) {
+			ClickWatch::Note(ClickRates::Source::kEmote);
 			RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", a_actor->GetFormID(), idle).c_str());
 			++actionsPlayed;
 			return;
@@ -815,7 +829,8 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
+		const auto [ledgerCounts, ledgerOpen] = LedgerCounts();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -1331,6 +1346,10 @@ namespace WeaponFire
 		std::uint32_t                                                handsLogged = 0;
 		constexpr std::uint32_t                                      MAX_HAND_LOGS = 60;
 		std::atomic<Clock::time_point>                               playerSampleAt{};
+		std::unordered_map<std::uint32_t, Clock::time_point>         sweepAt;      // stand-in -> when its hand is looked at next (SweepHand)
+		std::uint32_t                                                handsSwept = 0;  // grenades found drawn in a stand-in's hand between throws, culled
+		std::uint32_t                                                sweepsLogged = 0;
+		constexpr std::uint32_t                                      MAX_SWEEP_LOGS = 20;
 
 		// The weapon's model as the engine's model database keeps it, loaded as the engine loads a reference's model
 		// (from the archives if it is not in memory yet: a small file, on this thread), and kept for the next throw.
@@ -1507,6 +1526,7 @@ namespace WeaponFire
 	{
 		MuzzleFlash::Drop(a_actorFormId);  // called before the actor is deleted, like this
 		TakeOff(a_actorFormId, HandThrowable::Drop::kDeleted);
+		sweepAt.erase(a_actorFormId);
 	}
 
 	void DropHandThrowables()
@@ -1515,8 +1535,65 @@ namespace WeaponFire
 		for (const auto actorId : handBook.Actors()) {
 			TakeOff(actorId, HandThrowable::Drop::kDeleted);
 		}
+		sweepAt.clear();
 		std::scoped_lock l{ handCueLock };
 		handCues.clear();
+	}
+
+	void SweepHand(RE::Actor* a_standIn)
+	{
+		if (!a_standIn) {
+			return;
+		}
+		const auto id = a_standIn->GetFormID();
+		const auto now = Clock::now();
+		if (const auto it = sweepAt.find(id); it != sweepAt.end() && now < it->second) {
+			return;
+		}
+		if (sweepAt.size() >= 64) {
+			sweepAt.clear();  // stand-ins come and go with new form IDs; a spacing lost is one early look
+		}
+		sweepAt[id] = now + HandThrowable::SWEEP_EVERY;
+		HandThrowable::Between seen;
+		const auto root = !a_standIn->IsDead(false) ? a_standIn->Get3D() : nullptr;
+		const auto hand = Equipment::ChildNode(root, HandThrowable::HAND);
+		seen.loaded = hand != nullptr;
+		const auto engines = Equipment::DirectChild(hand, HandThrowable::ENGINE_NODE);
+		const auto enginesNode = engines ? engines->IsNode() : nullptr;
+		seen.drawn = engines && !engines->GetAppCulled();
+		if (enginesNode) {
+			for (const auto& child : enginesNode->children) {  // the array runs to its capacity: empty slots are null
+				seen.holds = seen.holds || child.get() != nullptr;
+			}
+		}
+		seen.ours = handBook.Holds(id);
+		std::optional<Clock::duration> sinceReplay;
+		{
+			std::scoped_lock l{ replayLock };
+			seen.windingUp = throwReplays.WindingUp(id, now, HandThrowable::WIND_UP);
+			if (const auto it = lastReplays.find(id); it != lastReplays.end()) {
+				sinceReplay = now - it->second;
+			}
+		}
+		if (!HandThrowable::ShouldCull(seen)) {
+			return;
+		}
+		engines->SetAppCulled(true);
+		++handsSwept;
+		if (sweepsLogged < MAX_SWEEP_LOGS) {
+			++sweepsLogged;
+			// What had it out: how long after its last replayed throw, with its weapon in which state (RE::WEAPON_STATE).
+			std::string inside;
+			for (const auto& child : enginesNode->children) {
+				if (const auto object = child.get()) {
+					inside += std::format(" '{}'{}", object->name.c_str() ? object->name.c_str() : "", object->GetAppCulled() ? "(culled)" : "");
+				}
+			}
+			const auto weapon = Equipment::HeldThrowable(a_standIn);
+			const auto since = sinceReplay ? std::format("{} ms after its last replayed throw", std::chrono::duration_cast<std::chrono::milliseconds>(*sinceReplay).count()) : std::string{ "no replayed throw yet" };
+			REX::INFO("WeaponFire: {:08X}'s left hand showed its {} between throws ({}, weapon state {}, throwable {:08X}, holding{}); culled again ({} so far)", id, HandThrowable::ENGINE_NODE, since,
+				std::to_underlying(static_cast<const RE::ActorState&>(*a_standIn).weaponState) & 0x7, weapon ? weapon->GetFormID() : 0, inside, handsSwept);  // the field's own bits (DrawMatch::StateOf)
+		}
 	}
 
 	void QueueHandCue(std::uint32_t a_actorId, HandThrowable::Cue a_cue)
@@ -1534,7 +1611,9 @@ namespace WeaponFire
 
 	std::string DescribeHandThrowables()
 	{
-		return HandThrowables() ? std::format("{}/{}{}", handsHung, handsDropped, HandModelFallback() ? "+model" : "") : "off";
+		// Grenades culled again in a stand-in's hand between throws (SweepHand), with the drawing on or off.
+		const auto swept = handsSwept != 0 ? std::format(" handsSwept={}", handsSwept) : std::string{};
+		return (HandThrowables() ? std::format("{}/{}{}", handsHung, handsDropped, HandModelFallback() ? "+model" : "") : std::string{ "off" }) + swept;
 	}
 
 	void UpdateHandThrowables()
@@ -1593,21 +1672,34 @@ namespace WeaponFire
 
 	// --- Copies kept from a friend's explosion (BlastShield) -----------------------------------
 	// Every copy goes by the id the session knows it by (NpcSync::SessionId): a plugin's reference, or the spawn id of our
-	// copy of a friend's runtime NPC, as NpcSync names the owner and the end of the mirror.
+	// copy of a friend's runtime NPC, as NpcSync names the owner and the end of the mirror. The ledger of the ghosts we
+	// set (GhostLedger) goes by our copy's own form id, the one the console's setghost takes and the one a save holds.
 	namespace
 	{
 		BlastShield::Book shields;
 		std::uint64_t     frames = 0;  // WeaponFire::Frame calls, for the ghost's frames
 		std::uint32_t     shieldsLogged = 0;
 		std::uint32_t     shieldEndsLogged = 0;
-		std::uint32_t     wereGhosts = 0;  // copies left alone, ghosts already (their own story's, not ours to clear)
+		std::uint32_t     wereGhosts = 0;  // copies left alone, ghosts already of the game's own (not in the ledger: not ours to clear)
 		// The copies' health when they were made ghosts, for the log when the ghost comes off (a ghost the explosion
 		// still hurt shows there).
 		std::unordered_map<std::uint32_t, float> healthWhenShielded;
-		std::unordered_set<std::uint32_t>        unghostLater;  // ghosts of ours not loaded when they were to come off
-		std::vector<std::uint32_t>               hiddenFromSave;  // ghosts whose flag HideGhostsFromSave turned off for the save (AfterSave)
-		std::uint32_t                            repairFrames = 0;  // frames in a session left to look for ghosts a loaded save brought
-		std::unordered_set<std::uint32_t>        repaired;          // ... and those taken off since the load, once each
+		std::vector<std::uint32_t>               hiddenFromSave;  // ghosts whose flag HideGhostsFromSave turned off for the save (AfterSave), by form id
+		std::unordered_set<std::uint32_t>        repaired;        // form ids whose ghost the repair scan took off since the load, once each
+
+		// Every ghost we set, until the engine reads the copy as no ghost again (GhostLedger), and what the loaded save's
+		// record of it said (adopted in OnGameLoaded). Under ledgerLock: the save's and the load's threads read and write
+		// them too (SaveGhostRecord, LoadGhostRecord, RevertGhostRecord).
+		std::mutex                 ledgerLock;
+		GhostLedger::Book          ledger;
+		std::vector<std::uint32_t> loadedLedger;
+		std::uint32_t              ledgerLogged = 0;
+		std::uint32_t              repairLogged = 0;
+		// The rolling counter line in the log: when it last went, and what it said (another goes only once something changed).
+		constexpr auto            LEDGER_LINE_EVERY = std::chrono::minutes{ 10 };
+		Clock::time_point         ledgerLineAt{};
+		GhostLedger::Book::Counts ledgerLineCounts;
+		std::size_t               ledgerLineOpen = 0;
 
 		// Our copy under the session's id (nullptr: none here, or gone).
 		RE::Actor* CopyOf(std::uint32_t a_id)
@@ -1617,11 +1709,25 @@ namespace WeaponFire
 			return actor && !actor->IsDeleted() ? actor : nullptr;
 		}
 
+		// The actor under its own form id (nullptr: none, or gone).
+		RE::Actor* ActorOf(std::uint32_t a_formId)
+		{
+			const auto actor = a_formId != 0 ? RE::TESForm::GetFormByID<RE::Actor>(a_formId) : nullptr;
+			return actor && !actor->IsDeleted() ? actor : nullptr;
+		}
+
 		// The copy for the log: its form id here, and the spawn id it goes by when that differs.
 		std::string Name(std::uint32_t a_id)
 		{
 			const auto local = NpcSync::LocalRef(a_id);
 			return local != 0 && local != a_id ? std::format("{:08X} (spawn {:08X})", local, a_id) : std::format("{:08X}", a_id);
+		}
+
+		// The same, from the actor's own form id.
+		std::string NameOf(std::uint32_t a_formId)
+		{
+			const auto id = NpcSync::SessionId(a_formId);
+			return id != 0 && id != a_formId ? std::format("{:08X} (spawn {:08X})", a_formId, id) : std::format("{:08X}", a_formId);
 		}
 
 		float HealthOf(RE::Actor* a_actor)
@@ -1659,11 +1765,25 @@ namespace WeaponFire
 			return (npc && npc->IsGhost()) || std::string_view{ GhostData(a_actor) } == "on";
 		}
 
+		// A ghost we set, still to come off (the ledger has it).
+		bool OurGhost(RE::Actor* a_actor)
+		{
+			std::scoped_lock l{ ledgerLock };
+			return ledger.Contains(a_actor->GetFormID());
+		}
+
+		// A quest holds the actor in an alias: a story's own ghost is set on such an actor.
+		bool InQuestAlias(RE::Actor* a_actor)
+		{
+			return a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+		}
+
 		// What a copy's ghost reads a frame, and five, after we set it or took it off: whether the console's command
-		// takes at once or a frame later, and whether a ghost taken off stays off. For the log.
+		// takes at once or a frame later, and whether a ghost taken off stays off. For the log and the ghostsStuck count;
+		// a ghost still on is the ledger's to send setghost 0 again (TendLedger).
 		struct GhostReadback
 		{
-			std::uint32_t id = 0;
+			std::uint32_t id = 0;  // the actor's form id
 			bool          on = false;
 			std::uint64_t frame = 0;
 		};
@@ -1672,73 +1792,65 @@ namespace WeaponFire
 		std::vector<GhostReadback> ghostReadbacks;
 		std::uint32_t              readbacksLogged = 0;
 
-		// The console's command on our copy under the session's id a_id (a loaded one: the caller found it).
-		void SetGhost(std::uint32_t a_id, bool a_on)
+		// The console's command on the actor (a loaded one: the caller found it). A ghost set goes into the ledger first,
+		// and is not set at all when the ledger has no room for it (a ghost nothing writes down would be the stuck ghost
+		// of old: the copy takes the blast instead, as one nobody runs does); one taken off is booked as sent, for the
+		// ledger to read back and send again if it stays. Whether the command went.
+		bool SendGhost(RE::Actor* a_actor, bool a_on)
 		{
-			const auto actor = CopyOf(a_id);
-			if (!actor) {
-				return;
+			const auto formId = a_actor->GetFormID();
+			{
+				std::scoped_lock l{ ledgerLock };
+				if (a_on) {
+					if (!ledger.Contains(formId) && !ledger.Add(formId, frames)) {
+						return false;
+					}
+				} else {
+					ledger.Sent(formId, frames);
+				}
 			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.setghost {}", actor->GetFormID(), a_on ? 1 : 0).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setghost {}", formId, a_on ? 1 : 0).c_str());
 			NpcSync::CountCommands(1);
 			if (readbacksLogged < 120) {
 				++readbacksLogged;
-				REX::INFO("WeaponFire: {}.setghost {} sent, the ghost reads {} at once", Name(a_id), a_on ? 1 : 0, CopyWatch::GhostState(actor));
+				REX::INFO("WeaponFire: {}.setghost {} sent, the ghost reads {} at once", NameOf(formId), a_on ? 1 : 0, CopyWatch::GhostState(a_actor));
 			}
 			if (ghostReadbacks.size() < BlastShield::MAX_SHIELDED) {
-				ghostReadbacks.push_back({ a_id, a_on, frames });
+				ghostReadbacks.push_back({ formId, a_on, frames });
 			}
+			return true;
 		}
 
-		// Copies still ghosts five frames after their setghost 0, sent it again (how many times, up to GHOST_RETRIES).
-		constexpr std::uint8_t                           GHOST_RETRIES = 3;
-		std::unordered_map<std::uint32_t, std::uint8_t> ghostRetries;
+		// Lines for a ghost still on five frames after its setghost 0, so many a RollingLog::WINDOW: the ledger sends the
+		// command again at a growing gap, and one line for each of a long session's would say the same thing for hours.
+		RollingLog::Budget stillGhostLog{ 20 };
 
 		void ReadBackGhosts()
 		{
-			std::vector<std::uint32_t> again;
 			std::erase_if(ghostReadbacks, [&](const GhostReadback& a_readback) {
 				const auto after = frames - a_readback.frame;
 				if (after != 1 && after != READBACK_LAST) {
 					return after > READBACK_LAST;
 				}
-				const auto actor = CopyOf(a_readback.id);
+				const auto actor = ActorOf(a_readback.id);
 				const bool still = actor && a_readback.on != actor->GetGhost();
-				if (after == READBACK_LAST && !a_readback.on) {
-					if (!still) {
-						ghostRetries.erase(a_readback.id);
-					} else {
-						++ghostsStuck;
-						// A setghost 1 sent in the frame a save began landed after the setghost 0 that followed it
-						// (the rig: both sent before either landed, the copy a ghost for good): the ghost is taken off
-						// again, unless a new explosion made it one meanwhile.
-						if (!shields.Shielded(a_readback.id) && ghostRetries[a_readback.id]++ < GHOST_RETRIES) {
-							again.push_back(a_readback.id);
-						}
-					}
+				if (after == READBACK_LAST && !a_readback.on && still) {
+					++ghostsStuck;  // the ledger sends setghost 0 again, as often as it takes
 				}
-				if (readbacksLogged < 120 || (after == READBACK_LAST && still)) {
+				if (readbacksLogged < 120 || (after == READBACK_LAST && still && stillGhostLog.Take(Clock::now()))) {
 					++readbacksLogged;
-					REX::INFO("WeaponFire: {}, {} frame{} after setghost {}: the ghost reads {}{}", Name(a_readback.id), after, after == 1 ? "" : "s", a_readback.on ? 1 : 0,
+					REX::INFO("WeaponFire: {}, {} frame{} after setghost {}: the ghost reads {}{}", NameOf(a_readback.id), after, after == 1 ? "" : "s", a_readback.on ? 1 : 0,
 						CopyWatch::GhostState(actor), still ? ", not yet as set" : "");
 				}
 				return after == READBACK_LAST;
 			});
-			for (const auto id : again) {
-				// A flag that reads off on a copy the engine still counts a ghost is put back on first: the console's
-				// setghost 0 leaves a flag that reads off alone (AfterSave).
-				if (const auto actor = CopyOf(id)) {
-					SetGhostData(actor, true);
-				}
-				++ghostsRetried;
-				REX::INFO("WeaponFire: {} still a ghost five frames after its setghost 0, sent again", Name(id));
-				SetGhost(id, false);
-			}
 		}
 
 		// Makes ghosts of our copies of NPCs another game runs that a friend's explosion at a_at reaches, before it is
-		// set off: their owner's game deals its damage to them, and a death of one here would not be believed.
-		void ShieldNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from)
+		// set off: their owner's game deals its damage to them, and a death of one here would not be believed. Only those
+		// the explosion's damage (a_damage, its record's; 0: not known, so any) could kill (BlastShield::Lethal): the rest
+		// take the blast and are given it back (CopyWatch).
+		void ShieldNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from, float a_damage)
 		{
 			const auto tes = RE::TES::GetSingleton();
 			const auto local = NpcSync::LocalPlayer();
@@ -1749,16 +1861,21 @@ namespace WeaponFire
 			// Never the player, a stand-in (a puppet), an NPC our game runs, one nobody does, or one never shared
 			// (BlastShield::Shields).
 			std::vector<std::uint32_t> copies;
+			std::uint32_t              spared = 0;
 			tes->ForEachReferenceInRange(a_at, a_radius + BlastShield::MARGIN, [&](RE::TESObjectREFR* a_ref) {
 				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
 				if (actor && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor)) {
-					const auto id = NpcSync::SessionId(actor->GetFormID());
-					if (BlastShield::Shields({ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false) }, local)) {
+					const auto                 id = NpcSync::SessionId(actor->GetFormID());
+					const BlastShield::Reached reached{ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false), .health = HealthOf(actor) };
+					if (BlastShield::Shields(reached, local, a_damage)) {
 						copies.push_back(id);
+					} else if (BlastShield::Shields(reached, local)) {
+						++spared;
 					}
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
+			copiesSpared += spared;
 			const auto  now = BlastShield::Clock::now();
 			std::string made;
 			std::string held;
@@ -1767,7 +1884,9 @@ namespace WeaponFire
 				if (!actor) {
 					continue;
 				}
-				if (!shields.Shielded(id) && WasGhost(actor)) {
+				// A ghost already that is none of ours is the game's own story's: left alone. One of ours still to come
+				// off (the ledger) is ours to keep a while longer.
+				if (!shields.Shielded(id) && WasGhost(actor) && !OurGhost(actor)) {
 					++wereGhosts;
 					continue;
 				}
@@ -1777,21 +1896,25 @@ namespace WeaponFire
 					}
 					continue;
 				}
-				SetGhost(id, true);
-				ghostRetries.erase(id);  // a new ghost: its setghost 0 may be sent again as many times as the first's
+				if (!SendGhost(actor, true)) {
+					shields.End(id);  // no room in the ledger (its refused count): it takes the blast, as one nobody runs does
+					continue;
+				}
 				++copiesShielded;
 				healthWhenShielded[id] = HealthOf(actor);
 				made += std::format(" {}(player {}'s, health {:.0f}, ghost {})", Name(id), NpcSync::Owner(id), HealthOf(actor), CopyWatch::GhostState(actor));
 			}
-			if ((!made.empty() || !held.empty()) && shieldsLogged < 40) {
+			if ((!made.empty() || !held.empty() || spared > 0) && shieldsLogged < 40) {
 				++shieldsLogged;
-				REX::INFO("WeaponFire: player {}'s explosion passes by our copies of NPCs other games run, made ghosts:{}{}{}", a_from, made.empty() ? " none newly" : made,
-					held.empty() ? "" : "; ghosts still from an earlier one:", held);
+				REX::INFO("WeaponFire: player {}'s explosion (damage {:.0f}) passes by our copies of NPCs other games run, made ghosts:{}{}{}{}", a_from, a_damage,
+					made.empty() ? " none newly" : made, held.empty() ? "" : "; ghosts still from an earlier one:", held,
+					spared > 0 ? std::format("; {} with health to spare left no ghost", spared) : "");
 			}
 		}
 
 		// Takes the copy's ghost off (it was put on by ShieldNear), and logs what the explosion took meanwhile: nothing,
-		// if ghosts are passed by as they should be.
+		// if ghosts are passed by as they should be. A copy not loaded now keeps its entry in the ledger, which takes the
+		// ghost off once it is loaded again, in this run or after a load of a save that holds it.
 		void Unshield(std::uint32_t a_id, const char* a_why)
 		{
 			const auto before = healthWhenShielded.find(a_id);
@@ -1800,15 +1923,14 @@ namespace WeaponFire
 				healthWhenShielded.erase(before);
 			}
 			const auto actor = CopyOf(a_id);
-			if (!actor) {
-				// Not loaded now: its ghost comes off when it is again. Our copy of a friend's spawn that is gone for good
-				// (Spawns deleted it) is placed afresh, no ghost, should the spawn come back.
-				if (NpcSync::LocalRef(a_id) != 0 && unghostLater.size() < BlastShield::MAX_SHIELDED) {
-					unghostLater.insert(a_id);
+			if (!actor || !actor->Get3D()) {
+				if (shieldEndsLogged < 40) {
+					++shieldEndsLogged;
+					REX::INFO("WeaponFire: {} is not loaded as its ghost is to come off ({}): the ledger takes it off once it is", Name(a_id), a_why);
 				}
 				return;
 			}
-			SetGhost(a_id, false);
+			SendGhost(actor, false);
 			++shieldsEnded;
 			const float now = HealthOf(actor);
 			if (now < was - 0.5f) {
@@ -1845,25 +1967,83 @@ namespace WeaponFire
 		}
 
 		// What this run knew of its ghosts, forgotten at a load: the load replaces the copies with the save's, and a form id
-		// made at runtime may name another actor after it.
+		// made at runtime may name another actor after it. The loaded save's own record of our ghosts comes with it
+		// (LoadGhostRecord, adopted in OnGameLoaded).
 		void ForgetGhosts()
 		{
 			shields.EndAll();
 			healthWhenShielded.clear();
-			unghostLater.clear();
 			hiddenFromSave.clear();
 			ghostReadbacks.clear();
-			ghostRetries.clear();
 			repaired.clear();
+			std::scoped_lock l{ ledgerLock };
+			ledger.Clear();
 		}
 
-		// For a while after a load, once in a session, the loaded copies that look like ghosts of ours the save brought
-		// (BlastShield::RepairsOnLoad) have the ghost taken off, once each: their flag reads on, so the console's setghost 0
-		// takes it (one still a ghost five frames on is sent it again by ReadBackGhosts).
-		void RepairGhostsFromSave()
+		// Each frame, every ghost of ours still written down (GhostLedger::Book::Check): setghost 0 again for one that reads
+		// a ghost with no shield wanting it, with a growing gap; forgotten once it reads no ghost. Whose the NPC is now
+		// is no part of it. A runtime form id that names no copy of ours any more (our copy of a friend's spawn, gone for
+		// good) is forgotten: a new actor may wear the id.
+		void TendLedger()
 		{
-			const auto local = NpcSync::LocalPlayer();
-			if (repairFrames == 0 || local == 0 || --repairFrames % BlastShield::REPAIR_EVERY != 0) {
+			std::vector<std::uint32_t> ids;
+			{
+				std::scoped_lock l{ ledgerLock };
+				if (ledger.Size() == 0) {
+					return;
+				}
+				ids = ledger.Ids();
+			}
+			for (const auto formId : ids) {
+				const auto actor = ActorOf(formId);
+				if (!GhostLedger::Plugin(formId) && (!actor || NpcSync::SessionId(formId) == 0)) {
+					std::scoped_lock l{ ledgerLock };
+					ledger.Forget(formId);
+					continue;
+				}
+				const auto                       id = NpcSync::SessionId(formId);
+				const bool                       loaded = actor && actor->Get3D();
+				const GhostLedger::Seen          seen{ .loaded = loaded, .ghost = loaded && actor->GetGhost(), .shielded = id != 0 && shields.Shielded(id) };
+				GhostLedger::Step                step;
+				std::uint8_t                     tries = 0;
+				bool                             fromSave = false;
+				{
+					std::scoped_lock l{ ledgerLock };
+					tries = ledger.Tries(formId);
+					fromSave = ledger.FromSave(formId);
+					step = ledger.Check(formId, seen, frames);
+				}
+				if (step == GhostLedger::Step::kDone) {
+					if ((tries >= 2 || fromSave) && ledgerLogged < 60) {
+						++ledgerLogged;
+						REX::INFO("WeaponFire: {} reads no ghost again after {} setghost 0{}{} (ghost {})", NameOf(formId), tries, tries == 1 ? "" : "s",
+							fromSave ? "; the save had brought it a ghost" : "", CopyWatch::GhostState(actor));
+					}
+				} else if (step == GhostLedger::Step::kClear) {
+					// A flag that reads off on a copy the engine still counts a ghost is put back on first: the console's
+					// setghost 0 leaves a flag that reads off alone (AfterSave).
+					SetGhostData(actor, true);
+					if (tries > 0) {
+						++ghostsRetried;
+					}
+					if (tries >= 1 && ledgerLogged < 60) {
+						++ledgerLogged;
+						REX::INFO("WeaponFire: {} still a ghost {} frames after its setghost 0 (sent {} time{}): sent again{} (owner {}, ghost {})", NameOf(formId),
+							GhostLedger::Book::RetryAfter(tries), tries, tries == 1 ? "" : "s", tries + 1 >= GhostLedger::GIVE_UP_AFTER ? ", the last time this run: a script's to keep" : "",
+							NpcSync::Owner(id), CopyWatch::GhostState(actor));
+					}
+					SendGhost(actor, false);
+				}
+			}
+		}
+
+		// Every REPAIR_EVERY frames in a session, the loaded actors whose ghost flag reads on that look like a ghost of
+		// ours a save from before the ledger brought (BlastShield::Repairs: a plugin's reference the session shares,
+		// alive, its base no ghost, no quest holding it, hostile to our player, not a ghost of ours now) have it taken
+		// off, once each since the load, through the ledger. Whose the NPC is now is no part of it.
+		void RepairGhosts()
+		{
+			if (frames % BlastShield::REPAIR_EVERY != 0 || NpcSync::LocalPlayer() == 0) {
 				return;
 			}
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -1871,7 +2051,7 @@ namespace WeaponFire
 			if (!player || !lists) {
 				return;
 			}
-			// Collected first, by the session's id: nothing is changed while the engine's list is walked.
+			// Collected first: nothing is changed while the engine's list is walked.
 			std::vector<std::uint32_t> ids;
 			for (const auto& handle : lists->highActorHandles) {
 				const auto ptr = handle.get();
@@ -1879,29 +2059,75 @@ namespace WeaponFire
 				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || Puppets::IsPuppet(actor) || !actor->Get3D() || std::string_view{ GhostData(actor) } != "on") {
 					continue;
 				}
-				const auto id = NpcSync::SessionId(actor->GetFormID());
-				if (id == 0 || repaired.contains(id)) {
+				const auto formId = actor->GetFormID();
+				if (repaired.contains(formId)) {
 					continue;
 				}
-				const auto npc = actor->GetNPC();
-				const BlastShield::Loaded copy{
-					.actor = { .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false) },
+				const auto               npc = actor->GetNPC();
+				const auto               id = NpcSync::SessionId(formId);
+				const BlastShield::Found found{
+					.id = formId,
+					.shareable = Protocol::IsShareableRef(formId),
+					.dead = actor->IsDead(false),
 					.ghost = true,
 					.baseGhost = npc && npc->IsGhost(),
-					.shielded = shields.Shielded(id) || std::ranges::any_of(ghostReadbacks, [&](const GhostReadback& a_readback) { return a_readback.id == id; }),
+					.questAlias = InQuestAlias(actor),
 					.hostile = actor->GetHostileToActor(player),
+					.ours = OurGhost(actor) || (id != 0 && shields.Shielded(id)),
 				};
-				if (BlastShield::RepairsOnLoad(copy, local)) {
-					ids.push_back(id);
+				if (BlastShield::Repairs(found)) {
+					ids.push_back(formId);
 				}
 			}
-			for (const auto id : ids) {
-				repaired.insert(id);
+			for (const auto formId : ids) {
+				const auto actor = ActorOf(formId);
+				if (!actor) {
+					continue;
+				}
+				repaired.insert(formId);
 				++ghostsRepaired;
-				REX::INFO("WeaponFire: {} (player {}'s) came from the save a ghost, its base none: the ghost is taken off (ghost {})", Name(id), NpcSync::Owner(id),
-					CopyWatch::GhostState(CopyOf(id)));
-				SetGhost(id, false);
+				{
+					std::scoped_lock l{ ledgerLock };
+					ledger.Add(formId, frames, true);
+				}
+				if (repairLogged < 40) {
+					++repairLogged;
+					REX::INFO("WeaponFire: {} is a ghost its base record and no quest made, hostile to us (owner {}, ghost {}): one of ours an older save left; the ghost is taken off",
+						NameOf(formId), NpcSync::Owner(NpcSync::SessionId(formId)), CopyWatch::GhostState(actor));
+				}
+				SendGhost(actor, false);
 			}
+		}
+
+		// The rolling counter line: every LEDGER_LINE_EVERY, when something changed or a ghost of ours is still open.
+		void LogLedgerLine()
+		{
+			const auto now = Clock::now();
+			if (now - ledgerLineAt < LEDGER_LINE_EVERY) {
+				return;
+			}
+			GhostLedger::Book::Counts  counts;
+			std::vector<std::uint32_t> open;
+			{
+				std::scoped_lock l{ ledgerLock };
+				counts = ledger.Count();
+				open = ledger.Ids();
+			}
+			ledgerLineAt = now;
+			const bool changed = counts.set != ledgerLineCounts.set || counts.cleared != ledgerLineCounts.cleared || counts.stuck != ledgerLineCounts.stuck ||
+			                     counts.fromSaves != ledgerLineCounts.fromSaves || counts.gaveUp != ledgerLineCounts.gaveUp || counts.refused != ledgerLineCounts.refused ||
+			                     open.size() != ledgerLineOpen;
+			if (!changed && open.empty()) {
+				return;
+			}
+			ledgerLineCounts = counts;
+			ledgerLineOpen = open.size();
+			std::string ids;
+			for (std::size_t i = 0; i < open.size() && i < 8; ++i) {
+				ids += std::format(" {}", NameOf(open[i]));
+			}
+			REX::INFO("WeaponFire: ghosts of ours this run: set {}, cleared {}, stuck {} ({} cleared after all, {} given up on), from saves {}, repaired {}, refused {}, open {}{}{}",
+				counts.set, counts.cleared, counts.stuck, counts.unstuck, counts.gaveUp, counts.fromSaves, ghostsRepaired, counts.refused, open.size(), ids.empty() ? "" : ":", ids);
 		}
 
 		void EndDueShields()
@@ -1912,19 +2138,9 @@ namespace WeaponFire
 			}
 			ReadBackGhosts();
 			ReportShieldedDeaths();
-			std::erase_if(unghostLater, [](std::uint32_t a_id) {
-				if (NpcSync::LocalRef(a_id) == 0) {
-					return true;  // our copy of a friend's spawn, gone for good
-				}
-				const auto actor = CopyOf(a_id);
-				if (!actor || !actor->Get3D()) {
-					return false;
-				}
-				SetGhost(a_id, false);
-				REX::INFO("WeaponFire: {} is no ghost again, loaded once more", Name(a_id));
-				return true;
-			});
-			RepairGhostsFromSave();
+			TendLedger();
+			RepairGhosts();
+			LogLedgerLine();
 			if (shields.Size() == 0) {
 				return;
 			}
@@ -1968,20 +2184,20 @@ namespace WeaponFire
 		// The console's setghost 0 lands a frame after it is sent, and the save is written in this frame: the ghost went
 		// into the save, and whoever loaded it (a player who died loads their last save) found those enemies ghosts for
 		// good, their shots passing through; as ghosts already, they were never ours to clear again. So the flag the save
-		// writes is turned off for it: on the copies whose setghost 0 went in the last frames and hasn't landed
-		// (EndAllShields and NpcSync::ReleaseMirrors end every shield just before this), and on those whose ghost was to
-		// come off once they loaded again. AfterSave puts it back on.
-		const auto hide = [](std::uint32_t a_id) {
-			if (const auto actor = CopyOf(a_id); actor && SetGhostData(actor, false) && std::ranges::find(hiddenFromSave, a_id) == hiddenFromSave.end()) {
-				hiddenFromSave.push_back(a_id);
-			}
-		};
-		for (const auto& readback : ghostReadbacks) {
-			if (!readback.on) {
-				hide(readback.id);
+		// writes is turned off for every ghost of ours still written down and loaded (EndAllShields and
+		// NpcSync::ReleaseMirrors end every shield just before this, so each is on its way off). AfterSave puts it back
+		// on. One not loaded is written as it is: the save's record of the ledger (SaveGhostRecord) names it, and it is
+		// taken off as it loads again.
+		std::vector<std::uint32_t> ids;
+		{
+			std::scoped_lock l{ ledgerLock };
+			ids = ledger.Ids();
+		}
+		for (const auto formId : ids) {
+			if (const auto actor = ActorOf(formId); actor && SetGhostData(actor, false) && std::ranges::find(hiddenFromSave, formId) == hiddenFromSave.end()) {
+				hiddenFromSave.push_back(formId);
 			}
 		}
-		std::ranges::for_each(unghostLater, hide);
 		if (!hiddenFromSave.empty()) {
 			ghostsHiddenFromSaves += static_cast<std::uint32_t>(hiddenFromSave.size());
 			REX::INFO("WeaponFire: {} ghost{} against friends' explosions kept out of the save", hiddenFromSave.size(), hiddenFromSave.size() == 1 ? "" : "s");
@@ -1992,18 +2208,15 @@ namespace WeaponFire
 	{
 		// The console's setghost 0 finds a ghost whose flag reads off already and leaves it: the engine still counted the
 		// copy a ghost (the rig: GetGhost on, the flag off, five frames on). So the flag goes back on and the command goes
-		// again, to take the ghost off as it does. One whose command landed meanwhile has no flag left to put back; one
-		// not loaded is unghosted as it loads again (unghostLater).
+		// again, to take the ghost off as it does. One whose command landed meanwhile has no flag left to put back.
 		std::uint32_t again = 0;
-		for (const auto id : std::exchange(hiddenFromSave, {})) {
-			const auto actor = CopyOf(id);
+		for (const auto formId : std::exchange(hiddenFromSave, {})) {
+			const auto actor = ActorOf(formId);
 			if (!actor || !SetGhostData(actor, true)) {
 				continue;
 			}
-			if (!unghostLater.contains(id)) {
-				SetGhost(id, false);
-				++again;
-			}
+			SendGhost(actor, false);
+			++again;
 		}
 		if (again > 0) {
 			REX::INFO("WeaponFire: after the save, setghost 0 sent again to {} cop{}", again, again == 1 ? "y" : "ies");
@@ -2019,7 +2232,81 @@ namespace WeaponFire
 	void OnGameLoaded()
 	{
 		ForgetGhosts();
-		repairFrames = BlastShield::REPAIR_FRAMES;
+		// The ghosts of ours the loaded save's record names: written down again, taken off as each copy loads.
+		std::size_t restored = 0;
+		std::size_t named = 0;
+		{
+			std::scoped_lock l{ ledgerLock };
+			const auto ids = std::exchange(loadedLedger, {});
+			named = ids.size();
+			restored = ledger.Restore(ids, frames);
+		}
+		if (named > 0) {
+			REX::INFO("WeaponFire: the save names {} ghost{} of ours, {} written down: each comes off as its copy loads, whoever runs the NPC", named, named == 1 ? "" : "s", restored);
+		}
+	}
+
+	std::vector<std::uint8_t> SaveGhostRecord()
+	{
+		std::scoped_lock l{ ledgerLock };
+		return GhostLedger::Encode(ledger.Saved());
+	}
+
+	void LoadGhostRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve)
+	{
+		// On the load's thread: adopted once the game says it loaded (OnGameLoaded), as frames may run meanwhile.
+		const auto ids = GhostLedger::Decode(a_bytes);
+		if (!ids) {
+			REX::WARN("WeaponFire: the save's record of our ghosts could not be read ({} bytes); ignored", a_bytes.size());
+			return;
+		}
+		std::vector<std::uint32_t> resolved;
+		std::size_t                dropped = 0;
+		for (const auto id : *ids) {
+			if (const auto now = a_resolve(id); now && GhostLedger::Plugin(*now)) {
+				resolved.push_back(*now);
+			} else {
+				++dropped;  // a plugin no longer loaded: no such actor to be a ghost
+			}
+		}
+		REX::INFO("WeaponFire: the save's record names {} ghost{} of ours{}", ids->size(), ids->size() == 1 ? "" : "s", dropped > 0 ? std::format(", {} of a plugin no longer loaded", dropped) : "");
+		std::scoped_lock l{ ledgerLock };
+		loadedLedger = std::move(resolved);
+	}
+
+	void RevertGhostRecord()
+	{
+		std::scoped_lock l{ ledgerLock };
+		loadedLedger.clear();
+	}
+
+	std::pair<GhostLedger::Book::Counts, std::size_t> LedgerCounts()
+	{
+		std::scoped_lock l{ ledgerLock };
+		return { ledger.Count(), ledger.Size() };
+	}
+
+	std::string DescribeGhosts()
+	{
+		GhostLedger::Book::Counts  counts;
+		std::vector<std::uint32_t> open;
+		{
+			std::scoped_lock l{ ledgerLock };
+			counts = ledger.Count();
+			open = ledger.Ids();
+		}
+		std::string out = std::format("ghostLedger: set={} cleared={} stuck={} unstuck={} gaveUp={} fromSaves={} refused={} repaired={} spared={} wereGhosts={} open={}", counts.set,
+			counts.cleared, counts.stuck, counts.unstuck, counts.gaveUp, counts.fromSaves, counts.refused, ghostsRepaired, copiesSpared, wereGhosts, open.size());
+		for (const auto formId : open) {
+			const auto actor = ActorOf(formId);
+			std::uint8_t tries = 0;
+			{
+				std::scoped_lock l{ ledgerLock };
+				tries = ledger.Tries(formId);
+			}
+			out += std::format(" {}[loaded={} ghost={} tries={} owner={}]", NameOf(formId), actor && actor->Get3D(), CopyWatch::GhostState(actor), tries, NpcSync::Owner(NpcSync::SessionId(formId)));
+		}
+		return out;
 	}
 
 	std::vector<Protocol::Explosion> TakeExplosions()
@@ -2035,6 +2322,14 @@ namespace WeaponFire
 
 	namespace
 	{
+		// What the explosion deals, for whether it could kill a copy (BlastShield::Lethal): its record's damage, unless the
+		// record carries an object effect too (a plasma, cryo or pulse grenade's; a mod's whose blast is all in its spell),
+		// whose damage the record's figure says nothing of: not known then (0), so every copy in reach is a ghost, as before.
+		float KnownDamage(const RE::BGSExplosion* a_explosion)
+		{
+			return a_explosion->formEnchanting ? 0.0f : a_explosion->data.damage;
+		}
+
 		// Whether an NPC our game runs (our companion among them) stands within a_reach of a_at, in the cells loaded here: a
 		// friend's explosion there is ours to set off for it, wherever our player is (RemoteEdits::SetOff).
 		bool OursNear(const RE::NiPoint3& a_at, float a_reach)
@@ -2105,7 +2400,7 @@ namespace WeaponFire
 			return;
 		}
 		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
-		ShieldNear(at, radius, a_explosion.playerId);
+		ShieldNear(at, radius, a_explosion.playerId, KnownDamage(base));
 		RE::NEW_REFR_DATA data;
 		data.location = at;
 		data.object = base;
@@ -2133,7 +2428,7 @@ namespace WeaponFire
 		if (!cell || !a_explosion) {
 			return;
 		}
-		ShieldNear(a_at, a_explosion->data.outerRadius, a_from);
+		ShieldNear(a_at, a_explosion->data.outerRadius, a_from, KnownDamage(a_explosion));
 		RE::NEW_REFR_DATA data;
 		data.location = a_at;
 		data.object = a_explosion;
@@ -2149,6 +2444,6 @@ namespace WeaponFire
 
 	void ShieldCopiesNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from)
 	{
-		ShieldNear(a_at, a_radius, a_from);
+		ShieldNear(a_at, a_radius, a_from, 0.0f);  // what a trap's grenades and shots deal is not known here: any copy in reach
 	}
 }

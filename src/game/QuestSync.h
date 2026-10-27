@@ -62,5 +62,11 @@ namespace QuestSync
 	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
 	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();
 
+	// The scene the player is in, if a friend's stage set here started it (0: none, or one of their own). It is
+	// the session's: the friend is playing it, their game runs its people, and their later stages end it here.
+	// It holds no friends' stages back (SceneHold), its people aren't claimed for it (Dialogue::Holds), and
+	// it doesn't keep the player from teleporting to a friend (Party).
+	[[nodiscard]] std::uint32_t SessionScene();
+
 	std::string Describe();
 }

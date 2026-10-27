@@ -486,7 +486,9 @@ namespace DevCommands
 		}
 
 		// paframes [radius]: the power armor frames near the local player, each with whether the engine would let our player
-		// into it and why not (Equipment::DescribeFrameUse), its distance and which game's it is (NpcSync::Owner).
+		// into it and why not (Equipment::DescribeFrameUse), its distance, which game's it is (NpcSync::Owner), whether it
+		// carries the keyword the workshop copies get (marked: a copy an older version left, FrameShare::Ghost) and whether
+		// anything is in it.
 		std::string PowerArmorFrames(std::string_view a_args)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -501,8 +503,8 @@ namespace DevCommands
 				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
 					return RE::BSContainer::ForEachResult::kContinue;
 				}
-				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
-					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership));
+				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={} marked={} holds={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
+					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership), WorkshopSync::IsCopyMarked(*a_ref), WorkshopSync::HoldsAnything(a_ref));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return std::format("{} ({}; {})", count ? out : "none", Equipment::DescribeFrameMends(), Equipment::DescribePlayerUse());
@@ -1026,7 +1028,8 @@ namespace DevCommands
 			if (!actor) {
 				return "error: no such actor";
 			}
-			std::string out = std::format("drawn={}", actor->GetWeaponMagicDrawn());
+			// The weapon state's own value too (RE::WEAPON_STATE: 4 wants to sheathe, 5 sheathing), which drawn= reads as away.
+			std::string out = std::format("drawn={} weaponState={}", actor->GetWeaponMagicDrawn(), std::to_underlying(static_cast<const RE::ActorState&>(*actor).weaponState) & 0x7);
 			for (const auto id : Equipment::Read(actor)) {
 				const auto form = RE::TESForm::GetFormByID(id);
 				out += std::format(" {:08X} '{}'", id, form ? RE::TESFullName::GetFullName(*form) : ""sv);
@@ -1952,6 +1955,25 @@ namespace DevCommands
 				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
 			}
 			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
+		}
+
+		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
+		// open; ghosts <refHex>: that actor's ghost as the engine and its extra data read it.
+		std::string Ghosts(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return WeaponFire::DescribeGhosts();
+			}
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: ghosts [<refHex>]";
+			}
+			const auto npc = actor->GetNPC();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("{:08X} ghost={} baseGhost={} questAlias={} hostile={} shareable={} dead={} loaded={} owner={}", actor->GetFormID(), CopyWatch::GhostState(actor),
+				npc && npc->IsGhost(), actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray), player && actor->GetHostileToActor(player),
+				Protocol::IsShareableRef(actor->GetFormID()), actor->IsDead(false), actor->Get3D() != nullptr, NpcSync::Owner(NpcSync::SessionId(actor->GetFormID())));
 		}
 
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
@@ -3619,6 +3641,7 @@ namespace DevCommands
 			Entry{ "sneak", Sneak },
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
+			Entry{ "ghosts", Ghosts },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "fade", FadeCommand },

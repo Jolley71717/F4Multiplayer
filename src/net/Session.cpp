@@ -12,6 +12,7 @@
 #include "game/Achievements.h"
 #include "game/AimPoint.h"
 #include "game/CharacterBinding.h"
+#include "game/ClickWatch.h"
 #include "game/Compass.h"
 #include "game/FadeWatch.h"
 #include "game/MenuIcons.h"
@@ -857,8 +858,11 @@ namespace Session
 				state.direction = graph->GetGraphVariableImplFloat(directionVar, direction) ? Protocol::PackDirection(direction) : std::uint8_t{ 0 };
 				state.pitch = Protocol::PackPitch(AimPoint::PitchFromLooking(player->data.angle.x));
 			}
-			// A downed player's stand-in crouches.
-			if (player->IsSneaking() || Downed::IsDown()) {
+			// Not while on the ground: a downed player's stand-in lies down by their status (DownRules::StandInDown), and the
+			// sneak stance the down leaves is stood out of as they get up (DownRules::Self). Sent for being down, as it once
+			// was to crouch the stand-in, it crouched it as it got up, and a stop the graph refused then left it crouched
+			// until its friend sneaked and stood again themselves.
+			if (player->IsSneaking() && !Downed::IsDown()) {
 				state.flags |= Protocol::kSneaking;
 			}
 			if (player->GetWeaponMagicDrawn()) {
@@ -1678,7 +1682,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
