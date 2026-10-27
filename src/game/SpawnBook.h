@@ -337,9 +337,6 @@ namespace SpawnBook
 				if (!a_facts.copyThere) {
 					return Act::kLost;
 				}
-				if (a_facts.lent) {
-					return Act::kNone;
-				}
 				if (copy.gone && !copy.dead) {
 					return Act::kDiscard;
 				}
@@ -380,6 +377,12 @@ namespace SpawnBook
 			}
 			const auto& copy = it->second;
 			if (copy.local != 0) {
+				// Lent to our player: held as it is, even while its handle does not resolve (a cell changing under them), since
+				// a copy lost here would be placed again where its owner's game has the frame, beside the one worn. The loan
+				// gives it back once it is gone for good, and its end drops it (Spawns::DropLentCopy).
+				if (a_facts.lent) {
+					return Act::kNone;
+				}
 				if (!a_facts.copyThere) {
 					return Act::kLost;
 				}
