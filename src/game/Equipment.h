@@ -157,8 +157,19 @@ namespace Equipment
 	// and the engine's own two answers. Main thread.
 	[[nodiscard]] FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame);
 
-	// That, for the log and the paframes dev command.
+	// That, with what else holds our player off it (FrameUse::Holds: the gate asked to look, FrameAsk::kLook, nothing told;
+	// its activation block; its state; our player's input), for the log and the paframes dev command.
 	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame);
+
+	// The reference's ExtraFlags word (EXTRA_DATA_TYPE::kFlags), 0 without one: Papyrus's BlockActivation sets bit 0 (value 1) in
+	// it on 1.11.240, as the rig verified (Skyrim uses 0x2) (DescribeFrameUse's `flags=`, FrameUse::Holds::activationBlocked).
+	// Read-only; for the refinfo dev command, where a dropped item's copy (Drops blocks those) shows the bit. Main thread.
+	[[nodiscard]] std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref);
+
+	// Our player as the engine has them for furniture: their sit state, the furniture they occupy, the frame they wear or
+	// left last, the frame they last asked to get into, and whether an input layer has the Activate user event off (by
+	// the layers' names) or their input is blocked. For the log and paframes. Main thread.
+	std::string DescribePlayerUse();
 
 	// Patches TESFurniture::Activate's call into the player's furniture use (FrameUse::USE_CALL): as our player gets into
 	// a frame, what would have the engine say "You cannot use this at this time." is mended first (FrameUse::ChooseMend),
@@ -173,6 +184,7 @@ namespace Equipment
 		kEnter,     // our player gets in (before anything is mended or the engine starts getting them in)
 		kTransfer,  // our player opened its inventory (Transfer): the menu is closed again
 		kOther,     // someone else here got in (a companion ordered into it): they are sent out again (RemotePlayers)
+		kLook,      // only asked whether our player would be kept out (DescribeFrameUse): nobody is told, nothing is counted
 	};
 
 	// Asked as our player gets into a frame or opens its inventory, and as anyone else here is found in one: true keeps
@@ -184,8 +196,18 @@ namespace Equipment
 	// thread: the container menu's hook closes Transfer on one as the menu is shown (on the UI's thread).
 	void SetTransfersKeptOut(std::vector<RE::ObjectRefHandle> a_handles);
 
-	// Hooks the container menu's messages in its vtable, for a frame's Transfer (kTransfer). Once, at load.
+	// Hooks the container menu's messages in its vtable, for a frame's Transfer (kTransfer), and its frame, for
+	// RedrawContainerMenu. Once, at load.
 	void InstallFrameGate();
+
+	// Any thread: the open container menu draws both its lists again (on the UI's thread, in its own code: its next frame or
+	// an update message posted to it, whichever is first), after an item was put in or taken out from outside the menu,
+	// which it doesn't draw by itself until the player's next move in it. Waits while its quantity box is up. A request
+	// made while none is open is dropped as the next one shows. ContainerMenuRedraws: how many it drew;
+	// DescribeContainerRedraw: that and each step's count (`gifts`).
+	void          RedrawContainerMenu();
+	std::uint32_t ContainerMenuRedraws();
+	std::string   DescribeContainerRedraw();
 
 	// What that hook mended and logged, for the paframes dev command.
 	std::string DescribeFrameMends();

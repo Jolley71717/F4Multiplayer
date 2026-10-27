@@ -47,6 +47,7 @@
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
+#include "game/SneakKey.h"
 #include "game/Storage.h"
 #include "game/StateBuffer.h"
 #include "game/Traps.h"
@@ -507,7 +508,7 @@ namespace DevCommands
 					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership), WorkshopSync::IsCopyMarked(*a_ref), WorkshopSync::HoldsAnything(a_ref));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
-			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
+			return std::format("{} ({}; {})", count ? out : "none", Equipment::DescribeFrameMends(), Equipment::DescribePlayerUse());
 		}
 
 		std::string Console(std::string_view a_args)
@@ -1549,7 +1550,7 @@ namespace DevCommands
 					owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, info), owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, info),
 					NpcSync::Owner(actor->GetFormID()), actor->IsDead(false));
 			}
-			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
+			return DescribeRef(ref) + std::format(" formFlags={:08X} extraFlags={:X}", ref->formFlags, Equipment::ExtraFlagsOf(ref)) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
 		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked
@@ -3153,6 +3154,51 @@ namespace DevCommands
 			return out.empty() ? "none" : out;
 		}
 
+		// The sneak key's way through the game, for `controls`: what holds it back by name (SneakKey.h), then what that is
+		// read from. A key that does nothing with "blocked=none" is the graph's: the stance and the graph disagree.
+		std::string SneakFacts()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto controls = RE::PlayerControls::GetSingleton();
+			if (!player || !controls) {
+				return "sneak: none";
+			}
+			const auto&     state = static_cast<RE::ActorState&>(*player);
+			SneakKey::Facts facts{ .lifeState = state.lifeState, .knockState = state.knockState, .meleeAttackState = state.meleeAttackState,
+				.swimming = state.IsSwimming() };
+			std::string off;  // the layers with the sneaking event off, by debug name
+			if (const auto enable = RE::BSInputEnableManager::GetSingleton()) {
+				facts.layersLetSneak = enable->cachedInputUserEventsFlags.all(RE::UserEvents::USER_EVENT_FLAG::kSneaking);
+				for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
+					const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
+					if (name && *name && enable->layers[i].inputUserEvents.none(RE::UserEvents::USER_EVENT_FLAG::kSneaking)) {
+						off += std::format("{}'{}'", off.empty() ? "" : ",", name);
+					}
+				}
+			}
+			const auto handler = reinterpret_cast<const RE::BSInputEventUser*>(controls->sneakHandler);
+			facts.handlerOn = handler && handler->inputEventHandlingEnabled;
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const int  view = camera && camera->currentState ? static_cast<int>(camera->currentState->id.underlying()) : -1;
+			facts.dialogueCamera = view == RE::CameraStates::kDialogue;
+			facts.firstPerson = view == RE::CameraStates::kFirstPerson;
+			if (const auto values = RE::ActorValue::GetSingleton()) {
+				auto& owner = static_cast<RE::ActorValueOwner&>(*player);
+				if (values->leftMobiltyCondition) {
+					facts.leftLeg = owner.GetActorValue(*values->leftMobiltyCondition);
+				}
+				if (values->rightMobilityCondition) {
+					facts.rightLeg = owner.GetActorValue(*values->rightMobilityCondition);
+				}
+			}
+			static const RE::BSFixedString inSneak{ "iIsInSneak" };
+			int                            graphSneak = -1;
+			static_cast<RE::IAnimationGraphManagerHolder*>(player)->GetGraphVariableImplInt(inSneak, graphSneak);
+			return std::format("sneak: blocked={} sneaking={} stance={} forceSneak={} iIsInSneak={} handler={} layersOff={} life={} knock={} melee={} legs={:.0f}/{:.0f} camera={}",
+				SneakKey::Blocking(facts), player->IsSneaking(), static_cast<std::uint32_t>(state.stance), static_cast<std::uint32_t>(state.forceSneak), graphSneak,
+				facts.handlerOn, off.empty() ? "none" : off, facts.lifeState, facts.knockState, facts.meleeAttackState, facts.leftLeg, facts.rightLeg, view);
+		}
+
 		// controls [contextHex]: the control map's stack of input contexts (uppermost last), and with a context,
 		// its user events and their keys (keyboard, mouse, pad), for `input`. 0 is gameplay, 1 menu navigation,
 		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest).
@@ -3178,7 +3224,7 @@ namespace DevCommands
 					}
 					out += std::format(" layers={}{}", enable->layers.size(), held);
 				}
-				return out;
+				return out + " | " + SneakFacts();
 			}
 			const auto id = ParseHex(a_args);
 			if (!id || *id >= static_cast<std::uint32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal)) {

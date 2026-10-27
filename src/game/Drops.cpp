@@ -1,5 +1,6 @@
 #include "game/Drops.h"
 
+#include "game/CharacterBinding.h"
 #include "game/DropBook.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
@@ -97,8 +98,16 @@ namespace Drops
 
 		// ---- the record (the co-save's thread too) ----
 
-		std::mutex       recordLock;
-		DropBook::Record record;
+		std::mutex                recordLock;
+		DropBook::Record          record;
+		CharacterBinding::World   world;  // whose world it is: said with the record, kept in the co-save ('CHAR')
+
+		// A random number for a fresh world key (under recordLock).
+		std::uint64_t WorldRandom()
+		{
+			static std::mt19937_64 random{ (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}() };
+			return random();
+		}
 
 		// ---- main thread ----
 
@@ -1000,7 +1009,7 @@ namespace Drops
 		void TakeBackYield(const DropBook::ScrapYields::Yield& a_yield)
 		{
 			const auto lostIt = lostItems.find(a_yield.dropId);
-			const auto lost = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
+			const auto lostItem = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
 			if (lostIt != lostItems.end()) {
 				lostItems.erase(lostIt);
 			}
@@ -1030,7 +1039,7 @@ namespace Drops
 			}
 			bool tookWhole = false;
 			for (const auto& item : plan.whole) {
-				if (lost && lost->base == item.base && RemoveDrop(bench, *lost, item.count, [] {})) {
+				if (lostItem && lostItem->base == item.base && RemoveDrop(bench, *lostItem, item.count, [] {})) {
 					tookWhole = true;
 					REX::INFO("Drops: {:08X} x{} stored whole taken back out of workbench {:08X}, as that item: drop {} went to someone else", item.base, item.count,
 						a_yield.bench, a_yield.dropId);
@@ -1108,7 +1117,9 @@ namespace Drops
 		Protocol::DropRecord RecordForServer()
 		{
 			std::scoped_lock l{ recordLock };
-			return record.ForServer();
+			auto             out = record.ForServer();
+			out.character = world.Key(WorldRandom());
+			return out;
 		}
 	}
 
@@ -1528,6 +1539,25 @@ namespace Drops
 	{
 		std::scoped_lock l{ recordLock };
 		record.Replace(DropBook::Record{});
+		world.Revert();
+	}
+
+	std::vector<std::uint8_t> SaveWorld()
+	{
+		std::scoped_lock l{ recordLock };
+		return world.Save(WorldRandom());
+	}
+
+	void LoadWorld(std::span<const std::uint8_t> a_bytes)
+	{
+		std::scoped_lock l{ recordLock };
+		world.Loaded(a_bytes);
+	}
+
+	void OnWorldStarted(bool a_newGame, std::uint64_t a_character)
+	{
+		std::scoped_lock l{ recordLock };
+		world.Started(a_newGame, a_character, WorldRandom());
 	}
 
 	void Reset()
@@ -1556,7 +1586,7 @@ namespace Drops
 			out += std::format("; pending {:08X} base={:08X} x{} {}", entry.refId, entry.base, entry.count, entry.reported ? "reported" : "settling");
 		}
 		const auto ours = RecordForServer();
-		out += std::format("; record: session={:016X} made={} taken={}", ours.sessionId, ours.made.size(), ours.taken.size());
+		out += std::format("; record: session={:016X} made={} taken={} character={:016X}", ours.sessionId, ours.made.size(), ours.taken.size(), ours.character);
 		return out;
 	}
 

@@ -614,6 +614,57 @@ TEST("cross: two friends shooting the host's raider leave it with the host while
 	CHECK_AGREE({ &host, &bob });
 }
 
+// A raider the host's game made at runtime (a random encounter's) is shared as a spawn: the host's game runs it for
+// good, and Bob's places a copy. Bob's hits ask to take it over as any hit does (NpcClaims::Book::OnHit, a kFight),
+// which the server never grants, with no cooldown of the host's to wait out: his damage reaches the host's game, and his
+// kill is believed because his claims and damage noted him fighting it.
+TEST("cross: a friend shooting a raider the host's game spawned never takes it over, every hit lands in the host's game, and the friend's kill of it counts")
+{
+	constexpr std::uint32_t SPAWN = 0xFF001234;        // the spawn id the host's game shares it under
+	constexpr std::uint32_t RAIDER_BASE = 0x0001D4D2;  // a plugin's NPC base, which every game has
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Spawn(SPAWN, RAIDER_BASE, 1000.0f, 2000.0f);
+	s.Settle();
+	REQUIRE(bob.CopyOf(SPAWN));
+	CHECK(bob.CopyOf(SPAWN)->playerId == host.Id());
+	CHECK(bob.CopyOf(SPAWN)->base == RAIDER_BASE);
+	CHECK(!host.CopyOf(SPAWN));  // its own: it has it
+	CHECK(bob.OwnerOf(SPAWN) == host.Id());
+	CHECK(host.OwnerOf(SPAWN) == host.Id());
+	host.TakeDamageHeard();
+
+	// Bob shoots it for half a minute while the host never does: each round is past the server's takeover cooldown,
+	// which would have handed a plugin's raider over on the first. It stays the host's, and the host hears every hit.
+	for (int round = 0; round < 5; ++round) {
+		s.Advance(std::chrono::seconds(6));
+		bob.Damage(SPAWN, 0.1f);
+		bob.Claim(SPAWN, Reason::kInteract);
+		s.Settle();
+		CHECK(bob.OwnerOf(SPAWN) == host.Id());
+		CHECK(host.OwnerOf(SPAWN) == host.Id());
+		CHECK(bob.CopyOf(SPAWN));
+		const auto heard = host.TakeDamageHeard();
+		REQUIRE(heard.size() == 1);
+		CHECK(heard[0].refId == SPAWN);
+		CHECK(heard[0].health == 0.1f);
+	}
+	CHECK(bob.TakeDamageHeard().empty());  // his own damage comes back to nobody but the runner
+
+	// His kill: believed, since he was fighting it; the host's game kills its raider, and the spawn is over everywhere.
+	bob.Died(SPAWN, true);
+	s.Settle();
+	CHECK(host.WorldNow().dead.contains(SPAWN));
+	CHECK(host.KilledBy(SPAWN) == bob.Id());
+	CHECK(host.OwnerOf(SPAWN) == 0);
+	CHECK(bob.OwnerOf(SPAWN) == 0);
+	CHECK(!bob.CopyOf(SPAWN));
+	CHECK_AGREE({ &host, &bob });
+}
+
 // ---- reloading faster than the server answers ----------------------------------------------------------
 
 // A world state past a player's budget is owed, not refused, and while it is owed their container changes

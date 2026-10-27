@@ -444,10 +444,10 @@ namespace ArmorFrames
 	}
 
 	// A wear whose frame is not known: ours when what we sat in as the armor went on is no frame (friends hear we are
-	// in power armor with no frame, and their stand-in of us wears the pieces with no frame copy), a friend's when the
-	// frame their stand-in would go into is no frame here (they named none, or one from a plugin this game lacks).
-	// Told in the log once a wear, once it has stayed unknown this long: the armor goes on a moment before the
-	// furniture is known, so the first status of every wear names no frame and the next one names it.
+	// in power armor with no frame, and their stand-in of us goes into a copy of STAND_IN_FRAME: see ChooseWornBase), a
+	// friend's when the frame their stand-in would go into is no frame here (they named none, or one from a plugin this
+	// game lacks). Told in the log once a wear, once it has stayed unknown this long: the armor goes on a moment before
+	// the furniture is known, so the first status of every wear names no frame and the next one names it.
 	constexpr auto UNKNOWN_FRAME_AFTER = std::chrono::seconds(1);
 
 	class UnknownFrame
@@ -476,10 +476,51 @@ namespace ArmorFrames
 			return true;
 		}
 
+		// In power armor with the frame unknown for UNKNOWN_FRAME_AFTER or longer, as of the last Update.
+		[[nodiscard]] bool Overdue(std::chrono::steady_clock::time_point a_now) const { return since && a_now - *since >= UNKNOWN_FRAME_AFTER; }
+
 	private:
 		std::optional<std::chrono::steady_clock::time_point> since;  // unknown since
 		bool                                                 told = false;
 	};
+
+	// The frame a friend's stand-in goes into while their status says they are in power armor (RemotePlayers' WornFrame).
+	// What the stand-in wears goes by what the engine has it in (ChooseDress): out of a frame, never a piece. So a friend
+	// in power armor whose stand-in had no frame copy to get into was shown in the clothes under their suit, out of it to
+	// every friend, until they got out and in again and their status named a frame. It came to that whenever the frame
+	// they told was none (a game loaded with them already in the armor, before 0.9.2 read the worn frame: see WornSeat)
+	// or one from a plugin this game lacks. The stand-in goes into a copy of a frame every game has instead: at once for a
+	// frame they named that is none here (no wait makes it one), and for none once that has lasted UNKNOWN_FRAME_AFTER
+	// (the first status of every wear names none, and the next one names it). Waiting a second on a named one too, a
+	// friend who got out of a frame here and into one this game lacks was shown out of their armor for that second,
+	// beside the copy of the frame kept from the last wear (Hear), drawn as an empty suit at their stand-in. Worn, a
+	// frame's own base shows nothing (the engine disables it; the suit seen is the frame item and the pieces on the
+	// actor), and a copy is emptied as it is placed. A frame they name later takes over as any change of frame does
+	// (ChooseCopy).
+	// The base of the museum's T-45 in Concord (Fallout4.esm), a frame in every game. Should a mod have made it no frame,
+	// there is none to fall back on, as before.
+	constexpr std::uint32_t STAND_IN_FRAME = 0x0019DED9;
+
+	enum class WornBase
+	{
+		kNone,     // out of power armor, or in it with no frame known yet: no copy
+		kTold,     // the frame they told, a frame here
+		kStandIn,  // STAND_IN_FRAME: theirs named but none here, or none named for UNKNOWN_FRAME_AFTER
+	};
+
+	// a_on: their status says they are in power armor; a_named: they told a frame (kept, see Hear), not none;
+	// a_toldHere: it is a frame here; a_overdue: theirs has not been one here for UNKNOWN_FRAME_AFTER in this wear
+	// (UnknownFrame::Overdue); a_standInHere: STAND_IN_FRAME is a frame here.
+	constexpr WornBase ChooseWornBase(bool a_on, bool a_named, bool a_toldHere, bool a_overdue, bool a_standInHere)
+	{
+		if (!a_on) {
+			return WornBase::kNone;
+		}
+		if (a_toldHere) {
+			return WornBase::kTold;
+		}
+		return (a_named || a_overdue) && a_standInHere ? WornBase::kStandIn : WornBase::kNone;
+	}
 
 	// What our player sits in now (Party): the reference and its base (0 when none), and whether the base is a frame.
 	struct Seat
