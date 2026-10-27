@@ -259,14 +259,15 @@ TEST("power armor tell: a frame reference made in the wearer's game is never sen
 	REQUIRE(alice.HearStatus(f, bob->playerId));
 	CHECK(alice.Of(bob->playerId).frameRef == 0u);
 
-	// A game that sends it anyway (an older or broken build) is refused by the server: Alice hears nothing, and
+	// A game that sends one anyway that is no spawn id either (a spawn id names a friend's frame lent to him: FrameLoan.h)
+	// is refused by the server: Alice hears nothing, and
 	// keeps what she had. His next good status, of a plugin frame she lacks, gets through and is logged once.
 	Protocol::PlayerStatus bad;
 	bad.level = 12;
 	bad.health = 100;
 	bad.powerArmor = true;
 	bad.powerArmorFrame = VANILLA_FRAME;
-	bad.powerArmorFrameRef = MADE_HERE;
+	bad.powerArmorFrameRef = 0xFF000000;  // the runtime range's first id, which no spawn has
 	f.fake->Deliver(2, Protocol::Encode(bad, MT::kReportStatus));
 	CHECK(!f.fake->WaitFor(1, Type(MT::kPlayerStatus), 200ms));
 	CHECK(alice.Of(bob->playerId).frameRef == 0u);

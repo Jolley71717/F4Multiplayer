@@ -234,6 +234,34 @@ namespace FormTranslate
 			return std::ranges::all_of(a_item.mods, [&](Protocol::ItemMod& a_mod) { return a_ctx.Key(a_mod.mod); });
 		}
 
+		// A lent frame's kit: an item whose base or any mod the other side lacks is left out, as a drop of it would be (the
+		// borrower wears fewer pieces; the return says those were not found, and the owner's stay as they are). The slots
+		// of the rest stay, so the return still answers for each by the owner's number.
+		inline bool MapLending(Context& a_ctx, Protocol::FrameLending& a_msg)
+		{
+			a_ctx.Entries(a_msg.kit, [&](Protocol::LentItem& a_item) {
+				return a_ctx.Key(a_item.base) && std::ranges::all_of(a_item.mods, [&](Protocol::ItemMod& a_mod) { return a_ctx.Key(a_mod.mod); });
+			});
+			return true;
+		}
+
+		// A return's place, or none (both 0): the owner's game then puts its frame back where it was lent from.
+		inline bool MapReturn(Context& a_ctx, Protocol::FrameReturn& a_msg)
+		{
+			auto cell = a_msg.cell;
+			auto worldspace = a_msg.worldspace;
+			if (a_ctx.Place(cell, worldspace)) {
+				a_msg.cell = cell;
+				a_msg.worldspace = worldspace;
+			} else {
+				a_msg.cell = 0;
+				a_msg.worldspace = 0;
+				++a_ctx.out.fields;
+				a_ctx.changed = true;
+			}
+			return true;
+		}
+
 		// A ping: its place, or not at all. For an NPC or an item, the target and its base are details (a ping of one the
 		// other game can't name shows as its name at the spot); a friend's target is a player id, no form.
 		inline bool MapPing(Context& a_ctx, Protocol::Ping& a_msg)
@@ -612,6 +640,17 @@ namespace FormTranslate
 		case MessageType::kStorageCaughtUp:
 		case MessageType::kStorageReversals:
 			break;  // counts and numbers
+		case MessageType::kBorrowFrame:
+		case MessageType::kLoanAsked:
+			break;  // a spawn id (the session's own) and a player id
+		case MessageType::kLendFrame:
+		case MessageType::kFrameLent:
+			Apply<FrameLending>(a_packet, ctx, DecodeFrameLending, [&](FrameLending& m) { return detail::MapLending(ctx, m); }, typed);
+			break;
+		case MessageType::kReturnFrame:
+		case MessageType::kFrameReturned:
+			Apply<FrameReturn>(a_packet, ctx, DecodeFrameReturn, [&](FrameReturn& m) { return detail::MapReturn(ctx, m); }, typed);
+			break;
 		}
 		return out;
 	}
