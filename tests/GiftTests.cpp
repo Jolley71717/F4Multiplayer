@@ -1162,6 +1162,24 @@ TEST("gifts: a gun put in a chest that holds a like one and taken back before it
 	CHECK(alice.Carried(gun) == 1);
 	CHECK(bob.Lying(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 3);
+
+	// Taken back in the very tick the offer is handled (no frame between them): still neither is given.
+	TakeGift(f, bob, gun, { &alice, &bob });  // (so no copy of a gift shows in her chest)
+	alice.Give(PLAYER, Gun());
+	alice.Open(f, CHEST);
+	REQUIRE(alice.Put(f, CHEST, gun));
+	REQUIRE(alice.Take(f, CHEST, gun, false));
+	alice.Receive(f);  // the offer, read before the frame that would see the take
+	SettleAll(f, { &alice, &bob });
+	alice.Close(f);
+	SettleAll(f, { &alice, &bob });
+	CHECK(alice.gifts.Counters().kept == 3);
+	CHECK(alice.gifts.Counters().given == 1);
+	CHECK(alice.In(CHEST, gun) == 1);
+	CHECK(alice.Carried(gun) == 2);
+	CHECK(bob.Carried(gun) == 1);
+	CHECK(bob.Lying(gun) == 0);
+	CHECK(Total(gun, { &alice, &bob }, bob) == 4);
 	NoFailures({ &alice, &bob });
 }
 

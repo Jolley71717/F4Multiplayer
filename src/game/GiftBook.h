@@ -40,7 +40,8 @@
 //   by a timeout). Granted to us, it goes into our player's inventory and the record says we took it; granted to someone
 //   else, nothing needs undoing. So the side our player can't hide an item from (the take we hold back) is the one put
 //   right, never an item already in their inventory. A copy gone anywhere else (another mod's script) isn't shown again
-//   until a load, and a take back of a class whose put waits for its offer takes that put back (its offer is kept).
+//   until a load or a rejoin, and a take back of a class whose put waits for its offer takes that put back (its offer is
+//   kept).
 // - A reload settles the rest: a friend's save from before their take lacks the item, so it lies there again; ours from
 //   before the put has it in the container, so the gift is withdrawn. The one case left is a giver's save from before the
 //   put loaded after a friend took it: both have it (counted on the server, dupRisk), as for a dropped item.
@@ -244,7 +245,7 @@ namespace GiftBook
 		std::uint32_t unplaceable = 0;  // gifts whose copy our game can't make (a base or mod it lacks)
 		std::uint32_t notGear = 0;      // gifts that aren't a weapon or armor our game has, nor one a gift may be (a modified game's): never shown
 		std::uint32_t addUndone = 0;    // items an add that failed left in an inventory anyway, taken out again
-		std::uint32_t copyMissing = 0;  // copies gone from their container but not to our player (never shown again until a load)
+		std::uint32_t copyMissing = 0;  // copies gone from their container but not to our player (not shown again until a load or a rejoin)
 		std::uint32_t taken = 0;        // copies our player took (claimed)
 		std::uint32_t unsignaled = 0;   // of those, seen by their count alone (the move's event never came)
 		std::uint32_t unheld = 0;       // of those, not found in their inventory to hold back until the answer
@@ -418,6 +419,11 @@ namespace GiftBook
 				return;
 			}
 			const bool mine = localId != 0 && a_drop.ownerId == localId;
+			if (mine && view) {
+				// What our player did since the last frame first: a take back of a put's class in the same tick as its
+				// offer takes that put back (CancelPuts), before the offer is matched to it.
+				Sync();
+			}
 			const auto put = mine ? std::ranges::find_if(puts, [&](const Put& a_put) { return a_put.item.nonce == a_drop.nonce; }) : puts.end();
 			if (a_drop.dropId == 0) {
 				// Not kept by the server: the item stays in our copy of the container, ours alone.
@@ -633,7 +639,7 @@ namespace GiftBook
 		// What the container holds now against what we knew: an item more than we knew of that our player put in is a gift;
 		// one fewer that went to our player (their take's event said so, or, the event lost, their count of its class rose)
 		// is our copy of a gift first (so it is claimed and held back), else their own item. A copy gone anywhere else is
-		// never shown again until a load.
+		// never shown again until a load or a rejoin.
 		void Sync()
 		{
 			const auto stacks = engine.Stacks(view->holder, 0);
@@ -911,7 +917,8 @@ namespace GiftBook
 		std::vector<Protocol::DroppedItem>             listing;
 		std::set<std::uint32_t>                        unplaceable;
 		// Gifts whose copy went from the container we view, but not to our player (another mod's script, say): not shown here
-		// again until a load, so a script that empties the container makes one item of each gift at most, not one a frame.
+		// again until a load or a rejoin, so a script that empties the container makes one item of each gift a load or a
+		// rejoin, not one a frame.
 		std::set<std::uint32_t>                        vanished;
 		std::array<bool, static_cast<std::size_t>(Notice::kCount)> said{};
 		Stats                                          stats;
