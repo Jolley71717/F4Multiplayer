@@ -1310,21 +1310,29 @@ namespace Equipment
 		// Whether the menu's quantity box (how many of a stack to move: a clip of the menu's own movie, shown by it) is up.
 		// The transfer it ends in names its item by the item's place in the list, which drawing the list again can change
 		// (a copy put in sorts before it): so no redraw while it is up; the request waits for it to close. A movie without
-		// the clip (a UI mod's) has no box to wait for. a_why gets what was read, for the log.
+		// the clip (a UI mod's) has no box to wait for. The vanilla movie never hides the clip: it stays visible and is
+		// faded out to alpha 0 (a rig, 0.10.0: visible=true alpha=0.00 with no box up), so the box is up only when it is
+		// visible and its alpha is above 0. CommonLibF4 knows no other sign of it (no flag on the menu or the clip; the
+		// menu's messageBoxIsActive is for its message boxes) and none of a transfer under way (DoItemTransfer is one call
+		// at the box's confirm). Fails open: anything that can't be read, or reads oddly (alpha not a number), is no box,
+		// and the lists are drawn. a_why gets what was read and what it was taken for, for the log.
 		bool QuantityBoxShowing(RE::ContainerMenu* a_menu, std::string& a_why)
 		{
 			const auto& box = a_menu->quantityMenu_mc;
 			if (!box || !box->IsDisplayObject()) {
-				a_why = box ? "quantity box not a display object" : "no quantity box";
+				a_why = box ? "quantity box not a display object: drawn" : "no quantity box: drawn";
 				return false;
 			}
-			Scaleform::GFx::Value::DisplayInfo info;
+			Scaleform::GFx::Value::DisplayInfo info{};  // zeroed: a field the read leaves unset reads as hidden
 			if (!box->GetDisplayInfo(&info)) {
-				a_why = "quantity box unreadable";
+				a_why = "quantity box unreadable: drawn";
 				return false;
 			}
-			a_why = std::format("quantity box visible={} alpha={:.2f}", info.GetVisible(), info.GetAlpha());
-			return info.GetVisible();
+			const bool   visible = info.GetVisible();
+			const double alpha = info.GetAlpha();
+			const bool   up = visible && alpha > 0.0;  // false for NaN
+			a_why = std::format("quantity box visible={} alpha={:.2f}: {}", visible, alpha, up ? "up, held" : "down, drawn");
+			return up;
 		}
 
 		// The request, taken on the UI's thread in the menu's own code (its frame or its message): the flag is taken only

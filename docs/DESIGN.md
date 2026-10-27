@@ -1223,7 +1223,9 @@ container's menu open, and only then.
   hooked beside its messages) and an update message posted to it through the UI's queue (the way the plugin closes
   the menu), which lands in its message hook; at most once a request. Not while the menu's quantity box is up (the
   transfer it ends in names its item by its place in the list, which a redraw can change): the request waits for the
-  box to close. A request is dropped as a menu shows or hides: it isn't owed to the next. `net status` counts each
+  box to close. The vanilla movie keeps the box's clip visible and fades it to alpha 0 when it closes, so the box is up
+  only while the clip is visible with an alpha above 0 (a guard on `visible` alone held a request forever on a rig).
+  It fails open: a box that is missing or can't be read is no box, and the lists are drawn. A request is dropped as a menu shows or hides: it isn't owed to the next. `net status` counts each
   step (`redraws=` and the rest of `DescribeContainerRedraw`), and the log has the first few of each.
 - **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
   before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
