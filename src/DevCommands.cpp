@@ -3166,12 +3166,20 @@ namespace DevCommands
 			const auto&     state = static_cast<RE::ActorState&>(*player);
 			SneakKey::Facts facts{ .lifeState = state.lifeState, .knockState = state.knockState, .meleeAttackState = state.meleeAttackState,
 				.swimming = state.IsSwimming() };
-			std::string off;  // the layers with the sneaking event off, by debug name
+			std::string   off;  // the layers in use with the sneaking event off, by debug name
+			std::uint32_t forced = 0;
 			if (const auto enable = RE::BSInputEnableManager::GetSingleton()) {
-				facts.layersLetSneak = enable->cachedInputUserEventsFlags.all(RE::UserEvents::USER_EVENT_FLAG::kSneaking);
+				constexpr auto sneaking = RE::UserEvents::USER_EVENT_FLAG::kSneaking;
+				// The game's own check: the forced mask wins, else the cache of the layers in use (SneakKey::EventEnabled).
+				forced = enable->forceEnableInputUserEventsFlags.underlying();
+				facts.layersLetSneak = SneakKey::EventEnabled(enable->cachedInputUserEventsFlags.underlying(), forced, static_cast<std::uint32_t>(sneaking));
+				// Under the lock the engine grows the layers with (see Equipment.cpp's LayersWithActivateOff).
+				RE::BSAutoLock l{ enable->layerLock };
 				for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
 					const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
-					if (name && *name && enable->layers[i].inputUserEvents.none(RE::UserEvents::USER_EVENT_FLAG::kSneaking)) {
+					// A slot nothing but the manager holds is let go: the cache leaves it out, though its name may linger.
+					const auto holder = i < enable->layerWrappers.size() ? enable->layerWrappers[i].get() : nullptr;
+					if (name && *name && holder && SneakKey::LayerCounts(holder->refCount) && enable->layers[i].inputUserEvents.none(sneaking)) {
 						off += std::format("{}'{}'", off.empty() ? "" : ",", name);
 					}
 				}
@@ -3194,9 +3202,9 @@ namespace DevCommands
 			static const RE::BSFixedString inSneak{ "iIsInSneak" };
 			int                            graphSneak = -1;
 			static_cast<RE::IAnimationGraphManagerHolder*>(player)->GetGraphVariableImplInt(inSneak, graphSneak);
-			return std::format("sneak: blocked={} sneaking={} stance={} forceSneak={} iIsInSneak={} handler={} layersOff={} life={} knock={} melee={} legs={:.0f}/{:.0f} camera={}",
+			return std::format("sneak: blocked={} sneaking={} stance={} forceSneak={} iIsInSneak={} handler={} layersOff={} forced={:X} life={} knock={} melee={} legs={:.0f}/{:.0f} camera={}",
 				SneakKey::Blocking(facts), player->IsSneaking(), static_cast<std::uint32_t>(state.stance), static_cast<std::uint32_t>(state.forceSneak), graphSneak,
-				facts.handlerOn, off.empty() ? "none" : off, facts.lifeState, facts.knockState, facts.meleeAttackState, facts.leftLeg, facts.rightLeg, view);
+				facts.handlerOn, off.empty() ? "none" : off, forced, facts.lifeState, facts.knockState, facts.meleeAttackState, facts.leftLeg, facts.rightLeg, view);
 		}
 
 		// controls [contextHex]: the control map's stack of input contexts (uppermost last), and with a context,
