@@ -1412,11 +1412,11 @@ TEST("blasts: each blast has its own cap")
 	ObjectShare::BlastBook  book;
 	ObjectShare::KnockWatch watch;
 	auto                    t = Clock::now();
-	constexpr std::uint32_t COUNT = 20;  // under each blast: more than a blast's cap
+	constexpr std::uint32_t COUNT = ObjectShare::BLAST_MAX_REPORTS + 6;  // under each blast: more than a blast's cap
 	std::size_t             said[2]{};
 	for (std::uint32_t blast = 0; blast < 2; ++blast) {
 		// A second blast, much later, where the first one's budget is long filled again.
-		t += 30s;
+		t += 60s;
 		const float x = blast * 5000.0f;
 		std::vector<Seen> still, moved;
 		for (std::uint32_t i = 0; i < COUNT; ++i) {
@@ -1429,7 +1429,7 @@ TEST("blasts: each blast has its own cap")
 		for (std::uint32_t i = 0; i < COUNT; ++i) {
 			moved.push_back({ .refId = 0x00320000 + blast * 100 + i, .pose = At({ x + i * 5.0f, 90, 0 }), .blast = serial });
 		}
-		for (int look = 0; look < 40; ++look) {
+		for (int look = 0; look < 160; ++look) {
 			said[blast] += watch.Scan(moved, t += 250ms).size();
 			for (auto& m : moved) {
 				m.blast = 0;
@@ -1438,6 +1438,114 @@ TEST("blasts: each blast has its own cap")
 	}
 	CHECK(said[0] == ObjectShare::BLAST_MAX_REPORTS);
 	CHECK(said[1] == ObjectShare::BLAST_MAX_REPORTS);
+	CHECK(watch.Dropped() == 2 * (COUNT - ObjectShare::BLAST_MAX_REPORTS));
+}
+
+// --- a grenade in a cluttered room (#213's rig) ----------------------------------------------------------------------
+// Every rig throw into the Speakeasy's pile said 16 to 18 rests (the blast's cap was 16), and the cans that differed
+// between the games were the pile's own: nearest the blast, flung furthest, resting last, after the cap was used up by
+// the ones that rested first. The friend's game applied every rest it was sent and kept the rest of its copies where its
+// own copy of the explosion threw them.
+
+TEST("blasts: a grenade that throws 40 objects has every one said, the nearest, resting last, too")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	constexpr std::uint32_t COUNT = 40, LATE = 10;  // the last LATE are the pile's: they fly 3 s before they rest
+	std::vector<Seen>       still;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		still.push_back({ .refId = 0x00330000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
+	}
+	watch.Scan(still, t += 250ms);
+	CHECK(book.Note(1, { 200, 0, 0 }, 500, BlastRole::kOurs, t));
+	std::set<std::uint32_t> said;
+	std::size_t             lateSaid = 0;
+	for (int look = 1; look <= 140; ++look) {
+		std::vector<Seen> seen;
+		for (std::uint32_t i = 0; i < COUNT; ++i) {
+			const bool late = i >= COUNT - LATE;
+			// Late ones move on every look for 3 s (12 looks), 30 units a look; the others land at once.
+			const float y = late ? 90.0f + 30.0f * static_cast<float>((std::min)(look, 12)) : 90.0f;
+			seen.push_back({ .refId = 0x00330000 + i, .pose = At({ i * 10.0f, y, 0 }) });
+		}
+		for (const auto& rest : watch.Scan(seen, t += 250ms, &book)) {
+			CHECK(said.insert(rest.refId).second);  // never twice
+			if (rest.refId >= 0x00330000 + COUNT - LATE) {
+				++lateSaid;
+				CHECK(Near(rest.position[1], 90.0f + 30.0f * 12));  // where it truly rests
+			}
+		}
+	}
+	CHECK(said.size() == COUNT);
+	CHECK(lateSaid == LATE);
+	CHECK(watch.Dropped() == 0);
+}
+
+TEST("knocks: a rest of ours that comes while the budget is empty waits for it instead of being dropped")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	constexpr std::uint32_t COUNT = 14;  // our player walks through a pile: more at once than the burst of 8
+	std::vector<Seen>       still, moved;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		still.push_back({ .refId = 0x00340000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
+		moved.push_back({ .refId = 0x00340000 + i, .pose = At({ i * 10.0f, 40, 0 }), .byUs = true });
+	}
+	watch.Scan(still, t += 250ms);
+	watch.Scan(moved, t += 250ms);
+	std::set<std::uint32_t> said;
+	for (int look = 0; look < 40; ++look) {
+		for (const auto& rest : watch.Scan(moved, t += 250ms)) {
+			CHECK(said.insert(rest.refId).second);
+		}
+	}
+	CHECK(said.size() == COUNT);
+	CHECK(watch.Dropped() == 0);
+}
+
+TEST("blasts: an object still owed that another can knocks on, after the blast's reach is over, is still ours")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	constexpr std::uint32_t COUNT = 40;
+	std::vector<Seen>       still;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		still.push_back({ .refId = 0x00350000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
+	}
+	watch.Scan(still, t += 250ms);
+	CHECK(book.Note(1, { 200, 0, 0 }, 500, BlastRole::kOurs, t));
+	std::map<std::uint32_t, float> saidAt;  // y of each rest said
+	std::set<std::uint32_t>        knockedOn;
+	for (int look = 1; look <= 160; ++look) {
+		if (look == 24) {
+			// 6 s in, past BLAST_REACH_FOR: every one not said yet is hit by another can and moves 30 units on.
+			for (std::uint32_t i = 0; i < COUNT; ++i) {
+				if (!saidAt.contains(0x00350000 + i)) {
+					knockedOn.insert(0x00350000 + i);
+				}
+			}
+		}
+		std::vector<Seen> seen;
+		for (std::uint32_t i = 0; i < COUNT; ++i) {
+			const std::uint32_t id = 0x00350000 + i;
+			const float         y = look >= 24 && knockedOn.contains(id) ? 120.0f : 90.0f;
+			seen.push_back({ .refId = id, .pose = At({ i * 10.0f, y, 0 }) });
+		}
+		for (const auto& rest : watch.Scan(seen, t += 250ms, &book)) {
+			CHECK(!saidAt.contains(rest.refId));
+			saidAt[rest.refId] = rest.position[1];
+		}
+	}
+	REQUIRE(!knockedOn.empty());
+	CHECK(saidAt.size() == COUNT);
+	for (const auto id : knockedOn) {
+		CHECK(saidAt.contains(id) && Near(saidAt[id], 120.0f));  // said where it came to rest after the knock
+	}
+	CHECK(watch.Dropped() == 0);
 }
 
 // --- what a friend's message may do -------------------------------------------------------------------------------

@@ -783,10 +783,10 @@ namespace MovedObjects
 	std::string Status()
 	{
 		const auto& c = counts;
-		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} refused={} releases={} badPoses={} "
+		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} knocksDropped={} refused={} releases={} badPoses={} "
 		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={}",
 			carry.Holding(), c.holdsSent, c.holdsApplied, c.holdsIgnored, c.letGosSent, c.letGosApplied, c.restsSent, c.restsApplied, c.restsAlready, c.restsIgnored,
-			c.knocksSent, c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
+			c.knocksSent, knocks.Dropped(), c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
 			c.placesApplied, c.placesAlready, waiting.Size());
 	}
 

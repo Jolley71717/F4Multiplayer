@@ -609,8 +609,12 @@ namespace ObjectShare
 	inline constexpr float       BLAST_MARGIN = 128.0f;                        // objects beyond its radius are thrown by it still (bodies, not centres)
 	inline constexpr float       BLAST_MAX_RADIUS = 1500.0f;                   // a nuke's reach is the scan's
 	inline constexpr std::size_t MAX_BLASTS = 16;
-	inline constexpr std::size_t BLAST_MAX_REPORTS = 16;                       // rests one blast may have reported (the server's burst is 24)
-	inline constexpr auto        BLAST_DEFER = std::chrono::seconds(6);        // a rest the budget had no room for waits that long
+	// Rests one blast may have reported. A grenade in a cluttered room throws 20 to 40 objects, and the ones nearest it fly
+	// furthest and come to rest last: a cap of 16 left exactly those unsaid (every rig throw said 16 to 18 rests), so the
+	// friend's game kept its copies where its own copy of the explosion threw them. The budget (8 at once, 3 a second,
+	// under the server's 24 and 6) paces them; the cap only bounds a nuke's.
+	inline constexpr std::size_t BLAST_MAX_REPORTS = 64;
+	inline constexpr auto        BLAST_DEFER = std::chrono::seconds(24);  // a rest the budget had no room for waits that long: the 64th is said within it
 
 	// Whose blast it is. The cause decides, so the game that threw the grenade (or shot the barrel, or runs the NPC that
 	// did) is the one that reports what it threw about; every other game sets off the same explosion on its own, and what
@@ -802,19 +806,23 @@ namespace ObjectShare
 				const bool theirs = reachedByTheirs && a_now >= w.quietUntil;
 				if (!w.moving) {
 					if (Distance(seen.pose.position, w.rest.position) > MOVE_DISTANCE || Turned(seen.pose.angles, w.rest.angles) > MOVE_TURN) {
+						// One of ours still owed (unsaid: the budget had no room yet) that moves on, hit by another can the
+						// blast threw, is still ours: its claim was made, and the blast's reach may be over by now.
+						const bool wasOwed = w.owed && a_now < w.owedUntil;
 						w.moving = true;
 						w.owed = false;
 						w.byUs = seen.byUs;
 						w.byNpc = seen.byNpc;
 						w.blast = blast;
 						w.theirs = theirs;
-						w.again = a_now < w.followUntil;
+						w.again = a_now < w.followUntil || wasOwed;
 						w.movingSince = w.stillSince = a_now;
 						w.last = seen.pose;
 					} else if (w.owed) {
 						// Came to rest while the budget had no room: say so now if it has, or give up.
 						if (a_now >= w.owedUntil) {
 							w.owed = false;
+							++dropped;
 						} else if (a_now >= w.quietUntil && Take(w.blast, a_now)) {
 							out.push_back(Rest(seen));
 							w.owed = false;
@@ -864,10 +872,14 @@ namespace ObjectShare
 						}
 					} else if (Take(w.blast, a_now)) {
 						out.push_back(Rest(seen));
-					} else if (w.blast != 0 && BlastRoom(w.blast)) {
-						// A blast moves dozens at once: the rest come as the budget fills again.
+					} else if (BlastRoom(w.blast)) {
+						// A blast moves dozens at once: the rest come as the budget fills again. So does any other rest of
+						// ours that comes while the budget is empty (a can rolling on from its rest, by the follow-on):
+						// dropped, it was never said, and the friend's copy stayed where their own physics put it.
 						w.owed = true;
 						w.owedUntil = a_now + BLAST_DEFER;
+					} else {
+						++dropped;  // past the blast's cap
 					}
 				}
 				w.byUs = w.byNpc = w.theirs = w.again = false;
@@ -921,6 +933,9 @@ namespace ObjectShare
 			return static_cast<std::size_t>(std::ranges::count_if(watched, [](const auto& a_entry) { return a_entry.second.moving; }));
 		}
 		[[nodiscard]] std::uint64_t Reported() const { return reported; }
+		// Rests of ours never said (past a blast's cap, or still owed at owedUntil): each leaves the friends' copies where
+		// their own physics put them.
+		[[nodiscard]] std::uint64_t Dropped() const { return dropped; }
 
 		void Reset()
 		{
@@ -991,6 +1006,7 @@ namespace ObjectShare
 		std::unordered_map<std::uint32_t, std::size_t> blastReports;  // by BlastBook's serial: rests reported for each
 		TokenBucket                                    budget{ KNOCK_BURST, KNOCKS_PER_SECOND };
 		std::uint64_t                                  reported = 0;
+		std::uint64_t                                  dropped = 0;
 	};
 
 	// --- what a friend's message may do ---------------------------------------------------------------------------

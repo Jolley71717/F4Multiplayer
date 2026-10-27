@@ -1504,8 +1504,13 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   NPC we run caused it (`Explosion::GetActorOwner`); one our game set off for a friend's throw (WeaponFire's copy), a
   friend's stand-in's or another game's NPC's is theirs, and an object a blast of theirs reaches is never reported here
   whatever else moved it, so exactly one game reports each object (a trap's explosion, with no cause, nobody's). Same
-  budget as every knock (8 at once, 3 a second), and a blast reports at most 16 objects; the rests the budget has no room
-  for wait up to 6 s for it. No new message: kReportObjectRest as before (`objects` in `net status` adds `blasts=seen/noted`).
+  budget as every knock (8 at once, 3 a second), and a blast reports at most 64 objects; the rests the budget has no room
+  for (a blast's, or any other of ours: one rolling on by the follow-on) wait up to 24 s for it, and one that waits is
+  still ours if another can knocks it on meanwhile. The cap was 16: a grenade in a cluttered room throws 20 to 40
+  objects, the ones nearest it fly furthest and rest last, so on the rig every throw said 16 to 18 rests and the pile's
+  own cans, past the cap, lay hundreds of units apart in the two games. `knocksDropped=` counts rests of ours never said
+  (past a blast's cap, or still waiting after 24 s). No new message: kReportObjectRest as before (`objects` in
+  `net status` adds `blasts=seen/noted`).
   A known limit: an explosion with no cause of ours, a trap's (a mine, a tripwire's grenades) or a destructible
   object's own (a car going up, a barrel), goes off in every game (TrapRules, `kDestructions`) but knocks nothing for
   anyone to report, so what it throws about lands where each game's physics puts it, and can lie apart in each.
