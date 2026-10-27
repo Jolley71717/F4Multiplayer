@@ -85,10 +85,17 @@ namespace
 		return Decoded(a_packets, MT::kFrameReturned, [](auto a_data) { return Protocol::DecodeFrameReturn(a_data); });
 	}
 
+	Server::Options Room()
+	{
+		Server::Options options;
+		options.maxPlayers = 5;  // Alice, Bob, Carol and two who join later (the default room is four)
+		return options;
+	}
+
 	// Alice shares a frame (SPAWN) and lends; Bob and Carol are there. Everyone's mail is read.
 	struct Session
 	{
-		Fixture       f;
+		Fixture       f{ Room() };
 		std::uint32_t alice = 0, bob = 0, carol = 0;
 
 		explicit Session(bool a_lends = true)
