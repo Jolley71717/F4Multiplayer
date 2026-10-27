@@ -28,6 +28,7 @@
 #include "game/GameStop.h"
 #include "game/HostRules.h"
 #include "game/Hud.h"
+#include "game/LogPace.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
 #include "game/Destructibles.h"
@@ -54,6 +55,7 @@
 #include "net/ModDiff.h"
 #include "net/NameChoice.h"
 #include "net/NetClient.h"
+#include "net/PlayerHitRules.h"
 #include "net/Refusals.h"
 #include "net/SessionSteps.h"
 #include "steam/Steam.h"
@@ -207,26 +209,32 @@ namespace Session
 
 		std::uint32_t hitsTaken = 0;
 		std::uint32_t hitsIgnored = 0;
+		std::uint32_t hitsUnseen = 0;      // taken though our copy of the NPC wasn't there to see (PlayerHits): the reporter was near
+		LogPace::Pace ignoredHitLog, unseenHitLog;
 		float         lastHitMult = 1.0f;  // how much the last hit was scaled (difficulty, VATS)
 
-		// Whether the NPC that hit our stand-in is there to see in our world: loaded, alive and
-		// within weapon range. Otherwise we'd take damage from nowhere (it died in our game, or
-		// hasn't spawned yet).
-		bool AttackerHere(const RE::PlayerCharacter* a_player, std::uint32_t a_attacker)
+		// Our copy of the NPC that hit our stand-in, as our world has it (PlayerHits::Attacker): there to see (loaded,
+		// alive, in our cell or worldspace, within weapon range), or why not.
+		PlayerHits::Attacker AttackerState(const RE::PlayerCharacter* a_player, std::uint32_t a_attacker)
 		{
-			constexpr float RANGE = 10000.0f;  // about 140 m: a sniper rifle's reach
+			if (a_attacker == 0) {
+				return PlayerHits::Attacker::kUnnamed;  // an NPC of a plugin our game (or the session's table) lacks
+			}
 			// A friend's spawn (made in their game at runtime) is here as our copy of it, if we placed one.
-			const auto      local = Protocol::IsSpawnRef(a_attacker) ? Spawns::LocalOf(a_attacker) : a_attacker;
-			const auto      actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
-			if (!actor || !actor->Get3D() || actor->IsDead(false)) {
-				return false;
+			const auto local = Protocol::IsSpawnRef(a_attacker) ? Spawns::LocalOf(a_attacker) : a_attacker;
+			const auto actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+			if (!actor || !actor->Get3D()) {
+				return PlayerHits::Attacker::kNotHere;
+			}
+			if (actor->IsDead(false)) {
+				return PlayerHits::Attacker::kDead;
 			}
 			const auto here = a_player->GetParentCell();
 			const auto there = actor->GetParentCell();
 			if (!here || !there || (here->IsInterior() || there->IsInterior() ? here != there : here->worldSpace != there->worldSpace)) {
-				return false;
+				return PlayerHits::Attacker::kElsewhere;
 			}
-			return actor->data.location.GetDistance(a_player->data.location) < RANGE;
+			return actor->data.location.GetDistance(a_player->data.location) < PlayerHits::RANGE ? PlayerHits::Attacker::kHere : PlayerHits::Attacker::kFar;
 		}
 
 		// Menus that stop the game (pause menu, Pip-Boy, ...): no damage lands while it's stopped.
@@ -271,9 +279,39 @@ namespace Session
 			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_hit.damage <= 0.0f) {
 				return;
 			}
-			if (GamePaused() || Story::InOpening() || (!a_hit.byPlayer && !AttackerHere(player, a_hit.attacker))) {
+			if (GamePaused() || Story::InOpening()) {
 				++hitsIgnored;
 				return;
+			}
+			// The NPC that hit our stand-in there may not be here to see: dead here (the session had it dead, the host's
+			// game has it back), on the other side of a door, not loaded yet, or one our game can't name (attacker 0). The
+			// hit counts all the same when the friend who reported it (a_hit.playerId) is near us: it stands beside our
+			// stand-in in their game (PlayerHits). Before, every such hit was ignored, and the enemy couldn't hurt us at all.
+			PlayerHits::Facts facts;
+			facts.byPlayer = a_hit.byPlayer;
+			facts.attacker = a_hit.byPlayer ? PlayerHits::Attacker::kUnnamed : AttackerState(player, a_hit.attacker);
+			if (const auto reporter = RemotePlayers::PositionOf(a_hit.playerId)) {
+				facts.reporterApart = reporter->GetDistance(player->data.location);
+			}
+			const auto now = Clock::now();
+			switch (PlayerHits::Judge(facts)) {
+			case PlayerHits::Verdict::kIgnore:
+				++hitsIgnored;
+				if (ignoredHitLog.Due(now)) {
+					REX::INFO("Session: a hit by {:08X} on our stand-in in player {}'s game ignored: it is {} and they are {} ({} ignored since the last line)", a_hit.attacker,
+						a_hit.playerId, PlayerHits::Name(facts.attacker), facts.reporterApart ? std::format("{:.0f} units away", *facts.reporterApart) : "not in our cell",
+						ignoredHitLog.Since());
+				}
+				return;
+			case PlayerHits::Verdict::kTakeUnseen:
+				++hitsUnseen;
+				if (unseenHitLog.Due(now)) {
+					REX::INFO("Session: a hit by {:08X} on our stand-in in player {}'s game taken though it is {} here: they are {:.0f} units from us ({} such since the last line)",
+						a_hit.attacker, a_hit.playerId, PlayerHits::Name(facts.attacker), *facts.reporterApart, unseenHitLog.Since());
+				}
+				break;
+			case PlayerHits::Verdict::kTake:
+				break;
 			}
 			++hitsTaken;
 			lastHitMult = DamageTakenMult(player, a_hit.byPlayer);
@@ -1684,7 +1722,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	std::optional<ModDiff::Difference> HostMods()

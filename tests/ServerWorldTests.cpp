@@ -72,6 +72,12 @@ namespace
 		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health }, MT::kReportHealth);
 	}
 
+	// What the sender's hit took off its copy of an NPC another game runs, for that game to deal (kReportDamage).
+	auto Damage(std::uint32_t a_ref, float a_damage)
+	{
+		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage }, MT::kReportDamage);
+	}
+
 	auto Container(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count)
 	{
 		return Protocol::Encode(Protocol::ContainerChange{ a_container, a_item, a_count }, MT::kReportContainer);
@@ -255,6 +261,70 @@ TEST("server world: health is relayed to the others, but not for the dead")
 	f.fake->Deliver(1, Health(NPC, 0.0f));
 	f.fake->Deliver(1, Health(RUNTIME, 0.2f));
 	CHECK(Count(Received(f, 2), MT::kActorHealth) == 0);
+}
+
+TEST("server world: a report about a dead NPC is dropped with a log line, and the sender's game is told the death again")
+{
+	Server::Options options;
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };  // the wait before the first reminder: long, crossed with Fixture::Advance
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
+	Fixture    f{ options };
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, DeathAt(NPC, true, 1.0f));  // Bob's kill: the corpse lies at (1, 0, 0) for him
+	Clear(f, { 1, 2 });
+
+	// Alice's game has it alive (her cell reset, or her save is older): her hit on it goes nowhere, nor do her damage
+	// report and her claims. Her game isn't told the death again at once: a host's game walking in beside hers would
+	// offer the NPC in the same moment, and bring it back for everyone.
+	// (The server answers at most 10 heartbeats a second, and each Received sends one: sparingly below.)
+	f.fake->Deliver(1, Health(NPC, 0.5f));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+	CHECK(f.Logged(std::format("health of {:08X} from player {} dropped: the session has it dead", NPC, alice)));
+	const auto toBob = Received(f, 2);
+	CHECK(Count(toBob, MT::kActorHealth) == 0);
+	CHECK(Count(toBob, MT::kActorDamaged) == 0);
+	// Once her game has reported about it for aliveAgainGrace with the NPC still dead, it is told, with where the NPC
+	// fell, as the world state would say.
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(1, Health(NPC, 0.4f));  // 200 s in: still nothing
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(1, Hit(bob, 10.0f, false, NPC));  // 400 s in; its copy there still fights Bob's stand-in
+	const auto deaths = Decoded(Received(f, 1), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].playerId == 0);
+	CHECK(!deaths[0].killed);
+	CHECK(deaths[0].x == 1.0f);
+	CHECK(f.Logged(std::format("a hit by {:08X} from player {} dropped: the session has it dead", NPC, alice)));
+	CHECK(Count(Received(f, 2), MT::kPlayerDamaged) == 0);
+	// Not again so soon, then once per remindDeadEvery while her game keeps reporting about it.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
+}
+
+TEST("server world: a hit by an NPC the reporter's game can't name reaches its victim with no attacker")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// An NPC of a plugin the session's table lacks hit Bob's stand-in in Alice's game: her game can't name it on the
+	// wire (FormTranslate), and Bob's game judges the hit by her distance (PlayerHits).
+	f.fake->Deliver(1, Hit(bob, 9.0f, false, 0));
+	const auto damage = Decoded(Received(f, 2), MT::kPlayerDamaged, Protocol::DecodePlayerHit);
+	REQUIRE(damage.size() == 1);
+	CHECK(damage[0].playerId == alice);
+	CHECK(damage[0].damage == 9.0f);
+	CHECK(!damage[0].byPlayer);
+	CHECK(damage[0].attacker == 0u);
 }
 
 TEST("server world: damage a player took off their copy of an NPC is relayed to the others as damage, never none, more than all of it, or for the dead")
@@ -683,6 +753,58 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
 	CHECK(Owners(Received(f, 2)).empty());
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+}
+
+TEST("server world: two players shooting one raider leave it with whoever hit it first while they keep hitting it; it changes hands once the first stops")
+{
+	Server::Options options;
+	options.takeoverCooldown = 1000s;  // long, crossed with Fixture::Advance: a busy PC can't make a gap below too long for it
+	Fixture    f{ options };
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));  // Alice's game runs the raider
+	Clear(f, { 1, 2 });
+
+	// Bob's shot: his game says what it took off its copy, and asks to take the raider over. It changed hands moments
+	// ago, so it stays Alice's, and his damage reaches her game to deal.
+	const auto bobShoots = [&] {
+		f.fake->Deliver(2, Damage(NPC, 0.1f));
+		f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	};
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	const auto toAlice = Received(f, 1);
+	CHECK(Owners(toAlice).empty());
+	CHECK(Count(toAlice, MT::kActorDamaged) == 1);
+
+	// Alice shoots it too: her game claims it again with her hit (NpcSync::OnLocalInteraction), as it does while she
+	// talks to one, and reports its health. Nobody is told anything.
+	f.Advance(600s);
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	f.fake->Deliver(1, Health(NPC, 0.7f));
+	CHECK(Owners(Received(f, 1)).empty());
+	CHECK(Owners(Received(f, 2)).empty());
+
+	// Bob's next shot, past the cooldown since the raider became hers but within it of her hit: still hers, and his
+	// damage still lands in her game. No change of hands restarts its AI.
+	f.fake->Settle();
+	f.Advance(500s);
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	const auto toAliceAgain = Received(f, 1);
+	CHECK(Owners(toAliceAgain).empty());
+	CHECK(Count(toAliceAgain, MT::kActorDamaged) == 1);
+
+	// Alice stops shooting: the cooldown after her last hit over, Bob's next shot takes it over, as before.
+	f.fake->Settle();
+	f.Advance(1100s);
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, bob));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	// And her shot now doesn't take it straight back.
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	CHECK(Owners(Received(f, 2)).empty());
 }
 
 TEST("server world: an NPC's health is said by the game that runs it; the last word of the game that ran it before a takeover never sets it back")
@@ -1941,6 +2063,7 @@ TEST("server trust: a hit is capped per hit and per second")
 		total += d.damage;
 	}
 	CHECK(total <= 1000.0f);  // 1500 a second, 500 already spent
+	CHECK(f.Logged("a hit from player 1 dropped: more damage a second than a fight deals"));
 }
 
 TEST("server trust: a second face within five seconds isn't passed on straight away")

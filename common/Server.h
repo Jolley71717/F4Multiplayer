@@ -86,11 +86,23 @@ public:
 		// be lost). Tests shorten it.
 		std::chrono::milliseconds deathGrace{ 10000 };
 
+		// A player who hits or talks to an NPC another player's game runs takes it over, unless it changed hands, or
+		// its runner claimed it again (their game does with each hit of theirs on it, and every 2 s while they talk to
+		// it), within this long: two players shooting one raider leave it with whoever hit it first, as long as they
+		// keep hitting it, instead of trading it every few seconds and restarting its AI each time. Tests shorten it.
+		std::chrono::milliseconds takeoverCooldown{ 5000 };
+
 		// The host's game offering to run an NPC the session has dead brings it back for everyone (its cell reset:
 		// the raiders of a camp cleared days ago). Believed only once this long has passed since the host's game
 		// last asked for the session's world, and since the death: before that, its game may still have it alive
 		// from a save older than the kill, or not have heard of the kill yet. Tests shorten it.
 		std::chrono::milliseconds aliveAgainGrace{ 10000 };
+
+		// A joiner's game that has an NPC alive which the session has dead (it offered to run it, hit it, or the NPC hit a
+		// stand-in there: its cell reset in that game alone) is told the death again, so it kills its copy: first once
+		// it has reported about the NPC for aliveAgainGrace (the host's game, walking in beside it, is given that long to
+		// bring the NPC back for everyone instead), then at most this often for each NPC. Tests shorten it.
+		std::chrono::milliseconds remindDeadEvery{ 5000 };
 
 		// Plugins that may differ between players (texture, sound or UI mods): left out of what a joiner is
 		// told differs. (Since protocol 36 any load order is let in and translated; a hello without a plugin

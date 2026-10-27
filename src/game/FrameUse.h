@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 // Why the engine turns our player away from a power armor frame with "You cannot use this at this time." (the game
 // setting sFailedActivation). Read from disk in 1.11.240, where the setting's value is read in two places only:
@@ -121,5 +122,42 @@ namespace FrameUse
 			return "no enabled marker";
 		}
 		return "-";
+	}
+
+	// What else is in our player's way, besides what the engine asks of the frame's markers (Judge): the session's own
+	// doings and the engine's silent states. None of these makes the game say "You cannot use this at this time.": the
+	// prompt shows and E does nothing (the gate says whose the frame is on the HUD instead). Equipment::DescribeFrameUse
+	// reads a frame's, Equipment::DescribePlayerUse our player's.
+	struct Holds
+	{
+		bool keptOut = false;            // the session's gate keeps our player out: a copy of a friend's frame (RemotePlayers::KeepOutOfFrame)
+		bool activationBlocked = false;  // its activation is blocked (ExtraFlags, as Papyrus's BlockActivation sets): Activate does nothing
+		bool disabled = false;           // disabled: no prompt, nothing to press E on
+		bool no3d = false;               // its 3D is not in
+		bool activateOff = false;        // the Activate user event is off in an input layer: E does nothing; the console's activate still works
+		bool inputBlocked = false;       // PlayerControls::blockPlayerInput: no input reaches the player
+		bool playerBusy = false;         // our player is in furniture, getting in or out, or wears a frame: the engine takes no E then
+
+		constexpr bool Any() const { return keptOut || activationBlocked || disabled || no3d || activateOff || inputBlocked || playerBusy; }
+	};
+
+	// Those that hold, by name, for the log and paframes.
+	inline std::string Describe(const Holds& a_holds)
+	{
+		std::string out;
+		const auto  add = [&](bool a_held, const char* a_what) {
+			if (a_held) {
+				out += out.empty() ? "" : ", ";
+				out += a_what;
+			}
+		};
+		add(a_holds.keptOut, "kept out by the session (a friend's frame)");
+		add(a_holds.activationBlocked, "activation blocked");
+		add(a_holds.disabled, "disabled");
+		add(a_holds.no3d, "no 3D");
+		add(a_holds.activateOff, "Activate input off");
+		add(a_holds.inputBlocked, "player input blocked");
+		add(a_holds.playerBusy, "our player busy in furniture or a frame");
+		return out.empty() ? "nothing else holds" : out;
 	}
 }

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -130,6 +131,48 @@ namespace InertShots
 			return copy;
 		}
 
+		std::atomic<std::uint32_t> standInsAimed{ 0 };  // stand-ins' launches of the engine's own record given their friend's aim
+		std::atomic<std::uint32_t> aimedLogged{ 0 };
+
+		// What of a launch's data steers it, kept to be put back once the engine has read it (it is the caller's own).
+		struct Steer
+		{
+			float              zAngle;
+			float              xAngle;
+			RE::TESObjectREFR* homingTarget;
+			bool               autoAim;
+			bool               alwaysHit;
+			InertShot::Angles  aimed;  // what it was given instead
+		};
+
+		// Gives a puppet's launch its owner's aim (InertShot::LaunchAngles), with nothing left to pull it back toward whoever
+		// the engine picked: no homing target, no auto-aim, no hit made certain. What it had, to put back (PutBack); none
+		// when the owner's aim isn't known, and the launch is left as the engine aimed it.
+		std::optional<Steer> AimByOwner(RE::ProjectileLaunchData* a_data, const RE::Actor* a_actor)
+		{
+			const auto aim = Puppets::AimOf(a_actor);
+			if (!aim) {
+				return std::nullopt;
+			}
+			const auto  angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
+			const Steer given{ .zAngle = a_data->zAngle, .xAngle = a_data->xAngle, .homingTarget = a_data->homingTarget, .autoAim = a_data->autoAim, .alwaysHit = a_data->alwaysHit, .aimed = angles };
+			a_data->zAngle = angles.z;
+			a_data->xAngle = angles.x;
+			a_data->homingTarget = nullptr;
+			a_data->autoAim = false;
+			a_data->alwaysHit = false;
+			return given;
+		}
+
+		void PutBack(RE::ProjectileLaunchData* a_data, const Steer& a_given)
+		{
+			a_data->zAngle = a_given.zAngle;
+			a_data->xAngle = a_given.xAngle;
+			a_data->homingTarget = a_given.homingTarget;
+			a_data->autoAim = a_given.autoAim;
+			a_data->alwaysHit = a_given.alwaysHit;
+		}
+
 		RE::ProjectileHandle* LaunchHook(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data)
 		{
 			launches.fetch_add(1, std::memory_order_relaxed);
@@ -153,6 +196,24 @@ namespace InertShots
 				}
 			}
 			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, base->data.flags, base->data.explosionType != nullptr);
+			const bool standIn = actor && Puppets::IsPuppet(actor);
+			if (!puppets && !spawned && InertShot::Aims(standIn, false)) {
+				// A stand-in's launch of its own record (a flamer's stream, a harpoon: AttackKind::ShotReplay): the engine's,
+				// sent where its friend aimed rather than at whoever the engine has it look at (InertShot::Aims).
+				const auto given = AimByOwner(a_data, actor);
+				const auto result = continuation(a_out, a_data);
+				if (given) {
+					const auto aimed = given->aimed;
+					PutBack(a_data, *given);
+					standInsAimed.fetch_add(1, std::memory_order_relaxed);
+					if (aimedLogged.fetch_add(1) < 20) {
+						REX::INFO("InertShots: {:08X}'s launch of {:08X} sent where its friend aimed (heading {:.2f} pitch {:.2f}), {:.0f} degrees from where the engine had it go{}{}",
+							actor->GetFormID(), base->GetFormID(), aimed.z, aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, aimed),
+							given->homingTarget ? std::format(", at {:08X}", given->homingTarget->GetFormID()) : "", given->autoAim || given->alwaysHit ? " (auto-aimed)" : "");
+					}
+				}
+				return result;
+			}
 			if (!puppets && !spawned) {
 				if (InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr) && leftLogged++ < 30) {
 					REX::INFO("InertShots: a launch of {:08X} (goes off) left to the engine: shooter {}{}", base->GetFormID(), shooter ? std::format("{:08X}", shooter->GetFormID()) : "none",
@@ -189,26 +250,15 @@ namespace InertShots
 				}
 				return a_out;
 			}
-			// A puppet's shot goes where its owner aimed, not at whoever the engine has it look at (InertShot::LaunchAngles).
-			const auto givenZ = a_data->zAngle;
-			const auto givenX = a_data->xAngle;
-			const auto givenTarget = a_data->homingTarget;
-			bool aimed = false;
-			if (puppets) {
-				if (const auto aim = Puppets::AimOf(actor)) {
-					const auto angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
-					a_data->zAngle = angles.z;
-					a_data->xAngle = angles.x;
-					a_data->homingTarget = nullptr;
-					aimed = true;
-				}
-			}
+			// A puppet's shot goes where its owner aimed, not at whoever the engine has it look at (InertShot::Aims).
+			const auto given = InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor) : std::nullopt;
+			const bool aimed = given.has_value();
 			a_data->projectileBase = copy;
 			const auto result = continuation(a_out, a_data);
 			a_data->projectileBase = base;  // the caller's own data again: nothing of ours is left for it to read
-			a_data->zAngle = givenZ;
-			a_data->xAngle = givenX;
-			a_data->homingTarget = givenTarget;
+			if (given) {
+				PutBack(a_data, *given);
+			}
 			++swapped;
 			if (spawned) {
 				++spawnedSwapped;
@@ -226,7 +276,7 @@ namespace InertShots
 			}
 			if (logged.fetch_add(1) < 20) {
 				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}: its blast comes as its shooter's game's report", shooterId, base->GetFormID(),
-					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}", a_data->zAngle, a_data->xAngle) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
+					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
 			}
 			return result;
 		}
@@ -377,7 +427,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
-			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load());
+		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load());
 	}
 }

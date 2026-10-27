@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -122,9 +124,10 @@ namespace InertShot
 		return a_age > MAX_LIFE || (a_age > SETTLE && !a_cellAttached);
 	}
 
-	// Where an inert shot goes. The engine aims an NPC's launch at whoever it looks at (on the rig a stand-in's missile
-	// went straight at our player, whichever way its friend had aimed; its plain bullets hit our player the same way), so
-	// a swapped launch is given its angles outright, from the puppet's own heading and its owner's pitch (Puppets::AimOf):
+	// Where an inert shot goes, and every launch of a stand-in's (Aims). The engine aims an NPC's launch at whoever it
+	// looks at (on the rig a stand-in's missile went straight at our player, whichever way its friend had aimed; its plain
+	// bullets hit our player the same way), so such a launch is given its angles outright, from the puppet's own heading
+	// and its owner's pitch (Puppets::AimOf):
 	// the launch data's zAngle is the heading as the game keeps it (radians, 0 along +y, a quarter turn along +x), and its
 	// xAngle the game's angle x, which is positive looking down (AimPoint.h), so the pitch, degrees up, is turned over.
 	struct Angles
@@ -139,6 +142,29 @@ namespace InertShot
 	{
 		constexpr float TO_RADIANS = 3.14159265358979f / 180.0f;
 		return { .z = a_heading, .x = -a_pitchUpDegrees * TO_RADIANS };
+	}
+
+	// Which launches are given their owner's aim (LaunchAngles). Every one of a stand-in's (a_standIn), not only a
+	// swapped one: a flamer's or a cryolator's stream, a harpoon, a railway spike or a syringe is the engine's own launch
+	// (AttackKind::ShotReplay), and the engine sent each at whoever the stand-in looked at, our player, so a friend firing
+	// anywhere near us looked to be firing at us (a Nexus report); a plain bullet of a stand-in's that the hold missed
+	// would go the same way. A copy's swapped launch (a_swapped) is aimed by its owner's copy's pitch. A copy's own plain
+	// shot is the engine's, as before: its fight is its owner's game's, which reports what it hits.
+	constexpr bool Aims(bool a_standIn, bool a_swapped)
+	{
+		return a_standIn || a_swapped;
+	}
+
+	// How far apart two launch directions are, in degrees (0 to 180), for the log: how far the engine's own aim of a
+	// stand-in's launch was from its owner's. The direction of angles z and x is (sin z cos x, cos z cos x, -sin x), x
+	// positive looking down. Nonsense in either counts as as far apart as can be.
+	inline float DegreesBetween(const Angles& a_from, const Angles& a_to)
+	{
+		if (!std::isfinite(a_from.z) || !std::isfinite(a_from.x) || !std::isfinite(a_to.z) || !std::isfinite(a_to.x)) {
+			return 180.0f;
+		}
+		const float dot = std::cos(a_from.x) * std::cos(a_to.x) * std::cos(a_from.z - a_to.z) + std::sin(a_from.x) * std::sin(a_to.x);
+		return std::acos(std::clamp(dot, -1.0f, 1.0f)) * (180.0f / 3.14159265358979f);
 	}
 
 	// A relayed explosion placed from its record spawns that record's projectiles (a MIRV pack's children, a Sentry Bot's

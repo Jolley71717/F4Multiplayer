@@ -20,7 +20,7 @@
 //   rest it is put where it lies in their world, if ours settled elsewhere.
 // - Knocked about: a scan of the loose objects near our player, four times a second, finds those that moved with no hand
 //   on them; one our player moved (walked into it, or shot it) is reported where it came to rest, a few a second at most,
-//   friend near or not.
+//   friend near or not, and again if it rolls on soon after (KnockWatch's follow-on).
 // - Later: the server keeps where each object came to rest last (ObjectMovers::Places, saved with the session) and tells
 //   a game that joins or loads a save (a catch-up: playerId 0). A place for an object our game doesn't have loaded yet
 //   waits (as a friend's rest that came meanwhile does) and is put there when it loads (WorldSync's retry, as references
