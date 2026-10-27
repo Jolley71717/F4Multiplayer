@@ -65,7 +65,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Bugs, ideas and pull requests
 
-- Something broke: [report a bug](https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml). The form asks for the version, host or joiner, how you were connected, your mod list, the steps, and the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) plus a crash log from Buffout 4 or Addictol if the game crashed. The plugin log leaves names, Steam ids and addresses out; older builds' logs, crash logs and screenshots may not, so check those before pasting.
+- Something broke: [report a bug](https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml). The form asks for the version, host or joiner, how you were connected, your mod list, the steps, and the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) plus a crash log from Buffout 4 or Addictol if the game crashed. The plugin log leaves names, Steam ids and addresses out; older builds' logs, crash logs and screenshots may not, so check those before attaching. Attach the files themselves: links to download, file-sharing or paste sites won't be opened.
 - Something you want: [propose an idea](https://github.com/Jolley71717/F4Multiplayer/issues/new?template=idea.yml).
 - Help getting a session going: the [Nexus page's posts](https://www.nexusmods.com/fallout4/mods/109812?tab=posts).
 - A change: see [CONTRIBUTING.md](CONTRIBUTING.md) for building, tests, style, the protocol version rule and the no-personal-data rule. The maintainer reviews every pull request.
