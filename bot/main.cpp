@@ -694,6 +694,7 @@ int main(int argc, char* argv[])
 				npc.speed = state.speed;
 				npc.moveMode = state.moveMode;
 				npc.flags = state.flags & Protocol::kWeaponDrawn;
+				npc.sentMs = state.sentMs;  // sampled with our own state: the copies draw it by our clock (MirrorClock.h)
 				// Like the game: 20 a second near players (2 of every 3 sends), else 10.
 				if (npcSlow ? sequence % 3 == 0 : sequence % 3 != 0) {
 					Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorState>{ npc }, Protocol::MessageType::kActorStates), false);

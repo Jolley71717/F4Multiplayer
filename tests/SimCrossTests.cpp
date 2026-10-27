@@ -563,6 +563,57 @@ TEST("cross: after a server restart, a friend's kill of a raider the host's game
 	CHECK_AGREE({ &host, &bob, &carol, &dave });
 }
 
+// Two friends shoot one raider the host's game runs. Each of the host's hits claims it again (NpcSync's
+// OnLocalInteraction, 2 s apart at most), so Bob's hits, which used to take it over every cooldown and restart its AI in
+// his game each time, are refused the takeover while the host keeps hitting it; his damage reaches the host's game all
+// the same. Once the host stops, Bob's next hit takes it over as before, and his kill counts.
+TEST("cross: two friends shooting the host's raider leave it with the host while the host keeps hitting it, every hit lands, and it goes to the friend once the host stops")
+{
+	Server::Options options;
+	options.takeoverCooldown = std::chrono::seconds(400);  // long, crossed on the server's clock (Session::Advance), not by sleeps
+	Session s{ options };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Claim(RAIDER_1);
+	s.Settle();
+	REQUIRE(bob.OwnerOf(RAIDER_1) == host.Id());
+	host.TakeDamageHeard();
+
+	// Six rounds, each within the cooldown of the last: both hit it, the host's game claims it again with its hit and
+	// reports its health, Bob's says what it took off its copy and asks to take it over.
+	float health = 1.0f;
+	for (int round = 0; round < 6; ++round) {
+		s.Advance(std::chrono::seconds(150));
+		host.Claim(RAIDER_1, Reason::kInteract);
+		health -= 0.1f;
+		host.Hurt(RAIDER_1, health);
+		bob.Damage(RAIDER_1, 0.05f);
+		bob.Claim(RAIDER_1, Reason::kInteract);
+		s.Settle();
+		CHECK(bob.OwnerOf(RAIDER_1) == host.Id());
+		CHECK(host.OwnerOf(RAIDER_1) == host.Id());
+		const auto heard = host.TakeDamageHeard();
+		REQUIRE(heard.size() == 1);
+		CHECK(heard[0].refId == RAIDER_1);
+		CHECK(bob.HealthHeard(RAIDER_1) == health);
+	}
+
+	// The host stops shooting. Past the cooldown, Bob's next hit takes it over, and his kill is believed.
+	s.Advance(std::chrono::seconds(500));
+	bob.Damage(RAIDER_1, 0.05f);
+	bob.Claim(RAIDER_1, Reason::kInteract);
+	s.Settle();
+	CHECK(bob.OwnerOf(RAIDER_1) == bob.Id());
+	CHECK(host.OwnerOf(RAIDER_1) == bob.Id());
+	bob.Kill(RAIDER_1, 10.0f, 20.0f, 0.0f);
+	s.Settle();
+	CHECK(host.WorldNow().dead.contains(RAIDER_1));
+	CHECK(host.OwnerOf(RAIDER_1) == 0);
+	CHECK_AGREE({ &host, &bob });
+}
+
 // ---- reloading faster than the server answers ----------------------------------------------------------
 
 // A world state past a player's budget is owed, not refused, and while it is owed their container changes

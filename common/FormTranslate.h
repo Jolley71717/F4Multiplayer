@@ -225,10 +225,14 @@ namespace FormTranslate
 
 		// An item given by dropping it: its base, every mod and its place, or not at all. A copy without one of its mods
 		// would be another item (the giver's legendary, say, as a plain gun), and the receiving game makes a copy only of
-		// an item whose base and every mod it has anyway (Drops).
+		// an item whose base and every mod it has anyway (Drops). A gift's container too: a game that lacks it never hears
+		// of the gift (GiftBook).
 		inline bool MapDrop(Context& a_ctx, Protocol::DroppedItem& a_item)
 		{
 			if (!a_ctx.Key(a_item.base) || !a_ctx.Place(a_item.cell, a_item.worldspace)) {
+				return false;
+			}
+			if (a_item.holder != 0 && !a_ctx.Key(a_item.holder)) {
 				return false;
 			}
 			return std::ranges::all_of(a_item.mods, [&](Protocol::ItemMod& a_mod) { return a_ctx.Key(a_mod.mod); });
@@ -416,7 +420,9 @@ namespace FormTranslate
 			break;
 		case MessageType::kPlayerHit:
 		case MessageType::kPlayerDamaged:
-			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { return ctx.Key(m.attacker); }, typed);
+			// The NPC that hit the stand-in is a detail: a hit by one the other side can't name still hurts the victim
+			// (attacker 0: PlayerHits), where dropping it left that NPC unable to hurt them at all.
+			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { ctx.Detail(m.attacker); return true; }, typed);
 			break;
 		case MessageType::kReportQuestStage:
 		case MessageType::kQuestStage:

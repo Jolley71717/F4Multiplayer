@@ -34,7 +34,8 @@ namespace Protocol
 	// off once) and what a leveled NPC was rolled as in the game that runs it (kReportNpcIdentity, kNpcIdentity:
 	// NpcIdentity). 51, 52 and 54 were those branches' own test builds (traps', destructibles', NPC identity's).
 	// 55: 0.10.0's changes together, one number for the whole release: each wire change merged for it from here on
-	// rides on it, and is listed in docs/DESIGN.md's protocol line as it lands. 0.9.2 (50) is refused at the hello.
+	// rides on it, and is listed in docs/DESIGN.md's protocol line as it lands (an NPC state's sentMs among them).
+	// 0.9.2 (50) is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 55;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -372,9 +373,16 @@ namespace Protocol
 		// Welcome flag bit 32, as shareGuestBuilds: a build that neither sets nor reads it keeps 0.9.2's way.
 		bool sharedStorage = false;
 
+		// Gifts (src/game/GiftBook.h): a weapon or armor a player puts in a container (not a workbench, a vendor's or a
+		// companion's) is given: it lies there in every friend's copy of the container, and the server grants it to whoever
+		// takes it first (bContainerGifts; experimental, off by default). Welcome flag bit 64, as sharedStorage: off, the
+		// server refuses a gift's report, and the item stays in its player's own copy of the container, as in 0.9.2.
+		bool containerGifts = false;
+
 		// Saves (src/game/AutoSaveRules.h): a player's game makes an autosave as they go down, so a bleed-out loads the
-		// moment they went down instead of whatever save was newest (bSaveOnDown; off by default). Welcome flag bit 64, as
+		// moment they went down instead of whatever save was newest (bSaveOnDown; off by default). Welcome flag bit 128, as
 		// sharedStorage: a build that neither sets nor reads it makes no such save, which changes no game but its own.
+		// Bit 128 is the flag byte's last: a further rule needs a byte of its own after the limits.
 		bool saveOnDown = false;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
@@ -817,9 +825,17 @@ namespace Protocol
 		std::uint32_t        worldspace = 0;     // worldspace form ID, or 0 when inside
 		float                x = 0, y = 0, z = 0;
 		std::uint32_t        takerId = 0;
+		// The container it was put in, a plugin's reference every game has (a gift: src/game/GiftBook.h); 0: it lies loose
+		// in the world. A gift's place is its container's. The server takes a gift's report only under the host's
+		// bContainerGifts (SessionRules::containerGifts).
+		std::uint32_t        holder = 0;
 
 		bool operator==(const DroppedItem&) const = default;
 	};
+
+	// A gift's offer as the server's session file keeps it (its takerId there; never sent): its giver's game may have taken
+	// the item out of its world before the link went, so the offer waits for their next record (DropStore::DropOffers).
+	inline constexpr std::uint32_t DROP_OFFERED = 0xFFFFFFFF;
 
 	// kClaimDrop. kTake: the sender's player pressed Take on its copy; the server grants it to the first who asks (kDropGone
 	// naming them). kGiveBack: a grant the sender's game could not finish (its copy was gone, a load came first): it lies
@@ -1365,6 +1381,9 @@ namespace Protocol
 		// The pitch its owner's copy aims its gun at, up (+) or down (-) in degrees (AimPoint.h), or NO_AIM while that
 		// copy has no aim point. The flags have no bit left to say which.
 		std::int8_t aimPitch = NO_AIM;
+		// When the owner's game sampled it, on the owner's clock (SentMs; 0: not said), as PlayerState::sentMs: the copies
+		// draw the states as far apart as they were sampled, however they arrive (MirrorClock.h).
+		std::uint32_t sentMs = 0;
 
 		[[nodiscard]] bool IsFinite() const
 		{
@@ -1389,7 +1408,10 @@ namespace Protocol
 
 	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
 	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
-	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world.
+	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world, and takes a hit
+	// by one that isn't when the sender is near (PlayerHits). Since protocol 55 an NPC hit may name no attacker (0): one
+	// the sender's game can't name on the wire, of a plugin the other side lacks (FormTranslate), and the victim takes
+	// it by the sender's distance alone.
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
@@ -2177,7 +2199,7 @@ namespace Protocol
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
 		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.shareGuestBuilds ? 8 : 0) | (rules.downedCrawl ? 16 : 0) |
-		                           (rules.sharedStorage ? 32 : 0) | (rules.saveOnDown ? 64 : 0);
+		                           (rules.sharedStorage ? 32 : 0) | (rules.containerGifts ? 64 : 0) | (rules.saveOnDown ? 128 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -2208,7 +2230,8 @@ namespace Protocol
 			rules.shareGuestBuilds = (flags & 8) != 0;  // an older host never sets it: off, as it was
 			rules.downedCrawl = (flags & 16) != 0;
 			rules.sharedStorage = (flags & 32) != 0;  // a host without it never sets it: each game keeps its own copy, as in 0.9.2
-			rules.saveOnDown = (flags & 64) != 0;  // likewise: no autosave on going down, as in 0.9.2
+			rules.containerGifts = (flags & 64) != 0;  // a host without it never sets it: a weapon put in a chest stays its player's own
+			rules.saveOnDown = (flags & 128) != 0;  // likewise: no autosave on going down, as in 0.9.2
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();
@@ -3929,6 +3952,7 @@ namespace Protocol
 			w.U8(a.gait);
 			w.U8(a.gaitRate);
 			w.U8(static_cast<std::uint8_t>(a.aimPitch));
+			w.U32(a.sentMs);
 		});
 	}
 
@@ -3950,6 +3974,7 @@ namespace Protocol
 			a.gait = r.U8();
 			a.gaitRate = r.U8();
 			a.aimPitch = static_cast<std::int8_t>(r.U8());
+			a.sentMs = r.U32();
 			return a;
 		});
 		if (states && !std::ranges::all_of(*states, [](const ActorState& a) { return a.IsFinite(); })) {
@@ -3978,7 +4003,7 @@ namespace Protocol
 		msg.byPlayer = r.U8() != 0;
 		msg.attacker = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
-			(msg.byPlayer ? msg.attacker != 0 : !IsActorRef(msg.attacker))) {
+			(msg.byPlayer ? msg.attacker != 0 : msg.attacker != 0 && !IsActorRef(msg.attacker))) {
 			return std::nullopt;
 		}
 		return msg;
@@ -4355,7 +4380,8 @@ namespace Protocol
 
 	namespace detail
 	{
-		inline void WriteDrop(Writer& w, const DroppedItem& a_drop)
+		// a_holders false: as the session files from before gifts held a drop (SessionFile::GIFTS), with no holder.
+		inline void WriteDrop(Writer& w, const DroppedItem& a_drop, bool a_holders = true)
 		{
 			w.U32(a_drop.dropId);
 			w.U32(a_drop.ownerId);
@@ -4378,11 +4404,15 @@ namespace Protocol
 			w.F32(a_drop.y);
 			w.F32(a_drop.z);
 			w.U32(a_drop.takerId);
+			if (a_holders) {
+				w.U32(a_drop.holder);
+			}
 		}
 
 		// An item every game has, a count a dropped reference can hold, mods from plugin files, a condition in 0..1 (or
-		// none), and one place: an interior or a worldspace, at a coordinate the world holds.
-		inline std::optional<DroppedItem> ReadDrop(Reader& r)
+		// none), and one place: an interior or a worldspace, at a coordinate the world holds. A gift's holder is a plugin's
+		// reference, and a gift is one item (each item put in is given on its own).
+		inline std::optional<DroppedItem> ReadDrop(Reader& r, bool a_holders = true)
 		{
 			DroppedItem drop;
 			drop.dropId = r.U32();
@@ -4413,9 +4443,11 @@ namespace Protocol
 			drop.y = r.F32();
 			drop.z = r.F32();
 			drop.takerId = r.U32();
+			drop.holder = a_holders ? r.U32() : 0;
 			const bool healthOk = drop.health == -1.0f || (std::isfinite(drop.health) && drop.health >= 0.0f && drop.health <= 1.0f);
+			const bool holderOk = drop.holder == 0 || (IsShareableRef(drop.holder) && drop.count == 1);
 			if (!r.Ok() || !IsShareableRef(drop.base) || drop.count < 1 || drop.count > MAX_DROP_COUNT || !healthOk || (drop.cell == 0) == (drop.worldspace == 0) ||
-				!InWorld(drop.x) || !InWorld(drop.y) || !InWorld(drop.z)) {
+				!InWorld(drop.x) || !InWorld(drop.y) || !InWorld(drop.z) || !holderOk) {
 				return std::nullopt;
 			}
 			return drop;
@@ -4527,40 +4559,65 @@ namespace Protocol
 		return msg;
 	}
 
+	namespace detail
+	{
+		inline std::vector<std::uint8_t> EncodeDropList(const DropList& a_msg, bool a_holders)
+		{
+			Writer w{ MessageType::kDropList };
+			w.U8(a_msg.last ? 1 : 0);
+			const auto count = (std::min)(a_msg.drops.size(), MAX_DROPS_PER_PACKET);
+			w.U8(static_cast<std::uint8_t>(count));
+			for (std::size_t i = 0; i < count; ++i) {
+				detail::WriteDrop(w, a_msg.drops[i], a_holders);
+			}
+			return w.Data();
+		}
+
+		inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data, bool a_holders)
+		{
+			Reader r{ a_data };
+			r.U8();
+			DropList msg;
+			const auto last = r.U8();
+			const auto count = r.U8();
+			if (!r.Ok() || last > 1 || count > MAX_DROPS_PER_PACKET) {
+				return std::nullopt;
+			}
+			msg.last = last == 1;
+			for (std::uint8_t i = 0; i < count; ++i) {
+				auto drop = ReadDrop(r, a_holders);
+				if (!drop) {
+					return std::nullopt;
+				}
+				msg.drops.push_back(std::move(*drop));
+			}
+			if (!r.AtEnd()) {
+				return std::nullopt;
+			}
+			return msg;
+		}
+	}
+
 	inline std::vector<std::uint8_t> Encode(const DropList& a_msg)
 	{
-		Writer w{ MessageType::kDropList };
-		w.U8(a_msg.last ? 1 : 0);
-		const auto count = (std::min)(a_msg.drops.size(), MAX_DROPS_PER_PACKET);
-		w.U8(static_cast<std::uint8_t>(count));
-		for (std::size_t i = 0; i < count; ++i) {
-			detail::WriteDrop(w, a_msg.drops[i]);
-		}
-		return w.Data();
+		return detail::EncodeDropList(a_msg, true);
+	}
+
+	// A session file's list as the layouts from before gifts held it (SessionFile::GIFTS): no holder on any drop. Every
+	// drop such a file holds lies loose.
+	inline std::vector<std::uint8_t> EncodeBeforeHolders(const DropList& a_msg)
+	{
+		return detail::EncodeDropList(a_msg, false);
 	}
 
 	inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data)
 	{
-		Reader r{ a_data };
-		r.U8();
-		DropList msg;
-		const auto last = r.U8();
-		const auto count = r.U8();
-		if (!r.Ok() || last > 1 || count > MAX_DROPS_PER_PACKET) {
-			return std::nullopt;
-		}
-		msg.last = last == 1;
-		for (std::uint8_t i = 0; i < count; ++i) {
-			auto drop = detail::ReadDrop(r);
-			if (!drop) {
-				return std::nullopt;
-			}
-			msg.drops.push_back(std::move(*drop));
-		}
-		if (!r.AtEnd()) {
-			return std::nullopt;
-		}
-		return msg;
+		return detail::DecodeDropList(a_data, true);
+	}
+
+	inline std::optional<DropList> DecodeDropListBeforeHolders(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeDropList(a_data, false);
 	}
 
 	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)

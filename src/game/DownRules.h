@@ -29,6 +29,9 @@ namespace DownRules
 	inline constexpr auto  FIGHT_OVER = 30s;    // out of a fight this long, it is over (revives "per fight")
 	inline constexpr auto  PUT_DOWN_RETRY = 500ms;  // stood up by the game while waiting for help: put down again this often
 	inline constexpr auto  PUT_DOWN_GIVE_UP = 5s;   // still up after this long of that: up it is
+	inline constexpr auto  STAND_RETRY = 1s;        // helped up and still down: the engine's get-up is asked again this often
+	inline constexpr auto  KNOCK_WAIT = 3s;         // helped up while knocked over: the get-up waits this long at most for the knock-down's to end
+	inline constexpr auto  GET_UP_SETTLE = 2s;      // up this long, not knocked over, out of the menus: the get-up has played out
 
 	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
 	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
@@ -140,6 +143,8 @@ namespace DownRules
 		bool paused = false;     // a menu has the game stopped (the pause menu, the Pip-Boy)
 		bool inCombat = false;   // the player is in a fight (revives per fight)
 		bool console = false;    // the console is open, or was a moment ago (Downed.cpp): a stand-up then is the player's command
+		bool knockedOver = false;  // the knock state is not normal: a ragdoll, or the get-up after it
+		bool sneaking = false;     // the game has the player sneaking (Actor::IsSneaking)
 	};
 
 	// What to do about it this frame.
@@ -159,6 +164,11 @@ namespace DownRules
 		bool                backDown = false;      // down again after that
 		bool                stayedUp = false;      // the game kept them up through PUT_DOWN_GIVE_UP of that: up it is
 		bool                upByCommand = false;   // stood up while the console was open (player.resurrect and the like): up it is
+		bool                standUp = false;       // helped up: stand them up now, the engine's own end of the down (Downed.cpp StandUp)
+		bool                gotUp = false;         // up again after a down, however it ended: what the down left on is taken off
+		bool                unsneak = false;       // up again, and still in the sneak they went down in: they stand (as they got up, and once more if that did not take)
+		bool                sneakKept = false;     // up again sneaking, though they went down standing: the sneak key pressed while down, theirs
+		bool                settled = false;       // GET_UP_SETTLE after getting up: the get-up has played out
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -168,6 +178,17 @@ namespace DownRules
 	//
 	// The session's rules can limit it: out of revives for the window (or the fight), or within the cooldown after
 	// being helped up, the player is not made essential, and a lethal hit kills as it would alone.
+	//
+	// Helped up (or a save loaded with them down), the player is stood up the engine's own way at once (standUp), not left
+	// to its recovery a few seconds on, when other paths of the game could stand them up first and leave part of the down
+	// on: once a knock-down's ragdoll and its get-up are over (KNOCK_WAIT at most), never in a stopped game, and again every
+	// STAND_RETRY while it has not taken. However a down ends with the player up (helped, stood up by the game, a bleed-out
+	// the kill did not take, a load), what the down left on is taken off (gotUp). The down's start and end leave the sneak
+	// stance alone, so a player downed sneaking got up crouched and stayed so until they pressed the key again: one who went
+	// down sneaking (as last seen up; a save loaded down counts so) and is sneaking as they get up is stood (unsneak), and
+	// once more when the get-up has played out (settled, GET_UP_SETTLE on) only if that did not take, the stance never
+	// having left sneak since. A sneak the player chose is theirs: one they went down standing and are sneaking as they get
+	// up pressed the key while down (sneakKept), and a change of the stance after they are up is their key too.
 	class Self
 	{
 	public:
@@ -211,7 +232,8 @@ namespace DownRules
 
 		Step Frame(const Facts& a_facts, Clock::time_point a_now)
 		{
-			Step step;
+			Step        step;
+			const Phase before = phase;
 			if (pending && !IsDown()) {
 				rules = *pending;
 				pending.reset();
@@ -284,11 +306,19 @@ namespace DownRules
 					step.trimHealth = true;
 					upAt = a_now;
 				} else if (a_now - revivedAt - pausedGettingUp >= GET_UP_TIME) {
-					// Helped up: the game stands the player up on its own. If it somehow doesn't, they die.
+					// Helped up, and neither our stand-up nor the game's own took. They die.
 					BleedOut(step, a_now);
 				} else {
 					// Essential until they stand, even across a save.
 					step.essential = true;
+					// The knock-down's get-up first (the bleed-out's played into a ragdoll does not take), then ours.
+					const bool knockWait = a_facts.knockedOver && a_now - revivedAt - pausedGettingUp < KNOCK_WAIT;
+					if (!a_facts.paused && !knockWait && (!standAskedAt || a_now - *standAskedAt >= STAND_RETRY)) {
+						step.standUp = true;
+						standAskedAt = a_now;
+						++standUpAsks;
+						++standUpAsksNow;
+					}
 				}
 				break;
 			case Phase::kBledOut:
@@ -305,6 +335,7 @@ namespace DownRules
 				}
 				break;
 			}
+			GettingUp(before, a_facts, step, a_now);
 			lastFrame = a_now;
 			return step;
 		}
@@ -321,6 +352,8 @@ namespace DownRules
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
 			pausedGettingUp = {};
+			standAskedAt.reset();
+			standUpAsksNow = 0;
 			++revives;
 			helpedUpAt.push_back(a_now);
 			++fightRevives;
@@ -367,17 +400,21 @@ namespace DownRules
 			giveUp = false;
 			standingSince.reset();
 			lastPutDown.reset();
+			standAskedAt.reset();
+			upSince.reset();  // a get-up of the old game's is nothing to this one
 			if (!a_down) {
 				return false;
 			}
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
 			pausedGettingUp = {};
+			standUpAsksNow = 0;
+			downSneaking = true;  // the down began in the saved game: a sneak it has is from before it
 			return true;
 		}
 
 		[[nodiscard]] Phase Now() const { return phase; }
-		// On the ground: down, or helped and getting up (the stand-in crouches).
+		// On the ground: down, or helped and getting up (friends are told the real health, DownRules::StatusHealth).
 		[[nodiscard]] bool IsDown() const { return phase == Phase::kDown || phase == Phase::kGettingUp; }
 		// What friends are told: down and still waiting for help. Once helped, friends stop helping; they kept
 		// helping while the game stood the player up, and the helper read "You helped Host up" three times for one down.
@@ -393,8 +430,62 @@ namespace DownRules
 		std::uint32_t killRetries = 0;
 		std::uint32_t standUps = 0;  // times the game stood the player up while they waited for help
 		std::uint32_t putDowns = 0;  // times they were put down again for it
+		std::uint32_t standUpAsks = 0;  // times the engine's get-up was asked for (standUp)
+		std::uint32_t standUpAsksNow = 0;  // of those, this get-up's (from the help-up or the load)
+		std::uint32_t getUps = 0;       // times up again after a down (gotUp)
+		std::uint32_t unsneaks = 0;     // stands asked for after those (unsneak)
 
 	private:
+		// Up again after a down, however it ended (a_before: the phase as the frame began): told once (gotUp), and once the
+		// get-up has played out (settled). Dead, or down again, before that: nothing to finish. The sneak: see the class.
+		void GettingUp(Phase a_before, const Facts& a_facts, Step& a_step, Clock::time_point a_now)
+		{
+			if (phase != Phase::kUp) {
+				if (a_before == Phase::kUp) {
+					// The stance they went down in, as last seen up: while down the game's answer may not be the stance.
+					downSneaking = sneakingUp;
+				}
+				upSince.reset();
+				return;
+			}
+			if (!a_facts.down && !a_facts.dead) {
+				sneakingUp = a_facts.sneaking;
+			}
+			if (a_before != Phase::kUp) {
+				if (a_facts.dead) {
+					return;
+				}
+				upSince = a_now;
+				a_step.gotUp = true;
+				a_step.unsneak = a_facts.sneaking && downSneaking;
+				a_step.sneakKept = a_facts.sneaking && !downSneaking;
+				unsneaks += a_step.unsneak ? 1u : 0u;
+				++getUps;
+				sneakAsked = a_step.unsneak;
+				sneakSeen = a_facts.sneaking;
+				sneakPressed = false;
+				return;
+			}
+			if (!upSince) {
+				return;
+			}
+			if (a_facts.dead || a_facts.down) {
+				upSince.reset();
+				return;
+			}
+			// A change of the stance since they got up is the player's key, but for the stand we asked for taking.
+			if (a_facts.sneaking != sneakSeen) {
+				sneakPressed = sneakPressed || a_facts.sneaking || !sneakAsked;
+				sneakSeen = a_facts.sneaking;
+			}
+			if (!a_facts.knockedOver && !a_facts.paused && a_now - *upSince >= GET_UP_SETTLE) {
+				upSince.reset();
+				a_step.settled = true;
+				a_step.unsneak = a_facts.sneaking && sneakAsked && !sneakPressed;
+				unsneaks += a_step.unsneak ? 1u : 0u;
+			}
+		}
+
 		// Down and waiting for help, neither helped up nor bled out, and the game has the player up again. The game
 		// stands an essential character up by itself on several paths the stay-down flag does not hold back (seen
 		// 2026-10-19: downed in a pile of clutter, the host was stood up and their revive state lost). They are put
@@ -494,6 +585,13 @@ namespace DownRules
 		std::optional<Clock::time_point> standingSince;  // down and waiting, but the game has them up (StoodUp)
 		std::optional<Clock::time_point> lastPutDown;
 		bool                             standUpTold = false;  // this time up has been told (stoodUp)
+		std::optional<Clock::time_point> standAskedAt;  // getting up: when the engine's get-up was last asked for (standUp)
+		std::optional<Clock::time_point> upSince;       // up again after a down, and the get-up not yet played out (GettingUp)
+		bool                             sneakingUp = false;    // sneaking as last seen up (GettingUp): what a down that begins began in
+		bool                             downSneaking = false;  // this down began sneaking (or came in a loaded save)
+		bool                             sneakAsked = false;    // up again: we stood them as they got up
+		bool                             sneakSeen = false;     // up again: the stance as last seen since
+		bool                             sneakPressed = false;  // up again: the stance changed since by the player's key
 	};
 
 	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,

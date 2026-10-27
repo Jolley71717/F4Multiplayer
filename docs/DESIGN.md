@@ -236,8 +236,11 @@
   - a player's current companion goes to that player, unless it is also another player's companion
     (then the first keeps it, so two players with Dogmeat don't trade him forever; the other's game asks
     again every 15 s rather than every 3 s, and at once when he is released: `NpcClaims`, `refusals=`);
-  - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
-    hands in the last 5 s.
+  - a player who hits or talks to an NPC takes it over, unless it is someone's companion, or it changed hands or its
+    runner claimed it again in the last 5 s (`Server::Options::takeoverCooldown`). The runner's game claims it again
+    with each of its player's hits on it (2 s apart at most) as it does every 2 s while they talk to it, so two players
+    shooting one raider leave it with whoever hit it first until they stop hitting it, instead of trading it every 5 s
+    with its AI starting over in the taker's game each time; the other's hits reach it as damage, as any non-runner's.
   - a player in workshop mode takes over the settlers of that workbench (`SettlerCommand`: those linked to it by
     `WorkshopItemKeyword`; four a round, every 2 s, each at most every 5 s) and claims again the ones they run, which
     are not handed off meanwhile (`commanding=`, `settlerTakeovers=`). Giving a settler a job runs on the settler's
@@ -248,12 +251,37 @@
   others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with
   interpolation, but it can be hurt and killed. Each copy renders 100 ms in the past when its states
   arrive at most 70 ms apart on average, else 150 ms, eased 2 ms per frame (`net status`: `fast=` NPCs
-  we send at 20 Hz, `delayMs=` the range over our copies). If the owner's copy is in a
+  we send at 20 Hz, `delayMs=` the range over our copies). Each state says when its owner's game sampled it
+  (`ActorState::sentMs`, the owner's clock, as a player's states do), and the copy draws the states as far apart as
+  they were sampled, however they arrive (`MirrorClock.h`, game-free and tested: `Prediction::SenderClock`, started
+  over when the NPC changes hands). Stamped by their arrival alone, the states of an NPC whose owner halved its rate
+  (it went past 3000 units from everyone, or its fight ended) were stamped up to 130 ms early for two seconds while
+  the arrival clock learned the new gap, so the copy stood at each state and stepped on, and 125 ms late when the rate
+  doubled again, so the copy fell that much further behind and then caught up; a state with no `sentMs` takes the
+  arrival clock as before. If the owner's copy is in a
   different cell or worldspace (a companion that followed its player through a door), the local copy
   is not moved there; it runs its own AI meanwhile. The same goes when the owner's copy is more than
   a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
-  our own current companion (two players can both have Dogmeat).
+  our own current companion (two players can both have Dogmeat). A copy let go to its own AI walks its own way, and
+  is put back where the owner has it when it is mirrored again: `net status` counts the fallbacks by reason
+  (`fallbackWhy=` elsewhere/silent/far, `NpcPlace::Lost`), those while the owner's status named a menu that stops
+  their game (`fallbacksPaused=`: their world stood still, so the copy's walk was for nothing), and the jumps of a
+  body's length or more when mirrored again (`snapBacks=`, `snapMax=`), with the first few and every 50th in the log.
+  Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
+  world stands still), a mirrored copy is instead held still where their last state put it, mirrored as before, for up
+  to 60 s of silence (`NpcPlace::WhileSilent`, game-free and tested; `holds=` held/let go after all, `holdMax=`), and
+  walks on from there when their states come back: no walk of its own, no jump. Not one in a fight here (our player
+  hit it lately, it fights our player, or the engine has it in combat): a held copy can't fight back, so that one runs
+  its own AI as before and jumps a little when the owner comes back. The copies a friend's game can take on are handed
+  over by the owner's game after 5 s of the menu anyway (`PauseHandOff`); the hold is for the ones it keeps.
+  Every change of hands restarts the NPC's AI in the game that takes it (from where that game's copy stood, a delay
+  behind) and makes a copy of the game that had it, which jumps to the new runner's: `hands=` counts the changes and
+  those within 10 s of the last (`NpcHands.h`, game-free and tested; a hit takes an NPC over, 5 s apart at most, and
+  two players shooting one traded it every 5 s until the runner's own hits kept it), with the quick ones logged. `ownedBlocked=` is NPCs we run found with
+  their movement blocked (a script's doing, or a copy's flag left on one; logged once each), `fightStandIns=` how many
+  of ours fight a friend's stand-in, which can't be hurt or pushed aside. `mirror <ref>` ends with the engine's AI
+  facts for any NPC (`ai:` process level, current package and its type, combat target, movement blocked, sit state).
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
   claims it. One that dies is kept until its death is reported (up to 15 s, `NpcHold`), and one our player hit
   in the last 10 s is not handed to a nearer friend. Mirrored NPCs are handed back to their own AI before saving.
@@ -288,6 +316,12 @@
   and the owner takes that fraction of its own, so the shots it takes to kill are as many as the shooter's copy needs,
   dealt through the copy's damage resistance. A copy rolled tougher than the owner's NPC (a Stalker's 30 DR against a
   Roamer's 15, a Guardian against a Watcher) takes less from each shot, and so does the NPC; one rolled weaker, more.
+- A copy's health is always its owner's: what it gains with no report from the owner's game is taken back once it has
+  stood 100 ms (`CopyHealth::Book::Check`, `copyGains=` times/health), as a drop with no hit of ours is given back. A
+  copy rolled legendary here and plain there mutated at half health and healed to full, which stood and was never
+  sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
+  left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
+  What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
@@ -396,9 +430,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   stand-in gets into: each game's pieces are its own loot) wherever its owner is, while the spot is in the area their
   engine draws, as a friend's parked frame is: moved in place when the owner's game has it a unit or a hundredth of a
   turn off, placed again when it is 256 units off or in another place, gone out of sight, before saves and loads, and
-  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). A joiner is sent
-  the frames shared before it came, so a friend's suit parked before the session stands there too. `net status`:
-  `framesMade=` shared/standing/our player's own (npcs), `frames: ours= reported= placed= moved= taken=` (spawns).
+  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). None while a frame
+  of our own of that base stands within 32 units of where the owner's game has theirs (`FrameFacts::oursThere`: two
+  saves with a shared past hold the same frames), and one placed goes then. A joiner is sent
+  the frames shared before it came, so a friend's suit parked before the session stands there too. Never a copy an older
+  version's workshop sync left in the save (`FrameShare::Ghost`: the keyword the workshop copies carry; it is cleared
+  instead, see Party's power armor). `net status`:
+  `framesMade=` shared/standing/our player's own, `ghostsCleared=` (npcs), `frames: ours= reported= placed= moved= taken=
+  oursThere=` (spawns).
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
@@ -471,7 +510,7 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
 | Kind | Goes off in | Reported as `kExplosion` | Its blow on a copy |
 |---|---|---|---|
 | Thrown grenade or Molotov (our player's, or an NPC our game runs, our companion among them, one made here at runtime too) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after its thrower's watch, if every blast of that thrower's watch was reported (`ThrowWatches`: each thrower's own) |
-| Missile, mini nuke, grenade launcher's shell, cannonball, explosive bullet, a beam with a blast, a legendary Explosive round (`ShotGoesOff`: the projectile names an explosion or has the explosion flag, or one of the gun's enchantments has an effect that does, which none of the game's legendaries has; the test the shooter's game watches by) | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's shot flies but goes off nowhere: it is launched from an inert copy of its projectile record (`InertShots`, `AttackKind::ShotReplay`, `firesInert=`, `inert=` launches swapped). The engine makes every projectile in `Projectile::Launch` (Address Library 2236958, +E421E0), whose entry is hooked: a stand-in's or a copy's launch of a record that goes off gets a runtime copy of the record (a runtime form ID, in no save; never freed, one per record: the same motion, speed, model, light and sounds; no explosion, no proximity or timer for one, no force, nothing to pin, pick up or switch off, `InertShot::InertFlags`) before the projectile class's constructor reads it, so nothing of the projectile exists that could go off, a point-blank missile and a beam included; the projectile's own explosion and damage are cleared as well once it is made. Its blast comes as the shooter's report, at the reported spot; the inert shot ends where it hits, with its impact effect and no blast. Its base is a form of this run alone, and the game saves projectile references, so every inert shot is kept a handle to and ended (disabled, deleted, its record dropped) before every save, when it is older than any flight (12 s: a lobbed shell at rest with no timer never ends on its own) and when its cell is no longer attached (`inertLive=`, `inertEnded=`; `InertShot::Stale`); before a load each is handed to the load instead (`SaveGuard::HandOver`, as a stand-in is: its record given back so the load frees it, or let go of now when it takes none; ended, it would stay in memory through the load, which frees only what has a record; `inertHanded=`). A 65th in flight at once is not launched (as the hold), so none goes untracked. A relayed explosion placed from a record that spawns projectiles (a MIRV pack's eight children, a Sentry Bot's shoulder cluster) spawns them here with no shooter: for 2 s after it is placed an unowned launch of that spawn record is swapped too (`inertSpawned=`; `InertShot::SwapsSpawned`), as the shooter's game reports the children's blasts; it is told before the explosion is placed, as the engine launches them inside the placing (on the rig a MIRV pack's five children went off twice before). The engine aims an NPC's launch at whoever it looks at (a stand-in's missile went straight at our player, whichever way its friend aimed), so a swapped launch is given its angles from the puppet's own heading and its owner's pitch (`Puppets::AimOf`, `InertShot::LaunchAngles`): it flies where the friend fired. Where the entry isn't as 1.11.240 has it (another plugin's hook), nothing is hooked and such shots are held, as before (`firesHeld=`). One that would go off by an enchantment alone is held (there is no record to take a blast from). A stand-in's plain bullet or beam stays held (it hit our player); a copy's is the engine's, as before | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
+| Missile, mini nuke, grenade launcher's shell, cannonball, explosive bullet, a beam with a blast, a legendary Explosive round (`ShotGoesOff`: the projectile names an explosion or has the explosion flag, or one of the gun's enchantments has an effect that does, which none of the game's legendaries has; the test the shooter's game watches by) | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's shot flies but goes off nowhere: it is launched from an inert copy of its projectile record (`InertShots`, `AttackKind::ShotReplay`, `firesInert=`, `inert=` launches swapped). The engine makes every projectile in `Projectile::Launch` (Address Library 2236958, +E421E0), whose entry is hooked: a stand-in's or a copy's launch of a record that goes off gets a runtime copy of the record (a runtime form ID, in no save; never freed, one per record: the same motion, speed, model, light and sounds; no explosion, no proximity or timer for one, no force, nothing to pin, pick up or switch off, `InertShot::InertFlags`) before the projectile class's constructor reads it, so nothing of the projectile exists that could go off, a point-blank missile and a beam included; the projectile's own explosion and damage are cleared as well once it is made. Its blast comes as the shooter's report, at the reported spot; the inert shot ends where it hits, with its impact effect and no blast. Its base is a form of this run alone, and the game saves projectile references, so every inert shot is kept a handle to and ended (disabled, deleted, its record dropped) before every save, when it is older than any flight (12 s: a lobbed shell at rest with no timer never ends on its own) and when its cell is no longer attached (`inertLive=`, `inertEnded=`; `InertShot::Stale`); before a load each is handed to the load instead (`SaveGuard::HandOver`, as a stand-in is: its record given back so the load frees it, or let go of now when it takes none; ended, it would stay in memory through the load, which frees only what has a record; `inertHanded=`). A 65th in flight at once is not launched (as the hold), so none goes untracked. A relayed explosion placed from a record that spawns projectiles (a MIRV pack's eight children, a Sentry Bot's shoulder cluster) spawns them here with no shooter: for 2 s after it is placed an unowned launch of that spawn record is swapped too (`inertSpawned=`; `InertShot::SwapsSpawned`), as the shooter's game reports the children's blasts; it is told before the explosion is placed, as the engine launches them inside the placing (on the rig a MIRV pack's five children went off twice before). The engine aims an NPC's launch at whoever it looks at (a stand-in's missile went straight at our player, whichever way its friend aimed), so a swapped launch is given its angles from the puppet's own heading and its owner's pitch (`Puppets::AimOf`, `InertShot::LaunchAngles`): it flies where the friend fired. Every other launch of a stand-in's (a flamer's or a cryolator's stream, a harpoon, a railway spike: the engine's own record, fired as before) is given the same aim, with no homing target or auto-aim left, so none goes at our player (`InertShot::Aims`, `standInsAimed=`). Where the entry isn't as 1.11.240 has it (another plugin's hook), nothing is hooked and such shots are held, as before (`firesHeld=`). One that would go off by an enchantment alone is held (there is no record to take a blast from). A stand-in's plain bullet or beam stays held (it hit our player); a copy's is the engine's, as before | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
 | Trap (a mine, a grenade bouquet, a tripwire's grenades) | every game whose copy of the trap is armed sets its own off (`kReportTrap`). Only one with no owner near the trap is the trap's: our grenade beside a mine is ours | never | the NPC's own game's (`Fate::kEachOwn`) |
 | Car or barrel (a destructible object's own stage, by its explosion's base) | every game passes the stage once, with its blast (`kDestructions` with `explode`) | never | the NPC's own game's (`Fate::kEachOwn`) |
 | An NPC's own, one another game runs | that NPC's game; once in each other game, from that game's report, wherever a player could be hit. Our copy's throw and explosive shot are held | by the NPC's own game only | the NPC's own game's (our copy's hits are nobody's) |
@@ -491,7 +530,15 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   as someone new runs out.
 - Set off where its NPCs are: a reported explosion goes off within 6000 units of our player, or beside an NPC our game
   runs (our companion among them) within its radius and 1024 units, wherever our player is (`explosionsForOurs=`). Our
-  copies of NPCs other games run are made ghosts while it goes off (BlastShield).
+  copies of NPCs other games run that its damage could kill are made ghosts while it goes off (BlastShield; the rest
+  take it and are given it back: `ghostsSpared=`). Every ghost we set is written down until the engine reads the copy as
+  no ghost again, in the save's co-save too (GhostLedger, `ghostLedger=set/cleared/stuck/unstuck/fromSaves/open`,
+  the `ghosts` dev command): it comes off whenever the copy is next loaded, whoever runs the NPC, with setghost 0 sent
+  again at a growing gap while it stays, sixteen times at most in a run. A ghost an older save left (a plugin's NPC the
+  session shares, its flag on, its base record no ghost, no quest holding it in an alias, hostile to our player, not
+  ours now) is taken off once per actor per load, in a session (`ghostsRepaired=`). A copy is ghosted only when the
+  explosion's record says what it deals and that could kill it (`Lethal`); one with an object effect on its record
+  says nothing of its spell's damage, so every copy in reach is ghosted as before.
 - Never from a fight we can't see: a report names the NPC that set it off (`source`, 0 for a player's), and a game with
   no copy of it sets nothing off (seen on the rig: a host-only Nuka-World NPC's blast went off beside a player without
   the DLC). One of a plugin that game lacks is dropped as it comes in (FormTranslate); a spawn it never placed is
@@ -629,13 +676,17 @@ tests play two and three games through it against a real server (tests/LootGame.
 
 Weapons and armor are per player because a move carries only the base form: another game would get a
 plain copy, and `removeitem` could take a legendary. So a friend's looted gun stays on your copy of the
-corpse. (Players give each other weapons and armor by dropping them: see Giving items.) A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
+corpse. (Players give each other weapons and armor by dropping them: see Giving items; with the host's `bContainerGifts`, also by putting them in a container: see Giving through a container.) A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
 for a second after, are trades and never reported. A corpse is shared once the session says it died: a
 change for an NPC still alive in this game waits for its kill, up to 10 minutes in the world, counted
 for all of that NPC's changes together (at most 4096 changes wait; when full, one waiting for a living
 NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). A chest
 waits too while this game holds it in no cell at all: one of a place we left lately stays in memory that
 way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go in when we come back. A
+take waits too while this game holds the chest in a cell but hasn't made its inventory yet (a place not
+loaded, or still loading): it would find nothing to take, and the roll made as the place loads would still
+hold what the friend took. So does a put, in order with the takes: going in first, it would make the inventory
+ahead of the roll, and the takes and the emptying after it would go into that instead. A
 change to a chest our player has open goes in at once: the container menu shows the new contents, and
 taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
@@ -875,6 +926,22 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
 - a two-state gate (an activator run by Default2StateActivator, or by one of `SharedGates::CHILDREN` that extend it:
   Med-Tek's lab doors, Jamaica Plain's treasure gates), with nothing beside the script but `SharedGates::SIBLINGS`
   (scripts that act on activation only): set in a friend's game by calling that script's own `SetOpenNoWait`;
+- a plain door a script opens, closes, locks or unlocks (a quest stage that unlocks the way, a trigger the player
+  walks into, a script shutting a door behind them): every loaded plain door is read every 500 ms
+  (`DoorShare::POLL_INTERVAL`, WorldSync's `PollDoor`), whoever changed it, by a sweep that reads 32 a frame
+  (`DoorShare::POLL_PER_FRAME`; `doorPollUs=` last/most per frame) from 2 s after the door loads
+  (`DoorShare::LOAD_SETTLE`). The loaded doors are the game's load event's (TESObjectLoadedEvent, which names few of
+  them: on the rig three of nineteen in Corvega's plant, none in Sanctuary on coming back) and those of a walk of the
+  loaded cells' reference lists (the interior, or the grid's attached cells and the worldspace's persistent cell,
+  where the load doors are), 256 references a frame with a second's rest between passes (`DoorShare::Walk`,
+  `FIND_PER_FRAME`, `FIND_REST`, WorldSync's `FindDoors`; `doorsFound=` found by the walk / passes), so a door in a
+  cell loaded later is on the list within about a second. Its first read, and its first after it loads again, is where it stands and is not
+  reported (the save's doors would fill the world state); a change is, once our player is within 1200 of it
+  (`DoorShare::REPORT_REACH`; a gate's `SharedGates::REPORT_REACH`), else kept until they are (`DoorShare::OnLook`;
+  `polledDoors=` put on watch / loaded, `reportsHeld=`), and no reference is reported more than 8 times at once and
+  then once every 2 s (`DoorShare::Pace`, `reportsPaced=`: a door a script flips over and over, or two games'
+  scripts fighting over it). A friend's state taken is what our watcher holds as said, with ours for what it leaves
+  out and no open state where we read none (`DoorShare::Heard`), so nothing goes back;
 - a door only a quest stage opens (Vault 114's gear door): the stage is shared (ScriptDoors).
 Not shared: elevators and their cars, load elevators, automatic doors, doors whose script answers OnOpen (an ambush,
 a stage), blocks activation or opens the door itself, the Mechanist's lair doors (their controls' state is each
@@ -929,18 +996,39 @@ the pickup pairing matches the activated reference's base (the mine's projectile
 `disarmed=`, `taken=`, `blasts=` (explosions left to the trap); the dev channel's `traps` lists the watched ones, and
 `traps <ref>` says how one was classified.
 
+The Prydwen (src/game/ScriptDoors.h, with Vault 114's gear door; 2026-10-27, a Nexus report on 0.9.2 of a friend who
+didn't see it arrive): its arrival is the story's. Out of Time's 130 (set when "Sanctuary" starts, Preston's talk after
+the museum fight) enables a flyover effect (MQ201FXPrydFlyoverRef 0019537C, persistent, full LOD) whose script flies
+the airship across the Commonwealth to Boston Airport over some minutes and at the end (or when it unloads, the player
+waits or travels) sets BoSEnable's 15, which enables the airship moored at the airport (the marker BoSPrydwen
+00184FD9, whose enable-parent children are the airship's parts), then disables itself. With `sStory = shared` a friend's game sets Out of Time's 130 too and plays its own flyover once its
+player is outdoors; with `own` it doesn't (the stage is the story's: it also sends Preston's group off); either way a
+game's moored airship appeared only when its own flight ended. So BoSEnable's 15 is shared through the session's quest
+stages like the vault door's (reported by the game whose flight ends first, or by the host's at its welcome if moored
+already; kept by the server for late joiners): BoSEnable is an internal start-game-enabled quest QuestSync never
+shares, 15 only enables the marker, and a persistent marker is enabled from anywhere, so the friend's stage is set at
+once, with no wait for loading (`Door::loaded` false), unless that game's own flyover is in the air (the effect 0019537C
+enabled, with its 3D: `Door::effect`, `Look::busy`): then it waits, logged once, as the effect's script sets 15 itself at
+the end of the flight or when the player waits, travels or goes indoors, and set sooner the moored airship would stand at
+the airport while the flying one is still crossing (both players leaving Concord together). A friend whose story is behind sees the airship moored before
+their own Brotherhood quests, as the game orders it anyway (the flyover follows Concord, long before Shadow of Steel,
+which takes the airship as there; nothing in the game reads BoSEnable's 15 or the marker: the only conditions on
+BoSEnable are Liberty Prime's scribes' packages, for its 20 to 40); their own flight later sets 15 again, which
+BoSEnable (no repeated stages) ignores. The flyover effect itself isn't shared: its script plays once a game and never resets,
+so enabled again after its flight it would hang in full LOD over the airport.
+
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
 
 | Feature | How |
 |---|---|
-| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for `Options::takeoverCooldown`, 5 s, after the NPC changes hands or its runner claims it again with a hit). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
 | Health | The game that runs an NPC reports its health (a fraction of max) after its hits and whenever it changes by anything else, at most every 250 ms (`HealthShare`: a fire, a burn, poison); receivers set their copy to it. A hit on a copy goes as the damage it did (`kReportDamage`, protocol 40: `CopyHealth::Book::TakeOurs`), which the game that runs the NPC takes off; only it applies it. Before, a copy reported its own health, which healed off the NPC whatever its game had taken since the copy last heard (a Molotov's fire). A game that comes to run an NPC (a takeover, a claim, back from a load) reports its health at once, at most 16 such reports every 250 ms (`healthShared=` sent/of them first readings): a takeover's claim leaves a frame ahead of the hit's damage, which the old runner then drops, and a host back from a death's reload runs its NPCs at its save's health. Only a throw's blow on a copy is left to the NPC's own game (`CopyHealth::OwnersToDeal`): an explosion's exactly when that explosion goes off in the NPC's own game too: our game decides once per explosion what becomes of it (`RemoteEdits::BlastLog`: reported by a throw's watch or a destructible object's, a destructible object's own that goes with its wreck, a world trap's that every game sets off, or ours alone), and a hit judges by the explosion that reaches it (`WeaponFire::BlastAt`, deciding one the 100 ms scan hasn't looked at yet) and the owner's player's distance from it by the receiver's own rule (`RemoteEdits::DealtThere`, `copyBlasts=` there/ours). Before, the hit went by the watch alone: a missile that hit a copy over 6000 units from our player, never reported, was dealt in neither game and healed back by the owner's next report, and at the watch's edge the hit and the scan could disagree. A throwable's too but never one with a weapon in hand that is no throwable, and the fire a Molotov leaves for 20 s after. In 0.9.0, as players reported it, gun hits on copies were taken for throws (how their hit events read on this runtime is not verified yet: `CopyWatch` now logs the flags), so only the game that ran an NPC hurt it, and a melee hit, which claimed it, moved that game to the hitter |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref, only while it is in the world (a persistent item's ref stays itself in the inventory that took it, ours too: OwnGear kTakeLoose). One the engine names an inventory for (ExtraReferenceHandles: the local player's, a container's, an NPC's) is left there and the pickup dropped; one in no cell and no inventory (being loaded or moved) stays pending and is tried again for 30 s (OwnGear::PICKUP_WAIT), then dropped |
 | The player's own gear | every inventory or equipment change the session makes for a friend's game is judged where it is made (src/game/OwnGear.h, Equipment::MayChange): stand-in dressing only on a stand-in, an NPC copy's only on a mirrored NPC, a frame emptied only if this game placed it and our player isn't in it, a pickup only off the world, loot never onto a stand-in, and none of them ever onto the local player (refused, logged, counted in `net status` as ownGear ourPlayer=). The counts start again with each session's welcome; the log takes up to 100 alarming refusals (our player, what they hold, the wrong actor, someone's own frame) and, on a budget of their own, 50 benign ones (gone, in an inventory, in no cell), so a join's catch-up can't hide the first. `inventory` (dev, read only) prints the player's stack and item counts, a checksum of every stack, the Pip-Boy (worn or not), caps and what is equipped, to compare before and after a join |
-| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304, and the game's dialogue quests: type 0, no objectives, named Dialogue<Place> after any DLCnn prefix, src/game/QuestFilter.h; Diamond City's entrance scene opens the gate at DialogueDiamondCityEntrance 32) only with `sStory = shared` (Welcome::sharedStory; the value is read in any case, `Shared` too, and the log says which story the host shares: Config's "loaded" line and the server's "listening" line); never misc, never the other type-0 quests (random encounters, companions, tutorials, dungeons). A dialogue quest has no objective to start it: it counts as started once running or with stages done, only a stage done here is past it (its stages aren't in order: a game at the gate has 400 without 32), and once it ran and stopped it is over (the rest of it from friends is dropped; starting it again would play it over); its name is the editor's, so no "caught up" or "completed" notice names it. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h), only while in a session (dropped when it ends, except a lock's quests: those are set after leaving too, with the story the player's own again, so a teleport begun in the session finishes), skipping indexes the quest doesn't have, and `setstage` them in the order they came: per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), up to 4 per poll, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105) without holding up other quests. In a session that wait is only for a quest the session doesn't share: a shared quest not started here is started by the first of its stages, once every stage that came before it is set and START_GRACE after the last one read done, and one that ran here and was stopped is never started (StageLog::Quest::kStart, Wait::kStopped; since 0.8.6). The host's game reports every done stage of the shared quests its player has started when its own server welcomes it, so a joiner is caught up to the host's story; a joiner's own progress from before joining is never reported. A quest is done with once completed and stopped (many complete at a stage and run on: MQ102 65). A stage reads done before Papyrus runs its fragment, so after a stage whose fragment waits (Utility.Wait, moving the player) nothing that came after it is set for that long plus 1 s. src/game/StageRules.h, generated from the QF_ fragments of Fallout4.esm and DLCCoast.esm (following the stages each one sets): stages that move the player (MoveTo, a door they are made to use, FadeOutGame, an InputEnableLayer) are set only when live (came in the last 30 s, not from the session state) and the friend who did it (the server stamps the reporter's id on kQuestStage; a WorldState carries none) is within 6000 units, else skipped, unless they also start another shared quest or award an achievement (MQ206 500 and 1000, the MQ206 faction 1400/1500): then after a 10 s HUD warning, outside combat; MQ206 500 and the 1400s (controls off) only once 1200 (controls on) is waiting too, and until then only their own quest waits (Verdict::kQuestWaits), not what came after it. After a lock stage is set, its quest's stages go first, without a combat hold or another warning and not held up by other quests', are kept if the session ends, and 1200 is set outright once they have done nothing (none being set, no script of theirs running on) for 90 s of unpaused play (StageLog::Queue::Lock). The release is looked for before each poll of the queue: after leaving, once 1200 is done the session's other waiting stages go, so nothing past 1200 is set in the solo game, nor left for the next session. While the game is paused (`UI::menuMode`, a loading screen) nothing is set and holds and timeouts don't run down. Stages that take caps or ordinary items from the player (MQ105 177, FFDiamondCity10 40, ...), and the dialogue quests' payments and sales (DialogueBunkerHill 210, DialogueVault81 5 and 645, DialogueDiamondCity 70, DLC03DialogueFarHarbor 90), are never set (tools/questscan.ps1 lists the stages whose own Fragment_Stage_ function calls RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem, UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property: of the shared quests only quest items, caps and chems; RemoveAllItems only in MQ101, the opening, and DN019JoinCult, both misc quests and never shared. It does not see such calls made through the quest's script (kmyQuest), a player alias (Alias_Player.GetRef()), a scene, a dialogue line or another script a stage starts, nor a shared stage setting a stage of another quest, so it is no proof that no shared stage takes the player's gear; src/game/StageRules.h); with `sStory = own`, side-quest stages that move a story or faction quest on (Min01 220/1500/2000, FFGoodneighbor01 100) aren't either. Caught-up stages wait during combat and 5 s after (at most 60 s), so Party doesn't take kill XP for quest XP. Never during dialogue; a scene holds them back, but one of a quest with stages waiting only for 30 s. One "Caught up" notice for many quests. Every poll in a shared-story session, a player whose MQ104 is past 210 without 210 done and whose MQ105 never started (left so by the old highest-stage-only sync, or by catching up from its session file) gets `setstage 229E6 10`, judged as MQ105's stage 0 (it moves the player): after the 10 s warning, outside combat, not in a conversation or a menu. Stage reports made while not welcomed (before the welcome, during a reconnect) are kept (the first 1024: what came first starts what came after), the story's and factions' too although Story::Shared is false while the connection is down (Session::OnDisconnected), marked so they go only if the welcome shares the story; they are sent once welcomed, at most 200 a second, oldest first (the server drops a player's events past 500 a second, all kinds together, and a stage is reported only once) (StageLog::Outbox). Ones made in no session (playing alone after leaving or stopping hosting), kept for a server the player then left for another (an invite accepted while the last host was being retried: Session::SwitchServer calls QuestSync::OnServerChanged), or kept through 5 minutes of not being welcomed (the host quit and the player plays on alone) are dropped, so a session joined later doesn't take solo progress for a friend's; loading a save drops them. Reporting doesn't settle again after a reconnect. A reconnect drops the waiting stages and what came live (OnSessionEnded): a friend's step that moves the player and was still waiting (a fight, a conversation) comes back in the WorldState as caught up, not live, and is skipped even beside that friend. Within a quest stages are set in stage order, not in the order they were done: one done after a higher one is already settled here and dropped (MQ104's 17 sets 12: 17's own script sets 12 here too). Different quests' stages go side by side, except a stage whose script sets a stage of another quest (StageRules::SETS_ANOTHER, from tools/questscan.ps1 -SetsOther: DialogueCodsworthPostWar 50 and 200 set MQ102 30 and 50, MQ102 40 sets DialogueCodsworthPostWar 100): it waits until nothing that came before it is still to be set or running on (as a quest's start does), else it moves the other quest past its stages still waiting and those are dropped as behind it; 0.9.1 lost a friend's Codsworth search (MQ102 20-25 and 36-40) that way when it was caught up all at once. Not a lock's quests. The opening's stages (MQ102 below 10, all of DialogueVault111) are never reported, baselined or set, and while this game is in the opening no stage that moves the player is set, its quest waiting (see The opening; a friend still in it holds nothing in the others' games); the endings' fades and slides (MQ302 850/855, MQ00 50/60, Inst308 30) count as moving the player. A fade the session caused that nothing fades back in is faded in after 20 s of play (see Fades). Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp) |
-| Doors and locks | refs the player activated are watched for 5 min (a door an NPC our game runs opened, 30 s), and what they are linked to (a terminal's door: an entry still holding the target's form ID is looked up by it, a pointer is read guarded and taken only if the form its own ID names is itself, `LinkedRefs.h`); open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
+| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304, and the game's dialogue quests: type 0, no objectives, named Dialogue<Place> after any DLCnn prefix, src/game/QuestFilter.h; Diamond City's entrance scene opens the gate at DialogueDiamondCityEntrance 32) only with `sStory = shared` (Welcome::sharedStory; the value is read in any case, `Shared` too, and the log says which story the host shares: Config's "loaded" line and the server's "listening" line); never misc, never the other type-0 quests (random encounters, companions, tutorials, dungeons). A dialogue quest has no objective to start it: it counts as started once running or with stages done, only a stage done here is past it (its stages aren't in order: a game at the gate has 400 without 32), and once it ran and stopped it is over (the rest of it from friends is dropped; starting it again would play it over); its name is the editor's, so no "caught up" or "completed" notice names it. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h), only while in a session (dropped when it ends, except a lock's quests: those are set after leaving too, with the story the player's own again, so a teleport begun in the session finishes), skipping indexes the quest doesn't have, and `setstage` them in the order they came: per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), up to 4 per poll, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105) without holding up other quests. In a session that wait is only for a quest the session doesn't share: a shared quest not started here is started by the first of its stages, once every stage that came before it is set and START_GRACE after the last one read done, and one that ran here and was stopped is never started (StageLog::Quest::kStart, Wait::kStopped; since 0.8.6). The host's game reports every done stage of the shared quests its player has started when its own server welcomes it, so a joiner is caught up to the host's story; a joiner's own progress from before joining is never reported. A quest is done with once completed and stopped (many complete at a stage and run on: MQ102 65). A stage reads done before Papyrus runs its fragment, so after a stage whose fragment waits (Utility.Wait, moving the player) nothing that came after it is set for that long plus 1 s. src/game/StageRules.h, generated from the QF_ fragments of Fallout4.esm and DLCCoast.esm (following the stages each one sets): stages that move the player (MoveTo, a door they are made to use, FadeOutGame, an InputEnableLayer) are set only when live (came in the last 30 s, not from the session state) and the friend who did it (the server stamps the reporter's id on kQuestStage; a WorldState carries none) is within 6000 units, else skipped, unless they also start another shared quest or award an achievement (MQ206 500 and 1000, the MQ206 faction 1400/1500): then after a 10 s HUD warning, outside combat; MQ206 500 and the 1400s (controls off) only once 1200 (controls on) is waiting too, and until then only their own quest waits (Verdict::kQuestWaits), not what came after it. After a lock stage is set, its quest's stages go first, without a combat hold or another warning and not held up by other quests', are kept if the session ends, and 1200 is set outright once they have done nothing (none being set, no script of theirs running on) for 90 s of unpaused play (StageLog::Queue::Lock). The release is looked for before each poll of the queue: after leaving, once 1200 is done the session's other waiting stages go, so nothing past 1200 is set in the solo game, nor left for the next session. While the game is paused (`UI::menuMode`, a loading screen) nothing is set and holds and timeouts don't run down. Stages that take caps or ordinary items from the player (MQ105 177, FFDiamondCity10 40, ...), and the dialogue quests' payments and sales (DialogueBunkerHill 210, DialogueVault81 5 and 645, DialogueDiamondCity 70, DLC03DialogueFarHarbor 90), are never set (tools/questscan.ps1 lists the stages whose own Fragment_Stage_ function calls RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem, UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property: of the shared quests only quest items, caps and chems; RemoveAllItems only in MQ101, the opening, and DN019JoinCult, both misc quests and never shared. It does not see such calls made through the quest's script (kmyQuest), a player alias (Alias_Player.GetRef()), a scene, a dialogue line or another script a stage starts, nor a shared stage setting a stage of another quest, so it is no proof that no shared stage takes the player's gear; src/game/StageRules.h); with `sStory = own`, side-quest stages that move a story or faction quest on (Min01 220/1500/2000, FFGoodneighbor01 100) aren't either. Caught-up stages wait during combat and 5 s after (at most 60 s), so Party doesn't take kill XP for quest XP. Never during dialogue; the player's own scene holds them back, but one of a quest with stages waiting only for 30 s. Not a scene a friend's stage started here: one of a quest a friend's stage was set on here in the last 30 s, or of the quest of such a scene that ended in the last 30 s, and not first seen with the dialogue menu open (the player started it by talking), is the session's for as long as the player is in it, a dropped connection or a load too (src/game/SceneHold.h, `QuestSync::SessionScene`; the shared quests' stage fragments start 502 scenes of their own quest and 18 of another's, those the player's own here). Codsworth's talk (DialogueCodsworthPostWar 50) starts his search of Sanctuary's houses, the scene MQ102_CodsworthSearch01 with Codsworth and the player as its actors, which only Out of Time's 40 ends (it sets his 100, whose script stops the scene): held back by that scene, the friend's stages never came, and the host had to follow Codsworth through the search themselves (up to 0.9.2). Its people aren't claimed for it either (`Dialogue::Holds`: Codsworth stays the friend's, mirrored here), and it doesn't refuse a teleport to a friend. One "Caught up" notice for many quests. Every poll in a shared-story session, a player whose MQ104 is past 210 without 210 done and whose MQ105 never started (left so by the old highest-stage-only sync, or by catching up from its session file) gets `setstage 229E6 10`, judged as MQ105's stage 0 (it moves the player): after the 10 s warning, outside combat, not in a conversation or a menu. Stage reports made while not welcomed (before the welcome, during a reconnect) are kept (the first 1024: what came first starts what came after), the story's and factions' too although Story::Shared is false while the connection is down (Session::OnDisconnected), marked so they go only if the welcome shares the story; they are sent once welcomed, at most 200 a second, oldest first (the server drops a player's events past 500 a second, all kinds together, and a stage is reported only once) (StageLog::Outbox). Ones made in no session (playing alone after leaving or stopping hosting), kept for a server the player then left for another (an invite accepted while the last host was being retried: Session::SwitchServer calls QuestSync::OnServerChanged), or kept through 5 minutes of not being welcomed (the host quit and the player plays on alone) are dropped, so a session joined later doesn't take solo progress for a friend's; loading a save drops them. Reporting doesn't settle again after a reconnect. A reconnect drops the waiting stages and what came live (OnSessionEnded): a friend's step that moves the player and was still waiting (a fight, a conversation) comes back in the WorldState as caught up, not live, and is skipped even beside that friend. Within a quest stages are set in stage order, not in the order they were done: one done after a higher one is already settled here and dropped (MQ104's 17 sets 12: 17's own script sets 12 here too). Different quests' stages go side by side, except a stage whose script sets a stage of another quest (StageRules::SETS_ANOTHER, from tools/questscan.ps1 -SetsOther: DialogueCodsworthPostWar 50 and 200 set MQ102 30 and 50, MQ102 40 sets DialogueCodsworthPostWar 100): it waits until nothing that came before it is still to be set or running on (as a quest's start does), else it moves the other quest past its stages still waiting and those are dropped as behind it; 0.9.1 lost a friend's Codsworth search (MQ102 20-25 and 36-40) that way when it was caught up all at once. Not a lock's quests. The opening's stages (MQ102 below 10, all of DialogueVault111) are never reported, baselined or set, and while this game is in the opening no stage that moves the player is set, its quest waiting (see The opening; a friend still in it holds nothing in the others' games); the endings' fades and slides (MQ302 850/855, MQ00 50/60, Inst308 30) count as moving the player. A fade the session caused that nothing fades back in is faded in after 20 s of play (see Fades). Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp) |
+| Doors and locks | refs the player activated are watched for 5 min (a door an NPC our game runs opened, 30 s; every loaded plain door, quietly, while it stays loaded), and what they are linked to (a terminal's door: an entry still holding the target's form ID is looked up by it, a pointer is read guarded and taken only if the form its own ID names is itself, `LinkedRefs.h`); open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ### Giving items (src/game/Drops.cpp, src/game/DropBook.h, common/DropStore.h)
 
@@ -1013,7 +1101,8 @@ So players give each other items by dropping them, and the server decides who ha
   empty. What lies about and who took what is kept in the session file (layout 33; 30 in the drops' own test builds), so it survives the
   host's server restarting.
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
-  and to drop it near them instead.
+  and to drop it near them instead (not for a put in a gift's place with the host's `bContainerGifts` on: see Giving
+  through a container).
 - Workshop mode can scrap (or store) a loose item lying in a settlement, copies included: the player gets its
   components and the game takes the reference away. That is our world consuming the item, so it is our player's
   take (`DropBook::Scraps`; no new message). Only the workshop's destroyed event (`Drops::OnScrapped`) makes it a
@@ -1040,6 +1129,115 @@ change) loses it. A world that never played the session (a new game in the same 
 rig's `coc` from the main menu makes) has no record of it, so it is taken to hold its player's earlier
 drops: those are withdrawn. The server trusts a game's record of its own world, as it does its container
 record.
+
+### Giving through a container (0.10.0, the host's `bContainerGifts`, off by default; welcome flag bit 64)
+
+(src/game/GiftBook.h, src/game/Gifts.cpp; the server's side is the drops' own, common/DropStore.h.) With the host's
+`bContainerGifts` on, a weapon or armor a player puts in a container is given, as a dropped item is: it is a drop whose
+place is that container (`DroppedItem::holder`, a session reference, count 1), and the server does for it what it does
+for any drop (offered to the giver alone, laid down on their kPlaced, the first claim granted, the record after each
+welcome and load making the session agree). Each game shows the gifts lying in a container while its player has that
+container's menu open, and only then.
+
+- **Where, and what.** A gift's place is a container (`LootScope::Holder::kContainer`, a session reference): not a
+  settlement's workbench (each player's own), a merchant's chest or a companion, an actor or a power armor frame.
+  Only weapons and armor, each given on its own, and never a quest item or one with a mod made at runtime
+  (`DropBook::Judge`, with the drops' other refusals), nor one with more mods than the wire carries: those stay in
+  the giver's copy of the container, said once a session (`gifts.not_given`). Items of one class (base, mods sorted,
+  the player's own name for it, condition to the percent: `GiftBook::Class`) are the same thing; a copy and the
+  player's own item of its class are told apart by count. Shared storage never carries weapons or armor (LootScope's
+  `kWeaponArmor`), and the container loot never shares them, so a gift never meets their copies: with
+  `bSharedStorage` on, a gun put in the host's chest is given just the same as with it off.
+- **Giving.** WorldSync's event watch posts the player's moves between their inventory and a container
+  (`Gifts::OnMoved`, ahead of the barter filter, so a take in a trade's last second isn't lost): only those at the
+  container the view watches are kept, summed by container and item (`GiftBook::Inbox`), so a Take All of any number
+  of kinds loses none (0.10.0's first cut kept 256 moves a frame, and a gift's take past them stayed unclaimed). A
+  change the open container then shows (one more of a class than we knew of, with a put of its base waiting:
+  `SIGNAL_KEEP`, 1 s) is reported (`kReportDrop` with its holder and a nonce); a put whose event comes late or never
+  isn't (it can't be told from a script's), and stays the player's own. Nothing is read off the container before the
+  inbox of moves is (every entry point drains it first). On the offer the item leaves the giver's world: taken out of
+  the container, or, while the menu still shows it, left there as the giver's copy of the gift (nothing moves on
+  screen; it goes as the menu closes). Then the record says it left (`made`), and kPlaced goes. A take of the
+  player's own of a class whose put still waits for its offer takes that put back (latest first): its offer is kKept,
+  so a like item the container held before is never given in its place. An item no longer there, or a container not
+  loaded, is kKept too: it never lay anywhere. An offer that comes past 60 s (`PUT_FORGET`) or after a load is kKept
+  too, unless the record says the item left. A refused one (`bContainerGifts` off on the server, the session's share
+  full) stays in the giver's container.
+- **No give-back on a link.** Unlike a loose drop's, a gift's offer survives its giver leaving and is saved in the
+  session file (takerId `DROP_OFFERED`): the giver's game gives nothing back when the link goes, so only its next
+  record says whether the item left its world (laid down, or the offer gone). Nothing anywhere is given back or taken
+  again on a timeout alone.
+- **Taking.** Fewer of a class in the container than we knew of went to the player as far as their take's events say,
+  or, an event lost, as far as their own count of that class rose since the last frame (`unsignaled=`): those take a
+  copy first (so it is claimed), then the player's own. A copy gone anywhere else (another mod's script handing it
+  to a settler) is counted (`copyMissing=`) and that gift isn't shown again in this game until a load or a rejoin (the view's
+  memory of it goes with the session's), so such a script makes one item of each gift a load or a rejoin, not one a
+  frame; across saves and rejoins they add up. The taken copy is held back: taken out of the player's
+  inventory at once (OwnGear `kGiftTake`, only ever our player and only for their own take), claimed (`kTake`, asked
+  again every 5 s until answered, never settled by a timeout), and added to their inventory only on the grant (with
+  `Took` in the record); a lost claim needs nothing undone (`gifts.taken_first`). So the side the player can't hide an
+  item from (the take held back) is the one put right, never an item already in their inventory. Taking one's own
+  gift back is the same claim. A grant to a take the world no longer makes (after a load) is given back
+  (`kGiveBack`), and so is one that can't go into the inventory (`giveFailed=`).
+- **Copies.** One item of each gift lying in the viewed container (at most 64 at once, and never more than can be
+  claimed: 128 with the takes waiting), with its mods, condition and the player's name (`Drops::AddOneTo`, as the
+  drops' copies are made); none of a gift whose base or mods this game lacks (`unplaceable=`), nor of one that isn't a
+  single weapon or armor of this game's with plugins' mods (`GiftBook::Receivable`, `notGear=`): the server can't tell
+  a gun from a box of ammo, so a modified game's "gift" of anything else would be an item no view sees, left in every
+  friend's copy for good. An add that fails after putting something in all the same has it taken out again
+  (`addUndone=`), a copy's and a grant's alike; a grant's then lies there again. Stacks are read one inventory entry
+  per base, as the engine keeps them and as a stack's index to take one from counts them (`Drops::StacksOf`). Copies go as the menu
+  closes (or is found gone for 1 s), as their gift goes, before every save and load and as the session ends: no save
+  holds one. OwnGear `kGiftCopy` lets them into a container's inventory only. The engine's changes made here are kept
+  out of WorldSync's watch (`Gifts::Applying`).
+- **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
+  before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
+  it: it lies there again.
+- **Saved.** The session file takes layout 39 while the server remembers any gift (a holder on a drop): one lying
+  there, offered, or taken, as the server remembers the last 4096 takes (a taken gift keeps its holder: a give-back
+  lays it down in its container again). So a session in which one gun was ever given is written as 39 until that many
+  takes later; one where none was is written in the layout an older build reads (38 with shared storage's owners,
+  else 36). An older build can't read a 39 file; 0.10.0 reads every older layout, their drops as loose ones.
+- **The record's cap.** Gifts share the drops' record (`MAX_DROP_RECORD`, 4096 `made` and 4096 `taken` a session,
+  the oldest forgotten), and fill it sooner: every gift given is a `made`, every take (one's own take-backs too) a
+  `taken`. Past that, the record misreads its oldest: a gift given that early and never taken is withdrawn from the
+  session by the giver's next record (lost), and an early take of one's own back is laid down again (twice). The
+  loose drops have the same limit; left as it is for 0.10.0 (thousands of transfers in one session), and said here.
+- **Off.** With the host's rule off a container no gift lies in isn't watched: no view, no reads of its inventory,
+  and the event watch keeps no move (Gifts' view filter), so the setting off costs nothing.
+- The "stays in your game only" hint is not said for a put in a gift's place with the rule on.
+- `net status` says `gifts=` (on or off, the container viewed, copies, claims, reports waiting and the counters; `ownRefused=`
+  must stay 0). The dev channel's `gifts` (`status`, `list`, `view <ref>`, `close`, `count`, `take`, `put`) drives it
+  without the menu.
+
+Tested without the game: `tests/GiftTests.cpp` drives GiftBook::Client and the drops' record (GiftGame.h) against the
+real server and counts every item of each class across every world and what lies in the session, through a give and a
+take, the giver's own take back, a take back before the offer (with a like item already in the container too), two
+friends taking at once, a reload on either side, links that go before the grant, the claim, the kPlaced or the offer,
+a late claim answered twice, a grant after a load, an offer past 60 s, others' and replayed confirms, keeps, takes and
+give-backs, a forged gift of no weapon or armor, the rule off (no reads at all), the host's server stopping, the giver
+away, places and items that aren't given, saves with a copy shown, a power armor piece's condition, and Take All beside
+the player's own like gun. Its fake engine misbehaves as a real one might: moves whose events are lost (a Take All)
+or come late, an item whose class changes as the copy is made or as it moves, adds that fail (before or after putting
+the item in), and a script moving a copy out with no event; each test checks the counters of what went wrong
+(`copyMissing`, `unheld`, `unsignaled`, `giveFailed`, `takenBack`, `dupRisk`, `overflow`, `notGear`, `addUndone`).
+With shared storage on, the game's own storage and loot code (LootGame.h: StorageView::Client and LootSync::Loot) run
+beside the gifts on the same packets, menus and moves, and are seen to move and send no weapon while the chest's
+stimpaks stay the host's one true copy. The inbox is tested on its own. `tests/DropStoreTests.cpp` and
+`tests/SessionFileTests.cpp` cover the saved offer and the layouts.
+
+Left open, behind the setting (and in the install guide): a giver's save from before the put loaded after a friend
+took the gift has it again, as with a dropped item (the server logs it: `dupRisk`); a gift waits in the session for
+its giver's record when their link went between the offer and their kPlaced (nobody can take it until they come
+back); a container that is the same reference in two games but holds a different thing (a mod changing it) shows the
+gift anyway. A copy another mod's script moves out of the container is no claim: it goes as missing (`copyMissing=`),
+the item stays where the script put it, and the gift still lies there for the others (one item more, at most one a
+gift and a load or a rejoin; across many they add up. Keeping the memory across a rejoin to the same session is
+left for later). A copy whose class changes as the player takes it (the engine dropping its name, say) can't be held
+back (`unheld=`): granted, it stays with them and nothing is added; lost to a friend who was first, both have it, and
+the game counts it (`dupRisk=`). Both are rig checks. The protocol needs nothing past 55: gifts add no message type,
+only `DroppedItem::holder` on kReportDrop, kDropPlaced and kDropList (listed in 55's line), so a 0.10.0 build from
+before this change passes the hello and can't read those messages: both rig games run the same build.
 
 ### Catching up (join, reconnect, loading a save)
 
@@ -1092,9 +1290,20 @@ as a respawn and forgets it was dead (`revived=` in `net status`), so it may off
 host's game is believed about it: its kUnowned claim on a dead NPC, at least `Options::aliveAgainGrace` (10 s)
 after its last hello or world request and after the death, takes the NPC off the dead list (and out of the saved session) and gives
 it to the host's game ("alive again in the host's world" in the server log); it can fight and hurt players
-again. A joiner's claim on a dead NPC is dropped, so a joiner whose cell reset first sees its copy run by its
-own AI until the host's game brings it back; one whose copy is still a corpse keeps the corpse (its
-`AttackerHere` drops that NPC's hits). A dedicated server has no host's game, so nothing comes back there.
+again. A joiner's game that has a dead NPC alive (its cell reset first, or its save is older) is told the death
+again when it offers to run it, hits it or reports its hits on a stand-in, once it has gone on about the NPC for
+`Options::aliveAgainGrace` (10 s: the host's game, walking into the reset camp beside it, is given that long to
+bring the NPC back for everyone first) and then every `Options::remindDeadEvery` (5 s per NPC; "dropped: the
+session has it dead" in the server log), and kills its copy (`WorldSync::TakeDeath`,
+`killsRetried=`), so every game has it dead until the host's game brings it back; before, those reports were
+dropped without a word and the joiner fought a copy alive only there. The host's game is never told again: its
+offer is the revival. Whenever the server names a game that runs an NPC, every other game forgets that NPC's
+death (`SessionDeaths::Ledger::OnOwned`, `corrected=`), whether its copy is alive or still a corpse (the
+corpse lies until its own cell resets); a death a game reported itself in the last 3 s is kept, since the
+grant crossed the report. Hits by that NPC on a stand-in in the runner's game reach the player even while their
+copy is a corpse, on the other side of a door, not loaded or of a plugin they lack (`PlayerHits`: taken when
+the reporting friend is within 20000 units, `hits: unseen=`; before, `AttackerHere` dropped every such hit and
+the enemy could not hurt them at all). A dedicated server has no host's game, so nothing comes back there.
 Nor does anything while the host's last world request went unanswered (refused for asking too often after a
 burst of loads): its game may have the NPC alive only in the save it loaded, so the server waits for a request
 it answers (the next load) before believing it again.
@@ -1185,7 +1394,10 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   (WorldSync's retry, as references load and as the player changes cell), however far from where its save had it, but
   not while anyone moves it; a friend's live rest for an object it doesn't
   have loaded waits the same way (at most 4096 waiting; a flood of those drops the rests waiting of the friend with the
-  most, the flooder, never the catch-ups or anyone else's). So a friend who loads the cell later, and every save loaded later, has the object
+  most, the flooder, never the catch-ups or anyone else's). While a place waits, our copy still lies where our save had
+  it, so a friend's hold, let-go or rest of that object is judged from the waiting place as well as from our copy
+  (`ObjectShare::FromWhereItLies`: their move starts where the session has it), and a move our game doesn't apply leaves
+  the place waiting, or their rest when it is too far even from the place (`StillWaiting`; a hold ends the wait once it is drawn here). So a friend who loads the cell later, and every save loaded later, has the object
   where it was left. No new message (an older game takes a catch-up as a rest, if the object is loaded then). A known
   limit: a reference moved this way keeps its parent cell, as one a friend carried across a cell border does.
 - Knocked about by NPCs and blasts: the same scan also reports an object that came to rest after an NPC our game runs
@@ -1356,7 +1568,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   quest alias: the museum's suit is the main quest's objective) and it stands within 200 units of
   where the friend was as they got in (their newest state if it came within 0.5 s of the status,
   else the next one); otherwise, or once it has been elsewhere or used in that wear, it stays shown
-  until they get in anew. It stays hidden through saves (only its 3D is touched) and is hidden again
+  until they get in anew. One another game runs (FrameShare: the wearer's, since getting in is a use)
+  is hidden wherever it stands while they wear it, loaded: it is moved to where their game has it (where
+  they got in), which for a friend who joined mid-wear is not where their stand-in first appeared, and
+  compared with that it stood shown for the whole wear, a second suit for the one they wear. It stays hidden through saves (only its 3D is touched) and is hidden again
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
@@ -1372,8 +1587,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   otherwise it is forgotten, and one whose form is gone is taken
   off the books at once and its record dropped (`SaveGuard::Forget`, `SaveStrays::Book::ForgetGone`, counted as
   `orphansDropped`): dropping the record frees the id, and the engine may hand it to the next frame it makes. A frame already
-  standing where a copy is placed is never taken over: nothing tells a copy an earlier session left from a suit of the
-  player's own (stripped, so empty, and with no owner if they never got in), so what 0.9.1 left in a save stays. The
+  standing where a copy is placed is never taken over: nothing tells a plain copy an earlier session left from a suit of
+  the player's own (stripped, so empty, and with no owner if they never got in), so such a one stays (the console removes
+  it: disable, then markfordelete); the workshop copies 0.9.1 made of frames carry the keyword and go (below). The
   leak the rig showed (2026-10-24): a load does not free every copy DespawnAll had just disabled or deleted for it; one
   stayed in memory, nobody's once the load had emptied the book, the next save wrote it, and a game started afresh from
   that save had it back drawn and whole beside the copy placed for the friend, and the host shared it as its own frame.
@@ -1397,7 +1613,21 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   with it), and nothing else gives a frame that. So the report of one still finds what stands at its spot, and a frame
   carrying the keyword and holding nothing goes (`WorkshopApply::Placeable::kFrame`, `framesCleared`); one without it,
   or one holding pieces (fitted out by a player, or their own suit an earlier session took over: deleting it would
-  lose them), is left alone.
+  lose them), is left alone. The session file is not needed for it: NpcSync's frame walk (every 2 s in a session) finds
+  any such copy standing loaded (`FrameShare::Ghost`: made at runtime, the keyword, empty, nobody in it, not the frame
+  our player wears or left last, with no owner (the engine gives a frame its wearer's ownership as they get in, so one
+  our player ever used has one), no quest's, no copy of this run's, loaded) and buries it as a frame copy of ours
+  (`SaveGuard::Track`, `RemotePlayers::Discard`: disabled, deleted, kept out of saves, handed to a load that comes first;
+  `ghostsCleared` in `net status`, `paframes` shows `marked=` and `holds=`). Left standing, the host's game shared it as
+  a frame of its own (`FrameShare::SharesMade` took any created frame standing loaded), and every joiner placed a copy
+  of it beside the friend's real one, every session: one 0.9.1 ghost in the host's save was one extra suit in every
+  other game. A ghost holding pieces is shared as the player's own, since it is theirs by then.
+  Two saves with a shared past (one save, played on by both) hold the same runtime frames under the same ids at the
+  same spots, and the joiner's game placed a copy of the host's beside its own: a frame of our own, of the base, no copy
+  of ours and not a ghost, standing within `FrameShare::SAME_SPOT` (32 units; no two frames stand nearer) of where the
+  owner's game has theirs stands for it (`SpawnBook::FrameFacts::oursThere`, `NpcSync::OwnMadeFrameAt`): no copy is
+  placed, and one placed before ours stood there goes; once theirs is moved away (its owner got in and parked it
+  elsewhere) a copy stands there, and ours stays ours (`oursThere=` in `net status`).
   Why they stayed (read from disk, 1.11.240): a load frees only what has a record of changes
   (`BGSSaveLoadGame::RevertAllChanges` walks the records and lets go of each created form it finds there), and DespawnAll
   drops the record of everything of ours on its way out, so none of it was freed (deleting a created reference drops it
@@ -1508,7 +1738,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   within the same day. Weather is forced only outside in the same worldspace.
 - Teleport: same cell or worldspace: `SetPosition`. Elsewhere: `coc <cell editor ID>` or
   `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
-  `SetPosition` once loaded. Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`),
+  `SetPosition` once loaded. Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`; not one a
+  friend's stage started here, `QuestSync::SessionScene`: the friend is playing it and their stages end it),
   furniture (sit/sleep state) and Survival (`GetDifficultyLevel`), where it could strand a quest.
 - Compass (src/game/Compass.cpp): each friend in our cell or worldspace gets a shape in their color
   (blue circle, orange square, pink diamond, purple triangle by player ID), drawn with the Flash
@@ -1534,8 +1765,18 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
   `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed` while
   the player waits for help (not once helped and getting up, so friends help once); a friend within
-  300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag and restores
-  health; the game stands them up a few seconds later with full health, which we cut back to 30%.
+  300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag, restores
+  health and, on their next frame, ends the down the engine's own way (`Actor::EssentialDown(false)`,
+  ID 2230033: life state, bleed-out camera and controls, the graph's bleed-out flag and the character
+  controller's bleed-out collision bit, in that order), asked again every second while it doesn't take
+  and only once a knock-down's ragdoll is over (3 s at most); full health from it is cut back to 30%.
+  However a down ends with the player up (helped, a save loaded while down, stood up by the game, the
+  last friend leaving), the get-up clears any bleed-out flag left on and, if they went down sneaking and
+  are still sneaking (the stance survives a down), stands them as they get up, and again 2 s later only
+  if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
+  alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
+  Friends are not sent the crouch flag while the player is down or getting up, and a stand-in that
+  gets up is told its sneak state again 2 s later, so it is not left crouched.
   45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)
   and `player.kill`; essential stays off until they are dead or the game stands them up, and the
   kill is repeated every 2 s while they are still alive and down. The rules are in
@@ -1817,7 +2058,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32). The sections below record each review as it was written.
+Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

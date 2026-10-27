@@ -2,11 +2,13 @@
 
 #include "MainThread.h"
 #include "Protocol.h"
+#include "game/ClickWatch.h"
 #include "game/GearPlan.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
+#include "game/Gifts.h"
 #include "game/Storage.h"
 #include "game/TextureFlush.h"
 
@@ -101,6 +103,8 @@ namespace Equipment
 			target.standIn = actor && Puppets::IsPuppet(actor);
 			target.mirrored = actor && !target.standIn && Puppets::IsRegistered(actor);
 			target.madeHere = a_ref->IsCreated();
+			const auto base = a_ref->GetObjectReference();
+			target.container = !actor && base && base->Is(RE::ENUM_FORM_ID::kCONT);
 			const auto ours = player ? PowerArmorFrameOf(player) : RE::NiPointer<RE::TESObjectREFR>{};
 			target.playersFrame = ours && ours.get() == a_ref;
 			target.inWorld = a_ref->GetParentCell() != nullptr;
@@ -357,6 +361,7 @@ namespace Equipment
 		const auto piece = [](std::uint32_t a_item) { return IsPowerArmorPiece(RE::TESForm::GetFormByID(a_item)); };
 		const auto equip = GearPlan::Equip(Read(a_actor), a_items, InPowerArmor(a_actor), has, piece, SlotsOf);
 		for (const auto item : equip) {
+			ClickWatch::Note(ClickRates::Source::kEquip);
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		// The one exception to "nothing is given": a replayed throw needs the grenade in the hand, and spends it.
@@ -490,6 +495,7 @@ namespace Equipment
 			if (copy != StandInGear::Copy::kKeep) {
 				Give(a_actor, a_item, theirs);
 			}
+			ClickWatch::Note(ClickRates::Source::kEquip);
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, a_item).c_str());
 			return false;
 		}
@@ -751,6 +757,7 @@ namespace Equipment
 				continue;
 			}
 			Give(a_puppet, item, StandInGear::ModsOf(a_mods, item));
+			ClickWatch::Note(ClickRates::Source::kEquip);
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		HoldThrowable(a_puppet, a_items);
@@ -1198,6 +1205,7 @@ namespace Equipment
 				MainThread::Post([target, closed] { CheckTransfer(target, closed); });
 				if (!closed) {
 					Storage::OnMenuShown(target);  // a friend's storage: its true copy shown in ours
+					Gifts::OnMenuShown(target);    // the gifts lying in it shown in our copy
 				}
 			}
 			return result;

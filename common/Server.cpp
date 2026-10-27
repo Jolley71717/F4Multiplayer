@@ -8,6 +8,7 @@
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
+#include "SaveRetry.h"
 #include "SessionFile.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
@@ -28,7 +29,30 @@
 
 namespace
 {
-	using Clock = std::chrono::steady_clock;
+	// The server's clock is the machine's steady clock plus however far a test has moved it (Server::AdvanceClock). A test
+	// waiting out a cooldown moves the clock past it, so it needs no sleep that a busy PC could make too short for the time
+	// it means; one that must act inside a window can hold the clock (Server::HoldClock), so a busy PC can't make it late.
+	// Only the server thread reads it.
+	thread_local const Server::ClockControl* t_clock = nullptr;
+
+	struct Clock
+	{
+		using rep = std::chrono::steady_clock::rep;
+		using period = std::chrono::steady_clock::period;
+		using duration = std::chrono::steady_clock::duration;
+		using time_point = std::chrono::steady_clock::time_point;
+		static constexpr bool is_steady = true;
+
+		static time_point now()
+		{
+			if (!t_clock) {
+				return std::chrono::steady_clock::now();
+			}
+			const auto held = t_clock->held.load(std::memory_order_relaxed);
+			const auto base = held != 0 ? time_point{ std::chrono::duration_cast<duration>(std::chrono::nanoseconds{ held }) } : std::chrono::steady_clock::now();
+			return base + std::chrono::duration_cast<duration>(std::chrono::nanoseconds{ t_clock->skew.load(std::memory_order_relaxed) });
+		}
+	};
 
 	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(16);  // ~60 Hz relay of new player states
 	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states (sent at 30 Hz)
@@ -105,9 +129,11 @@ namespace
 	constexpr auto XP_REPORT_INTERVAL = std::chrono::milliseconds(500);
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
-	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
-	constexpr auto TAKEOVER_COOLDOWN = std::chrono::seconds(5);
+	// A player who hits or talks to an NPC another player runs takes it over, at most every Options::takeoverCooldown.
 	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
+	// A player's game that has an NPC alive which the session has dead (it hit it, offered to run it, or it hit their
+	// stand-in) is told its death again (Options::remindDeadEvery): at most this many NPCs are remembered for one player.
+	constexpr std::size_t MAX_REMINDED = 256;
 	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
 	// A flooder's budget refills and runs out again twice a second: the log says so at most this often.
 	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
@@ -286,6 +312,15 @@ namespace
 		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
 		// MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
+		// Dead NPCs this player's game has alive (remindDead): since when it has reported about one, when last, and when
+		// its death was last told again.
+		struct DeadReminder
+		{
+			Clock::time_point since{};  // its first report of this run (the game has had the NPC alive since)
+			Clock::time_point last{};   // its latest report
+			Clock::time_point told{};   // when the death was last told again (never: zero)
+		};
+		std::unordered_map<std::uint32_t, DeadReminder> deadReminded;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
 		Clock::time_point          reloadToldAt{};  // when the others were last told it loaded a save (kPlayerReloaded)
 		bool                       reloadOwed = false;  // it loaded again sooner: the others are told once Options::reloadToldEvery is up
@@ -377,6 +412,7 @@ void Server::Stop()
 
 void Server::Run()
 {
+	t_clock = &testClock;
 	std::unordered_map<ConnectionKey, Player> players;
 	std::uint32_t                             nextId = 1;
 	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run
@@ -603,11 +639,13 @@ void Server::Run()
 	// written with any other change, on the host's game saves and when the server stops.
 	std::uint64_t revision = 0;
 	std::uint64_t lastSavedRevision = 0;
-	bool          saveFailing = false;  // said once, not at every check, until a save goes through
-	const auto    touched = [&] { ++revision; };
-	const auto    saveSession = [&] {
+	// A save that failed is tried again on its own, with a growing wait, whether or not anything else changed since:
+	// the time of day alone is never a change, so a save the host's game asked for would otherwise be lost.
+	SaveRetry  saveRetry{ options.saveInterval };
+	const auto touched = [&] { ++revision; };
+	const auto saveSession = [&](bool a_stopping = false) {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
-			return;
+			return true;
 		}
 		SessionFile::Snapshot snapshot;
 		snapshot.contentHash = sessionContentHash;
@@ -642,15 +680,16 @@ void Server::Run()
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
-			if (!std::exchange(saveFailing, true)) {
-				log(std::format("server: could not save the session to {}; trying again at every check", sessionPath.filename().string()));
+			if (saveRetry.Failed(Clock::now()) && !a_stopping) {  // (stopping says its own line)
+				log(std::format("server: could not save the session to {}; trying again until it works", sessionPath.filename().string()));
 			}
-			return;  // tried again at the next check
+			return false;  // tried again once the wait is over
 		}
-		if (std::exchange(saveFailing, false)) {
+		if (saveRetry.Succeeded()) {
 			log("server: the session is saved again");
 		}
 		lastSavedRevision = saved;
+		return true;
 	};
 	Clock::time_point nextSave = Clock::now() + options.saveInterval;
 
@@ -1097,7 +1136,8 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
-		// Offers they never confirmed go: their game may still have those items (common/DropStore.h).
+		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
+		// wait for their next record (common/DropStore.h).
 		drops.DropOffers(a_player.id);
 		objectMovers.Leave(a_player.id);
 		// They view no storage now, and what their game keeps closes to friends until it lists it again.
@@ -1403,6 +1443,61 @@ void Server::Run()
 	std::size_t       droppedDeaths = 0;  // since the last line about them
 	Clock::time_point staleHealthLogged{};
 	std::size_t       staleHealthDropped = 0;  // health reports from a game that no longer runs the NPC, since the last line
+	Clock::time_point deadHealthLogged{};
+	std::size_t       deadHealthDropped = 0;  // health and damage reports for an NPC the session has dead, since the last line
+	Clock::time_point deadHitLogged{};
+	std::size_t       deadHitsDropped = 0;  // hits on stand-ins by an NPC the session has dead, since the last line
+	Clock::time_point hitBudgetLogged{};
+	std::size_t       hitBudgetDropped = 0;  // hits on stand-ins past the reporter's damage a second, since the last line
+	std::size_t       deadReminders = 0;     // deaths told again to a game that had the NPC alive (remindDead)
+
+	// The session has the NPC dead, and this player's game just had it alive: it hit it, offered to run it, or the NPC
+	// hit a stand-in there (its cell reset in that game, or its save is from before the kill). Told its death again, as
+	// the world state would, at most once per Options::remindDeadEvery for each NPC: its game kills its copy (WorldSync's
+	// TakeDeath kills one alive here though known dead), so every game has it dead until the host's world brings it
+	// back. Before, every report about it was dropped without a word and the game fought a copy alive only there. Not
+	// the host's game: its offer to run one that came back is the revival (handleClaims), and a reminder would kill
+	// what came back.
+	// Not at the first report either: the players mostly walk into a reset camp together, and the host's game offers
+	// each raider in the same moment the joiner's does. A reminder sent on the joiner's claim, with the host's offer
+	// next in the queue, killed the joiner's copy just before the host's game brought the raider back: a corpse for the
+	// joiner, hitting them unseen, for the rest of the session. So the death is told again only once the game has
+	// reported about the NPC for Options::aliveAgainGrace, the time the host's game is given to bring one back, with the
+	// NPC still dead; then every Options::remindDeadEvery while it keeps reporting. A silence of aliveAgainGrace ends
+	// the run: its next report starts the wait again (its cell reset once more, days later).
+	const auto remindDead = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
+		if (a_player.local || !a_player.welcomed) {
+			return;
+		}
+		auto& reminded = a_player.deadReminded;
+		auto  it = reminded.find(a_refId);
+		if (it == reminded.end()) {
+			if (reminded.size() >= MAX_REMINDED) {
+				std::erase_if(reminded, [&](const auto& a_entry) { return a_now - a_entry.second.last >= options.aliveAgainGrace; });
+				if (reminded.size() >= MAX_REMINDED) {
+					return;
+				}
+			}
+			it = reminded.try_emplace(a_refId, Player::DeadReminder{ a_now, a_now, {} }).first;
+		} else if (a_now - it->second.last >= options.aliveAgainGrace) {
+			it->second = { a_now, a_now, {} };
+		}
+		auto& reminder = it->second;
+		reminder.last = a_now;
+		if (a_now - reminder.since < options.aliveAgainGrace || (reminder.told != Clock::time_point{} && a_now - reminder.told < options.remindDeadEvery)) {
+			return;
+		}
+		reminder.told = a_now;
+		++deadReminders;
+		const auto at = deathPositions.find(a_refId);
+		Protocol::ActorDeath death{ a_refId, 0, false };
+		if (at != deathPositions.end()) {
+			death.x = at->second[0];
+			death.y = at->second[1];
+			death.z = at->second[2];
+		}
+		send(a_player.key, Protocol::Encode(death, Protocol::MessageType::kActorDied), true);
+	};
 
 	// A spawn died: in its owner's game, or in the game of a player fighting their copy of it (they hurt it or tried to
 	// take it over within Options::deathGrace, as for any NPC another game runs). Not kept with the session's dead: it is
@@ -1563,7 +1658,20 @@ void Server::Run()
 		const auto health = Protocol::DecodeActorHealth(a_data);
 		// A spawn's health goes to its owner too, whoever hit their copy of it.
 		const bool spawn = health && spawns.contains(health->refId);
-		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId)) || deadActors.contains(health->refId)) {
+		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId))) {
+			return;
+		}
+		// Dead for the session: nothing to pass on, and the sender's game, which has it alive, is told so (remindDead).
+		// A spawn's death ends it (handleSpawnDeath), so this is a plugin's NPC.
+		if (deadActors.contains(health->refId)) {
+			++deadHealthDropped;
+			const auto now = Clock::now();
+			if (now - deadHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				deadHealthLogged = now;
+				log(std::format("server: {} of {:08X} from player {} dropped: the session has it dead ({} since the last such line)",
+					a_out == Protocol::MessageType::kActorDamaged ? "damage" : "health", health->refId, a_player.id, std::exchange(deadHealthDropped, 0)));
+			}
+			remindDead(a_player, health->refId, now);
 			return;
 		}
 		if (a_out == Protocol::MessageType::kActorDamaged && !(health->health > 0.0f && health->health <= 1.0f)) {
@@ -1850,7 +1958,7 @@ void Server::Run()
 				-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 			return;
 		}
-		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game gives it back", refusal->first,
+		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game is asked to give it back", refusal->first,
 			-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 		send(taker->first, Protocol::Encode(refusal->second), true);
 	};
@@ -1907,13 +2015,17 @@ void Server::Run()
 		if (cut) {
 			work.clear();
 		}
+		constexpr std::size_t kShortfallLinesPerSettle = 8;
+		std::size_t           shortfalls = 0;
 		for (const auto& [index, has] : work) {
-			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
-			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
+			// What the move calls for before the true copy's own count caps it. Nothing for a move already undone (or not the
+			// settler's own to undo here): the true copy does nothing for it, and that is no shortfall.
+			const auto wanted = storage.Settle(a_player.id, index, has, containerChanges, false);
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
-			if (expected && *expected < 0 && (change ? change->count : 0) > *expected) {
-				log(std::format("server: storage {:08X} held {} fewer of {:08X} than player {}'s move #{} {} needed", containerChanges[index].change.container,
-					(change ? change->count : 0) - *expected, containerChanges[index].change.item, a_player.id, index, has ? "done again" : "undone"));
+			// A settle may hold thousands of moves (MAX_STORAGE_LACKING): the first few get a line each, the rest are counted.
+			if (wanted && wanted->count < 0 && (change ? change->count : 0) > wanted->count && ++shortfalls <= kShortfallLinesPerSettle) {
+				log(std::format("server: storage {:08X} held {} fewer of {:08X} than {} player {}'s move #{} needed to take out; only what it held went", containerChanges[index].change.container,
+					(change ? change->count : 0) - wanted->count, containerChanges[index].change.item, has ? "doing again" : "undoing", a_player.id, index));
 			}
 			if (!change) {
 				continue;
@@ -1934,6 +2046,10 @@ void Server::Run()
 					send(key, packet, true);
 				}
 			}
+		}
+		if (shortfalls > kShortfallLinesPerSettle) {
+			log(std::format("server: and {} more of player {}'s moves found storage holding less than they needed to take out", shortfalls - kShortfallLinesPerSettle,
+				a_player.id));
 		}
 		a_player.storageSettled = !cut;
 		if (cut) {
@@ -2002,8 +2118,11 @@ void Server::Run()
 	// - nobody yet: the first player to claim it;
 	// - a companion follows its player, so that player takes it over, unless it is also another
 	//   player's companion (then the first keeps it);
-	// - a player fighting or talking to it takes it over, unless it is someone's companion or
-	//   changed hands moments ago (two players fighting it would otherwise trade it constantly).
+	// - a player fighting or talking to it takes it over, unless it is someone's companion, or it changed hands or
+	//   its runner claimed it again (with a hit of theirs, or while they talk to it) within Options::takeoverCooldown:
+	//   two players fighting it would otherwise trade it every cooldown, and its AI started over in the taker's game
+	//   each time. It stays with whoever hit it first until they stop hitting it; the other's hits reach it as damage
+	//   (handleHealth's kReportDamage), as any non-runner's do.
 	const auto ownedBy = [&](std::uint32_t a_playerId) {
 		return static_cast<std::size_t>(std::ranges::count_if(actorOwners, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; }));
 	};
@@ -2085,6 +2204,9 @@ void Server::Run()
 				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
 				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
 				if (!cameBack) {
+					// A joiner's game has it alive (its own cell reset, or an older save): told it is dead, so it kills its copy
+					// instead of fighting it alone and offering it every few seconds. The host's game is left to offer it again.
+					remindDead(a_player, claim.refId, now);
 					continue;
 				}
 				deadActors.erase(claim.refId);
@@ -2112,7 +2234,8 @@ void Server::Run()
 					++*companions;
 				}
 				it->second.reason = (std::max)(it->second.reason, claim.reason);
-				// The owner talking to it: nobody takes it over mid-conversation.
+				// The owner talking to it, or hitting it (NpcSync::OnLocalInteraction claims it again with each hit, 2 s
+				// apart at most): nobody takes it over mid-conversation, nor mid-fight while its runner keeps hitting it.
 				if (claim.reason == Reason::kInteract) {
 					it->second.since = now;
 				}
@@ -2120,7 +2243,7 @@ void Server::Run()
 			} else if (claim.reason == Reason::kCompanion) {
 				grant = it->second.reason != Reason::kCompanion;
 			} else if (claim.reason == Reason::kInteract) {
-				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= TAKEOVER_COOLDOWN;
+				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= options.takeoverCooldown;
 			}
 			if (grant) {
 				if (it != actorOwners.end()) {
@@ -2214,10 +2337,26 @@ void Server::Run()
 		if (!item) {
 			return;
 		}
+		const auto refuse = [&] {
+			// Not kept: their game keeps the item as it is (an ordinary item on its ground, or in its container). Said by a
+			// kDropPlaced with no drop ID.
+			auto refused = *item;
+			refused.dropId = 0;
+			refused.ownerId = a_player.id;
+			refused.takerId = 0;
+			send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+		};
+		if (item->holder != 0 && !options.rules.containerGifts) {
+			refuse();  // a gift, without the host's bContainerGifts: the weapon stays in its player's own copy of the container
+			return;
+		}
 		const auto added = drops.Add(a_player.id, *item);
 		switch (added.outcome) {
 		case DropStore::Outcome::kAdded:
 			send(a_player.key, Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true);  // the offer
+			if (added.drop->holder != 0) {
+				dropsChanged();  // a gift's offer is saved (DropStore::DropOffers)
+			}
 			break;
 		case DropStore::Outcome::kRepeat:
 			if (added.drop) {
@@ -2227,13 +2366,7 @@ void Server::Run()
 		case DropStore::Outcome::kFull:
 		case DropStore::Outcome::kOwnerFull:
 			{
-				// Not kept: their game keeps the item it dropped as it is (an ordinary item on its ground). Said by a
-				// kDropPlaced with no drop ID.
-				auto refused = *item;
-				refused.dropId = 0;
-				refused.ownerId = a_player.id;
-				refused.takerId = 0;
-				send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+				refuse();
 				if (!std::exchange(dropsFullLogged, true)) {
 					log(std::format("server: {} items dropped for others lie in the session ({} of player {}); not keeping more", drops.LyingCount(), drops.LyingOf(a_player.id),
 						a_player.id));
@@ -2490,8 +2623,19 @@ void Server::Run()
 			return;
 		}
 		// A dead NPC hurts nobody. One the session knows is dead can still be alive for a moment in the
-		// reporter's game (dead in the host's save, alive in a joiner's until the news reaches it).
+		// reporter's game (dead in the host's save, alive in a joiner's until the news reaches it), or for good (its
+		// cell reset there): the reporter's game is told again (remindDead). An attacker of 0 is one the reporter's
+		// game can't name on the wire (a plugin the session's table lacks): passed on, the victim judges it by the
+		// reporter's distance.
 		if (!hit->byPlayer && deadActors.contains(hit->attacker)) {
+			++deadHitsDropped;
+			const auto now = Clock::now();
+			if (now - deadHitLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				deadHitLogged = now;
+				log(std::format("server: a hit by {:08X} from player {} dropped: the session has it dead ({} since the last such line)", hit->attacker, a_player.id,
+					std::exchange(deadHitsDropped, 0)));
+			}
+			remindDead(a_player, hit->attacker, now);
 			return;
 		}
 		// A spawn hits a stand-in only in its owner's game: the reporter's own (the victim's game has a copy of it).
@@ -2505,6 +2649,12 @@ void Server::Run()
 		// reporter than a fight can produce; the rest is dropped.
 		const float damage = (std::min)(hit->damage, MAX_HIT_DAMAGE);
 		if (a_player.rate.hitDamage + damage > MAX_HIT_DAMAGE_PER_SECOND) {
+			++hitBudgetDropped;
+			if (const auto now = Clock::now(); now - hitBudgetLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				hitBudgetLogged = now;
+				log(std::format("server: a hit from player {} dropped: more damage a second than a fight deals ({} since the last such line)", a_player.id,
+					std::exchange(hitBudgetDropped, 0)));
+			}
 			return;
 		}
 		a_player.rate.hitDamage += damage;
@@ -3646,18 +3796,25 @@ void Server::Run()
 		}
 
 		// The session goes to disk when it changed (checked every saveInterval), when asked (the host's game
-		// saves, or its connection goes) and when the server stops.
+		// saves, or its connection goes), when a save failed and its wait is over, and when the server stops.
 		if (saveRequested.exchange(false)) {
-			nextSave = Clock::now() + options.saveInterval;
+			nextSave = now + options.saveInterval;
 			saveSession();
-		} else if (Clock::now() >= nextSave) {
-			nextSave = Clock::now() + options.saveInterval;
-			if (revision != lastSavedRevision) {
+		} else if (saveRetry.Due(now)) {
+			nextSave = now + options.saveInterval;
+			saveSession();
+		} else if (now >= nextSave) {
+			nextSave = now + options.saveInterval;
+			// While a save is failing the retry above decides when to try, not each check.
+			if (revision != lastSavedRevision && !saveRetry.Failing()) {
 				saveSession();
 			}
 		}
 	}
-	saveSession();
+	// One last try, whatever the wait: the file may be free again by now.
+	if (!saveSession(true)) {
+		log("server: could not save the session when the server stopped; the last save that worked is what it keeps");
+	}
 
 	for (auto& transport : transports) {
 		transport->Close();

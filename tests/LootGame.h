@@ -53,6 +53,7 @@ namespace LootTest
 		Clock::time_point                     now{};  // the game's clock: tests move it on
 		std::uint64_t                         sessionId = 0;
 		std::uint32_t                         localId = 0;
+		Protocol::SessionRules                rules;  // the welcome's
 		std::vector<LootSync::Move>           moves;  // since the last frame (WorldSync's inbox)
 		std::uint32_t                         applied = 0;   // other players' changes put into this world
 		std::uint32_t                         requests = 0;  // world requests sent (after Hello)
@@ -95,6 +96,7 @@ namespace LootTest
 			REQUIRE(welcome);
 			sessionId = welcome->sessionId;
 			localId = welcome->playerId;
+			rules = welcome->rules;
 			connected = true;
 			loot.OnWelcome(sessionId, localId);
 			storage.OnWelcome(welcome->rules.sharedStorage, host, sessionId);

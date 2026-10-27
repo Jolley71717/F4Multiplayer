@@ -120,8 +120,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
 	// Before the first file (protocol 22), the layouts of the destructibles' and shared storage's own test
-	// builds (35, 37), a layout to come (39), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 39 }, std::uint16_t{ 0xE526 } }) {
+	// builds (35, 37), a layout to come (40), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 40 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -153,7 +153,7 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	withOwners.storageOwners = { { 0x00020000, 1 } };
 	const auto ownerBytes = SessionFile::Encode(withOwners);
 	std::memcpy(&version, ownerBytes.data() + 4, sizeof(version));
-	CHECK(version == SessionFile::FORMAT);
+	CHECK(version == SessionFile::STORAGE);
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
 	// The layout before 29, under the protocol versions that wrote it before the file had its own version (28: the
 	// shared-quest test builds, before rc3 gave the file its own, 26): the same, less the list of deaths that may be
@@ -513,7 +513,7 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 
 	auto withDrop = bare;
 	withDrop.drops = { drop };
-	REQUIRE(as(SessionFile::Encode(withDrop), SessionFile::FORMAT));
+	REQUIRE(as(SessionFile::Encode(withDrop), SessionFile::STORAGE));
 	const auto drops = as(SessionFile::Encode(withDrop), SessionFile::DROPS_ONLY);
 	REQUIRE(drops);
 	CHECK(drops->drops == withDrop.drops);

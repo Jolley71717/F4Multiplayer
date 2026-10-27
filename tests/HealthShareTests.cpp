@@ -43,6 +43,8 @@ namespace
 		float                health = 100.0f;
 		bool                 v0810 = false;
 		bool                 v092 = false;  // a report sets a copy as it comes, as up to 0.9.2 (no raise held: Book::Heard)
+		bool                 gainsKept = false;  // a copy's gain of its own is where it stands, as up to 0.9.2 (none taken back: Book::Check)
+		float                takenBack = 0.0f;   // a copy's gains of its own taken back
 		CopyHealth::Book     copy;
 		HealthShare::Book    share;
 		Clock::time_point    now{};
@@ -116,6 +118,12 @@ namespace
 				if (give > 0.0f) {
 					health += give;
 					givenBack += give;
+					copy.Set(RAIDER, health);
+				} else if (give < 0.0f) {
+					if (!gainsKept) {
+						health += give;
+						takenBack -= give;
+					}
 					copy.Set(RAIDER, health);
 				}
 			} else if (!v0810 && share.Due(RAIDER, health / 100.0f, now)) {
@@ -531,6 +539,11 @@ TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own 
 	CHECK(OwnersToDeal(Blow{ .throwable = true, .explosionsShared = true, .threwLately = true }));
 	CHECK(OwnersToDeal(Blow{ .spellAlone = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{}));  // a gun's, a bat's: ours to report
+	// A legendary weapon's burn or bleed riding along with the shot (an enchantment's hit, read as a spell's with no weapon):
+	// ours, however lately we threw a Molotov. What a throw leaves burning is a hazard's spell, never an enchantment.
+	CHECK(!OwnersToDeal(Blow{ .spellAlone = true, .enchantment = true, .threwLately = true }));
+	CHECK(!OwnersToDeal(Blow{ .spellAlone = true, .enchantment = true, .explosionsShared = true, .threwLately = true }));
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .enchantment = true, .blastThere = true }));  // an explosive round's blast that goes off there too
 	CHECK(!OwnersToDeal(Blow{ .inHand = true, .explosionsShared = true, .threwLately = true }));
 
 	CHECK(!After(Hitter::kOurPlayer, FRIEND, US, false, true).report);
@@ -679,7 +692,7 @@ TEST("health share: Bob's shot that takes the raider over is not lost: his game 
 	f.hostGame.Shoot(30.0f);
 	f.Pass();
 	REQUIRE(Near(f.bobGame.health, 70.0f));
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	f.s.Advance(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
 	// His claim leaves at the end of the frame, his shot's damage at the start of the next: the server gives him the
 	// raider first, and the host's game drops the damage as no longer its to deal.
 	f.bobGame.Strike(20.0f, CopyHealth::Blow{ .inHand = true });
@@ -701,7 +714,8 @@ TEST("health share: a host's report on its way as Bob's shot takes the raider ov
 	Fight fixed;
 	Fight v092;
 	v092.hostGame.v092 = v092.bobGame.v092 = true;
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	fixed.s.Advance(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	v092.s.Advance(std::chrono::milliseconds{ 5100 });
 	for (auto* f : { &fixed, &v092 }) {
 		// A fire takes 5 off the host's raider, and the host's report of 95 reaches the server just ahead of Bob's claim:
 		// passed on (the host ran the raider then), it lands on Bob's copy after his 30-point shot. The host's game drops
@@ -824,7 +838,7 @@ TEST("health share: a heal in the host's game while Bob keeps shooting the raide
 	CHECK(f.bobGame.health > 75.0f);
 	round();
 	round();
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	f.s.Advance(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
 	f.bobGame.Strike(5.0f, GUN);  // takes the raider over; the host's game drops the shot's damage
 	f.Deliver();
 	REQUIRE(f.bob.OwnerOf(RAIDER) == f.bob.Id());
@@ -896,4 +910,53 @@ TEST("health share: after a host's reload brings the raider back at its save's h
 	CHECK(Near(f.hostGame.health, 90.0f));
 	CHECK(Near(f.bobGame.health, 90.0f));
 	CHECK(f.bobGame.givenBack == 0.0f);
+}
+
+// A raider rolled legendary in Bob's game and plain in the host's, which runs it (the host's roll is written onto Bob's
+// copy for its next load only: Rolls::Apply). Bob's shot takes it past half health, and his engine's legendary mutation
+// heals his copy to full: a frame after the shot, or once the host's report of the shot is in. The host's raider is no
+// legendary and stays where Bob's shot left it.
+namespace
+{
+	struct MutatedCopy
+	{
+		Fight f;
+
+		MutatedCopy(bool a_gainsKept, bool a_afterReport)
+		{
+			f.bobGame.gainsKept = a_gainsKept;
+			f.bobGame.Shoot(55.0f);
+			if (a_afterReport) {
+				f.Pass();
+			}
+			f.bobGame.health = 100.0f;  // the mutation
+			f.bobGame.Wait(CopyHealth::JUDGE_AFTER + FRAME);
+			f.Pass();
+		}
+	};
+}
+
+TEST("health share: Bob's copy, legendary only in his game, mutates at half health; the heal is taken back, and his shots kill the host's raider")
+{
+	for (const bool afterReport : { false, true }) {
+		MutatedCopy m{ false, afterReport };
+		CHECK(Near(m.f.hostGame.health, 45.0f));  // Bob's shot reached the raider, the heal did not
+		CHECK(Near(m.f.bobGame.health, 45.0f));   // and his copy stands where the raider does
+		CHECK(Near(m.f.bobGame.takenBack, 55.0f));
+		CHECK(m.f.bobGame.givenBack == 0.0f);
+
+		m.f.bobGame.Shoot(45.0f);
+		m.f.Pass();
+		CHECK(m.f.hostGame.health < 0.6f);  // the raider dies of Bob's shots, as many as a plain one takes
+	}
+}
+
+TEST("health share: up to 0.9.2 the mutation's heal stood on Bob's copy: his shot healed it to full while the host's raider stayed at half")
+{
+	MutatedCopy m{ true, true };
+	CHECK(Near(m.f.hostGame.health, 45.0f));
+	CHECK(Near(m.f.bobGame.health, 100.0f));  // "my hit healed it", until the host's raider changed again
+	m.f.bobGame.Shoot(10.0f);
+	m.f.Pass();
+	CHECK(Near(m.f.bobGame.health, 35.0f));  // then it jumped down to the host's
 }

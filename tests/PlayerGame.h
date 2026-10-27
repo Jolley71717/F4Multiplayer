@@ -334,7 +334,7 @@ namespace TestGame
 			const auto answered = [&] {
 				return std::ranges::any_of(got, [](const auto& a_packet) { return a_packet[0] == Type(MT::kWelcome) || a_packet[0] == Type(MT::kReject); });
 			};
-			for (const auto until = std::chrono::steady_clock::now() + 2s; !answered() && std::chrono::steady_clock::now() < until;) {
+			for (const auto until = std::chrono::steady_clock::now() + 30s; !answered() && std::chrono::steady_clock::now() < until;) {
 				auto more = f.fake->Take(peer);
 				got.insert(got.end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
 				if (!answered()) {

@@ -191,7 +191,7 @@ namespace
 	{
 		return a.refId == b.refId && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
 		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.direction == b.direction &&
-		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch;
+		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch && a.sentMs == b.sentMs;
 	}
 }
 
@@ -508,10 +508,11 @@ TEST("protocol: an NPC state carries its owner's graph's gait and clip rate, a p
 		REQUIRE(out->size() == 1);
 		CHECK(SameActorState(out->front(), in));
 	}
-	// The layout is unchanged by what the gait means: one state is still 39 bytes after the type and count.
+	// The layout is unchanged by what the gait means: one state is 43 bytes after the type and count (39 before the
+	// owner's clock, sentMs, came).
 	const auto one = Encode(std::vector<ActorState>{ MakeActorState(0) }, MT::kActorStates);
 	const auto two = Encode(std::vector<ActorState>{ MakeActorState(0), MakeActorState(1) }, MT::kActorStates);
-	CHECK(two.size() - one.size() == 39);
+	CHECK(two.size() - one.size() == 43);
 }
 
 TEST("protocol: ActorStates round trip with both message types")
@@ -521,10 +522,13 @@ TEST("protocol: ActorStates round trip with both message types")
 		for (std::uint32_t i = 0; i < MAX_ACTORS_PER_PACKET; ++i) {
 			in.push_back(MakeActorState(i));
 		}
-		// One whose owner's copy aims at nothing, and ones aiming straight up and down.
+		// One whose owner's copy aims at nothing, and ones aiming straight up and down; one from an older build that
+		// does not say when it was sampled, and one sampled as the owner's clock wraps.
 		in[1].aimPitch = NO_AIM;
 		in[2].aimPitch = 90;
 		in[3].aimPitch = -90;
+		in[4].sentMs = 0;
+		in[5].sentMs = 0xFFFFFFFFu;
 		const auto packet = Encode(in, type);
 		CHECK(PeekType(packet) == type);
 		const auto out = DecodeActorStates(packet);
@@ -1030,8 +1034,9 @@ TEST("protocol: PlayerHit checks the attacker against byPlayer")
 	// Hit by a player: there is no NPC attacker.
 	CHECK(!ok(10.0f, true, REF_A));
 	CHECK(!ok(10.0f, true, PLAYER_REF_ID));
-	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id).
-	CHECK(!ok(10.0f, false, 0));
+	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id), or none at
+	// all: one the sender's game can't name on the wire (of a plugin the other side lacks: FormTranslate).
+	CHECK(ok(10.0f, false, 0));
 	CHECK(!ok(10.0f, false, PLAYER_REF_ID));
 	CHECK(ok(10.0f, false, RUNTIME_REF));
 	CHECK(!ok(10.0f, false, 0xFF000000));
@@ -1807,4 +1812,74 @@ TEST("protocol: a string cut to its length on the wire never ends inside a UTF-8
 	CHECK(Protocol::Utf8Prefix("abc", 2) == "ab");
 	CHECK(Protocol::Utf8Prefix("\xC3\xA9", 1).empty());
 	CHECK(Protocol::Utf8Prefix("", 0).empty());
+}
+
+// A gift (src/game/GiftBook.h) is a drop with the container it was put in: the holder travels with it, a plugin's
+// reference every game has, and a gift is one item. A drop with no holder lies loose, as before.
+TEST("protocol: a gift round trips with its holder; one whose holder isn't a plugin's reference, or of more than one item, is refused")
+{
+	Protocol::DroppedItem gift{ .nonce = 7, .base = 0x0004F46A, .count = 1, .templateIndex = 2, .mods = { { 0x0004F46B, 0, 0 } }, .worldspace = 0x3C, .holder = 0x0001D9F6 };
+	for (const auto type : { Protocol::MessageType::kReportDrop, Protocol::MessageType::kDropPlaced }) {
+		const auto read = Protocol::DecodeDroppedItem(Protocol::Encode(gift, type));
+		REQUIRE(read);
+		CHECK(*read == gift);
+	}
+	auto loose = gift;
+	loose.holder = 0;
+	loose.count = 30;
+	CHECK(Protocol::DecodeDroppedItem(Protocol::Encode(loose, Protocol::MessageType::kReportDrop)) == loose);
+
+	auto runtime = gift;
+	runtime.holder = 0xFF001234;  // a container built in a settlement: no other game has it
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(runtime, Protocol::MessageType::kReportDrop)));
+	auto player = gift;
+	player.holder = Protocol::PLAYER_REF_ID;
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(player, Protocol::MessageType::kReportDrop)));
+	auto stack = gift;
+	stack.count = 2;  // each item put in is a gift of its own
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(stack, Protocol::MessageType::kReportDrop)));
+
+	// In a list too, after the loose ones.
+	const Protocol::DropList list{ true, { loose, gift } };
+	const auto               listed = Protocol::DecodeDropList(Protocol::Encode(list));
+	REQUIRE(listed);
+	CHECK(*listed == list);
+}
+
+// The session files from before gifts held their drops without a holder (SessionFile::GIFTS): their codec stays, and
+// every drop it reads lies loose. The two never read as each other.
+TEST("protocol: a drop list of the layout before holders reads as loose drops, and neither layout reads as the other")
+{
+	Protocol::DroppedItem drop{ .dropId = 3, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .takerId = 5 };
+	const Protocol::DropList list{ true, { drop, drop } };
+	const auto               old = Protocol::DecodeDropListBeforeHolders(Protocol::EncodeBeforeHolders(list));
+	REQUIRE(old);
+	CHECK(*old == list);
+	CHECK(!Protocol::DecodeDropList(Protocol::EncodeBeforeHolders(list)));
+	CHECK(!Protocol::DecodeDropListBeforeHolders(Protocol::Encode(list)));
+	CHECK(Protocol::EncodeBeforeHolders(Protocol::DropList{}) == Protocol::Encode(Protocol::DropList{}));  // nothing to hold
+}
+
+// The host's bContainerGifts is welcome flag bit 64, alone: no other rule moves with it, and a welcome without it is off.
+TEST("protocol: the container gifts rule is the welcome's flag bit 64")
+{
+	Protocol::Welcome welcome{ 9, 0x1122334455667788ull, false, true, {} };
+	CHECK(!Protocol::DecodeWelcome(Protocol::Encode(welcome))->rules.containerGifts);
+	welcome.rules.containerGifts = true;
+	const auto bytes = Protocol::Encode(welcome);
+	const auto read = Protocol::DecodeWelcome(bytes);
+	REQUIRE(read);
+	CHECK(read->rules == welcome.rules);
+	auto off = welcome;
+	off.rules.containerGifts = false;
+	const auto plain = Protocol::Encode(off);
+	REQUIRE(plain.size() == bytes.size());
+	std::size_t differ = 0;
+	for (std::size_t i = 0; i < bytes.size(); ++i) {
+		if (bytes[i] != plain[i]) {
+			++differ;
+			CHECK((bytes[i] ^ plain[i]) == 64);
+		}
+	}
+	CHECK(differ == 1);
 }

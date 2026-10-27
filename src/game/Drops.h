@@ -57,7 +57,17 @@ namespace Drops
 	// workbench): said once a session, with how to give it instead.
 	void OnKeptInContainer();
 
-	// Messages from the server.
+	// Gifts' share (src/game/GiftBook.h: a weapon or armor given through a container is a drop too, its holder set). Our
+	// record of the session's transfers (any thread); whether our game can make the item as it is; and one of it (count 1)
+	// put in a_ref's inventory, made as our copies are (its mods, condition and name; main thread).
+	void               RecordMade(std::uint64_t a_nonce);
+	[[nodiscard]] bool HasMade(std::uint64_t a_nonce);
+	void               RecordTook(std::uint32_t a_dropId);
+	[[nodiscard]] bool HasTaken(std::uint32_t a_dropId);
+	[[nodiscard]] bool CanPlace(const Protocol::DroppedItem& a_item);
+	bool               AddOneTo(RE::TESObjectREFR* a_ref, const Protocol::DroppedItem& a_item);
+
+	// Messages from the server (a gift's are Gifts', and never come here: Session).
 	void OnPlaced(const Protocol::DroppedItem& a_drop);
 	void OnGone(const Protocol::DropGone& a_gone);
 	void OnList(const Protocol::DropList& a_list);

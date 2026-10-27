@@ -1,0 +1,207 @@
+#pragma once
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+// A friend's hit on their copy of an NPC our game runs comes as the damage it did (kActorDamaged: a fraction of the
+// NPC's maximum), for our game to take off the NPC (WorldSync::ApplyRemoteDamage). Up to 0.9.2 what could not be taken
+// off at once was dropped: our game on a loading screen or in the opening, the NPC not loaded here yet (the friend has
+// its cell loaded, ours not), or the server's word that we run it not here yet (a takeover's claim leaves a frame
+// ahead of the hit's damage; after a load our table is empty until the owners come again). The friend's copy had lost
+// the health, our NPC had not, and our next health report (HealthShare) set the copy back up: as the friend saw it,
+// their shot healed the NPC, and only the game that ran it could hurt it.
+//
+// So such damage is held, summed per NPC, and taken off as soon as it can be: every frame while in the world, before
+// the NPC's health is shared, so the first reading after a load has it. Held for up to HOLD of time in the world (a
+// loading screen's length doesn't count: the friend's hits keep landing on their copy meanwhile), then dropped. What
+// can never be taken off (no such actor here, the NPC dead here or dead for the session, another game running it) is
+// dropped at once; every drop is counted and logged. Pure, so it can be tested without the game.
+namespace DamageHold
+{
+	using Clock = std::chrono::steady_clock;
+
+	constexpr Clock::duration HOLD = std::chrono::seconds{ 15 };
+	constexpr std::size_t     MAX_HELD = 256;  // NPCs held for at once (a guard: a flood of damage for NPCs we never load)
+
+	// What our game finds of the NPC the damage names, as WorldSync reads it. Nothing of the actor is read out of the
+	// world (a_inWorld false: only whether the id names anything of ours).
+	struct Facts
+	{
+		bool          known = false;       // the id names an actor every game has, or a runtime NPC of ours (a spawn)
+		bool          inWorld = false;     // our game is in the world, out of the opening (WorldSync::CanApply)
+		bool          deadHere = false;    // dead in our game
+		bool          ledgerDead = false;  // dead for the session, as our game knows it (SessionDeaths)
+		std::uint32_t local = 0;           // our player's id in the session (0: none)
+		std::uint32_t owner = 0;           // who the server says runs the NPC, as our game last heard (0: nobody, or not yet)
+		bool          loaded = false;      // loaded here with 3D, in a cell
+		bool          hasHealth = false;   // its maximum health is above 0
+	};
+
+	enum class Verdict : std::uint8_t
+	{
+		kApply,
+		kHold,
+		kDrop,
+	};
+
+	// Why the damage was applied, held or dropped.
+	enum class Why : std::uint8_t
+	{
+		kApplied,
+		kNotInWorld,  // held: a loading screen, or the opening
+		kNoOwnerYet,  // held: the server hasn't said who runs it (our claim's answer, or the owners after a load, on their way)
+		kNotLoaded,   // held: not loaded here yet
+		kNoActor,     // dropped: no such actor here
+		kDeadHere,    // dropped: dead in our game
+		kLedgerDead,  // dropped: dead for the session
+		kNotOurs,     // dropped: another game runs it, and takes it off there
+		kNoHealth,    // dropped: no maximum health to take a fraction of
+		kExpired,     // dropped: held for HOLD without a chance to apply it
+	};
+
+	struct Decision
+	{
+		Verdict verdict = Verdict::kDrop;
+		Why     why = Why::kNoActor;
+	};
+
+	// What to do with a friend's damage on the NPC now. What can't be applied yet is held; what can never be is dropped.
+	constexpr Decision Decide(const Facts& a_facts)
+	{
+		if (!a_facts.known) {
+			return { Verdict::kDrop, Why::kNoActor };
+		}
+		if (!a_facts.inWorld) {
+			return { Verdict::kHold, Why::kNotInWorld };
+		}
+		if (a_facts.deadHere) {
+			return { Verdict::kDrop, Why::kDeadHere };
+		}
+		if (a_facts.ledgerDead) {
+			return { Verdict::kDrop, Why::kLedgerDead };
+		}
+		if (a_facts.local == 0 || (a_facts.owner != 0 && a_facts.owner != a_facts.local)) {
+			return { Verdict::kDrop, Why::kNotOurs };
+		}
+		if (a_facts.owner == 0) {
+			return { Verdict::kHold, Why::kNoOwnerYet };
+		}
+		if (!a_facts.loaded) {
+			return { Verdict::kHold, Why::kNotLoaded };
+		}
+		if (!a_facts.hasHealth) {
+			return { Verdict::kDrop, Why::kNoHealth };
+		}
+		return { Verdict::kApply, Why::kApplied };
+	}
+
+	constexpr const char* Name(Why a_why)
+	{
+		switch (a_why) {
+		case Why::kApplied:
+			return "applied";
+		case Why::kNotInWorld:
+			return "our game is not in the world";
+		case Why::kNoOwnerYet:
+			return "the server hasn't said who runs it yet";
+		case Why::kNotLoaded:
+			return "it isn't loaded here";
+		case Why::kNoActor:
+			return "no such actor here";
+		case Why::kDeadHere:
+			return "it is dead here";
+		case Why::kLedgerDead:
+			return "the session has it dead";
+		case Why::kNotOurs:
+			return "another game runs it";
+		case Why::kNoHealth:
+			return "it has no health to take from";
+		case Why::kExpired:
+			return "held too long";
+		}
+		return "?";
+	}
+
+	// Damage held for one NPC.
+	struct Held
+	{
+		std::uint32_t     id = 0;
+		float             fraction = 0.0f;  // of the NPC's maximum, summed over the hits held
+		Why               why = Why::kNotInWorld;  // why it was last held
+		Clock::time_point since{};                 // held since (restarted when the world comes back: BackInWorld)
+	};
+
+	class Book
+	{
+	public:
+		// Holds a_fraction for the NPC, on top of what is held for it already. False when the book is full (dropped).
+		bool Hold(std::uint32_t a_id, float a_fraction, Why a_why, Clock::time_point a_now)
+		{
+			auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				if (entries.size() >= MAX_HELD) {
+					return false;
+				}
+				it = entries.emplace(a_id, Held{ a_id, 0.0f, a_why, a_now }).first;
+				++held;
+			}
+			it->second.fraction += a_fraction;
+			it->second.why = a_why;
+			return true;
+		}
+
+		// Tries everything held again: a_try(held) applies or drops it and returns true, or leaves it held (it may change
+		// why) and returns false.
+		template <class Try>
+		void Retry(Try&& a_try)
+		{
+			std::erase_if(entries, [&](auto& a_entry) { return a_try(a_entry.second); });
+		}
+
+		// What is held for the NPC (nothing: none held).
+		[[nodiscard]] std::optional<Held> HeldFor(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() ? std::optional{ it->second } : std::nullopt;
+		}
+
+		// The world came back (a loading screen ended, the opening is over): the hold starts afresh for everything held,
+		// since the time out of the world doesn't count.
+		void BackInWorld(Clock::time_point a_now)
+		{
+			for (auto& [id, entry] : entries) {
+				entry.since = a_now;
+			}
+		}
+
+		// Everything held for HOLD or longer, taken out: dropped, each counted.
+		std::vector<Held> Expire(Clock::time_point a_now)
+		{
+			std::vector<Held> out;
+			std::erase_if(entries, [&](const auto& a_entry) {
+				if (a_now - a_entry.second.since < HOLD) {
+					return false;
+				}
+				out.push_back(a_entry.second);
+				return true;
+			});
+			expired += static_cast<std::uint32_t>(out.size());
+			return out;
+		}
+
+		[[nodiscard]] std::size_t   Size() const { return entries.size(); }
+		[[nodiscard]] std::uint32_t HeldCount() const { return held; }     // NPCs ever held for
+		[[nodiscard]] std::uint32_t Expired() const { return expired; }  // ... of them dropped unapplied
+		void                        Clear() { entries.clear(); }
+
+	private:
+		std::unordered_map<std::uint32_t, Held> entries;
+		std::uint32_t                           held = 0;
+		std::uint32_t                           expired = 0;
+	};
+}
