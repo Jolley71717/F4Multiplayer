@@ -242,23 +242,32 @@ namespace AutoSaveRules
 	// bSaveOnRest, bSaveOnWait and bSaveOnPause ("bSaveOnTravel=1"), not under [SaveGame]. Its collections key a
 	// setting "name:Section", and a lookup that guesses the section finds nothing: the first build asked for
 	// "bSaveOnTravel:SaveGame", took the null for "off" and never made a travel autosave. So the setting is found by
-	// its name in any section, [MAIN] first, and one that is not there at all is the game's default (on), not off.
+	// its name in any section, [MAIN] first, and one that is not there at all is the game's default (on), not off. The
+	// Prefs collection holds it with no section at all ("bSaveOnTravel"), so the bare name counts too.
 	inline constexpr std::string_view TRAVEL_SETTING = "bSaveOnTravel";
 	inline constexpr std::string_view TRAVEL_SECTION = "MAIN";
 	inline constexpr bool             TRAVEL_DEFAULT = true;  // the game's own: all four bSaveOn... settings ship on
 
 	// Which of a_keys ("name:Section" as the game keys an ini setting) is a_name: the one in a_section if there is one,
-	// else the first in another section. Name and section compare without regard to case; a key with no section, or
-	// only a name that merely starts with a_name, is not it. nullopt: no such setting.
+	// else one with no section that is exactly a_name (how the Prefs collection keys it), else the first in another
+	// section. Name and section compare without regard to case; a name that merely starts with a_name is not it.
+	// nullopt: no such setting.
 	inline std::optional<std::size_t> FindSetting(const std::vector<std::string_view>& a_keys, std::string_view a_name, std::string_view a_section)
 	{
 		const auto same = [](std::string_view a_a, std::string_view a_b) {
 			return std::ranges::equal(a_a, a_b, [](unsigned char a_x, unsigned char a_y) { return std::tolower(a_x) == std::tolower(a_y); });
 		};
+		std::optional<std::size_t> bare;
 		std::optional<std::size_t> other;
 		for (std::size_t i = 0; i < a_keys.size(); ++i) {
 			const auto colon = a_keys[i].find(':');
-			if (colon == std::string_view::npos || !same(a_keys[i].substr(0, colon), a_name)) {
+			if (colon == std::string_view::npos) {
+				if (!bare && same(a_keys[i], a_name)) {
+					bare = i;
+				}
+				continue;
+			}
+			if (!same(a_keys[i].substr(0, colon), a_name)) {
 				continue;
 			}
 			if (same(a_keys[i].substr(colon + 1), a_section)) {
@@ -268,15 +277,15 @@ namespace AutoSaveRules
 				other = i;
 			}
 		}
-		return other;
+		return bare ? bare : other;
 	}
 
 	// The value of a yes-or-no key in an ini file's text, as the player's Fallout4Prefs.ini holds it ("[MAIN]" then
 	// "bSaveOnTravel=1"): section and key without regard to case, spaces around the key and the value ignored, a line
 	// starting with ; or # a comment, CRLF or LF, a leading byte order mark. The first of the key in its section counts, as
 	// Windows reads an ini. 0 and false are off, any other number and true are on; a key that is not there, or holds
-	// anything else, is nullopt. The game's setting collections do not hold this setting (the rig: neither the Prefs
-	// collection nor the ini's has it under any section), so the file is what says what the player chose.
+	// anything else, is nullopt. The game's Prefs collection holds this setting under its bare name, which is found
+	// first; the file is the fallback when the collection does not give it.
 	inline std::optional<bool> IniBool(std::string_view a_text, std::string_view a_section, std::string_view a_key)
 	{
 		const auto lower = [](std::string_view a_s) {
