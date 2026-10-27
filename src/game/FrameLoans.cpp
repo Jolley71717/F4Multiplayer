@@ -68,8 +68,12 @@ namespace FrameLoans
 			std::uint32_t       borrower = 0;
 			bool                granted = false;
 			std::vector<Source> kit;
+			Clock::time_point   since{};  // offered then
 		};
 		std::unordered_map<std::uint32_t, Lent> lent;
+		// An offer the server never confirmed in this long (its kFrameLent lost, or the ask ended unheard) is forgotten: our
+		// frame is ours to use again. The server confirms at once, or tells us the ask ended.
+		constexpr auto LEND_WAIT = std::chrono::seconds(15);
 
 		// Our frame to move to where its borrower left it, once that spot is in our sight (NpcSync::MoveOwnFrame).
 		struct Move
@@ -823,7 +827,7 @@ namespace FrameLoans
 			}
 		}
 		if (answer.refusal == Protocol::LoanRefusal::kNone) {
-			lent[a_ask.spawnId] = { .local = local, .borrower = a_ask.playerId, .granted = false, .kit = std::move(sources) };
+			lent[a_ask.spawnId] = { .local = local, .borrower = a_ask.playerId, .granted = false, .kit = std::move(sources), .since = Clock::now() };
 		}
 		REX::INFO("FrameLoans: player {} asks for our frame {:08X} ({:08X}): {}", a_ask.playerId, a_ask.spawnId, local,
 			answer.refusal == Protocol::LoanRefusal::kNone ? std::format("lent, with {} items", answer.kit.size()) : std::format("refused ({})", static_cast<int>(answer.refusal)));
@@ -963,9 +967,16 @@ namespace FrameLoans
 			const FrameLoan::WearFacts facts{ .copyThere = copy && !copy->IsDeleted(), .in = PlayerIn(borrowed.copy), .inArmor = Equipment::InPowerArmor(Player()) };
 			switch (FrameLoan::NextStep(borrowed.stage, now - borrowed.since, facts)) {
 			case FrameLoan::Step::kGiveUp:
-				REX::INFO("FrameLoans: player {} never answered our ask for frame {:08X}", borrowed.owner, borrowed.spawnId);
-				borrowed = {};
-				break;
+				{
+					REX::INFO("FrameLoans: player {} never answered our ask for frame {:08X}", borrowed.owner, borrowed.spawnId);
+					// The server is told the ask is over (it tells the owner's game): a late grant is then dropped there.
+					Protocol::FrameReturn back;
+					back.spawnId = borrowed.spawnId;
+					back.ended = true;
+					outgoing.push_back(Protocol::Encode(back, Protocol::MessageType::kReturnFrame));
+					borrowed = {};
+					break;
+				}
 			case FrameLoan::Step::kWorn:
 				if (borrowed.stage == Stage::kLent) {
 					++worn;
@@ -991,6 +1002,14 @@ namespace FrameLoans
 				break;
 			}
 		}
+		// Ours offered and never confirmed: ours again.
+		std::erase_if(lent, [&](const auto& a_entry) {
+			if (a_entry.second.granted || now - a_entry.second.since < LEND_WAIT) {
+				return false;
+			}
+			REX::INFO("FrameLoans: our frame {:08X} offered to player {} was never confirmed; ours again", a_entry.first, a_entry.second.borrower);
+			return true;
+		});
 		// Ours given back while it had no inventory here: what came back put on it once it has.
 		std::erase_if(backs, [&](const PendingBack& a_back) {
 			if (PutBack(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_back.local), a_back.kit, a_back.items)) {

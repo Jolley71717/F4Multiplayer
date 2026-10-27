@@ -290,3 +290,50 @@ TEST("frame loans: the borrower leaving or loading a save, and the owner's spawn
 		CHECK(Returned(got)[0].ended);
 	}
 }
+
+TEST("frame loans: an ask that ends before it is granted is told to the owner's game, so it forgets the frame it was to lend")
+{
+	const auto askOver = [](Session& a_s) {
+		const auto back = Returned(Received(a_s.f, 1));
+		REQUIRE(back.size() == 1);
+		CHECK(back[0].ended);
+		CHECK(back[0].spawnId == SPAWN);
+		CHECK(back[0].ownerId == a_s.alice);
+		CHECK(back[0].borrowerId == a_s.bob);
+	};
+	{
+		// Bob gives up waiting (his game sends an ended return for it).
+		Session s;
+		s.f.fake->Deliver(2, Ask(SPAWN));
+		REQUIRE(Asked(Received(s.f, 1)).size() == 1);
+		s.f.fake->Deliver(2, Protocol::Encode(Protocol::FrameReturn{ 0, 0, SPAWN, true }, MT::kReturnFrame));
+		askOver(s);
+		CHECK(Returned(Received(s.f, 3)).empty());  // nobody else heard of the ask: nobody else hears it end
+		// Alice's late grant is dropped, and Bob may ask again.
+		s.f.fake->Deliver(1, Lend(s.bob, SPAWN));
+		CHECK(Lent(Received(s.f, 2)).empty());
+		s.f.fake->Deliver(2, Ask(SPAWN));
+		CHECK(Asked(Received(s.f, 1)).size() == 1);
+	}
+	{
+		// Bob loads a save while he waits.
+		Session s;
+		s.f.fake->Deliver(2, Ask(SPAWN));
+		REQUIRE(Asked(Received(s.f, 1)).size() == 1);
+		s.f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{}));
+		askOver(s);
+	}
+	{
+		// Bob leaves while he waits.
+		Session s;
+		s.f.fake->Deliver(2, Ask(SPAWN));
+		REQUIRE(Asked(Received(s.f, 1)).size() == 1);
+		s.f.fake->Drop(2);
+		Packets got;
+		REQUIRE(Await(s.f, 1, MT::kFrameReturned, got));
+		const auto back = Returned(got);
+		REQUIRE(back.size() == 1);
+		CHECK(back[0].ended);
+		CHECK(back[0].borrowerId == s.bob);
+	}
+}
