@@ -188,11 +188,14 @@ namespace Equipment
 	// RedrawContainerMenu. Once, at load.
 	void InstallFrameGate();
 
-	// Any thread: the open container menu draws both its lists again on its next frame (on the UI's thread), after an item
-	// was put in or taken out from outside the menu, which it doesn't draw by itself until the player's next move in it.
-	// Nothing if no container menu is open. ContainerMenuRedraws: how many it drew (for `net status`).
+	// Any thread: the open container menu draws both its lists again (on the UI's thread, in its own code: its next frame or
+	// an update message posted to it, whichever is first), after an item was put in or taken out from outside the menu,
+	// which it doesn't draw by itself until the player's next move in it. Waits while its quantity box is up. A request
+	// made while none is open is dropped as the next one shows. ContainerMenuRedraws: how many it drew;
+	// DescribeContainerRedraw: that and each step's count (`gifts`).
 	void          RedrawContainerMenu();
 	std::uint32_t ContainerMenuRedraws();
+	std::string   DescribeContainerRedraw();
 
 	// What that hook mended and logged, for the paframes dev command.
 	std::string DescribeFrameMends();

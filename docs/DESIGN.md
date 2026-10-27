@@ -1144,11 +1144,13 @@ container's menu open, and only then.
   the player switches between them), never for an item put in or taken out from outside it: a copy added just after
   it opened (as every copy is) and a take granted or held back while it was open showed only at the player's next
   key press (rig, #180). Every add and remove Gifts makes asks the open menu to draw both lists again
-  (`Equipment::RedrawContainerMenu`): the container menu's frame (its vtable's AdvanceMovie, hooked beside its
-  messages, on the UI's thread in the menu's own code) calls the menu's own `UpdateList` for each side, as the engine
-  does after a transfer, at most once a frame. Not while the menu's quantity box is up (the transfer it ends in names
-  its item by its place in the list, which a redraw can change): the request waits for the box to close. A request
-  made of a menu that closes isn't owed to the next. `net status` counts them (`redraws=`).
+  (`Equipment::RedrawContainerMenu`): the menu's own code, on the UI's thread, calls its own `UpdateList` for each
+  side, as the engine does after a transfer, from whichever comes first of its frame (its vtable's AdvanceMovie,
+  hooked beside its messages) and an update message posted to it through the UI's queue (the way the plugin closes
+  the menu), which lands in its message hook; at most once a request. Not while the menu's quantity box is up (the
+  transfer it ends in names its item by its place in the list, which a redraw can change): the request waits for the
+  box to close. A request is dropped as a menu shows or hides: it isn't owed to the next. `net status` counts each
+  step (`redraws=` and the rest of `DescribeContainerRedraw`), and the log has the first few of each.
 - **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
   before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
   it: it lies there again. Only that character's saves: a player who starts over as a new character (or a coc one

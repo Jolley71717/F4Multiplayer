@@ -430,11 +430,11 @@ namespace Gifts
 		const auto  viewing = client.Viewing();
 		return std::format("gifts={} viewing={} copies={} claims={} puts={} lying={} views={} put={} notGiven={} overflow={} reported={} refused={} given={} kept={} "
 						   "lateOffers={} shown={} unplaceable={} notGear={} addUndone={} copyMissing={} taken={} unsignaled={} unheld={} received={} giveFailed={} takenFirst={} givenBack={} takenBack={} "
-						   "dupRisk={} inboxDropped={} ownRefused={} redraws={}",
+						   "dupRisk={} inboxDropped={} ownRefused={} {}",
 			client.Rule() ? "on" : "off", viewing ? std::format("{:08X}", *viewing) : "-", client.Copies(), client.Claims(), client.Puts(), client.Lying().size(), s.views,
 			s.puts, s.notGiven, s.overflow, s.reported, s.refused, s.given, s.kept, s.lateOffers, s.shown, s.unplaceable, s.notGear, s.addUndone, s.copyMissing, s.taken,
 			s.unsignaled, s.unheld, s.received,
-			s.giveFailed, s.takenFirst, s.givenBack, s.takenBack, s.dupRisk, counts.inboxDropped, counts.refusedOwn, Equipment::ContainerMenuRedraws());
+			s.giveFailed, s.takenFirst, s.givenBack, s.takenBack, s.dupRisk, counts.inboxDropped, counts.refusedOwn, Equipment::DescribeContainerRedraw());
 	}
 
 	std::string Command(std::string_view a_args)
