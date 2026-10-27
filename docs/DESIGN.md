@@ -1553,7 +1553,11 @@ before the first whose percent is below the object's.
   isn't shared. A deleted reference is left out, but for one the engine deleted as it destroyed it: an explosive
   barrel's last stage disables it and marks it deleted and destroyed at once (seen on the rig), so leaving out every
   deleted reference lost the very stage to report, and the shooter's explosion watch reported its blast as a plain
-  explosion.
+  explosion. The engine deletes any object whose stage takes it away, but only a stage flagged destroyed also marks it
+  destroyed, so a deleted reference is read when it is destroyed or a stage it passed takes it away
+  (`DestructionRules::DeletedByDestruction`): a gas canister whose last stage only takes it away is reported too. A
+  hit on something not shared logs why and the base's form type and name (`hit on ... is not shared: ...`, the first
+  twenty; `destruct probe <ref>` says it too).
 - The server keeps the lowest health of each and destroyed for good (a wreck is never mended), relays only news (a
   report another game's already took further is dropped), and saves the table with the session (layout 34). A report
   names where its object stands (its cell or worldspace and position; a relay and the session file don't), and is

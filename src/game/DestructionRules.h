@@ -66,6 +66,22 @@ namespace DestructionRules
 		return a_stages.size();
 	}
 
+	// Whether the stages an object has passed take it away: the engine disables it then and marks it deleted.
+	[[nodiscard]] inline bool TakenAway(std::span<const Stage> a_stages, std::size_t a_passed)
+	{
+		const auto end = a_stages.begin() + static_cast<std::ptrdiff_t>((std::min)(a_passed, a_stages.size()));
+		return std::any_of(a_stages.begin(), end, [](const Stage& a_stage) { return (a_stage.flags & STAGE_DISABLE) != 0; });
+	}
+
+	// Whether a deleted reference is still the destruction's to share: the engine deleted it itself, as its stage took it
+	// away (an explosive barrel's, a gas canister's), which is the very stage to report. Any other deleted reference (a
+	// script's delete, a picked-up item) is not. Not every such stage also marks the object destroyed (STAGE_DESTROY is the
+	// record's own flag): going by that flag alone lost the stage of an object whose last stage only takes it away.
+	[[nodiscard]] inline bool DeletedByDestruction(std::span<const Stage> a_stages, std::size_t a_passed, bool a_destroyed)
+	{
+		return a_destroyed || TakenAway(a_stages, a_passed);
+	}
+
 	// An object as a game has it.
 	struct Copy
 	{

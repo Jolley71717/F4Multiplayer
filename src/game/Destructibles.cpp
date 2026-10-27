@@ -98,18 +98,35 @@ namespace Destructibles
 			Copy                                      copy;
 		};
 
-		std::optional<Object> Read(RE::TESObjectREFR* a_ref)
+		// A reference's destruction, or why it has none (a_why, for the log and the dev channel's probe).
+		std::optional<Object> Read(RE::TESObjectREFR* a_ref, const char** a_why = nullptr)
 		{
-			// A deleted reference is left alone, but for one the engine deleted itself when it was destroyed: a barrel's
-			// last stage disables it, then marks it deleted and destroyed (seen on the rig), and that is the stage to report.
-			if (!a_ref || !Protocol::IsShareableRef(a_ref->GetFormID()) || (a_ref->IsDeleted() && (a_ref->GetFormFlags() & DESTROYED_FLAG) == 0)) {
-				return std::nullopt;
+			const auto refuse = [&](const char* a_reason) {
+				if (a_why) {
+					*a_why = a_reason;
+				}
+				return std::optional<Object>{};
+			};
+			if (!a_ref) {
+				return refuse("no such reference");
+			}
+			if (!Protocol::IsShareableRef(a_ref->GetFormID())) {
+				return refuse("made at runtime, not placed by a plugin");
+			}
+			if (a_ref->As<RE::Actor>()) {
+				return refuse("an actor");
 			}
 			const auto base = a_ref->GetObjectReference();
 			const auto form = DestructibleOf(base);
 			const auto data = form ? form->data : nullptr;
-			if (!data || data->numStages <= 0 || !data->stagesArray || data->health == 0 || a_ref->As<RE::Actor>()) {
-				return std::nullopt;
+			if (!data) {
+				return refuse("its base has no destruction data");
+			}
+			if (data->numStages <= 0 || !data->stagesArray) {
+				return refuse("its base has no destruction stages");
+			}
+			if (data->health == 0) {
+				return refuse("its base has 0 health");
 			}
 			Object out;
 			out.form = form;
@@ -117,7 +134,7 @@ namespace Destructibles
 			for (std::int8_t i = 0; i < data->numStages; ++i) {
 				const auto stage = data->stagesArray[i];
 				if (!stage) {
-					return std::nullopt;
+					return refuse("a destruction stage is missing");
 				}
 				out.engineStages.push_back(stage);
 				out.stages.push_back({ static_cast<std::uint8_t>(stage->healthPercentage), static_cast<std::uint8_t>(stage->flags),
@@ -125,6 +142,13 @@ namespace Destructibles
 			}
 			out.copy.health = HealthOf(a_ref->extraList.get());
 			out.copy.destroyed = (a_ref->GetFormFlags() & DESTROYED_FLAG) != 0;
+			// A deleted reference is left alone, but for one the engine deleted itself as its stage took it away: a barrel's
+			// last stage disables it, then marks it deleted and destroyed (seen on the rig), and a gas canister's may only
+			// take it away without marking it destroyed. That is the stage to report.
+			if (a_ref->IsDeleted() &&
+				!DestructionRules::DeletedByDestruction(out.stages, DestructionRules::Passed(out.stages, out.copy.health, out.maximum), out.copy.destroyed)) {
+				return refuse("deleted, not by its destruction");
+			}
 			return out;
 		}
 
@@ -156,6 +180,7 @@ namespace Destructibles
 		struct Counts
 		{
 			std::uint32_t hits = 0;
+			std::uint32_t hitsRefused = 0;  // hits on something not shared (logged, the first twenty)
 			std::uint32_t reported = 0;
 			std::uint32_t reportedExplosions = 0;
 			std::uint32_t applied = 0;
@@ -386,8 +411,18 @@ namespace Destructibles
 			return;
 		}
 		for (const auto id : hits) {
-			const auto object = Read(Lookup(id));
+			const char* why = nullptr;
+			const auto  ref = Lookup(id);
+			const auto  object = Read(ref, &why);
 			if (!object) {
+				// A shot at something that may blow up and is not shared: the reason and the base's type, for the rig.
+				if (counts.hitsRefused < 20) {
+					++counts.hitsRefused;
+					const auto base = ref ? ref->GetObjectReference() : nullptr;
+					const auto name = base ? base->As<RE::TESFullName>() : nullptr;
+					REX::INFO("Destructibles: hit on {:08X} (base {:08X}, form type {}, \"{}\") is not shared: {}", id, base ? base->GetFormID() : 0,
+						base ? static_cast<int>(base->GetFormType()) : -1, name && name->GetFullName() ? name->GetFullName() : "", why ? why : "?");
+				}
 				continue;
 			}
 			++counts.hits;
@@ -583,9 +618,10 @@ namespace Destructibles
 			if (!ref) {
 				return "error: no such reference";
 			}
-			const auto object = Read(ref);
+			const char* why = nullptr;
+			const auto  object = Read(ref, &why);
 			if (!object) {
-				return std::format("{:08X}: not a destructible object (an actor, one made at runtime, or no stages)", id);
+				return std::format("{:08X}: not a destructible object: {}", id, why ? why : "?");
 			}
 			return line(ref, *object) + std::format(" watched={} waiting={}", watch.Contains(id), waiting.Find(id) != nullptr);
 		}
