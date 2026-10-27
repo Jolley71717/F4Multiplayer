@@ -1378,9 +1378,12 @@ namespace RemotePlayers
 		bool IsSeatBase(const RE::TESBoundObject* a_base)
 		{
 			// A plain seat or bed only, whatever a friend's game names: never a terminal, a workbench or a station (see
-			// StandInSeat.h).
+			// StandInSeat.h), and never a power armor frame, which is furniture of the same kind: a stand-in put into one
+			// would hold its marker (TESFurniture::Activate turns our player away without a word while another actor uses
+			// it) and be switched into the armor by the engine. Their status names none (StandInSeat::Tell); one named by
+			// an older or another game's build is refused here, where the stand-in is sent in.
 			const auto type = a_base ? a_base->GetFormType() : RE::ENUM_FORM_ID::kNONE;
-			return type == RE::ENUM_FORM_ID::kFURN && static_cast<const RE::TESFurniture*>(a_base)->wbData.type == RE::WorkbenchData::Type::kNone;
+			return type == RE::ENUM_FORM_ID::kFURN && static_cast<const RE::TESFurniture*>(a_base)->wbData.type == RE::WorkbenchData::Type::kNone && !Equipment::IsPowerArmorFrame(a_base);
 		}
 
 		// Furniture the stand-in can be put in: enabled, its 3D in, and where the stand-in is.
@@ -2650,6 +2653,10 @@ namespace RemotePlayers
 
 	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by)
 	{
+		if (a_ask == Equipment::FrameAsk::kLook) {
+			// Looked at only (the log, paframes): the answer, with nobody told and nothing counted.
+			return a_frame && Equipment::IsPowerArmorFrame(a_frame->GetObjectReference()) && FriendOf(a_frame).owner != 0;
+		}
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}

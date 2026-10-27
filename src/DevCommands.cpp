@@ -505,7 +505,7 @@ namespace DevCommands
 					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
-			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
+			return std::format("{} ({}; {})", count ? out : "none", Equipment::DescribeFrameMends(), Equipment::DescribePlayerUse());
 		}
 
 		std::string Console(std::string_view a_args)

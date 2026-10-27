@@ -157,8 +157,14 @@ namespace Equipment
 	// and the engine's own two answers. Main thread.
 	[[nodiscard]] FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame);
 
-	// That, for the log and the paframes dev command.
+	// That, with what else holds our player off it (FrameUse::Holds: the gate asked to look, FrameAsk::kLook, nothing told;
+	// its activation block; its state; our player's input), for the log and the paframes dev command.
 	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame);
+
+	// Our player as the engine has them for furniture: their sit state, the furniture they occupy, the frame they wear or
+	// left last, the frame they last asked to get into, and whether an input layer has the Activate user event off (by
+	// the layers' names) or their input is blocked. For the log and paframes. Main thread.
+	std::string DescribePlayerUse();
 
 	// Patches TESFurniture::Activate's call into the player's furniture use (FrameUse::USE_CALL): as our player gets into
 	// a frame, what would have the engine say "You cannot use this at this time." is mended first (FrameUse::ChooseMend),
@@ -173,6 +179,7 @@ namespace Equipment
 		kEnter,     // our player gets in (before anything is mended or the engine starts getting them in)
 		kTransfer,  // our player opened its inventory (Transfer): the menu is closed again
 		kOther,     // someone else here got in (a companion ordered into it): they are sent out again (RemotePlayers)
+		kLook,      // only asked whether our player would be kept out (DescribeFrameUse): nobody is told, nothing is counted
 	};
 
 	// Asked as our player gets into a frame or opens its inventory, and as anyone else here is found in one: true keeps

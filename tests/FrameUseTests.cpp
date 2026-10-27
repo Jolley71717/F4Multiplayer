@@ -179,3 +179,36 @@ TEST("frame use: nothing is mended on a frame the game lets the player into")
 {
 	CHECK(!FrameUse::ChooseMend(Standing()).Any());
 }
+
+TEST("frame use: with nothing else in our player's way, the holds say so")
+{
+	const FrameUse::Holds holds;
+	CHECK(!holds.Any());
+	CHECK(FrameUse::Describe(holds) == "nothing else holds");
+}
+
+TEST("frame use: a copy of a friend's frame the session keeps our player out of is told apart from the engine's refusals")
+{
+	FrameUse::Holds holds;
+	holds.keptOut = true;
+	CHECK(holds.Any());
+	CHECK(FrameUse::Describe(holds) == "kept out by the session (a friend's frame)");
+}
+
+TEST("frame use: everything that holds is named, each once, in one line")
+{
+	FrameUse::Holds holds;
+	holds.activationBlocked = true;
+	holds.activateOff = true;
+	holds.playerBusy = true;
+	CHECK(FrameUse::Describe(holds) == "activation blocked, Activate input off, our player busy in furniture or a frame");
+	holds.disabled = true;
+	holds.no3d = true;
+	holds.inputBlocked = true;
+	holds.keptOut = true;
+	const auto all = FrameUse::Describe(holds);
+	CHECK(all.find("disabled") != std::string::npos);
+	CHECK(all.find("no 3D") != std::string::npos);
+	CHECK(all.find("player input blocked") != std::string::npos);
+	CHECK(all.find("kept out") == 0);
+}
