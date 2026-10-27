@@ -138,7 +138,7 @@ namespace RemotePlayers
 			Clock::time_point    originalCheckAt{};
 			int                  originalChoice = -1;    // the last ArmorFrames::Original logged
 			bool                 originalCounted = false;  // a hide counted for this wear (one hidden again after a load is not a new one)
-			ArmorFrames::UnknownFrame frameUnknown;      // a wear the stand-in goes through with no frame copy, for the log (see Update)
+			ArmorFrames::UnknownFrame frameUnknown;      // a wear whose frame they told is none here: for the log, and for the frame that stands in (see WornFrame)
 			std::optional<Spot>  wornAt;                 // where they were as they got into the pre-placed frame they wear
 			bool                 wornAtWanted = false;   // that spot is taken from their next state
 			bool                 originalMoved = false;  // ours was not where they got in (or moved, or was used) in this wear: left alone
@@ -636,6 +636,10 @@ namespace RemotePlayers
 
 		// Another actor in our game (but a_except, the stand-in the frame is for) is in this frame: getting in (the seat) or
 		// all the way in (ExtraPowerArmor's frame: the engine then clears the seat and disables the frame while it is worn).
+		// Never a stand-in on its way out (buried, or being deleted): it is still in its frame until the engine lets go of
+		// it, and it is no one to leave a frame to. Counted so, a copy it was in, buried with it (ReleaseArmor) and then
+		// let go of by what else held it (DeleteParked, DeleteFrame, Discard), was left to the game as someone's: off the
+		// books, a load in the second it waited to be deleted kept it, disabled, and the next save wrote it.
 		bool FrameInUse(RE::TESObjectREFR* a_frame, const RE::Actor* a_except = nullptr)
 		{
 			const auto lists = RE::ProcessLists::GetSingleton();
@@ -644,7 +648,7 @@ namespace RemotePlayers
 			}
 			for (const auto& handle : lists->highActorHandles) {
 				const auto actor = handle.get();
-				if (!actor || (a_except && actor.get() == a_except)) {
+				if (!actor || (a_except && actor.get() == a_except) || OnItsWayOut(actor.get())) {
 					continue;
 				}
 				const auto middle = actor->currentProcess ? actor->currentProcess->middleHigh : nullptr;
@@ -749,8 +753,15 @@ namespace RemotePlayers
 		// known from the stand-in, and a copy buried after the game had taken the stand-in from under us used to keep its
 		// promotion in the persistence manager for the rest of the session.
 		// a_wearer: the stand-in kept for the player's conversation while in this frame (see Grave::wearer).
+		// Once: one already on its way out (buried with its stand-in, then let go of by what else held it) stays as it is.
+		// And on the books again, should it have been let go of to the game meanwhile (SaveGuard::Release): it is ours to
+		// delete, so it is kept out of every save until it is gone, and handed to a load that comes first, which frees it.
 		void BuryFrame(RE::TESObjectREFR* a_frame, Clock::time_point a_placedAt, RE::ObjectRefHandle a_wearer = {})
 		{
+			if (OnItsWayOut(a_frame)) {
+				return;
+			}
+			SaveGuard::Track(a_frame);
 			Equipment::ReleasePowerArmorFrame(a_frame);
 			Bury({ .actor = a_frame->GetHandle(), .spawnedAt = a_placedAt, .wearer = a_wearer });
 		}
@@ -1024,12 +1035,31 @@ namespace RemotePlayers
 			}
 		}
 
-		// The frame they are in, when they are in power armor and it is a frame here (a terminal is furniture too, but never
-		// a frame).
-		RE::TESFurniture* WornFrame(const RemotePlayer& a_player)
+		// The frame they told they are in, when they are in power armor and it is a frame here (a terminal is furniture too,
+		// but never a frame).
+		RE::TESFurniture* ToldFrame(const RemotePlayer& a_player)
 		{
 			const auto base = a_player.powerArmorOn ? RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame) : nullptr;
 			return Equipment::IsPowerArmorFrame(base) ? base : nullptr;
+		}
+
+		// The frame their stand-in goes into while they are in power armor: the one they told, or, theirs none here (named,
+		// or none named a while), a frame every game has, so that it is never shown out of their suit for want of one
+		// (ArmorFrames::ChooseWornBase). Their frameUnknown is updated each frame (Update) before anything here asks.
+		RE::TESFurniture* WornFrame(const RemotePlayer& a_player)
+		{
+			const auto told = ToldFrame(a_player);
+			const auto standIn = RE::TESForm::GetFormByID<RE::TESFurniture>(ArmorFrames::STAND_IN_FRAME);
+			switch (ArmorFrames::ChooseWornBase(a_player.powerArmorOn, a_player.powerArmorFrame != 0, told != nullptr, a_player.frameUnknown.Overdue(Clock::now()),
+				Equipment::IsPowerArmorFrame(standIn))) {
+			case ArmorFrames::WornBase::kTold:
+				return told;
+			case ArmorFrames::WornBase::kStandIn:
+				return standIn;
+			case ArmorFrames::WornBase::kNone:
+				break;
+			}
+			return nullptr;
 		}
 
 		// Places a copy of a frame in an interior (a_interior) or outside (a_world): for the stand-in to get into, where they
@@ -1229,7 +1259,8 @@ namespace RemotePlayers
 				if (!worn) {
 					a_player.frameActionAt = a_played;  // the copy stands where they got out a while
 				}
-				REX::INFO("RemotePlayers: player {} is {} power armor (frame {:08X})", a_player.id, worn ? "in" : "out of", a_player.powerArmorFrame);
+				REX::INFO("RemotePlayers: player {} is {} power armor (frame {:08X}{})", a_player.id, worn ? "in" : "out of", a_player.powerArmorFrame,
+					worn && base->GetFormID() != a_player.powerArmorFrame ? std::format(", unknown here: a copy of {:08X} stands in", base->GetFormID()) : std::string{});
 			}
 
 			const bool has3D = a_actor->Get3D() != nullptr;
@@ -1380,9 +1411,12 @@ namespace RemotePlayers
 		bool IsSeatBase(const RE::TESBoundObject* a_base)
 		{
 			// A plain seat or bed only, whatever a friend's game names: never a terminal, a workbench or a station (see
-			// StandInSeat.h).
+			// StandInSeat.h), and never a power armor frame, which is furniture of the same kind: a stand-in put into one
+			// would hold its marker (TESFurniture::Activate turns our player away without a word while another actor uses
+			// it) and be switched into the armor by the engine. Their status names none (StandInSeat::Tell); one named by
+			// an older or another game's build is refused here, where the stand-in is sent in.
 			const auto type = a_base ? a_base->GetFormType() : RE::ENUM_FORM_ID::kNONE;
-			return type == RE::ENUM_FORM_ID::kFURN && static_cast<const RE::TESFurniture*>(a_base)->wbData.type == RE::WorkbenchData::Type::kNone;
+			return type == RE::ENUM_FORM_ID::kFURN && static_cast<const RE::TESFurniture*>(a_base)->wbData.type == RE::WorkbenchData::Type::kNone && !Equipment::IsPowerArmorFrame(a_base);
 		}
 
 		// Furniture the stand-in can be put in: enabled, its 3D in, and where the stand-in is.
@@ -1568,7 +1602,12 @@ namespace RemotePlayers
 		void LeaveArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			const auto  frame = Equipment::PowerArmorFrameOf(a_actor);
-			const auto  base = frame ? frame->GetObjectReference() : nullptr;
+			// The frame they got out of: theirs when it is a frame here, else the one the stand-in is in. It can be another:
+			// the frame that stood in while theirs was none here (ArmorFrames::STAND_IN_FRAME), or the one kept from their
+			// last wear (ArmorFrames::Hear), with theirs named only once the stand-in was in. A copy of that one left here
+			// stood as a second empty suit beside the copy of theirs placed where their frame stands (UpdateParked).
+			const auto  told = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
+			RE::TESBoundObject* const base = Equipment::IsPowerArmorFrame(told) ? told : frame ? frame->GetObjectReference() : nullptr;
 			const auto  at = a_actor->data.location;
 			const float heading = a_actor->data.angle.z;
 			REX::INFO("RemotePlayers: player {} got out of their power armor; stand-in {:08X} goes with its frame {:08X}, a copy is left where it stood", a_player.id, a_actor->GetFormID(), frame ? frame->GetFormID() : 0);
@@ -2656,6 +2695,12 @@ namespace RemotePlayers
 
 	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by)
 	{
+		if (a_ask == Equipment::FrameAsk::kLook) {
+			// Looked at only (the log, paframes): the answer, with nobody told and nothing counted. Kept first: every
+			// branch below counts, logs or tells the HUD (a_by is null for a look as for our player). Anything added below
+			// that changes the answer (a frame lent out or lent to us) needs its own side-effect-free read here too.
+			return a_frame && Equipment::IsPowerArmorFrame(a_frame->GetObjectReference()) && FriendOf(a_frame).owner != 0;
+		}
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}
@@ -3038,11 +3083,12 @@ namespace RemotePlayers
 				}
 			}
 
-			// In power armor with no frame here to place a copy of, for a second (the first status of a wear names none):
-			// the stand-in wears their pieces as they are, and nothing else is logged of it (no "is in power armor").
-			if (remote.frameUnknown.Update(remote.powerArmorOn, WornFrame(remote) != nullptr, now)) {
-				REX::WARN("RemotePlayers: player {} is in power armor, but the frame they told ({:08X}) is {}; their stand-in wears the pieces with no frame copy", remote.id, remote.powerArmorFrame,
-					remote.powerArmorFrame ? "no frame in this game" : "none");
+			// In power armor with no frame of theirs here to place a copy of, for a second (the first status of a wear names
+			// none): from then on their stand-in goes into a copy of a frame every game has (see WornFrame).
+			if (remote.frameUnknown.Update(remote.powerArmorOn, ToldFrame(remote) != nullptr, now)) {
+				const auto standIn = WornFrame(remote);
+				REX::WARN("RemotePlayers: player {} is in power armor, but the frame they told ({:08X}) is {}; their stand-in goes into a copy of {:08X}{}", remote.id, remote.powerArmorFrame,
+					remote.powerArmorFrame ? "no frame in this game" : "none", ArmorFrames::STAND_IN_FRAME, standIn ? "" : ", which is no frame in this game either: it wears their clothes, out of its armor");
 			}
 
 			if (const auto parked = remote.parkedCopy.get(); Adrift(parked.get(), remote.parkedPlacedAt, now)) {

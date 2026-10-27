@@ -203,6 +203,19 @@ namespace Downed
 			REX::INFO("Downed: up again and sneaking; standing us (sneaking now {})", a_player->IsSneaking());
 		}
 
+		// Up and standing, though they went down sneaking: the game stood them by the stance alone, its graph left in its
+		// sneak, where the sneak key's start is refused until a load. The graph is told its sneak stop; taken, it was in sneak.
+		void GraphSneakStop(RE::PlayerCharacter* a_player, bool a_settled)
+		{
+			static const RE::BSFixedString sneakStop{ "sneakStop" };
+			const bool taken = static_cast<RE::IAnimationGraphManagerHolder*>(a_player)->NotifyAnimationGraphImpl(sneakStop);
+			if (taken) {
+				REX::WARN("Downed: up again ({}), went down sneaking, standing, but the graph was still in its sneak; told it to stop", a_settled ? "settled" : "getting up");
+			} else {
+				REX::INFO("Downed: up again ({}), went down sneaking, standing; the graph had no sneak to stop", a_settled ? "settled" : "getting up");
+			}
+		}
+
 		// What the game shows of the player as it stands them up while they wait for help, for the log: which of
 		// its paths did it is then a look at the line (the stay-down flag dropped, the character's own essential
 		// copy off, a knock-down's get-up, a save a moment before).
@@ -300,6 +313,9 @@ namespace Downed
 			}
 			if (a_step.sneakKept) {
 				REX::INFO("Downed: up again and sneaking, though we went down standing (the sneak key while down); left so");
+			}
+			if (a_step.graphSneakStop) {
+				GraphSneakStop(a_player, a_step.settled);
 			}
 			if (a_step.settled) {
 				REX::INFO("Downed: the get-up has played out ({})", PoseFacts(a_player));
@@ -630,8 +646,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, helper.helped,
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
+			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, helper.helped,
 			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
 			crawl.distance, InputFacts());
 	}

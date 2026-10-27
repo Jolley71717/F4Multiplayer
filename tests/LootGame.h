@@ -250,10 +250,12 @@ namespace LootTest
 			}
 		}
 
-		// The player opens the menu on a container (Equipment's show, posted): Storage::OnMenuShown.
+		// The player opens the menu on a container (Equipment's show, posted): WorldSync::OnMenuShown, then
+		// Storage::OnMenuShown.
 		void OpenMenu(Fixture& a_f, std::uint32_t a_holder)
 		{
 			menu = a_holder;
+			loot.Opened(a_holder, *this);
 			storage.Open(a_holder, Keeper(a_holder) == StorageView::Keeper::kFriend);
 			SendOut(a_f);
 		}

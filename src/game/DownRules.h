@@ -168,6 +168,7 @@ namespace DownRules
 		bool                gotUp = false;         // up again after a down, however it ended: what the down left on is taken off
 		bool                unsneak = false;       // up again, and still in the sneak they went down in: they stand (as they got up, and once more if that did not take)
 		bool                sneakKept = false;     // up again sneaking, though they went down standing: the sneak key pressed while down, theirs
+		bool                graphSneakStop = false;  // up again standing, though they went down sneaking: the graph told its sneak stop (as they got up, and settled)
 		bool                settled = false;       // GET_UP_SETTLE after getting up: the get-up has played out
 	};
 
@@ -189,6 +190,12 @@ namespace DownRules
 	// once more when the get-up has played out (settled, GET_UP_SETTLE on) only if that did not take, the stance never
 	// having left sneak since. A sneak the player chose is theirs: one they went down standing and are sneaking as they get
 	// up pressed the key while down (sneakKept), and a change of the stance after they are up is their key too.
+	//
+	// One who went down sneaking and is standing as they get up was stood by the game, and the game's ways of doing it set
+	// the stance alone (Actor::SetSneaking: the stance and iIsInSneak, no graph event): the behaviour graph stayed in its
+	// sneak. The sneak key reads the stance, asks a graph already in sneak to start one, is refused, and does nothing until
+	// a load builds the graph again. The graph is told its own sneak stop (graphSneakStop) as they get up, and once more
+	// when the get-up has played out (a graph still in the get-up may not take it then), unless the stance changed since.
 	class Self
 	{
 	public:
@@ -434,6 +441,7 @@ namespace DownRules
 		std::uint32_t standUpAsksNow = 0;  // of those, this get-up's (from the help-up or the load)
 		std::uint32_t getUps = 0;       // times up again after a down (gotUp)
 		std::uint32_t unsneaks = 0;     // stands asked for after those (unsneak)
+		std::uint32_t graphSneakStops = 0;  // sneak stops the graph was told after those (graphSneakStop)
 
 	private:
 		// Up again after a down, however it ended (a_before: the phase as the frame began): told once (gotUp), and once the
@@ -459,7 +467,9 @@ namespace DownRules
 				a_step.gotUp = true;
 				a_step.unsneak = a_facts.sneaking && downSneaking;
 				a_step.sneakKept = a_facts.sneaking && !downSneaking;
+				a_step.graphSneakStop = !a_facts.sneaking && downSneaking;
 				unsneaks += a_step.unsneak ? 1u : 0u;
+				graphSneakStops += a_step.graphSneakStop ? 1u : 0u;
 				++getUps;
 				sneakAsked = a_step.unsneak;
 				sneakSeen = a_facts.sneaking;
@@ -482,7 +492,9 @@ namespace DownRules
 				upSince.reset();
 				a_step.settled = true;
 				a_step.unsneak = a_facts.sneaking && sneakAsked && !sneakPressed;
+				a_step.graphSneakStop = !a_facts.sneaking && downSneaking && !sneakPressed;
 				unsneaks += a_step.unsneak ? 1u : 0u;
+				graphSneakStops += a_step.graphSneakStop ? 1u : 0u;
 			}
 		}
 

@@ -686,7 +686,10 @@ way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go
 take waits too while this game holds the chest in a cell but hasn't made its inventory yet (a place not
 loaded, or still loading): it would find nothing to take, and the roll made as the place loads would still
 hold what the friend took. So does a put, in order with the takes: going in first, it would make the inventory
-ahead of the roll, and the takes and the emptying after it would go into that instead. A
+ahead of the roll, and the takes and the emptying after it would go into that instead. A chest of a
+place our game held this way makes its roll as our player opens it, so opening it counts as its load: what
+waits for it goes in on the next frame after the menu opens (`Loot::Opened`, `openApplied=`), not when the 2 s
+sweep comes to it, which left the whole roll in the menu for up to a second. A
 change to a chest our player has open goes in at once: the container menu shows the new contents, and
 taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
@@ -700,8 +703,14 @@ different things in the two games of the rig), so a friend taking what their cop
 holding its own roll. A take that leaves a holder with nothing the session shares is followed by an
 emptied marker (`Protocol::CONTAINER_EMPTIED`: the player's ref as the item, count -1, an ordinary
 numbered change, so it is caught up on after a load or a join like any other; one also follows a weapon, a key or a note taken from a holder that then holds nothing the session shares, once, though that take itself is not reported): every receiver takes out
-each stack its own copy holds that the same take would share, and leaves weapons, armor and personal
-items. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
+what its own copy has left of each item another player took from the holder since it was last emptied there (its roll
+had more of it; the takes themselves went in before), and leaves the rest: what only its own roll put there, an item
+only its own mods add, what its player put in where the session didn't see it (alone, before a join), and weapons,
+armor and personal items. Taking every item thus leaves a friend's copy as taking all but one does, less the leftovers
+of what was taken (a Nexus report, 2026-10-26: Take All cleared the friend's own loot; until 0.10.0 the marker took
+every shared stack of the receiver's roll). Its own player's takes don't count: they say nothing of what the friend's
+copy held. The items taken are kept in memory only, as the session's puts are: after a load they come back with the
+catch-up of the takes, and a marker whose takes went in before the save leaves everything. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
 yet (a chest that rolls its loot as it first loads), and an NPC still alive there; a vendor's chest, a
 workbench or a frame is left alone. Storage is too: what the player has made their own, a container they own or
 whose cell they own (a home bought), a settlement's workbench or a piece built there, or a container in the build area
@@ -1385,7 +1394,14 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
 - Knocked about: four times a second our game looks at up to 256 loose objects within 1500 units. One that moved with no
   hand on it and came to rest is reported (kRest) when our player moved it (stood within 160 units of it, or hit it in
   the last 3 s: TESHitEvent), 8 at once and 3 a second at most, whether or not a friend is near (the session keeps it,
-  below). What a friend's move put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+  below). What a friend's move put somewhere is quiet for 4 s (our physics settling it is not ours to report). At rest
+  means it moved under a unit (and turned under 0.02 rad) from where it last moved for 0.6 s, or 15 s went by. One of
+  ours that moves again within 10 s of that rest (a ball rolling on after it slowed, or still rolling when we gave up)
+  is still ours and is reported again where it truly rests (`KnockWatch`'s follow-on: the same scan, nothing more looked
+  at), unless a friend's move put it there, someone picked it up, a friend's blast reached it, or a friend's stand-in or
+  another game's NPC stands within 200 units of it as it moves (their game's to report). Rests that only the follow-on
+  claimed stop after 8 in a row (`FOLLOW_ON_MAX`: a thing that swings for hours is not reported for ever), and the
+  follow-on is gone once the scan has not seen the object for 3 s (a loading screen, a cell that unloaded).
 - Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
   the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,
   `maxObjectPlacesPerPlayer`, never more whatever `--max-share` says, so made-up ones can't push out the host's), saves it with the session (layout 36, as kObjectRested
@@ -1528,7 +1544,12 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   (only a power armor frame: furniture with the engine's power armor furniture keyword) under it,
   placed at once, hidden and without collision from the moment its 3D is in, and moved along with
   the stand-in (placed again if it is in another place, over 256 units off or without 3D after
-  10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
+  10 s). A friend in power armor who names a frame from a plugin this game lacks, or still names none a second
+  into the wear, has a copy of a frame every game has placed instead, the museum
+  T-45's base (`ArmorFrames::ChooseWornBase`, `STAND_IN_FRAME`): what a stand-in wears goes by the frame the
+  engine has it in, and with no copy to get into it wore the clothes under their suit, out of it, until they
+  got out and in again. Worn, a frame's base shows nothing of its own; one they name later takes over as any
+  change of frame does. When they get out, the pieces come off and the copy is drawn where they got out, solid once
   nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
   to them. The stand-in is switched into the copy (`ArmorFrames::ChooseSwitch`), and the engine rebuilds
   it on the power armor skeleton with a fresh animation graph. Rebuilt before the power armor subgraphs
@@ -1604,6 +1625,24 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   good once it does not (`lingered`, `lingeringDropped` and `lingering` in `saveguard`); no record is dropped for its
   id once it is gone, as the id is the loaded game's. `net status` counts the rest: `framesUnloaded`, `framesBack`
   (stand-ins), `unloaded` and `back` (spawns).
+  A lingering copy was only ever disabled, never deleted: it stood on, unseen, for the rest of the run, and a save wrote
+  it once it was no longer provably ours. A copy let go of to the game as someone's while it waited to be deleted was
+  off the books for a load in that second: a stand-in buried in its frame still counted as someone in it
+  (`RemotePlayers`' `FrameInUse` now skips anything on its way out, and `BuryFrame` puts a frame back on the books and
+  buries it once). Each session places its copy at the same spot again, so these piled up, disabled, at one spot (rig,
+  2026-10-27). Now, right after every load, each disabled frame made at runtime is watched (`FrameLeftovers`), and
+  judged once it has stood so `FrameLeftovers::LOOK_AGAIN` (5 s, no loading screen up, still the same form). One goes
+  as every copy of ours goes (`SaveGuard::Track`, `RemotePlayers::Discard`) only with proof that it is ours
+  (`FrameLeftovers::Proven`: it lingers from this run's load, it carries the workshop copies' keyword, or a stand-in's
+  base owns it, which the switch-in gives every copy a stand-in gets into) and nobody's: not persistent (the engine
+  promotes a frame as an actor gets in, so an NPC away in their suit keeps it persistent), holds nothing (nor would its
+  base fill it), no quest alias holds, nothing links or enables, nobody here is in it or left it last (every process
+  list), and no owner but a stand-in's base (one our player ever used is theirs; an owner that cannot be told counts as
+  someone's). A plain disabled frame with no proof stays, whatever else it lacks: it cannot be told from a frame the
+  game made (as `FrameShare::Ghost` rules for a standing one), and a frame a player cares about is often one full of
+  pieces. So a parked or left-behind copy of an older version's save, which no stand-in got into, stays unseen where
+  it is. `saveguard` shows `frameLeftovers=` cleared/judged, `leftoversKept=` and `leftoversWatched=`; each one judged
+  is logged with its facts.
   Nor is a frame a workshop piece (`WorkshopApply::Shared`): workshop mode moves a parked frame, and up to 0.9.1 the
   move (of the player's own, or of our copy of a friend's) was reported as building: each friend's game made a plain
   copy of the frame where it was set down, and the server kept it for every later session and load. Now WorkshopSync
@@ -1775,6 +1814,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   are still sneaking (the stance survives a down), stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
+  One who went down sneaking and gets up standing was stood by the game's stance alone
+  (`Actor::SetSneaking` sends the graph no event): the graph stayed in its sneak, and the sneak key,
+  which asks the graph for the start the stance calls for, was refused until a load. The graph is told
+  `sneakStop` as they get up and again 2 s later unless the stance changed since (graphSneakStop,
+  tested). `controls` ends with a `sneak:` line naming what holds the key back (`SneakKey.h`, tested).
   Friends are not sent the crouch flag while the player is down or getting up, and a stand-in that
   gets up is told its sneak state again 2 s later, so it is not left crouched.
   45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)

@@ -75,6 +75,10 @@ namespace WorldSync
 	// of for it waits until it can die here.
 	[[nodiscard]] bool IsEssential(RE::Actor* a_actor);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
+	// Any thread (the container menu's show, on the UI's): our player opened a_container's menu. The other players' changes
+	// waiting for it go in on the main thread's next frame, as when it loads (LootSync::Loot::Opened), not at the slow
+	// sweep's turn: a chest our game held without its inventory makes its roll as it is opened.
+	void OnMenuShown(RE::ObjectRefHandle a_container);
 	void ApplyRemotePickup(std::uint32_t a_refId);
 	void ApplyRemoteRefState(const Protocol::RefState& a_state);
 
