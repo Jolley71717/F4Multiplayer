@@ -929,6 +929,24 @@ the pickup pairing matches the activated reference's base (the mine's projectile
 `disarmed=`, `taken=`, `blasts=` (explosions left to the trap); the dev channel's `traps` lists the watched ones, and
 `traps <ref>` says how one was classified.
 
+The Prydwen (src/game/ScriptDoors.h, with Vault 114's gear door; 2026-10-27, a Nexus report on 0.9.2 of a friend who
+didn't see it arrive): its arrival is the story's. Out of Time's 130 (set when "Sanctuary" starts, Preston's talk after
+the museum fight) enables a flyover effect (MQ201FXPrydFlyoverRef 0019537C, persistent, full LOD) whose script flies
+the airship across the Commonwealth to Boston Airport over some minutes and at the end (or when it unloads, the player
+waits or travels) sets BoSEnable's 15, which enables the airship moored at the airport (the marker BoSPrydwen
+00184FD9, whose enable-parent children are the airship's parts), then disables itself. With `sStory = shared` a friend's game sets Out of Time's 130 too and plays its own flyover once its
+player is outdoors; with `own` it doesn't (the stage is the story's: it also sends Preston's group off); either way a
+game's moored airship appeared only when its own flight ended. So BoSEnable's 15 is shared through the session's quest
+stages like the vault door's (reported by the game whose flight ends first, or by the host's at its welcome if moored
+already; kept by the server for late joiners): BoSEnable is an internal start-game-enabled quest QuestSync never
+shares, 15 only enables the marker, and a persistent marker is enabled from anywhere, so the friend's stage is set at
+once, with no wait for loading (`Door::loaded` false). A friend whose story is behind sees the airship moored before
+their own Brotherhood quests, as the game orders it anyway (the flyover follows Concord, long before Shadow of Steel,
+which takes the airship as there; nothing in the game reads BoSEnable's 15 or the marker: the only conditions on
+BoSEnable are Liberty Prime's scribes' packages, for its 20 to 40); their own flight later sets 15 again, which
+BoSEnable (no repeated stages) ignores. The flyover effect itself isn't shared: its script plays once a game and never resets,
+so enabled again after its flight it would hang in full LOD over the airport.
+
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
 
