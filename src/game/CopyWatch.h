@@ -47,7 +47,9 @@ namespace CopyWatch
 	// ... and it reads a_health once set (what the engine let it come to): where it stands from now on.
 	void HealthSet(std::uint32_t a_refId, float a_health);
 
-	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
+	// Gives copies back what something other than our hits took, takes back what they gained with no report from their
+	// game (a legendary's mutation of a copy legendary only here), and logs the hits and deaths (so many a
+	// RollingLog::WINDOW) and the damage counters every WINDOW. Every frame.
 	void Frame();
 
 	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
