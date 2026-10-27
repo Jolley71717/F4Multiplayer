@@ -73,6 +73,8 @@ namespace CopyWatch
 		std::uint32_t damageSent = 0;
 		std::uint32_t leftToOwner = 0;  // throws' blows of ours on copies, left to the NPC's own game (OwnersToDeal)
 		std::uint32_t blastsThere = 0, blastsOurs = 0;  // explosions' blows on copies judged: its owner's game sets it off too / ours alone
+		std::uint32_t effectHits = 0;     // hits of ours on copies that put an effect on them (an enchantment's, a spell's: Book::OurEffect)
+		std::uint32_t friendsBlasts = 0;  // blows on copies by explosions set off here for a friend, or a trap's, booked as the owner's
 		float         damageTotal = 0.0f;
 		std::uint32_t hitsLogged = 0;
 		std::uint32_t restoresLogged = 0;
@@ -152,8 +154,9 @@ namespace CopyWatch
 
 		std::string Describe(const Hit& a_hit, bool a_ours)
 		{
-			return std::format("by {:08X} ({}{}), weapon {:08X}, source {:08X}, projectile {:08X}{}{}, damage {}, flags {:08X}{}", a_hit.cause, KindOf(a_hit.cause, a_hit.byPlayer),
+			return std::format("by {:08X} ({}{}), weapon {:08X}, source {:08X}, projectile {:08X}{}{}{}, damage {}, flags {:08X}{}", a_hit.cause, KindOf(a_hit.cause, a_hit.byPlayer),
 				a_ours ? "; ours, reported" : "", a_hit.weapon, a_hit.source, a_hit.projectile, a_hit.explosion ? ", an explosion's" : "", a_hit.inHand ? ", in hand" : "",
+				a_hit.blow.enchantment ? ", an enchantment's" : a_hit.blow.spellAlone ? ", a spell's" : "",
 				a_hit.usesHitData ? std::format("{:.1f}", a_hit.damage) : std::string{ "unknown" }, a_hit.flags, a_hit.usesHitData ? "" : " (no hit data)");
 		}
 
@@ -236,6 +239,8 @@ namespace CopyWatch
 			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
 			.throwable = throwable(weapon) || throwable(source),
 			.spellAlone = !weapon && source && source->IsMagicItem(),
+			// A weapon's enchantment (a legendary effect's record is an ENCH); what a throw leaves burning is a hazard's SPEL.
+			.enchantment = !weapon && source && source->GetFormType() == RE::ENUM_FORM_ID::kENCH,
 			.inHand = inHand(weapon) || inHand(source),
 			.explosionsShared = WeaponFire::ExplosionsShared(thrower),
 			.threwLately = WeaponFire::ThrewLately(thrower),
@@ -248,16 +253,23 @@ namespace CopyWatch
 		return ref ? ref->GetFormID() : 0u;
 	}
 
-	// An explosion's blow on a copy is the NPC's own game's to deal when that explosion goes off there too (RemoteEdits::
-	// DealtThere: one we reported, a trap's, a destructible object's own), told by the explosion the hit names (a_sourceRef)
-	// or else the nearest that reached it (WeaponFire::BlastAt).
+	// Whether the explosion that dealt a blow on a copy goes off in the NPC's own game too (RemoteEdits::DealtThere: one we
+	// reported, a trap's, a destructible object's own, a friend's set off here), told by the explosion the hit names
+	// (a_sourceRef) or else the nearest that reached it (WeaponFire::BlastAt).
+	static bool BlastThere(std::uint32_t a_target, std::uint32_t a_sourceRef)
+	{
+		const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_target);
+		const auto seen = WeaponFire::BlastAt(target, a_sourceRef);
+		const bool there = seen && RemoteEdits::DealtThere(*seen);
+		++(there ? blastsThere : blastsOurs);
+		return there;
+	}
+
+	// An explosion's blow on a copy is the NPC's own game's to deal when that explosion goes off there too (BlastThere).
 	bool OwnersToDeal(CopyHealth::Blow a_blow, std::uint32_t a_target, std::uint32_t a_owner, std::uint32_t a_sourceRef)
 	{
 		if (a_blow.explosion && a_owner != 0) {
-			const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_target);
-			const auto seen = WeaponFire::BlastAt(target, a_sourceRef);
-			a_blow.blastThere = seen && RemoteEdits::DealtThere(*seen);
-			++(a_blow.blastThere ? blastsThere : blastsOurs);
+			a_blow.blastThere = BlastThere(a_target, a_sourceRef);
 		}
 		return CopyHealth::OwnersToDeal(a_blow);
 	}
@@ -373,6 +385,21 @@ namespace CopyWatch
 			}
 			if (hitter != CopyHealth::Hitter::kNotOurs) {
 				book.OurHit(wire, hit.at, hit.usesHitData && hit.damage > 0.0f ? std::optional{ hit.damage } : std::nullopt);
+				// An enchantment's or a spell's hit of ours puts an effect on the copy whose ticks follow with no event:
+				// ours for a while (CopyHealth::EFFECT_WINDOW), not something else's to give back.
+				if (hit.blow.enchantment || hit.blow.spellAlone) {
+					book.OurEffect(wire, hit.at);
+					++effectHits;
+				}
+			} else if (owner != 0 && !left) {
+				// Nobody's of ours (a hazard's, a friend's explosion's set off here, another game's actor's): an effect of
+				// ours on the copy no longer accounts for its drops alone. A friend's explosion that goes off in the NPC's
+				// own game too is that game's blow: what it took beyond our own hits' figures is given back (Check).
+				book.OtherHit(wire, hit.at);
+				if (hit.blow.explosion && BlastThere(hit.target, hit.sourceRef)) {
+					book.OwnersBlow(wire, hit.at);
+					++friendsBlasts;
+				}
 			}
 			if (owner == 0) {
 				continue;
@@ -494,8 +521,8 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyHeld={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyDeaths={}", book.Size(),
-			hitsOnCopies, allyHits, restores, healthRestored, reportsSet, reportsHeld, damageSent, damageTotal, leftToOwner, blastsThere, blastsOurs, copiesDied);
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyHeld={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={}",
+			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, reportsSet, reportsHeld, damageSent, damageTotal, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied);
 	}
 
 	std::vector<std::pair<std::uint32_t, float>> TakeDamage()

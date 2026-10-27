@@ -491,7 +491,12 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   as someone new runs out.
 - Set off where its NPCs are: a reported explosion goes off within 6000 units of our player, or beside an NPC our game
   runs (our companion among them) within its radius and 1024 units, wherever our player is (`explosionsForOurs=`). Our
-  copies of NPCs other games run are made ghosts while it goes off (BlastShield).
+  copies of NPCs other games run that its damage could kill are made ghosts while it goes off (BlastShield; the rest
+  take it and are given it back: `ghostsSpared=`). Every ghost we set is written down until the engine reads the copy as
+  no ghost again, in the save's co-save too (GhostLedger, `ghostLedger=set/cleared/stuck/unstuck/fromSaves/open`,
+  the `ghosts` dev command): it comes off whenever the copy is next loaded, whoever runs the NPC, with setghost 0 sent
+  again at a growing gap while it stays. A ghost an older save left (its flag on, its base record no ghost, no quest
+  holding it in an alias, not ours now) is taken off once per actor per load (`ghostsRepaired=`).
 - Never from a fight we can't see: a report names the NPC that set it off (`source`, 0 for a player's), and a game with
   no copy of it sets nothing off (seen on the rig: a host-only Nuka-World NPC's blast went off beside a player without
   the DLC). One of a plugin that game lacks is dropped as it comes in (FormTranslate); a spawn it never placed is

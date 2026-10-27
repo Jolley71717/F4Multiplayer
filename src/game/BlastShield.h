@@ -21,9 +21,19 @@
 // the engine's arithmetic (a loan left on, one taken back as a kill). The ghost goes after a second and a few
 // frames, when the engine has dealt the explosion's damage. While it lasts our player's shots pass the copy by
 // too: a second of that, beside a grenade going off, is the price. It is never put on the player, a stand-in, an
-// NPC our game runs or nobody does, nor on an actor that was a ghost already, and it comes off before a save or a
-// load, when the copy stops being mirrored, when its NPC stops being another game's, and when the session ends.
-// This is the bookkeeping, pure so it can be tested without the game.
+// NPC our game runs or nobody does, nor on an actor that was a ghost already (unless it is a ghost of ours still to
+// come off: GhostLedger), and it comes off before a save or a load, when the copy stops being mirrored, when its NPC
+// stops being another game's, and when the session ends.
+//
+// Why a ghost and not something narrower: the mod's hit hook (WorldSync's HitWatcher) hears the engine's hit event a
+// frame after the damage is dealt, so it can filter nothing; the engine's damage path has no hook of the mod's; and
+// a copy that only loses health to the explosion gets it back from CopyWatch (a drop with no hit of ours is given back
+// a tenth of a second later) unless the blow killed it, which no give-back undoes (its death here is never believed,
+// and the copy stops being mirrored). So the ghost is kept for the blow that could kill: a copy is made one only when
+// the explosion's damage comes near its health (Lethal). A copy with health to spare takes the blast and is given it
+// back, its hit booked as the owner's blow (CopyWatch), so a friend firing explosive rounds no longer makes every copy
+// around their target unhittable for a second per round. This is the bookkeeping, pure so it can be tested without the
+// game.
 namespace BlastShield
 {
 	using Clock = std::chrono::steady_clock;
@@ -37,12 +47,23 @@ namespace BlastShield
 	// bodies, not their feet).
 	constexpr float       MARGIN = 256.0f;
 	constexpr std::size_t MAX_SHIELDED = 256;  // copies ghosted at once (a guard)
+	// An explosion whose record's damage, times this, reaches the copy's health could kill it (the engine adds its own
+	// margins: a sneak attack's, a perk's, a difficulty's are the thrower's and never apply to one set off here with no
+	// owner, but the record's figure is before resistances either way, so the margin errs on the ghost's side).
+	constexpr float LETHAL_MARGIN = 2.0f;
 
 	// Whether a friend's explosion set off in our game is kept from hurting this NPC: a_owner runs it (0 nobody),
 	// a_local is our player. Ours, and those nobody runs, it hurts.
 	constexpr bool Shields(std::uint32_t a_owner, std::uint32_t a_local)
 	{
 		return a_owner != 0 && a_local != 0 && a_owner != a_local;
+	}
+
+	// Whether an explosion dealing a_damage (its record's; 0 or less: unknown, a trap's grenades, a death blast) could
+	// kill a copy with a_health (less than 0: unknown).
+	constexpr bool Lethal(float a_health, float a_damage)
+	{
+		return a_damage <= 0.0f || a_health < 0.0f || a_health <= a_damage * LETHAL_MARGIN;
 	}
 
 	// An actor a friend's explosion reaches, as our game knows it. Every copy goes by the id the session knows it by
@@ -55,39 +76,45 @@ namespace BlastShield
 		std::uint32_t id = 0;     // the session's id for it (0: never shared, so nobody's: one our game made, a stand-in)
 		std::uint32_t owner = 0;  // the player whose game runs it (NpcSync::Owner of that id; 0 nobody)
 		bool          dead = false;
+		float         health = -1.0f;  // its health now (less than 0: not read)
 	};
 
 	// Whether the actor is to be a ghost while the explosion goes off: one the session knows, alive, that another
-	// game runs (Shields above). The player and the friends' stand-ins are never reached this way (the caller leaves
-	// them out: the engine never counts them as NPCs here).
-	constexpr bool Shields(const Reached& a_actor, std::uint32_t a_local)
+	// game runs (Shields above), and one the explosion's damage (a_damage) could kill (Lethal). The player and the
+	// friends' stand-ins are never reached this way (the caller leaves them out: the engine never counts them as NPCs
+	// here).
+	constexpr bool Shields(const Reached& a_actor, std::uint32_t a_local, float a_damage = 0.0f)
 	{
-		return a_actor.id != 0 && !a_actor.dead && Shields(a_actor.owner, a_local);
+		return a_actor.id != 0 && !a_actor.dead && Shields(a_actor.owner, a_local) && Lethal(a_actor.health, a_damage);
 	}
 
 	// A save written while a ghost of ours was still on (its setghost 0 lands a frame late; 0.8.10 and 0.8.11 saved it
-	// so mid-fight) loads it a ghost, and as one already it was never ours to clear: the player's shots passed through
-	// it for good, and every later save wrote it again. So for a while after a load, once in a session, WeaponFire takes
-	// the ghost off a loaded copy that looks like one of ours: one Shields would make a ghost (shared, alive, run by
-	// another game: never an NPC our game runs, whose ghost is our own story's, the host's for everyone), its flag on
-	// though its base is no ghost, not one we made since, and hostile to our player (a story's ghost is more often a
-	// friend in a scene).
-	struct Loaded
+	// so mid-fight; up to 0.9.2 a copy that unloaded before its setghost 0 was written as a ghost too) loads it a
+	// ghost. Saves made since carry the ledger of our ghosts (GhostLedger), which takes them off. For a save from
+	// before, WeaponFire looks every REPAIR_EVERY frames at the loaded actors whose ghost flag reads on and takes the
+	// ghost off one that looks like ours, once per actor per load: a plugin's reference (the only kind a save could
+	// hold a ghost of ours on; the session need not know it now), alive, its flag on though its base record makes it no
+	// ghost and no quest holds it in an alias (a story's ghost is set by a quest on an actor it holds: an essential
+	// character in a scene), and not a ghost of ours now (shielded, or in the ledger: those the ledger clears). Whose
+	// the NPC is now, and whether it is hostile, is no part of it: before, one our game had come to run, one nobody ran
+	// or one not yet hostile when the thirty seconds ran out stayed a ghost for the rest of the save. A ghost cleared
+	// this way that a script sets again is left alone from then on (once per actor per load).
+	struct Found
 	{
-		Reached actor;
-		bool    ghost = false;      // its ghost flag reads on (the extra data the save wrote)
-		bool    baseGhost = false;  // its base record makes it a ghost: its story's own
-		bool    shielded = false;   // a ghost of ours against an explosion since the load (Book), or one whose setghost has yet to land
-		bool    hostile = false;    // hostile to our player
+		std::uint32_t id = 0;            // its form id (0: none)
+		bool          dead = false;
+		bool          ghost = false;      // its ghost flag reads on (the extra data the save wrote)
+		bool          baseGhost = false;  // its base record makes it a ghost: its story's own
+		bool          questAlias = false; // a quest holds it in an alias: a story's own
+		bool          ours = false;       // a ghost of ours now (shielded, or in the ledger)
 	};
 
-	constexpr bool RepairsOnLoad(const Loaded& a_copy, std::uint32_t a_local)
+	constexpr bool Repairs(const Found& a_actor)
 	{
-		return Shields(a_copy.actor, a_local) && a_copy.ghost && !a_copy.baseGhost && !a_copy.shielded && a_copy.hostile;
+		return a_actor.id != 0 && (a_actor.id >> 24) != 0xFF && !a_actor.dead && a_actor.ghost && !a_actor.baseGhost && !a_actor.questAlias && !a_actor.ours;
 	}
 
-	// How long after a load (frames in a session) the copies are looked at for that, and how often.
-	constexpr std::uint32_t REPAIR_FRAMES = 1800;
+	// How often (frames) the loaded actors are looked at for that.
 	constexpr std::uint32_t REPAIR_EVERY = 15;
 
 	class Book
