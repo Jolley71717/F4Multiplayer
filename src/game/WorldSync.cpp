@@ -320,6 +320,7 @@ namespace WorldSync
 		// deaths told again that killed a copy alive here after all (TakeDeath).
 		std::uint32_t healthDropped = 0;
 		LogPace::Pace droppedHealthLog;
+		LogPace::Pace refStateLog;  // the lock lines of a friend's door state applied here
 		std::uint32_t killsRetried = 0;
 		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
 
@@ -1683,7 +1684,10 @@ namespace WorldSync
 				ref->GetLock()->SetLocked(a_state.locked == Protocol::RefState::kYes);
 				ref->AddLockChange();
 				++refStatesApplied;
-				REX::INFO("WorldSync: {:08X} {} (changed in another player's world)", a_state.refId, a_state.locked == Protocol::RefState::kYes ? "locked" : "unlocked");
+				// A door whose script flips its lock is applied every few seconds for as long as both players are near it: one line per interval.
+				if (refStateLog.Due(Clock::now())) {
+					REX::INFO("WorldSync: {:08X} {} (changed in another player's world) ({} such since the last line)", a_state.refId, a_state.locked == Protocol::RefState::kYes ? "locked" : "unlocked", refStateLog.Since());
+				}
 			}
 			if (gate) {
 				if (*gateApply == SharedGates::Apply::kSet) {
