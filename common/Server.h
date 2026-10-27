@@ -86,6 +86,12 @@ public:
 		// be lost). Tests shorten it.
 		std::chrono::milliseconds deathGrace{ 10000 };
 
+		// A player who hits or talks to an NPC another player's game runs takes it over, unless it changed hands, or
+		// its runner claimed it again (their game does with each hit of theirs on it, and every 2 s while they talk to
+		// it), within this long: two players shooting one raider leave it with whoever hit it first, as long as they
+		// keep hitting it, instead of trading it every few seconds and restarting its AI each time. Tests shorten it.
+		std::chrono::milliseconds takeoverCooldown{ 5000 };
+
 		// The host's game offering to run an NPC the session has dead brings it back for everyone (its cell reset:
 		// the raiders of a camp cleared days ago). Believed only once this long has passed since the host's game
 		// last asked for the session's world, and since the death: before that, its game may still have it alive

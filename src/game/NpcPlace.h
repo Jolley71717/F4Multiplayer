@@ -138,6 +138,33 @@ namespace NpcPlace
 		return LostWhy(a_ours, a_owners, a_age) == Lost::kNo;
 	}
 
+	// What is done with a copy whose owner's game has gone silent (Lost::kSilent) while their status names a menu that
+	// stops their game (PauseHandOff::Stopped: the Pip-Boy, the pause menu, a container, a terminal). Their world stands
+	// still, so ours is held still where their last state put it, mirrored as before (kHold), rather than let go to its
+	// own AI: let go, every settler near our player set off on a walk of its own after 3 s of the owner's Pip-Boy, and
+	// jumped back to where the owner's game had it when the menu closed. The ones a friend's game can take on are handed
+	// over by the owner's game after 5 s of the menu anyway (PauseHandOff); the ones it keeps (its companion, one it
+	// fought lately, a spawn of its own) are held for the menu, up to HELD_FOR of silence, since a status can go stale
+	// (their game hung, their connection gone: the server's release ends the mirror either way); past that, or with no
+	// such status (a load, a bad connection), it is let go as before (kRelease).
+	//
+	// Not in a fight (a_inFight: our player hit it lately, it fights our player, or it is in combat here): a held copy
+	// can't fight back, and an enemy standing still beside our player for as long as its owner reads the Pip-Boy is worse
+	// than one that fights on its own AI here and jumps a little when the owner comes back. Our hits on it meanwhile are
+	// dealt in the owner's game once it runs again, as any non-runner's are.
+	constexpr std::chrono::steady_clock::duration HELD_FOR = std::chrono::seconds{ 60 };
+
+	enum class Silent
+	{
+		kRelease,  // let go to its own AI (NpcSync's StopMirroring), as every other Lost reason is
+		kHold,     // kept mirrored, still at the owner's last state
+	};
+
+	constexpr Silent WhileSilent(bool a_ownerStopped, bool a_inFight, std::chrono::steady_clock::duration a_age)
+	{
+		return a_ownerStopped && !a_inFight && a_age <= HELD_FOR ? Silent::kHold : Silent::kRelease;
+	}
+
 	constexpr const char* LostName(Lost a_lost)
 	{
 		switch (a_lost) {

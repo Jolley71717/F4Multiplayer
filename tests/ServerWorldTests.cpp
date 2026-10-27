@@ -72,6 +72,12 @@ namespace
 		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health }, MT::kReportHealth);
 	}
 
+	// What the sender's hit took off its copy of an NPC another game runs, for that game to deal (kReportDamage).
+	auto Damage(std::uint32_t a_ref, float a_damage)
+	{
+		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage }, MT::kReportDamage);
+	}
+
 	auto Container(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count)
 	{
 		return Protocol::Encode(Protocol::ContainerChange{ a_container, a_item, a_count }, MT::kReportContainer);
@@ -683,6 +689,58 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
 	CHECK(Owners(Received(f, 2)).empty());
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+}
+
+TEST("server world: two players shooting one raider leave it with whoever hit it first while they keep hitting it; it changes hands once the first stops")
+{
+	Server::Options options;
+	options.takeoverCooldown = 1000s;  // long, crossed with Fixture::Advance: a busy PC can't make a gap below too long for it
+	Fixture    f{ options };
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));  // Alice's game runs the raider
+	Clear(f, { 1, 2 });
+
+	// Bob's shot: his game says what it took off its copy, and asks to take the raider over. It changed hands moments
+	// ago, so it stays Alice's, and his damage reaches her game to deal.
+	const auto bobShoots = [&] {
+		f.fake->Deliver(2, Damage(NPC, 0.1f));
+		f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	};
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	const auto toAlice = Received(f, 1);
+	CHECK(Owners(toAlice).empty());
+	CHECK(Count(toAlice, MT::kActorDamaged) == 1);
+
+	// Alice shoots it too: her game claims it again with her hit (NpcSync::OnLocalInteraction), as it does while she
+	// talks to one, and reports its health. Nobody is told anything.
+	f.Advance(600s);
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	f.fake->Deliver(1, Health(NPC, 0.7f));
+	CHECK(Owners(Received(f, 1)).empty());
+	CHECK(Owners(Received(f, 2)).empty());
+
+	// Bob's next shot, past the cooldown since the raider became hers but within it of her hit: still hers, and his
+	// damage still lands in her game. No change of hands restarts its AI.
+	f.fake->Settle();
+	f.Advance(500s);
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	const auto toAliceAgain = Received(f, 1);
+	CHECK(Owners(toAliceAgain).empty());
+	CHECK(Count(toAliceAgain, MT::kActorDamaged) == 1);
+
+	// Alice stops shooting: the cooldown after her last hit over, Bob's next shot takes it over, as before.
+	f.fake->Settle();
+	f.Advance(1100s);
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, bob));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	// And her shot now doesn't take it straight back.
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	CHECK(Owners(Received(f, 2)).empty());
 }
 
 TEST("server world: an NPC's health is said by the game that runs it; the last word of the game that ran it before a takeover never sets it back")

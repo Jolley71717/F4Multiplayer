@@ -536,3 +536,28 @@ TEST("npc place: each reason ours stays or moves, and when it is mirrored")
 	CHECK(std::string_view{ NpcPlace::LostName(Lost::kSilent) } == "silent");
 	CHECK(std::string_view{ NpcPlace::LostName(Lost::kFar) } == "far");
 }
+
+TEST("npc place: a copy gone silent while its owner reads the Pip-Boy is held still, not let go: out of a fight, for the menu, and not past a minute")
+{
+	using NpcPlace::Silent;
+	using NpcPlace::WhileSilent;
+	// The host opens the Pip-Boy with settlers near the joiner: their status names the menu within 2 s, the states
+	// stop; after 3 s of silence (LOST_AFTER) the joiner's copies are held where the host's last states put them, for
+	// the whole menu, instead of each walking its own way and jumping back when it closes.
+	CHECK(WhileSilent(true, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kHold);
+	CHECK(WhileSilent(true, false, 10s) == Silent::kHold);
+	CHECK(WhileSilent(true, false, NpcPlace::HELD_FOR) == Silent::kHold);
+	// A minute on, the status may be stale (their game hung in the menu, their connection gone): let go as before.
+	CHECK(WhileSilent(true, false, NpcPlace::HELD_FOR + 1ms) == Silent::kRelease);
+	// Silent with no such menu (a load, a bad connection, their game gone): let go, as before.
+	CHECK(WhileSilent(false, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
+	CHECK(WhileSilent(false, false, 10s) == Silent::kRelease);
+	// A raider the joiner is fighting, or that fights them: a held one can't fight back, so it runs its own AI here
+	// and jumps a little when the host comes back, rather than standing still beside the joiner for the menu.
+	CHECK(WhileSilent(true, true, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
+	CHECK(WhileSilent(true, true, 10s) == Silent::kRelease);
+	CHECK(WhileSilent(false, true, 10s) == Silent::kRelease);
+	// A fight starting while held ends the hold; the menu closing (states back) ends it with no release at all.
+	CHECK(WhileSilent(true, false, 20s) == Silent::kHold);
+	CHECK(WhileSilent(true, true, 20s) == Silent::kRelease);
+}

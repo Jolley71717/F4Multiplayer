@@ -236,8 +236,11 @@
   - a player's current companion goes to that player, unless it is also another player's companion
     (then the first keeps it, so two players with Dogmeat don't trade him forever; the other's game asks
     again every 15 s rather than every 3 s, and at once when he is released: `NpcClaims`, `refusals=`);
-  - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
-    hands in the last 5 s.
+  - a player who hits or talks to an NPC takes it over, unless it is someone's companion, or it changed hands or its
+    runner claimed it again in the last 5 s (`Server::Options::takeoverCooldown`). The runner's game claims it again
+    with each of its player's hits on it (2 s apart at most) as it does every 2 s while they talk to it, so two players
+    shooting one raider leave it with whoever hit it first until they stop hitting it, instead of trading it every 5 s
+    with its AI starting over in the taker's game each time; the other's hits reach it as damage, as any non-runner's.
   - a player in workshop mode takes over the settlers of that workbench (`SettlerCommand`: those linked to it by
     `WorkshopItemKeyword`; four a round, every 2 s, each at most every 5 s) and claims again the ones they run, which
     are not handed off meanwhile (`commanding=`, `settlerTakeovers=`). Giving a settler a job runs on the settler's
@@ -265,10 +268,17 @@
   (`fallbackWhy=` elsewhere/silent/far, `NpcPlace::Lost`), those while the owner's status named a menu that stops
   their game (`fallbacksPaused=`: their world stood still, so the copy's walk was for nothing), and the jumps of a
   body's length or more when mirrored again (`snapBacks=`, `snapMax=`), with the first few and every 50th in the log.
+  Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
+  world stands still), a mirrored copy is instead held still where their last state put it, mirrored as before, for up
+  to 60 s of silence (`NpcPlace::WhileSilent`, game-free and tested; `holds=` held/let go after all, `holdMax=`), and
+  walks on from there when their states come back: no walk of its own, no jump. Not one in a fight here (our player
+  hit it lately, it fights our player, or the engine has it in combat): a held copy can't fight back, so that one runs
+  its own AI as before and jumps a little when the owner comes back. The copies a friend's game can take on are handed
+  over by the owner's game after 5 s of the menu anyway (`PauseHandOff`); the hold is for the ones it keeps.
   Every change of hands restarts the NPC's AI in the game that takes it (from where that game's copy stood, a delay
   behind) and makes a copy of the game that had it, which jumps to the new runner's: `hands=` counts the changes and
-  those within 10 s of the last (`NpcHands.h`, game-free and tested; a hit takes an NPC over, 5 s apart at most, so
-  two players shooting one trade it every 5 s), with the quick ones logged. `ownedBlocked=` is NPCs we run found with
+  those within 10 s of the last (`NpcHands.h`, game-free and tested; a hit takes an NPC over, 5 s apart at most, and
+  two players shooting one traded it every 5 s until the runner's own hits kept it), with the quick ones logged. `ownedBlocked=` is NPCs we run found with
   their movement blocked (a script's doing, or a copy's flag left on one; logged once each), `fightStandIns=` how many
   of ours fight a friend's stand-in, which can't be hurt or pushed aside. `mirror <ref>` ends with the engine's AI
   facts for any NPC (`ai:` process level, current package and its type, combat target, movement blocked, sit state).
@@ -975,7 +985,7 @@ menu) and to loaded references; everything else waits and is retried.
 
 | Feature | How |
 |---|---|
-| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for `Options::takeoverCooldown`, 5 s, after the NPC changes hands or its runner claims it again with a hit). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
 | Health | The game that runs an NPC reports its health (a fraction of max) after its hits and whenever it changes by anything else, at most every 250 ms (`HealthShare`: a fire, a burn, poison); receivers set their copy to it. A hit on a copy goes as the damage it did (`kReportDamage`, protocol 40: `CopyHealth::Book::TakeOurs`), which the game that runs the NPC takes off; only it applies it. Before, a copy reported its own health, which healed off the NPC whatever its game had taken since the copy last heard (a Molotov's fire). A game that comes to run an NPC (a takeover, a claim, back from a load) reports its health at once, at most 16 such reports every 250 ms (`healthShared=` sent/of them first readings): a takeover's claim leaves a frame ahead of the hit's damage, which the old runner then drops, and a host back from a death's reload runs its NPCs at its save's health. Only a throw's blow on a copy is left to the NPC's own game (`CopyHealth::OwnersToDeal`): an explosion's exactly when that explosion goes off in the NPC's own game too: our game decides once per explosion what becomes of it (`RemoteEdits::BlastLog`: reported by a throw's watch or a destructible object's, a destructible object's own that goes with its wreck, a world trap's that every game sets off, or ours alone), and a hit judges by the explosion that reaches it (`WeaponFire::BlastAt`, deciding one the 100 ms scan hasn't looked at yet) and the owner's player's distance from it by the receiver's own rule (`RemoteEdits::DealtThere`, `copyBlasts=` there/ours). Before, the hit went by the watch alone: a missile that hit a copy over 6000 units from our player, never reported, was dealt in neither game and healed back by the owner's next report, and at the watch's edge the hit and the scan could disagree. A throwable's too but never one with a weapon in hand that is no throwable, and the fire a Molotov leaves for 20 s after. In 0.9.0, as players reported it, gun hits on copies were taken for throws (how their hit events read on this runtime is not verified yet: `CopyWatch` now logs the flags), so only the game that ran an NPC hurt it, and a melee hit, which claimed it, moved that game to the hitter |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref, only while it is in the world (a persistent item's ref stays itself in the inventory that took it, ours too: OwnGear kTakeLoose). One the engine names an inventory for (ExtraReferenceHandles: the local player's, a container's, an NPC's) is left there and the pickup dropped; one in no cell and no inventory (being loaded or moved) stays pending and is tried again for 30 s (OwnGear::PICKUP_WAIT), then dropped |
