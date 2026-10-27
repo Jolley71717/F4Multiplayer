@@ -8,6 +8,7 @@
 #include <charconv>
 #include <format>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 
 namespace Destructibles
@@ -143,8 +144,8 @@ namespace Destructibles
 			out.copy.health = HealthOf(a_ref->extraList.get());
 			out.copy.destroyed = (a_ref->GetFormFlags() & DESTROYED_FLAG) != 0;
 			// A deleted reference is left alone, but for one the engine deleted itself as its stage took it away: a barrel's
-			// last stage disables it, then marks it deleted and destroyed (seen on the rig), and a gas canister's may only
-			// take it away without marking it destroyed. That is the stage to report.
+			// last stage disables it, then marks it deleted and destroyed (seen on the rig), and one whose stage only takes it
+			// away (the record's disable without destroy) may not be marked destroyed. That is the stage to report.
 			if (a_ref->IsDeleted() &&
 				!DestructionRules::DeletedByDestruction(out.stages, DestructionRules::Passed(out.stages, out.copy.health, out.maximum), out.copy.destroyed)) {
 				return refuse("deleted, not by its destruction");
@@ -180,7 +181,6 @@ namespace Destructibles
 		struct Counts
 		{
 			std::uint32_t hits = 0;
-			std::uint32_t hitsRefused = 0;  // hits on something not shared (logged, the first twenty)
 			std::uint32_t reported = 0;
 			std::uint32_t reportedExplosions = 0;
 			std::uint32_t applied = 0;
@@ -206,6 +206,7 @@ namespace Destructibles
 		Clock::time_point                            nextPoll{};
 		Clock::time_point                            nextScan{};
 		std::uint32_t                                logged = 0;
+		std::set<std::pair<std::uint32_t, const char*>> refusedLogged;  // (base, reason) of each shot at something not shared that the log has
 		std::mutex                                   hitLock;
 		std::vector<std::uint32_t>                   hitInbox;
 
@@ -415,10 +416,11 @@ namespace Destructibles
 			const auto  ref = Lookup(id);
 			const auto  object = Read(ref, &why);
 			if (!object) {
-				// A shot at something that may blow up and is not shared: the reason and the base's type, for the rig.
-				if (counts.hitsRefused < 20) {
-					++counts.hitsRefused;
-					const auto base = ref ? ref->GetObjectReference() : nullptr;
+				// A shot at something not shared: the reason and the base's type, for the rig. Once for each kind of thing and
+				// reason (a hundred at most): the first shots of a session hit bottles and junk, and a plain count would be
+				// spent before a gas canister is shot.
+				const auto base = ref ? ref->GetObjectReference() : nullptr;
+				if (refusedLogged.size() < 100 && refusedLogged.emplace(base ? base->GetFormID() : 0, why).second) {
 					const auto name = base ? base->As<RE::TESFullName>() : nullptr;
 					REX::INFO("Destructibles: hit on {:08X} (base {:08X}, form type {}, \"{}\") is not shared: {}", id, base ? base->GetFormID() : 0,
 						base ? static_cast<int>(base->GetFormType()) : -1, name && name->GetFullName() ? name->GetFullName() : "", why ? why : "?");

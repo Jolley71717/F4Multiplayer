@@ -74,9 +74,9 @@ namespace DestructionRules
 	}
 
 	// Whether a deleted reference is still the destruction's to share: the engine deleted it itself, as its stage took it
-	// away (an explosive barrel's, a gas canister's), which is the very stage to report. Any other deleted reference (a
-	// script's delete, a picked-up item) is not. Not every such stage also marks the object destroyed (STAGE_DESTROY is the
-	// record's own flag): going by that flag alone lost the stage of an object whose last stage only takes it away.
+	// away (an explosive barrel's), which is the very stage to report. Any other deleted reference (a
+	// script's delete, a picked-up item) is not. Whether a stage that only takes the object away (STAGE_DISABLE without
+	// STAGE_DESTROY) also marks it destroyed is not known; the few such records in Fallout4.esm are a trap and a hatch.
 	[[nodiscard]] inline bool DeletedByDestruction(std::span<const Stage> a_stages, std::size_t a_passed, bool a_destroyed)
 	{
 		return a_destroyed || TakenAway(a_stages, a_passed);
