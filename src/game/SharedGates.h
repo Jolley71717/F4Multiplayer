@@ -195,6 +195,10 @@ namespace SharedGates
 	// down the corridor from its gate (a door's reports count from 1500 units, a button's reach).
 	inline constexpr float REACH = 4000.0f;
 
+	// From how near our own report of a gate is sent (DoorShare::Watch::near): a little less than REACH, for where the
+	// friend last saw us. Read from further, a change is kept until we come near.
+	inline constexpr float REPORT_REACH = 3600.0f;
+
 	// How many gates deep a chain of linked gates is followed (a terminal opens a chain: each gate links the next).
 	inline constexpr std::size_t CHAIN_DEPTH = 8;
 

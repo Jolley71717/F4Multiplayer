@@ -4,6 +4,7 @@
 
 #include "ServerFixture.h"
 
+#include "game/DoorShare.h"
 #include "game/ScriptDoors.h"
 
 #include <algorithm>
@@ -69,6 +70,11 @@ TEST("script doors: the list holds Vault 114's gear door (DN142's 50) and only s
 		CHECK(!door.what.empty());
 	}
 
+	// What the host used to open it (2026-10-19's report named 00145DA1 and 00145DA2): the console VaultDoorConsole01,
+	// an activator whose script sets the stage, and the furniture it links to, NPCVaultConsoleActivate, the lever the
+	// player pulls. Neither is a door: their open state is nobody's to share (DoorShare), the stage is.
+	CHECK(!DoorShare::SharesOpen({ .door = false, .scripts = 1 }));  // the console (VaultDoorConsoleScript)
+	CHECK(!DoorShare::SharesOpen({ .door = false }));                // its furniture, and the gear door itself (an activator)
 	CHECK(ScriptDoors::Find(QUESTS, DN142, OPENS) == VAULT_114);
 	CHECK(!ScriptDoors::Find(QUESTS, DN142, 5));        // DN142's other stages are its own
 	CHECK(!ScriptDoors::Find(QUESTS, 0x000B8464, 15));  // Vault 81's console: V81_00_Intro's 15 starts the intercom talk (QuestSync's)
