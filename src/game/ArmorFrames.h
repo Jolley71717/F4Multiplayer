@@ -568,6 +568,15 @@ namespace ArmorFrames
 		template <class F>
 		Told Update(bool a_on, F&& a_seat, std::chrono::steady_clock::time_point a_now)
 		{
+			return Update(a_on, std::forward<F>(a_seat), [](std::uint32_t) { return 0u; }, a_now);
+		}
+
+		// a_spawnOf(ref) names a frame made at runtime that is a copy of a friend's spawn (Spawns::CopyIdOf): the
+		// spawn's id, which every game resolves to its own copy, or the owner's game to its own frame (a frame lent to
+		// us, FrameLoans). 0 for any other: a frame of our own making is none in another game.
+		template <class F, class G>
+		Told Update(bool a_on, F&& a_seat, G&& a_spawnOf, std::chrono::steady_clock::time_point a_now)
+		{
 			std::uint32_t seat = 0;
 			if (!a_on) {
 				frame = 0;
@@ -576,7 +585,7 @@ namespace ArmorFrames
 				const Seat s = a_seat();
 				if (s.frame && s.base != 0) {
 					frame = s.base;
-					frameRef = Protocol::IsShareableRef(s.ref) ? s.ref : 0;
+					frameRef = Protocol::IsShareableRef(s.ref) ? s.ref : static_cast<std::uint32_t>(a_spawnOf(s.ref));
 				} else {
 					seat = s.base;
 				}
@@ -723,6 +732,26 @@ namespace ArmorFrames
 			return Original::kElsewhere;
 		}
 		return Original::kHide;
+	}
+
+	// A friend wears a frame one game made and lent them (FrameLoans): their status names it by its spawn id, which our
+	// game resolves to its own reference of it (Spawns::LocalOf): the owner's game to its real frame, every other game
+	// to its copy of the spawn. That is hidden while they wear it, wherever it stands: it is the very suit they wear, and
+	// the stand-in's copy shows it on them. None of the rules for a pre-placed one hold: it is no reference of our world
+	// a player of ours could have found, moved or be sent for by a quest, and the owner's player, whose suit it is, is
+	// the one who lent it. Only someone here in it (it was lent while nobody was) keeps it shown.
+	constexpr Original ChooseLentOriginal(std::uint32_t a_frameBase, const OriginalFacts& a_facts)
+	{
+		if (!a_facts.found || a_frameBase == 0 || a_facts.base != a_frameBase) {
+			return Original::kMissing;
+		}
+		if (!a_facts.frame) {
+			return Original::kNotFrame;
+		}
+		if (a_facts.inUse) {
+			return Original::kInUse;
+		}
+		return a_facts.loaded ? Original::kHide : Original::kNotLoaded;
 	}
 
 	// A frame a friend left standing: the one they got out of last, where their game has it now (Protocol::ParkedFrame).

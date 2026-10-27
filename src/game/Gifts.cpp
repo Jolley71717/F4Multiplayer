@@ -4,6 +4,7 @@
 #include "Text.h"
 #include "game/Drops.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/GiftBook.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
@@ -149,6 +150,7 @@ namespace Gifts
 							}
 							entry.quest = extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 						}
+						entry.lent = FrameLoans::IsLentItem(entry.base, entry.name);
 						entry.equipped = stack->IsEquipped();
 						out.push_back(std::move(entry));
 					}

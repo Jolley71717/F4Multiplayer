@@ -86,6 +86,7 @@ namespace GiftBook
 		std::string                    name;            // the player's name for it; empty: the game's own
 		bool                           quest = false;   // it fills a quest alias
 		bool                           equipped = false;
+		bool                           lent = false;    // a copy of a piece a friend lent our player with a frame (FrameLoans): theirs, never given
 	};
 
 	// What tells items of a base apart: two of one class are the same thing.
@@ -154,9 +155,13 @@ namespace GiftBook
 	}
 
 	// Whether the item may be given: a weapon or armor every game can have as it is (DropBook::Judge), whose mods the
-	// wire carries.
+	// wire carries. Never a copy of a friend's lent power armor piece (Stack::lent): as for a drop (Drops), it stays in our
+	// copy of the container, and its owner's game takes theirs out at the return.
 	inline bool Givable(const Stack& a_stack)
 	{
+		if (a_stack.lent) {
+			return false;
+		}
 		DropBook::ItemFacts facts{ .kind = a_stack.kind, .questItem = a_stack.quest, .runtimeBase = (a_stack.base >> 24) == 0xFF, .count = 1 };
 		facts.runtimeMod = std::ranges::any_of(a_stack.mods, [](const Protocol::ItemMod& a_mod) { return (a_mod.mod >> 24) == 0xFF; });
 		return GiftKind(a_stack.kind) && a_stack.mods.size() <= Protocol::MAX_ITEM_MODS && DropBook::Judge(facts) == DropBook::Givable::kGive;

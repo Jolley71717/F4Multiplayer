@@ -941,16 +941,114 @@ TEST("protocol: PlayerStatus health over 100 is rejected")
 	CHECK(!DecodePlayerStatus(Encode(PlayerStatus{ 1, 0, 0, 255, 1 }, MT::kPlayerStatus)));
 }
 
-TEST("protocol: PlayerStatus frame reference is one every game shares, or none")
+TEST("protocol: PlayerStatus frame reference is one every game shares, a spawn id, or none")
 {
 	PlayerStatus status{ 1, 0, 0, 100, 1, false, false, false, true, 0x0017F6E4, REF_A };
 	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus)));
 	status.powerArmorFrameRef = 0;  // a frame made in their game
 	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus)));
-	status.powerArmorFrameRef = RUNTIME_REF;  // another reference, or none, in every other game
+	status.powerArmorFrameRef = RUNTIME_REF;  // a spawn id: a friend's frame lent to them (FrameLending)
+	const auto lent = DecodePlayerStatus(Encode(status, MT::kReportStatus));
+	REQUIRE(lent);
+	CHECK(lent->powerArmorFrameRef == RUNTIME_REF);
+	status.powerArmorFrameRef = 0xFF000000;  // the runtime range's first id: no spawn's
 	CHECK(!DecodePlayerStatus(Encode(status, MT::kReportStatus)));
 	status.powerArmorFrameRef = PLAYER_REF_ID;
 	CHECK(!DecodePlayerStatus(Encode(status, MT::kPlayerStatus)));
+}
+
+TEST("protocol: PlayerStatus says whether they lend their power armor, beside its other flags")
+{
+	PlayerStatus status{ 1, 0x0001D5E0, 0x0001A2B3, 87, 42, true, false, true, false, 0 };
+	status.seat = Seat{ .ref = REF_B, .base = 0x0004A0F5, .x = 1.0f, .y = 2.0f, .z = 3.0f };
+	status.lends = true;
+	const auto back = DecodePlayerStatus(Encode(status, MT::kReportStatus));
+	REQUIRE(back);
+	CHECK(*back == status);
+	status.lends = false;
+	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus))->lends == false);
+}
+
+TEST("protocol: a lent frame's kit, ask and return read back as they were sent")
+{
+	FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+	lent.kit.push_back(LentItem{ .slot = 1, .base = 0x00154ABC, .templateIndex = 2, .mods = { { 0x0018ADA6, 0, 1 } }, .health = 0.5f, .name = "Sam's T-60 Left Arm" });
+	lent.kit.push_back(LentItem{ .slot = 6, .base = 0x00075FE4, .health = 0.8f, .core = true });
+	const auto lending = DecodeFrameLending(Encode(lent, MT::kFrameLent));
+	REQUIRE(lending);
+	CHECK(*lending == lent);
+
+	const FrameLending refused{ 3, 2, RUNTIME_REF, LoanRefusal::kLent, {} };
+	CHECK(DecodeFrameLending(Encode(refused, MT::kFrameLent)) == refused);
+	// A refusal carries no kit: one written with a kit is sent without it.
+	FrameLending refusedWithKit = refused;
+	refusedWithKit.kit = lent.kit;
+	CHECK(DecodeFrameLending(Encode(refusedWithKit, MT::kFrameLent)) == refused);
+
+	const FrameBorrow ask{ 2, RUNTIME_REF };
+	CHECK(DecodeFrameBorrow(Encode(ask, MT::kBorrowFrame)) == ask);
+
+	const FrameReturn back{ 2, 3, RUNTIME_REF, false, 0x0001A2B3, 0, 120.0f, -40.5f, 6.0f, 3.0f, { { 1, true, 0.25f }, { 6, false, -1.0f } } };
+	CHECK(DecodeFrameReturn(Encode(back, MT::kFrameReturned)) == back);
+	const FrameReturn nowhere{ 2, 3, RUNTIME_REF, false, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, {} };
+	CHECK(DecodeFrameReturn(Encode(nowhere, MT::kReturnFrame)) == nowhere);
+	// Ended: nothing else goes, whatever the message held.
+	FrameReturn ended = back;
+	ended.ended = true;
+	const auto endedBack = DecodeFrameReturn(Encode(ended, MT::kFrameReturned));
+	REQUIRE(endedBack);
+	CHECK(endedBack->ended);
+	CHECK(endedBack->items.empty());
+	CHECK(endedBack->cell == 0u);
+}
+
+TEST("protocol: a loan names a spawn, a borrower, a kit of plugin forms with each slot once, and a place the world holds")
+{
+	CHECK(!DecodeFrameBorrow(Encode(FrameBorrow{ 2, REF_A }, MT::kBorrowFrame)));        // not a spawn: a plugin's frame is everyone's own
+	CHECK(!DecodeFrameBorrow(Encode(FrameBorrow{ 2, 0xFF000000 }, MT::kBorrowFrame)));
+
+	const auto lends = [](auto a_change) {
+		FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, { LentItem{ .slot = 0, .base = 0x00154ABC, .health = 0.5f } } };
+		a_change(lent);
+		return DecodeFrameLending(Encode(lent, MT::kLendFrame)).has_value();
+	};
+	CHECK(lends([](FrameLending&) {}));
+	CHECK(!lends([](FrameLending& a_l) { a_l.borrowerId = 0; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.spawnId = REF_A; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].slot = static_cast<std::uint8_t>(MAX_LENT_ITEMS); }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit.push_back(a_l.kit[0]); }));  // a slot twice
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].base = RUNTIME_REF; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].mods = { { RUNTIME_REF, 0, 0 } }; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].health = 1.5f; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].health = std::numeric_limits<float>::quiet_NaN(); }));
+	CHECK(lends([](FrameLending& a_l) { a_l.kit[0].health = -1.0f; }));
+	CHECK(lends([](FrameLending& a_l) {
+		a_l.kit.clear();
+		for (std::uint8_t i = 0; i < MAX_LENT_ITEMS; ++i) {
+			a_l.kit.push_back(LentItem{ .slot = i, .base = 0x00154ABC });
+		}
+	}));
+	// More than a kit holds is cut to MAX_LENT_ITEMS as it is written (the rest never goes).
+	FrameLending big{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+	for (std::uint8_t i = 0; i < MAX_LENT_ITEMS; ++i) {
+		big.kit.push_back(LentItem{ .slot = i, .base = 0x00154ABC });
+	}
+	big.kit.push_back(LentItem{ .slot = 0, .base = 0x00154ABC });
+	CHECK(DecodeFrameLending(Encode(big, MT::kLendFrame))->kit.size() == MAX_LENT_ITEMS);
+
+	const auto returns = [](auto a_change) {
+		FrameReturn back{ 2, 3, RUNTIME_REF, false, 0, 0x0000003C, 10.0f, 20.0f, 30.0f, 0.5f, { { 0, true, 0.5f } } };
+		a_change(back);
+		return DecodeFrameReturn(Encode(back, MT::kReturnFrame)).has_value();
+	};
+	CHECK(returns([](FrameReturn&) {}));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.cell = 0x0001A2B3; }));  // inside and outside at once
+	CHECK(!returns([](FrameReturn& a_r) { a_r.x = std::numeric_limits<float>::infinity(); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.heading = std::numeric_limits<float>::quiet_NaN(); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.items.push_back(a_r.items[0]); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.items[0] = { 0, false, 0.5f }; }));  // not found, yet a condition
+	CHECK(!returns([](FrameReturn& a_r) { a_r.items[0].slot = static_cast<std::uint8_t>(MAX_LENT_ITEMS); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.spawnId = REF_A; }));
 }
 
 TEST("protocol: WorldTime rejects bad hours and day counts")

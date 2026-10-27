@@ -144,10 +144,11 @@ namespace FrameShare
 	// using it makes it theirs), one a quest holds, one the session placed, or one not loaded (deleting a reference
 	// whose 3D is still coming crashes the loader; the walk finds loaded ones). A plain copy an older version left (no
 	// keyword: one of a friend's stand-in's or parked frame that a load kept) cannot be told from a frame the game
-	// made, and stays: the console removes those (disable, then markfordelete).
-	constexpr bool Ghost(const Ours& a_ours)
+	// made, and stays: the console removes those (disable, then markfordelete). Never one lent to a friend (a_lent:
+	// FrameLoans): it is the suit they wear, and its pieces come back to it.
+	constexpr bool Ghost(const Ours& a_ours, bool a_lent = false)
 	{
-		if (!a_ours.found || !a_ours.created || !a_ours.frame || !a_ours.marked || a_ours.copy) {
+		if (a_lent || !a_ours.found || !a_ours.created || !a_ours.frame || !a_ours.marked || a_ours.copy) {
 			return false;
 		}
 		if (a_ours.holdsItems || a_ours.off || a_ours.inUse || a_ours.wornHere || a_ours.lastUsed || a_ours.owned || a_ours.quest) {
@@ -172,15 +173,17 @@ namespace FrameShare
 	// with it. Never while somebody is in it: the engine disables a worn frame, and the wearer's stand-in shows it then;
 	// the copies go and it is shared afresh where they get out. Never a copy the session placed here (that would send a
 	// friend's own frame back to them), nor one an older version's workshop sync left in the save (Ghost: it goes).
-	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere)
+	// One lent to a friend (a_lent: FrameLoans) is shared for as long as the loan lasts, hidden here and wherever it
+	// stands: every copy keeps its spawn id, the borrower's the one they wear.
+	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere, bool a_lent = false)
 	{
-		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy || Ghost(a_ours)) {
+		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy || Ghost(a_ours, a_lent)) {
 			return false;
 		}
 		if (a_ours.wornHere || a_ours.off || a_ours.inUse) {
 			return false;
 		}
-		return a_usedHere || (a_hosting && a_ours.loaded);
+		return a_lent || a_usedHere || (a_hosting && a_ours.loaded);
 	}
 
 	// Of the spawns one game may share at once (Protocol::MAX_SPAWNS_PER_PLAYER), frames take this many at most: the
@@ -199,6 +202,15 @@ namespace FrameShare
 	// a copy of it right on its own, two suits where there is one (and the other way round, once the joiner's player had
 	// used theirs). No two frames stand this near each other, and a copy of ours there is a copy, never our own.
 	constexpr float SAME_SPOT = 32.0f;
+
+	// Whether a frame our game made, standing at that spot (SAME_SPOT), stands for a friend's: not a copy the session
+	// placed, not a copy an older version left (Ghost: it goes), and not one lent to a friend (a_lent: FrameLoans). A lent
+	// one is hidden here while they wear it and is moved to where they got out: standing for a friend's frame, it would
+	// keep that frame's copy out of our game for the whole loan, with nothing of ours shown at the spot.
+	constexpr bool StandsFor(const Ours& a_ours, bool a_lent)
+	{
+		return !a_ours.copy && !a_lent && !Ghost(a_ours);
+	}
 
 	// ---- A frame another game runs: ours is moved to where theirs stands ---------------------------------------
 

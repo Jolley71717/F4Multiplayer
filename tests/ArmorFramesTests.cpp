@@ -887,3 +887,80 @@ TEST("armor frames: our copy of a frame another game runs is theirs wherever our
 	facts.ours = false;
 	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kUsed);
 }
+
+TEST("armor frames: our wear names a frame lent to us by its spawn id, and one of our own making by none")
+{
+	using ArmorFrames::OwnWear;
+	using ArmorFrames::Seat;
+	constexpr std::uint32_t base = 0x0019DED9;
+	constexpr std::uint32_t copy = 0xFF0012AB;   // our copy of a friend's frame
+	constexpr std::uint32_t ours = 0xFF0034CD;   // one our game made
+	constexpr std::uint32_t spawn = 0xFF800005;  // the spawn id our copy is of
+	const auto spawnOf = [&](std::uint32_t a_ref) { return a_ref == copy ? spawn : 0u; };
+	const auto now = std::chrono::steady_clock::now();
+	OwnWear wear;
+	auto    told = wear.Update(true, [&] { return Seat{ .ref = copy, .base = base, .frame = true }; }, spawnOf, now);
+	CHECK(told.frame == base);
+	CHECK(told.frameRef == spawn);
+	// Kept for the wear, and gone as the armor comes off.
+	told = wear.Update(true, [&] { return Seat{}; }, spawnOf, now);
+	CHECK(told.frameRef == spawn);
+	told = wear.Update(false, [&] { return Seat{}; }, spawnOf, now);
+	CHECK(told.frameRef == 0);
+	// One of our own making is none in another game; a pre-placed one goes by its own id, whatever the function says.
+	told = wear.Update(true, [&] { return Seat{ .ref = ours, .base = base, .frame = true }; }, spawnOf, now);
+	CHECK(told.frameRef == 0);
+	wear.Forget();
+	told = wear.Update(true, [&] { return Seat{ .ref = 0x0003F2B4, .base = base, .frame = true }; }, [](std::uint32_t) { return 0xFF800009u; }, now);
+	CHECK(told.frameRef == 0x0003F2B4);
+	// The old form names none for a made frame.
+	OwnWear plain;
+	told = plain.Update(true, [&] { return Seat{ .ref = copy, .base = base, .frame = true }; }, now);
+	CHECK(told.frameRef == 0);
+}
+
+TEST("armor frames: a frame lent to a friend is hidden wherever it stands while they wear it, unless someone here is in it")
+{
+	using ArmorFrames::ChooseLentOriginal;
+	using ArmorFrames::Original;
+	using ArmorFrames::OriginalFacts;
+	constexpr std::uint32_t base = 0x0019DED9;
+	// The owner's own suit, last used by the owner's player, standing far from where the borrower is: hidden all the
+	// same. Nothing of where it stands or who used it last counts.
+	OriginalFacts facts{ .found = true, .created = true, .base = base, .frame = true, .loaded = true, .ours = true, .moved = true, .fromStart = 5000.0f };
+	CHECK(ChooseLentOriginal(base, facts) == Original::kHide);
+	facts.loaded = false;
+	CHECK(ChooseLentOriginal(base, facts) == Original::kNotLoaded);
+	facts.loaded = true;
+	facts.inUse = true;
+	CHECK(ChooseLentOriginal(base, facts) == Original::kInUse);
+	facts.inUse = false;
+	CHECK(ChooseLentOriginal(0x0019DEDA, facts) == Original::kMissing);  // another frame by that id
+	CHECK(ChooseLentOriginal(0, facts) == Original::kMissing);
+	facts.frame = false;
+	CHECK(ChooseLentOriginal(base, facts) == Original::kNotFrame);
+	facts.found = false;
+	CHECK(ChooseLentOriginal(base, facts) == Original::kMissing);
+}
+
+TEST("armor frames: the hide of a worn frame another game runs, wherever it stands, never takes a frame lent out or borrowed")
+{
+	using ArmorFrames::ChooseOriginal;
+	using ArmorFrames::ChooseParkedOriginal;
+	using ArmorFrames::Original;
+	using ArmorFrames::OriginalFacts;
+	constexpr std::uint32_t base = 0x0019DED9;
+	constexpr std::uint32_t made = 0xFF0034CD;  // a frame a game made: the only kind lent (FrameLoans)
+	constexpr std::uint32_t museum = 0x0003F2B4;
+	// Synced, far off, ours: a pre-placed one is hidden wherever it stands while a friend wears theirs.
+	OriginalFacts facts{ .found = true, .base = base, .frame = true, .loaded = true, .ours = true, .fromStart = 5000.0f, .fromSpot = 3000.0f, .synced = true };
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	// A made frame (ours lent out, or our copy of one lent to us) is no pre-placed one: never hidden by that rule, worn
+	// or parked. Only the loan's own rule hides it (ChooseLentOriginal, by the spawn id the borrower's status names).
+	CHECK(ChooseOriginal(made, base, facts) == Original::kNone);
+	CHECK(ChooseParkedOriginal(made, base, facts) == Original::kNone);
+	// Nor any reference made in this game, whatever id the status names.
+	facts.created = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kMissing);
+	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kMissing);
+}

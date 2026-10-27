@@ -4,7 +4,9 @@
 #include "game/DropBook.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/Hud.h"
+#include "game/ItemCopies.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/RemotePlayers.h"
@@ -450,57 +452,9 @@ namespace Drops
 
 		// ---- copies ----
 
-		bool ModHere(std::uint32_t a_mod)
-		{
-			return RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_mod) != nullptr;
-		}
-
-		// Whether our game can place that very item: its base and every mod on it are here.
-		bool Placeable(const Protocol::DroppedItem& a_drop)
-		{
-			const auto form = RE::TESForm::GetFormByID(a_drop.base);
-			return form && form->As<RE::TESBoundObject>() && std::ranges::all_of(a_drop.mods, [](const Protocol::ItemMod& a_mod) { return ModHere(a_mod.mod); });
-		}
-
-		// The extra data our copy is made with: the item's instance (its mods, as Equipment::Give builds a stand-in's), its
-		// count, condition and name.
-		RE::BSTSmartPointer<RE::ExtraDataList> ExtraFor(const Protocol::DroppedItem& a_drop, RE::TESBoundObject* a_object)
-		{
-			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
-			const auto type = a_object->GetFormType();
-			const bool gear = type == RE::ENUM_FORM_ID::kWEAP || type == RE::ENUM_FORM_ID::kARMO;
-			if (gear && a_drop.mods.empty() && !a_object->objectTemplate.items.empty()) {
-				// A plain one (its dropper's had no mods): its base's default combination, as Equipment::Give does, so the
-				// engine doesn't roll one for our level.
-				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*a_object, *extra, nullptr, true);
-			} else if (gear && a_drop.templateIndex != StandInGear::NO_TEMPLATE) {
-				std::unique_ptr<RE::BGSObjectInstanceExtra> instance{ new RE::BGSObjectInstanceExtra() };
-				instance->itemIndex = a_drop.templateIndex;
-				for (const auto& entry : a_drop.mods) {
-					if (const auto mod = RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(entry.mod)) {
-						instance->AddMod(*mod, entry.index, entry.rank, false);
-					}
-				}
-				if (instance->values) {
-					RE::BSTSmartPointer<RE::TBO_InstanceData> data;
-					instance->CreateBaseInstanceData(*a_object, data);
-					extra->AddExtra(instance.release());  // the list owns it from here
-					if (data) {
-						extra->AddExtra(new RE::ExtraInstanceData(a_object, data));
-					}
-				}
-			}
-			if (a_drop.count > 1) {
-				extra->SetCount(static_cast<std::int16_t>(a_drop.count));
-			}
-			if (a_drop.health >= 0.0f) {
-				extra->SetHealthPerc(a_drop.health);
-			}
-			if (!a_drop.name.empty()) {
-				extra->SetOverrideName(a_drop.name.c_str());
-			}
-			return extra;
-		}
+		// Made as a lent frame's pieces are (ItemCopies).
+		using ItemCopies::ExtraFor;
+		using ItemCopies::Placeable;
 
 		// Told when the VM has run a copy's BlockActivation (on one of its threads): from then on Take only asks the server.
 		// A cancelled call says nothing; the copy goes after BLOCK_WAIT.
@@ -822,6 +776,15 @@ namespace Drops
 				const auto item = ItemOf(ref.get(), a_pending.count, a_pending.nonce);
 				if (!item) {
 					++notGiven;
+					return true;
+				}
+				// A copy of a friend's lent piece (FrameLoans): never given, as it is not ours. Left lying in our world, and
+				// its owner takes theirs out at the return, as for one sold or stored.
+				if (FrameLoans::IsLentItem(item->base, item->name)) {
+					++notGiven;
+					if (Log()) {
+						REX::INFO("Drops: {:08X} ({:08X}) dropped is a copy of a friend's lent piece; not given", ref->GetFormID(), item->base);
+					}
 					return true;
 				}
 				Send(Protocol::Encode(*item, Protocol::MessageType::kReportDrop));
