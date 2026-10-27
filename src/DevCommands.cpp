@@ -507,7 +507,7 @@ namespace DevCommands
 					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership), WorkshopSync::IsCopyMarked(*a_ref), WorkshopSync::HoldsAnything(a_ref));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
-			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
+			return std::format("{} ({}; {})", count ? out : "none", Equipment::DescribeFrameMends(), Equipment::DescribePlayerUse());
 		}
 
 		std::string Console(std::string_view a_args)
@@ -1549,7 +1549,7 @@ namespace DevCommands
 					owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, info), owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, info),
 					NpcSync::Owner(actor->GetFormID()), actor->IsDead(false));
 			}
-			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
+			return DescribeRef(ref) + std::format(" formFlags={:08X} extraFlags={:X}", ref->formFlags, Equipment::ExtraFlagsOf(ref)) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
 		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked

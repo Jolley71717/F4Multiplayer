@@ -993,6 +993,77 @@ namespace Equipment
 		return out.empty() ? " nohands" : out;
 	}
 
+	namespace
+	{
+		FrameGate keepOut = nullptr;  // SetFrameGate
+
+		// The engine's ExtraFlags (EXTRA_DATA_TYPE::kFlags; CommonLibF4 has no class for it): its flags word follows the
+		// BSExtraData head. Papyrus's BlockActivation puts the block in it (bit 0, value 1, on 1.11.240: the rig verified it on
+		// an engine-placed drop copy and on a blocked frame; Skyrim's ExtraFlags uses 0x2 for kBlockActivate), and TESObjectREFR::Activate then does nothing: no word, no
+		// seat. The whole word is shown so a block set another way is seen too.
+		struct ExtraFlagsData : RE::BSExtraData
+		{
+			std::uint32_t flags;  // 18
+		};
+		constexpr std::uint32_t BLOCK_ACTIVATE = 1u << 0;
+	}
+
+	std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref)
+	{
+		const auto extra = a_ref && a_ref->extraList ? a_ref->extraList->GetByType(RE::EXTRA_DATA_TYPE::kFlags) : nullptr;
+		return extra ? static_cast<const ExtraFlagsData*>(extra)->flags : 0;
+	}
+
+	namespace
+	{
+		// Whether our player is in furniture, getting in or out of some, or wears a frame.
+		bool PlayerBusy(RE::PlayerCharacter* a_player)
+		{
+			const auto middle = a_player->currentProcess ? a_player->currentProcess->middleHigh : nullptr;
+			return static_cast<int>(a_player->DoGetSitSleepState()) != 0 || (middle && middle->occupiedFurniture.get()) || InPowerArmor(a_player);
+		}
+
+		// The input enable layers in use (a script's DisablePlayerControls, a conversation's, a menu's, the game's own) that
+		// have the Activate user event off, by their debug names: with one, E activates nothing, while the console's activate
+		// still does. The session makes no layer of its own. Empty when Activate is on.
+		std::string LayersWithActivateOff()
+		{
+			std::string out;
+			const auto  enable = RE::BSInputEnableManager::GetSingleton();
+			if (!enable) {
+				return out;
+			}
+			// The engine grows the layers under this lock as a script makes one (InputEnableLayer.Create, on the VM's
+			// thread): read under it too, or the walk could read a buffer just let go.
+			RE::BSAutoLock l{ enable->layerLock };
+			for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
+				const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
+				if (!name || !*name || enable->layers[i].inputUserEvents.any(RE::UserEvents::USER_EVENT_FLAG::kActivate)) {
+					continue;  // a free slot, or one that leaves Activate on
+				}
+				out += std::format("{}{}'{}'", out.empty() ? "" : ",", i, name);
+			}
+			return out;
+		}
+
+		// What else holds our player off the frame (FrameUse::Holds): the gate's answer (asked to look only: nothing is
+		// told), the frame's block and state, and our player's input and state.
+		FrameUse::Holds HoldsOf(RE::TESObjectREFR* a_frame)
+		{
+			FrameUse::Holds holds;
+			holds.keptOut = keepOut && keepOut(a_frame, FrameAsk::kLook, nullptr);
+			holds.activationBlocked = (ExtraFlagsOf(a_frame) & BLOCK_ACTIVATE) != 0;
+			holds.disabled = a_frame->IsDisabled();
+			holds.no3d = a_frame->Get3D() == nullptr;
+			holds.activateOff = !LayersWithActivateOff().empty();
+			const auto controls = RE::PlayerControls::GetSingleton();
+			holds.inputBlocked = controls && controls->blockPlayerInput;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			holds.playerBusy = player && PlayerBusy(player);
+			return holds;
+		}
+	}
+
 	FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame)
 	{
 		FrameUse::Facts facts;
@@ -1004,10 +1075,7 @@ namespace Equipment
 		}
 		static REL::Relocation<float*> upMin{ UPRIGHT_ANGLE_COSINE };
 		facts.upMin = *upMin;
-		{
-			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
-			facts.playerBusy = static_cast<int>(player->DoGetSitSleepState()) != 0 || (middle && middle->occupiedFurniture.get()) || InPowerArmor(player);
-		}
+		facts.playerBusy = PlayerBusy(player);
 		// TESObjectREFR::GetOrientation builds a non-actor's from its angle (NiMatrix3::FromEulerAnglesXYZ), and the
 		// engine compares the z of its up axis: cos x times cos y.
 		facts.up = std::cos(a_frame->data.angle.x) * std::cos(a_frame->data.angle.y);
@@ -1045,11 +1113,31 @@ namespace Equipment
 			return "none";
 		}
 		const auto facts = FrameUseOf(a_frame);
+		const auto holds = HoldsOf(a_frame);
 		const auto base = a_frame->GetObjectReference();
 		const auto root = a_frame->Get3D();
-		return std::format("{:08X} base={:08X} {}: up={:.2f} (min {:.2f}) markers={} used={} user={:08X}{}{} othersThanPlayer={} free={} disabled={} 3d={} culled={}", a_frame->GetFormID(),
-			base ? base->GetFormID() : 0, FrameUse::Name(FrameUse::Judge(facts)), facts.up, facts.upMin, facts.markers, facts.used, facts.user, facts.userIsPlayer ? "(player)" : "",
-			facts.used ? (facts.userIn ? "(in it)" : "(not in it)") : "", facts.othersThanPlayer, facts.free, a_frame->IsDisabled(), root != nullptr, root && root->GetAppCulled());
+		const auto owner = a_frame->GetOwner();
+		return std::format("{:08X} base={:08X} {}: up={:.2f} (min {:.2f}) markers={} used={} user={:08X}{}{} othersThanPlayer={} free={} disabled={} 3d={} culled={} flags={:X} ownedBy={:08X} steal={}; {}",
+			a_frame->GetFormID(), base ? base->GetFormID() : 0, FrameUse::Name(FrameUse::Judge(facts)), facts.up, facts.upMin, facts.markers, facts.used, facts.user, facts.userIsPlayer ? "(player)" : "",
+			facts.used ? (facts.userIn ? "(in it)" : "(not in it)") : "", facts.othersThanPlayer, facts.free, a_frame->IsDisabled(), root != nullptr, root && root->GetAppCulled(), ExtraFlagsOf(a_frame),
+			owner ? owner->GetFormID() : 0, a_frame->IsCrimeToActivate(), FrameUse::Describe(holds));
+	}
+
+	std::string DescribePlayerUse()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return "no player";
+		}
+		const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+		const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+		const auto worn = PowerArmorFrameOf(player);
+		const auto last = player->lastUsedPowerArmor.get();
+		const auto controls = RE::PlayerControls::GetSingleton();
+		const auto layersOff = LayersWithActivateOff();
+		return std::format("our player: sitState={} occupied={:08X} inPA={} wornFrame={:08X} lastFrame={:08X} activateInput={}{} inputBlocked={}", static_cast<int>(player->DoGetSitSleepState()),
+			occupied ? occupied->GetFormID() : 0, InPowerArmor(player), worn ? worn->GetFormID() : 0, last ? last->GetFormID() : 0, layersOff.empty() ? "on" : "off by layers ", layersOff,
+			controls && controls->blockPlayerInput);
 	}
 
 	namespace
@@ -1064,7 +1152,6 @@ namespace Equipment
 		using UseFn = bool (*)(RE::PlayerCharacter*, RE::TESObjectREFR*);
 		using MessageFn = void (*)(const char*, const char*, bool, bool);
 		UseFn                   originalUse = nullptr;
-		FrameGate               keepOut = nullptr;  // SetFrameGate
 		MessageFn               originalMessage = nullptr;
 		std::uint32_t           seatsFreed = 0;
 		std::uint32_t           framesStoodUp = 0;
@@ -1107,7 +1194,7 @@ namespace Equipment
 			}
 			const bool seated = originalUse(a_player, a_ref);
 			if (frame && !seated && refusals++ < MAX_REFUSALS_LOGGED) {
-				REX::INFO("Equipment: the engine did not let our player into frame {}", DescribeFrameUse(a_ref));
+				REX::INFO("Equipment: the engine did not let our player into frame {}; {}", DescribeFrameUse(a_ref), DescribePlayerUse());
 			}
 			return seated;
 		}
