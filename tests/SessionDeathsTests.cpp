@@ -30,8 +30,8 @@ namespace
 	constexpr std::uint32_t RAIDER = 0x0001F101;
 	constexpr std::uint32_t RAIDER2 = 0x0001F102;
 	constexpr std::uint64_t HOST_IDENTITY = 0x1111;
-	constexpr auto          GRACE = 300ms;   // Options::aliveAgainGrace in these tests
-	constexpr auto          REMIND = 400ms;  // Options::remindDeadEvery in these tests
+	constexpr auto          GRACE = 300ms;   // Options::aliveAgainGrace in these tests (also the wait before a first reminder)
+	constexpr auto          REMIND = 150ms;  // Options::remindDeadEvery in these tests
 	// What a cell reset takes: days of game time. Only the games' ledgers are told it passed.
 	constexpr auto DAYS_LATER = std::chrono::hours(1);
 
@@ -345,26 +345,36 @@ TEST("alive again: a joiner's game can't bring the dead back, whatever it claims
 	host.Pump();
 	std::this_thread::sleep_for(GRACE + 50ms);
 
-	// Bob's camp reset first. His own game knows its raider is back and offers it; the server grants nothing, and tells
-	// his game the death again (once in a while), so it kills the raider instead of fighting it alone for good.
+	// Bob's camp reset first. His own game knows its raider is back and offers it; the server grants nothing, and says
+	// nothing yet (the host's game may be about to offer it too, which brings it back for everyone).
 	const auto later = Clock::now() + DAYS_LATER;
 	bob.Unloads(RAIDER);
 	CHECK(bob.Loads(RAIDER, true, later));
 	REQUIRE(bob.Scan(RAIDER, later));
 	f.fake->Deliver(2, Claim(RAIDER, Reason::kCompanion));
 	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
-	const auto toBob = bob.Pump();
+	auto toBob = bob.Pump();
 	CHECK(Owners(toBob).empty());
+	CHECK(Count(toBob, MT::kActorDied) == 0);
+	CHECK(bob.Alive(RAIDER));
+	CHECK(Owners(host.Pump()).empty());
+	// His hits on it (as its health, since nobody runs it) are dropped and logged. Once his game has gone on about it
+	// for aliveAgainGrace with the raider still dead, it is told the death again, so it kills the raider instead of
+	// fighting it alone for good.
+	// (The server answers at most 10 heartbeats a second, and each Pump sends one: the claims below go without one.)
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ RAIDER, 0.5f }, MT::kReportHealth));
+	CHECK(Count(host.Pump(), MT::kActorHealth) == 0);
+	CHECK(f.Logged(std::format("health of {:08X} from player {} dropped: the session has it dead", RAIDER, bob.id)));
+	std::this_thread::sleep_for(200ms);
+	f.fake->Deliver(2, Claim(RAIDER));  // 200 ms in: still nothing
+	std::this_thread::sleep_for(200ms);
+	f.fake->Deliver(2, Claim(RAIDER));  // 400 ms in: told
+	toBob = bob.Pump();
 	CHECK(Count(toBob, MT::kActorDied) == 1);
 	CHECK(bob.deaths.Contains(RAIDER));
 	CHECK(!bob.Alive(RAIDER));
-	CHECK(Owners(host.Pump()).empty());
-	// His hits on it (as its health, since nobody runs it) are dropped and logged, and bring no second reminder so soon.
-	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ RAIDER, 0.5f }, MT::kReportHealth));
+	// No second reminder so soon, then one per remindDeadEvery while his game keeps reporting about it.
 	f.fake->Deliver(2, Claim(RAIDER));
-	CHECK(Count(bob.Pump(), MT::kActorDied) == 0);
-	CHECK(Count(host.Pump(), MT::kActorHealth) == 0);
-	CHECK(f.Logged(std::format("health of {:08X} from player {} dropped: the session has it dead", RAIDER, bob.id)));
 	std::this_thread::sleep_for(REMIND + 50ms);
 	f.fake->Deliver(2, Claim(RAIDER));
 	CHECK(Count(bob.Pump(), MT::kActorDied) == 1);
@@ -378,6 +388,45 @@ TEST("alive again: a joiner's game can't bring the dead back, whatever it claims
 
 	Game carol{ f, 3, "Carol" };
 	CHECK(carol.deaths.Contains(RAIDER));
+}
+
+TEST("alive again: both camps reset together, the joiner's offer first: the host's offer brings the raider back, and the joiner's copy isn't killed")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Loads(RAIDER, true, Clock::now());
+	bob.Loads(RAIDER, true, Clock::now());
+	host.Kills(RAIDER);
+	bob.Pump();
+	host.Pump();
+	CHECK(!bob.Alive(RAIDER));
+	std::this_thread::sleep_for(GRACE + 50ms);
+
+	// The players walk back into the camp together, days later: both games find the raider alive again and offer it in
+	// the same moment, Bob's a packet ahead. The host's offer brings it back for everyone; Bob's game is not told the
+	// death again meanwhile (that would have killed his copy just before it came back: a corpse for him, hitting him
+	// unseen, for the rest of the session).
+	const auto later = Clock::now() + DAYS_LATER;
+	host.Unloads(RAIDER);
+	bob.Unloads(RAIDER);
+	CHECK(bob.Loads(RAIDER, true, later));
+	CHECK(host.Loads(RAIDER, true, later));
+	REQUIRE(bob.Scan(RAIDER, later));
+	REQUIRE(host.Scan(RAIDER, later));
+	const auto toBob = bob.Pump(later);
+	CHECK(Count(toBob, MT::kActorDied) == 0);
+	CHECK(HasOwner(Owners(toBob), RAIDER, host.id));
+	CHECK(HasOwner(Owners(host.Pump(later)), RAIDER, host.id));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", RAIDER)));
+	CHECK(bob.Alive(RAIDER));
+	CHECK(!bob.deaths.Contains(RAIDER));
+	// Nor later: the raider lives for the session, and its reports go through.
+	std::this_thread::sleep_for(GRACE + 50ms);
+	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ RAIDER, 0.5f }, MT::kReportDamage));
+	CHECK(Count(bob.Pump(later), MT::kActorDied) == 0);
+	CHECK(Count(host.Pump(later), MT::kActorDamaged) == 1);
 }
 
 TEST("alive again: a joiner whose copy lies dead no longer has the raider dead once the host's game runs it, and takes its hits")

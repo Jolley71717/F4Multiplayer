@@ -289,8 +289,15 @@ namespace
 		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
 		// MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
-		// Dead NPCs this player's game had alive, and when it was last told their death again (remindDead).
-		std::unordered_map<std::uint32_t, Clock::time_point> deadReminded;
+		// Dead NPCs this player's game has alive (remindDead): since when it has reported about one, when last, and when
+		// its death was last told again.
+		struct DeadReminder
+		{
+			Clock::time_point since{};  // its first report of this run (the game has had the NPC alive since)
+			Clock::time_point last{};   // its latest report
+			Clock::time_point told{};   // when the death was last told again (never: zero)
+		};
+		std::unordered_map<std::uint32_t, DeadReminder> deadReminded;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
 		Clock::time_point          reloadToldAt{};  // when the others were last told it loaded a save (kPlayerReloaded)
 		bool                       reloadOwed = false;  // it loaded again sooner: the others are told once Options::reloadToldEvery is up
@@ -1423,21 +1430,36 @@ void Server::Run()
 	// back. Before, every report about it was dropped without a word and the game fought a copy alive only there. Not
 	// the host's game: its offer to run one that came back is the revival (handleClaims), and a reminder would kill
 	// what came back.
+	// Not at the first report either: the players mostly walk into a reset camp together, and the host's game offers
+	// each raider in the same moment the joiner's does. A reminder sent on the joiner's claim, with the host's offer
+	// next in the queue, killed the joiner's copy just before the host's game brought the raider back: a corpse for the
+	// joiner, hitting them unseen, for the rest of the session. So the death is told again only once the game has
+	// reported about the NPC for Options::aliveAgainGrace, the time the host's game is given to bring one back, with the
+	// NPC still dead; then every Options::remindDeadEvery while it keeps reporting. A silence of aliveAgainGrace ends
+	// the run: its next report starts the wait again (its cell reset once more, days later).
 	const auto remindDead = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
 		if (a_player.local || !a_player.welcomed) {
 			return;
 		}
 		auto& reminded = a_player.deadReminded;
-		if (const auto it = reminded.find(a_refId); it != reminded.end() && a_now - it->second < options.remindDeadEvery) {
+		auto  it = reminded.find(a_refId);
+		if (it == reminded.end()) {
+			if (reminded.size() >= MAX_REMINDED) {
+				std::erase_if(reminded, [&](const auto& a_entry) { return a_now - a_entry.second.last >= options.aliveAgainGrace; });
+				if (reminded.size() >= MAX_REMINDED) {
+					return;
+				}
+			}
+			it = reminded.try_emplace(a_refId, Player::DeadReminder{ a_now, a_now, {} }).first;
+		} else if (a_now - it->second.last >= options.aliveAgainGrace) {
+			it->second = { a_now, a_now, {} };
+		}
+		auto& reminder = it->second;
+		reminder.last = a_now;
+		if (a_now - reminder.since < options.aliveAgainGrace || (reminder.told != Clock::time_point{} && a_now - reminder.told < options.remindDeadEvery)) {
 			return;
 		}
-		if (reminded.size() >= MAX_REMINDED && !reminded.contains(a_refId)) {
-			std::erase_if(reminded, [&](const auto& a_entry) { return a_now - a_entry.second >= options.remindDeadEvery; });
-			if (reminded.size() >= MAX_REMINDED) {
-				return;
-			}
-		}
-		reminded[a_refId] = a_now;
+		reminder.told = a_now;
 		++deadReminders;
 		const auto at = deathPositions.find(a_refId);
 		Protocol::ActorDeath death{ a_refId, 0, false };

@@ -1093,8 +1093,10 @@ host's game is believed about it: its kUnowned claim on a dead NPC, at least `Op
 after its last hello or world request and after the death, takes the NPC off the dead list (and out of the saved session) and gives
 it to the host's game ("alive again in the host's world" in the server log); it can fight and hurt players
 again. A joiner's game that has a dead NPC alive (its cell reset first, or its save is older) is told the death
-again when it offers to run it, hits it or reports its hits on a stand-in (`Options::remindDeadEvery`, 5 s per
-NPC; "dropped: the session has it dead" in the server log), and kills its copy (`WorldSync::TakeDeath`,
+again when it offers to run it, hits it or reports its hits on a stand-in, once it has gone on about the NPC for
+`Options::aliveAgainGrace` (10 s: the host's game, walking into the reset camp beside it, is given that long to
+bring the NPC back for everyone first) and then every `Options::remindDeadEvery` (5 s per NPC; "dropped: the
+session has it dead" in the server log), and kills its copy (`WorldSync::TakeDeath`,
 `killsRetried=`), so every game has it dead until the host's game brings it back; before, those reports were
 dropped without a word and the joiner fought a copy alive only there. The host's game is never told again: its
 offer is the revival. Whenever the server names a game that runs an NPC, every other game forgets that NPC's

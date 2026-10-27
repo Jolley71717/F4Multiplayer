@@ -93,8 +93,9 @@ public:
 		std::chrono::milliseconds aliveAgainGrace{ 10000 };
 
 		// A joiner's game that has an NPC alive which the session has dead (it offered to run it, hit it, or the NPC hit a
-		// stand-in there: its cell reset in that game alone) is told the death again, so it kills its copy, at most this
-		// often for each NPC. Tests shorten it.
+		// stand-in there: its cell reset in that game alone) is told the death again, so it kills its copy: first once
+		// it has reported about the NPC for aliveAgainGrace (the host's game, walking in beside it, is given that long to
+		// bring the NPC back for everyone instead), then at most this often for each NPC. Tests shorten it.
 		std::chrono::milliseconds remindDeadEvery{ 5000 };
 
 		// Plugins that may differ between players (texture, sound or UI mods): left out of what a joiner is
