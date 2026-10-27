@@ -296,9 +296,13 @@ TEST("moved objects places: a friend's move of an object whose place still waits
 	CHECK(Near(notHere->position, moved.position));
 	const auto tooFar = ObjectShare::StillWaiting(Verdict::kTooFar, moved, &caughtUp);  // too far even from the place
 	REQUIRE(tooFar);
-	CHECK(tooFar->playerId == 0);  // the session's place still waits
-	CHECK(Near(tooFar->position, caughtUp.position));
-	CHECK(!ObjectShare::StillWaiting(Verdict::kTooFar, moved, nullptr));
+	CHECK(tooFar->playerId == 1);  // their rest waits: the session keeps the object there now, not at the old place
+	CHECK(Near(tooFar->position, moved.position));
+	CHECK(!ObjectShare::StillWaiting(Verdict::kTooFar, moved, nullptr));  // a made-up jump from a live copy: dropped
+	const auto letGoFar = Rest(BROOM, Protocol::ObjectRestKind::kLetGo, 3, { 9000, 600, 80 }, { 0, 300, 50 });
+	const auto keptFar = ObjectShare::StillWaiting(Verdict::kTooFar, letGoFar, &caughtUp);  // a let-go: its rest follows
+	REQUIRE(keptFar);
+	CHECK(keptFar->playerId == 0);
 	// A let-go not applied here: what waited stays, so the rest that follows is judged from it.
 	const auto letGo = Rest(BROOM, Protocol::ObjectRestKind::kLetGo, 3, { 150, 600, 80 }, { 0, 300, 50 });
 	const auto flying = ObjectShare::StillWaiting(Verdict::kNotHere, letGo, &caughtUp);

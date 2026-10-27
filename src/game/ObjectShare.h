@@ -967,15 +967,16 @@ namespace ObjectShare
 	}
 
 	// What waits for the object after a friend's move our game did not apply (a_verdict, JudgeRest's), where a_waited is
-	// what waited before it: their rest, when our game doesn't have the object near yet; else what waited, so a let-go
-	// not applied here (its rest is judged from that place) or a move too far even from it doesn't lose where the
-	// session has the object. Nothing while our player holds it: that move is the newer.
+	// what waited before it: their rest, when our game doesn't have the object near yet, or when it is too far even from
+	// the place that waited (the session keeps it there now; our copy only lies where our save had it); else what waited,
+	// so a let-go not applied here keeps the place its rest is judged from. Nothing while our player holds it: that move
+	// is the newer. A rest too far from our copy with no place waiting is a made-up jump: dropped.
 	inline std::optional<Protocol::ObjectRest> StillWaiting(Verdict a_verdict, const Protocol::ObjectRest& a_move, const Protocol::ObjectRest* a_waited)
 	{
 		if (a_verdict == Verdict::kApply || a_verdict == Verdict::kOurs) {
 			return std::nullopt;
 		}
-		if (a_verdict == Verdict::kNotHere && a_move.kind == Protocol::ObjectRestKind::kRest) {
+		if (a_move.kind == Protocol::ObjectRestKind::kRest && (a_verdict == Verdict::kNotHere || (a_verdict == Verdict::kTooFar && a_waited))) {
 			return a_move;
 		}
 		return a_waited ? std::optional{ *a_waited } : std::nullopt;

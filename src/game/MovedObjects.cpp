@@ -394,7 +394,7 @@ namespace MovedObjects
 					.loaded = true,
 					.sameSpace = std::pair{ standInCell, standInWorld } == SpaceOf(ref.get()),
 					.oursHeld = a_ourHeld == id,
-					.fromUs = player ? ObjectShare::Distance(Position(player), Position(ref.get())) : 0.0f,
+					.fromUs = player ? ObjectShare::FromWhereItLies(Position(ref.get()), waiting.Find(id), standInCell, standInWorld, Position(player)) : 0.0f,
 					.fromPlace = entry->placed ? 0.0f : ObjectShare::FromWhereItLies(Position(ref.get()), waiting.Find(id), standInCell, standInWorld, Position(standIn)),
 				};
 				const auto verdict = ObjectShare::JudgeHold(facts);
