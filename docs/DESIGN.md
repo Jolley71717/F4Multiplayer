@@ -288,6 +288,12 @@
   and the owner takes that fraction of its own, so the shots it takes to kill are as many as the shooter's copy needs,
   dealt through the copy's damage resistance. A copy rolled tougher than the owner's NPC (a Stalker's 30 DR against a
   Roamer's 15, a Guardian against a Watcher) takes less from each shot, and so does the NPC; one rolled weaker, more.
+- A copy's health is always its owner's: what it gains with no report from the owner's game is taken back once it has
+  stood 100 ms (`CopyHealth::Book::Check`, `copyGains=` times/health), as a drop with no hit of ours is given back. A
+  copy rolled legendary here and plain there mutated at half health and healed to full, which stood and was never
+  sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
+  left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
+  What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
