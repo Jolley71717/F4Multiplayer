@@ -298,3 +298,86 @@ TEST("npc claims: a refused companion claim is let go of exactly COMPANION_BACKO
 	book.Expire(t0 + NpcClaims::COMPANION_BACKOFF);
 	CHECK(book.Due(DOGMEAT, Reason::kCompanion, t0 + NpcClaims::COMPANION_BACKOFF - 1ns));
 }
+
+// ---- what our hits ask for (NpcSync::OnLocalInteraction) ----------------------------------------------------------
+
+TEST("npc claims: a hit on a plugin's NPC a friend runs asks to take it over once per cooldown, and on one we run keeps it every 2 s")
+{
+	using NpcClaims::Hit;
+	NpcClaims::Book         book;
+	const auto              t0 = Clock::now();
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t FRIEND = 1;
+
+	// Nobody runs it (Scan offers it), or we're in no session: nothing.
+	CHECK(book.OnHit(RAIDER, 0, US, t0).hit == Hit::kNone);
+	CHECK(book.OnHit(RAIDER, FRIEND, 0, t0).hit == Hit::kNone);
+	CHECK(!book.TakeoverPending(RAIDER));
+
+	// The friend's: asked for with the first hit, not again within the cooldown, again past it.
+	CHECK(book.OnHit(RAIDER, FRIEND, US, t0).hit == Hit::kTakeover);
+	CHECK(book.TakeoverPending(RAIDER));
+	CHECK(!book.Due(RAIDER, Reason::kUnowned, t0));  // awaiting its answer, as any claim
+	CHECK(book.OnHit(RAIDER, FRIEND, US, t0 + NpcClaims::TAKEOVER_COOLDOWN - 1ns).hit == Hit::kNone);
+	book.Expire(t0 + NpcClaims::TAKEOVER_COOLDOWN - 1ns);
+	CHECK(book.TakeoverPending(RAIDER));
+	book.Expire(t0 + NpcClaims::TAKEOVER_COOLDOWN);
+	CHECK(!book.TakeoverPending(RAIDER));
+	CHECK(book.OnHit(RAIDER, FRIEND, US, t0 + NpcClaims::TAKEOVER_COOLDOWN).hit == Hit::kTakeover);
+
+	// Ours now (granted): the takeover waits out its cooldown all the same (SettlerCommand's turn-taking), then our
+	// hits claim it again, 2 s apart at most, so a friend's hit doesn't take it over meanwhile; a keep is no takeover.
+	book.Answered(RAIDER, US, US, t0 + 6s);
+	CHECK(book.TakeoverPending(RAIDER));
+	book.Expire(t0 + 12s);
+	CHECK(!book.TakeoverPending(RAIDER));
+	CHECK(book.OnHit(RAIDER, US, US, t0 + 12s).hit == Hit::kKeep);
+	CHECK(!book.TakeoverPending(RAIDER));
+	CHECK(book.OnHit(RAIDER, US, US, t0 + 12s + NpcClaims::HIT_KEEP_INTERVAL - 1ns).hit == Hit::kNone);
+	CHECK(book.OnHit(RAIDER, US, US, t0 + 12s + NpcClaims::HIT_KEEP_INTERVAL).hit == Hit::kKeep);
+	CHECK(book.SpawnFights() == 0);
+
+	book.Clear();
+	CHECK(book.OnHit(RAIDER, US, US, t0 + 12s + NpcClaims::HIT_KEEP_INTERVAL).hit == Hit::kKeep);  // nothing held back
+}
+
+TEST("npc claims: a hit on a spawn a friend's game made notes us fighting it, never asks to take it over, and says so once per spawn")
+{
+	using NpcClaims::Hit;
+	NpcClaims::Book         book;
+	const auto              t0 = Clock::now();
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t FRIEND = 1;
+	constexpr std::uint32_t OTHER = 3;
+	constexpr std::uint32_t SPAWN = 0xFF001234;  // a spawn id (Protocol::IsSpawnRef)
+
+	CHECK(book.OnHit(SPAWN, 0, US, t0).hit == Hit::kNone);
+	// The first hit: the claim goes (the server notes us fighting it), and NpcSync says once why the copy stays theirs.
+	auto hit = book.OnHit(SPAWN, FRIEND, US, t0);
+	CHECK(hit.hit == Hit::kFight);
+	CHECK(hit.first);
+	CHECK(book.SpawnFights() == 1);
+	CHECK(book.TakeoverPending(SPAWN));  // asked as often as a takeover is
+	// The server answers with its owner, as it does: no change, nothing more to say.
+	book.Answered(SPAWN, FRIEND, US, t0);
+	CHECK(book.OnHit(SPAWN, FRIEND, US, t0 + 4s).hit == Hit::kNone);
+	hit = book.OnHit(SPAWN, FRIEND, US, t0 + NpcClaims::TAKEOVER_COOLDOWN);
+	CHECK(hit.hit == Hit::kFight);
+	CHECK(!hit.first);
+	CHECK(book.SpawnFights() == 1);
+	// Our own spawn: kept with our hits as any NPC we run.
+	CHECK(book.OnHit(0xFF005678, US, US, t0).hit == Hit::kKeep);
+	CHECK(book.SpawnFights() == 1);
+
+	// The spawn is over (nobody runs it): the id may name another game's spawn later, said again for that one.
+	book.Answered(SPAWN, 0, US, t0 + 10s);
+	hit = book.OnHit(SPAWN, OTHER, US, t0 + 20s);
+	CHECK(hit.hit == Hit::kFight);
+	CHECK(hit.first);
+	CHECK(book.SpawnFights() == 2);
+	// Expiry drops nothing of what was said: the next hit on the same spawn is no first.
+	book.Expire(t0 + 60s);
+	hit = book.OnHit(SPAWN, OTHER, US, t0 + 60s);
+	CHECK(hit.hit == Hit::kFight);
+	CHECK(!hit.first);
+}

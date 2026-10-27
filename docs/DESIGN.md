@@ -241,6 +241,11 @@
     with each of its player's hits on it (2 s apart at most) as it does every 2 s while they talk to it, so two players
     shooting one raider leave it with whoever hit it first until they stop hitting it, instead of trading it every 5 s
     with its AI starting over in the taker's game each time; the other's hits reach it as damage, as any non-runner's.
+    What a hit asks for is `NpcClaims::Book::OnHit`. A hit on a spawn (an NPC a friend's game made at runtime, below)
+    asks nothing the server grants: what was hit is a copy placed from the spawn's template, no NPC of the friend's
+    game to hand over, and the server leaves a spawn with the game that made it for good. The claim still goes, as
+    often as a takeover would, so the server notes the hitter fighting it and believes their kill; their hits reach
+    it as damage. The game logs once per spawn why the copy stays theirs (`spawnFights=`).
   - a player in workshop mode takes over the settlers of that workbench (`SettlerCommand`: those linked to it by
     `WorkshopItemKeyword`; four a round, every 2 s, each at most every 5 s) and claims again the ones they run, which
     are not handed off meanwhile (`commanding=`, `settlerTakeovers=`). Giving a settler a job runs on the settler's
@@ -404,7 +409,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   sends the others `kSpawned` and everyone the owner. A joiner is sent the spawns before who runs NPCs. Limits:
   32 a player at once, 128 in the session, a budget of 32 and 2 a second; past them the answer names nobody and
   the game asks again 10 s later. Nobody else can claim one; a claim to take one over notes the claimer as
-  fighting it.
+  fighting it, and the claimer's game logs once per spawn that its copy stays the owner's (Shared NPC AI, takeovers).
 - The others place a copy (`CreateReferenceAtLocation`, kept out of saves like a stand-in) while their player is
   within 6000 units of where the owner's game has it, in the same space, and the owner's stand-in is within 8000
   of it; 2 a frame at most, 3 tries. NpcSync mirrors it under the spawn id as any NPC another game runs: states,
