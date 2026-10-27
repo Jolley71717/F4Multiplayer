@@ -570,7 +570,7 @@ TEST("cross: after a server restart, a friend's kill of a raider the host's game
 TEST("cross: two friends shooting the host's raider leave it with the host while the host keeps hitting it, every hit lands, and it goes to the friend once the host stops")
 {
 	Server::Options options;
-	options.takeoverCooldown = std::chrono::milliseconds(400);
+	options.takeoverCooldown = std::chrono::seconds(400);  // long, crossed on the server's clock (Session::Advance), not by sleeps
 	Session s{ options };
 	auto&   host = s.Host();
 	auto&   bob = s.Player("Bob");
@@ -585,7 +585,7 @@ TEST("cross: two friends shooting the host's raider leave it with the host while
 	// reports its health, Bob's says what it took off its copy and asks to take it over.
 	float health = 1.0f;
 	for (int round = 0; round < 6; ++round) {
-		s.Pass(std::chrono::milliseconds(150));
+		s.Advance(std::chrono::seconds(150));
 		host.Claim(RAIDER_1, Reason::kInteract);
 		health -= 0.1f;
 		host.Hurt(RAIDER_1, health);
@@ -601,7 +601,7 @@ TEST("cross: two friends shooting the host's raider leave it with the host while
 	}
 
 	// The host stops shooting. Past the cooldown, Bob's next hit takes it over, and his kill is believed.
-	s.Pass(std::chrono::milliseconds(500));
+	s.Advance(std::chrono::seconds(500));
 	bob.Damage(RAIDER_1, 0.05f);
 	bob.Claim(RAIDER_1, Reason::kInteract);
 	s.Settle();
