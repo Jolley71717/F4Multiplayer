@@ -1930,6 +1930,31 @@ TEST("downed get-up: stood by the stance alone, the graph left in its sneak, it 
 	CHECK(!stuck.body.sneaking);
 }
 
+TEST("downed get-up: stood by the stance alone, a sneak and a stand of their own before the get-up has played out are not followed by a stop")
+{
+	// Their key, twice: the stance is back where it was at the get-up, but the graph's stand is theirs, and a stop then
+	// could cut off a sneak they start a moment later.
+	Game game;
+	auto now = Start();
+	game.body.sneaking = true;
+	game.body.graphSneaking = true;
+	game.body.stanceOnlyGetUp = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	CHECK(game.body.graphStops == 1);
+	CHECK(game.body.PressSneak());
+	game.Run(now, 200ms);
+	CHECK(game.body.PressSneak());
+	CHECK(!game.body.sneaking);
+	game.Run(now, DownRules::GET_UP_SETTLE);
+	CHECK(game.settled == 1);
+	CHECK(game.body.graphStops == 1);
+	CHECK(game.self.graphSneakStops == 1);
+}
+
 TEST("downed get-up: a sneak stop the graph does not take as they get up is told once more when the get-up has played out")
 {
 	Game game;
