@@ -636,6 +636,10 @@ namespace RemotePlayers
 
 		// Another actor in our game (but a_except, the stand-in the frame is for) is in this frame: getting in (the seat) or
 		// all the way in (ExtraPowerArmor's frame: the engine then clears the seat and disables the frame while it is worn).
+		// Never a stand-in on its way out (buried, or being deleted): it is still in its frame until the engine lets go of
+		// it, and it is no one to leave a frame to. Counted so, a copy it was in, buried with it (ReleaseArmor) and then
+		// let go of by what else held it (DeleteParked, DeleteFrame, Discard), was left to the game as someone's: off the
+		// books, a load in the second it waited to be deleted kept it, disabled, and the next save wrote it.
 		bool FrameInUse(RE::TESObjectREFR* a_frame, const RE::Actor* a_except = nullptr)
 		{
 			const auto lists = RE::ProcessLists::GetSingleton();
@@ -644,7 +648,7 @@ namespace RemotePlayers
 			}
 			for (const auto& handle : lists->highActorHandles) {
 				const auto actor = handle.get();
-				if (!actor || (a_except && actor.get() == a_except)) {
+				if (!actor || (a_except && actor.get() == a_except) || OnItsWayOut(actor.get())) {
 					continue;
 				}
 				const auto middle = actor->currentProcess ? actor->currentProcess->middleHigh : nullptr;
@@ -749,8 +753,15 @@ namespace RemotePlayers
 		// known from the stand-in, and a copy buried after the game had taken the stand-in from under us used to keep its
 		// promotion in the persistence manager for the rest of the session.
 		// a_wearer: the stand-in kept for the player's conversation while in this frame (see Grave::wearer).
+		// Once: one already on its way out (buried with its stand-in, then let go of by what else held it) stays as it is.
+		// And on the books again, should it have been let go of to the game meanwhile (SaveGuard::Release): it is ours to
+		// delete, so it is kept out of every save until it is gone, and handed to a load that comes first, which frees it.
 		void BuryFrame(RE::TESObjectREFR* a_frame, Clock::time_point a_placedAt, RE::ObjectRefHandle a_wearer = {})
 		{
+			if (OnItsWayOut(a_frame)) {
+				return;
+			}
+			SaveGuard::Track(a_frame);
 			Equipment::ReleasePowerArmorFrame(a_frame);
 			Bury({ .actor = a_frame->GetHandle(), .spawnedAt = a_placedAt, .wearer = a_wearer });
 		}
