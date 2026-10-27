@@ -167,3 +167,31 @@ TEST("autosaves: the travel autosave setting is found by its name in Fallout4Pre
 	CHECK(AutoSaveRules::TRAVEL_DEFAULT);
 	CHECK(AutoSaveRules::Wanted(Why::kTeleport, Facts{ .saveOnTravel = AutoSaveRules::TRAVEL_DEFAULT }));
 }
+
+TEST("autosaves: a dead player is never saved, and a downed one gets no travel autosave, only the host's on going down")
+{
+	CHECK(!AutoSaveRules::Wanted(Why::kTeleport, { .saveOnTravel = true, .down = true }));  // landed, and went down meanwhile
+	CHECK(!AutoSaveRules::Wanted(Why::kTeleport, { .saveOnTravel = true, .dead = true }));
+	CHECK(AutoSaveRules::Wanted(Why::kDown, { .saveOnDown = true, .down = true }));  // what the rule is for: loaded, Downed stands them up
+	CHECK(!AutoSaveRules::Wanted(Why::kDown, { .saveOnDown = true, .down = true, .dead = true }));
+	Book book;
+	CHECK(book.Ask(Why::kTeleport, { .saveOnTravel = true, .down = true }, START) == Asked::kNotWanted);
+	CHECK(book.asks == 0);
+}
+
+TEST("autosaves: one taken back before it began is awaited no more, and a save after it is not taken for it")
+{
+	Book book;
+	CHECK(book.Withdraw() == Why::kNone);  // nothing asked for
+	CHECK(book.withdrawn == 0);
+	CHECK(book.Ask(Why::kTeleport, TRAVEL, START) == Asked::kYes);
+	CHECK(book.Withdraw() == Why::kTeleport);  // the player went down
+	CHECK(book.withdrawn == 1);
+	CHECK(book.Withdraw() == Why::kNone);  // once
+	CHECK(book.Unanswered(START + AutoSaveRules::ANSWER_TIME) == Why::kNone);  // not told as unanswered
+	// The autosave on going down is asked for at once, not left waiting on the one taken back.
+	CHECK(book.Ask(Why::kDown, DOWN_RULE, START + 1s) == Asked::kYes);
+	CHECK(book.Withdraw() == Why::kDown);  // bled out before the game made it
+	CHECK(book.Began(START + 2s) == Why::kNone);  // a save that still comes is not the mod's
+	CHECK(book.made == 0);
+}

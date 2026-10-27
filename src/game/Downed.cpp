@@ -332,6 +332,7 @@ namespace Downed
 				} else {
 					REX::INFO("Downed: bled out; the game loads the newest save (the \"Save: loading\" line names it)");
 				}
+				AutoSave::OnDying();  // no autosave the game still holds is made of the dead player
 				RE::Console::ExecuteCommand("player.kill");
 			}
 		}

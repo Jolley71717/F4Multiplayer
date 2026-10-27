@@ -24,7 +24,10 @@
 // - with the host's bSaveOnDown, going down makes an autosave too, so a bleed-out loads the moment the player went
 //   down (a save made while down loads fine: Downed::OnGameLoaded stands the player up as if helped);
 // - never in Survival, where the game saves only in a bed, and none within MIN_GAP of the last save of any kind, so a
-//   string of teleports does not stop the game for a save each time.
+//   string of teleports does not stop the game for a save each time;
+// - never of a dead player, and no travel autosave of a downed one. The engine makes an autosave asked for at its next
+//   chance, which may be later (in a fight, say): one it still holds when the player goes down, is about to bleed out,
+//   or is dead is taken off its queue (AutoSave.cpp), so the newest save is never one a death would load into a death.
 namespace AutoSaveRules
 {
 	using Clock = std::chrono::steady_clock;
@@ -71,17 +74,21 @@ namespace AutoSaveRules
 		bool survival = false;      // Survival difficulty: the game saves only in a bed
 		bool saveOnTravel = false;  // the player's own setting for travel autosaves (bSaveOnTravel)
 		bool saveOnDown = false;    // the host's rule (bSaveOnDown)
+		bool down = false;          // the player is down, or getting up (Downed::IsDown)
+		bool dead = false;          // the player is dead
 	};
 
-	// Whether the game should make an autosave for a_why, by its settings and the rules (the gap is the Book's).
+	// Whether the game should make an autosave for a_why, by its settings and the rules (the gap is the Book's). A dead
+	// player is never saved: the death's load would take that save for the newest. A downed one gets no travel autosave
+	// either: only the host's bSaveOnDown saves a player down (Downed stands up a player loaded down).
 	constexpr bool Wanted(Why a_why, const Facts& a_facts)
 	{
-		if (a_facts.survival) {
+		if (a_facts.survival || a_facts.dead) {
 			return false;
 		}
 		switch (a_why) {
 		case Why::kTeleport:
-			return a_facts.saveOnTravel;
+			return a_facts.saveOnTravel && !a_facts.down;
 		case Why::kDown:
 			return a_facts.saveOnDown;
 		default:
@@ -141,6 +148,17 @@ namespace AutoSaveRules
 			return std::exchange(asked, Why::kNone);
 		}
 
+		// The autosave asked for is taken back before it began (the player went down, or is dying): it is no longer
+		// awaited, and a save that begins after is not taken for it. What was asked; kNone when nothing was.
+		Why Withdraw()
+		{
+			const auto was = std::exchange(asked, Why::kNone);
+			if (was != Why::kNone) {
+				++withdrawn;
+			}
+			return was;
+		}
+
 		// How long ago the last save began; nullopt before the first.
 		[[nodiscard]] std::optional<Clock::duration> SinceSave(Clock::time_point a_now) const
 		{
@@ -151,6 +169,7 @@ namespace AutoSaveRules
 		std::uint32_t made = 0;        // of those, begun
 		std::uint32_t unanswered = 0;  // of those, never begun
 		std::uint32_t tooSoon = 0;     // not asked for: a save had just been made
+		std::uint32_t withdrawn = 0;   // of those asked for, taken back before they began
 
 	private:
 		std::optional<Clock::time_point> lastSave;

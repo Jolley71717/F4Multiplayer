@@ -232,6 +232,7 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	rules.realTimeVats = false;
 	rules.shareGuestBuilds = true;
 	rules.sharedStorage = true;
+	rules.containerGifts = true;
 	rules.saveOnDown = true;
 	const auto out = DecodeWelcome(Encode(Welcome{ 7, 8, false, true, rules }));
 	REQUIRE(out);
@@ -239,7 +240,7 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	CHECK(out->sharedStory);
 
 	// Each flag alone, so none is read from another's bit.
-	for (int bit = 0; bit < 7; ++bit) {
+	for (int bit = 0; bit < 8; ++bit) {
 		SessionRules one;
 		one.revive = bit == 0;
 		one.reviveOutsideCombat = bit == 1;
@@ -247,7 +248,8 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 		one.downedCrawl = bit == 3;
 		one.shareGuestBuilds = bit == 4;
 		one.sharedStorage = bit == 5;
-		one.saveOnDown = bit == 6;
+		one.containerGifts = bit == 6;
+		one.saveOnDown = bit == 7;
 		const auto decoded = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, one }));
 		REQUIRE(decoded);
 		CHECK(decoded->rules == one);
@@ -1882,4 +1884,33 @@ TEST("protocol: the container gifts rule is the welcome's flag bit 64")
 		}
 	}
 	CHECK(differ == 1);
+}
+
+// The host's bSaveOnDown is welcome flag bit 128, alone: bit 64 is bContainerGifts, and the two never share a bit.
+TEST("protocol: the save on down rule is the welcome's flag bit 128, apart from container gifts")
+{
+	Protocol::Welcome welcome{ 9, 0x1122334455667788ull, false, true, {} };
+	CHECK(!Protocol::DecodeWelcome(Protocol::Encode(welcome))->rules.saveOnDown);
+	auto on = welcome;
+	on.rules.saveOnDown = true;
+	const auto bytes = Protocol::Encode(on);
+	const auto plain = Protocol::Encode(welcome);
+	REQUIRE(bytes.size() == plain.size());
+	std::size_t differ = 0;
+	for (std::size_t i = 0; i < bytes.size(); ++i) {
+		if (bytes[i] != plain[i]) {
+			++differ;
+			CHECK((bytes[i] ^ plain[i]) == 128);
+		}
+	}
+	CHECK(differ == 1);
+	const auto read = Protocol::DecodeWelcome(bytes);
+	REQUIRE(read);
+	CHECK(read->rules.saveOnDown);
+	CHECK(!read->rules.containerGifts);
+	// Both on: each reads back as its own.
+	on.rules.containerGifts = true;
+	const auto both = Protocol::DecodeWelcome(Protocol::Encode(on));
+	REQUIRE(both);
+	CHECK(both->rules == on.rules);
 }
