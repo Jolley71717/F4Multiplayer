@@ -59,6 +59,17 @@ namespace
 		return Protocol::Encode(Protocol::FrameReturn{ 0, 0, a_id, false, 0, WORLD, 1500.0f, 2000.0f, 100.0f, 0.25f, { { 0, true, 0.25f }, { 1, false, -1.0f } } }, MT::kReturnFrame);
 	}
 
+	// Where a player's game says they are: in the Commonwealth (a_cell 0) or in the interior a_cell.
+	auto At(std::uint32_t a_sequence, float a_x, float a_y, float a_z, std::uint32_t a_cell = 0)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.cell = a_cell;
+		state.worldspace = a_cell ? 0 : WORLD;
+		state.x = a_x, state.y = a_y, state.z = a_z;
+		return Protocol::Encode(state);
+	}
+
 	std::vector<Protocol::FrameBorrow> Asked(const Packets& a_packets)
 	{
 		return Decoded(a_packets, MT::kLoanAsked, [](auto a_data) { return Protocol::DecodeFrameBorrow(a_data); });
@@ -141,6 +152,7 @@ TEST("frame loans: a joiner hears of a frame lent out after the spawn it is, and
 	CHECK(Lent(daveGot).size() == 1);
 	CHECK(Lent(daveGot)[0].borrowerId == s.bob);
 
+	s.f.fake->Deliver(2, At(1, 1450.0f, 2050.0f, 100.0f));  // Bob stands beside where he got out
 	s.f.fake->Deliver(2, Return(SPAWN));
 	for (const PeerId peer : { 1, 2, 3, 4 }) {
 		const auto back = Returned(Received(s.f, peer));
@@ -149,6 +161,7 @@ TEST("frame loans: a joiner hears of a frame lent out after the spawn it is, and
 		CHECK(back[0].ownerId == s.alice);
 		CHECK(!back[0].ended);
 		CHECK(back[0].worldspace == WORLD);
+		CHECK(back[0].x == 1500.0f);  // his own word for the spot: it is near where he was seen
 		CHECK(back[0].items.size() == 2);
 	}
 	// Over: a second return is nobody's, and the next joiner hears of no loan.
@@ -335,5 +348,47 @@ TEST("frame loans: an ask that ends before it is granted is told to the owner's 
 		REQUIRE(back.size() == 1);
 		CHECK(back[0].ended);
 		CHECK(back[0].borrowerId == s.bob);
+	}
+}
+
+TEST("frame loans: a return naming a spot far off or elsewhere is put where its borrower was last seen, and one from a borrower never seen leaves the frame where it stood")
+{
+	const auto returned = [](Session& a_s) {
+		a_s.f.fake->Deliver(2, Return(SPAWN));
+		const auto back = Returned(Received(a_s.f, 1));
+		REQUIRE(back.size() == 1);
+		CHECK(!back[0].ended);
+		CHECK(back[0].items.size() == 2);  // what came back is the borrower's word: only the spot is moved
+		return back[0];
+	};
+	{
+		// Far off: the spot is where Bob was last seen.
+		Session s;
+		s.Borrow();
+		s.f.fake->Deliver(2, At(1, 90000.0f, -40000.0f, 300.0f));
+		const auto back = returned(s);
+		CHECK(back.cell == 0);
+		CHECK(back.worldspace == WORLD);
+		CHECK(back.x == 90000.0f);
+		CHECK(back.y == -40000.0f);
+		CHECK(back.z == 300.0f);
+	}
+	{
+		// In an interior while his return names the Commonwealth: the interior, where he was seen.
+		constexpr std::uint32_t CELL = 0x0001F0A1;
+		Session s;
+		s.Borrow();
+		s.f.fake->Deliver(2, At(1, 1500.0f, 2000.0f, 100.0f, CELL));
+		const auto back = returned(s);
+		CHECK(back.cell == CELL);
+		CHECK(back.worldspace == 0);
+	}
+	{
+		// Never seen: no spot, so the owner's game leaves its frame where it stood.
+		Session s;
+		s.Borrow();
+		const auto back = returned(s);
+		CHECK(back.cell == 0);
+		CHECK(back.worldspace == 0);
 	}
 }

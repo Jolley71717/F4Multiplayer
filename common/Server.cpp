@@ -72,6 +72,9 @@ namespace
 	// Taking or disarming a trap is done standing at it: the reporter is within this of it (their last state comes 20 times
 	// a second), or a report is a way to take away every mine around them.
 	constexpr float TRAP_REACH = 1024.0f;
+	// A frame lent out is given back where its borrower got out of it: within this of their last state (they step out
+	// beside it), or it is moved there instead, never across the map.
+	constexpr float RETURN_REACH = 1024.0f;
 	// A destructible object is reported by a game that has it loaded, as a trap is: within the loaded cells around the
 	// reporter (a car can be shot from the far side of them), never across the map.
 	constexpr float DESTRUCTION_RANGE = 16000.0f;
@@ -2627,6 +2630,27 @@ void Server::Run()
 		if (!granted) {
 			tellAskOver(asked);  // an ask taken back: the owner's game forgets it (an answer to it is dropped: handleLend finds no ask)
 			return;
+		}
+		if (!back->ended) {
+			// The frame is moved to where the borrower says they left it, but only near where they were last seen: a
+			// spot far off, or in another place, is moved to their last state; with no state at all it stays put.
+			if (!a_player.hasState) {
+				back->cell = 0;
+				back->worldspace = 0;
+			} else {
+				const auto& seen = a_player.state;
+				const float dx = back->x - seen.x;
+				const float dy = back->y - seen.y;
+				const float dz = back->z - seen.z;
+				const bool  samePlace = back->cell == seen.cell && back->worldspace == seen.worldspace;
+				if (!samePlace || !(dx * dx + dy * dy + dz * dz <= RETURN_REACH * RETURN_REACH)) {
+					back->cell = seen.cell;
+					back->worldspace = seen.worldspace;
+					back->x = seen.x;
+					back->y = seen.y;
+					back->z = seen.z;
+				}
+			}
 		}
 		log(std::format("server: player {} returned frame {:08X} to player {}{}", a_player.id, back->spawnId, back->ownerId, back->ended ? " (unworn)" : ""));
 		broadcast(Protocol::Encode(*back, Protocol::MessageType::kFrameReturned), true, 0);
