@@ -77,18 +77,29 @@ namespace AutoSave
 		// "[MAIN] bSaveOnTravel" in the player's Prefs ini file; nullopt when the file or the key cannot be read.
 		std::optional<bool> TravelFromPrefsFile(std::string& a_why)
 		{
-			const auto path = PrefsIni();
-			std::ifstream file{ path, std::ios::binary };
-			if (path.empty() || !file) {
-				a_why = path.empty() ? "no Documents folder" : std::format("{} could not be opened", path.filename().string());
+			// On the game thread at a teleport: a read that fails or throws is "not read", never an exception into the frame.
+			try {
+				const auto    path = PrefsIni();
+				std::ifstream file{ path, std::ios::binary };
+				if (path.empty() || !file) {
+					a_why = path.empty() ? "no Documents folder" : std::format("{} could not be opened", path.filename().string());
+					return std::nullopt;
+				}
+				// A Prefs ini is a few kilobytes; the cap keeps a wrong file (a setting file named as something large) from
+				// stalling the frame.
+				constexpr std::size_t MAX_BYTES = 1 << 20;
+				std::string           text(MAX_BYTES, '\0');
+				file.read(text.data(), static_cast<std::streamsize>(text.size()));
+				text.resize(static_cast<std::size_t>((std::max)(file.gcount(), std::streamsize{ 0 })));
+				const auto value = AutoSaveRules::IniBool(text, AutoSaveRules::TRAVEL_SECTION, AutoSaveRules::TRAVEL_SETTING);
+				if (!value) {
+					a_why = std::format("{} has no [{}] {} as a yes or no", path.filename().string(), AutoSaveRules::TRAVEL_SECTION, AutoSaveRules::TRAVEL_SETTING);
+				}
+				return value;
+			} catch (...) {
+				a_why = "reading Fallout4Prefs.ini threw";
 				return std::nullopt;
 			}
-			const std::string text{ std::istreambuf_iterator<char>{ file }, std::istreambuf_iterator<char>{} };
-			const auto        value = AutoSaveRules::IniBool(text, AutoSaveRules::TRAVEL_SECTION, AutoSaveRules::TRAVEL_SETTING);
-			if (!value) {
-				a_why = std::format("{} has no [{}] {} as a yes or no", path.filename().string(), AutoSaveRules::TRAVEL_SECTION, AutoSaveRules::TRAVEL_SETTING);
-			}
-			return value;
 		}
 
 		// The game's own setting for it, if its collections hold it. They do not, as of 0.10.0's rig: the walk finds nothing

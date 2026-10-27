@@ -235,3 +235,14 @@ TEST("autosaves: the travel setting is the game's when it holds it, else the Pre
 	CHECK(ResolveTravel(std::nullopt, std::nullopt).source == Source::kDefault);
 	CHECK(!AutoSaveRules::Wanted(Why::kTeleport, Facts{ .saveOnTravel = ResolveTravel(std::nullopt, false).on }));
 }
+
+TEST("autosaves: the Prefs ini reader copes with odd files")
+{
+	using AutoSaveRules::IniBool;
+	CHECK(IniBool("[MAIN] ; the section\r\nbSaveOnTravel=0\r\n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ false });  // a comment after the section
+	CHECK(!IniBool("[MAIN]\r\nbSaveOnTravelX=0\r\nxbSaveOnTravel=0\r\n", "MAIN", "bSaveOnTravel"));  // only the whole key
+	CHECK(IniBool("[MAIN]\r\n\tbSaveOnTravel\t=\t0\t\r\n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ false });  // tabs
+	CHECK(!IniBool(std::string("\xFF\xFE[\0M\0A\0I\0N\0]\0\n\0", 18), "MAIN", "bSaveOnTravel"));  // UTF-16: not read, so the default
+	CHECK(!IniBool("[MAIN", "MAIN", "bSaveOnTravel"));  // an unclosed section header
+	CHECK(!IniBool("[MAIN]\nbSaveOnTravel", "MAIN", "bSaveOnTravel"));  // no =
+}
