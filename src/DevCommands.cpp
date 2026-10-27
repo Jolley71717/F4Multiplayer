@@ -3222,6 +3222,7 @@ namespace DevCommands
 				// in use, by debug name, with each one's user event and other event flags.
 				if (const auto enable = RE::BSInputEnableManager::GetSingleton()) {
 					std::string held;
+					RE::BSAutoLock l{ enable->layerLock };  // the engine grows the layers under it (as SneakFacts reads them)
 					for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
 						const auto& layer = enable->layers[i];
 						const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
