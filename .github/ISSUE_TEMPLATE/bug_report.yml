@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for the report. One bug per issue, please.
 
-        **Before you paste anything:** the plugin log of current builds names other players only as
+        **Before you attach anything:** the plugin log of current builds names other players only as
         `player N`, Steam accounts as short aliases like `~3fa2c1`, and masks IP addresses
         (`198.51.100.x`). Logs written by older builds (a `F4Multiplayer.1.log` kept from one too),
         crash logs, hang `.dmp` files and screenshots can still contain Steam names, Steam ids
@@ -80,20 +80,18 @@ body:
     id: plugin_log
     attributes:
       label: Plugin log
-      description: Paste `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log` from the game where it went wrong (from both games if you can; `F4Multiplayer.1.log` if the game was restarted since). Current builds leave names, Steam ids and addresses out; check an older build's log for them. Long logs can be attached as a file instead.
-      render: text
+      description: Drag `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log` from the game where it went wrong into this box (from both games if you can; `F4Multiplayer.1.log` if the game was restarted since). Attach the file itself: links to download, file-sharing or paste sites won't be opened. Current builds leave names, Steam ids and addresses out; check an older build's log for them.
   - type: textarea
     id: crash_log
     attributes:
       label: Crash log
-      description: If the game crashed, paste the crash log from [Buffout 4](https://www.nexusmods.com/fallout4/mods/47359) or Addictol (`Documents\My Games\Fallout4\F4SE\` or the logger's own folder). Without a crash logger a crash leaves nothing to read, so install one before trying again. If the game froze instead, paste the newest `F4Multiplayer-hang-<date>_<time>.txt` from the same folder (not a `.dmp`: that one holds your user name, so it only goes to the maintainer privately).
-      render: text
+      description: If the game crashed, drag in the crash log from [Buffout 4](https://www.nexusmods.com/fallout4/mods/47359) or Addictol (`Documents\My Games\Fallout4\F4SE\` or the logger's own folder). Without a crash logger a crash leaves nothing to read, so install one before trying again. If the game froze instead, drag in the newest `F4Multiplayer-hang-<date>_<time>.txt` from the same folder (not a `.dmp`: that one holds your user name, so it only goes to the maintainer privately). Attach the files themselves, not links.
   - type: checkboxes
     id: privacy
     attributes:
       label: Personal data
       options:
-        - label: I checked everything I pasted above (older logs, crash logs, screenshots) and removed Steam names, Steam ids and Windows user names that I do not want public.
+        - label: I checked everything I attached above (older logs, crash logs, screenshots) and removed Steam names, Steam ids and Windows user names that I do not want public.
           required: true
         - label: Everyone in the session ran the same version of the mod.
           required: false
