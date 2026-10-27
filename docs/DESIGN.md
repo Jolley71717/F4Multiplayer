@@ -1724,7 +1724,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   one across the worldspace both players are in (a `SetPosition` farther than an exterior cell), now asks for
   an autosave (`BGSSaveLoadManager::QueueSaveLoadTask(kAutoSave)`) when the player's own `bSaveOnTravel`
   is on; with the host's `bSaveOnDown` (welcome flag bit 128, no protocol version of its own; off) going down
-  does too. Neither in Survival, nor within 60 s of the last save of any kind. Going down, a last revive, a
+  does too. Neither in Survival, nor within 60 s of the last save of any kind, nor of a dead player, nor a
+  travel one of a downed player: the engine makes an autosave at its next chance, maybe late (in a fight),
+  so the `kAutoSave` bit it still holds in `BGSSaveLoadManager::queuedTasks` is cleared when the player goes
+  down, before a bleed-out's kill, and while they are dead ("Save: the autosave the game held ... is taken
+  back"); a save of ours that still begins then logs an error. Going down, a last revive, a
   cooldown and a session without revives say on the HUD that a death loads the last save. Each save logs
   "Save: <kind> (<location>, <date>) begins (the mod's autosave after a teleport | ... | the player's or the
   game's)" and "written (N ms)", and each load "Save: loading ..." (F4SE's message data; the character's
