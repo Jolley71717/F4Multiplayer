@@ -679,7 +679,7 @@ TEST("health share: Bob's shot that takes the raider over is not lost: his game 
 	f.hostGame.Shoot(30.0f);
 	f.Pass();
 	REQUIRE(Near(f.bobGame.health, 70.0f));
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	f.s.Advance(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
 	// His claim leaves at the end of the frame, his shot's damage at the start of the next: the server gives him the
 	// raider first, and the host's game drops the damage as no longer its to deal.
 	f.bobGame.Strike(20.0f, CopyHealth::Blow{ .inHand = true });
@@ -701,7 +701,8 @@ TEST("health share: a host's report on its way as Bob's shot takes the raider ov
 	Fight fixed;
 	Fight v092;
 	v092.hostGame.v092 = v092.bobGame.v092 = true;
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	fixed.s.Advance(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	v092.s.Advance(std::chrono::milliseconds{ 5100 });
 	for (auto* f : { &fixed, &v092 }) {
 		// A fire takes 5 off the host's raider, and the host's report of 95 reaches the server just ahead of Bob's claim:
 		// passed on (the host ran the raider then), it lands on Bob's copy after his 30-point shot. The host's game drops
@@ -824,7 +825,7 @@ TEST("health share: a heal in the host's game while Bob keeps shooting the raide
 	CHECK(f.bobGame.health > 75.0f);
 	round();
 	round();
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	f.s.Advance(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
 	f.bobGame.Strike(5.0f, GUN);  // takes the raider over; the host's game drops the shot's damage
 	f.Deliver();
 	REQUIRE(f.bob.OwnerOf(RAIDER) == f.bob.Id());

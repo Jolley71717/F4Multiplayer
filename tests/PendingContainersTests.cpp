@@ -48,7 +48,7 @@ namespace
 
 	bool AwaitWorldState(Fixture& a_f, PeerId a_peer, Packets& a_got)
 	{
-		const auto deadline = std::chrono::steady_clock::now() + 3s;
+		const auto deadline = std::chrono::steady_clock::now() + 30s;
 		while (std::chrono::steady_clock::now() < deadline) {
 			std::ranges::move(a_f.fake->Take(a_peer), std::back_inserter(a_got));
 			if (Count(a_got, MT::kWorldState) > 0) {
@@ -69,7 +69,7 @@ namespace
 TEST("pending loot: a friend's game ends up with every container as the session has it, through a reload and an owed world state")
 {
 	Server::Options options;
-	options.worldStateRefill = 1500ms;
+	options.worldStateRefill = 600s;  // owed until the test moves the server clock past it (Advance), so a busy PC can't refill it early
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	const auto welcome = f.Join(2, HelloFrom("Bob", 0xB0B));
@@ -125,6 +125,7 @@ TEST("pending loot: a friend's game ends up with every container as the session 
 	Sync(f, 1);
 	Packets toBob = Received(f, 2);
 	CHECK(Count(toBob, MT::kContainerChanged) == 0);
+	f.Advance(601s);  // his budget refills
 	REQUIRE(AwaitWorldState(f, 2, toBob));
 	bob.Take(toBob);
 

@@ -900,7 +900,7 @@ TEST("shared storage: put, leave, load an older save, move the items to a workbe
 TEST("shared storage: quickloads whose catch-up is owed: the friend can't view or take until it has come and they have settled")
 {
 	auto options = Options();
-	options.worldStateRefill = std::chrono::milliseconds{ 1500 };
+	options.worldStateRefill = std::chrono::hours{ 1 };  // owed until the test moves the server clock past it, so a busy PC can't refill it early
 	Session s{ options };
 	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
 	s.guest.OpenMenu(s.f, CHEST);
@@ -943,7 +943,7 @@ TEST("shared storage: quickloads whose catch-up is owed: the friend can't view o
 	CHECK(s.host.In(CHEST, WATER) == 3);
 
 	// The owed catch-up comes: the put is undone in the true copy, and they can view it again.
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 1700 });
+	s.f.Advance(std::chrono::hours{ 1 } + std::chrono::seconds{ 1 });
 	s.Settle();
 	CHECK(!s.guest.storage.State().Settling());
 	CHECK(s.host.In(CHEST, WATER) == 0);

@@ -346,11 +346,11 @@ namespace
 		return Protocol::Encode(item, MT::kReportWorkshopItem);
 	}
 
-	// Waits (up to 3 s) for the session file to read back as a_ready says; the server writes it on its own thread.
+	// Waits (up to 30 s) for the session file to read back as a_ready says; the server writes it on its own thread.
 	template <class Ready>
 	std::optional<SessionFile::Snapshot> WaitForFile(const TempFile& a_file, Ready a_ready)
 	{
-		const auto until = std::chrono::steady_clock::now() + 3s;
+		const auto until = std::chrono::steady_clock::now() + 30s;
 		do {
 			if (auto saved = SessionFile::Load(a_file.path); saved && a_ready(*saved)) {
 				return saved;
@@ -460,7 +460,7 @@ TEST("session life: a session file that can't be written is tried at every check
 	REQUIRE(JoinHost(f, 1));
 	f.fake->Deliver(1, Kill(RAIDER));
 	Sync(f, 1);
-	const auto until = std::chrono::steady_clock::now() + 3s;
+	const auto until = std::chrono::steady_clock::now() + 30s;
 	while (!f.Logged("could not save the session") && std::chrono::steady_clock::now() < until) {
 		std::this_thread::sleep_for(10ms);
 	}

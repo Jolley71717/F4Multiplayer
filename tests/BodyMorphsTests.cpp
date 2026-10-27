@@ -342,7 +342,7 @@ TEST("body morphs: a player's LooksMenu body reaches a friend's stand-in with Lo
 TEST("body morphs: a newcomer is told the body as last read, and a player without LooksMenu sends none")
 {
 	Server::Options options;
-	options.faceInterval = 100ms;
+	options.faceInterval = 600s;  // the test moves the server clock past it (Advance), so a busy PC can't decide when
 	Fixture f{ options };
 	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
@@ -358,7 +358,7 @@ TEST("body morphs: a newcomer is told the body as last read, and a player withou
 	// Alice moves a slider at the plastic surgeon; it goes with the next read once she is out of the chair.
 	aliceGame.body.push_back({ "Thighs", 0.8f });
 	CHECK(!aliceGame.Frame(now + 5s));
-	std::this_thread::sleep_for(150ms);  // past the server's face interval
+	f.Advance(601s);  // past the server's face interval
 	now += BodyMorphs::READ_INTERVAL + 1s;
 	const auto changed = aliceGame.Frame(now);
 	REQUIRE(changed);
