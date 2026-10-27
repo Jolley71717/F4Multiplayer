@@ -102,8 +102,8 @@ namespace AutoSave
 			}
 		}
 
-		// The game's own setting for it, if its collections hold it. They do not, as of 0.10.0's rig: the walk finds nothing
-		// of that name in the Prefs ini's or the game's ini's, so the log says what they did hold (once).
+		// The game's own setting for it, if its collections hold it: the Prefs collection does, under the bare name
+		// "bSaveOnTravel" with no section. When they do not, the log says what they did hold (once).
 		std::optional<bool> TravelFromGame()
 		{
 			static const auto found = [] {

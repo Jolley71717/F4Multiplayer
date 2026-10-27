@@ -160,10 +160,17 @@ TEST("autosaves: the travel autosave setting is found by its name in Fallout4Pre
 	CHECK(FindSetting({ "bsaveontravel:main" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 0 });
 	CHECK(FindSetting({ "bAlwaysActive:General", "bSaveOnTravel:Gameplay" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 1 });
 
+	// The Prefs collection keys it with no section ("bSaveOnTravel"): the exact bare name is found, whatever its case,
+	// after [MAIN]'s and before another section's.
+	CHECK(FindSetting({ "bAlwaysActive", "bSaveOnTravel", "bSaveOnRest" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 1 });
+	CHECK(FindSetting({ "BSAVEONTRAVEL" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 0 });
+	CHECK(FindSetting({ "bSaveOnTravel", "bSaveOnTravel:MAIN" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 1 });
+	CHECK(FindSetting({ "bSaveOnTravel:Gameplay", "bSaveOnTravel" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 1 });
+
 	// Not there: no match, so the game's default stands (on) instead of "off". A longer name, a prefix and a key without a
 	// section are not it.
 	CHECK(!FindSetting({}, TRAVEL_SETTING, TRAVEL_SECTION));
-	CHECK(!FindSetting({ "bSaveOnTravelAlways:MAIN", "bSaveOn:MAIN", "bSaveOnTravel", "bSaveOnRest:MAIN" }, TRAVEL_SETTING, TRAVEL_SECTION));
+	CHECK(!FindSetting({ "bSaveOnTravelAlways:MAIN", "bSaveOn:MAIN", "bSaveOnTravelAlways", "bSaveOn", " bSaveOnTravel", "bSaveOnTravel ", "bSaveOnRest:MAIN" }, TRAVEL_SETTING, TRAVEL_SECTION));
 	CHECK(AutoSaveRules::TRAVEL_DEFAULT);
 	CHECK(AutoSaveRules::Wanted(Why::kTeleport, Facts{ .saveOnTravel = AutoSaveRules::TRAVEL_DEFAULT }));
 }
