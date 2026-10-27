@@ -8,6 +8,7 @@
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
+#include "SaveRetry.h"
 #include "SessionFile.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
@@ -28,7 +29,30 @@
 
 namespace
 {
-	using Clock = std::chrono::steady_clock;
+	// The server's clock is the machine's steady clock plus however far a test has moved it (Server::AdvanceClock). A test
+	// waiting out a cooldown moves the clock past it, so it needs no sleep that a busy PC could make too short for the time
+	// it means; one that must act inside a window can hold the clock (Server::HoldClock), so a busy PC can't make it late.
+	// Only the server thread reads it.
+	thread_local const Server::ClockControl* t_clock = nullptr;
+
+	struct Clock
+	{
+		using rep = std::chrono::steady_clock::rep;
+		using period = std::chrono::steady_clock::period;
+		using duration = std::chrono::steady_clock::duration;
+		using time_point = std::chrono::steady_clock::time_point;
+		static constexpr bool is_steady = true;
+
+		static time_point now()
+		{
+			if (!t_clock) {
+				return std::chrono::steady_clock::now();
+			}
+			const auto held = t_clock->held.load(std::memory_order_relaxed);
+			const auto base = held != 0 ? time_point{ std::chrono::duration_cast<duration>(std::chrono::nanoseconds{ held }) } : std::chrono::steady_clock::now();
+			return base + std::chrono::duration_cast<duration>(std::chrono::nanoseconds{ t_clock->skew.load(std::memory_order_relaxed) });
+		}
+	};
 
 	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(16);  // ~60 Hz relay of new player states
 	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states (sent at 30 Hz)
@@ -377,6 +401,7 @@ void Server::Stop()
 
 void Server::Run()
 {
+	t_clock = &testClock;
 	std::unordered_map<ConnectionKey, Player> players;
 	std::uint32_t                             nextId = 1;
 	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run
@@ -603,11 +628,13 @@ void Server::Run()
 	// written with any other change, on the host's game saves and when the server stops.
 	std::uint64_t revision = 0;
 	std::uint64_t lastSavedRevision = 0;
-	bool          saveFailing = false;  // said once, not at every check, until a save goes through
-	const auto    touched = [&] { ++revision; };
-	const auto    saveSession = [&] {
+	// A save that failed is tried again on its own, with a growing wait, whether or not anything else changed since:
+	// the time of day alone is never a change, so a save the host's game asked for would otherwise be lost.
+	SaveRetry  saveRetry{ options.saveInterval };
+	const auto touched = [&] { ++revision; };
+	const auto saveSession = [&](bool a_stopping = false) {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
-			return;
+			return true;
 		}
 		SessionFile::Snapshot snapshot;
 		snapshot.contentHash = sessionContentHash;
@@ -642,15 +669,16 @@ void Server::Run()
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
-			if (!std::exchange(saveFailing, true)) {
-				log(std::format("server: could not save the session to {}; trying again at every check", sessionPath.filename().string()));
+			if (saveRetry.Failed(Clock::now()) && !a_stopping) {  // (stopping says its own line)
+				log(std::format("server: could not save the session to {}; trying again until it works", sessionPath.filename().string()));
 			}
-			return;  // tried again at the next check
+			return false;  // tried again once the wait is over
 		}
-		if (std::exchange(saveFailing, false)) {
+		if (saveRetry.Succeeded()) {
 			log("server: the session is saved again");
 		}
 		lastSavedRevision = saved;
+		return true;
 	};
 	Clock::time_point nextSave = Clock::now() + options.saveInterval;
 
@@ -1851,7 +1879,7 @@ void Server::Run()
 				-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 			return;
 		}
-		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game gives it back", refusal->first,
+		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game is asked to give it back", refusal->first,
 			-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 		send(taker->first, Protocol::Encode(refusal->second), true);
 	};
@@ -1908,13 +1936,17 @@ void Server::Run()
 		if (cut) {
 			work.clear();
 		}
+		constexpr std::size_t kShortfallLinesPerSettle = 8;
+		std::size_t           shortfalls = 0;
 		for (const auto& [index, has] : work) {
-			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
-			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
+			// What the move calls for before the true copy's own count caps it. Nothing for a move already undone (or not the
+			// settler's own to undo here): the true copy does nothing for it, and that is no shortfall.
+			const auto wanted = storage.Settle(a_player.id, index, has, containerChanges, false);
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
-			if (expected && *expected < 0 && (change ? change->count : 0) > *expected) {
-				log(std::format("server: storage {:08X} held {} fewer of {:08X} than player {}'s move #{} {} needed", containerChanges[index].change.container,
-					(change ? change->count : 0) - *expected, containerChanges[index].change.item, a_player.id, index, has ? "done again" : "undone"));
+			// A settle may hold thousands of moves (MAX_STORAGE_LACKING): the first few get a line each, the rest are counted.
+			if (wanted && wanted->count < 0 && (change ? change->count : 0) > wanted->count && ++shortfalls <= kShortfallLinesPerSettle) {
+				log(std::format("server: storage {:08X} held {} fewer of {:08X} than {} player {}'s move #{} needed to take out; only what it held went", containerChanges[index].change.container,
+					(change ? change->count : 0) - wanted->count, containerChanges[index].change.item, has ? "doing again" : "undoing", a_player.id, index));
 			}
 			if (!change) {
 				continue;
@@ -1935,6 +1967,10 @@ void Server::Run()
 					send(key, packet, true);
 				}
 			}
+		}
+		if (shortfalls > kShortfallLinesPerSettle) {
+			log(std::format("server: and {} more of player {}'s moves found storage holding less than they needed to take out", shortfalls - kShortfallLinesPerSettle,
+				a_player.id));
 		}
 		a_player.storageSettled = !cut;
 		if (cut) {
@@ -3658,18 +3694,25 @@ void Server::Run()
 		}
 
 		// The session goes to disk when it changed (checked every saveInterval), when asked (the host's game
-		// saves, or its connection goes) and when the server stops.
+		// saves, or its connection goes), when a save failed and its wait is over, and when the server stops.
 		if (saveRequested.exchange(false)) {
-			nextSave = Clock::now() + options.saveInterval;
+			nextSave = now + options.saveInterval;
 			saveSession();
-		} else if (Clock::now() >= nextSave) {
-			nextSave = Clock::now() + options.saveInterval;
-			if (revision != lastSavedRevision) {
+		} else if (saveRetry.Due(now)) {
+			nextSave = now + options.saveInterval;
+			saveSession();
+		} else if (now >= nextSave) {
+			nextSave = now + options.saveInterval;
+			// While a save is failing the retry above decides when to try, not each check.
+			if (revision != lastSavedRevision && !saveRetry.Failing()) {
 				saveSession();
 			}
 		}
 	}
-	saveSession();
+	// One last try, whatever the wait: the file may be free again by now.
+	if (!saveSession(true)) {
+		log("server: could not save the session when the server stopped; the last save that worked is what it keeps");
+	}
 
 	for (auto& transport : transports) {
 		transport->Close();

@@ -1285,6 +1285,12 @@ namespace
 	constexpr std::uint32_t MQ102 = 0x0001CC2A;      // Out of Time: main quest (type 1); below 10 the vault's, each player's own
 	constexpr std::uint32_t CODSWORTH = 0x0001E64E;  // DialogueCodsworthPostWar: type 0, no objectives, runs from the start; his talk and search
 	constexpr std::uint32_t VAULT111 = 0x0001ED62;   // DialogueVault111: the vault's own scenes, each player's own
+	constexpr std::uint32_t MQ103 = 0x000229E5;      // When Freedom Calls
+	// Codsworth's search of Sanctuary's houses (MQ102_CodsworthSearch01): a scene of his quest with Codsworth and the
+	// player as its actors, started by his 50's script and stopped by his 100's. A scene of the player's own, for
+	// contrast: Preston's balcony scene (MQ103DetectiveSignScene, of When Freedom Calls, which nothing here moves).
+	constexpr std::uint32_t SEARCH_SCENE = 0x0019E137;
+	constexpr std::uint32_t OWN_SCENE = 0x000865AB;
 
 	// Out of Time from the cryopod to Concord. 1 to 9 are the vault (each player's own), 10 the trigger at the top of
 	// the lift, 15 on the way home, 20 "Talk to Codsworth", 22 his holotape, 25 the bloatflies, 30 to 38 the search (he
@@ -1298,8 +1304,9 @@ namespace
 		return quest;
 	}
 
-	// Codsworth's own quest: his 50 is the talk, which sets Out of Time's 30 and starts his search scene; his 200, back
-	// with him after it, sets its 50. These are in StageRules::SETS_ANOTHER (with his 275, and Out of Time's 34, 38 and 40).
+	// Codsworth's own quest: his 50 is the talk, which sets Out of Time's 30 and starts his search scene (the player in
+	// it); his 100, set by Out of Time's 40, stops the scene; his 200, back with him after it, sets its 50. These are
+	// in StageRules::SETS_ANOTHER (with his 275, and Out of Time's 34, 38 and 40).
 	Quest CodsworthPostWar()
 	{
 		Quest quest;
@@ -1309,6 +1316,8 @@ namespace
 		quest.dialogue = true;
 		quest.running = true;
 		quest.starts = { { 50, { MQ102, 30 } }, { 200, { MQ102, 50 } } };
+		quest.startsScene = { { 50, { SEARCH_SCENE, CODSWORTH } } };
+		quest.stopsScene = { { 100, SEARCH_SCENE } };
 		quest.stops = { 500 };
 		return quest;
 	}
@@ -1476,6 +1485,131 @@ TEST("sim quests: with a shared story, the host's talk with Codsworth and his se
 	CHECK(Order(carol, CODSWORTH) == CODSWORTH_SEARCH);
 	CHECK(Done(carol, VAULT111).empty());
 	CHECK(carol.Quests().Skipped().empty());
+}
+
+TEST("sim quests: with a shared story, a friend's talk with Codsworth starts his search scene in the host's game too, and the friend's stages carry the host through it instead of the scene holding them back")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	const auto step = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		bob.Stage(a_quest, a_stage);
+		s.PlayFor(3s);
+	};
+	step(MQ102, 15);
+	step(MQ102, 20);
+	step(MQ102, 22);
+	step(MQ102, 25);
+	step(CODSWORTH, 50);  // the talk: set here, its script starts the search with the host's player in it
+	CHECK(Done(host, MQ102).contains(30));
+	CHECK(host.Quests().PlayerScene() == SEARCH_SCENE);
+	CHECK(host.Quests().SessionScene() == SEARCH_SCENE);  // the session's, not the host's own: it holds nothing back
+	// Codsworth searches the houses in Bob's game; 0.9.2 held these back as long as the host was in the scene, which
+	// only 40 ends (it sets Codsworth's 100): the host had to follow Codsworth through the search themselves.
+	step(MQ102, 32);
+	CHECK(Done(host, MQ102).contains(32));
+	step(MQ102, 34);
+	step(MQ102, 36);
+	step(MQ102, 38);  // its script sets 40, whose sets his 100, which stops the scene
+	CHECK(Done(host, MQ102).contains(40));
+	CHECK(Done(host, CODSWORTH).contains(100));
+	CHECK(host.Quests().PlayerScene() == 0);
+	CHECK(host.Quests().SessionScene() == 0);
+	step(CODSWORTH, 200);
+	step(MQ102, 60);
+	s.PlayFor(10s);
+	CHECK(PastTheVault(host) == OUT_OF_SANCTUARY);
+	CHECK(Order(host, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(host.Quests().WaitingCount() == 0);
+	CHECK(host.Quests().Skipped().empty());
+	CHECK(bob.Quests().PlayerScene() == 0);  // nothing came back to Bob as the host's
+}
+
+TEST("sim quests: with a shared story, a friend whose connection drops in the middle of the host's Codsworth search is still carried through it once back")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	const auto step = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		host.Stage(a_quest, a_stage);
+		s.PlayFor(3s);
+	};
+	step(MQ102, 15);
+	step(MQ102, 20);
+	step(MQ102, 22);
+	step(MQ102, 25);
+	step(CODSWORTH, 50);  // the search starts in Bob's game too, Bob in it
+	CHECK(bob.Quests().SessionScene() == SEARCH_SCENE);
+
+	// A Steam hiccup: Bob's session ends and is made again, his player still in the search scene. Taken for his own
+	// then, it would hold the rest of the search back again, and only its end (40) ends it.
+	bob.LoseConnection();
+	s.PlayFor(5s);
+	REQUIRE(bob.Join());
+	s.PlayFor(3s);
+	CHECK(bob.Quests().SessionScene() == SEARCH_SCENE);
+	step(MQ102, 32);
+	CHECK(Done(bob, MQ102).contains(32));  // as it comes, not held back
+	step(MQ102, 34);
+	step(MQ102, 36);
+	step(MQ102, 38);
+	CHECK(Done(bob, MQ102).contains(40));
+	CHECK(bob.Quests().PlayerScene() == 0);
+	step(CODSWORTH, 200);
+	step(MQ102, 60);
+	s.PlayFor(30s);
+	CHECK(PastTheVault(bob) == OUT_OF_SANCTUARY);
+	CHECK(Order(bob, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(bob.Quests().PlayerScene() == 0);
+	CHECK(bob.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: with a shared story, a scene the host walks into right after a friend's stage came is the host's own: the friend's next stages wait for it")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	bob.Stage(MQ102, 15);
+	s.PlayFor(3s);
+	REQUIRE(Done(host, MQ102).contains(15));
+	host.Quests().EnterScene(OWN_SCENE, MQ103);  // a moment after it: Preston's, not anything 15 started
+	s.PlayFor(1s);
+	CHECK(host.Quests().SessionScene() == 0);
+	bob.Stage(MQ102, 20);
+	s.PlayFor(5s);
+	CHECK(!Done(host, MQ102).contains(20));  // not in the middle of the host's own scene
+
+	host.Quests().LeaveScene();
+	s.PlayFor(5s);
+	CHECK(Done(host, MQ102).contains(20));
+	CHECK(host.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: with a shared story, the host's own scene still holds a friend's Codsworth search back until they are out of it")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	host.Quests().EnterScene(OWN_SCENE, MQ103);  // the host walked into a scene of their own, of a quest nothing moves
+	Sanctuary(s, bob);
+	CHECK(PastTheVault(host).empty());
+	CHECK(host.Quests().SessionScene() == 0);
+	CHECK(host.Quests().WaitingCount() == 15);  // 12 of Out of Time and 3 of Codsworth's
+
+	host.Quests().LeaveScene();
+	s.PlayFor(30s);
+	CHECK(PastTheVault(host) == OUT_OF_SANCTUARY);
+	CHECK(Order(host, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(host.Quests().PlayerScene() == 0);  // the search scene started here by Codsworth's 50 and was stopped by his 100
+	CHECK(host.Quests().WaitingCount() == 0);
 }
 
 TEST("sim quests: with each player's own story, a friend's Codsworth search never reaches the host's Out of Time")
