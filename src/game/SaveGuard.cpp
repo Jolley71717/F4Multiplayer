@@ -7,9 +7,17 @@
 #include "game/RemotePlayers.h"
 #include "game/SaveStrays.h"
 #include "game/Spawns.h"
+#include "game/WorkshopSync.h"
 #include "Text.h"
 
 #include <cstring>
+
+// Power armor lent between players (#182, feat/pa-borrow): a frame lent is a backstop fact of a leftover (FrameLeftovers).
+// Guarded until that branch is on main; the guard goes with it.
+#if __has_include("game/FrameLoans.h")
+#	include "game/FrameLoans.h"
+#	define F4MP_HAS_FRAME_LOANS 1
+#endif
 
 namespace SaveGuard
 {
@@ -202,7 +210,8 @@ namespace SaveGuard
 		std::uint32_t             broughtBackHanded = 0;  // of those, handed to a load
 		std::uint32_t             oldSaveNotices = 0;     // loads of a save holding one of those, told on the HUD
 
-		// Somebody here is in this frame, or our player is in it or got out of it last.
+		// Somebody here is in this frame, or our player is in it or got out of it last. Every process list: a settler or
+		// companion away in their suit is in a low one, and the frame they wear may stand loaded where they got in.
 		bool Worn(const RE::TESObjectREFR* a_frame)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -222,9 +231,11 @@ namespace SaveGuard
 			if (!lists) {
 				return false;
 			}
-			for (const auto& handle : lists->highActorHandles) {
-				if (const auto actor = handle.get(); actor && inIt(actor.get())) {
-					return true;
+			for (const auto* handles : { &lists->highActorHandles, &lists->middleHighActorHandles, &lists->middleLowActorHandles, &lists->lowActorHandles }) {
+				for (const auto& handle : *handles) {
+					if (const auto actor = handle.get(); actor && inIt(actor.get())) {
+						return true;
+					}
 				}
 			}
 			return false;
@@ -360,15 +371,21 @@ namespace SaveGuard
 			facts.quest = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 			facts.linked = extra && (extra->HasType(RE::EXTRA_DATA_TYPE::kLinkedRef) || extra->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent));
 			facts.worn = Worn(a_ref);
+			const auto id = a_ref->GetFormID();
 			// One lingering from before the load is provably our old copy, its ownership the one it had then (the stand-in's,
 			// whose base the load may have freed: never read through). Any other's owner is read with care (OwnerIdOf).
+			facts.lingering = book.IsLingering(id, base ? base->GetFormID() : 0);
 			const bool hasOwner = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
-			if (hasOwner && !book.IsLingering(a_ref->GetFormID(), base ? base->GetFormID() : 0)) {
-				facts.owned = FrameLeftovers::Owned(hasOwner, OwnerIdOf(a_ref), RemotePlayers::IsStandInBase);
+			if (hasOwner && !facts.lingering) {
+				facts.owner = FrameLeftovers::OwnerOf(hasOwner, OwnerIdOf(a_ref), RemotePlayers::IsStandInBase);
 			}
-			// facts.lent: a frame lent to or by a friend (FrameLoans) is disabled only while someone wears it (Worn); set from
-			// FrameLoans once it is on main.
-			facts.session = Placed(a_ref) || RemotePlayers::OnItsWayOut(a_ref) || Spawns::CopyIdOf(a_ref->GetFormID()) != 0;
+			facts.marked = WorkshopSync::IsCopyMarked(*a_ref);
+#ifdef F4MP_HAS_FRAME_LOANS
+			// A frame of ours lent to a friend (FrameLoans) is hidden, not disabled, and one lent to us is disabled only while
+			// our player wears it (Worn): a backstop.
+			facts.lent = FrameLoans::LentOut(id);
+#endif
+			facts.session = Placed(a_ref) || RemotePlayers::OnItsWayOut(a_ref) || Spawns::CopyIdOf(id) != 0;
 			return facts;
 		}
 
@@ -421,17 +438,19 @@ namespace SaveGuard
 					continue;
 				}
 				const auto facts = LeftoverFactsOf(ref);
+				const auto owner = facts.owner == FrameLeftovers::Owner::kNone ? "none" : facts.owner == FrameLeftovers::Owner::kStandIn ? "a stand-in's base" : "someone's";
 				if (!FrameLeftovers::Leftover(facts)) {
 					++leftoversKept;
-					REX::INFO("SaveGuard: disabled frame {:08X} (base {:08X}) is left as it is (deleted={} persistent={} holds={} quest={} linked={} worn={} owned={} session={})", found.id, found.base, facts.deleted,
-						facts.persistent, facts.holdsItems, facts.quest, facts.linked, facts.worn, facts.owned, facts.session);
+					REX::INFO("SaveGuard: disabled frame {:08X} (base {:08X}) is left as it is ({}; deleted={} persistent={} holds={} quest={} linked={} worn={} owner={} lent={} session={} lingering={} marked={})", found.id,
+						found.base, FrameLeftovers::Proven(facts) ? "ours, but not nobody's" : "no proof it is ours", facts.deleted, facts.persistent, facts.holdsItems, facts.quest, facts.linked, facts.worn, owner, facts.lent,
+						facts.session, facts.lingering, facts.marked);
 					continue;
 				}
 				++leftoversCleared;
 				const auto  cell = ref->GetParentCell();
 				const auto& at = ref->data.location;
-				REX::INFO("SaveGuard: disabled frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} is a frame copy a save kept switched off, empty and nobody's; it goes ({} so far)", found.id, found.base, at.x,
-					at.y, at.z, cell ? cell->GetFormID() : 0, leftoversCleared);
+				REX::INFO("SaveGuard: disabled frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} is a frame copy a save kept switched off ({}), empty and nobody's; it goes ({} so far)", found.id, found.base,
+					at.x, at.y, at.z, cell ? cell->GetFormID() : 0, facts.lingering ? "ours from before the load" : facts.marked ? "a workshop copy's keyword" : "a stand-in's base owns it", leftoversCleared);
 				// Ours from now on, as a copy placed this run is, so no save keeps it and a load that comes first frees it.
 				// Disabled long since, so no 3D of it is loading: the graveyard deletes it a second from now.
 				Track(ref);

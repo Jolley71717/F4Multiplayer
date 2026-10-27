@@ -16,8 +16,21 @@
 // the load that came then (RemotePlayers' FrameInUse); older versions left more. Each session places its copy at the
 // same spot again (where the friend parks their suit, or where their stand-in gets into it), so they pile up there,
 // unseen, one more each time. The engine never lets go of a reference that is only disabled, so a save keeps them.
-// So right after a load each disabled frame made at runtime is looked at, and one that is provably nobody's goes the way
-// every copy of ours goes (RemotePlayers::Discard: deleted, and kept out of every save). Nobody's means all of:
+// So right after a load each disabled frame made at runtime is looked at, and one that is provably ours and nobody's
+// goes the way every copy of ours goes (RemotePlayers::Discard: deleted, and kept out of every save). A frame a player
+// cares about is often one full of pieces, and a disabled one is not seen until it is wanted: so none goes on the
+// strength of what it lacks alone (a plain copy an older version left cannot be told from a frame the game made:
+// FrameShare::Ghost), but only with proof that it is a copy of ours (Proven), any of:
+// - it lingers from this run's last load: the very form SaveGuard noted of our copy just before the load, still at the
+//   spot, still off and nobody's (SaveStrays::Remains, SaveStrays::Book::IsLingering);
+// - it carries the keyword every workshop copy is given, which a save keeps and nothing else of ours, nor the game,
+//   gives a frame (WorkshopSync::IsCopyMarked, as FrameShare::Ghost tells an older version's copy by);
+// - its owner is one of our stand-ins' bases: the switch-in gives a copy the stand-in's base for its owner
+//   (Equipment::SwitchIntoPowerArmor), and the engine gives a frame its wearer's base as they get out, so one a settler
+//   of that very base used is told apart by the rest below (worn, persistent, holds). The owner is read through a guess
+//   at the ownership extra data's layout, taken only when the forms' map has that very form under the id read: a wrong
+//   guess names no form, let alone a stand-in's base.
+// And nobody's, all of:
 // - made at runtime (0xFF......): never a frame a plugin placed;
 // - disabled and not deleted already: what the game shows is never touched;
 // - not persistent: the engine promotes a frame to persist as an actor gets into it (Actor::SwitchToPowerArmor), so
@@ -25,31 +38,47 @@
 //   it, wherever they are; every copy of ours is demoted as it is buried (Equipment::ReleasePowerArmorFrame);
 // - nothing in it, nor anything its base would fill it with the first time it is looked into (a loot frame's pieces);
 // - no quest alias holds it, and nothing links it or enables it: no quest, workshop or script of the game's has it;
-// - our player is not in it and did not leave it last, and no actor in our game is in it or getting in;
-// - it has no owner of its own, or its owner is one of our stand-ins' bases (the switch-in gives a copy the stand-in's
-//   base for its owner, Equipment::SwitchIntoPowerArmor): the engine gives a frame its wearer's ownership as they get in,
-//   so one our player ever used is theirs, and one a settler or companion used is theirs;
+// - our player is not in it and did not leave it last, and no actor in our game, in any process list, is in it or
+//   getting in;
+// - it has no owner of its own but a stand-in's base (one our player ever used is theirs; an owner that cannot be told,
+//   gone since the load or not readable, counts as someone's);
 // - not lent to or by a friend (FrameLoans), and not one of the session's own copies (those are already looked after).
 // The process lists are not filled at once after a load, so a frame found then is judged only once it has stood so
 // for LOOK_AGAIN, with no loading screen up, and only while it is still the same form (address and base).
 // Kept free of the game so the rules can be tested.
 namespace FrameLeftovers
 {
+	// Whose a frame's ownership extra data says it is.
+	enum class Owner
+	{
+		kNone,     // it has no owner of its own
+		kStandIn,  // one of our stand-ins' bases: the switch-in's doing
+		kOther,    // someone else's, or one that cannot be told (gone, or not readable)
+	};
+
 	struct Facts
 	{
-		bool frame = false;        // its base is a power armor frame
-		bool created = false;      // made at runtime (0xFF......)
-		bool disabled = false;
-		bool deleted = false;      // marked for deletion already
-		bool persistent = false;   // the reference's persistent flag (a worn frame is promoted)
-		bool holdsItems = false;   // anything in it, or in its base's container while it was never looked into
-		bool quest = false;        // a quest alias holds it
-		bool linked = false;       // it has a linked reference or an enable parent
-		bool worn = false;         // our player is in it or left it last, or an actor here is in it or getting in
-		bool owned = false;        // it has an owner of its own that is not one of our stand-ins' bases
-		bool lent = false;         // lent to or by a friend (FrameLoans)
-		bool session = false;      // one of the session's copies now: placed this run, or on its way out
+		bool  frame = false;        // its base is a power armor frame
+		bool  created = false;      // made at runtime (0xFF......)
+		bool  disabled = false;
+		bool  deleted = false;      // marked for deletion already
+		bool  persistent = false;   // the reference's persistent flag (a worn frame is promoted)
+		bool  holdsItems = false;   // anything in it, or in its base's container while it was never looked into
+		bool  quest = false;        // a quest alias holds it
+		bool  linked = false;       // it has a linked reference or an enable parent
+		bool  worn = false;         // our player is in it or left it last, or an actor here is in it or getting in
+		Owner owner = Owner::kNone;
+		bool  lent = false;         // lent to or by a friend (FrameLoans)
+		bool  session = false;      // one of the session's copies now: placed this run, or on its way out
+		bool  lingering = false;    // our copy from before this run's last load, the very form noted then (SaveStrays::Remains)
+		bool  marked = false;       // carries the keyword every workshop copy is given (WorkshopSync::IsCopyMarked)
 	};
+
+	// Proof that it is a copy of ours (see above): without it, a disabled frame is left as it is, whatever else it lacks.
+	constexpr bool Proven(const Facts& a_facts)
+	{
+		return a_facts.lingering || a_facts.marked || a_facts.owner == Owner::kStandIn;
+	}
 
 	constexpr bool Leftover(const Facts& a_facts)
 	{
@@ -59,17 +88,23 @@ namespace FrameLeftovers
 		if (a_facts.persistent || a_facts.holdsItems || a_facts.quest || a_facts.linked) {
 			return false;
 		}
-		return !a_facts.worn && !a_facts.owned && !a_facts.lent && !a_facts.session;
+		if (a_facts.worn || a_facts.owner == Owner::kOther || a_facts.lent || a_facts.session) {
+			return false;
+		}
+		return Proven(a_facts);
 	}
 
-	// Facts::owned. a_hasOwner: it has an owner of its own (its ownership extra data). a_owner: that owner's form ID, when
+	// Facts::owner. a_hasOwner: it has an owner of its own (its ownership extra data). a_owner: that owner's form ID, when
 	// it is a form in our game now; none when it cannot be told (gone, such as a stand-in's face copy no save keeps, or not
 	// readable), and then the frame counts as someone's: only an owner known to be a stand-in's base (a_standInBase(id))
-	// leaves it nobody's.
+	// is the switch-in's.
 	template <class S>
-	constexpr bool Owned(bool a_hasOwner, std::optional<std::uint32_t> a_owner, S&& a_standInBase)
+	constexpr Owner OwnerOf(bool a_hasOwner, std::optional<std::uint32_t> a_owner, S&& a_standInBase)
 	{
-		return a_hasOwner && !(a_owner && a_standInBase(*a_owner));
+		if (!a_hasOwner) {
+			return Owner::kNone;
+		}
+		return a_owner && a_standInBase(*a_owner) ? Owner::kStandIn : Owner::kOther;
 	}
 
 	constexpr auto        LOOK_AGAIN = std::chrono::seconds(5);

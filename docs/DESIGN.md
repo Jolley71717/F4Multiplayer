@@ -1534,12 +1534,18 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   (`RemotePlayers`' `FrameInUse` now skips anything on its way out, and `BuryFrame` puts a frame back on the books and
   buries it once). Each session places its copy at the same spot again, so these piled up, disabled, at one spot (rig,
   2026-10-27). Now, right after every load, each disabled frame made at runtime is watched (`FrameLeftovers`), and
-  judged once it has stood so `FrameLeftovers::LOOK_AGAIN` (5 s, no loading screen up, still the same form): one that is
-  not persistent (the engine promotes a frame as an actor gets in, so an NPC away in their suit keeps it persistent),
-  holds nothing (nor would its base fill it), no quest alias holds, nothing links or enables, nobody here is in or left
-  last, and has no owner but a stand-in's base (one our player ever used is theirs; an owner that cannot be told counts
-  as someone's) goes as every copy of ours goes (`SaveGuard::Track`, `RemotePlayers::Discard`). `saveguard` shows
-  `frameLeftovers=` cleared/judged, `leftoversKept=` and `leftoversWatched=`; each one judged is logged.
+  judged once it has stood so `FrameLeftovers::LOOK_AGAIN` (5 s, no loading screen up, still the same form). One goes
+  as every copy of ours goes (`SaveGuard::Track`, `RemotePlayers::Discard`) only with proof that it is ours
+  (`FrameLeftovers::Proven`: it lingers from this run's load, it carries the workshop copies' keyword, or a stand-in's
+  base owns it, which the switch-in gives every copy a stand-in gets into) and nobody's: not persistent (the engine
+  promotes a frame as an actor gets in, so an NPC away in their suit keeps it persistent), holds nothing (nor would its
+  base fill it), no quest alias holds, nothing links or enables, nobody here is in it or left it last (every process
+  list), and no owner but a stand-in's base (one our player ever used is theirs; an owner that cannot be told counts as
+  someone's). A plain disabled frame with no proof stays, whatever else it lacks: it cannot be told from a frame the
+  game made (as `FrameShare::Ghost` rules for a standing one), and a frame a player cares about is often one full of
+  pieces. So a parked or left-behind copy of an older version's save, which no stand-in got into, stays unseen where
+  it is. `saveguard` shows `frameLeftovers=` cleared/judged, `leftoversKept=` and `leftoversWatched=`; each one judged
+  is logged with its facts.
   Nor is a frame a workshop piece (`WorkshopApply::Shared`): workshop mode moves a parked frame, and up to 0.9.1 the
   move (of the player's own, or of our copy of a friend's) was reported as building: each friend's game made a plain
   copy of the frame where it was set down, and the server kept it for every later session and load. Now WorkshopSync
