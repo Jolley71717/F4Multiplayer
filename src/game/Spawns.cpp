@@ -82,6 +82,9 @@ namespace Spawns
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
 		std::uint32_t copiesUnloaded = 0, copiesBack = 0;  // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
+		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does: no copy.
+		std::unordered_set<std::uint32_t> oursThere;
+		std::uint32_t                     frameCopiesWithheld = 0;
 		std::uint32_t logged = 0;
 
 		std::uint32_t LocalPlayer()
@@ -250,6 +253,18 @@ namespace Spawns
 				return;
 			}
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
+			// A frame of our own, of that base, standing where their game has theirs (two saves with a shared past hold the
+			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT).
+			facts.oursThere = facts.inView && NpcSync::OwnMadeFrameAt(copy->spawn.base, copy->at, FrameShare::SAME_SPOT);
+			if (facts.oursThere) {
+				if (oursThere.insert(a_id).second) {
+					++frameCopiesWithheld;
+					REX::INFO("Spawns: a frame of our own stands where player {}'s game has their frame {:08X} (base {:08X}), at ({:.0f},{:.0f},{:.0f}); it stands for theirs, no copy beside it", copy->spawn.playerId, a_id,
+						copy->spawn.base, copy->at.x, copy->at.y, copy->at.z);
+				}
+			} else {
+				oursThere.erase(a_id);
+			}
 			RE::NiPointer<RE::TESObjectREFR> ref;
 			if (copy->local != 0) {
 				ref = CopyOf(a_id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
@@ -306,8 +321,8 @@ namespace Spawns
 			case SpawnBook::Act::kDiscard:
 				if (ref) {
 					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
-					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} {:.0f} units off)", ref->GetFormID(),
-						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, off);
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} oursThere={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, facts.oursThere, off);
 				}
 				Discard(a_id);
 				break;
@@ -602,6 +617,7 @@ namespace Spawns
 		}
 		// A spawn forgotten some other way (its player gone, the server's word) takes its first sighting with it.
 		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(oursThere, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -650,6 +666,7 @@ namespace Spawns
 		placed.clear();
 		killedHere.clear();
 		leaving.clear();
+		oursThere.clear();  // the loaded world's frames are looked at afresh
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
 		const auto released = ours.Ids();
@@ -678,14 +695,15 @@ namespace Spawns
 		theirs.Clear();
 		ours.Clear();
 		ownFrames.clear();
+		oursThere.clear();
 		killedHere.clear();
 		outgoing.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack);
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld);
 	}
 }

@@ -486,7 +486,9 @@ namespace DevCommands
 		}
 
 		// paframes [radius]: the power armor frames near the local player, each with whether the engine would let our player
-		// into it and why not (Equipment::DescribeFrameUse), its distance and which game's it is (NpcSync::Owner).
+		// into it and why not (Equipment::DescribeFrameUse), its distance, which game's it is (NpcSync::Owner), whether it
+		// carries the keyword the workshop copies get (marked: a copy an older version left, FrameShare::Ghost) and whether
+		// anything is in it.
 		std::string PowerArmorFrames(std::string_view a_args)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -501,8 +503,8 @@ namespace DevCommands
 				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
 					return RE::BSContainer::ForEachResult::kContinue;
 				}
-				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
-					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership));
+				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={} marked={} holds={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
+					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership), WorkshopSync::IsCopyMarked(*a_ref), WorkshopSync::HoldsAnything(a_ref));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());

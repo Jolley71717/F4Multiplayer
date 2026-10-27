@@ -650,7 +650,11 @@ namespace ArmorFrames
 		}
 		// A frame another game runs stands here where that game has it (synced): it is theirs wherever our player last
 		// left it, and the move that brought it here is no use of it by our player. Where they get in is where their
-		// game has it, so it is looked at afresh each time rather than left alone for the wear (moved).
+		// game has it, so it is looked at afresh each time rather than left alone for the wear (moved), and it is hidden
+		// wherever it stands, as the suit they wear: ours is moved to where their game has it as they got in, or is on
+		// its way there (NpcSync brings it once that is in view), which is not where their stand-in was as their status
+		// came for one who joined mid-wear (where they got in, in their own world, against their stand-in's first spot).
+		// Compared with that, ours stood there shown for the whole wear, a second suit for one they wear.
 		if (!a_facts.synced && a_facts.ours) {
 			return Original::kOurs;
 		}
@@ -674,7 +678,7 @@ namespace ArmorFrames
 		if (!a_facts.loaded) {
 			return Original::kNotLoaded;
 		}
-		if (!a_facts.fromSpot || !(*a_facts.fromSpot <= ORIGINAL_RADIUS)) {
+		if (!a_facts.synced && (!a_facts.fromSpot || !(*a_facts.fromSpot <= ORIGINAL_RADIUS))) {
 			return Original::kElsewhere;
 		}
 		return Original::kHide;
