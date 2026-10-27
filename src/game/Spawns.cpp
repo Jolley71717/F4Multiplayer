@@ -256,8 +256,9 @@ namespace Spawns
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
 			facts.lent = FrameLoans::LentToUs(a_id);  // held as it is for the loan (FrameLoans)
 			// A frame of our own, of that base, standing where their game has theirs (two saves with a shared past hold the
-			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT).
-			facts.oursThere = facts.inView && NpcSync::OwnMadeFrameAt(copy->spawn.base, copy->at, FrameShare::SAME_SPOT);
+			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT). Never one lent to us: our
+			// copy is the frame our player borrowed, held for the loan whatever of ours stands at that spot.
+			facts.oursThere = !facts.lent && facts.inView && NpcSync::OwnMadeFrameAt(copy->spawn.base, copy->at, FrameShare::SAME_SPOT);
 			if (facts.oursThere) {
 				if (oursThere.insert(a_id).second) {
 					++frameCopiesWithheld;

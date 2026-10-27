@@ -1056,7 +1056,7 @@ namespace NpcSync
 				const auto frame = MadeFrameRef(local);
 				const auto ours = frame ? FrameOursOf(frame) : FrameShare::Ours{};
 				const bool lent = FrameLoans::LentOut(local);
-				if (frame && FrameShare::Ghost(ours) && !RemotePlayers::OnItsWayOut(frame)) {
+				if (frame && FrameShare::Ghost(ours, lent) && !RemotePlayers::OnItsWayOut(frame)) {
 					ClearGhost(frame, ours);
 					continue;
 				}
@@ -1808,8 +1808,8 @@ namespace NpcSync
 			if (!base || base->GetFormID() != a_base || !RemoteEdits::Within(RemoteEdits::Distance(SpotOf(frame), a_spot), a_radius) || RemotePlayers::OnItsWayOut(frame)) {
 				continue;
 			}
-			if (const auto ours = FrameOursOf(frame); !ours.copy && !FrameShare::Ghost(ours)) {
-				return true;  // a copy of ours, or one on its way out, is never our own
+			if (FrameShare::StandsFor(FrameOursOf(frame), FrameLoans::LentOut(local))) {
+				return true;  // a copy of ours, one on its way out, or one lent to a friend never stands for theirs
 			}
 		}
 		return false;

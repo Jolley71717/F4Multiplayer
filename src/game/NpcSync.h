@@ -105,9 +105,9 @@ namespace NpcSync
 	// our sight (false: not yet, asked again later); true once it is moved, or is no frame of ours to move.
 	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading);
 
-	// Whether a frame our own game made (no copy of ours, nor one on its way out), of base a_base, stands within a_radius
-	// of a_spot, as the last frame walk found it standing loaded: it stands for a friend's frame their game has there
-	// (FrameShare::SAME_SPOT, Spawns' copies).
+	// Whether a frame our own game made (no copy of ours, nor one on its way out or lent to a friend), of base a_base,
+	// stands within a_radius of a_spot, as the last frame walk found it standing loaded: it stands for a friend's frame
+	// their game has there (FrameShare::SAME_SPOT, FrameShare::StandsFor, Spawns' copies).
 	[[nodiscard]] bool OwnMadeFrameAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot, float a_radius);
 
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted); for a power

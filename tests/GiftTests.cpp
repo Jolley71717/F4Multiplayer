@@ -781,17 +781,28 @@ TEST("gifts: a workbench, a merchant's chest and a companion aren't gift places,
 	auto quest = Gun("Kellogg's Pistol");
 	quest.quest = true;
 	auto runtime = Gun("Odd", { { 0xFF000801, 0, 0 } });
+	// A copy of a piece a friend lent Alice with their frame (FrameLoans): theirs, never given.
+	auto lent = Armor(0.5f);
+	lent.name = "Bob's T-60 Left Arm";
+	lent.lent = true;
+	CHECK(!GiftBook::Givable(lent));
+	lent.lent = false;
+	CHECK(GiftBook::Givable(lent));
+	lent.lent = true;
 	alice.Give(PLAYER, quest);
 	alice.Give(PLAYER, runtime);
+	alice.Give(PLAYER, lent);
 	alice.Open(f, CHEST);
 	REQUIRE(alice.Put(f, CHEST, ClassOf(quest)));
 	REQUIRE(alice.Put(f, CHEST, ClassOf(runtime)));
+	REQUIRE(alice.Put(f, CHEST, ClassOf(lent)));
 	alice.Close(f);
 	SettleAll(f, { &alice, &bob });
-	CHECK(alice.gifts.Counters().notGiven == 2);
+	CHECK(alice.gifts.Counters().notGiven == 3);
 	CHECK(alice.Noticed(Notice::kNotGiven) == 1);  // said once a session
 	CHECK(alice.In(CHEST, ClassOf(quest)) == 1);
 	CHECK(alice.In(CHEST, ClassOf(runtime)) == 1);
+	CHECK(alice.In(CHEST, ClassOf(lent)) == 1);
 	CHECK(bob.gifts.Lying().empty());
 	NoFailures({ &alice, &bob });
 }

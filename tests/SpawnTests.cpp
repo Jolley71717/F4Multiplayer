@@ -713,6 +713,14 @@ TEST("spawns: our copy of a friend's frame lent to us is held as it is until the
 	theirs.Placed(SPAWN, COPY, T0);
 	FrameFacts lent{ .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f, .lent = true };
 	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	// A frame of our own standing where the owner's game has theirs (a shared past) never takes the borrowed copy: it
+	// would go from under our player (Spawns asks no oursThere while lent, and DecideFrame holds the copy all the same).
+	lent.oursThere = true;
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	lent.occupied = true;
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	lent.occupied = false;
+	lent.oursThere = false;
 	// Our player in it: never given up to them (it goes back), and not moved after its owner's word.
 	lent.occupied = true;
 	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);

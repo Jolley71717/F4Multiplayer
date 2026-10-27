@@ -417,8 +417,11 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   (`kLendFrame`, at most 16, each with its mods, condition and name). The borrower's game puts copies of them, each named
   as the owner's, into its copy (held as it is while lent: `SpawnBook::FrameFacts::lent`), and the next press gets
   their player in. While they wear it their status names it by its spawn id and every game hides its own reference
-  of it (the frame hide); the owner's game neither shares it nor tells it parked. As they get out (2 s settled, and out
-  of power armor) the copies are gathered from the frame and the player and removed, what else of the player's own the
+  of it (the frame hide); the owner's game neither shares it nor tells it parked. While lent, the owner's frame is never
+  cleared as an older version's copy (`FrameShare::Ghost`) and stands for no friend's frame at its spot
+  (`FrameShare::StandsFor`), and the borrower's copy is kept whatever of their own stands where the owner's game has it
+  (no `oursThere` while lent). As they get out (2 s settled, and out of power armor) the copies are gathered from the
+  frame and the player and removed, what else of the player's own the
   frame holds goes back to them (their cores, as many as they lost to it; their own pieces, put on from the Pip-Boy),
   their copy goes (found by its handle or, the engine having made it anew with its cell, by its id; one not found is put
   back under the save guard by its id and forgotten), and `kReturnFrame` says where it stands and each piece's condition:

@@ -942,3 +942,25 @@ TEST("armor frames: a frame lent to a friend is hidden wherever it stands while 
 	facts.found = false;
 	CHECK(ChooseLentOriginal(base, facts) == Original::kMissing);
 }
+
+TEST("armor frames: the hide of a worn frame another game runs, wherever it stands, never takes a frame lent out or borrowed")
+{
+	using ArmorFrames::ChooseOriginal;
+	using ArmorFrames::ChooseParkedOriginal;
+	using ArmorFrames::Original;
+	using ArmorFrames::OriginalFacts;
+	constexpr std::uint32_t base = 0x0019DED9;
+	constexpr std::uint32_t made = 0xFF0034CD;  // a frame a game made: the only kind lent (FrameLoans)
+	constexpr std::uint32_t museum = 0x0003F2B4;
+	// Synced, far off, ours: a pre-placed one is hidden wherever it stands while a friend wears theirs.
+	OriginalFacts facts{ .found = true, .base = base, .frame = true, .loaded = true, .ours = true, .fromStart = 5000.0f, .fromSpot = 3000.0f, .synced = true };
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	// A made frame (ours lent out, or our copy of one lent to us) is no pre-placed one: never hidden by that rule, worn
+	// or parked. Only the loan's own rule hides it (ChooseLentOriginal, by the spawn id the borrower's status names).
+	CHECK(ChooseOriginal(made, base, facts) == Original::kNone);
+	CHECK(ChooseParkedOriginal(made, base, facts) == Original::kNone);
+	// Nor any reference made in this game, whatever id the status names.
+	facts.created = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kMissing);
+	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kMissing);
+}
