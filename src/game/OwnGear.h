@@ -14,6 +14,8 @@
 // the session may ever do the same). The one exception is the player's own act put right: a take or put of theirs at a
 // friend's shared storage that the server refused, or a take the host's chest held less of, is undone (Change::kStorageUndo,
 // never on anything but our player, and only for a StorageView::PlayerChange, which only StorageView::Client makes).
+// The other is a power armor frame a friend lent: copies of its pieces go into our copy of it, and are gathered back out of
+// it and out of our player as they get out (Change::kLoan; only items named as the lent ones, FrameLoans).
 // A move our loaded world lacks is put right in the true copy by the server, never on our player.
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
@@ -36,6 +38,10 @@ namespace OwnGear
 		// did themselves, put right. Nothing else goes to them (a friend's copy's own things are set aside in the copy while it
 		// shows the true one, never moved to the player).
 		kStorageUndo,
+		// A power armor frame lent to our player (FrameLoans): copies of its owner's pieces and core put into our copy of the
+		// frame, and gathered back out of it and out of our player as they get out (only items named as the lent ones), with a
+		// fusion core of our player's own the frame used up given back to them. Our player, or a frame this game placed.
+		kLoan,
 		kCount,
 	};
 
@@ -73,7 +79,7 @@ namespace OwnGear
 			return Verdict::kGone;
 		}
 		if (a_target.player) {
-			return a_change == Change::kStorageUndo ? Verdict::kGo : Verdict::kOurPlayer;
+			return a_change == Change::kStorageUndo || a_change == Change::kLoan ? Verdict::kGo : Verdict::kOurPlayer;
 		}
 		switch (a_change) {
 		case Change::kDressStandIn:
@@ -105,6 +111,11 @@ namespace OwnGear
 			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kStorageUndo:
 			return Verdict::kWrongActor;  // only ever our player
+		case Change::kLoan:
+			if (a_target.playersFrame) {
+				return Verdict::kOurFrame;  // never while our player is in it
+			}
+			return a_target.madeHere && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kCount:
 			break;
 		}
@@ -128,6 +139,8 @@ namespace OwnGear
 			return "dropCopy";
 		case Change::kStorageUndo:
 			return "storageUndo";
+		case Change::kLoan:
+			return "loan";
 		case Change::kCount:
 			break;
 		}

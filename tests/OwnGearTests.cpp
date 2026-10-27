@@ -205,3 +205,22 @@ TEST("own gear: a refused move at a friend's shared storage is put right on our 
 		CHECK(OwnGear::Judge(change, Player()) == Verdict::kOurPlayer);
 	}
 }
+
+TEST("own gear: a frame lent to our player fills our copy, and its lent items come back from the copy and our player only")
+{
+	Target copy;
+	copy.madeHere = true;
+	CHECK(OwnGear::Judge(Change::kLoan, copy) == Verdict::kGo);
+	CHECK(OwnGear::Judge(Change::kLoan, Player()) == Verdict::kGo);  // the lent items gathered back, and our own cores given back
+	// Never while our player is in it, never a frame of the world's or a friend's shared one, never a stand-in or an NPC copy.
+	auto worn = copy;
+	worn.playersFrame = true;
+	CHECK(OwnGear::Judge(Change::kLoan, worn) == Verdict::kOurFrame);
+	CHECK(OwnGear::Judge(Change::kLoan, Target{}) == Verdict::kNotCopy);
+	CHECK(OwnGear::Judge(Change::kLoan, StandIn()) == Verdict::kNotCopy);
+	CHECK(OwnGear::Judge(Change::kLoan, Mirrored()) == Verdict::kNotCopy);
+	Target gone;
+	gone.exists = false;
+	CHECK(OwnGear::Judge(Change::kLoan, gone) == Verdict::kGone);
+	CHECK(OwnGear::Name(Change::kLoan) == "loan");
+}

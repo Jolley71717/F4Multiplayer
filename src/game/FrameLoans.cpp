@@ -250,6 +250,9 @@ namespace FrameLoans
 		// Every lent item in a_ref (our copy, or our player) found, its condition noted, and removed.
 		void Gather(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found)
 		{
+			if (!Equipment::MayChange(a_ref, OwnGear::Change::kLoan)) {
+				return;  // never our player's frame, nor a reference this game did not place
+			}
 			for (int i = 0; i < MAX_STACKS; ++i) {
 				const auto hit = FindStack(a_ref, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
 					const auto base = a_object->GetFormID();
@@ -317,6 +320,9 @@ namespace FrameLoans
 		// it holds goes with it.
 		void GiveRest(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player)
 		{
+			if (!Equipment::MayChange(a_player, OwnGear::Change::kLoan) || !Equipment::MayChange(a_copy, OwnGear::Change::kLoan)) {
+				return;
+			}
 			for (const auto& [base, before] : borrowed.ownCores) {
 				const auto lost = before - CountOf(a_player, base);
 				const auto there = CountOf(a_copy, base);
@@ -840,8 +846,8 @@ namespace FrameLoans
 			return;  // told again (we asked again while it was lent to us)
 		}
 		const auto copy = borrowed.handle.get();
-		if (!askedFor || !copy || copy->IsDeleted()) {
-			// Not asked for now (asked before a load), or our copy is gone: given back as it is.
+		if (!askedFor || !copy || copy->IsDeleted() || !Equipment::MayChange(copy.get(), OwnGear::Change::kLoan)) {
+			// Not asked for now (asked before a load), or our copy is gone (or not one ours to fill): given back as it is.
 			REX::INFO("FrameLoans: frame {:08X} lent to us by player {}, but {}; given back", a_lending.spawnId, a_lending.ownerId, askedFor ? "our copy of it is gone" : "we no longer ask for it");
 			Protocol::FrameReturn back;
 			back.spawnId = a_lending.spawnId;
