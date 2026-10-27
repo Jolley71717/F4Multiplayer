@@ -145,6 +145,29 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
     so turning it back on carries on where it left off. A session that has used this setting can't be opened by an
     older version of the mod.
   A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
+- `bContainerGifts` (false, experimental): on, a weapon or a piece of armor a player puts in a container gives it to
+  the others. Any container works except a workbench, a vendor's and a companion's, and a container built in a
+  settlement. The item then shows in that container for every player who opens it, and the first who takes it has it.
+  Off, what a player puts in a container stays in their own copy of it, as in 0.9.x: drop an item to give it instead.
+  - Taking a gift: it goes into your inventory a moment after you press Take, once the session says you were first.
+    If a friend was first, you get nothing and a notice says so. Until someone takes it, its giver can take it back
+    the same way.
+  - Each item is given on its own: putting in three guns gives three gifts. Mods, a legendary effect, a name and a
+    power armor piece's condition go with it. An item with a mod from a plugin a friend lacks doesn't show for them.
+    Quest items and items made by a mod at runtime are not given (a notice says so once).
+  - With `bSharedStorage` on or off it works the same: shared storage never shares weapons and armor, so they are
+    given this way in any container.
+  - Loading a save: a friend who loads a save from before taking a gift has it back in the container for everyone.
+    A giver who loads a save from before putting the item in has it back in their own copy, and it is gone for the
+    others. The one case not put right: a giver who loads a save from before putting it in, after a friend took it,
+    has it too (both have it; the host's log counts it). A mod that moves items out of containers by itself (an
+    auto-sorter, say) can make one more of a gift the same way; the gift then stops showing for that player until
+    they load a save or rejoin, and each time it shows again such a mod can do it again.
+  - A connection that drops while a take is on its way loses nothing: the item is in the container again after you
+    rejoin, or in your inventory if the session says you took it. A giver whose connection drops just as
+    the item is given finds it given once they rejoin (until then nobody can take it), or still in the container if
+    it never reached the session. The dedicated server takes it as `--container-gifts`. Once a gift has been
+    given in a session, an older version of the mod can't open that session any more, even after the gift is taken.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
   `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
@@ -294,7 +317,7 @@ character your game places where your friend is, and moves as they move.
   Pip-Boy light. Their name is over their head when you look at them, with their health when they're hurt.
 - **What they can do in your world:** enemies see them and fight them, and a hit on their stand-in reaches the real
   friend. Their kills, loot, doors and quest steps reach your game as described below. Pressing E on them does
-  nothing: you can't talk to, trade with or give things to a stand-in (giving items is coming in a later version).
+  nothing: you can't talk to, trade with or give things to a stand-in (drop an item near them instead: see Giving items below).
 - **Their companion:** it walks with them in your game too, but it stays their companion: its affinity, its romance
   and what it carries are kept in each game apart. If you both travel with Dogmeat, each game keeps its own.
 
@@ -329,7 +352,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
 - **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
   your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
-  Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,
+  Weapons and armor put in a container stay in your game only, so drop them instead, unless the host turns on
+  `bContainerGifts` (see [Host settings](#host-settings)): then one put in a container is given to whoever takes it
+  first. Keys, notes,
   holotapes, bobbleheads, magazines and quest items can't be given (each player collects their own).
   Items left lying about are kept with the host's session.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
@@ -504,7 +529,8 @@ without it they last until it stops.
 ## Known limitations (early version)
 
 - Friends' faces haven't been tried with LooksMenu or with a heavily sculpted character yet; reports welcome.
-- You can't give a friend an item yet: what you drop stays in your game. Giving items is coming in a later version.
+- Keys, notes, holotapes, bobbleheads, magazines and quest items can't be given to a friend, and a weapon or armor put
+  in a container is given only with the host's experimental `bContainerGifts` on: otherwise drop it near them.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
 - Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters) and radiant quests other than those listed under
   "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.

@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -43,7 +44,12 @@ namespace SessionFile
 	// with the change it was claimed at) and the friends' moves the true copy undid for their loaded worlds
 	// (Snapshot::storageReversals, as kStorageReversals packets). A session with neither is written as 36. 37 was shared
 	// storage's own test builds' (owners alone, without the change each was claimed at), which no build reads.
-	inline constexpr std::uint16_t FORMAT = 38;
+	// 39 adds to 38 the container each drop was put in (Protocol::DroppedItem::holder: a gift, src/game/GiftBook.h), and
+	// keeps a gift's offer (takerId Protocol::DROP_OFFERED). A session with no gift is written as 38 or 36, its drops without
+	// a holder, so an older build still reads it; a drop in a file before 39 lies loose.
+	inline constexpr std::uint16_t FORMAT = 39;
+	inline constexpr std::uint16_t GIFTS = 39;
+	inline constexpr std::uint16_t STORAGE = 38;
 	inline constexpr std::uint16_t STORAGE_TEST = 37;
 	inline constexpr std::uint16_t OBJECT_PLACES = 36;
 	inline constexpr std::uint16_t TRAPS_AND_DESTRUCTIONS = 34;
@@ -57,7 +63,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 39 (35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 40 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -69,7 +75,15 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasTraps(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
 	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
 	[[nodiscard]] constexpr bool HasObjectPlaces(std::uint16_t a_format) { return a_format >= OBJECT_PLACES; }
-	[[nodiscard]] constexpr bool HasStorageOwners(std::uint16_t a_format) { return a_format >= FORMAT; }
+	[[nodiscard]] constexpr bool HasStorageOwners(std::uint16_t a_format) { return a_format >= STORAGE; }
+	[[nodiscard]] constexpr bool HasHolders(std::uint16_t a_format) { return a_format >= GIFTS; }
+
+	// The layout a snapshot is written in: the oldest that holds it, so a session without gifts or shared storage is still
+	// one an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_gifts, bool a_storage)
+	{
+		return a_gifts ? GIFTS : a_storage ? STORAGE : OBJECT_PLACES;
+	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
@@ -136,8 +150,10 @@ namespace SessionFile
 			out.insert(out.end(), a_packet.begin(), a_packet.end());
 		};
 		put(MAGIC);
-		// The layout that holds it: a session with no shared storage is still one an older build reads.
-		put(a_snapshot.storageOwners.empty() && a_snapshot.storageReversals.empty() ? OBJECT_PLACES : FORMAT);
+		// The layout that holds it: a session with no gifts and no shared storage is still one an older build reads.
+		const bool gifts = std::ranges::any_of(a_snapshot.drops, [](const Protocol::DroppedItem& a_drop) { return a_drop.holder != 0; });
+		const auto layout = LayoutFor(gifts, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty());
+		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
 		put(a_snapshot.nextId);
@@ -188,7 +204,8 @@ namespace SessionFile
 		}
 		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::DropList{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } }));
+			const Protocol::DropList list{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } };
+			packet(HasHolders(layout) ? Protocol::Encode(list) : Protocol::EncodeBeforeHolders(list));
 		}
 		for (std::size_t i = 0; i < a_snapshot.traps.size(); i += Protocol::MAX_TRAPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.traps.size(), i + Protocol::MAX_TRAPS_PER_PACKET);
@@ -309,7 +326,7 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kDropList: {
-				const auto list = HasDrops(version) ? Protocol::DecodeDropList(packet) : std::nullopt;
+				const auto list = !HasDrops(version) ? std::nullopt : HasHolders(version) ? Protocol::DecodeDropList(packet) : Protocol::DecodeDropListBeforeHolders(packet);
 				if (!list) {
 					return std::nullopt;
 				}
@@ -406,7 +423,9 @@ namespace SessionFile
 		{
 			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
 			if (!out) {
-				return discard();
+				// Not opened, so not touched: a whole temporary file an earlier try left (the new save, when the rename
+				// onto the session file failed) is still what Recover reads, and a program holding it is no reason to delete it.
+				return false;
 			}
 			out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 			out.close();  // the last bytes are written here: a full disk shows now

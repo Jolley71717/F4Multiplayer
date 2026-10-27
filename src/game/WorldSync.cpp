@@ -5,6 +5,7 @@
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
 #include "game/Drops.h"
+#include "game/Gifts.h"
 #include "game/Equipment.h"
 #include "game/FloraShare.h"
 #include "game/FoundDead.h"
@@ -766,8 +767,9 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent& a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
 			{
-				// Shared storage's own changes (a friend's copy shown, a refused move undone): never a move of the player's.
-				if (Storage::Applying()) {
+				// Shared storage's own changes (a friend's copy shown, a refused move undone) and Gifts' (a gift's copy, a take held
+				// back or granted): never a move of the player's.
+				if (Storage::Applying() || Gifts::Applying()) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				// Only moves the local player makes. Changes we apply for other players go between a
@@ -803,6 +805,9 @@ namespace WorldSync
 				if (!move) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				// A weapon or armor put in a container may be a gift, and a take of one may be of a gift's copy: Gifts keeps
+				// every move at the container its view watches (never a vendor's), so a take just after a trade isn't lost.
+				Gifts::OnMoved(move->holder, move->item, move->count);
 				const auto closed = Clock::time_point{ Clock::duration{ barterClosedAt.load() } };
 				if (bartering || Clock::now() - closed < BARTER_TAIL) {
 					++barterMoves;  // a trade
@@ -825,6 +830,7 @@ namespace WorldSync
 			{
 				if (!a_event.opening && a_event.menuName == "ContainerMenu"sv) {
 					Storage::OnMenuClosed();  // a friend's storage viewed: the session's things leave our copy
+					Gifts::OnMenuClosed();  // our copies of the gifts in it leave it
 				}
 				if (a_event.menuName == "BarterMenu"sv) {
 					if (!a_event.opening) {
@@ -1199,8 +1205,9 @@ namespace WorldSync
 		{
 			for (const auto& move : a_moves) {
 				// A weapon or armor put in a container: a friend's game would get a plain copy, so it isn't shared there.
-				// Our player is told once a session how to give it instead.
-				if (move.count > 0 && LootScope::Of(ReadHolderFacts(move.holder), ReadItemFacts(RE::TESForm::GetFormByID(move.item)), LootScope::Direction::kPut) ==
+				// Our player is told once a session how to give it instead. (With the host's bContainerGifts, one put in a gift's place
+				// is given: Gifts.)
+				if (move.count > 0 && !Gifts::GivesIn(move.holder) && LootScope::Of(ReadHolderFacts(move.holder), ReadItemFacts(RE::TESForm::GetFormByID(move.item)), LootScope::Direction::kPut) ==
 										  LootScope::Scope::kWeaponArmor) {
 					Drops::OnKeptInContainer();
 				}

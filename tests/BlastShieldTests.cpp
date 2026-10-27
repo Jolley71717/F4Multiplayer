@@ -1113,12 +1113,12 @@ TEST("copy health: a copy's drop is judged after a tenth of a second, kept aroun
 	const CopyHealth::Clock::time_point t0{};
 	Book book;
 
-	// First seen: where it stands. Gaining health, or losing less than rounding, is kept.
+	// First seen: where it stands. Losing less than rounding is kept (gaining with no report is taken back:
+	// CopyGainsTests.cpp).
 	CHECK(book.Check(RAIDER_1, 30.0f, t0) == 0.0f);
 	CHECK(book.Health(RAIDER_1) == std::optional{ 30.0f });
-	CHECK(book.Check(RAIDER_1, 40.0f, t0 + milliseconds{ 50 }) == 0.0f);
-	CHECK(book.Check(RAIDER_1, 39.97f, t0 + milliseconds{ 100 }) == 0.0f);
-	CHECK(book.Health(RAIDER_1) == std::optional{ 39.97f });
+	CHECK(book.Check(RAIDER_1, 29.97f, t0 + milliseconds{ 100 }) == 0.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 29.97f });
 	book.Set(RAIDER_1, 30.0f);
 
 	// A drop with no hit of ours: given back once it has stood a tenth of a second, all of it.
