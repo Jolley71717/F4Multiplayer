@@ -8,7 +8,7 @@
 // --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
 // (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat
 // (bReviveOutOfCombat), --downed-crawl (bDownedCrawl), --slow-vats (bRealTimeVats = false), --share-guest-builds
-// (bShareGuestBuilds; with no host game, every player is a guest).
+// (bShareGuestBuilds; with no host game, every player is a guest), --save-on-down (bSaveOnDown).
 // --ban-file: where the bans are kept, so they outlive the server; without it they last until it stops.
 // While it runs, the console takes the host controls (Server::Console): help, players, kick <n>, ban <n>, bans,
 // unban <n | ~alias | all>, password <text> (password - removes it), lock and unlock. The answers go to the output,
@@ -111,6 +111,8 @@ int main(int argc, char* argv[])
 			options.rules.realTimeVats = false;
 		} else if (arg == "--share-guest-builds") {
 			options.rules.shareGuestBuilds = true;
+		} else if (arg == "--save-on-down") {
+			options.rules.saveOnDown = true;
 		} else if (arg == "--ban-file" && hasValue) {
 			options.banFile = argv[++i];
 		} else if (arg == "--session-file" && hasValue) {
@@ -127,7 +129,7 @@ int main(int argc, char* argv[])
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
 						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
 						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--downed-crawl] [--slow-vats]\n"
-						 "                  [--share-guest-builds]\n";
+						 "                  [--share-guest-builds] [--save-on-down]\n";
 			return 2;
 		}
 	}

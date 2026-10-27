@@ -147,7 +147,8 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
-  `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
+  `bReviveOutOfCombat` (false), `bDownedCrawl` (false) and `bSaveOnDown` (false). Guests play by the host's. See
+  [Going down](#going-down).
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
 
@@ -259,12 +260,19 @@ the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the h
 changed any of these, joiners are told the rules as they join, and the F1 menu shows them. The HUD
 tells you how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
-`--revive-out-of-combat`, `--no-revive`, `--downed-crawl`).
+`--revive-out-of-combat`, `--no-revive`, `--downed-crawl`, `--save-on-down`).
 
 The host can also let downed players crawl (`bDownedCrawl = true`; experimental, off by default):
 while down, forward and back crawl slowly and left and right turn you, so you can reach a friend or
 cover before you bleed out. Walls, ledges and steep ground stop you, and so does a friend right next
 to you, so their help isn't broken. Your friends see you drag yourself along the ground.
+
+Dying, in a session or alone, makes the game load your last save, so you lose what you did since it; the HUD
+says so as you go down. Teleporting to a friend with F7 makes an autosave when you land, as a door or fast
+travel would, if the game's own "Save on travel" setting is on (Settings > Gameplay). The host can also have
+everyone's game make an autosave as they go down (`bSaveOnDown = true`, off by default; server:
+`--save-on-down`), so bleeding out takes you back only to that moment. Neither saves in Survival, and neither
+saves within a minute of another save.
 
 ### VATS in real time
 

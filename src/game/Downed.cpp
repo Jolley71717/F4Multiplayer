@@ -1,6 +1,8 @@
 #include "game/Downed.h"
 
 #include "Config.h"
+#include "game/AutoSave.h"
+#include "game/AutoSaveRules.h"
 #include "game/DownRules.h"
 #include "game/GameStop.h"
 #include "game/Hotkeys.h"
@@ -191,6 +193,10 @@ namespace Downed
 			if (a_step.wentDown) {
 				REX::INFO("Downed: down; a friend can help us up (crawl {}; {})", self.MayCrawl(), InputFacts());
 				Hud::Notify(Text::Format(self.MayCrawl() ? "down.went_down_crawl" : "down.went_down", { { "key", GiveUpKey() } }));
+				// A death loads the newest save, which in a session can be many minutes old: said before it happens.
+				const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(self.GetRules().bleedOut).count();
+				Hud::Notify(Text::Format(AutoSaveRules::DeathWarning({ .wentDown = true }), { { "n", seconds } }));
+				AutoSave::OnWentDown(self.GetRules().saveOnDown);
 			}
 			if (a_step.secondsLeft >= 0) {
 				Hud::Notify(Text::Format("down.seconds_left", { { "n", a_step.secondsLeft } }));
@@ -221,7 +227,7 @@ namespace Downed
 				if (self.killRetries > 0) {
 					REX::WARN("Downed: bled out, but still alive and down; killing again ({} so far)", self.killRetries);
 				} else {
-					REX::INFO("Downed: bled out");
+					REX::INFO("Downed: bled out; the game loads the newest save (the \"Save: loading\" line names it)");
 				}
 				RE::Console::ExecuteCommand("player.kill");
 			}
@@ -467,6 +473,10 @@ namespace Downed
 		}
 		if (after.cooldownSeconds > 0) {
 			Hud::Notify(Text::Format("down.cooldown", { { "n", after.cooldownSeconds } }));
+		}
+		// The next lethal hit may kill outright now: and a death loads the newest save.
+		if (const auto warning = AutoSaveRules::DeathWarning({ .lastRevive = after.lastRevive, .cooldownSeconds = after.cooldownSeconds }); !warning.empty()) {
+			Hud::Notify(Text::Get(warning));
 		}
 	}
 

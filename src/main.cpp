@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/AutoSave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
@@ -392,6 +393,16 @@ namespace
 		}
 	}
 
+	// The text an F4SE message carries: a save's name, or the file path of the save a load reads; empty with none.
+	std::string_view MessageText(const F4SE::MessagingInterface::Message* a_msg)
+	{
+		constexpr std::uint32_t LONGEST = 4096;  // more is no name
+		if (!a_msg->data || a_msg->dataLen == 0 || a_msg->dataLen > LONGEST) {
+			return {};
+		}
+		return { static_cast<const char*>(a_msg->data), a_msg->dataLen };
+	}
+
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
 	{
 		switch (a_msg->type) {
@@ -419,6 +430,8 @@ namespace
 			StartFrameWatch();
 			break;
 		case F4SE::MessagingInterface::kPreLoadGame:
+			// Which save is loaded (a death loads the newest one): the line a report of "an old save" is read by.
+			AutoSave::OnPreLoad(MessageText(a_msg));
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
 			RunBeforeSaveOrLoad(
 				[] {
@@ -434,23 +447,43 @@ namespace
 				"load");
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
+			AutoSave::OnPreSave(MessageText(a_msg));  // which save, and whether it is one the mod asked for
 			BeginSaveOrLoad(HangWatch::Phase::kSave);
 			// Remote players' actors must never be written into a save. A save made before the first frame
 			// after a load runs that load's own work first (RunAfterLoad), or the stand-ins it took out
 			// would be the ones from before the load.
-			RunBeforeSaveOrLoad(
-				[] {
-					Session::OnBeforeSaveOrLoad();
-					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
-					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
-					InertShots::BeforeSave();  // no inert shot, whose base exists at runtime only, is written into the save
-					SaveGuard::BeforeSave();
-					RemotePlayers::BeforeSave();  // after DespawnAll: the copies kept with their wearers are what a load of this save waits on
-					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
-				},
-				"save");
+			// An exception must not go on into the engine's save, which would crash the game and lose the save; each
+			// step is caught on its own, so one that fails does not leave the others' objects in the save.
+			try {
+				RunBeforeSaveOrLoad(
+					[] {
+						const auto step = [](std::string_view a_what, auto&& a_work) {
+							try {
+								a_work();
+							} catch (const std::exception& e) {
+								REX::ERROR("Frame: before the save, {}: {}", a_what, e.what());
+							} catch (...) {
+								REX::ERROR("Frame: before the save, {}: an unknown exception", a_what);
+							}
+						};
+						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved
+						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reference reset a moment ago is saved on, as it was
+						step("the inert shots", [] { InertShots::BeforeSave(); });  // no inert shot, whose base exists at runtime only, is written into the save
+						step("the strays", [] { SaveGuard::BeforeSave(); });
+						step("the frame copies", [] { RemotePlayers::BeforeSave(); });  // after DespawnAll: the copies kept with their wearers are what a load of this save waits on
+						step("the workshops", [] { WorkshopSync::BeforeSave(); });  // no power grid saved names a friend's piece
+					},
+					"save");
+			} catch (const std::exception& e) {
+				// The work an earlier message handed over, run first (SaveLoadHold::Hold::RunNow), threw.
+				REX::ERROR("Frame: before the save: {}", e.what());
+			} catch (...) {
+				REX::ERROR("Frame: before the save: an unknown exception");
+			}
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
+			AutoSave::OnPostSave(MessageText(a_msg));
 			if (gameDataReady) {
 				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
 				// (WeaponFire::AfterSave waits for the next frame: no console command is sent from the save's own message.)

@@ -144,6 +144,8 @@ namespace Config
 				settings.shareGuestBuilds = ParseBool(value);
 			} else if (key == "bSharedStorage") {
 				settings.sharedStorage = ParseBool(value);
+			} else if (key == "bSaveOnDown") {
+				settings.saveOnDown = ParseBool(value);
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {

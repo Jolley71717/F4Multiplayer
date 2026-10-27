@@ -1571,6 +1571,17 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   player up as before. A game from before the rule ignores the welcome's bit and does not crawl. Whether
   the game still fills `moveInputVec` during bleed-out is logged once a down ("movement input while
   down") and shown in `Describe`.
+- A death loads the newest save (`src/game/AutoSaveRules.h`, tested; `AutoSave.cpp`). The teleport key's
+  `coc`/`cow` is not travel to the engine, so it made none of the autosaves a load door or fast travel makes,
+  and a bleed-out could take a player back ten minutes or more while the world, caught up from the session,
+  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace now asks for
+  an autosave (`BGSSaveLoadManager::QueueSaveLoadTask(kAutoSave)`) when the player's own `bSaveOnTravel`
+  is on; with the host's `bSaveOnDown` (welcome flag bit 64, no protocol version of its own; off) going down
+  does too. Neither in Survival, nor within 60 s of the last save of any kind. Going down, a last revive, a
+  cooldown and a session without revives say on the HUD that a death loads the last save. Each save logs
+  "Save: <kind> (<location>, <date>) begins (the mod's autosave after a teleport | ... | the player's or the
+  game's)" and "written (N ms)", and each load "Save: loading ..." (F4SE's message data; the character's
+  name, hex in the file name, is left out); a request with no save within 10 s logs a warning.
 - Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
   options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
   game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help

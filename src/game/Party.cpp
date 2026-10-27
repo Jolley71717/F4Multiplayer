@@ -4,6 +4,7 @@
 #include "game/WeaponFire.h"
 
 #include "Config.h"
+#include "game/AutoSave.h"
 #include "game/Compass.h"
 #include "game/DownRules.h"
 #include "game/Downed.h"
@@ -679,6 +680,9 @@ namespace Party
 			if (SpaceOf(player) == std::pair{ pendingTeleport->cell, pendingTeleport->worldspace } && player->Get3D()) {
 				player->SetPosition(pendingTeleport->position, true);
 				pendingTeleport.reset();
+				// The engine does not count a coc or cow as travel, so it made none of the autosaves a load door or fast
+				// travel makes, and the save a death loads was often many minutes old (AutoSaveRules.h).
+				AutoSave::AfterTeleport();
 			}
 		}
 
@@ -790,6 +794,7 @@ namespace Party
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
+		AutoSave::Frame();
 		pings.Expire(now);
 		FollowPings();
 		// Not in the opening: no friend could get there to help.

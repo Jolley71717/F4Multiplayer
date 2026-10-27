@@ -372,6 +372,11 @@ namespace Protocol
 		// Welcome flag bit 32, as shareGuestBuilds: a build that neither sets nor reads it keeps 0.9.2's way.
 		bool sharedStorage = false;
 
+		// Saves (src/game/AutoSaveRules.h): a player's game makes an autosave as they go down, so a bleed-out loads the
+		// moment they went down instead of whatever save was newest (bSaveOnDown; off by default). Welcome flag bit 64, as
+		// sharedStorage: a build that neither sets nor reads it makes no such save, which changes no game but its own.
+		bool saveOnDown = false;
+
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
 		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
@@ -2172,7 +2177,7 @@ namespace Protocol
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
 		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.shareGuestBuilds ? 8 : 0) | (rules.downedCrawl ? 16 : 0) |
-		                           (rules.sharedStorage ? 32 : 0);
+		                           (rules.sharedStorage ? 32 : 0) | (rules.saveOnDown ? 64 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -2203,6 +2208,7 @@ namespace Protocol
 			rules.shareGuestBuilds = (flags & 8) != 0;  // an older host never sets it: off, as it was
 			rules.downedCrawl = (flags & 16) != 0;
 			rules.sharedStorage = (flags & 32) != 0;  // a host without it never sets it: each game keeps its own copy, as in 0.9.2
+			rules.saveOnDown = (flags & 64) != 0;  // likewise: no autosave on going down, as in 0.9.2
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();
