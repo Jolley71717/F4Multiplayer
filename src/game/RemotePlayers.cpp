@@ -4,6 +4,7 @@
 #include "game/DownRules.h"
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
+#include "game/FrameLoans.h"
 #include "game/FriendFrame.h"
 #include "game/FriendLight.h"
 #include "game/FriendPlace.h"
@@ -2691,9 +2692,29 @@ namespace RemotePlayers
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}
+		// Our own frame, lent to a friend who wears it (FrameLoans): nobody here gets into it or takes its pieces.
+		if (const auto borrower = FrameLoans::LentOutTo(a_frame->GetFormID())) {
+			++framesKeptOut;
+			if (!a_by) {
+				Hud::Notify(Text::Format("party.frame_is_lent", { { "player", NameOf(borrower) } }));
+			}
+			return true;
+		}
 		const auto [owner, kind] = FriendOf(a_frame);
 		if (owner == 0) {
 			return false;
+		}
+		// Our player getting into our copy of a frame a friend's game made and shares: borrowed (FrameLoans), which asks
+		// its owner for it, or says why not, and lets them in once it is lent and its pieces are in it.
+		if (a_ask == Equipment::FrameAsk::kEnter && !a_by) {
+			if (const auto spawn = Spawns::CopyIdOf(a_frame->GetFormID()); spawn != 0 && Spawns::FrameCopyOwnerOf(a_frame->GetFormID()) == owner) {
+				if (!FrameLoans::KeepOut(a_frame, spawn, owner)) {
+					REX::INFO("RemotePlayers: our player gets into {:08X}, our copy of player {}'s frame, lent to us", a_frame->GetFormID(), owner);
+					return false;
+				}
+				++framesKeptOut;
+				return true;
+			}
 		}
 		++framesKeptOut;
 		// Told once a while per frame: a companion is asked about again while it is still in it.

@@ -100,6 +100,11 @@ namespace NpcSync
 	// Whether an actor of ours (not our player) is in this power armor frame.
 	[[nodiscard]] bool InFrame(const RE::TESObjectREFR* a_frame);
 
+	// Our own frame (one our game made, given back from a loan: FrameLoans) moved to a_at, turned to a_heading, as a frame
+	// another game runs is moved here: in place when it is loaded near, else through the console. Only once that spot is in
+	// our sight (false: not yet, asked again later); true once it is moved, or is no frame of ours to move.
+	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading);
+
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted); for a power
 	// armor frame, who runs it and where ours stands.
 	std::string DescribeMirror(std::uint32_t a_refId);

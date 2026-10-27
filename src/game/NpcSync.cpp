@@ -5,6 +5,7 @@
 #include "game/CreatureGait.h"
 #include "game/Dialogue.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/FrameShare.h"
 #include "game/Gait.h"
 #include "game/GameStop.h"
@@ -1033,7 +1034,7 @@ namespace NpcSync
 					continue;
 				}
 				const auto frame = MadeFrameRef(local);
-				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), hosting, usedMade.contains(local));
+				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), hosting, usedMade.contains(local), FrameLoans::LentOut(local));
 				if (const auto spawn = Spawns::ShareFrame(frame, share)) {
 					a_loaded.insert(spawn);
 				}
@@ -1100,7 +1101,7 @@ namespace NpcSync
 				return std::nullopt;
 			}
 			const auto ours = FrameOursOf(frame);
-			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
+			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID()), FrameLoans::LentOut(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
 				return std::nullopt;
 			}
 			const auto sent = sentFrames.find(a_id);
@@ -1728,6 +1729,42 @@ namespace NpcSync
 	bool InSight(const RemoteEdits::Spot& a_spot)
 	{
 		return InView(a_spot, RE::PlayerCharacter::GetSingleton());
+	}
+
+	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading)
+	{
+		if (!a_frame || a_frame->IsDeleted()) {
+			return true;
+		}
+		if (!InView(a_at, RE::PlayerCharacter::GetSingleton())) {
+			return false;
+		}
+		const auto ours = FrameOursOf(a_frame);
+		if (!ours.found || !ours.frame || ours.off || ours.inUse) {
+			REX::INFO("NpcSync: our frame {:08X}, given back, is left where it stands (found={} frame={} off={} inUse={})", a_frame->GetFormID(), ours.found, ours.frame, ours.off, ours.inUse);
+			return true;
+		}
+		const auto id = a_frame->GetFormID();
+		const float distance = RemoteEdits::Distance(ours.at, a_at);  // NaN in another place
+		if (ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT)) {
+			a_frame->data.location = { a_at.x, a_at.y, a_at.z };
+			a_frame->data.angle = { 0.0f, 0.0f, a_heading };
+			a_frame->Update3DPosition(true);
+			++framesNudged;
+		} else {
+			RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, a_at.x).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, a_at.y).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, a_at.z).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_heading * 180.0f / std::numbers::pi_v<float>).c_str());
+			meter.Count(7);
+			++framesBrought;
+		}
+		REX::INFO("NpcSync: our frame {:08X}, given back, is {} to ({:.0f},{:.0f},{:.0f}) in {:08X}", id, ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT) ? "moved" : "brought", a_at.x, a_at.y, a_at.z,
+			a_at.cell ? a_at.cell : a_at.worldspace);
+		return true;
 	}
 
 	bool InFrame(const RE::TESObjectREFR* a_frame)

@@ -9,6 +9,7 @@
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
+#include "game/FrameLoans.h"
 #include "game/FrameWatch.h"
 #include "game/GpuWatch.h"
 #include "game/Hotkeys.h"
@@ -226,6 +227,9 @@ namespace
 	constexpr std::uint32_t KEPT_RECORD = 'KEPT';
 	constexpr std::uint32_t KEPT_VERSION = 1;
 	constexpr std::uint32_t KEPT_MAX_LENGTH = 1u << 10;  // FriendFrame::Encode writes at most 768 bytes
+	constexpr std::uint32_t LOAN_RECORD = 'LOAN';
+	constexpr std::uint32_t LOAN_VERSION = 1;
+	constexpr std::uint32_t LOAN_MAX_LENGTH = 1u << 13;  // FrameLoan::Encode: 17 bytes and at most 16 tags of 262
 	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
 	constexpr std::uint32_t LOOKS_VERSION = 1;
 	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
@@ -252,6 +256,10 @@ namespace
 		// Our moves at a friend's shared storage still unanswered, and those numbered our world lacks (Storage): settled after a load.
 		if (const auto storage = Storage::SaveRecord(); !storage.empty() && a_intfc->OpenRecord(STORAGE_RECORD, STORAGE_VERSION)) {
 			a_intfc->WriteRecordData(storage.data(), static_cast<std::uint32_t>(storage.size()));
+		}
+		// The frame our player wears on loan from a friend (FrameLoans): sent out of it, and it goes, after this save's load.
+		if (const auto loan = FrameLoans::SaveRecord(); !loan.empty() && a_intfc->OpenRecord(LOAN_RECORD, LOAN_VERSION)) {
+			a_intfc->WriteRecordData(loan.data(), static_cast<std::uint32_t>(loan.size()));
 		}
 		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
 		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
@@ -287,6 +295,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Storage::LoadRecord(bytes);
 				}
+			} else if (type == LOAN_RECORD && version == LOAN_VERSION && length <= LOAN_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					FrameLoans::LoadRecord(bytes);
+				}
 			} else if (type == LOOKS_RECORD && version == LOOKS_VERSION && length <= LOOKS_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -304,6 +317,7 @@ namespace
 		RemotePlayers::RevertRecord();
 		LooksMenu::RevertRecord();
 		Storage::RevertRecord();
+		FrameLoans::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -441,6 +455,7 @@ namespace
 			RunBeforeSaveOrLoad(
 				[] {
 					Session::OnBeforeSaveOrLoad();
+					FrameLoans::BeforeSave();  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					InertShots::BeforeSave();  // no inert shot, whose base exists at runtime only, is written into the save

@@ -154,6 +154,11 @@ namespace Config
 		// Locations a friend discovers show up on your map, ready for fast travel.
 		bool shareMap = true;
 
+		// Not a host's rule: a friend may borrow a power armor frame of yours your game made (one you found or looted), parked
+		// where they can reach it: they wear your pieces and core, and it comes back to you where they get out, with the
+		// wear they put on it (FrameLoans). Off: your frames are yours alone.
+		bool lendPowerArmor = true;
+
 		// A freeze this long (seconds without the game reading its window messages; a save, a load or a
 		// loading screen gets four times as long) is logged with a short report of where the game was
 		// stuck (HangWatch.h). 0 = off.

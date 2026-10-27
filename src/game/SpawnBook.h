@@ -256,6 +256,9 @@ namespace SpawnBook
 		bool                occupied = false;   // somebody here is in our copy, or it is the frame our player left last
 		bool                leaving = false;    // who is in it is being sent out of it, or just was (RemotePlayers::BeingSentOut)
 		bool                baseOk = true;      // its base is a power armor frame here
+		// Lent to our player (FrameLoans): the kit is in our copy, or they wear it. Neither moved, nor deleted, nor given up
+		// to whoever is in it, until the loan is over (then it goes, and is placed again where the owner's game has it).
+		bool                lent = false;
 	};
 
 	class Theirs
@@ -333,6 +336,9 @@ namespace SpawnBook
 			if (copy.local != 0) {
 				if (!a_facts.copyThere) {
 					return Act::kLost;
+				}
+				if (a_facts.lent) {
+					return Act::kNone;
 				}
 				if (copy.gone && !copy.dead) {
 					return Act::kDiscard;

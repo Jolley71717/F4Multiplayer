@@ -148,6 +148,8 @@ namespace Config
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {
 				settings.shareMap = ParseBool(value);
+			} else if (key == "bLendPowerArmor") {
+				settings.lendPowerArmor = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "iFastLoadingSeconds") {
