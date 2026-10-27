@@ -1,8 +1,8 @@
 #pragma once
 
 // One player's game as far as gifts go (src/game/GiftBook.h), driven against a real Server (ServerFixture). The plugin's
-// own code runs in it: GiftBook::Client as Gifts.cpp runs it, and DropBook::Record as Drops keeps it (the co-save record,
-// saved and loaded through its bytes). What stands in for the engine is only what GiftBook::Engine reads and changes:
+// own code runs in it: GiftBook::Client as Gifts.cpp runs it, and DropBook::Record and CharacterBinding::World as Drops
+// keeps them (the co-save records, saved and loaded through their bytes). What stands in for the engine is only what GiftBook::Engine reads and changes:
 // what each inventory holds (our player's and the containers'), what is loaded, which forms this game has. The calls come
 // in the plugin's order (Session's packet loop, Gifts::Frame, Gifts::BeforeSaveOrLoad before a save or a load, the
 // co-save record, Session::OnGameLoaded and Drops::SendRecord after a load, Reset as the session ends); the test plays
@@ -21,6 +21,7 @@
 #include "LootGame.h"
 #include "ServerFixture.h"
 
+#include "game/CharacterBinding.h"
 #include "game/DropBook.h"
 #include "game/GiftBook.h"
 
@@ -90,6 +91,9 @@ namespace GiftTest
 		std::set<std::uint32_t>                                   away;         // containers not loaded here
 		std::set<std::uint32_t>                                   lacking;      // forms this game lacks (a plugin it hasn't)
 		DropBook::Record                                          record;       // Drops' co-save record
+		CharacterBinding::World                                   world;        // whose world it is (Drops', co-save 'CHAR')
+		std::uint64_t                                             character = 0;  // the engine's character ID (the saves')
+		std::uint64_t                                             worldRolls = 0;
 		Packets                                                   outbox;       // sent with the frame (Session::SendOut)
 		Clock::time_point                                         now{};
 		std::uint64_t                                             nonces = 0;
@@ -117,6 +121,7 @@ namespace GiftTest
 		{
 			Inventories               inventories;
 			std::vector<std::uint8_t> record;  // the co-save's bytes ('DROP')
+			std::vector<std::uint8_t> world;   // and 'CHAR'
 		};
 
 		Game(PeerId a_peer, std::uint64_t a_identity) :
@@ -343,7 +348,7 @@ namespace GiftTest
 			menu.reset();
 			gifts.BeforeSaveOrLoad();
 			SendOut(a_f);
-			return { inventories, record.Save() };
+			return { inventories, record.Save(), world.Save(Roll()) };
 		}
 
 		// A load while connected: Session::OnBeforeSaveOrLoad, the co-save record (F4SE reverts it first), then
@@ -365,6 +370,23 @@ namespace GiftTest
 			connected = false;
 			menu.reset();
 			Restore(a_save);
+			gifts.GameLoaded();
+		}
+
+		// The game started again with a fresh character and no save loaded (coc from the main menu, or a new game:
+		// a_newGame), before connecting: nothing in its world, no record, and the engine's same character ID (a coc
+		// character's is always 0) or a new one.
+		void StartOver(bool a_newGame)
+		{
+			outbox.clear();
+			connected = false;
+			menu.reset();
+			inventories.clear();
+			record = {};
+			world.Revert();
+			if (a_newGame) {
+				world.Started(true, character, Roll());
+			}
 			gifts.GameLoaded();
 		}
 
@@ -513,9 +535,14 @@ namespace GiftTest
 				std::this_thread::sleep_for(std::chrono::milliseconds{ 300 } - since);
 			}
 			recordSentAt = std::chrono::steady_clock::now();
-			outbox.push_back(Protocol::Encode(record.ForServer()));
+			auto out = record.ForServer();
+			out.character = world.Key(Roll());
+			outbox.push_back(Protocol::Encode(out));
 			SendOut(a_f);
 		}
+
+		// Drops' random number for a fresh world key: one per game and call, never the same twice.
+		std::uint64_t Roll() { return (identity << 16) ^ (++worldRolls * 0x9E3779B97F4A7C15ull); }
 
 		// What the session hasn't heard yet goes (Session::SendOut; nothing while unconnected).
 		void SendOut(Fixture& a_f)
@@ -661,6 +688,10 @@ namespace GiftTest
 			inventories = a_save.inventories;
 			auto loaded = DropBook::Record::Load(a_save.record);
 			record.Replace(loaded ? std::move(*loaded) : DropBook::Record{});
+			// F4SE reverts, the load reads 'CHAR', and Session::OnGameLoaded starts the world (Drops::OnWorldStarted).
+			world.Revert();
+			world.Loaded(a_save.world);
+			world.Started(false, character, Roll());
 		}
 	};
 }

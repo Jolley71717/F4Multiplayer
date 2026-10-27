@@ -823,6 +823,11 @@ namespace Protocol
 		// in the world. A gift's place is its container's. The server takes a gift's report only under the host's
 		// bContainerGifts (SessionRules::containerGifts).
 		std::uint32_t        holder = 0;
+		// The character whose world it left and the one whose world took it in (DropRecord::character), set only in the
+		// server's own book and its session file, like takerId (never sent): a record of another character's world neither
+		// takes it back nor lays it down again. 0: not known (an older build's record or file), which any character matches.
+		std::uint64_t        ownerCharacter = 0;
+		std::uint64_t        takerCharacter = 0;
 
 		bool operator==(const DroppedItem&) const = default;
 	};
@@ -870,11 +875,18 @@ namespace Protocol
 	// this session, so is from before any of it). The server makes the session agree: a drop of theirs not listed is back in
 	// their inventory (a save from before they dropped it), so it is withdrawn; one they took and don't list isn't in their
 	// inventory (a save from before they took it), so it lies there again. Answered with kDropList.
+	//
+	// character: which character's world it is (CharacterBinding::World: a key of its own, kept in its saves, not the
+	// engine's character ID, which can't tell two characters apart). Only that character's saves are its takes and drops:
+	// a new character's world, or another character's save, holds none of them, so it neither lays down again what an
+	// older character took nor takes back what one gave. 0: not known, which matches any character (a world always
+	// sends its own key; 0 is left for drops a session file from before SessionFile::CHARACTERS holds).
 	struct DropRecord
 	{
 		std::uint64_t              sessionId = 0;
 		std::vector<std::uint64_t> made;
 		std::vector<std::uint32_t> taken;
+		std::uint64_t              character = 0;
 
 		bool operator==(const DropRecord&) const = default;
 	};
@@ -4374,7 +4386,9 @@ namespace Protocol
 	namespace detail
 	{
 		// a_holders false: as the session files from before gifts held a drop (SessionFile::GIFTS), with no holder.
-		inline void WriteDrop(Writer& w, const DroppedItem& a_drop, bool a_holders = true)
+		// a_characters: as a session file since SessionFile::CHARACTERS holds it, with its owner's and taker's characters
+		// (never on the wire).
+		inline void WriteDrop(Writer& w, const DroppedItem& a_drop, bool a_holders = true, bool a_characters = false)
 		{
 			w.U32(a_drop.dropId);
 			w.U32(a_drop.ownerId);
@@ -4400,12 +4414,16 @@ namespace Protocol
 			if (a_holders) {
 				w.U32(a_drop.holder);
 			}
+			if (a_holders && a_characters) {
+				w.U64(a_drop.ownerCharacter);
+				w.U64(a_drop.takerCharacter);
+			}
 		}
 
 		// An item every game has, a count a dropped reference can hold, mods from plugin files, a condition in 0..1 (or
 		// none), and one place: an interior or a worldspace, at a coordinate the world holds. A gift's holder is a plugin's
 		// reference, and a gift is one item (each item put in is given on its own).
-		inline std::optional<DroppedItem> ReadDrop(Reader& r, bool a_holders = true)
+		inline std::optional<DroppedItem> ReadDrop(Reader& r, bool a_holders = true, bool a_characters = false)
 		{
 			DroppedItem drop;
 			drop.dropId = r.U32();
@@ -4437,6 +4455,10 @@ namespace Protocol
 			drop.z = r.F32();
 			drop.takerId = r.U32();
 			drop.holder = a_holders ? r.U32() : 0;
+			if (a_holders && a_characters) {
+				drop.ownerCharacter = r.U64();
+				drop.takerCharacter = r.U64();
+			}
 			const bool healthOk = drop.health == -1.0f || (std::isfinite(drop.health) && drop.health >= 0.0f && drop.health <= 1.0f);
 			const bool holderOk = drop.holder == 0 || (IsShareableRef(drop.holder) && drop.count == 1);
 			if (!r.Ok() || !IsShareableRef(drop.base) || drop.count < 1 || drop.count > MAX_DROP_COUNT || !healthOk || (drop.cell == 0) == (drop.worldspace == 0) ||
@@ -4523,6 +4545,7 @@ namespace Protocol
 		for (std::size_t i = 0; i < taken; ++i) {
 			w.U32(a_msg.taken[i]);
 		}
+		w.U64(a_msg.character);
 		return w.Data();
 	}
 
@@ -4546,6 +4569,7 @@ namespace Protocol
 		for (std::uint16_t i = 0; i < taken && r.Ok(); ++i) {
 			msg.taken.push_back(r.U32());
 		}
+		msg.character = r.U64();
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
@@ -4554,19 +4578,19 @@ namespace Protocol
 
 	namespace detail
 	{
-		inline std::vector<std::uint8_t> EncodeDropList(const DropList& a_msg, bool a_holders)
+		inline std::vector<std::uint8_t> EncodeDropList(const DropList& a_msg, bool a_holders, bool a_characters = false)
 		{
 			Writer w{ MessageType::kDropList };
 			w.U8(a_msg.last ? 1 : 0);
 			const auto count = (std::min)(a_msg.drops.size(), MAX_DROPS_PER_PACKET);
 			w.U8(static_cast<std::uint8_t>(count));
 			for (std::size_t i = 0; i < count; ++i) {
-				detail::WriteDrop(w, a_msg.drops[i], a_holders);
+				detail::WriteDrop(w, a_msg.drops[i], a_holders, a_characters);
 			}
 			return w.Data();
 		}
 
-		inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data, bool a_holders)
+		inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data, bool a_holders, bool a_characters = false)
 		{
 			Reader r{ a_data };
 			r.U8();
@@ -4578,7 +4602,7 @@ namespace Protocol
 			}
 			msg.last = last == 1;
 			for (std::uint8_t i = 0; i < count; ++i) {
-				auto drop = ReadDrop(r, a_holders);
+				auto drop = ReadDrop(r, a_holders, a_characters);
 				if (!drop) {
 					return std::nullopt;
 				}
@@ -4611,6 +4635,18 @@ namespace Protocol
 	inline std::optional<DropList> DecodeDropListBeforeHolders(std::span<const std::uint8_t> a_data)
 	{
 		return detail::DecodeDropList(a_data, false);
+	}
+
+	// A session file's list since SessionFile::CHARACTERS: each drop with its owner's and taker's characters too (the
+	// server's own book; the wire's kDropList never carries them).
+	inline std::vector<std::uint8_t> EncodeWithCharacters(const DropList& a_msg)
+	{
+		return detail::EncodeDropList(a_msg, true, true);
+	}
+
+	inline std::optional<DropList> DecodeDropListWithCharacters(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeDropList(a_data, true, true);
 	}
 
 	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)
