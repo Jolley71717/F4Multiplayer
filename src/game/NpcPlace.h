@@ -106,14 +106,49 @@ namespace NpcPlace
 		return a_ours.companion || a_ours.talkingToUs || a_ours.holdsUs;
 	}
 
-	// Whether ours, loaded at a_ours, is mirrored from the owner's latest state (at a_owners, a_age old): in the same
-	// cell or world, heard from lately, and near. Otherwise it runs its own AI here.
-	constexpr bool Follows(const Spot& a_ours, const Spot& a_owners, std::chrono::steady_clock::duration a_age)
+	// Why ours, loaded at a_ours, is not mirrored from the owner's latest state (at a_owners, a_age old) but runs its own
+	// AI here, or that it is (kNo). For the log and `net status` (`fallbackWhy=`): a copy let go to its own AI walks its
+	// own way, and is put back where the owner has it when it is mirrored again (`snapBacks=`), so which of these it
+	// keeps happening for says whether the owner's game is stopping (kSilent: a menu, a load, a bad connection), its
+	// copy moved far (kFar: a fast travel, a script), or the two games have the NPC in different places (kElsewhere).
+	enum class Lost
 	{
-		if (!RemoteEdits::SameSpace(a_ours, a_owners) || a_age > LOST_AFTER) {
-			return false;
+		kNo,         // it follows: in the same cell or world, heard from lately, and near
+		kElsewhere,  // the owner's copy is in another cell or world
+		kSilent,     // no state for LOST_AFTER: the owner's game is paused, loading or gone
+		kFar,        // the owner's copy is more than MAX_FOLLOW_DISTANCE from ours
+	};
+
+	constexpr Lost LostWhy(const Spot& a_ours, const Spot& a_owners, std::chrono::steady_clock::duration a_age)
+	{
+		if (!RemoteEdits::SameSpace(a_ours, a_owners)) {
+			return Lost::kElsewhere;
+		}
+		if (a_age > LOST_AFTER) {
+			return Lost::kSilent;
 		}
 		const float dx = a_ours.x - a_owners.x, dy = a_ours.y - a_owners.y, dz = a_ours.z - a_owners.z;
-		return dx * dx + dy * dy + dz * dz <= MAX_FOLLOW_DISTANCE * MAX_FOLLOW_DISTANCE;
+		return dx * dx + dy * dy + dz * dz <= MAX_FOLLOW_DISTANCE * MAX_FOLLOW_DISTANCE ? Lost::kNo : Lost::kFar;
+	}
+
+	// Whether ours, loaded at a_ours, is mirrored from the owner's latest state (at a_owners, a_age old): in the same
+	// cell or world, heard from lately, and near. Otherwise it runs its own AI here (LostWhy says why).
+	constexpr bool Follows(const Spot& a_ours, const Spot& a_owners, std::chrono::steady_clock::duration a_age)
+	{
+		return LostWhy(a_ours, a_owners, a_age) == Lost::kNo;
+	}
+
+	constexpr const char* LostName(Lost a_lost)
+	{
+		switch (a_lost) {
+		case Lost::kElsewhere:
+			return "elsewhere";
+		case Lost::kSilent:
+			return "silent";
+		case Lost::kFar:
+			return "far";
+		default:
+			return "follows";
+		}
 	}
 }

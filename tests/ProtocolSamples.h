@@ -95,6 +95,7 @@ namespace ProtocolSamples
 		a.gait = static_cast<std::uint8_t>(3 + a_seed);
 		a.gaitRate = static_cast<std::uint8_t>(200 - a_seed);
 		a.aimPitch = static_cast<std::int8_t>(-41 + static_cast<int>(a_seed));
+		a.sentMs = 0x7A3B0000u + a_seed * 50;
 		return a;
 	}
 
