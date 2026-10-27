@@ -259,6 +259,9 @@ namespace SpawnBook
 		// Lent to our player (FrameLoans): the kit is in our copy, or they wear it. Neither moved, nor deleted, nor given up
 		// to whoever is in it, until the loan is over (then it goes, and is placed again where the owner's game has it).
 		bool                lent = false;
+		// A frame our own game made, of that base and no copy of ours, stands where their game has theirs (within
+		// FrameShare::SAME_SPOT): ours stands for it (two saves with a shared past hold the same frames). No copy beside it.
+		bool                oursThere = false;
 	};
 
 	class Theirs
@@ -368,7 +371,8 @@ namespace SpawnBook
 		// place, gone once out of our sight or over. A frame never dies: one its owner's game let go of (worn, gone, left in
 		// a cell since unloaded) is over, and shared afresh when it stands again. A copy somebody here got into (but one being
 		// sent out of it again, RemotePlayers::BeingSentOut) is theirs from then on: neither moved nor deleted, and none placed
-		// again while this spawn lasts.
+		// again while this spawn lasts. None while a frame of our own stands where their game has theirs (oursThere): ours
+		// stands for it, and a copy placed before ours stood there goes.
 		[[nodiscard]] Act DecideFrame(std::uint32_t a_id, const FrameFacts& a_facts, Clock::time_point a_now) const
 		{
 			const auto it = copies.find(a_id);
@@ -392,7 +396,7 @@ namespace SpawnBook
 				if (a_facts.occupied) {
 					return Act::kAbandon;
 				}
-				if (copy.gone || !a_facts.inView || !a_facts.copyAt) {
+				if (copy.gone || !a_facts.inView || !a_facts.copyAt || a_facts.oursThere) {
 					return Act::kDiscard;
 				}
 				const float distance = RemoteEdits::Distance(*a_facts.copyAt, copy.at);  // NaN in another place
@@ -413,7 +417,7 @@ namespace SpawnBook
 			if (copy.taken || !a_facts.baseOk || copy.tries >= PLACE_TRIES || (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY)) {
 				return Act::kNone;
 			}
-			return a_facts.inView ? Act::kPlace : Act::kNone;
+			return a_facts.inView && !a_facts.oursThere ? Act::kPlace : Act::kNone;
 		}
 
 		// Somebody here got into our copy of a frame (DecideFrame's kAbandon): it is theirs, no copy of ours any more, and

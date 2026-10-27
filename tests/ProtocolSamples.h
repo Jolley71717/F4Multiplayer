@@ -314,6 +314,9 @@ namespace ProtocolSamples
 			s.push_back({ "Drop", Encode(MakeDrop(), type), D(DecodeDroppedItem) });
 			DroppedItem plain{ .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3 };
 			s.push_back({ "Drop(plain)", Encode(plain, type), D(DecodeDroppedItem) });
+			auto gift = MakeDrop();
+			gift.holder = 0x0001D9F6;  // a chest: a gift (bContainerGifts)
+			s.push_back({ "Drop(gift)", Encode(gift, type), D(DecodeDroppedItem) });
 		}
 		s.push_back({ "ClaimDrop", Encode(ClaimDrop{ 4, DropClaim::kGiveBack }), D(DecodeClaimDrop) });
 		// The dropper's game swapped its item for a copy: drop 1, the first a fresh server numbers (the Drop above, from a

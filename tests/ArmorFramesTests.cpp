@@ -852,11 +852,25 @@ TEST("armor frames: our copy of a frame another game runs is theirs wherever our
 	CHECK(ChooseOriginal(museum, base, facts) == Original::kOurs);
 	facts.ours = false;
 	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
-	// Not where they got in yet (their state has not moved ours there): looked at again, not written off for the wear.
+	// Hidden wherever it stands: where their game has it, or on its way there (their state moves ours once in view).
+	// Where their stand-in was as their status came is no measure of that for one who joined mid-wear (they got in
+	// somewhere in their own world, and their stand-in appeared where they are now), and ours stood shown beside them
+	// for the whole wear. Not written off for the wear: looked at again, loaded or not.
 	facts = { .found = true, .base = base, .frame = true, .loaded = true, .moved = true, .fromStart = 5000.0f, .fromSpot = 3000.0f, .synced = true };
-	CHECK(ChooseOriginal(museum, base, facts) == Original::kElsewhere);
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	facts.fromSpot.reset();  // in another place altogether, as yet
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	facts.loaded = false;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kNotLoaded);
+	facts.loaded = true;
 	facts.fromSpot = 12.0f;
 	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	// One nobody else runs is hidden only where they got in, as ever.
+	facts.synced = false;
+	facts.moved = false;
+	facts.fromStart = 0.0f;
+	facts.fromSpot = 3000.0f;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kElsewhere);
 	// Someone here in it, or a quest of ours holding it, keeps it shown as ever.
 	facts.inUse = true;
 	CHECK(ChooseOriginal(museum, base, facts) == Original::kInUse);

@@ -15,6 +15,7 @@
 #include "Text.h"
 
 #include <algorithm>
+#include <iterator>
 #include <atomic>
 #include <cmath>
 #include <format>
@@ -1182,6 +1183,48 @@ namespace Drops
 		}
 	}
 
+	void RecordMade(std::uint64_t a_nonce)
+	{
+		std::scoped_lock l{ recordLock };
+		record.Made(a_nonce);
+	}
+
+	bool HasMade(std::uint64_t a_nonce)
+	{
+		std::scoped_lock l{ recordLock };
+		return record.HasMade(a_nonce);
+	}
+
+	void RecordTook(std::uint32_t a_dropId)
+	{
+		std::scoped_lock l{ recordLock };
+		record.Took(a_dropId);
+	}
+
+	bool HasTaken(std::uint32_t a_dropId)
+	{
+		std::scoped_lock l{ recordLock };
+		return record.HasTaken(a_dropId);
+	}
+
+	bool CanPlace(const Protocol::DroppedItem& a_item)
+	{
+		return Placeable(a_item);
+	}
+
+	bool AddOneTo(RE::TESObjectREFR* a_ref, const Protocol::DroppedItem& a_item)
+	{
+		const auto form = RE::TESForm::GetFormByID(a_item.base);
+		const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+		if (!a_ref || !object || !Placeable(a_item)) {
+			return false;
+		}
+		auto one = a_item;
+		one.count = 1;  // the stack's count is the container's, not its extra data's
+		a_ref->AddObjectToContainer(object, ExtraFor(one, object), 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
+		return true;
+	}
+
 	void DevDropNext()
 	{
 		devDrop = true;
@@ -1201,6 +1244,9 @@ namespace Drops
 
 	void OnPlaced(const Protocol::DroppedItem& a_drop)
 	{
+		if (a_drop.holder != 0) {
+			return;  // a gift's (Gifts')
+		}
 		++received;
 		const auto mine = a_drop.ownerId == localId && localId != 0;
 		const auto it = mine ? std::ranges::find(pending, a_drop.nonce, &Pending::nonce) : pending.end();
@@ -1337,7 +1383,7 @@ namespace Drops
 
 	void OnList(const Protocol::DropList& a_list)
 	{
-		listing.insert(listing.end(), a_list.drops.begin(), a_list.drops.end());
+		std::ranges::copy_if(a_list.drops, std::back_inserter(listing), [](const Protocol::DroppedItem& a_drop) { return a_drop.holder == 0; });  // the gifts are Gifts'
 		if (!a_list.last) {
 			return;
 		}

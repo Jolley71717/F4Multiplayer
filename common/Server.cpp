@@ -8,6 +8,7 @@
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
+#include "SaveRetry.h"
 #include "SessionFile.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
@@ -615,11 +616,13 @@ void Server::Run()
 	// written with any other change, on the host's game saves and when the server stops.
 	std::uint64_t revision = 0;
 	std::uint64_t lastSavedRevision = 0;
-	bool          saveFailing = false;  // said once, not at every check, until a save goes through
-	const auto    touched = [&] { ++revision; };
-	const auto    saveSession = [&] {
+	// A save that failed is tried again on its own, with a growing wait, whether or not anything else changed since:
+	// the time of day alone is never a change, so a save the host's game asked for would otherwise be lost.
+	SaveRetry  saveRetry{ options.saveInterval };
+	const auto touched = [&] { ++revision; };
+	const auto saveSession = [&](bool a_stopping = false) {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
-			return;
+			return true;
 		}
 		SessionFile::Snapshot snapshot;
 		snapshot.contentHash = sessionContentHash;
@@ -654,15 +657,16 @@ void Server::Run()
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
-			if (!std::exchange(saveFailing, true)) {
-				log(std::format("server: could not save the session to {}; trying again at every check", sessionPath.filename().string()));
+			if (saveRetry.Failed(Clock::now()) && !a_stopping) {  // (stopping says its own line)
+				log(std::format("server: could not save the session to {}; trying again until it works", sessionPath.filename().string()));
 			}
-			return;  // tried again at the next check
+			return false;  // tried again once the wait is over
 		}
-		if (std::exchange(saveFailing, false)) {
+		if (saveRetry.Succeeded()) {
 			log("server: the session is saved again");
 		}
 		lastSavedRevision = saved;
+		return true;
 	};
 	Clock::time_point nextSave = Clock::now() + options.saveInterval;
 
@@ -1156,7 +1160,8 @@ void Server::Run()
 		releaseAll(a_player.id);
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
-		// Offers they never confirmed go: their game may still have those items (common/DropStore.h).
+		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
+		// wait for their next record (common/DropStore.h).
 		drops.DropOffers(a_player.id);
 		objectMovers.Leave(a_player.id);
 		// They view no storage now, and what their game keeps closes to friends until it lists it again.
@@ -1916,7 +1921,7 @@ void Server::Run()
 				-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 			return;
 		}
-		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game gives it back", refusal->first,
+		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game is asked to give it back", refusal->first,
 			-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 		send(taker->first, Protocol::Encode(refusal->second), true);
 	};
@@ -1973,13 +1978,17 @@ void Server::Run()
 		if (cut) {
 			work.clear();
 		}
+		constexpr std::size_t kShortfallLinesPerSettle = 8;
+		std::size_t           shortfalls = 0;
 		for (const auto& [index, has] : work) {
-			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
-			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
+			// What the move calls for before the true copy's own count caps it. Nothing for a move already undone (or not the
+			// settler's own to undo here): the true copy does nothing for it, and that is no shortfall.
+			const auto wanted = storage.Settle(a_player.id, index, has, containerChanges, false);
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
-			if (expected && *expected < 0 && (change ? change->count : 0) > *expected) {
-				log(std::format("server: storage {:08X} held {} fewer of {:08X} than player {}'s move #{} {} needed", containerChanges[index].change.container,
-					(change ? change->count : 0) - *expected, containerChanges[index].change.item, a_player.id, index, has ? "done again" : "undone"));
+			// A settle may hold thousands of moves (MAX_STORAGE_LACKING): the first few get a line each, the rest are counted.
+			if (wanted && wanted->count < 0 && (change ? change->count : 0) > wanted->count && ++shortfalls <= kShortfallLinesPerSettle) {
+				log(std::format("server: storage {:08X} held {} fewer of {:08X} than {} player {}'s move #{} needed to take out; only what it held went", containerChanges[index].change.container,
+					(change ? change->count : 0) - wanted->count, containerChanges[index].change.item, has ? "doing again" : "undoing", a_player.id, index));
 			}
 			if (!change) {
 				continue;
@@ -2000,6 +2009,10 @@ void Server::Run()
 					send(key, packet, true);
 				}
 			}
+		}
+		if (shortfalls > kShortfallLinesPerSettle) {
+			log(std::format("server: and {} more of player {}'s moves found storage holding less than they needed to take out", shortfalls - kShortfallLinesPerSettle,
+				a_player.id));
 		}
 		a_player.storageSettled = !cut;
 		if (cut) {
@@ -2280,10 +2293,26 @@ void Server::Run()
 		if (!item) {
 			return;
 		}
+		const auto refuse = [&] {
+			// Not kept: their game keeps the item as it is (an ordinary item on its ground, or in its container). Said by a
+			// kDropPlaced with no drop ID.
+			auto refused = *item;
+			refused.dropId = 0;
+			refused.ownerId = a_player.id;
+			refused.takerId = 0;
+			send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+		};
+		if (item->holder != 0 && !options.rules.containerGifts) {
+			refuse();  // a gift, without the host's bContainerGifts: the weapon stays in its player's own copy of the container
+			return;
+		}
 		const auto added = drops.Add(a_player.id, *item);
 		switch (added.outcome) {
 		case DropStore::Outcome::kAdded:
 			send(a_player.key, Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true);  // the offer
+			if (added.drop->holder != 0) {
+				dropsChanged();  // a gift's offer is saved (DropStore::DropOffers)
+			}
 			break;
 		case DropStore::Outcome::kRepeat:
 			if (added.drop) {
@@ -2293,13 +2322,7 @@ void Server::Run()
 		case DropStore::Outcome::kFull:
 		case DropStore::Outcome::kOwnerFull:
 			{
-				// Not kept: their game keeps the item it dropped as it is (an ordinary item on its ground). Said by a
-				// kDropPlaced with no drop ID.
-				auto refused = *item;
-				refused.dropId = 0;
-				refused.ownerId = a_player.id;
-				refused.takerId = 0;
-				send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+				refuse();
 				if (!std::exchange(dropsFullLogged, true)) {
 					log(std::format("server: {} items dropped for others lie in the session ({} of player {}); not keeping more", drops.LyingCount(), drops.LyingOf(a_player.id),
 						a_player.id));
@@ -3855,18 +3878,25 @@ void Server::Run()
 		}
 
 		// The session goes to disk when it changed (checked every saveInterval), when asked (the host's game
-		// saves, or its connection goes) and when the server stops.
+		// saves, or its connection goes), when a save failed and its wait is over, and when the server stops.
 		if (saveRequested.exchange(false)) {
-			nextSave = Clock::now() + options.saveInterval;
+			nextSave = now + options.saveInterval;
 			saveSession();
-		} else if (Clock::now() >= nextSave) {
-			nextSave = Clock::now() + options.saveInterval;
-			if (revision != lastSavedRevision) {
+		} else if (saveRetry.Due(now)) {
+			nextSave = now + options.saveInterval;
+			saveSession();
+		} else if (now >= nextSave) {
+			nextSave = now + options.saveInterval;
+			// While a save is failing the retry above decides when to try, not each check.
+			if (revision != lastSavedRevision && !saveRetry.Failing()) {
 				saveSession();
 			}
 		}
 	}
-	saveSession();
+	// One last try, whatever the wait: the file may be free again by now.
+	if (!saveSession(true)) {
+		log("server: could not save the session when the server stopped; the last save that worked is what it keeps");
+	}
 
 	for (auto& transport : transports) {
 		transport->Close();

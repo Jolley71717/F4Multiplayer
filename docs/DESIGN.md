@@ -288,6 +288,12 @@
   and the owner takes that fraction of its own, so the shots it takes to kill are as many as the shooter's copy needs,
   dealt through the copy's damage resistance. A copy rolled tougher than the owner's NPC (a Stalker's 30 DR against a
   Roamer's 15, a Guardian against a Watcher) takes less from each shot, and so does the NPC; one rolled weaker, more.
+- A copy's health is always its owner's: what it gains with no report from the owner's game is taken back once it has
+  stood 100 ms (`CopyHealth::Book::Check`, `copyGains=` times/health), as a drop with no hit of ours is given back. A
+  copy rolled legendary here and plain there mutated at half health and healed to full, which stood and was never
+  sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
+  left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
+  What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
@@ -396,9 +402,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   stand-in gets into: each game's pieces are its own loot) wherever its owner is, while the spot is in the area their
   engine draws, as a friend's parked frame is: moved in place when the owner's game has it a unit or a hundredth of a
   turn off, placed again when it is 256 units off or in another place, gone out of sight, before saves and loads, and
-  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). A joiner is sent
-  the frames shared before it came, so a friend's suit parked before the session stands there too. `net status`:
-  `framesMade=` shared/standing/our player's own (npcs), `frames: ours= reported= placed= moved= taken=` (spawns).
+  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). None while a frame
+  of our own of that base stands within 32 units of where the owner's game has theirs (`FrameFacts::oursThere`: two
+  saves with a shared past hold the same frames), and one placed goes then. A joiner is sent
+  the frames shared before it came, so a friend's suit parked before the session stands there too. Never a copy an older
+  version's workshop sync left in the save (`FrameShare::Ghost`: the keyword the workshop copies carry; it is cleared
+  instead, see Party's power armor). `net status`:
+  `framesMade=` shared/standing/our player's own, `ghostsCleared=` (npcs), `frames: ours= reported= placed= moved= taken=
+  oursThere=` (spawns).
 - A friend may borrow a frame another game made and parked (`FrameLoans.cpp`; the rules in `FrameLoan.h`, game-free and
   tested; the server's side in `Server.cpp`). Their press of E on its copy asks the owner's game for it (`kBorrowFrame`;
   the server keeps one loan per frame and per borrower and relays the ask as `kLoanAsked`), which says yes while its
@@ -656,13 +667,17 @@ tests play two and three games through it against a real server (tests/LootGame.
 
 Weapons and armor are per player because a move carries only the base form: another game would get a
 plain copy, and `removeitem` could take a legendary. So a friend's looted gun stays on your copy of the
-corpse. (Players give each other weapons and armor by dropping them: see Giving items.) A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
+corpse. (Players give each other weapons and armor by dropping them: see Giving items; with the host's `bContainerGifts`, also by putting them in a container: see Giving through a container.) A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
 for a second after, are trades and never reported. A corpse is shared once the session says it died: a
 change for an NPC still alive in this game waits for its kill, up to 10 minutes in the world, counted
 for all of that NPC's changes together (at most 4096 changes wait; when full, one waiting for a living
 NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). A chest
 waits too while this game holds it in no cell at all: one of a place we left lately stays in memory that
 way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go in when we come back. A
+take waits too while this game holds the chest in a cell but hasn't made its inventory yet (a place not
+loaded, or still loading): it would find nothing to take, and the roll made as the place loads would still
+hold what the friend took. So does a put, in order with the takes: going in first, it would make the inventory
+ahead of the roll, and the takes and the emptying after it would go into that instead. A
 change to a chest our player has open goes in at once: the container menu shows the new contents, and
 taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
@@ -1040,7 +1055,8 @@ So players give each other items by dropping them, and the server decides who ha
   empty. What lies about and who took what is kept in the session file (layout 33; 30 in the drops' own test builds), so it survives the
   host's server restarting.
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
-  and to drop it near them instead.
+  and to drop it near them instead (not for a put in a gift's place with the host's `bContainerGifts` on: see Giving
+  through a container).
 - Workshop mode can scrap (or store) a loose item lying in a settlement, copies included: the player gets its
   components and the game takes the reference away. That is our world consuming the item, so it is our player's
   take (`DropBook::Scraps`; no new message). Only the workshop's destroyed event (`Drops::OnScrapped`) makes it a
@@ -1067,6 +1083,115 @@ change) loses it. A world that never played the session (a new game in the same 
 rig's `coc` from the main menu makes) has no record of it, so it is taken to hold its player's earlier
 drops: those are withdrawn. The server trusts a game's record of its own world, as it does its container
 record.
+
+### Giving through a container (0.10.0, the host's `bContainerGifts`, off by default; welcome flag bit 64)
+
+(src/game/GiftBook.h, src/game/Gifts.cpp; the server's side is the drops' own, common/DropStore.h.) With the host's
+`bContainerGifts` on, a weapon or armor a player puts in a container is given, as a dropped item is: it is a drop whose
+place is that container (`DroppedItem::holder`, a session reference, count 1), and the server does for it what it does
+for any drop (offered to the giver alone, laid down on their kPlaced, the first claim granted, the record after each
+welcome and load making the session agree). Each game shows the gifts lying in a container while its player has that
+container's menu open, and only then.
+
+- **Where, and what.** A gift's place is a container (`LootScope::Holder::kContainer`, a session reference): not a
+  settlement's workbench (each player's own), a merchant's chest or a companion, an actor or a power armor frame.
+  Only weapons and armor, each given on its own, and never a quest item or one with a mod made at runtime
+  (`DropBook::Judge`, with the drops' other refusals), nor one with more mods than the wire carries: those stay in
+  the giver's copy of the container, said once a session (`gifts.not_given`). Items of one class (base, mods sorted,
+  the player's own name for it, condition to the percent: `GiftBook::Class`) are the same thing; a copy and the
+  player's own item of its class are told apart by count. Shared storage never carries weapons or armor (LootScope's
+  `kWeaponArmor`), and the container loot never shares them, so a gift never meets their copies: with
+  `bSharedStorage` on, a gun put in the host's chest is given just the same as with it off.
+- **Giving.** WorldSync's event watch posts the player's moves between their inventory and a container
+  (`Gifts::OnMoved`, ahead of the barter filter, so a take in a trade's last second isn't lost): only those at the
+  container the view watches are kept, summed by container and item (`GiftBook::Inbox`), so a Take All of any number
+  of kinds loses none (0.10.0's first cut kept 256 moves a frame, and a gift's take past them stayed unclaimed). A
+  change the open container then shows (one more of a class than we knew of, with a put of its base waiting:
+  `SIGNAL_KEEP`, 1 s) is reported (`kReportDrop` with its holder and a nonce); a put whose event comes late or never
+  isn't (it can't be told from a script's), and stays the player's own. Nothing is read off the container before the
+  inbox of moves is (every entry point drains it first). On the offer the item leaves the giver's world: taken out of
+  the container, or, while the menu still shows it, left there as the giver's copy of the gift (nothing moves on
+  screen; it goes as the menu closes). Then the record says it left (`made`), and kPlaced goes. A take of the
+  player's own of a class whose put still waits for its offer takes that put back (latest first): its offer is kKept,
+  so a like item the container held before is never given in its place. An item no longer there, or a container not
+  loaded, is kKept too: it never lay anywhere. An offer that comes past 60 s (`PUT_FORGET`) or after a load is kKept
+  too, unless the record says the item left. A refused one (`bContainerGifts` off on the server, the session's share
+  full) stays in the giver's container.
+- **No give-back on a link.** Unlike a loose drop's, a gift's offer survives its giver leaving and is saved in the
+  session file (takerId `DROP_OFFERED`): the giver's game gives nothing back when the link goes, so only its next
+  record says whether the item left its world (laid down, or the offer gone). Nothing anywhere is given back or taken
+  again on a timeout alone.
+- **Taking.** Fewer of a class in the container than we knew of went to the player as far as their take's events say,
+  or, an event lost, as far as their own count of that class rose since the last frame (`unsignaled=`): those take a
+  copy first (so it is claimed), then the player's own. A copy gone anywhere else (another mod's script handing it
+  to a settler) is counted (`copyMissing=`) and that gift isn't shown again in this game until a load or a rejoin (the view's
+  memory of it goes with the session's), so such a script makes one item of each gift a load or a rejoin, not one a
+  frame; across saves and rejoins they add up. The taken copy is held back: taken out of the player's
+  inventory at once (OwnGear `kGiftTake`, only ever our player and only for their own take), claimed (`kTake`, asked
+  again every 5 s until answered, never settled by a timeout), and added to their inventory only on the grant (with
+  `Took` in the record); a lost claim needs nothing undone (`gifts.taken_first`). So the side the player can't hide an
+  item from (the take held back) is the one put right, never an item already in their inventory. Taking one's own
+  gift back is the same claim. A grant to a take the world no longer makes (after a load) is given back
+  (`kGiveBack`), and so is one that can't go into the inventory (`giveFailed=`).
+- **Copies.** One item of each gift lying in the viewed container (at most 64 at once, and never more than can be
+  claimed: 128 with the takes waiting), with its mods, condition and the player's name (`Drops::AddOneTo`, as the
+  drops' copies are made); none of a gift whose base or mods this game lacks (`unplaceable=`), nor of one that isn't a
+  single weapon or armor of this game's with plugins' mods (`GiftBook::Receivable`, `notGear=`): the server can't tell
+  a gun from a box of ammo, so a modified game's "gift" of anything else would be an item no view sees, left in every
+  friend's copy for good. An add that fails after putting something in all the same has it taken out again
+  (`addUndone=`), a copy's and a grant's alike; a grant's then lies there again. Stacks are read one inventory entry
+  per base, as the engine keeps them and as a stack's index to take one from counts them (`Drops::StacksOf`). Copies go as the menu
+  closes (or is found gone for 1 s), as their gift goes, before every save and load and as the session ends: no save
+  holds one. OwnGear `kGiftCopy` lets them into a container's inventory only. The engine's changes made here are kept
+  out of WorldSync's watch (`Gifts::Applying`).
+- **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
+  before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
+  it: it lies there again.
+- **Saved.** The session file takes layout 39 while the server remembers any gift (a holder on a drop): one lying
+  there, offered, or taken, as the server remembers the last 4096 takes (a taken gift keeps its holder: a give-back
+  lays it down in its container again). So a session in which one gun was ever given is written as 39 until that many
+  takes later; one where none was is written in the layout an older build reads (38 with shared storage's owners,
+  else 36). An older build can't read a 39 file; 0.10.0 reads every older layout, their drops as loose ones.
+- **The record's cap.** Gifts share the drops' record (`MAX_DROP_RECORD`, 4096 `made` and 4096 `taken` a session,
+  the oldest forgotten), and fill it sooner: every gift given is a `made`, every take (one's own take-backs too) a
+  `taken`. Past that, the record misreads its oldest: a gift given that early and never taken is withdrawn from the
+  session by the giver's next record (lost), and an early take of one's own back is laid down again (twice). The
+  loose drops have the same limit; left as it is for 0.10.0 (thousands of transfers in one session), and said here.
+- **Off.** With the host's rule off a container no gift lies in isn't watched: no view, no reads of its inventory,
+  and the event watch keeps no move (Gifts' view filter), so the setting off costs nothing.
+- The "stays in your game only" hint is not said for a put in a gift's place with the rule on.
+- `net status` says `gifts=` (on or off, the container viewed, copies, claims, reports waiting and the counters; `ownRefused=`
+  must stay 0). The dev channel's `gifts` (`status`, `list`, `view <ref>`, `close`, `count`, `take`, `put`) drives it
+  without the menu.
+
+Tested without the game: `tests/GiftTests.cpp` drives GiftBook::Client and the drops' record (GiftGame.h) against the
+real server and counts every item of each class across every world and what lies in the session, through a give and a
+take, the giver's own take back, a take back before the offer (with a like item already in the container too), two
+friends taking at once, a reload on either side, links that go before the grant, the claim, the kPlaced or the offer,
+a late claim answered twice, a grant after a load, an offer past 60 s, others' and replayed confirms, keeps, takes and
+give-backs, a forged gift of no weapon or armor, the rule off (no reads at all), the host's server stopping, the giver
+away, places and items that aren't given, saves with a copy shown, a power armor piece's condition, and Take All beside
+the player's own like gun. Its fake engine misbehaves as a real one might: moves whose events are lost (a Take All)
+or come late, an item whose class changes as the copy is made or as it moves, adds that fail (before or after putting
+the item in), and a script moving a copy out with no event; each test checks the counters of what went wrong
+(`copyMissing`, `unheld`, `unsignaled`, `giveFailed`, `takenBack`, `dupRisk`, `overflow`, `notGear`, `addUndone`).
+With shared storage on, the game's own storage and loot code (LootGame.h: StorageView::Client and LootSync::Loot) run
+beside the gifts on the same packets, menus and moves, and are seen to move and send no weapon while the chest's
+stimpaks stay the host's one true copy. The inbox is tested on its own. `tests/DropStoreTests.cpp` and
+`tests/SessionFileTests.cpp` cover the saved offer and the layouts.
+
+Left open, behind the setting (and in the install guide): a giver's save from before the put loaded after a friend
+took the gift has it again, as with a dropped item (the server logs it: `dupRisk`); a gift waits in the session for
+its giver's record when their link went between the offer and their kPlaced (nobody can take it until they come
+back); a container that is the same reference in two games but holds a different thing (a mod changing it) shows the
+gift anyway. A copy another mod's script moves out of the container is no claim: it goes as missing (`copyMissing=`),
+the item stays where the script put it, and the gift still lies there for the others (one item more, at most one a
+gift and a load or a rejoin; across many they add up. Keeping the memory across a rejoin to the same session is
+left for later). A copy whose class changes as the player takes it (the engine dropping its name, say) can't be held
+back (`unheld=`): granted, it stays with them and nothing is added; lost to a friend who was first, both have it, and
+the game counts it (`dupRisk=`). Both are rig checks. The protocol needs nothing past 55: gifts add no message type,
+only `DroppedItem::holder` on kReportDrop, kDropPlaced and kDropList (listed in 55's line), so a 0.10.0 build from
+before this change passes the hello and can't read those messages: both rig games run the same build.
 
 ### Catching up (join, reconnect, loading a save)
 
@@ -1212,7 +1337,10 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   (WorldSync's retry, as references load and as the player changes cell), however far from where its save had it, but
   not while anyone moves it; a friend's live rest for an object it doesn't
   have loaded waits the same way (at most 4096 waiting; a flood of those drops the rests waiting of the friend with the
-  most, the flooder, never the catch-ups or anyone else's). So a friend who loads the cell later, and every save loaded later, has the object
+  most, the flooder, never the catch-ups or anyone else's). While a place waits, our copy still lies where our save had
+  it, so a friend's hold, let-go or rest of that object is judged from the waiting place as well as from our copy
+  (`ObjectShare::FromWhereItLies`: their move starts where the session has it), and a move our game doesn't apply leaves
+  the place waiting, or their rest when it is too far even from the place (`StillWaiting`; a hold ends the wait once it is drawn here). So a friend who loads the cell later, and every save loaded later, has the object
   where it was left. No new message (an older game takes a catch-up as a rest, if the object is loaded then). A known
   limit: a reference moved this way keeps its parent cell, as one a friend carried across a cell border does.
 - Knocked about by NPCs and blasts: the same scan also reports an object that came to rest after an NPC our game runs
@@ -1383,7 +1511,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   quest alias: the museum's suit is the main quest's objective) and it stands within 200 units of
   where the friend was as they got in (their newest state if it came within 0.5 s of the status,
   else the next one); otherwise, or once it has been elsewhere or used in that wear, it stays shown
-  until they get in anew. It stays hidden through saves (only its 3D is touched) and is hidden again
+  until they get in anew. One another game runs (FrameShare: the wearer's, since getting in is a use)
+  is hidden wherever it stands while they wear it, loaded: it is moved to where their game has it (where
+  they got in), which for a friend who joined mid-wear is not where their stand-in first appeared, and
+  compared with that it stood shown for the whole wear, a second suit for the one they wear. It stays hidden through saves (only its 3D is touched) and is hidden again
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
@@ -1399,8 +1530,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   otherwise it is forgotten, and one whose form is gone is taken
   off the books at once and its record dropped (`SaveGuard::Forget`, `SaveStrays::Book::ForgetGone`, counted as
   `orphansDropped`): dropping the record frees the id, and the engine may hand it to the next frame it makes. A frame already
-  standing where a copy is placed is never taken over: nothing tells a copy an earlier session left from a suit of the
-  player's own (stripped, so empty, and with no owner if they never got in), so what 0.9.1 left in a save stays. The
+  standing where a copy is placed is never taken over: nothing tells a plain copy an earlier session left from a suit of
+  the player's own (stripped, so empty, and with no owner if they never got in), so such a one stays (the console removes
+  it: disable, then markfordelete); the workshop copies 0.9.1 made of frames carry the keyword and go (below). The
   leak the rig showed (2026-10-24): a load does not free every copy DespawnAll had just disabled or deleted for it; one
   stayed in memory, nobody's once the load had emptied the book, the next save wrote it, and a game started afresh from
   that save had it back drawn and whole beside the copy placed for the friend, and the host shared it as its own frame.
@@ -1424,7 +1556,21 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   with it), and nothing else gives a frame that. So the report of one still finds what stands at its spot, and a frame
   carrying the keyword and holding nothing goes (`WorkshopApply::Placeable::kFrame`, `framesCleared`); one without it,
   or one holding pieces (fitted out by a player, or their own suit an earlier session took over: deleting it would
-  lose them), is left alone.
+  lose them), is left alone. The session file is not needed for it: NpcSync's frame walk (every 2 s in a session) finds
+  any such copy standing loaded (`FrameShare::Ghost`: made at runtime, the keyword, empty, nobody in it, not the frame
+  our player wears or left last, with no owner (the engine gives a frame its wearer's ownership as they get in, so one
+  our player ever used has one), no quest's, no copy of this run's, loaded) and buries it as a frame copy of ours
+  (`SaveGuard::Track`, `RemotePlayers::Discard`: disabled, deleted, kept out of saves, handed to a load that comes first;
+  `ghostsCleared` in `net status`, `paframes` shows `marked=` and `holds=`). Left standing, the host's game shared it as
+  a frame of its own (`FrameShare::SharesMade` took any created frame standing loaded), and every joiner placed a copy
+  of it beside the friend's real one, every session: one 0.9.1 ghost in the host's save was one extra suit in every
+  other game. A ghost holding pieces is shared as the player's own, since it is theirs by then.
+  Two saves with a shared past (one save, played on by both) hold the same runtime frames under the same ids at the
+  same spots, and the joiner's game placed a copy of the host's beside its own: a frame of our own, of the base, no copy
+  of ours and not a ghost, standing within `FrameShare::SAME_SPOT` (32 units; no two frames stand nearer) of where the
+  owner's game has theirs stands for it (`SpawnBook::FrameFacts::oursThere`, `NpcSync::OwnMadeFrameAt`): no copy is
+  placed, and one placed before ours stood there goes; once theirs is moved away (its owner got in and parked it
+  elsewhere) a copy stands there, and ours stays ours (`oursThere=` in `net status`).
   Why they stayed (read from disk, 1.11.240): a load frees only what has a record of changes
   (`BGSSaveLoadGame::RevertAllChanges` walks the records and lets go of each created form it finds there), and DespawnAll
   drops the record of everything of ours on its way out, so none of it was freed (deleting a created reference drops it
@@ -1832,7 +1978,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns). The sections below record each review as it was written.
+Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

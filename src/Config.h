@@ -147,6 +147,8 @@ namespace Config
 		bool shareGuestBuilds = false;
 		// A home's or a settlement's storage has one true copy, the host's game's, that friends take from and put into (StorageView.h).
 		bool sharedStorage = false;
+		// A weapon or armor put in a container is given: any friend can take it from their copy of it, once (GiftBook.h).
+		bool containerGifts = false;
 
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;
