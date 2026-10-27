@@ -138,6 +138,19 @@ namespace FrameLoans
 			return (occupied && occupied.get() == a_frame) || Equipment::PowerArmorFrameOf(player).get() == a_frame;
 		}
 
+		// The same by the frame's form id, for our copy while its handle does not resolve.
+		bool PlayerIn(std::uint32_t a_frame)
+		{
+			const auto player = Player();
+			if (!player || a_frame == 0) {
+				return false;
+			}
+			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+			const auto worn = Equipment::PowerArmorFrameOf(player);
+			return (occupied && occupied->GetFormID() == a_frame) || (worn && worn->GetFormID() == a_frame);
+		}
+
 		std::optional<RemoteEdits::Spot> SpotOf(const RE::TESObjectREFR* a_ref)
 		{
 			const auto cell = a_ref ? a_ref->GetParentCell() : nullptr;
@@ -295,11 +308,31 @@ namespace FrameLoans
 		{
 			const auto copy = borrowed.handle.get();
 			const auto player = Player();
+			// Our player in it after all (got in as the loan ended unworn): never taken from under them. The owner's game is
+			// told it ended (its frame stays as it was), and ours goes, with the copies, as they get out.
+			if (PlayerIn(borrowed.copy)) {
+				if (a_send && !borrowed.ownerless) {
+					Protocol::FrameReturn back;
+					back.spawnId = borrowed.spawnId;
+					back.ended = true;
+					outgoing.push_back(Protocol::Encode(back, Protocol::MessageType::kReturnFrame));
+				}
+				REX::INFO("FrameLoans: player {}'s frame {:08X} given back ({}) with our player in it; ours goes as they get out", borrowed.owner, borrowed.spawnId, a_why);
+				borrowed.ownerless = true;
+				borrowed.stage = Stage::kWorn;
+				borrowed.since = Clock::now();
+				if (!borrowed.released) {
+					borrowed.released = true;
+					SaveGuard::Release(borrowed.copy);
+				}
+				return;
+			}
 			std::vector<FrameLoan::Found> found;
 			if (copy) {
 				Gather(copy.get(), borrowed.tags, found);
 			}
-			if (player) {
+			// Never from our player while they are in power armor (another frame): its pieces on them are its own.
+			if (player && !Equipment::InPowerArmor(player)) {
 				Gather(player, borrowed.tags, found);
 			}
 			if (copy && player) {
@@ -776,7 +809,7 @@ namespace FrameLoans
 		}
 		if (borrowed.stage != Stage::kNone) {
 			const auto copy = borrowed.handle.get();
-			const FrameLoan::WearFacts facts{ .copyThere = copy && !copy->IsDeleted(), .in = copy && PlayerIn(copy.get()) };
+			const FrameLoan::WearFacts facts{ .copyThere = copy && !copy->IsDeleted(), .in = PlayerIn(borrowed.copy), .inArmor = Equipment::InPowerArmor(Player()) };
 			switch (FrameLoan::NextStep(borrowed.stage, now - borrowed.since, facts)) {
 			case FrameLoan::Step::kGiveUp:
 				REX::INFO("FrameLoans: player {} never answered our ask for frame {:08X}", borrowed.owner, borrowed.spawnId);

@@ -54,6 +54,19 @@ TEST("frame loan: an ask times out, a frame never got into goes back, and the lo
 	CHECK(NextStep(Stage::kOut, 500ms, standing) == Step::kNone);
 	CHECK(NextStep(Stage::kOut, 500ms, in) == Step::kWorn);
 	CHECK(NextStep(Stage::kOut, FrameLoan::EXIT_SETTLE, standing) == Step::kReturn);
+	// Our copy gone as they got out: still the settle first.
+	CHECK(NextStep(Stage::kOut, 500ms, {}) == Step::kNone);
+	CHECK(NextStep(Stage::kOut, FrameLoan::EXIT_SETTLE, {}) == Step::kReturn);
+	// In power armor while our copy does not resolve (a cell changing under them): still in it, whatever the stage.
+	const WearFacts unsure{ .copyThere = false, .in = false, .inArmor = true };
+	CHECK(NextStep(Stage::kWorn, 10min, unsure) == Step::kNone);
+	CHECK(NextStep(Stage::kOut, 1h, unsure) == Step::kNone);
+	CHECK(NextStep(Stage::kLent, 1h, unsure) == Step::kNone);
+	// In power armor, our copy there and they not in it (another frame): out, but given back only once out of that too.
+	const WearFacts elsewhere{ .copyThere = true, .in = false, .inArmor = true };
+	CHECK(NextStep(Stage::kWorn, 1s, elsewhere) == Step::kOut);
+	CHECK(NextStep(Stage::kOut, 1h, elsewhere) == Step::kNone);
+	CHECK(NextStep(Stage::kOut, FrameLoan::EXIT_SETTLE, standing) == Step::kReturn);
 	CHECK(NextStep(Stage::kNone, 1h, standing) == Step::kNone);
 }
 

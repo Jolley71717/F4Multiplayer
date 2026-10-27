@@ -95,7 +95,8 @@ namespace FrameLoan
 	struct WearFacts
 	{
 		bool copyThere = false;  // our copy of the frame still exists
-		bool in = false;         // our player is in power armor, in our copy
+		bool in = false;         // our player is in our copy (seated in it, or wearing it)
+		bool inArmor = false;    // our player is in power armor at all (Equipment::InPowerArmor)
 	};
 
 	enum class Step
@@ -107,9 +108,13 @@ namespace FrameLoan
 		kReturn,  // the loan is over: the kit gathered and the frame given back (or gone, ownerless)
 	};
 
-	// What the loan does next, from its stage (since a_since) and what our game shows of it.
+	// What the loan does next, from its stage (since a_since) and what our game shows of it. Our player in power armor
+	// while our copy does not resolve (a cell changing under them) is taken as still in it: never out on that, nor given
+	// back. Given back only after the settle, and only once they are out of power armor altogether (never gathered from
+	// while a frame is on them).
 	constexpr Step NextStep(Stage a_stage, Clock::duration a_since, const WearFacts& a_facts)
 	{
+		const bool unsure = a_facts.inArmor && !a_facts.copyThere;
 		switch (a_stage) {
 		case Stage::kAsked:
 			return a_since >= ASK_TIMEOUT ? Step::kGiveUp : Step::kNone;
@@ -117,14 +122,20 @@ namespace FrameLoan
 			if (a_facts.in) {
 				return Step::kWorn;
 			}
+			if (unsure) {
+				return Step::kNone;
+			}
 			return !a_facts.copyThere || a_since >= ENTER_TIMEOUT ? Step::kReturn : Step::kNone;
 		case Stage::kWorn:
-			return a_facts.in ? Step::kNone : Step::kOut;
+			return a_facts.in || unsure ? Step::kNone : Step::kOut;
 		case Stage::kOut:
 			if (a_facts.in) {
 				return Step::kWorn;
 			}
-			return !a_facts.copyThere || a_since >= EXIT_SETTLE ? Step::kReturn : Step::kNone;
+			if (a_facts.inArmor) {
+				return Step::kNone;  // in power armor again (ours, unseen, or another frame): given back once out of it
+			}
+			return a_since >= EXIT_SETTLE ? Step::kReturn : Step::kNone;
 		case Stage::kNone:
 			break;
 		}
