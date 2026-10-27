@@ -303,6 +303,54 @@ TEST("script doors: the Prydwen is moored in a friend's game at once, wherever t
 	CHECK(CountOf(LookFor(vault, Elsewhere(), now, 1min), Act::kSet) == 0);
 }
 
+TEST("script doors: the Prydwen's stage waits while this game's own flyover is in the air, and is set once the effect is gone with the stage still not done")
+{
+	Book book;
+	auto now = Clock::now();
+	CHECK(book.See(PRYDWEN, Elsewhere(), now) == Act::kNone);
+	now += 500ms;
+	book.Take(PRYDWEN);
+
+	// Our own flyover is crossing the Commonwealth (the effect enabled and loaded): the session's stage waits for its
+	// script to set it, and the wait is said once.
+	auto flying = Elsewhere();
+	flying.busy = true;
+	CHECK(book.See(PRYDWEN, flying, now) == Act::kHold);
+	now += 500ms;
+	const auto acts = LookFor(book, flying, now, 5min, PRYDWEN);
+	CHECK(CountOf(acts, Act::kSet) == 0);
+	CHECK(CountOf(acts, Act::kHold) == 0);
+	CHECK(book.Pending(PRYDWEN));
+
+	// The flight ends and its script sets the stage: done here, nothing to set, and nothing more to say after.
+	Book landed = book;
+	CHECK(landed.See(PRYDWEN, Elsewhere(true), now) != Act::kSet);
+	CHECK(!landed.Pending(PRYDWEN));
+	CHECK(CountOf(LookFor(landed, Elsewhere(true), now, 1min, PRYDWEN), Act::kReport) == 0);
+	CHECK(CountOf(LookFor(landed, flying, now, 1min, PRYDWEN), Act::kHold) == 0);
+
+	// The effect went (unloaded, disabled) with the stage still not done: set at once.
+	Book gone = book;
+	CHECK(gone.See(PRYDWEN, Elsewhere(), now) == Act::kSet);
+	CHECK(CountOf(LookFor(gone, Elsewhere(true), now, 1min, PRYDWEN), Act::kReport) == 0);
+
+	// In a menu while it flies: nothing, and still waiting; the wait is said again only after a set or a stage done.
+	auto menu = flying;
+	menu.canApply = false;
+	CHECK(CountOf(LookFor(book, menu, now, 1min, PRYDWEN), Act::kSet) == 0);
+	CHECK(CountOf(LookFor(book, flying, now, 1min, PRYDWEN), Act::kHold) == 0);
+	CHECK(book.Pending(PRYDWEN));
+
+	// A game not flying (the effect never enabled, or the player indoors so it has no 3D) is set at once, as before.
+	Book still;
+	still.Take(PRYDWEN);
+	CHECK(still.See(PRYDWEN, Elsewhere(), now) == Act::kSet);
+
+	// The vault door has no effect of its own: never held.
+	CHECK(ScriptDoors::DOORS[VAULT_114].effect == 0);
+	CHECK(ScriptDoors::DOORS[PRYDWEN].effect == 0x0019537C);  // MQ201FXPrydFlyoverRef
+}
+
 TEST("script doors: the game whose flyover ends first reports the Prydwen moored; a friend whose own flight ends later reports nothing")
 {
 	auto now = Clock::now();

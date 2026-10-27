@@ -940,7 +940,10 @@ game's moored airship appeared only when its own flight ended. So BoSEnable's 15
 stages like the vault door's (reported by the game whose flight ends first, or by the host's at its welcome if moored
 already; kept by the server for late joiners): BoSEnable is an internal start-game-enabled quest QuestSync never
 shares, 15 only enables the marker, and a persistent marker is enabled from anywhere, so the friend's stage is set at
-once, with no wait for loading (`Door::loaded` false). A friend whose story is behind sees the airship moored before
+once, with no wait for loading (`Door::loaded` false), unless that game's own flyover is in the air (the effect 0019537C
+enabled, with its 3D: `Door::effect`, `Look::busy`): then it waits, logged once, as the effect's script sets 15 itself at
+the end of the flight or when the player waits, travels or goes indoors, and set sooner the moored airship would stand at
+the airport while the flying one is still crossing (both players leaving Concord together). A friend whose story is behind sees the airship moored before
 their own Brotherhood quests, as the game orders it anyway (the flyover follows Concord, long before Shadow of Steel,
 which takes the airship as there; nothing in the game reads BoSEnable's 15 or the marker: the only conditions on
 BoSEnable are Liberty Prime's scribes' packages, for its 20 to 40); their own flight later sets 15 again, which

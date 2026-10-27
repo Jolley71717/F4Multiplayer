@@ -184,6 +184,7 @@ namespace WorldSync
 		ScriptDoors::Book          scriptDoors;
 		std::vector<std::uint32_t> scriptDoorQuests;  // ScriptDoors::DOORS[i]'s quest by this game's ID (0: not in this game)
 		std::vector<std::uint32_t> scriptDoorRefs;    // ... and its door
+		std::vector<std::uint32_t> scriptDoorEffects;  // ... and the effect whose own flight sets the stage here (0: none)
 		bool                       scriptDoorsReported = false;  // the host's open ones, since its welcome or the last load
 		Clock::time_point          nextDoorLook{};
 		std::uint32_t              scriptDoorsSent = 0, scriptDoorsSet = 0, scriptDoorsGaveUp = 0;
@@ -1848,6 +1849,7 @@ namespace WorldSync
 				const auto quest = handler->LookupForm<RE::TESQuest>(door.quest, door.file);
 				scriptDoorQuests.push_back(quest ? quest->GetFormID() : 0);
 				scriptDoorRefs.push_back(quest ? handler->LookupFormID(door.door, door.file) : 0);
+				scriptDoorEffects.push_back(quest && door.effect != 0 ? handler->LookupFormID(door.effect, door.file) : 0);
 			}
 		}
 
@@ -1881,6 +1883,9 @@ namespace WorldSync
 				look.done = QuestStageLayout::IsStageDone(quest, door.stage);
 				look.doorLoaded = ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->Get3D() && ref->GetParentCell();
 				look.canApply = canApply;
+				// Our own game on its way to the stage (the flyover effect enabled and in the air): its script sets it.
+				const auto effect = scriptDoorEffects[i] != 0 ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(scriptDoorEffects[i]) : nullptr;
+				look.busy = effect && !effect->IsDeleted() && !effect->IsDisabled() && effect->Get3D();
 				switch (scriptDoors.See(i, look, a_now)) {
 				case ScriptDoors::Act::kReport:
 					Queue(Protocol::Encode(Protocol::QuestStage{ quest->GetFormID(), door.stage }, Protocol::MessageType::kReportQuestStage));
@@ -1892,6 +1897,10 @@ namespace WorldSync
 					RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", quest->GetFormID(), door.stage).c_str());
 					++scriptDoorsSet;
 					REX::INFO("WorldSync: {} {} here now (setting {:08X} stage {}, done in another player's game)", door.what, door.state, quest->GetFormID(), door.stage);
+					break;
+				case ScriptDoors::Act::kHold:
+					REX::INFO("WorldSync: {} is {} in another player's game, and ours is on its way ({:08X} enabled and loaded): waiting for it to set {:08X} stage {}",
+						door.what, door.state, scriptDoorEffects[i], quest->GetFormID(), door.stage);
 					break;
 				case ScriptDoors::Act::kGiveUp:
 					++scriptDoorsGaveUp;
