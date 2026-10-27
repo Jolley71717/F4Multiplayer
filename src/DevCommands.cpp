@@ -11,6 +11,7 @@
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/Drops.h"
+#include "game/Gifts.h"
 #include "game/EnemyList.h"
 #include "game/EnemySpawn.h"
 #include "game/Downed.h"
@@ -3431,6 +3432,18 @@ namespace DevCommands
 			return Destructibles::Command(joined);
 		}
 
+		// gifts: weapons and armor given through a container (Gifts.h): status; list; view <ref> / close (what the container menu's
+		// show and close do); count <ref> <item>; take / put <ref> <item> [count] (a transfer as the menu makes one).
+		std::string GiftsCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Gifts::Command(joined);
+		}
+
 		// storage: shared storage (Storage.h): status; owners; keeper <ref>; view <ref> / close (what the container menu's show and close do);
 		// count <ref> <item>; take / put <ref> <item> [count] (a transfer between our player and the container, as the menu makes one).
 		std::string StorageCommand(std::string_view a_args)
@@ -3622,6 +3635,7 @@ namespace DevCommands
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
 			Entry{ "destruct", DestructCommand },
+			Entry{ "gifts", GiftsCommand },
 			Entry{ "storage", StorageCommand },
 		};
 	}

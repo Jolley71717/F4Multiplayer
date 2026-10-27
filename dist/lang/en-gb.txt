@@ -153,6 +153,9 @@ storage.closed = The host's copy of this container isn't open now (they are away
 storage.take_refused = That was gone from the host's container (a friend took it first?): it went back
 storage.put_refused = That couldn't go into the host's container (their game lacks its mod?): it came back to you
 storage.short = The container held less than it showed: what wasn't there was taken back
+gifts.given = Friends can take this from their copy of the container now (the first to take it has it); until one does, you can take it back
+gifts.not_given = Friends won't get this one: it stays in your copy of the container only (a quest item, a mod only your game has, or the session is full)
+gifts.taken_first = A friend took it first
 save.old_leftover = Multiplayer: this save holds a leftover from an older version of the mod. Save now, then restart the game and play from the new save
 
 # --- The F1 menu ---
