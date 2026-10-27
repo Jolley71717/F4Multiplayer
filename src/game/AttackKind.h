@@ -89,7 +89,8 @@ namespace AttackKind
 	// record to take the blast from. A stand-in's plain one, a bullet or a beam, is held: it hit our player and shows
 	// nothing in flight but what the replay draws (MuzzleFlash); a copy's is the engine's, as before. What neither goes
 	// off nor flies straight is fired as before, so friends see it: a flamer's or a cryolator's stream, a harpoon or a
-	// railway spike, which hurt nobody here (the puppet's damage multiplier is zero, Puppets). A gun whose projectile
+	// railway spike, which hurt nobody here (the puppet's damage multiplier is zero, Puppets) and go where the friend
+	// aimed, not at whoever the engine has the stand-in look at (InertShot::Aims). A gun whose projectile
 	// we can't read (a_known false) is taken for a plain one.
 	constexpr Fire ShotReplay(bool a_standIn, bool a_known, std::uint32_t a_flags, bool a_explodes, bool a_enchanted, bool a_inert)
 	{

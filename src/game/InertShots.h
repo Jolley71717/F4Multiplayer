@@ -6,7 +6,8 @@
 // A stand-in's or a copy's shot that would go off flies with no blast of its own: the engine's Projectile::Launch is
 // hooked at its entry, and such a launch is made from an inert copy of the projectile record (InertShot.h has the
 // decisions and the bytes; docs/DESIGN.md, "Who sets off an explosion"). The shooter's game reports the blast, and
-// WeaponFire::ApplyExplosion sets it off here, once.
+// WeaponFire::ApplyExplosion sets it off here, once. The same hook sends every launch of a stand-in's where its friend
+// aimed (InertShot::Aims): a flamer's stream or a harpoon of the engine's own went at whoever the stand-in looked at.
 namespace InertShots
 {
 	// Puts the hook on Projectile::Launch, at plugin load. Only where the function begins as 1.11.240 has it and the
@@ -40,6 +41,7 @@ namespace InertShots
 	void ExpectSpawned(RE::BGSProjectile* a_spawn);
 
 	// Counters for `net status`: launches seen, swapped, refused (no copy to be had), copies made, launches off the
-	// main thread, shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped.
+	// main thread, shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, and stand-ins'
+	// launches of their own record given their friend's aim.
 	[[nodiscard]] std::string Describe();
 }
