@@ -1,6 +1,7 @@
 #include "game/WeaponFire.h"
 
 #include "game/BlastShield.h"
+#include "game/ClickWatch.h"
 #include "game/CopyWatch.h"
 #include "game/Destructibles.h"
 #include "game/EngineRefs.h"
@@ -540,6 +541,7 @@ namespace WeaponFire
 			if (!handle.Play()) {
 				return false;
 			}
+			ClickWatch::Note(ClickRates::Source::kShotSound);
 			lastLooped = handle.IsEnvelopeLoop();
 			if (lastLooped) {
 				loopingShots.Add(a_actor->GetFormID(), handle, now);
@@ -725,6 +727,7 @@ namespace WeaponFire
 		}
 		// Emotes: an idle, played the way the console does (the stand-in takes it while standing still).
 		if (const auto idle = EmoteIdle(a_action)) {
+			ClickWatch::Note(ClickRates::Source::kEmote);
 			RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", a_actor->GetFormID(), idle).c_str());
 			++actionsPlayed;
 			return;

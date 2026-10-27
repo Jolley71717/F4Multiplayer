@@ -1,5 +1,6 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/ArmorFrames.h"
+#include "game/ClickWatch.h"
 #include "game/DeferredDelete.h"
 #include "game/DownRules.h"
 #include "game/Dialogue.h"
@@ -3349,7 +3350,11 @@ namespace RemotePlayers
 			pipboyFacts.standIn = actor->GetFormID();
 			pipboyFacts.ready = actor->Get3D() && !inArmor && !remote.inPowerArmor && !remote.powerArmorOn && !remote.seat && !remote.seatHeld && !remote.downed &&
 			                    remote.health > 0 && state->speed < 1.0f;
-			switch (StandInPipboy::Frame(remote.pipboy, pipboyFacts, now)) {
+			const auto pipboyDo = StandInPipboy::Frame(remote.pipboy, pipboyFacts, now);
+			if (pipboyDo != StandInPipboy::Do::kNothing) {
+				ClickWatch::Note(ClickRates::Source::kEmote);
+			}
+			switch (pipboyDo) {
 			case StandInPipboy::Do::kRaise:
 				{
 					const auto npc = actor->GetNPC();

@@ -1,6 +1,7 @@
 ﻿#include "game/Puppets.h"
 
 #include "game/AimPoint.h"
+#include "game/ClickWatch.h"
 #include "game/CreatureGait.h"
 #include "game/DrawMatch.h"
 #include "game/FrameClock.h"
@@ -321,6 +322,7 @@ namespace Puppets
 			}
 			if (what != DrawMatch::Do::kNothing) {
 				drawAsks.fetch_add(1, std::memory_order_relaxed);
+				ClickWatch::Note(ClickRates::Source::kDrawAsk);
 				a_actor->DrawWeaponMagicHands(what == DrawMatch::Do::kDraw);
 			}
 		}
