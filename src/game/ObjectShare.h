@@ -750,7 +750,11 @@ namespace ObjectShare
 			bool          theirs = false;
 		};
 
-		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, Clock::time_point a_now)
+		// a_blasts: the blasts our scans saw lately. What a blast reaches is judged from where the object lay before it
+		// moved as well as from where it is now: a blast flings an object far past its own reach (and past our player's
+		// near range) between two scans, so the scan that first sees it move finds it already out of reach of what moved
+		// it. The claim is made when it starts moving and held until it rests (and its follow-on after).
+		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, Clock::time_point a_now, const BlastBook* a_blasts = nullptr)
 		{
 			std::vector<Protocol::ObjectRest> out;
 			for (const auto& seen : a_seen) {
@@ -766,6 +770,15 @@ namespace ObjectShare
 					continue;
 				}
 				auto& w = it->second;
+				std::uint32_t blast = seen.blast;
+				bool          reachedByTheirs = seen.theirs;
+				if (a_blasts) {
+					for (const Vec3* from : { &seen.pose.position, static_cast<const Vec3*>(&w.rest.position) }) {
+						const auto reach = a_blasts->Reaching(*from, a_now);
+						blast = blast != 0 ? blast : reach.serial;
+						reachedByTheirs = reachedByTheirs || reach.theirs;
+					}
+				}
 				if (a_now - w.seenAt >= FORGET_AFTER) {
 					// Not looked at for a while (a loading screen, a cell that unloaded and came back): whatever made it ours
 					// is long gone.
@@ -786,14 +799,14 @@ namespace ObjectShare
 				}
 				// A friend's blast reaching it makes the move theirs, unless their place put it here just now (quiet): their
 				// blast's throw of it ended with their rest, and what moves it on from where they put it is not the blast.
-				const bool theirs = seen.theirs && a_now >= w.quietUntil;
+				const bool theirs = reachedByTheirs && a_now >= w.quietUntil;
 				if (!w.moving) {
 					if (Distance(seen.pose.position, w.rest.position) > MOVE_DISTANCE || Turned(seen.pose.angles, w.rest.angles) > MOVE_TURN) {
 						w.moving = true;
 						w.owed = false;
 						w.byUs = seen.byUs;
 						w.byNpc = seen.byNpc;
-						w.blast = seen.blast;
+						w.blast = blast;
 						w.theirs = theirs;
 						w.again = a_now < w.followUntil;
 						w.movingSince = w.stillSince = a_now;
@@ -814,7 +827,7 @@ namespace ObjectShare
 				w.byNpc = w.byNpc || seen.byNpc;
 				w.theirs = w.theirs || theirs;
 				if (w.blast == 0) {
-					w.blast = seen.blast;
+					w.blast = blast;
 				}
 				// Still: within STILL_DISTANCE of where it was when it last moved, not merely of the last look, so a slow
 				// roll (under a unit a look) is moving, not at rest.
@@ -880,6 +893,23 @@ namespace ObjectShare
 			w.quietUntil = a_now + QUIET_AFTER_PLACED;
 			w.followUntil = {};  // theirs now: our physics moving it on is not ours to report
 			w.follows = 0;
+		}
+
+		// The objects moving that are ours so far (our player, an NPC of ours or a blast of ours set them going, no friend's
+		// blast did), at most a_max: what the scan looks at wherever they fly, past its own radius round our player, until
+		// each rests or Scan gives up on it (MOVING_GIVE_UP), so how far one is flung does not end the watch on it.
+		[[nodiscard]] std::vector<std::uint32_t> Tracking(std::size_t a_max) const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& [ref, w] : watched) {
+				if (out.size() >= a_max) {
+					break;
+				}
+				if (w.moving && !w.theirs && (w.byUs || w.byNpc || w.blast != 0)) {
+					out.push_back(ref);
+				}
+			}
+			return out;
 		}
 
 		[[nodiscard]] std::size_t Watching() const { return watched.size(); }

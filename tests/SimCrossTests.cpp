@@ -979,3 +979,57 @@ TEST("cross: two players standing by one kicked can both say where it rests; the
 	CHECK(host.Undecodable() == 0);
 	CHECK(bob.Undecodable() == 0);
 }
+
+// A grenade flings cans far past its reach (a blast's radius and a margin) and past our player's near range. Where each
+// one lies when it stops is said by the game that threw the grenade, the one that set the motion going: its scan only
+// sees a can after it has flown, so what moved it comes from where the can lay before (a friend standing in the pile
+// makes no difference to that). The other game puts them there, and nothing flung far is left apart between the games.
+TEST("cross: cans a grenade flings far beyond its reach end in the same place in both games, with the friend standing in the pile, whichever of host and joiner threw")
+{
+	for (const bool hostThrows : { true, false }) {
+		Session s;
+		auto&   host = s.Host();
+		auto&   bob = s.Player("Bob");
+		REQUIRE(host.Join());
+		REQUIRE(bob.Join());
+		s.HoldClock();
+		auto& thrower = hostThrows ? host : bob;
+		auto& bystander = hostThrows ? bob : host;
+		for (auto* game : { &thrower, &bystander }) {
+			game->Loose(CAN_1, { 0, 0, 0 });
+			game->Loose(CAN_2, { 10, 0, 0 });
+			game->Loose(CAN_3, { 20, 0, 0 });
+			game->Frames(SEEN_FRAMES);
+		}
+		s.Settle();
+		thrower.Blast({ 5, 0, 0 }, 128.0f, false);
+		bystander.Blast({ 5, 0, 0 }, 128.0f, true);
+		// In reach (150), past it (300), far past it (450): each game's physics flings them its own way, and the scan
+		// sees each only after it has flown.
+		thrower.Knock(CAN_1, { 150, 0, 0 });
+		thrower.Knock(CAN_2, { 10, 300, 0 });
+		thrower.Knock(CAN_3, { -450, 20, 0 });
+		bystander.Knock(CAN_1, { 140, 25, 0 });
+		bystander.Knock(CAN_2, { 30, 280, 0 });
+		bystander.Knock(CAN_3, { -430, -30, 0 });
+		thrower.Frames(REST_FRAMES);
+		bystander.Frames(REST_FRAMES);
+		s.Settle();
+		CHECK(thrower.KnocksSaid() == 3);
+		CHECK(bystander.KnocksSaid() == 0);
+		CHECK(bystander.Heard(MT::kObjectRested) == 3);
+		CHECK(ObjectLies(bystander, CAN_1, { 150, 0, 0 }));
+		CHECK(ObjectLies(bystander, CAN_2, { 10, 300, 0 }));
+		CHECK(ObjectLies(bystander, CAN_3, { -450, 20, 0 }));
+		CHECK_AGREE({ &host, &bob });
+		// Nothing more is said once they lie, in the quiet after the thrower's place and well past it.
+		thrower.Frames(QUIET_FRAMES);
+		bystander.Frames(QUIET_FRAMES);
+		s.Settle();
+		CHECK(thrower.KnocksSaid() == 3);
+		CHECK(bystander.KnocksSaid() == 0);
+		CHECK_AGREE({ &host, &bob });
+		CHECK(host.Undecodable() == 0);
+		CHECK(bob.Undecodable() == 0);
+	}
+}

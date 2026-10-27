@@ -1839,3 +1839,74 @@ TEST("moved objects server: a game that loads a save, or rejoins, is told the pl
 	JoinAs(f, 3, "Bob", BOB_IDENTITY);
 	CHECK(told(Received(f, 3)));
 }
+
+TEST("blasts: a can flung far past the blast's reach is still the blast's, by where it lay, and is reported where it stops")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	const Vec3              before{ 0, 0, 0 };
+	const Vec3              flung{ 600, 0, 0 };  // reach 128 and its margin: far past
+	ScanFor(watch, t, 2, { .refId = TIRE, .pose = At(before) });
+	CHECK(book.Note(1, before, 128, BlastRole::kOurs, t));
+	CHECK(book.Reaching(flung, t).serial == 0);  // where it is now, nothing reaches it
+	// The first look at it after the blast finds it flown; nothing of ours is near it.
+	const std::array moved{ Seen{ .refId = TIRE, .pose = At(flung) } };
+	CHECK(watch.Scan(moved, t += 250ms, &book).empty());
+	CHECK(watch.Moving() == 1);
+	CHECK(watch.Tracking(8) == std::vector<std::uint32_t>{ TIRE });
+	// Still rolling on a while, then at rest: said once, where it stopped.
+	const std::array rolling{ Seen{ .refId = TIRE, .pose = At({ 640, 30, 0 }) } };
+	CHECK(watch.Scan(rolling, t += 250ms, &book).empty());
+	std::size_t said = 0;
+	const std::array stopped{ Seen{ .refId = TIRE, .pose = At({ 700, 60, 0 }) } };
+	for (int i = 0; i < 6; ++i) {
+		for (const auto& rest : watch.Scan(stopped, t += 250ms, &book)) {
+			CHECK(Near(rest.position, { 700, 60, 0 }));
+			++said;
+		}
+	}
+	CHECK(said == 1);
+	CHECK(watch.Tracking(8).empty());
+}
+
+TEST("blasts: a can a friend's blast flung far past its reach is theirs by where it lay, and is not reported")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	ScanFor(watch, t, 2, { .refId = TIRE, .pose = At({ 0, 0, 0 }) });
+	CHECK(book.Note(1, { 0, 0, 0 }, 128, BlastRole::kTheirs, t));
+	// Our player stands by its place as it flies past: by us, but their blast threw it.
+	const std::array moved{ Seen{ .refId = TIRE, .pose = At({ 600, 0, 0 }), .byUs = true } };
+	CHECK(watch.Scan(moved, t += 250ms, &book).empty());
+	CHECK(watch.Tracking(8).empty());
+	const std::array stopped{ Seen{ .refId = TIRE, .pose = At({ 700, 60, 0 }) } };
+	for (int i = 0; i < 8; ++i) {
+		CHECK(watch.Scan(stopped, t += 250ms, &book).empty());
+	}
+	CHECK(watch.Reported() == 0);
+}
+
+TEST("moved objects knocks: tracking lists what is moving and ours, at most the number asked for, nothing at rest or busy")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	std::vector<Seen>       still, moved;
+	for (std::uint32_t i = 0; i < 5; ++i) {
+		still.push_back({ .refId = 0x00330000 + i, .pose = At({ i * 50.0f, 0, 0 }) });
+		moved.push_back({ .refId = 0x00330000 + i, .pose = At({ i * 50.0f, 90, 0 }), .byUs = i != 4 });
+	}
+	watch.Scan(still, t += 250ms);
+	CHECK(watch.Tracking(8).empty());
+	watch.Scan(moved, t += 250ms);
+	CHECK(watch.Tracking(8).size() == 4);  // the fifth is not ours
+	CHECK(watch.Tracking(2).size() == 2);
+	for (auto& m : moved) {
+		m.busy = true;
+	}
+	watch.Scan(moved, t += 250ms);
+	CHECK(watch.Tracking(8).empty());
+}

@@ -32,6 +32,7 @@ namespace MovedObjects
 		constexpr auto  SCAN_INTERVAL = std::chrono::milliseconds(250);
 		constexpr float SCAN_RADIUS = 1500.0f;        // loose objects this close to our player are watched for knocks
 		constexpr std::size_t MAX_SCANNED = 256;      // of them, at most this many a scan
+		constexpr std::size_t MAX_TRACKED = 64;       // flung beyond the radius, still looked at: at most this many
 		constexpr auto  HIT_MEMORY = std::chrono::seconds(3);  // a hit of ours moves it for that long
 		constexpr auto  FLIGHT = std::chrono::seconds(12);     // a friend's let-go flies here until their rest, at most
 		constexpr float SNAP_DISTANCE = 1.0f;          // our copy this far from their rest is put where theirs lies
@@ -534,6 +535,15 @@ namespace MovedObjects
 			for (const auto& blast : blastRefs) {
 				NoteBlast(blast.get(), a_now);
 			}
+			// What we saw move that something of ours set going is looked at wherever it has flown, past the scan's radius
+			// (a blast flings a can far): until it rests, or the watch gives up on it (MOVING_GIVE_UP).
+			for (const auto id : knocks.Tracking(MAX_TRACKED)) {
+				if (std::ranges::none_of(found, [&](const auto& a_ref) { return a_ref->GetFormID() == id; })) {
+					if (auto ref = Lookup(id)) {
+						found.push_back(std::move(ref));
+					}
+				}
+			}
 			const Vec3                                  player = Position(a_player);
 			std::vector<ObjectShare::KnockWatch::Seen> seen;
 			seen.reserve(found.size());
@@ -547,12 +557,10 @@ namespace MovedObjects
 				}
 				const auto id = ref->GetFormID();
 				const bool busy = carried.Find(id) || flying.contains(id) || keyframed.contains(id) || a_ourHeld == id || carry.IsSettling(id) || carry.IsRefused(id);
-				const auto reach = blasts.Reaching(pose->position, a_now);
 				const bool byNpc = std::ranges::any_of(shovers, [&](const Vec3& a_npc) { return ObjectShare::NpcNear(a_npc, pose->position); });
-				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc,
-					.blast = reach.serial, .theirs = reach.theirs });
+				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc });
 			}
-			for (const auto& rest : knocks.Scan(seen, a_now)) {
+			for (const auto& rest : knocks.Scan(seen, a_now, &blasts)) {
 				Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);
 				waiting.Erase(rest.refId);  // our move is the newer
 				++counts.knocksSent;

@@ -329,6 +329,13 @@ namespace Sim
 
 		// A loose object lies at a_at in this game (loaded with the cell, still). The scan sees it on the next frames.
 		void Loose(std::uint32_t a_ref, std::array<float, 3> a_at) { world.objects[a_ref] = a_at; }
+		// An explosion at a_at (radius a_radius) in this game, as MovedObjects' scan notes it: our grenade's, or (a_theirs)
+		// one set off here for a friend's throw. What it throws about is reached by it (ObjectShare::BlastBook), and
+		// Knock moves the objects.
+		void Blast(std::array<float, 3> a_at, float a_radius, bool a_theirs)
+		{
+			blasts.Note(++blastKey, a_at, a_radius, a_theirs ? ObjectShare::BlastRole::kTheirs : ObjectShare::BlastRole::kOurs, frameClock);
+		}
 		// The object is thrown or knocked to a_to in this game and lies there from now on (its physics' doing: nothing is
 		// in anyone's hands). Frames (a second or so) let the scan see it come to rest; the rest goes to the server if
 		// the plugin's rule (ObjectShare::KnockWatch) makes it this game's to report, and a friend's rest of it that comes
@@ -512,6 +519,8 @@ namespace Sim
 		std::map<std::uint32_t, LooseHow>      looseHow;
 		ObjectShare::KnockWatch                knocks;
 		std::uint32_t                          blastSerial = 0;
+		ObjectShare::BlastBook                 blasts;
+		std::uint32_t                          blastKey = 0;
 		Clock::time_point                      nextKnockScan{};
 	};
 
@@ -1231,7 +1240,7 @@ namespace Sim
 			}
 			seen.push_back(s);
 		}
-		for (const auto& rest : knocks.Scan(seen, frameClock)) {
+		for (const auto& rest : knocks.Scan(seen, frameClock, &blasts)) {
 			Send(Protocol::Encode(rest, MT::kReportObjectRest), true);
 		}
 	}
