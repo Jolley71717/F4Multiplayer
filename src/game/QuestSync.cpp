@@ -13,6 +13,7 @@
 #include "game/RadiantRules.h"
 #include "game/RadiantSync.h"
 #include "game/RemotePlayers.h"
+#include "game/SceneHold.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 #include "game/Story.h"
@@ -92,10 +93,6 @@ namespace QuestSync
 		// something out of reach can keep the player in combat.
 		constexpr auto AFTER_COMBAT = 5s;
 		constexpr auto MAX_COMBAT_HOLD = 60s;
-		// A scene of a quest with stages waiting here holds them back only so long: a stage set from far
-		// away can start a scene with the player in it that only a later stage of its quest ends (MQ104's
-		// 18 starts one, its 30 ends it), while the scene's other actors are nowhere near.
-		constexpr auto MAX_SCENE_HOLD = 30s;
 		// The quests caught up with are named in one notice, once none came for a moment (or every so often).
 		constexpr auto NOTICE_QUIET = 3s;
 		constexpr auto NOTICE_EVERY = 15s;
@@ -160,7 +157,8 @@ namespace QuestSync
 		bool                                             combatHold = false;  // this poll: caught-up stages wait
 		std::optional<Clock::time_point>                 combatSince;
 		Clock::time_point                                lastCombat{};
-		std::optional<Clock::time_point>                 sceneSince;
+		SceneHold::Watch                                 sceneHold;  // whether the scene the player is in holds friends' stages back
+		std::uint32_t                                    sessionSceneLogged = 0;  // the session's scene last logged (0: none)
 		std::optional<Clock::time_point>                 warnedAt;
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
@@ -194,23 +192,26 @@ namespace QuestSync
 			return { quests.data(), quests.size() };
 		}
 
-		// A stage set in the middle of a conversation or scene can break it; wait until it's over. A scene
-		// of a quest with stages waiting here only holds them for MAX_SCENE_HOLD.
+		// A stage set in the middle of a conversation or scene can break it; wait until it's over. Not a scene
+		// a friend's stage started here (Codsworth's search, started by his talk's stage): it is the session's,
+		// the friend's later stages end it, and held back by it they would never come (SceneHold). The player's
+		// own scene of a quest with stages waiting here only holds them for SceneHold::MAX_HOLD.
 		bool PlayerBusy(Clock::time_point a_now)
 		{
-			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
-				return true;
-			}
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto scene = player ? player->GetCurrentScene() : nullptr;
-			if (!scene || !scene->parentQuest || !waiting.Contains(scene->parentQuest->GetFormID())) {
-				sceneSince.reset();
-				return scene != nullptr;
+			const auto quest = scene && scene->parentQuest ? scene->parentQuest->GetFormID() : 0u;
+			const bool held = sceneHold.Holds({ .talking = OpenMenus::Open(OpenMenus::Menu::kDialogue),
+												  .scene = scene ? scene->GetFormID() : 0u,
+												  .sceneQuestWaiting = quest != 0 && waiting.Contains(quest) },
+				a_now);
+			if (const auto sessions = sceneHold.SessionScene(); sessions != sessionSceneLogged) {
+				sessionSceneLogged = sessions;
+				if (sessions) {
+					REX::INFO("QuestSync: the player is in scene {:08X} of {:08X}, started by a friend's stage; it holds no stages back, and its people are theirs", sessions, quest);
+				}
 			}
-			if (!sceneSince) {
-				sceneSince = a_now;
-			}
-			return a_now - *sceneSince < MAX_SCENE_HOLD;
+			return held;
 		}
 
 		// Whether caught-up stages wait now (see AFTER_COMBAT).
@@ -447,6 +448,7 @@ namespace QuestSync
 			}
 			remoteStageAt[id] = Clock::now();
 			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
+			sceneHold.StageSet(Clock::now());  // its script may start a scene with the player in it: the session's
 			++applied;
 		}
 
@@ -654,6 +656,7 @@ namespace QuestSync
 			REX::WARN("QuestSync: MQ104 is at {} without its stage {}, and MQ105 never started; starting it", mq104->currentStage, MQ104_STARTS_MQ105);
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
 			FadeWatch::Arm(std::format("set {:08X} stage {}", MQ105, MQ105_FIRST));
+			sceneHold.StageSet(a_now);
 			++repaired;
 			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
 		}
@@ -1003,7 +1006,8 @@ namespace QuestSync
 		liveAt.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
-		sceneSince.reset();
+		sceneHold.Clear();  // a scene of the session's the player is still in is theirs now, like the rest of their game
+		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		waitLogged.clear();
@@ -1032,7 +1036,8 @@ namespace QuestSync
 		liveAt.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
-		sceneSince.reset();
+		sceneHold.Clear();
+		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		waitLogged.clear();
@@ -1052,10 +1057,16 @@ namespace QuestSync
 		return lastStageChange;
 	}
 
+	std::uint32_t SessionScene()
+	{
+		return sceneHold.SessionScene();
+	}
+
 	std::string Describe()
 	{
 		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released, outgoing.Size(),
-			unstarted.Size(), locked ? " locked" : "") + " " + RadiantSync::Describe();
+			unstarted.Size(), locked ? " locked" : "") +
+		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe();
 	}
 }

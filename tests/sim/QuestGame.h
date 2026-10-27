@@ -15,17 +15,20 @@
 // as live, the friend nearby, the combat hold, the warning and its cover, the lock and its release (looked
 // at before the queue's poll), what is dropped when the session ends (with Session's
 // Story::SetShared(false)) or the server changes, the 5 s settle before reporting, and the opening's own
-// stages (StageRules::IsOpening: never reported, in the host's baseline or set). Left out: scenes
-// (only a conversation holds stages back), the MQ104/MQ105 repair, completion notices
+// stages (StageRules::IsOpening: never reported, in the host's baseline or set), and the scene the player is in
+// (SceneHold: a conversation or the player's own scene holds stages back, a scene a friend's stage started here
+// doesn't). Left out: the MQ104/MQ105 repair, completion notices
 // and the type checks (a test says which quests are the story).
 //
 // The model of a quest: the stages it has, which are done, the current one, whether it is running and
 // started here (an objective shown, by any stage but a quiet one, or a moment later), and what its stages'
-// scripts do (start another quest, complete this one, award an achievement). What a stage does to the player comes from StageRules' table by its form ID
+// scripts do (start another quest, complete this one, award an achievement, start or stop a scene with the
+// player in it). What a stage does to the player comes from StageRules' table by its form ID
 // (Fallout4.esm's, load order index 00): moved, made to pay, controls taken and given back.
 
 #include "Protocol.h"
 
+#include "game/SceneHold.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 
@@ -64,11 +67,14 @@ namespace Sim
 		std::uint16_t           current = 0;
 		std::set<std::uint16_t> done;
 		// What its stages' scripts do: start another quest at one of its stages, complete and stop this
-		// one, stop it without completing it, award an achievement.
+		// one, stop it without completing it, award an achievement, start a scene with the player in it
+		// (the scene's form ID and the quest it belongs to) or stop one.
 		std::map<std::uint16_t, std::pair<std::uint32_t, std::uint16_t>> starts;
 		std::set<std::uint16_t>                                          finishes;
 		std::set<std::uint16_t>                                          stops;
 		std::map<std::uint16_t, std::string>                             awards;
+		std::map<std::uint16_t, std::pair<std::uint32_t, std::uint32_t>> startsScene;
+		std::map<std::uint16_t, std::uint32_t>                           stopsScene;
 	};
 
 	// What a save keeps of the quests: the quests, the achievements and whether the player can move.
@@ -148,10 +154,32 @@ namespace Sim
 			if (quest.stops.contains(a_stage)) {
 				quest.running = false;
 			}
+			if (const auto scene = quest.startsScene.find(a_stage); scene != quest.startsScene.end()) {
+				playerScene = scene->second.first;
+				playerSceneQuest = scene->second.second;
+			}
+			if (const auto scene = quest.stopsScene.find(a_stage); scene != quest.stopsScene.end() && scene->second == playerScene) {
+				LeaveScene();
+			}
 			if (const auto start = quest.starts.find(a_stage); start != quest.starts.end()) {
 				Do(start->second.first, start->second.second);
 			}
 		}
+
+		// The player walks into a scene of their own (a forcegreet), or out of the one they are in.
+		void EnterScene(std::uint32_t a_scene, std::uint32_t a_quest)
+		{
+			playerScene = a_scene;
+			playerSceneQuest = a_quest;
+		}
+		void LeaveScene()
+		{
+			playerScene = 0;
+			playerSceneQuest = 0;
+		}
+		[[nodiscard]] std::uint32_t PlayerScene() const { return playerScene; }
+		// The scene the player is in, if a friend's stage started it (QuestSync::SessionScene).
+		[[nodiscard]] std::uint32_t SessionScene() const { return sceneHold.SessionScene(); }
 
 		// What the player is doing, as QuestSync reads it from the game.
 		bool loading = false;   // a loading screen (WorldSync::InWorld false)
@@ -209,7 +237,8 @@ namespace Sim
 				return outbox.Take(now, { a_inSession, a_wanted, story });
 			}
 			if (a_inSession || locked) {
-				busy = talking;
+				// QuestSync::PlayerBusy: a conversation, or the player's own scene (not one a friend's stage started here).
+				busy = sceneHold.Holds({ .talking = talking, .scene = playerScene, .sceneQuestWaiting = playerScene != 0 && waiting.Contains(playerSceneQuest) }, now);
 				combatHold = CombatHold();
 				std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= StageRules::LIVE_FOR; });
 				CheckReleased(a_inSession);
@@ -298,6 +327,7 @@ namespace Sim
 			baseline.clear();
 			baselineQueued = false;
 			story = false;
+			sceneHold.Clear();
 		}
 
 		// Session::SwitchServer: QuestSync::OnServerChanged.
@@ -326,6 +356,8 @@ namespace Sim
 			startHolds.clear();
 			baseline.clear();
 			baselineQueued = false;
+			sceneHold.Clear();
+			LeaveScene();  // the save says what scene the player is in: none, in these tests
 		}
 
 		[[nodiscard]] QuestSave Save() const { return { quests, achievements, controls }; }
@@ -497,6 +529,7 @@ namespace Sim
 				StageLog::Insert(known->second, a_stage);
 			}
 			remoteStageAt[a_id] = now;
+			sceneHold.StageSet(now);  // its script may start a scene with the player in it: the session's
 			++applied;
 		}
 
@@ -611,6 +644,9 @@ namespace Sim
 		std::vector<std::pair<std::uint32_t, Clock::time_point>> showing;  // objectives a stage's script shows a moment later
 		StageLog::Unstarted                                 unstarted;
 		StageLog::Outbox<Packet>                            outbox;
+		SceneHold::Watch                                    sceneHold;
+		std::uint32_t                                       playerScene = 0;       // the scene the player is in (0: none)
+		std::uint32_t                                       playerSceneQuest = 0;  // ... and the quest it belongs to
 		bool                                                busy = false;
 		bool                                                combatHold = false;
 		bool                                                inSession = false;
