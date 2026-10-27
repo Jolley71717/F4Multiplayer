@@ -672,6 +672,36 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kForget);
 }
 
+TEST("spawns: our copy of a friend's frame lent to us is held as it is until the loan is over")
+{
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	theirs.Placed(SPAWN, COPY, T0);
+	FrameFacts lent{ .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f, .lent = true };
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	// Our player in it: never given up to them (it goes back), and not moved after its owner's word.
+	lent.occupied = true;
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	theirs.Moved(SPAWN, At(1010.0f), 1.5f);
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	// Worn far off, out of our sight of where its owner's game had it, or with its 3D gone: still held.
+	lent.copyAt = At(9000.0f, 0x0000AAAA);
+	lent.inView = false;
+	lent.copyLoaded = false;
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0 + SpawnBook::LOAD_WAIT) == Act::kNone);
+	// Its owner's game let it go (they left): still held for the wear.
+	theirs.Gone(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	// Its handle not resolving for a moment (a cell changing under our player): still held. The loan gives it back once
+	// it is gone for good, and its end drops it (Spawns::DropLentCopy).
+	lent.copyThere = false;
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	CHECK(theirs.LocalOf(SPAWN) == COPY);
+}
+
 TEST("spawns: our copy of a friend's frame stands for the one their status says they left parked there")
 {
 	SpawnBook::Theirs       theirs;
