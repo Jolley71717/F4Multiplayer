@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T16:37:08+00:00",
+ "updated": "2026-10-27T19:02:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -637,8 +637,8 @@
    "title": "Knocked clutter ends in different places when friends stand by it",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "",
+   "stage": 2,
+   "note": "Rig: flung cans still end apart; being fixed",
    "pr": 213
   },
   {
@@ -646,8 +646,8 @@
    "title": "A friend's game loaded an older save than expected",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "The rig test found the travel autosave read the wrong setting; being fixed.",
+   "stage": 2,
+   "note": "Rig: the game's save-on-travel setting still isn't read; being fixed",
    "pr": 186,
    "desc": "A player reported that their friend ended up with a save from about ten minutes earlier instead of the latest one. Progress may have been lost, so this is a high priority. We need to know which save was loaded (quick, auto or exit save) and the logs from both games."
   },
