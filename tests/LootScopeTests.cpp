@@ -532,7 +532,7 @@ TEST("loot sync: a take from a chest the friend's game holds without an inventor
 	alice.Wait(f, std::chrono::seconds{ 1 });
 	CHECK(alice.loot.Waiting().empty());
 	CHECK(alice.In(CHEST_3, STEEL) == 0);
-	CHECK(alice.In(CHEST_3, AMMO_38) == 0);
+	CHECK(alice.In(CHEST_3, AMMO_38) == 8);  // her roll's own: Bob took no ammo from it
 	CHECK(alice.In(CHEST_3, PIPE_PISTOL) == 1);
 
 	// A put waits too, ahead of the takes and the emptying after it: going in first it would make the inventory before the
@@ -553,7 +553,7 @@ TEST("loot sync: a take from a chest the friend's game holds without an inventor
 	CHECK(bob.loot.Waiting().empty());
 	CHECK(bob.In(CHEST_4, STEEL) == 0);
 	CHECK(bob.In(CHEST_4, AMMO_38) == 0);  // the put went in, and Alice's take of it took it out again
-	CHECK(bob.In(CHEST_4, CORE) == 0);     // his roll's own, taken by the emptying
+	CHECK(bob.In(CHEST_4, CORE) == 2);  // his roll's own: Alice took no cores from it
 	CHECK(bob.In(CHEST_4, PIPE_PISTOL) == 1);
 
 	// A take the session doesn't share is left out at once, not held.
