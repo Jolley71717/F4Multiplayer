@@ -1,0 +1,686 @@
+{
+ "release": "0.10.0",
+ "updated": "2026-10-27T03:51:46+00:00",
+ "stages": [
+  "Queued",
+  "Looked into",
+  "Built",
+  "Reviewed",
+  "Rig-tested",
+  "Merged",
+  "rc soak",
+  "Shipped"
+ ],
+ "items": [
+  {
+   "id": "0df",
+   "title": "Alternate-start mods work in a session like the Vault 111 start",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release, but not yet tried with a real alternate-start mod; waiting for the long test.",
+   "pr": 176,
+   "desc": "New characters normally play Vault 111 alone and then join, and alternate-start mods were untested with that. A character from an alternate start has the wrong identity until it is named, so it could not reliably host or join. The next release treats such a character like a Vault 111 one: it can host or join once it has a name. We have not been able to try it with a real alternate-start mod yet, so reports are welcome."
+  },
+  {
+   "id": "161b",
+   "title": "Power armor frames duplicate and appear in odd places in Sanctuary",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "Fixed in 0.9.2, with a clean-up for the next release; waiting for the long test before it ships.",
+   "pr": 172,
+   "desc": "On 0.9.1, power armor frames kept duplicating and turning up in random places around Sanctuary. 0.9.2 stopped a load from keeping the copies of friends' frames. The next release also stops a frame moved in workshop mode from being shared as a building, and removes the copies older versions made that way. Extra frames already in your world from 0.9.1 can be removed in the console: click one, then type disable and markfordelete."
+  },
+  {
+   "id": "1ap3",
+   "title": "A friend's helmet or Pip-Boy light should be a beam, not a glow",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 1,
+   "note": "We know why it looks round and have a plan; not built yet.",
+   "desc": "At night your own light is a beam, but a friend's light beside you shows as a round glow around them. We plan to make it a beam that starts at their head and points where they face and look. In power armor it should match the helmet light's cone."
+  },
+  {
+   "id": "2c1b",
+   "title": "See a friend's Pip-Boy and a marker when they are in a menu",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 3,
+   "note": "Built but held up: the Pip-Boy model we hang on the friend's character doesn't show yet, so it stays off by default.",
+   "pr": 173,
+   "blocked": true,
+   "desc": "Players asked to see a friend's Pip-Boy on their wrist, the tapping animation, and a marker above their head. Since 0.9.0 a friend in the Pip-Boy raises their wrist and their name tag says so. We built a Pip-Boy that hangs on the friend's character, off by default behind bMenuBadges, but in testing the model we picked does not appear and we need a different one."
+  },
+  {
+   "id": "2jop",
+   "title": "The host's Dogmeat is invisible to a friend indoors",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release; tested with another companion, not yet with Dogmeat himself.",
+   "pr": 152,
+   "desc": "A player reported on 0.9.1 that the host's Dogmeat could not be seen by the client inside interiors. The fix brings a companion that followed its player into an interior to the friend's game there too. On two real games we tested it with Codsworth standing in for Dogmeat."
+  },
+  {
+   "id": "2r3",
+   "title": "A friend's hand looks empty while they wind up a grenade throw",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 7,
+   "note": "Shown in the friend's hand since 0.9.0; we are still checking it looks right in real play.",
+   "desc": "A cosmetic problem: when a friend wound up a throw, their hand looked empty, though the throw and the explosion were right. 0.9.0 shows the grenade in their hand during the throw, controlled by the setting bGrenadeInHand. It was only tried with a frag grenade, so other throwables still need checking."
+  },
+  {
+   "id": "3lh",
+   "title": "Dogmeat looks like he is squatting on a joiner's screen",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0; we haven't yet seen Dogmeat run in a real game to confirm it.",
+   "desc": "On the joiner's screen the host's Dogmeat squatted along instead of running. His copy was given a walk while the real dog moved at a run's pace. 0.9.0 makes the copy follow the real dog's speed. Walking looked right in testing; we still need to watch him follow a sprinting host."
+  },
+  {
+   "id": "4c0",
+   "title": "'You cannot use this at this time' when entering power armor",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "Fixed in 0.9.0 and again for the next release for the causes we found; the original case was never reproduced.",
+   "pr": 153,
+   "desc": "Some players got 'You cannot use this at this time' when trying to enter a power armor frame. We could not reproduce the exact case, but found two things that cause the message: a frame left leaning, and a seat the game still thought was yours. 0.9.0 handles both, and the next release also stands a leaning frame back up so it can be entered again. It has not been tried in a real game with a leaning frame."
+  },
+  {
+   "id": "4fss",
+   "title": "See a friend raise their Pip-Boy and a marker when in a menu",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "The raised wrist and name tag shipped in 0.9.0; the icon above the head is still off by default.",
+   "desc": "Players asked to see a friend's Pip-Boy, the raise animation, and an icon over their head while they are in a menu. Since 0.9.0 a friend in the Pip-Boy raises their wrist, and their name tag says [Pip-Boy] or [in a menu]. The icon exists but is off by default (bMenuIcons) because it only drew partly. Showing the Pip-Boy itself is tracked separately."
+  },
+  {
+   "id": "5393",
+   "title": "A dedicated server doesn't retry a failed session save",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found and understood; the fix is small but not built yet.",
+   "desc": "The dedicated server saves its session by replacing the session file. On Windows that can fail if another program, such as antivirus, has the file open. The time of day doesn't count as a change, so a failed save is not tried again until something else changes and the saved time can be out of date. We plan to retry a failed save at the next check."
+  },
+  {
+   "id": "57af",
+   "title": "Show how far away a friend is on their compass marker",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Partly done: F10 shows each friend's distance and direction, but not on the marker itself.",
+   "desc": "Players asked for a friend's distance on their compass marker. Text drawn by the mod does not show up on the compass, which is why markers are plain shapes. Since 0.9.0, pressing F10 (iKeyWhere) prints each friend's distance and direction on screen, and pings name what they point at with its distance. We are still looking for a way to put the number on the marker."
+  },
+  {
+   "id": "5ylb",
+   "title": "A legendary enemy in one game is a normal one in another",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Mostly fixed in 0.9.2; an enemy that is already loaded still looks different until it loads again.",
+   "desc": "A player saw a legendary black bloatfly and a legendary ghoul in their game while a friend saw normal ones, because each game rolls its own version of an enemy. Since 0.9.2 the game that runs the enemy shares its roll, and the other games use it the next time the enemy loads. An enemy that is already loaded keeps looking different until it loads again, for example after leaving and coming back."
+  },
+  {
+   "id": "6dko",
+   "title": "Heavily sculpted faces look warped on friends",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release; we couldn't test a face that large, so it still needs confirming.",
+   "pr": 155,
+   "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
+  },
+  {
+   "id": "6o40",
+   "title": "Compare mods lists the HD texture pack as missing",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 5,
+   "note": "Fixed for the next release; waiting for the long test before it ships.",
+   "pr": 151,
+   "desc": "The mod comparison listed DLCUltraHighResolution.esm as missing on a game that has the file. It is a texture pack with no game records, so one player having it and another not makes no difference in a session. The next release leaves it out of the comparison. We tested it on two real games with the pack on only one."
+  },
+  {
+   "id": "7gi3",
+   "title": "Friends' faces look a bit narrower than in their own game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Looked into: the face data arrives complete, so we suspect one head-shaping value that isn't sent. Not fixed yet.",
+   "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
+  },
+  {
+   "id": "8mp",
+   "title": "Give a friend weapons and armor through a chest",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 3,
+   "note": "Built behind the host setting bContainerGifts (off by default) and checked; the test on two real games is still to do.",
+   "pr": 180,
+   "desc": "Players tried dropping items and putting them in containers to give to each other. Since 0.9.0 you can hand items over by dropping them. This work adds weapons and armor through any chest, cabinet or safe: it goes to the first friend who takes it, and the server makes sure it is never in two inventories or lost. It is a host setting, bContainerGifts, off by default."
+  },
+  {
+   "id": "8r6",
+   "title": "Objects you move by hand show up moved for your friend",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 7,
+   "note": "Shipped in 0.9.0; the Junk Jet damage test in both directions is still to do.",
+   "desc": "Players asked that a broom or other loose object they pick up and move be seen moved by their friend. Since 0.9.0, objects you move by hand, drop or throw show up moved for your friend, and things you knock over land in the same place. 0.9.2 added objects knocked about by NPCs and explosions. We still want to test the Junk Jet's damage in both directions."
+  },
+  {
+   "id": "8vy5",
+   "title": "A chest a friend emptied while away still holds items for you",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 7,
+   "note": "Fixed in 0.9.0; we can't find any remaining cause, but haven't confirmed it in a real game.",
+   "desc": "A player reported that containers looted while the friend was in another area were not emptied for them, though loose items were. Each game rolls its own loot, so a friend's take only removed the stacks their copy held. 0.9.0 sends a marker when a container is left bare, and looting done while you are away waits until you come back to that area."
+  },
+  {
+   "id": "9f3p",
+   "title": "Shared storage: one true copy of each home and settlement container",
+   "kind": "feature",
+   "priority": 1,
+   "stage": 5,
+   "note": "Built and tested on two real games, off by default behind bSharedStorage; a few stress cases wait for the long test.",
+   "pr": 179,
+   "desc": "Players asked for items in shared storage to stay in step across games. Until now each game held its own copy of a container, so copies could drift: a friend's take removed that item type from your stash, or a load quietly rolled one copy back. With the host setting bSharedStorage on, the host's game keeps the one true copy of each home and settlement container, and everyone's takes and puts go through it. Only ammo, aid and junk are shared this way; weapons, armor, keys and notes stay per player."
+  },
+  {
+   "id": "af5k",
+   "title": "A friend in power armor slides along without walking",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0 and tested on two real games.",
+   "desc": "A friend in power armor appeared to slide along without a walk cycle, or showed up without their armor at all. The armor's walking animation was not being set up for the friend's character. 0.9.0 sets it up, and in testing both players walked in power armor correctly."
+  },
+  {
+   "id": "b3l8",
+   "title": "Misleading storage messages in the log after shared storage settles",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 2,
+   "note": "Fix written; waiting to be built and reviewed.",
+   "pr": 181,
+   "desc": "While testing shared storage we saw two log messages that read as if items went missing when they did not. Item counts stayed correct throughout. We plan to reword or remove those messages so they don't worry anyone reading the log."
+  },
+  {
+   "id": "blj1",
+   "title": "After dying and reloading, you often can't damage enemies",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "Fixed in 0.9.0 for new saves; the next release also repairs enemies an older save kept as ghosts.",
+   "pr": 154,
+   "desc": "After a player died and reloaded, they often could not hurt enemies. Enemies are made untouchable for a moment during a friend's explosion, and a save written at that moment kept them that way. 0.9.0 stops that from being saved, and the next release repairs enemies an older save kept in that state. We tested the repair on two real games but not yet with a real old save."
+  },
+  {
+   "id": "celo",
+   "title": "The clap emote in power armor slides the view sideways",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 7,
+   "note": "Fixed in 0.9.0: emotes are no longer played in power armor.",
+   "desc": "Pressing the clap emote key (F4 by default) in power armor made everything slide to the left on screen. 0.9.0 does not play emotes in power armor and shows a line saying why."
+  },
+  {
+   "id": "cnj2",
+   "title": "Codsworth's search for Shaun finished for one player, not the other",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Partly fixed in 0.9.2; the report was vague, so other causes can't be ruled out.",
+   "desc": "With the story shared (sStory = Shared), one player finished Codsworth's search for Shaun in Sanctuary while the host had to repeat the talk and the search. 0.9.2 fixes a story-stage ordering problem that matches the report. We can't rule out other causes, so more details are welcome."
+  },
+  {
+   "id": "ctl",
+   "title": "Some settlement pieces built in workshop mode don't show for a friend",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Mostly fixed since 0.9.0, with more for the next release; waiting for the long test.",
+   "pr": 171,
+   "desc": "Some structures built in workshop mode did not show up for the other player. 0.9.0 added power wires, building done before the session started, and moved settlement pieces. The next release adds a host setting, bShareGuestBuilds (off by default), so a guest's earlier building only comes into the host's world when the host turns it on, and a second friend reporting the same piece makes no second copy. Tested on two real games; the three-player case and large settlements are still to check."
+  },
+  {
+   "id": "e0xc",
+   "title": "A bundle of six small polish items",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 1,
+   "note": "Looked into: a collection of small, low-priority leftovers rather than one bug. Not started.",
+   "desc": "These are minor leftovers we noted along the way, not known problems that stop play. They include how Dogmeat walks after a run, a fade timing against one quest's longer fade, how often hotkeys are checked, and F10, the default key for 'where is everyone', also being a Windows system key. We will go through them one by one."
+  },
+  {
+   "id": "e2ae",
+   "title": "Friends' lights stay dark in your game",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "A fix for the next release; not yet tried in a powered camp, so it still needs confirming.",
+   "pr": 156,
+   "desc": "In a four-player camp on 0.9.1, lights one player built did not light up for the others, who needed their own generator and circuit. We suspect the game's own setup of a new object leaves a piece dark after we show it. The next release shows a friend's powered copy once more after its new object has settled for two seconds. We had no powered camp to test with, so it is unconfirmed."
+  },
+  {
+   "id": "e4m9",
+   "title": "A holstered weapon still shows on a friend",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release; the truly stuck case hasn't been tested.",
+   "pr": 159,
+   "desc": "A player reported that a friend's weapon stayed in view after the friend put it away. The next release keeps asking the friend's character to holster it every so often until it does. Normal drawing and holstering worked on two real games."
+  },
+  {
+   "id": "eiir",
+   "title": "Host options to make being downed and revived harder",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 5,
+   "note": "Shipped in 0.9.0; the next release also tells joiners the host's rules. Waiting for the long test.",
+   "pr": 158,
+   "desc": "Players asked for ways to keep side-by-side play from making everyone invincible. 0.9.0 added host settings for how long a downed player bleeds out, how long a revive takes and the health it gives, how many revives per fight or per time window, a cooldown, and whether helpers can revive during a fight. The next release also tells a joiner the host's rules when they join, and a rule change waits until a downed player is back up."
+  },
+  {
+   "id": "eldm",
+   "title": "Looting a corpse isn't shared with friends",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 7,
+   "note": "Fixed in 0.9.0; weapons and armor on corpses stay per player on purpose.",
+   "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
+  },
+  {
+   "id": "g6s7",
+   "title": "Borrow a friend's parked power armor frame",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 2,
+   "note": "Written behind the owner's setting bLendPowerArmor; waiting to be built, reviewed and tried on two real games.",
+   "pr": 182,
+   "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
+  },
+  {
+   "id": "grij",
+   "title": "Friend markers and ping rings are missing on the power armor compass",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 7,
+   "note": "Fixed in 0.9.0; not yet tested in a real game.",
+   "desc": "In power armor the friend's marker and ping rings did not show on the compass, though the text line for pings did. Power armor draws its own compass and the mod only drew on the normal one. 0.9.0 draws on both."
+  },
+  {
+   "id": "h5jc",
+   "title": "One player can't damage wild enemies until the other has",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Partly fixed in 0.9.1 and 0.9.2; mirelurks and legendary or powerful enemies may still be a problem.",
+   "desc": "On 0.9.0 often only one player could hurt an enemy; the others' shots did nothing or healed back. 0.9.1 fixed the main cause, and 0.9.2 fixed a late health update that healed hits back. Reports about mirelurks and powerful or legendary enemies are still open: we think a tougher version of the enemy in one game can absorb the shots. Reports with the game's log are welcome."
+  },
+  {
+   "id": "h8oq",
+   "title": "A downed player is stood back up when downed in clutter",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0: a downed player the game stands back up is put down again.",
+   "desc": "A downed player was sometimes stood up by the game, for example when downed in a pile of objects or around a save. 0.9.0 puts them down again, and they keep waiting for help."
+  },
+  {
+   "id": "hidq",
+   "title": "Can't move right after joining",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
+   "pr": 157,
+   "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
+  },
+  {
+   "id": "ikzy",
+   "title": "Objects a friend built flicker or look blurry",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 5,
+   "note": "Fixed for the next release; waiting for the long test before it ships.",
+   "pr": 160,
+   "desc": "Objects another player placed sometimes vibrated or looked blurry on and off, most likely two copies at the same spot. The next release places a friend's building only once the area is loaded in your game, and removes doubled copies a save holds. On two real games a piece waited while the friend was elsewhere, was placed once on return, and scrapped cleanly."
+  },
+  {
+   "id": "iwoy",
+   "title": "Friends' run, walk and jump animations lag",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "A change for the next release; we can't yet say how much it helps.",
+   "pr": 161,
+   "desc": "A player reported that a friend's run, walk and jump animations lagged. The next release makes a friend who sets off from standing move at the right pace at once, instead of at the slowest rate. In testing the movement measured the same as before, so we can't yet say how much it helps."
+  },
+  {
+   "id": "j9dz",
+   "title": "A downed friend isn't shown downed on your screen",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0 and tested on two real games, in and out of power armor.",
+   "desc": "A friend downed in power armor was not shown downed on the host's screen: the empty frame lay crumpled on the road while the friend's character stood elsewhere. 0.9.0 makes a downed friend's character lie where they are, and you can walk over to revive them."
+  },
+  {
+   "id": "jdnq",
+   "title": "Downed players can crawl toward their friend",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 5,
+   "note": "Built for the next release, experimental and off by default (bDownedCrawl); the crawl itself is untested.",
+   "pr": 165,
+   "desc": "Players asked to be able to crawl while downed, to reach a friend or cover. The next release adds an experimental host setting, bDownedCrawl, off by default. With it on, a downed player crawls slowly with the movement keys; a wall, ledge, railing or lack of ground stops it, and so does being within helping range of a friend. We could only test that the setting reaches every game, not the crawling itself."
+  },
+  {
+   "id": "js2d",
+   "title": "Enemy death animations play late for the client",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release; not yet tried with real shots.",
+   "pr": 170,
+   "desc": "A player reported that enemies' death animations played late on the client's screen. The next release reports an enemy as dead as soon as it starts to fall, so friends see the death without a three second wait. On two real games a kill was counted once and the corpses ended up in the same place."
+  },
+  {
+   "id": "krne",
+   "title": "A friend's grenade or Molotov stays stuck in their hand",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Looked into; the code shows no sure cause, though the 0.9.0 grenade-in-hand display is the likely suspect.",
+   "desc": "A player reported a friend's grenade or Molotov staying in the friend's hand. We think the grenade-in-hand display added in 0.9.0 can leave a grenade showing for up to three seconds when it misses the signal that the grenade was thrown, for example with an animation mod. We could not prove it from the code."
+  },
+  {
+   "id": "ktmu",
+   "title": "The host sees joiners' movement jitter",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0, which made friends' movement roughly two-thirds less uneven.",
+   "desc": "The host saw joiners' movement jitter. The cause was how each movement update was timestamped on the sender's side, not the receiving side. 0.9.0 stamps updates with the game frame they were read in, and a friend now carries on through a late update instead of freezing and leaping. On a local network in testing the unevenness dropped from about 36% to about 13%."
+  },
+  {
+   "id": "l7oc",
+   "title": "Emptying a container clears everyone's own loot in it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Looked into: the rule the report asks for is already in place.",
+   "desc": "Each game rolls its own loot for world containers and corpses. When one player takes every shared item the container is emptied for the others too, and if one item is left they keep theirs. We looked at whether this should change and found it already follows that rule. 0.9.2 also stopped taking the last item from a container in a home from emptying a friend's own stash."
+  },
+  {
+   "id": "l8j",
+   "title": "Show a friend's LooksMenu look on their character",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 5,
+   "note": "Shipped in 0.9.0 but not yet tried with LooksMenu installed; the next release adds a save fix.",
+   "pr": 174,
+   "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
+  },
+  {
+   "id": "lzyx",
+   "title": "Explosions from enemies you can't see hit you (DLC you don't own)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 5,
+   "note": "Fixed for the next release; blasts thrown by enemies aren't tested yet.",
+   "pr": 167,
+   "desc": "If the host has a DLC you don't own, its enemies are not shown in your game, but their explosions could still hit you. The next release names the enemy that set off a blast, so a game without a copy of that enemy doesn't set the blast off. Players' grenades were tested both ways on two real games."
+  },
+  {
+   "id": "mkbe",
+   "title": "Friends appear out of power armor after the game was quit in it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Partly fixed in 0.9.2; not yet tried in a real game.",
+   "desc": "If players quit while in power armor and start a session later, others saw them without a suit until they got out and back in. 0.9.2 fixes the sending side, so a player who loads a save in power armor is seen in it. We have not tried it in a real game, and there may be other reasons a frame is missing on the receiving side."
+  },
+  {
+   "id": "mlno",
+   "title": "The character fires when you click in another window",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0 for alt-tabbing out of the game.",
+   "desc": "With bRunInBackground on, pressing Alt to tab out could make the character shoot at clicks meant for another window, because the game kept reading the mouse and keys while unfocused. 0.9.0 stops the game reading input while its window is not in front. A click that brings the game back to the front is not counted."
+  },
+  {
+   "id": "n22z",
+   "title": "Wiring to a friend's workshop copy damaged the power grid",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0.",
+   "desc": "In workshop mode a friend's copy of a generator or light could be wired to your own, which linked it into your power grid and left a dead link when the copy was later removed. It could also be scrapped for free materials. 0.9.0 stops workshop mode from picking a friend's copies and cleans up any grid link to one. This was tested in both directions."
+  },
+  {
+   "id": "n2gk",
+   "title": "An enemy is hostile in one game, friendly in another, heals when shot",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Partly fixed in 0.9.1 and 0.9.2; an enemy whose side differs between games isn't fully covered.",
+   "desc": "One player's game showed an enemy as a hostile scavenger while the host's showed a friendly settler, and the host's shots healed it. 0.9.2 makes such an enemy the same in every game, and 0.9.1 fixed a heal-back after a takeover. The fixes have not been tried in a real game, and an enemy already in the world whose side differs between games is not covered."
+  },
+  {
+   "id": "ngtk",
+   "title": "A one-off crash a few seconds after starting the game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Seen once and never again; the crash was inside the game's own startup code.",
+   "desc": "On one start the host's game crashed about 12 seconds in, before any join, inside the game's own interface drawing setup. The mod's code was not part of the crash, and it did not happen again across many later starts and a one-hour test. We are watching for a repeat. If you see a crash, a crash log from Buffout 4 or Addictol helps."
+  },
+  {
+   "id": "np3",
+   "title": "Molotov and fire damage moves who can hurt an enemy",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "Fixed in 0.9.0, with a further fix for the next release; waiting for the long test.",
+   "pr": 162,
+   "desc": "A player reported that throwing a Molotov seemed to hand the ability to damage an enemy to the other player. Burn damage was being healed back by the other player's next hit, and the thrower's blast counted twice. 0.9.0 fixed the main cause by having the game that runs the enemy share its health whenever it changes. The next release also stops a thrower's own hit in the same second from counting twice."
+  },
+  {
+   "id": "nz4w",
+   "title": "Friends run at full speed while you're in VATS slow motion",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0 and tested on two real games.",
+   "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
+  },
+  {
+   "id": "ou8y",
+   "title": "The host's gun looks taken apart on a friend's screen",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0; we still want a two-game test to confirm it.",
+   "desc": "On a friend's screen the host's gun had its parts floating apart, like a dismantled weapon. We think this happened when a held gun was swapped for another copy of the same gun with different mods: it was removed and re-added in one frame and rebuilt half-assembled. 0.9.0 removes the old one first and gives the new one a moment later."
+  },
+  {
+   "id": "pcg4",
+   "title": "Doors and gates opened by scripts stay shut for friends (Vault 114)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Mostly fixed in 0.9.0 and 0.9.2; the exact Vault 114 cog door hasn't been tested.",
+   "desc": "Vault 114's cog door opened for the host but stayed shut for a friend, because a script opens it. 0.9.0 shares Vault 114's gear door and gates opened from terminals and card readers, and 0.9.2 shares chained doors, quietly scripted doors, two-state gates and doors NPCs open. These passed two-game tests, but the exact Vault 114 door was not tested and one of its two parts may not be covered. Doors that also start scenes or move NPCs stay each player's own."
+  },
+  {
+   "id": "pga",
+   "title": "Crashes taking from some containers and using terminals",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.7.3 and hardened in 0.9.0; no crash log came with the report, so we can't confirm it.",
+   "desc": "A player reported crashes when picking up from some containers and when using terminals such as the Red Rocket one, with no crash log. This was one bug in builds before 0.7.3 that affected containers with linked objects and terminals alike. We fixed it in 0.7.3 and hardened it further in 0.9.0, and could not make a current build crash. If it still happens, please update and send a crash log from Buffout 4 or Addictol."
+  },
+  {
+   "id": "pn99",
+   "title": "Show friends on the Pip-Boy world and local maps",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": "Built and passing automatic checks, but not yet tried in a real game.",
+   "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
+  },
+  {
+   "id": "r4al",
+   "title": "Tutorial hints off in a session, and menus that pause the game",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 5,
+   "note": "Hints off since 0.9.0; the next release adds a hand-off so enemies don't freeze while someone is in a menu.",
+   "pr": 168,
+   "desc": "Players asked that tutorial hints not pop up in a session and that menus not freeze things for friends. 0.9.0 turns tutorial hints off during a session (bHideTutorials) and they come back afterward. The next release handles one effect of a menu pausing your game: after five seconds in a menu, the enemies your game runs are handed to a friend nearby so they no longer freeze on the friend's screen. A menu that doesn't pause is tracked separately."
+  },
+  {
+   "id": "rw9u",
+   "title": "A unique character spawned by console doesn't show for friends",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Looked into: this is deliberate, so nothing to fix.",
+   "desc": "In a test where both players owned Far Harbor, a Fog Crawler the host placed with a console command appeared for the friend, but Old Longfellow did not. Unique characters spawned this way are skipped on purpose."
+  },
+  {
+   "id": "rzd3",
+   "title": "Share the other factions' radiant quests and settlement attacks",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": "Much of it shipped in 0.9.0; settlement attacks and quests with on-the-spot enemies remain each player's own.",
+   "desc": "Players asked for the other factions' repeatable jobs to be shared. 0.9.0 shares most Minutemen settlement requests, several Brotherhood, Institute and Railroad jobs, and Diamond City wanted posters, so each player gets the same quest and is paid once. The setting bSharedRadiants turns it off. Quests whose enemies or helpers are made on the spot, such as settlement attacks, the Castle's defense, rescues and escorts, still stay each player's own."
+  },
+  {
+   "id": "s2tp",
+   "title": "A friend's Raider chest piece shows with the wrong mods",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 5,
+   "note": "Fixed for the next release; a plain piece and power armor pieces weren't tested.",
+   "pr": 163,
+   "desc": "Armor on friends looked right except the Raider chest piece, which was armored in one game and plain in another because a friend's game rolled its own mods onto it. The next release sends a plain piece as plain. A modded chest piece and a leather swap matched in testing on two real games."
+  },
+  {
+   "id": "t8kx",
+   "title": "Moved objects don't reach a friend who loads the area later",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Fixed for the next release; not yet tried with a late joiner.",
+   "pr": 177,
+   "desc": "A moved object only reached games that had it loaded at that moment, so a friend arriving later saw it in the old place. The next release keeps where moved objects came to rest in the session, so a game that loads the area later puts them there too."
+  },
+  {
+   "id": "tnl5",
+   "title": "Pip-Boy and menus that don't pause the game in a session",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 5,
+   "note": "Not working yet: our first attempt was dropped. Groundwork for the next attempt is in the next release.",
+   "pr": 169,
+   "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
+  },
+  {
+   "id": "ub47",
+   "title": "Mines go off at once for the client, without the warning beep",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Looked at: we won't change it without testing the mine timing in the game first.",
+   "desc": "A player reported that world mines blow up instantly for the client, with no warning beep. A friend's game only hears about the blast at the moment it happens, so it never runs the beep, and delaying it by a guess would make damage differ between games. 0.9.2's trap sharing probably replaced the old behavior behind the report. We want to check in the game what happens when a client walks up to a mine and when a friend sets one off nearby."
+  },
+  {
+   "id": "ul6d",
+   "title": "An extra power armor frame after saving while a companion steps out",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 5,
+   "note": "Fixed for the next release; we couldn't test it with a companion in a frame.",
+   "pr": 164,
+   "desc": "If the game saved in the few seconds a companion was stepping out of a friend's frame copy, loading that save brought the copy back as an ordinary frame, one extra suit. The next release still sends the companion out after that load, so the copy no longer comes back. 0.9.2 lists this as a known issue."
+  },
+  {
+   "id": "v7mg",
+   "title": "A constant clicking noise after someone joins or leaves",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Probably fixed in 0.9.2, which capped three repeating sounds; we never reproduced it, so we can't be sure.",
+   "desc": "A player reported a constant clicking that began when someone joined or left. We could not reproduce it, but found three things that could repeat a sound over and over, and 0.9.2 caps or softens each of them. If it still happens on 0.9.2, the game's log from a moment when it is clicking will help."
+  },
+  {
+   "id": "vxjv",
+   "title": "A friend's shots look aimed at you",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Partly fixed in 0.9.2; we haven't checked the aim while firing in a real game.",
+   "desc": "A player said that when a friend shoots, it looks as if they are shooting at you. 0.9.2 fixed the most likely cause: a friend's character fired real shots at your character. Their shots now follow where they actually aim. We have not checked the aim during firing in both directions."
+  },
+  {
+   "id": "w310",
+   "title": "Gates and objects with several scripts could be judged wrongly",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Already fixed in the code that shipped in 0.9.2.",
+   "desc": "We found that the game stops reading an object's scripts after the first one in one kind of check, so a gate with several scripts could be judged wrongly and traps were missed at random. The mod now handles this when checking gates, workshop objects and traps. Two-game tests of doors and traps passed."
+  },
+  {
+   "id": "wood",
+   "title": "Enemies that heal on every hit can't hurt the client",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "Another fix for the next release; we couldn't reproduce the report, so it still needs confirming.",
+   "pr": 175,
+   "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
+  },
+  {
+   "id": "y7tn",
+   "title": "Picking plants isn't shared with friends",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Fixed in 0.9.0, tested on two real games.",
+   "desc": "A player reported that harvesting plants was not synced. Picking a plant moves nothing into the inventory the usual way, so the mod never saw it. 0.9.0 shares it: a plant a friend picks is picked in your game too, and two players picking the same plant harvest it once."
+  },
+  {
+   "id": "yx7v",
+   "title": "Settlers can't be given jobs during a session",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "Probably fixed in 0.9.2; not yet tried in a real game.",
+   "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
+  },
+  {
+   "id": "zr1r",
+   "title": "World traps shared: mines, tripwires, bear traps, grenade bouquets",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 1,
+   "note": "Shipped in 0.9.2 and tested for most cases; picking up mines and a bear trap closing on a player weren't tested.",
+   "desc": "Players asked for world traps to go off the same way for everyone. Since 0.9.2, mines, tripwires, bear traps and grenade bouquets go off once in every game, including for a friend who arrives later. Picking up a mine and a bear trap closing on a player have not been tested yet."
+  }
+ ]
+}
