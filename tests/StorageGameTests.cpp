@@ -1444,6 +1444,47 @@ TEST("shared storage: undoing and doing again one's own moves counts against one
 	CHECK(refusals[0].reason == Protocol::StorageReason::kClosed);
 }
 
+TEST("shared storage: a settle logs a shortfall only when the chest held less than the undone move called for, a few lines a settle, and never for a move already undone")
+{
+	Fixture f{ Reloads() };
+	f.fake->SetLocal(HOST_PEER);
+	const auto host = f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID));
+	REQUIRE(host);
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	REQUIRE(f.Join(OTHER_PEER, Fixture::MakeHello("Other", OTHER_ID)));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	SettleRaw(f, FRIEND_PEER);
+	SettleRaw(f, OTHER_PEER);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	for (int i = 0; i < 10; ++i) {
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 1 }, MT::kReportContainer));  // #0 to #9
+	}
+	Pace(FRIEND_PEER);
+	Sync(f, FRIEND_PEER);
+	f.fake->Deliver(OTHER_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	f.fake->Deliver(OTHER_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, -10 }, MT::kReportContainer));  // #10: all of it
+	Pace(OTHER_PEER);
+	Sync(f, OTHER_PEER);
+
+	const auto settle = [&](std::uint32_t a_asked, std::vector<std::uint32_t> a_lacking) {
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ a_asked, 11, 0, std::move(a_lacking), {} }));
+		Pace(FRIEND_PEER);
+		Received(f, FRIEND_PEER);
+	};
+	// Their world lacks all ten puts, which the other friend took out: the chest holds none to give back.
+	settle(2, { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
+	CHECK(f.LoggedTimes("than undoing player") == 8);  // the first few get a line each
+	CHECK(f.LoggedTimes("and 2 more of player") == 1);
+	CHECK(f.Logged("only what it held went"));
+
+	// Asked about the same again: every move is undone already, and the chest does nothing for it: no shortfall.
+	settle(3, { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
+	CHECK(f.LoggedTimes("than undoing player") == 8);
+	CHECK(f.LoggedTimes("and 2 more of player") == 1);
+}
+
 TEST("shared storage: a settle that doesn't all fit in one's share makes none of its changes: no take put back without its put taken out")
 {
 	auto options = Options();

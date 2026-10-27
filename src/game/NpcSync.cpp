@@ -31,6 +31,7 @@
 #include "game/StandInRange.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
+#include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
 namespace NpcSync
@@ -241,6 +242,7 @@ namespace NpcSync
 		std::uint32_t                                framesNudged = 0;   // moved in place to where their owner's game has them
 		std::uint32_t                                framesBrought = 0;  // moved there through the console (from an unloaded cell, or far)
 		std::uint32_t                                frameStates = 0;    // states sent for frames we run
+		std::uint32_t                                ghostsCleared = 0;  // copies an older version's workshop sync left in the save, found standing and buried (FrameShare::Ghost)
 
 
 		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game; under a
@@ -1060,10 +1062,27 @@ namespace NpcSync
 			ours.inUse = FrameInUse(a_frame);
 			ours.wornHere = player && Equipment::PowerArmorFrameOf(player).get() == a_frame;
 			ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
+			ours.marked = WorkshopSync::IsCopyMarked(*a_frame);
+			ours.holdsItems = WorkshopSync::HoldsAnything(a_frame);
+			ours.lastUsed = player && player->lastUsedPowerArmor.get().get() == a_frame;
+			ours.owned = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
 			ours.at = SpotOf(a_frame);
 			ours.heading = a_frame->data.angle.z;
 			ours.upright = FrameShare::Upright(a_frame->data.angle.x, a_frame->data.angle.y);
 			return ours;
+		}
+
+		// A copy an older version's workshop sync left in the save (FrameShare::Ghost), found standing by the walk: buried as
+		// every frame copy of ours is (disabled, then deleted, kept out of every save meanwhile, and handed to a load that
+		// comes first), so the save loses it. Tracked first, as a copy placed this run is, so SaveGuard knows it as ours.
+		void ClearGhost(RE::TESObjectREFR* a_frame, const FrameShare::Ours& a_ours)
+		{
+			const auto base = a_frame->GetObjectReference();
+			REX::INFO("NpcSync: frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} is a copy an older version's workshop sync made, empty and nobody's; it goes ({} so far)", a_frame->GetFormID(),
+				base ? base->GetFormID() : 0, a_ours.at.x, a_ours.at.y, a_ours.at.z, a_ours.at.cell ? a_ours.at.cell : a_ours.at.worldspace, ghostsCleared + 1);
+			SaveGuard::Track(a_frame);
+			RemotePlayers::Discard(a_frame->GetHandle(), Clock::now());
+			++ghostsCleared;
 		}
 
 		// The frames standing in the loaded cells, found by a walk of their references now and then: furniture is in no
@@ -1099,7 +1118,8 @@ namespace NpcSync
 		// Scan's part for frames our game made: each one ours to share (FrameShare::SharesMade) goes to the server under a
 		// spawn id, and counts as loaded once granted (kept); one that no longer is (worn, gone, or a stranger's left in a
 		// cell since unloaded) is not, and is let go of, which ends the copies in the other games. Our player's own first,
-		// then the ones we share already, then the ones standing about (FrameShare::MAX_MADE).
+		// then the ones we share already, then the ones standing about (FrameShare::MAX_MADE). One that is a copy an older
+		// version's workshop sync left in the save (FrameShare::Ghost) is cleared instead of shared.
 		void ShareMade(std::unordered_set<std::uint32_t>& a_loaded)
 		{
 			std::erase_if(usedMade, [](std::uint32_t a_local) { return !MadeFrameRef(a_local); });
@@ -1116,7 +1136,12 @@ namespace NpcSync
 					continue;
 				}
 				const auto frame = MadeFrameRef(local);
-				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), hosting, usedMade.contains(local));
+				const auto ours = frame ? FrameOursOf(frame) : FrameShare::Ours{};
+				if (frame && FrameShare::Ghost(ours) && !RemotePlayers::OnItsWayOut(frame)) {
+					ClearGhost(frame, ours);
+					continue;
+				}
+				const bool share = frame && FrameShare::SharesMade(ours, hosting, usedMade.contains(local));
 				if (const auto spawn = Spawns::ShareFrame(frame, share)) {
 					a_loaded.insert(spawn);
 				}
@@ -1977,6 +2002,23 @@ namespace NpcSync
 		return FrameInUse(a_frame);
 	}
 
+	bool OwnMadeFrameAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot, float a_radius)
+	{
+		// The frames the last walk found standing loaded (within FRAME_WALK_INTERVAL): a copy is placed only in view. Asked
+		// every frame for each frame copy: the spot first, and the rest (FrameOursOf walks the actors) only of one near it.
+		for (const auto local : standingMade) {
+			const auto frame = MadeFrameRef(local);
+			const auto base = frame ? frame->GetObjectReference() : nullptr;
+			if (!base || base->GetFormID() != a_base || !RemoteEdits::Within(RemoteEdits::Distance(SpotOf(frame), a_spot), a_radius) || RemotePlayers::OnItsWayOut(frame)) {
+				continue;
+			}
+			if (const auto ours = FrameOursOf(frame); !ours.copy && !FrameShare::Ghost(ours)) {
+				return true;  // a copy of ours, or one on its way out, is never our own
+			}
+		}
+		return false;
+	}
+
 	std::string DescribeMirror(std::uint32_t a_refId)
 	{
 		if (const auto frame = FrameRef(a_refId)) {
@@ -2056,10 +2098,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
 			broughtOver, broughtIn, switchedOn, handOffs, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), commandBench, commanding.size(), settlerTakeovers);
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers);
 	}
 }
