@@ -43,6 +43,8 @@ namespace
 		float                health = 100.0f;
 		bool                 v0810 = false;
 		bool                 v092 = false;  // a report sets a copy as it comes, as up to 0.9.2 (no raise held: Book::Heard)
+		bool                 gainsKept = false;  // a copy's gain of its own is where it stands, as up to 0.9.2 (none taken back: Book::Check)
+		float                takenBack = 0.0f;   // a copy's gains of its own taken back
 		CopyHealth::Book     copy;
 		HealthShare::Book    share;
 		Clock::time_point    now{};
@@ -116,6 +118,12 @@ namespace
 				if (give > 0.0f) {
 					health += give;
 					givenBack += give;
+					copy.Set(RAIDER, health);
+				} else if (give < 0.0f) {
+					if (!gainsKept) {
+						health += give;
+						takenBack -= give;
+					}
 					copy.Set(RAIDER, health);
 				}
 			} else if (!v0810 && share.Due(RAIDER, health / 100.0f, now)) {
@@ -901,4 +909,53 @@ TEST("health share: after a host's reload brings the raider back at its save's h
 	CHECK(Near(f.hostGame.health, 90.0f));
 	CHECK(Near(f.bobGame.health, 90.0f));
 	CHECK(f.bobGame.givenBack == 0.0f);
+}
+
+// A raider rolled legendary in Bob's game and plain in the host's, which runs it (the host's roll is written onto Bob's
+// copy for its next load only: Rolls::Apply). Bob's shot takes it past half health, and his engine's legendary mutation
+// heals his copy to full: a frame after the shot, or once the host's report of the shot is in. The host's raider is no
+// legendary and stays where Bob's shot left it.
+namespace
+{
+	struct MutatedCopy
+	{
+		Fight f;
+
+		MutatedCopy(bool a_gainsKept, bool a_afterReport)
+		{
+			f.bobGame.gainsKept = a_gainsKept;
+			f.bobGame.Shoot(55.0f);
+			if (a_afterReport) {
+				f.Pass();
+			}
+			f.bobGame.health = 100.0f;  // the mutation
+			f.bobGame.Wait(CopyHealth::JUDGE_AFTER + FRAME);
+			f.Pass();
+		}
+	};
+}
+
+TEST("health share: Bob's copy, legendary only in his game, mutates at half health; the heal is taken back, and his shots kill the host's raider")
+{
+	for (const bool afterReport : { false, true }) {
+		MutatedCopy m{ false, afterReport };
+		CHECK(Near(m.f.hostGame.health, 45.0f));  // Bob's shot reached the raider, the heal did not
+		CHECK(Near(m.f.bobGame.health, 45.0f));   // and his copy stands where the raider does
+		CHECK(Near(m.f.bobGame.takenBack, 55.0f));
+		CHECK(m.f.bobGame.givenBack == 0.0f);
+
+		m.f.bobGame.Shoot(45.0f);
+		m.f.Pass();
+		CHECK(m.f.hostGame.health < 0.6f);  // the raider dies of Bob's shots, as many as a plain one takes
+	}
+}
+
+TEST("health share: up to 0.9.2 the mutation's heal stood on Bob's copy: his shot healed it to full while the host's raider stayed at half")
+{
+	MutatedCopy m{ true, true };
+	CHECK(Near(m.f.hostGame.health, 45.0f));
+	CHECK(Near(m.f.bobGame.health, 100.0f));  // "my hit healed it", until the host's raider changed again
+	m.f.bobGame.Shoot(10.0f);
+	m.f.Pass();
+	CHECK(Near(m.f.bobGame.health, 35.0f));  // then it jumped down to the host's
 }
