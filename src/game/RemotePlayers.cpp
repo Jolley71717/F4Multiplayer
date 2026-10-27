@@ -138,7 +138,7 @@ namespace RemotePlayers
 			Clock::time_point    originalCheckAt{};
 			int                  originalChoice = -1;    // the last ArmorFrames::Original logged
 			bool                 originalCounted = false;  // a hide counted for this wear (one hidden again after a load is not a new one)
-			ArmorFrames::UnknownFrame frameUnknown;      // a wear the stand-in goes through with no frame copy, for the log (see Update)
+			ArmorFrames::UnknownFrame frameUnknown;      // a wear whose frame they told is none here: for the log, and for the frame that stands in (see WornFrame)
 			std::optional<Spot>  wornAt;                 // where they were as they got into the pre-placed frame they wear
 			bool                 wornAtWanted = false;   // that spot is taken from their next state
 			bool                 originalMoved = false;  // ours was not where they got in (or moved, or was used) in this wear: left alone
@@ -1024,12 +1024,31 @@ namespace RemotePlayers
 			}
 		}
 
-		// The frame they are in, when they are in power armor and it is a frame here (a terminal is furniture too, but never
-		// a frame).
-		RE::TESFurniture* WornFrame(const RemotePlayer& a_player)
+		// The frame they told they are in, when they are in power armor and it is a frame here (a terminal is furniture too,
+		// but never a frame).
+		RE::TESFurniture* ToldFrame(const RemotePlayer& a_player)
 		{
 			const auto base = a_player.powerArmorOn ? RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame) : nullptr;
 			return Equipment::IsPowerArmorFrame(base) ? base : nullptr;
+		}
+
+		// The frame their stand-in goes into while they are in power armor: the one they told, or, theirs none here (named,
+		// or none named a while), a frame every game has, so that it is never shown out of their suit for want of one
+		// (ArmorFrames::ChooseWornBase). Their frameUnknown is updated each frame (Update) before anything here asks.
+		RE::TESFurniture* WornFrame(const RemotePlayer& a_player)
+		{
+			const auto told = ToldFrame(a_player);
+			const auto standIn = RE::TESForm::GetFormByID<RE::TESFurniture>(ArmorFrames::STAND_IN_FRAME);
+			switch (ArmorFrames::ChooseWornBase(a_player.powerArmorOn, a_player.powerArmorFrame != 0, told != nullptr, a_player.frameUnknown.Overdue(Clock::now()),
+				Equipment::IsPowerArmorFrame(standIn))) {
+			case ArmorFrames::WornBase::kTold:
+				return told;
+			case ArmorFrames::WornBase::kStandIn:
+				return standIn;
+			case ArmorFrames::WornBase::kNone:
+				break;
+			}
+			return nullptr;
 		}
 
 		// Places a copy of a frame in an interior (a_interior) or outside (a_world): for the stand-in to get into, where they
@@ -1229,7 +1248,8 @@ namespace RemotePlayers
 				if (!worn) {
 					a_player.frameActionAt = a_played;  // the copy stands where they got out a while
 				}
-				REX::INFO("RemotePlayers: player {} is {} power armor (frame {:08X})", a_player.id, worn ? "in" : "out of", a_player.powerArmorFrame);
+				REX::INFO("RemotePlayers: player {} is {} power armor (frame {:08X}{})", a_player.id, worn ? "in" : "out of", a_player.powerArmorFrame,
+					worn && base->GetFormID() != a_player.powerArmorFrame ? std::format(", unknown here: a copy of {:08X} stands in", base->GetFormID()) : std::string{});
 			}
 
 			const bool has3D = a_actor->Get3D() != nullptr;
@@ -1571,7 +1591,12 @@ namespace RemotePlayers
 		void LeaveArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			const auto  frame = Equipment::PowerArmorFrameOf(a_actor);
-			const auto  base = frame ? frame->GetObjectReference() : nullptr;
+			// The frame they got out of: theirs when it is a frame here, else the one the stand-in is in. It can be another:
+			// the frame that stood in while theirs was none here (ArmorFrames::STAND_IN_FRAME), or the one kept from their
+			// last wear (ArmorFrames::Hear), with theirs named only once the stand-in was in. A copy of that one left here
+			// stood as a second empty suit beside the copy of theirs placed where their frame stands (UpdateParked).
+			const auto  told = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
+			RE::TESBoundObject* const base = Equipment::IsPowerArmorFrame(told) ? told : frame ? frame->GetObjectReference() : nullptr;
 			const auto  at = a_actor->data.location;
 			const float heading = a_actor->data.angle.z;
 			REX::INFO("RemotePlayers: player {} got out of their power armor; stand-in {:08X} goes with its frame {:08X}, a copy is left where it stood", a_player.id, a_actor->GetFormID(), frame ? frame->GetFormID() : 0);
@@ -3047,11 +3072,12 @@ namespace RemotePlayers
 				}
 			}
 
-			// In power armor with no frame here to place a copy of, for a second (the first status of a wear names none):
-			// the stand-in wears their pieces as they are, and nothing else is logged of it (no "is in power armor").
-			if (remote.frameUnknown.Update(remote.powerArmorOn, WornFrame(remote) != nullptr, now)) {
-				REX::WARN("RemotePlayers: player {} is in power armor, but the frame they told ({:08X}) is {}; their stand-in wears the pieces with no frame copy", remote.id, remote.powerArmorFrame,
-					remote.powerArmorFrame ? "no frame in this game" : "none");
+			// In power armor with no frame of theirs here to place a copy of, for a second (the first status of a wear names
+			// none): from then on their stand-in goes into a copy of a frame every game has (see WornFrame).
+			if (remote.frameUnknown.Update(remote.powerArmorOn, ToldFrame(remote) != nullptr, now)) {
+				const auto standIn = WornFrame(remote);
+				REX::WARN("RemotePlayers: player {} is in power armor, but the frame they told ({:08X}) is {}; their stand-in goes into a copy of {:08X}{}", remote.id, remote.powerArmorFrame,
+					remote.powerArmorFrame ? "no frame in this game" : "none", ArmorFrames::STAND_IN_FRAME, standIn ? "" : ", which is no frame in this game either: it wears their clothes, out of its armor");
 			}
 
 			if (const auto parked = remote.parkedCopy.get(); Adrift(parked.get(), remote.parkedPlacedAt, now)) {
