@@ -536,11 +536,23 @@ namespace MovedObjects
 				NoteBlast(blast.get(), a_now);
 			}
 			// What we saw move that something of ours set going is looked at wherever it has flown, past the scan's radius
-			// (a blast flings a can far): until it rests, or the watch gives up on it (MOVING_GIVE_UP).
-			for (const auto id : knocks.Tracking(MAX_TRACKED)) {
-				if (std::ranges::none_of(found, [&](const auto& a_ref) { return a_ref->GetFormID() == id; })) {
-					if (auto ref = Lookup(id)) {
-						found.push_back(std::move(ref));
+			// (a blast flings a can far): until it rests and is said, or the watch gives up on it (MOVING_GIVE_UP). Asked
+			// for more than MAX_TRACKED: the ones already in the scan's range take places in the list too.
+			{
+				std::unordered_set<std::uint32_t> inRange;
+				for (const auto& ref : found) {
+					inRange.insert(ref->GetFormID());
+				}
+				std::size_t extra = 0;
+				for (const auto id : knocks.Tracking(found.size() + MAX_TRACKED, a_now)) {
+					if (extra >= MAX_TRACKED) {
+						break;
+					}
+					if (!inRange.contains(id)) {
+						if (auto ref = Lookup(id)) {
+							found.push_back(std::move(ref));
+							++extra;
+						}
 					}
 				}
 			}

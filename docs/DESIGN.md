@@ -1404,8 +1404,8 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   A blast flings a can far past its own reach (its radius and 128 units) and past our player's near range in the moments
   between two looks, so a blast reaches an object by where it lay before it moved as well as by where the scan first
   finds it moving, and that claim, made once when it starts moving, is held until it rests. An object something of ours
-  set going that is still moving is looked at wherever it has flown, past the 1500 units (`KnockWatch::Tracking`, at
-  most 64 a scan), until it rests or the 15 s are up.
+  set going that is still moving (or at rest and owed, or in its follow-on) is looked at wherever it has flown, past the 1500 units (`KnockWatch::Tracking`, at
+  most 64 beyond the scan's own range a scan), until it is said or its 15 s, owed or follow-on time is up.
 - A friend standing by it changes nothing: each game reports what its own player, NPCs and blasts moved and what rolled
   on from its own rests, and a rest two games claim (both players stood by the can one kicked; a friend stood in the
   pile a grenade threw about) is settled by the server: the first rest holds for 3 s (`ObjectMovers::SETTLED`), a second

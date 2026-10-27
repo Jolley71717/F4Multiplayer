@@ -1855,7 +1855,7 @@ TEST("blasts: a can flung far past the blast's reach is still the blast's, by wh
 	const std::array moved{ Seen{ .refId = TIRE, .pose = At(flung) } };
 	CHECK(watch.Scan(moved, t += 250ms, &book).empty());
 	CHECK(watch.Moving() == 1);
-	CHECK(watch.Tracking(8) == std::vector<std::uint32_t>{ TIRE });
+	CHECK(watch.Tracking(8, t) == std::vector<std::uint32_t>{ TIRE });
 	// Still rolling on a while, then at rest: said once, where it stopped.
 	const std::array rolling{ Seen{ .refId = TIRE, .pose = At({ 640, 30, 0 }) } };
 	CHECK(watch.Scan(rolling, t += 250ms, &book).empty());
@@ -1868,7 +1868,8 @@ TEST("blasts: a can flung far past the blast's reach is still the blast's, by wh
 		}
 	}
 	CHECK(said == 1);
-	CHECK(watch.Tracking(8).empty());
+	CHECK(watch.Tracking(8, t) == std::vector<std::uint32_t>{ TIRE });  // at rest, said: still looked at while it may roll on
+	CHECK(watch.Tracking(8, t + ObjectShare::FOLLOW_ON + 1s).empty());
 }
 
 TEST("blasts: a can a friend's blast flung far past its reach is theirs by where it lay, and is not reported")
@@ -1882,7 +1883,7 @@ TEST("blasts: a can a friend's blast flung far past its reach is theirs by where
 	// Our player stands by its place as it flies past: by us, but their blast threw it.
 	const std::array moved{ Seen{ .refId = TIRE, .pose = At({ 600, 0, 0 }), .byUs = true } };
 	CHECK(watch.Scan(moved, t += 250ms, &book).empty());
-	CHECK(watch.Tracking(8).empty());
+	CHECK(watch.Tracking(8, t).empty());
 	const std::array stopped{ Seen{ .refId = TIRE, .pose = At({ 700, 60, 0 }) } };
 	for (int i = 0; i < 8; ++i) {
 		CHECK(watch.Scan(stopped, t += 250ms, &book).empty());
@@ -1900,13 +1901,42 @@ TEST("moved objects knocks: tracking lists what is moving and ours, at most the 
 		moved.push_back({ .refId = 0x00330000 + i, .pose = At({ i * 50.0f, 90, 0 }), .byUs = i != 4 });
 	}
 	watch.Scan(still, t += 250ms);
-	CHECK(watch.Tracking(8).empty());
+	CHECK(watch.Tracking(8, t).empty());
 	watch.Scan(moved, t += 250ms);
-	CHECK(watch.Tracking(8).size() == 4);  // the fifth is not ours
-	CHECK(watch.Tracking(2).size() == 2);
+	CHECK(watch.Tracking(8, t).size() == 4);  // the fifth is not ours
+	CHECK(watch.Tracking(2, t).size() == 2);
 	for (auto& m : moved) {
 		m.busy = true;
 	}
 	watch.Scan(moved, t += 250ms);
-	CHECK(watch.Tracking(8).empty());
+	CHECK(watch.Tracking(8, t).empty());
+}
+
+TEST("blasts: cans flung far past the scan, more than the burst, are tracked while they wait for the budget, and said where they lie")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	constexpr std::uint32_t COUNT = 12;  // more than the burst of 8, fewer than the cap
+	std::vector<Seen>       still, flung;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		still.push_back({ .refId = 0x00310000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
+		flung.push_back({ .refId = 0x00310000 + i, .pose = At({ i * 10.0f, 900, 0 }) });
+	}
+	watch.Scan(still, t);
+	book.Note(1, { 60, 0, 0 }, 600, BlastRole::kOurs, t);
+	watch.Scan(flung, t += 250ms, &book);
+	CHECK(watch.Tracking(64, t).size() == COUNT);
+	std::size_t said = 0;
+	for (int i = 0; i < 40; ++i) {
+		said += watch.Scan(flung, t += 250ms, &book).size();
+		if (said > 0 && said < COUNT) {
+			CHECK(watch.Tracking(64, t).size() == COUNT);  // said ones may roll on, the rest wait for the budget: all still looked at
+		}
+	}
+	CHECK(said == COUNT);
+	t += ObjectShare::FOLLOW_ON + 1s;
+	watch.Scan(flung, t, &book);
+	CHECK(watch.Tracking(64, t).empty());
 }

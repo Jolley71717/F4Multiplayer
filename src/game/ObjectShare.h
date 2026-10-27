@@ -895,17 +895,20 @@ namespace ObjectShare
 			w.follows = 0;
 		}
 
-		// The objects moving that are ours so far (our player, an NPC of ours or a blast of ours set them going, no friend's
-		// blast did), at most a_max: what the scan looks at wherever they fly, past its own radius round our player, until
-		// each rests or Scan gives up on it (MOVING_GIVE_UP), so how far one is flung does not end the watch on it.
-		[[nodiscard]] std::vector<std::uint32_t> Tracking(std::size_t a_max) const
+		// The objects of ours the scan has not finished with, at most a_max: moving and ours so far (our player, an NPC of
+		// ours or a blast of ours set them going, no friend's blast did); at rest and owed (the blast's budget had no room
+		// yet); at rest within the follow-on of a rest of ours (it may roll on). What the scan looks at wherever they lie,
+		// past its own radius round our player, until each is said or Scan gives up on it (MOVING_GIVE_UP, owedUntil,
+		// followUntil), so how far one is flung does not end the watch on it.
+		[[nodiscard]] std::vector<std::uint32_t> Tracking(std::size_t a_max, Clock::time_point a_now) const
 		{
 			std::vector<std::uint32_t> out;
 			for (const auto& [ref, w] : watched) {
 				if (out.size() >= a_max) {
 					break;
 				}
-				if (w.moving && !w.theirs && (w.byUs || w.byNpc || w.blast != 0)) {
+				const bool ours = w.moving ? !w.theirs && (w.byUs || w.byNpc || w.blast != 0) : (w.owed && a_now < w.owedUntil) || a_now < w.followUntil;
+				if (ours) {
 					out.push_back(ref);
 				}
 			}
