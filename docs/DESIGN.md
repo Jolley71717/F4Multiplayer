@@ -636,6 +636,9 @@ for all of that NPC's changes together (at most 4096 changes wait; when full, on
 NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). A chest
 waits too while this game holds it in no cell at all: one of a place we left lately stays in memory that
 way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go in when we come back. A
+take waits too while this game holds the chest in a cell but hasn't made its inventory yet (a place not
+loaded, or still loading): it would find nothing to take, and the roll made as the place loads would still
+hold what the friend took. A put goes in at once, as before. A
 change to a chest our player has open goes in at once: the container menu shows the new contents, and
 taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones

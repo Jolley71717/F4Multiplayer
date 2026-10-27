@@ -666,6 +666,13 @@ namespace LootSync
 				}
 				return Applied::kDone;
 			}
+			if (keeper == StorageView::Keeper::kNone && direction == LootScope::Direction::kTake && !a_world.Stocked(a_change.container)) {
+				// Our game holds the holder in a cell but hasn't made its inventory yet (a chest of a place we have not loaded,
+				// kept in memory, or one whose place is still loading): removeitem would find nothing to take now, and the roll
+				// the game makes as the place loads would still hold what the friend took. It waits for that, as the emptying
+				// after it does (TryEmpty), and goes in, in order, once the inventory is there. A put goes in at once, as before.
+				return Applied::kNotLoaded;
+			}
 			const auto before = CountOf(a_change.container, a_change.item, a_world);
 			if (keeper == StorageView::Keeper::kUs && direction == LootScope::Direction::kTake && before < -static_cast<std::int64_t>(a_change.count)) {
 				// Our storage is the true copy: a friend took more than it holds (our world was reloaded since we listed it).
