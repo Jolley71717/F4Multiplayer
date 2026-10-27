@@ -608,7 +608,7 @@ void Server::Run()
 	// the time of day alone is never a change, so a save the host's game asked for would otherwise be lost.
 	SaveRetry  saveRetry{ options.saveInterval };
 	const auto touched = [&] { ++revision; };
-	const auto saveSession = [&] {
+	const auto saveSession = [&](bool a_stopping = false) {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
 			return true;
 		}
@@ -645,7 +645,7 @@ void Server::Run()
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
-			if (saveRetry.Failed(Clock::now())) {
+			if (saveRetry.Failed(Clock::now()) && !a_stopping) {  // (stopping says its own line)
 				log(std::format("server: could not save the session to {}; trying again until it works", sessionPath.filename().string()));
 			}
 			return false;  // tried again once the wait is over
@@ -3666,7 +3666,7 @@ void Server::Run()
 		}
 	}
 	// One last try, whatever the wait: the file may be free again by now.
-	if (!saveSession()) {
+	if (!saveSession(true)) {
 		log("server: could not save the session when the server stopped; the last save that worked is what it keeps");
 	}
 

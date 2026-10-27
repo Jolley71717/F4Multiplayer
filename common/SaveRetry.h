@@ -22,7 +22,7 @@ public:
 
 	explicit SaveRetry(std::chrono::milliseconds a_base) :
 		base((std::max)(a_base, std::chrono::milliseconds{ 1 })),
-		cap((std::clamp)(base * 8, base, kLongestWait))
+		cap((std::max)(base, (std::min)(base * 8, kLongestWait)))
 	{}
 
 	// A save failed. True for the first of a streak, which is the one to log.

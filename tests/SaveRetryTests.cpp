@@ -78,3 +78,14 @@ TEST("save retry: a zero interval still waits and still never overflows")
 	}
 	CHECK(retry.Wait() == 8ms);
 }
+
+TEST("save retry: an interval longer than the longest wait is waited as it is, not cut short")
+{
+	SaveRetry retry{ 120s };
+	retry.Failed(T0);
+	CHECK(retry.Wait() == 120s);
+	retry.Failed(T0);
+	CHECK(retry.Wait() == 120s);
+	CHECK(!retry.Due(T0 + 119s));
+	CHECK(retry.Due(T0 + 120s));
+}

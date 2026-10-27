@@ -406,7 +406,9 @@ namespace SessionFile
 		{
 			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
 			if (!out) {
-				return discard();
+				// Not opened, so not touched: a whole temporary file an earlier try left (the new save, when the rename
+				// onto the session file failed) is still what Recover reads, and a program holding it is no reason to delete it.
+				return false;
 			}
 			out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 			out.close();  // the last bytes are written here: a full disk shows now

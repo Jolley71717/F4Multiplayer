@@ -533,6 +533,22 @@ TEST("session life: a session file that can't be written when the server stops i
 	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
 }
 
+TEST("session life: a session file that still can't be written when the server stops is said")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 60s;
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	f.fake->Deliver(1, Kill(RAIDER));
+	Sync(f, 1);
+	std::filesystem::remove(file.path);
+	std::filesystem::create_directory(file.path);  // shut for good
+	f.server.Stop();
+	CHECK(f.Logged("could not save the session when the server stopped"));
+	CHECK(f.LoggedCount("could not save the session to") == 0);  // the stop's own line, not a streak's
+}
+
 // ---- a session file that goes wrong on disk ---------------------------------------------------------
 
 namespace
