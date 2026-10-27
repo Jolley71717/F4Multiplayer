@@ -1,10 +1,15 @@
 #include "game/SaveGuard.h"
+#include "game/DeferredDelete.h"
 #include "game/Equipment.h"
+#include "game/FrameLeftovers.h"
 #include "game/Hud.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveStrays.h"
+#include "game/Spawns.h"
 #include "Text.h"
+
+#include <cstring>
 
 namespace SaveGuard
 {
@@ -225,6 +230,12 @@ namespace SaveGuard
 			return false;
 		}
 
+		// Disabled frames made at runtime that the last load brought, until each is judged (see FrameLeftovers).
+		FrameLeftovers::Watch leftovers;
+		std::uint32_t         leftoversFound = 0;    // looked at after loads
+		std::uint32_t         leftoversCleared = 0;  // of those, nobody's: buried as every copy of ours is
+		std::uint32_t         leftoversKept = 0;     // of those, someone's, or no longer the same form: left to the game
+
 		// Where a held copy stands (see HeldCopy::Spot).
 		HeldCopy::Spot SpotOf(const RE::TESObjectREFR* a_ref)
 		{
@@ -277,6 +288,155 @@ namespace SaveGuard
 				remains.holdsItems = HoldsItems(ref);
 			}
 			return remains;
+		}
+
+		// The reference's record flag (as in HavokGuard): the engine sets it on a frame it promotes as an actor gets in.
+		constexpr std::uint32_t PERSISTENT_FLAG = 1u << 10;
+
+		// Whether a frame never looked into would be filled from its base's container (a loot frame's pieces) the first time
+		// its inventory is read: one that has no inventory of its own yet holds what its base holds.
+		bool BaseFills(RE::TESBoundObject* a_base)
+		{
+			const auto furniture = a_base ? a_base->As<RE::TESFurniture>() : nullptr;
+			const auto container = furniture ? furniture->GetContainer() : nullptr;
+			if (!container) {
+				return false;
+			}
+			bool any = false;
+			container->ForEachContainerObject([&](RE::ContainerObject& a_object) {
+				any = a_object.obj != nullptr;
+				return !any;
+			});
+			return any;
+		}
+
+		// Reads a_size bytes at a_address into a_out, guarded: the address may be anything.
+		bool ReadGuarded(std::uintptr_t a_address, void* a_out, std::size_t a_size)
+		{
+			__try {
+				std::memcpy(a_out, reinterpret_cast<const void*>(a_address), a_size);
+				return true;
+			} __except (1) {
+				return false;
+			}
+		}
+
+		// Where the ownership extra data holds its owner (right after BSExtraData's header; CommonLibF4 has no type for it),
+		// and where a form holds its id (TESForm::formID).
+		constexpr std::uintptr_t OWNERSHIP_OWNER = 0x18;
+		constexpr std::uintptr_t FORM_ID = 0x14;
+		static_assert(sizeof(RE::BSExtraData) == OWNERSHIP_OWNER);
+
+		// The form ID of the owner a reference's ownership extra data names, when that is a form in our game now; none when
+		// it has none, names none, or cannot be read. Every read is guarded, and what it reads is only taken when the forms'
+		// map has that very form under that id: an owner the load freed (a stand-in's face copy), or a wrong guess at the
+		// layout, never names a live form, and a frame whose owner is not known is someone's (FrameLeftovers::Owned).
+		std::optional<std::uint32_t> OwnerIdOf(const RE::TESObjectREFR* a_ref)
+		{
+			const auto extra = a_ref->extraList ? a_ref->extraList->GetByType(RE::EXTRA_DATA_TYPE::kOwnership) : nullptr;
+			const void* owner = nullptr;
+			if (!extra || !ReadGuarded(reinterpret_cast<std::uintptr_t>(extra) + OWNERSHIP_OWNER, &owner, sizeof(owner)) || !owner) {
+				return std::nullopt;
+			}
+			std::uint32_t id = 0;
+			if (!ReadGuarded(reinterpret_cast<std::uintptr_t>(owner) + FORM_ID, &id, sizeof(id)) || id == 0) {
+				return std::nullopt;
+			}
+			return static_cast<const void*>(RE::TESForm::GetFormByID(id)) == owner ? std::optional{ id } : std::nullopt;
+		}
+
+		// A disabled frame made at runtime, as FrameLeftovers judges it.
+		FrameLeftovers::Facts LeftoverFactsOf(RE::TESObjectREFR* a_ref)
+		{
+			FrameLeftovers::Facts facts;
+			const auto            base = a_ref->GetObjectReference();
+			facts.frame = Equipment::IsPowerArmorFrame(base);
+			facts.created = a_ref->IsCreated();
+			facts.disabled = a_ref->IsDisabled();
+			facts.deleted = a_ref->IsDeleted();
+			facts.persistent = (a_ref->GetFormFlags() & PERSISTENT_FLAG) != 0;
+			facts.holdsItems = a_ref->inventoryList ? HoldsItems(a_ref) : BaseFills(base);
+			const auto extra = a_ref->extraList.get();
+			facts.quest = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+			facts.linked = extra && (extra->HasType(RE::EXTRA_DATA_TYPE::kLinkedRef) || extra->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent));
+			facts.worn = Worn(a_ref);
+			// One lingering from before the load is provably our old copy, its ownership the one it had then (the stand-in's,
+			// whose base the load may have freed: never read through). Any other's owner is read with care (OwnerIdOf).
+			const bool hasOwner = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
+			if (hasOwner && !book.IsLingering(a_ref->GetFormID(), base ? base->GetFormID() : 0)) {
+				facts.owned = FrameLeftovers::Owned(hasOwner, OwnerIdOf(a_ref), RemotePlayers::IsStandInBase);
+			}
+			// facts.lent: a frame lent to or by a friend (FrameLoans) is disabled only while someone wears it (Worn); set from
+			// FrameLoans once it is on main.
+			facts.session = Placed(a_ref) || RemotePlayers::OnItsWayOut(a_ref) || Spawns::CopyIdOf(a_ref->GetFormID()) != 0;
+			return facts;
+		}
+
+		// Right after a load: every disabled frame made at runtime is watched, to be judged a moment later (JudgeLeftovers).
+		// Picked by id under the forms' lock, as Sweep picks; whether its base is a frame is read once the lock is let go.
+		void FindLeftovers()
+		{
+			leftovers.Clear();
+			std::vector<std::uint32_t> off;
+			{
+				const auto& [map, lock] = RE::TESForm::GetAllForms();
+				const RE::BSAutoReadLock l{ lock };
+				if (!map) {
+					return;
+				}
+				for (const auto& [id, form] : *map) {
+					if (SaveStrays::IsCreatedId(id) && form) {
+						if (const auto ref = form->As<RE::TESObjectREFR>(); ref && ref->IsDisabled() && !ref->IsDeleted()) {
+							off.push_back(id);
+						}
+					}
+				}
+			}
+			const auto now = Clock::now();
+			for (const auto id : off) {
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+				const auto base = ref ? ref->GetObjectReference() : nullptr;
+				if (base && Equipment::IsPowerArmorFrame(base)) {
+					leftovers.Add(id, base->GetFormID(), ref, now);
+				}
+			}
+			if (leftovers.Size() != 0) {
+				REX::INFO("SaveGuard: the load brought {} disabled frame(s) made at runtime; each is looked at in {} s", leftovers.Size(), FrameLeftovers::LOOK_AGAIN.count());
+			}
+		}
+
+		// The disabled frames found after the load, once they have stood so a while: one that is provably nobody's (a copy of
+		// ours a save kept switched off) goes as every copy of ours goes, deleted and kept out of every save from then on.
+		void JudgeLeftovers(Clock::time_point a_now)
+		{
+			if (leftovers.Size() == 0) {
+				return;
+			}
+			for (const auto& found : leftovers.TakeDue(a_now, Hud::LoadingScreenUp())) {
+				++leftoversFound;
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(found.id);
+				const auto base = ref ? ref->GetObjectReference() : nullptr;
+				if (!FrameLeftovers::Same(found, ref, base ? base->GetFormID() : 0)) {
+					++leftoversKept;
+					continue;
+				}
+				const auto facts = LeftoverFactsOf(ref);
+				if (!FrameLeftovers::Leftover(facts)) {
+					++leftoversKept;
+					REX::INFO("SaveGuard: disabled frame {:08X} (base {:08X}) is left as it is (deleted={} persistent={} holds={} quest={} linked={} worn={} owned={} session={})", found.id, found.base, facts.deleted,
+						facts.persistent, facts.holdsItems, facts.quest, facts.linked, facts.worn, facts.owned, facts.session);
+					continue;
+				}
+				++leftoversCleared;
+				const auto  cell = ref->GetParentCell();
+				const auto& at = ref->data.location;
+				REX::INFO("SaveGuard: disabled frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} is a frame copy a save kept switched off, empty and nobody's; it goes ({} so far)", found.id, found.base, at.x,
+					at.y, at.z, cell ? cell->GetFormID() : 0, leftoversCleared);
+				// Ours from now on, as a copy placed this run is, so no save keeps it and a load that comes first frees it.
+				// Disabled long since, so no 3D of it is loading: the graveyard deletes it a second from now.
+				Track(ref);
+				RemotePlayers::Discard(ref->GetHandle(), a_now - DeferredDelete::MAX_WAIT);
+			}
 		}
 
 		std::string_view KindOf(const SaveStrays::Remains& a_remains)
@@ -629,6 +789,7 @@ namespace SaveGuard
 	{
 		const auto now = Clock::now();
 		LogRefusals(now);
+		JudgeLeftovers(now);
 		if ((book.ForgottenCount() == 0 && book.LingeringCount() == 0) || now < forgottenCheckAt) {
 			return;
 		}
@@ -773,6 +934,8 @@ namespace SaveGuard
 			++oldSaveNotices;
 			Hud::Notify(Text::Get("save.old_leftover"));
 		}
+		// After book.AfterLoad has switched off the lingering ones (Lingers): they are among the frames it finds.
+		FindLeftovers();
 		straysLoaded += static_cast<std::uint32_t>(strays.size());
 		return static_cast<std::uint32_t>(strays.size());
 	}
@@ -781,6 +944,7 @@ namespace SaveGuard
 	{
 		unpromoted.Clear();
 		broughtBack.clear();
+		leftovers.Clear();
 		book.AfterLoad({}, StandIn, Lingers);  // what was placed before it is gone, as after a load (or on its way out: Lingers)
 	}
 
@@ -819,8 +983,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={} frameLeftovers={}/{} leftoversKept={} leftoversWatched={}",
 			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), turnedOff, leftToLoad, recordsGiven, releasedAtLoad, basesKept, broughtBack.size(), broughtBackHanded, oldSaveNotices, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
-			unpromoted.Refused());
+			unpromoted.Refused(), leftoversCleared, leftoversFound, leftoversKept, leftovers.Size());
 	}
 }
