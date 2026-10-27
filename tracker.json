@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T11:57:19+00:00",
+ "updated": "2026-10-27T13:03:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -117,8 +117,8 @@
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "The rig test found the chest still doesn't redraw; being fixed.",
+   "stage": 3,
+   "note": "The chest redraw is fixed a second way after the rig test; reviewed.",
    "pr": 202
   },
   {
@@ -251,11 +251,12 @@
   },
   {
    "id": "b5ii",
-   "title": "After going down while sneaking and being helped up, the sneak key stops working until a restart",
+   "title": "After being helped up from going down while sneaking, the sneak key stops working",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Likely cause found and fixed; reviewed; needs a real game to confirm.",
+   "pr": 210
   },
   {
    "id": "blj1",
@@ -637,11 +638,12 @@
   },
   {
    "id": "rfcp",
-   "title": "Disabled leftover power armor frame copies pile up at one spot",
+   "title": "Leftover power armor frame copies pile up at one spot",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Two ways copies were left behind are fixed, and old ones are cleaned up on load; reviewed.",
+   "pr": 209
   },
   {
    "id": "rg6a",
