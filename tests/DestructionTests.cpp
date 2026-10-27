@@ -488,3 +488,20 @@ TEST("server destruction: past a generous budget of stage explosions a stage is 
 	CHECK(exploding >= 64);
 	CHECK(exploding <= 66);  // what refilled while the test ran
 }
+
+TEST("destruction: a deleted reference is read when its own stage took it away, destroyed or not")
+{
+	// An explosive barrel's last stage takes it away and counts it destroyed; a gas canister's may only take it away.
+	const std::vector<Stage> canister{ { 50, DestructionRules::STAGE_CAP_DAMAGE, 0, false }, { 0, DestructionRules::STAGE_DISABLE, 0x00001234, false } };
+	CHECK(DestructionRules::TakenAway(BARREL, 1));
+	CHECK(!DestructionRules::TakenAway(BARREL, 0));  // not yet passed
+	CHECK(!DestructionRules::TakenAway(canister, 1));  // damaged, still there
+	CHECK(DestructionRules::TakenAway(canister, 2));
+	CHECK(DestructionRules::TakenAway(canister, 99));  // more than it has: all of them
+	CHECK(!DestructionRules::TakenAway({}, 1));
+	CHECK(DestructionRules::DeletedByDestruction(canister, DestructionRules::Passed(canister, 0.0f, 5), false));
+	CHECK(DestructionRules::DeletedByDestruction(BARREL, 1, true));
+	CHECK(!DestructionRules::DeletedByDestruction(canister, 0, false));  // a script's delete, a picked-up item
+	CHECK(!DestructionRules::DeletedByDestruction(canister, DestructionRules::Passed(canister, 2.0f, 5), false));  // only damaged
+	CHECK(DestructionRules::DeletedByDestruction(CAR, 0, true));
+}

@@ -1573,7 +1573,12 @@ before the first whose percent is below the object's.
   isn't shared. A deleted reference is left out, but for one the engine deleted as it destroyed it: an explosive
   barrel's last stage disables it and marks it deleted and destroyed at once (seen on the rig), so leaving out every
   deleted reference lost the very stage to report, and the shooter's explosion watch reported its blast as a plain
-  explosion.
+  explosion. A deleted reference is also read when a stage it passed takes it away
+  (`DestructionRules::DeletedByDestruction`), should the engine not mark that one destroyed; in Fallout4.esm only a
+  trap and a hatch have such a stage. The gas canister (a MISC, "GasCanister") is not one of them: its explosion stage is
+  flagged cap damage, destroy and ignore external damage, at 15% of 40 health, like a car's, so why it is not shared is
+  open. A hit on something not shared logs why and the base's form type and name (`hit on ... is not shared: ...`, once
+  for each base and reason, a hundred at most; `destruct probe <ref>` says it too).
 - The server keeps the lowest health of each and destroyed for good (a wreck is never mended), relays only news (a
   report another game's already took further is dropped), and saves the table with the session (layout 34). A report
   names where its object stands (its cell or worldspace and position; a relay and the session file don't), and is
