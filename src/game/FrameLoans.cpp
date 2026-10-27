@@ -714,7 +714,8 @@ namespace FrameLoans
 				backs.push_back({ .local = loan.local, .kit = loan.kit, .items = a_return.items, .since = Clock::now() });
 				REX::INFO("FrameLoans: our frame {:08X} has no inventory here now; what came back is put on it once it has", loan.local);
 			}
-			if (frame && FrameLoan::ChoosePlace(a_return) == FrameLoan::Place::kMove) {
+			// Queued with no frame here too (freed with its cell while our player was away): moved once it is loaded again.
+			if (FrameLoan::ChoosePlace(a_return) == FrameLoan::Place::kMove) {
 				if (moves.size() >= MAX_MOVES) {
 					moves.erase(moves.begin());
 				}
@@ -1162,8 +1163,11 @@ namespace FrameLoans
 				return true;
 			}
 			const auto frame = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_move.local);
-			if (!frame || !NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
-				return !frame;
+			if (!frame) {
+				return false;  // unloaded with its cell: tried again once it is back (until MOVE_LIMIT)
+			}
+			if (!NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
+				return false;
 			}
 			++movedBack;
 			return true;
