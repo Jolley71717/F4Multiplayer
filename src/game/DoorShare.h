@@ -258,6 +258,14 @@ namespace DoorShare
 		return a_watch.near && !a_watch.paced ? Look::kSend : Look::kHold;
 	}
 
+	// An entry with a change not yet sent outlives the door's 3D (its cell unloaded, a reset): its last-sent state is still
+	// the old baseline, so when the door is back the change reads as one and goes when we are near, or reads as gone
+	// back and clears. Forgotten, the door's unlocked state would be taken as a fresh baseline and never reported.
+	constexpr bool KeptWhenGone(bool a_held)
+	{
+		return a_held;
+	}
+
 	// What our watcher takes as already said of a reference once a friend's state of it is taken (OfferRefState), so
 	// it isn't sent back: their word where they said something, ours (what we last said, or what it reads) where they
 	// didn't, and no open state where we read none (a door with a script on it in our game, from a plugin the friend

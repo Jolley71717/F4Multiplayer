@@ -489,6 +489,20 @@ TEST("door share: a look at a watched door: a polled door's first read is its ba
 	static_assert(SharedGates::REACH - SharedGates::REPORT_REACH >= 1500.0f - DoorShare::REPORT_REACH);
 }
 
+TEST("door share: a change held while far outlives the door's cell")
+{
+	using DoorShare::Look;
+	using DoorShare::OnLook;
+	// A quest unlocks a door across a long interior: read while far, it is held.
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = false }) == Look::kHold);
+	// The door's 3D goes (its cell unloads) before we come near: the entry stays, its last-sent state still the old one.
+	CHECK(DoorShare::KeptWhenGone(true));
+	// The door is back and we are near: the same look now reads as the change and sends it.
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = true }) == Look::kSend);
+	// An entry with nothing held is forgotten with the door, as before.
+	CHECK(!DoorShare::KeptWhenGone(false));
+}
+
 TEST("door share: a plain door a script unlocks and opens in the host's game does the same for the friend once the host is near it")
 {
 	Fixture f;

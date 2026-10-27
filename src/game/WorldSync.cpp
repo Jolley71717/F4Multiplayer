@@ -1844,7 +1844,7 @@ namespace WorldSync
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto forget = [&] {
 				loadedDoors.erase(a_id);
-				if (const auto it = watched.find(a_id); it != watched.end() && it->second.quiet) {
+				if (const auto it = watched.find(a_id); it != watched.end() && it->second.quiet && !DoorShare::KeptWhenGone(it->second.held)) {
 					watched.erase(it);
 				}
 			};
@@ -2004,7 +2004,12 @@ namespace WorldSync
 					continue;
 				}
 				if (!LookAt(it->first, entry, a_now, player)) {
-					it = watched.erase(it);
+					if (DoorShare::KeptWhenGone(entry.held)) {
+						entry.quiet = true;  // a change not sent yet outlives the door's 3D: the poll settles it when the door is back
+						++it;
+					} else {
+						it = watched.erase(it);
+					}
 					continue;
 				}
 				++it;
@@ -2912,7 +2917,7 @@ namespace WorldSync
 				// Read while it stays loaded (PollDoor), from DoorShare::LOAD_SETTLE on. Loaded again (its cell came back, a
 				// reset relocked it), it is where it stands once more: the poll's look at it starts afresh.
 				loadedDoors.insert_or_assign(id, now);
-				if (const auto it = watched.find(id); it != watched.end() && it->second.quiet) {
+				if (const auto it = watched.find(id); it != watched.end() && it->second.quiet && !DoorShare::KeptWhenGone(it->second.held)) {
 					watched.erase(it);
 				}
 			}
