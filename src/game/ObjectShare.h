@@ -564,6 +564,8 @@ namespace ObjectShare
 	inline constexpr auto   FORGET_AFTER = std::chrono::seconds(3);  // not seen in a scan that long
 	inline constexpr auto   QUIET_AFTER_PLACED = std::chrono::seconds(4);  // a friend's move: ours of it are theirs
 	inline constexpr auto   FOLLOW_ON = std::chrono::seconds(10);  // ours, at rest, moves again this soon: it rolled on, still ours
+	inline constexpr int    ECHO_MAX = 3;  // rests said for one object in ECHO_WINDOW that our physics moved on from a friend's place (two games whose physics never agree would trade it for ever)
+	inline constexpr auto   ECHO_WINDOW = std::chrono::seconds(120);
 	inline constexpr int    FOLLOW_ON_MAX = 8;  // rests in a row that are ours only by the follow-on: past it, a thing that never stops (swinging) is let go
 	inline constexpr std::size_t MAX_WATCHED = 512;
 	inline constexpr double KNOCK_BURST = 8.0;  // rests our game reports: a few at once, then KNOCKS_PER_SECOND
@@ -731,7 +733,8 @@ namespace ObjectShare
 	// copy their place put down that our player, an NPC of ours or a blast of ours moves on is ours again, the friend's
 	// blast's reach notwithstanding (their blast's throw of it ended with their rest), said once the quiet after their
 	// place (QUIET_AFTER_PLACED, longer than the server's SETTLED) is over: never crossed with their rest on the way, so
-	// no two games fight over it, and at most one rest per QUIET_AFTER_PLACED per object goes back. A copy that only
+	// no two games fight over it, and at most one rest per QUIET_AFTER_PLACED per object goes back, ECHO_MAX per
+	// ECHO_WINDOW (two games whose physics never agree on where it lies would trade it for ever). A copy that only
 	// settles on its own after their place, with nothing of ours by it, is not ours to speak of.
 	class KnockWatch
 	{
@@ -833,9 +836,19 @@ namespace ObjectShare
 					w.followUntil = a_now + FOLLOW_ON;
 					if (a_now < w.quietUntil) {
 						// A friend's place put it down just now and something of ours moved it on from there (our player's
-						// body pushed it out, say): said where it lies once the quiet is over, if it still lies there.
-						w.owed = true;
-						w.owedUntil = w.quietUntil + BLAST_DEFER;
+						// body pushed it out, say): said where it lies once the quiet is over, if it still lies there. At
+						// most ECHO_MAX times in ECHO_WINDOW: if our game and theirs each move it on from the other's rest
+						// for ever (the physics of the two never agree on where it lies), the trade stops.
+						if (a_now - w.echoSince >= ECHO_WINDOW) {
+							w.echoes = 0;
+						}
+						if (w.echoes < ECHO_MAX) {
+							if (w.echoes++ == 0) {
+								w.echoSince = a_now;
+							}
+							w.owed = true;
+							w.owedUntil = w.quietUntil + BLAST_DEFER;
+						}
 					} else if (Take(w.blast, a_now)) {
 						out.push_back(Rest(seen));
 					} else if (w.blast != 0 && BlastRoom(w.blast)) {
@@ -901,6 +914,8 @@ namespace ObjectShare
 			Clock::time_point owedUntil{};
 			Clock::time_point followUntil{};  // ours if it moves again before then
 			int               follows = 0;    // rests in a row that only the follow-on made ours
+			int               echoes = 0;     // rests owed for moving a friend's place on, counted from echoSince
+			Clock::time_point echoSince{};
 		};
 
 		// Whether the blast (0: none) may have another rest reported.

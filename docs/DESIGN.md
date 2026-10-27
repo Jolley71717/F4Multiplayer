@@ -1410,7 +1410,7 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   place their game knows nothing of: if our player, an NPC of ours or a blast of ours is by it as it moves on from their
   place, it is ours again, whatever blast of theirs still reaches it (their throw of it ended with their rest), and is
   reported where it lies once the 4 s quiet after their place is over, past the server's 3 s, so their rest and ours
-  never cross on the way and at most one such rest per object goes back per quiet. A copy that only settles on its own
+  never cross on the way, at most one such rest per object goes back per quiet and `ECHO_MAX` (3) per `ECHO_WINDOW` (120 s), so two games whose physics never agree on where it lies stop trading it. A copy that only settles on its own
   after their place, with nothing of ours by it, stays where it lies, unreported.
 - Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
   the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,

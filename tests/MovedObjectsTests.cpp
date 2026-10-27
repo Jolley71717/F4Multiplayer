@@ -1078,6 +1078,47 @@ TEST("knocks by a friend: a grenade into a pile with a friend standing in it end
 	}
 }
 
+TEST("knocks by a friend: two games whose physics never agree trade a copy only ECHO_MAX times each in ECHO_WINDOW, then it lies")
+{
+	// Each game's physics pushes the copy 30 units on from the place the other's rest put it (both players stand by it),
+	// every time: the rest each says is the other's next place. Without a bound it goes on for ever.
+	const int               quietLooks = static_cast<int>(ObjectShare::QUIET_AFTER_PLACED / 250ms);
+	ObjectShare::KnockWatch games[2];
+	Clock::time_point       clocks[2] = { Clock::now(), Clock::now() };
+	for (int i = 0; i < 2; ++i) {
+		ScanFor(games[i], clocks[i], 1, { .refId = BALL, .pose = At({ 0, 0, 0 }) });
+	}
+	const auto trade = [&](int a_first) {
+		Vec3 place{ 100, 0, 0 };
+		int  rounds = 0;
+		for (int side = a_first; rounds < 40; side = 1 - side, ++rounds) {
+			games[side].Placed(BALL, At(place), clocks[side]);
+			const Vec3 pushed{ place[0] + 30, place[1], place[2] };
+			auto       said = Roll(games[side], clocks[side], place, pushed, 2, { .byUs = true });
+			for (auto& rest : ScanFor(games[side], clocks[side], quietLooks + 8, { .refId = BALL, .pose = At(pushed), .byUs = true })) {
+				said.push_back(rest);
+			}
+			if (said.empty()) {
+				break;
+			}
+			place = said[0].position;
+		}
+		return rounds;
+	};
+	const int rounds = trade(0);
+	CHECK(rounds <= 2 * ObjectShare::ECHO_MAX + 1);
+	CHECK(games[0].Reported() <= static_cast<std::uint64_t>(ObjectShare::ECHO_MAX));
+	CHECK(games[1].Reported() <= static_cast<std::uint64_t>(ObjectShare::ECHO_MAX));
+	CHECK(games[0].Reported() + games[1].Reported() >= 2);  // it did trade before it stopped
+	// A long while later the bound is spent: a push-out is said again.
+	for (int i = 0; i < 2; ++i) {
+		clocks[i] += ObjectShare::ECHO_WINDOW;
+	}
+	const auto before = games[0].Reported() + games[1].Reported();
+	trade(0);
+	CHECK(games[0].Reported() + games[1].Reported() > before);
+}
+
 TEST("knocks rolling on: two games, one kick: only the kicker's game reports it, each time it comes to rest")
 {
 	// Alice kicked it. Bob's copy is put at each rest of hers (Placed) and rolls on in his physics too; his game says
