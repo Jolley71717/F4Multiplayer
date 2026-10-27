@@ -45,6 +45,8 @@ namespace
 		int  getUpsAsked = 0;
 		bool knockedOver = false;     // a knock-down's ragdoll or its get-up
 		bool sneaking = false;        // the sneak stance
+		bool sneakHiddenDown = false; // the game's IsSneaking answers false while down, whatever the stance
+		bool unsneakIgnored = false;  // our stand out of sneak does not take
 
 		// The game stands them up on a path the stay-down flag does not hold back.
 		void StoodUpByGame()
@@ -88,6 +90,7 @@ namespace
 		int               gotUp = 0;
 		int               settled = 0;
 		int               unsneaks = 0;
+		int               sneakKept = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
@@ -121,7 +124,7 @@ namespace
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
 			const DownRules::Facts facts{ .enabled = withFriends && self.GetRules().revive, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console,
-				.knockedOver = body.knockedOver, .sneaking = body.sneaking };
+				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down) };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -148,11 +151,12 @@ namespace
 				}
 			}
 			if (step.unsneak) {
-				body.sneaking = false;
+				body.sneaking = body.sneaking && body.unsneakIgnored;
 				++unsneaks;
 			}
 			gotUp += step.gotUp;
 			settled += step.settled;
+			sneakKept += step.sneakKept;
 			stoodUp += step.stoodUp;
 			backDown += step.backDown;
 			stayedUp += step.stayedUp;
@@ -1742,10 +1746,9 @@ TEST("downed get-up: helped up while knocked over, the get-up waits for the knoc
 	CHECK(!stuck.body.down);
 }
 
-TEST("downed get-up: sneaking as they went down, the player stands as they get up, and again once the get-up has played out")
+TEST("downed get-up: sneaking as they went down, the player stands as they get up; a sneak after that is theirs")
 {
-	// The game keeps the sneak stance through a down and the sneak key works while down: a player helped up was
-	// left in sneak.
+	// The game keeps the sneak stance through a down: a player helped up was left in sneak.
 	Game game;
 	auto now = Start();
 	game.body.sneaking = true;
@@ -1757,17 +1760,124 @@ TEST("downed get-up: sneaking as they went down, the player stands as they get u
 	game.Run(now, 1s);
 	CHECK(game.gotUp == 1);
 	CHECK(game.unsneaks == 1);
+	CHECK(game.sneakKept == 0);
 	CHECK(!game.body.sneaking);
-	game.body.sneaking = true;  // the get-up's animation put them back in it
+	game.body.sneaking = true;  // the player presses the sneak key before the get-up has played out
+	game.Run(now, DownRules::GET_UP_SETTLE);
+	CHECK(game.settled == 1);
+	CHECK(game.unsneaks == 1);  // theirs: not overridden
+	CHECK(game.body.sneaking);
+	game.Run(now, 10s);
+	CHECK(game.unsneaks == 1);
+	CHECK(game.body.sneaking);
+	CHECK(game.self.unsneaks == 1);
+}
+
+TEST("downed get-up: a stand out of sneak that does not take is asked once more when the get-up has played out")
+{
+	Game game;
+	auto now = Start();
+	game.body.sneaking = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.body.unsneakIgnored = true;
+	game.Run(now, 1s);
+	CHECK(game.unsneaks == 1);
+	CHECK(game.body.sneaking);
+	game.body.unsneakIgnored = false;
 	game.Run(now, DownRules::GET_UP_SETTLE);
 	CHECK(game.settled == 1);
 	CHECK(game.unsneaks == 2);
 	CHECK(!game.body.sneaking);
-	game.body.sneaking = true;  // and from then on sneaking is theirs again
 	game.Run(now, 10s);
 	CHECK(game.unsneaks == 2);
+
+	// Not taken, then the player stands and sneaks again themselves before it has played out: theirs.
+	Game pressed;
+	auto then = Start();
+	pressed.body.sneaking = true;
+	pressed.Run(then, 1s);
+	pressed.body.LethalHit();
+	pressed.Run(then, 2s);
+	REQUIRE(pressed.Revived(then));
+	pressed.body.unsneakIgnored = true;
+	pressed.Run(then, 500ms);
+	REQUIRE(pressed.unsneaks == 1);
+	pressed.body.unsneakIgnored = false;
+	pressed.body.sneaking = false;
+	pressed.Run(then, 300ms);
+	pressed.body.sneaking = true;
+	pressed.Run(then, DownRules::GET_UP_SETTLE);
+	CHECK(pressed.settled == 1);
+	CHECK(pressed.unsneaks == 1);
+	CHECK(pressed.body.sneaking);
+}
+
+TEST("downed get-up: down standing, the sneak key pressed while down, they get up sneaking as they chose")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.sneaking = true;  // the bleed-out's controls let the sneak key through
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	CHECK(game.gotUp == 1);
+	CHECK(game.sneakKept == 1);
+	CHECK(game.unsneaks == 0);
+	game.Run(now, DownRules::GET_UP_SETTLE + 1s);
+	CHECK(game.settled == 1);
+	CHECK(game.unsneaks == 0);
 	CHECK(game.body.sneaking);
-	CHECK(game.self.unsneaks == 2);
+}
+
+TEST("downed get-up: the sneak they went down in is read as last seen up, whatever the game answers while down")
+{
+	// Down sneaking, the game's IsSneaking may answer false while the player lies there, the stance kept: still stood.
+	Game game;
+	auto now = Start();
+	game.body.sneakHiddenDown = true;
+	game.body.sneaking = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	CHECK(game.gotUp == 1);
+	CHECK(game.unsneaks == 1);
+	CHECK(game.sneakKept == 0);
+	CHECK(!game.body.sneaking);
+
+	// Down standing, the same: nothing to stand.
+	Game standing;
+	auto then = Start();
+	standing.body.sneakHiddenDown = true;
+	standing.Run(then, 1s);
+	standing.body.LethalHit();
+	standing.Run(then, 2s);
+	REQUIRE(standing.Revived(then));
+	standing.Run(then, DownRules::GET_UP_SETTLE + 1s);
+	CHECK(standing.unsneaks == 0);
+	CHECK(standing.sneakKept == 0);
+}
+
+TEST("downed get-up: the log's stand-up count is this get-up's, not the session's")
+{
+	Game game;
+	auto now = Start();
+	for (int down = 0; down < 5; ++down) {
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 2s);
+		REQUIRE(game.Revived(now));
+		game.Run(now, 1s);
+		CHECK(game.self.standUpAsksNow == 1);
+		game.Run(now, DownRules::FIGHT_OVER + 1s);
+	}
+	CHECK(game.self.standUpAsks == 5);
 }
 
 TEST("downed get-up: not sneaking, getting up stands nobody; knocked over or in a menu, the settle waits")

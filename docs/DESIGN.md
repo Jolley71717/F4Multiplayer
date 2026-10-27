@@ -1540,9 +1540,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   controller's bleed-out collision bit, in that order), asked again every second while it doesn't take
   and only once a knock-down's ragdoll is over (3 s at most); full health from it is cut back to 30%.
   However a down ends with the player up (helped, a save loaded while down, stood up by the game, the
-  last friend leaving), the get-up clears any bleed-out flag left on and, if the game still has them
-  sneaking (the stance survives a down, and the sneak key works while down), stands them, once as they
-  get up and once 2 s later when the get-up has played out (`DownRules::Self` gotUp/settled, tested).
+  last friend leaving), the get-up clears any bleed-out flag left on and, if they went down sneaking and
+  are still sneaking (the stance survives a down), stands them as they get up, and again 2 s later only
+  if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
+  alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
   Friends are not sent the crouch flag while the player is down or getting up, and a stand-in that
   gets up is told its sneak state again 2 s later, so it is not left crouched.
   45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)

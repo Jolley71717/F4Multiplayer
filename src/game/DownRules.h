@@ -164,7 +164,8 @@ namespace DownRules
 		bool                upByCommand = false;   // stood up while the console was open (player.resurrect and the like): up it is
 		bool                standUp = false;       // helped up: stand them up now, the engine's own end of the down (Downed.cpp StandUp)
 		bool                gotUp = false;         // up again after a down, however it ended: what the down left on is taken off
-		bool                unsneak = false;       // up again, and the game has them sneaking: they stand (as they got up, and once it has played out)
+		bool                unsneak = false;       // up again, and still in the sneak they went down in: they stand (as they got up, and once more if that did not take)
+		bool                sneakKept = false;     // up again sneaking, though they went down standing: the sneak key pressed while down, theirs
 		bool                settled = false;       // GET_UP_SETTLE after getting up: the get-up has played out
 	};
 
@@ -180,11 +181,12 @@ namespace DownRules
 	// to its recovery a few seconds on, when other paths of the game could stand them up first and leave part of the down
 	// on: once a knock-down's ragdoll and its get-up are over (KNOCK_WAIT at most), never in a stopped game, and again every
 	// STAND_RETRY while it has not taken. However a down ends with the player up (helped, stood up by the game, a bleed-out
-	// the kill did not take, a load), they stand up as they were before it, not sneaking: the down's start and end leave
-	// the sneak stance alone, and the bleed-out's controls let the sneak key through, so a player downed sneaking, or who
-	// pressed it while down, got up crouched and stayed so until they pressed it again. They are stood as they get up
-	// (gotUp) and once more when it has played out (settled, GET_UP_SETTLE on), should the graph's get-up have put them
-	// back in it.
+	// the kill did not take, a load), what the down left on is taken off (gotUp). The down's start and end leave the sneak
+	// stance alone, so a player downed sneaking got up crouched and stayed so until they pressed the key again: one who went
+	// down sneaking (as last seen up; a save loaded down counts so) and is sneaking as they get up is stood (unsneak), and
+	// once more when the get-up has played out (settled, GET_UP_SETTLE on) only if that did not take, the stance never
+	// having left sneak since. A sneak the player chose is theirs: one they went down standing and are sneaking as they get
+	// up pressed the key while down (sneakKept), and a change of the stance after they are up is their key too.
 	class Self
 	{
 	public:
@@ -313,6 +315,7 @@ namespace DownRules
 						step.standUp = true;
 						standAskedAt = a_now;
 						++standUpAsks;
+						++standUpAsksNow;
 					}
 				}
 				break;
@@ -348,6 +351,7 @@ namespace DownRules
 			revivedAt = a_now;
 			pausedGettingUp = {};
 			standAskedAt.reset();
+			standUpAsksNow = 0;
 			++revives;
 			helpedUpAt.push_back(a_now);
 			++fightRevives;
@@ -402,6 +406,8 @@ namespace DownRules
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
 			pausedGettingUp = {};
+			standUpAsksNow = 0;
+			downSneaking = true;  // the down began in the saved game: a sneak it has is from before it
 			return true;
 		}
 
@@ -423,17 +429,25 @@ namespace DownRules
 		std::uint32_t standUps = 0;  // times the game stood the player up while they waited for help
 		std::uint32_t putDowns = 0;  // times they were put down again for it
 		std::uint32_t standUpAsks = 0;  // times the engine's get-up was asked for (standUp)
+		std::uint32_t standUpAsksNow = 0;  // of those, this get-up's (from the help-up or the load)
 		std::uint32_t getUps = 0;       // times up again after a down (gotUp)
-		std::uint32_t unsneaks = 0;     // of the steps after those, the ones that found the player sneaking
+		std::uint32_t unsneaks = 0;     // stands asked for after those (unsneak)
 
 	private:
 		// Up again after a down, however it ended (a_before: the phase as the frame began): told once (gotUp), and once the
-		// get-up has played out (settled); sneaking at either, they stand. Dead, or down again, before that: nothing to finish.
+		// get-up has played out (settled). Dead, or down again, before that: nothing to finish. The sneak: see the class.
 		void GettingUp(Phase a_before, const Facts& a_facts, Step& a_step, Clock::time_point a_now)
 		{
 			if (phase != Phase::kUp) {
+				if (a_before == Phase::kUp) {
+					// The stance they went down in, as last seen up: while down the game's answer may not be the stance.
+					downSneaking = sneakingUp;
+				}
 				upSince.reset();
 				return;
+			}
+			if (!a_facts.down && !a_facts.dead) {
+				sneakingUp = a_facts.sneaking;
 			}
 			if (a_before != Phase::kUp) {
 				if (a_facts.dead) {
@@ -441,9 +455,13 @@ namespace DownRules
 				}
 				upSince = a_now;
 				a_step.gotUp = true;
-				a_step.unsneak = a_facts.sneaking;
-				unsneaks += a_facts.sneaking ? 1u : 0u;
+				a_step.unsneak = a_facts.sneaking && downSneaking;
+				a_step.sneakKept = a_facts.sneaking && !downSneaking;
+				unsneaks += a_step.unsneak ? 1u : 0u;
 				++getUps;
+				sneakAsked = a_step.unsneak;
+				sneakSeen = a_facts.sneaking;
+				sneakPressed = false;
 				return;
 			}
 			if (!upSince) {
@@ -453,11 +471,16 @@ namespace DownRules
 				upSince.reset();
 				return;
 			}
+			// A change of the stance since they got up is the player's key, but for the stand we asked for taking.
+			if (a_facts.sneaking != sneakSeen) {
+				sneakPressed = sneakPressed || a_facts.sneaking || !sneakAsked;
+				sneakSeen = a_facts.sneaking;
+			}
 			if (!a_facts.knockedOver && !a_facts.paused && a_now - *upSince >= GET_UP_SETTLE) {
 				upSince.reset();
 				a_step.settled = true;
-				a_step.unsneak = a_facts.sneaking;
-				unsneaks += a_facts.sneaking ? 1u : 0u;
+				a_step.unsneak = a_facts.sneaking && sneakAsked && !sneakPressed;
+				unsneaks += a_step.unsneak ? 1u : 0u;
 			}
 		}
 
@@ -562,6 +585,11 @@ namespace DownRules
 		bool                             standUpTold = false;  // this time up has been told (stoodUp)
 		std::optional<Clock::time_point> standAskedAt;  // getting up: when the engine's get-up was last asked for (standUp)
 		std::optional<Clock::time_point> upSince;       // up again after a down, and the get-up not yet played out (GettingUp)
+		bool                             sneakingUp = false;    // sneaking as last seen up (GettingUp): what a down that begins began in
+		bool                             downSneaking = false;  // this down began sneaking (or came in a loaded save)
+		bool                             sneakAsked = false;    // up again: we stood them as they got up
+		bool                             sneakSeen = false;     // up again: the stance as last seen since
+		bool                             sneakPressed = false;  // up again: the stance changed since by the player's key
 	};
 
 	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,

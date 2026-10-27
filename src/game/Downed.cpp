@@ -164,8 +164,8 @@ namespace Downed
 				}
 			}
 			if (InEssentialDown(a_player)) {
-				if (self.standUpAsks <= 3) {
-					REX::INFO("Downed: standing us up (ask {}; {})", self.standUpAsks, PoseFacts(a_player));
+				if (self.standUpAsksNow <= 3) {
+					REX::INFO("Downed: standing us up (ask {} of this get-up; {})", self.standUpAsksNow, PoseFacts(a_player));
 				}
 				EssentialDown(a_player, false);
 			}
@@ -191,7 +191,7 @@ namespace Downed
 			REX::INFO("Downed: up again ({})", PoseFacts(a_player));
 		}
 
-		// Up and sneaking after a down: stood, as the graph's own sneak-exit event does it (PlayerCharacter::SetSneaking: the
+		// Up and still in the sneak they went down in: stood, as the graph's own sneak-exit event does it (PlayerCharacter::SetSneaking: the
 		// stance and the graph's iIsInSneak), and the graph told the sneak stop an NPC's takes, should it be crouched anyway.
 		void Unsneak(RE::PlayerCharacter* a_player)
 		{
@@ -291,6 +291,9 @@ namespace Downed
 			}
 			if (a_step.unsneak) {
 				Unsneak(a_player);
+			}
+			if (a_step.sneakKept) {
+				REX::INFO("Downed: up again and sneaking, though we went down standing (the sneak key while down); left so");
 			}
 			if (a_step.settled) {
 				REX::INFO("Downed: the get-up has played out ({})", PoseFacts(a_player));
