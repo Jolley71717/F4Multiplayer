@@ -530,15 +530,33 @@ TEST("loot sync: a take from a chest the friend's game holds without an inventor
 	CHECK(alice.In(CHEST_3, AMMO_38) == 0);
 	CHECK(alice.In(CHEST_3, PIPE_PISTOL) == 1);
 
-	// A put goes in at once, as before, and a take the session doesn't share is left out at once, not held.
+	// A put waits too, ahead of the takes and the emptying after it: going in first it would make the inventory before the
+	// roll, and they would follow it into that. Nothing goes into the chest until its roll is there.
 	bob.unstocked.insert(CHEST_4);
-	bob.unstocked.insert(VENDOR_REF);
+	alice.holders[CHEST_4] = { { STEEL, 4 } };
 	alice.Put(f, CHEST_4, AMMO_38, 3);
+	alice.Take(f, CHEST_4, STEEL, 4);
+	alice.Take(f, CHEST_4, AMMO_38, 3);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	const auto appliedBefore = bob.applied;
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 4);  // the put, both takes and the emptying
+	CHECK(bob.applied == appliedBefore);
+	bob.unstocked.erase(CHEST_4);
+	bob.holders[CHEST_4] = { { STEEL, 2 }, { CORE, 2 }, { PIPE_PISTOL, 1 } };
+	bob.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(CHEST_4, STEEL) == 0);
+	CHECK(bob.In(CHEST_4, AMMO_38) == 0);  // the put went in, and Alice's take of it took it out again
+	CHECK(bob.In(CHEST_4, CORE) == 0);     // his roll's own, taken by the emptying
+	CHECK(bob.In(CHEST_4, PIPE_PISTOL) == 1);
+
+	// A take the session doesn't share is left out at once, not held.
+	bob.unstocked.insert(VENDOR_REF);
 	UncheckedMove(f, carol, VENDOR_REF, CAPS, -500);
 	const auto leftOut = bob.LeftOut();
 	bob.Receive(f);
 	CHECK(bob.loot.Waiting().empty());
-	CHECK(bob.In(CHEST_4, AMMO_38) == 3);
 	CHECK(bob.LeftOut() == leftOut + 1);
 }
 
