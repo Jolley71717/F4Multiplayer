@@ -161,9 +161,9 @@ namespace Equipment
 	// its activation block; its state; our player's input), for the log and the paframes dev command.
 	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame);
 
-	// The reference's ExtraFlags word (EXTRA_DATA_TYPE::kFlags), 0 without one: Papyrus's BlockActivation sets bit 1 in
-	// it (DescribeFrameUse's `flags=`, FrameUse::Holds::activationBlocked). Read-only; for the refinfo dev command, where
-	// a dropped item's copy (Drops blocks those) shows the bit 1.11.240 sets. Main thread.
+	// The reference's ExtraFlags word (EXTRA_DATA_TYPE::kFlags), 0 without one: Papyrus's BlockActivation sets bit 0 (value 1) in
+	// it on 1.11.240, as the rig verified (Skyrim uses 0x2) (DescribeFrameUse's `flags=`, FrameUse::Holds::activationBlocked).
+	// Read-only; for the refinfo dev command, where a dropped item's copy (Drops blocks those) shows the bit. Main thread.
 	[[nodiscard]] std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref);
 
 	// Our player as the engine has them for furniture: their sit state, the furniture they occupy, the frame they wear or

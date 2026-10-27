@@ -997,14 +997,14 @@ namespace Equipment
 		FrameGate keepOut = nullptr;  // SetFrameGate
 
 		// The engine's ExtraFlags (EXTRA_DATA_TYPE::kFlags; CommonLibF4 has no class for it): its flags word follows the
-		// BSExtraData head. Papyrus's BlockActivation puts the block in it (bit 1, kBlockActivate, in Skyrim's ExtraFlags;
-		// a copy Drops blocks shows what 1.11.240 sets), and TESObjectREFR::Activate then does nothing: no word, no
+		// BSExtraData head. Papyrus's BlockActivation puts the block in it (bit 0, value 1, on 1.11.240: the rig verified it on
+		// an engine-placed drop copy and on a blocked frame; Skyrim's ExtraFlags uses 0x2 for kBlockActivate), and TESObjectREFR::Activate then does nothing: no word, no
 		// seat. The whole word is shown so a block set another way is seen too.
 		struct ExtraFlagsData : RE::BSExtraData
 		{
 			std::uint32_t flags;  // 18
 		};
-		constexpr std::uint32_t BLOCK_ACTIVATE = 1u << 1;
+		constexpr std::uint32_t BLOCK_ACTIVATE = 1u << 0;
 	}
 
 	std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref)
