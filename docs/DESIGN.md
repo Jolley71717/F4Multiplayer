@@ -1082,8 +1082,9 @@ container's menu open, and only then.
 - **Taking.** Fewer of a class in the container than we knew of went to the player as far as their take's events say,
   or, an event lost, as far as their own count of that class rose since the last frame (`unsignaled=`): those take a
   copy first (so it is claimed), then the player's own. A copy gone anywhere else (another mod's script handing it
-  to a settler) is counted (`copyMissing=`) and that gift isn't shown again in this game until a load, so such a
-  script makes one item of each gift at most, not one a frame. The taken copy is held back: taken out of the player's
+  to a settler) is counted (`copyMissing=`) and that gift isn't shown again in this game until a load or a rejoin (the view's
+  memory of it goes with the session's), so such a script makes one item of each gift a load or a rejoin, not one a
+  frame; across saves and rejoins they add up. The taken copy is held back: taken out of the player's
   inventory at once (OwnGear `kGiftTake`, only ever our player and only for their own take), claimed (`kTake`, asked
   again every 5 s until answered, never settled by a timeout), and added to their inventory only on the grant (with
   `Took` in the record); a lost claim needs nothing undone (`gifts.taken_first`). So the side the player can't hide an
@@ -1143,7 +1144,8 @@ its giver's record when their link went between the offer and their kPlaced (nob
 back); a container that is the same reference in two games but holds a different thing (a mod changing it) shows the
 gift anyway. A copy another mod's script moves out of the container is no claim: it goes as missing (`copyMissing=`),
 the item stays where the script put it, and the gift still lies there for the others (one item more, at most one a
-gift and a load). A copy whose class changes as the player takes it (the engine dropping its name, say) can't be held
+gift and a load or a rejoin; across many they add up. Keeping the memory across a rejoin to the same session is
+left for later). A copy whose class changes as the player takes it (the engine dropping its name, say) can't be held
 back (`unheld=`): granted, it stays with them and nothing is added; lost to a friend who was first, both have it, and
 the game counts it (`dupRisk=`). Both are rig checks. The protocol needs nothing past 55: gifts add no message type,
 only `DroppedItem::holder` on kReportDrop, kDropPlaced and kDropList (listed in 55's line), so a 0.10.0 build from

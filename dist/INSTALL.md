@@ -162,7 +162,7 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
     others. The one case not put right: a giver who loads a save from before putting it in, after a friend took it,
     has it too (both have it; the host's log counts it). A mod that moves items out of containers by itself (an
     auto-sorter, say) can make one more of a gift the same way; the gift then stops showing for that player until
-    they load a save.
+    they load a save or rejoin, and each time it shows again such a mod can do it again.
   - A connection that drops while a take is on its way loses nothing: the item is in the container again after you
     rejoin, or in your inventory if the session says you took it. A giver whose connection drops just as
     the item is given finds it given once they rejoin (until then nobody can take it), or still in the container if
