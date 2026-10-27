@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T10:28:50+00:00",
+ "updated": "2026-10-27T11:17:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -766,11 +766,12 @@
   },
   {
    "id": "wz59",
-   "title": "Loot: an opened container shows its full roll for up to ~1 s before a friend's waiting takes land",
+   "title": "An opened chest briefly shows loot a friend already took",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fixed: a friend's earlier takes now go in as you open it; reviewed.",
+   "pr": 208
   },
   {
    "id": "y1dj",
@@ -792,11 +793,12 @@
   },
   {
    "id": "yqm3",
-   "title": "Knocked objects: a ball that keeps rolling after its reported rest is never reported again (joiner sees it ~230 units off)",
+   "title": "A knocked object that rolls on shows in the wrong place for a friend",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fixed: an object that moves again soon after it stopped is followed until it really stops; reviewed.",
+   "pr": 207
   },
   {
    "id": "yx7v",
