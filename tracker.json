@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T08:54:02+00:00",
+ "updated": "2026-10-27T09:14:04+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -27,8 +27,8 @@
    "title": "Power armor frames duplicate and appear in odd places in Sanctuary",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Fixed in 0.9.2, with a clean-up for the next release; waiting for the long test before it ships.",
+   "stage": 5,
+   "note": "Merged for the next release: a 0.9.1 leftover frame now goes; tested in two games.",
    "pr": 188,
    "partial": "0.9.2",
    "desc": "On 0.9.1, power armor frames kept duplicating and turning up in random places around Sanctuary. 0.9.2 stopped a load from keeping the copies of friends' frames. The next release also stops a frame moved in workshop mode from being shared as a building, and removes the copies older versions made that way. Extra frames already in your world from 0.9.1 can be removed in the console: click one, then type disable and markfordelete."
@@ -107,8 +107,8 @@
    "title": "A dedicated server doesn't retry a failed session save",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Found and understood; the fix is small but not built yet.",
+   "stage": 5,
+   "note": "Merged for the next release; tested with the dedicated server and in the game.",
    "pr": 190,
    "desc": "The dedicated server saves its session by replacing the session file. On Windows that can fail if another program, such as antivirus, has the file open. The time of day doesn't count as a change, so a failed save is not tried again until something else changes and the saved time can be out of date. We plan to retry a failed save at the next check."
   },
@@ -136,8 +136,8 @@
    "title": "A legendary enemy in one game is a normal one in another",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Mostly fixed in 0.9.2; an enemy that is already loaded still looks different until it loads again.",
+   "stage": 5,
+   "note": "Merged for the next release: a copy's own heal no longer sticks; tested in two games.",
    "pr": 187,
    "partial": "0.9.2",
    "desc": "A player saw a legendary black bloatfly and a legendary ghoul in their game while a friend saw normal ones, because each game rolls its own version of an enemy. Since 0.9.2 the game that runs the enemy shares its roll, and the other games use it the next time the enemy loads. An enemy that is already loaded keeps looking different until it loads again, for example after leaving and coming back."
@@ -204,8 +204,8 @@
    "title": "A chest a friend emptied while away still holds items for you",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Fixed in 0.9.0; we can't find any remaining cause, but haven't confirmed it in a real game.",
+   "stage": 5,
+   "note": "Merged for the next release: a take from a far chest now waits for the chest; tested in two games.",
    "pr": 191,
    "partial": "0.9.0",
    "desc": "A player reported that containers looted while the friend was in another area were not emptied for them, though loose items were. Each game rolls its own loot, so a friend's take only removed the stacks their copy held. 0.9.0 sends a marker when a container is left bare, and looting done while you are away waits until you come back to that area."
@@ -244,8 +244,8 @@
    "title": "Misleading storage messages in the log after shared storage settles",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix written; waiting to be built and reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games.",
    "pr": 181,
    "desc": "While testing shared storage we saw two log messages that read as if items went missing when they did not. Item counts stayed correct throughout. We plan to reword or remove those messages so they don't worry anyone reading the log."
   },
@@ -580,8 +580,8 @@
    "title": "Doors and gates opened by scripts stay shut for friends (Vault 114)",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Mostly fixed in 0.9.0 and 0.9.2; the exact Vault 114 cog door hasn't been tested.",
+   "stage": 2,
+   "note": "The rig test found most doors weren't watched yet; being fixed.",
    "pr": 189,
    "partial": "0.9.0 and 0.9.2",
    "desc": "Vault 114's cog door opened for the host but stayed shut for a friend, because a script opens it. 0.9.0 shares Vault 114's gear door and gates opened from terminals and card readers, and 0.9.2 shares chained doors, quietly scripted doors, two-state gates and doors NPCs open. These passed two-game tests, but the exact Vault 114 door was not tested and one of its two parts may not be covered. Doors that also start scenes or move NPCs stay each player's own."
@@ -679,8 +679,8 @@
    "title": "Moved objects don't reach a friend who loads the area later",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Fixed for the next release; not yet tried with a late joiner.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games, including a late joiner.",
    "pr": 185,
    "desc": "A moved object only reached games that had it loaded at that moment, so a friend arriving later saw it in the old place. The next release keeps where moved objects came to rest in the session, so a game that loads the area later puts them there too."
   },
@@ -762,6 +762,14 @@
    "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
   },
   {
+   "id": "wz59",
+   "title": "Loot: an opened container shows its full roll for up to ~1 s before a friend's waiting takes land",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "y1dj",
    "title": "Some explosions aren't shared, like gas canisters",
    "kind": "bug",
@@ -778,6 +786,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0, tested on two real games.",
    "desc": "A player reported that harvesting plants was not synced. Picking a plant moves nothing into the inventory the usual way, so the mod never saw it. 0.9.0 shares it: a plant a friend picks is picked in your game too, and two players picking the same plant harvest it once."
+  },
+  {
+   "id": "yqm3",
+   "title": "Knocked objects: a ball that keeps rolling after its reported rest is never reported again (joiner sees it ~230 units off)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "yx7v",
