@@ -117,6 +117,8 @@ down.last_revive = Era l'ultima volta che potevi essere rialzato per ora: il pro
 down.revives_back = I tuoi amici possono di nuovo rialzarti
 down.cooldown = Appena rialzato: per {n} secondi un colpo letale ti uccide
 down.cant_help_fighting = Non puoi rialzare {player} durante un combattimento
+down.bleed_out_loads_save = Se nessuno ti rialza entro {n} secondi, muori e il gioco carica il tuo ultimo salvataggio
+down.death_loads_save = Se muori, il gioco carica il tuo ultimo salvataggio
 
 rules.host = Regole dell'host: {rules}
 rules.revive_off = nessun rialzo, un colpo letale uccide
@@ -127,6 +129,7 @@ rules.help_time = {n} s per rialzare un amico
 rules.revive_health = rialzato con il {n}% di salute
 rules.cooldown = un colpo letale entro {n} s da un rialzo uccide
 rules.out_of_combat = niente rialzi durante un combattimento
+rules.save_on_down = un salvataggio automatico quando sei a terra
 map.discovered = {player} ha scoperto {place}
 quest.caught_up = Storia al passo con i tuoi amici: {names}
 quest.and_more = e altre {n}

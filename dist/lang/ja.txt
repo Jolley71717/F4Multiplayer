@@ -131,6 +131,8 @@ down.last_revive = しばらくはこれが最後の助け起こしです。次�
 down.revives_back = また仲間に助け起こしてもらえるようになりました
 down.cooldown = 助け起こされた直後です。{n}秒間は致命傷を受けると死亡します
 down.cant_help_fighting = 戦闘中は{player}を助け起こせません
+down.bleed_out_loads_save = {n}秒以内に助け起こされないと死亡し、最後のセーブデータがロードされます
+down.death_loads_save = 死亡すると最後のセーブデータがロードされます
 
 rules.host = ホストのルール：{rules}
 rules.revive_off = 助け起こしなし、致命傷で死亡
@@ -141,6 +143,7 @@ rules.help_time = 仲間を助け起こすのに{n}秒
 rules.revive_health = 体力{n}%で起き上がる
 rules.cooldown = 助け起こされてから{n}秒以内の致命傷で死亡
 rules.out_of_combat = 戦闘中は助け起こし不可
+rules.save_on_down = ダウン時にオートセーブ
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player}が{place}を発見

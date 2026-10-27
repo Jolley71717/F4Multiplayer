@@ -120,6 +120,8 @@ down.last_revive = C'était votre dernier relevé pour l'instant : le prochain c
 down.revives_back = Vos amis peuvent de nouveau vous relever
 down.cooldown = Vous venez d'être relevé : pendant {n} s, un coup mortel vous tuera
 down.cant_help_fighting = Impossible de relever {player} pendant un combat
+down.bleed_out_loads_save = Si personne ne vous relève dans les {n} s, vous mourez et le jeu charge votre dernière sauvegarde
+down.death_loads_save = Si vous mourez, le jeu charge votre dernière sauvegarde
 
 rules.host = Règles de l'hôte : {rules}
 rules.revive_off = pas de relevé, un coup mortel tue
@@ -130,6 +132,7 @@ rules.help_time = {n} s pour relever un ami
 rules.revive_health = relevé avec {n} % de santé
 rules.cooldown = un coup mortel dans les {n} s qui suivent un relevé tue
 rules.out_of_combat = pas de relevé pendant un combat
+rules.save_on_down = une sauvegarde auto quand on est à terre
 map.discovered = {player} a découvert {place}
 quest.caught_up = Vous avez rattrapé vos amis : {names}
 quest.and_more = et {n} de plus

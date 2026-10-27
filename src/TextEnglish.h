@@ -148,6 +148,8 @@ namespace Text
 		{ "down.revives_back", "Your revives are back: a friend can help you up again" },
 		{ "down.cooldown", "Just helped up: for {n} seconds a lethal hit kills you" },
 		{ "down.cant_help_fighting", "Can't help {player} up during a fight" },
+		{ "down.bleed_out_loads_save", "If nobody helps you up in {n} seconds, you die and the game loads your last save" },
+		{ "down.death_loads_save", "If you die, the game loads your last save" },
 
 		// --- The host's rules for being down, as a joiner is told them (HostRules::Summary) ---
 		{ "rules.host", "Host's rules: {rules}" },
@@ -159,6 +161,7 @@ namespace Text
 		{ "rules.revive_health", "up with {n}% health" },
 		{ "rules.cooldown", "a lethal hit within {n} s of a revive kills" },
 		{ "rules.out_of_combat", "no helping up during a fight" },
+		{ "rules.save_on_down", "an autosave when you go down" },
 
 		// --- The shared map, quests and workshop ---
 		{ "map.discovered", "{player} discovered {place}" },

@@ -54,6 +54,9 @@ namespace RulesSummary
 		if (rules.reviveOutsideCombat) {
 			parts.push_back({ "rules.out_of_combat", {} });
 		}
+		if (rules.saveOnDown) {
+			parts.push_back({ "rules.save_on_down", {} });
+		}
 		return parts;
 	}
 }

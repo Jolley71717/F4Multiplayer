@@ -116,6 +116,8 @@ down.last_revive = Essa foi a última vez que você pode ser levantado por enqua
 down.revives_back = Seus amigos podem levantar você de novo
 down.cooldown = Você acabou de ser levantado: por {n} s, um golpe fatal mata você
 down.cant_help_fighting = Não dá para levantar {player} durante um combate
+down.bleed_out_loads_save = Se ninguém levantar você em {n} s, você morre e o jogo carrega o seu último jogo salvo
+down.death_loads_save = Se você morrer, o jogo carrega o seu último jogo salvo
 
 rules.host = Regras do anfitrião: {rules}
 rules.revive_off = ninguém é levantado, um golpe fatal mata
@@ -126,6 +128,7 @@ rules.help_time = {n} s para levantar um amigo
 rules.revive_health = levantado com {n}% de vida
 rules.cooldown = um golpe fatal até {n} s depois de ser levantado mata
 rules.out_of_combat = não dá para levantar ninguém durante um combate
+rules.save_on_down = salvamento automático quando você cai
 map.discovered = {player} descobriu {place}
 quest.caught_up = Em dia com seus amigos: {names}
 quest.and_more = e mais {n}

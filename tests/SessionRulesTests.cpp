@@ -31,6 +31,24 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(!rules.shareGuestBuilds);  // a guest's earlier building stays in their own game
 	CHECK(!rules.sharedStorage);     // each game keeps its own copy of storage, as in 0.9.2
 	CHECK(!rules.containerGifts);    // a weapon put in a chest stays its player's own, as in 0.9.2
+	CHECK(!rules.saveOnDown);        // no autosave on going down, as in 0.9.2
+}
+
+TEST("session rules: the host's bSaveOnDown makes an autosave on going down part of the downed rules, and the summary says so")
+{
+	Text::Use("en", {});
+	Config::Settings settings;
+	CHECK(!DownRules::Rules::From(HostRules::FromSettings(settings)).saveOnDown);
+	settings.saveOnDown = true;
+	const auto rules = HostRules::FromSettings(settings);
+	CHECK(rules.saveOnDown);
+	CHECK(DownRules::Rules::From(rules).saveOnDown);
+	CHECK(HostRules::Describe(rules).find("saveOnDown=true") != std::string::npos);
+	CHECK(HostRules::Summary(rules) == "Host's rules: an autosave when you go down");
+	// With revives off nobody goes down: said alone, as before.
+	auto off = rules;
+	off.revive = false;
+	CHECK(HostRules::Summary(off) == "Host's rules: no revives, a lethal hit kills");
 }
 
 TEST("session rules: crawling while down is off by default, and the host's bDownedCrawl turns it on for the downed rules")
