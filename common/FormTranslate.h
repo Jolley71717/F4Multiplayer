@@ -448,7 +448,9 @@ namespace FormTranslate
 			break;
 		case MessageType::kPlayerHit:
 		case MessageType::kPlayerDamaged:
-			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { return ctx.Key(m.attacker); }, typed);
+			// The NPC that hit the stand-in is a detail: a hit by one the other side can't name still hurts the victim
+			// (attacker 0: PlayerHits), where dropping it left that NPC unable to hurt them at all.
+			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { ctx.Detail(m.attacker); return true; }, typed);
 			break;
 		case MessageType::kReportQuestStage:
 		case MessageType::kQuestStage:

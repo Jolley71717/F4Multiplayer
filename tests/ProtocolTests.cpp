@@ -191,7 +191,7 @@ namespace
 	{
 		return a.refId == b.refId && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
 		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.direction == b.direction &&
-		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch;
+		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch && a.sentMs == b.sentMs;
 	}
 }
 
@@ -506,10 +506,11 @@ TEST("protocol: an NPC state carries its owner's graph's gait and clip rate, a p
 		REQUIRE(out->size() == 1);
 		CHECK(SameActorState(out->front(), in));
 	}
-	// The layout is unchanged by what the gait means: one state is still 39 bytes after the type and count.
+	// The layout is unchanged by what the gait means: one state is 43 bytes after the type and count (39 before the
+	// owner's clock, sentMs, came).
 	const auto one = Encode(std::vector<ActorState>{ MakeActorState(0) }, MT::kActorStates);
 	const auto two = Encode(std::vector<ActorState>{ MakeActorState(0), MakeActorState(1) }, MT::kActorStates);
-	CHECK(two.size() - one.size() == 39);
+	CHECK(two.size() - one.size() == 43);
 }
 
 TEST("protocol: ActorStates round trip with both message types")
@@ -519,10 +520,13 @@ TEST("protocol: ActorStates round trip with both message types")
 		for (std::uint32_t i = 0; i < MAX_ACTORS_PER_PACKET; ++i) {
 			in.push_back(MakeActorState(i));
 		}
-		// One whose owner's copy aims at nothing, and ones aiming straight up and down.
+		// One whose owner's copy aims at nothing, and ones aiming straight up and down; one from an older build that
+		// does not say when it was sampled, and one sampled as the owner's clock wraps.
 		in[1].aimPitch = NO_AIM;
 		in[2].aimPitch = 90;
 		in[3].aimPitch = -90;
+		in[4].sentMs = 0;
+		in[5].sentMs = 0xFFFFFFFFu;
 		const auto packet = Encode(in, type);
 		CHECK(PeekType(packet) == type);
 		const auto out = DecodeActorStates(packet);
@@ -1126,8 +1130,9 @@ TEST("protocol: PlayerHit checks the attacker against byPlayer")
 	// Hit by a player: there is no NPC attacker.
 	CHECK(!ok(10.0f, true, REF_A));
 	CHECK(!ok(10.0f, true, PLAYER_REF_ID));
-	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id).
-	CHECK(!ok(10.0f, false, 0));
+	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id), or none at
+	// all: one the sender's game can't name on the wire (of a plugin the other side lacks: FormTranslate).
+	CHECK(ok(10.0f, false, 0));
 	CHECK(!ok(10.0f, false, PLAYER_REF_ID));
 	CHECK(ok(10.0f, false, RUNTIME_REF));
 	CHECK(!ok(10.0f, false, 0xFF000000));

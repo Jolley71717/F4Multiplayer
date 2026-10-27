@@ -34,7 +34,8 @@ namespace Protocol
 	// off once) and what a leveled NPC was rolled as in the game that runs it (kReportNpcIdentity, kNpcIdentity:
 	// NpcIdentity). 51, 52 and 54 were those branches' own test builds (traps', destructibles', NPC identity's).
 	// 55: 0.10.0's changes together, one number for the whole release: each wire change merged for it from here on
-	// rides on it, and is listed in docs/DESIGN.md's protocol line as it lands. 0.9.2 (50) is refused at the hello.
+	// rides on it, and is listed in docs/DESIGN.md's protocol line as it lands (an NPC state's sentMs among them).
+	// 0.9.2 (50) is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 55;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -1380,6 +1381,9 @@ namespace Protocol
 		// The pitch its owner's copy aims its gun at, up (+) or down (-) in degrees (AimPoint.h), or NO_AIM while that
 		// copy has no aim point. The flags have no bit left to say which.
 		std::int8_t aimPitch = NO_AIM;
+		// When the owner's game sampled it, on the owner's clock (SentMs; 0: not said), as PlayerState::sentMs: the copies
+		// draw the states as far apart as they were sampled, however they arrive (MirrorClock.h).
+		std::uint32_t sentMs = 0;
 
 		[[nodiscard]] bool IsFinite() const
 		{
@@ -1404,7 +1408,10 @@ namespace Protocol
 
 	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
 	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
-	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world.
+	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world, and takes a hit
+	// by one that isn't when the sender is near (PlayerHits). Since protocol 55 an NPC hit may name no attacker (0): one
+	// the sender's game can't name on the wire, of a plugin the other side lacks (FormTranslate), and the victim takes
+	// it by the sender's distance alone.
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
@@ -4033,6 +4040,7 @@ namespace Protocol
 			w.U8(a.gait);
 			w.U8(a.gaitRate);
 			w.U8(static_cast<std::uint8_t>(a.aimPitch));
+			w.U32(a.sentMs);
 		});
 	}
 
@@ -4054,6 +4062,7 @@ namespace Protocol
 			a.gait = r.U8();
 			a.gaitRate = r.U8();
 			a.aimPitch = static_cast<std::int8_t>(r.U8());
+			a.sentMs = r.U32();
 			return a;
 		});
 		if (states && !std::ranges::all_of(*states, [](const ActorState& a) { return a.IsFinite(); })) {
@@ -4082,7 +4091,7 @@ namespace Protocol
 		msg.byPlayer = r.U8() != 0;
 		msg.attacker = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
-			(msg.byPlayer ? msg.attacker != 0 : !IsActorRef(msg.attacker))) {
+			(msg.byPlayer ? msg.attacker != 0 : msg.attacker != 0 && !IsActorRef(msg.attacker))) {
 			return std::nullopt;
 		}
 		return msg;

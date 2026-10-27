@@ -3,7 +3,9 @@
 #include "Protocol.h"
 #include "game/RemoteEdits.h"
 
+#include <functional>
 #include <optional>
+#include <span>
 
 // Weapon shots: the local player's and those of NPCs we run are reported, so other players see
 // the shooter's firing animation. Only the animation is replayed (no projectile, no damage):
@@ -119,9 +121,20 @@ namespace WeaponFire
 	// Before a load, ahead of Session::OnBeforeSaveOrLoad: the shields end with no console command (the load replaces the
 	// copies), and what was known of them is forgotten.
 	void BeforeLoad();
-	// After a load: for a while, once in a session, a loaded copy that looks like a ghost of ours the save brought
-	// (BlastShield::RepairsOnLoad) has it taken off.
+	// After a load: the ghosts of ours the loaded save's record names (LoadGhostRecord) are written down again, to come
+	// off as each copy loads, whoever runs the NPC (GhostLedger); and from then on an actor whose ghost looks like one of
+	// ours an older save left (BlastShield::Repairs) has it taken off, once per actor per load.
 	void OnGameLoaded();
+
+	// The co-save's record of the ghosts we set and have yet to see off (GhostLedger::Encode; empty: none), written with
+	// each save and read back with it on the save's or load's thread (a_resolve: F4SE's ResolveFormID, for a changed
+	// load order). Reverted before a load or a new game.
+	[[nodiscard]] std::vector<std::uint8_t> SaveGhostRecord();
+	void                                    LoadGhostRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
+	void                                    RevertGhostRecord();
+
+	// The ledger's counts and its open entries, for the dev channel's ghosts command.
+	[[nodiscard]] std::string DescribeGhosts();
 
 	// The grenade is shown in the hand of a stand-in replaying a friend's throw, from its wind-up to its release
 	// (HandThrowable.h): set from bGrenadeInHand at load, and by the dev's handthrowable on|off|model (a_modelFallback:
@@ -136,6 +149,11 @@ namespace WeaponFire
 
 	// ... out of every hand: before a save or a load, and when the session ends.
 	void DropHandThrowables();
+
+	// A friend's stand-in, each frame (looked at every HandThrowable::SWEEP_EVERY): the grenade the engine keeps culled in
+	// its left hand between throws is culled again when it is found drawn with no throw going on (bead krne). Runs whatever
+	// bGrenadeInHand says. Main thread.
+	void SweepHand(RE::Actor* a_standIn);
 
 	// An NPC died in our world (its form id: a plugin's, or a runtime NPC's that may be our copy of a friend's
 	// spawn): a copy that was a ghost of ours then is counted and logged (the explosion reached it).

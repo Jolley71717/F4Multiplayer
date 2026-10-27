@@ -306,3 +306,23 @@ the first and keeps the second as a dev experiment.
   `handthrowable model` also allows round 4's database-node hang on a hand with no `WeaponLeft`.
   Going back from `model` to `on` takes every hung database node off at once, as `off` does.
 - **No protocol change.** The form is already in the gear report, and the drawing is local.
+
+## Between throws: a grenade stuck in the hand (bead krne)
+
+A player saw a friend's grenade or Molotov stay in the friend's hand. The code has no sure cause,
+but it shows why nothing would take one out again:
+
+- The stand-in carries the grenade equipped between throws (`HoldThrowable` on every dressing), and
+  the engine keeps its model in the culled `WeaponLeft` under `LArm_Hand` the whole time: round 4 found
+  it there *before* the throw, where the player's own hand has one only through a throw.
+- The engine never hears a replayed throw's release (`ThrowReplays` keeps it), so none of its own
+  end of a throw runs on the stand-in.
+- `HandThrowable::Book` looks after that node only for the half second it draws it. Once drawn by
+  anything else, it stays drawn, and the next throw skips it (`the engine shows its own`).
+
+So `WeaponFire::SweepHand` looks at each stand-in's left hand every 250 ms. A `WeaponLeft` found drawn
+with something in it, with no throw winding up (replayed less than 3 s ago and not let go of) and
+nothing of ours in the hand, is culled again, as the engine keeps it. It runs whatever
+`bGrenadeInHand` says. Each time is logged (`left hand showed its WeaponLeft between throws`, with
+the time since the last replayed throw and the weapon state), and `net status` counts them
+(`inhand=... handsSwept=N`). A count that grows says what drew it, for the next fix.

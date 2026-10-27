@@ -945,7 +945,7 @@ TEST("workshop session: building at a friend's mod settlement your game doesn't 
 
 TEST("workshop session: a friend's save from an earlier run of the session keeps its copies after the host restarts")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-workshop-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-workshop", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;

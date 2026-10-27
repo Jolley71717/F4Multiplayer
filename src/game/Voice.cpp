@@ -1,6 +1,7 @@
 #include "game/Voice.h"
 
 #include "Config.h"
+#include "game/ClickWatch.h"
 #include "game/Hotkeys.h"
 #include "game/RemotePlayers.h"
 #include "game/VoiceGate.h"
@@ -241,6 +242,10 @@ namespace Voice
 			if (speaker.queued.empty()) {
 				const bool underrun = VoiceRamp::Underrun(true, heardBefore, sinceLast);
 				underruns += underrun;
+				ClickWatch::Note(ClickRates::Source::kVoiceStart);
+				if (underrun) {
+					ClickWatch::Note(ClickRates::Source::kVoiceUnderrun);
+				}
 				Queue(speaker, underrun ? longSilence : silence);
 				VoiceRamp::FadeIn(samples);
 			}

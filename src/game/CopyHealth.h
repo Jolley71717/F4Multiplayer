@@ -19,8 +19,9 @@
 // So a copy that loses health with no hit of ours on it (from OURS_GRACE before the drop on) is given it back
 // (CopyWatch, each frame). A drop is judged only once it has stood for JUDGE_AFTER, so that our hit, whose event can
 // come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed) is
-// given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
-// passed by: BlastShield). Health a report sets is where it stands from then on.
+// given back before it adds up, unless it is an effect of ours (a legendary's bleed or burn put on the copy by our hit:
+// OurEffect, ours for EFFECT_WINDOW while nothing else hits it). A lethal blow in one go is not given back (the
+// explosions of friends' throws are passed by: BlastShield). Health a report sets is where it stands from then on.
 //
 // Health a copy gains with no report behind it is taken back the same way (Check returns it as less than nothing): a
 // copy's health is its own game's, never ours. Each game rolls a leveled NPC on its own as it first loads, and the
@@ -43,6 +44,12 @@ namespace CopyHealth
 
 	constexpr Clock::duration OURS_GRACE = std::chrono::milliseconds{ 1000 };
 	constexpr Clock::duration JUDGE_AFTER = std::chrono::milliseconds{ 100 };
+	// How long after a hit of ours that put an effect on the copy (a weapon's enchantment: a legendary's bleed, burn or
+	// poison; a mod's spell) the copy's drops with no hit behind them are still ours: the effect's ticks fire no hit
+	// event, and the NPC's own game never deals them (the effect is on our copy alone). Before, every tick after the
+	// first second was "a drop with no hit of ours" and was given back: a Wounding or Incendiary weapon healed its own
+	// damage back as the player watched. The longest of the game's own last ten seconds (Poisoner's).
+	constexpr Clock::duration EFFECT_WINDOW = std::chrono::seconds{ 10 };
 	constexpr float           SLACK = 0.05f;      // smaller drops are rounding
 	constexpr float           RAISE_SHARE = 0.01f;  // of the maximum: a smaller gain is left until it adds up to one
 	constexpr float           MIN_LEFT = 1.0f;    // a gain taken back never leaves the copy with less (it would die here)
@@ -110,6 +117,8 @@ namespace CopyHealth
 		bool explosion = false;     // an explosion's (HitData's kExplosion flag)
 		bool throwable = false;     // its weapon, or the source, is a grenade, a Molotov or a mine
 		bool spellAlone = false;    // a spell or an enchantment with no weapon: what a Molotov's fire leaves burning
+		bool enchantment = false;   // ... and the source is a weapon's enchantment (an ENCH record: a legendary effect's,
+		                            // a mod's), never what a throw leaves burning (a hazard's spell, a SPEL record)
 		bool inHand = false;        // its weapon, or the source, is a weapon that is no throwable: a gun, a bat, a baton
 		bool explosionsShared = false;  // our game reports the explosions around our player now (a throw's watch is on)
 		bool threwLately = false;       // ... or did a little while ago: the fire a Molotov left may burn there still
@@ -131,14 +140,17 @@ namespace CopyHealth
 	// RemoteEdits::ReportGate; the NPC's game sets it off beside its NPC wherever its player is), a destructible object's
 	// own or a world trap's (every game sets its own off). Any other, one kept ours (too far, too big, past the budget),
 	// or a gun's hit read as an explosion's with none there, is dealt nowhere else and is ours to report. Any other blow with
-	// a weapon in hand that is no throwable is ours whatever else the event reads, and the burn a Molotov's fire leaves
-	// is the owner's for WeaponFire::THREW_LATELY after the watch.
+	// a weapon in hand that is no throwable is ours whatever else the event reads, and so is a weapon's enchantment's
+	// (a legendary's burn or bleed riding along with the shot, read as a spell with no weapon: its record is an ENCH,
+	// which no throw's fire ever is), and the burn a Molotov's fire leaves (a hazard's SPEL) is the owner's for
+	// WeaponFire::THREW_LATELY after the watch. Before, a Wounding or Incendiary hit within twenty seconds of the
+	// player's own Molotov was left to the owner's game, which never dealt it.
 	constexpr bool OwnersToDeal(const Blow& a_blow)
 	{
 		if (a_blow.explosion) {
 			return a_blow.blastThere;
 		}
-		if (a_blow.inHand) {
+		if (a_blow.inHand || a_blow.enchantment) {
 			return false;
 		}
 		return (a_blow.throwable && a_blow.explosionsShared) || (a_blow.spellAlone && (a_blow.explosionsShared || a_blow.threwLately));
@@ -205,12 +217,34 @@ namespace CopyHealth
 		}
 
 		// A blow of ours on the copy now that the NPC's own game deals itself (OwnersToDeal): a throw's blast, its fire.
+		// Or a friend's explosion's that goes off there too (set off here for them: the hit names no actor).
 		void OwnersBlow(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			if (auto it = entries.find(a_id); it != entries.end()) {
 				it->second.ownersBlow = a_now;
 			} else if (entries.size() < MAX_COPIES) {
 				entries[a_id] = Entry{ .ownersBlow = a_now };
+			}
+		}
+
+		// A hit of ours on the copy now that put an effect on it (an enchantment's, a spell's: its ticks follow with no
+		// hit event, ours for EFFECT_WINDOW). Called beside OurHit for the same hit.
+		void OurEffect(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				it->second.effect = a_now;
+			} else if (entries.size() < MAX_COPIES) {
+				entries[a_id] = Entry{ .effect = a_now };
+			}
+		}
+
+		// A hit on the copy now that is nobody's of ours: a hazard's (a fire, gas), a friend's explosion's, another
+		// game's actor's. From then on a drop with no hit behind it is no longer our effect's alone (the fire's ticks
+		// fire no event either), so the effect's window closes.
+		void OtherHit(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				it->second.otherHit = a_now;
 			}
 		}
 
@@ -254,7 +288,7 @@ namespace CopyHealth
 			// A report held while our hits landed (Heard) stands once they are over: by then the owner's next report would
 			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged, nor on
 			// a fresh drop: either may be ours to send yet (a hit's event can come a frame after its damage).
-			if (entry.held && !entry.dropSince && a_health >= *entry.health - SLACK && !(entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now)) {
+			if (entry.held && !entry.dropSince && a_health >= *entry.health - SLACK && !OursLately(entry, a_now)) {
 				const float held = *std::exchange(entry.held, std::nullopt);
 				entry.unacked = 0.0f;
 				if (held > a_health + SLACK) {
@@ -283,10 +317,10 @@ namespace CopyHealth
 					return 0.0f;
 				}
 				entry.raiseSince.reset();
-				// What it fell from the most it read, with a hit of ours around, is ours as any drop is (TakeOurs): the hit
-				// landed on the gained health. Else a shot in the tenth of a second after the mutation was taken back with
-				// the heal, and never reached the NPC's game.
-				if (const float fell = entry.peak - a_health; fell > SLACK && entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now) {
+				// What it fell from the most it read, with a hit of ours around (or an effect of ours still on it: OursLately),
+				// is ours as any drop is (TakeOurs): the hit landed on the gained health. Else a shot in the tenth of a second
+				// after the mutation was taken back with the heal, and never reached the NPC's game.
+				if (const float fell = entry.peak - a_health; fell > SLACK && OursLately(entry, a_now)) {
 					const float take = Unknown(entry) ? fell : (std::min)(fell, entry.dealt);
 					entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
 					entry.ours += take;
@@ -309,8 +343,9 @@ namespace CopyHealth
 			if (!entry.dropSince) {
 				entry.dropSince = a_now;
 			}
-			// A hit of ours around the drop: the copy is ours to hurt, and what it took goes to the NPC's game (TakeOurs).
-			if (entry.ourHit && *entry.ourHit + OURS_GRACE >= *entry.dropSince) {
+			// A hit of ours around the drop, or an effect of ours still on it: the copy is ours to hurt, and what it took goes
+			// to the NPC's game (TakeOurs).
+			if (OursLately(entry, *entry.dropSince)) {
 				const float drop = *entry.health - a_health;
 				const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
 				entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
@@ -360,7 +395,7 @@ namespace CopyHealth
 				return a_health;
 			}
 			auto&      entry = it->second;
-			const bool lately = entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now;
+			const bool lately = OursLately(entry, a_now);
 			if (entry.health && lately && a_before < *entry.health - SLACK) {
 				// With a blow left to the owner around, only what our hits said they took is ours (as in Check).
 				const float drop = *entry.health - a_before;
@@ -438,6 +473,8 @@ namespace CopyHealth
 			bool                             figured = false;  // ... and one of them said what it took
 			float                            unacked = 0.0f;  // taken by hits of ours that the owner's reports may not have yet
 			std::optional<float>             held;  // a report's health not set yet (Heard)
+			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
+			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)
 			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
 			float                            peak = 0.0f;     // ... and the most it has read since then
 			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
@@ -450,6 +487,17 @@ namespace CopyHealth
 		// with no figure beside one with (a legendary's effect riding along with the shot, a blocked blow) adds nothing, so
 		// one of those in a burst no longer takes every burn tick near the player's shots for theirs.
 		static bool Unknown(const Entry& a_entry) { return a_entry.unknown && !a_entry.figured; }
+
+		// Whether the copy is ours to hurt at a_at: a hit of ours within OURS_GRACE before it, or an effect of ours put on
+		// it within EFFECT_WINDOW before it with no other's hit on it since (a fire's ticks fire no event either, so once
+		// something else hit the copy its drops are no longer the effect's alone: given back, as before).
+		static bool OursLately(const Entry& a_entry, Clock::time_point a_at)
+		{
+			if (a_entry.ourHit && *a_entry.ourHit + OURS_GRACE >= a_at) {
+				return true;
+			}
+			return a_entry.effect && *a_entry.effect + EFFECT_WINDOW >= a_at && a_at >= *a_entry.effect && !(a_entry.otherHit && *a_entry.otherHit > *a_entry.effect);
+		}
 
 		// A blow left to the owner landed around the drop being judged (from OURS_GRACE before it on).
 		static bool OwnersAround(const Entry& a_entry) { return a_entry.ownersBlow && a_entry.dropSince && *a_entry.ownersBlow + OURS_GRACE >= *a_entry.dropSince; }

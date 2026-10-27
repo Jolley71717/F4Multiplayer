@@ -701,7 +701,8 @@ namespace Party
 			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
 				return "party.cant_teleport_talking";
 			}
-			if (a_player->GetCurrentScene()) {
+			// Not a scene a friend's stage started here: the friend is playing it, and their later stages end it.
+			if (const auto scene = a_player->GetCurrentScene(); scene && scene->GetFormID() != QuestSync::SessionScene()) {
 				return "party.cant_teleport_scene";
 			}
 			if (static_cast<int>(a_player->DoGetSitSleepState()) != 0) {

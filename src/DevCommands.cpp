@@ -1028,7 +1028,8 @@ namespace DevCommands
 			if (!actor) {
 				return "error: no such actor";
 			}
-			std::string out = std::format("drawn={}", actor->GetWeaponMagicDrawn());
+			// The weapon state's own value too (RE::WEAPON_STATE: 4 wants to sheathe, 5 sheathing), which drawn= reads as away.
+			std::string out = std::format("drawn={} weaponState={}", actor->GetWeaponMagicDrawn(), std::to_underlying(static_cast<const RE::ActorState&>(*actor).weaponState) & 0x7);
 			for (const auto id : Equipment::Read(actor)) {
 				const auto form = RE::TESForm::GetFormByID(id);
 				out += std::format(" {:08X} '{}'", id, form ? RE::TESFullName::GetFullName(*form) : ""sv);
@@ -1954,6 +1955,25 @@ namespace DevCommands
 				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
 			}
 			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
+		}
+
+		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
+		// open; ghosts <refHex>: that actor's ghost as the engine and its extra data read it.
+		std::string Ghosts(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return WeaponFire::DescribeGhosts();
+			}
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: ghosts [<refHex>]";
+			}
+			const auto npc = actor->GetNPC();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("{:08X} ghost={} baseGhost={} questAlias={} hostile={} shareable={} dead={} loaded={} owner={}", actor->GetFormID(), CopyWatch::GhostState(actor),
+				npc && npc->IsGhost(), actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray), player && actor->GetHostileToActor(player),
+				Protocol::IsShareableRef(actor->GetFormID()), actor->IsDead(false), actor->Get3D() != nullptr, NpcSync::Owner(NpcSync::SessionId(actor->GetFormID())));
 		}
 
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
@@ -3621,6 +3641,7 @@ namespace DevCommands
 			Entry{ "sneak", Sneak },
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
+			Entry{ "ghosts", Ghosts },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "fade", FadeCommand },

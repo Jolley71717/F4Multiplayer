@@ -648,6 +648,15 @@ namespace Sim
 			}
 		}
 
+		// The server's clock moves on by a_by at once (a cooldown ends) without waiting for it: a busy PC can't make the
+		// wait too short, and nothing sleeps.
+		void Advance(std::chrono::milliseconds a_by)
+		{
+			if (fixture) {
+				fixture->Advance(a_by);
+			}
+		}
+
 		// Time goes by on the server (a budget refills), and then the session is settled.
 		void SettleAfter(std::chrono::milliseconds a_wait)
 		{

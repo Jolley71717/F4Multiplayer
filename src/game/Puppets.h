@@ -50,8 +50,8 @@ namespace Puppets
 
 	// Where a puppet's owner aims: the heading (radians) and the pitch (degrees up) its owner's game sent, or for a
 	// mirrored NPC the pitch its owner's copy aims at (none while it aims at nothing: level). None for no puppet. Any
-	// thread (the puppet's last state, under its lock): the launch hook aims a stand-in's inert shot by it
-	// (InertShots), as the engine otherwise fires an NPC's shot at whoever it looks at.
+	// thread (the puppet's last state, under its lock): the launch hook aims every launch of a stand-in's and a copy's
+	// inert shot by it (InertShots, InertShot::Aims), as the engine otherwise fires an NPC's shot at whoever it looks at.
 	struct OwnerAim
 	{
 		float heading = 0.0f;  // radians, 0 along +y, a quarter turn along +x
@@ -66,6 +66,9 @@ namespace Puppets
 	// the weapon arrives leaves the actor flagged as drawn but empty-handed, and then it can't
 	// play attacks.)
 	void RedrawWeapon(RE::Actor* a_actor);
+
+	// No draw or holster is asked of the puppet for this long (a replayed throw plays first: DrawMatch::THROW_HOLD).
+	void HoldDraw(RE::Actor* a_actor, std::chrono::steady_clock::duration a_for);
 
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);

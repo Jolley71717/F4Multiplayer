@@ -11,6 +11,7 @@
 #include "game/FastLoad.h"
 #include "game/FrameLoans.h"
 #include "game/FrameWatch.h"
+#include "game/GhostLedger.h"
 #include "game/GpuWatch.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
@@ -233,6 +234,9 @@ namespace
 	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
 	constexpr std::uint32_t LOOKS_VERSION = 1;
 	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
+	constexpr std::uint32_t GHOST_RECORD = 'GHST';
+	constexpr std::uint32_t GHOST_VERSION = 1;
+	constexpr std::uint32_t GHOST_MAX_LENGTH = 4 + 4 * static_cast<std::uint32_t>(GhostLedger::MAX);  // GhostLedger::Encode: a version, a count, the ids
 	constexpr std::uint32_t STORAGE_RECORD = 'STOR';
 	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
 	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
@@ -264,6 +268,11 @@ namespace
 		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
 		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
 			a_intfc->WriteRecordData(looks.data(), static_cast<std::uint32_t>(looks.size()));
+		}
+		// The ghosts we set against friends' explosions and have yet to see off (WeaponFire, GhostLedger): taken off as
+		// each copy loads after a load of this save.
+		if (const auto ghosts = WeaponFire::SaveGhostRecord(); !ghosts.empty() && a_intfc->OpenRecord(GHOST_RECORD, GHOST_VERSION)) {
+			a_intfc->WriteRecordData(ghosts.data(), static_cast<std::uint32_t>(ghosts.size()));
 		}
 	}
 
@@ -305,6 +314,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					LooksMenu::LoadRecord(bytes);
 				}
+			} else if (type == GHOST_RECORD && version == GHOST_VERSION && length <= GHOST_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					WeaponFire::LoadGhostRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
+				}
 			}
 		}
 	}
@@ -318,6 +332,7 @@ namespace
 		LooksMenu::RevertRecord();
 		Storage::RevertRecord();
 		FrameLoans::RevertRecord();
+		WeaponFire::RevertGhostRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
