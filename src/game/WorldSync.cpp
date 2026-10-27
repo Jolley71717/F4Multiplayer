@@ -805,12 +805,14 @@ namespace WorldSync
 				if (!move) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				// A weapon or armor put in a container may be a gift, and a take of one may be of a gift's copy: Gifts keeps
+				// every move at the container its view watches (never a vendor's), so a take just after a trade isn't lost.
+				Gifts::OnMoved(move->holder, move->item, move->count);
 				const auto closed = Clock::time_point{ Clock::duration{ barterClosedAt.load() } };
 				if (bartering || Clock::now() - closed < BARTER_TAIL) {
 					++barterMoves;  // a trade
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				Gifts::OnMoved(move->holder, move->item, move->count);  // a weapon or armor put in a container may be a gift
 				std::scoped_lock l{ inboxLock };
 				lootInbox.push_back(*move);
 				return RE::BSEventNotifyControl::kContinue;

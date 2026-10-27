@@ -28,7 +28,6 @@ namespace Gifts
 
 		// The container menu is gone this long (its close event missed, or another menu took over) and our view closes.
 		constexpr auto MENU_GONE = std::chrono::seconds{ 1 };
-		constexpr std::size_t MAX_INBOX = 256;
 
 		thread_local bool applying = false;
 
@@ -40,16 +39,10 @@ namespace Gifts
 			Guard& operator=(const Guard&) = delete;
 		};
 
-		struct Moved
-		{
-			std::uint32_t holder = 0;
-			std::uint32_t base = 0;
-			std::int32_t  count = 0;
-		};
-		std::mutex         inboxLock;
-		std::vector<Moved> inbox;
-		std::uint32_t      inboxDropped = 0;     // under inboxLock
-		std::atomic<bool>  listening{ false };  // welcomed: the menu's entry points post
+		std::mutex                 inboxLock;
+		GiftBook::Inbox            inbox;                  // under inboxLock
+		std::atomic<bool>          listening{ false };     // welcomed: the menu's entry points post
+		std::atomic<std::uint32_t> viewed{ 0 };            // the container our view watches (0: none): only its moves are kept
 
 		struct Counts
 		{
@@ -113,6 +106,7 @@ namespace Gifts
 					return std::nullopt;
 				}
 				std::vector<GiftBook::Stack> out;
+				std::vector<std::uint32_t>   seen;  // one entry per base, as the engine keeps them and Remove counts stacks (Drops::StacksOf)
 				RE::BSAutoReadLock           l{ list->rwLock };
 				for (auto& item : list->data) {
 					const auto object = item.object;
@@ -123,6 +117,10 @@ namespace Gifts
 					if (type != RE::ENUM_FORM_ID::kWEAP && type != RE::ENUM_FORM_ID::kARMO) {
 						continue;
 					}
+					if (std::ranges::find(seen, object->GetFormID()) != seen.end()) {
+						continue;
+					}
+					seen.push_back(object->GetFormID());
 					for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
 						GiftBook::Stack entry{ .base = object->GetFormID(),
 							.kind = type == RE::ENUM_FORM_ID::kWEAP ? LootScope::Item::kWeapon : LootScope::Item::kArmor,
@@ -217,6 +215,22 @@ namespace Gifts
 
 			bool Placeable(const Protocol::DroppedItem& a_item) override { return Drops::CanPlace(a_item); }
 
+			std::optional<LootScope::Item> KindOf(std::uint32_t a_base) override
+			{
+				const auto object = Object(a_base);
+				if (!object) {
+					return std::nullopt;
+				}
+				switch (object->GetFormType()) {
+				case RE::ENUM_FORM_ID::kWEAP:
+					return LootScope::Item::kWeapon;
+				case RE::ENUM_FORM_ID::kARMO:
+					return LootScope::Item::kArmor;
+				default:
+					return std::nullopt;
+				}
+			}
+
 			void Send(std::vector<std::uint8_t> a_packet) override { outgoing.push_back(std::move(a_packet)); }
 
 			void Notify(GiftBook::Notice a_notice) override { Hud::Notify(Text::Get(TextKey(a_notice))); }
@@ -244,18 +258,22 @@ namespace Gifts
 		bool              devView = false;   // `gifts view`: a view with no menu, until `gifts close`
 		std::optional<Clock::time_point> menuGoneSince;
 
+		// The container our view watches, for the event watch's thread.
+		void Publish()
+		{
+			viewed = client.Viewing().value_or(0);
+		}
+
 		// Our player's moves the event watch saw, before anything here looks at the container.
 		void Drain()
 		{
-			std::vector<Moved> moves;
+			GiftBook::Inbox moves;
 			{
 				std::scoped_lock l{ inboxLock };
-				moves = std::exchange(inbox, {});
-				counts.inboxDropped += std::exchange(inboxDropped, 0);
+				std::swap(moves, inbox);
+				counts.inboxDropped += moves.TakeDropped();
 			}
-			for (const auto& move : moves) {
-				client.Moved(move.holder, move.base, move.count);
-			}
+			moves.Drain([](std::uint32_t a_holder, std::uint32_t a_base, std::int32_t a_count) { client.Moved(a_holder, a_base, a_count); });
 		}
 
 		void Close()
@@ -264,6 +282,7 @@ namespace Gifts
 			client.Close();
 			devView = false;
 			menuGoneSince.reset();
+			Publish();
 		}
 
 		std::uint32_t ParseHex(std::string_view a_text)
@@ -285,18 +304,22 @@ namespace Gifts
 	{
 		Drain();
 		client.Placed(a_drop);
+		Publish();
 	}
 
 	bool OnGone(const Protocol::DropGone& a_gone)
 	{
 		Drain();
-		return client.Gone(a_gone);
+		const bool ours = client.Gone(a_gone);
+		Publish();
+		return ours;
 	}
 
 	void OnList(const Protocol::DropList& a_list)
 	{
 		Drain();
 		client.List(a_list);
+		Publish();
 	}
 
 	void Frame()
@@ -312,6 +335,7 @@ namespace Gifts
 			}
 		}
 		client.Frame();
+		Publish();
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -329,11 +353,12 @@ namespace Gifts
 	{
 		{
 			std::scoped_lock l{ inboxLock };
-			inbox.clear();
+			inbox.Clear();
 		}
 		client.GameLoaded();
 		devView = false;
 		menuGoneSince.reset();
+		Publish();
 	}
 
 	void Reset()
@@ -344,6 +369,7 @@ namespace Gifts
 		outgoing.clear();
 		devView = false;
 		menuGoneSince.reset();
+		Publish();
 	}
 
 	void OnMenuShown(RE::ObjectRefHandle a_container)
@@ -357,6 +383,7 @@ namespace Gifts
 				devView = false;
 				menuGoneSince.reset();
 				client.Open(ref->GetFormID());
+				Publish();
 			}
 		});
 	}
@@ -375,15 +402,13 @@ namespace Gifts
 
 	void OnMoved(std::uint32_t a_holder, std::uint32_t a_base, std::int32_t a_count)
 	{
-		if (!listening) {
+		// Only the container our view watches: a move anywhere else changes nothing here (and the host's rule off, with no
+		// gift in it, no container is watched).
+		if (!listening || a_holder == 0 || a_holder != viewed.load()) {
 			return;
 		}
 		std::scoped_lock l{ inboxLock };
-		if (inbox.size() >= MAX_INBOX) {
-			++inboxDropped;
-			return;
-		}
-		inbox.push_back({ a_holder, a_base, a_count });
+		inbox.Add(a_holder, a_base, a_count);
 	}
 
 	bool Applying()
@@ -401,10 +426,11 @@ namespace Gifts
 		const auto& s = client.Counters();
 		const auto  viewing = client.Viewing();
 		return std::format("gifts={} viewing={} copies={} claims={} puts={} lying={} views={} put={} notGiven={} overflow={} reported={} refused={} given={} kept={} "
-						   "lateOffers={} shown={} unplaceable={} copyMissing={} taken={} unheld={} received={} giveFailed={} takenFirst={} givenBack={} takenBack={} "
+						   "lateOffers={} shown={} unplaceable={} notGear={} addUndone={} copyMissing={} taken={} unsignaled={} unheld={} received={} giveFailed={} takenFirst={} givenBack={} takenBack={} "
 						   "dupRisk={} inboxDropped={} ownRefused={}",
 			client.Rule() ? "on" : "off", viewing ? std::format("{:08X}", *viewing) : "-", client.Copies(), client.Claims(), client.Puts(), client.Lying().size(), s.views,
-			s.puts, s.notGiven, s.overflow, s.reported, s.refused, s.given, s.kept, s.lateOffers, s.shown, s.unplaceable, s.copyMissing, s.taken, s.unheld, s.received,
+			s.puts, s.notGiven, s.overflow, s.reported, s.refused, s.given, s.kept, s.lateOffers, s.shown, s.unplaceable, s.notGear, s.addUndone, s.copyMissing, s.taken,
+			s.unsignaled, s.unheld, s.received,
 			s.giveFailed, s.takenFirst, s.givenBack, s.takenBack, s.dupRisk, counts.inboxDropped, counts.refusedOwn);
 	}
 
@@ -448,6 +474,7 @@ namespace Gifts
 		if (args[0] == "view") {
 			Drain();
 			client.Open(id);
+			Publish();
 			devView = client.Viewing() == id;
 			return devView ? std::format("viewing {:08X}: {} copies", id, client.Copies()) : std::format("not viewed: {:08X} is no gift's place (or the session isn't on)", id);
 		}

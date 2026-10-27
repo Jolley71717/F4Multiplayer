@@ -23,7 +23,8 @@
 // first, lies in the session once that game says the item left its world, is granted to whoever takes it first, and a
 // world's record after each welcome and load makes the session agree with it (DropBook::Record, Drops' co-save record).
 //
-// - Giving. A put into the container whose menu is open (WorldSync's event, Moved) that left one more of a weapon or armor
+// - Giving (only under the host's rule: off, a container no gift lies in isn't even watched). A put into the container
+//   whose menu is open (WorldSync's event, Moved) that left one more of a weapon or armor
 //   in it than we knew of is reported, one item at a time (each with a nonce of ours). On the server's offer the item
 //   leaves our world: taken out of the container, or, while the menu still shows it, kept there as our copy of the gift,
 //   so nothing changes on screen. The record says it left (Made), and kPlaced goes. An item no longer there (our player
@@ -33,11 +34,13 @@
 // - Showing. While our player has a container's menu open, each gift lying in it shows there as our copy (one item of
 //   it, with its mods, condition and name), the giver's own included. A copy goes as the menu closes, as the gift goes,
 //   and before every save and load: no save holds one.
-// - Taking. Our player's take from the container that left fewer than we knew of, of a class a copy is, took that copy:
-//   it comes out of our player's inventory at once (they have it only once the server says so), and is claimed (kTake,
-//   asked again until answered, never settled by a timeout). Granted to us, it goes into our player's inventory and the
-//   record says we took it; granted to someone else, nothing needs undoing. So the side our player can't hide an item from
-//   (the take we hold back) is the one put right, never an item already in their inventory.
+// - Taking. Fewer in the container than we knew of, of a class a copy is, that went to our player (their take's event
+//   said so, or, the event lost, their count of the class rose), took that copy: it comes out of our player's inventory
+//   at once (they have it only once the server says so), and is claimed (kTake, asked again until answered, never settled
+//   by a timeout). Granted to us, it goes into our player's inventory and the record says we took it; granted to someone
+//   else, nothing needs undoing. So the side our player can't hide an item from (the take we hold back) is the one put
+//   right, never an item already in their inventory. A copy gone anywhere else (another mod's script) isn't shown again
+//   until a load, and a take back of a class whose put waits for its offer takes that put back (its offer is kept).
 // - A reload settles the rest: a friend's save from before their take lacks the item, so it lies there again; ours from
 //   before the put has it in the container, so the gift is withdrawn. The one case left is a giver's save from before the
 //   put loaded after a friend took it: both have it (counted on the server, dupRisk), as for a dropped item.
@@ -212,6 +215,8 @@ namespace GiftBook
 		virtual std::optional<Place>   PlaceOf(std::uint32_t a_ref) = 0;
 		// Our game has the item's base and every mod on it.
 		virtual bool Placeable(const Protocol::DroppedItem& a_item) = 0;
+		// What our game's form a_base is: a weapon or an armor, or nothing (neither, or no such form here).
+		virtual std::optional<LootScope::Item> KindOf(std::uint32_t a_base) = 0;
 		virtual void Send(std::vector<std::uint8_t> a_packet) = 0;
 		virtual void Notify(Notice a_notice) = 0;
 		virtual std::uint64_t     NewNonce() = 0;
@@ -237,8 +242,11 @@ namespace GiftBook
 		std::uint32_t lateOffers = 0;   // offers of ours we no longer waited for (kKept)
 		std::uint32_t shown = 0;        // copies put in a container
 		std::uint32_t unplaceable = 0;  // gifts whose copy our game can't make (a base or mod it lacks)
-		std::uint32_t copyMissing = 0;  // copies gone from their container but not by our player's take
+		std::uint32_t notGear = 0;      // gifts that aren't a weapon or armor our game has, nor one a gift may be (a modified game's): never shown
+		std::uint32_t addUndone = 0;    // items an add that failed left in an inventory anyway, taken out again
+		std::uint32_t copyMissing = 0;  // copies gone from their container but not to our player (never shown again until a load)
 		std::uint32_t taken = 0;        // copies our player took (claimed)
+		std::uint32_t unsignaled = 0;   // of those, seen by their count alone (the move's event never came)
 		std::uint32_t unheld = 0;       // of those, not found in their inventory to hold back until the answer
 		std::uint32_t received = 0;     // takes granted to us
 		std::uint32_t giveFailed = 0;   // granted, but the item couldn't go into our player's inventory (it lies there again)
@@ -246,6 +254,69 @@ namespace GiftBook
 		std::uint32_t givenBack = 0;    // granted to a take our world no longer makes (after a load): lies there again
 		std::uint32_t takenBack = 0;    // a take lost that we couldn't hold back: taken out of our player's inventory after all
 		std::uint32_t dupRisk = 0;      // ... and not there to take: both have it
+	};
+
+	// A gift as it reached us may be shown: one weapon or armor of our game's, whose mods are plugins' (a modified game
+	// can report anything: the server can't tell a gun from a box of ammo).
+	inline bool Receivable(const Protocol::DroppedItem& a_drop, std::optional<LootScope::Item> a_kind)
+	{
+		return a_kind && GiftKind(*a_kind) && a_drop.count == 1 && Protocol::IsShareableRef(a_drop.base) && a_drop.mods.size() <= Protocol::MAX_ITEM_MODS &&
+		       std::ranges::none_of(a_drop.mods, [](const Protocol::ItemMod& a_mod) { return (a_mod.mod >> 24) == 0xFF; });
+	}
+
+	// Our player's moves between their inventory and a container, as the event watch saw them, until the main thread reads
+	// them: summed by container and item, so a Take All of a thousand kinds is a thousand entries and no move is ever left
+	// out (Gifts.cpp keeps only the moves at the container our menu shows). Not locked: Gifts.cpp holds its lock.
+	class Inbox
+	{
+	public:
+		static constexpr std::size_t MAX_KINDS = 8192;
+
+		// False: MAX_KINDS kinds already wait (never, but for a container of that many kinds), and it is left out.
+		bool Add(std::uint32_t a_holder, std::uint32_t a_base, std::int32_t a_count)
+		{
+			if (a_count == 0) {
+				return true;
+			}
+			auto it = moves.find({ a_holder, a_base });
+			if (it == moves.end()) {
+				if (moves.size() >= MAX_KINDS) {
+					++dropped;
+					return false;
+				}
+				it = moves.emplace(std::pair{ a_holder, a_base }, Sums{}).first;
+			}
+			(a_count > 0 ? it->second.puts : it->second.takes) += a_count > 0 ? std::int64_t{ a_count } : -std::int64_t{ a_count };
+			return true;
+		}
+
+		// Each container's and item's puts (+) and takes (-) to a_to(holder, base, count), and the inbox is empty again.
+		template <class F>
+		void Drain(F&& a_to)
+		{
+			constexpr std::int64_t MAX = INT32_MAX;
+			for (const auto& [key, sums] : std::exchange(moves, {})) {
+				if (sums.puts > 0) {
+					a_to(key.first, key.second, static_cast<std::int32_t>((std::min)(sums.puts, MAX)));
+				}
+				if (sums.takes > 0) {
+					a_to(key.first, key.second, -static_cast<std::int32_t>((std::min)(sums.takes, MAX)));
+				}
+			}
+		}
+
+		void                        Clear() { moves.clear(); }
+		[[nodiscard]] std::size_t   Size() const { return moves.size(); }
+		std::uint32_t               TakeDropped() { return std::exchange(dropped, 0); }
+
+	private:
+		struct Sums
+		{
+			std::int64_t puts = 0;
+			std::int64_t takes = 0;
+		};
+		std::map<std::pair<std::uint32_t, std::uint32_t>, Sums> moves;
+		std::uint32_t                                           dropped = 0;
 	};
 
 	class Client
@@ -285,7 +356,14 @@ namespace GiftBook
 				return;
 			}
 			Close();
-			if (localId == 0 || !Protocol::IsShareableRef(a_holder) || !GiftPlace(engine.Holder(a_holder))) {
+			if (localId == 0 || !Protocol::IsShareableRef(a_holder)) {
+				return;
+			}
+			// The host's rule off, a container no gift lies in isn't watched: nothing put in it is given (it costs nothing).
+			if (!Rule() && std::ranges::none_of(lying, [&](const auto& a_entry) { return a_entry.second.holder == a_holder; })) {
+				return;
+			}
+			if (!GiftPlace(engine.Holder(a_holder))) {
 				return;
 			}
 			const auto stacks = engine.Stacks(a_holder, 0);
@@ -295,6 +373,7 @@ namespace GiftBook
 			view = View{ .holder = a_holder, .real = Count(*stacks) };
 			++stats.views;
 			ShowCopies();
+			NoteCarried();
 		}
 
 		// The menu closed (or a save or a load is about to be made, or the session ends): our copies leave the container.
@@ -326,6 +405,7 @@ namespace GiftBook
 			if (view) {
 				Sync();
 				ShowCopies();
+				NoteCarried();
 			}
 		}
 
@@ -342,10 +422,21 @@ namespace GiftBook
 			if (a_drop.dropId == 0) {
 				// Not kept by the server: the item stays in our copy of the container, ours alone.
 				if (put != puts.end()) {
+					const bool cancelled = put->cancelled;
 					puts.erase(put);
-					++stats.refused;
-					Say(Notice::kNotGiven);
+					if (!cancelled) {
+						++stats.refused;
+						Say(Notice::kNotGiven);
+					}
 				}
+				return;
+			}
+			if (put != puts.end() && put->cancelled) {
+				// Our player took one of its class back out before the offer came: it never lay anywhere, and what the
+				// container held of that class before stays there (it was never the gift).
+				puts.erase(put);
+				Claim(a_drop.dropId, Protocol::DropClaim::kKept);
+				++stats.kept;
 				return;
 			}
 			if (put == puts.end()) {
@@ -374,39 +465,9 @@ namespace GiftBook
 			}
 			RemoveCopy(id);  // our player's take of it just now, if any, is claimed first
 			lying.erase(id);
-			const auto claim = claims.find(id);
-			if (localId != 0 && a_gone.takerId == localId) {
-				if (claim != claims.end()) {
-					const auto ours = std::move(claim->second);
-					claims.erase(claim);
-					if (ours.held && !engine.Add(PLAYER, ours.item)) {
-						Claim(id, Protocol::DropClaim::kGiveBack);  // it couldn't go into our player's inventory: it lies there again
-						++stats.giveFailed;
-						return true;
-					}
-					engine.Took(id);
-					++stats.received;
-				} else if (!engine.HasTaken(id)) {
-					// Granted to a take we no longer make (from before a load): it lies there again for anyone.
-					Claim(id, Protocol::DropClaim::kGiveBack);
-					++stats.givenBack;
-				}
-				return true;
-			}
-			if (claim != claims.end()) {
-				const auto lost = std::move(claim->second);
-				claims.erase(claim);
-				if (!lost.held) {
-					if (TakeOut(PLAYER, lost.cls)) {
-						++stats.takenBack;
-					} else {
-						++stats.dupRisk;
-					}
-				}
-				if (a_gone.takerId != 0) {
-					++stats.takenFirst;
-					engine.Notify(Notice::kTakenFirst);
-				}
+			GoneFor(id, a_gone.takerId);
+			if (view) {
+				NoteCarried();  // what a grant or a lost take changed of our player's isn't a take of theirs
 			}
 			return true;
 		}
@@ -449,6 +510,7 @@ namespace GiftBook
 			claims.clear();
 			puts.clear();
 			unplaceable.clear();
+			vanished.clear();
 		}
 
 		// The session ended (or our link went): copies leave the container, and everything but the record is forgotten.
@@ -482,6 +544,7 @@ namespace GiftBook
 			Class                 cls;
 			std::uint32_t         holder = 0;
 			Clock::time_point     at{};
+			bool                  cancelled = false;  // one of its class taken back out before the offer: kept on it
 		};
 
 		struct Signal
@@ -497,6 +560,10 @@ namespace GiftBook
 			Counts                          real;    // what the container holds that isn't our copy of a gift
 			std::map<std::uint32_t, Class>  copies;  // drop ID -> the class of our copy of it in the container
 			std::map<std::uint32_t, Signal> signals;  // by base: our player's moves not yet seen in the container
+			// Our player's items of the bases our copies are, as last seen: a copy gone with no event, while their count of its
+			// class rose, went to them (the event lost).
+			Counts                          carried;
+			std::set<std::uint32_t>         carriedBases;
 		};
 
 		struct TakeClaim
@@ -506,6 +573,45 @@ namespace GiftBook
 			bool                  held = false;  // the item came out of our player's inventory until the answer
 			Clock::time_point     sent{};
 		};
+
+		// Our claim of a gift no longer lying there, answered: granted to a_taker (0: withdrawn).
+		void GoneFor(std::uint32_t id, std::uint32_t a_taker)
+		{
+			const auto claim = claims.find(id);
+			if (localId != 0 && a_taker == localId) {
+				if (claim != claims.end()) {
+					const auto ours = std::move(claim->second);
+					claims.erase(claim);
+					if (ours.held && !AddOne(PLAYER, ours.item)) {
+						Claim(id, Protocol::DropClaim::kGiveBack);  // it couldn't go into our player's inventory: it lies there again
+						++stats.giveFailed;
+						return;
+					}
+					engine.Took(id);
+					++stats.received;
+				} else if (!engine.HasTaken(id)) {
+					// Granted to a take we no longer make (from before a load): it lies there again for anyone.
+					Claim(id, Protocol::DropClaim::kGiveBack);
+					++stats.givenBack;
+				}
+				return;
+			}
+			if (claim != claims.end()) {
+				const auto lost = std::move(claim->second);
+				claims.erase(claim);
+				if (!lost.held) {
+					if (TakeOut(PLAYER, lost.cls)) {
+						++stats.takenBack;
+					} else {
+						++stats.dupRisk;
+					}
+				}
+				if (a_taker != 0) {
+					++stats.takenFirst;
+					engine.Notify(Notice::kTakenFirst);
+				}
+			}
+		}
 
 		void Claim(std::uint32_t a_dropId, Protocol::DropClaim a_op) { engine.Send(Protocol::Encode(Protocol::ClaimDrop{ a_dropId, a_op })); }
 
@@ -525,7 +631,9 @@ namespace GiftBook
 		}
 
 		// What the container holds now against what we knew: an item more than we knew of that our player put in is a gift;
-		// one fewer that our player took is our copy of a gift first (so it is claimed), else their own item.
+		// one fewer that went to our player (their take's event said so, or, the event lost, their count of its class rose)
+		// is our copy of a gift first (so it is claimed and held back), else their own item. A copy gone anywhere else is
+		// never shown again until a load.
 		void Sync()
 		{
 			const auto stacks = engine.Stacks(view->holder, 0);
@@ -547,6 +655,18 @@ namespace GiftBook
 			for (const auto& [cls, n] : known) {
 				classes.insert(cls);
 			}
+			std::map<std::uint32_t, Counts> carriedNow;  // read once a base, before anything is held back
+			const auto rise = [&](const Class& a_class) -> std::int64_t {
+				if (!view->carriedBases.contains(a_class.base)) {
+					return 0;
+				}
+				auto it = carriedNow.find(a_class.base);
+				if (it == carriedNow.end()) {
+					const auto mine = engine.Stacks(PLAYER, a_class.base);
+					it = carriedNow.emplace(a_class.base, mine ? Count(*mine) : Counts{}).first;
+				}
+				return (std::max)(std::int64_t{ 0 }, CountOf(it->second, a_class) - CountOf(view->carried, a_class));
+			};
 			for (const auto& cls : classes) {
 				const auto change = CountOf(have, cls) - CountOf(known, cls);
 				auto&      signal = view->signals[cls.base];
@@ -560,27 +680,96 @@ namespace GiftBook
 					}
 				} else if (change < 0) {
 					auto        missing = -change;
-					const auto& ids = copiesOf[cls];
-					const auto  taken = (std::min)({ missing, signal.takes, static_cast<std::int64_t>(ids.size()) });
-					for (std::int64_t i = 0; i < taken; ++i) {
+					const auto  ids = copiesOf[cls];
+					const auto  copies = static_cast<std::int64_t>(ids.size());
+					const auto  toPlayer = (std::min)(missing, (std::max)(signal.takes, rise(cls)));
+					const auto  claimed = (std::min)(toPlayer, copies);
+					for (std::int64_t i = 0; i < claimed; ++i) {
+						if (i >= signal.takes) {
+							++stats.unsignaled;
+						}
 						Taken(ids[static_cast<std::size_t>(i)], cls, now);
 					}
-					signal.takes -= taken;
-					missing -= taken;
 					auto&      real = view->real[cls];
-					const auto own = (std::min)(missing, real);
+					const auto own = (std::min)(toPlayer - claimed, real);
 					real -= own;
-					missing -= own;
-					signal.takes -= (std::min)(signal.takes, own);
-					// Copies gone without a take of our player's (another mod's script): they no longer show.
-					for (auto i = static_cast<std::size_t>(taken); missing > 0 && i < ids.size(); ++i, --missing) {
-						view->copies.erase(ids[i]);
+					CancelPuts(cls, own);
+					signal.takes -= (std::min)(signal.takes, claimed + own);
+					missing -= claimed + own;
+					// Copies gone elsewhere (another mod's script; or the event lost and the item changed on the way): they no
+					// longer show, and aren't shown again.
+					for (auto i = claimed; missing > 0 && i < copies; ++i, --missing) {
+						const auto id = ids[static_cast<std::size_t>(i)];
+						view->copies.erase(id);
+						vanished.insert(id);
 						++stats.copyMissing;
 					}
+					real -= (std::min)(missing, real);  // our player's own, gone elsewhere
 				}
 			}
 			std::erase_if(view->real, [](const auto& a_entry) { return a_entry.second <= 0; });
 			std::erase_if(view->signals, [&](const auto& a_entry) { return now - a_entry.second.at > SIGNAL_KEEP || (a_entry.second.puts <= 0 && a_entry.second.takes <= 0); });
+			NoteCarried();
+		}
+
+		// Our player took a_n of a_class's own items out of the container we view: as many of their puts of that class still
+		// waiting for an offer were taken back (their offers are kept), the latest first. What the container held of that
+		// class before the put is never given for one.
+		void CancelPuts(const Class& a_class, std::int64_t a_n)
+		{
+			for (auto it = puts.rbegin(); a_n > 0 && it != puts.rend(); ++it) {
+				if (!it->cancelled && it->holder == view->holder && it->cls == a_class) {
+					it->cancelled = true;
+					--a_n;
+				}
+			}
+		}
+
+		// What our player carries of the bases our copies are, for the next Sync.
+		void NoteCarried()
+		{
+			view->carried.clear();
+			view->carriedBases.clear();
+			for (const auto& [id, cls] : view->copies) {
+				if (!view->carriedBases.insert(cls.base).second) {
+					continue;
+				}
+				if (const auto mine = engine.Stacks(PLAYER, cls.base)) {
+					for (const auto& [c, n] : Count(*mine)) {
+						view->carried[c] = n;
+					}
+				} else {
+					view->carriedBases.erase(cls.base);
+				}
+			}
+		}
+
+		// One a_item into a_ref: the class it is there, or nothing, and then nothing of it is left there (an add that
+		// failed after putting something in is undone).
+		std::optional<Class> AddOne(std::uint32_t a_ref, const Protocol::DroppedItem& a_item)
+		{
+			const auto before = engine.Stacks(a_ref, a_item.base);
+			if (!before) {
+				return std::nullopt;
+			}
+			const auto         had = Count(*before);
+			const bool         added = engine.Add(a_ref, a_item);
+			const auto         after = engine.Stacks(a_ref, a_item.base);
+			std::vector<Class> grown;
+			for (const auto& [cls, n] : after ? Count(*after) : Counts{}) {
+				for (auto more = n - CountOf(had, cls); more > 0; --more) {
+					grown.push_back(cls);
+				}
+			}
+			if (added && grown.size() == 1) {
+				return grown.front();
+			}
+			for (const auto& cls : grown) {
+				if (TakeOut(a_ref, cls)) {
+					++stats.addUndone;
+				}
+			}
+			return std::nullopt;
 		}
 
 		// Our player put one of a_stack's items in the container we view: reported as a gift, if it may be one.
@@ -624,6 +813,7 @@ namespace GiftBook
 				// The menu still shows it: the item itself stays there as our copy of the gift, so nothing moves on screen.
 				--view->real[a_put.cls];
 				view->copies[a_drop.dropId] = a_put.cls;
+				NoteCarried();
 				out = true;
 			} else if (there >= 1 && !viewing) {
 				out = TakeOut(a_put.holder, a_put.cls);
@@ -682,7 +872,7 @@ namespace GiftBook
 		{
 			const auto holder = view->holder;
 			for (const auto& [id, drop] : lying) {
-				if (drop.holder != holder || view->copies.contains(id) || claims.contains(id) || unplaceable.contains(id)) {
+				if (drop.holder != holder || view->copies.contains(id) || claims.contains(id) || unplaceable.contains(id) || vanished.contains(id)) {
 					continue;
 				}
 				if (view->copies.size() >= MAX_COPIES || view->copies.size() + claims.size() >= MAX_CLAIMS) {
@@ -693,26 +883,16 @@ namespace GiftBook
 					++stats.unplaceable;
 					continue;
 				}
-				const auto before = engine.Stacks(holder, drop.base);
-				if (!before) {
-					return;
-				}
-				const auto had = Count(*before);
-				if (!engine.Add(holder, drop)) {
+				if (!Receivable(drop, engine.KindOf(drop.base))) {
+					// Not a weapon or armor (a modified game's report): shown, it would be an item no Sync sees, left in our
+					// copy for good.
 					unplaceable.insert(id);
-					++stats.unplaceable;
+					++stats.notGear;
 					continue;
 				}
-				const auto                after = engine.Stacks(holder, drop.base);
-				std::optional<Class>      grown;
-				for (const auto& [cls, n] : after ? Count(*after) : Counts{}) {
-					if (n > CountOf(had, cls)) {
-						grown = cls;
-						break;
-					}
-				}
+				const auto grown = AddOne(holder, drop);
 				if (!grown) {
-					unplaceable.insert(id);  // it didn't go in
+					unplaceable.insert(id);  // it didn't go in (and nothing of it stayed)
 					++stats.unplaceable;
 					continue;
 				}
@@ -730,6 +910,9 @@ namespace GiftBook
 		std::map<std::uint32_t, Protocol::DroppedItem> lying;
 		std::vector<Protocol::DroppedItem>             listing;
 		std::set<std::uint32_t>                        unplaceable;
+		// Gifts whose copy went from the container we view, but not to our player (another mod's script, say): not shown here
+		// again until a load, so a script that empties the container makes one item of each gift at most, not one a frame.
+		std::set<std::uint32_t>                        vanished;
 		std::array<bool, static_cast<std::size_t>(Notice::kCount)> said{};
 		Stats                                          stats;
 	};
