@@ -43,6 +43,8 @@ namespace FrameShare
 		                         // copy an older version's workshop sync made of a frame, not a suit of the player's own (Ghost)
 		bool  holdsItems = false;  // anything is in it
 		bool  lastUsed = false;  // the frame our player got out of last (PlayerCharacter::lastUsedPowerArmor)
+		bool  owned = false;     // it has an owner of its own (ExtraOwnership): the engine gives a frame its wearer's
+		                         // ownership as they get in, so one our player ever used has one, not only the last
 		Spot  at;                // where it stands here
 		float heading = 0.0f;
 		bool  upright = true;    // not leaning (its x and y angles within TURNED of none): one leaning past
@@ -137,7 +139,8 @@ namespace FrameShare
 	// cleared (NpcSync's frame walk, as WorkshopApply clears one at a spot the session file still reports): left there,
 	// the host's game shared it as a frame of its own, a second suit beside the friend's real one in every joiner's
 	// game, every session. Never one that holds anything (a player fitted it out, or it is their own suit an older
-	// version took over: deleting it would lose the pieces), one anyone is in, our player's own (worn, or left last:
+	// version took over: deleting it would lose the pieces), one anyone is in, our player's own (worn, left last, or
+	// with an owner: the engine gives a frame its wearer's ownership as they get in, so one they ever used has one, and
 	// using it makes it theirs), one a quest holds, one the session placed, or one not loaded (deleting a reference
 	// whose 3D is still coming crashes the loader; the walk finds loaded ones). A plain copy an older version left (no
 	// keyword: one of a friend's stand-in's or parked frame that a load kept) cannot be told from a frame the game
@@ -147,7 +150,7 @@ namespace FrameShare
 		if (!a_ours.found || !a_ours.created || !a_ours.frame || !a_ours.marked || a_ours.copy) {
 			return false;
 		}
-		if (a_ours.holdsItems || a_ours.off || a_ours.inUse || a_ours.wornHere || a_ours.lastUsed || a_ours.quest) {
+		if (a_ours.holdsItems || a_ours.off || a_ours.inUse || a_ours.wornHere || a_ours.lastUsed || a_ours.owned || a_ours.quest) {
 			return false;
 		}
 		return a_ours.loaded;

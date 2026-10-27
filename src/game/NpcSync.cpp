@@ -982,6 +982,7 @@ namespace NpcSync
 			ours.marked = WorkshopSync::IsCopyMarked(*a_frame);
 			ours.holdsItems = WorkshopSync::HoldsAnything(a_frame);
 			ours.lastUsed = player && player->lastUsedPowerArmor.get().get() == a_frame;
+			ours.owned = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
 			ours.at = SpotOf(a_frame);
 			ours.heading = a_frame->data.angle.z;
 			ours.upright = FrameShare::Upright(a_frame->data.angle.x, a_frame->data.angle.y);
@@ -1761,19 +1762,16 @@ namespace NpcSync
 
 	bool OwnMadeFrameAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot, float a_radius)
 	{
-		// The frames the last walk found standing loaded (within FRAME_WALK_INTERVAL): a copy is placed only in view.
+		// The frames the last walk found standing loaded (within FRAME_WALK_INTERVAL): a copy is placed only in view. Asked
+		// every frame for each frame copy: the spot first, and the rest (FrameOursOf walks the actors) only of one near it.
 		for (const auto local : standingMade) {
 			const auto frame = MadeFrameRef(local);
 			const auto base = frame ? frame->GetObjectReference() : nullptr;
-			if (!base || base->GetFormID() != a_base || RemotePlayers::OnItsWayOut(frame)) {
+			if (!base || base->GetFormID() != a_base || !RemoteEdits::Within(RemoteEdits::Distance(SpotOf(frame), a_spot), a_radius) || RemotePlayers::OnItsWayOut(frame)) {
 				continue;
 			}
-			const auto ours = FrameOursOf(frame);
-			if (ours.copy || FrameShare::Ghost(ours)) {
-				continue;  // a copy of ours, or one on its way out: never our own
-			}
-			if (RemoteEdits::Within(RemoteEdits::Distance(ours.at, a_spot), a_radius)) {
-				return true;
+			if (const auto ours = FrameOursOf(frame); !ours.copy && !FrameShare::Ghost(ours)) {
+				return true;  // a copy of ours, or one on its way out, is never our own
 			}
 		}
 		return false;

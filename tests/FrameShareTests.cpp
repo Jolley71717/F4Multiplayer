@@ -268,6 +268,11 @@ TEST("frame share: a copy an older version's workshop sync left in the save is t
 	facts = ghost;
 	facts.lastUsed = true;
 	CHECK(!Ghost(facts));
+	// Or ever used: the engine gives a frame its wearer's ownership as they get in, which the last-used one alone misses
+	// (one they got out of before the next, or a frame they docked in a station and left for another).
+	facts = ghost;
+	facts.owned = true;
+	CHECK(!Ghost(facts));
 	// Someone else in it, a quest holding it, disabled by anything, a copy the session placed this run: left alone.
 	facts = ghost;
 	facts.inUse = true;

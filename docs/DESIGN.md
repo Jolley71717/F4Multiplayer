@@ -1408,7 +1408,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   or one holding pieces (fitted out by a player, or their own suit an earlier session took over: deleting it would
   lose them), is left alone. The session file is not needed for it: NpcSync's frame walk (every 2 s in a session) finds
   any such copy standing loaded (`FrameShare::Ghost`: made at runtime, the keyword, empty, nobody in it, not the frame
-  our player wears or left last, no quest's, no copy of this run's, loaded) and buries it as a frame copy of ours
+  our player wears or left last, with no owner (the engine gives a frame its wearer's ownership as they get in, so one
+  our player ever used has one), no quest's, no copy of this run's, loaded) and buries it as a frame copy of ours
   (`SaveGuard::Track`, `RemotePlayers::Discard`: disabled, deleted, kept out of saves, handed to a load that comes first;
   `ghostsCleared` in `net status`, `paframes` shows `marked=` and `holds=`). Left standing, the host's game shared it as
   a frame of its own (`FrameShare::SharesMade` took any created frame standing loaded), and every joiner placed a copy
