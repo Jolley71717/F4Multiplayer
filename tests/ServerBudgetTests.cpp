@@ -262,9 +262,10 @@ TEST("budgets: a busy evening of two honest players never meets a limit, and eac
 			f.fake->SetIdentity(bobPeer, BOB_STEAM);
 			f.fake->Connect(bobPeer);
 			f.fake->Deliver(bobPeer, Protocol::Encode(HelloFrom("Bob", 0xB0B, session, bobSaveFrom)));
-			REQUIRE(Await(f, bobPeer, MT::kWelcome, toBob, 1000ms));  // at once: no wait for a budget
+			REQUIRE(Await(f, bobPeer, MT::kWelcome, toBob, 30s));  // at once: no wait for a budget
 			claimAll(bobPeer, std::vector<std::uint32_t>(bobRaiders.begin() + 4, bobRaiders.end()));
 		}
+		REQUIRE(f.fake->Settle());  // the server has handled the step before the next, however busy the PC: it sees them a tenth apart at least
 		std::this_thread::sleep_for(100ms);
 		collect();
 	}
@@ -320,7 +321,7 @@ TEST("budgets: a busy evening of two honest players never meets a limit, and eac
 TEST("budgets: a friend rejoining in a loop waits for their budget, and gets the loot made meanwhile in their world state")
 {
 	Server::Options options;
-	options.worldStateRefill = 1000ms;
+	options.worldStateRefill = 600s;  // owed until the test moves the server clock past it (Advance): a busy PC can't refill it early
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	f.fake->SetIdentity(2, BOB_STEAM);
@@ -347,6 +348,7 @@ TEST("budgets: a friend rejoining in a loop waits for their budget, and gets the
 	const auto echo = Decoded(Received(f, 1), MT::kContainerChanged, Protocol::DecodeIndexedContainerChange);
 	REQUIRE(echo.size() == 1);
 
+	f.Advance(options.worldStateRefill + 1s);  // the budget refills
 	REQUIRE(Await(f, 3, MT::kWorldState, toBob));
 	std::ranges::move(During(f, 3, 300ms), std::back_inserter(toBob));
 	CHECK(Count(toBob, MT::kWelcome) == 1);
@@ -363,7 +365,7 @@ TEST("budgets: a friend rejoining in a loop waits for their budget, and gets the
 TEST("budgets: over UDP, a friend rejoining in a loop under one identity waits for the budget the last connection spent")
 {
 	Server::Options options;
-	options.worldStateRefill = 1000ms;
+	options.worldStateRefill = 600s;  // owed until the test moves the server clock past it
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	for (PeerId peer = 2; peer <= 4; ++peer) {  // three joins: the bucket
@@ -376,13 +378,14 @@ TEST("budgets: over UDP, a friend rejoining in a loop under one identity waits f
 	Packets toBob;
 	CHECK(NoneYet(f, 1, 5, MT::kWelcome, toBob, asked, options.worldStateRefill));
 	CHECK(f.Logged("says hello too often"));
+	f.Advance(options.worldStateRefill + 1s);  // the budget refills
 	REQUIRE(Await(f, 5, MT::kWorldState, toBob));
 	CHECK(Count(toBob, MT::kWelcome) == 1);
 
 	// Someone else's game, on a connection of its own, isn't held up by Bob's budget.
 	f.fake->Connect(6);
 	f.fake->Deliver(6, Protocol::Encode(HelloFrom("Carol", 0xCA201)));
-	CHECK(f.fake->WaitFor(6, Type(MT::kWorldState), 500ms));
+	CHECK(f.fake->WaitFor(6, Type(MT::kWorldState), 30s));
 }
 
 // Bob's game restarts before Steam notices (it keeps one connection per friend) and loads a save, with his
@@ -392,7 +395,7 @@ TEST("budgets: over UDP, a friend rejoining in a loop under one identity waits f
 TEST("budgets: hello again on the same connection with an empty budget is answered when it refills, and the loot made meanwhile isn't lost")
 {
 	Server::Options options;
-	options.worldStateRefill = 1500ms;
+	options.worldStateRefill = 600s;  // owed until the test moves the server clock past it
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	f.fake->SetIdentity(2, BOB_STEAM);
@@ -428,6 +431,7 @@ TEST("budgets: hello again on the same connection with an empty budget is answer
 	Packets toBob;
 	CHECK(NoneYet(f, 1, 2, MT::kWelcome, toBob, asked, options.worldStateRefill));
 	CHECK(Count(toBob, MT::kContainerChanged) == 0);
+	f.Advance(options.worldStateRefill + 1s);  // the budget refills
 	REQUIRE(Await(f, 2, MT::kWorldState, toBob));
 	game.Take(toBob);
 	CHECK(game.welcomes == 1);
@@ -454,7 +458,7 @@ TEST("budgets: hello again on the same connection with an empty budget is answer
 TEST("budgets: a friend who joins and reloads three times in a row gets every world state, the last one when his budget refills")
 {
 	Server::Options options;
-	options.worldStateRefill = 1000ms;
+	options.worldStateRefill = 600s;  // owed until the test moves the server clock past it
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	const auto bob = f.Join(2, HelloFrom("Bob", 0xB0B));
@@ -467,7 +471,6 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 	Packets    toAlice = Received(f, 1);
 
 	// Each time: he saves, Alice loots (he sees it live), he dies and loads that save.
-	std::vector<std::chrono::steady_clock::time_point> askedAt;
 	for (std::uint32_t reload = 0; reload < 3; ++reload) {
 		const auto savedWorld = game.world;
 		const auto savedNext = game.Next();
@@ -476,7 +479,6 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 		Sync(f, 1);
 		game.Take(Received(f, 2));
 		game.LoadSave(savedWorld, savedNext, savedEntries);
-		askedAt.push_back(std::chrono::steady_clock::now());
 		f.fake->Deliver(2, Request(bob->sessionId, savedNext));
 		Sync(f, 2);
 		game.Take(Received(f, 2));
@@ -485,9 +487,9 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 
 	Packets toBob;
 	if (game.worldStates - joined == 2) {
-		REQUIRE(Await(f, 2, MT::kWorldState, toBob, 3000ms));
-		// Within about one refill of asking (with room for a slow machine).
-		CHECK(std::chrono::steady_clock::now() - askedAt.back() < options.worldStateRefill * 2);
+		f.Advance(options.worldStateRefill + 1s);  // the budget refills: it comes then, not before
+		REQUIRE(Await(f, 2, MT::kWorldState, toBob));
+		// It came when the budget refilled: not before (the clock was short of it), and once the clock was past it.
 		game.Take(toBob);
 	}
 	CHECK(game.worldStates - joined == 3);
@@ -504,7 +506,7 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 TEST("budgets: while a player's world state is owed, every container change reaches them once, in order")
 {
 	Server::Options options;
-	options.worldStateRefill = 1000ms;
+	options.worldStateRefill = 600s;  // owed until the test moves the server clock past it
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	const auto bob = f.Join(2, HelloFrom("Bob", 0xB0B));
@@ -523,6 +525,7 @@ TEST("budgets: while a player's world state is owed, every container change reac
 	CHECK(Count(toBob, MT::kContainerChanged) == 0);
 	CHECK(Count(Received(f, 1), MT::kContainerChanged) == 3);  // Alice isn't owed anything
 
+	f.Advance(options.worldStateRefill + 1s);  // the budget refills
 	REQUIRE(Await(f, 2, MT::kWorldState, toBob));
 	f.fake->Deliver(1, Loot(CHEST, ITEM + 4, -1));  // #4: live again
 	std::ranges::move(Received(f, 2), std::back_inserter(toBob));
@@ -576,7 +579,7 @@ TEST("budgets: shared XP spent before a rejoin isn't there again after it")
 TEST("budgets: a face changed again within the interval reaches the others as the latest one when it ends")
 {
 	Server::Options options;
-	options.faceInterval = 600ms;
+	options.faceInterval = 600s;  // held until the test moves the server clock past it (Advance), so a busy PC can't end it early
 	Fixture f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
@@ -590,6 +593,7 @@ TEST("budgets: a face changed again within the interval reaches the others as th
 	CHECK(faces[0].weight[0] == 0.1f);
 
 	Packets toBob;
+	f.Advance(601s);  // the interval is up: the latest follows
 	REQUIRE(Await(f, 2, MT::kPlayerFace, toBob));
 	faces = Decoded(toBob, MT::kPlayerFace, Protocol::DecodeFace);
 	REQUIRE(faces.size() == 1);
@@ -857,7 +861,7 @@ TEST("tables: a saved session near full says so when the host starts again")
 	{
 		Fixture f{ options };  // the next start: already that full
 		REQUIRE(f.fake);
-		std::this_thread::sleep_for(100ms);
+		REQUIRE(f.LoggedSoon("picked-up item table is 80% full (8/10)"));  // said as the server starts, on its own thread
 		CHECK(f.LogLines("picked-up item table is 80% full (8/10)").size() == 1);
 	}
 	std::filesystem::remove(path);

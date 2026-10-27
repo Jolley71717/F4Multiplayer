@@ -30,7 +30,7 @@ namespace
 	constexpr std::uint32_t RAIDER = 0x0001F101;
 	constexpr std::uint32_t RAIDER2 = 0x0001F102;
 	constexpr std::uint64_t HOST_IDENTITY = 0x1111;
-	constexpr auto          GRACE = 300ms;  // Options::aliveAgainGrace in these tests
+	constexpr auto          GRACE = 300s;  // Options::aliveAgainGrace in these tests: long, so a busy PC can't end it early; a test ends it with Fixture::Advance
 	// What a cell reset takes: days of game time. Only the games' ledgers are told it passed.
 	constexpr auto DAYS_LATER = std::chrono::hours(1);
 
@@ -269,7 +269,7 @@ TEST("alive again: a camp cleared together comes back after a cell reset in the 
 	bob.Pump();
 
 	// Days later the camp's cell resets in the host's game: the raider loads alive.
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	CHECK(host.Loads(RAIDER, true, later));
@@ -309,7 +309,7 @@ TEST("alive again: a newcomer is told who runs a raider that came back instead o
 	host.Loads(RAIDER, true, Clock::now());
 	host.Kills(RAIDER, 10.0f);  // the host kills it alone
 	host.Pump();
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	REQUIRE(host.Loads(RAIDER, true, later));
@@ -335,7 +335,7 @@ TEST("alive again: a joiner's game can't bring the dead back, whatever it claims
 	bob.Pump();
 	CHECK(!bob.Alive(RAIDER));
 	host.Pump();
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// Bob's camp reset first. His own game knows its raider is back and offers it; the server says nothing.
 	const auto later = Clock::now() + DAYS_LATER;
@@ -364,7 +364,7 @@ TEST("alive again: the host loading a save from before the kill doesn't bring th
 	bob.Kills(RAIDER);
 	host.Pump();
 	bob.Pump();
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// The host loads an older save: its raider is alive there. Its game knows nothing until the session's world
 	// state is in, so it offers nothing...
@@ -387,7 +387,7 @@ TEST("alive again: the host loading a save from before the kill doesn't bring th
 TEST("alive again: the host quickloading so often that the server refuses its world request doesn't undo a friend's kills")
 {
 	auto options = HostedOptions();
-	options.worldStateRefill = 2500ms;
+	options.worldStateRefill = 3600s;  // owed until the test moves the clock past it
 	Fixture f{ options };
 	Game    host{ f, 1, "Host", true };
 	Game    bob{ f, 2, "Bob" };
@@ -396,7 +396,7 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	host.Pump();
 	bob.Pump();
 	CHECK(!host.Alive(RAIDER));
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// The host is in a hard fight and quickloads a save from before the kill, again and again. Its budget has three
 	// world states and its hello took one: the server answers two requests in a row and owes the third until the
@@ -413,7 +413,7 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	CHECK(host.Alive(RAIDER));
 
 	// Its game gives up waiting and offers the raider it has alive, well after the request (on the server's clock).
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto afterFallback = Clock::now() + SessionDeaths::SETTLE_FALLBACK;
 	REQUIRE(host.Scan(RAIDER, afterFallback));
 	CHECK(Owners(host.Pump()).empty());
@@ -425,8 +425,9 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	CHECK(carol.deaths.Contains(RAIDER));
 
 	// And once the host's budget refills, the world state it was owed comes: its game kills the raider too.
+	f.Advance(3600s);
 	bool owedCame = false;
-	for (const auto deadline = std::chrono::steady_clock::now() + 6s; !owedCame && std::chrono::steady_clock::now() < deadline;) {
+	for (const auto deadline = std::chrono::steady_clock::now() + 30s; !owedCame && std::chrono::steady_clock::now() < deadline;) {
 		owedCame = Count(host.Pump(), MT::kWorldState) >= 1;
 		if (!owedCame) {
 			std::this_thread::sleep_for(200ms);  // one heartbeat each time, fewer than the server answers (ten a second)
@@ -452,7 +453,7 @@ TEST("alive again: a raider essential only in the host's game doesn't undo Bob's
 
 	// The host walks off and comes back: it loads alive, as it has been all along. Its game offers to run it, marked
 	// essential; a death seen this session is no mistake, so nobody gets it and it stays dead.
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	CHECK(!host.Loads(RAIDER, true, later));
@@ -479,7 +480,7 @@ TEST("alive again: a raider the host's game heard of while its cell was unloaded
 	bob.Kills(RAIDER);
 	host.Pump();
 	CHECK(host.pending.contains(RAIDER));
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// Days later the host walks into the camp: the raider loads alive, its death still waiting.
 	const auto later = Clock::now() + DAYS_LATER;
@@ -502,7 +503,7 @@ TEST("alive again: a kill the host's game has not heard of yet is not undone by 
 	Game    host{ f, 1, "Host", true };
 	Game    bob{ f, 2, "Bob" };
 	host.Loads(RAIDER2, true, Clock::now());
-	std::this_thread::sleep_for(GRACE + 50ms);  // long past the host's hello
+	f.Advance(GRACE + 50ms);  // long past the host's hello
 
 	// Bob kills a raider nobody runs; the host's game, which has it alive and unowned, offers to run it before the
 	// news arrives (its claim crossed the death on the wire).
@@ -519,7 +520,7 @@ TEST("alive again: a kill the host's game has not heard of yet is not undone by 
 
 TEST("alive again: a raider back in the host's world stays alive after the server restarts, and the rest stay dead")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-alive-again-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-alive-again", ".session").string();
 	std::filesystem::remove(path);
 	auto options = HostedOptions();
 	options.sessionFile = path;
@@ -531,7 +532,7 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 		host.Kills(RAIDER);
 		host.Kills(RAIDER2);
 		host.Pump();
-		std::this_thread::sleep_for(GRACE + 50ms);
+		f.Advance(GRACE + 50ms);
 		const auto later = Clock::now() + DAYS_LATER;
 		host.Unloads(RAIDER);
 		REQUIRE(host.Loads(RAIDER, true, later));
@@ -552,7 +553,7 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 		host.Loads(RAIDER2, false, Clock::now());
 		f.fake->Deliver(1, Claim(RAIDER2));
 		CHECK(Owners(host.Pump()).empty());
-		std::this_thread::sleep_for(GRACE + 50ms);
+		f.Advance(GRACE + 50ms);
 		const auto later = Clock::now() + DAYS_LATER;
 		host.Unloads(RAIDER2);
 		REQUIRE(host.Loads(RAIDER2, true, later));
@@ -672,7 +673,7 @@ TEST("essential: a real death of an NPC the host's game still keeps essential st
 		CHECK(host.pending.contains(PIPER));  // held, not undone
 
 		// Its game offers to run her, marked essential, long after the death and the host's hello: nobody gets her.
-		std::this_thread::sleep_for(GRACE + 50ms);
+		f.Advance(GRACE + 50ms);
 		REQUIRE(host.Scan(PIPER, Clock::now()));
 		CHECK(Owners(host.Pump()).empty());
 		CHECK(Owners(bob.Pump()).empty());
