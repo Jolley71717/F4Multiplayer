@@ -1398,10 +1398,20 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   means it moved under a unit (and turned under 0.02 rad) from where it last moved for 0.6 s, or 15 s went by. One of
   ours that moves again within 10 s of that rest (a ball rolling on after it slowed, or still rolling when we gave up)
   is still ours and is reported again where it truly rests (`KnockWatch`'s follow-on: the same scan, nothing more looked
-  at), unless a friend's move put it there, someone picked it up, a friend's blast reached it, or a friend's stand-in or
-  another game's NPC stands within 200 units of it as it moves (their game's to report). Rests that only the follow-on
-  claimed stop after 8 in a row (`FOLLOW_ON_MAX`: a thing that swings for hours is not reported for ever), and the
-  follow-on is gone once the scan has not seen the object for 3 s (a loading screen, a cell that unloaded).
+  at), unless a friend's move put it there, someone picked it up, or a friend's blast reached it. Rests that only the
+  follow-on claimed stop after 8 in a row (`FOLLOW_ON_MAX`: a thing that swings for hours is not reported for ever), and
+  the follow-on is gone once the scan has not seen the object for 3 s (a loading screen, a cell that unloaded).
+- A friend standing by it changes nothing: each game reports what its own player, NPCs and blasts moved and what rolled
+  on from its own rests, and a rest two games claim (both players stood by the can one kicked; a friend stood in the
+  pile a grenade threw about) is settled by the server: the first rest holds for 3 s (`ObjectMovers::SETTLED`), a second
+  player's rest of the object within it is refused and answered with the first, to the refused game alone, so that
+  game's copy goes where the session has it instead of staying where its own physics left it. A copy a friend's rest put
+  down in our player's own body (or in their stand-in's, where their player is not) is pushed out by our physics to a
+  place their game knows nothing of: if our player, an NPC of ours or a blast of ours is by it as it moves on from their
+  place, it is ours again, whatever blast of theirs still reaches it (their throw of it ended with their rest), and is
+  reported where it lies once the 4 s quiet after their place is over, past the server's 3 s, so their rest and ours
+  never cross on the way and at most one such rest per object goes back per quiet. A copy that only settles on its own
+  after their place, with nothing of ours by it, stays where it lies, unreported.
 - Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
   the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,
   `maxObjectPlacesPerPlayer`, never more whatever `--max-share` says, so made-up ones can't push out the host's), saves it with the session (layout 36, as kObjectRested

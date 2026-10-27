@@ -9,8 +9,10 @@
 // client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement, SendPacer
 // for how fast a player's settlement reports go, FoundDead::Shared for the host's save,
 // ArmorFrames::ChooseOriginal for a friend's power armor,
-// MoveSync::Drive every frame for a friend's stand-in, and StandInGear for what it wears (dressed every
-// frame as RemotePlayers::Update does, out of power armor). For the quests a test gives a game
+// MoveSync::Drive every frame for a friend's stand-in, StandInGear for what it wears (dressed every
+// frame as RemotePlayers::Update does, out of power armor), and ObjectShare::KnockWatch, scanned four
+// times a second of the game's frames, for which rests of the loose objects a test knocks about
+// (Knock) this game reports. For the quests a test gives a game
 // (GiveQuest), QuestSync's StageLog and StageRules set friends' stages and decide what is reported
 // (tests/sim/QuestGame.h). The rest is the model's own, written after the plugin and only as good as
 // that copy: applying doors, the stages of quests no test gave (only recorded) and pickups, dropping older
@@ -30,6 +32,7 @@
 #include "game/ArmorFrames.h"
 #include "game/FoundDead.h"
 #include "game/MoveSync.h"
+#include "game/ObjectShare.h"
 #include "game/SendPacer.h"
 #include "game/StandInGear.h"
 #include "game/WorkshopCells.h"
@@ -120,6 +123,7 @@ namespace Sim
 		std::set<std::pair<std::uint32_t, std::uint16_t>>              questStages;
 		std::map<std::uint32_t, Protocol::WorkshopItem>                built;     // by this player, by their reference ID
 		std::set<std::uint32_t>                                        scrapped;  // pieces of the world itself, gone
+		std::map<std::uint32_t, std::array<float, 3>>                  objects;   // where each loose object knocked about lies (its physics', or a friend's rest)
 
 		// Container contents with the untouched entries left out, for comparing.
 		[[nodiscard]] std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> Contents() const
@@ -311,6 +315,33 @@ namespace Sim
 			}
 		}
 
+		// ---- loose objects knocked about ----
+
+		// What moved a loose object in this game, as MovedObjects' scan would see it for the next few seconds: our
+		// player stood by it (or hit it), a blast of ours (our grenade) threw it, a friend's blast (set off here for
+		// their throw) reached it. Nothing of it: something the game cannot name.
+		struct Knocked
+		{
+			bool byUs = false;
+			bool blast = false;
+			bool theirs = false;
+		};
+
+		// A loose object lies at a_at in this game (loaded with the cell, still). The scan sees it on the next frames.
+		void Loose(std::uint32_t a_ref, std::array<float, 3> a_at) { world.objects[a_ref] = a_at; }
+		// The object is thrown or knocked to a_to in this game and lies there from now on (its physics' doing: nothing is
+		// in anyone's hands). Frames (a second or so) let the scan see it come to rest; the rest goes to the server if
+		// the plugin's rule (ObjectShare::KnockWatch) makes it this game's to report, and a friend's rest of it that comes
+		// back puts it where they say.
+		void Knock(std::uint32_t a_ref, std::array<float, 3> a_to, Knocked a_how = {});
+		[[nodiscard]] std::optional<std::array<float, 3>> ObjectAt(std::uint32_t a_ref) const
+		{
+			const auto it = world.objects.find(a_ref);
+			return it != world.objects.end() ? std::optional{ it->second } : std::nullopt;
+		}
+		// Rests this game reported (KnockWatch's count).
+		[[nodiscard]] std::uint64_t KnocksSaid() const { return knocks.Reported(); }
+
 		// The host's game: the NPCs others run that are dead in its own world (its save had them dead) are
 		// reported found dead, as WorldSync's CheckFoundDead does, story characters as FoundDead::Shared says.
 		void CheckFoundDead();
@@ -416,6 +447,8 @@ namespace Sim
 		void JudgeWear(std::uint32_t a_friend);
 		// One QuestSync poll (half a second of play), and what it reports.
 		void PollQuests();
+		// One look at the loose objects (MovedObjects::ScanKnocks, four times a second), and what it reports.
+		void ScanKnocks();
 		Packet Hello();
 
 		Session&      session;
@@ -466,6 +499,20 @@ namespace Sim
 		SendPacer::Queue<Packet>    workshopOut{ SendPacer::WORKSHOP_PER_SECOND, SendPacer::WORKSHOP_QUEUED };  // WorkshopSync's outgoing line
 		bool                        pacedWorkshop = true;
 		Clock::time_point           frameClock{};  // this game's frames, 30 a second
+
+		// Loose objects: what moved each lately (Knock's a_how, for KNOCKED_FOR of this game's frames), and the scan.
+		struct LooseHow
+		{
+			Knocked           how;
+			std::uint32_t     blast = 0;  // the blast's serial (BlastBook's), while ours threw it
+			Clock::time_point until{};
+		};
+		static constexpr auto                  KNOCKED_FOR = std::chrono::seconds(4);  // a hit's memory, a blast's reach
+		static constexpr auto                  KNOCK_SCAN = std::chrono::milliseconds(250);
+		std::map<std::uint32_t, LooseHow>      looseHow;
+		ObjectShare::KnockWatch                knocks;
+		std::uint32_t                          blastSerial = 0;
+		Clock::time_point                      nextKnockScan{};
 	};
 
 	class Session
@@ -654,6 +701,15 @@ namespace Sim
 		{
 			if (fixture) {
 				fixture->Advance(a_by);
+			}
+		}
+
+		// The server's clock stops where it is and moves only by Advance (Server::HoldClock): a test of what happens
+		// inside a window of the server's (a rest's SETTLED) can't be made late by a busy PC.
+		void HoldClock()
+		{
+			if (fixture) {
+				fixture->HoldClock();
 			}
 		}
 
@@ -1126,6 +1182,10 @@ namespace Sim
 	{
 		for (int i = 0; i < a_count; ++i) {
 			frameClock += std::chrono::milliseconds(33);
+			if (frameClock >= nextKnockScan) {
+				nextKnockScan = frameClock + KNOCK_SCAN;
+				ScanKnocks();
+			}
 			for (auto& [id, f] : friends) {
 				if (!f.state) {
 					continue;  // no stand-in yet
@@ -1149,6 +1209,30 @@ namespace Sim
 					return true;
 				});
 			}
+		}
+	}
+
+	inline void Client::Knock(std::uint32_t a_ref, std::array<float, 3> a_to, Knocked a_how)
+	{
+		world.objects[a_ref] = a_to;
+		looseHow[a_ref] = { .how = a_how, .blast = a_how.blast ? ++blastSerial : 0, .until = frameClock + KNOCKED_FOR };
+	}
+
+	inline void Client::ScanKnocks()
+	{
+		std::vector<ObjectShare::KnockWatch::Seen> seen;
+		seen.reserve(world.objects.size());
+		for (const auto& [ref, at] : world.objects) {
+			ObjectShare::KnockWatch::Seen s{ .refId = ref, .pose = { .worldspace = COMMONWEALTH, .position = at } };
+			if (const auto it = looseHow.find(ref); it != looseHow.end() && frameClock < it->second.until) {
+				s.byUs = it->second.how.byUs;
+				s.blast = it->second.blast;
+				s.theirs = it->second.how.theirs;
+			}
+			seen.push_back(s);
+		}
+		for (const auto& rest : knocks.Scan(seen, frameClock)) {
+			Send(Protocol::Encode(rest, MT::kReportObjectRest), true);
 		}
 	}
 
@@ -1548,6 +1632,19 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kObjectRested:
+			// A friend's move of a loose object, or the session's place for it: our copy goes where they say (every loose
+			// object is loaded and near here), and our physics settling it there is not ours to report (KnockWatch::Placed).
+			if (const auto msg = Protocol::DecodeObjectRest(a_data)) {
+				world.objects[msg->refId] = msg->position;
+				knocks.Placed(msg->refId, { .cell = msg->cell, .worldspace = msg->worldspace, .position = msg->position, .angles = msg->rotation }, frameClock);
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kObjectHeld:
+			unless(Protocol::DecodeObjectHold(a_data).has_value());
+			break;
 		case MT::kPlayerFace:
 			unless(Protocol::DecodeFace(a_data).has_value());
 			break;
@@ -1588,6 +1685,7 @@ namespace Sim
 		{
 			return std::format("op {} base {} at bench {} ({}, {}, {})", a_v.op, Hex(a_v.base), Hex(a_v.workshop), a_v.position[0], a_v.position[1], a_v.position[2]);
 		}
+		inline std::string Show(const std::array<float, 3>& a_v) { return std::format("({}, {}, {})", a_v[0], a_v[1], a_v[2]); }
 
 		template <class T>
 		void DiffSets(std::string& a_out, const char* a_what, const Client& a_a, const std::set<T>& a_sa, const Client& a_b, const std::set<T>& a_sb)
@@ -1642,6 +1740,9 @@ namespace Sim
 				return x.op == y.op && x.base == y.base && x.workshop == y.workshop && std::ranges::equal(x.position, y.position);
 			};
 			DiffMaps(out, "built", a, a.Settlements(), b, b.Settlements(), same);
+			// Where loose objects lie: within what MovedObjects leaves alone (SNAP_DISTANCE, a unit).
+			const auto near = [](const std::array<float, 3>& x, const std::array<float, 3>& y) { return ObjectShare::Distance(x, y) <= 1.0f; };
+			DiffMaps(out, "object", a, wa.objects, b, wb.objects, near);
 		}
 		return out;
 	}

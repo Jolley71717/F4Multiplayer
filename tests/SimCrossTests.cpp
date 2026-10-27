@@ -5,6 +5,8 @@
 
 #include "sim/Sim.h"
 
+#include "ObjectMovers.h"
+
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -816,4 +818,164 @@ TEST("cross: a session of flooders, one after another, logs each limit once in t
 	CHECK(honest.Count(TRUNK, CAPS) == -18);
 	CHECK(looper.Count(TRUNK, CAPS) == -18);
 	CHECK_AGREE({ &host, &honest, &looper });
+}
+
+// ---- loose objects knocked about with a friend standing by ---------------------------------------
+
+// A grenade into a pile of cans with the friend standing in the pile left the two games' copies 27 to 520 units apart:
+// nothing was said of a can that rolled on by the friend's stand-in, nor of the friend's copy their own body pushed out
+// of the place the thrower's rest put it in. Now each game says what its own player and blasts moved, the server
+// settles a rest both games claim (the first holds for 3 s; the other is told it), and both games end with the same
+// copies, whichever of host and joiner threw.
+
+namespace
+{
+	constexpr std::uint32_t CAN_1 = 0x0003B101;
+	constexpr std::uint32_t CAN_2 = 0x0003B102;
+	constexpr std::uint32_t CAN_3 = 0x0003B103;
+
+	bool ObjectLies(const Client& a_game, std::uint32_t a_ref, std::array<float, 3> a_at)
+	{
+		const auto at = a_game.ObjectAt(a_ref);
+		return at && ObjectShare::Distance(*at, a_at) <= 1.0f;
+	}
+
+	constexpr int SEEN_FRAMES = 8;  // frames enough for one scan (250 ms) to see an object lying still
+	constexpr int REST_FRAMES = 40;  // over a second: a knocked object comes to rest, and its rest is said
+
+	// Both games have the pile still; then a_thrower's grenade throws it about, with a_bystander's player standing in
+	// it (so their copies are byUs as well as reached by the friend's blast), each game's physics its own way.
+	void Pile(Session& a_s, Client& a_thrower, Client& a_bystander)
+	{
+		for (auto* game : { &a_thrower, &a_bystander }) {
+			game->Loose(CAN_1, { 0, 0, 0 });
+			game->Loose(CAN_2, { 10, 0, 0 });
+			game->Loose(CAN_3, { 20, 0, 0 });
+			game->Frames(SEEN_FRAMES);
+		}
+		a_s.Settle();
+		a_thrower.Knock(CAN_1, { 200, 0, 0 }, { .blast = true });
+		a_thrower.Knock(CAN_2, { 0, 150, 0 }, { .blast = true });
+		a_thrower.Knock(CAN_3, { -120, 40, 0 }, { .blast = true });
+		a_bystander.Knock(CAN_1, { 180, 20, 0 }, { .byUs = true, .theirs = true });
+		a_bystander.Knock(CAN_2, { 10, 140, 0 }, { .byUs = true, .theirs = true });
+		a_bystander.Knock(CAN_3, { -100, 30, 0 }, { .byUs = true, .theirs = true });
+		a_thrower.Frames(REST_FRAMES);  // over a second: they come to rest
+		a_bystander.Frames(REST_FRAMES);
+		a_s.Settle();
+	}
+
+	constexpr int QUIET_FRAMES = static_cast<int>(ObjectShare::QUIET_AFTER_PLACED / std::chrono::milliseconds(33)) + 8;
+}
+
+TEST("cross: a grenade into a pile with a friend standing in it ends with every can in the same place in both games, whichever of host and joiner threw, and a can the friend's body pushed out goes where it lies")
+{
+	for (const bool hostThrows : { true, false }) {
+		Session s;
+		auto&   host = s.Host();
+		auto&   bob = s.Player("Bob");
+		REQUIRE(host.Join());
+		REQUIRE(bob.Join());
+		s.HoldClock();  // the server's SETTLED is crossed by Advance alone
+		auto& thrower = hostThrows ? host : bob;
+		auto& bystander = hostThrows ? bob : host;
+		Pile(s, thrower, bystander);
+		// The thrower's game said where the three rest; the bystander's said nothing and has them there.
+		CHECK(thrower.KnocksSaid() == 3);
+		CHECK(bystander.KnocksSaid() == 0);
+		CHECK(bystander.Heard(MT::kObjectRested) == 3);
+		CHECK(thrower.Heard(MT::kObjectRested) == 0);
+		CHECK(ObjectLies(bystander, CAN_2, { 0, 150, 0 }));
+		CHECK_AGREE({ &host, &bob });
+
+		// Can 2 was put down in the bystander's player's body: their physics pushes it 40 units out, with the thrower's
+		// blast still in reach. Nothing is said of it in the quiet after the thrower's place.
+		bystander.Knock(CAN_2, { 0, 190, 0 }, { .byUs = true, .theirs = true });
+		bystander.Frames(REST_FRAMES);
+		s.Settle();
+		CHECK(bystander.KnocksSaid() == 0);
+		CHECK(ObjectLies(thrower, CAN_2, { 0, 150, 0 }));
+		// The quiet over, the bystander says where it lies. The thrower's rest still holds on the server (its SETTLED,
+		// not out yet): the bystander's is refused and answered with the thrower's, and the bystander's copy goes back
+		// where the session has it. Nothing reaches the thrower.
+		bystander.Frames(QUIET_FRAMES);
+		s.Settle();
+		CHECK(bystander.KnocksSaid() == 1);
+		CHECK(bystander.Heard(MT::kObjectRested) == 4);
+		CHECK(thrower.Heard(MT::kObjectRested) == 0);
+		CHECK(ObjectLies(bystander, CAN_2, { 0, 150, 0 }));
+		CHECK_AGREE({ &host, &bob });
+
+		// Pushed out again, once SETTLED is past: the bystander's rest goes round, and the thrower's copy goes where the
+		// bystander's body left it. Then both lie still, and nothing more is said.
+		s.Advance(ObjectMovers::SETTLED + std::chrono::milliseconds(100));
+		bystander.Knock(CAN_2, { 0, 190, 0 }, { .byUs = true });
+		bystander.Frames(REST_FRAMES + QUIET_FRAMES);
+		s.Settle();
+		CHECK(bystander.KnocksSaid() == 2);
+		CHECK(thrower.Heard(MT::kObjectRested) == 1);
+		CHECK(ObjectLies(thrower, CAN_2, { 0, 190, 0 }));
+		CHECK(ObjectLies(bystander, CAN_2, { 0, 190, 0 }));
+		CHECK_AGREE({ &host, &bob });
+		thrower.Frames(QUIET_FRAMES);
+		bystander.Frames(QUIET_FRAMES);
+		s.Settle();
+		CHECK(thrower.KnocksSaid() == 3);
+		CHECK(bystander.KnocksSaid() == 2);
+		CHECK(thrower.Heard(MT::kObjectRested) == 1);
+		CHECK(bystander.Heard(MT::kObjectRested) == 4);
+		CHECK_AGREE({ &host, &bob });
+		CHECK(host.Undecodable() == 0);
+		CHECK(bob.Undecodable() == 0);
+	}
+}
+
+TEST("cross: two players standing by one kicked can both say where it rests; the first's holds, the other's copy goes there, and the other way round once it is settled")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	s.HoldClock();
+	for (auto* game : { &host, &bob }) {
+		game->Loose(CAN_1, { 0, 0, 0 });
+		game->Frames(SEEN_FRAMES);
+	}
+	s.Settle();
+
+	// The host's player kicks it, Bob's stands by it: in his game his player is by it as it moves, in the host's game
+	// his stand-in is. Each says where its copy rests, the host's game first.
+	host.Knock(CAN_1, { 50, 0, 0 }, { .byUs = true });
+	bob.Knock(CAN_1, { 60, 5, 0 }, { .byUs = true });
+	host.Frames(REST_FRAMES);
+	bob.Frames(REST_FRAMES);
+	s.Settle();
+	CHECK(host.KnocksSaid() == 1);
+	CHECK(bob.KnocksSaid() == 1);
+	CHECK(host.Heard(MT::kObjectRested) == 0);  // nothing of Bob's reaches the host
+	CHECK(bob.Heard(MT::kObjectRested) == 2);   // the host's, and the host's again for his own
+	CHECK(ObjectLies(host, CAN_1, { 50, 0, 0 }));
+	CHECK(ObjectLies(bob, CAN_1, { 50, 0, 0 }));
+	CHECK_AGREE({ &host, &bob });
+
+	// Settled, and the other way round: Bob's game first.
+	s.Advance(ObjectMovers::SETTLED + std::chrono::milliseconds(100));
+	host.Frames(QUIET_FRAMES);
+	bob.Frames(QUIET_FRAMES);
+	s.Settle();
+	bob.Knock(CAN_1, { 120, 0, 0 }, { .byUs = true });
+	host.Knock(CAN_1, { 110, -5, 0 }, { .byUs = true });
+	bob.Frames(REST_FRAMES);
+	host.Frames(REST_FRAMES);
+	s.Settle();
+	CHECK(host.KnocksSaid() == 2);
+	CHECK(bob.KnocksSaid() == 2);
+	CHECK(host.Heard(MT::kObjectRested) == 2);
+	CHECK(bob.Heard(MT::kObjectRested) == 2);
+	CHECK(ObjectLies(host, CAN_1, { 120, 0, 0 }));
+	CHECK(ObjectLies(bob, CAN_1, { 120, 0, 0 }));
+	CHECK_AGREE({ &host, &bob });
+	CHECK(host.Undecodable() == 0);
+	CHECK(bob.Undecodable() == 0);
 }

@@ -465,20 +465,6 @@ namespace MovedObjects
 			return ObjectShare::Answers(id, NpcSync::Owner(id), NpcSync::LocalPlayer());
 		}
 
-		// Whether another game answers for this actor: a friend's stand-in (their player), or an NPC the server gave another
-		// player. What it shoves is that game's to report.
-		bool RunsElsewhere(RE::Actor* a_actor)
-		{
-			if (!a_actor || a_actor->IsPlayerRef()) {
-				return false;
-			}
-			if (Puppets::IsPuppet(a_actor)) {
-				return true;
-			}
-			const auto id = NpcSync::SessionId(a_actor->GetFormID());
-			return ObjectShare::AnswersElsewhere(id, NpcSync::Owner(id), NpcSync::LocalPlayer());
-		}
-
 		// An explosion in our game: whose it is by what caused it (ObjectShare::RoleOf), kept in the blast book for what it
 		// throws about. One our game set off for a friend's throw is theirs; so is one a friend's stand-in or an NPC another
 		// game runs caused. A hazard's is nobody's.
@@ -518,7 +504,8 @@ namespace MovedObjects
 		}
 
 		// The loose objects near our player: what moved with no hand on it, and came to rest, where our player, an NPC of
-		// ours or a blast of ours moved it.
+		// ours or a blast of ours moved it. A friend's stand-in by it changes nothing: their game reports their player's
+		// moves of it, and the server settles a rest both games claim (ObjectShare::KnockWatch).
 		void ScanKnocks(RE::PlayerCharacter* a_player, std::uint32_t a_ourHeld, Clock::time_point a_now)
 		{
 			const auto tes = RE::TES::GetSingleton();
@@ -528,7 +515,6 @@ namespace MovedObjects
 			std::vector<RE::NiPointer<RE::TESObjectREFR>> found;
 			std::vector<RE::NiPointer<RE::TESObjectREFR>> blastRefs;
 			std::vector<Vec3>                             shovers;  // NPCs our game runs, alive
-			std::vector<Vec3>                             others;   // friends' stand-ins and NPCs other games run, alive
 			found.reserve(MAX_SCANNED);
 			tes->ForEachReferenceInRange(a_player->data.location, SCAN_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				if (found.size() >= MAX_SCANNED) {
@@ -537,14 +523,8 @@ namespace MovedObjects
 				if (MaybeLoose(a_ref)) {
 					found.emplace_back(a_ref);
 				} else if (const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr) {
-					if (!actor->IsDead(false)) {
-						if (RunsHere(actor)) {
-							if (shovers.size() < ObjectShare::MAX_SHOVERS) {
-								shovers.push_back(Position(actor));
-							}
-						} else if (others.size() < ObjectShare::MAX_SHOVERS && RunsElsewhere(actor)) {
-							others.push_back(Position(actor));
-						}
+					if (!actor->IsDead(false) && RunsHere(actor) && shovers.size() < ObjectShare::MAX_SHOVERS) {
+						shovers.push_back(Position(actor));
 					}
 				} else if (const auto base = a_ref ? a_ref->GetObjectReference() : nullptr; base && base->Is(RE::ENUM_FORM_ID::kEXPL) && blastRefs.size() < ObjectShare::MAX_BLASTS) {
 					blastRefs.emplace_back(a_ref);
@@ -569,9 +549,8 @@ namespace MovedObjects
 				const bool busy = carried.Find(id) || flying.contains(id) || keyframed.contains(id) || a_ourHeld == id || carry.IsSettling(id) || carry.IsRefused(id);
 				const auto reach = blasts.Reaching(pose->position, a_now);
 				const bool byNpc = std::ranges::any_of(shovers, [&](const Vec3& a_npc) { return ObjectShare::NpcNear(a_npc, pose->position); });
-				const bool byOthers = std::ranges::any_of(others, [&](const Vec3& a_actor) { return ObjectShare::NpcNear(a_actor, pose->position); });
 				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc,
-					.blast = reach.serial, .theirs = reach.theirs, .others = byOthers });
+					.blast = reach.serial, .theirs = reach.theirs });
 			}
 			for (const auto& rest : knocks.Scan(seen, a_now)) {
 				Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);

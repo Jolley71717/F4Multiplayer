@@ -600,14 +600,6 @@ namespace ObjectShare
 		return a_id != 0 && a_local != 0 && a_owner == a_local;
 	}
 
-	// Whether another game answers for an actor: the session knows it and the server made another player its owner. What
-	// it shoves is that game's to report, so an object of ours rolling on (KnockWatch's follow-on) that it stands by is
-	// not ours to claim any more.
-	constexpr bool AnswersElsewhere(std::uint32_t a_id, std::uint32_t a_owner, std::uint32_t a_local)
-	{
-		return a_id != 0 && a_owner != 0 && a_owner != a_local;
-	}
-
 	// --- blasts ---------------------------------------------------------------------------------------------------------
 
 	inline constexpr auto        BLAST_REACH_FOR = std::chrono::seconds(4);    // a blast's reach holds that long after our scan first sees it
@@ -729,9 +721,18 @@ namespace ObjectShare
 	// we gave up. Whatever moved it is long gone by then (our player walked on, the hit is old), so one of ours that moves
 	// again within FOLLOW_ON of the rest our game reported is still ours (the follow-on), and is reported again where it
 	// truly rests. Nothing new is looked at for it: the same scan sees it. A friend's move of it (Placed), a hand on it
-	// (busy), a friend's blast (theirs), or a friend's stand-in or another game's NPC by it as it moves again (others: the
-	// move may be theirs to report) ends the follow-on, so a friend's place never echoes back and two games never both
-	// claim it.
+	// (busy) or a friend's blast (theirs) ends the follow-on, so a friend's place never echoes back.
+	//
+	// A friend standing by it changes nothing: each game reports what its own player, NPCs and blasts moved and what rolled
+	// on from its own rests, and when two games claim one rest the server settles it (ObjectMovers::Book: the first rest
+	// holds for SETTLED, a second player's is refused and answered with the first), so both end with the same copy. Their
+	// rest puts our copy where their game has it, but our world is not theirs: put down in our player's body, or in
+	// their stand-in's where their player is not, it is pushed out, and lies somewhere their game knows nothing of. So a
+	// copy their place put down that our player, an NPC of ours or a blast of ours moves on is ours again, the friend's
+	// blast's reach notwithstanding (their blast's throw of it ended with their rest), said once the quiet after their
+	// place (QUIET_AFTER_PLACED, longer than the server's SETTLED) is over: never crossed with their rest on the way, so
+	// no two games fight over it, and at most one rest per QUIET_AFTER_PLACED per object goes back. A copy that only
+	// settles on its own after their place, with nothing of ours by it, is not ours to speak of.
 	class KnockWatch
 	{
 	public:
@@ -744,7 +745,6 @@ namespace ObjectShare
 			bool          byNpc = false;
 			std::uint32_t blast = 0;
 			bool          theirs = false;
-			bool          others = false;  // a friend's stand-in, or an NPC another game runs, stands by it
 		};
 
 		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, Clock::time_point a_now)
@@ -781,6 +781,9 @@ namespace ObjectShare
 					w.quietUntil = (std::max)(w.quietUntil, a_now + QUIET_AFTER_PLACED);
 					continue;
 				}
+				// A friend's blast reaching it makes the move theirs, unless their place put it here just now (quiet): their
+				// blast's throw of it ended with their rest, and what moves it on from where they put it is not the blast.
+				const bool theirs = seen.theirs && a_now >= w.quietUntil;
 				if (!w.moving) {
 					if (Distance(seen.pose.position, w.rest.position) > MOVE_DISTANCE || Turned(seen.pose.angles, w.rest.angles) > MOVE_TURN) {
 						w.moving = true;
@@ -788,8 +791,8 @@ namespace ObjectShare
 						w.byUs = seen.byUs;
 						w.byNpc = seen.byNpc;
 						w.blast = seen.blast;
-						w.theirs = seen.theirs;
-						w.again = a_now < w.followUntil && !seen.others;
+						w.theirs = theirs;
+						w.again = a_now < w.followUntil;
 						w.movingSince = w.stillSince = a_now;
 						w.last = seen.pose;
 					} else if (w.owed) {
@@ -806,8 +809,7 @@ namespace ObjectShare
 				}
 				w.byUs = w.byUs || seen.byUs;
 				w.byNpc = w.byNpc || seen.byNpc;
-				w.theirs = w.theirs || seen.theirs;
-				w.again = w.again && !seen.others;
+				w.theirs = w.theirs || theirs;
 				if (w.blast == 0) {
 					w.blast = seen.blast;
 				}
@@ -825,11 +827,16 @@ namespace ObjectShare
 				// Ours because something said so (fresh), or only by the follow-on, and not for ever: a thing that swings or
 				// jitters for hours is let go after FOLLOW_ON_MAX rests in a row that nothing but the follow-on claimed.
 				const bool fresh = w.byUs || w.byNpc || w.blast != 0;
-				if (!w.theirs && (fresh || (w.again && w.follows < FOLLOW_ON_MAX)) && a_now >= w.quietUntil) {
+				if (!w.theirs && (fresh || (w.again && w.follows < FOLLOW_ON_MAX))) {
 					// Ours: if it moves again soon, that is still ours (the follow-on), reported or owed.
 					w.follows = fresh ? 0 : w.follows + 1;
 					w.followUntil = a_now + FOLLOW_ON;
-					if (Take(w.blast, a_now)) {
+					if (a_now < w.quietUntil) {
+						// A friend's place put it down just now and something of ours moved it on from there (our player's
+						// body pushed it out, say): said where it lies once the quiet is over, if it still lies there.
+						w.owed = true;
+						w.owedUntil = w.quietUntil + BLAST_DEFER;
+					} else if (Take(w.blast, a_now)) {
 						out.push_back(Rest(seen));
 					} else if (w.blast != 0 && BlastRoom(w.blast)) {
 						// A blast moves dozens at once: the rest come as the budget fills again.
@@ -847,7 +854,7 @@ namespace ObjectShare
 		}
 
 		// A friend's move put the object at a_pose: where it rests now, and what our game sees of it settling there (its
-		// own physics) is not ours to report for a while.
+		// own physics) is not ours to report; what something of ours moves it on to is said once the quiet is over.
 		void Placed(std::uint32_t a_ref, const Pose& a_pose, Clock::time_point a_now)
 		{
 			auto& w = watched[a_ref];
@@ -884,7 +891,7 @@ namespace ObjectShare
 			bool              byUs = false;
 			bool              byNpc = false;
 			bool              theirs = false;
-			bool              owed = false;   // at rest, to be reported when the budget has room
+			bool              owed = false;   // at rest, to be reported when the budget has room, or a friend's place's quiet is over
 			bool              again = false;  // moving on after a rest of ours (the follow-on): ours
 			std::uint32_t     blast = 0;
 			Clock::time_point movingSince{};
