@@ -471,7 +471,6 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 	Packets    toAlice = Received(f, 1);
 
 	// Each time: he saves, Alice loots (he sees it live), he dies and loads that save.
-	std::vector<std::chrono::steady_clock::time_point> askedAt;
 	for (std::uint32_t reload = 0; reload < 3; ++reload) {
 		const auto savedWorld = game.world;
 		const auto savedNext = game.Next();
@@ -480,7 +479,6 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 		Sync(f, 1);
 		game.Take(Received(f, 2));
 		game.LoadSave(savedWorld, savedNext, savedEntries);
-		askedAt.push_back(std::chrono::steady_clock::now());
 		f.fake->Deliver(2, Request(bob->sessionId, savedNext));
 		Sync(f, 2);
 		game.Take(Received(f, 2));

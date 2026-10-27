@@ -386,6 +386,7 @@ TEST("server session: a connection that never says hello is dropped")
 {
 	Fixture f;
 	f.fake->Connect(1);
+	REQUIRE(f.fake->Settle());  // the server has the connection: its five seconds count from then
 	f.Advance(6s);  // past the server's five seconds for a hello
 	const auto deadline = std::chrono::steady_clock::now() + 30s;
 	while (!f.fake->Disconnected(1) && std::chrono::steady_clock::now() < deadline) {

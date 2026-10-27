@@ -354,6 +354,7 @@ TEST("body morphs: a newcomer is told the body as last read, and a player withou
 	const auto bobReport = bobGame.Frame(now);
 	REQUIRE(bobReport);  // at once: no LooksMenu, nothing to wait for
 	f.fake->Deliver(2, *bobReport);
+	REQUIRE(f.fake->WaitFor(2, Type(MT::kPlayerFace)));  // her first read reaches Bob: the server's face interval starts
 
 	// Alice moves a slider at the plastic surgeon; it goes with the next read once she is out of the chair.
 	aliceGame.body.push_back({ "Thighs", 0.8f });
@@ -363,7 +364,11 @@ TEST("body morphs: a newcomer is told the body as last read, and a player withou
 	const auto changed = aliceGame.Frame(now);
 	REQUIRE(changed);
 	f.fake->Deliver(1, *changed);
-	REQUIRE(f.fake->WaitFor(2, Type(MT::kPlayerFace)));
+	const auto toBob = f.fake->WaitFor(2, Type(MT::kPlayerFace));
+	REQUIRE(toBob);
+	const auto changedFace = Protocol::DecodeFace(*toBob);
+	REQUIRE(changedFace);
+	CHECK(std::ranges::contains(changedFace->bodyMorphs, Protocol::BodyMorph{ "Thighs", 0.8f }));
 
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
 	bool sawAlice = false;
