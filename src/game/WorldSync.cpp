@@ -1273,15 +1273,15 @@ namespace WorldSync
 		void ReportFalling(const std::vector<std::uint32_t>& a_dying, const Killers& a_killers)
 		{
 			const auto local = NpcSync::LocalPlayer();
-			std::vector<std::uint32_t> falling;
+			std::vector<std::uint32_t> fell;
 			for (const auto id : a_dying) {
 				const bool friendsBlow = friendsBlows.erase(id) != 0;
 				const auto actor = local != 0 && !dead.Contains(id) ? LoadedActor(id) : nullptr;
 				if (actor && actor->IsDead(false) && NpcHold::ReportAtFall(NpcSync::Owner(id) == local, a_killers.contains(id), friendsBlow, GetsUp(actor))) {
-					falling.push_back(id);
+					fell.push_back(id);
 				}
 			}
-			ReportDeaths(falling, a_killers, true);
+			ReportDeaths(fell, a_killers, true);
 		}
 
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
@@ -2329,6 +2329,22 @@ namespace WorldSync
 		loot.Live(a_change, Clock::now(), engine);
 	}
 
+	void OnMenuShown(RE::ObjectRefHandle a_container)
+	{
+		// Only the handle is taken here (off the main thread). The menu may have drawn its list by the time this runs (a
+		// frame or so): a take that goes in now shows at once anyway, as a friend's change to a chest our player has open
+		// does (the console's removeitem, which the open menu follows).
+		MainThread::Post([a_container] {
+			const auto ref = a_container.get();
+			if (!ref || !CanApply()) {
+				return;
+			}
+			engine.inWorld = true;
+			loot.Opened(ref->GetFormID(), engine);
+			engine.inWorld.reset();
+		});
+	}
+
 	void ApplyRemotePickup(std::uint32_t a_refId)
 	{
 		OfferPickup(a_refId, CanApply());
@@ -2693,6 +2709,6 @@ namespace WorldSync
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied);
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);
 	}
 }

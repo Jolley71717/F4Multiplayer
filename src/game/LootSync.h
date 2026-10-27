@@ -147,6 +147,7 @@ namespace LootSync
 			std::uint32_t storageKept = 0;     // the player's moves at storage another game keeps, made with no view of it (their copy's own)
 			std::uint32_t storageSkipped = 0;  // other players' changes to storage another game keeps, not shown here (no view of it)
 			std::uint32_t storageOverflow = 0; // the player's moves at a friend's storage undone unsent (too many unanswered)
+			std::uint32_t openApplied = 0;     // waiting changes that went in as our player opened their holder (Opened)
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -381,6 +382,17 @@ namespace LootSync
 				blocked = true;
 				return false;
 			});
+			return applied;
+		}
+
+		// Our player opened a_container's menu: what waits for it is tried now, as when it loads. A chest of a place our game
+		// held without its inventory makes its roll as it is opened, and the takes and the emptying waiting for that roll
+		// would otherwise wait for the slow sweep (up to its interval) while the menu showed the whole roll. Each goes in
+		// once: what goes in leaves the queue, so the sweep and a later open find nothing more. Returns how many went in.
+		std::size_t Opened(std::uint32_t a_container, World& a_world)
+		{
+			const auto applied = Retry(a_container, a_world);
+			counts.openApplied += static_cast<std::uint32_t>(applied);
 			return applied;
 		}
 
