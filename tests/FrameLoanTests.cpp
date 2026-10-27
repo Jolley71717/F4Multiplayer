@@ -204,6 +204,16 @@ TEST("frame loan: the LOAN record reads back as written, and nothing of a damage
 	CHECK(cut && cut->tags.size() == 1 && cut->tags[0].name.size() == FrameLoan::MAX_TAG_NAME);
 }
 
+TEST("frame loan: the clean-up after a load waits the exit settle once our player is out")
+{
+	using FrameLoan::CleanupDue;
+	CHECK(!CleanupDue(true, std::nullopt));
+	CHECK(!CleanupDue(true, 1s));
+	CHECK(CleanupDue(true, 2s));
+	CHECK(CleanupDue(true, 5s));
+	CHECK(CleanupDue(false, std::nullopt));  // no copy: nothing to settle
+}
+
 TEST("frame loan: after loading a save made in a borrowed frame, our player is sent out and the copy and the lent items go")
 {
 	using FrameLoan::AfterLoad;

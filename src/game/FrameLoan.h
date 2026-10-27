@@ -142,6 +142,15 @@ namespace FrameLoan
 		return Step::kNone;
 	}
 
+	// After a load of a save made in a borrowed frame, the clean-up gathers from the copy and buries it once our player
+	// has been out of it for EXIT_SETTLE (a_sinceOut; none while they are in it or in another frame): the engine's exit
+	// runs on after the frame reads as empty (re-enabled, its 3D rebuilt, the player's own pieces moved back into it).
+	// With no copy there is nothing to settle.
+	constexpr bool CleanupDue(bool a_copy, std::optional<Clock::duration> a_sinceOut)
+	{
+		return !a_copy || (a_sinceOut && *a_sinceOut >= EXIT_SETTLE);
+	}
+
 	// One lent item as the borrower's game named it: what to gather at the return.
 	struct Tag
 	{

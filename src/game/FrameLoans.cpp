@@ -117,6 +117,8 @@ namespace FrameLoans
 			Clock::time_point    askedAt{};
 			bool                 asked = false;
 			bool                 warned = false;
+
+			std::optional<Clock::time_point> outSince;  // our player first read as out of the frame (FrameLoan::CleanupDue)
 		};
 		std::optional<Cleanup> cleanup;
 		constexpr auto         CLEANUP_AFTER = std::chrono::seconds(2);   // the loaded world settles first
@@ -734,6 +736,7 @@ namespace FrameLoans
 			}
 			const auto copy = job.what == FrameLoan::AfterLoad::kAll ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(job.record.copy) : nullptr;
 			if (copy && PlayerIn(copy)) {
+				job.outSince.reset();  // back in before the settle was over
 				if (!job.warned && a_now - job.since >= CLEANUP_WARN) {
 					job.warned = true;
 					REX::WARN("FrameLoans: our player is still in {:08X}, the frame borrowed from player {} as this save was made; still sending them out", job.record.copy, job.record.owner);
@@ -750,7 +753,14 @@ namespace FrameLoans
 				return;
 			}
 			if (Equipment::InPowerArmor(player)) {
+				job.outSince.reset();
 				return;  // in another frame: nothing is gathered from them until they are out of it
+			}
+			if (copy && !job.outSince) {
+				job.outSince = a_now;
+			}
+			if (!FrameLoan::CleanupDue(copy != nullptr, job.outSince ? std::optional<Clock::duration>{ a_now - *job.outSince } : std::nullopt)) {
+				return;  // the engine's exit runs on: the frame re-enabled, its 3D rebuilt, our player's own pieces moved back into it
 			}
 			std::vector<FrameLoan::Found> found;
 			if (copy) {
