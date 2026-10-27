@@ -457,7 +457,7 @@ TEST("npc hold: a guard let go as it fell is still the host's kill once its deat
 TEST("npc hold: a one-shot kill by the game that ran the NPC is believed after it changed hands, for deathGrace")
 {
 	Server::Options options;
-	options.deathGrace = 1000ms;
+	options.deathGrace = 600s;  // the test moves the server's clock past it (Advance), so a busy PC can't end it early
 	Fixture    f{ options };
 	Game       alice{ f, 1, "Alice" };
 	Game       bob{ f, 2, "Bob" };
@@ -491,7 +491,7 @@ TEST("npc hold: a one-shot kill by the game that ran the NPC is believed after i
 	// Carol never ran nor fought the raider: hers is dropped. Nor is Alice's believed once the grace is over.
 	carol.SawDie(RAIDER, true);
 	CHECK(bob.Pump(t0 + 1500ms).empty());
-	std::this_thread::sleep_for(1100ms);
+	f.Advance(601s);  // past deathGrace
 	alice.SawDie(RAIDER, true);
 	CHECK(carol.Pump(t0 + 2s).empty());
 	CHECK(f.Logged(std::format("death of {:08X} from player {} dropped", RAIDER, carol.id)));
@@ -511,7 +511,7 @@ TEST("npc hold: a friend takes over a raider in the middle of a fight: the old r
 	bob.Pump(t0);
 	REQUIRE(bob.OwnerOf(RAIDER) == alice.id);
 
-	std::this_thread::sleep_for(5100ms);  // the server's TAKEOVER_COOLDOWN: a takeover is granted now
+	f.Advance(5100ms);  // the server's TAKEOVER_COOLDOWN: a takeover is granted now
 	const auto t1 = Clock::now();
 	// Alice one-shots it as Bob's shot lands: Bob's takeover reaches the server first, and Alice's game, told Bob runs
 	// it now, lets it fall as a copy.

@@ -29,7 +29,30 @@
 
 namespace
 {
-	using Clock = std::chrono::steady_clock;
+	// The server's clock is the machine's steady clock plus however far a test has moved it (Server::AdvanceClock). A test
+	// waiting out a cooldown moves the clock past it, so it needs no sleep that a busy PC could make too short for the time
+	// it means; one that must act inside a window can hold the clock (Server::HoldClock), so a busy PC can't make it late.
+	// Only the server thread reads it.
+	thread_local const Server::ClockControl* t_clock = nullptr;
+
+	struct Clock
+	{
+		using rep = std::chrono::steady_clock::rep;
+		using period = std::chrono::steady_clock::period;
+		using duration = std::chrono::steady_clock::duration;
+		using time_point = std::chrono::steady_clock::time_point;
+		static constexpr bool is_steady = true;
+
+		static time_point now()
+		{
+			if (!t_clock) {
+				return std::chrono::steady_clock::now();
+			}
+			const auto held = t_clock->held.load(std::memory_order_relaxed);
+			const auto base = held != 0 ? time_point{ std::chrono::duration_cast<duration>(std::chrono::nanoseconds{ held }) } : std::chrono::steady_clock::now();
+			return base + std::chrono::duration_cast<duration>(std::chrono::nanoseconds{ t_clock->skew.load(std::memory_order_relaxed) });
+		}
+	};
 
 	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(16);  // ~60 Hz relay of new player states
 	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states (sent at 30 Hz)
@@ -390,6 +413,7 @@ void Server::Stop()
 
 void Server::Run()
 {
+	t_clock = &testClock;
 	std::unordered_map<ConnectionKey, Player> players;
 	std::uint32_t                             nextId = 1;
 	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run

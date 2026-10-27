@@ -139,7 +139,7 @@ namespace
 			a_f.fake->Deliver(peer, packet);
 		}
 		Packets watched;
-		const auto deadline = std::chrono::steady_clock::now() + 15s;
+		const auto deadline = std::chrono::steady_clock::now() + 60s;
 		while (Count(watched, a_type) < a_count && std::chrono::steady_clock::now() < deadline) {
 			std::this_thread::sleep_for(50ms);
 			for (const auto peer : a_peers) {
@@ -260,8 +260,8 @@ TEST("server world: health is relayed to the others, but not for the dead")
 TEST("server world: a report about a dead NPC is dropped with a log line, and the sender's game is told the death again")
 {
 	Server::Options options;
-	options.aliveAgainGrace = std::chrono::milliseconds{ 300 };  // the wait before the first reminder
-	options.remindDeadEvery = std::chrono::milliseconds{ 150 };
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };  // the wait before the first reminder: long, crossed with Fixture::Advance
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	const auto bob = JoinAs(f, 2, "Bob");
@@ -282,10 +282,11 @@ TEST("server world: a report about a dead NPC is dropped with a log line, and th
 	CHECK(Count(toBob, MT::kActorDamaged) == 0);
 	// Once her game has reported about it for aliveAgainGrace with the NPC still dead, it is told, with where the NPC
 	// fell, as the world state would say.
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 200 });
-	f.fake->Deliver(1, Health(NPC, 0.4f));  // 200 ms in: still nothing
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 200 });
-	f.fake->Deliver(1, Hit(bob, 10.0f, false, NPC));  // 400 ms in; its copy there still fights Bob's stand-in
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(1, Health(NPC, 0.4f));  // 200 s in: still nothing
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(1, Hit(bob, 10.0f, false, NPC));  // 400 s in; its copy there still fights Bob's stand-in
 	const auto deaths = Decoded(Received(f, 1), MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].refId == NPC);
@@ -296,7 +297,8 @@ TEST("server world: a report about a dead NPC is dropped with a log line, and th
 	CHECK(Count(Received(f, 2), MT::kPlayerDamaged) == 0);
 	// Not again so soon, then once per remindDeadEvery while her game keeps reporting about it.
 	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
-	std::this_thread::sleep_for(std::chrono::milliseconds{ 200 });
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
 	f.fake->Deliver(1, Claim(NPC));
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
 }
@@ -736,7 +738,7 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 	f.fake->Deliver(1, Claim(NPC));
 	Clear(f, { 1, 2 });
 
-	std::this_thread::sleep_for(5100ms);  // TAKEOVER_COOLDOWN
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
 	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
 	CHECK(HasOwner(Owners(Received(f, 2)), NPC, bob));
@@ -761,7 +763,7 @@ TEST("server world: an NPC's health is said by the game that runs it; the last w
 
 	// Bob's shot takes it over. Alice's game had a report on its way, sent before it heard: in Bob's game, now the one
 	// that runs it, it set the NPC back to 0.9, undoing the shot (and his game then shared that as where it stood).
-	std::this_thread::sleep_for(5100ms);  // TAKEOVER_COOLDOWN
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
 	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
 	Clear(f, { 2 });
@@ -1505,7 +1507,7 @@ TEST("server workshop: a piece of the world moved and then scrapped reaches a la
 TEST("server workshop: a world request after a load sends everything the others built, but only a few times in a row")
 {
 	Server::Options options;
-	options.worldStateRefill = std::chrono::milliseconds{ 500 };
+	options.worldStateRefill = std::chrono::seconds{ 600 };  // owed until the test moves the server clock past it (Advance), so a busy PC can't refill it early
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
@@ -1534,6 +1536,7 @@ TEST("server workshop: a world request after a load sends everything the others 
 	CHECK(batchesFor(2).empty());
 	CHECK(batchesFor(2).empty());
 	std::vector<std::vector<std::uint8_t>> later;
+	f.Advance(601s);  // his budget refills
 	REQUIRE(Await(f, 2, MT::kWorkshopItems, later));
 	std::ranges::move(Received(f, 2), std::back_inserter(later));
 	const auto owed = Decoded(later, MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
@@ -1569,7 +1572,7 @@ TEST("server workshop: a friend who loads a save from another session, or from b
 TEST("server: a friend who loads a save has the others told, once in a while, so their games send their radiant runs again")
 {
 	Server::Options options;
-	options.reloadToldEvery = std::chrono::milliseconds{ 400 };
+	options.reloadToldEvery = std::chrono::seconds{ 600 };  // owed until the test moves the server clock past it (Advance)
 	Fixture    f{ options };
 	JoinAs(f, 1, "Alice");
 	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
@@ -1590,6 +1593,7 @@ TEST("server: a friend who loads a save has the others told, once in a while, so
 	CHECK(Count(Received(f, 1), MT::kPlayerReloaded) == 0);
 	// Owed, it goes once the time is up: once for both (what the first load's told games resent went with the world).
 	std::vector<std::vector<std::uint8_t>> later;
+	f.Advance(601s);  // the time is up
 	REQUIRE(Await(f, 1, MT::kPlayerReloaded, later));
 	std::ranges::move(During(f, 1, std::chrono::milliseconds{ 600 }), std::back_inserter(later));
 	CHECK(Count(later, MT::kPlayerReloaded) == 1);
@@ -1817,7 +1821,7 @@ TEST("server trust: in a three-player fight, only those who fought the raider ca
 TEST("server trust: a fight long over is no licence to kill the NPC")
 {
 	Server::Options options;
-	options.deathGrace = 200ms;
+	options.deathGrace = 600s;  // the test moves the server clock past it (Advance)
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
@@ -1826,7 +1830,7 @@ TEST("server trust: a fight long over is no licence to kill the NPC")
 	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
 	Clear(f, { 1, 2 });
 
-	std::this_thread::sleep_for(300ms);
+	f.Advance(601s);  // past deathGrace
 	f.fake->Deliver(2, Death(NPC, true));
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
 	CHECK(f.Logged("dropped"));
@@ -2187,6 +2191,7 @@ namespace
 TEST("server trust: a joiner's deaths stop at their budget and come back with time")
 {
 	Fixture f;
+	f.HoldClock();  // a busy PC can't let more than the 1.1 s through: the clock moves by Advance
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
@@ -2194,7 +2199,7 @@ TEST("server trust: a joiner's deaths stop at their budget and come back with ti
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 60);
 	CHECK(f.Logged("reports deaths faster than any fight"));
 
-	std::this_thread::sleep_for(1100ms);  // two a second come back
+	f.Advance(1100ms);  // two a second come back
 	DeliverAll(f, 1, Deaths(0x00100100, 2));
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 2);
 
@@ -2210,12 +2215,13 @@ TEST("server trust: a flood that goes on says once per 10 seconds that the budge
 {
 	// The budget refills two a second and a flooder spends them at once: the log used to say so each time.
 	Fixture f;
+	f.HoldClock();  // the budget refills when the test says
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
 	DeliverAll(f, 1, Deaths(0x00200000, 62));  // 60 pass, 2 dropped
 	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 60);
-	std::this_thread::sleep_for(1100ms);
+	f.Advance(1100ms);
 	DeliverAll(f, 1, Deaths(0x00200100, 5));  // 2 pass, 3 dropped
 	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 2);
 	CHECK(f.LoggedTimes("reports deaths faster than any fight") == 1);
@@ -2313,7 +2319,7 @@ TEST("server trust: a death refused, or known already, costs nothing from the bu
 
 TEST("server trust: a joiner's deaths over the budget are not in the session the host restarts from")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-server", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
@@ -2440,7 +2446,7 @@ namespace
 
 TEST("host authority: a friend's builds come back after a host restart at their own size, but none bigger than ten times or smaller than a tenth")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-server", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
@@ -2620,11 +2626,11 @@ namespace
 		return Protocol::Encode(state);
 	}
 
-	// Hands what the server sends a_peer to a_handle, in order, until a_done() or three seconds pass.
+	// Hands what the server sends a_peer to a_handle, in order, until a_done() or half a minute passes.
 	template <class Handle, class Done>
 	void Pump(Fixture& a_f, PeerId a_peer, Handle&& a_handle, Done&& a_done)
 	{
-		const auto deadline = std::chrono::steady_clock::now() + 3s;
+		const auto deadline = std::chrono::steady_clock::now() + 30s;
 		while (!a_done() && std::chrono::steady_clock::now() < deadline) {
 			a_handle(a_f.fake->Take(a_peer));
 			std::this_thread::sleep_for(10ms);
