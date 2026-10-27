@@ -805,7 +805,7 @@ namespace FrameLoans
 
 	bool LentToUs(std::uint32_t a_id)
 	{
-		return a_id != 0 && a_id == borrowed.spawnId && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
+		return FrameLoan::HoldsSpawn(borrowed.stage, borrowed.spawnId, a_id);
 	}
 
 	bool BorrowedCopy(std::uint32_t a_local)
@@ -1253,6 +1253,11 @@ namespace FrameLoans
 				REX::INFO("FrameLoans: the session ended while our player wears player {}'s frame {:08X}; it goes as they get out", borrowed.owner, borrowed.spawnId);
 				Say(Text::Format("party.frame_owner_left", { { "player", RemotePlayers::NameOf(borrowed.owner) } }));
 			}
+			// The ids of the next session are not this one's: a new spawn under the id we hold would be taken for the frame lent
+			// to us (LentToUs), its copy never placed or moved while we wear on, and every press on a frame copy called busy.
+			// The copy and the tags are all Finish still needs.
+			borrowed.spawnId = 0;
+			borrowed.owner = 0;
 			break;
 		case Stage::kLent:
 			Finish(false, true, "the session ended");  // before Spawns lets the copy go

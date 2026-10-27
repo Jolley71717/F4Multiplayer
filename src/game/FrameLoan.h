@@ -151,6 +151,13 @@ namespace FrameLoan
 		return !a_copy || (a_sinceOut && *a_sinceOut >= EXIT_SETTLE);
 	}
 
+	// Whether the spawn a_id is the one lent to us (a_ours, with a_stage): from the kit coming until the loan ends. Spawn id 0
+	// is none, so a loan worn on past its session (which lets go of its id) holds no spawn of the next session.
+	constexpr bool HoldsSpawn(Stage a_stage, std::uint32_t a_ours, std::uint32_t a_id)
+	{
+		return a_id != 0 && a_id == a_ours && a_stage != Stage::kNone && a_stage != Stage::kAsked;
+	}
+
 	// Whether our status tells the frame we got out of last as our parked one. Not a frame of ours lent out (it stands hidden
 	// here), nor the copy lent to us (a_borrowedCopy): it is its owner's spawn, which their game and every other already
 	// place and move, and a parked copy of it told as ours would stand beside it for the EXIT_SETTLE after we get out.
