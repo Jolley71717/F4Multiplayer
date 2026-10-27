@@ -4,11 +4,14 @@
 #include "game/WeaponFire.h"
 
 #include "Config.h"
+#include "game/AutoSave.h"
+#include "game/AutoSaveRules.h"
 #include "game/Compass.h"
 #include "game/DownRules.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/FadeWatch.h"
+#include "game/FrameLoans.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
@@ -95,6 +98,8 @@ namespace Party
 
 		std::uint32_t                  teleportTarget = 0;
 		std::optional<PendingTeleport> pendingTeleport;
+		// A teleport across the worldspace we were in already (no coc or cow): when its autosave is asked for.
+		std::optional<Clock::time_point> landingSaveAt;
 
 		Clock::time_point killFeedWindow{};
 		int               killFeedShown = 0;
@@ -542,12 +547,19 @@ namespace Party
 					const auto held = Equipment::PowerArmorFrameOf(player);
 					return ArmorFrames::WornSeat(seatOf(seat.get()), seatOf(held && !held->IsDeleted() ? held.get() : nullptr));
 				},
+				// A frame lent to us is our copy of a friend's: named by its spawn id, which their game and every other
+				// resolve to their own (FrameLoans).
+				[](std::uint32_t a_ref) { return FrameLoans::WornSpawnOf(a_ref); },
 				Clock::now());
 			status.powerArmorFrame = wear.frame;
 			status.powerArmorFrameRef = wear.frameRef;
 			// Out of it: the frame we got out of last, where it stands (see ArmorFrames::TellParked). Friends show a copy
 			// there, in the station we parked it in or wherever we left it.
-			status.parked = ArmorFrames::TellParked(status.powerArmor, LastFrameOf(player));
+			// Not while it is lent (FrameLoans): it stands hidden here, and the borrower wears it.
+			const auto last = LastFrameOf(player);
+			status.parked = FrameLoans::LentOut(last.ref) ? std::nullopt : ArmorFrames::TellParked(status.powerArmor, last);
+			// Whether we lend our own frames to friends who ask (bLendPowerArmor).
+			status.lends = Config::Get().lendPowerArmor;
 			// The chair, bed, workbench or terminal we use: friends put our stand-in in the same one (not a frame: above).
 			status.seat = StandInSeat::Tell(OwnSeatOf(player, status.powerArmor));
 			if (wear.unknown) {
@@ -669,6 +681,12 @@ namespace Party
 		void FinishTeleport(Clock::time_point a_now)
 		{
 			const auto player = Player();
+			if (landingSaveAt && player && a_now >= *landingSaveAt) {
+				landingSaveAt.reset();
+				if (player->Get3D()) {
+					AutoSave::AfterTeleport();  // as below: the engine counts no SetPosition as travel either
+				}
+			}
 			if (!pendingTeleport || !player) {
 				return;
 			}
@@ -679,6 +697,9 @@ namespace Party
 			if (SpaceOf(player) == std::pair{ pendingTeleport->cell, pendingTeleport->worldspace } && player->Get3D()) {
 				player->SetPosition(pendingTeleport->position, true);
 				pendingTeleport.reset();
+				// The engine does not count a coc or cow as travel, so it made none of the autosaves a load door or fast
+				// travel makes, and the save a death loads was often many minutes old (AutoSaveRules.h).
+				AutoSave::AfterTeleport();
 			}
 		}
 
@@ -791,6 +812,7 @@ namespace Party
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
+		AutoSave::Frame();
 		pings.Expire(now);
 		FollowPings();
 		// Not in the opening: no friend could get there to help.
@@ -814,6 +836,7 @@ namespace Party
 
 	void ApplyStatus(const Protocol::PlayerStatus& a_status)
 	{
+		FrameLoans::OnStatus(a_status.playerId, a_status.lends);  // whether a press on their frame asks them for it
 		auto&      entry = known[a_status.playerId];
 		const auto name = RemotePlayers::NameOf(a_status.playerId);
 		if (entry.hasStatus) {
@@ -1026,6 +1049,7 @@ namespace Party
 		}
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
+		landingSaveAt.reset();  // an earlier teleport's: this one asks for its own below, if it is travel
 
 		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins are taken out first
 		// (RemotePlayers::DespawnAll, as before a save): disabled in this frame, before the engine clears the cells for the
@@ -1033,8 +1057,12 @@ namespace Party
 		// left with no cell crashed the next save). Not deleted at once: a physics job of the frames after still handles a
 		// collision with one just beside the player (the crash a save's flush had). They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
+			const bool travel = AutoSaveRules::TeleportIsTravel(true, state.cell != 0, player->data.location.GetDistance(position));
 			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
+			if (travel) {
+				landingSaveAt = Clock::now() + AutoSaveRules::LANDING_SETTLE;
+			}
 			REX::INFO("Party: teleported to player {}", target->id);
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
 			return;
@@ -1119,6 +1147,7 @@ namespace Party
 		heldXp = 0.0f;
 		killWindowEnd = {};
 		ownWear.Forget();
+		landingSaveAt.reset();  // the teleport was in the game left behind: no autosave of the one just loaded
 	}
 
 	void Reset()
@@ -1136,6 +1165,7 @@ namespace Party
 		xpCredit = 0.0f;
 		teleportTarget = 0;
 		pendingTeleport.reset();
+		landingSaveAt.reset();
 		Downed::Reset();
 		pings.Clear();
 		pingLimit.Reset();

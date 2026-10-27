@@ -2,6 +2,7 @@
 #include "game/DeferredDelete.h"
 #include "game/Equipment.h"
 #include "game/FrameLeftovers.h"
+#include "game/FrameLoans.h"
 #include "game/Hud.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -11,13 +12,6 @@
 #include "Text.h"
 
 #include <cstring>
-
-// Power armor lent between players (#182, feat/pa-borrow): a frame lent is a backstop fact of a leftover (FrameLeftovers).
-// Guarded until that branch is on main; the guard goes with it.
-#if __has_include("game/FrameLoans.h")
-#	include "game/FrameLoans.h"
-#	define F4MP_HAS_FRAME_LOANS 1
-#endif
 
 namespace SaveGuard
 {
@@ -380,11 +374,9 @@ namespace SaveGuard
 				facts.owner = FrameLeftovers::OwnerOf(hasOwner, OwnerIdOf(a_ref), RemotePlayers::IsStandInBase);
 			}
 			facts.marked = WorkshopSync::IsCopyMarked(*a_ref);
-#ifdef F4MP_HAS_FRAME_LOANS
 			// A frame of ours lent to a friend (FrameLoans) is hidden, not disabled, and one lent to us is disabled only while
 			// our player wears it (Worn): a backstop.
 			facts.lent = FrameLoans::LentOut(id);
-#endif
 			facts.session = Placed(a_ref) || RemotePlayers::OnItsWayOut(a_ref) || Spawns::CopyIdOf(id) != 0;
 			return facts;
 		}
@@ -722,6 +714,13 @@ namespace SaveGuard
 		if (a_ref) {
 			const auto base = a_ref->GetObjectReference();
 			book.Track(a_ref->GetFormID(), base ? base->GetFormID() : 0);
+		}
+	}
+
+	void Track(std::uint32_t a_id, std::uint32_t a_base)
+	{
+		if (a_id != 0) {
+			book.Track(a_id, a_base);
 		}
 	}
 

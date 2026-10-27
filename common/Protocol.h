@@ -173,6 +173,9 @@ namespace Protocol
 		kDropRecord = 42,         // the drops the sender's world holds (after its welcome and each load)
 		kReportObjectHold = 52,   // the sender holds a loose object in their hands: where it is, in their own frame (unreliable)
 		kReportObjectRest = 53,   // an object the sender moved: let go of (dropped or thrown), or come to rest
+		kBorrowFrame = 72,        // the sender asks to borrow a friend's power armor frame, a spawn of the friend's game (FrameBorrow)
+		kLendFrame = 73,          // the sender's game lends its frame to the friend who asked, with its pieces and core, or says why not (FrameLending)
+		kReturnFrame = 74,        // the sender got out of a frame lent to them: where it stands, and what came back of its pieces (FrameReturn)
 
 		// server -> client
 		kWelcome = 101,
@@ -232,6 +235,9 @@ namespace Protocol
 		kDropPlaced = 140,        // an item lies in the session for anyone to take (offered to its dropper alone first: DropClaim)
 		kDropGone = 141,          // a dropped item was taken (by takerId: that game takes it) or went back to its owner
 		kDropList = 142,          // every item lying in the session now (the answer to kDropRecord)
+		kLoanAsked = 173,         // to a frame's owner alone: a friend asks to borrow it (FrameBorrow, playerId the friend)
+		kFrameLent = 174,         // a frame is lent (to everyone, and to a joiner for each loan there is); a refusal, to the friend who asked alone (FrameLending)
+		kFrameReturned = 175,     // a lent frame came back, or the loan ended without a return (FrameReturn::ended)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -378,6 +384,12 @@ namespace Protocol
 		// takes it first (bContainerGifts; experimental, off by default). Welcome flag bit 64, as sharedStorage: off, the
 		// server refuses a gift's report, and the item stays in its player's own copy of the container, as in 0.9.2.
 		bool containerGifts = false;
+
+		// Saves (src/game/AutoSaveRules.h): a player's game makes an autosave as they go down, so a bleed-out loads the
+		// moment they went down instead of whatever save was newest (bSaveOnDown; off by default). Welcome flag bit 128, as
+		// sharedStorage: a build that neither sets nor reads it makes no such save, which changes no game but its own.
+		// Bit 128 is the flag byte's last: a further rule needs a byte of its own after the limits.
+		bool saveOnDown = false;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -823,6 +835,11 @@ namespace Protocol
 		// in the world. A gift's place is its container's. The server takes a gift's report only under the host's
 		// bContainerGifts (SessionRules::containerGifts).
 		std::uint32_t        holder = 0;
+		// The character whose world it left and the one whose world took it in (DropRecord::character), set only in the
+		// server's own book and its session file, like takerId (never sent): a record of another character's world neither
+		// takes it back nor lays it down again. 0: not known (an older build's record or file), which any character matches.
+		std::uint64_t        ownerCharacter = 0;
+		std::uint64_t        takerCharacter = 0;
 
 		bool operator==(const DroppedItem&) const = default;
 	};
@@ -870,11 +887,18 @@ namespace Protocol
 	// this session, so is from before any of it). The server makes the session agree: a drop of theirs not listed is back in
 	// their inventory (a save from before they dropped it), so it is withdrawn; one they took and don't list isn't in their
 	// inventory (a save from before they took it), so it lies there again. Answered with kDropList.
+	//
+	// character: which character's world it is (CharacterBinding::World: a key of its own, kept in its saves, not the
+	// engine's character ID, which can't tell two characters apart). Only that character's saves are its takes and drops:
+	// a new character's world, or another character's save, holds none of them, so it neither lays down again what an
+	// older character took nor takes back what one gave. 0: not known, which matches any character (a world always
+	// sends its own key; 0 is left for drops a session file from before SessionFile::CHARACTERS holds).
 	struct DropRecord
 	{
 		std::uint64_t              sessionId = 0;
 		std::vector<std::uint64_t> made;
 		std::vector<std::uint32_t> taken;
+		std::uint64_t              character = 0;
 
 		bool operator==(const DropRecord&) const = default;
 	};
@@ -1508,6 +1532,8 @@ namespace Protocol
 		std::uint32_t powerArmorFrame = 0;   // base form of the frame they are in (0 = none): the hearer places one for the stand-in
 		// The frame reference itself when every game has it (placed in the world by a plugin, such as the museum's suit
 		// in Concord), 0 for one made in their game: the hearer hides its own copy of that frame while they wear theirs.
+		// A spawn id (IsSpawnRef) for a friend's frame lent to them (FrameLending): the hearer hides its own of that
+		// spawn, the owner's real frame or a copy of it, while they wear it.
 		std::uint32_t powerArmorFrameRef = 0;
 		// Out of power armor: the frame they got out of last, where it stands now (none while they are in one).
 		std::optional<ParkedFrame> parked;
@@ -1515,8 +1541,95 @@ namespace Protocol
 		std::optional<Seat> seat;
 		// The menu they are in (MenuKind; protocol 48).
 		std::uint8_t menu = MenuKind::kNone;
+		// They lend a frame they parked to a friend who asks (their bLendPowerArmor; protocol 55): the server passes on
+		// a friend's kBorrowFrame to them only then.
+		bool lends = false;
 
 		bool operator==(const PlayerStatus&) const = default;
+	};
+
+	// ---- power armor lent between players (protocol 55) ----------------------------------------------
+
+	// A frame one game made at runtime is shared as a spawn (FrameShare::SharesMade): its owner's game runs it, and every
+	// other game places an empty copy of it. A friend borrows it by its spawn id: the owner's game sends the pieces and
+	// the fusion core it holds (the kit), the friend's copy is filled with copies of them and the friend climbs in, the
+	// owner's real frame is hidden meanwhile, and at the return it stands where the friend left it with the wear they put
+	// on it. The server keeps the loans beside the spawns, never in the session file (src/game/FrameLoan.h has the rules).
+	inline constexpr std::size_t MAX_LENT_ITEMS = 16;  // a frame holds seven pieces and a core; the rest is room for mods' extras
+
+	// One item of a lent frame, as the owner's game has it (a DroppedItem without a place or a count: one of each).
+	struct LentItem
+	{
+		std::uint8_t         slot = 0;           // the owner's number for it in this loan, below MAX_LENT_ITEMS: the return answers by it
+		std::uint32_t        base = 0;           // a base form every game has (a piece's armor, the core's ammo)
+		std::uint16_t        templateIndex = 0;  // the instance's template combination, as DroppedItem's
+		std::vector<ItemMod> mods;
+		float                health = -1.0f;     // 0..1: a piece's condition, the core's charge; -1: none
+		std::string          name;               // a name the owner gave it; empty: the game's own
+		bool                 core = false;       // the fusion core
+
+		bool operator==(const LentItem&) const = default;
+	};
+
+	// Why a frame is not lent (FrameLending::refusal).
+	enum class LoanRefusal : std::uint8_t
+	{
+		kNone = 0,
+		kNotLending = 1,   // its owner does not lend (their bLendPowerArmor is off)
+		kLent = 2,         // it is lent to someone else already, or the one who asked has another
+		kUnavailable = 3,  // its owner's game can't lend it now: it is not theirs, someone is in it, or it is not parked
+		kMax = kUnavailable,
+	};
+
+	// kBorrowFrame (playerId ignored), kLoanAsked (playerId: who asks).
+	struct FrameBorrow
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t spawnId = 0;  // the frame, by the spawn id its owner's game shares it under
+
+		bool operator==(const FrameBorrow&) const = default;
+	};
+
+	// kLendFrame (ownerId ignored: the server sets it), kFrameLent. With a refusal the kit is empty.
+	struct FrameLending
+	{
+		std::uint32_t         ownerId = 0;
+		std::uint32_t         borrowerId = 0;
+		std::uint32_t         spawnId = 0;
+		LoanRefusal           refusal = LoanRefusal::kNone;
+		std::vector<LentItem> kit;
+
+		bool operator==(const FrameLending&) const = default;
+	};
+
+	// What came back of one lent item (FrameReturn::items): its condition now, or that the friend's game found it no more.
+	struct ReturnedItem
+	{
+		std::uint8_t slot = 0;      // LentItem::slot
+		bool         found = false;
+		float        health = -1.0f;  // 0..1, or -1: none (and always -1 when not found)
+
+		bool operator==(const ReturnedItem&) const = default;
+	};
+
+	// kReturnFrame (borrowerId and ownerId ignored: the server sets them), kFrameReturned. ended: the loan ended without
+	// a return (the borrower left or loaded a save, the owner's spawn of the frame ended), and the rest is empty: the
+	// owner's frame is shown again where it stood, as it was lent. Else the place is where the frame stands now in the
+	// borrower's game, or none (cell and worldspace both 0) when that game can't name it: the owner's game then puts it
+	// back where it was lent from.
+	struct FrameReturn
+	{
+		std::uint32_t             borrowerId = 0;
+		std::uint32_t             ownerId = 0;
+		std::uint32_t             spawnId = 0;
+		bool                      ended = false;
+		std::uint32_t             cell = 0;        // interior cell form ID, or 0
+		std::uint32_t             worldspace = 0;  // worldspace form ID, or 0
+		float                     x = 0, y = 0, z = 0;
+		float                     heading = 0;     // radians
+		std::vector<ReturnedItem> items;
+
+		bool operator==(const FrameReturn&) const = default;
 	};
 
 	// playerId: whose clock it is (ignored client -> server).
@@ -2193,7 +2306,7 @@ namespace Protocol
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
 		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.shareGuestBuilds ? 8 : 0) | (rules.downedCrawl ? 16 : 0) |
-		                           (rules.sharedStorage ? 32 : 0) | (rules.containerGifts ? 64 : 0);
+		                           (rules.sharedStorage ? 32 : 0) | (rules.containerGifts ? 64 : 0) | (rules.saveOnDown ? 128 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -2225,6 +2338,7 @@ namespace Protocol
 			rules.downedCrawl = (flags & 16) != 0;
 			rules.sharedStorage = (flags & 32) != 0;  // a host without it never sets it: each game keeps its own copy, as in 0.9.2
 			rules.containerGifts = (flags & 64) != 0;  // a host without it never sets it: a weapon put in a chest stays its player's own
+			rules.saveOnDown = (flags & 128) != 0;  // likewise: no autosave on going down, as in 0.9.2
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();
@@ -4036,7 +4150,7 @@ namespace Protocol
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
 		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0) | (a_msg.parked ? 16 : 0) |
-		                                   (a_msg.seat ? 32 : 0)));
+		                                   (a_msg.seat ? 32 : 0) | (a_msg.lends ? 64 : 0)));
 		w.U32(a_msg.powerArmorFrame);
 		w.U32(a_msg.powerArmorFrameRef);
 		if (a_msg.parked) {
@@ -4077,6 +4191,7 @@ namespace Protocol
 		msg.opening = (flags & 2) != 0;
 		msg.light = (flags & 4) != 0;
 		msg.powerArmor = (flags & 8) != 0;
+		msg.lends = (flags & 64) != 0;
 		msg.powerArmorFrame = r.U32();
 		msg.powerArmorFrameRef = r.U32();
 		if ((flags & 16) != 0) {
@@ -4103,7 +4218,7 @@ namespace Protocol
 		msg.menu = r.U8();
 		// A frame is parked, and a seat is told, only while they are out of power armor (a frame is furniture too, but
 		// a frame's own path handles that).
-		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || msg.menu > MenuKind::kMax || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || msg.menu > MenuKind::kMax || (msg.powerArmorFrameRef != 0 && !IsActorRef(msg.powerArmorFrameRef)) ||
 			(msg.parked && (msg.powerArmor || !msg.parked->Valid())) || (msg.seat && (msg.powerArmor || !msg.seat->Valid()))) {
 			return std::nullopt;
 		}
@@ -4374,7 +4489,9 @@ namespace Protocol
 	namespace detail
 	{
 		// a_holders false: as the session files from before gifts held a drop (SessionFile::GIFTS), with no holder.
-		inline void WriteDrop(Writer& w, const DroppedItem& a_drop, bool a_holders = true)
+		// a_characters: as a session file since SessionFile::CHARACTERS holds it, with its owner's and taker's characters
+		// (never on the wire).
+		inline void WriteDrop(Writer& w, const DroppedItem& a_drop, bool a_holders = true, bool a_characters = false)
 		{
 			w.U32(a_drop.dropId);
 			w.U32(a_drop.ownerId);
@@ -4400,12 +4517,16 @@ namespace Protocol
 			if (a_holders) {
 				w.U32(a_drop.holder);
 			}
+			if (a_holders && a_characters) {
+				w.U64(a_drop.ownerCharacter);
+				w.U64(a_drop.takerCharacter);
+			}
 		}
 
 		// An item every game has, a count a dropped reference can hold, mods from plugin files, a condition in 0..1 (or
 		// none), and one place: an interior or a worldspace, at a coordinate the world holds. A gift's holder is a plugin's
 		// reference, and a gift is one item (each item put in is given on its own).
-		inline std::optional<DroppedItem> ReadDrop(Reader& r, bool a_holders = true)
+		inline std::optional<DroppedItem> ReadDrop(Reader& r, bool a_holders = true, bool a_characters = false)
 		{
 			DroppedItem drop;
 			drop.dropId = r.U32();
@@ -4437,6 +4558,10 @@ namespace Protocol
 			drop.z = r.F32();
 			drop.takerId = r.U32();
 			drop.holder = a_holders ? r.U32() : 0;
+			if (a_holders && a_characters) {
+				drop.ownerCharacter = r.U64();
+				drop.takerCharacter = r.U64();
+			}
 			const bool healthOk = drop.health == -1.0f || (std::isfinite(drop.health) && drop.health >= 0.0f && drop.health <= 1.0f);
 			const bool holderOk = drop.holder == 0 || (IsShareableRef(drop.holder) && drop.count == 1);
 			if (!r.Ok() || !IsShareableRef(drop.base) || drop.count < 1 || drop.count > MAX_DROP_COUNT || !healthOk || (drop.cell == 0) == (drop.worldspace == 0) ||
@@ -4523,6 +4648,7 @@ namespace Protocol
 		for (std::size_t i = 0; i < taken; ++i) {
 			w.U32(a_msg.taken[i]);
 		}
+		w.U64(a_msg.character);
 		return w.Data();
 	}
 
@@ -4546,6 +4672,7 @@ namespace Protocol
 		for (std::uint16_t i = 0; i < taken && r.Ok(); ++i) {
 			msg.taken.push_back(r.U32());
 		}
+		msg.character = r.U64();
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
@@ -4554,19 +4681,19 @@ namespace Protocol
 
 	namespace detail
 	{
-		inline std::vector<std::uint8_t> EncodeDropList(const DropList& a_msg, bool a_holders)
+		inline std::vector<std::uint8_t> EncodeDropList(const DropList& a_msg, bool a_holders, bool a_characters = false)
 		{
 			Writer w{ MessageType::kDropList };
 			w.U8(a_msg.last ? 1 : 0);
 			const auto count = (std::min)(a_msg.drops.size(), MAX_DROPS_PER_PACKET);
 			w.U8(static_cast<std::uint8_t>(count));
 			for (std::size_t i = 0; i < count; ++i) {
-				detail::WriteDrop(w, a_msg.drops[i], a_holders);
+				detail::WriteDrop(w, a_msg.drops[i], a_holders, a_characters);
 			}
 			return w.Data();
 		}
 
-		inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data, bool a_holders)
+		inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data, bool a_holders, bool a_characters = false)
 		{
 			Reader r{ a_data };
 			r.U8();
@@ -4578,7 +4705,7 @@ namespace Protocol
 			}
 			msg.last = last == 1;
 			for (std::uint8_t i = 0; i < count; ++i) {
-				auto drop = ReadDrop(r, a_holders);
+				auto drop = ReadDrop(r, a_holders, a_characters);
 				if (!drop) {
 					return std::nullopt;
 				}
@@ -4611,6 +4738,18 @@ namespace Protocol
 	inline std::optional<DropList> DecodeDropListBeforeHolders(std::span<const std::uint8_t> a_data)
 	{
 		return detail::DecodeDropList(a_data, false);
+	}
+
+	// A session file's list since SessionFile::CHARACTERS: each drop with its owner's and taker's characters too (the
+	// server's own book; the wire's kDropList never carries them).
+	inline std::vector<std::uint8_t> EncodeWithCharacters(const DropList& a_msg)
+	{
+		return detail::EncodeDropList(a_msg, true, true);
+	}
+
+	inline std::optional<DropList> DecodeDropListWithCharacters(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeDropList(a_data, true, true);
 	}
 
 	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)
@@ -4820,6 +4959,207 @@ namespace Protocol
 			msg.questStages.push_back(stage);
 		}
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// ---- power armor lent between players -------------------------------------------------------------
+
+	inline std::vector<std::uint8_t> Encode(const FrameBorrow& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.spawnId);
+		return w.Data();
+	}
+
+	inline std::optional<FrameBorrow> DecodeFrameBorrow(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		FrameBorrow msg;
+		msg.playerId = r.U32();
+		msg.spawnId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsSpawnRef(msg.spawnId)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	namespace detail
+	{
+		// A condition in 0..1, or none (-1), as DroppedItem's.
+		inline bool HealthOk(float a_health)
+		{
+			return a_health == -1.0f || (std::isfinite(a_health) && a_health >= 0.0f && a_health <= 1.0f);
+		}
+
+		inline void WriteLent(Writer& w, const LentItem& a_item)
+		{
+			w.U8(a_item.slot);
+			w.U32(a_item.base);
+			w.U16(a_item.templateIndex);
+			const auto modCount = (std::min)(a_item.mods.size(), MAX_ITEM_MODS);
+			w.U8(static_cast<std::uint8_t>(modCount));
+			for (std::size_t i = 0; i < modCount; ++i) {
+				w.U32(a_item.mods[i].mod);
+				w.U8(a_item.mods[i].index);
+				w.U8(a_item.mods[i].rank);
+			}
+			w.F32(a_item.health);
+			w.Str(a_item.name, MAX_ITEM_NAME_LENGTH);
+			w.U8(a_item.core ? 1 : 0);
+		}
+
+		// An item every game has, mods from plugin files, a condition in 0..1 (or none), and a slot of the kit.
+		inline std::optional<LentItem> ReadLent(Reader& r)
+		{
+			LentItem item;
+			item.slot = r.U8();
+			item.base = r.U32();
+			item.templateIndex = r.U16();
+			const auto modCount = r.U8();
+			if (modCount > MAX_ITEM_MODS) {
+				return std::nullopt;
+			}
+			for (std::uint8_t i = 0; i < modCount && r.Ok(); ++i) {
+				ItemMod mod;
+				mod.mod = r.U32();
+				mod.index = r.U8();
+				mod.rank = r.U8();
+				if (!IsShareableRef(mod.mod)) {
+					return std::nullopt;
+				}
+				item.mods.push_back(mod);
+			}
+			item.health = r.F32();
+			item.name = r.Str(MAX_ITEM_NAME_LENGTH);
+			const auto core = r.U8();
+			item.core = core == 1;
+			if (!r.Ok() || item.slot >= MAX_LENT_ITEMS || !IsShareableRef(item.base) || !HealthOk(item.health) || core > 1) {
+				return std::nullopt;
+			}
+			return item;
+		}
+	}
+
+	inline std::vector<std::uint8_t> Encode(const FrameLending& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.ownerId);
+		w.U32(a_msg.borrowerId);
+		w.U32(a_msg.spawnId);
+		w.U8(static_cast<std::uint8_t>(a_msg.refusal));
+		const auto count = a_msg.refusal == LoanRefusal::kNone ? (std::min)(a_msg.kit.size(), MAX_LENT_ITEMS) : 0;
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteLent(w, a_msg.kit[i]);
+		}
+		return w.Data();
+	}
+
+	// A spawn, a borrower, and a kit of at most MAX_LENT_ITEMS whose slots are each named once; none with a refusal.
+	inline std::optional<FrameLending> DecodeFrameLending(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		FrameLending msg;
+		msg.ownerId = r.U32();
+		msg.borrowerId = r.U32();
+		msg.spawnId = r.U32();
+		const auto refusal = r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || refusal > static_cast<std::uint8_t>(LoanRefusal::kMax) || count > MAX_LENT_ITEMS || (refusal != 0 && count != 0)) {
+			return std::nullopt;
+		}
+		msg.refusal = static_cast<LoanRefusal>(refusal);
+		std::uint32_t slots = 0;
+		for (std::uint8_t i = 0; i < count; ++i) {
+			auto item = detail::ReadLent(r);
+			if (!item || (slots & (1u << item->slot)) != 0) {
+				return std::nullopt;
+			}
+			slots |= 1u << item->slot;
+			msg.kit.push_back(std::move(*item));
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsSpawnRef(msg.spawnId) || msg.borrowerId == 0) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const FrameReturn& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.borrowerId);
+		w.U32(a_msg.ownerId);
+		w.U32(a_msg.spawnId);
+		w.U8(a_msg.ended ? 1 : 0);
+		if (a_msg.ended) {
+			return w.Data();
+		}
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
+		w.F32(a_msg.heading);
+		const auto count = (std::min)(a_msg.items.size(), MAX_LENT_ITEMS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U8(a_msg.items[i].slot);
+			w.U8(a_msg.items[i].found ? 1 : 0);
+			w.F32(a_msg.items[i].health);
+		}
+		return w.Data();
+	}
+
+	// A spawn; ended, or a place that is one interior, one worldspace or none, at a coordinate the world holds, and at most
+	// MAX_LENT_ITEMS answers whose slots are each named once (an item not found has no condition).
+	inline std::optional<FrameReturn> DecodeFrameReturn(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		FrameReturn msg;
+		msg.borrowerId = r.U32();
+		msg.ownerId = r.U32();
+		msg.spawnId = r.U32();
+		const auto ended = r.U8();
+		if (!r.Ok() || ended > 1 || !IsSpawnRef(msg.spawnId)) {
+			return std::nullopt;
+		}
+		msg.ended = ended == 1;
+		if (msg.ended) {
+			if (!r.AtEnd()) {
+				return std::nullopt;
+			}
+			return msg;
+		}
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		msg.heading = r.F32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_LENT_ITEMS || (msg.cell != 0 && msg.worldspace != 0) || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) || !std::isfinite(msg.heading)) {
+			return std::nullopt;
+		}
+		std::uint32_t slots = 0;
+		for (std::uint8_t i = 0; i < count; ++i) {
+			ReturnedItem item;
+			item.slot = r.U8();
+			const auto found = r.U8();
+			item.found = found == 1;
+			item.health = r.F32();
+			if (!r.Ok() || found > 1 || item.slot >= MAX_LENT_ITEMS || (slots & (1u << item.slot)) != 0 || !detail::HealthOk(item.health) || (!item.found && item.health != -1.0f)) {
+				return std::nullopt;
+			}
+			slots |= 1u << item.slot;
+			msg.items.push_back(item);
+		}
+		if (!r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

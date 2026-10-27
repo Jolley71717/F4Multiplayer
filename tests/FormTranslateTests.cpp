@@ -285,6 +285,69 @@ TEST("form translate: a spawn keeps the session's own id, and a broken packet is
 	CHECK(Translate(Bytes{}, MISSING, Way::kToSession).kind == Result::Kind::kSame);
 }
 
+TEST("form translate: a friend in a frame lent to them names it by spawn id, which no translation changes")
+{
+	PlayerStatus status{ 2, 0, 0, 100, 5, false, false, false, true, SHARED, RUNTIME_REF };
+	Result     out;
+	const auto there = After(Encode(status, MT::kReportStatus), MISSING, Way::kToSession, &out);
+	REQUIRE(there);
+	const auto told = DecodePlayerStatus(*there);
+	REQUIRE(told);
+	CHECK(told->powerArmorFrame == SESSION_SHARED);
+	CHECK(told->powerArmorFrameRef == RUNTIME_REF);
+	CHECK(out.fields == 0);
+}
+
+TEST("form translate: a lent frame's piece whose base or mod the other side lacks is left out, the rest keep their slots")
+{
+	FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+	lent.kit.push_back(LentItem{ .slot = 0, .base = SHARED, .health = 0.5f });
+	lent.kit.push_back(LentItem{ .slot = 1, .base = MINE, .health = 0.5f });                                // a piece of a plugin they lack
+	lent.kit.push_back(LentItem{ .slot = 2, .base = SHARED, .mods = { { MINE, 0, 0 } }, .health = 0.5f });  // with a mod they lack
+	lent.kit.push_back(LentItem{ .slot = 5, .base = SHARED, .mods = { { SHARED, 1, 0 } }, .core = true });
+	Result     out;
+	const auto there = After(Encode(lent, MT::kLendFrame), MISSING, Way::kToSession, &out);
+	REQUIRE(there);
+	const auto sent = DecodeFrameLending(*there);
+	REQUIRE(sent);
+	REQUIRE(sent->kit.size() == 2);
+	CHECK(sent->kit[0].slot == 0);
+	CHECK(sent->kit[0].base == SESSION_SHARED);
+	CHECK(sent->kit[1].slot == 5);
+	CHECK(sent->kit[1].mods[0].mod == SESSION_SHARED);
+	CHECK(sent->kit[1].core);
+	CHECK(out.entries == 2);
+
+	// Coming in, a piece of the session's plugin we lack is left out the same way.
+	FrameLending theirs{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, { LentItem{ .slot = 0, .base = THEIRS }, LentItem{ .slot = 1, .base = SESSION_SHARED } } };
+	const auto here = After(Encode(theirs, MT::kFrameLent), MISSING, Way::kToLocal);
+	REQUIRE(here);
+	const auto heard = DecodeFrameLending(*here);
+	REQUIRE(heard);
+	REQUIRE(heard->kit.size() == 1);
+	CHECK(heard->kit[0].slot == 1);
+	CHECK(heard->kit[0].base == SHARED);
+}
+
+TEST("form translate: a return to a place the other side lacks comes with no place, and is kept")
+{
+	const FrameReturn back{ 2, 3, RUNTIME_REF, false, THEIRS, 0, 10.0f, 20.0f, 30.0f, 0.5f, { { 0, true, 0.5f } } };
+	Result     out;
+	const auto here = After(Encode(back, MT::kFrameReturned), MISSING, Way::kToLocal, &out);
+	REQUIRE(here);
+	const auto heard = DecodeFrameReturn(*here);
+	REQUIRE(heard);
+	CHECK(heard->cell == 0u);
+	CHECK(heard->worldspace == 0u);
+	CHECK(heard->items == back.items);
+	CHECK(out.fields == 1);
+	// One it has keeps its place, in its own numbering.
+	const FrameReturn shared{ 2, 3, RUNTIME_REF, false, SESSION_SHARED, 0, 10.0f, 20.0f, 30.0f, 0.5f, {} };
+	const auto        kept = After(Encode(shared, MT::kFrameReturned), MISSING, Way::kToLocal);
+	REQUIRE(kept);
+	CHECK(DecodeFrameReturn(*kept)->cell == SHARED);
+}
+
 // A gift's container is a key: a game whose load order lacks the chest's plugin never hears of the gift (it would have no
 // chest to show it in), and one that has it gets the chest in its own numbering. A loose drop has no holder to map.
 TEST("form translate: a gift in a container the other game lacks is not passed to it, and one it has names the container in its load order")

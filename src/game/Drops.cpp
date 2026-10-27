@@ -1,11 +1,15 @@
 #include "game/Drops.h"
 
+#include "game/CharacterBinding.h"
 #include "game/DropBook.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/Hud.h"
+#include "game/ItemCopies.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
+#include "game/RefTag.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
@@ -95,8 +99,16 @@ namespace Drops
 
 		// ---- the record (the co-save's thread too) ----
 
-		std::mutex       recordLock;
-		DropBook::Record record;
+		std::mutex                recordLock;
+		DropBook::Record          record;
+		CharacterBinding::World   world;  // whose world it is: said with the record, kept in the co-save ('CHAR')
+
+		// A random number for a fresh world key (under recordLock).
+		std::uint64_t WorldRandom()
+		{
+			static std::mt19937_64 random{ (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}() };
+			return random();
+		}
 
 		// ---- main thread ----
 
@@ -441,57 +453,9 @@ namespace Drops
 
 		// ---- copies ----
 
-		bool ModHere(std::uint32_t a_mod)
-		{
-			return RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_mod) != nullptr;
-		}
-
-		// Whether our game can place that very item: its base and every mod on it are here.
-		bool Placeable(const Protocol::DroppedItem& a_drop)
-		{
-			const auto form = RE::TESForm::GetFormByID(a_drop.base);
-			return form && form->As<RE::TESBoundObject>() && std::ranges::all_of(a_drop.mods, [](const Protocol::ItemMod& a_mod) { return ModHere(a_mod.mod); });
-		}
-
-		// The extra data our copy is made with: the item's instance (its mods, as Equipment::Give builds a stand-in's), its
-		// count, condition and name.
-		RE::BSTSmartPointer<RE::ExtraDataList> ExtraFor(const Protocol::DroppedItem& a_drop, RE::TESBoundObject* a_object)
-		{
-			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
-			const auto type = a_object->GetFormType();
-			const bool gear = type == RE::ENUM_FORM_ID::kWEAP || type == RE::ENUM_FORM_ID::kARMO;
-			if (gear && a_drop.mods.empty() && !a_object->objectTemplate.items.empty()) {
-				// A plain one (its dropper's had no mods): its base's default combination, as Equipment::Give does, so the
-				// engine doesn't roll one for our level.
-				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*a_object, *extra, nullptr, true);
-			} else if (gear && a_drop.templateIndex != StandInGear::NO_TEMPLATE) {
-				std::unique_ptr<RE::BGSObjectInstanceExtra> instance{ new RE::BGSObjectInstanceExtra() };
-				instance->itemIndex = a_drop.templateIndex;
-				for (const auto& entry : a_drop.mods) {
-					if (const auto mod = RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(entry.mod)) {
-						instance->AddMod(*mod, entry.index, entry.rank, false);
-					}
-				}
-				if (instance->values) {
-					RE::BSTSmartPointer<RE::TBO_InstanceData> data;
-					instance->CreateBaseInstanceData(*a_object, data);
-					extra->AddExtra(instance.release());  // the list owns it from here
-					if (data) {
-						extra->AddExtra(new RE::ExtraInstanceData(a_object, data));
-					}
-				}
-			}
-			if (a_drop.count > 1) {
-				extra->SetCount(static_cast<std::int16_t>(a_drop.count));
-			}
-			if (a_drop.health >= 0.0f) {
-				extra->SetHealthPerc(a_drop.health);
-			}
-			if (!a_drop.name.empty()) {
-				extra->SetOverrideName(a_drop.name.c_str());
-			}
-			return extra;
-		}
+		// Made as a lent frame's pieces are (ItemCopies).
+		using ItemCopies::ExtraFor;
+		using ItemCopies::Placeable;
 
 		// Told when the VM has run a copy's BlockActivation (on one of its threads): from then on Take only asks the server.
 		// A cancelled call says nothing; the copy goes after BLOCK_WAIT.
@@ -540,6 +504,7 @@ namespace Drops
 				return {};
 			}
 			SaveGuard::Track(ref.get());
+			REX::INFO("Drops: placed copy {}", RefTag::Of(ref.get()));
 			// Take only asks the server (OnActivated); the engine's own pickup runs once the server grants it (StartTake).
 			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> blocked{ new Blocked(ref->GetFormID()) };
 			if (!Papyrus::CallMethodThen(blocked, ref.get(), "ObjectReference", "BlockActivation", true, true, false)) {
@@ -815,6 +780,15 @@ namespace Drops
 					++notGiven;
 					return true;
 				}
+				// A copy of a friend's lent piece (FrameLoans): never given, as it is not ours. Left lying in our world, and
+				// its owner takes theirs out at the return, as for one sold or stored.
+				if (FrameLoans::IsLentItem(item->base, item->name)) {
+					++notGiven;
+					if (Log()) {
+						REX::INFO("Drops: {:08X} ({:08X}) dropped is a copy of a friend's lent piece; not given", ref->GetFormID(), item->base);
+					}
+					return true;
+				}
 				Send(Protocol::Encode(*item, Protocol::MessageType::kReportDrop));
 				a_pending.reported = true;
 				++reported;
@@ -1037,7 +1011,7 @@ namespace Drops
 		void TakeBackYield(const DropBook::ScrapYields::Yield& a_yield)
 		{
 			const auto lostIt = lostItems.find(a_yield.dropId);
-			const auto lost = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
+			const auto lostItem = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
 			if (lostIt != lostItems.end()) {
 				lostItems.erase(lostIt);
 			}
@@ -1067,7 +1041,7 @@ namespace Drops
 			}
 			bool tookWhole = false;
 			for (const auto& item : plan.whole) {
-				if (lost && lost->base == item.base && RemoveDrop(bench, *lost, item.count, [] {})) {
+				if (lostItem && lostItem->base == item.base && RemoveDrop(bench, *lostItem, item.count, [] {})) {
 					tookWhole = true;
 					REX::INFO("Drops: {:08X} x{} stored whole taken back out of workbench {:08X}, as that item: drop {} went to someone else", item.base, item.count,
 						a_yield.bench, a_yield.dropId);
@@ -1145,7 +1119,9 @@ namespace Drops
 		Protocol::DropRecord RecordForServer()
 		{
 			std::scoped_lock l{ recordLock };
-			return record.ForServer();
+			auto             out = record.ForServer();
+			out.character = world.Key(WorldRandom());
+			return out;
 		}
 	}
 
@@ -1565,6 +1541,25 @@ namespace Drops
 	{
 		std::scoped_lock l{ recordLock };
 		record.Replace(DropBook::Record{});
+		world.Revert();
+	}
+
+	std::vector<std::uint8_t> SaveWorld()
+	{
+		std::scoped_lock l{ recordLock };
+		return world.Save(WorldRandom());
+	}
+
+	void LoadWorld(std::span<const std::uint8_t> a_bytes)
+	{
+		std::scoped_lock l{ recordLock };
+		world.Loaded(a_bytes);
+	}
+
+	void OnWorldStarted(bool a_newGame, std::uint64_t a_character)
+	{
+		std::scoped_lock l{ recordLock };
+		world.Started(a_newGame, a_character, WorldRandom());
 	}
 
 	void Reset()
@@ -1593,7 +1588,7 @@ namespace Drops
 			out += std::format("; pending {:08X} base={:08X} x{} {}", entry.refId, entry.base, entry.count, entry.reported ? "reported" : "settling");
 		}
 		const auto ours = RecordForServer();
-		out += std::format("; record: session={:016X} made={} taken={}", ours.sessionId, ours.made.size(), ours.taken.size());
+		out += std::format("; record: session={:016X} made={} taken={} character={:016X}", ours.sessionId, ours.made.size(), ours.taken.size(), ours.character);
 		return out;
 	}
 

@@ -84,7 +84,18 @@ party.ping_you = あなた
 party.ping_something = 何か
 party.where = {player}：{where}
 party.no_emote_armor = パワーアーマー着用中はエモートできません
-party.friends_frame = これは{player}のパワーアーマーです。フレンドとのパワーアーマーの共有は今後のバージョンで対応予定です。
+party.friends_frame = これは{player}のパワーアーマーです。置いてあるときは乗り込んで借りられますが、パーツは持ち主のものです。
+party.frame_asking = {player}にパワーアーマーの貸し出しを依頼中…
+party.frame_lent = {player}がパワーアーマーを貸してくれました。もう一度押すと乗り込みます。
+party.frame_not_lending = {player}はパワーアーマーを貸し出していません。
+party.frame_refused = {player}は今このパワーアーマーを貸し出せません。
+party.frame_busy = すでにフレンドのパワーアーマーを借りています。
+party.frame_borrowed = {player}がパワーアーマーを借りました
+party.frame_given_back = {player}がパワーアーマーを返却しました
+party.frame_owner_left = {player}が退出：降りるとパワーアーマーは消えます
+party.frame_loan_over = 借りたパワーアーマーは持ち主に返却されました
+party.lent_item = {player}の{item}
+party.frame_is_lent = パワーアーマーを{player}に貸し出し中
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [メニュー中]
 party.killed = {killer}が{victim}を倒しました
@@ -120,6 +131,8 @@ down.last_revive = しばらくはこれが最後の助け起こしです。次�
 down.revives_back = また仲間に助け起こしてもらえるようになりました
 down.cooldown = 助け起こされた直後です。{n}秒間は致命傷を受けると死亡します
 down.cant_help_fighting = 戦闘中は{player}を助け起こせません
+down.bleed_out_loads_save = {n}秒以内に助け起こされないと死亡し、最後のセーブデータがロードされます
+down.death_loads_save = 死亡すると最後のセーブデータがロードされます
 
 rules.host = ホストのルール：{rules}
 rules.revive_off = 助け起こしなし、致命傷で死亡
@@ -130,6 +143,7 @@ rules.help_time = 仲間を助け起こすのに{n}秒
 rules.revive_health = 体力{n}%で起き上がる
 rules.cooldown = 助け起こされてから{n}秒以内の致命傷で死亡
 rules.out_of_combat = 戦闘中は助け起こし不可
+rules.save_on_down = ダウン時にオートセーブ
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player}が{place}を発見
@@ -209,6 +223,8 @@ menu.compass_markers = コンパスマーカー
 menu.compass_markers_what = コンパスにフレンドを表示
 menu.fast_loading = 高速ロード
 menu.fast_loading_what = ロード画面中は垂直同期をオフにします
+menu.lend_power_armor = パワーアーマーの貸し出し
+menu.lend_power_armor_what = 置いてあるパワーアーマーをフレンドが借りられます
 
 menu.mods = MODを比較（{n}）
 menu.mods_ask = ホストにもう一度確認

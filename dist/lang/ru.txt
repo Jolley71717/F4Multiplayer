@@ -88,7 +88,18 @@ party.ping_you = вас
 party.ping_something = что-то
 party.where = {player}: {where}
 party.no_emote_armor = В силовой броне эмоции недоступны
-party.friends_frame = Это силовая броня игрока {player}. Делиться силовой бронёй с друзьями можно будет в одной из следующих версий.
+party.friends_frame = Это силовая броня игрока {player}. Когда она припаркована, в неё можно сесть и взять её взаймы, но её части остаются у владельца.
+party.frame_asking = Просим игрока {player} одолжить вам силовую броню...
+party.frame_lent = Игрок {player} одолжил вам силовую броню. Нажмите ещё раз, чтобы сесть в неё.
+party.frame_not_lending = Игрок {player} не одалживает силовую броню.
+party.frame_refused = Игрок {player} сейчас не может одолжить эту силовую броню.
+party.frame_busy = У вас уже есть силовая броня, одолженная у друга.
+party.frame_borrowed = Игрок {player} взял вашу силовую броню взаймы
+party.frame_given_back = Игрок {player} вернул вашу силовую броню
+party.frame_owner_left = Игрок {player} вышел: его силовая броня исчезнет, когда вы из неё выйдете
+party.frame_loan_over = Одолженная силовая броня вернулась к владельцу
+party.lent_item = {item} ({player})
+party.frame_is_lent = Ваша силовая броня одолжена игроку {player}
 party.tag_pipboy = {name} [Пип-Бой]
 party.tag_menu = {name} [в меню]
 party.killed = {killer} убил: {victim}
@@ -124,6 +135,8 @@ down.last_revive = Пока это был последний подъём: сл�
 down.revives_back = Друзья снова могут вас поднять
 down.cooldown = Вас только что подняли: ещё {n} сек. смертельный удар вас убьёт
 down.cant_help_fighting = Нельзя поднять игрока {player} во время боя
+down.bleed_out_loads_save = Если вас не поднимут за {n} сек., вы умрёте, и игра загрузит ваше последнее сохранение
+down.death_loads_save = Если вы умрёте, игра загрузит ваше последнее сохранение
 
 rules.host = Правила хоста: {rules}
 rules.revive_off = без подъёмов, смертельный удар убивает
@@ -134,6 +147,7 @@ rules.help_time = {n} сек., чтобы поднять друга
 rules.revive_health = подъём с {n}% здоровья
 rules.cooldown = смертельный удар в течение {n} сек. после подъёма убивает
 rules.out_of_combat = нельзя поднимать во время боя
+rules.save_on_down = автосохранение, когда вы падаете
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player} обнаружил: {place}
@@ -215,6 +229,8 @@ menu.compass_markers = Маркеры на компасе
 menu.compass_markers_what = друзья на компасе
 menu.fast_loading = Быстрая загрузка
 menu.fast_loading_what = вертикальная синхронизация выключена при загрузке
+menu.lend_power_armor = Одалживать силовую броню
+menu.lend_power_armor_what = друзья могут брать взаймы вашу припаркованную силовую броню
 
 menu.mods = Сравнить моды ({n})
 menu.mods_ask = Спросить хоста ещё раз

@@ -170,7 +170,8 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
     given in a session, an older version of the mod can't open that session any more, even after the gift is taken.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
-  `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
+  `bReviveOutOfCombat` (false), `bDownedCrawl` (false) and `bSaveOnDown` (false). Guests play by the host's. See
+  [Going down](#going-down).
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
 
@@ -195,6 +196,9 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `iMyAppearance` (0) and `iPuppetBaseForm` (the female settler): which character friends see for you, and which one
   you see for friends who haven't picked one. Friends see only the two settlers.
 - `bShareMap` (true): locations friends discover show on your map, and yours show on theirs.
+- `bLendPowerArmor` (true): friends may borrow a power armor frame your game made (one you found or looted) once it
+  stands parked. They press E on it to ask and again to get in, wear your pieces and fusion core, and it comes back
+  to you where they get out, worn as they left it. The pieces stay yours. Off, nobody borrows your frames.
 - `bSyncTime` (true): you follow the host's time of day and weather. If the host turns it off, nobody follows.
 - `fXpShare` (0.5): the share of a friend's kill XP you get.
 - `bSyncQuests` (true): turn it off and your game leaves the shared quests: nothing comes to you, nothing goes out.
@@ -282,12 +286,19 @@ the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the h
 changed any of these, joiners are told the rules as they join, and the F1 menu shows them. The HUD
 tells you how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
-`--revive-out-of-combat`, `--no-revive`, `--downed-crawl`).
+`--revive-out-of-combat`, `--no-revive`, `--downed-crawl`, `--save-on-down`).
 
 The host can also let downed players crawl (`bDownedCrawl = true`; experimental, off by default):
 while down, forward and back crawl slowly and left and right turn you, so you can reach a friend or
 cover before you bleed out. Walls, ledges and steep ground stop you, and so does a friend right next
 to you, so their help isn't broken. Your friends see you drag yourself along the ground.
+
+Dying, in a session or alone, makes the game load your last save, so you lose what you did since it; the HUD
+says so as you go down. Teleporting to a friend with F7 makes an autosave when you land, as a door or fast
+travel would, if the game's own "Save on travel" setting is on (Settings > Gameplay). The host can also have
+everyone's game make an autosave as they go down (`bSaveOnDown = true`, off by default; server:
+`--save-on-down`), so bleeding out takes you back only to that moment. Neither saves in Survival, and neither
+saves within a minute of another save.
 
 ### VATS in real time
 

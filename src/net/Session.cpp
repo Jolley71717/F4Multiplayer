@@ -11,10 +11,13 @@
 #include "Text.h"
 #include "game/Achievements.h"
 #include "game/AimPoint.h"
+#include "game/AutoSave.h"
+#include "game/AutoSaveRules.h"
 #include "game/CharacterBinding.h"
 #include "game/ClickWatch.h"
 #include "game/Compass.h"
 #include "game/FadeWatch.h"
+#include "game/FrameLoans.h"
 #include "game/MenuIcons.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
@@ -502,6 +505,10 @@ namespace Session
 						if (const auto summary = HostRules::Summary(msg->rules); !summary.empty()) {
 							Hud::Notify(summary);
 						}
+						// With no revives a lethal hit kills, and a death loads the newest save, which can be minutes old.
+						if (const auto warning = AutoSaveRules::DeathWarning({ .reviveOff = !msg->rules.revive }); !warning.empty()) {
+							Hud::Notify(Text::Get(warning));
+						}
 					}
 				}
 				break;
@@ -573,6 +580,7 @@ namespace Session
 					const auto name = RemotePlayers::NameOf(msg->playerId);
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
+					FrameLoans::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
 					WorkshopSync::OnPlayerLeft(msg->playerId);  // their copies' power, shown no more
 					MovedObjects::OnPlayerLeft(msg->playerId);
@@ -690,6 +698,21 @@ namespace Session
 			case MessageType::kSpawned:
 				if (const auto msg = Protocol::DecodeSpawn(a_data)) {
 					Spawns::Add(*msg);
+				}
+				break;
+			case MessageType::kLoanAsked:
+				if (const auto msg = Protocol::DecodeFrameBorrow(a_data)) {
+					FrameLoans::OnLoanAsked(*msg);
+				}
+				break;
+			case MessageType::kFrameLent:
+				if (const auto msg = Protocol::DecodeFrameLending(a_data)) {
+					FrameLoans::OnFrameLent(*msg);
+				}
+				break;
+			case MessageType::kFrameReturned:
+				if (const auto msg = Protocol::DecodeFrameReturn(a_data)) {
+					FrameLoans::OnFrameReturned(*msg);
 				}
 				break;
 			case MessageType::kActorStatesRelay:
@@ -959,6 +982,7 @@ namespace Session
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());
+			FrameLoans::Reset();  // before Spawns: a frame lent to us and not worn yet is emptied while our copy of it is there
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
@@ -1557,6 +1581,16 @@ namespace Session
 				SendOut(std::move(packet), true);
 			}
 		}
+		// Power armor lent between players: in a session or not, as a loan worn when the session ended, or the clean-up
+		// after loading a save made in a borrowed frame, goes on.
+		if (InGame()) {
+			FrameLoans::Frame();
+		}
+		for (auto& packet : FrameLoans::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		PERF_NEXT(perf, "Conversations");
 		Conversations::Frame(welcomed);
 		for (auto& packet : Conversations::TakeOutgoing()) {
@@ -1611,33 +1645,50 @@ namespace Session
 		// The player's last moves, and what the last frame left to send, go out now, while their world
 		// stands: after a load they would be forgotten (WorldSync::Reset), and sent ahead of the load's
 		// request they are in its answer, numbered before it.
-		WorldSync::FlushLoot();
-		Storage::BeforeSaveOrLoad();  // no save holds the session's things in a friend's copy
-		SendWorldEvents();
-		Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
-		for (auto& packet : Drops::TakeOutgoing()) {
-			if (welcomed) {
-				SendOut(std::move(packet), true);  // a take given back: before the save, as the moves
+		// Each step on its own: one that throws must not keep the rest from running, or a friend's stand-in or a copy
+		// of an item lying in the session would be written into the save (the save goes on: nothing can stop it here).
+		const auto step = [](std::string_view a_what, auto&& a_work) {
+			try {
+				a_work();
+			} catch (const std::exception& e) {
+				REX::ERROR("Session: before the save or load, {}: {}", a_what, e.what());
+			} catch (...) {
+				REX::ERROR("Session: before the save or load, {}: an unknown exception", a_what);
 			}
-		}
-		Gifts::BeforeSaveOrLoad();  // no copy of a gift is saved; a take of one our player just made is claimed
-		for (auto& packet : Gifts::TakeOutgoing()) {
-			if (welcomed) {
-				SendOut(std::move(packet), true);
+		};
+		step("the loot", [] { WorldSync::FlushLoot(); });
+		step("the storage", [] { Storage::BeforeSaveOrLoad(); });  // no save holds the session's things in a friend's copy
+		step("the world events", [] { SendWorldEvents(); });
+		step("the drops", [] {
+			Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
+			for (auto& packet : Drops::TakeOutgoing()) {
+				if (welcomed) {
+					SendOut(std::move(packet), true);  // a take given back: before the save, as the moves
+				}
 			}
-		}
-		Spawns::DiscardCopies();  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
-		RemotePlayers::DespawnAll();
-		NpcSync::ReleaseMirrors();
-		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
-		WeaponFire::DropHandThrowables();
-		Downed::OnBeforeSave();
-		MovedObjects::BeforeSaveOrLoad();
-		Destructibles::BeforeSaveOrLoad();
+		});
+		step("the gifts", [] {
+			Gifts::BeforeSaveOrLoad();  // no copy of a gift is saved; a take of one our player just made is claimed
+			for (auto& packet : Gifts::TakeOutgoing()) {
+				if (welcomed) {
+					SendOut(std::move(packet), true);
+				}
+			}
+		});
+		step("the spawns", [] { Spawns::DiscardCopies(); });  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
+		step("the stand-ins", [] { RemotePlayers::DespawnAll(); });
+		step("the mirrors", [] { NpcSync::ReleaseMirrors(); });
+		step("the shields", [] { WeaponFire::EndAllShields(); });  // a ghost made against a friend's explosion is never saved
+		step("the throwables", [] { WeaponFire::DropHandThrowables(); });
+		step("going down", [] { Downed::OnBeforeSave(); });
+		step("the moved objects", [] { MovedObjects::BeforeSaveOrLoad(); });
+		step("the destructibles", [] { Destructibles::BeforeSaveOrLoad(); });
 		// The session file is never older than our save. (A load asks too; it costs a write.)
-		if (hostedServer) {
-			hostedServer->RequestSave();
-		}
+		step("the session file", [] {
+			if (hostedServer) {
+				hostedServer->RequestSave();
+			}
+		});
 	}
 
 	void Shutdown()
@@ -1670,12 +1721,14 @@ namespace Session
 		Party::OnGameLoaded();
 		RemotePlayers::OnGameLoaded();
 		Spawns::OnGameLoaded();
+		FrameLoans::OnGameLoaded();  // after Spawns: our frames' spawns are let go
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
 		Destructibles::Reset();
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
+		Drops::OnWorldStarted(a_newGame, CurrentCharacter());  // whose world the record speaks for (sent below)
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
@@ -1721,7 +1774,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	std::optional<ModDiff::Difference> HostMods()

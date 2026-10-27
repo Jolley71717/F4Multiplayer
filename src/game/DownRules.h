@@ -46,6 +46,7 @@ namespace DownRules
 		Clock::duration cooldown{};             // helped up, a lethal hit within this long kills
 		bool            outsideCombat = false;  // a helper in a fight cannot help
 		bool            crawl = false;          // down, the player crawls with their movement keys (Crawl)
+		bool            saveOnDown = false;     // going down makes an autosave (AutoSaveRules::DownSave)
 
 		static Rules From(const Protocol::SessionRules& a_session)
 		{
@@ -60,6 +61,7 @@ namespace DownRules
 			rules.cooldown = std::chrono::seconds{ session.downCooldownSeconds };
 			rules.outsideCombat = session.reviveOutsideCombat;
 			rules.crawl = session.downedCrawl;
+			rules.saveOnDown = session.saveOnDown;
 			return rules;
 		}
 	};

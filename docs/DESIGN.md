@@ -241,6 +241,11 @@
     with each of its player's hits on it (2 s apart at most) as it does every 2 s while they talk to it, so two players
     shooting one raider leave it with whoever hit it first until they stop hitting it, instead of trading it every 5 s
     with its AI starting over in the taker's game each time; the other's hits reach it as damage, as any non-runner's.
+    What a hit asks for is `NpcClaims::Book::OnHit`. A hit on a spawn (an NPC a friend's game made at runtime, below)
+    asks nothing the server grants: what was hit is a copy placed from the spawn's template, no NPC of the friend's
+    game to hand over, and the server leaves a spawn with the game that made it for good. The claim still goes, as
+    often as a takeover would, so the server notes the hitter fighting it and believes their kill; their hits reach
+    it as damage. The game logs once per spawn why the copy stays theirs (`spawnFights=`).
   - a player in workshop mode takes over the settlers of that workbench (`SettlerCommand`: those linked to it by
     `WorkshopItemKeyword`; four a round, every 2 s, each at most every 5 s) and claims again the ones they run, which
     are not handed off meanwhile (`commanding=`, `settlerTakeovers=`). Giving a settler a job runs on the settler's
@@ -404,7 +409,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   sends the others `kSpawned` and everyone the owner. A joiner is sent the spawns before who runs NPCs. Limits:
   32 a player at once, 128 in the session, a budget of 32 and 2 a second; past them the answer names nobody and
   the game asks again 10 s later. Nobody else can claim one; a claim to take one over notes the claimer as
-  fighting it.
+  fighting it, and the claimer's game logs once per spawn that its copy stays the owner's (Shared NPC AI, takeovers).
 - The others place a copy (`CreateReferenceAtLocation`, kept out of saves like a stand-in) while their player is
   within 6000 units of where the owner's game has it, in the same space, and the owner's stand-in is within 8000
   of it; 2 a frame at most, 3 tries. NpcSync mirrors it under the spawn id as any NPC another game runs: states,
@@ -438,6 +443,36 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   instead, see Party's power armor). `net status`:
   `framesMade=` shared/standing/our player's own, `ghostsCleared=` (npcs), `frames: ours= reported= placed= moved= taken=
   oursThere=` (spawns).
+- A friend may borrow a frame another game made and parked (`FrameLoans.cpp`; the rules in `FrameLoan.h`, game-free and
+  tested; the server's side in `Server.cpp`). Their press of E on its copy asks the owner's game for it (`kBorrowFrame`;
+  the server keeps one loan per frame and per borrower and relays the ask as `kLoanAsked`), which says yes while its
+  `bLendPowerArmor` is on and the frame stands there, loaded, with nobody in it, and sends its pieces and one fusion core
+  (`kLendFrame`, at most 16, each with its mods, condition and name). The borrower's game puts copies of them, each named
+  as the owner's, into its copy (held as it is while lent: `SpawnBook::FrameFacts::lent`), and the next press gets
+  their player in. While they wear it their status names it by its spawn id and every game hides its own reference
+  of it (the frame hide); the owner's game neither shares it nor tells it parked. While lent, the owner's frame is never
+  cleared as an older version's copy (`FrameShare::Ghost`) and stands for no friend's frame at its spot
+  (`FrameShare::StandsFor`), and the borrower's copy is kept whatever of their own stands where the owner's game has it
+  (no `oursThere` while lent). As they get out (2 s settled, and out of power armor) the copies are gathered from the
+  frame and the player and removed, what else of the player's own the
+  frame holds goes back to them (their cores, as many as they lost to it; their own pieces, put on from the Pip-Boy),
+  their copy goes (found by its handle or, the engine having made it anew with its cell, by its id; one not found is put
+  back under the save guard by its id and forgotten), and `kReturnFrame` says where it stands and each piece's condition:
+  the owner's game wears its pieces down to that (never up), removes a piece that did not come back (dropped, sold, or in
+  a copy that went), and moves its frame there once the spot is in sight (`NpcSync::MoveOwnFrame`; the server keeps the
+  spot within 1024 units of the borrower's last state, or it is that state). What came back waits for as long as the
+  frame has no inventory here or the owner's player is in it. Every change to an inventory goes through `OwnGear`
+  (`kLoan`), and Drops never gives a lent copy away. The core is the vanilla fusion core by its id, never other ammunition
+  stored in the frame. A frame not got into within 60 s, or before a save, goes back unworn; an offer the server never
+  confirms is the owner's again after 15 s, and a confirmation that comes later is taken up all the same (the kit as the
+  server kept it, each piece found again by base and condition). A loan ends without a return when
+  either player leaves, the spawn ends, or the borrower loads a save (`kFrameReturned` with `ended`; an ask not yet
+  answered ends the same way, so the owner's game forgets it): the frame stays where it stood, and a borrower still in
+  it keeps it until they get out. A save made in a borrowed frame keeps it and notes it in the co-save's `LOAN` record;
+  loaded again, the player is sent out (again until they are), the copies go, and their own pieces and cores in the
+  frame go back to them. Not yet: a loan does not carry over a
+  load, a lent piece may still be sold to a vendor (the owner's goes at the return), and a piece no other game can name
+  (one with a runtime mod) is not lent.
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
@@ -1109,6 +1144,21 @@ So players give each other items by dropping them, and the server decides who ha
   made after the load are recorded. The answer is the list of what lies about (`kDropList`). A record of another session counts as
   empty. What lies about and who took what is kept in the session file (layout 33; 30 in the drops' own test builds), so it survives the
   host's server restarting.
+- Whose world (0.10.0): only one character's saves hold what its world gave and took. Each world has a key of
+  its own (`CharacterBinding::World`), kept in its saves (co-save record `CHAR` v1, 8 bytes, beside `DROP` so an
+  older build reads that as before) and said last in its `kDropRecord` (`DropRecord::character`; a drop with none, from a session
+  file from before, is any character's). The engine's character ID can't be it: every coc character from the main menu has 0, and a
+  new game has the last character's until named. A new game gets a fresh key; a save its own, or, from before
+  keys, one made from its character's ID (all that character's older saves agree); a world nothing loaded or
+  started (coc from the main menu) a fresh one when first asked. The server keeps on each drop the characters
+  whose worlds it left and went into (`ownerCharacter`, `takerCharacter`, never sent), and a record of another
+  character's world lays down nothing an older character took, takes back nothing it gave (its drops lie on) and
+  leaves its gifts' offers waiting (`DropStore::SameCharacter`). So a player who starts over doesn't get back
+  what their old character took (found on the rig: a host restarting as a fresh character, 4 items became 6),
+  while that character's own save from before a take still does. The characters are saved with the session
+  (layout 40, once it holds a gift or any drop whose characters are known: a loose drop's taker forgotten with a
+  restart would have their new character lay it down again); a drop a 39 file brought has none (as before, any
+  character).
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
   and to drop it near them instead (not for a put in a gift's place with the host's `bContainerGifts` on: see Giving
   through a container).
@@ -1199,14 +1249,30 @@ container's menu open, and only then.
   closes (or is found gone for 1 s), as their gift goes, before every save and load and as the session ends: no save
   holds one. OwnGear `kGiftCopy` lets them into a container's inventory only. The engine's changes made here are kept
   out of WorldSync's watch (`Gifts::Applying`).
+- **Drawn at once.** The container menu draws its two lists as it opens and after a transfer it makes itself (or as
+  the player switches between them), never for an item put in or taken out from outside it: a copy added just after
+  it opened (as every copy is) and a take granted or held back while it was open showed only at the player's next
+  key press (rig, #180). Every add and remove Gifts makes asks the open menu to draw both lists again
+  (`Equipment::RedrawContainerMenu`): the menu's own code, on the UI's thread, calls its own `UpdateList` for each
+  side, as the engine does after a transfer, from whichever comes first of its frame (its vtable's AdvanceMovie,
+  hooked beside its messages) and an update message posted to it through the UI's queue (the way the plugin closes
+  the menu), which lands in its message hook; at most once a request. Not while the menu's quantity box is up (the
+  transfer it ends in names its item by its place in the list, which a redraw can change): the request waits for the
+  box to close. The vanilla movie keeps the box's clip visible and fades it to alpha 0 when it closes, so the box is up
+  only while the clip is visible with an alpha above 0 (a guard on `visible` alone held a request forever on a rig).
+  It fails open: a box that is missing or can't be read is no box, and the lists are drawn. A request is dropped as a menu shows or hides: it isn't owed to the next. `net status` counts each
+  step (`redraws=` and the rest of `DescribeContainerRedraw`), and the log has the first few of each.
 - **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
   before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
-  it: it lies there again.
-- **Saved.** The session file takes layout 39 while the server remembers any gift (a holder on a drop): one lying
+  it: it lies there again. Only that character's saves: a player who starts over as a new character (or a coc one
+  from the main menu) gets back none of the gifts the old one took, and the old one's gifts lie on (Giving items,
+  "Whose world").
+- **Saved.** The session file takes layout 40 (39 in 0.10.0's test builds, without the drops' characters) while the server remembers any gift (a holder on a drop): one lying
   there, offered, or taken, as the server remembers the last 4096 takes (a taken gift keeps its holder: a give-back
-  lays it down in its container again). So a session in which one gun was ever given is written as 39 until that many
+  lays it down in its container again), or any drop whose characters it knows (every drop made since keys, loose
+  ones too: see "Whose world"). So a session in which one gun was ever given or dropped is written as 40 until that many
   takes later; one where none was is written in the layout an older build reads (38 with shared storage's owners,
-  else 36). An older build can't read a 39 file; 0.10.0 reads every older layout, their drops as loose ones.
+  else 36). An older build can't read a 40 file; 0.10.0 reads every older layout: 39's drops with no characters, those before 39 as loose ones.
 - **The record's cap.** Gifts share the drops' record (`MAX_DROP_RECORD`, 4096 `made` and 4096 `taken` a session,
   the oldest forgotten), and fill it sooner: every gift given is a `made`, every take (one's own take-backs too) a
   `taken`. Past that, the record misreads its oldest: a gift given that early and never taken is withdrawn from the
@@ -1871,6 +1937,22 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   player up as before. A game from before the rule ignores the welcome's bit and does not crawl. Whether
   the game still fills `moveInputVec` during bleed-out is logged once a down ("movement input while
   down") and shown in `Describe`.
+- A death loads the newest save (`src/game/AutoSaveRules.h`, tested; `AutoSave.cpp`). The teleport key's
+  `coc`/`cow` is not travel to the engine, so it made none of the autosaves a load door or fast travel makes,
+  and a bleed-out could take a player back ten minutes or more while the world, caught up from the session,
+  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace, or 3 s after
+  one across the worldspace both players are in (a `SetPosition` farther than an exterior cell), now asks for
+  an autosave (`BGSSaveLoadManager::QueueSaveLoadTask(kAutoSave)`) when the player's own `bSaveOnTravel`
+  is on; with the host's `bSaveOnDown` (welcome flag bit 128, no protocol version of its own; off) going down
+  does too. Neither in Survival, nor within 60 s of the last save of any kind, nor of a dead player, nor a
+  travel one of a downed player: the engine makes an autosave at its next chance, maybe late (in a fight),
+  so the `kAutoSave` bit it still holds in `BGSSaveLoadManager::queuedTasks` is cleared when the player goes
+  down, before a bleed-out's kill, and while they are dead ("Save: the autosave the game held ... is taken
+  back"); a save of ours that still begins then logs an error. Going down, a last revive, a
+  cooldown and a session without revives say on the HUD that a death loads the last save. Each save logs
+  "Save: <kind> (<location>, <date>) begins (the mod's autosave after a teleport | ... | the player's or the
+  game's)" and "written (N ms)", and each load "Save: loading ..." (F4SE's message data; the character's
+  name, hex in the file name, is left out); a request with no save within 10 s logs a warning.
 - Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
   options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
   game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help
@@ -2105,7 +2187,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"). The sections below record each review as it was written.
+Protocol VERSION 55 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's) and welcome flag bit 32; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

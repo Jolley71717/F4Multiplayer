@@ -1238,6 +1238,7 @@ namespace Equipment
 		std::mutex                       keptOutLock;
 		std::vector<RE::ObjectRefHandle> transfersKeptOutNow;  // the copies our player is kept out of
 		std::atomic<std::uint32_t>       transfersClosedAtShow{ 0 };
+		std::atomic<bool>                containerRedraw{ false };  // the open menu is to draw its lists again (RedrawContainerMenu)
 
 		bool KeptOutNow(const RE::ObjectRefHandle& a_target)
 		{
@@ -1279,9 +1280,119 @@ namespace Equipment
 			}
 		}
 
+		// The container menu draws its two lists from the inventories when it opens and again after a transfer it makes
+		// itself (or as the player switches between them); an item put in or taken out from outside the menu (a gift's copy,
+		// a take granted or held back) is only drawn at the next of those. So the menu's own code draws both lists again
+		// when asked (UpdateList, as the engine itself calls it after a transfer), on the UI's thread, from two places of its
+		// own: its frame (AdvanceMovie, hooked below) and a message of ours (kUpdate, posted through the UI's queue, which
+		// lands in the message hook above; the queue is the way the plugin closes the menu too). Whichever comes first takes
+		// the request. The hook on the frame alone never drew on a rig (0.10.0, redraws=0 on both games with everything
+		// else of the menu working), and the message hook is the one proven to run there; each step logs its first few.
+		constexpr std::size_t ADVANCE_MOVIE_INDEX = 0x04;
+		using AdvanceMovieFn = void (*)(RE::IMenu*, float, std::uint64_t);
+		AdvanceMovieFn             originalContainerAdvance = nullptr;
+		std::atomic<std::uint32_t> containerRedraws{ 0 };   // lists drawn again
+		std::atomic<std::uint32_t> redrawRequests{ 0 };    // RedrawContainerMenu calls with the hook in
+		std::atomic<std::uint32_t> redrawsOnFrame{ 0 };    // drawn from the frame hook
+		std::atomic<std::uint32_t> redrawsOnMessage{ 0 };  // drawn from the message hook
+		std::atomic<std::uint32_t> redrawsHeld{ 0 };       // a frame or message that left the request waiting (the quantity box)
+		std::atomic<std::uint32_t> redrawsCleared{ 0 };    // requests dropped at the menu's show or hide
+		std::atomic<std::uint32_t> requestsClosed{ 0 };    // requests made while the book said no container menu was open
+		std::atomic<std::uint32_t> containerFrames{ 0 };   // frames the frame hook saw
+		std::atomic<std::uint32_t> updateMessages{ 0 };    // kUpdate messages the message hook saw
+		std::atomic<bool>          redrawWaiting{ false }; // a request has been held at least once (one held line per request)
+
+		// The first few of each step are logged, then counted only (DescribeContainerRedraw).
+		constexpr std::uint32_t REDRAW_LOGGED = 8;
+		std::atomic<std::uint32_t> requestsLogged{ 0 }, heldLogged{ 0 }, drawnLogged{ 0 }, closedLogged{ 0 }, clearedLogged{ 0 };
+		bool                       LogFew(std::atomic<std::uint32_t>& a_logged) { return a_logged.fetch_add(1) < REDRAW_LOGGED; }
+
+		// Whether the menu's quantity box (how many of a stack to move: a clip of the menu's own movie, shown by it) is up.
+		// The transfer it ends in names its item by the item's place in the list, which drawing the list again can change
+		// (a copy put in sorts before it): so no redraw while it is up; the request waits for it to close. A movie without
+		// the clip (a UI mod's) has no box to wait for. The vanilla movie never hides the clip: it stays visible and is
+		// faded out to alpha 0 (a rig, 0.10.0: visible=true alpha=0.00 with no box up), so the box is up only when it is
+		// visible and its alpha is above 0. CommonLibF4 knows no other sign of it (no flag on the menu or the clip; the
+		// menu's messageBoxIsActive is for its message boxes) and none of a transfer under way (DoItemTransfer is one call
+		// at the box's confirm). Fails open: anything that can't be read, or reads oddly (alpha not a number), is no box,
+		// and the lists are drawn. a_why gets what was read and what it was taken for, for the log.
+		bool QuantityBoxShowing(RE::ContainerMenu* a_menu, std::string& a_why)
+		{
+			const auto& box = a_menu->quantityMenu_mc;
+			if (!box || !box->IsDisplayObject()) {
+				a_why = box ? "quantity box not a display object: drawn" : "no quantity box: drawn";
+				return false;
+			}
+			Scaleform::GFx::Value::DisplayInfo info{};  // zeroed: a field the read leaves unset reads as hidden
+			if (!box->GetDisplayInfo(&info)) {
+				a_why = "quantity box unreadable: drawn";
+				return false;
+			}
+			const bool   visible = info.GetVisible();
+			const double alpha = info.GetAlpha();
+			const bool   up = visible && alpha > 0.0;  // false for NaN
+			a_why = std::format("quantity box visible={} alpha={:.2f}: {}", visible, alpha, up ? "up, held" : "down, drawn");
+			return up;
+		}
+
+		// The request, taken on the UI's thread in the menu's own code (its frame or its message): the flag is taken only
+		// once the box is down, so a request made after it is taken waits for the next frame, and a change made while the
+		// lists are drawn is drawn then.
+		void RedrawNow(RE::ContainerMenu* a_menu, std::string_view a_from, std::atomic<std::uint32_t>& a_drawn)
+		{
+			if (!containerRedraw.load()) {
+				return;
+			}
+			std::string why;
+			if (QuantityBoxShowing(a_menu, why)) {
+				++redrawsHeld;
+				if (!redrawWaiting.exchange(true) && LogFew(heldLogged)) {
+					REX::INFO("Equipment: the container menu's redraw waits ({}): {}", a_from, why);
+				}
+				return;
+			}
+			if (!containerRedraw.exchange(false)) {
+				return;
+			}
+			a_menu->UpdateList(true);
+			a_menu->UpdateList(false);
+			++containerRedraws;
+			++a_drawn;
+			const bool waited = redrawWaiting.exchange(false);
+			if (LogFew(drawnLogged)) {
+				REX::INFO("Equipment: the container menu drew its lists again ({}, {}; {}; redraws={} frames={} messages={})", a_from, waited ? "after waiting" : "at once", why,
+					containerRedraws.load(), containerFrames.load(), updateMessages.load());
+			}
+		}
+
+		void ContainerAdvanceHook(RE::IMenu* a_menu, float a_timeDelta, std::uint64_t a_time)
+		{
+			if (containerFrames.fetch_add(1) == 0) {
+				REX::INFO("Equipment: the container menu's first frame seen (its frame hook runs)");
+			}
+			RedrawNow(static_cast<RE::ContainerMenu*>(a_menu), "frame", redrawsOnFrame);
+			originalContainerAdvance(a_menu, a_timeDelta, a_time);
+		}
+
 		RE::UI_MESSAGE_RESULTS ContainerMessageHook(RE::IMenu* a_menu, RE::UIMessage& a_message)
 		{
 			const auto result = originalContainerMessage(a_menu, a_message);
+			if (a_message.type == RE::UI_MESSAGE_TYPE::kUpdate) {
+				if (updateMessages.fetch_add(1) == 0) {
+					REX::INFO("Equipment: the container menu's first update message seen (its message hook runs)");
+				}
+				RedrawNow(static_cast<RE::ContainerMenu*>(a_menu), "message", redrawsOnMessage);
+			}
+			if (a_message.type == RE::UI_MESSAGE_TYPE::kHide || a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
+				// A redraw asked of a menu isn't owed to the next: a menu just shown draws its own lists, a hidden one is gone.
+				if (containerRedraw.exchange(false)) {
+					++redrawsCleared;
+					redrawWaiting = false;
+					if (LogFew(clearedLogged)) {
+						REX::INFO("Equipment: a container menu redraw asked before the menu's {} is dropped", a_message.type == RE::UI_MESSAGE_TYPE::kShow ? "show" : "hide");
+					}
+				}
+			}
 			if (a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
 				const auto target = static_cast<RE::ContainerMenu*>(a_menu)->containerRef;
 				// Only the handle is compared here: no game object is read off the main thread.
@@ -1299,6 +1410,49 @@ namespace Equipment
 			}
 			return result;
 		}
+
+	}
+
+	void RedrawContainerMenu()
+	{
+		if (!originalContainerAdvance) {
+			if (LogFew(requestsLogged)) {
+				REX::WARN("Equipment: the container menu asked to draw its lists again before its hooks are in; nothing drawn");
+			}
+			return;
+		}
+		// The request is kept whatever the book of open menus says (a request a menu doesn't take is dropped at the next
+		// menu's show); the message is posted only to an open menu, as the plugin's hide is.
+		containerRedraw = true;
+		const auto n = redrawRequests.fetch_add(1) + 1;
+		const bool open = OpenMenus::Open(OpenMenus::Menu::kContainer);
+		const bool settled = Hud::IsSettled();
+		const auto queue = RE::UIMessageQueue::GetSingleton();
+		const bool posted = open && settled && queue;
+		if (posted) {
+			queue->AddMessage(RE::ContainerMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kUpdate);
+		}
+		if (!open) {
+			++requestsClosed;
+			if (LogFew(closedLogged)) {
+				REX::INFO("Equipment: the container menu asked to draw its lists again (#{}) while the book says none is open: no message; the frame hook takes it if one is", n);
+			}
+		} else if (LogFew(requestsLogged)) {
+			REX::INFO("Equipment: the container menu asked to draw its lists again (#{}): message {} (settled={}); frames seen so far {}", n, posted ? "posted" : "not posted", settled,
+				containerFrames.load());
+		}
+	}
+
+	std::uint32_t ContainerMenuRedraws()
+	{
+		return containerRedraws;
+	}
+
+	std::string DescribeContainerRedraw()
+	{
+		return std::format("redraws={} redrawRequests={} redrawsOnFrame={} redrawsOnMessage={} redrawsHeld={} redrawsCleared={} requestsClosed={} menuFrames={} updateMessages={}",
+			containerRedraws.load(), redrawRequests.load(), redrawsOnFrame.load(), redrawsOnMessage.load(), redrawsHeld.load(), redrawsCleared.load(), requestsClosed.load(),
+			containerFrames.load(), updateMessages.load());
 	}
 
 	void InstallFrameGate()
@@ -1309,7 +1463,11 @@ namespace Equipment
 		const auto slot = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * PROCESS_MESSAGE_INDEX;
 		originalContainerMessage = *reinterpret_cast<ProcessMessageFn*>(slot);
 		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ContainerMessageHook));
-		REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer)");
+		const auto advance = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * ADVANCE_MOVIE_INDEX;
+		originalContainerAdvance = *reinterpret_cast<AdvanceMovieFn*>(advance);
+		REL::WriteSafeData(advance, reinterpret_cast<std::uintptr_t>(&ContainerAdvanceHook));
+		REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer; its lists drawn again on a gift's change): vtable {:X}, message slot {} and frame slot {} hooked",
+			RE::VTABLE::ContainerMenu[0].address(), PROCESS_MESSAGE_INDEX, ADVANCE_MOVIE_INDEX);
 	}
 
 	void InstallFrameUse()

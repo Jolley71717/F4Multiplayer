@@ -489,3 +489,58 @@ TEST("frame share: the last player to use a frame runs it")
 	CHECK(!host.Scan(MUSEUM_SUIT, Standing(), t0 + 5s));
 	CHECK(host.OwnerOf(MUSEUM_SUIT) == joiner.id);
 }
+
+TEST("frame share: a frame our game made and lent to a friend is shared for as long as the loan lasts")
+{
+	// A joiner's suit parked where its cell has since unloaded, lent: still shared, so every copy keeps the spawn id the
+	// borrower's status names.
+	auto made = Standing();
+	made.created = true;
+	made.loaded = false;
+	CHECK(!FrameShare::SharesMade(made, false, false));
+	CHECK(FrameShare::SharesMade(made, false, false, true));
+	CHECK(FrameShare::SharesMade(made, true, false, true));
+	// Not when it is gone, no frame, a copy, or somebody here is in it: the loan cannot hold it then.
+	made.inUse = true;
+	CHECK(!FrameShare::SharesMade(made, false, true, true));
+	made.inUse = false;
+	made.copy = true;
+	CHECK(!FrameShare::SharesMade(made, false, true, true));
+	made.copy = false;
+	made.found = false;
+	CHECK(!FrameShare::SharesMade(made, false, true, true));
+}
+
+TEST("frame share: a frame lent to a friend is never cleared as an older version's copy, nor stands for a friend's at its spot")
+{
+	using FrameShare::Ghost;
+	using FrameShare::StandsFor;
+	// The rules a 0.9.1 leftover is cleared by, but lent: the friend wears it and its pieces come back to it.
+	auto lent = Standing();
+	lent.created = true;
+	lent.marked = true;
+	CHECK(Ghost(lent));
+	CHECK(!Ghost(lent, true));
+	// Shared for the loan instead, as any lent frame is (every copy keeps its spawn id).
+	CHECK(!FrameShare::SharesMade(lent, true, false));
+	CHECK(FrameShare::SharesMade(lent, true, false, true));
+	CHECK(FrameShare::SharesMade(lent, false, false, true));
+
+	// Our own frame at a friend's frame's spot stands for it (a shared past): one of ours standing there, unlent.
+	auto ours = Standing();
+	ours.created = true;
+	CHECK(StandsFor(ours, false));
+	// Lent, it is hidden here while the friend wears it and goes where they get out: it stands for nothing, so the
+	// friend's frame at that spot gets its copy in our game for the loan.
+	CHECK(!StandsFor(ours, true));
+	// A copy the session placed, or a leftover that goes, never stands for one either.
+	auto copy = ours;
+	copy.copy = true;
+	CHECK(!StandsFor(copy, false));
+	auto ghost = ours;
+	ghost.marked = true;
+	CHECK(!StandsFor(ghost, false));
+	ghost.holdsItems = true;  // fitted out: the player's own, and no leftover
+	CHECK(StandsFor(ghost, false));
+	CHECK(!StandsFor(ghost, true));
+}

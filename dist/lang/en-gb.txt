@@ -86,7 +86,18 @@ party.ping_you = you
 party.ping_something = something
 party.where = {player}: {where}
 party.no_emote_armor = No emotes in power armour
-party.friends_frame = This is {player}'s power armour. Sharing power armour with friends is coming in a later version.
+party.friends_frame = This is {player}'s power armour. Once it is parked you can get in to borrow it, but its pieces stay theirs.
+party.frame_asking = Asking {player} to lend you their power armour...
+party.frame_lent = {player} lent you their power armour. Press again to get in.
+party.frame_not_lending = {player} doesn't lend their power armour.
+party.frame_refused = {player} can't lend this power armour right now.
+party.frame_busy = You already have a friend's power armour on loan.
+party.frame_borrowed = {player} borrowed your power armour
+party.frame_given_back = {player} gave your power armour back
+party.frame_owner_left = {player} left: their power armour goes when you get out
+party.frame_loan_over = The power armour you borrowed went back to its owner
+party.lent_item = {player}'s {item}
+party.frame_is_lent = Your power armour is lent to {player}
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [in a menu]
 party.killed = {killer} killed {victim}
@@ -122,6 +133,8 @@ down.last_revive = That was your last revive for now: the next lethal hit kills 
 down.revives_back = Your revives are back: a friend can help you up again
 down.cooldown = Just helped up: for {n} seconds a lethal hit kills you
 down.cant_help_fighting = Can't help {player} up during a fight
+down.bleed_out_loads_save = If nobody helps you up in {n} seconds, you die and the game loads your last save
+down.death_loads_save = If you die, the game loads your last save
 
 # --- The host's rules for being down, as a joiner is told them ---
 rules.host = Host's rules: {rules}
@@ -133,6 +146,7 @@ rules.help_time = {n} s to help a friend up
 rules.revive_health = up with {n}% health
 rules.cooldown = a lethal hit within {n} s of a revive kills
 rules.out_of_combat = no helping up during a fight
+rules.save_on_down = an autosave when you go down
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player} discovered {place}
@@ -212,6 +226,8 @@ menu.compass_markers = Compass markers
 menu.compass_markers_what = friends on the compass
 menu.fast_loading = Fast loading
 menu.fast_loading_what = vsync off during loading screens
+menu.lend_power_armor = Lend power armour
+menu.lend_power_armor_what = friends may borrow your parked power armour
 
 menu.mods = Compare mods ({n})
 menu.mods_ask = Ask the host again

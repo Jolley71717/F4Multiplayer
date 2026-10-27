@@ -96,6 +96,9 @@ namespace
 	// Taking or disarming a trap is done standing at it: the reporter is within this of it (their last state comes 20 times
 	// a second), or a report is a way to take away every mine around them.
 	constexpr float TRAP_REACH = 1024.0f;
+	// A frame lent out is given back where its borrower got out of it: within this of their last state (they step out
+	// beside it), or it is moved there instead, never across the map.
+	constexpr float RETURN_REACH = 1024.0f;
 	// A destructible object is reported by a game that has it loaded, as a trap is: within the loaded cells around the
 	// reporter (a car can be shot from the far side of them), never across the map.
 	constexpr float DESTRUCTION_RANGE = 16000.0f;
@@ -484,6 +487,15 @@ void Server::Run()
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
+	// Power armor frames lent between players (src/game/FrameLoan.h), by spawn id: a frame its owner's game shares as a
+	// spawn, asked for by a friend (granted false) or lent to them, with the kit lent. One loan per frame and one per
+	// borrower. Each ends with a return, the borrower leaving or loading a save, or the spawn ending. Not saved, as spawns are not.
+	struct Loan
+	{
+		Protocol::FrameLending lending;  // ownerId, borrowerId, spawnId; the kit once granted
+		bool                   granted = false;
+	};
+	std::unordered_map<std::uint32_t, Loan> loans;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
 	// What each run NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
@@ -708,6 +720,7 @@ void Server::Run()
 		destructions.clear();
 		objectPlaces.Clear();
 		spawns.clear();
+		loans.clear();
 		npcEquipment.clear();
 		npcIdentities.clear();
 		workshop.Clear();
@@ -1126,6 +1139,50 @@ void Server::Run()
 		}
 	};
 
+	// The connection of the welcomed player a_id, or 0.
+	const auto keyOfPlayer = [&](std::uint32_t a_id) -> ConnectionKey {
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && !other.kicked && other.id == a_id) {
+				return key;
+			}
+		}
+		return 0;
+	};
+
+	// An ask the server dropped before it was granted: the owner's game hears it ended (kFrameReturned, ended, to it alone),
+	// so it forgets the frame it was about to lend (or had answered for) and its own player may use it again.
+	const auto tellAskOver = [&](const Protocol::FrameLending& a_loan) {
+		if (const auto owner = keyOfPlayer(a_loan.ownerId)) {
+			send(owner, Protocol::Encode(Protocol::FrameReturn{ a_loan.borrowerId, a_loan.ownerId, a_loan.spawnId, true }, Protocol::MessageType::kFrameReturned), true);
+		}
+	};
+
+	// Loans a_ends picks end: a lent one with kFrameReturned (ended) to everyone, so the owner's game shows its frame where
+	// it stood; one only asked for with a refusal to whoever asked, when they are still here, and its end to the owner.
+	const auto endLoans = [&](auto a_ends) {
+		std::erase_if(loans, [&](const auto& a_entry) {
+			const auto& loan = a_entry.second;
+			if (!a_ends(loan.lending)) {
+				return false;
+			}
+			if (loan.granted) {
+				log(std::format("server: loan of frame {:08X} from player {} to player {} ended", loan.lending.spawnId, loan.lending.ownerId, loan.lending.borrowerId));
+				broadcast(Protocol::Encode(Protocol::FrameReturn{ loan.lending.borrowerId, loan.lending.ownerId, loan.lending.spawnId, true }, Protocol::MessageType::kFrameReturned), true, 0);
+			} else {
+				if (const auto asker = keyOfPlayer(loan.lending.borrowerId)) {
+					send(asker, Protocol::Encode(Protocol::FrameLending{ loan.lending.ownerId, loan.lending.borrowerId, loan.lending.spawnId, Protocol::LoanRefusal::kUnavailable, {} }, Protocol::MessageType::kFrameLent), true);
+				}
+				tellAskOver(loan.lending);
+			}
+			return true;
+		});
+	};
+
+	// Loans of frames whose spawn is over (it died, its owner's game let it go, or its owner left).
+	const auto endLoansOfGoneSpawns = [&] {
+		endLoans([&](const Protocol::FrameLending& a_loan) { return !spawns.contains(a_loan.spawnId); });
+	};
+
 	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
@@ -1136,6 +1193,8 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
+		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
+		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
 		// wait for their next record (common/DropStore.h).
 		drops.DropOffers(a_player.id);
@@ -1353,6 +1412,12 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(spawn, Protocol::MessageType::kSpawned), true);
 			}
 		}
+		// ... and the frames of those lent out now: the newcomer hides its copy of each while its borrower wears it.
+		for (const auto& [ref, loan] : loans) {
+			if (loan.granted) {
+				send(a_player.key, Protocol::Encode(loan.lending, Protocol::MessageType::kFrameLent), true);
+			}
+		}
 		std::vector<Protocol::ActorOwner> owners;
 		for (const auto& [ref, owner] : actorOwners) {
 			owners.push_back({ ref, owner.playerId });
@@ -1525,6 +1590,7 @@ void Server::Run()
 		a_death.playerId = a_player.id;
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
 		sendOwners({ { a_death.refId, 0 } }, 0);
+		endLoansOfGoneSpawns();
 	};
 
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -2466,6 +2532,7 @@ void Server::Run()
 		if (!record) {
 			return;
 		}
+		drops.SetCharacter(a_player.id, record->character);  // their drops and takes from now on are that world's, held or not
 		if (const auto now = Clock::now(); now - a_player.dropRecordAt >= DROP_RECORD_INTERVAL) {
 			a_player.heldDropRecord.reset();
 			answerDropRecord(a_player, *record, now);
@@ -2550,6 +2617,7 @@ void Server::Run()
 			}
 		}
 		sendOwners(released, 0);
+		endLoansOfGoneSpawns();
 	};
 
 	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
@@ -2589,6 +2657,137 @@ void Server::Run()
 		actorOwners[spawn->refId] = { a_player.id, Protocol::ClaimReason::kUnowned, now };
 		broadcast(Protocol::Encode(*spawn, Protocol::MessageType::kSpawned), true, a_player.key);
 		sendOwners({ { spawn->refId, a_player.id } }, 0);
+	};
+
+	// A friend asks to borrow a frame another game shares as a spawn (src/game/FrameLoan.h). Passed on to the frame's owner
+	// alone, when their latest status says they lend, nobody else has asked for or holds that frame, and the friend has no
+	// other: else the friend is told why not. The owner's game answers with kLendFrame.
+	const auto handleBorrow = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto ask = Protocol::DecodeFrameBorrow(a_data);
+		if (!ask) {
+			return;
+		}
+		const auto refuse = [&](std::uint32_t a_owner, Protocol::LoanRefusal a_why) {
+			send(a_player.key, Protocol::Encode(Protocol::FrameLending{ a_owner, a_player.id, ask->spawnId, a_why, {} }, Protocol::MessageType::kFrameLent), true);
+		};
+		const auto spawn = spawns.find(ask->spawnId);
+		const auto ownerId = spawn != spawns.end() ? spawn->second.playerId : 0;
+		const auto ownerKey = ownerId != 0 && ownerId != a_player.id ? keyOfPlayer(ownerId) : 0;
+		if (!ownerKey) {
+			refuse(ownerId, Protocol::LoanRefusal::kUnavailable);
+			return;
+		}
+		const auto& owner = players.at(ownerKey);
+		if (!owner.status || !owner.status->lends) {
+			refuse(ownerId, Protocol::LoanRefusal::kNotLending);
+			return;
+		}
+		const auto held = loans.find(ask->spawnId);
+		const bool another = std::ranges::any_of(loans, [&](const auto& a_entry) { return a_entry.first != ask->spawnId && a_entry.second.lending.borrowerId == a_player.id; });
+		if (another || (held != loans.end() && held->second.lending.borrowerId != a_player.id)) {
+			refuse(ownerId, Protocol::LoanRefusal::kLent);
+			return;
+		}
+		if (held != loans.end() && held->second.granted) {
+			// Theirs already (their game missed the grant): told again.
+			send(a_player.key, Protocol::Encode(held->second.lending, Protocol::MessageType::kFrameLent), true);
+			return;
+		}
+		loans[ask->spawnId].lending = Protocol::FrameLending{ ownerId, a_player.id, ask->spawnId, Protocol::LoanRefusal::kNone, {} };
+		send(ownerKey, Protocol::Encode(Protocol::FrameBorrow{ a_player.id, ask->spawnId }, Protocol::MessageType::kLoanAsked), true);
+	};
+
+	// The owner's game answers a friend's ask: the frame lent, with its kit (to everyone: the borrower fills its copy, every
+	// game hides its own of the frame while the borrower wears it), or refused (to the friend who asked alone). Only an
+	// answer to an ask the server passed on, for a spawn still theirs.
+	// Not on the event budget: one answer per ask the server passed on counts (any other is dropped below), and a dropped
+	// one would leave the ask, and the owner's frame, waiting for good.
+	const auto handleLend = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		auto lending = Protocol::DecodeFrameLending(a_data);
+		if (!lending) {
+			return;
+		}
+		lending->ownerId = a_player.id;
+		const auto it = loans.find(lending->spawnId);
+		const auto spawn = spawns.find(lending->spawnId);
+		if (it == loans.end() || it->second.granted || it->second.lending.ownerId != a_player.id || it->second.lending.borrowerId != lending->borrowerId ||
+			spawn == spawns.end() || spawn->second.playerId != a_player.id) {
+			// An answer to an ask that is over: whatever ended that ask told the owner's game so already (tellAskOver), on
+			// the same reliable channel and after the ask it answers.
+			return;
+		}
+		if (lending->refusal != Protocol::LoanRefusal::kNone) {
+			loans.erase(it);
+			if (const auto asker = keyOfPlayer(lending->borrowerId)) {
+				send(asker, Protocol::Encode(*lending, Protocol::MessageType::kFrameLent), true);
+			}
+			return;
+		}
+		if (!keyOfPlayer(lending->borrowerId)) {
+			loans.erase(it);  // gone since they asked: the owner's game hears the loan ended
+			broadcast(Protocol::Encode(Protocol::FrameReturn{ lending->borrowerId, a_player.id, lending->spawnId, true }, Protocol::MessageType::kFrameReturned), true, 0);
+			return;
+		}
+		it->second.lending = *lending;
+		it->second.granted = true;
+		log(std::format("server: player {} lent frame {:08X} ({} items) to player {}", a_player.id, lending->spawnId, lending->kit.size(), lending->borrowerId));
+		broadcast(Protocol::Encode(*lending, Protocol::MessageType::kFrameLent), true, 0);
+	};
+
+	// The borrower got out of a frame lent to them (or gave it up unworn): the loan is over, and everyone hears where the
+	// frame stands and what came back of its pieces. Only the borrower's word for it counts.
+	// Not on the event budget either: one return per loan counts (a second finds none), and a dropped one would leave the
+	// loan, and the owner's frame hidden, for as long as the borrower stays.
+	const auto handleReturn = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		auto back = Protocol::DecodeFrameReturn(a_data);
+		if (!back) {
+			return;
+		}
+		const auto it = loans.find(back->spawnId);
+		if (it == loans.end() || it->second.lending.borrowerId != a_player.id) {
+			return;
+		}
+		back->borrowerId = a_player.id;
+		back->ownerId = it->second.lending.ownerId;
+		const bool granted = it->second.granted;
+		const auto asked = it->second.lending;
+		loans.erase(it);
+		if (!granted) {
+			tellAskOver(asked);  // an ask taken back: the owner's game forgets it (an answer to it is dropped: handleLend finds no ask)
+			return;
+		}
+		if (!back->ended) {
+			// The frame is moved to where the borrower says they left it, but only near where they were last seen: a
+			// spot far off, or in another place, is moved to their last state; with no state at all it stays put.
+			if (!a_player.hasState) {
+				back->cell = 0;
+				back->worldspace = 0;
+			} else {
+				const auto& seen = a_player.state;
+				const float dx = back->x - seen.x;
+				const float dy = back->y - seen.y;
+				const float dz = back->z - seen.z;
+				const bool  samePlace = back->cell == seen.cell && back->worldspace == seen.worldspace;
+				if (!samePlace || !(dx * dx + dy * dy + dz * dz <= RETURN_REACH * RETURN_REACH)) {
+					back->cell = seen.cell;
+					back->worldspace = seen.worldspace;
+					back->x = seen.x;
+					back->y = seen.y;
+					back->z = seen.z;
+				}
+			}
+		}
+		log(std::format("server: player {} returned frame {:08X} to player {}{}", a_player.id, back->spawnId, back->ownerId, back->ended ? " (unworn)" : ""));
+		broadcast(Protocol::Encode(*back, Protocol::MessageType::kFrameReturned), true, 0);
 	};
 
 	const auto handleActorStates = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -3219,6 +3418,8 @@ void Server::Run()
 		// Options::reloadToldEvery for a player (a game asking over and over has every other game resend its runs); one asked for
 		// sooner goes when that time is up (a second load at once threw away what the first had resent).
 		tellReloaded(a_player, Clock::now());
+		// A frame lent to them goes back as it was lent: the loaded game no longer wears it (FrameLoan::AfterLoad).
+		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id; });
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.
@@ -3628,6 +3829,15 @@ void Server::Run()
 			break;
 		case MessageType::kReportSpawn:
 			handleSpawn(a_player, a_data);
+			break;
+		case MessageType::kBorrowFrame:
+			handleBorrow(a_player, a_data);
+			break;
+		case MessageType::kLendFrame:
+			handleLend(a_player, a_data);
+			break;
+		case MessageType::kReturnFrame:
+			handleReturn(a_player, a_data);
 			break;
 		case MessageType::kRename:
 			handleRename(a_player, a_data);

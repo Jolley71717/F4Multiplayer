@@ -97,7 +97,21 @@ namespace Text
 		{ "party.where", "{player}: {where}" },
 		{ "party.no_emote_armor", "No emotes in power armor" },
 		// Our player tried to get into our copy of a friend's frame (FriendFrame.h).
-		{ "party.friends_frame", "This is {player}'s power armor. Sharing power armor with friends is coming in a later version." },
+		{ "party.friends_frame", "This is {player}'s power armor. Once it is parked you can get in to borrow it, but its pieces stay theirs." },
+		// A frame borrowed from a friend (FrameLoans): asking for it, why not, and what it says as it goes and comes back.
+		{ "party.frame_asking", "Asking {player} to lend you their power armor..." },
+		{ "party.frame_lent", "{player} lent you their power armor. Press again to get in." },
+		{ "party.frame_not_lending", "{player} doesn't lend their power armor." },
+		{ "party.frame_refused", "{player} can't lend this power armor right now." },
+		{ "party.frame_busy", "You already have a friend's power armor on loan." },
+		// Our own frame, lent to a friend.
+		{ "party.frame_borrowed", "{player} borrowed your power armor" },
+		{ "party.frame_given_back", "{player} gave your power armor back" },
+		{ "party.frame_is_lent", "Your power armor is lent to {player}" },
+		// The loan ended without our player giving it back; and the name each lent piece carries while we hold it.
+		{ "party.frame_owner_left", "{player} left: their power armor goes when you get out" },
+		{ "party.frame_loan_over", "The power armor you borrowed went back to its owner" },
+		{ "party.lent_item", "{player}'s {item}" },
 		// A friend's name tag (their name, with their health when hurt) while they are in their Pip-Boy, or another menu.
 		{ "party.tag_pipboy", "{name} [Pip-Boy]" },
 		{ "party.tag_menu", "{name} [in a menu]" },
@@ -134,6 +148,8 @@ namespace Text
 		{ "down.revives_back", "Your revives are back: a friend can help you up again" },
 		{ "down.cooldown", "Just helped up: for {n} seconds a lethal hit kills you" },
 		{ "down.cant_help_fighting", "Can't help {player} up during a fight" },
+		{ "down.bleed_out_loads_save", "If nobody helps you up in {n} seconds, you die and the game loads your last save" },
+		{ "down.death_loads_save", "If you die, the game loads your last save" },
 
 		// --- The host's rules for being down, as a joiner is told them (HostRules::Summary) ---
 		{ "rules.host", "Host's rules: {rules}" },
@@ -145,6 +161,7 @@ namespace Text
 		{ "rules.revive_health", "up with {n}% health" },
 		{ "rules.cooldown", "a lethal hit within {n} s of a revive kills" },
 		{ "rules.out_of_combat", "no helping up during a fight" },
+		{ "rules.save_on_down", "an autosave when you go down" },
 
 		// --- The shared map, quests and workshop ---
 		{ "map.discovered", "{player} discovered {place}" },
@@ -224,6 +241,8 @@ namespace Text
 		{ "menu.compass_markers_what", "friends on the compass" },
 		{ "menu.fast_loading", "Fast loading" },
 		{ "menu.fast_loading_what", "vsync off during loading screens" },
+		{ "menu.lend_power_armor", "Lend power armor" },
+		{ "menu.lend_power_armor_what", "friends may borrow your parked power armor" },
 		{ "menu.mods", "Compare mods ({n})" },
 		{ "menu.mods_ask", "Ask the host again" },
 

@@ -8,7 +8,9 @@
 //
 // The key goes through the game's controls, then the game's sneak action, then the behaviour graph, and each has its
 // say (Fallout4.exe 1.11.240):
-//  - an input layer with its sneaking flag off drops the key's event, as a DisablePlayerControls with sneaking does;
+//  - an input layer with its sneaking flag off drops the key's event, as a DisablePlayerControls with sneaking does,
+//    unless the sneaking event is forced on (Game.ForceEnablePlayerControls sets it in a mask of its own that wins over
+//    every layer: EventEnabled), and a layer counts only while something besides the manager holds it (LayerCounts);
 //  - the controls' sneak handler with its input switched off, or the dialogue camera, never reads it;
 //  - the controls read nothing while the player is not alive (down, dying or dead);
 //  - knocked over, the sneak action is refused;
@@ -22,7 +24,7 @@ namespace SneakKey
 {
 	struct Facts
 	{
-		bool          layersLetSneak = true;  // every input layer in use lets the sneaking event through
+		bool          layersLetSneak = true;  // the input layers in use let the sneaking event through (EventEnabled)
 		bool          handlerOn = true;       // the controls' sneak handler reads input
 		bool          dialogueCamera = false;
 		std::uint32_t lifeState = 0;          // 0: alive
@@ -33,6 +35,22 @@ namespace SneakKey
 		bool          firstPerson = false;
 		bool          swimming = false;
 	};
+
+	// Whether the input enable manager lets a user event through (Fallout4.exe 1.11.240, BSInputEnableManager's check).
+	// A bit set in a layer's mask means the event is on in it. a_cached is the manager's cache: the layers in use ANDed
+	// together, all ones with none. a_forced is the mask Game.ForceEnablePlayerControls fills; any bit of the event in
+	// it lets the event through whatever the layers say. Reading the cache alone calls a forced event blocked.
+	[[nodiscard]] constexpr bool EventEnabled(std::uint32_t a_cached, std::uint32_t a_forced, std::uint32_t a_event)
+	{
+		return (a_forced & a_event) != 0 || (a_cached & a_event) == a_event;
+	}
+
+	// Whether an input layer slot is in use: the manager keeps one reference to each layer it hands out, so a layer
+	// whose count is that one is let go (its name may still be there) and the cache leaves it out.
+	[[nodiscard]] constexpr bool LayerCounts(std::uint32_t a_refCount)
+	{
+		return a_refCount > 1;
+	}
 
 	// The names of what holds the key back, space-separated, or "none".
 	[[nodiscard]] inline std::string Blocking(const Facts& a_facts)

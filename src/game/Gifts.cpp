@@ -4,6 +4,7 @@
 #include "Text.h"
 #include "game/Drops.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/GiftBook.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
@@ -149,6 +150,7 @@ namespace Gifts
 							}
 							entry.quest = extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 						}
+						entry.lent = FrameLoans::IsLentItem(entry.base, entry.name);
 						entry.equipped = stack->IsEquipped();
 						out.push_back(std::move(entry));
 					}
@@ -171,6 +173,7 @@ namespace Gifts
 				RE::TESObjectREFR::RemoveItemData data{ object, 1 };
 				data.stackData.push_back(a_stack);
 				ref->RemoveItem(data);
+				Equipment::RedrawContainerMenu();  // the open menu shows it gone now, not at the player's next move
 				return CountIn(ref, object) == before - 1;
 			}
 
@@ -183,7 +186,9 @@ namespace Gifts
 				}
 				const auto before = CountIn(ref, object);
 				Guard      guard;
-				return Drops::AddOneTo(ref, a_item) && CountIn(ref, object) == before + 1;
+				const bool added = Drops::AddOneTo(ref, a_item) && CountIn(ref, object) == before + 1;
+				Equipment::RedrawContainerMenu();  // a copy put in, or a take granted, shows in the open menu now
+				return added;
 			}
 
 			LootScope::HolderFacts Holder(std::uint32_t a_ref) override { return WorldSync::HolderFactsOf(a_ref); }
@@ -427,11 +432,11 @@ namespace Gifts
 		const auto  viewing = client.Viewing();
 		return std::format("gifts={} viewing={} copies={} claims={} puts={} lying={} views={} put={} notGiven={} overflow={} reported={} refused={} given={} kept={} "
 						   "lateOffers={} shown={} unplaceable={} notGear={} addUndone={} copyMissing={} taken={} unsignaled={} unheld={} received={} giveFailed={} takenFirst={} givenBack={} takenBack={} "
-						   "dupRisk={} inboxDropped={} ownRefused={}",
+						   "dupRisk={} inboxDropped={} ownRefused={} {}",
 			client.Rule() ? "on" : "off", viewing ? std::format("{:08X}", *viewing) : "-", client.Copies(), client.Claims(), client.Puts(), client.Lying().size(), s.views,
 			s.puts, s.notGiven, s.overflow, s.reported, s.refused, s.given, s.kept, s.lateOffers, s.shown, s.unplaceable, s.notGear, s.addUndone, s.copyMissing, s.taken,
 			s.unsignaled, s.unheld, s.received,
-			s.giveFailed, s.takenFirst, s.givenBack, s.takenBack, s.dupRisk, counts.inboxDropped, counts.refusedOwn);
+			s.giveFailed, s.takenFirst, s.givenBack, s.takenBack, s.dupRisk, counts.inboxDropped, counts.refusedOwn, Equipment::DescribeContainerRedraw());
 	}
 
 	std::string Command(std::string_view a_args)
