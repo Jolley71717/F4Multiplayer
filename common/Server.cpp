@@ -1850,7 +1850,7 @@ void Server::Run()
 				-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 			return;
 		}
-		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game gives it back", refusal->first,
+		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game is asked to give it back", refusal->first,
 			-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 		send(taker->first, Protocol::Encode(refusal->second), true);
 	};
@@ -1908,12 +1908,13 @@ void Server::Run()
 			work.clear();
 		}
 		for (const auto& [index, has] : work) {
-			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
-			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
+			// What the move calls for before the true copy's own count caps it. Nothing for a move already undone (or not the
+			// settler's own to undo here): the true copy does nothing for it, and that is no shortfall.
+			const auto wanted = storage.Settle(a_player.id, index, has, containerChanges, false);
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
-			if (expected && *expected < 0 && (change ? change->count : 0) > *expected) {
-				log(std::format("server: storage {:08X} held {} fewer of {:08X} than player {}'s move #{} {} needed", containerChanges[index].change.container,
-					(change ? change->count : 0) - *expected, containerChanges[index].change.item, a_player.id, index, has ? "done again" : "undone"));
+			if (wanted && wanted->count < 0 && (change ? change->count : 0) > wanted->count) {
+				log(std::format("server: storage {:08X} held {} fewer of {:08X} than {} player {}'s move #{} needed to take out; only what it held went", containerChanges[index].change.container,
+					(change ? change->count : 0) - wanted->count, containerChanges[index].change.item, has ? "doing again" : "undoing", a_player.id, index));
 			}
 			if (!change) {
 				continue;
