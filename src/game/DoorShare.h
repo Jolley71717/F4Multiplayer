@@ -233,6 +233,7 @@ namespace DoorShare
 		bool near = false;     // our player is within reach of it (REPORT_REACH; a gate's is SharedGates')
 		bool pending = false;  // the session's state of it waits to be applied here: what it reads now is the old one
 		bool paced = false;    // reported REPORT_BURST times lately (Pace): a change waits its turn
+		bool used = false;     // the player used it since its state was last sent or taken as the poll's baseline: it goes once, unchanged or not, as a used door's first read did before the poll
 	};
 
 	enum class Look
@@ -251,7 +252,7 @@ namespace DoorShare
 		if (a_watch.quiet && !a_watch.seen) {
 			return Look::kBaseline;
 		}
-		if (!a_watch.changed) {
+		if (!a_watch.changed && !a_watch.used) {
 			return Look::kNothing;
 		}
 		return a_watch.near && !a_watch.paced ? Look::kSend : Look::kHold;

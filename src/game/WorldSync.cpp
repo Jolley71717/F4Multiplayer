@@ -153,6 +153,7 @@ namespace WorldSync
 			Protocol::RefState lastSent;        // what the session last heard of it from us, or took as where it stands
 			Clock::time_point  until;
 			bool               quiet = false;  // on watch because it is loaded (DoorShare's poll), not used: its first read isn't reported, and it is read by the poll's sweep only
+			bool               used = false;   // the player used it since its state was last sent (or taken as the poll's baseline): it is sent once, changed or not
 			bool               held = false;   // a change not reported yet (read too far from it for a friend to take, or paced), kept for when it may go
 			DoorShare::Pace    pace;           // how often it was reported lately
 		};
@@ -1799,6 +1800,7 @@ namespace WorldSync
 			look.quiet = a_entry.quiet;
 			look.seen = a_entry.lastSent.refId != 0;
 			look.changed = !state->SameState(a_entry.lastSent);
+			look.used = a_entry.used;
 			look.near = a_player && a_player->GetParentCell() &&
 			            a_player->data.location.GetDistance(ref->data.location) <= (IsSharedGate(ref) ? SharedGates::REPORT_REACH : DoorShare::REPORT_REACH);
 			look.pending = pendingRefStates.contains(a_id);
@@ -1815,6 +1817,7 @@ namespace WorldSync
 			case DoorShare::Look::kSend:
 				a_entry.lastSent = *state;
 				a_entry.held = false;
+				a_entry.used = false;
 				a_entry.pace.Spend(a_now);
 				refBook.Sent(*state);
 				Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
@@ -1947,6 +1950,7 @@ namespace WorldSync
 				auto& entry = watched[activation.ref];
 				entry.until = a_now + WATCH_TIME;
 				entry.quiet = false;  // used: read every frame again, as a door the poll found is only on its ticks
+				entry.used = true;    // and its state goes once all the same: a load door's use changes nothing readable, and the poll's baseline filled lastSent
 				// What the thing is linked to is watched as well: a terminal's door opens without anyone
 				// activating the door, and the friend would otherwise stay locked out. A terminal opens a chain of
 				// gates, each linking the next: the gates linked from a gate are followed too (SharedGates::CHAIN_DEPTH).
@@ -1956,6 +1960,7 @@ namespace WorldSync
 						auto& linked = watched[a_target->GetFormID()];
 						linked.until = a_now + WATCH_TIME;
 						linked.quiet = false;
+						linked.used = true;
 						++linkedWatched;
 						if (IsSharedGate(a_target)) {
 							chain.push_back(a_target);

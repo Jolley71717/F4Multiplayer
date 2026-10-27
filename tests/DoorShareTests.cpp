@@ -476,6 +476,11 @@ TEST("door share: a look at a watched door: a polled door's first read is its ba
 	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = true, .pending = true }) == Look::kNothing);
 	CHECK(OnLook({ .quiet = false, .seen = false, .changed = true, .near = true, .pending = true }) == Look::kNothing);
 	CHECK(OnLook({}) == Look::kNothing);
+	// Used after the poll took its state as the baseline (a load door the player walks through: no change to read): its
+	// state goes once all the same, so a friend whose save has it otherwise is put right, as before the poll.
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = true, .used = true }) == Look::kSend);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = false, .used = true }) == Look::kHold);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = true, .pending = true, .used = true }) == Look::kNothing);
 	// From how near: a friend takes a door's report from 1500 (WorldSync's ACTIVATION_REACH), a gate's from
 	// SharedGates::REACH, measured from where they last saw us.
 	static_assert(DoorShare::REPORT_REACH < 1500.0f);
