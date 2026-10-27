@@ -5,6 +5,7 @@
 #include "ServerFixture.h"
 
 #include "game/DoorShare.h"
+#include "game/SharedGates.h"
 
 #include <map>
 #include <set>
@@ -37,7 +38,9 @@ namespace
 			std::uint8_t     locked = RS::kUnknown;
 		};
 		std::map<std::uint32_t, Door> doors;
-		std::map<std::uint32_t, RS>   lastSent;
+		std::map<std::uint32_t, RS>   lastSent;  // what the session last heard of each from us, or where it stood when the poll found it
+		std::set<std::uint32_t>       quiet;     // on watch by the poll, not by the player's use
+		std::set<std::uint32_t>       held;      // changed too far from the thing to report
 		DoorShare::Book               book;
 		int                           applied = 0;
 
@@ -58,16 +61,53 @@ namespace
 			return DoorShare::Shared(RS{ a_ref, door.open, door.locked }, DoorShare::SharesOpen(door.facts));
 		}
 
-		// The watcher's report of a_ref, if it says something new.
-		std::optional<std::vector<std::uint8_t>> Report(std::uint32_t a_ref)
+		// The watcher's look at a_ref (WatchRefStates, DoorShare::OnLook): its report, if it says something new.
+		std::optional<std::vector<std::uint8_t>> Look(std::uint32_t a_ref, bool a_near, bool a_pending = false)
 		{
 			const auto state = Read(a_ref);
-			if (!DoorShare::Says(state) || state.SameState(lastSent[a_ref])) {
+			if (!DoorShare::Says(state)) {
 				return std::nullopt;
 			}
-			lastSent[a_ref] = state;
-			book.Sent(state);
-			return Protocol::Encode(state, MT::kReportRefState);
+			DoorShare::Watch look;
+			look.quiet = quiet.contains(a_ref);
+			look.seen = lastSent.contains(a_ref);
+			look.changed = !look.seen || !state.SameState(lastSent.at(a_ref));
+			look.near = a_near;
+			look.pending = a_pending;
+			switch (DoorShare::OnLook(look)) {
+			case DoorShare::Look::kBaseline:
+				lastSent[a_ref] = state;
+				return std::nullopt;
+			case DoorShare::Look::kHold:
+				held.insert(a_ref);
+				return std::nullopt;
+			case DoorShare::Look::kSend:
+				lastSent[a_ref] = state;
+				held.erase(a_ref);
+				book.Sent(state);
+				return Protocol::Encode(state, MT::kReportRefState);
+			case DoorShare::Look::kNothing:
+				return std::nullopt;
+			}
+			return std::nullopt;
+		}
+
+		// The watcher's report of a_ref the player used, standing at it.
+		std::optional<std::vector<std::uint8_t>> Report(std::uint32_t a_ref)
+		{
+			return Look(a_ref, true);
+		}
+
+		// The poll comes across a_ref loaded (PollDoors): a plain door goes on watch quietly, and is read.
+		std::optional<std::vector<std::uint8_t>> Poll(std::uint32_t a_ref, bool a_near)
+		{
+			if (!DoorShare::SharesOpen(doors.at(a_ref).facts)) {
+				return std::nullopt;  // not polled: an activator's, an automatic door's, a scripted one's
+			}
+			if (!lastSent.contains(a_ref)) {
+				quiet.insert(a_ref);
+			}
+			return Look(a_ref, a_near);
 		}
 
 		void Offer(const RS& a_state)
@@ -335,6 +375,124 @@ TEST("door share: a chained door the host opens from its unchained side opens fo
 	CHECK(friendGame.applied == 2);
 }
 
+TEST("door share: a look at a watched door: a polled door's first read is its baseline, a change goes from near and waits from far")
+{
+	using DoorShare::Look;
+	using DoorShare::OnLook;
+	// The player used it: its state goes at once (the first read too), from where they stand.
+	CHECK(OnLook({ .quiet = false, .seen = false, .changed = true, .near = true }) == Look::kSend);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = true, .near = true }) == Look::kSend);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = true }) == Look::kNothing);
+	// A terminal's door down the corridor: a friend would refuse the report from here, so it waits for us to come near.
+	CHECK(OnLook({ .quiet = false, .seen = false, .changed = true, .near = false }) == Look::kHold);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = true, .near = false }) == Look::kHold);
+	// The poll found it loaded: where it stands is kept, not reported; a change from that is, as above.
+	CHECK(OnLook({ .quiet = true, .seen = false, .changed = true, .near = true }) == Look::kBaseline);
+	CHECK(OnLook({ .quiet = true, .seen = false, .changed = true, .near = false }) == Look::kBaseline);
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = false, .near = true }) == Look::kNothing);
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = true }) == Look::kSend);
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = false }) == Look::kHold);
+	// The session's state of it waits to be applied here: what we read is the old one, not news.
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = true, .pending = true }) == Look::kNothing);
+	CHECK(OnLook({ .quiet = false, .seen = false, .changed = true, .near = true, .pending = true }) == Look::kNothing);
+	CHECK(OnLook({}) == Look::kNothing);
+	// From how near: a friend takes a door's report from 1500 (WorldSync's ACTIVATION_REACH), a gate's from
+	// SharedGates::REACH, measured from where they last saw us.
+	static_assert(DoorShare::REPORT_REACH < 1500.0f);
+	static_assert(DoorShare::REPORT_REACH == DoorShare::NPC_REACH);
+	static_assert(SharedGates::REPORT_REACH < SharedGates::REACH);
+	static_assert(SharedGates::REACH - SharedGates::REPORT_REACH >= 1500.0f - DoorShare::REPORT_REACH);
+}
+
+TEST("door share: a plain door a script unlocks and opens in the host's game does the same for the friend once the host is near it")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DoorGame host, friendGame;
+	host.doors[DOOR].locked = RS::kYes;
+	friendGame.doors[DOOR].locked = RS::kYes;
+
+	// The poll comes across the door locked and shut, in both games: where it stands, nothing sent.
+	CHECK(!host.Poll(DOOR, false));
+	CHECK(!friendGame.Poll(DOOR, true));
+	CHECK(!host.Poll(DOOR, true));
+	CHECK(Count(Received(f, 2), MT::kRefStateChanged) == 0);
+
+	// A quest stage unlocks it in the host's game, with the host across the building: kept until they come near.
+	host.doors[DOOR].locked = RS::kNo;
+	CHECK(!host.Poll(DOOR, false));
+	CHECK(host.held.contains(DOOR));
+	CHECK(!host.Poll(DOOR, false));
+	CHECK(Count(Received(f, 2), MT::kRefStateChanged) == 0);
+
+	// Near: reported once; the friend's unlocks, and their own poll doesn't send it back.
+	const auto report = host.Poll(DOOR, true);
+	REQUIRE(report);
+	CHECK(!host.held.contains(DOOR));
+	CHECK(!host.Poll(DOOR, true));
+	f.fake->Deliver(1, *report);
+	friendGame.Take(Received(f, 2));
+	CHECK(friendGame.doors[DOOR].locked == RS::kNo);
+	CHECK(friendGame.applied == 1);
+	CHECK(!friendGame.Poll(DOOR, true));
+
+	// The script opens it too, with the host still near: the friend's opens.
+	host.doors[DOOR].open = RS::kYes;
+	const auto opened = host.Poll(DOOR, true);
+	REQUIRE(opened);
+	f.fake->Deliver(1, *opened);
+	friendGame.Take(Received(f, 2));
+	CHECK(friendGame.doors[DOOR].open == RS::kYes);
+	CHECK(friendGame.applied == 2);
+
+	// A change that goes back before the host comes near is nothing: the session's word still stands.
+	host.doors[DOOR].open = RS::kNo;
+	CHECK(!host.Poll(DOOR, false));
+	host.doors[DOOR].open = RS::kYes;
+	CHECK(!host.Poll(DOOR, true));
+	CHECK(Count(Received(f, 2), MT::kRefStateChanged) == 0);
+}
+
+TEST("door share: the poll reports no door the save has open already, and reads only plain doors")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	Clear(f, { 1 });
+	DoorGame host;
+
+	// A save with the door open, and a locked chained door: where they stand, nothing sent as the host walks past.
+	host.doors[DOOR].open = RS::kYes;
+	host.doors[CHAINED].locked = RS::kYes;
+	CHECK(!host.Poll(DOOR, true));
+	CHECK(!host.Poll(CHAINED, true));
+	CHECK(host.quiet.contains(DOOR) && host.quiet.contains(CHAINED));
+
+	// An elevator's doors, an automatic door, a scripted door: not polled, whatever they do (their locks are still
+	// shared when the player uses them).
+	for (const auto ref : { ELEVATOR, CAR, AUTOMATIC, SCRIPTED }) {
+		host.doors[ref].open = RS::kYes;
+		CHECK(!host.Poll(ref, true));
+		CHECK(!host.quiet.contains(ref));
+	}
+	host.doors[SCRIPTED].locked = RS::kNo;
+	CHECK(!host.Poll(SCRIPTED, true));
+	CHECK(host.Report(SCRIPTED));
+
+	// The player then uses the open door: shut, reported as ever.
+	host.doors[DOOR].open = RS::kNo;
+	CHECK(host.Report(DOOR));
+	CHECK(!host.Poll(DOOR, true));
+
+	// After a load the game's doors are the save's: the poll takes them as they stand, once more.
+	host.lastSent.clear();
+	host.quiet.clear();
+	host.doors[DOOR].open = RS::kYes;
+	CHECK(!host.Poll(DOOR, true));
+	CHECK(host.lastSent.at(DOOR).open == RS::kYes);
+}
+
 TEST("door share: only a plain door near our player that an NPC our game runs opens is watched")
 {
 	const DoorShare::NpcOpen ours{ .runsHere = true, .sharesOpen = true, .loadDoor = false, .playerDistance = 400.0f };
@@ -353,7 +511,7 @@ TEST("door share: only a plain door near our player that an NPC our game runs op
 	CHECK(!DoorShare::WatchesNpcOpen(open));
 	open.playerDistance = DoorShare::NPC_REACH;
 	CHECK(DoorShare::WatchesNpcOpen(open));
-	CHECK(DoorShare::NPC_REACH < 1500.0f);
+	static_assert(DoorShare::NPC_REACH < 1500.0f);
 	CHECK(!DoorShare::WatchesNpcOpen(DoorShare::NpcOpen{}));
 }
 

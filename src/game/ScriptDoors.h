@@ -58,8 +58,12 @@ namespace ScriptDoors
 	};
 
 	// Fallout4.esm's DN142 (Vault 114) 50: Fragment_Stage_0050 calls DN142QuestScript::OpenGearDoor, which plays
-	// "Stage2" on the GearDoor alias (VltGearDoor114 000B25D1, by its location ref type), disables VDoorCollision
-	// (00178F07) and enables and activates the klaxon lights. Set by the console at 00145DA1 (StageToSet 50).
+	// "Stage2" on the GearDoor alias (the reference 000B25D1 of the activator VltGearDoor114 000C01CA in the Vault114
+	// cell, filled by its location ref type AutofillGeneric20), disables VDoorCollision (00178F07) and enables and
+	// activates the klaxon lights. Set by the console at 00145DA1 (VaultDoorConsole01, StageToSet 50), which the player
+	// uses through the furniture it links to at 00145DA2 (NPCVaultConsoleActivate, LinkVaultDoorConsoleFurniture): the
+	// lever's animation, each player's own, which WorldSync logs as opened by a script (a FURN, not a door). DN142 is
+	// start-game-enabled (DNAM 0x0111), so it runs in every game from the start and the stage can be set in any.
 	inline constexpr std::array DOORS{
 		Door{ "Fallout4.esm", 0x0013B747, 50, 0x000B25D1, "Vault 114's gear door" },
 	};

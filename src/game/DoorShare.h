@@ -9,12 +9,13 @@
 #include <string_view>
 #include <unordered_map>
 
-// Which open and lock states a game shares, and which of the session's it takes. Only a door a player
-// opens is shared as open or closed, and one an NPC our game runs opens (below). What a script or the game moves is
-// left to them: an elevator (its doors, its car, the call panel), a vault's gear door, a load elevator, a door that
-// opens by itself. Forcing those open in a friend's game opened the elevator onto an empty shaft, as its car was
-// elsewhere (Vault 81, 2026-10-14). Locks are shared on everything that has one. Kept free of the game
-// so the rules can be tested.
+// Which open and lock states a game shares, and which of the session's it takes. Only a plain door's open
+// state is shared, whoever opens it: a player, an NPC our game runs, or a script that opens or unlocks a door that
+// has no script of its own (every loaded one is read, below). What a script or the game moves is left to them: an
+// elevator (its doors, its car, the call panel), a vault's gear door (ScriptDoors shares the stage that opens it), a
+// load elevator, a door that opens by itself. Forcing those open in a friend's game opened the elevator onto an empty
+// shaft, as its car was elsewhere (Vault 81, 2026-10-14). Locks are shared on everything that has one. Kept free of
+// the game so the rules can be tested.
 namespace DoorShare
 {
 	using RefState = Protocol::RefState;
@@ -96,7 +97,8 @@ namespace DoorShare
 
 	// A friend refuses a live report from a player further than 1500 from the thing (WorldSync's ACTIVATION_REACH); a
 	// little less allows for where the friend last saw us.
-	inline constexpr float NPC_REACH = 1200.0f;
+	inline constexpr float REPORT_REACH = 1200.0f;
+	inline constexpr float NPC_REACH = REPORT_REACH;
 
 	// How long a door an NPC opened is watched: it walks through, and the door closes behind it in moments.
 	inline constexpr auto NPC_WATCH = std::chrono::seconds(30);
@@ -104,6 +106,50 @@ namespace DoorShare
 	constexpr bool WatchesNpcOpen(const NpcOpen& a_open)
 	{
 		return a_open.runsHere && a_open.sharesOpen && !a_open.loadDoor && a_open.playerDistance <= NPC_REACH;
+	}
+
+	// Every loaded door whose open state is a player's (SharesOpen) is read this often as well, whoever or whatever
+	// changes it: a quest stage that unlocks the way (Fraternal Post 115's doors, the Boston Public Library's load
+	// doors), a trigger that unlocks a door as the player walks in, a script that shuts one behind them, an NPC's use
+	// no event named. Before, only a door the player had used (or a terminal they had used linked to) was watched, so
+	// a plain door a script opened or unlocked reached a friend only once the player touched it. An activator's open
+	// state is still its script's (an elevator; a shared gate is read through its script), a quest's stage still
+	// ScriptDoors'. The first read of a door is where it stands (the save's, or the session's) and is not reported:
+	// reporting every door the player walks past would fill the session's world state with the save's doors. A change
+	// from it is, once our player is near enough for a friend to take our word for it (REPORT_REACH); read while far,
+	// it is kept and reported when we come near, if it still stands.
+	inline constexpr auto POLL_INTERVAL = std::chrono::milliseconds(500);
+
+	// One look at a watched reference, as WorldSync's watcher sees it.
+	struct Watch
+	{
+		bool quiet = false;    // on watch because it is loaded (the poll), not because the player used it
+		bool seen = false;     // a state of it has been sent, or taken as its baseline
+		bool changed = false;  // what it reads now differs from that
+		bool near = false;     // our player is within reach of it (REPORT_REACH; a gate's is SharedGates')
+		bool pending = false;  // the session's state of it waits to be applied here: what it reads now is the old one
+	};
+
+	enum class Look
+	{
+		kNothing,   // nothing new, or nothing to say yet
+		kBaseline,  // a polled door's first read: kept as where it stands, not reported
+		kHold,      // changed, but we are too far for a friend to take it: kept for when we are near
+		kSend,      // report it
+	};
+
+	constexpr Look OnLook(const Watch& a_watch)
+	{
+		if (a_watch.pending) {
+			return Look::kNothing;
+		}
+		if (a_watch.quiet && !a_watch.seen) {
+			return Look::kBaseline;
+		}
+		if (!a_watch.changed) {
+			return Look::kNothing;
+		}
+		return a_watch.near ? Look::kSend : Look::kHold;
 	}
 
 	// The part of a reference's state that is shared: the lock always, the open state if it is a player's.

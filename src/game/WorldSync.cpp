@@ -147,11 +147,20 @@ namespace WorldSync
 		constexpr std::size_t MAX_PENDING_HEALTH = 512;  // health reports waiting for their actor to load  // hacking a terminal and walking its menus, or a long lockpick, can take minutes
 		struct Watched
 		{
-			Protocol::RefState lastSent;
+			Protocol::RefState lastSent;        // what the session last heard of it from us, or took as where it stands
 			Clock::time_point  until;
+			bool               quiet = false;  // on watch because it is loaded (DoorShare's poll), not used: its first read isn't reported
+			bool               held = false;   // a change read too far from it for a friend to take, kept for when we are near
 		};
 		std::unordered_map<std::uint32_t, Watched>           watched;
 		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
+		// Every door the game loaded (TESObjectLoadedEvent), read every DoorShare::POLL_INTERVAL while it stays loaded: a
+		// plain one is put on watch, so what a script does to it is shared as a player's use is. Kept across a load or a
+		// disconnect (a door the world keeps loaded fires no new event); one gone from the world is dropped when read.
+		std::unordered_set<std::uint32_t>                    loadedDoors;
+		Clock::time_point                                    nextDoorPoll{};
+		std::uint32_t                                        doorsPolled = 0;  // doors put on watch by the poll
+		std::uint32_t                                        reportsHeld = 0;  // changes read too far from the thing for a friend to take them, kept for when we are near
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
 		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
@@ -1383,8 +1392,9 @@ namespace WorldSync
 		}
 
 		// Whether a loaded reference's open state is a player's to share (DoorShare::SharesOpen), worked out
-		// once per reference: an elevator's, or a gear door's, is its script's.
-		bool OpensShared(RE::TESObjectREFR* a_ref)
+		// once per reference: an elevator's, or a gear door's, is its script's. One that isn't is logged when the player
+		// used it (a_log), not for every door the poll comes across.
+		bool OpensShared(RE::TESObjectREFR* a_ref, bool a_log = true)
 		{
 			if (const auto it = opensShared.find(a_ref->GetFormID()); it != opensShared.end()) {
 				return it->second;
@@ -1409,7 +1419,7 @@ namespace WorldSync
 				});
 			}
 			const bool shared = DoorShare::SharesOpen(facts);
-			if (!shared) {
+			if (!shared && a_log) {
 				// Not a door: an activator's script, or a container's lid, a chair, a marker (by the base's type). A door
 				// only a quest stage opens is shared by that stage (ScriptDoors), not by its open state.
 				REX::INFO("WorldSync: {:08X} (base {:08X}) is opened by {}; its open state isn't shared", a_ref->GetFormID(), base ? base->GetFormID() : 0,
@@ -1702,19 +1712,43 @@ namespace WorldSync
 			}
 		}
 
+		// Puts every loaded plain door on watch (DoorShare's poll), quietly: its first read is where it stands. A door
+		// gone from the world, or one whose open state isn't a player's (an automatic door, a scripted one, the story's),
+		// is forgotten until it loads again; a scripted door's lock is still shared when the player uses it.
+		void PollDoors(Clock::time_point a_now)
+		{
+			for (auto it = loadedDoors.begin(); it != loadedDoors.end();) {
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(*it);
+				if (!ref || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell() || !OpensShared(ref, false)) {
+					it = loadedDoors.erase(it);
+					continue;
+				}
+				auto [entry, added] = watched.try_emplace(*it);
+				if (added) {
+					entry->second.quiet = true;
+					++doorsPolled;
+				}
+				entry->second.until = (std::max)(entry->second.until, a_now + WATCH_TIME);
+				++it;
+			}
+		}
+
 		// Starts watching references the player activated, and reports changes to watched ones.
 		void WatchRefStates(Clock::time_point a_now, const std::vector<Activation>& a_activations)
 		{
 			for (const auto& activation : a_activations) {
 				auto& entry = watched[activation.ref];
 				entry.until = a_now + WATCH_TIME;
+				entry.quiet = false;  // used: read every frame again, as a door the poll found is only on its ticks
 				// What the thing is linked to is watched as well: a terminal's door opens without anyone
 				// activating the door, and the friend would otherwise stay locked out. A terminal opens a chain of
 				// gates, each linking the next: the gates linked from a gate are followed too (SharedGates::CHAIN_DEPTH).
 				std::vector<RE::TESObjectREFR*> chain;
 				ForEachLinked(RE::TESForm::GetFormByID<RE::TESObjectREFR>(activation.ref), [&](RE::TESObjectREFR* a_target) {
 					if (Protocol::IsShareableRef(a_target->GetFormID())) {
-						watched[a_target->GetFormID()].until = a_now + WATCH_TIME;
+						auto& linked = watched[a_target->GetFormID()];
+						linked.until = a_now + WATCH_TIME;
+						linked.quiet = false;
 						++linkedWatched;
 						if (IsSharedGate(a_target)) {
 							chain.push_back(a_target);
@@ -1739,26 +1773,61 @@ namespace WorldSync
 					chain = std::move(next);
 				}
 			}
+			// Every loaded plain door is on watch too (DoorShare's poll), read on the poll's ticks only: what the player
+			// used is read every frame.
+			const bool poll = a_now >= nextDoorPoll;
+			if (poll) {
+				nextDoorPoll = a_now + DoorShare::POLL_INTERVAL;
+				PollDoors(a_now);
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const bool placed = player && player->GetParentCell();
 			for (auto it = watched.begin(); it != watched.end();) {
+				auto& entry = it->second;
+				if (entry.quiet && !poll) {
+					++it;
+					continue;
+				}
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(it->first);
 				const auto state = ReadRefState(ref);
-				if (!state || !DoorShare::Says(*state) || a_now > it->second.until) {
+				if (!state || !DoorShare::Says(*state) || a_now > entry.until) {
 					it = watched.erase(it);
 					continue;
 				}
 				// A gate we set from a friend's state reads as it was until its script gets round to it: not sent back.
 				if (state->open != Protocol::RefState::kUnknown && gatesApplied.Holds(it->first, state->open == Protocol::RefState::kYes, a_now)) {
-					if (!state->SameState(it->second.lastSent)) {
+					if (!state->SameState(entry.lastSent)) {
 						++gateReportsHeld;
 					}
 					++it;
 					continue;
 				}
-				// The same state is no news whoever said it: one we took from a friend names them, ours doesn't.
-				if (!state->SameState(it->second.lastSent)) {
-					it->second.lastSent = *state;
+				// The same state is no news whoever said it: one we took from a friend names them, ours doesn't. A change
+				// is reported from near enough for a friend to take it (they refuse a report from a player far from the
+				// thing), else kept for when we are.
+				DoorShare::Watch look;
+				look.quiet = entry.quiet;
+				look.seen = entry.lastSent.refId != 0;
+				look.changed = !state->SameState(entry.lastSent);
+				look.near = placed && player->data.location.GetDistance(ref->data.location) <= (IsSharedGate(ref) ? SharedGates::REPORT_REACH : DoorShare::REPORT_REACH);
+				look.pending = pendingRefStates.contains(it->first);
+				switch (DoorShare::OnLook(look)) {
+				case DoorShare::Look::kBaseline:
+					entry.lastSent = *state;  // where it stands: a save's door, or the session's
+					break;
+				case DoorShare::Look::kHold:
+					if (!std::exchange(entry.held, true)) {
+						++reportsHeld;
+					}
+					break;
+				case DoorShare::Look::kSend:
+					entry.lastSent = *state;
+					entry.held = false;
 					refBook.Sent(*state);
 					Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
+					break;
+				case DoorShare::Look::kNothing:
+					break;
 				}
 				++it;
 			}
@@ -2513,6 +2582,8 @@ namespace WorldSync
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
 			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
 				gateLoads[id] = now;
+			} else if (base && base->Is(RE::ENUM_FORM_ID::kDOOR)) {
+				loadedDoors.insert(id);  // read while it stays loaded (PollDoors)
 			}
 		}
 		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty() || Destructibles::AnyWaiting() ||
@@ -2590,6 +2661,7 @@ namespace WorldSync
 		scriptDoors.Clear();
 		scriptDoorsReported = false;
 		nextDoorLook = {};
+		nextDoorPoll = {};  // loadedDoors is kept: the doors still loaded fire no new load event, and the rest are dropped when read
 		unmatchedPickups.clear();
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
@@ -2686,6 +2758,7 @@ namespace WorldSync
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
+		       std::format(" polledDoors={}/{} reportsHeld={}", doorsPolled, loadedDoors.size(), reportsHeld) +
 		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied);
 	}
 }
