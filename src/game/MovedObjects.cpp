@@ -32,6 +32,7 @@ namespace MovedObjects
 		constexpr auto  SCAN_INTERVAL = std::chrono::milliseconds(250);
 		constexpr float SCAN_RADIUS = 1500.0f;        // loose objects this close to our player are watched for knocks
 		constexpr std::size_t MAX_SCANNED = 256;      // of them, at most this many a scan
+		constexpr std::size_t MAX_TRACKED = 64;       // flung beyond the radius, still looked at: at most this many
 		constexpr auto  HIT_MEMORY = std::chrono::seconds(3);  // a hit of ours moves it for that long
 		constexpr auto  FLIGHT = std::chrono::seconds(12);     // a friend's let-go flies here until their rest, at most
 		constexpr float SNAP_DISTANCE = 1.0f;          // our copy this far from their rest is put where theirs lies
@@ -465,20 +466,6 @@ namespace MovedObjects
 			return ObjectShare::Answers(id, NpcSync::Owner(id), NpcSync::LocalPlayer());
 		}
 
-		// Whether another game answers for this actor: a friend's stand-in (their player), or an NPC the server gave another
-		// player. What it shoves is that game's to report.
-		bool RunsElsewhere(RE::Actor* a_actor)
-		{
-			if (!a_actor || a_actor->IsPlayerRef()) {
-				return false;
-			}
-			if (Puppets::IsPuppet(a_actor)) {
-				return true;
-			}
-			const auto id = NpcSync::SessionId(a_actor->GetFormID());
-			return ObjectShare::AnswersElsewhere(id, NpcSync::Owner(id), NpcSync::LocalPlayer());
-		}
-
 		// An explosion in our game: whose it is by what caused it (ObjectShare::RoleOf), kept in the blast book for what it
 		// throws about. One our game set off for a friend's throw is theirs; so is one a friend's stand-in or an NPC another
 		// game runs caused. A hazard's is nobody's.
@@ -518,7 +505,8 @@ namespace MovedObjects
 		}
 
 		// The loose objects near our player: what moved with no hand on it, and came to rest, where our player, an NPC of
-		// ours or a blast of ours moved it.
+		// ours or a blast of ours moved it. A friend's stand-in by it changes nothing: their game reports their player's
+		// moves of it, and the server settles a rest both games claim (ObjectShare::KnockWatch).
 		void ScanKnocks(RE::PlayerCharacter* a_player, std::uint32_t a_ourHeld, Clock::time_point a_now)
 		{
 			const auto tes = RE::TES::GetSingleton();
@@ -528,7 +516,6 @@ namespace MovedObjects
 			std::vector<RE::NiPointer<RE::TESObjectREFR>> found;
 			std::vector<RE::NiPointer<RE::TESObjectREFR>> blastRefs;
 			std::vector<Vec3>                             shovers;  // NPCs our game runs, alive
-			std::vector<Vec3>                             others;   // friends' stand-ins and NPCs other games run, alive
 			found.reserve(MAX_SCANNED);
 			tes->ForEachReferenceInRange(a_player->data.location, SCAN_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				if (found.size() >= MAX_SCANNED) {
@@ -537,14 +524,8 @@ namespace MovedObjects
 				if (MaybeLoose(a_ref)) {
 					found.emplace_back(a_ref);
 				} else if (const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr) {
-					if (!actor->IsDead(false)) {
-						if (RunsHere(actor)) {
-							if (shovers.size() < ObjectShare::MAX_SHOVERS) {
-								shovers.push_back(Position(actor));
-							}
-						} else if (others.size() < ObjectShare::MAX_SHOVERS && RunsElsewhere(actor)) {
-							others.push_back(Position(actor));
-						}
+					if (!actor->IsDead(false) && RunsHere(actor) && shovers.size() < ObjectShare::MAX_SHOVERS) {
+						shovers.push_back(Position(actor));
 					}
 				} else if (const auto base = a_ref ? a_ref->GetObjectReference() : nullptr; base && base->Is(RE::ENUM_FORM_ID::kEXPL) && blastRefs.size() < ObjectShare::MAX_BLASTS) {
 					blastRefs.emplace_back(a_ref);
@@ -553,6 +534,27 @@ namespace MovedObjects
 			});
 			for (const auto& blast : blastRefs) {
 				NoteBlast(blast.get(), a_now);
+			}
+			// What we saw move that something of ours set going is looked at wherever it has flown, past the scan's radius
+			// (a blast flings a can far): until it rests and is said, or the watch gives up on it (MOVING_GIVE_UP). Asked
+			// for more than MAX_TRACKED: the ones already in the scan's range take places in the list too.
+			{
+				std::unordered_set<std::uint32_t> inRange;
+				for (const auto& ref : found) {
+					inRange.insert(ref->GetFormID());
+				}
+				std::size_t extra = 0;
+				for (const auto id : knocks.Tracking(found.size() + MAX_TRACKED, a_now)) {
+					if (extra >= MAX_TRACKED) {
+						break;
+					}
+					if (!inRange.contains(id)) {
+						if (auto ref = Lookup(id)) {
+							found.push_back(std::move(ref));
+							++extra;
+						}
+					}
+				}
 			}
 			const Vec3                                  player = Position(a_player);
 			std::vector<ObjectShare::KnockWatch::Seen> seen;
@@ -567,13 +569,10 @@ namespace MovedObjects
 				}
 				const auto id = ref->GetFormID();
 				const bool busy = carried.Find(id) || flying.contains(id) || keyframed.contains(id) || a_ourHeld == id || carry.IsSettling(id) || carry.IsRefused(id);
-				const auto reach = blasts.Reaching(pose->position, a_now);
 				const bool byNpc = std::ranges::any_of(shovers, [&](const Vec3& a_npc) { return ObjectShare::NpcNear(a_npc, pose->position); });
-				const bool byOthers = std::ranges::any_of(others, [&](const Vec3& a_actor) { return ObjectShare::NpcNear(a_actor, pose->position); });
-				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc,
-					.blast = reach.serial, .theirs = reach.theirs, .others = byOthers });
+				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc });
 			}
-			for (const auto& rest : knocks.Scan(seen, a_now)) {
+			for (const auto& rest : knocks.Scan(seen, a_now, &blasts)) {
 				Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);
 				waiting.Erase(rest.refId);  // our move is the newer
 				++counts.knocksSent;
@@ -784,10 +783,10 @@ namespace MovedObjects
 	std::string Status()
 	{
 		const auto& c = counts;
-		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} refused={} releases={} badPoses={} "
+		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} knocksDropped={} refused={} releases={} badPoses={} "
 		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={}",
 			carry.Holding(), c.holdsSent, c.holdsApplied, c.holdsIgnored, c.letGosSent, c.letGosApplied, c.restsSent, c.restsApplied, c.restsAlready, c.restsIgnored,
-			c.knocksSent, c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
+			c.knocksSent, knocks.Dropped(), c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
 			c.placesApplied, c.placesAlready, waiting.Size());
 	}
 

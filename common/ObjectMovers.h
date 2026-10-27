@@ -16,7 +16,9 @@
 // holds it, so that game lets go of its own copy. After a let-go the object's rest is still theirs to report while it
 // flies and settles (FLIGHT), and for SETTLED after it came to rest: each game's physics moves it a little differently,
 // and what the others' games then see of it is their own physics settling the copy just placed, not a move of theirs.
-// A friend may grab it meanwhile (a broom handed over): from then on it is theirs.
+// A friend may grab it meanwhile (a broom handed over): from then on it is theirs. A rest refused for the mover's own is
+// answered with theirs (Book::LastRest), so the refused game puts its copy where the session has the object, however
+// its own physics moved it on after the mover's rest placed it.
 namespace ObjectMovers
 {
 	using Clock = std::chrono::steady_clock;
@@ -43,6 +45,7 @@ namespace ObjectMovers
 		std::uint32_t                       sequence = 0;  // their newest hold of it, or the let-go's
 		Clock::time_point                   until{};       // theirs until then
 		std::optional<Protocol::ObjectHold> lastHold;      // what a refused grab is told
+		std::optional<Protocol::ObjectRest> lastRest;      // where they said it rests (none while held or flying): what a refused rest is told
 	};
 
 	class Book
@@ -71,6 +74,7 @@ namespace ObjectMovers
 			mover.until = a_now + HOLD_TIMEOUT;
 			mover.lastHold = a_hold;
 			mover.lastHold->playerId = a_player;
+			mover.lastRest.reset();
 			return Verdict::kRelay;
 		}
 
@@ -99,8 +103,11 @@ namespace ObjectMovers
 			if (a_rest.kind == Protocol::ObjectRestKind::kLetGo) {
 				mover.sequence = a_rest.sequence;
 				mover.until = a_now + FLIGHT;
+				mover.lastRest.reset();
 			} else {
 				mover.until = a_now + SETTLED;
+				mover.lastRest = a_rest;
+				mover.lastRest->playerId = a_player;
 			}
 			return Verdict::kRelay;
 		}
@@ -113,6 +120,17 @@ namespace ObjectMovers
 				return std::nullopt;
 			}
 			return it->second.lastHold;
+		}
+
+		// Where the object's mover said it rests, while that rest is still theirs (for a refused rest), or none: not while
+		// it is held or flies from a let-go (its rest is still to come).
+		[[nodiscard]] std::optional<Protocol::ObjectRest> LastRest(std::uint32_t a_ref, Clock::time_point a_now) const
+		{
+			const auto it = movers.find(a_ref);
+			if (it == movers.end() || a_now >= it->second.until) {
+				return std::nullopt;
+			}
+			return it->second.lastRest;
 		}
 
 		// Who moves the object now (0: nobody).

@@ -3011,6 +3011,9 @@ void Server::Run()
 	// to rest is kept (objectPlaces), for a game that loads it later. An object the session has no place for yet takes one
 	// from the player's share: a full Places forgets the one moved longest ago, so past it a joiner's made-up objects
 	// would push out the host's. Theirs past it still go to the others, as a door's state does.
+	// A rest refused for another player's (two games claimed one rest: a friend stood in the pile a grenade threw about,
+	// and their copy went on moving after the first rest placed it) is answered with the first player's rest, to this
+	// player alone, so their copy goes where the session has it; one refused for a hold is answered as a refused grab is.
 	const auto handleObjectRest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -3021,7 +3024,8 @@ void Server::Run()
 			return;
 		}
 		rest->playerId = a_player.id;
-		if (objectMovers.Rest(*rest, a_player.id, now) == ObjectMovers::Verdict::kRelay) {
+		switch (objectMovers.Rest(*rest, a_player.id, now)) {
+		case ObjectMovers::Verdict::kRelay:
 			broadcast(Protocol::Encode(*rest, Protocol::MessageType::kObjectRested), true, a_player.key);
 			if (rest->kind != Protocol::ObjectRestKind::kRest || pickedUp.contains(rest->refId)) {
 				return;
@@ -3034,6 +3038,19 @@ void Server::Run()
 			}
 			objectPlaces.Rested(*rest);
 			touched();
+			break;
+		case ObjectMovers::Verdict::kRefused:
+			if (rest->kind != Protocol::ObjectRestKind::kRest) {
+				break;
+			}
+			if (const auto theirs = objectMovers.LastRest(rest->refId, now)) {
+				send(a_player.key, Protocol::Encode(*theirs, Protocol::MessageType::kObjectRested), true);
+			} else if (const auto holder = objectMovers.Holder(rest->refId, now)) {
+				send(a_player.key, Protocol::Encode(*holder, Protocol::MessageType::kObjectHeld), true);
+			}
+			break;
+		case ObjectMovers::Verdict::kDropped:
+			break;
 		}
 	};
 

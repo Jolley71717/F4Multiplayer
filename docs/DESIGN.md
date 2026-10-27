@@ -1464,10 +1464,25 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   means it moved under a unit (and turned under 0.02 rad) from where it last moved for 0.6 s, or 15 s went by. One of
   ours that moves again within 10 s of that rest (a ball rolling on after it slowed, or still rolling when we gave up)
   is still ours and is reported again where it truly rests (`KnockWatch`'s follow-on: the same scan, nothing more looked
-  at), unless a friend's move put it there, someone picked it up, a friend's blast reached it, or a friend's stand-in or
-  another game's NPC stands within 200 units of it as it moves (their game's to report). Rests that only the follow-on
-  claimed stop after 8 in a row (`FOLLOW_ON_MAX`: a thing that swings for hours is not reported for ever), and the
-  follow-on is gone once the scan has not seen the object for 3 s (a loading screen, a cell that unloaded).
+  at), unless a friend's move put it there, someone picked it up, or a friend's blast reached it. Rests that only the
+  follow-on claimed stop after 8 in a row (`FOLLOW_ON_MAX`: a thing that swings for hours is not reported for ever), and
+  the follow-on is gone once the scan has not seen the object for 3 s (a loading screen, a cell that unloaded).
+  A blast flings a can far past its own reach (its radius and 128 units) and past our player's near range in the moments
+  between two looks, so a blast reaches an object by where it lay before it moved as well as by where the scan first
+  finds it moving, and that claim, made once when it starts moving, is held until it rests. An object something of ours
+  set going that is still moving (or at rest and owed, or in its follow-on) is looked at wherever it has flown, past the 1500 units (`KnockWatch::Tracking`, at
+  most 64 beyond the scan's own range a scan), until it is said or its 15 s, owed or follow-on time is up.
+- A friend standing by it changes nothing: each game reports what its own player, NPCs and blasts moved and what rolled
+  on from its own rests, and a rest two games claim (both players stood by the can one kicked; a friend stood in the
+  pile a grenade threw about) is settled by the server: the first rest holds for 3 s (`ObjectMovers::SETTLED`), a second
+  player's rest of the object within it is refused and answered with the first, to the refused game alone, so that
+  game's copy goes where the session has it instead of staying where its own physics left it. A copy a friend's rest put
+  down in our player's own body (or in their stand-in's, where their player is not) is pushed out by our physics to a
+  place their game knows nothing of: if our player, an NPC of ours or a blast of ours is by it as it moves on from their
+  place, it is ours again, whatever blast of theirs still reaches it (their throw of it ended with their rest), and is
+  reported where it lies once the 4 s quiet after their place is over, past the server's 3 s, so their rest and ours
+  never cross on the way, at most one such rest per object goes back per quiet and `ECHO_MAX` (3) per `ECHO_WINDOW` (120 s), so two games whose physics never agree on where it lies stop trading it. A copy that only settles on its own
+  after their place, with nothing of ours by it, stays where it lies, unreported.
 - Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
   the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,
   `maxObjectPlacesPerPlayer`, never more whatever `--max-share` says, so made-up ones can't push out the host's), saves it with the session (layout 36, as kObjectRested
@@ -1489,8 +1504,13 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   NPC we run caused it (`Explosion::GetActorOwner`); one our game set off for a friend's throw (WeaponFire's copy), a
   friend's stand-in's or another game's NPC's is theirs, and an object a blast of theirs reaches is never reported here
   whatever else moved it, so exactly one game reports each object (a trap's explosion, with no cause, nobody's). Same
-  budget as every knock (8 at once, 3 a second), and a blast reports at most 16 objects; the rests the budget has no room
-  for wait up to 6 s for it. No new message: kReportObjectRest as before (`objects` in `net status` adds `blasts=seen/noted`).
+  budget as every knock (8 at once, 3 a second), and a blast reports at most 64 objects; the rests the budget has no room
+  for (a blast's, or any other of ours: one rolling on by the follow-on) wait up to 24 s for it, and one that waits is
+  still ours if another can knocks it on meanwhile. The cap was 16: a grenade in a cluttered room throws 20 to 40
+  objects, the ones nearest it fly furthest and rest last, so on the rig every throw said 16 to 18 rests and the pile's
+  own cans, past the cap, lay hundreds of units apart in the two games. `knocksDropped=` counts rests of ours never said
+  (past a blast's cap, or still waiting after 24 s). No new message: kReportObjectRest as before (`objects` in
+  `net status` adds `blasts=seen/noted`).
   A known limit: an explosion with no cause of ours, a trap's (a mine, a tripwire's grenades) or a destructible
   object's own (a car going up, a barrel), goes off in every game (TrapRules, `kDestructions`) but knocks nothing for
   anyone to report, so what it throws about lands where each game's physics puts it, and can lie apart in each.
