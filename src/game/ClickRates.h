@@ -11,7 +11,8 @@
 // How often each thing the plugin does that the game answers with a sound happens, so a repeating sound (a constant
 // clicking reported after a friend joined or left, bead F4Multiplayer-v7mg) shows in the log and the status line by
 // name instead of being guessed at. Each source counts what it does in windows of WINDOW; a window with more than the
-// source's LIMIT is one a sound repeated in, and the first such is reported, then one every REPORT_EVERY. The limits are
+// source's LIMIT is one a sound repeated in, and the first such is reported, then one every REPORT_EVERY (one report for all
+// the sources together, so the log holds a line a minute at most however many repeat). The limits are
 // well above what play does (a fight, a join with a settlement's worth of friends' lamps), and well below a repeat that
 // never ends. Kept free of the game so it can be tested; not thread-safe (ClickWatch holds the lock).
 namespace ClickRates
@@ -59,7 +60,8 @@ namespace ClickRates
 	{
 	public:
 		// One or a_count of the source's events at a_now. True when the window now holds more than the source's limit and
-		// that has not been said within REPORT_EVERY: the caller says it (a line in the log).
+		// no report, of this source or any other, has been made within REPORT_EVERY: the caller says it (a line in the
+		// log). A source held back by another's report says it at its next event after the gap, if it still repeats.
 		bool Note(Source a_source, Clock::time_point a_now, std::uint32_t a_count = 1)
 		{
 			auto& entry = entries[static_cast<std::size_t>(a_source)];
@@ -69,11 +71,11 @@ namespace ClickRates
 			if (entry.inWindow <= InfoOf(a_source).limit) {
 				return false;
 			}
-			if (entry.reported && a_now - entry.reportedAt < REPORT_EVERY) {
+			if (reported && a_now - reportedAt < REPORT_EVERY) {
 				return false;
 			}
-			entry.reported = true;
-			entry.reportedAt = a_now;
+			reported = true;
+			reportedAt = a_now;
 			return true;
 		}
 
@@ -124,8 +126,6 @@ namespace ClickRates
 			std::uint32_t     peak = 0;
 			std::uint32_t     repeats = 0;
 			std::uint64_t     total = 0;
-			bool              reported = false;
-			Clock::time_point reportedAt{};
 		};
 
 		void Roll(Source a_source, Entry& a_entry, Clock::time_point a_now)
@@ -145,5 +145,7 @@ namespace ClickRates
 		}
 
 		std::array<Entry, static_cast<std::size_t>(Source::kCount)> entries{};
+		bool                                                        reported = false;
+		Clock::time_point                                           reportedAt{};
 	};
 }

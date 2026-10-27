@@ -40,6 +40,26 @@ TEST("ClickRates: the event past the limit is reported once, then not again with
 	CHECK(later == 1);
 }
 
+TEST("ClickRates: sources repeating together are reported once a minute between them, not once each")
+{
+	ClickRates::Rates rates;
+	std::uint32_t     reports = 0;
+	// Every source over its limit in every window, for ten minutes: the log gets a line a minute at most.
+	for (int i = 0; i < 6000; ++i) {
+		for (std::size_t s = 0; s < static_cast<std::size_t>(Source::kCount); ++s) {
+			reports += rates.Note(static_cast<Source>(s), T0 + i * 100ms, 5);
+		}
+	}
+	CHECK(reports >= 9);
+	CHECK(reports <= 10);
+	// A source held back by another's report is not lost: it still counts, and says so once the gap is over.
+	ClickRates::Rates two;
+	CHECK(two.Note(Source::kHud, T0, 100));
+	CHECK(!two.Note(Source::kEmote, T0 + 1s, 100));
+	CHECK(two.Repeats(Source::kEmote) == 1);
+	CHECK(two.Note(Source::kEmote, T0 + ClickRates::REPORT_EVERY + 1s, 100));
+}
+
 TEST("ClickRates: a slow steady source never is a repeat, however long it goes on")
 {
 	ClickRates::Rates rates;
