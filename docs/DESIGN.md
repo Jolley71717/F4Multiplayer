@@ -288,6 +288,12 @@
   and the owner takes that fraction of its own, so the shots it takes to kill are as many as the shooter's copy needs,
   dealt through the copy's damage resistance. A copy rolled tougher than the owner's NPC (a Stalker's 30 DR against a
   Roamer's 15, a Guardian against a Watcher) takes less from each shot, and so does the NPC; one rolled weaker, more.
+- A copy's health is always its owner's: what it gains with no report from the owner's game is taken back once it has
+  stood 100 ms (`CopyHealth::Book::Check`, `copyGains=` times/health), as a drop with no hit of ours is given back. A
+  copy rolled legendary here and plain there mutated at half health and healed to full, which stood and was never
+  sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
+  left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
+  What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
@@ -396,9 +402,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   stand-in gets into: each game's pieces are its own loot) wherever its owner is, while the spot is in the area their
   engine draws, as a friend's parked frame is: moved in place when the owner's game has it a unit or a hundredth of a
   turn off, placed again when it is 256 units off or in another place, gone out of sight, before saves and loads, and
-  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). A joiner is sent
-  the frames shared before it came, so a friend's suit parked before the session stands there too. `net status`:
-  `framesMade=` shared/standing/our player's own (npcs), `frames: ours= reported= placed= moved= taken=` (spawns).
+  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). None while a frame
+  of our own of that base stands within 32 units of where the owner's game has theirs (`FrameFacts::oursThere`: two
+  saves with a shared past hold the same frames), and one placed goes then. A joiner is sent
+  the frames shared before it came, so a friend's suit parked before the session stands there too. Never a copy an older
+  version's workshop sync left in the save (`FrameShare::Ghost`: the keyword the workshop copies carry; it is cleared
+  instead, see Party's power armor). `net status`:
+  `framesMade=` shared/standing/our player's own, `ghostsCleared=` (npcs), `frames: ours= reported= placed= moved= taken=
+  oursThere=` (spawns).
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
@@ -636,6 +647,10 @@ for all of that NPC's changes together (at most 4096 changes wait; when full, on
 NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). A chest
 waits too while this game holds it in no cell at all: one of a place we left lately stays in memory that
 way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go in when we come back. A
+take waits too while this game holds the chest in a cell but hasn't made its inventory yet (a place not
+loaded, or still loading): it would find nothing to take, and the roll made as the place loads would still
+hold what the friend took. So does a put, in order with the takes: going in first, it would make the inventory
+ahead of the roll, and the takes and the emptying after it would go into that instead. A
 change to a chest our player has open goes in at once: the container menu shows the new contents, and
 taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
@@ -1301,7 +1316,10 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   (WorldSync's retry, as references load and as the player changes cell), however far from where its save had it, but
   not while anyone moves it; a friend's live rest for an object it doesn't
   have loaded waits the same way (at most 4096 waiting; a flood of those drops the rests waiting of the friend with the
-  most, the flooder, never the catch-ups or anyone else's). So a friend who loads the cell later, and every save loaded later, has the object
+  most, the flooder, never the catch-ups or anyone else's). While a place waits, our copy still lies where our save had
+  it, so a friend's hold, let-go or rest of that object is judged from the waiting place as well as from our copy
+  (`ObjectShare::FromWhereItLies`: their move starts where the session has it), and a move our game doesn't apply leaves
+  the place waiting, or their rest when it is too far even from the place (`StillWaiting`; a hold ends the wait once it is drawn here). So a friend who loads the cell later, and every save loaded later, has the object
   where it was left. No new message (an older game takes a catch-up as a rest, if the object is loaded then). A known
   limit: a reference moved this way keeps its parent cell, as one a friend carried across a cell border does.
 - Knocked about by NPCs and blasts: the same scan also reports an object that came to rest after an NPC our game runs
@@ -1472,7 +1490,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   quest alias: the museum's suit is the main quest's objective) and it stands within 200 units of
   where the friend was as they got in (their newest state if it came within 0.5 s of the status,
   else the next one); otherwise, or once it has been elsewhere or used in that wear, it stays shown
-  until they get in anew. It stays hidden through saves (only its 3D is touched) and is hidden again
+  until they get in anew. One another game runs (FrameShare: the wearer's, since getting in is a use)
+  is hidden wherever it stands while they wear it, loaded: it is moved to where their game has it (where
+  they got in), which for a friend who joined mid-wear is not where their stand-in first appeared, and
+  compared with that it stood shown for the whole wear, a second suit for the one they wear. It stays hidden through saves (only its 3D is touched) and is hidden again
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
@@ -1488,8 +1509,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   otherwise it is forgotten, and one whose form is gone is taken
   off the books at once and its record dropped (`SaveGuard::Forget`, `SaveStrays::Book::ForgetGone`, counted as
   `orphansDropped`): dropping the record frees the id, and the engine may hand it to the next frame it makes. A frame already
-  standing where a copy is placed is never taken over: nothing tells a copy an earlier session left from a suit of the
-  player's own (stripped, so empty, and with no owner if they never got in), so what 0.9.1 left in a save stays. The
+  standing where a copy is placed is never taken over: nothing tells a plain copy an earlier session left from a suit of
+  the player's own (stripped, so empty, and with no owner if they never got in), so such a one stays (the console removes
+  it: disable, then markfordelete); the workshop copies 0.9.1 made of frames carry the keyword and go (below). The
   leak the rig showed (2026-10-24): a load does not free every copy DespawnAll had just disabled or deleted for it; one
   stayed in memory, nobody's once the load had emptied the book, the next save wrote it, and a game started afresh from
   that save had it back drawn and whole beside the copy placed for the friend, and the host shared it as its own frame.
@@ -1513,7 +1535,21 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   with it), and nothing else gives a frame that. So the report of one still finds what stands at its spot, and a frame
   carrying the keyword and holding nothing goes (`WorkshopApply::Placeable::kFrame`, `framesCleared`); one without it,
   or one holding pieces (fitted out by a player, or their own suit an earlier session took over: deleting it would
-  lose them), is left alone.
+  lose them), is left alone. The session file is not needed for it: NpcSync's frame walk (every 2 s in a session) finds
+  any such copy standing loaded (`FrameShare::Ghost`: made at runtime, the keyword, empty, nobody in it, not the frame
+  our player wears or left last, with no owner (the engine gives a frame its wearer's ownership as they get in, so one
+  our player ever used has one), no quest's, no copy of this run's, loaded) and buries it as a frame copy of ours
+  (`SaveGuard::Track`, `RemotePlayers::Discard`: disabled, deleted, kept out of saves, handed to a load that comes first;
+  `ghostsCleared` in `net status`, `paframes` shows `marked=` and `holds=`). Left standing, the host's game shared it as
+  a frame of its own (`FrameShare::SharesMade` took any created frame standing loaded), and every joiner placed a copy
+  of it beside the friend's real one, every session: one 0.9.1 ghost in the host's save was one extra suit in every
+  other game. A ghost holding pieces is shared as the player's own, since it is theirs by then.
+  Two saves with a shared past (one save, played on by both) hold the same runtime frames under the same ids at the
+  same spots, and the joiner's game placed a copy of the host's beside its own: a frame of our own, of the base, no copy
+  of ours and not a ghost, standing within `FrameShare::SAME_SPOT` (32 units; no two frames stand nearer) of where the
+  owner's game has theirs stands for it (`SpawnBook::FrameFacts::oursThere`, `NpcSync::OwnMadeFrameAt`): no copy is
+  placed, and one placed before ours stood there goes; once theirs is moved away (its owner got in and parked it
+  elsewhere) a copy stands there, and ours stays ours (`oursThere=` in `net status`).
   Why they stayed (read from disk, 1.11.240): a load frees only what has a record of changes
   (`BGSSaveLoadGame::RevertAllChanges` walks the records and lets go of each created form it finds there), and DespawnAll
   drops the record of everything of ours on its way out, so none of it was freed (deleting a created reference drops it
