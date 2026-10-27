@@ -410,12 +410,14 @@ namespace FrameLoans
 			REX::WARN("FrameLoans: our player's own items in {:08X} did not all go back to them", a_copy->GetFormID());
 		}
 
-		// A frame of ours nobody is in, gone (one the session's book of spawns no longer holds).
+		// A frame of ours nobody is in, gone (one the session's book of spawns no longer holds), as every copy of ours goes
+		// (RemotePlayers::Discard): its persistence let go of, disabled once its 3D is in, deleted a moment later and kept
+		// out of saves meanwhile. Disabled and deleted in one frame, as it was, a physics job of the frames after still
+		// handled a collision with the frame our player had just got out of (DeferredDelete). Anyone here in it after
+		// all keeps it, never left in a frame that is gone.
 		void DeleteFrame(RE::TESObjectREFR* a_frame)
 		{
-			Equipment::ReleasePowerArmorFrame(a_frame);
-			a_frame->Disable();
-			a_frame->SetDelete(true);
+			RemotePlayers::Discard(a_frame->GetHandle(), Clock::now());
 		}
 
 		// Our player out of the frame they are in: Actor.SwitchToPowerArmor with None, as a companion is sent out of a
