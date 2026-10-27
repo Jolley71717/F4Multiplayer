@@ -35,7 +35,7 @@ namespace
 		std::uint32_t Frame(Clock::time_point a_now)
 		{
 			unknown.Update(heard.on, ToldHere(), a_now);
-			switch (ChooseWornBase(heard.on, ToldHere(), unknown.Overdue(a_now), framesHere.contains(ArmorFrames::STAND_IN_FRAME))) {
+			switch (ChooseWornBase(heard.on, heard.frame != 0, ToldHere(), unknown.Overdue(a_now), framesHere.contains(ArmorFrames::STAND_IN_FRAME))) {
 			case WornBase::kTold:
 				return heard.frame;
 			case WornBase::kStandIn:
@@ -65,15 +65,20 @@ namespace
 
 TEST("stand-in frame: the frame told, a frame here, is the one; none out of power armor")
 {
-	CHECK(ChooseWornBase(true, true, false, true) == WornBase::kTold);
-	CHECK(ChooseWornBase(true, true, true, true) == WornBase::kTold);
-	CHECK(ChooseWornBase(true, true, false, false) == WornBase::kTold);
-	CHECK(ChooseWornBase(false, true, true, true) == WornBase::kNone);
-	CHECK(ChooseWornBase(false, false, true, true) == WornBase::kNone);
-	// Theirs unknown here: none for the first second of the wear, then the frame every game has, if this one has it.
-	CHECK(ChooseWornBase(true, false, false, true) == WornBase::kNone);
-	CHECK(ChooseWornBase(true, false, true, true) == WornBase::kStandIn);
-	CHECK(ChooseWornBase(true, false, true, false) == WornBase::kNone);
+	CHECK(ChooseWornBase(true, true, true, false, true) == WornBase::kTold);
+	CHECK(ChooseWornBase(true, true, true, true, true) == WornBase::kTold);
+	CHECK(ChooseWornBase(true, true, true, false, false) == WornBase::kTold);
+	CHECK(ChooseWornBase(false, true, true, true, true) == WornBase::kNone);
+	CHECK(ChooseWornBase(false, true, false, true, true) == WornBase::kNone);
+	CHECK(ChooseWornBase(false, false, false, true, true) == WornBase::kNone);
+	// None named: none for the first second of the wear, then the frame every game has, if this one has it.
+	CHECK(ChooseWornBase(true, false, false, false, true) == WornBase::kNone);
+	CHECK(ChooseWornBase(true, false, false, true, true) == WornBase::kStandIn);
+	CHECK(ChooseWornBase(true, false, false, true, false) == WornBase::kNone);
+	// One named that is none here: the frame every game has at once, if this one has it (no wait makes theirs one).
+	CHECK(ChooseWornBase(true, true, false, false, true) == WornBase::kStandIn);
+	CHECK(ChooseWornBase(true, true, false, true, true) == WornBase::kStandIn);
+	CHECK(ChooseWornBase(true, true, false, false, false) == WornBase::kNone);
 }
 
 TEST("stand-in frame: the frame is overdue a second into a wear with it unknown, and starts over once it is known or they are out")
@@ -123,9 +128,11 @@ TEST("stand-in frame: a friend in power armor whose frame is none, or one this g
 	for (const auto told : { 0u, PLUGIN_FRAME }) {
 		Friend bob;
 		bob.Status(true, told);
-		// The first second: the next status of a wear names its frame, and nothing is placed meanwhile.
-		CHECK(bob.Frame(t0) == 0u);
-		CHECK(bob.Frame(t0 + 500ms) == 0u);
+		// None named: the first second, as the next status of a wear names its frame, nothing is placed. One named that
+		// this game lacks never becomes one here: the frame every game has at once.
+		const auto first = told == 0 ? 0u : ArmorFrames::STAND_IN_FRAME;
+		CHECK(bob.Frame(t0) == first);
+		CHECK(bob.Frame(t0 + 500ms) == first);
 		// Then the frame every game has. Before, their stand-in wore the clothes under their suit until they got out and
 		// in again.
 		CHECK(bob.Frame(t0 + 1s) == ArmorFrames::STAND_IN_FRAME);
@@ -166,12 +173,37 @@ TEST("stand-in frame: a frame from a plugin this game lacks, told while out of t
 	bob.Status(false, 0);
 	CHECK(bob.heard.frame == PLUGIN_FRAME);
 	bob.Status(true, 0);
-	CHECK(bob.Frame(t0) == 0u);
+	CHECK(bob.Frame(t0) == ArmorFrames::STAND_IN_FRAME);
 	CHECK(bob.Frame(t0 + 1s) == ArmorFrames::STAND_IN_FRAME);
+	// The next status names a frame here: it takes over.
+	bob.Status(true, VANILLA_FRAME);
+	CHECK(bob.Frame(t0 + 1200ms) == VANILLA_FRAME);
 	// A game without that frame either (a mod made it no frame): none, as before.
 	Friend bare;
 	bare.framesHere = { VANILLA_FRAME };
 	bare.Status(true, PLUGIN_FRAME);
 	CHECK(bare.Frame(t0) == 0u);
 	CHECK(bare.Frame(t0 + 5s) == 0u);
+}
+
+TEST("stand-in frame: a friend who got out of a frame here and into one this game lacks is never shown out of their armor in between")
+{
+	// Their last wear was in a frame here, kept into the next one (Hear), whose first status names none: the stand-in
+	// goes on with that one. Their next status names a frame from a plugin this game lacks.
+	Friend bob;
+	const auto t0 = Clock::now();
+	bob.Status(true, VANILLA_FRAME);
+	CHECK(bob.Frame(t0) == VANILLA_FRAME);
+	bob.Status(false, 0);
+	CHECK(bob.Frame(t0 + 10s) == 0u);
+	bob.Status(true, 0);
+	CHECK(bob.Frame(t0 + 20s) == VANILLA_FRAME);
+	bob.Status(true, PLUGIN_FRAME);
+	// Waiting a second on it, the stand-in was out of its armor for that second, and the copy of the kept frame drawn
+	// at it as they got "out" (ChooseCopy's kShow), an empty suit.
+	for (const auto at : { 20250ms, 20500ms, 21000ms, 25000ms }) {
+		CHECK(bob.Frame(t0 + at) == ArmorFrames::STAND_IN_FRAME);
+	}
+	// The copy of the kept frame, not in it yet, is another base: placed again, never shown.
+	CHECK(ArmorFrames::ChooseCopy({ .worn = true, .exists = true, .loaded = true, .samePlace = true, .sincePlaced = 250ms, .sameBase = false }) == ArmorFrames::Copy::kReplace);
 }

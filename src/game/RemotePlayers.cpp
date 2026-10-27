@@ -1030,14 +1030,15 @@ namespace RemotePlayers
 			return Equipment::IsPowerArmorFrame(base) ? base : nullptr;
 		}
 
-		// The frame their stand-in goes into while they are in power armor: the one they told, or, theirs unknown here a
-		// while, a frame every game has, so that it is never shown out of their suit for want of one (ArmorFrames::
-		// ChooseWornBase). Their frameUnknown is updated each frame (Update) before anything here asks.
+		// The frame their stand-in goes into while they are in power armor: the one they told, or, theirs none here (named,
+		// or none named a while), a frame every game has, so that it is never shown out of their suit for want of one
+		// (ArmorFrames::ChooseWornBase). Their frameUnknown is updated each frame (Update) before anything here asks.
 		RE::TESFurniture* WornFrame(const RemotePlayer& a_player)
 		{
 			const auto told = ToldFrame(a_player);
 			const auto standIn = RE::TESForm::GetFormByID<RE::TESFurniture>(ArmorFrames::STAND_IN_FRAME);
-			switch (ArmorFrames::ChooseWornBase(a_player.powerArmorOn, told != nullptr, a_player.frameUnknown.Overdue(Clock::now()), Equipment::IsPowerArmorFrame(standIn))) {
+			switch (ArmorFrames::ChooseWornBase(a_player.powerArmorOn, a_player.powerArmorFrame != 0, told != nullptr, a_player.frameUnknown.Overdue(Clock::now()),
+				Equipment::IsPowerArmorFrame(standIn))) {
 			case ArmorFrames::WornBase::kTold:
 				return told;
 			case ArmorFrames::WornBase::kStandIn:
@@ -1585,7 +1586,12 @@ namespace RemotePlayers
 		void LeaveArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			const auto  frame = Equipment::PowerArmorFrameOf(a_actor);
-			const auto  base = frame ? frame->GetObjectReference() : nullptr;
+			// The frame they got out of: theirs when it is a frame here, else the one the stand-in is in. It can be another:
+			// the frame that stood in while theirs was none here (ArmorFrames::STAND_IN_FRAME), or the one kept from their
+			// last wear (ArmorFrames::Hear), with theirs named only once the stand-in was in. A copy of that one left here
+			// stood as a second empty suit beside the copy of theirs placed where their frame stands (UpdateParked).
+			const auto  told = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
+			RE::TESBoundObject* const base = Equipment::IsPowerArmorFrame(told) ? told : frame ? frame->GetObjectReference() : nullptr;
 			const auto  at = a_actor->data.location;
 			const float heading = a_actor->data.angle.z;
 			REX::INFO("RemotePlayers: player {} got out of their power armor; stand-in {:08X} goes with its frame {:08X}, a copy is left where it stood", a_player.id, a_actor->GetFormID(), frame ? frame->GetFormID() : 0);

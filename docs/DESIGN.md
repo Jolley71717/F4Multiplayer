@@ -1444,8 +1444,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   (only a power armor frame: furniture with the engine's power armor furniture keyword) under it,
   placed at once, hidden and without collision from the moment its 3D is in, and moved along with
   the stand-in (placed again if it is in another place, over 256 units off or without 3D after
-  10 s). A friend in power armor whose frame is still not one here a second into the wear (they named none,
-  or one from a plugin this game lacks) has a copy of a frame every game has placed instead, the museum
+  10 s). A friend in power armor who names a frame from a plugin this game lacks, or still names none a second
+  into the wear, has a copy of a frame every game has placed instead, the museum
   T-45's base (`ArmorFrames::ChooseWornBase`, `STAND_IN_FRAME`): what a stand-in wears goes by the frame the
   engine has it in, and with no copy to get into it wore the clothes under their suit, out of it, until they
   got out and in again. Worn, a frame's base shows nothing of its own; one they name later takes over as any
