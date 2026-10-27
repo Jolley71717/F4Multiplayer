@@ -44,6 +44,34 @@
 // repeated stages), so a stage set while the player was elsewhere would leave the wall gone and the door shut for
 // good. Not over a stage done here already (the player opened it, or the session's stage came twice), nor while the
 // quest doesn't run here (setting it would start the quest over). Kept free of the game so it can be tested.
+//
+// The same list shares the Prydwen (2026-10-27, a Nexus report on 0.9.2: a friend didn't see it arrive though both
+// left the place together). Read off Fallout4.esm and its scripts: the airship's arrival is the story's. Out of
+// Time's 130 (set when "Sanctuary" starts, Min01's 0, Preston's talk after the museum fight) enables a flyover
+// effect (MQ201FXPrydFlyoverRef 0019537C, persistent, full LOD, parked in the sky far west), whose script
+// (FXPrydwenFlyoverScript) plays once its 3D loads, flies the airship across the Commonwealth to Boston Airport
+// over some minutes, and at the end of the flight (or when the effect unloads, the player waits or travels) sets
+// BoSEnable's 15, which enables the airship moored at the airport (BoSPrydwen 00184FD9, a persistent, initially
+// disabled marker whose enable-parent children are the moored airship's parts, perches and markers), then disables
+// itself. With a shared story a friend's game sets Out of Time's 130 too (QuestSync) and plays its own flyover once
+// its player is outdoors; with each player's own story it doesn't; and either way the moored airship appears in a
+// game only when that game's own flight ends. So BoSEnable's 15 is shared here: BoSEnable is start-game-enabled and
+// internal (type 0, no objectives, never QuestSync's), 15 does nothing but enable the marker, and a persistent
+// marker is enabled from anywhere (Door::loaded false: no wait for it to load, no settle). A friend whose story is
+// behind sees the airship moored before their own Brotherhood quests, as the game itself orders it: the flyover
+// follows Concord, long before Shadow of Steel (BoS201), whose scene and vertibird ride take the airship as there
+// already; no script reads BoSEnable's stages (every script naming it sets them: the Brotherhood's, the Institute's
+// and the Railroad's quests, the destruction script's 200; DN165Exterior's fragment asks only whether it runs), the
+// marker is held only by its own 15 (enabled), RR304's fragment (enabled) and PrydwenDestructionScript (disabled),
+// and the only conditions on BoSEnable are Liberty Prime's scribes' packages, which read its stage for Prime's 20
+// to 40 (every pex and every record of the plugins, read again at review). Their own flight later sets 15 again,
+// which BoSEnable (no repeated stages) ignores. A game whose own flyover is in the air (the effect enabled, with
+// its 3D: Door::effect, Look::busy) waits for it instead: its script sets 15 itself at the end of the flight, or
+// when the player waits, travels or goes indoors, and set sooner the moored airship would stand at the airport
+// while the flying one is still crossing (both players leaving Concord together, the report's case). The flyover
+// itself isn't shared: it is Out of Time's (its 130 also sends Preston's group off to Sanctuary), and the effect
+// plays only once in a game (its script never resets): enabled again after its flight it would hang, in full LOD,
+// where it stopped over the airport.
 namespace ScriptDoors
 {
 	using Clock = std::chrono::steady_clock;
@@ -55,6 +83,9 @@ namespace ScriptDoors
 		std::uint16_t    stage;  // the stage that opens the door
 		std::uint32_t    door;   // the door the stage opens, its form ID in that file: the stage waits for it to load
 		std::string_view what;   // which door, for the log
+		std::string_view state;  // what the stage leaves it as, for the log ("open")
+		bool             loaded = true;  // the stage animates it: set only once it is loaded (an enable needs no 3D)
+		std::uint32_t    effect = 0;     // a reference whose loaded 3D means this game's own script is on its way to the stage (the flyover in the air): the session's stage waits for it
 	};
 
 	// Fallout4.esm's DN142 (Vault 114) 50: Fragment_Stage_0050 calls DN142QuestScript::OpenGearDoor, which plays
@@ -65,7 +96,11 @@ namespace ScriptDoors
 	// lever's animation, each player's own, which WorldSync logs as opened by a script (a FURN, not a door). DN142 is
 	// start-game-enabled (DNAM 0x0111), so it runs in every game from the start and the stage can be set in any.
 	inline constexpr std::array DOORS{
-		Door{ "Fallout4.esm", 0x0013B747, 50, 0x000B25D1, "Vault 114's gear door" },
+		Door{ "Fallout4.esm", 0x0013B747, 50, 0x000B25D1, "Vault 114's gear door", "open" },
+		// BoSEnable (001851A0) 15: Fragment_Stage_0015 enables BoSPrydwen (00184FD9), the marker whose children are the
+		// airship moored at Boston Airport, and nothing else (see above). Set by the flyover effect's script
+		// (MQ201FXPrydFlyoverRef 0019537C) at the end of its flight: while that effect is in the air here, waited for.
+		Door{ "Fallout4.esm", 0x001851A0, 15, 0x00184FD9, "the Prydwen", "moored at Boston Airport", false, 0x0019537C },
 	};
 
 	// The door a quest's stage opens (by the IDs as this game has them: a_quests[i] is DOORS[i]'s quest), if it is one.
@@ -86,6 +121,7 @@ namespace ScriptDoors
 		bool done = false;        // the stage is done here
 		bool doorLoaded = false;  // the door is loaded (has its 3D), so its open animation plays
 		bool canApply = false;    // in the world, out of the opening, no menu pausing scripts
+		bool busy = false;        // this game's own script is on its way to the stage (Door::effect enabled and loaded): it sets it itself
 	};
 
 	enum class Act
@@ -93,6 +129,7 @@ namespace ScriptDoors
 		kNone,
 		kReport,  // done here, by this game's player: tell the session
 		kSet,     // the session's stage: set it here now
+		kHold,    // the session's stage, but this game's own script is about to set it (Look::busy): waiting, said once
 		kGiveUp,  // set here, and still not done after TIMEOUT: left alone
 	};
 
@@ -134,6 +171,7 @@ namespace ScriptDoors
 			const bool reportOpen = std::exchange(door.reportOpen, false);
 			if (a_look.done) {
 				door.pending = false;
+				door.held = false;
 				door.setAt.reset();
 				door.loadedSince.reset();
 				// One this game set is the session's already.
@@ -150,18 +188,28 @@ namespace ScriptDoors
 				door.setAt.reset();
 				return Act::kGiveUp;
 			}
-			if (!a_look.running || !a_look.canApply || !a_look.doorLoaded) {
+			if (!a_look.running || !a_look.canApply || (DOORS[a_door].loaded && !a_look.doorLoaded)) {
 				door.loadedSince.reset();
 				return Act::kNone;
 			}
-			if (!door.loadedSince) {
-				door.loadedSince = a_now;
+			// This game's own script is on its way to the stage (the flyover in the air): it sets it itself, within
+			// minutes or at the player's next wait, travel or door. Said once.
+			if (a_look.busy) {
+				door.loadedSince.reset();
+				return std::exchange(door.held, true) ? Act::kNone : Act::kHold;
 			}
-			if (a_now - *door.loadedSince < SETTLE) {
-				return Act::kNone;
+			// One that needs no 3D (the Prydwen's enable) is set at once.
+			if (DOORS[a_door].loaded) {
+				if (!door.loadedSince) {
+					door.loadedSince = a_now;
+				}
+				if (a_now - *door.loadedSince < SETTLE) {
+					return Act::kNone;
+				}
 			}
 			door.setAt = a_now;
 			door.setHere = true;
+			door.held = false;
 			return Act::kSet;
 		}
 
@@ -187,6 +235,7 @@ namespace ScriptDoors
 			bool                             pending = false;
 			bool                             reportOpen = false;
 			bool                             setHere = false;  // this game set it as the session's
+			bool                             held = false;     // waiting for this game's own script (Look::busy), logged
 			std::optional<Clock::time_point> loadedSince;
 			std::optional<Clock::time_point> setAt;
 		};
