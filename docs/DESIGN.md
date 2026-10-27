@@ -1295,7 +1295,10 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   (WorldSync's retry, as references load and as the player changes cell), however far from where its save had it, but
   not while anyone moves it; a friend's live rest for an object it doesn't
   have loaded waits the same way (at most 4096 waiting; a flood of those drops the rests waiting of the friend with the
-  most, the flooder, never the catch-ups or anyone else's). So a friend who loads the cell later, and every save loaded later, has the object
+  most, the flooder, never the catch-ups or anyone else's). While a place waits, our copy still lies where our save had
+  it, so a friend's hold, let-go or rest of that object is judged from the waiting place as well as from our copy
+  (`ObjectShare::FromWhereItLies`: their move starts where the session has it), and a move our game doesn't apply leaves
+  the place waiting, or their rest when it is too far even from the place (`StillWaiting`; a hold ends the wait once it is drawn here). So a friend who loads the cell later, and every save loaded later, has the object
   where it was left. No new message (an older game takes a catch-up as a rest, if the object is loaded then). A known
   limit: a reference moved this way keeps its parent cell, as one a friend carried across a cell border does.
 - Knocked about by NPCs and blasts: the same scan also reports an object that came to rest after an NPC our game runs
