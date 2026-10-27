@@ -14,6 +14,8 @@
 // the session may ever do the same). The one exception is the player's own act put right: a take or put of theirs at a
 // friend's shared storage that the server refused, or a take the host's chest held less of, is undone (Change::kStorageUndo,
 // never on anything but our player, and only for a StorageView::PlayerChange, which only StorageView::Client makes).
+// The other is the player's take of a gift from a container (Change::kGiftTake, GiftBook.h): what they took is held back from
+// their inventory until the server grants it, then given, or taken out again if a friend's take came first.
 // A move our loaded world lacks is put right in the true copy by the server, never on our player.
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
@@ -36,6 +38,14 @@ namespace OwnGear
 		// did themselves, put right. Nothing else goes to them (a friend's copy's own things are set aside in the copy while it
 		// shows the true one, never moved to the player).
 		kStorageUndo,
+		// Gifts (GiftBook.h, the host's bContainerGifts): a copy of a weapon or armor given through a container, put in or taken out
+		// of this game's own copy of that container, and the giver's own item taken out of it as it is given. A container's
+		// inventory only: never an actor's, never our player's.
+		kGiftCopy,
+		// Our player's own take of a gift: the item they took held back from their inventory until the server's answer, given
+		// them when it is theirs, or taken out again when a friend's take came first. Only ever our player, and only ever what
+		// they took themselves (GiftBook::Client makes it).
+		kGiftTake,
 		kCount,
 	};
 
@@ -51,6 +61,7 @@ namespace OwnGear
 		bool inWorld = true;         // in a cell: a reference an inventory holds (a persistent one, picked up) has none
 		bool heldByPlayer = false;   // in no cell, and the engine names the local player as the inventory that holds it
 		bool heldHere = false;       // in no cell, and the engine names another inventory here as its holder (a container's, an NPC's)
+		bool container = false;      // a container's reference (its base is one), not an actor
 	};
 
 	enum class Verdict : std::uint8_t
@@ -73,7 +84,7 @@ namespace OwnGear
 			return Verdict::kGone;
 		}
 		if (a_target.player) {
-			return a_change == Change::kStorageUndo ? Verdict::kGo : Verdict::kOurPlayer;
+			return a_change == Change::kStorageUndo || a_change == Change::kGiftTake ? Verdict::kGo : Verdict::kOurPlayer;
 		}
 		switch (a_change) {
 		case Change::kDressStandIn:
@@ -105,6 +116,10 @@ namespace OwnGear
 			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kStorageUndo:
 			return Verdict::kWrongActor;  // only ever our player
+		case Change::kGiftCopy:
+			return a_target.container && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kWrongActor;
+		case Change::kGiftTake:
+			return Verdict::kWrongActor;  // only ever our player
 		case Change::kCount:
 			break;
 		}
@@ -128,6 +143,10 @@ namespace OwnGear
 			return "dropCopy";
 		case Change::kStorageUndo:
 			return "storageUndo";
+		case Change::kGiftCopy:
+			return "giftCopy";
+		case Change::kGiftTake:
+			return "giftTake";
 		case Change::kCount:
 			break;
 		}

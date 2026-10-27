@@ -8,7 +8,7 @@ namespace
 	using OwnGear::Target;
 	using OwnGear::Verdict;
 
-	constexpr Change ALL[] = { Change::kDressStandIn, Change::kDressCopy, Change::kEmptyFrame, Change::kTakeLoose, Change::kContainer, Change::kDropCopy };
+	constexpr Change ALL[] = { Change::kDressStandIn, Change::kDressCopy, Change::kEmptyFrame, Change::kTakeLoose, Change::kContainer, Change::kDropCopy, Change::kGiftCopy };
 
 	Target Player()
 	{
@@ -201,6 +201,29 @@ TEST("own gear: a refused move at a friend's shared storage is put right on our 
 	CHECK(OwnGear::Judge(Change::kStorageUndo, gone) == Verdict::kGone);
 	CHECK(OwnGear::Name(Change::kStorageUndo) == "storageUndo");
 	// Every other change still never touches our player.
+	for (const auto change : ALL) {
+		CHECK(OwnGear::Judge(change, Player()) == Verdict::kOurPlayer);
+	}
+}
+
+TEST("own gear: a gift's copy goes in and out of a container only, and our player's take of one is the one change to them")
+{
+	Target chest;
+	chest.container = true;
+	CHECK(OwnGear::Judge(Change::kGiftCopy, chest) == Verdict::kGo);
+	CHECK(OwnGear::Judge(Change::kGiftCopy, Target{}) == Verdict::kWrongActor);  // an NPC's inventory, or anything not a container
+	CHECK(OwnGear::Judge(Change::kGiftCopy, StandIn()) == Verdict::kWrongActor);
+	CHECK(OwnGear::Judge(Change::kGiftCopy, Mirrored()) == Verdict::kWrongActor);
+	auto odd = chest;
+	odd.standIn = true;
+	CHECK(OwnGear::Judge(Change::kGiftCopy, odd) == Verdict::kWrongActor);
+	CHECK(OwnGear::Judge(Change::kGiftCopy, Player()) == Verdict::kOurPlayer);
+	CHECK(OwnGear::Judge(Change::kGiftTake, Player()) == Verdict::kGo);
+	CHECK(OwnGear::Judge(Change::kGiftTake, chest) == Verdict::kWrongActor);
+	CHECK(OwnGear::Judge(Change::kGiftTake, StandIn()) == Verdict::kWrongActor);
+	CHECK(OwnGear::Judge(Change::kGiftTake, Mirrored()) == Verdict::kWrongActor);
+	CHECK(OwnGear::Name(Change::kGiftCopy) == "giftCopy");
+	CHECK(OwnGear::Name(Change::kGiftTake) == "giftTake");
 	for (const auto change : ALL) {
 		CHECK(OwnGear::Judge(change, Player()) == Verdict::kOurPlayer);
 	}

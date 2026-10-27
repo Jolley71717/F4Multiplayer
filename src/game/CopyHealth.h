@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -19,7 +20,15 @@
 // (CopyWatch, each frame). A drop is judged only once it has stood for JUDGE_AFTER, so that our hit, whose event can
 // come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed) is
 // given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
-// passed by: BlastShield). Health a report sets, or a copy gains, is where it stands from then on.
+// passed by: BlastShield). Health a report sets is where it stands from then on.
+//
+// Health a copy gains with no report behind it is taken back the same way (Check returns it as less than nothing): a
+// copy's health is its own game's, never ours. Each game rolls a leveled NPC on its own as it first loads, and the
+// owner's roll is written onto our copy for its next load only (Rolls::Apply: an NPC the engine has made is not made
+// again in place), so a copy can be legendary here and plain in the game that runs it. Its legendary mutation healed
+// it to full at half health; that was taken as where it stood and never sent, so the player who hit it saw their hit
+// heal it, while the NPC itself stayed at half. A copy whose maximum changes (our level set to the owner's, Rolls) keeps
+// the share of it that it stood at: the owner's reports are shares of the maximum too (WorldSync's kActorHealth).
 //
 // What our hits take off a copy is booked (TakeOurs) and sent as damage (kReportDamage), which the game that runs the NPC
 // takes off its own health; that game then shares where its health stands (HealthShare). A report of the copy's health
@@ -35,6 +44,8 @@ namespace CopyHealth
 	constexpr Clock::duration OURS_GRACE = std::chrono::milliseconds{ 1000 };
 	constexpr Clock::duration JUDGE_AFTER = std::chrono::milliseconds{ 100 };
 	constexpr float           SLACK = 0.05f;      // smaller drops are rounding
+	constexpr float           RAISE_SHARE = 0.01f;  // of the maximum: a smaller gain is left until it adds up to one
+	constexpr float           MIN_LEFT = 1.0f;    // a gain taken back never leaves the copy with less (it would die here)
 	constexpr std::size_t     MAX_COPIES = 1024;  // copies watched at once (a guard)
 
 	// What struck a hit (or a killing blow), as our game knows it on the main thread a frame later.
@@ -209,20 +220,37 @@ namespace CopyHealth
 			if (auto it = entries.find(a_id); it != entries.end()) {
 				it->second.health = a_health;
 				it->second.dropSince.reset();
+				it->second.raiseSince.reset();
 			} else if (entries.size() < MAX_COPIES) {
 				entries[a_id] = Entry{ .health = a_health };
 			}
 		}
 
-		// The copy reads a_health now: how much to give back (0: none, or not yet). After giving it back, Set what it reads.
-		float Check(std::uint32_t a_id, float a_health, Clock::time_point a_now)
+		// The copy reads a_health now, of a_maximum at most (0: not known): how much to give back (0: none, or not yet),
+		// or, below 0, how much of a gain no report gave it to take back. After either, Set what it reads.
+		float Check(std::uint32_t a_id, float a_health, Clock::time_point a_now, float a_maximum = 0.0f)
 		{
 			auto it = entries.find(a_id);
 			if (it == entries.end() || !it->second.health) {
 				Set(a_id, a_health);
+				if (const auto found = entries.find(a_id); found != entries.end() && a_maximum > 0.0f) {
+					found->second.maximum = a_maximum;
+				}
 				return 0.0f;
 			}
 			auto& entry = it->second;
+			// A new maximum (our level set to the owner's: Rolls) moves its health with it, the engine's reading as well as
+			// where it stands: the same share of it.
+			if (a_maximum > 0.0f) {
+				if (entry.maximum > 0.0f && std::abs(a_maximum - entry.maximum) > SLACK) {
+					const float scale = a_maximum / entry.maximum;
+					*entry.health *= scale;
+					if (entry.held) {
+						*entry.held *= scale;
+					}
+				}
+				entry.maximum = a_maximum;
+			}
 			// A report held while our hits landed (Heard) stands once they are over: by then the owner's next report would
 			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged, nor on
 			// a fresh drop: either may be ours to send yet (a hit's event can come a frame after its damage).
@@ -233,9 +261,48 @@ namespace CopyHealth
 					entry.dropSince.reset();
 					return held - a_health;
 				}
+				// The copy is at the report's health already, or past it (its own heal got there first): the report's is
+				// where it stands, and only what it has beyond that is a gain of its own (below). Left at what it stood at
+				// before the report, the gain was taken back to that, below the owner's health until its next report.
+				entry.health = held;
 			}
+			// A gain no report gave it (a report Sets where it stands first): the copy's own, of something in our world
+			// alone: a legendary mutation of a copy that is legendary only here (the owner's roll is ours from its next
+			// load on), a heal no other game saw. Taken back once it has stood JUDGE_AFTER (as a drop is judged; and a new
+			// maximum, which moves the health with it above, can come a frame after the health), all of it but MIN_LEFT;
+			// what follows comes from the owner's reports. A small gain is not followed: one that creeps up a little at a
+			// time is taken back once it adds up to RAISE_SHARE of the maximum.
+			if (a_health > *entry.health + RaiseSlack(entry)) {
+				entry.dropSince.reset();
+				if (!entry.raiseSince) {
+					entry.raiseSince = a_now;
+					entry.peak = a_health;
+				}
+				entry.peak = (std::max)(entry.peak, a_health);
+				if (a_now - *entry.raiseSince < JUDGE_AFTER) {
+					return 0.0f;
+				}
+				entry.raiseSince.reset();
+				// What it fell from the most it read, with a hit of ours around, is ours as any drop is (TakeOurs): the hit
+				// landed on the gained health. Else a shot in the tenth of a second after the mutation was taken back with
+				// the heal, and never reached the NPC's game.
+				if (const float fell = entry.peak - a_health; fell > SLACK && entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now) {
+					const float take = Unknown(entry) ? fell : (std::min)(fell, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
+					entry.ours += take;
+					entry.unacked += take;
+					*entry.health -= take;
+				}
+				const float to = (std::max)(*entry.health, MIN_LEFT);
+				if (to >= a_health - SLACK) {
+					entry.health = a_health;
+					return 0.0f;
+				}
+				return to - a_health;
+			}
+			entry.raiseSince.reset();
 			if (a_health >= *entry.health - SLACK) {
-				entry.health = a_health;
+				entry.health = (std::min)(*entry.health, a_health);
 				entry.dropSince.reset();
 				return 0.0f;
 			}
@@ -320,6 +387,7 @@ namespace CopyHealth
 			}
 			entry.health = health;
 			entry.dropSince.reset();
+			entry.raiseSince.reset();  // a report is where it stands: no gain of its own is pending
 			return health;
 		}
 
@@ -370,7 +438,13 @@ namespace CopyHealth
 			bool                             figured = false;  // ... and one of them said what it took
 			float                            unacked = 0.0f;  // taken by hits of ours that the owner's reports may not have yet
 			std::optional<float>             held;  // a report's health not set yet (Heard)
+			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
+			float                            peak = 0.0f;     // ... and the most it has read since then
+			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
 		};
+
+		// A gain smaller than this is not taken back (yet).
+		static float RaiseSlack(const Entry& a_entry) { return (std::max)(SLACK, RAISE_SHARE * a_entry.maximum); }
 
 		// Our hits around the drop said nothing of what they took: all of it is ours. Not when one of them did: a hit event
 		// with no figure beside one with (a legendary's effect riding along with the shot, a blocked blow) adds nothing, so

@@ -26,8 +26,10 @@
 //
 // A new drop is an offer at first, to its dropper's game alone: it lies there for the others only once that game says it
 // has swapped the item it dropped for a copy (Confirm), so nobody can take an item that is still in its dropper's world.
-// An offer is never taken, listed or saved, and goes when its dropper leaves (DropOffers) or picked the item up again
-// (Keep).
+// An offer is never taken or listed, and goes when its dropper picked the item up again (Keep), or leaves (DropOffers): a
+// loose drop's then, as its dropper's game gives the item back to its world as it leaves. A gift's (a drop put in a
+// container, holder set: src/game/GiftBook.h) waits for its giver's next record instead, and is saved with the session:
+// their game gives nothing back on a link that went, so only its record says whether the item left its world.
 //
 // Kept free of the server's loop so it can be tested; saved with the session (SessionFile).
 class DropStore
@@ -126,10 +128,12 @@ public:
 		return true;
 	}
 
-	// a_owner left: their offers go (their game never swapped those items out, as far as anyone knows).
+	// a_owner left: their loose drops' offers go (their game gives those items back to its world as it leaves). Their gifts'
+	// offers stay for their next record to settle (Reconcile): their game may have taken the item out of its world before
+	// the link went, and gives nothing back.
 	std::size_t DropOffers(std::uint32_t a_owner)
 	{
-		return static_cast<std::size_t>(std::erase_if(offers, [&](const auto& a_entry) { return a_entry.second.ownerId == a_owner; }));
+		return static_cast<std::size_t>(std::erase_if(offers, [&](const auto& a_entry) { return a_entry.second.ownerId == a_owner && a_entry.second.holder == 0; }));
 	}
 
 	// a_player's game asks to take the item: granted while it lies there, to whoever asks first (never an offer).
@@ -223,10 +227,18 @@ public:
 		return out;
 	}
 
-	// Everything kept, for the session file: what lies there, and what was taken (takerId set).
+	// Everything kept, for the session file: what lies there, what was taken (takerId set), and the gifts' offers (takerId
+	// Protocol::DROP_OFFERED).
 	[[nodiscard]] std::vector<Protocol::DroppedItem> All() const
 	{
 		auto out = Lying();
+		for (const auto& [id, drop] : offers) {
+			if (drop.holder != 0) {
+				auto offer = drop;
+				offer.takerId = Protocol::DROP_OFFERED;
+				out.push_back(std::move(offer));
+			}
+		}
 		for (const auto& [id, drop] : taken) {
 			out.push_back(drop);
 		}
@@ -240,7 +252,14 @@ public:
 			return;
 		}
 		nextId = (std::max)(nextId, a_drop.dropId + 1);
-		if (a_drop.takerId != 0) {
+		if (a_drop.takerId == Protocol::DROP_OFFERED) {
+			// A gift's offer: its giver's next record settles it (a loose drop's is never saved).
+			if (a_drop.holder != 0 && a_drop.ownerId != 0 && lying.size() + offers.size() < limits.lying) {
+				auto offer = a_drop;
+				offer.takerId = 0;
+				offers[offer.dropId] = std::move(offer);
+			}
+		} else if (a_drop.takerId != 0) {
 			Remember(a_drop);
 		} else if (lying.size() < limits.lying) {
 			lying[a_drop.dropId] = a_drop;

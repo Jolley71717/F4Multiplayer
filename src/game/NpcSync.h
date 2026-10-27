@@ -100,6 +100,11 @@ namespace NpcSync
 	// Whether an actor of ours (not our player) is in this power armor frame.
 	[[nodiscard]] bool InFrame(const RE::TESObjectREFR* a_frame);
 
+	// Whether a frame our own game made (no copy of ours, nor one on its way out), of base a_base, stands within a_radius
+	// of a_spot, as the last frame walk found it standing loaded: it stands for a friend's frame their game has there
+	// (FrameShare::SAME_SPOT, Spawns' copies).
+	[[nodiscard]] bool OwnMadeFrameAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot, float a_radius);
+
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted); for a power
 	// armor frame, who runs it and where ours stands.
 	std::string DescribeMirror(std::uint32_t a_refId);
