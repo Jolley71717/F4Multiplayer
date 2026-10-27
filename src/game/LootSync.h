@@ -144,6 +144,7 @@ namespace LootSync
 			std::uint32_t emptiedApplied = 0;  // other players' emptied holders emptied here
 			std::uint32_t emptiedStacks = 0;   // stacks those took out of our world
 			std::uint32_t emptiedKept = 0;     // items those left: the session put them in and nobody took them out since
+			std::uint32_t emptiedOwn = 0;      // stacks those left: our copy's own (no friend took that item from the holder)
 			std::uint32_t storageKept = 0;     // the player's moves at storage another game keeps, made with no view of it (their copy's own)
 			std::uint32_t storageSkipped = 0;  // other players' changes to storage another game keeps, not shown here (no view of it)
 			std::uint32_t storageOverflow = 0; // the player's moves at a friend's storage undone unsent (too many unanswered)
@@ -154,8 +155,8 @@ namespace LootSync
 		// The player's moves since the last frame (or, before a save or a load, the frame that didn't come):
 		// those that are the session's, encoded to go to the server in order. A holder the player took the
 		// session's things from and that has none of them left goes out emptied after them (CONTAINER_EMPTIED):
-		// each game rolls a chest's and an NPC's leveled loot on its own, so taking the same items leaves a friend's
-		// copy holding its own roll.
+		// each game rolls a chest's and an NPC's leveled loot on its own, so taking the same items can leave a friend's
+		// copy holding more of them than ours did (TryEmpty says what a friend's copy gives up).
 		std::vector<std::vector<std::uint8_t>> Report(std::span<const Move> a_moves, World& a_world)
 		{
 			std::vector<std::vector<std::uint8_t>> packets;
@@ -177,8 +178,8 @@ namespace LootSync
 				if (scope != LootScope::Scope::kShared) {
 					++counts.keptSent[static_cast<std::size_t>(scope)];
 					// A weapon, a key or a note taken from a chest or corpse that holds nothing else the session shares leaves it
-					// bare too (its own take isn't reported): a friend's copy still holds its own roll of junk. Once told, not
-					// again for each gun taken after (told: until something shared is put back in it).
+					// bare too (its own take isn't reported): a friend's copy may still hold more of what was taken from it before
+					// (TryEmpty). Once told, not again for each gun taken after (told: until something shared is put back in it).
 					if (direction == LootScope::Direction::kTake && (scope == LootScope::Scope::kPersonal || scope == LootScope::Scope::kWeaponArmor) &&
 						LootScope::Of(holder, { .kind = LootScope::Item::kMisc }, direction) == LootScope::Scope::kShared && !toldBare.contains(move.holder) &&
 						std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
@@ -236,6 +237,7 @@ namespace LootSync
 			if (receiver.OnWelcome(a_session, a_localId)) {
 				pending.clear();  // a different session: none of its changes are in our world yet
 				sessionPut.clear();
+				friendTook.clear();
 			}
 		}
 
@@ -251,6 +253,7 @@ namespace LootSync
 		{
 			toldBare.clear();  // the world is the save's: a chest looted bare since may hold its things again
 			sessionPut.clear();
+			friendTook.clear();
 			receiver.Load(a_session, a_next);
 			pending = std::move(a_pending);
 			// In session order, whatever order the record holds them in: a container's changes go in in that order.
@@ -264,6 +267,7 @@ namespace LootSync
 		{
 			toldBare.clear();
 			sessionPut.clear();
+			friendTook.clear();
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
 			}
@@ -499,11 +503,15 @@ namespace LootSync
 			});
 		}
 
-		// Another player emptied a holder of what the session shares: ours gives up every such stack its own roll put
-		// there. Weapons, armor, keys, notes, quest items stay, as they would for a take of each, and so does what the
-		// session put in and nobody has taken since (a friend's put the sender hadn't seen yet: the server may order it
-		// first, and the sender's copy gets it after). A container that keeps things (a home's, a settlement's) is left
-		// alone: our copy may hold our player's stash, which the friend never saw.
+		// Another player emptied a holder of what the session shares. Their takes went in before this, as many of each item
+		// as they took; ours gives up the rest of each item a friend took from it (our roll had more of that than theirs: the
+		// holder is bare of it in their game now), and nothing else. What no friend took from it is our copy's own and stays:
+		// what our game's roll put there that theirs didn't, an item only a mod of ours adds, what our player put in where
+		// the session didn't see it (alone, before a join). Taking every item thus leaves a friend's copy as taking all but one
+		// does, but for those leftovers. Weapons, armor, keys, notes, quest items stay, as they would for a take of each, and
+		// so does what the session put in and nobody has taken since (a friend's put the sender hadn't seen yet: the server
+		// may order it first, and the sender's copy gets it after). A container that keeps things (a home's, a settlement's)
+		// is left alone: our copy may hold our player's stash, which the friend never saw.
 		Applied TryEmpty(const Protocol::ContainerChange& a_change, World& a_world)
 		{
 			if (!a_world.Stocked(a_change.container)) {
@@ -520,6 +528,7 @@ namespace LootSync
 				return Applied::kDone;
 			}
 			const auto put = sessionPut.find(a_change.container);
+			const auto took = friendTook.find(a_change.container);
 			for (const auto& stack : a_world.Stacks(a_change.container)) {
 				auto item = a_world.Item(stack.item);
 				item.questAlias = stack.questAlias;
@@ -534,10 +543,19 @@ namespace LootSync
 				if (kept > 0) {
 					counts.emptiedKept += static_cast<std::uint32_t>(kept);
 				}
-				if (stack.count > kept) {
-					a_world.Apply({ a_change.container, stack.item, -static_cast<std::int32_t>(stack.count - kept) });
-					++counts.emptiedStacks;
+				if (stack.count <= kept) {
+					continue;
 				}
+				if (took == friendTook.end() || !took->second.contains(stack.item)) {
+					++counts.emptiedOwn;  // no friend took it from here: their copy never had it
+					continue;
+				}
+				a_world.Apply({ a_change.container, stack.item, -static_cast<std::int32_t>(stack.count - kept) });
+				++counts.emptiedStacks;
+			}
+			// What friends take after this is told afresh (the holder's loot may respawn, and the next emptying is of that).
+			if (took != friendTook.end()) {
+				friendTook.erase(took);
 			}
 			++counts.emptiedApplied;
 			return Applied::kDone;
@@ -674,6 +692,9 @@ namespace LootSync
 			}
 			if (keeper == StorageView::Keeper::kNone) {
 				Track(a_change, before);
+				if (direction == LootScope::Direction::kTake) {
+					friendTook[a_change.container].insert(a_change.item);  // their copy held it: an emptying after takes ours too
+				}
 			}
 			a_world.Apply(a_change);
 			return Applied::kDone;
@@ -731,6 +752,9 @@ namespace LootSync
 		std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, std::int64_t>> toldBare;
 		// What the session put into each holder and nobody took out since (see Track).
 		std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, std::int64_t>> sessionPut;
+		// The items other players took from each holder since it was last emptied here (see TryEmpty): an emptying takes
+		// the rest of these from our copy, and leaves the rest of its roll.
+		std::unordered_map<std::uint32_t, std::unordered_set<std::uint32_t>> friendTook;
 		Counts                    counts;
 	};
 }

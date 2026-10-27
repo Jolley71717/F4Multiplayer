@@ -1273,15 +1273,15 @@ namespace WorldSync
 		void ReportFalling(const std::vector<std::uint32_t>& a_dying, const Killers& a_killers)
 		{
 			const auto local = NpcSync::LocalPlayer();
-			std::vector<std::uint32_t> falling;
+			std::vector<std::uint32_t> fell;
 			for (const auto id : a_dying) {
 				const bool friendsBlow = friendsBlows.erase(id) != 0;
 				const auto actor = local != 0 && !dead.Contains(id) ? LoadedActor(id) : nullptr;
 				if (actor && actor->IsDead(false) && NpcHold::ReportAtFall(NpcSync::Owner(id) == local, a_killers.contains(id), friendsBlow, GetsUp(actor))) {
-					falling.push_back(id);
+					fell.push_back(id);
 				}
 			}
-			ReportDeaths(falling, a_killers, true);
+			ReportDeaths(fell, a_killers, true);
 		}
 
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is

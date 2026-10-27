@@ -649,8 +649,14 @@ different things in the two games of the rig), so a friend taking what their cop
 holding its own roll. A take that leaves a holder with nothing the session shares is followed by an
 emptied marker (`Protocol::CONTAINER_EMPTIED`: the player's ref as the item, count -1, an ordinary
 numbered change, so it is caught up on after a load or a join like any other; one also follows a weapon, a key or a note taken from a holder that then holds nothing the session shares, once, though that take itself is not reported): every receiver takes out
-each stack its own copy holds that the same take would share, and leaves weapons, armor and personal
-items. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
+what its own copy has left of each item another player took from the holder since it was last emptied there (its roll
+had more of it; the takes themselves went in before), and leaves the rest: what only its own roll put there, an item
+only its own mods add, what its player put in where the session didn't see it (alone, before a join), and weapons,
+armor and personal items. Taking every item thus leaves a friend's copy as taking all but one does, less the leftovers
+of what was taken (a Nexus report, 2026-10-26: Take All cleared the friend's own loot; until 0.10.0 the marker took
+every shared stack of the receiver's roll). Its own player's takes don't count: they say nothing of what the friend's
+copy held. The items taken are kept in memory only, as the session's puts are: after a load they come back with the
+catch-up of the takes, and a marker whose takes went in before the save leaves everything. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
 yet (a chest that rolls its loot as it first loads), and an NPC still alive there; a vendor's chest, a
 workbench or a frame is left alone. Storage is too: what the player has made their own, a container they own or
 whose cell they own (a home bought), a settlement's workbench or a piece built there, or a container in the build area
