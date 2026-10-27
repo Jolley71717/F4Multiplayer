@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T08:44:58+00:00",
+ "updated": "2026-10-27T08:54:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -117,8 +117,9 @@
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 202
   },
   {
    "id": "57af",
@@ -688,8 +689,9 @@
    "title": "A new character gets back gifts the old one took",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 202
   },
   {
    "id": "tnl5",
