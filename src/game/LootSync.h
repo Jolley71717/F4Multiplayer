@@ -671,7 +671,8 @@ namespace LootSync
 			auto       item = a_world.Item(a_change.item);
 			// Everyone takes their own quest item (and doesn't get a copy of one someone else put in).
 			item.questAlias = direction == LootScope::Direction::kTake && LootScope::IsInventory(item.kind) && a_world.QuestAlias(a_change.container, a_change.item);
-			const auto scope = LootScope::Of(a_world.Holder(a_change.container), item, direction);
+			const auto holder = a_world.Holder(a_change.container);
+			const auto scope = LootScope::Of(holder, item, direction);
 			if (scope == LootScope::Scope::kNotYetDead) {
 				return Applied::kNotYetDead;
 			}
@@ -692,8 +693,10 @@ namespace LootSync
 			}
 			if (keeper == StorageView::Keeper::kNone) {
 				Track(a_change, before);
-				if (direction == LootScope::Direction::kTake) {
-					friendTook[a_change.container].insert(a_change.item);  // their copy held it: an emptying after takes ours too
+				// Their copy held it: an emptying after takes ours too. Only for a holder an emptying acts on (Rolled: an
+				// emptying of storage is left out, and would never clear the record).
+				if (direction == LootScope::Direction::kTake && LootScope::Rolled(holder)) {
+					friendTook[a_change.container].insert(a_change.item);
 				}
 			}
 			a_world.Apply(a_change);
