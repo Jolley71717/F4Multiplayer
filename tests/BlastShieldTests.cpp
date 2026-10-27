@@ -248,10 +248,12 @@ namespace
 				const auto               id = SessionIdOf(key);
 				const BlastShield::Found found{
 					.id = key,
+					.shareable = GhostLedger::Plugin(key),  // a plugin's NPC: Protocol::IsShareableRef
 					.dead = npc.dead,
 					.ghost = npc.ghost,
 					.baseGhost = npc.ownGhost,
 					.questAlias = npc.questAlias,
+					.hostile = !npc.friendly,
 					.ours = ledger.Contains(key) || shields.Shielded(id),
 				};
 				if (npc.loaded && BlastShield::Repairs(found) && repaired.insert(key).second) {
@@ -897,10 +899,12 @@ TEST("blast shield: had a load left the ghosts a save held, the host's raider's 
 	CHECK(c.bobGame.Save().at(RAIDER_1).ghost);  // and the next save writes it again
 }
 
-TEST("blast shield: a ghost an older save left comes off after the load whoever runs the NPC and whether or not it is hostile; one its base record or a quest makes, and a dead one, are left")
+TEST("blast shield: a ghost an older save left comes off after the load whoever runs the NPC, once it is hostile to us; one its base record or a quest makes, one not hostile, and a dead one, are left")
 {
 	// A save from before the ledger (no record of our ghosts): the repair scan alone tells ours from the game's own.
-	// Before, a friendly copy's, one nobody ran and one our own game had come to run were left ghosts for good.
+	// Before, one nobody ran and one our own game had come to run were left ghosts for good. One not hostile to our
+	// player is left: what a mod's script ghosts on purpose (a vendor, a settler, a character in a scene) is no enemy,
+	// and a ghost of ours was only ever set on a copy the friends were fighting.
 	Corvega c;
 	c.SecondHostRaider(100.0f);
 	c.bobGame.consoleLag = true;
@@ -913,12 +917,19 @@ TEST("blast shield: a ghost an older save left comes off after the load whoever 
 	saved[RAIDER_2].ghost = true;  // Bob's own game runs it
 	c.bobGame.Load(saved);
 	c.bobGame.Wait(std::chrono::seconds{ 3 });
-	CHECK(c.bobGame.unghostsSent == 3);
+	CHECK(c.bobGame.unghostsSent == 2);
 	CHECK(c.bobGame.npcs[RAIDER_1].ghost);
 	CHECK(!c.bobGame.npcs[RAIDER_2].ghost);
 	CHECK(!c.bobGame.npcs[RAIDER_3].ghost);
-	CHECK(!c.bobGame.npcs[RAIDER_4].ghost);
+	CHECK(c.bobGame.npcs[RAIDER_4].ghost);
 	CHECK(c.bobGame.ledger.Size() == 0);  // each read as no ghost: forgotten
+	CHECK(c.bobGame.ledger.Count().fromSaves == 2);
+
+	// The friendly one turns on us (a wild mongrel aggroes, a settler is turned): repaired then, the scan running on.
+	c.bobGame.npcs[RAIDER_4].friendly = false;
+	c.bobGame.Wait(std::chrono::seconds{ 3 });
+	CHECK(!c.bobGame.npcs[RAIDER_4].ghost);
+	CHECK(c.bobGame.unghostsSent == 3);
 	CHECK(c.bobGame.ledger.Count().fromSaves == 3);
 
 	// One a quest holds in an alias, and a dead copy, a ghost in the save, are left too.
@@ -1113,19 +1124,21 @@ TEST("blast shield: a load sends no setghost for the ghosts of ours it ends, and
 	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
 }
 
-TEST("blast shield: a loaded actor's ghost is taken off only when it looks like one of ours an older save left: a plugin's reference, alive, its base no ghost, no quest holding it, not ours now")
+TEST("blast shield: a loaded actor's ghost is taken off only when it looks like one of ours an older save left: a plugin's reference the session shares, alive, hostile to us, its base no ghost, no quest holding it, not ours now")
 {
 	using BlastShield::Found;
 	using BlastShield::Repairs;
-	const Found raider{ .id = RAIDER_1, .ghost = true };
+	const Found raider{ .id = RAIDER_1, .shareable = true, .ghost = true, .hostile = true };
 	CHECK(Repairs(raider));
-	CHECK(!Repairs({ .id = RAIDER_1, .ghost = false }));
-	CHECK(!Repairs({ .id = 0, .ghost = true }));
-	CHECK(!Repairs({ .id = BOB_COPY, .ghost = true }));  // a runtime actor: never saved as a ghost of ours
-	CHECK(!Repairs({ .id = RAIDER_1, .dead = true, .ghost = true }));
-	CHECK(!Repairs({ .id = RAIDER_1, .ghost = true, .baseGhost = true }));
-	CHECK(!Repairs({ .id = RAIDER_1, .ghost = true, .questAlias = true }));
-	CHECK(!Repairs({ .id = RAIDER_1, .ghost = true, .ours = true }));  // the ledger's, or shielded now: cleared that way
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = false, .hostile = true }));
+	CHECK(!Repairs({ .id = 0, .shareable = true, .ghost = true, .hostile = true }));
+	CHECK(!Repairs({ .id = BOB_COPY, .shareable = true, .ghost = true, .hostile = true }));  // a runtime actor: never saved as a ghost of ours
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = false, .ghost = true, .hostile = true }));  // one the session never shares: never a copy, never ours
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .dead = true, .ghost = true, .hostile = true }));
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .baseGhost = true, .hostile = true }));
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .questAlias = true, .hostile = true }));  // a story's: Kellogg in his scene
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .hostile = false }));  // a mod's script's: a vendor, a settler, a character in a scene
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .hostile = true, .ours = true }));  // the ledger's, or shielded now: cleared that way
 }
 
 TEST("blast shield: a copy is made a ghost only when the explosion's damage comes near its health, or either is not known")

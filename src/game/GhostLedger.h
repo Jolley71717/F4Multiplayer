@@ -18,8 +18,10 @@
 // one of us can damage the NPCs". Now the ledger decides each frame what is to be done with each entry (Check): nothing
 // while the copy is not loaded or a shield of ours still wants the ghost; setghost 0 again when it reads a ghost, with a
 // gap that grows (RETRY_AFTER frames, doubling to RETRY_MOST) so a ghost the engine will not let go of costs a command
-// every few seconds and no more; and the entry is forgotten once the copy reads no ghost. Whose the copy is, and whether
-// it is hostile, is no part of it: a ghost of ours comes off whoever runs the NPC now.
+// every few seconds and no more, and no command at all after GIVE_UP_AFTER of them (a ghost a script puts back each
+// time is that script's: fought for a minute, then left, the entry kept so it is still ours and still saved); and the
+// entry is forgotten once the copy reads no ghost. Whose the copy is, and whether it is hostile, is no part of it: a
+// ghost of ours comes off whoever runs the NPC now.
 //
 // The ledger goes into the save's co-save record (Encode) and comes back with it (Decode): a save written while a
 // ghost of ours was on (its copy unloaded, so HideGhostsFromSave could not turn the flag off; the game crashed or quit
@@ -33,6 +35,9 @@ namespace GhostLedger
 	constexpr std::uint32_t RETRY_AFTER = 6;   // frames after a setghost 0 before it is sent again, if the ghost is still on
 	constexpr std::uint32_t RETRY_MOST = 300;  // ... growing to this many (five seconds at 60 fps) for a ghost that will not go
 	constexpr std::uint8_t  STUCK_AFTER = 3;   // setghost 0s one copy needed before it counts as stuck (for the counters and the log)
+	// ... and after which no more are sent in this run (about a minute of them: 6+12+...+192 and ten of RETRY_MOST): a
+	// ghost put back that often is a script's, and a command every five seconds for six hours is noise in the log.
+	constexpr std::uint8_t  GIVE_UP_AFTER = 16;
 	constexpr std::uint16_t RECORD_VERSION = 1;
 
 	// A plugin's reference: the same form id in every run of the save (F4SE resolves it for a changed load order).
@@ -88,10 +93,14 @@ namespace GhostLedger
 				if (entry.tries == STUCK_AFTER) {
 					++stuck;
 				}
+				if (entry.tries == GIVE_UP_AFTER) {
+					++gaveUp;
+				}
 			}
 		}
 
 		// What to do with the copy this frame. kDone forgets it; the caller sends the command for kClear and calls Sent.
+		// A ghost sent GIVE_UP_AFTER commands that reads on still is waited on (kWait) until it reads off by itself.
 		Step Check(std::uint32_t a_id, const Seen& a_seen, std::uint64_t a_frame)
 		{
 			const auto it = entries.find(a_id);
@@ -110,7 +119,7 @@ namespace GhostLedger
 				entries.erase(it);
 				return Step::kDone;
 			}
-			if (entry.tries == 0 || a_frame - entry.sent >= RetryAfter(entry.tries)) {
+			if (entry.tries == 0 || (entry.tries < GIVE_UP_AFTER && a_frame - entry.sent >= RetryAfter(entry.tries))) {
 				return Step::kClear;
 			}
 			return Step::kWait;
@@ -146,6 +155,9 @@ namespace GhostLedger
 			return it != entries.end() && it->second.fromSave;
 		}
 
+		// Sent GIVE_UP_AFTER commands and a ghost still: no more are sent for it this run.
+		[[nodiscard]] bool GivenUp(std::uint32_t a_id) const { return Tries(a_id) >= GIVE_UP_AFTER; }
+
 		[[nodiscard]] std::vector<std::uint32_t> Ids() const
 		{
 			std::vector<std::uint32_t> ids;
@@ -179,13 +191,14 @@ namespace GhostLedger
 		}
 
 		// Ghosts set, cleared (read as no ghost again), stuck (needed STUCK_AFTER commands or more), of those cleared
-		// after all, brought by loaded saves, and refused for want of room. Rolling over the run.
+		// after all, brought by loaded saves, refused for want of room, and given up on (GIVE_UP_AFTER commands sent).
+		// Rolling over the run.
 		struct Counts
 		{
-			std::uint32_t set = 0, cleared = 0, stuck = 0, unstuck = 0, fromSaves = 0, refused = 0;
+			std::uint32_t set = 0, cleared = 0, stuck = 0, unstuck = 0, fromSaves = 0, refused = 0, gaveUp = 0;
 		};
 
-		[[nodiscard]] Counts Count() const { return { set, cleared, stuck, unstuck, fromSaves, refused }; }
+		[[nodiscard]] Counts Count() const { return { set, cleared, stuck, unstuck, fromSaves, refused, gaveUp }; }
 
 	private:
 		struct Entry
@@ -197,7 +210,7 @@ namespace GhostLedger
 		};
 
 		std::unordered_map<std::uint32_t, Entry> entries;
-		std::uint32_t                            set = 0, cleared = 0, stuck = 0, unstuck = 0, fromSaves = 0, refused = 0;
+		std::uint32_t                            set = 0, cleared = 0, stuck = 0, unstuck = 0, fromSaves = 0, refused = 0, gaveUp = 0;
 	};
 
 	// The record's bytes: the version, the count, then each id; nothing when there is none to write.

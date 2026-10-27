@@ -95,6 +95,7 @@ TEST("ghost ledger: a ghost the engine will not let go of is sent setghost 0 aga
 		}
 	}
 	CHECK(sent >= 10);
+	CHECK(sent == GhostLedger::GIVE_UP_AFTER);  // and no more: a ghost put back that often is a script's
 	CHECK(Book::RetryAfter(1) == GhostLedger::RETRY_AFTER);
 	CHECK(Book::RetryAfter(2) == 2 * GhostLedger::RETRY_AFTER);
 	CHECK(Book::RetryAfter(20) == GhostLedger::RETRY_MOST);
@@ -107,6 +108,32 @@ TEST("ghost ledger: a ghost the engine will not let go of is sent setghost 0 aga
 	CHECK(book.Check(RAIDER, OFF, frame) == Step::kDone);
 	CHECK(book.Count().unstuck == 1);
 	CHECK(book.Count().cleared == 1);
+}
+
+TEST("ghost ledger: a ghost a script puts back every time is given up on after sixteen commands, kept as ours and in the save, and forgotten once it reads off by itself")
+{
+	// A command every five seconds for six hours would be a log full of the same line and a fight with that script.
+	Book          book;
+	std::uint64_t frame = 0;
+	book.Add(RAIDER, frame);
+	for (std::uint8_t i = 0; i < GhostLedger::GIVE_UP_AFTER; ++i) {
+		while (book.Check(RAIDER, ON, frame) != Step::kClear) {
+			++frame;
+		}
+		book.Sent(RAIDER, frame);
+	}
+	CHECK(book.Tries(RAIDER) == GhostLedger::GIVE_UP_AFTER);
+	CHECK(book.GivenUp(RAIDER));
+	CHECK(book.Count().gaveUp == 1);
+	CHECK(frame < 60 * 60 * 2);  // inside two minutes at 60 fps
+	for (std::uint64_t f = frame; f < frame + 60 * 60 * 60 * 6; f += 60) {
+		CHECK(book.Check(RAIDER, ON, f) == Step::kWait);  // six hours: not one command more
+	}
+	CHECK(book.Contains(RAIDER));
+	CHECK((book.Saved() == std::vector<std::uint32_t>{ RAIDER }));  // still ours, still saved: a load tries again
+	CHECK(book.Check(RAIDER, OFF, frame + 1) == Step::kDone);  // the script let go: forgotten as any
+	CHECK(book.Count().unstuck == 1);
+	CHECK(!book.GivenUp(RAIDER));
 }
 
 TEST("ghost ledger: a save keeps the plugins' references we ghosted and not a spawn copy's runtime id, and a load writes them down again as ghosts the save brought")

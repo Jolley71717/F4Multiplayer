@@ -91,27 +91,35 @@ namespace BlastShield
 	// A save written while a ghost of ours was still on (its setghost 0 lands a frame late; 0.8.10 and 0.8.11 saved it
 	// so mid-fight; up to 0.9.2 a copy that unloaded before its setghost 0 was written as a ghost too) loads it a
 	// ghost. Saves made since carry the ledger of our ghosts (GhostLedger), which takes them off. For a save from
-	// before, WeaponFire looks every REPAIR_EVERY frames at the loaded actors whose ghost flag reads on and takes the
-	// ghost off one that looks like ours, once per actor per load: a plugin's reference (the only kind a save could
-	// hold a ghost of ours on; the session need not know it now), alive, its flag on though its base record makes it no
-	// ghost and no quest holds it in an alias (a story's ghost is set by a quest on an actor it holds: an essential
-	// character in a scene), and not a ghost of ours now (shielded, or in the ledger: those the ledger clears). Whose
-	// the NPC is now, and whether it is hostile, is no part of it: before, one our game had come to run, one nobody ran
-	// or one not yet hostile when the thirty seconds ran out stayed a ghost for the rest of the save. A ghost cleared
-	// this way that a script sets again is left alone from then on (once per actor per load).
+	// before, WeaponFire looks every REPAIR_EVERY frames, in a session, at the loaded actors whose ghost flag reads on
+	// and takes the ghost off one that looks like ours, once per actor per load. The engine keeps no note of who set a
+	// ghost (a script's and the console's are the same extra data), so the rule is what the mod could ever have ghosted
+	// and nothing a story would: a plugin's reference the session shares (the only kind a save could hold a ghost of
+	// ours on: a ghost against a friend's explosion was only ever set on a copy of an NPC the session ran), alive, its
+	// flag on though its base record makes it no ghost, no quest holding it in an alias (a story's ghost is set by a
+	// quest on an actor it holds: an essential character in a scene, Kellogg in his), hostile to our player (a copy
+	// ghosted against a friend's explosion is an enemy the friends were fighting; what a mod's script ghosts is a
+	// vendor, a settler, a character in a scene, none hostile; a wild mongrel is repaired as it aggroes, the scan
+	// running for the whole run), and not a ghost of ours now (shielded, or in the ledger: those the ledger clears).
+	// Whose the NPC is now is no part of it: before, one our game had come to run or one nobody ran stayed a ghost for
+	// the rest of the save. A ghost cleared this way that a script sets again is left alone from then on (once per
+	// actor per load).
 	struct Found
 	{
-		std::uint32_t id = 0;            // its form id (0: none)
+		std::uint32_t id = 0;             // its form id (0: none)
+		bool          shareable = false;  // one the session shares under that id (Protocol::IsShareableRef): a copy could be ours
 		bool          dead = false;
 		bool          ghost = false;      // its ghost flag reads on (the extra data the save wrote)
 		bool          baseGhost = false;  // its base record makes it a ghost: its story's own
 		bool          questAlias = false; // a quest holds it in an alias: a story's own
+		bool          hostile = false;    // hostile to our player now
 		bool          ours = false;       // a ghost of ours now (shielded, or in the ledger)
 	};
 
 	constexpr bool Repairs(const Found& a_actor)
 	{
-		return a_actor.id != 0 && (a_actor.id >> 24) != 0xFF && !a_actor.dead && a_actor.ghost && !a_actor.baseGhost && !a_actor.questAlias && !a_actor.ours;
+		return a_actor.id != 0 && (a_actor.id >> 24) != 0xFF && a_actor.shareable && !a_actor.dead && a_actor.ghost && !a_actor.baseGhost && !a_actor.questAlias &&
+		       a_actor.hostile && !a_actor.ours;
 	}
 
 	// How often (frames) the loaded actors are looked at for that.

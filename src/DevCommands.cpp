@@ -1966,9 +1966,10 @@ namespace DevCommands
 				return "error: usage: ghosts [<refHex>]";
 			}
 			const auto npc = actor->GetNPC();
-			return std::format("{:08X} ghost={} baseGhost={} questAlias={} dead={} loaded={} owner={}", actor->GetFormID(), CopyWatch::GhostState(actor), npc && npc->IsGhost(),
-				actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray), actor->IsDead(false), actor->Get3D() != nullptr,
-				NpcSync::Owner(NpcSync::SessionId(actor->GetFormID())));
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("{:08X} ghost={} baseGhost={} questAlias={} hostile={} shareable={} dead={} loaded={} owner={}", actor->GetFormID(), CopyWatch::GhostState(actor),
+				npc && npc->IsGhost(), actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray), player && actor->GetHostileToActor(player),
+				Protocol::IsShareableRef(actor->GetFormID()), actor->IsDead(false), actor->Get3D() != nullptr, NpcSync::Owner(NpcSync::SessionId(actor->GetFormID())));
 		}
 
 		// mirror <refHex>: why an NPC is or isn't mirrored here.

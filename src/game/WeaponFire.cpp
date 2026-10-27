@@ -14,6 +14,7 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/RollingLog.h"
 #include "game/ThrowReplays.h"
 #include "game/Traps.h"
 
@@ -1718,15 +1719,19 @@ namespace WeaponFire
 		std::vector<GhostReadback> ghostReadbacks;
 		std::uint32_t              readbacksLogged = 0;
 
-		// The console's command on the actor (a loaded one: the caller found it). A ghost set goes into the ledger; one
-		// taken off is booked as sent, for the ledger to read back and send again if it stays.
-		void SendGhost(RE::Actor* a_actor, bool a_on)
+		// The console's command on the actor (a loaded one: the caller found it). A ghost set goes into the ledger first,
+		// and is not set at all when the ledger has no room for it (a ghost nothing writes down would be the stuck ghost
+		// of old: the copy takes the blast instead, as one nobody runs does); one taken off is booked as sent, for the
+		// ledger to read back and send again if it stays. Whether the command went.
+		bool SendGhost(RE::Actor* a_actor, bool a_on)
 		{
 			const auto formId = a_actor->GetFormID();
 			{
 				std::scoped_lock l{ ledgerLock };
 				if (a_on) {
-					ledger.Add(formId, frames);
+					if (!ledger.Contains(formId) && !ledger.Add(formId, frames)) {
+						return false;
+					}
 				} else {
 					ledger.Sent(formId, frames);
 				}
@@ -1740,7 +1745,12 @@ namespace WeaponFire
 			if (ghostReadbacks.size() < BlastShield::MAX_SHIELDED) {
 				ghostReadbacks.push_back({ formId, a_on, frames });
 			}
+			return true;
 		}
+
+		// Lines for a ghost still on five frames after its setghost 0, so many a RollingLog::WINDOW: the ledger sends the
+		// command again at a growing gap, and one line for each of a long session's would say the same thing for hours.
+		RollingLog::Budget stillGhostLog{ 20 };
 
 		void ReadBackGhosts()
 		{
@@ -1754,7 +1764,7 @@ namespace WeaponFire
 				if (after == READBACK_LAST && !a_readback.on && still) {
 					++ghostsStuck;  // the ledger sends setghost 0 again, as often as it takes
 				}
-				if (readbacksLogged < 120 || (after == READBACK_LAST && still)) {
+				if (readbacksLogged < 120 || (after == READBACK_LAST && still && stillGhostLog.Take(Clock::now()))) {
 					++readbacksLogged;
 					REX::INFO("WeaponFire: {}, {} frame{} after setghost {}: the ghost reads {}{}", NameOf(a_readback.id), after, after == 1 ? "" : "s", a_readback.on ? 1 : 0,
 						CopyWatch::GhostState(actor), still ? ", not yet as set" : "");
@@ -1813,7 +1823,10 @@ namespace WeaponFire
 					}
 					continue;
 				}
-				SendGhost(actor, true);
+				if (!SendGhost(actor, true)) {
+					shields.End(id);  // no room in the ledger (its refused count): it takes the blast, as one nobody runs does
+					continue;
+				}
 				++copiesShielded;
 				healthWhenShielded[id] = HealthOf(actor);
 				made += std::format(" {}(player {}'s, health {:.0f}, ghost {})", Name(id), NpcSync::Owner(id), HealthOf(actor), CopyWatch::GhostState(actor));
@@ -1942,25 +1955,27 @@ namespace WeaponFire
 					}
 					if (tries >= 1 && ledgerLogged < 60) {
 						++ledgerLogged;
-						REX::INFO("WeaponFire: {} still a ghost {} frames after its setghost 0 (sent {} time{}): sent again (owner {}, ghost {})", NameOf(formId),
-							GhostLedger::Book::RetryAfter(tries), tries, tries == 1 ? "" : "s", NpcSync::Owner(id), CopyWatch::GhostState(actor));
+						REX::INFO("WeaponFire: {} still a ghost {} frames after its setghost 0 (sent {} time{}): sent again{} (owner {}, ghost {})", NameOf(formId),
+							GhostLedger::Book::RetryAfter(tries), tries, tries == 1 ? "" : "s", tries + 1 >= GhostLedger::GIVE_UP_AFTER ? ", the last time this run: a script's to keep" : "",
+							NpcSync::Owner(id), CopyWatch::GhostState(actor));
 					}
 					SendGhost(actor, false);
 				}
 			}
 		}
 
-		// Every REPAIR_EVERY frames, the loaded actors whose ghost flag reads on that look like a ghost of ours a save
-		// from before the ledger brought (BlastShield::Repairs: a plugin's reference, alive, its base no ghost, no quest
-		// holding it, not a ghost of ours now) have it taken off, once each since the load, through the ledger. Whose the
-		// NPC is now, and whether it is hostile, is no part of it.
+		// Every REPAIR_EVERY frames in a session, the loaded actors whose ghost flag reads on that look like a ghost of
+		// ours a save from before the ledger brought (BlastShield::Repairs: a plugin's reference the session shares,
+		// alive, its base no ghost, no quest holding it, hostile to our player, not a ghost of ours now) have it taken
+		// off, once each since the load, through the ledger. Whose the NPC is now is no part of it.
 		void RepairGhosts()
 		{
-			if (frames % BlastShield::REPAIR_EVERY != 0) {
+			if (frames % BlastShield::REPAIR_EVERY != 0 || NpcSync::LocalPlayer() == 0) {
 				return;
 			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto lists = RE::ProcessLists::GetSingleton();
-			if (!lists) {
+			if (!player || !lists) {
 				return;
 			}
 			// Collected first: nothing is changed while the engine's list is walked.
@@ -1979,10 +1994,12 @@ namespace WeaponFire
 				const auto               id = NpcSync::SessionId(formId);
 				const BlastShield::Found found{
 					.id = formId,
+					.shareable = Protocol::IsShareableRef(formId),
 					.dead = actor->IsDead(false),
 					.ghost = true,
 					.baseGhost = npc && npc->IsGhost(),
 					.questAlias = InQuestAlias(actor),
+					.hostile = actor->GetHostileToActor(player),
 					.ours = OurGhost(actor) || (id != 0 && shields.Shielded(id)),
 				};
 				if (BlastShield::Repairs(found)) {
@@ -2002,7 +2019,7 @@ namespace WeaponFire
 				}
 				if (repairLogged < 40) {
 					++repairLogged;
-					REX::INFO("WeaponFire: {} is a ghost its base record and no quest made (owner {}, ghost {}): one of ours an older save left; the ghost is taken off",
+					REX::INFO("WeaponFire: {} is a ghost its base record and no quest made, hostile to us (owner {}, ghost {}): one of ours an older save left; the ghost is taken off",
 						NameOf(formId), NpcSync::Owner(NpcSync::SessionId(formId)), CopyWatch::GhostState(actor));
 				}
 				SendGhost(actor, false);
@@ -2025,7 +2042,8 @@ namespace WeaponFire
 			}
 			ledgerLineAt = now;
 			const bool changed = counts.set != ledgerLineCounts.set || counts.cleared != ledgerLineCounts.cleared || counts.stuck != ledgerLineCounts.stuck ||
-			                     counts.fromSaves != ledgerLineCounts.fromSaves || open.size() != ledgerLineOpen;
+			                     counts.fromSaves != ledgerLineCounts.fromSaves || counts.gaveUp != ledgerLineCounts.gaveUp || counts.refused != ledgerLineCounts.refused ||
+			                     open.size() != ledgerLineOpen;
 			if (!changed && open.empty()) {
 				return;
 			}
@@ -2035,8 +2053,8 @@ namespace WeaponFire
 			for (std::size_t i = 0; i < open.size() && i < 8; ++i) {
 				ids += std::format(" {}", NameOf(open[i]));
 			}
-			REX::INFO("WeaponFire: ghosts of ours this run: set {}, cleared {}, stuck {} ({} cleared after all), from saves {}, repaired {}, open {}{}{}", counts.set, counts.cleared,
-				counts.stuck, counts.unstuck, counts.fromSaves, ghostsRepaired, open.size(), ids.empty() ? "" : ":", ids);
+			REX::INFO("WeaponFire: ghosts of ours this run: set {}, cleared {}, stuck {} ({} cleared after all, {} given up on), from saves {}, repaired {}, refused {}, open {}{}{}",
+				counts.set, counts.cleared, counts.stuck, counts.unstuck, counts.gaveUp, counts.fromSaves, ghostsRepaired, counts.refused, open.size(), ids.empty() ? "" : ":", ids);
 		}
 
 		void EndDueShields()
@@ -2204,8 +2222,8 @@ namespace WeaponFire
 			counts = ledger.Count();
 			open = ledger.Ids();
 		}
-		std::string out = std::format("ghostLedger: set={} cleared={} stuck={} unstuck={} fromSaves={} refused={} repaired={} spared={} wereGhosts={} open={}", counts.set, counts.cleared,
-			counts.stuck, counts.unstuck, counts.fromSaves, counts.refused, ghostsRepaired, copiesSpared, wereGhosts, open.size());
+		std::string out = std::format("ghostLedger: set={} cleared={} stuck={} unstuck={} gaveUp={} fromSaves={} refused={} repaired={} spared={} wereGhosts={} open={}", counts.set,
+			counts.cleared, counts.stuck, counts.unstuck, counts.gaveUp, counts.fromSaves, counts.refused, ghostsRepaired, copiesSpared, wereGhosts, open.size());
 		for (const auto formId : open) {
 			const auto actor = ActorOf(formId);
 			std::uint8_t tries = 0;
@@ -2231,6 +2249,14 @@ namespace WeaponFire
 
 	namespace
 	{
+		// What the explosion deals, for whether it could kill a copy (BlastShield::Lethal): its record's damage, unless the
+		// record carries an object effect too (a plasma, cryo or pulse grenade's; a mod's whose blast is all in its spell),
+		// whose damage the record's figure says nothing of: not known then (0), so every copy in reach is a ghost, as before.
+		float KnownDamage(const RE::BGSExplosion* a_explosion)
+		{
+			return a_explosion->formEnchanting ? 0.0f : a_explosion->data.damage;
+		}
+
 		// Whether an NPC our game runs (our companion among them) stands within a_reach of a_at, in the cells loaded here: a
 		// friend's explosion there is ours to set off for it, wherever our player is (RemoteEdits::SetOff).
 		bool OursNear(const RE::NiPoint3& a_at, float a_reach)
@@ -2301,7 +2327,7 @@ namespace WeaponFire
 			return;
 		}
 		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
-		ShieldNear(at, radius, a_explosion.playerId, base->data.damage);
+		ShieldNear(at, radius, a_explosion.playerId, KnownDamage(base));
 		RE::NEW_REFR_DATA data;
 		data.location = at;
 		data.object = base;
@@ -2329,7 +2355,7 @@ namespace WeaponFire
 		if (!cell || !a_explosion) {
 			return;
 		}
-		ShieldNear(a_at, a_explosion->data.outerRadius, a_from, a_explosion->data.damage);
+		ShieldNear(a_at, a_explosion->data.outerRadius, a_from, KnownDamage(a_explosion));
 		RE::NEW_REFR_DATA data;
 		data.location = a_at;
 		data.object = a_explosion;
