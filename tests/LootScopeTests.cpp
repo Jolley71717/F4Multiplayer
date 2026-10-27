@@ -432,7 +432,7 @@ TEST("loot sync: an emptying waits for a holder the friend's game hasn't stocked
 	alice.holders[CHEST_2] = { { AMMO_38, 10 } };
 	alice.Take(f, CHEST_2, AMMO_38, 10);
 	bob.Receive(f);
-	CHECK(bob.loot.Waiting().size() == 1);
+	CHECK(bob.loot.Waiting().size() == 2);  // the take, and the emptying behind it
 	bob.unstocked.erase(CHEST_2);
 	bob.holders[CHEST_2] = { { CAPS, 25 }, { PIPE_PISTOL, 1 } };
 	bob.Wait(f, std::chrono::seconds{ 1 });
@@ -460,6 +460,104 @@ TEST("loot sync: an emptying waits for a holder the friend's game hasn't stocked
 	CHECK(bob.In(VENDOR_REF, CAPS) == 500);
 	CHECK(bob.In(WORKBENCH_REF, STEEL) == 40);
 	CHECK(bob.LeftOut() == 2);
+}
+
+TEST("loot sync: a take from a chest the friend's game holds without an inventory yet waits for its roll, through a save and a reload, both ways")
+{
+	constexpr std::uint32_t CHEST_3 = 0x0002C005;
+	constexpr std::uint32_t CHEST_4 = 0x0002C006;
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B }, carol{ 3, 0xCA401 };
+	for (auto* game : { &alice, &bob, &carol }) {
+		Describe(*game);
+		game->Join(f, "P");
+	}
+
+	// Alice loots part of a chest in a place Bob isn't: his game holds the chest in memory, with no inventory made yet.
+	alice.holders[CHEST_2] = { { AMMO_38, 10 }, { STEEL, 2 } };
+	bob.unstocked.insert(CHEST_2);
+	alice.Take(f, CHEST_2, AMMO_38, 10);
+	CHECK(alice.loot.Stats().emptiedSent == 0);  // the steel is still there: only the take goes out
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 1);
+	CHECK(bob.applied == 0);
+
+	// Bob saves and reloads before going there: the save's record keeps it waiting, and the catch-up doesn't bring it twice.
+	const auto saved = bob.SaveGame(f);
+	CHECK(saved.waiting.size() == 1);
+	bob.LoadGame(f, saved);
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 1);
+	CHECK(bob.applied == 0);
+
+	// He walks there: his game makes the chest's inventory with its own roll, and the take goes in then.
+	bob.unstocked.erase(CHEST_2);
+	bob.holders[CHEST_2] = { { AMMO_38, 6 }, { CAPS, 3 } };
+	bob.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(CHEST_2, AMMO_38) == 0);  // what Alice took, from his copy too
+	CHECK(bob.In(CHEST_2, CAPS) == 3);     // a partial loot leaves the rest of his roll
+
+	// A chest not in Bob's memory at all waits for its place, then for its inventory as the place loads.
+	alice.holders[CHEST_REF] = { { AMMO_38, 5 }, { STEEL, 1 } };
+	bob.away.insert(CHEST_REF);
+	alice.Take(f, CHEST_REF, AMMO_38, 5);
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 1);
+	bob.away.erase(CHEST_REF);
+	bob.unstocked.insert(CHEST_REF);
+	bob.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(bob.loot.Waiting().size() == 1);
+	bob.unstocked.erase(CHEST_REF);
+	bob.holders[CHEST_REF] = { { AMMO_38, 9 } };
+	bob.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 4);
+
+	// The other way: Bob loots a chest bare that Alice's game holds without an inventory. The take and the emptying wait, and
+	// go in, in order, once her game has rolled it.
+	bob.holders[CHEST_3] = { { STEEL, 4 } };
+	alice.unstocked.insert(CHEST_3);
+	bob.Take(f, CHEST_3, STEEL, 4);
+	CHECK(bob.loot.Stats().emptiedSent == 1);
+	alice.Receive(f);
+	CHECK(alice.loot.Waiting().size() == 2);
+	alice.unstocked.erase(CHEST_3);
+	alice.holders[CHEST_3] = { { STEEL, 1 }, { AMMO_38, 8 }, { PIPE_PISTOL, 1 } };
+	alice.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(alice.loot.Waiting().empty());
+	CHECK(alice.In(CHEST_3, STEEL) == 0);
+	CHECK(alice.In(CHEST_3, AMMO_38) == 0);
+	CHECK(alice.In(CHEST_3, PIPE_PISTOL) == 1);
+
+	// A put waits too, ahead of the takes and the emptying after it: going in first it would make the inventory before the
+	// roll, and they would follow it into that. Nothing goes into the chest until its roll is there.
+	bob.unstocked.insert(CHEST_4);
+	alice.holders[CHEST_4] = { { STEEL, 4 } };
+	alice.Put(f, CHEST_4, AMMO_38, 3);
+	alice.Take(f, CHEST_4, STEEL, 4);
+	alice.Take(f, CHEST_4, AMMO_38, 3);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	const auto appliedBefore = bob.applied;
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 4);  // the put, both takes and the emptying
+	CHECK(bob.applied == appliedBefore);
+	bob.unstocked.erase(CHEST_4);
+	bob.holders[CHEST_4] = { { STEEL, 2 }, { CORE, 2 }, { PIPE_PISTOL, 1 } };
+	bob.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(CHEST_4, STEEL) == 0);
+	CHECK(bob.In(CHEST_4, AMMO_38) == 0);  // the put went in, and Alice's take of it took it out again
+	CHECK(bob.In(CHEST_4, CORE) == 0);     // his roll's own, taken by the emptying
+	CHECK(bob.In(CHEST_4, PIPE_PISTOL) == 1);
+
+	// A take the session doesn't share is left out at once, not held.
+	bob.unstocked.insert(VENDOR_REF);
+	UncheckedMove(f, carol, VENDOR_REF, CAPS, -500);
+	const auto leftOut = bob.LeftOut();
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.LeftOut() == leftOut + 1);
 }
 
 TEST("loot sync: a friend who reloads a save from before the emptying, or joins after it, finds the chest bare; what was put back after it is there")
