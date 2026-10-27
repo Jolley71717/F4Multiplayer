@@ -2254,9 +2254,9 @@ namespace WorldSync
 				look.done = QuestStageLayout::IsStageDone(quest, door.stage);
 				look.doorLoaded = ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->Get3D() && ref->GetParentCell();
 				look.canApply = canApply;
-				// Our own game on its way to the stage (the flyover effect enabled and in the air): its script sets it.
+				// Our own game on its way to the stage (the flyover effect enabled: its script plays the flight once its 3D loads, indoors too, and sets the stage itself).
 				const auto effect = scriptDoorEffects[i] != 0 ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(scriptDoorEffects[i]) : nullptr;
-				look.busy = effect && !effect->IsDeleted() && !effect->IsDisabled() && effect->Get3D();
+				look.busy = effect && !effect->IsDeleted() && !effect->IsDisabled();
 				switch (scriptDoors.See(i, look, a_now)) {
 				case ScriptDoors::Act::kReport:
 					Queue(Protocol::Encode(Protocol::QuestStage{ quest->GetFormID(), door.stage }, Protocol::MessageType::kReportQuestStage));
@@ -2270,7 +2270,7 @@ namespace WorldSync
 					REX::INFO("WorldSync: {} {} here now (setting {:08X} stage {}, done in another player's game)", door.what, door.state, quest->GetFormID(), door.stage);
 					break;
 				case ScriptDoors::Act::kHold:
-					REX::INFO("WorldSync: {} is {} in another player's game, and ours is on its way ({:08X} enabled and loaded): waiting for it to set {:08X} stage {}",
+					REX::INFO("WorldSync: {} is {} in another player's game, and ours is on its way ({:08X} enabled): waiting for it to set {:08X} stage {}",
 						door.what, door.state, scriptDoorEffects[i], quest->GetFormID(), door.stage);
 					break;
 				case ScriptDoors::Act::kGiveUp:
