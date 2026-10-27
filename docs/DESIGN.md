@@ -877,10 +877,15 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
   (scripts that act on activation only): set in a friend's game by calling that script's own `SetOpenNoWait`;
 - a plain door a script opens, closes, locks or unlocks (a quest stage that unlocks the way, a trigger the player
   walks into, a script shutting a door behind them): every loaded plain door is read every 500 ms
-  (`DoorShare::POLL_INTERVAL`, WorldSync's `PollDoors`), whoever changed it. Its first read is where it stands and
-  is not reported (the save's doors would fill the world state); a change is, once our player is within 1200 of it
+  (`DoorShare::POLL_INTERVAL`, WorldSync's `PollDoor`), whoever changed it, by a sweep that reads 32 a frame
+  (`DoorShare::POLL_PER_FRAME`; `doorPollUs=` last/most per frame) from 2 s after the door loads
+  (`DoorShare::LOAD_SETTLE`). Its first read, and its first after it loads again, is where it stands and is not
+  reported (the save's doors would fill the world state); a change is, once our player is within 1200 of it
   (`DoorShare::REPORT_REACH`; a gate's `SharedGates::REPORT_REACH`), else kept until they are (`DoorShare::OnLook`;
-  `polledDoors=` put on watch / loaded, `reportsHeld=`);
+  `polledDoors=` put on watch / loaded, `reportsHeld=`), and no reference is reported more than 8 times at once and
+  then once every 2 s (`DoorShare::Pace`, `reportsPaced=`: a door a script flips over and over, or two games'
+  scripts fighting over it). A friend's state taken is what our watcher holds as said, with ours for what it leaves
+  out and no open state where we read none (`DoorShare::Heard`), so nothing goes back;
 - a door only a quest stage opens (Vault 114's gear door): the stage is shared (ScriptDoors).
 Not shared: elevators and their cars, load elevators, automatic doors, doors whose script answers OnOpen (an ambush,
 a stage), blocks activation or opens the door itself, the Mechanist's lair doors (their controls' state is each

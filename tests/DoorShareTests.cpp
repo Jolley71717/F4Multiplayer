@@ -115,8 +115,9 @@ namespace
 			if (!doors.contains(a_state.refId) || !book.Take(a_state)) {
 				return;
 			}
-			lastSent[a_state.refId] = a_state;
 			const auto current = Read(a_state.refId);
+			const auto had = lastSent.contains(a_state.refId) ? lastSent.at(a_state.refId) : current;
+			lastSent[a_state.refId] = DoorShare::Heard(a_state, had, current.open != RS::kUnknown);
 			if (!DoorShare::Says(current)) {
 				return;
 			}
@@ -373,6 +374,85 @@ TEST("door share: a chained door the host opens from its unchained side opens fo
 	CHECK(friendGame.doors[CHAINED].locked == RS::kNo);
 	CHECK(friendGame.doors[CHAINED].open == RS::kYes);
 	CHECK(friendGame.applied == 2);
+}
+
+TEST("door share: a door with a script on it in one game only is not sent back and forth between the two")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	// A plugin only the host has puts a script on the door: its open state is that script's there, a player's here.
+	DoorGame host, friendGame;
+	host.doors[DOOR].facts = { .door = true, .scripts = 1 };
+	host.doors[DOOR].locked = RS::kYes;
+	friendGame.doors[DOOR].locked = RS::kYes;
+	CHECK(!friendGame.Poll(DOOR, true));  // the friend's poll: where it stands
+
+	// The host picks the lock: only the lock goes (the open state isn't the host's to share).
+	host.doors[DOOR].locked = RS::kNo;
+	const auto picked = host.Report(DOOR);
+	REQUIRE(picked);
+	f.fake->Deliver(1, *picked);
+	friendGame.Take(Received(f, 2));
+	CHECK(friendGame.doors[DOOR].locked == RS::kNo);
+	// The friend's watcher reads its door shut and unlocked: what the host said, and the open state the host left out
+	// is the friend's as it stood. Nothing goes back.
+	CHECK(friendGame.lastSent.at(DOOR).open == RS::kNo);
+	CHECK(!friendGame.Poll(DOOR, true));
+	CHECK(!friendGame.Report(DOOR));
+
+	// The friend opens it: that goes; the host's game takes the lock part (same) and sends nothing back either.
+	friendGame.doors[DOOR].open = RS::kYes;
+	const auto opened = friendGame.Report(DOOR);
+	REQUIRE(opened);
+	f.fake->Deliver(2, *opened);
+	host.Take(Received(f, 1));
+	CHECK(host.doors[DOOR].open == RS::kNo);  // the host's script's, left alone
+	CHECK(host.lastSent.at(DOOR).open == RS::kUnknown);
+	CHECK(!host.Report(DOOR));
+
+	// What a friend's state leaves out is ours: what we last said, else what it reads; and no open state where we read none.
+	const RS ours{ DOOR, RS::kYes, RS::kNo };
+	CHECK(DoorShare::Heard(RS{ DOOR, RS::kUnknown, RS::kYes }, ours, true).SameState(RS{ DOOR, RS::kYes, RS::kYes }));
+	CHECK(DoorShare::Heard(RS{ DOOR, RS::kNo, RS::kUnknown }, ours, true).SameState(RS{ DOOR, RS::kNo, RS::kNo }));
+	CHECK(DoorShare::Heard(RS{ DOOR, RS::kNo, RS::kYes }, ours, false).SameState(RS{ DOOR, RS::kUnknown, RS::kYes }));
+	CHECK(DoorShare::Heard(RS{ DOOR, RS::kUnknown, RS::kYes }, RS{}, true).SameState(RS{ DOOR, RS::kUnknown, RS::kYes }));
+	CHECK(DoorShare::Heard(RS{ DOOR, RS::kNo, RS::kYes, 7 }, ours, true).playerId == 7);
+}
+
+TEST("door share: a door a script flips over and over is reported a burst, then once every few seconds, its latest state last")
+{
+	using Clock = DoorShare::Pace::Clock;
+	const auto       t0 = Clock::time_point{} + std::chrono::hours(1);
+	DoorShare::Pace pace;
+	for (std::uint32_t i = 0; i < DoorShare::REPORT_BURST; ++i) {
+		CHECK(pace.May(t0));
+		pace.Spend(t0);
+	}
+	CHECK(!pace.May(t0));
+	CHECK(!pace.May(t0 + DoorShare::REPORT_EVERY - std::chrono::milliseconds(1)));
+	CHECK(pace.May(t0 + DoorShare::REPORT_EVERY));
+	pace.Spend(t0 + DoorShare::REPORT_EVERY);
+	CHECK(!pace.May(t0 + DoorShare::REPORT_EVERY));
+	// Left alone long enough, a full burst again; never more than one a REPORT_EVERY over a long run.
+	CHECK(pace.May(t0 + DoorShare::REPORT_EVERY * (DoorShare::REPORT_BURST + 1)));
+	DoorShare::Pace run;
+	int             sent = 0;
+	for (auto t = t0; t < t0 + std::chrono::minutes(10); t += std::chrono::milliseconds(16)) {
+		if (run.May(t)) {
+			run.Spend(t);
+			++sent;
+		}
+	}
+	CHECK(sent <= static_cast<int>(DoorShare::REPORT_BURST + 600 / 2));
+	CHECK(sent >= static_cast<int>(600 / 2));
+
+	// Paced, a change is held even beside the door, and goes when it may (OnLook).
+	CHECK(DoorShare::OnLook({ .quiet = true, .seen = true, .changed = true, .near = true, .paced = true }) == DoorShare::Look::kHold);
+	CHECK(DoorShare::OnLook({ .quiet = false, .seen = true, .changed = true, .near = true, .paced = true }) == DoorShare::Look::kHold);
+	CHECK(DoorShare::OnLook({ .quiet = true, .seen = true, .changed = false, .near = true, .paced = true }) == DoorShare::Look::kNothing);
+	CHECK(DoorShare::OnLook({ .quiet = true, .seen = false, .changed = true, .near = true, .paced = true }) == DoorShare::Look::kBaseline);
 }
 
 TEST("door share: a look at a watched door: a polled door's first read is its baseline, a change goes from near and waits from far")

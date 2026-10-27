@@ -3,8 +3,10 @@
 #include "Protocol.h"
 #include "game/ScriptNames.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 #include <unordered_map>
@@ -120,6 +122,35 @@ namespace DoorShare
 	// it is kept and reported when we come near, if it still stands.
 	inline constexpr auto POLL_INTERVAL = std::chrono::milliseconds(500);
 
+	// How many loaded doors the poll reads in one frame: a sweep of them all is spread over as many frames as it takes
+	// (a busy exterior has a few hundred, a big modded cell may have more), so no frame pays for every door at once.
+	// At 60 frames a second up to 960 doors are still read every POLL_INTERVAL; past that a sweep takes longer.
+	inline constexpr std::size_t POLL_PER_FRAME = 32;
+
+	// A door just loaded is first read this long after: its scripts are bound by then, and what its cell's scripts do
+	// to it as it loads (a lock set on load) is where it stands in this game, not news.
+	inline constexpr auto LOAD_SETTLE = std::chrono::seconds(2);
+
+	// How often one reference is reported at most: REPORT_BURST at once, then one every REPORT_EVERY. A door a script
+	// flips over and over (every frame, or each game's script undoing what the other's did) would otherwise be reported
+	// each time it is read, and the server drops a player's events past 500 a second, all kinds together (kills and
+	// container changes among them). A change that may not go yet is held, and its latest state goes when it may.
+	inline constexpr std::uint32_t REPORT_BURST = 8;
+	inline constexpr auto          REPORT_EVERY = std::chrono::seconds(2);
+
+	class Pace
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		[[nodiscard]] bool May(Clock::time_point a_now) const { return due <= a_now + (REPORT_BURST - 1) * REPORT_EVERY; }
+
+		void Spend(Clock::time_point a_now) { due = (std::max)(due, a_now) + REPORT_EVERY; }
+
+	private:
+		Clock::time_point due{};  // when every report spent would have come back
+	};
+
 	// One look at a watched reference, as WorldSync's watcher sees it.
 	struct Watch
 	{
@@ -128,6 +159,7 @@ namespace DoorShare
 		bool changed = false;  // what it reads now differs from that
 		bool near = false;     // our player is within reach of it (REPORT_REACH; a gate's is SharedGates')
 		bool pending = false;  // the session's state of it waits to be applied here: what it reads now is the old one
+		bool paced = false;    // reported REPORT_BURST times lately (Pace): a change waits its turn
 	};
 
 	enum class Look
@@ -149,7 +181,26 @@ namespace DoorShare
 		if (!a_watch.changed) {
 			return Look::kNothing;
 		}
-		return a_watch.near ? Look::kSend : Look::kHold;
+		return a_watch.near && !a_watch.paced ? Look::kSend : Look::kHold;
+	}
+
+	// What our watcher takes as already said of a reference once a friend's state of it is taken (OfferRefState), so
+	// it isn't sent back: their word where they said something, ours (what we last said, or what it reads) where they
+	// didn't, and no open state where we read none (a door with a script on it in our game, from a plugin the friend
+	// hasn't). Taken whole, a state that leaves the open state out read as a change here and was sent back with ours,
+	// which read as a change in theirs, and so on, back and forth, for as long as both games watched the door.
+	constexpr RefState Heard(RefState a_heard, const RefState& a_ours, bool a_readsOpen)
+	{
+		if (a_heard.open == RefState::kUnknown && a_ours.refId == a_heard.refId) {
+			a_heard.open = a_ours.open;
+		}
+		if (a_heard.locked == RefState::kUnknown && a_ours.refId == a_heard.refId) {
+			a_heard.locked = a_ours.locked;
+		}
+		if (!a_readsOpen) {
+			a_heard.open = RefState::kUnknown;
+		}
+		return a_heard;
 	}
 
 	// The part of a reference's state that is shared: the lock always, the open state if it is a player's.
