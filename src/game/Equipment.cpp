@@ -1001,13 +1001,16 @@ namespace Equipment
 			std::uint32_t flags;  // 18
 		};
 		constexpr std::uint32_t BLOCK_ACTIVATE = 1u << 1;
+	}
 
-		std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref)
-		{
-			const auto extra = a_ref->extraList ? a_ref->extraList->GetByType(RE::EXTRA_DATA_TYPE::kFlags) : nullptr;
-			return extra ? static_cast<const ExtraFlagsData*>(extra)->flags : 0;
-		}
+	std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref)
+	{
+		const auto extra = a_ref && a_ref->extraList ? a_ref->extraList->GetByType(RE::EXTRA_DATA_TYPE::kFlags) : nullptr;
+		return extra ? static_cast<const ExtraFlagsData*>(extra)->flags : 0;
+	}
 
+	namespace
+	{
 		// Whether our player is in furniture, getting in or out of some, or wears a frame.
 		bool PlayerBusy(RE::PlayerCharacter* a_player)
 		{
@@ -1025,6 +1028,9 @@ namespace Equipment
 			if (!enable) {
 				return out;
 			}
+			// The engine grows the layers under this lock as a script makes one (InputEnableLayer.Create, on the VM's
+			// thread): read under it too, or the walk could read a buffer just let go.
+			RE::BSAutoLock l{ enable->layerLock };
 			for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
 				const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
 				if (!name || !*name || enable->layers[i].inputUserEvents.any(RE::UserEvents::USER_EVENT_FLAG::kActivate)) {

@@ -2654,7 +2654,9 @@ namespace RemotePlayers
 	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by)
 	{
 		if (a_ask == Equipment::FrameAsk::kLook) {
-			// Looked at only (the log, paframes): the answer, with nobody told and nothing counted.
+			// Looked at only (the log, paframes): the answer, with nobody told and nothing counted. Kept first: every
+			// branch below counts, logs or tells the HUD (a_by is null for a look as for our player). Anything added below
+			// that changes the answer (a frame lent out or lent to us) needs its own side-effect-free read here too.
 			return a_frame && Equipment::IsPowerArmorFrame(a_frame->GetObjectReference()) && FriendOf(a_frame).owner != 0;
 		}
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {

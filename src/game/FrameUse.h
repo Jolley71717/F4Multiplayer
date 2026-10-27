@@ -145,8 +145,8 @@ namespace FrameUse
 	inline std::string Describe(const Holds& a_holds)
 	{
 		std::string out;
-		const auto  add = [&](bool a_holds, const char* a_what) {
-			if (a_holds) {
+		const auto  add = [&](bool a_held, const char* a_what) {
+			if (a_held) {
 				out += out.empty() ? "" : ", ";
 				out += a_what;
 			}

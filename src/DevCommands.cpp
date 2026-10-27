@@ -1546,7 +1546,7 @@ namespace DevCommands
 					owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, info), owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, info),
 					NpcSync::Owner(actor->GetFormID()), actor->IsDead(false));
 			}
-			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
+			return DescribeRef(ref) + std::format(" formFlags={:08X} extraFlags={:X}", ref->formFlags, Equipment::ExtraFlagsOf(ref)) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
 		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked

@@ -161,6 +161,11 @@ namespace Equipment
 	// its activation block; its state; our player's input), for the log and the paframes dev command.
 	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame);
 
+	// The reference's ExtraFlags word (EXTRA_DATA_TYPE::kFlags), 0 without one: Papyrus's BlockActivation sets bit 1 in
+	// it (DescribeFrameUse's `flags=`, FrameUse::Holds::activationBlocked). Read-only; for the refinfo dev command, where
+	// a dropped item's copy (Drops blocks those) shows the bit 1.11.240 sets. Main thread.
+	[[nodiscard]] std::uint32_t ExtraFlagsOf(const RE::TESObjectREFR* a_ref);
+
 	// Our player as the engine has them for furniture: their sit state, the furniture they occupy, the frame they wear or
 	// left last, the frame they last asked to get into, and whether an input layer has the Activate user event off (by
 	// the layers' names) or their input is blocked. For the log and paframes. Main thread.
