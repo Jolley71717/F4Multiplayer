@@ -1630,6 +1630,24 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   center group or the quest markers' base, scaled or drawn at its size, added again or made anew on each move, or
   drawn into the parent's own graphics. The compass markers likely show because the game redraws the compass every frame.
   `menuicons layer` and `menuicons opt` (DEV-CHANNEL.md) are there to try the next idea.
+  The badge (`StandInBadge.h`, `MenuBadges.cpp`; `bMenuBadges`, off and not in the shipped ini until the rig has seen
+  it) puts the icon in the world instead: the Pip-Boy form's own world model, loaded once through the model database
+  (`BSModelDB::Demand`, as the grenade in a stand-in's hand), is hung from the stand-in's 3D root over its head (the head
+  bone's height plus `OVER_HEAD`, from the root so it stays level through the wrist check), turned each frame so its
+  front looks at our camera (read off the root's own world rotation) and scaled from its bounding radius. Nothing is
+  sent: each game draws it from the friend's status. The database keeps one node per file and hands that same node to
+  everyone (a clone of one crashed, GRENADE-IN-HAND.md), so one badge shows at a time, over the nearest friend in the
+  Pip-Boy within about 70 m (kept 250 units further once hung, so it does not blink at the edge). Only the Pip-Boy has
+  a badge; the other kinds keep their tag until there is a model for them. Of the shared node only its parent changes,
+  as for the grenade: the engine clones that node whenever it shows the model (the Pip-Boy's preview in the inventory,
+  one lying in the world), and a copy takes its transform as it is then. It hangs untouched under a node of our own,
+  which hangs from the root with the turn, height and scale on it (set before it goes on, so the first frame draws it
+  in place). A model with collision anywhere in it is never hung. It is hung again on a new root (dressed again, in or
+  out of a frame), or when something else took it off the root it still has, and comes off when the menu closes, out of
+  reach, with the stand-in's deletion (`MenuBadges::Drop` beside `DropHandThrowable`), before a save or a load and at
+  the session's end (`MenuBadges::DropAll` beside `DropHandThrowables`; a test holds each pair together). It is a node
+  in loaded 3D, never a form or a reference, so it is never saved. `menubadges` (DEV-CHANNEL.md) says what was loaded,
+  who wears it and how often it was hung and taken off.
 - Furniture (`StandInSeat.h`; protocol 31): while the player sits, lies or works in furniture (a chair, couch, bench,
   stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
   it or getting in, and it names the furniture they occupy), the status carries it: the reference when every game has

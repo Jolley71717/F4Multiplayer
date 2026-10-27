@@ -26,6 +26,7 @@
 #include "game/Menu.h"
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
+#include "game/MenuBadges.h"
 #include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
 #include "game/Destructibles.h"
@@ -2974,6 +2975,13 @@ namespace DevCommands
 			return MenuIcons::Probe() + " " + MenuIcons::Describe();
 		}
 
+		// menubadges: the badge over a friend in their Pip-Boy (MenuBadges): the model, who wears it, and how often it was
+		// hung and taken off; read only.
+		std::string MenuBadgesCommand(std::string_view)
+		{
+			return MenuBadges::Describe();
+		}
+
 		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's
 		// own input receivers, the menus' (MenuControls) and then the player's controls (PlayerControls), and
 		// its release once the hold is over (Frame). Past Windows, DirectInput and the control map, which a key
@@ -3652,6 +3660,7 @@ namespace DevCommands
 			Entry{ "wspower", WsPower },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
+			Entry{ "menubadges", MenuBadgesCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
 			Entry{ "workshop", Workshop },
