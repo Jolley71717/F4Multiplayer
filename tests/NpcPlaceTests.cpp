@@ -522,4 +522,17 @@ TEST("npc place: each reason ours stays or moves, and when it is mirrored")
 	CHECK(!NpcPlace::Follows(theirs, Off(theirs, 100.0f), NpcPlace::LOST_AFTER + 1ms));
 	CHECK(!NpcPlace::Follows(theirs, Off(theirs, NpcPlace::MAX_FOLLOW_DISTANCE + 1.0f), 0s));
 	CHECK(!NpcPlace::Follows(IN_THE_MUSEUM, { 0, WORLD, IN_THE_MUSEUM.x, IN_THE_MUSEUM.y, IN_THE_MUSEUM.z }, 0s));  // same numbers, other space
+
+	// And why not, for the log: another space first (ours runs its own AI there whatever else), then a silent owner (a
+	// menu, a load, a lost connection), then one whose copy went far (a fast travel, a script).
+	using NpcPlace::Lost;
+	CHECK(NpcPlace::LostWhy(theirs, Off(theirs, 100.0f), NpcPlace::LOST_AFTER) == Lost::kNo);
+	CHECK(NpcPlace::LostWhy(theirs, Off(theirs, 100.0f), NpcPlace::LOST_AFTER + 1ms) == Lost::kSilent);
+	CHECK(NpcPlace::LostWhy(theirs, Off(theirs, NpcPlace::MAX_FOLLOW_DISTANCE + 1.0f), 0s) == Lost::kFar);
+	CHECK(NpcPlace::LostWhy(theirs, Off(theirs, NpcPlace::MAX_FOLLOW_DISTANCE + 1.0f), NpcPlace::LOST_AFTER + 1ms) == Lost::kSilent);
+	CHECK(NpcPlace::LostWhy(IN_THE_MUSEUM, { 0, WORLD, IN_THE_MUSEUM.x, IN_THE_MUSEUM.y, IN_THE_MUSEUM.z }, NpcPlace::LOST_AFTER + 1ms) == Lost::kElsewhere);
+	CHECK(std::string_view{ NpcPlace::LostName(Lost::kNo) } == "follows");
+	CHECK(std::string_view{ NpcPlace::LostName(Lost::kElsewhere) } == "elsewhere");
+	CHECK(std::string_view{ NpcPlace::LostName(Lost::kSilent) } == "silent");
+	CHECK(std::string_view{ NpcPlace::LostName(Lost::kFar) } == "far");
 }
