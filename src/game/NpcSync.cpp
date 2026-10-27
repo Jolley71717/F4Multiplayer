@@ -1532,6 +1532,7 @@ namespace NpcSync
 			if (entry.playerId == 0) {
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
+				ownedBlocked.erase(entry.refId);  // not ours to find blocked any more; logged again if it is when we run it next
 				sentGear.erase(entry.refId);  // the server forgot its gear with its runner: report it afresh when we run it
 				sentRolls.Forget(entry.refId);  // and its roll
 				rolls.Forget(entry.refId);
@@ -1545,6 +1546,7 @@ namespace NpcSync
 				StopMirroring(entry.refId);
 			} else {
 				owned.erase(entry.refId);
+				ownedBlocked.erase(entry.refId);
 				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
 				sentRolls.Forget(entry.refId);
 			}

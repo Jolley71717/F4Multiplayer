@@ -2,6 +2,7 @@
 
 #include "game/Prediction.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 
@@ -22,6 +23,14 @@ namespace MirrorClock
 
 	// The owner's tick (NpcSync's STATE_INTERVAL): the arrival clock's first guess at the gap between states.
 	constexpr float TICK = 0.05f;
+	// A stamp this far after its state came is not the owner's clock read on: the NPC changed hands, and the new
+	// runner's first state overtook the owners' message that says so (a reliable message lost once comes after the
+	// unreliable ones sent behind it), so the old runner's clock put it hours off (its clock lower: the step counts as no
+	// time, Prediction::SenderClock; higher: once the first 64 trips are known, the stamp lands wherever the step
+	// says). A copy drawn between its last state and one hours ahead stands still until that one is dropped, then jumps.
+	// A stamp ahead by less is the owner's clock laid late on ours: the trips shortened and the shift follows at 3% a
+	// state (SenderClock::FOLLOW).
+	constexpr auto FAR_AHEAD = std::chrono::seconds(1);
 
 	struct Stamps
 	{
@@ -31,7 +40,19 @@ namespace MirrorClock
 		// The stamp for a state that came at a_now, sampled at a_sentMs on its owner's clock (0: not said).
 		Clock::time_point Next(Clock::time_point a_now, std::uint32_t a_sentMs)
 		{
-			return a_sentMs ? sender.Next(a_now, a_sentMs) : arrivals.Next(a_now);
+			if (!a_sentMs) {
+				return arrivals.Next(a_now);
+			}
+			const auto before = sender.started ? sender.stamp : a_now;  // the stamp given last
+			auto       stamp = sender.Next(a_now, a_sentMs);
+			if (stamp - a_now > FAR_AHEAD) {
+				// Another clock's: the timeline starts over at this state, as NewOwner does; the stamps given before it
+				// that had run past now step back behind it, so the states stay in the order they were given.
+				sender = {};
+				stamp = sender.Next(a_now, a_sentMs);
+				sender.steppedBack = (std::max)(before - a_now + std::chrono::milliseconds(1), Clock::duration::zero());
+			}
+			return stamp;
 		}
 
 		// How much earlier the stamps given before the last Next now are (Prediction::SenderClock::steppedBack, the first
