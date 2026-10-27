@@ -4,6 +4,9 @@
 #include "game/DownRules.h"
 #include "game/Downed.h"
 
+#include <ShlObj.h>
+#undef ERROR  // wingdi.h's, which REX::ERROR is
+
 #include <atomic>
 
 namespace AutoSave
@@ -19,47 +22,113 @@ namespace AutoSave
 		std::optional<Clock::time_point> saveBegan;  // OnPreSave, for how long the save took
 
 		// The setting in a_collection (the Prefs ini's or the game's ini's), by its name in whatever section it is in.
-		RE::Setting* FindIniSetting(RE::INISettingCollection* a_collection)
+		// a_seen, for the log when it is not there: how many settings the collection holds and which have "save" in their key.
+		RE::Setting* FindIniSetting(RE::INISettingCollection* a_collection, std::string& a_seen)
 		{
 			if (!a_collection) {
+				a_seen += " (no collection)";
 				return nullptr;
 			}
 			std::vector<std::string_view> keys;
 			std::vector<RE::Setting*>     settings;
+			std::string                   saves;
 			for (auto* setting : a_collection->settings) {
 				if (setting) {
 					keys.push_back(setting->GetKey());
 					settings.push_back(setting);
+					auto lower = std::string{ setting->GetKey() };
+					std::ranges::transform(lower, lower.begin(), [](unsigned char a_c) { return static_cast<char>(std::tolower(a_c)); });
+					if (lower.contains("save")) {
+						saves += std::format(" {}", setting->GetKey());
+					}
 				}
 			}
+			a_seen += std::format(" {} settings, with save in the key:{}", keys.size(), saves.empty() ? " none" : saves);
 			const auto at = AutoSaveRules::FindSetting(keys, AutoSaveRules::TRAVEL_SETTING, AutoSaveRules::TRAVEL_SECTION);
 			return at ? settings[*at] : nullptr;
 		}
 
-		// The player's own setting for travel autosaves (Settings > Gameplay), from their Prefs ini, or the game's ini when
-		// it is not there. Fallout4Prefs.ini keeps it as "[MAIN] bSaveOnTravel", so it is found by its name (the game keys
-		// it "bSaveOnTravel:MAIN"). A setting that is in neither ini is the game's default, on, and the log says it was
-		// missing rather than off.
-		bool SaveOnTravel()
+		// The player's Prefs ini: the path the game's collection says it reads (when that file is there), else
+		// Documents/My Games/<the game's save folder>/<its file name>.
+		std::filesystem::path PrefsIni()
 		{
-			static RE::Setting* const found = [] {
-				const auto inPrefs = FindIniSetting(RE::INIPrefSettingCollection::GetSingleton());
-				const auto setting = inPrefs ? inPrefs : FindIniSetting(RE::INISettingCollection::GetSingleton());
-				if (!setting) {
-					REX::WARN("Save: the game's {} setting was not found in its Prefs ini or its ini; taking its default ({})", AutoSaveRules::TRAVEL_SETTING,
-						AutoSaveRules::TRAVEL_DEFAULT ? "on" : "off");
-					return static_cast<RE::Setting*>(nullptr);
+			std::string name = "Fallout4Prefs.ini";
+			if (const auto prefs = RE::INIPrefSettingCollection::GetSingleton()) {
+				const std::string_view given{ prefs->settingFile, strnlen(prefs->settingFile, sizeof(prefs->settingFile)) };
+				const std::filesystem::path path{ given };
+				std::error_code             ec;
+				if (!given.empty() && path.has_filename() && path.extension() == ".ini") {
+					if (std::filesystem::is_regular_file(path, ec)) {
+						return path;
+					}
+					name = path.filename().string();
 				}
-				if (setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
-					REX::WARN("Save: the game's {} setting is not a yes or no (type {}); taking its default ({})", setting->GetKey(), static_cast<int>(setting->GetType()),
-						AutoSaveRules::TRAVEL_DEFAULT ? "on" : "off");
+			}
+			PWSTR docs = nullptr;
+			if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs))) {
+				return {};
+			}
+			std::filesystem::path folder{ docs };
+			CoTaskMemFree(docs);
+			const auto save = F4SE::GetSaveFolderName();
+			return folder / "My Games" / (save.empty() ? "Fallout4"sv : save) / name;
+		}
+
+		// "[MAIN] bSaveOnTravel" in the player's Prefs ini file; nullopt when the file or the key cannot be read.
+		std::optional<bool> TravelFromPrefsFile(std::string& a_why)
+		{
+			const auto path = PrefsIni();
+			std::ifstream file{ path, std::ios::binary };
+			if (path.empty() || !file) {
+				a_why = path.empty() ? "no Documents folder" : std::format("{} could not be opened", path.filename().string());
+				return std::nullopt;
+			}
+			const std::string text{ std::istreambuf_iterator<char>{ file }, std::istreambuf_iterator<char>{} };
+			const auto        value = AutoSaveRules::IniBool(text, AutoSaveRules::TRAVEL_SECTION, AutoSaveRules::TRAVEL_SETTING);
+			if (!value) {
+				a_why = std::format("{} has no [{}] {} as a yes or no", path.filename().string(), AutoSaveRules::TRAVEL_SECTION, AutoSaveRules::TRAVEL_SETTING);
+			}
+			return value;
+		}
+
+		// The game's own setting for it, if its collections hold it. They do not, as of 0.10.0's rig: the walk finds nothing
+		// of that name in the Prefs ini's or the game's ini's, so the log says what they did hold (once).
+		std::optional<bool> TravelFromGame()
+		{
+			static const auto found = [] {
+				std::string seen = "Save: looking for the game's bSaveOnTravel; Prefs collection:";
+				const auto  inPrefs = FindIniSetting(RE::INIPrefSettingCollection::GetSingleton(), seen);
+				RE::Setting* setting = inPrefs;
+				if (!setting) {
+					seen += "; ini collection:";
+					setting = FindIniSetting(RE::INISettingCollection::GetSingleton(), seen);
+				}
+				if (!setting || setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
+					REX::INFO("{}; {}", seen, setting ? "it is not a yes or no" : "not in either");
 					return static_cast<RE::Setting*>(nullptr);
 				}
 				REX::INFO("Save: the game's travel autosave setting is {} ({}, in {})", setting->GetBinary() ? "on" : "off", setting->GetKey(),
 					inPrefs ? "its Prefs ini" : "its ini");
 				return setting;
 			}();
-			return found ? found->GetBinary() : AutoSaveRules::TRAVEL_DEFAULT;
+			return found ? std::optional<bool>{ found->GetBinary() } : std::nullopt;
+		}
+
+		// The player's own setting for travel autosaves (Settings > Gameplay), read at each teleport (cheap, and a change in
+		// the Settings screen is followed): from the game's collections when they hold it, else from the Prefs ini file,
+		// where Fallout 4 keeps it as "[MAIN] bSaveOnTravel"; in neither, the game's default (on). The log says which.
+		bool SaveOnTravel()
+		{
+			const auto game = TravelFromGame();
+			std::string why;
+			const auto file = game ? std::nullopt : TravelFromPrefsFile(why);
+			const auto travel = AutoSaveRules::ResolveTravel(game, file);
+			if (travel.source == AutoSaveRules::Source::kDefault) {
+				REX::WARN("Save: the travel autosave setting could not be read ({}); taking the game's default (on)", why);
+			} else {
+				REX::INFO("Save: the game's travel autosave setting is {}, from {}", travel.on ? "on" : "off", AutoSaveRules::SourceName(travel.source));
+			}
+			return travel.on;
 		}
 
 		// Dead or dying. Not down: the game's IsDead answers true for a player down too (DownRules::Dead).

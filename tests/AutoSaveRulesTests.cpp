@@ -195,3 +195,43 @@ TEST("autosaves: one taken back before it began is awaited no more, and a save a
 	CHECK(book.Began(START + 2s) == Why::kNone);  // a save that still comes is not the mod's
 	CHECK(book.made == 0);
 }
+
+TEST("autosaves: the travel autosave setting is read from Fallout4Prefs.ini's [MAIN] when the game's collections do not hold it")
+{
+	using AutoSaveRules::IniBool;
+	// A Prefs ini as the game writes it (CRLF, a byte order mark, other sections that hold a key of the same name).
+	const std::string prefs = "\xEF\xBB\xBF[Display]\r\nbSaveOnTravel=0\r\niSize W=1920\r\n\r\n[MAIN]\r\nbSaveOnPause=1\r\nbSaveOnTravel=1\r\nbSaveOnWait=0\r\nbSaveOnRest=1\r\n";
+	CHECK(IniBool(prefs, "MAIN", "bSaveOnTravel") == std::optional<bool>{ true });  // not the [Display] one
+	CHECK(IniBool(prefs, "MAIN", "bSaveOnWait") == std::optional<bool>{ false });
+	CHECK(IniBool(prefs, "main", "BSAVEONTRAVEL") == std::optional<bool>{ true });  // case is not told apart
+	CHECK(IniBool(prefs, "Display", "bSaveOnTravel") == std::optional<bool>{ false });
+	CHECK(!IniBool(prefs, "MAIN", "bSaveOnTeleport"));
+	CHECK(!IniBool(prefs, "General", "bSaveOnTravel"));  // no such section
+
+	CHECK(IniBool("[MAIN]\nbSaveOnTravel = 0 \n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ false });  // LF, spaces
+	CHECK(IniBool("  [ MAIN ]  \n  bSaveOnTravel  =  1  ; on\n", "MAIN", "bSaveOnTravel") == std::nullopt);  // a trailing comment is not a value
+	CHECK(IniBool("[MAIN]\nbSaveOnTravel=true", "MAIN", "bSaveOnTravel") == std::optional<bool>{ true });    // no final newline
+	CHECK(IniBool("[MAIN]\nbSaveOnTravel=False\n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ false });
+	CHECK(IniBool("[MAIN]\nbSaveOnTravel=00\n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ false });
+	CHECK(IniBool("[MAIN]\nbSaveOnTravel=2\n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ true });
+	CHECK(!IniBool("[MAIN]\nbSaveOnTravel=\n", "MAIN", "bSaveOnTravel"));
+	CHECK(!IniBool("[MAIN]\nbSaveOnTravel=maybe\n", "MAIN", "bSaveOnTravel"));
+	CHECK(!IniBool("[MAIN]\n;bSaveOnTravel=1\n#bSaveOnTravel=1\n", "MAIN", "bSaveOnTravel"));  // comments
+	CHECK(IniBool("[MAIN]\nbSaveOnTravel=0\nbSaveOnTravel=1\n", "MAIN", "bSaveOnTravel") == std::optional<bool>{ false });  // the first
+	CHECK(!IniBool("", "MAIN", "bSaveOnTravel"));
+	CHECK(!IniBool("bSaveOnTravel=1\n", "MAIN", "bSaveOnTravel"));  // a key before any section is in none
+}
+
+TEST("autosaves: the travel setting is the game's when it holds it, else the Prefs ini's, else on, and says which")
+{
+	using AutoSaveRules::ResolveTravel;
+	using AutoSaveRules::Source;
+	CHECK(ResolveTravel(false, true).on == false);  // the game's own wins over the file
+	CHECK(ResolveTravel(false, true).source == Source::kGame);
+	CHECK(ResolveTravel(std::nullopt, false).on == false);  // the live bug: the player turned it off, and it still autosaved
+	CHECK(ResolveTravel(std::nullopt, false).source == Source::kPrefsFile);
+	CHECK(ResolveTravel(std::nullopt, true).on == true);
+	CHECK(ResolveTravel(std::nullopt, std::nullopt).on == AutoSaveRules::TRAVEL_DEFAULT);  // read nowhere: the game's default
+	CHECK(ResolveTravel(std::nullopt, std::nullopt).source == Source::kDefault);
+	CHECK(!AutoSaveRules::Wanted(Why::kTeleport, Facts{ .saveOnTravel = ResolveTravel(std::nullopt, false).on }));
+}

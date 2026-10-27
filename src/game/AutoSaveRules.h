@@ -271,6 +271,106 @@ namespace AutoSaveRules
 		return other;
 	}
 
+	// The value of a yes-or-no key in an ini file's text, as the player's Fallout4Prefs.ini holds it ("[MAIN]" then
+	// "bSaveOnTravel=1"): section and key without regard to case, spaces around the key and the value ignored, a line
+	// starting with ; or # a comment, CRLF or LF, a leading byte order mark. The first of the key in its section counts, as
+	// Windows reads an ini. 0 and false are off, any other number and true are on; a key that is not there, or holds
+	// anything else, is nullopt. The game's setting collections do not hold this setting (the rig: neither the Prefs
+	// collection nor the ini's has it under any section), so the file is what says what the player chose.
+	inline std::optional<bool> IniBool(std::string_view a_text, std::string_view a_section, std::string_view a_key)
+	{
+		const auto lower = [](std::string_view a_s) {
+			std::string out{ a_s };
+			std::ranges::transform(out, out.begin(), [](unsigned char a_c) { return static_cast<char>(std::tolower(a_c)); });
+			return out;
+		};
+		const auto trim = [](std::string_view a_s) {
+			while (!a_s.empty() && std::isspace(static_cast<unsigned char>(a_s.front()))) {
+				a_s.remove_prefix(1);
+			}
+			while (!a_s.empty() && std::isspace(static_cast<unsigned char>(a_s.back()))) {
+				a_s.remove_suffix(1);
+			}
+			return a_s;
+		};
+		if (a_text.starts_with("\xEF\xBB\xBF")) {
+			a_text.remove_prefix(3);
+		}
+		const auto section = lower(a_section);
+		const auto key = lower(a_key);
+		bool       in = false;
+		for (std::size_t start = 0; start <= a_text.size();) {
+			auto end = a_text.find('\n', start);
+			if (end == std::string_view::npos) {
+				end = a_text.size();
+			}
+			const auto line = trim(a_text.substr(start, end - start));
+			start = end + 1;
+			if (line.empty() || line.front() == ';' || line.front() == '#') {
+				continue;
+			}
+			if (line.front() == '[') {
+				const auto close = line.find(']');
+				in = close != std::string_view::npos && lower(trim(line.substr(1, close - 1))) == section;
+				continue;
+			}
+			const auto equals = line.find('=');
+			if (!in || equals == std::string_view::npos || lower(trim(line.substr(0, equals))) != key) {
+				continue;
+			}
+			const auto value = lower(trim(line.substr(equals + 1)));
+			if (value == "true") {
+				return true;
+			}
+			if (value == "false") {
+				return false;
+			}
+			if (value.empty() || !std::ranges::all_of(value, [](unsigned char a_c) { return std::isdigit(a_c) != 0; })) {
+				return std::nullopt;
+			}
+			return value.find_first_not_of('0') != std::string::npos;
+		}
+		return std::nullopt;
+	}
+
+	enum class Source
+	{
+		kGame,       // the game's own setting, as it is now
+		kPrefsFile,  // Fallout4Prefs.ini, where the player's choice is written
+		kDefault,    // found in neither: the game's default
+	};
+
+	struct Travel
+	{
+		bool   on = TRAVEL_DEFAULT;
+		Source source = Source::kDefault;
+	};
+
+	// The player's travel autosave setting from what could be read: the game's own setting when its collections hold it,
+	// else the Prefs ini's value, else the game's default (on: a setting nobody could read is not one the player turned off).
+	constexpr Travel ResolveTravel(std::optional<bool> a_game, std::optional<bool> a_file)
+	{
+		if (a_game) {
+			return { *a_game, Source::kGame };
+		}
+		if (a_file) {
+			return { *a_file, Source::kPrefsFile };
+		}
+		return {};
+	}
+
+	constexpr std::string_view SourceName(Source a_source)
+	{
+		switch (a_source) {
+		case Source::kGame:
+			return "the game's settings";
+		case Source::kPrefsFile:
+			return "Fallout4Prefs.ini";
+		default:
+			return "not found anywhere, the game's default";
+		}
+	}
+
 	// What the player is told of what a death does (Fallout 4 loads their newest save, which in a session can be many
 	// minutes old), at the moments it is near: they just went down and bleed out if nobody comes; they were helped up
 	// for the last time for now, or into the host's cooldown, so the next lethal hit kills; or they joined a session
