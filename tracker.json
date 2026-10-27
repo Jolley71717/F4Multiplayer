@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T22:08:09+00:00",
+ "updated": "2026-10-27T22:44:53+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -369,6 +369,14 @@
    "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
   },
   {
+   "id": "fhkp",
+   "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "g6s7",
    "title": "Borrow a friend's parked power armor frame",
    "kind": "feature",
@@ -638,8 +646,8 @@
    "title": "Knocked clutter ends in different places when friends stand by it",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Rig: still apart after a grenade with a friend in the pile; looking deeper",
+   "stage": 5,
+   "note": "Much closer now; small leftovers tracked separately",
    "pr": 213
   },
   {
@@ -823,8 +831,9 @@
    "title": "Some explosions aren't shared, like gas canisters",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Reported on 0.9.1; 0.9.2 shared cars, barrels and fuel tanks, so we need to check what is left.",
+   "stage": 3,
+   "note": "Logging added to find why canisters aren't shared",
+   "pr": 217,
    "desc": "Explosions from things a player shoots should happen once in every game. 0.9.2 covered cars, barrels and fuel tanks; gas canisters and similar small props still need checking."
   },
   {
