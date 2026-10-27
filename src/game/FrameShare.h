@@ -39,6 +39,10 @@ namespace FrameShare
 		bool  wornHere = false;  // our own player is in it (off, too)
 		bool  copy = false;      // one the session placed here (a friend's stand-in's, the one they left, a copy of a
 		                         // frame their game made): never ours to share
+		bool  marked = false;    // it carries the keyword WorkshopSync gives every workshop copy (saved with the copy): a
+		                         // copy an older version's workshop sync made of a frame, not a suit of the player's own (Ghost)
+		bool  holdsItems = false;  // anything is in it
+		bool  lastUsed = false;  // the frame our player got out of last (PlayerCharacter::lastUsedPowerArmor)
 		Spot  at;                // where it stands here
 		float heading = 0.0f;
 		bool  upright = true;    // not leaning (its x and y angles within TURNED of none): one leaning past
@@ -123,6 +127,32 @@ namespace FrameShare
 		return !RemoteEdits::Within(distance, MOVED) || StandInHold::AngleBetween(a_sentHeading, a_heading) > TURNED;
 	}
 
+	// ---- A copy an older version left in the save ----------------------------------------------------------------
+
+	// Up to 0.9.1 workshop mode's moved event reported a power armor frame as building, and each friend's game made a
+	// workshop copy of it where it was set down (WorkshopApply::Shared), kept in their saves since: the 0.9.1 report of
+	// frames piling up in Sanctuary. Such a copy is told from a suit of the player's own by the keyword every workshop
+	// copy carries (WorkshopSync::IsCopyMarked: the game's WorkshopBlockInteractionKeyword, given since 0.9.0 and saved
+	// with the copy; nothing else of ours, nor the game, gives a frame that one). One found standing in a session is
+	// cleared (NpcSync's frame walk, as WorkshopApply clears one at a spot the session file still reports): left there,
+	// the host's game shared it as a frame of its own, a second suit beside the friend's real one in every joiner's
+	// game, every session. Never one that holds anything (a player fitted it out, or it is their own suit an older
+	// version took over: deleting it would lose the pieces), one anyone is in, our player's own (worn, or left last:
+	// using it makes it theirs), one a quest holds, one the session placed, or one not loaded (deleting a reference
+	// whose 3D is still coming crashes the loader; the walk finds loaded ones). A plain copy an older version left (no
+	// keyword: one of a friend's stand-in's or parked frame that a load kept) cannot be told from a frame the game
+	// made, and stays: the console removes those (disable, then markfordelete).
+	constexpr bool Ghost(const Ours& a_ours)
+	{
+		if (!a_ours.found || !a_ours.created || !a_ours.frame || !a_ours.marked || a_ours.copy) {
+			return false;
+		}
+		if (a_ours.holdsItems || a_ours.off || a_ours.inUse || a_ours.wornHere || a_ours.lastUsed || a_ours.quest) {
+			return false;
+		}
+		return a_ours.loaded;
+	}
+
 	// ---- One our game made: shared as a spawn --------------------------------------------------------------------
 
 	// A frame our game made at runtime (0xFF......: placed by a script, a quest or an encounter rather than by a plugin,
@@ -138,10 +168,10 @@ namespace FrameShare
 	// beside the host's own in the same spot. One that only stood in a cell since unloaded is let go, and the copies go
 	// with it. Never while somebody is in it: the engine disables a worn frame, and the wearer's stand-in shows it then;
 	// the copies go and it is shared afresh where they get out. Never a copy the session placed here (that would send a
-	// friend's own frame back to them).
+	// friend's own frame back to them), nor one an older version's workshop sync left in the save (Ghost: it goes).
 	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere)
 	{
-		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy) {
+		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy || Ghost(a_ours)) {
 			return false;
 		}
 		if (a_ours.wornHere || a_ours.off || a_ours.inUse) {
@@ -158,6 +188,14 @@ namespace FrameShare
 	{
 		return a_shared < MAX_MADE;
 	}
+
+	// A frame our own game made, of the same base, standing this near to where a friend's game has one it made stands
+	// for it: no copy is placed beside it, and one placed goes (SpawnBook::FrameFacts::oursThere). Two saves with a
+	// shared past (one save, played on by both players) hold the same frames, made by the one game before the saves
+	// parted, under the same ids at the same spots: the host's game shares each as a spawn, and the joiner's game placed
+	// a copy of it right on its own, two suits where there is one (and the other way round, once the joiner's player had
+	// used theirs). No two frames stand this near each other, and a copy of ours there is a copy, never our own.
+	constexpr float SAME_SPOT = 32.0f;
 
 	// ---- A frame another game runs: ours is moved to where theirs stands ---------------------------------------
 
