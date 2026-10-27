@@ -2,6 +2,7 @@
 
 #include "MainThread.h"
 #include "game/CopyWatch.h"
+#include "game/DamageHold.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
 #include "game/Drops.h"
@@ -13,6 +14,7 @@
 #include "game/HealthShare.h"
 #include "game/Hud.h"
 #include "game/LinkedRefs.h"
+#include "game/LogPace.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
 #include "game/Destructibles.h"
@@ -285,6 +287,19 @@ namespace WorldSync
 		std::uint32_t                     damageReported = 0;  // what our hits took off copies, sent (kReportDamage)
 		std::uint32_t                     damageApplied = 0;   // friends' damage taken off NPCs we run (kActorDamaged)
 		std::uint32_t                     damageIgnored = 0;   // ... that came for one we don't run (its runner takes it off)
+		std::uint32_t                     damageDropped = 0;   // ... dropped for good for any other reason (DamageHold::Why)
+		std::uint32_t                     damageLate = 0;      // ... taken off after a hold (DamageHold)
+		// Friends' damage on NPCs we run that can't be taken off yet (DamageHold): a loading screen, the server's word
+		// that we run it on its way, the NPC not loaded here yet. Tried again every frame in the world, before the
+		// NPC's health is shared.
+		DamageHold::Book heldDamage;
+		bool             heldInWorld = false;  // whether the last frame could apply (the hold restarts as the world comes back)
+		LogPace::Pace    heldDamageLog, droppedDamageLog;
+		// Health reports (a friend's, or our own hit's) that go nowhere because the session has the NPC dead, and the
+		// deaths told again that killed a copy alive here after all (TakeDeath).
+		std::uint32_t healthDropped = 0;
+		LogPace::Pace droppedHealthLog;
+		std::uint32_t killsRetried = 0;
 		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
 
 		// Down, and gets up again (SessionDeaths::GetsUp: Dogmeat at the end of his health): alive for the session.
@@ -423,7 +438,30 @@ namespace WorldSync
 
 		void TakeDeath(std::uint32_t a_refId, const DeathReports::Report& a_death, bool a_inWorld)
 		{
-			if (IsShareableRef(a_refId) && dead.Add(a_refId, Clock::now(), a_death.reporter) && !TryKill(a_refId, a_death, a_inWorld)) {
+			if (!IsShareableRef(a_refId)) {
+				return;
+			}
+			const auto now = Clock::now();
+			if (dead.Add(a_refId, now, a_death.reporter)) {
+				if (!TryKill(a_refId, a_death, a_inWorld)) {
+					reports.Hold(a_refId, a_death);
+				}
+				return;
+			}
+			// Known dead already, and told again: the session's reminder, sent when our game offered to run it or hit it
+			// alive (its cell reset here while the session, which the host's world alone brings back, has it dead), or a
+			// replay. A copy alive and loaded here is killed after all, unless its death is held already (killed as it
+			// loads) or was learned of a moment ago (that kill is landing).
+			if (!a_inWorld || reports.Holds(a_refId) || !dead.KnownFor(a_refId, SessionDeaths::KILL_RETRY_AFTER, now)) {
+				return;
+			}
+			const auto actor = LoadedActor(a_refId);
+			if (!actor || DeadHere(actor)) {
+				return;
+			}
+			++killsRetried;
+			REX::INFO("WorldSync: {:08X} is alive here though the session has it dead (told again); killing it after all", a_refId);
+			if (!TryKill(a_refId, a_death, a_inWorld)) {
 				reports.Hold(a_refId, a_death);
 			}
 		}
@@ -601,6 +639,7 @@ namespace WorldSync
 				}
 				dead.Add(id, Clock::now());
 				dead.SawDead(id);
+				dead.Reported(id);
 				// Said to be found dead, so the server takes it over the NPC's runner (see Server.cpp, handleDeath).
 				// No position: a friend's copy dies where it stands. Ours can lie in another cell than theirs
 				// (an NPC that walks about, alive in their game), and coordinates in one cell are nowhere in
@@ -1239,6 +1278,7 @@ namespace WorldSync
 					continue;
 				}
 				if (dead.Add(id, Clock::now())) {
+					dead.Reported(id);  // ours: an owner named for it in the next moments crossed this report (SessionDeaths::OnOwned)
 					// Our kill, of a friend's NPC too: a grenade's, a mine's or a fire's blows name no attacker, so no hit
 					// of ours told the server we fight it. The takeover claim leaves this frame, the death next frame
 					// (Session::Frame), so the server believes it (Server.cpp, handleDeath).
@@ -1273,15 +1313,15 @@ namespace WorldSync
 		void ReportFalling(const std::vector<std::uint32_t>& a_dying, const Killers& a_killers)
 		{
 			const auto local = NpcSync::LocalPlayer();
-			std::vector<std::uint32_t> falling;
+			std::vector<std::uint32_t> fell;
 			for (const auto id : a_dying) {
 				const bool friendsBlow = friendsBlows.erase(id) != 0;
 				const auto actor = local != 0 && !dead.Contains(id) ? LoadedActor(id) : nullptr;
 				if (actor && actor->IsDead(false) && NpcHold::ReportAtFall(NpcSync::Owner(id) == local, a_killers.contains(id), friendsBlow, GetsUp(actor))) {
-					falling.push_back(id);
+					fell.push_back(id);
 				}
 			}
-			ReportDeaths(falling, a_killers, true);
+			ReportDeaths(fell, a_killers, true);
 		}
 
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
@@ -1836,6 +1876,115 @@ namespace WorldSync
 			return InWorld() && !Story::InOpening();
 		}
 
+		// A health report that goes nowhere because the session has the NPC dead (a_what: whose): counted, and logged
+		// now and then. With the ledger put right whenever a game runs the NPC (OnActorOwners), these are reports for an
+		// NPC alive in one game only, which the session would drop too (Server.cpp, handleHealth).
+		void DropHealth(std::uint32_t a_refId, const char* a_what, std::optional<float> a_fraction = std::nullopt)
+		{
+			++healthDropped;
+			if (droppedHealthLog.Due(Clock::now())) {
+				REX::INFO("WorldSync: {} dropped: the session has {:08X} dead{} ({} such since the last line)", a_what, a_refId,
+					a_fraction ? std::format(" (said {:.0f}% of its health)", *a_fraction * 100.0f) : std::string{}, droppedHealthLog.Since());
+			}
+		}
+
+		// Takes a friend's damage (a fraction of the NPC's maximum) off the NPC we run, if it can be now (DamageHold::Decide):
+		// what can't be yet is held (a_retry: it is held already, so it stays), what can never be is dropped.
+		DamageHold::Decision TakeDamage(std::uint32_t a_refId, float a_damage, Clock::time_point a_now, bool a_retry)
+		{
+			// A spawn's: our own NPC (a copy of a friend's is not ours to hurt). A plugin's reference is the same everywhere.
+			const auto local = Protocol::IsSpawnRef(a_refId) ? Spawns::LocalOf(a_refId) : IsShareableRef(a_refId) ? a_refId : 0;
+			DamageHold::Facts facts;
+			facts.known = local != 0;
+			facts.inWorld = CanApply();
+			facts.local = NpcSync::LocalPlayer();
+			facts.owner = NpcSync::Owner(a_refId);
+			const auto info = HealthInfo();
+			RE::Actor* actor = nullptr;
+			if (facts.known && facts.inWorld) {
+				facts.ledgerDead = dead.Contains(local);
+				actor = LoadedActor(local);
+				facts.loaded = actor != nullptr;
+				facts.deadHere = actor && actor->IsDead(false);
+				facts.hasHealth = actor && info && static_cast<RE::ActorValueOwner&>(*actor).GetPermanentActorValue(*info) > 0.0f;
+			}
+			const auto decision = DamageHold::Decide(facts);
+			switch (decision.verdict) {
+			case DamageHold::Verdict::kHold:
+				if (a_retry) {
+					break;  // held already, and stays
+				}
+				if (heldDamage.Hold(a_refId, a_damage, decision.why, a_now)) {
+					if (heldDamageLog.Due(a_now)) {
+						REX::INFO("WorldSync: player's damage on {:08X} ({:.0f}% of its health) held: {} ({} held since the last line, {} waiting)", a_refId,
+							a_damage * 100.0f, DamageHold::Name(decision.why), heldDamageLog.Since(), heldDamage.Size());
+					}
+				} else {
+					++damageDropped;
+					if (droppedDamageLog.Due(a_now)) {
+						REX::WARN("WorldSync: player's damage on {:08X} ({:.0f}% of its health) dropped: {} NPCs held for already ({} dropped since the last line)", a_refId,
+							a_damage * 100.0f, DamageHold::MAX_HELD, droppedDamageLog.Since());
+					}
+				}
+				break;
+			case DamageHold::Verdict::kDrop:
+				if (decision.why == DamageHold::Why::kNotOurs) {
+					++damageIgnored;  // its runner takes it off: every game but the sender's hears of it
+					break;
+				}
+				++damageDropped;
+				if (droppedDamageLog.Due(a_now)) {
+					REX::INFO("WorldSync: player's damage on {:08X} ({:.0f}% of its health) dropped: {} ({} dropped since the last line)", a_refId, a_damage * 100.0f,
+						DamageHold::Name(decision.why), droppedDamageLog.Since());
+				}
+				break;
+			case DamageHold::Verdict::kApply: {
+				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
+				const float maximum = values.GetPermanentActorValue(*info);
+				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, -a_damage * maximum);
+				++damageApplied;
+				if (a_retry) {
+					++damageLate;
+				}
+				// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
+				if (values.GetActorValue(*info) <= 0.0f && !Protocol::IsSpawnRef(a_refId)) {
+					std::erase_if(friendsBlows, [&](const auto& a_entry) { return a_now - a_entry.second > FRIENDS_BLOW_KEEP; });
+					if (friendsBlows.size() < MAX_DYING) {
+						friendsBlows.insert_or_assign(local, a_now);
+					}
+				}
+				break;
+			}
+			}
+			return decision;
+		}
+
+		// Tries every NPC damage is held for again (DamageHold), each frame in the world: applied as the NPC loads or the
+		// server's word that we run it comes, dropped once it can never be or after DamageHold::HOLD in the world.
+		void RetryHeldDamage(Clock::time_point a_now)
+		{
+			const bool inWorld = CanApply();
+			if (inWorld && !heldInWorld) {
+				heldDamage.BackInWorld(a_now);  // the loading screen's time didn't count
+			}
+			heldInWorld = inWorld;
+			if (!inWorld || heldDamage.Size() == 0) {
+				return;
+			}
+			heldDamage.Retry([&](DamageHold::Held& a_held) {
+				const auto decision = TakeDamage(a_held.id, (std::min)(a_held.fraction, 1.0f), a_now, true);
+				a_held.why = decision.why;
+				return decision.verdict != DamageHold::Verdict::kHold;
+			});
+			for (const auto& gone : heldDamage.Expire(a_now)) {
+				++damageDropped;
+				if (droppedDamageLog.Due(a_now)) {
+					REX::INFO("WorldSync: player's damage on {:08X} ({:.0f}% of its health) dropped: {} ({}; {} dropped since the last line)", gone.id, gone.fraction * 100.0f,
+						DamageHold::Name(DamageHold::Why::kExpired), DamageHold::Name(gone.why), droppedDamageLog.Since());
+				}
+			}
+		}
+
 		// ScriptDoors::DOORS by the IDs this game has them under, once its data is loaded. A door whose plugin
 		// isn't loaded keeps 0 and is never looked at.
 		void ResolveScriptDoors()
@@ -2021,6 +2170,7 @@ namespace WorldSync
 	{
 		friendlyFire = a_friendlyFire;
 		dead.Expect(Clock::now());  // the session's world state follows the welcome
+		heldDamage.Clear();         // what was held was for the session we were in before
 	}
 
 	LootSync::Loot& Loot()
@@ -2236,7 +2386,11 @@ namespace WorldSync
 			}
 			return;
 		}
-		if (!IsShareableRef(a_refId) || dead.Contains(a_refId)) {
+		if (!IsShareableRef(a_refId)) {
+			return;
+		}
+		if (dead.Contains(a_refId)) {
+			DropHealth(a_refId, "a friend's report of its health", a_health);
 			return;
 		}
 		if (TrySetHealth(a_refId, a_health, CanApply())) {
@@ -2251,37 +2405,10 @@ namespace WorldSync
 
 	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage)
 	{
-		if (!(a_damage > 0.0f && a_damage <= 1.0f) || !CanApply()) {
+		if (!(a_damage > 0.0f && a_damage <= 1.0f)) {
 			return;
 		}
-		// A spawn's: our own NPC (a copy of a friend's is not ours to hurt). A plugin's reference is the same everywhere.
-		const auto local = Protocol::IsSpawnRef(a_refId) ? Spawns::LocalOf(a_refId) : IsShareableRef(a_refId) ? a_refId : 0;
-		const auto us = NpcSync::LocalPlayer();
-		if (local == 0 || dead.Contains(local) || us == 0 || NpcSync::Owner(a_refId) != us) {
-			++damageIgnored;
-			return;
-		}
-		const auto info = HealthInfo();
-		const auto actor = LoadedActor(local);
-		if (!info || !actor || actor->IsDead(false)) {
-			++damageIgnored;
-			return;
-		}
-		auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
-		const float maximum = values.GetPermanentActorValue(*info);
-		if (maximum <= 0.0f) {
-			return;
-		}
-		values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, -a_damage * maximum);
-		++damageApplied;
-		// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
-		if (values.GetActorValue(*info) <= 0.0f && !Protocol::IsSpawnRef(a_refId)) {
-			const auto now = Clock::now();
-			std::erase_if(friendsBlows, [&](const auto& a_entry) { return now - a_entry.second > FRIENDS_BLOW_KEEP; });
-			if (friendsBlows.size() < MAX_DYING) {
-				friendsBlows.insert_or_assign(local, now);
-			}
-		}
+		TakeDamage(a_refId, a_damage, Clock::now(), false);
 	}
 
 	bool MayClaim(std::uint32_t a_refId, bool a_essential)
@@ -2312,13 +2439,20 @@ namespace WorldSync
 			if (owner.playerId != 0 && !loot.Ours(owner.playerId) && IsShareableRef(owner.refId)) {
 				toCheck.insert(owner.refId);
 			}
-			// An owner for one whose death we hold (essential here, or not loaded yet): the death was undone, so our
-			// copy lives on. One we already killed stays dead.
-			if (owner.playerId != 0 && reports.Holds(owner.refId)) {
+			// A game runs one we have dead: it is alive there, so alive for the session (the host's game brought it back
+			// with a cell reset, or its death was undone, or what we knew was from another world: the server gives
+			// nobody a dead NPC). No longer dead here, whether our copy lives (its death was held: essential here, or
+			// not loaded yet) or lies dead (its own cell's reset brings it back; until then its hits on our stand-in in
+			// the runner's game count all the same: PlayerHits). Before, only a held death was forgotten: a joiner whose
+			// copy had died kept the NPC dead, and could neither hurt it nor be hurt by it once the host's game had it
+			// back. Not a death our own game reported a moment ago (SessionDeaths::OWNED_CROSSING).
+			if (owner.playerId != 0 && IsShareableRef(owner.refId) && dead.OnOwned(owner.refId, Clock::now())) {
+				const bool held = reports.Holds(owner.refId);
 				reports.Forget(owner.refId);
-				dead.Forget(owner.refId);
 				essentialHeld.erase(owner.refId);
-				REX::INFO("WorldSync: {:08X} lives after all (player {} runs it); its death is forgotten here", owner.refId, owner.playerId);
+				const auto actor = LoadedActor(owner.refId);
+				REX::INFO("WorldSync: {:08X} lives after all (player {} runs it); its death is forgotten here{}", owner.refId, owner.playerId,
+					held ? " (it was held)" : actor && DeadHere(actor) ? "; our copy lies dead until its cell resets" : "");
 			}
 		}
 	}
@@ -2390,18 +2524,26 @@ namespace WorldSync
 			for (const auto id : hitLastFrame) {
 				const auto wire = WireId(id);
 				const auto actor = wire ? LoadedActor(id) : nullptr;
-				if (actor && !actor->IsDead(false) && !dead.Contains(id)) {
-					const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
-					const float maximum = values.GetPermanentActorValue(*info);
-					if (maximum > 0.0f) {
-						const float fraction = values.GetActorValue(*info) / maximum;
-						Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
-						healthShare.Sent(wire, fraction, Clock::now());
-					}
+				if (!actor || actor->IsDead(false)) {
+					continue;
+				}
+				if (dead.Contains(id)) {
+					DropHealth(id, "our hit on it");  // the session would drop it too: ours fights a copy alive only here
+					continue;
+				}
+				const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
+				const float maximum = values.GetPermanentActorValue(*info);
+				if (maximum > 0.0f) {
+					const float fraction = values.GetActorValue(*info) / maximum;
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
+					healthShare.Sent(wire, fraction, Clock::now());
 				}
 			}
 		}
 		hitLastFrame.clear();
+		// Friends' damage held for NPCs we run (DamageHold): taken off now if it can be, before their health is shared,
+		// so what we share has it.
+		RetryHeldDamage(Clock::now());
 		// The NPCs we run: what they lost (or got back) since, by anything but our hits.
 		if (const auto info = HealthInfo()) {
 			ShareHealth(*info, Clock::now());
@@ -2690,8 +2832,9 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
-			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+			   dead.Revived(), dead.Corrected(), killsRetried, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
+			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied);
 	}

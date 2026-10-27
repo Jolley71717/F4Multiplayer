@@ -131,6 +131,9 @@ namespace
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most every Options::takeoverCooldown.
 	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
+	// A player's game that has an NPC alive which the session has dead (it hit it, offered to run it, or it hit their
+	// stand-in) is told its death again (Options::remindDeadEvery): at most this many NPCs are remembered for one player.
+	constexpr std::size_t MAX_REMINDED = 256;
 	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
 	// A flooder's budget refills and runs out again twice a second: the log says so at most this often.
 	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
@@ -309,6 +312,15 @@ namespace
 		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
 		// MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
+		// Dead NPCs this player's game has alive (remindDead): since when it has reported about one, when last, and when
+		// its death was last told again.
+		struct DeadReminder
+		{
+			Clock::time_point since{};  // its first report of this run (the game has had the NPC alive since)
+			Clock::time_point last{};   // its latest report
+			Clock::time_point told{};   // when the death was last told again (never: zero)
+		};
+		std::unordered_map<std::uint32_t, DeadReminder> deadReminded;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
 		Clock::time_point          reloadToldAt{};  // when the others were last told it loaded a save (kPlayerReloaded)
 		bool                       reloadOwed = false;  // it loaded again sooner: the others are told once Options::reloadToldEvery is up
@@ -1431,6 +1443,61 @@ void Server::Run()
 	std::size_t       droppedDeaths = 0;  // since the last line about them
 	Clock::time_point staleHealthLogged{};
 	std::size_t       staleHealthDropped = 0;  // health reports from a game that no longer runs the NPC, since the last line
+	Clock::time_point deadHealthLogged{};
+	std::size_t       deadHealthDropped = 0;  // health and damage reports for an NPC the session has dead, since the last line
+	Clock::time_point deadHitLogged{};
+	std::size_t       deadHitsDropped = 0;  // hits on stand-ins by an NPC the session has dead, since the last line
+	Clock::time_point hitBudgetLogged{};
+	std::size_t       hitBudgetDropped = 0;  // hits on stand-ins past the reporter's damage a second, since the last line
+	std::size_t       deadReminders = 0;     // deaths told again to a game that had the NPC alive (remindDead)
+
+	// The session has the NPC dead, and this player's game just had it alive: it hit it, offered to run it, or the NPC
+	// hit a stand-in there (its cell reset in that game, or its save is from before the kill). Told its death again, as
+	// the world state would, at most once per Options::remindDeadEvery for each NPC: its game kills its copy (WorldSync's
+	// TakeDeath kills one alive here though known dead), so every game has it dead until the host's world brings it
+	// back. Before, every report about it was dropped without a word and the game fought a copy alive only there. Not
+	// the host's game: its offer to run one that came back is the revival (handleClaims), and a reminder would kill
+	// what came back.
+	// Not at the first report either: the players mostly walk into a reset camp together, and the host's game offers
+	// each raider in the same moment the joiner's does. A reminder sent on the joiner's claim, with the host's offer
+	// next in the queue, killed the joiner's copy just before the host's game brought the raider back: a corpse for the
+	// joiner, hitting them unseen, for the rest of the session. So the death is told again only once the game has
+	// reported about the NPC for Options::aliveAgainGrace, the time the host's game is given to bring one back, with the
+	// NPC still dead; then every Options::remindDeadEvery while it keeps reporting. A silence of aliveAgainGrace ends
+	// the run: its next report starts the wait again (its cell reset once more, days later).
+	const auto remindDead = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
+		if (a_player.local || !a_player.welcomed) {
+			return;
+		}
+		auto& reminded = a_player.deadReminded;
+		auto  it = reminded.find(a_refId);
+		if (it == reminded.end()) {
+			if (reminded.size() >= MAX_REMINDED) {
+				std::erase_if(reminded, [&](const auto& a_entry) { return a_now - a_entry.second.last >= options.aliveAgainGrace; });
+				if (reminded.size() >= MAX_REMINDED) {
+					return;
+				}
+			}
+			it = reminded.try_emplace(a_refId, Player::DeadReminder{ a_now, a_now, {} }).first;
+		} else if (a_now - it->second.last >= options.aliveAgainGrace) {
+			it->second = { a_now, a_now, {} };
+		}
+		auto& reminder = it->second;
+		reminder.last = a_now;
+		if (a_now - reminder.since < options.aliveAgainGrace || (reminder.told != Clock::time_point{} && a_now - reminder.told < options.remindDeadEvery)) {
+			return;
+		}
+		reminder.told = a_now;
+		++deadReminders;
+		const auto at = deathPositions.find(a_refId);
+		Protocol::ActorDeath death{ a_refId, 0, false };
+		if (at != deathPositions.end()) {
+			death.x = at->second[0];
+			death.y = at->second[1];
+			death.z = at->second[2];
+		}
+		send(a_player.key, Protocol::Encode(death, Protocol::MessageType::kActorDied), true);
+	};
 
 	// A spawn died: in its owner's game, or in the game of a player fighting their copy of it (they hurt it or tried to
 	// take it over within Options::deathGrace, as for any NPC another game runs). Not kept with the session's dead: it is
@@ -1591,7 +1658,20 @@ void Server::Run()
 		const auto health = Protocol::DecodeActorHealth(a_data);
 		// A spawn's health goes to its owner too, whoever hit their copy of it.
 		const bool spawn = health && spawns.contains(health->refId);
-		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId)) || deadActors.contains(health->refId)) {
+		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId))) {
+			return;
+		}
+		// Dead for the session: nothing to pass on, and the sender's game, which has it alive, is told so (remindDead).
+		// A spawn's death ends it (handleSpawnDeath), so this is a plugin's NPC.
+		if (deadActors.contains(health->refId)) {
+			++deadHealthDropped;
+			const auto now = Clock::now();
+			if (now - deadHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				deadHealthLogged = now;
+				log(std::format("server: {} of {:08X} from player {} dropped: the session has it dead ({} since the last such line)",
+					a_out == Protocol::MessageType::kActorDamaged ? "damage" : "health", health->refId, a_player.id, std::exchange(deadHealthDropped, 0)));
+			}
+			remindDead(a_player, health->refId, now);
 			return;
 		}
 		if (a_out == Protocol::MessageType::kActorDamaged && !(health->health > 0.0f && health->health <= 1.0f)) {
@@ -2124,6 +2204,9 @@ void Server::Run()
 				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
 				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
 				if (!cameBack) {
+					// A joiner's game has it alive (its own cell reset, or an older save): told it is dead, so it kills its copy
+					// instead of fighting it alone and offering it every few seconds. The host's game is left to offer it again.
+					remindDead(a_player, claim.refId, now);
 					continue;
 				}
 				deadActors.erase(claim.refId);
@@ -2540,8 +2623,19 @@ void Server::Run()
 			return;
 		}
 		// A dead NPC hurts nobody. One the session knows is dead can still be alive for a moment in the
-		// reporter's game (dead in the host's save, alive in a joiner's until the news reaches it).
+		// reporter's game (dead in the host's save, alive in a joiner's until the news reaches it), or for good (its
+		// cell reset there): the reporter's game is told again (remindDead). An attacker of 0 is one the reporter's
+		// game can't name on the wire (a plugin the session's table lacks): passed on, the victim judges it by the
+		// reporter's distance.
 		if (!hit->byPlayer && deadActors.contains(hit->attacker)) {
+			++deadHitsDropped;
+			const auto now = Clock::now();
+			if (now - deadHitLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				deadHitLogged = now;
+				log(std::format("server: a hit by {:08X} from player {} dropped: the session has it dead ({} since the last such line)", hit->attacker, a_player.id,
+					std::exchange(deadHitsDropped, 0)));
+			}
+			remindDead(a_player, hit->attacker, now);
 			return;
 		}
 		// A spawn hits a stand-in only in its owner's game: the reporter's own (the victim's game has a copy of it).
@@ -2555,6 +2649,12 @@ void Server::Run()
 		// reporter than a fight can produce; the rest is dropped.
 		const float damage = (std::min)(hit->damage, MAX_HIT_DAMAGE);
 		if (a_player.rate.hitDamage + damage > MAX_HIT_DAMAGE_PER_SECOND) {
+			++hitBudgetDropped;
+			if (const auto now = Clock::now(); now - hitBudgetLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				hitBudgetLogged = now;
+				log(std::format("server: a hit from player {} dropped: more damage a second than a fight deals ({} since the last such line)", a_player.id,
+					std::exchange(hitBudgetDropped, 0)));
+			}
 			return;
 		}
 		a_player.rate.hitDamage += damage;
