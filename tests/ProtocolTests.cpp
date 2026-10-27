@@ -1028,8 +1028,9 @@ TEST("protocol: PlayerHit checks the attacker against byPlayer")
 	// Hit by a player: there is no NPC attacker.
 	CHECK(!ok(10.0f, true, REF_A));
 	CHECK(!ok(10.0f, true, PLAYER_REF_ID));
-	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id).
-	CHECK(!ok(10.0f, false, 0));
+	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id), or none at
+	// all: one the sender's game can't name on the wire (of a plugin the other side lacks: FormTranslate).
+	CHECK(ok(10.0f, false, 0));
 	CHECK(!ok(10.0f, false, PLAYER_REF_ID));
 	CHECK(ok(10.0f, false, RUNTIME_REF));
 	CHECK(!ok(10.0f, false, 0xFF000000));

@@ -125,6 +125,31 @@ TEST("form translate: a message about a form the other side lacks is dropped, an
 	CHECK(runtime.kind == Result::Kind::kSame);
 }
 
+TEST("form translate: a hit on a stand-in by an NPC of a plugin the other side lacks is kept, naming no attacker")
+{
+	// The victim's game can't show the NPC, but it hurt their stand-in in the sender's game all the same: dropped, that
+	// NPC could never hurt them (PlayerHits takes an unnamed attacker's hit when the sender is near).
+	for (const auto type : { MT::kPlayerHit, MT::kPlayerDamaged }) {
+		Result     out;
+		const auto ours = After(Encode(PlayerHit{ 2, 12.5f, false, MINE }, type), MISSING, Way::kToSession, &out);
+		REQUIRE(ours);
+		CHECK(out.fields == 1);
+		CHECK(out.unmapped == std::vector<std::uint32_t>{ MINE });
+		const auto hit = DecodePlayerHit(*ours);
+		REQUIRE(hit);
+		CHECK(hit->attacker == 0u);
+		CHECK(hit->damage == 12.5f);
+		CHECK(!hit->byPlayer);
+		const auto theirs = After(Encode(PlayerHit{ 2, 3.0f, false, THEIRS }, type), MISSING, Way::kToLocal);
+		REQUIRE(theirs);
+		CHECK(DecodePlayerHit(*theirs)->attacker == 0u);
+		// One we both have is named as each side knows it.
+		const auto shared = After(Encode(PlayerHit{ 2, 3.0f, false, SESSION_SHARED }, type), MISSING, Way::kToLocal);
+		REQUIRE(shared);
+		CHECK(DecodePlayerHit(*shared)->attacker == SHARED);
+	}
+}
+
 TEST("form translate: an explosion set off by an NPC of a plugin we lack is dropped; a player's or a spawn's is kept")
 {
 	Result out;

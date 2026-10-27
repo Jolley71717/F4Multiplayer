@@ -1384,7 +1384,10 @@ namespace Protocol
 
 	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
 	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
-	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world.
+	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world, and takes a hit
+	// by one that isn't when the sender is near (PlayerHits). Since protocol 55 an NPC hit may name no attacker (0): one
+	// the sender's game can't name on the wire, of a plugin the other side lacks (FormTranslate), and the victim takes
+	// it by the sender's distance alone.
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
@@ -3972,7 +3975,7 @@ namespace Protocol
 		msg.byPlayer = r.U8() != 0;
 		msg.attacker = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
-			(msg.byPlayer ? msg.attacker != 0 : !IsActorRef(msg.attacker))) {
+			(msg.byPlayer ? msg.attacker != 0 : msg.attacker != 0 && !IsActorRef(msg.attacker))) {
 			return std::nullopt;
 		}
 		return msg;
