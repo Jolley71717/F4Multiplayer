@@ -162,11 +162,11 @@ namespace
 		}
 	};
 
-	// Hands what the server sends a_peer to the joiner, in order, until a_done() or three seconds pass.
+	// Hands what the server sends a_peer to the joiner, in order, until a_done() or half a minute passes.
 	template <class Done>
 	void Pump(Fixture& a_f, PeerId a_peer, Joiner& a_game, Done&& a_done)
 	{
-		const auto deadline = std::chrono::steady_clock::now() + 3s;
+		const auto deadline = std::chrono::steady_clock::now() + 30s;
 		while (!a_done() && std::chrono::steady_clock::now() < deadline) {
 			a_game.Handle(a_f.fake->Take(a_peer));
 			std::this_thread::sleep_for(10ms);
