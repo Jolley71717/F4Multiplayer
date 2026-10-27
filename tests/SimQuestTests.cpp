@@ -1527,6 +1527,70 @@ TEST("sim quests: with a shared story, a friend's talk with Codsworth starts his
 	CHECK(bob.Quests().PlayerScene() == 0);  // nothing came back to Bob as the host's
 }
 
+TEST("sim quests: with a shared story, a friend whose connection drops in the middle of the host's Codsworth search is still carried through it once back")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	const auto step = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		host.Stage(a_quest, a_stage);
+		s.PlayFor(3s);
+	};
+	step(MQ102, 15);
+	step(MQ102, 20);
+	step(MQ102, 22);
+	step(MQ102, 25);
+	step(CODSWORTH, 50);  // the search starts in Bob's game too, Bob in it
+	CHECK(bob.Quests().SessionScene() == SEARCH_SCENE);
+
+	// A Steam hiccup: Bob's session ends and is made again, his player still in the search scene. Taken for his own
+	// then, it would hold the rest of the search back again, and only its end (40) ends it.
+	bob.LoseConnection();
+	s.PlayFor(5s);
+	REQUIRE(bob.Join());
+	s.PlayFor(3s);
+	CHECK(bob.Quests().SessionScene() == SEARCH_SCENE);
+	step(MQ102, 32);
+	CHECK(Done(bob, MQ102).contains(32));  // as it comes, not held back
+	step(MQ102, 34);
+	step(MQ102, 36);
+	step(MQ102, 38);
+	CHECK(Done(bob, MQ102).contains(40));
+	CHECK(bob.Quests().PlayerScene() == 0);
+	step(CODSWORTH, 200);
+	step(MQ102, 60);
+	s.PlayFor(30s);
+	CHECK(PastTheVault(bob) == OUT_OF_SANCTUARY);
+	CHECK(Order(bob, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(bob.Quests().PlayerScene() == 0);
+	CHECK(bob.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: with a shared story, a scene the host walks into right after a friend's stage came is the host's own: the friend's next stages wait for it")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	bob.Stage(MQ102, 15);
+	s.PlayFor(3s);
+	REQUIRE(Done(host, MQ102).contains(15));
+	host.Quests().EnterScene(OWN_SCENE, MQ103);  // a moment after it: Preston's, not anything 15 started
+	s.PlayFor(1s);
+	CHECK(host.Quests().SessionScene() == 0);
+	bob.Stage(MQ102, 20);
+	s.PlayFor(5s);
+	CHECK(!Done(host, MQ102).contains(20));  // not in the middle of the host's own scene
+
+	host.Quests().LeaveScene();
+	s.PlayFor(5s);
+	CHECK(Done(host, MQ102).contains(20));
+	CHECK(host.Quests().WaitingCount() == 0);
+}
+
 TEST("sim quests: with a shared story, the host's own scene still holds a friend's Codsworth search back until they are out of it")
 {
 	Session s{ SharedStory() };

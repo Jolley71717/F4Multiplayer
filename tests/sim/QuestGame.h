@@ -238,7 +238,7 @@ namespace Sim
 			}
 			if (a_inSession || locked) {
 				// QuestSync::PlayerBusy: a conversation, or the player's own scene (not one a friend's stage started here).
-				busy = sceneHold.Holds({ .talking = talking, .scene = playerScene, .sceneQuestWaiting = playerScene != 0 && waiting.Contains(playerSceneQuest) }, now);
+				busy = sceneHold.Holds({ .talking = talking, .scene = playerScene, .sceneQuest = playerSceneQuest, .sceneQuestWaiting = playerScene != 0 && waiting.Contains(playerSceneQuest) }, now);
 				combatHold = CombatHold();
 				std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= StageRules::LIVE_FOR; });
 				CheckReleased(a_inSession);
@@ -529,7 +529,7 @@ namespace Sim
 				StageLog::Insert(known->second, a_stage);
 			}
 			remoteStageAt[a_id] = now;
-			sceneHold.StageSet(now);  // its script may start a scene with the player in it: the session's
+			sceneHold.StageSet(a_id, now);  // its script may start a scene with the player in it: the session's
 			++applied;
 		}
 

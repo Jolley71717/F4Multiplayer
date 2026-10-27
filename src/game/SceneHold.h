@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <utility>
+#include <vector>
 
 // Whether the scene the player is in holds friends' quest stages back. Kept free of the game so it can be
 // tested.
@@ -15,10 +18,18 @@
 // player's: the friend is playing it, their game runs Codsworth, and only the friend's later stages end it
 // here (Out of Time's 40 sets Codsworth's 100, whose script stops the scene). Held back by the scene, those
 // stages never came, the scene never ended, and the host had to follow Codsworth through the search
-// themselves to go on; meanwhile the hold kept every other quest's stages waiting too. So a scene that begins
-// within STARTED_BY_FRIEND of a friend's stage being set here, or of such a scene ending (one scene can start
-// the next), counts as the session's for as long as the player is in it: it holds nothing back. The
-// conversation menu holds stages back whoever's scene it is: its topics change with the stages.
+// themselves to go on; meanwhile the hold kept every other quest's stages waiting too. So a scene of a quest
+// a friend's stage was set on here within STARTED_BY_FRIEND, or of the quest of the session's scene that
+// ended within STARTED_BY_FRIEND (one scene can start the next), counts as the session's for as long as the
+// player is in it: it holds nothing back. The conversation menu holds stages back whoever's scene it is: its
+// topics change with the stages.
+//
+// Of its quest, not any: the player talking to someone right after a friend's progress came starts a scene
+// of their own, of that NPC's quest. Fallout4.esm's and DLCCoast.esm's shared quests' stage fragments start
+// 502 scenes of their own quest and 18 of another's (Inst306 200 starts Inst307's, the Memory Den's memories
+// a holotape quest's): those 18 are the player's own here, held back as before. A scene the player is first
+// seen in with the dialogue menu open is theirs too: they started it by talking (Codsworth's search has no
+// line for the player: his packages and his own lines only).
 //
 // The player's own scene holds friends' stages back, but one of a quest with stages waiting here only for
 // MAX_HOLD: a stage set from far away can start a scene with the player in it that only a later stage of its
@@ -27,9 +38,11 @@ namespace SceneHold
 {
 	using Clock = std::chrono::steady_clock;
 
-	// A scene that begins this soon after a friend's stage was set here (its script runs a moment later, and
-	// some wait a few seconds first), or after the session's last scene ended, is the session's.
-	inline constexpr auto STARTED_BY_FRIEND = std::chrono::seconds(10);
+	// A scene that begins this soon after a friend's stage of its quest was set here, or after the session's last scene
+	// of its quest ended, is the session's. Its script runs a moment later, some wait a few seconds first, and a
+	// game with hundreds of mods can be many seconds behind on its scripts; the quest and the dialogue menu, not
+	// the time, are what keep the player's own scenes theirs.
+	inline constexpr auto STARTED_BY_FRIEND = std::chrono::seconds(30);
 	// The player's own scene holds the stages of its quest back at most this long.
 	inline constexpr auto MAX_HOLD = std::chrono::seconds(30);
 
@@ -38,25 +51,36 @@ namespace SceneHold
 	{
 		bool          talking = false;            // the dialogue menu is open
 		std::uint32_t scene = 0;                  // the scene they are in (0: none)
+		std::uint32_t sceneQuest = 0;             // the quest it belongs to
 		bool          sceneQuestWaiting = false;  // stages of that scene's quest are waiting here
 	};
 
 	class Watch
 	{
 	public:
-		// A friend's stage was set here: its script may start a scene a moment later.
-		void StageSet(Clock::time_point a_now) { lastStage = a_now; }
+		// A friend's stage of a_quest was set here: its script may start a scene of that quest a moment later.
+		void StageSet(std::uint32_t a_quest, Clock::time_point a_now)
+		{
+			Forget(a_now);
+			if (const auto it = std::ranges::find(recent, a_quest, &Stage::first); it != recent.end()) {
+				it->second = a_now;
+			} else {
+				recent.emplace_back(a_quest, a_now);
+			}
+		}
 
 		// Whether friends' stages wait now.
 		bool Holds(const Player& a_player, Clock::time_point a_now)
 		{
 			if (a_player.scene != scene) {
-				const bool wasSessions = sessions;
-				if (wasSessions) {
-					sessionSceneEnded = a_now;
+				if (sessions) {
+					ended = { sceneQuest, a_now };
 				}
+				Forget(a_now);
 				scene = a_player.scene;
-				sessions = scene != 0 && (Within(lastStage, a_now) || Within(sessionSceneEnded, a_now));
+				sceneQuest = a_player.sceneQuest;
+				sessions = scene != 0 && sceneQuest != 0 && !a_player.talking &&
+				           (std::ranges::contains(recent, sceneQuest, &Stage::first) || (ended && ended->first == sceneQuest));
 				heldSince.reset();
 			}
 			if (a_player.talking) {
@@ -78,26 +102,33 @@ namespace SceneHold
 		// The scene the player is in, if it is the session's (0: none, or their own).
 		[[nodiscard]] std::uint32_t SessionScene() const { return sessions ? scene : 0; }
 
-		// The session ended, or a save was loaded: nothing of it is remembered.
+		// The session ended (a dropped connection too: it is made again a moment later), or a save was loaded:
+		// what was set before is forgotten, so a scene begun after it is the player's own. The scene they are
+		// still in stays what it was: the session's search goes on in their game, and only the friend's stages
+		// end it, the ones that come again once the session is back.
 		void Clear()
 		{
-			scene = 0;
-			sessions = false;
+			recent.clear();
+			ended.reset();
 			heldSince.reset();
-			lastStage.reset();
-			sessionSceneEnded.reset();
 		}
 
 	private:
-		static bool Within(const std::optional<Clock::time_point>& a_at, Clock::time_point a_now)
+		using Stage = std::pair<std::uint32_t, Clock::time_point>;  // a quest, and when a stage of it was set or its scene ended
+
+		void Forget(Clock::time_point a_now)
 		{
-			return a_at && a_now - *a_at < STARTED_BY_FRIEND;
+			std::erase_if(recent, [&](const Stage& a_stage) { return a_now - a_stage.second >= STARTED_BY_FRIEND; });
+			if (ended && a_now - ended->second >= STARTED_BY_FRIEND) {
+				ended.reset();
+			}
 		}
 
-		std::uint32_t                    scene = 0;        // the scene the player was in at the last poll
+		std::uint32_t                    scene = 0;       // the scene the player was in at the last poll
+		std::uint32_t                    sceneQuest = 0;  // ... its quest
 		bool                             sessions = false;  // ... which a friend's stage started here
 		std::optional<Clock::time_point> heldSince;         // since when the player's own scene holds its quest's stages
-		std::optional<Clock::time_point> lastStage;         // when a friend's stage was last set here
-		std::optional<Clock::time_point> sessionSceneEnded;  // when the player last left a scene of the session's
+		std::vector<Stage>               recent;            // the quests friends' stages were set on lately
+		std::optional<Stage>             ended;             // the session's scene the player last left, by its quest
 	};
 }

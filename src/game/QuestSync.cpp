@@ -203,6 +203,7 @@ namespace QuestSync
 			const auto quest = scene && scene->parentQuest ? scene->parentQuest->GetFormID() : 0u;
 			const bool held = sceneHold.Holds({ .talking = OpenMenus::Open(OpenMenus::Menu::kDialogue),
 												  .scene = scene ? scene->GetFormID() : 0u,
+												  .sceneQuest = quest,
 												  .sceneQuestWaiting = quest != 0 && waiting.Contains(quest) },
 				a_now);
 			if (const auto sessions = sceneHold.SessionScene(); sessions != sessionSceneLogged) {
@@ -448,7 +449,7 @@ namespace QuestSync
 			}
 			remoteStageAt[id] = Clock::now();
 			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
-			sceneHold.StageSet(Clock::now());  // its script may start a scene with the player in it: the session's
+			sceneHold.StageSet(id, Clock::now());  // its script may start a scene with the player in it: the session's
 			++applied;
 		}
 
@@ -656,7 +657,7 @@ namespace QuestSync
 			REX::WARN("QuestSync: MQ104 is at {} without its stage {}, and MQ105 never started; starting it", mq104->currentStage, MQ104_STARTS_MQ105);
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
 			FadeWatch::Arm(std::format("set {:08X} stage {}", MQ105, MQ105_FIRST));
-			sceneHold.StageSet(a_now);
+			sceneHold.StageSet(MQ105, a_now);
 			++repaired;
 			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
 		}
@@ -1006,7 +1007,7 @@ namespace QuestSync
 		liveAt.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
-		sceneHold.Clear();  // a scene of the session's the player is still in is theirs now, like the rest of their game
+		sceneHold.Clear();  // what was set is forgotten; a scene of the session's the player is still in stays the session's (a reconnect)
 		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
