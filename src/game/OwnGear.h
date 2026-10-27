@@ -11,11 +11,13 @@
 // takes off, gives or takes away. Every change the session makes to an inventory or what an actor wears is judged here
 // at the point it is made, whatever the code that asked for it already checked (a Nexus report had a host lose their
 // Pip-Boy and weapons as a friend joined; that was a story mod's quest stage replayed, see Official.h, and nothing of
-// the session may ever do the same). The one exception is the player's own act put right: a take or put of theirs at a
+// the session may ever do the same). The exception is the player's own act put right: a take or put of theirs at a
 // friend's shared storage that the server refused, or a take the host's chest held less of, is undone (Change::kStorageUndo,
 // never on anything but our player, and only for a StorageView::PlayerChange, which only StorageView::Client makes).
-// The other is the player's take of a gift from a container (Change::kGiftTake, GiftBook.h): what they took is held back from
+// Another is the player's take of a gift from a container (Change::kGiftTake, GiftBook.h): what they took is held back from
 // their inventory until the server grants it, then given, or taken out again if a friend's take came first.
+// A third is a power armor frame a friend lent: copies of its pieces go into our copy of it, and are gathered back out of
+// it and out of our player as they get out (Change::kLoan; only items named as the lent ones, FrameLoans).
 // A move our loaded world lacks is put right in the true copy by the server, never on our player.
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
@@ -46,6 +48,10 @@ namespace OwnGear
 		// them when it is theirs, or taken out again when a friend's take came first. Only ever our player, and only ever what
 		// they took themselves (GiftBook::Client makes it).
 		kGiftTake,
+		// A power armor frame lent to our player (FrameLoans): copies of its owner's pieces and core put into our copy of the
+		// frame, and gathered back out of it and out of our player as they get out (only items named as the lent ones), with a
+		// fusion core of our player's own the frame used up given back to them. Our player, or a frame this game placed.
+		kLoan,
 		kCount,
 	};
 
@@ -84,7 +90,7 @@ namespace OwnGear
 			return Verdict::kGone;
 		}
 		if (a_target.player) {
-			return a_change == Change::kStorageUndo || a_change == Change::kGiftTake ? Verdict::kGo : Verdict::kOurPlayer;
+			return a_change == Change::kStorageUndo || a_change == Change::kGiftTake || a_change == Change::kLoan ? Verdict::kGo : Verdict::kOurPlayer;
 		}
 		switch (a_change) {
 		case Change::kDressStandIn:
@@ -120,6 +126,11 @@ namespace OwnGear
 			return a_target.container && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kWrongActor;
 		case Change::kGiftTake:
 			return Verdict::kWrongActor;  // only ever our player
+		case Change::kLoan:
+			if (a_target.playersFrame) {
+				return Verdict::kOurFrame;  // never while our player is in it
+			}
+			return a_target.madeHere && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kCount:
 			break;
 		}
@@ -147,6 +158,8 @@ namespace OwnGear
 			return "giftCopy";
 		case Change::kGiftTake:
 			return "giftTake";
+		case Change::kLoan:
+			return "loan";
 		case Change::kCount:
 			break;
 		}

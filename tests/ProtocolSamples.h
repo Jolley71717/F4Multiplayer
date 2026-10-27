@@ -345,6 +345,19 @@ namespace ProtocolSamples
 		s.push_back({ "StorageRefusal", Encode(StorageRefusal{ REF_A, 0x0001F276, -5, STORAGE_NOT_NUMBERED, StorageReason::kNotHeld }), D(DecodeStorageRefusal) });
 		s.push_back({ "StorageRefusal(short)", Encode(StorageRefusal{ REF_A, 0x0001F276, -2, 17, StorageReason::kShort }), D(DecodeStorageRefusal) });
 		s.push_back({ "StorageRefusal(closed)", Encode(StorageRefusal{ REF_A, 0, 0, STORAGE_NOT_NUMBERED, StorageReason::kClosed }), D(DecodeStorageRefusal) });
+		for (const auto type : { MT::kBorrowFrame, MT::kLoanAsked }) {
+			s.push_back({ "FrameBorrow", Encode(FrameBorrow{ 2, RUNTIME_REF }, type), D(DecodeFrameBorrow) });
+		}
+		for (const auto type : { MT::kLendFrame, MT::kFrameLent }) {
+			FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+			lent.kit.push_back(LentItem{ .slot = 0, .base = 0x00154ABC, .templateIndex = 1, .mods = { { 0x0018ADA6, 0, 1 }, { REF_B, 1, 0 } }, .health = 0.5f });
+			lent.kit.push_back(LentItem{ .slot = 3, .base = 0x00154AC5, .health = 1.0f, .name = "Old Faithful" });
+			lent.kit.push_back(LentItem{ .slot = 7, .base = 0x00075FE4, .health = 0.25f, .core = true });
+			s.push_back({ "FrameLending", Encode(lent, type), D(DecodeFrameLending) });
+		}
+		for (const auto type : { MT::kReturnFrame, MT::kFrameReturned }) {
+			s.push_back({ "FrameReturn", Encode(FrameReturn{ 2, 3, RUNTIME_REF, false, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, { { 0, true, 0.25f }, { 3, false, -1.0f }, { 7, true, 0.0f } } }, type), D(DecodeFrameReturn) });
+		}
 		return s;
 	}
 
@@ -409,6 +422,9 @@ namespace ProtocolSamples
 		case MT::kReportRadiantStart:
 		case MT::kReportRadiantStage:
 		case MT::kReportTrap:
+		case MT::kBorrowFrame:
+		case MT::kLendFrame:
+		case MT::kReturnFrame:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -470,6 +486,9 @@ namespace ProtocolSamples
 		case MT::kStorageContents:
 		case MT::kStorageOwners:
 		case MT::kStorageRefused:
+		case MT::kLoanAsked:
+		case MT::kFrameLent:
+		case MT::kFrameReturned:
 			return true;
 		}
 		return false;

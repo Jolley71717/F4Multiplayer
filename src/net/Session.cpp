@@ -17,6 +17,7 @@
 #include "game/ClickWatch.h"
 #include "game/Compass.h"
 #include "game/FadeWatch.h"
+#include "game/FrameLoans.h"
 #include "game/MenuIcons.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
@@ -579,6 +580,7 @@ namespace Session
 					const auto name = RemotePlayers::NameOf(msg->playerId);
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
+					FrameLoans::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
 					WorkshopSync::OnPlayerLeft(msg->playerId);  // their copies' power, shown no more
 					MovedObjects::OnPlayerLeft(msg->playerId);
@@ -696,6 +698,21 @@ namespace Session
 			case MessageType::kSpawned:
 				if (const auto msg = Protocol::DecodeSpawn(a_data)) {
 					Spawns::Add(*msg);
+				}
+				break;
+			case MessageType::kLoanAsked:
+				if (const auto msg = Protocol::DecodeFrameBorrow(a_data)) {
+					FrameLoans::OnLoanAsked(*msg);
+				}
+				break;
+			case MessageType::kFrameLent:
+				if (const auto msg = Protocol::DecodeFrameLending(a_data)) {
+					FrameLoans::OnFrameLent(*msg);
+				}
+				break;
+			case MessageType::kFrameReturned:
+				if (const auto msg = Protocol::DecodeFrameReturn(a_data)) {
+					FrameLoans::OnFrameReturned(*msg);
 				}
 				break;
 			case MessageType::kActorStatesRelay:
@@ -965,6 +982,7 @@ namespace Session
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());
+			FrameLoans::Reset();  // before Spawns: a frame lent to us and not worn yet is emptied while our copy of it is there
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
@@ -1563,6 +1581,16 @@ namespace Session
 				SendOut(std::move(packet), true);
 			}
 		}
+		// Power armor lent between players: in a session or not, as a loan worn when the session ended, or the clean-up
+		// after loading a save made in a borrowed frame, goes on.
+		if (InGame()) {
+			FrameLoans::Frame();
+		}
+		for (auto& packet : FrameLoans::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		PERF_NEXT(perf, "Conversations");
 		Conversations::Frame(welcomed);
 		for (auto& packet : Conversations::TakeOutgoing()) {
@@ -1693,12 +1721,14 @@ namespace Session
 		Party::OnGameLoaded();
 		RemotePlayers::OnGameLoaded();
 		Spawns::OnGameLoaded();
+		FrameLoans::OnGameLoaded();  // after Spawns: our frames' spawns are let go
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
 		Destructibles::Reset();
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
+		Drops::OnWorldStarted(a_newGame, CurrentCharacter());  // whose world the record speaks for (sent below)
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session

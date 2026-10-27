@@ -372,3 +372,89 @@ TEST("character binding: of two files under whole IDs, the one of the session th
 	std::error_code error;
 	std::filesystem::remove_all(folder, error);
 }
+
+// ---- whose world it is (CharacterBinding::World: the key a drop record says, common/DropStore.h) ----------------
+
+namespace
+{
+	// A world's key as the co-save keeps it ('CHAR').
+	std::vector<std::uint8_t> SavedKey(CharacterBinding::World& a_world) { return a_world.Save(0x5151); }
+
+	// a_world after loading a save whose co-save holds a_saved (empty: a save from before keys), of character a_character.
+	std::uint64_t AfterLoad(CharacterBinding::World& a_world, const std::vector<std::uint8_t>& a_saved, std::uint64_t a_character, std::uint64_t a_random)
+	{
+		a_world.Revert();
+		a_world.Loaded(a_saved);
+		a_world.Started(false, a_character, a_random);
+		return a_world.Key(0x7777);
+	}
+}
+
+TEST("world key: two characters with the engine's same ID (coc from the main menu: 0) are two worlds; each keeps its key in its saves")
+{
+	CharacterBinding::World first;
+	const auto              a = first.Key(0x1234);  // no load and no new game: given the first time it is asked
+	CHECK(a != 0);
+	CHECK(first.Key(0x9999) == a);  // and kept
+	const auto saveOfFirst = SavedKey(first);
+
+	// The game restarted, a fresh coc character: the same ID, nothing loaded.
+	CharacterBinding::World second;
+	const auto              b = second.Key(0x4321);
+	CHECK(b != 0);
+	CHECK(b != a);
+
+	// The first character's save, loaded in either game, is the first character's world again.
+	CHECK(AfterLoad(second, saveOfFirst, 0, 0x5555) == a);
+	CHECK(AfterLoad(first, saveOfFirst, 0, 0x6666) == a);
+}
+
+TEST("world key: a new game is a world of its own, even with the last character's ID; its saves load back as it")
+{
+	CharacterBinding::World world;
+	world.Started(false, COOP, 0x1111);  // a save of COOP from before keys
+	const auto coop = world.Key(0);
+	world.Revert();
+	world.Started(true, COOP, 0x2222);  // a new game: the ID is still COOP's until the name is confirmed
+	const auto fresh = world.Key(0);
+	CHECK(fresh != coop);
+	CHECK(fresh != 0);
+	const auto save = SavedKey(world);
+	CHECK(AfterLoad(world, save, NEW, 0x3333) == fresh);  // its saves have the ID it was named with by then
+}
+
+TEST("world key: saves from before keys are their character's world, the same for all of them, and never a fresh key")
+{
+	CharacterBinding::World world;
+	const auto              coop = AfterLoad(world, {}, COOP, 0x1);
+	CHECK(coop == CharacterBinding::World::FromCharacter(COOP));
+	CHECK(AfterLoad(world, {}, COOP | 0x0000000100000000ull, 0x2) == coop);  // another high half: the same character
+	CHECK(AfterLoad(world, {}, SOLO, 0x3) != coop);
+	// A save made since keeps that key, so the character's older and newer saves agree.
+	const auto save = SavedKey(world);  // SOLO's
+	CHECK(AfterLoad(world, save, SOLO, 0x4) == CharacterBinding::World::FromCharacter(SOLO));
+	// No random number makes a key one of those (nor 0).
+	for (const std::uint64_t random : { 0ull, 1ull << 63, CharacterBinding::World::FromCharacter(COOP), ~0ull }) {
+		const auto key = CharacterBinding::World::Fresh(random);
+		CHECK(key != 0);
+		CHECK((key >> 63) == 0);
+	}
+	// A record that isn't a key is none.
+	CHECK(AfterLoad(world, { 1, 2, 3 }, COOP, 0x5) == coop);
+}
+
+TEST("world key: a load whose co-save has no key, after one that had: the save's character, never the world before's")
+{
+	CharacterBinding::World world;
+	const auto              first = world.Key(0xAAAA);
+	const auto              save = SavedKey(world);
+	CHECK(AfterLoad(world, save, 0, 0xB) == first);
+	// F4SE's revert, then a save with no 'CHAR' record: no key carries over from the world before.
+	CHECK(AfterLoad(world, {}, SOLO, 0xC) == CharacterBinding::World::FromCharacter(SOLO));
+	// Started without a revert (should one ever be missed) still forgets the save before's key.
+	world.Loaded(save);
+	world.Started(false, SOLO, 0xD);
+	CHECK(world.Key(0) == first);
+	world.Started(false, SOLO, 0xE);
+	CHECK(world.Key(0) == CharacterBinding::World::FromCharacter(SOLO));
+}

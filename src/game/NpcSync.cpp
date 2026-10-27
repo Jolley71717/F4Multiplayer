@@ -6,6 +6,7 @@
 #include "game/Dialogue.h"
 #include "game/Equipment.h"
 #include "game/FrameClock.h"
+#include "game/FrameLoans.h"
 #include "game/FrameShare.h"
 #include "game/Gait.h"
 #include "game/GameStop.h"
@@ -44,14 +45,9 @@ namespace NpcSync
 		// NPCs fighting or near a player send 20 states a second, the rest 10 (every other tick).
 		constexpr auto  STATE_INTERVAL = 50ms;
 		constexpr float FAST_RANGE = 3000.0f;  // game units from any player
-		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeover requests for the same NPC
 		// While we talk to an NPC we run, we claim it again this often so nobody takes it over
-		// mid-conversation (the server refuses takeovers within 5 s of a claim).
+		// mid-conversation (the server refuses takeovers within 5 s of a claim). What our hits ask for: NpcClaims.
 		constexpr auto TALK_CLAIM_INTERVAL = 2s;
-		// Our player's hit on an NPC we run claims it again, this often at most, so a friend's hit doesn't take it over
-		// while we keep hitting it (the server refuses takeovers within its cooldown of the runner's claim): two players
-		// shooting one raider used to trade it every 5 s, its AI starting over in the taker's game each time.
-		constexpr auto HIT_KEEP_INTERVAL = 2s;
 		// Render far enough in the past to have two states to blend: less for NPCs sending 20 a
 		// second than for those sending 10. Changes are eased in so the NPC doesn't jump.
 		constexpr auto  FAST_DELAY = 100ms;
@@ -110,10 +106,8 @@ namespace NpcSync
 		std::uint32_t localId = 0;
 
 		std::unordered_map<std::uint32_t, std::uint32_t>     owners;     // NPC -> player (absent = nobody)
-		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, and companion claims refused
+		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, companion claims refused, and what our hits asked for
 		NpcHold::Book                                        hold;       // NPCs our player fights, and ours that are dying
-		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
-		std::unordered_map<std::uint32_t, Clock::time_point> lastKeep;  // NPCs we run, claimed again with our hit (HIT_KEEP_INTERVAL)
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
@@ -509,7 +503,7 @@ namespace NpcSync
 					if (commandBench != 0) {
 						// One taken over lately, or refused, waits out its cooldown so the others get their turn.
 						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId);
-						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !lastTakeover.contains(id))) {
+						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !claimBook.TakeoverPending(id))) {
 							commanding.push_back({ id, step });
 						}
 					}
@@ -546,8 +540,6 @@ namespace NpcSync
 			claimBook.Expire(a_now);
 			hold.Expire(a_now);
 			hands.Expire(a_now);
-			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
-			std::erase_if(lastKeep, [&](const auto& a_entry) { return a_now - a_entry.second >= HIT_KEEP_INTERVAL; });
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
 
 			// NPCs we run that are no longer loaded go back to the pool, and so do the ones a friend is
@@ -1137,11 +1129,12 @@ namespace NpcSync
 				}
 				const auto frame = MadeFrameRef(local);
 				const auto ours = frame ? FrameOursOf(frame) : FrameShare::Ours{};
-				if (frame && FrameShare::Ghost(ours) && !RemotePlayers::OnItsWayOut(frame)) {
+				const bool lent = FrameLoans::LentOut(local);
+				if (frame && FrameShare::Ghost(ours, lent) && !RemotePlayers::OnItsWayOut(frame)) {
 					ClearGhost(frame, ours);
 					continue;
 				}
-				const bool share = frame && FrameShare::SharesMade(ours, hosting, usedMade.contains(local));
+				const bool share = frame && FrameShare::SharesMade(ours, hosting, usedMade.contains(local), lent);
 				if (const auto spawn = Spawns::ShareFrame(frame, share)) {
 					a_loaded.insert(spawn);
 				}
@@ -1208,7 +1201,7 @@ namespace NpcSync
 				return std::nullopt;
 			}
 			const auto ours = FrameOursOf(frame);
-			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
+			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID()), FrameLoans::LentOut(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
 				return std::nullopt;
 			}
 			const auto sent = sentFrames.find(a_id);
@@ -1757,28 +1750,26 @@ namespace NpcSync
 
 	void OnLocalInteraction(std::uint32_t a_refId)
 	{
-		hold.Fought(a_refId, Clock::now());  // ours or not: one we run is not handed away mid-fight
-		const auto owner = OwnerOf(a_refId);
-		if (localId == 0 || owner == 0 || Story::InOpening()) {
-			return;
-		}
 		const auto now = Clock::now();
-		// Our hit on one we run: claimed again (HIT_KEEP_INTERVAL apart at most), so the server refuses a friend's hit
-		// the takeover for its cooldown after, as it does while we talk to one (TALK_CLAIM_INTERVAL). The friend's hits
-		// reach it as damage meanwhile, as any non-runner's do. It changes hands once we stop hitting it.
-		if (owner == localId) {
-			if (const auto last = lastKeep.find(a_refId); last == lastKeep.end() || now - last->second >= HIT_KEEP_INTERVAL) {
-				lastKeep[a_refId] = now;
-				outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
-			}
+		hold.Fought(a_refId, now);  // ours or not: one we run is not handed away mid-fight
+		if (Story::InOpening()) {
 			return;
 		}
-		const auto last = lastTakeover.find(a_refId);
-		if (last != lastTakeover.end() && now - last->second < TAKEOVER_COOLDOWN) {
+		// What the hit asks for (NpcClaims::Book::OnHit). Our hit on one we run: claimed again, so the server refuses a
+		// friend's hit the takeover for its cooldown after, as it does while we talk to one (TALK_CLAIM_INTERVAL); the
+		// friend's hits reach it as damage meanwhile, and it changes hands once we stop hitting it. Our hit on a plugin's
+		// NPC a friend's game runs: ours from this hit. On a spawn their game made: theirs for good (what we hit is a copy
+		// placed from its template, and the server hands no spawn over); the claim notes us fighting it, so our kill of
+		// it is believed, and our hits reach it there as damage (CopyWatch, kReportDamage).
+		const auto owner = OwnerOf(a_refId);
+		const auto claim = claimBook.OnHit(a_refId, owner, localId, now);
+		if (claim.hit == NpcClaims::Hit::kNone) {
 			return;
 		}
-		lastTakeover[a_refId] = now;
-		claimBook.Claimed(a_refId, Protocol::ClaimReason::kInteract, now);
+		if (claim.hit == NpcClaims::Hit::kFight && claim.first) {
+			REX::INFO("NpcSync: {:08X} is a spawn player {}'s game made: it stays theirs to run (our copy of it is placed from its template, no NPC of theirs to hand over, and it is in no save but theirs); our hits reach it there as damage, and our kill of it counts ({} such spawns fought)",
+				a_refId, owner, claimBook.SpawnFights());
+		}
 		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
 	}
 
@@ -1968,8 +1959,6 @@ namespace NpcSync
 		hands.Clear();
 		ownedBlocked.clear();
 		fightingStandIns = 0;
-		lastTakeover.clear();
-		lastKeep.clear();
 		handedOffAt.clear();
 		stop.Reset();
 		stoppedFor = {};
@@ -1997,6 +1986,42 @@ namespace NpcSync
 		return InView(a_spot, RE::PlayerCharacter::GetSingleton());
 	}
 
+	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading)
+	{
+		if (!a_frame || a_frame->IsDeleted()) {
+			return true;
+		}
+		if (!InView(a_at, RE::PlayerCharacter::GetSingleton())) {
+			return false;
+		}
+		const auto ours = FrameOursOf(a_frame);
+		if (!ours.found || !ours.frame || ours.off || ours.inUse) {
+			REX::INFO("NpcSync: our frame {:08X}, given back, is left where it stands (found={} frame={} off={} inUse={})", a_frame->GetFormID(), ours.found, ours.frame, ours.off, ours.inUse);
+			return true;
+		}
+		const auto id = a_frame->GetFormID();
+		const float distance = RemoteEdits::Distance(ours.at, a_at);  // NaN in another place
+		if (ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT)) {
+			a_frame->data.location = { a_at.x, a_at.y, a_at.z };
+			a_frame->data.angle = { 0.0f, 0.0f, a_heading };
+			a_frame->Update3DPosition(true);
+			++framesNudged;
+		} else {
+			RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, a_at.x).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, a_at.y).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, a_at.z).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_heading * 180.0f / std::numbers::pi_v<float>).c_str());
+			meter.Count(7);
+			++framesBrought;
+		}
+		REX::INFO("NpcSync: our frame {:08X}, given back, is {} to ({:.0f},{:.0f},{:.0f}) in {:08X}", id, ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT) ? "moved" : "brought", a_at.x, a_at.y, a_at.z,
+			a_at.cell ? a_at.cell : a_at.worldspace);
+		return true;
+	}
+
 	bool InFrame(const RE::TESObjectREFR* a_frame)
 	{
 		return FrameInUse(a_frame);
@@ -2012,8 +2037,8 @@ namespace NpcSync
 			if (!base || base->GetFormID() != a_base || !RemoteEdits::Within(RemoteEdits::Distance(SpotOf(frame), a_spot), a_radius) || RemotePlayers::OnItsWayOut(frame)) {
 				continue;
 			}
-			if (const auto ours = FrameOursOf(frame); !ours.copy && !FrameShare::Ghost(ours)) {
-				return true;  // a copy of ours, or one on its way out, is never our own
+			if (FrameShare::StandsFor(FrameOursOf(frame), FrameLoans::LentOut(local))) {
+				return true;  // a copy of ours, one on its way out, or one lent to a friend never stands for theirs
 			}
 		}
 		return false;
@@ -2098,10 +2123,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
 			broughtOver, broughtIn, switchedOn, handOffs, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers);
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights());
 	}
 }

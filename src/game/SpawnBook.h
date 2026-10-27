@@ -256,6 +256,9 @@ namespace SpawnBook
 		bool                occupied = false;   // somebody here is in our copy, or it is the frame our player left last
 		bool                leaving = false;    // who is in it is being sent out of it, or just was (RemotePlayers::BeingSentOut)
 		bool                baseOk = true;      // its base is a power armor frame here
+		// Lent to our player (FrameLoans): the kit is in our copy, or they wear it. Neither moved, nor deleted, nor given up
+		// to whoever is in it, until the loan is over (then it goes, and is placed again where the owner's game has it).
+		bool                lent = false;
 		// A frame our own game made, of that base and no copy of ours, stands where their game has theirs (within
 		// FrameShare::SAME_SPOT): ours stands for it (two saves with a shared past hold the same frames). No copy beside it.
 		bool                oursThere = false;
@@ -378,6 +381,12 @@ namespace SpawnBook
 			}
 			const auto& copy = it->second;
 			if (copy.local != 0) {
+				// Lent to our player: held as it is, even while its handle does not resolve (a cell changing under them), since
+				// a copy lost here would be placed again where its owner's game has the frame, beside the one worn. The loan
+				// gives it back once it is gone for good, and its end drops it (Spawns::DropLentCopy).
+				if (a_facts.lent) {
+					return Act::kNone;
+				}
 				if (!a_facts.copyThere) {
 					return Act::kLost;
 				}

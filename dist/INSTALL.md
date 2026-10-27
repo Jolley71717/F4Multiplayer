@@ -196,6 +196,9 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `iMyAppearance` (0) and `iPuppetBaseForm` (the female settler): which character friends see for you, and which one
   you see for friends who haven't picked one. Friends see only the two settlers.
 - `bShareMap` (true): locations friends discover show on your map, and yours show on theirs.
+- `bLendPowerArmor` (true): friends may borrow a power armor frame your game made (one you found or looted) once it
+  stands parked. They press E on it to ask and again to get in, wear your pieces and fusion core, and it comes back
+  to you where they get out, worn as they left it. The pieces stay yours. Off, nobody borrows your frames.
 - `bSyncTime` (true): you follow the host's time of day and weather. If the host turns it off, nobody follows.
 - `fXpShare` (0.5): the share of a friend's kill XP you get.
 - `bSyncQuests` (true): turn it off and your game leaves the shared quests: nothing comes to you, nothing goes out.

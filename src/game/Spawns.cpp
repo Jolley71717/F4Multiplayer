@@ -2,6 +2,7 @@
 
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/FrameShare.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
@@ -253,9 +254,11 @@ namespace Spawns
 				return;
 			}
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
+			facts.lent = FrameLoans::LentToUs(a_id);  // held as it is for the loan (FrameLoans)
 			// A frame of our own, of that base, standing where their game has theirs (two saves with a shared past hold the
-			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT).
-			facts.oursThere = facts.inView && NpcSync::OwnMadeFrameAt(copy->spawn.base, copy->at, FrameShare::SAME_SPOT);
+			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT). Never one lent to us: our
+			// copy is the frame our player borrowed, held for the loan whatever of ours stands at that spot.
+			facts.oursThere = !facts.lent && facts.inView && NpcSync::OwnMadeFrameAt(copy->spawn.base, copy->at, FrameShare::SAME_SPOT);
 			if (facts.oursThere) {
 				if (oursThere.insert(a_id).second) {
 					++frameCopiesWithheld;
@@ -635,6 +638,11 @@ namespace Spawns
 			// A frame copy someone is being sent out of is kept as it is, saved with the frame they wear (a load takes it with
 			// the old world): buried, the save would have them wear a frame it does not have (RemotePlayers::SomeoneSentOutOf).
 			if (const auto it = placed.find(id); it != placed.end()) {
+				// One our player wears on loan is saved with them, as it is (FrameLoans: the LOAN record cleans it up after a load).
+				if (const auto ref = it->second.handle.get(); ref && FrameLoans::KeepsThroughSave(ref.get())) {
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; our player wears it on loan", ref->GetFormID(), copy->spawn.playerId);
+					continue;
+				}
 				if (const auto ref = it->second.handle.get(); ref && RemotePlayers::SomeoneSentOutOf(ref.get())) {
 					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; someone is being sent out of it", ref->GetFormID(), copy->spawn.playerId);
 					RemotePlayers::NoteKeptThroughSave(ref.get());
@@ -643,6 +651,15 @@ namespace Spawns
 			}
 			Discard(id);
 		}
+	}
+
+	bool DropLentCopy(std::uint32_t a_id)
+	{
+		if (!placed.contains(a_id)) {
+			return false;
+		}
+		Discard(a_id);
+		return true;
 	}
 
 	std::vector<RE::ObjectRefHandle> FrameCopies()
@@ -704,6 +721,6 @@ namespace Spawns
 	{
 		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld);
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld) + " " + FrameLoans::Describe();
 	}
 }

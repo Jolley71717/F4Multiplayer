@@ -69,6 +69,10 @@ namespace Spawns
 	// frame copy someone is being sent out of is kept as it is, saved with the frame they wear (RemotePlayers::SomeoneSentOutOf).
 	void DiscardCopies();
 
+	// A loan of the frame a_id to our player is over (FrameLoans): our copy goes as any does, and is placed again where its
+	// owner's game has the frame. False when we have no copy of it placed (the session ended, say).
+	bool DropLentCopy(std::uint32_t a_id);
+
 	// Our copies of friends' frames now (RemotePlayers tells the container menu's hook which our player is kept out of).
 	[[nodiscard]] std::vector<RE::ObjectRefHandle> FrameCopies();
 

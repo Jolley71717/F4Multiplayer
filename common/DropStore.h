@@ -24,6 +24,13 @@
 // save after the drop lays it down again. The one case left is an item two worlds hold, as when someone else took a drop
 // and its owner loads a save from before dropping it: both have it then (counted, dupRisk).
 //
+// Only the saves of one character hold what that character's world gave and took: each record says whose world it is
+// (DropRecord::character), and each drop keeps the characters whose worlds it left and went into. A record of another
+// character's world (a new character, a coc one from the main menu, another character's save) is no save from before
+// those: it lays nothing that character took down again and takes back nothing it gave, so a player who starts over
+// doesn't get back what their older character took, while that character's own older save still does. A character not
+// known (0: an older build's record, a file from before them) matches any, as before.
+//
 // A new drop is an offer at first, to its dropper's game alone: it lies there for the others only once that game says it
 // has swapped the item it dropped for a copy (Confirm), so nobody can take an item that is still in its dropper's world.
 // An offer is never taken or listed, and goes when its dropper picked the item up again (Keep), or leaves (DropOffers): a
@@ -73,6 +80,22 @@ public:
 		limits(a_limits)
 	{}
 
+	// Whether a record of a_record's character's world speaks for what a_kept's did (see the class).
+	[[nodiscard]] static constexpr bool SameCharacter(std::uint64_t a_kept, std::uint64_t a_record)
+	{
+		return a_kept == 0 || a_record == 0 || a_kept == a_record;
+	}
+
+	// a_player's game plays a_character's world now (their last record says so, answered yet or not): their drops and takes
+	// from here on are that world's.
+	void SetCharacter(std::uint32_t a_player, std::uint64_t a_character) { characters[a_player] = a_character; }
+
+	[[nodiscard]] std::uint64_t CharacterOf(std::uint32_t a_player) const
+	{
+		const auto it = characters.find(a_player);
+		return it == characters.end() ? 0 : it->second;
+	}
+
 	// A player's drop (a_item as their game reported it; its ids are set here): an offer to them until they Confirm it.
 	Added Add(std::uint32_t a_owner, Protocol::DroppedItem a_item)
 	{
@@ -100,6 +123,8 @@ public:
 		a_item.dropId = nextId++;
 		a_item.ownerId = a_owner;
 		a_item.takerId = 0;
+		a_item.ownerCharacter = CharacterOf(a_owner);
+		a_item.takerCharacter = 0;
 		offers.emplace(a_item.dropId, a_item);
 		return { Outcome::kAdded, a_item };
 	}
@@ -146,6 +171,7 @@ public:
 		auto drop = std::move(it->second);
 		lying.erase(it);
 		drop.takerId = a_player;
+		drop.takerCharacter = CharacterOf(a_player);
 		Remember(std::move(drop));
 		return Protocol::DropGone{ a_dropId, a_player };
 	}
@@ -168,13 +194,19 @@ public:
 		const bool        ours = a_record.sessionId == a_session && a_session != 0;
 		const std::unordered_set<std::uint64_t> made = ours ? std::unordered_set<std::uint64_t>(a_record.made.begin(), a_record.made.end()) : std::unordered_set<std::uint64_t>{};
 		const std::unordered_set<std::uint32_t> took = ours ? std::unordered_set<std::uint32_t>(a_record.taken.begin(), a_record.taken.end()) : std::unordered_set<std::uint32_t>{};
+		// Whose world it is: their drops and takes from now on are its (see the class).
+		const auto character = a_record.character;
+		SetCharacter(a_player, character);
+		// Whether a drop of theirs (an offer, or one lying) is this world's: one another character of theirs gave isn't.
+		const auto ownWorld = [&](const Protocol::DroppedItem& a_drop) { return a_drop.ownerId == a_player && SameCharacter(a_drop.ownerCharacter, character); };
 		// Whether the player's world holds the item: one they took, or their own that never left it.
 		const auto holds = [&](const Protocol::DroppedItem& a_drop) {
-			return took.contains(a_drop.dropId) || (a_drop.ownerId == a_player && !made.contains(a_drop.nonce));
+			return took.contains(a_drop.dropId) || (ownWorld(a_drop) && !made.contains(a_drop.nonce));
 		};
-		// Their offers: one their world swapped out (a confirm lost with a load) lies there now; one it still has goes.
+		// Their offers: one their world swapped out (a confirm lost with a load) lies there now; one it still has goes. One
+		// another character's world made waits for that world's record.
 		for (auto it = offers.begin(); it != offers.end();) {
-			if (it->second.ownerId != a_player) {
+			if (!ownWorld(it->second)) {
 				++it;
 				continue;
 			}
@@ -198,13 +230,16 @@ public:
 			it = lying.erase(it);
 			const bool own = !took.contains(drop.dropId);
 			drop.takerId = a_player;
+			drop.takerCharacter = character;
 			out.withdrawn.push_back({ drop.dropId, own ? 0 : a_player });
 			Remember(std::move(drop));
 		}
 		for (auto it = taken.begin(); it != taken.end();) {
 			const auto& drop = it->second;
-			if (drop.takerId == a_player && !holds(drop)) {
-				out.returned.push_back(*Lay(it++));  // not in their world: it lies there again for anyone
+			// Not in their world: it lies there again for anyone. Only if this world is the one that took it: another
+			// character's of theirs (a new one) never had it, and the one that did still holds it in its saves.
+			if (drop.takerId == a_player && SameCharacter(drop.takerCharacter, character) && !holds(drop)) {
+				out.returned.push_back(*Lay(it++));
 				continue;
 			}
 			if (drop.takerId != a_player && holds(drop)) {
@@ -297,6 +332,7 @@ public:
 		offers.clear();
 		lying.clear();
 		taken.clear();
+		characters.clear();
 		nextId = 1;
 	}
 
@@ -309,6 +345,7 @@ private:
 		auto drop = std::move(a_taken->second);
 		taken.erase(a_taken);
 		drop.takerId = 0;
+		drop.takerCharacter = 0;
 		lying[drop.dropId] = drop;
 		return drop;
 	}
@@ -326,4 +363,5 @@ private:
 	Book          lying;
 	Book          taken;
 	std::uint32_t nextId = 1;
+	std::map<std::uint32_t, std::uint64_t> characters;  // each player's world now (SetCharacter); not saved: every game says it after its welcome
 };

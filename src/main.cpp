@@ -10,6 +10,7 @@
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
+#include "game/FrameLoans.h"
 #include "game/FrameWatch.h"
 #include "game/GhostLedger.h"
 #include "game/GpuWatch.h"
@@ -220,6 +221,11 @@ namespace
 	constexpr std::uint32_t DROP_RECORD = 'DROP';
 	constexpr std::uint32_t DROP_VERSION = 1;
 	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
+	// Whose world the drop record speaks for (CharacterBinding::World): its key alone, so a build that knows no key reads
+	// the save's 'DROP' record as it always did.
+	constexpr std::uint32_t WORLD_RECORD = 'CHAR';
+	constexpr std::uint32_t WORLD_VERSION = 1;
+	constexpr std::uint32_t WORLD_LENGTH = 8;
 
 	constexpr std::uint32_t RADIANT_RECORD = 'RADI';
 	constexpr std::uint32_t RADIANT_VERSION = 1;
@@ -228,6 +234,9 @@ namespace
 	constexpr std::uint32_t KEPT_RECORD = 'KEPT';
 	constexpr std::uint32_t KEPT_VERSION = 1;
 	constexpr std::uint32_t KEPT_MAX_LENGTH = 1u << 10;  // FriendFrame::Encode writes at most 768 bytes
+	constexpr std::uint32_t LOAN_RECORD = 'LOAN';
+	constexpr std::uint32_t LOAN_VERSION = 1;
+	constexpr std::uint32_t LOAN_MAX_LENGTH = 1u << 13;  // FrameLoan::Encode: 17 bytes and at most 16 tags of 262
 	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
 	constexpr std::uint32_t LOOKS_VERSION = 1;
 	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
@@ -250,6 +259,9 @@ namespace
 		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
 			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
 		}
+		if (const auto world = Drops::SaveWorld(); a_intfc->OpenRecord(WORLD_RECORD, WORLD_VERSION)) {
+			a_intfc->WriteRecordData(world.data(), static_cast<std::uint32_t>(world.size()));
+		}
 		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
 		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
 			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
@@ -257,6 +269,10 @@ namespace
 		// Our moves at a friend's shared storage still unanswered, and those numbered our world lacks (Storage): settled after a load.
 		if (const auto storage = Storage::SaveRecord(); !storage.empty() && a_intfc->OpenRecord(STORAGE_RECORD, STORAGE_VERSION)) {
 			a_intfc->WriteRecordData(storage.data(), static_cast<std::uint32_t>(storage.size()));
+		}
+		// The frame our player wears on loan from a friend (FrameLoans): sent out of it, and it goes, after this save's load.
+		if (const auto loan = FrameLoans::SaveRecord(); !loan.empty() && a_intfc->OpenRecord(LOAN_RECORD, LOAN_VERSION)) {
+			a_intfc->WriteRecordData(loan.data(), static_cast<std::uint32_t>(loan.size()));
 		}
 		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
 		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
@@ -282,6 +298,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Drops::LoadRecord(bytes);
 				}
+			} else if (type == WORLD_RECORD && version == WORLD_VERSION && length == WORLD_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Drops::LoadWorld(bytes);
+				}
 			} else if (type == KEPT_RECORD && version == KEPT_VERSION && length <= KEPT_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -296,6 +317,11 @@ namespace
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Storage::LoadRecord(bytes);
+				}
+			} else if (type == LOAN_RECORD && version == LOAN_VERSION && length <= LOAN_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					FrameLoans::LoadRecord(bytes);
 				}
 			} else if (type == LOOKS_RECORD && version == LOOKS_VERSION && length <= LOOKS_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
@@ -319,6 +345,7 @@ namespace
 		RemotePlayers::RevertRecord();
 		LooksMenu::RevertRecord();
 		Storage::RevertRecord();
+		FrameLoans::RevertRecord();
 		WeaponFire::RevertGhostRecord();
 	}
 
@@ -482,7 +509,9 @@ namespace
 								REX::ERROR("Frame: before the save, {}: an unknown exception", a_what);
 							}
 						};
+						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // first: an unworn loan's copy and kit go with it, before Spawns discards copies
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved
 						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reference reset a moment ago is saved on, as it was
 						step("the inert shots", [] { InertShots::BeforeSave(); });  // no inert shot, whose base exists at runtime only, is written into the save

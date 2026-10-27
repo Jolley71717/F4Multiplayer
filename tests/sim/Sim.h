@@ -281,6 +281,9 @@ namespace Sim
 		void Scrap(std::uint32_t a_bench, std::uint32_t a_ref);
 		void Claim(std::uint32_t a_ref, Protocol::ClaimReason a_reason = Protocol::ClaimReason::kUnowned);
 		void Release(std::uint32_t a_ref);
+		// This game made an NPC at runtime (a random encounter's raider) and shares it under spawn id a_ref, placed from
+		// a_base, as Spawns reports it (kReportSpawn): the server grants it to this game for good, and the others place a copy.
+		void Spawn(std::uint32_t a_ref, std::uint32_t a_base, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_worldspace = COMMONWEALTH);
 		// Moves an NPC this player's game runs (the others copy it).
 		void RunNpc(std::uint32_t a_ref, float a_x, float a_y, float a_z = 0.0f);
 		void NpcGear(std::uint32_t a_ref, std::vector<std::uint32_t> a_items);
@@ -357,6 +360,12 @@ namespace Sim
 		{
 			const auto it = killedBy.find(a_ref);
 			return it != killedBy.end() ? std::optional{ it->second } : std::nullopt;
+		}
+		// A friend's spawn this game placed a copy of (kSpawned), as the session sent it, if it did.
+		[[nodiscard]] std::optional<Protocol::Spawn> CopyOf(std::uint32_t a_ref) const
+		{
+			const auto it = spawnCopies.find(a_ref);
+			return it != spawnCopies.end() ? std::optional{ it->second } : std::nullopt;
 		}
 		[[nodiscard]] const std::map<std::uint32_t, Protocol::ActorState>&        NpcStates() const { return npcStates; }
 		[[nodiscard]] const std::map<std::uint32_t, std::vector<std::uint32_t>>& NpcGearSeen() const { return npcGear; }
@@ -442,6 +451,7 @@ namespace Sim
 		std::map<std::uint32_t, Friend>               friends;
 		std::map<std::uint32_t, std::uint32_t>        owners;
 		std::map<std::uint32_t, Protocol::ActorState> npcStates;
+		std::map<std::uint32_t, Protocol::Spawn>      spawnCopies;  // friends' spawns, copies of which this game placed
 		std::map<std::uint32_t, std::vector<std::uint32_t>> npcGear;
 		std::map<std::uint32_t, float>                npcHealth;
 		std::vector<Protocol::ActorHealth>            damageHeard;
@@ -1014,6 +1024,11 @@ namespace Sim
 		Send(Protocol::EncodeRelease({ a_ref }), true);
 	}
 
+	inline void Client::Spawn(std::uint32_t a_ref, std::uint32_t a_base, float a_x, float a_y, float a_z, std::uint32_t a_worldspace)
+	{
+		Send(Protocol::Encode(Protocol::Spawn{ 0, a_ref, a_base, 0, a_worldspace, a_x, a_y, a_z, 0.0f }, MT::kReportSpawn), true);
+	}
+
 	inline void Client::RunNpc(std::uint32_t a_ref, float a_x, float a_y, float a_z)
 	{
 		Protocol::ActorState state;
@@ -1441,12 +1456,20 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kSpawned:
+			if (const auto msg = Protocol::DecodeSpawn(a_data)) {
+				spawnCopies[msg->refId] = *msg;  // placed at once: every copy is in sight here
+			} else {
+				unless(false);
+			}
+			break;
 		case MT::kActorOwners:
 			if (const auto msg = Protocol::DecodeOwners(a_data)) {
 				for (const auto& owner : *msg) {
 					if (owner.playerId == 0) {
 						owners.erase(owner.refId);
 						npcStates.erase(owner.refId);
+						spawnCopies.erase(owner.refId);  // a spawn over: the copy goes (Spawns::OnOwners)
 						continue;
 					}
 					owners[owner.refId] = owner.playerId;

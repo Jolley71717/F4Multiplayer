@@ -343,6 +343,96 @@ TEST("gifts: a giver's save from before the put takes the gift back out of the s
 	NoFailures({ &alice, &bob });
 }
 
+// Found on the rig: a host who started over as a fresh character (no save loaded) was offered again the gifts their old
+// character had taken, so each was in the old character's saves and in the chest (4 items became 6). A new character's
+// world never had them; the old character's own save from before the take still lacks them, and gets them back.
+TEST("gifts: a player who starts over as a new character gets back none of the old one's takes, and keeps its gifts lying; its older save still does")
+{
+	for (const bool newGame : { false, true }) {  // a coc character from the main menu (the same engine ID), a new game
+		Fixture    f{ Gifts() };
+		Game       alice{ 1, ALICE_ID };
+		Game       bob{ 2, BOB_ID };
+		alice.Join(f, "Alice");
+		bob.Join(f, "Bob");
+		const auto gun = ClassOf(Gun());
+		const auto spare = Gun("Spare");
+		const auto spareClass = ClassOf(spare);
+		const auto id = GiveGun(f, alice, { &alice, &bob });
+		const auto before = bob.SaveGame(f);
+		TakeGift(f, bob, gun, { &alice, &bob });
+		const auto bobsSpare = GiveGun(f, bob, { &alice, &bob }, spare);  // and Bob gives one, lying there
+		const auto after = bob.SaveGame(f);  // his old character's world: Alice's gun in it, his spare gone from it
+		CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+		CHECK(Total(spareClass, { &alice, &bob }, alice) == 1);
+
+		bob.Disconnect(f);
+		bob.StartOver(newGame);
+		bob.Join(f, "Bob");
+		SettleAll(f, { &alice, &bob });
+		CHECK(!alice.gifts.Lying().contains(id));  // was: lying again (a copy of the one in his old saves)
+		CHECK(!bob.gifts.Lying().contains(id));
+		CHECK(Total(gun, { &alice, &bob }, alice) == 0);  // it is in the old character's saves alone
+		CHECK(alice.gifts.Lying().contains(bobsSpare));  // was: withdrawn into a world that never had it (lost)
+		CHECK(Total(spareClass, { &alice, &bob }, alice) == 1);
+		CHECK(!f.Logged("someone else holds too"));
+
+		// Back to the old character, its save from after: as it was.
+		bob.LoadGame(f, after);
+		SettleAll(f, { &alice, &bob });
+		CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+		CHECK(!alice.gifts.Lying().contains(id));
+		CHECK(alice.gifts.Lying().contains(bobsSpare));
+		CHECK(Total(spareClass, { &alice, &bob }, alice) == 1);
+
+		// Its save from before the take: the gun isn't in it, so it lies there again for anyone (the reload rule).
+		bob.LoadGame(f, before);
+		SettleAll(f, { &alice, &bob });
+		CHECK(alice.gifts.Lying().contains(id));
+		CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+		CHECK(!f.Logged("someone else holds too"));
+		NoFailures({ &alice, &bob });
+	}
+}
+
+// The same with the host's server restarting between (the host quit and started over): the session file keeps whose
+// world took each gift.
+TEST("gifts: a new character after the host's server restarted still gets back none of the old one's takes")
+{
+	const TempSessionFile file;
+	auto                  options = Gifts();
+	options.sessionFile = file.path.string();
+	Game       alice{ 1, ALICE_ID };
+	Game       bob{ 2, BOB_ID };
+	const auto gun = ClassOf(Gun());
+	std::uint32_t id = 0;
+	Game::Save    before;
+	{
+		Fixture f{ options };
+		alice.Join(f, "Alice");
+		bob.Join(f, "Bob");
+		id = GiveGun(f, bob, { &alice, &bob });
+		before = alice.SaveGame(f);
+		TakeGift(f, alice, gun, { &alice, &bob });
+		CHECK(alice.Carried(gun) == 1);
+		alice.LinkLost();
+		bob.LinkLost();
+	}  // stopping saves
+	alice.StartOver(false);
+	{
+		Fixture f{ options };
+		alice.Join(f, "Alice");
+		bob.Join(f, "Bob");
+		SettleAll(f, { &alice, &bob });
+		CHECK(!bob.gifts.Lying().contains(id));
+		CHECK(Total(gun, { &alice, &bob }, bob) == 0);  // in the old character's saves alone
+		alice.LoadGame(f, before);
+		SettleAll(f, { &alice, &bob });
+		CHECK(bob.gifts.Lying().contains(id));
+		CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	}
+	NoFailures({ &alice, &bob });
+}
+
 // The case that can't be put right, as for a dropped item: behind the host's setting, and in the install guide.
 TEST("gifts: a giver's save from before the put loaded after a friend took it: both have it, and the server says so")
 {
@@ -709,7 +799,7 @@ TEST("gifts: what lies in a chest and a giver's offer waiting for its record out
 		in.read(header.data(), header.size());
 		std::uint16_t version = 0;
 		std::memcpy(&version, header.data() + 4, sizeof(version));
-		CHECK(version == SessionFile::GIFTS);
+		CHECK(version == SessionFile::CHARACTERS);
 	}
 	const auto gun = ClassOf(Gun());
 	const auto spareClass = ClassOf(spare);
@@ -781,17 +871,28 @@ TEST("gifts: a workbench, a merchant's chest and a companion aren't gift places,
 	auto quest = Gun("Kellogg's Pistol");
 	quest.quest = true;
 	auto runtime = Gun("Odd", { { 0xFF000801, 0, 0 } });
+	// A copy of a piece a friend lent Alice with their frame (FrameLoans): theirs, never given.
+	auto lent = Armor(0.5f);
+	lent.name = "Bob's T-60 Left Arm";
+	lent.lent = true;
+	CHECK(!GiftBook::Givable(lent));
+	lent.lent = false;
+	CHECK(GiftBook::Givable(lent));
+	lent.lent = true;
 	alice.Give(PLAYER, quest);
 	alice.Give(PLAYER, runtime);
+	alice.Give(PLAYER, lent);
 	alice.Open(f, CHEST);
 	REQUIRE(alice.Put(f, CHEST, ClassOf(quest)));
 	REQUIRE(alice.Put(f, CHEST, ClassOf(runtime)));
+	REQUIRE(alice.Put(f, CHEST, ClassOf(lent)));
 	alice.Close(f);
 	SettleAll(f, { &alice, &bob });
-	CHECK(alice.gifts.Counters().notGiven == 2);
+	CHECK(alice.gifts.Counters().notGiven == 3);
 	CHECK(alice.Noticed(Notice::kNotGiven) == 1);  // said once a session
 	CHECK(alice.In(CHEST, ClassOf(quest)) == 1);
 	CHECK(alice.In(CHEST, ClassOf(runtime)) == 1);
+	CHECK(alice.In(CHEST, ClassOf(lent)) == 1);
 	CHECK(bob.gifts.Lying().empty());
 	NoFailures({ &alice, &bob });
 }

@@ -11,6 +11,7 @@
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/FadeWatch.h"
+#include "game/FrameLoans.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
@@ -546,12 +547,19 @@ namespace Party
 					const auto held = Equipment::PowerArmorFrameOf(player);
 					return ArmorFrames::WornSeat(seatOf(seat.get()), seatOf(held && !held->IsDeleted() ? held.get() : nullptr));
 				},
+				// A frame lent to us is our copy of a friend's: named by its spawn id, which their game and every other
+				// resolve to their own (FrameLoans).
+				[](std::uint32_t a_ref) { return FrameLoans::WornSpawnOf(a_ref); },
 				Clock::now());
 			status.powerArmorFrame = wear.frame;
 			status.powerArmorFrameRef = wear.frameRef;
 			// Out of it: the frame we got out of last, where it stands (see ArmorFrames::TellParked). Friends show a copy
 			// there, in the station we parked it in or wherever we left it.
-			status.parked = ArmorFrames::TellParked(status.powerArmor, LastFrameOf(player));
+			// Not while it is lent (FrameLoans): it stands hidden here, and the borrower wears it.
+			const auto last = LastFrameOf(player);
+			status.parked = FrameLoans::LentOut(last.ref) ? std::nullopt : ArmorFrames::TellParked(status.powerArmor, last);
+			// Whether we lend our own frames to friends who ask (bLendPowerArmor).
+			status.lends = Config::Get().lendPowerArmor;
 			// The chair, bed, workbench or terminal we use: friends put our stand-in in the same one (not a frame: above).
 			status.seat = StandInSeat::Tell(OwnSeatOf(player, status.powerArmor));
 			if (wear.unknown) {
@@ -828,6 +836,7 @@ namespace Party
 
 	void ApplyStatus(const Protocol::PlayerStatus& a_status)
 	{
+		FrameLoans::OnStatus(a_status.playerId, a_status.lends);  // whether a press on their frame asks them for it
 		auto&      entry = known[a_status.playerId];
 		const auto name = RemotePlayers::NameOf(a_status.playerId);
 		if (entry.hasStatus) {
