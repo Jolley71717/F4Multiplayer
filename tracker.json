@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T13:03:45+00:00",
+ "updated": "2026-10-27T13:13:16+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -225,8 +225,8 @@
    "title": "NPCs walk or path oddly in a session",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reported on 0.9.2; we need an example and a log to find the cause.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games, the 6-hour soak still to come.",
    "pr": 193,
    "desc": "A player reported that enemies or other characters move oddly in a session, with other mods installed. We do not know yet which characters, in whose game, or how. A log and an example of where it happens would help."
   },
@@ -263,8 +263,8 @@
    "title": "After dying and reloading, you often can't damage enemies",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Fixed in 0.9.0 for new saves; the next release also repairs enemies an older save kept as ghosts.",
+   "stage": 5,
+   "note": "Merged for the next release; checked in two games, not every case could be set up.",
    "pr": 192,
    "partial": "0.9.0",
    "desc": "After a player died and reloaded, they often could not hurt enemies. Enemies are made untouchable for a moment during a friend's explosion, and a save written at that moment kept them that way. 0.9.0 stops that from being saved, and the next release repairs enemies an older save kept in that state. We tested the repair on two real games but not yet with a real old save."
@@ -577,6 +577,14 @@
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
   },
   {
+   "id": "oif6",
+   "title": "An enemy spawned in the host's game can't be taken over by the joiner",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ou8y",
    "title": "The host's gun looks taken apart on a friend's screen",
    "kind": "bug",
@@ -590,8 +598,8 @@
    "title": "Doors and gates opened by scripts stay shut for friends (Vault 114)",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Fixed again after the rig test: every loaded door is now watched; reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; script-locked doors tested in two games; Vault 114 itself not yet.",
    "pr": 189,
    "partial": "0.9.0 and 0.9.2",
    "desc": "Vault 114's cog door opened for the host but stayed shut for a friend, because a script opens it. 0.9.0 shares Vault 114's gear door and gates opened from terminals and card readers, and 0.9.2 shares chained doors, quietly scripted doors, two-state gates and doors NPCs open. These passed two-game tests, but the exact Vault 114 door was not tested and one of its two parts may not be covered. Doors that also start scenes or move NPCs stay each player's own."
@@ -620,8 +628,8 @@
    "title": "A friend's game loaded an older save than expected",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Reported on 0.9.2; we are finding out how it happened.",
+   "stage": 2,
+   "note": "The rig test found the travel autosave read the wrong setting; being fixed.",
    "pr": 186,
    "desc": "A player reported that their friend ended up with a save from about ten minutes earlier instead of the latest one. Progress may have been lost, so this is a high priority. We need to know which save was loaded (quick, auto or exit save) and the logs from both games."
   },
@@ -650,8 +658,8 @@
    "title": "A friend doesn't see the Prydwen arrive",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Cause found: the moored airship wasn't shared; fixed and reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; checked in two games, the real flyover not yet.",
    "pr": 205,
    "desc": "A friend didn't see the Prydwen arrive. Each game showed the airship moored at Boston Airport only when its own flyover ended, so a friend indoors, far away or on their own story never got it. The next release shares the moored airship as soon as it arrives in any game, and waits while the friend's own flyover is still in the air so there is never a second one."
   },
@@ -757,8 +765,8 @@
    "title": "A friend's shots look aimed at you",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Remaining case found: flamers, cryolators, harpoons, railway rifles and syringers; fixed and reviewed.",
+   "stage": 5,
+   "note": "Merged for the next release; tested in two games.",
    "pr": 204,
    "partial": "0.9.2",
    "desc": "A player said that when a friend shoots, it looks as if they are shooting at you. 0.9.2 fixed the most likely cause: a friend's character fired real shots at your character. Their shots now follow where they actually aim. We have not checked the aim during firing in both directions."
