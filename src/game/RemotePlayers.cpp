@@ -211,6 +211,7 @@ namespace RemotePlayers
 		{
 			RE::ObjectRefHandle ref;
 			std::uint32_t       id = 0;
+			bool                told = false;  // what became of it at a save has been logged (see DespawnAll)
 		};
 		std::vector<Deleting> deleting;
 		std::uint32_t      heldForConversation = 0;
@@ -2285,17 +2286,34 @@ namespace RemotePlayers
 		// is and saved with them, the frame they wear.
 		BuryWaitedOut();
 		// Marked for deletion earlier and still there: kept out of the save too. (Before the graveyard is
-		// flushed, so the ones it adds now are not excluded twice.)
-		std::erase_if(deleting, [](const Deleting& a_deleting) {
+		// flushed, so the ones it adds now are not excluded twice.) The engine frees a reference marked for deletion only
+		// when its cell unloads or a load lets go of it, so one stays held, its record dropped, through the saves in
+		// between: each is logged once, at the first save that finds it so, and the rest are only counted.
+		std::uint32_t heldBefore = 0;
+		std::erase_if(deleting, [&](Deleting& a_deleting) {
 			const auto ref = a_deleting.ref.get();
-			if (!ref) {
+			switch (DeferredDelete::OutcomeOf(ref != nullptr, ref && ref->IsDeleted(), a_deleting.told)) {
+			case DeferredDelete::Outcome::kGone:
+				REX::INFO("SaveFlush: {:08X}, marked for deletion before, is gone", a_deleting.id);
 				LetGoOfLost(a_deleting.id);
 				return true;
+			case DeferredDelete::Outcome::kNotMarked:
+				REX::WARN("SaveFlush: {} was marked for deletion before, but is not deleted", RefTag::Of(ref.get()));
+				break;
+			case DeferredDelete::Outcome::kHeld:
+				REX::INFO("SaveFlush: {} was marked for deletion before; the engine still holds it, freed when its cell unloads or a load comes", RefTag::Of(ref.get()));
+				break;
+			case DeferredDelete::Outcome::kQuiet:
+				break;
 			}
-			REX::INFO("SaveFlush: {} was marked for deletion before; still there", RefTag::Of(ref.get()));
+			a_deleting.told = true;
+			++heldBefore;
 			SaveGuard::Exclude(ref.get());
 			return false;
 		});
+		if (heldBefore > 0) {
+			REX::INFO("SaveFlush: {} reference(s) marked for deletion at earlier saves are still held by the engine, their records dropped", heldBefore);
+		}
 		// Before a save: whatever still stands in the graveyard is disabled now, and deleted by Update once
 		// DeferredDelete::MayDelete lets it (one disabled long enough ago goes now). Disabled and deleted in one
 		// step here, the physics jobs of the frames after the save still handled a collision with the freed
@@ -3108,6 +3126,7 @@ namespace RemotePlayers
 		std::erase_if(deleting, [](const Deleting& a_deleting) {
 			const auto ref = a_deleting.ref.get();
 			if (!ref) {
+				REX::INFO("RemotePlayers: {:08X}, marked for deletion, is gone", a_deleting.id);
 				LetGoOfLost(a_deleting.id);
 				return true;
 			}
