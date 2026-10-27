@@ -564,6 +564,7 @@ namespace ObjectShare
 	inline constexpr auto   FORGET_AFTER = std::chrono::seconds(3);  // not seen in a scan that long
 	inline constexpr auto   QUIET_AFTER_PLACED = std::chrono::seconds(4);  // a friend's move: ours of it are theirs
 	inline constexpr auto   FOLLOW_ON = std::chrono::seconds(10);  // ours, at rest, moves again this soon: it rolled on, still ours
+	inline constexpr int    FOLLOW_ON_MAX = 8;  // rests in a row that are ours only by the follow-on: past it, a thing that never stops (swinging) is let go
 	inline constexpr std::size_t MAX_WATCHED = 512;
 	inline constexpr double KNOCK_BURST = 8.0;  // rests our game reports: a few at once, then KNOCKS_PER_SECOND
 	inline constexpr double KNOCKS_PER_SECOND = 3.0;
@@ -762,6 +763,13 @@ namespace ObjectShare
 					continue;
 				}
 				auto& w = it->second;
+				if (a_now - w.seenAt >= FORGET_AFTER) {
+					// Not looked at for a while (a loading screen, a cell that unloaded and came back): whatever made it ours
+					// is long gone.
+					w.again = false;
+					w.followUntil = {};
+					w.follows = 0;
+				}
 				w.seenAt = a_now;
 				if (seen.busy) {
 					w.rest = w.last = seen.pose;
@@ -769,6 +777,7 @@ namespace ObjectShare
 					w.owed = false;
 					w.again = false;
 					w.followUntil = {};
+					w.follows = 0;
 					w.quietUntil = (std::max)(w.quietUntil, a_now + QUIET_AFTER_PLACED);
 					continue;
 				}
@@ -813,8 +822,12 @@ namespace ObjectShare
 				}
 				w.moving = false;
 				w.rest = w.last = seen.pose;
-				if (!w.theirs && (w.byUs || w.byNpc || w.blast != 0 || w.again) && a_now >= w.quietUntil) {
+				// Ours because something said so (fresh), or only by the follow-on, and not for ever: a thing that swings or
+				// jitters for hours is let go after FOLLOW_ON_MAX rests in a row that nothing but the follow-on claimed.
+				const bool fresh = w.byUs || w.byNpc || w.blast != 0;
+				if (!w.theirs && (fresh || (w.again && w.follows < FOLLOW_ON_MAX)) && a_now >= w.quietUntil) {
 					// Ours: if it moves again soon, that is still ours (the follow-on), reported or owed.
+					w.follows = fresh ? 0 : w.follows + 1;
 					w.followUntil = a_now + FOLLOW_ON;
 					if (Take(w.blast, a_now)) {
 						out.push_back(Rest(seen));
@@ -846,6 +859,7 @@ namespace ObjectShare
 			w.seenAt = a_now;
 			w.quietUntil = a_now + QUIET_AFTER_PLACED;
 			w.followUntil = {};  // theirs now: our physics moving it on is not ours to report
+			w.follows = 0;
 		}
 
 		[[nodiscard]] std::size_t Watching() const { return watched.size(); }
@@ -879,6 +893,7 @@ namespace ObjectShare
 			Clock::time_point quietUntil{};
 			Clock::time_point owedUntil{};
 			Clock::time_point followUntil{};  // ours if it moves again before then
+			int               follows = 0;    // rests in a row that only the follow-on made ours
 		};
 
 		// Whether the blast (0: none) may have another rest reported.

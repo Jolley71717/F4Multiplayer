@@ -944,6 +944,43 @@ TEST("knocks rolling on: one that never stops is reported once a MOVING_GIVE_UP 
 	CHECK(said.size() <= static_cast<std::size_t>(60s / ObjectShare::MOVING_GIVE_UP) + 1);
 }
 
+TEST("knocks rolling on: a thing that swings for ever is followed only so long, until something says it is ours again")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+	// Then it swings 20 units either side, every 4 s, with nobody near: ten minutes of it.
+	std::size_t said = 0;
+	auto        swing = [&](int a_looks, Seen a_how = {}) {
+		for (int i = 0; i < a_looks; ++i) {
+			const float      a = static_cast<float>(i) * 0.4f;
+			Seen             s = a_how;
+			s.refId = BALL;
+			s.pose = At({ 60.0f + 20.0f * std::sin(a), 0, 0 });
+			const std::array seen{ s };
+			said += watch.Scan(seen, t += 250ms).size();
+		}
+	};
+	swing(4 * 60 * 10);
+	CHECK(said >= 2);
+	CHECK(said <= static_cast<std::size_t>(ObjectShare::FOLLOW_ON_MAX));
+	const auto before = said;
+	// Our player kicks it again: it is ours once more.
+	swing(4, { .byUs = true });
+	swing(4 * 60);
+	CHECK(said > before);
+}
+
+TEST("knocks rolling on: not looked at for a while (a loading screen), what made it ours is gone")
+{
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	REQUIRE(KickedTo(watch, t, { 60, 0, 0 }).size() == 1);
+	t += ObjectShare::FORGET_AFTER + 1s;  // under FOLLOW_ON, but nothing looked at it meanwhile
+	CHECK(Roll(watch, t, { 60, 0, 0 }, { 160, 0, 0 }, 4).empty());
+	CHECK(ScanFor(watch, t, 8, { .refId = BALL, .pose = At({ 160, 0, 0 }) }).empty());
+}
+
 // --- knocked about by NPCs and blasts -----------------------------------------------------------------------------
 // A loose object an NPC shoves or an explosion throws lands differently in each game; only our own player's knocks used
 // to be reported, so a friend's chair or a table of clutter stayed where it was in their game. The game that runs the NPC
