@@ -1806,3 +1806,73 @@ TEST("protocol: a string cut to its length on the wire never ends inside a UTF-8
 	CHECK(Protocol::Utf8Prefix("\xC3\xA9", 1).empty());
 	CHECK(Protocol::Utf8Prefix("", 0).empty());
 }
+
+// A gift (src/game/GiftBook.h) is a drop with the container it was put in: the holder travels with it, a plugin's
+// reference every game has, and a gift is one item. A drop with no holder lies loose, as before.
+TEST("protocol: a gift round trips with its holder; one whose holder isn't a plugin's reference, or of more than one item, is refused")
+{
+	Protocol::DroppedItem gift{ .nonce = 7, .base = 0x0004F46A, .count = 1, .templateIndex = 2, .mods = { { 0x0004F46B, 0, 0 } }, .worldspace = 0x3C, .holder = 0x0001D9F6 };
+	for (const auto type : { Protocol::MessageType::kReportDrop, Protocol::MessageType::kDropPlaced }) {
+		const auto read = Protocol::DecodeDroppedItem(Protocol::Encode(gift, type));
+		REQUIRE(read);
+		CHECK(*read == gift);
+	}
+	auto loose = gift;
+	loose.holder = 0;
+	loose.count = 30;
+	CHECK(Protocol::DecodeDroppedItem(Protocol::Encode(loose, Protocol::MessageType::kReportDrop)) == loose);
+
+	auto runtime = gift;
+	runtime.holder = 0xFF001234;  // a container built in a settlement: no other game has it
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(runtime, Protocol::MessageType::kReportDrop)));
+	auto player = gift;
+	player.holder = Protocol::PLAYER_REF_ID;
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(player, Protocol::MessageType::kReportDrop)));
+	auto stack = gift;
+	stack.count = 2;  // each item put in is a gift of its own
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(stack, Protocol::MessageType::kReportDrop)));
+
+	// In a list too, after the loose ones.
+	const Protocol::DropList list{ true, { loose, gift } };
+	const auto               listed = Protocol::DecodeDropList(Protocol::Encode(list));
+	REQUIRE(listed);
+	CHECK(*listed == list);
+}
+
+// The session files from before gifts held their drops without a holder (SessionFile::GIFTS): their codec stays, and
+// every drop it reads lies loose. The two never read as each other.
+TEST("protocol: a drop list of the layout before holders reads as loose drops, and neither layout reads as the other")
+{
+	Protocol::DroppedItem drop{ .dropId = 3, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .takerId = 5 };
+	const Protocol::DropList list{ true, { drop, drop } };
+	const auto               old = Protocol::DecodeDropListBeforeHolders(Protocol::EncodeBeforeHolders(list));
+	REQUIRE(old);
+	CHECK(*old == list);
+	CHECK(!Protocol::DecodeDropList(Protocol::EncodeBeforeHolders(list)));
+	CHECK(!Protocol::DecodeDropListBeforeHolders(Protocol::Encode(list)));
+	CHECK(Protocol::EncodeBeforeHolders(Protocol::DropList{}) == Protocol::Encode(Protocol::DropList{}));  // nothing to hold
+}
+
+// The host's bContainerGifts is welcome flag bit 64, alone: no other rule moves with it, and a welcome without it is off.
+TEST("protocol: the container gifts rule is the welcome's flag bit 64")
+{
+	Protocol::Welcome welcome{ 9, 0x1122334455667788ull, false, true, {} };
+	CHECK(!Protocol::DecodeWelcome(Protocol::Encode(welcome))->rules.containerGifts);
+	welcome.rules.containerGifts = true;
+	const auto bytes = Protocol::Encode(welcome);
+	const auto read = Protocol::DecodeWelcome(bytes);
+	REQUIRE(read);
+	CHECK(read->rules == welcome.rules);
+	auto off = welcome;
+	off.rules.containerGifts = false;
+	const auto plain = Protocol::Encode(off);
+	REQUIRE(plain.size() == bytes.size());
+	std::size_t differ = 0;
+	for (std::size_t i = 0; i < bytes.size(); ++i) {
+		if (bytes[i] != plain[i]) {
+			++differ;
+			CHECK((bytes[i] ^ plain[i]) == 64);
+		}
+	}
+	CHECK(differ == 1);
+}

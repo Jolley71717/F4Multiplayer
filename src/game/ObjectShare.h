@@ -952,6 +952,36 @@ namespace ObjectShare
 		return a_facts.oursHeld || a_busy ? Verdict::kOurs : Verdict::kApply;
 	}
 
+	// How far a friend's move takes the object (Facts::fromPlace: to a_to, in that space), from where our copy lies or
+	// from a place of the session's still waiting to be put down here, whichever is nearer. While a place waits, our copy
+	// lies where our save had it (a catch-up that came while loading, or one not near enough yet): the friend moves it
+	// from where the session has it, which may be across the map from our copy. Judged from our copy alone, that move was
+	// dropped as too far, and so was the place it replaced, so neither went down.
+	inline float FromWhereItLies(const Vec3& a_copy, const Protocol::ObjectRest* a_waiting, std::uint32_t a_cell, std::uint32_t a_worldspace, const Vec3& a_to)
+	{
+		const float fromCopy = Distance(a_copy, a_to);
+		if (!a_waiting || a_waiting->cell != a_cell || a_waiting->worldspace != a_worldspace) {
+			return fromCopy;
+		}
+		return (std::min)(fromCopy, Distance(a_waiting->position, a_to));
+	}
+
+	// What waits for the object after a friend's move our game did not apply (a_verdict, JudgeRest's), where a_waited is
+	// what waited before it: their rest, when our game doesn't have the object near yet, or when it is too far even from
+	// the place that waited (the session keeps it there now; our copy only lies where our save had it); else what waited,
+	// so a let-go not applied here keeps the place its rest is judged from. Nothing while our player holds it: that move
+	// is the newer. A rest too far from our copy with no place waiting is a made-up jump: dropped.
+	inline std::optional<Protocol::ObjectRest> StillWaiting(Verdict a_verdict, const Protocol::ObjectRest& a_move, const Protocol::ObjectRest* a_waited)
+	{
+		if (a_verdict == Verdict::kApply || a_verdict == Verdict::kOurs) {
+			return std::nullopt;
+		}
+		if (a_move.kind == Protocol::ObjectRestKind::kRest && (a_verdict == Verdict::kNotHere || (a_verdict == Verdict::kTooFar && a_waited))) {
+			return a_move;
+		}
+		return a_waited ? std::optional{ *a_waited } : std::nullopt;
+	}
+
 	// The session's places our game could not put an object at yet (not loaded, in another space, being moved), one each,
 	// the newest. A newer move of the object (ours or a friend's, applied) ends its wait. At most MAX: a flood of one
 	// friend's rests for objects we never load (a joiner's made-up ones) drops the rests waiting of the friend with the most,

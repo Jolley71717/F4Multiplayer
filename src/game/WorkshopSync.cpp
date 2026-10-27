@@ -2150,6 +2150,16 @@ namespace WorkshopSync
 		AuditPower("save");
 	}
 
+	bool IsCopyMarked(const RE::TESObjectREFR& a_ref)
+	{
+		return Blocked(a_ref);
+	}
+
+	bool HoldsAnything(RE::TESObjectREFR* a_ref)
+	{
+		return a_ref && HoldsItems(a_ref);
+	}
+
 	void SetBlockCopies(bool a_block)
 	{
 		blockCopies = a_block;

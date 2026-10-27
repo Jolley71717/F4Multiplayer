@@ -37,16 +37,17 @@ namespace HostRules
 		rules.realTimeVats = a_settings.realTimeVats;
 		rules.shareGuestBuilds = a_settings.shareGuestBuilds;
 		rules.sharedStorage = a_settings.sharedStorage;
+		rules.containerGifts = a_settings.containerGifts;
 		return rules.Clamped();
 	}
 
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={}",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} containerGifts={}",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
-			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage);
+			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage, a_rules.containerGifts);
 	}
 
 	// What a player reads of the rules for being down, in their language: "Host's rules: 3 revives per fight, 30 s to bleed

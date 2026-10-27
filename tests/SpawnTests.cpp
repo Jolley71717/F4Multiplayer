@@ -672,6 +672,37 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kForget);
 }
 
+TEST("spawns: a frame of our own standing where a friend's game has one it made stands for it, and no copy goes beside it")
+{
+	// Two saves with a shared past: the frame the one game made before the saves parted stands in both, at the same
+	// spot. The host's game shares its own; ours stands right there, and is no copy.
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true, .oursThere = true }, T0) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+	// A copy placed before ours stood there (ours was not loaded yet, or came with a save): it goes.
+	theirs.Placed(SPAWN, COPY, T0);
+	const FrameFacts there{ .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f };
+	CHECK(theirs.DecideFrame(SPAWN, there, T0) == Act::kNone);
+	auto ours = there;
+	ours.oursThere = true;
+	CHECK(theirs.DecideFrame(SPAWN, ours, T0) == Act::kDiscard);
+	// Not before whoever is in the copy is out of it, nor from under someone here who got into it.
+	ours.leaving = true;
+	CHECK(theirs.DecideFrame(SPAWN, ours, T0) == Act::kNone);
+	ours.leaving = false;
+	ours.occupied = true;
+	CHECK(theirs.DecideFrame(SPAWN, ours, T0) == Act::kAbandon);
+	// Their game moved theirs away from ours (they got in and parked it elsewhere): a copy stands there, ours stays ours.
+	theirs.Unplaced(SPAWN);
+	theirs.Moved(SPAWN, At(3000.0f), 0.5f);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+}
+
 TEST("spawns: our copy of a friend's frame stands for the one their status says they left parked there")
 {
 	SpawnBook::Theirs       theirs;

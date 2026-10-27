@@ -392,3 +392,142 @@ TEST("session file: a file of the layout before drops reads as one with none")
 	std::memcpy(withDrops.data() + 4, &old, sizeof(old));
 	CHECK(!SessionFile::Decode(withDrops));
 }
+
+namespace
+{
+	constexpr std::uint32_t CHEST = 0x0001D9F6;
+
+	// A gun put in a chest: a gift (src/game/GiftBook.h).
+	Protocol::DroppedItem Gift(std::uint64_t a_nonce)
+	{
+		auto item = Gun(a_nonce);
+		item.holder = CHEST;
+		return item;
+	}
+
+	std::uint16_t LayoutOf(const std::vector<std::uint8_t>& a_bytes)
+	{
+		std::uint16_t layout = 0;
+		std::memcpy(&layout, a_bytes.data() + 4, sizeof(layout));
+		return layout;
+	}
+}
+
+// A giver's game takes the gift out of its world as the offer comes, and gives nothing back on a link that went: so the
+// offer can't go with them, as a loose drop's does. Their next record says whether the item left their world.
+TEST("drop store: a gift's offer stays when its giver leaves, and their next record settles it either way")
+{
+	DropStore  store;
+	const auto swapped = store.Add(ALICE, Gift(11)).drop->dropId;
+	const auto held = store.Add(ALICE, Gift(12)).drop->dropId;
+	const auto loose = store.Add(ALICE, Gun(13)).drop->dropId;
+	CHECK(store.DropOffers(ALICE) == 1);  // the loose drop's alone (Alice's game gives that item back as it leaves)
+	CHECK(store.OfferCount() == 2);
+	CHECK(!store.Confirm(ALICE, loose));
+	CHECK(!store.Take(BOB, swapped));  // still an offer: nobody takes it
+	CHECK(store.LyingOf(ALICE) == 2);  // and it counts against her share
+
+	// She is back: her world took 11 out (the swap came before the link went), and still has 12.
+	const auto out = store.Reconcile(ALICE, Record({ 11 }, {}), SESSION);
+	REQUIRE(out.confirmed.size() == 1);
+	CHECK(out.confirmed[0].dropId == swapped);
+	CHECK(out.confirmed[0].holder == CHEST);
+	REQUIRE(out.unoffered.size() == 1);
+	CHECK(out.unoffered[0].dropId == held);
+	CHECK(store.OfferCount() == 0);
+	CHECK(store.Take(BOB, swapped));
+}
+
+// The host stops (or the dedicated server restarts) while a gift is still an offer: the file keeps it as one, so the
+// giver's record settles it after the restart, and it never lies before.
+TEST("drop store: a gift's offer goes into the session file and comes back as an offer; a loose drop's offer never does")
+{
+	DropStore  store;
+	const auto lying = Laid(store, ALICE, Gift(11));
+	const auto offer = store.Add(ALICE, Gift(12)).drop->dropId;
+	store.Add(ALICE, Gun(13));  // a loose drop's offer: not saved
+	const auto all = store.All();
+	REQUIRE(all.size() == 2);
+	CHECK(all[1].dropId == offer);
+	CHECK(all[1].takerId == Protocol::DROP_OFFERED);
+
+	SessionFile::Snapshot snapshot;
+	snapshot.contentHash = 1;
+	snapshot.sessionId = SESSION;
+	snapshot.drops = all;
+	const auto bytes = SessionFile::Encode(snapshot);
+	CHECK(LayoutOf(bytes) == SessionFile::GIFTS);
+	const auto read = SessionFile::Decode(bytes);
+	REQUIRE(read);
+	CHECK(read->drops == all);
+
+	DropStore again;
+	for (const auto& drop : read->drops) {
+		again.Restore(drop);
+	}
+	CHECK(again.LyingCount() == 1);
+	CHECK(again.OfferCount() == 1);
+	REQUIRE(again.Find(lying) != nullptr);
+	CHECK(again.Find(lying)->holder == CHEST);
+	CHECK(again.Find(offer) == nullptr);
+	CHECK(!again.Take(BOB, offer));
+	CHECK(again.TakerOf(offer) == 0);
+	const auto out = again.Reconcile(ALICE, Record({ 11, 12 }, {}), SESSION);
+	REQUIRE(out.confirmed.size() == 1);
+	CHECK(out.confirmed[0].dropId == offer);
+	CHECK(out.confirmed[0].takerId == 0);
+	CHECK(again.Take(BOB, offer));
+
+	// A saved offer that names nobody, or no container, is no offer: left out.
+	DropStore odd;
+	auto      noOwner = all[1];
+	noOwner.ownerId = 0;
+	odd.Restore(noOwner);
+	auto noHolder = all[1];
+	noHolder.holder = 0;
+	odd.Restore(noHolder);
+	CHECK(odd.OfferCount() == 0);
+	CHECK(odd.LyingCount() == 0);
+}
+
+// Layout 39 holds each drop's container. A session with no gift is still written in the layout an older build reads,
+// and a file of an older layout reads its drops as loose; one that says it is older but holds holders is damage.
+TEST("session file: a session with gifts takes layout 39; one without stays 36 or 38, and an older file's drops lie loose")
+{
+	SessionFile::Snapshot snapshot;
+	snapshot.contentHash = 1;
+	snapshot.sessionId = SESSION;
+	auto drop = Gun(1);
+	drop.dropId = 1;
+	drop.ownerId = ALICE;
+	snapshot.drops = { drop };
+	const auto loose = SessionFile::Encode(snapshot);
+	CHECK(LayoutOf(loose) == SessionFile::OBJECT_PLACES);
+	for (const std::uint16_t layout : { SessionFile::ALL_THREE, SessionFile::TRAPS_AND_DESTRUCTIONS, SessionFile::OBJECT_PLACES, SessionFile::STORAGE }) {
+		auto bytes = loose;
+		std::memcpy(bytes.data() + 4, &layout, sizeof(layout));
+		const auto read = SessionFile::Decode(bytes);
+		REQUIRE(read);
+		CHECK(read->drops == snapshot.drops);
+	}
+	auto withOwners = snapshot;
+	withOwners.storageOwners = { { 0x00020000, 1 } };
+	CHECK(LayoutOf(SessionFile::Encode(withOwners)) == SessionFile::STORAGE);
+
+	auto gifts = withOwners;
+	gifts.drops.push_back(Gift(2));
+	gifts.drops.back().dropId = 2;
+	gifts.drops.back().ownerId = BOB;
+	const auto bytes = SessionFile::Encode(gifts);
+	CHECK(LayoutOf(bytes) == SessionFile::GIFTS);
+	CHECK(SessionFile::Readable(SessionFile::GIFTS));
+	const auto read = SessionFile::Decode(bytes);
+	REQUIRE(read);
+	CHECK(read->drops == gifts.drops);
+	CHECK(read->storageOwners == gifts.storageOwners);
+	auto older = bytes;
+	const std::uint16_t storage = SessionFile::STORAGE;
+	std::memcpy(older.data() + 4, &storage, sizeof(storage));
+	CHECK(!SessionFile::Decode(older));
+	CHECK(!SessionFile::Readable(40));  // a later build's
+}

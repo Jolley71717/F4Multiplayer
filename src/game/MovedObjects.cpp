@@ -389,12 +389,13 @@ namespace MovedObjects
 					continue;
 				}
 				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto [standInCell, standInWorld] = SpaceOf(standIn);
 				ObjectShare::Facts facts{
 					.loaded = true,
-					.sameSpace = SpaceOf(standIn) == SpaceOf(ref.get()),
+					.sameSpace = std::pair{ standInCell, standInWorld } == SpaceOf(ref.get()),
 					.oursHeld = a_ourHeld == id,
-					.fromUs = player ? ObjectShare::Distance(Position(player), Position(ref.get())) : 0.0f,
-					.fromPlace = entry->placed ? 0.0f : ObjectShare::Distance(Position(standIn), Position(ref.get())),
+					.fromUs = player ? ObjectShare::FromWhereItLies(Position(ref.get()), waiting.Find(id), standInCell, standInWorld, Position(player)) : 0.0f,
+					.fromPlace = entry->placed ? 0.0f : ObjectShare::FromWhereItLies(Position(ref.get()), waiting.Find(id), standInCell, standInWorld, Position(standIn)),
 				};
 				const auto verdict = ObjectShare::JudgeHold(facts);
 				if (verdict != ObjectShare::Verdict::kApply) {
@@ -413,6 +414,7 @@ namespace MovedObjects
 				if (Place(ref.get(), position, angles)) {
 					if (!entry->placed) {
 						entry->placed = true;
+						waiting.Erase(id);  // their move is the newer, and drawn here now
 						++counts.holdsApplied;
 					}
 					const auto [cell, worldspace] = SpaceOf(ref.get());
@@ -624,7 +626,8 @@ namespace MovedObjects
 		}
 		carry.TakenOver(a_hold.refId);
 		flying.erase(a_hold.refId);
-		waiting.Erase(a_hold.refId);  // their move is the newer; its rest comes
+		// A place waiting for it stays until the hold is drawn here (DrawHeld): their hands may be where the session has
+		// it, far from our copy, and their let-go and rest are judged from there.
 		if (!carried.OnHold(a_hold, now)) {
 			++counts.holdsIgnored;
 		}
@@ -633,6 +636,12 @@ namespace MovedObjects
 	void OnRested(const Protocol::ObjectRest& a_rest)
 	{
 		const auto now = Clock::now();
+		// What waited for it: our copy still lies where our save had it, so the friend's move is judged from there too
+		// (ObjectShare::FromWhereItLies), and it waits again if this move isn't applied (StillWaiting).
+		std::optional<Protocol::ObjectRest> waited;
+		if (const auto place = waiting.Find(a_rest.refId)) {
+			waited = *place;
+		}
 		waiting.Erase(a_rest.refId);
 		if (a_rest.playerId == 0) {
 			// A catch-up (after joining or loading): where the session has it, put there now or once our game loads it.
@@ -652,7 +661,7 @@ namespace MovedObjects
 				.sameSpace = SpaceOf(ref.get()) == std::pair{ a_rest.cell, a_rest.worldspace },
 				.oursHeld = OurHeld() == a_rest.refId,
 				.fromUs = ObjectShare::Distance(Position(player), a_rest.position),
-				.fromPlace = ObjectShare::Distance(Position(ref.get()), a_rest.position),
+				.fromPlace = ObjectShare::FromWhereItLies(Position(ref.get()), waited ? &*waited : nullptr, a_rest.cell, a_rest.worldspace, a_rest.position),
 			};
 		}
 		const auto verdict = ObjectShare::JudgeRest(facts);
@@ -660,8 +669,9 @@ namespace MovedObjects
 			if (wasHeld) {
 				LetLoose(a_rest.refId);
 			}
-			if (verdict == ObjectShare::Verdict::kNotHere) {
-				waiting.Add(a_rest);  // a rest: put there once our game has it (a let-go's rest follows)
+			// A rest: put there once our game has it (a let-go's rest follows, judged from what waited).
+			if (const auto still = ObjectShare::StillWaiting(verdict, a_rest, waited ? &*waited : nullptr)) {
+				waiting.Add(*still);
 			}
 			++counts.restsIgnored;
 			return;

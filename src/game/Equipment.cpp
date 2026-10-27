@@ -7,6 +7,7 @@
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
+#include "game/Gifts.h"
 #include "game/Storage.h"
 #include "game/TextureFlush.h"
 
@@ -101,6 +102,8 @@ namespace Equipment
 			target.standIn = actor && Puppets::IsPuppet(actor);
 			target.mirrored = actor && !target.standIn && Puppets::IsRegistered(actor);
 			target.madeHere = a_ref->IsCreated();
+			const auto base = a_ref->GetObjectReference();
+			target.container = !actor && base && base->Is(RE::ENUM_FORM_ID::kCONT);
 			const auto ours = player ? PowerArmorFrameOf(player) : RE::NiPointer<RE::TESObjectREFR>{};
 			target.playersFrame = ours && ours.get() == a_ref;
 			target.inWorld = a_ref->GetParentCell() != nullptr;
@@ -1198,6 +1201,7 @@ namespace Equipment
 				MainThread::Post([target, closed] { CheckTransfer(target, closed); });
 				if (!closed) {
 					Storage::OnMenuShown(target);  // a friend's storage: its true copy shown in ours
+					Gifts::OnMenuShown(target);    // the gifts lying in it shown in our copy
 				}
 			}
 			return result;

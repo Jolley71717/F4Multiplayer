@@ -81,6 +81,14 @@ namespace WorkshopSync
 	// A save is about to be written: no grid of ours may name a copy (main thread).
 	void BeforeSave();
 
+	// Whether the reference carries the keyword every workshop copy is given (the game's WorkshopBlockInteractionKeyword,
+	// since 0.9.0, saved with the copy): a power armor frame made at runtime that has it is a copy an older version's
+	// workshop sync made of a frame (FrameShare::Ghost), never a suit of the player's own.
+	[[nodiscard]] bool IsCopyMarked(const RE::TESObjectREFR& a_ref);
+
+	// Whether the reference holds anything in our game.
+	[[nodiscard]] bool HoldsAnything(RE::TESObjectREFR* a_ref);
+
 	// Dev: whether copies are kept out of workshop mode's reach (off: to try the repair), and the audit run now.
 	void                      SetBlockCopies(bool a_block);
 	[[nodiscard]] std::string AuditNow();

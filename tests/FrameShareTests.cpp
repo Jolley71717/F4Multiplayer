@@ -208,6 +208,16 @@ TEST("frame share: a frame our game made is shared as a spawn wherever it is whi
 	made.created = true;
 	made.copy = true;
 	CHECK(!SharesMade(made, true));
+	// Nor a copy an older version's workshop sync left in the save (Ghost): it goes. One with pieces in it is the
+	// player's own by now, and is shared as any of theirs.
+	made = Standing();
+	made.created = true;
+	made.marked = true;
+	CHECK(!SharesMade(made, true));
+	CHECK(!SharesMade(made, false));
+	made.holdsItems = true;
+	CHECK(SharesMade(made, true));
+	CHECK(SharesMade(made, false));
 	// A pre-placed one goes by its own id (ChooseShare), and what is gone or no frame is nothing to share.
 	CHECK(!SharesMade(Standing(), true));
 	made = Standing();
@@ -221,7 +231,69 @@ TEST("frame share: a frame our game made is shared as a spawn wherever it is whi
 	CHECK(FrameShare::RoomForMade(0));
 	CHECK(FrameShare::RoomForMade(FrameShare::MAX_MADE - 1));
 	CHECK(!FrameShare::RoomForMade(FrameShare::MAX_MADE));
-	CHECK(FrameShare::MAX_MADE < Protocol::MAX_SPAWNS_PER_PLAYER);
+	static_assert(FrameShare::MAX_MADE < Protocol::MAX_SPAWNS_PER_PLAYER);
+}
+
+TEST("frame share: a copy an older version's workshop sync left in the save is told by its keyword, and goes only while it is empty and nobody's")
+{
+	using FrameShare::Ghost;
+	// The 0.9.1 leftover: a frame made at runtime, carrying the keyword every workshop copy gets, empty, standing loaded.
+	auto ghost = Standing();
+	ghost.created = true;
+	ghost.marked = true;
+	CHECK(Ghost(ghost));
+	// Without the keyword nothing tells it from a frame the game made (a raider's, stripped): it stays.
+	auto plain = ghost;
+	plain.marked = false;
+	CHECK(!Ghost(plain));
+	// A pre-placed frame is never one (the keyword cannot reach it), nor anything that is no frame, nor one gone.
+	auto facts = ghost;
+	facts.created = false;
+	CHECK(!Ghost(facts));
+	facts = ghost;
+	facts.frame = false;
+	CHECK(!Ghost(facts));
+	facts = ghost;
+	facts.found = false;
+	CHECK(!Ghost(facts));
+	// Pieces in it: a player fitted it out, or it is their own suit an older version took over. Deleting it would lose them.
+	facts = ghost;
+	facts.holdsItems = true;
+	CHECK(!Ghost(facts));
+	// Our player's own: in it (disabled by the engine), or got out of it last. Using a ghost makes it theirs.
+	facts = ghost;
+	facts.wornHere = true;
+	facts.off = true;
+	CHECK(!Ghost(facts));
+	facts = ghost;
+	facts.lastUsed = true;
+	CHECK(!Ghost(facts));
+	// Or ever used: the engine gives a frame its wearer's ownership as they get in, which the last-used one alone misses
+	// (one they got out of before the next, or a frame they docked in a station and left for another).
+	facts = ghost;
+	facts.owned = true;
+	CHECK(!Ghost(facts));
+	// Someone else in it, a quest holding it, disabled by anything, a copy the session placed this run: left alone.
+	facts = ghost;
+	facts.inUse = true;
+	CHECK(!Ghost(facts));
+	facts = ghost;
+	facts.quest = true;
+	CHECK(!Ghost(facts));
+	facts = ghost;
+	facts.off = true;
+	CHECK(!Ghost(facts));
+	facts = ghost;
+	facts.copy = true;
+	CHECK(!Ghost(facts));
+	// Not loaded: deleting a reference whose 3D is still coming crashes the loader; the walk finds loaded ones.
+	facts = ghost;
+	facts.loaded = false;
+	CHECK(!Ghost(facts));
+	// Our own frame stands for a friend's at the same spot within less than any two frames can stand apart, and farther
+	// than the owner's physics nudges one; a copy is moved in place up to the nudge limit.
+	static_assert(FrameShare::SAME_SPOT > FrameShare::MOVED);
+	static_assert(FrameShare::SAME_SPOT < FrameShare::NUDGE_LIMIT);
 }
 
 TEST("frame share: the host offers every frame standing in its loaded cells, a joiner only one its player used")
