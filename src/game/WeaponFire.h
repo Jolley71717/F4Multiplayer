@@ -150,6 +150,11 @@ namespace WeaponFire
 	// ... out of every hand: before a save or a load, and when the session ends.
 	void DropHandThrowables();
 
+	// A friend's stand-in, each frame (looked at every HandThrowable::SWEEP_EVERY): the grenade the engine keeps culled in
+	// its left hand between throws is culled again when it is found drawn with no throw going on (bead krne). Runs whatever
+	// bGrenadeInHand says. Main thread.
+	void SweepHand(RE::Actor* a_standIn);
+
 	// An NPC died in our world (its form id: a plugin's, or a runtime NPC's that may be our copy of a friend's
 	// spawn): a copy that was a ghost of ours then is counted and logged (the explosion reached it).
 	void NoteDeath(std::uint32_t a_refId);

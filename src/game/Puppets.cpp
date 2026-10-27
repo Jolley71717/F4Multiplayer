@@ -293,15 +293,31 @@ namespace Puppets
 
 		std::atomic<std::uint32_t> drawAsks{ 0 };     // draws and holsters asked of puppets (dev status line)
 		std::atomic<std::uint32_t> drawGiveUps{ 0 };  // states a puppet never took in DrawMatch::MAX_TRIES asks
+		std::atomic<std::uint32_t> drawRestarts{ 0 };  // draws and holsters that stalled half-way, set back and asked again
+
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kSheathed) == std::to_underlying(DrawMatch::State::kSheathed));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kWantToDraw) == std::to_underlying(DrawMatch::State::kWantToDraw));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kDrawing) == std::to_underlying(DrawMatch::State::kDrawing));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kDrawn) == std::to_underlying(DrawMatch::State::kDrawn));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kWantToSheathe) == std::to_underlying(DrawMatch::State::kWantToSheathe));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kSheathing) == std::to_underlying(DrawMatch::State::kSheathing));
+
+		// The actor's weapon state as the engine keeps it, not as GetWeaponMagicDrawn reads it (DrawMatch::StateOf: a weapon
+		// on its way to the holster read as away).
+		DrawMatch::State WeaponStateOf(const RE::Actor* a_actor)
+		{
+			return DrawMatch::StateOf(std::to_underlying(static_cast<const RE::ActorState&>(*a_actor).weaponState));
+		}
 
 		// Draws or holsters the weapon to match the remote player: each ask plays the weapon's sound, so a few
-		// asks a second apart, then it is let be (DrawMatch).
+		// asks a second apart, then it is let be (DrawMatch). One that stalled half-way is set back and asked again.
 		void MatchWeaponDrawn(RE::Actor* a_actor, const Puppet& a_puppet)
 		{
 			const bool wantDrawn = (a_puppet.target.flags & Protocol::kWeaponDrawn) != 0;
-			const bool drawn = a_actor->GetWeaponMagicDrawn();
+			const auto state = WeaponStateOf(a_actor);
 			const auto now = std::chrono::steady_clock::now();
 			DrawMatch::Do what = DrawMatch::Do::kNothing;
+			std::chrono::steady_clock::duration stalledFor{};
 			{
 				std::scoped_lock l{ lock };
 				const auto entry = Find(a_actor);
@@ -309,7 +325,8 @@ namespace Puppets
 					return;
 				}
 				const auto giveUps = entry->draw.giveUps;
-				what = DrawMatch::Next(entry->draw, wantDrawn, drawn, entry->redraw, entry->nextDrawAttempt, now);
+				stalledFor = now - entry->draw.seenSince;
+				what = DrawMatch::Next(entry->draw, wantDrawn, state, entry->redraw, entry->nextDrawAttempt, now);
 				if (entry->draw.giveUps != giveUps) {
 					drawGiveUps.fetch_add(1, std::memory_order_relaxed);
 					if (MoveSync::Loggable(drawGiveUps.load(std::memory_order_relaxed))) {
@@ -321,11 +338,27 @@ namespace Puppets
 					entry->redraw = false;
 				}
 			}
-			if (what != DrawMatch::Do::kNothing) {
-				drawAsks.fetch_add(1, std::memory_order_relaxed);
-				ClickWatch::Note(ClickRates::Source::kDrawAsk);
-				a_actor->DrawWeaponMagicHands(what == DrawMatch::Do::kDraw);
+			if (what == DrawMatch::Do::kNothing) {
+				return;
 			}
+			drawAsks.fetch_add(1, std::memory_order_relaxed);
+			ClickWatch::Note(ClickRates::Source::kDrawAsk);
+			if (what == DrawMatch::Do::kRestart) {
+				// Back where its weapon still is (the animation that would have moved it never played), and asked as the first time.
+				const auto from = DrawMatch::From(state);
+				static_cast<RE::ActorState&>(*a_actor).SetWeaponState(static_cast<RE::WEAPON_STATE>(std::to_underlying(from)));
+				const auto restarts = drawRestarts.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (MoveSync::Loggable(restarts)) {
+					REX::INFO("Puppets: {:08X} stalled {} ms in weapon state {} (its friend's weapon {}); set back to {}{} ({} so far)", a_actor->GetFormID(),
+						std::chrono::duration_cast<std::chrono::milliseconds>(stalledFor).count(), std::to_underlying(state), wantDrawn ? "out" : "away", std::to_underlying(from),
+						DrawMatch::Drawn(from) != wantDrawn ? " and asked again" : "", restarts);
+				}
+				if (DrawMatch::Drawn(from) != wantDrawn) {
+					a_actor->DrawWeaponMagicHands(wantDrawn);
+				}
+				return;
+			}
+			a_actor->DrawWeaponMagicHands(what == DrawMatch::Do::kDraw);
 		}
 
 		// Player stand-ins whose graph was found moving while they should stand, or the other way round, and
@@ -841,7 +874,15 @@ namespace Puppets
 		std::scoped_lock l{ lock };
 		if (const auto entry = Find(a_actor)) {
 			entry->redraw = true;
-			entry->nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // let the equipping finish
+			entry->nextDrawAttempt = std::max(entry->nextDrawAttempt, std::chrono::steady_clock::now() + 1s);  // let the equipping finish
+		}
+	}
+
+	void HoldDraw(RE::Actor* a_actor, std::chrono::steady_clock::duration a_for)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto entry = Find(a_actor)) {
+			entry->nextDrawAttempt = std::max(entry->nextDrawAttempt, std::chrono::steady_clock::now() + a_for);
 		}
 	}
 
@@ -1216,6 +1257,9 @@ namespace Puppets
 		}
 		if (const auto asks = drawAsks.load(std::memory_order_relaxed); asks != 0) {
 			out += std::format("{}draws={}/{}", out.empty() ? "" : " ", asks, drawGiveUps.load(std::memory_order_relaxed));
+		}
+		if (const auto restarts = drawRestarts.load(std::memory_order_relaxed); restarts != 0) {
+			out += std::format("{}drawRestarts={}", out.empty() ? "" : " ", restarts);
 		}
 		return out;
 	}

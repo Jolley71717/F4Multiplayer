@@ -4,6 +4,7 @@
 #include "game/DeferredDelete.h"
 #include "game/DownRules.h"
 #include "game/Dialogue.h"
+#include "game/DrawMatch.h"
 #include "game/EngineRefs.h"
 #include "game/FriendFrame.h"
 #include "game/FriendLight.h"
@@ -2155,6 +2156,10 @@ namespace RemotePlayers
 		if (a_action == Protocol::ShotAction::kThrow && player.gear.has) {
 			Equipment::HoldThrowable(actor, player.gear.items);
 		}
+		// A draw or holster asked while the throw plays is one its graph cannot take (DrawMatch): asked once it has played.
+		if (a_action == Protocol::ShotAction::kThrow && actor) {
+			Puppets::HoldDraw(actor, DrawMatch::THROW_HOLD);
+		}
 		WeaponFire::PlayAction(actor, a_action);
 	}
 
@@ -3331,6 +3336,8 @@ namespace RemotePlayers
 				break;
 			}
 			gearChanges += dressing.change;
+			// The grenade it carries for their throws shows in its hand only while it plays one (bead krne).
+			WeaponFire::SweepHand(actor);
 			if (dressing.redraw) {
 				Puppets::RedrawWeapon(actor);
 				++redraws;

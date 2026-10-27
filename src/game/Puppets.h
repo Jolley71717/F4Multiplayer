@@ -67,6 +67,9 @@ namespace Puppets
 	// play attacks.)
 	void RedrawWeapon(RE::Actor* a_actor);
 
+	// No draw or holster is asked of the puppet for this long (a replayed throw plays first: DrawMatch::THROW_HOLD).
+	void HoldDraw(RE::Actor* a_actor, std::chrono::steady_clock::duration a_for);
+
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
