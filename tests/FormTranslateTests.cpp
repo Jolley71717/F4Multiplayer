@@ -259,3 +259,34 @@ TEST("form translate: a spawn keeps the session's own id, and a broken packet is
 	CHECK(Translate(broken, MISSING, Way::kToSession).kind == Result::Kind::kSame);
 	CHECK(Translate(Bytes{}, MISSING, Way::kToSession).kind == Result::Kind::kSame);
 }
+
+// A gift's container is a key: a game whose load order lacks the chest's plugin never hears of the gift (it would have no
+// chest to show it in), and one that has it gets the chest in its own numbering. A loose drop has no holder to map.
+TEST("form translate: a gift in a container the other game lacks is not passed to it, and one it has names the container in its load order")
+{
+	DroppedItem gift{ .nonce = 7, .base = 0x0004F46A, .count = 1, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .holder = THEIRS };
+	CHECK(!After(Encode(gift, MT::kDropPlaced), MISSING, Way::kToLocal));
+	gift.holder = SESSION_SHARED;
+	const auto out = After(Encode(gift, MT::kDropPlaced), MISSING, Way::kToLocal);
+	REQUIRE(out);
+	const auto read = DecodeDroppedItem(*out);
+	REQUIRE(read);
+	CHECK(read->holder == SHARED);
+	CHECK(read->base == gift.base);
+
+	// Ours to the session, and in a list: the one in a container they lack is left out, the rest stay.
+	DroppedItem mine = gift;
+	mine.holder = MINE;
+	CHECK(!After(Encode(mine, MT::kReportDrop), MISSING, Way::kToSession));
+	DroppedItem loose = gift;
+	loose.holder = 0;
+	const auto list = After(Encode(DropList{ true, { gift, Protocol::DroppedItem{ gift.dropId, 0, 8, gift.base, 1, 0xFFFF, {}, -1.0f, "", gift.cell, 0, 0, 0, 0, 0, THEIRS }, loose } }), MISSING,
+		Way::kToLocal);
+	REQUIRE(list);
+	const auto listed = DecodeDropList(*list);
+	REQUIRE(listed);
+	REQUIRE(listed->drops.size() == 2);
+	CHECK(listed->drops[0].holder == SHARED);
+	CHECK(listed->drops[1].holder == 0);
+	CHECK(listed->last);
+}
