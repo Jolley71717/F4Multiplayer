@@ -1956,6 +1956,25 @@ namespace DevCommands
 			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
 		}
 
+		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
+		// open; ghosts <refHex>: that actor's ghost as the engine and its extra data read it.
+		std::string Ghosts(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return WeaponFire::DescribeGhosts();
+			}
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: ghosts [<refHex>]";
+			}
+			const auto npc = actor->GetNPC();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("{:08X} ghost={} baseGhost={} questAlias={} hostile={} shareable={} dead={} loaded={} owner={}", actor->GetFormID(), CopyWatch::GhostState(actor),
+				npc && npc->IsGhost(), actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray), player && actor->GetHostileToActor(player),
+				Protocol::IsShareableRef(actor->GetFormID()), actor->IsDead(false), actor->Get3D() != nullptr, NpcSync::Owner(NpcSync::SessionId(actor->GetFormID())));
+		}
+
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
 		std::string Mirror(std::string_view a_args)
 		{
@@ -3621,6 +3640,7 @@ namespace DevCommands
 			Entry{ "sneak", Sneak },
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
+			Entry{ "ghosts", Ghosts },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "fade", FadeCommand },

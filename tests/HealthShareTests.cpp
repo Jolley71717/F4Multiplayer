@@ -539,6 +539,11 @@ TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own 
 	CHECK(OwnersToDeal(Blow{ .throwable = true, .explosionsShared = true, .threwLately = true }));
 	CHECK(OwnersToDeal(Blow{ .spellAlone = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{}));  // a gun's, a bat's: ours to report
+	// A legendary weapon's burn or bleed riding along with the shot (an enchantment's hit, read as a spell's with no weapon):
+	// ours, however lately we threw a Molotov. What a throw leaves burning is a hazard's spell, never an enchantment.
+	CHECK(!OwnersToDeal(Blow{ .spellAlone = true, .enchantment = true, .threwLately = true }));
+	CHECK(!OwnersToDeal(Blow{ .spellAlone = true, .enchantment = true, .explosionsShared = true, .threwLately = true }));
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .enchantment = true, .blastThere = true }));  // an explosive round's blast that goes off there too
 	CHECK(!OwnersToDeal(Blow{ .inHand = true, .explosionsShared = true, .threwLately = true }));
 
 	CHECK(!After(Hitter::kOurPlayer, FRIEND, US, false, true).report);

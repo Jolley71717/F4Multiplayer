@@ -9,6 +9,7 @@
 
 #include "game/BlastShield.h"
 #include "game/CopyHealth.h"
+#include "game/GhostLedger.h"
 #include "game/RemoteEdits.h"
 #include "game/ThrowReplays.h"
 
@@ -45,10 +46,13 @@ namespace
 		float         x = 0.0f, y = 0.0f;
 		float         health = 100.0f;
 		bool          dead = false;
-		bool          ghost = false;     // its ghost flag: made one by BlastShield (or a save that held it so)
-		bool          ownGhost = false;  // one before we came near it (its base record's)
-		bool          friendly = false;  // not hostile to our player
-		std::uint32_t sessionId = 0;     // the id the session knows it by, when not its own (NpcSync::SessionId)
+		bool          ghost = false;       // its ghost flag: made one by BlastShield (or a save that held it so)
+		bool          ownGhost = false;    // one before we came near it (its base record's)
+		bool          questAlias = false;  // a quest holds it in an alias (a story's own ghost is set on such an actor)
+		bool          friendly = false;    // not hostile to our player
+		bool          loaded = true;       // here with 3D (the console's command takes on it; a door or a fast travel unloads it)
+		std::uint32_t stubborn = 0;        // setghost 0s the engine ignores before one takes (a ghost that will not go)
+		std::uint32_t sessionId = 0;       // the id the session knows it by, when not its own (NpcSync::SessionId)
 
 		void Hurt(float a_amount)
 		{
@@ -71,6 +75,7 @@ namespace
 		BlastShield::Book              shields;
 		ThrowReplays::Book             throws;
 		CopyHealth::Book               copies;
+		GhostLedger::Book              ledger;  // every ghost we set, by our form id, until it reads no ghost (WeaponFire::TendLedger)
 		bool                           watchCopies = true;  // CopyWatch (off: as before it)
 		float                          givenBack = 0.0f;
 		BlastShield::Clock::time_point now{};
@@ -80,8 +85,9 @@ namespace
 		bool                           consoleLag = false;
 		std::vector<std::uint32_t>     unghosting;  // its commands still to land, by our form id
 		std::uint32_t                  unghostsSent = 0;
-		bool                           repairOnLoad = true;  // WeaponFire::RepairGhostsFromSave (off: as before it)
-		std::uint32_t                  repairFrames = 0;
+		bool                           repairOnLoad = true;  // WeaponFire::RepairGhosts (off: as before it)
+		bool                           keepLedger = true;    // the ledger (off: as before it, up to 0.9.2)
+		std::set<std::uint32_t>        repaired;             // the repair's, once each since the load
 
 		struct Grenade
 		{
@@ -108,24 +114,35 @@ namespace
 			return a_id;
 		}
 
-		// WeaponFire::ApplyExplosion: our copies of NPCs another game runs are made ghosts first (not one that is a
-		// ghost already, unless it is one of ours: WasGhost), then the explosion hurts everyone in reach (a_damage, the
-		// same to each here).
-		void SetOff(const Protocol::Explosion& a_explosion, float a_damage)
+		// WeaponFire::ApplyExplosion: our copies of NPCs another game runs that the explosion's damage could kill are made
+		// ghosts first (not one that is a ghost already, unless it is one of ours: in the ledger, or shielded), then the
+		// explosion hurts everyone in reach (a_damage, the same to each here; a_known: its record says so, as
+		// ApplyExplosion reads it; else any copy in reach, as for a trap's). A copy with health to spare takes the blast
+		// as a friend's blow (CopyWatch books it the owner's: OwnersBlow), given back by WatchCopies.
+		void SetOff(const Protocol::Explosion& a_explosion, float a_damage, bool a_known = false)
 		{
 			const auto reach = [&](const Npc& a_npc, float a_range) {
 				return RemoteEdits::Within(std::hypot(a_npc.x - a_explosion.x, a_npc.y - a_explosion.y), a_range);
 			};
 			for (auto& [key, npc] : npcs) {
-				const auto id = SessionIdOf(key);
-				if (reach(npc, FRAG_RADIUS + BlastShield::MARGIN) && BlastShield::Shields({ .id = id, .owner = client.OwnerOf(id), .dead = npc.dead }, client.Id()) &&
-					(shields.Shielded(id) || !(npc.ownGhost || npc.ghost)) && shields.Begin(id, now, frame)) {
+				const auto                 id = SessionIdOf(key);
+				const BlastShield::Reached reached{ .id = id, .owner = client.OwnerOf(id), .dead = npc.dead, .health = npc.health };
+				if (reach(npc, FRAG_RADIUS + BlastShield::MARGIN) && BlastShield::Shields(reached, client.Id(), a_known ? a_damage : 0.0f) &&
+					(shields.Shielded(id) || ledger.Contains(key) || !(npc.ownGhost || npc.ghost)) && shields.Begin(id, now, frame)) {
 					npc.ghost = true;
+					if (keepLedger) {
+						ledger.Add(key, frame);
+					}
 				}
 			}
-			for (auto& [id, npc] : npcs) {
+			for (auto& [key, npc] : npcs) {
 				if (reach(npc, FRAG_RADIUS)) {
-					Hurt(id, a_damage);
+					const auto id = SessionIdOf(key);
+					if (!npc.ghost && !npc.ownGhost && client.OwnerOf(id) != 0 && client.OwnerOf(id) != client.Id()) {
+						copies.OtherHit(id, now);
+						copies.OwnersBlow(id, now);
+					}
+					Hurt(key, a_damage);
 				}
 			}
 		}
@@ -150,19 +167,32 @@ namespace
 			}
 		}
 
-		// WeaponFire's ghost comes off (the session's id): the console's setghost 0.
+		// WeaponFire's ghost comes off (the session's id): the console's setghost 0, which takes on a loaded copy only (one
+		// not loaded keeps its entry in the ledger, which sends it once the copy is), and which a stubborn ghost ignores
+		// the first few times.
 		void Unshield(std::uint32_t a_id)
 		{
+			const auto key = KeyOf(a_id);
+			auto&      npc = npcs.at(key);
+			if (!npc.loaded) {
+				return;
+			}
 			++unghostsSent;
+			ledger.Sent(key, frame);
+			if (npc.stubborn > 0) {
+				--npc.stubborn;
+				return;
+			}
 			if (consoleLag) {
-				unghosting.push_back(KeyOf(a_id));
+				unghosting.push_back(key);
 			} else {
-				npcs.at(KeyOf(a_id)).ghost = false;
+				npc.ghost = false;
 			}
 		}
 
-		// A save, as main.cpp's kPreSaveGame has it: the shields end (EndAllShields), and the copies whose setghost 0
-		// has not landed have their flag off in what the save writes (HideGhostsFromSave). What the save holds.
+		// A save, as main.cpp's kPreSaveGame has it: the shields end (EndAllShields), and the loaded copies the ledger
+		// has have their flag off in what the save writes (HideGhostsFromSave). What the save holds; its record of the
+		// ledger is SavedLedger.
 		std::map<std::uint32_t, Npc> Save()
 		{
 			BeforeSave();
@@ -170,35 +200,64 @@ namespace
 			for (const auto key : unghosting) {
 				saved.at(key).ghost = false;
 			}
+			for (const auto key : ledger.Ids()) {
+				if (npcs.at(key).loaded) {
+					saved.at(key).ghost = false;
+				}
+			}
 			return saved;
 		}
 
+		std::vector<std::uint32_t> SavedLedger() const { return keepLedger ? ledger.Saved() : std::vector<std::uint32_t>{}; }
+
 		// A load of a_saved: no setghost goes out for the shields it ends (WeaponFire::BeforeLoad), the copies are the
-		// save's, and the ghosts of ours it may hold are looked for a while (WeaponFire::OnGameLoaded).
-		void Load(std::map<std::uint32_t, Npc> a_saved)
+		// save's, and its record of our ghosts (a_ledger; none from a save made before the ledger) is written down again
+		// (WeaponFire::OnGameLoaded).
+		void Load(std::map<std::uint32_t, Npc> a_saved, const std::vector<std::uint32_t>& a_ledger = {})
 		{
 			shields.EndAll();
 			unghosting.clear();
+			ledger.Clear();
+			repaired.clear();
 			npcs = std::move(a_saved);
-			repairFrames = BlastShield::REPAIR_FRAMES;
+			ledger.Restore(a_ledger, frame);
 		}
 
-		// WeaponFire::RepairGhostsFromSave.
+		// WeaponFire::TendLedger, each frame: a ghost of ours still written down has setghost 0 sent (again) once its copy
+		// is loaded and no shield wants it, and is forgotten once it reads no ghost.
+		void TendLedger()
+		{
+			for (const auto key : ledger.Ids()) {
+				const auto& npc = npcs.at(key);
+				const auto  id = SessionIdOf(key);
+				const auto  step = ledger.Check(key, { .loaded = npc.loaded, .ghost = npc.ghost, .shielded = shields.Shielded(id) }, frame);
+				if (step == GhostLedger::Step::kClear) {
+					Unshield(id);
+				}
+			}
+		}
+
+		// WeaponFire::RepairGhosts, every REPAIR_EVERY frames: a loaded actor whose ghost looks like one of ours an older
+		// save left (BlastShield::Repairs) has it taken off through the ledger, once each since the load.
 		void RepairGhosts()
 		{
-			if (!repairOnLoad || repairFrames == 0 || client.Id() == 0 || --repairFrames % BlastShield::REPAIR_EVERY != 0) {
+			if (!repairOnLoad || frame % BlastShield::REPAIR_EVERY != 0) {
 				return;
 			}
 			for (const auto& [key, npc] : npcs) {
-				const auto id = SessionIdOf(key);
-				const BlastShield::Loaded copy{
-					.actor = { .id = id, .owner = client.OwnerOf(id), .dead = npc.dead },
+				const auto               id = SessionIdOf(key);
+				const BlastShield::Found found{
+					.id = key,
+					.shareable = GhostLedger::Plugin(key),  // a plugin's NPC: Protocol::IsShareableRef
+					.dead = npc.dead,
 					.ghost = npc.ghost,
 					.baseGhost = npc.ownGhost,
-					.shielded = shields.Shielded(id) || std::ranges::find(unghosting, key) != unghosting.end(),
+					.questAlias = npc.questAlias,
 					.hostile = !npc.friendly,
+					.ours = ledger.Contains(key) || shields.Shielded(id),
 				};
-				if (BlastShield::RepairsOnLoad(copy, client.Id())) {
+				if (npc.loaded && BlastShield::Repairs(found) && repaired.insert(key).second) {
+					ledger.Add(key, frame, true);
 					Unshield(id);
 				}
 			}
@@ -251,6 +310,7 @@ namespace
 				for (const auto id : shields.Due(now, frame)) {
 					Unshield(id);
 				}
+				TendLedger();
 				RepairGhosts();
 				WatchCopies();
 			}
@@ -287,7 +347,7 @@ namespace
 
 		// Our player hits an NPC (WorldSync's HitWatcher, then its Frame): a shot that lands on a copy another game
 		// runs claims it (which tells the server we fight it) and sends its health; a ghost's passes it by, no hit.
-		// The hit's event can be heard a frame after its damage (a_heardLate).
+		// The hit's event can be heard a frame after its damage (a_heardLate), and says what it took (its HitData figure).
 		// a_key is the NPC's form id here; the book and the wire go by the session's id.
 		void OurBlow(std::uint32_t a_key, float a_damage, bool a_heardLate = false)
 		{
@@ -300,7 +360,7 @@ namespace
 			if (a_heardLate) {
 				Wait(std::chrono::milliseconds{ 50 });
 			}
-			copies.OurHit(id, now);
+			copies.OurHit(id, now, a_damage);
 			if (client.OwnerOf(id) != client.Id()) {
 				client.Claim(id, Reason::kInteract);
 			}
@@ -839,34 +899,213 @@ TEST("blast shield: had a load left the ghosts a save held, the host's raider's 
 	CHECK(c.bobGame.Save().at(RAIDER_1).ghost);  // and the next save writes it again
 }
 
-TEST("blast shield: on a load, a ghost whose base is one, a friendly copy's, one nobody runs, a dead one and one on an NPC our own game runs are left as they are")
+TEST("blast shield: a ghost an older save left comes off after the load whoever runs the NPC, once it is hostile to us; one its base record or a quest makes, one not hostile, and a dead one, are left")
 {
+	// A save from before the ledger (no record of our ghosts): the repair scan alone tells ours from the game's own.
+	// Before, one nobody ran and one our own game had come to run were left ghosts for good. One not hostile to our
+	// player is left: what a mod's script ghosts on purpose (a vendor, a settler, a character in a scene) is no enemy,
+	// and a ghost of ours was only ever set on a copy the friends were fighting.
 	Corvega c;
 	c.SecondHostRaider(100.0f);
 	c.bobGame.consoleLag = true;
 	auto saved = c.bobGame.npcs;
 	saved[RAIDER_1].ghost = true;
-	saved[RAIDER_1].ownGhost = true;
+	saved[RAIDER_1].ownGhost = true;  // its base record's: its story's own
 	saved[RAIDER_4].ghost = true;
 	saved[RAIDER_4].friendly = true;
 	saved[RAIDER_3].ghost = true;  // nobody runs it
-	saved[RAIDER_2].ghost = true;  // Bob's own game runs it: its ghost is his story's
+	saved[RAIDER_2].ghost = true;  // Bob's own game runs it
 	c.bobGame.Load(saved);
 	c.bobGame.Wait(std::chrono::seconds{ 3 });
-	CHECK(c.bobGame.unghostsSent == 0);
-	for (const auto id : { RAIDER_1, RAIDER_2, RAIDER_3, RAIDER_4 }) {
-		CHECK(c.bobGame.npcs[id].ghost);
-	}
+	CHECK(c.bobGame.unghostsSent == 2);
+	CHECK(c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(!c.bobGame.npcs[RAIDER_2].ghost);
+	CHECK(!c.bobGame.npcs[RAIDER_3].ghost);
+	CHECK(c.bobGame.npcs[RAIDER_4].ghost);
+	CHECK(c.bobGame.ledger.Size() == 0);  // each read as no ghost: forgotten
+	CHECK(c.bobGame.ledger.Count().fromSaves == 2);
 
-	// A dead copy of the host's raider, a ghost in the save, is left too.
+	// The friendly one turns on us (a wild mongrel aggroes, a settler is turned): repaired then, the scan running on.
+	c.bobGame.npcs[RAIDER_4].friendly = false;
+	c.bobGame.Wait(std::chrono::seconds{ 3 });
+	CHECK(!c.bobGame.npcs[RAIDER_4].ghost);
+	CHECK(c.bobGame.unghostsSent == 3);
+	CHECK(c.bobGame.ledger.Count().fromSaves == 3);
+
+	// One a quest holds in an alias, and a dead copy, a ghost in the save, are left too.
 	Corvega d;
-	auto deadSaved = d.bobGame.npcs;
-	deadSaved[RAIDER_1].ghost = true;
-	deadSaved[RAIDER_1].dead = true;
-	d.bobGame.Load(deadSaved);
+	auto quest = d.bobGame.npcs;
+	quest[RAIDER_1].ghost = true;
+	quest[RAIDER_1].questAlias = true;
+	quest[RAIDER_2].ghost = true;
+	quest[RAIDER_2].dead = true;
+	d.bobGame.Load(quest);
 	d.bobGame.Wait(std::chrono::seconds{ 3 });
 	CHECK(d.bobGame.unghostsSent == 0);
 	CHECK(d.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(d.bobGame.npcs[RAIDER_2].ghost);
+
+	// A ghost taken off once that a script sets again is the script's: left alone from then on (once per actor per load).
+	c.bobGame.npcs[RAIDER_3].ghost = true;
+	c.bobGame.Wait(std::chrono::seconds{ 3 });
+	CHECK(c.bobGame.npcs[RAIDER_3].ghost);
+	CHECK(c.bobGame.unghostsSent == 3);
+}
+
+TEST("blast shield: a copy that leaves the loaded world inside the shield's second, and is saved a ghost, is no ghost again once it loads, in this run or after a load of that save")
+{
+	// A door, a fast travel or a despawn between the grenade and its second: the copy had no 3D for its setghost 0.
+	// Before, the setghost 0 was sent only if the copy loaded again in the same run, and the save (its flag could not be
+	// hidden on an unloaded copy) brought it back a ghost for good.
+	Corvega c;
+	c.bobGame.consoleLag = true;
+	c.HostRaiderThrows();
+	c.HostExplosionReachesBob(150.0f);
+	REQUIRE(c.bobGame.npcs[RAIDER_1].ghost);
+	c.bobGame.npcs[RAIDER_1].loaded = false;
+	c.bobGame.Wait(BlastShield::HOLD + std::chrono::seconds{ 1 });
+	CHECK(c.bobGame.shields.Size() == 0);
+	CHECK(c.bobGame.npcs[RAIDER_1].ghost);  // no command could take: still written down
+	CHECK(c.bobGame.ledger.Contains(RAIDER_1));
+	CHECK(c.bobGame.unghostsSent == 0);
+
+	// The save, made while it is away, holds the ghost and the ledger's record of it.
+	const auto saved = c.bobGame.Save();
+	const auto record = c.bobGame.SavedLedger();
+	CHECK(saved.at(RAIDER_1).ghost);
+	CHECK(record == std::vector<std::uint32_t>{ RAIDER_1 });
+
+	// In this run it comes back: no ghost within a frame or two.
+	c.bobGame.npcs[RAIDER_1].loaded = true;
+	c.bobGame.Wait(std::chrono::milliseconds{ 150 });
+	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(c.bobGame.ledger.Size() == 0);
+	c.bobGame.OurBlow(RAIDER_1, 25.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 75.0f);
+
+	// The save loaded (the friend died and loads their last save): the copy is the save's, a ghost, and its owner is now
+	// Bob's own game (the host let it go meanwhile). It comes off all the same, and Bob's shots land.
+	Corvega d;
+	d.bobGame.consoleLag = true;
+	d.host.Release(RAIDER_1);
+	d.bob.Claim(RAIDER_1);
+	d.s.Settle();
+	REQUIRE(d.bob.OwnerOf(RAIDER_1) == d.bob.Id());
+	d.bobGame.Load(saved, record);
+	REQUIRE(d.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(d.bobGame.ledger.Contains(RAIDER_1));
+	d.bobGame.npcs[RAIDER_1].loaded = false;  // not in the loaded cells yet
+	d.bobGame.Wait(std::chrono::seconds{ 2 });
+	CHECK(d.bobGame.npcs[RAIDER_1].ghost);
+	d.bobGame.npcs[RAIDER_1].loaded = true;
+	d.bobGame.Wait(std::chrono::milliseconds{ 150 });
+	CHECK(!d.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(d.bobGame.unghostsSent == 1);
+	d.bobGame.OurBlow(RAIDER_1, 25.0f);
+	CHECK(d.bobGame.npcs[RAIDER_1].health == 75.0f);
+}
+
+TEST("blast shield: without the ledger, the copy saved a ghost while away would have loaded a ghost and stayed one with the repair for a hostile copy another game runs")
+{
+	Corvega c;
+	c.bobGame.consoleLag = true;
+	c.bobGame.keepLedger = false;
+	c.HostRaiderThrows();
+	c.HostExplosionReachesBob(150.0f);
+	c.bobGame.npcs[RAIDER_1].loaded = false;
+	c.bobGame.Wait(BlastShield::HOLD + std::chrono::seconds{ 1 });
+	const auto saved = c.bobGame.Save();
+	CHECK(saved.at(RAIDER_1).ghost);
+	CHECK(c.bobGame.SavedLedger().empty());
+
+	// Loaded into a game that runs the raider itself: the old repair (another game's, hostile) never touched it; the new
+	// one does, as a ghost no base record or quest made.
+	Corvega d;
+	d.bobGame.consoleLag = true;
+	d.host.Release(RAIDER_1);
+	d.bob.Claim(RAIDER_1);
+	d.s.Settle();
+	d.bobGame.Load(saved);
+	d.bobGame.npcs[RAIDER_1].loaded = true;
+	d.bobGame.Wait(std::chrono::seconds{ 2 });
+	CHECK(!d.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(d.bobGame.ledger.Count().fromSaves == 1);
+}
+
+TEST("blast shield: a ghost the engine will not let go of is sent setghost 0 again until it goes, and the player's shots land after")
+{
+	// The rig: a setghost 1 sent in the frame a save began landed after the setghost 0 that followed it. Before, three
+	// tries and then the copy was left a ghost for good.
+	Corvega c;
+	c.bobGame.consoleLag = true;
+	c.bobGame.npcs[RAIDER_1].stubborn = 5;
+	c.HostRaiderThrows();
+	c.HostExplosionReachesBob(150.0f);
+	REQUIRE(c.bobGame.npcs[RAIDER_1].ghost);
+	c.bobGame.Wait(BlastShield::HOLD);
+	CHECK(c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(c.bobGame.unghostsSent == 1);
+	c.bobGame.Wait(std::chrono::seconds{ 10 });
+	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(c.bobGame.unghostsSent == 6);
+	CHECK(c.bobGame.ledger.Count().stuck == 1);
+	CHECK(c.bobGame.ledger.Count().unstuck == 1);
+	CHECK(c.bobGame.ledger.Size() == 0);
+	c.bobGame.OurBlow(RAIDER_1, 25.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 75.0f);
+
+	// A ghost of ours still to come off is ours to make a ghost again for the next explosion (not the game's own).
+	c.bobGame.npcs[RAIDER_1].stubborn = 2;
+	c.HostRaiderThrows();
+	c.HostExplosionReachesBob(150.0f);
+	REQUIRE(c.bobGame.npcs[RAIDER_1].ghost);
+	c.bobGame.Wait(BlastShield::HOLD + std::chrono::milliseconds{ 100 });
+	CHECK(c.bobGame.npcs[RAIDER_1].ghost);  // stubborn still
+	CHECK(c.bobGame.ledger.Contains(RAIDER_1));
+	c.HostRaiderThrows();
+	c.HostExplosionReachesBob(150.0f);
+	CHECK(c.bobGame.shields.Shielded(RAIDER_1));  // shielded again, not left alone as a story's ghost
+	c.bobGame.Wait(std::chrono::seconds{ 5 });
+	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 75.0f);
+}
+
+TEST("blast shield: a friend's explosion with damage short of the copy's health makes no ghost: the copy takes the blast as the owner's blow and is given it back, and the player's shots land meanwhile")
+{
+	// A friend's explosive rounds (15 a round, a dozen a second from an automatic): before, every round made the copies
+	// around its target ghosts for a second, so the other player's shots passed through them for as long as the friend
+	// kept firing.
+	Corvega c;
+	auto&   host = c.host;
+	auto&   bob = c.bob;
+	c.bobGame.Wait(std::chrono::milliseconds{ 50 });  // the copies are first seen at 100
+	c.HostRaiderThrows();
+	host.Raw(ExplosionAt(1220.0f, 2100.0f), false);
+	c.s.Settle();
+	REQUIRE(bob.Explosions().size() == 1);
+	c.bobGame.SetOff(bob.Explosions().back(), 15.0f, true);
+	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(!c.bobGame.shields.Shielded(RAIDER_1));
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 85.0f);
+	CHECK(c.bobGame.npcs[RAIDER_2].health == 85.0f);  // Bob's own raider: hurt for real
+
+	// Bob's shot lands at once, and is his (the explosion's blow is the owner's, given back, not his).
+	c.bobGame.OurBlow(RAIDER_1, 25.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 60.0f);
+	c.bobGame.Wait(std::chrono::milliseconds{ 500 });
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 75.0f);  // the blast's 15 given back; his 25 kept
+	CHECK(c.bobGame.givenBack == 15.0f);
+
+	// One with less health than twice the damage is a ghost as before: the blast could kill it.
+	c.bobGame.npcs[RAIDER_1].health = 30.0f;
+	c.bobGame.copies.Set(RAIDER_1, 30.0f);
+	host.Raw(ExplosionAt(1220.0f, 2100.0f), false);
+	c.s.Settle();
+	c.bobGame.SetOff(bob.Explosions().back(), 15.0f, true);
+	CHECK(c.bobGame.npcs[RAIDER_1].ghost);
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 30.0f);
+	c.bobGame.Wait(BlastShield::HOLD);
+	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
 }
 
 TEST("blast shield: a load sends no setghost for the ghosts of ours it ends, and the save's copies are as it holds them")
@@ -885,22 +1124,38 @@ TEST("blast shield: a load sends no setghost for the ghosts of ours it ends, and
 	CHECK(!c.bobGame.npcs[RAIDER_1].ghost);
 }
 
-TEST("blast shield: a loaded copy's ghost is taken off only when it looks like one of ours: shared, alive, run by another game, its base no ghost, not ours since, and hostile")
+TEST("blast shield: a loaded actor's ghost is taken off only when it looks like one of ours an older save left: a plugin's reference the session shares, alive, hostile to us, its base no ghost, no quest holding it, not ours now")
 {
-	using BlastShield::Loaded;
-	using BlastShield::RepairsOnLoad;
-	const Loaded raider{ .actor = { .id = RAIDER_1, .owner = 2 }, .ghost = true, .hostile = true };
-	CHECK(RepairsOnLoad(raider, 1));
-	CHECK(RepairsOnLoad({ .actor = { .id = SPAWN, .owner = 2 }, .ghost = true, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 1 }, .ghost = true, .hostile = true }, 1));  // ours: its ghost is our story's
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 2 }, .ghost = false, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = 0, .owner = 2 }, .ghost = true, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 0 }, .ghost = true, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 2, .dead = true }, .ghost = true, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 2 }, .ghost = true, .baseGhost = true, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 2 }, .ghost = true, .shielded = true, .hostile = true }, 1));
-	CHECK(!RepairsOnLoad({ .actor = { .id = RAIDER_1, .owner = 2 }, .ghost = true, .hostile = false }, 1));
-	CHECK(!RepairsOnLoad(raider, 0));  // not in a session
+	using BlastShield::Found;
+	using BlastShield::Repairs;
+	const Found raider{ .id = RAIDER_1, .shareable = true, .ghost = true, .hostile = true };
+	CHECK(Repairs(raider));
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = false, .hostile = true }));
+	CHECK(!Repairs({ .id = 0, .shareable = true, .ghost = true, .hostile = true }));
+	CHECK(!Repairs({ .id = BOB_COPY, .shareable = true, .ghost = true, .hostile = true }));  // a runtime actor: never saved as a ghost of ours
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = false, .ghost = true, .hostile = true }));  // one the session never shares: never a copy, never ours
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .dead = true, .ghost = true, .hostile = true }));
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .baseGhost = true, .hostile = true }));
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .questAlias = true, .hostile = true }));  // a story's: Kellogg in his scene
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .hostile = false }));  // a mod's script's: a vendor, a settler, a character in a scene
+	CHECK(!Repairs({ .id = RAIDER_1, .shareable = true, .ghost = true, .hostile = true, .ours = true }));  // the ledger's, or shielded now: cleared that way
+}
+
+TEST("blast shield: a copy is made a ghost only when the explosion's damage comes near its health, or either is not known")
+{
+	using BlastShield::Lethal;
+	using BlastShield::Reached;
+	CHECK(Lethal(100.0f, 151.0f));  // a frag grenade beside a raider
+	CHECK(Lethal(300.0f, 151.0f));  // within the margin: resistances and the engine's own figures are not read here
+	CHECK(!Lethal(303.0f, 151.0f));
+	CHECK(!Lethal(100.0f, 15.0f));  // explosive rounds
+	CHECK(Lethal(30.0f, 15.0f));
+	CHECK(Lethal(100.0f, 0.0f));   // damage not known (a trap's grenades, a death blast)
+	CHECK(Lethal(-1.0f, 15.0f));   // health not read
+	CHECK(BlastShield::Shields(Reached{ .id = RAIDER_1, .owner = 2, .health = 100.0f }, 1, 15.0f) == false);
+	CHECK(BlastShield::Shields(Reached{ .id = RAIDER_1, .owner = 2, .health = 100.0f }, 1, 151.0f));
+	CHECK(BlastShield::Shields(Reached{ .id = RAIDER_1, .owner = 2, .health = 100.0f }, 1));  // damage not given: as before
+	CHECK(!BlastShield::Shields(Reached{ .id = RAIDER_1, .owner = 1, .health = 10.0f }, 1, 151.0f));  // ours: never
 }
 
 TEST("blast shield: a ghost lasts its second and its frames, longer for another explosion, and only so many at once")
