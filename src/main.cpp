@@ -454,6 +454,7 @@ namespace
 			// would be the ones from before the load.
 			RunBeforeSaveOrLoad(
 				[] {
+					FrameLoans::EndUnwornBeforeSave();  // first: an unworn loan's copy and kit go with it, before Spawns discards copies
 					Session::OnBeforeSaveOrLoad();
 					FrameLoans::BeforeSave();  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved

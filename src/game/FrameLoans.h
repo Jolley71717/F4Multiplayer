@@ -39,8 +39,12 @@ namespace FrameLoans
 	// A save or a load is coming (Spawns::DiscardCopies): the copy our player wears on loan is kept as it is.
 	[[nodiscard]] bool KeepsThroughSave(const RE::TESObjectREFR* a_copy);
 
-	// Just before a save: what its LOAN record holds (SaveRecord).
+	// Just before a save: what its LOAN record holds (SaveRecord). A clean-up after a load not done yet is noted again.
 	void BeforeSave();
+
+	// A save is coming, before the session's copies go (Session::OnBeforeSaveOrLoad): a frame lent to us that our player
+	// has not got into yet is given back, unworn, so that none of it is in the save.
+	void EndUnwornBeforeSave();
 
 	// A friend's status: whether they lend their frames.
 	void OnStatus(std::uint32_t a_playerId, bool a_lends);

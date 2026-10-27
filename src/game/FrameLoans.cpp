@@ -111,11 +111,12 @@ namespace FrameLoans
 			Clock::time_point    since{};
 			Clock::time_point    askedAt{};
 			bool                 asked = false;
+			bool                 warned = false;
 		};
 		std::optional<Cleanup> cleanup;
 		constexpr auto         CLEANUP_AFTER = std::chrono::seconds(2);   // the loaded world settles first
 		constexpr auto         SEND_OUT_AGAIN = std::chrono::seconds(3);
-		constexpr auto         CLEANUP_LIMIT = std::chrono::seconds(30);  // still in it then: left as it is (logged)
+		constexpr auto         CLEANUP_WARN = std::chrono::seconds(30);  // still in it then: logged, and tried on (a save then keeps the record)
 
 		std::string       lastSaid;
 		Clock::time_point lastSaidAt{};
@@ -640,18 +641,23 @@ namespace FrameLoans
 			}
 			const auto copy = job.what == FrameLoan::AfterLoad::kAll ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(job.record.copy) : nullptr;
 			if (copy && PlayerIn(copy)) {
-				if (a_now - job.since >= CLEANUP_LIMIT) {
-					REX::WARN("FrameLoans: our player is still in {:08X}, the frame borrowed from player {} as this save was made; left as it is", job.record.copy, job.record.owner);
-					cleanup.reset();
-					return;
+				if (!job.warned && a_now - job.since >= CLEANUP_WARN) {
+					job.warned = true;
+					REX::WARN("FrameLoans: our player is still in {:08X}, the frame borrowed from player {} as this save was made; still sending them out", job.record.copy, job.record.owner);
 				}
 				if (!job.asked || a_now - job.askedAt >= SEND_OUT_AGAIN) {
+					const bool first = !job.asked;
 					job.asked = true;
 					job.askedAt = a_now;
 					const bool sent = SendOut(player);
-					REX::INFO("FrameLoans: this save was made in {:08X}, the frame borrowed from player {}; our player is sent out of it{}", job.record.copy, job.record.owner, sent ? "" : " (the call could not be made)");
+					if (first) {
+						REX::INFO("FrameLoans: this save was made in {:08X}, the frame borrowed from player {}; our player is sent out of it{}", job.record.copy, job.record.owner, sent ? "" : " (the call could not be made)");
+					}
 				}
 				return;
+			}
+			if (Equipment::InPowerArmor(player)) {
+				return;  // in another frame: nothing is gathered from them until they are out of it
 			}
 			std::vector<FrameLoan::Found> found;
 			if (copy) {
@@ -771,9 +777,21 @@ namespace FrameLoans
 		if (borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut) {
 			record = FrameLoan::Record{ .copy = borrowed.copy, .base = borrowed.base, .spawnId = borrowed.spawnId, .owner = borrowed.owner, .tags = borrowed.tags };
 			REX::INFO("FrameLoans: this save holds {:08X}, the frame our player wears on loan from player {}, and {} lent items", borrowed.copy, borrowed.owner, borrowed.tags.size());
+		} else if (cleanup) {
+			// The clean-up after the last load is not done yet (our player still in the frame, or the world settling): this
+			// save holds what that one did, and its load cleans it up the same way.
+			record = cleanup->record;
+			REX::INFO("FrameLoans: this save still holds {:08X}, the frame borrowed from player {} as the save loaded was made; noted again", cleanup->record.copy, cleanup->record.owner);
 		}
 		std::scoped_lock l{ recordLock };
 		recordAtSave = std::move(record);
+	}
+
+	void EndUnwornBeforeSave()
+	{
+		if (borrowed.stage == Stage::kLent) {
+			Finish(true, true, "a save came before our player got in");
+		}
 	}
 
 	void OnStatus(std::uint32_t a_playerId, bool a_lends)
