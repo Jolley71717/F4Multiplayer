@@ -106,7 +106,7 @@ namespace RemotePlayers
 			StandInRange::Track  range;  // the current stand-in: when it was placed and whether it was drawn (see StandInRange::Frame)
 			bool                 powerArmorOn = false;   // they are in power armor
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
-			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), else 0
+			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), its spawn id when lent to them (FrameLoans), else 0
 			bool                 inPowerArmor = false;   // they are in a frame here: the stand-in goes into its copy as soon as it can (see ArmorFrames)
 			HeldFrame            frame;                  // the frame we placed for it: the stand-in's to get into, the engine's while it is in, or where they got out
 			Clock::time_point    framePlacedAt{};
@@ -852,6 +852,28 @@ namespace RemotePlayers
 			return facts;
 		}
 
+		// A frame a friend wears on loan (ArmorFrames::ChooseLentOriginal): our own reference of the spawn their status
+		// names, and whether anyone here is in it, our player included.
+		ArmorFrames::OriginalFacts LentFactsOf(RE::TESObjectREFR* a_ref)
+		{
+			ArmorFrames::OriginalFacts facts;
+			facts.found = a_ref && !a_ref->IsDeleted() && !a_ref->IsDisabled();
+			if (!facts.found) {
+				return facts;
+			}
+			const auto base = a_ref->GetObjectReference();
+			facts.created = a_ref->IsCreated();
+			facts.base = base ? base->GetFormID() : 0;
+			facts.frame = Equipment::IsPowerArmorFrame(base);
+			facts.loaded = a_ref->Get3D() != nullptr;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+			const bool ourPlayerIn = (occupied && occupied.get() == a_ref) || (player && Equipment::PowerArmorFrameOf(player).get() == a_ref);
+			facts.inUse = ourPlayerIn || FrameInUse(a_ref);
+			return facts;
+		}
+
 		// Another friend wears their own copy of the same pre-placed frame and has ours hidden as well: it stays hidden
 		// until the last of them is done with it.
 		bool HiddenByAnother(const RemotePlayer& a_player, const RE::TESObjectREFR* a_original)
@@ -887,12 +909,16 @@ namespace RemotePlayers
 			// somewhere else, ours still standing where the world placed it.
 			const bool parked = !a_player.powerArmorOn && a_player.parked && a_player.parked->ref != 0;
 			const auto named = worn ? a_player.powerArmorFrameRef : parked ? a_player.parked->ref : 0;
+			// One lent to them (FrameLoans) is named by its spawn id: our own reference of it is the owner's real frame here,
+			// or our copy of the spawn (ArmorFrames::ChooseLentOriginal).
+			const bool lent = worn && Protocol::IsSpawnRef(named);
+			const auto namedHere = lent ? Spawns::LocalOf(named) : named;
 			auto       original = a_player.original.get();
 			if (original && (original->IsDeleted() || original->IsDisabled())) {
 				ShowOriginal(a_player);  // gone from our world meanwhile: nothing left to show
 				original = nullptr;
 			}
-			if (original && original->GetFormID() != named) {
+			if (original && original->GetFormID() != namedHere) {
 				// They are out of it, and it is not the frame they left parked either. Ours is shown again once the frame
 				// copy their stand-in leaves is gone or clear of it (it stands where they got out, often right on ours, for a
 				// few seconds: two suits in one spot), and is solid again once nobody stands in it. Not while another friend
@@ -903,11 +929,11 @@ namespace RemotePlayers
 				ShowOriginal(a_player);
 				original = nullptr;
 			}
-			if (named == 0) {
+			if (namedHere == 0) {
 				a_player.originalChoice = -1;
 				return;
 			}
-			if (worn && a_player.wornAtWanted) {
+			if (worn && !lent && a_player.wornAtWanted) {
 				return;  // where they got in comes with their next state
 			}
 			if (parked != a_player.originalParked) {
@@ -918,31 +944,43 @@ namespace RemotePlayers
 			// no longer the suit they wear where they got into it.
 			if (a_now >= a_player.originalCheckAt) {
 				a_player.originalCheckAt = a_now + ORIGINAL_CHECK_INTERVAL;
-				const auto ref = original ? original.get() : RE::TESForm::GetFormByID<RE::TESObjectREFR>(named);
-				const auto facts = OriginalFactsOf(a_player, ref, !worn);
-				const auto choice = worn ? ArmorFrames::ChooseOriginal(named, a_player.powerArmorFrame, facts) : ArmorFrames::ChooseParkedOriginal(named, a_player.parked->base, facts);
+				const auto ref = original ? original.get() : RE::TESForm::GetFormByID<RE::TESObjectREFR>(namedHere);
+				const auto facts = lent ? LentFactsOf(ref) : OriginalFactsOf(a_player, ref, !worn);
+				const auto choice = lent ? ArmorFrames::ChooseLentOriginal(a_player.powerArmorFrame, facts) :
+				                   worn ? ArmorFrames::ChooseOriginal(named, a_player.powerArmorFrame, facts) :
+				                          ArmorFrames::ChooseParkedOriginal(named, a_player.parked->base, facts);
 				if (static_cast<int>(choice) != a_player.originalChoice) {
 					a_player.originalChoice = static_cast<int>(choice);
-					REX::INFO("RemotePlayers: player {} {} frame {:08X} (base {:08X}); ours{}, {:.0f} units from where they {} and {:.0f} from where it first stood: {}", a_player.id, worn ? "wears" : "left", named,
-						worn ? a_player.powerArmorFrame : a_player.parked->base, facts.synced ? " (player " + std::to_string(NpcSync::Owner(named)) + "'s game runs it)" : "", facts.fromSpot.value_or(-1.0f), worn ? "got in" : "left theirs", facts.fromStart,
-						choice == ArmorFrames::Original::kHide      ? (worn ? "hidden while they wear theirs" : "hidden while theirs stands parked elsewhere") :
-						choice == ArmorFrames::Original::kMissing   ? "none here" :
-						choice == ArmorFrames::Original::kNotLoaded ? "not loaded" :
-						choice == ArmorFrames::Original::kOurs      ? "our player's own, left alone" :
-						choice == ArmorFrames::Original::kInUse     ? "in use here, left alone" :
-						choice == ArmorFrames::Original::kNotFrame  ? "not a power armor frame, left alone" :
-						choice == ArmorFrames::Original::kQuest     ? "a quest of ours holds it, left alone" :
-						choice == ArmorFrames::Original::kElsewhere ? "not where they got in, left alone while they wear theirs" :
-						choice == ArmorFrames::Original::kUsed      ? "moved in our world since it was placed (our player's own now), left alone" :
-						choice == ArmorFrames::Original::kThere     ? "it stands where they left theirs, and stands for it" :
-						                                              "-");
+					if (lent) {
+						REX::INFO("RemotePlayers: player {} wears frame {:08X} (base {:08X}) on loan, ours {:08X}: {}", a_player.id, named, a_player.powerArmorFrame, namedHere,
+							choice == ArmorFrames::Original::kHide      ? "hidden while they wear it" :
+							choice == ArmorFrames::Original::kMissing   ? "none here" :
+							choice == ArmorFrames::Original::kNotLoaded ? "not loaded" :
+							choice == ArmorFrames::Original::kInUse     ? "in use here, left alone" :
+							choice == ArmorFrames::Original::kNotFrame  ? "not a power armor frame, left alone" :
+							                                              "-");
+					} else {
+						REX::INFO("RemotePlayers: player {} {} frame {:08X} (base {:08X}); ours{}, {:.0f} units from where they {} and {:.0f} from where it first stood: {}", a_player.id, worn ? "wears" : "left", named,
+							worn ? a_player.powerArmorFrame : a_player.parked->base, facts.synced ? " (player " + std::to_string(NpcSync::Owner(named)) + "'s game runs it)" : "", facts.fromSpot.value_or(-1.0f), worn ? "got in" : "left theirs", facts.fromStart,
+							choice == ArmorFrames::Original::kHide      ? (worn ? "hidden while they wear theirs" : "hidden while theirs stands parked elsewhere") :
+							choice == ArmorFrames::Original::kMissing   ? "none here" :
+							choice == ArmorFrames::Original::kNotLoaded ? "not loaded" :
+							choice == ArmorFrames::Original::kOurs      ? "our player's own, left alone" :
+							choice == ArmorFrames::Original::kInUse     ? "in use here, left alone" :
+							choice == ArmorFrames::Original::kNotFrame  ? "not a power armor frame, left alone" :
+							choice == ArmorFrames::Original::kQuest     ? "a quest of ours holds it, left alone" :
+							choice == ArmorFrames::Original::kElsewhere ? "not where they got in, left alone while they wear theirs" :
+							choice == ArmorFrames::Original::kUsed      ? "moved in our world since it was placed (our player's own now), left alone" :
+							choice == ArmorFrames::Original::kThere     ? "it stands where they left theirs, and stands for it" :
+							                                              "-");
+					}
 				}
 				// A synced one (another game runs it) is moved to where their game has it: looked at again once it is there.
 				if (worn && choice == ArmorFrames::Original::kElsewhere && !facts.synced) {
 					a_player.originalMoved = true;  // not hidden later in this wear, even should it come back to the spot
 				}
 				if (original && choice != ArmorFrames::Original::kHide && choice != ArmorFrames::Original::kNotLoaded) {
-					if (worn && !facts.synced) {
+					if (worn && !lent && !facts.synced) {
 						a_player.originalMoved = true;
 					}
 					ShowOriginal(a_player);

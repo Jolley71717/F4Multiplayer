@@ -139,7 +139,9 @@ namespace FrameShare
 	// with it. Never while somebody is in it: the engine disables a worn frame, and the wearer's stand-in shows it then;
 	// the copies go and it is shared afresh where they get out. Never a copy the session placed here (that would send a
 	// friend's own frame back to them).
-	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere)
+	// One lent to a friend (a_lent: FrameLoans) is shared for as long as the loan lasts, hidden here and wherever it
+	// stands: every copy keeps its spawn id, the borrower's the one they wear.
+	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere, bool a_lent = false)
 	{
 		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy) {
 			return false;
@@ -147,7 +149,7 @@ namespace FrameShare
 		if (a_ours.wornHere || a_ours.off || a_ours.inUse) {
 			return false;
 		}
-		return a_usedHere || (a_hosting && a_ours.loaded);
+		return a_lent || a_usedHere || (a_hosting && a_ours.loaded);
 	}
 
 	// Of the spawns one game may share at once (Protocol::MAX_SPAWNS_PER_PLAYER), frames take this many at most: the

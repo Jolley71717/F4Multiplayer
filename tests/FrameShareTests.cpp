@@ -417,3 +417,24 @@ TEST("frame share: the last player to use a frame runs it")
 	CHECK(!host.Scan(MUSEUM_SUIT, Standing(), t0 + 5s));
 	CHECK(host.OwnerOf(MUSEUM_SUIT) == joiner.id);
 }
+
+TEST("frame share: a frame our game made and lent to a friend is shared for as long as the loan lasts")
+{
+	// A joiner's suit parked where its cell has since unloaded, lent: still shared, so every copy keeps the spawn id the
+	// borrower's status names.
+	auto made = Standing();
+	made.created = true;
+	made.loaded = false;
+	CHECK(!FrameShare::SharesMade(made, false, false));
+	CHECK(FrameShare::SharesMade(made, false, false, true));
+	CHECK(FrameShare::SharesMade(made, true, false, true));
+	// Not when it is gone, no frame, a copy, or somebody here is in it: the loan cannot hold it then.
+	made.inUse = true;
+	CHECK(!FrameShare::SharesMade(made, false, true, true));
+	made.inUse = false;
+	made.copy = true;
+	CHECK(!FrameShare::SharesMade(made, false, true, true));
+	made.copy = false;
+	made.found = false;
+	CHECK(!FrameShare::SharesMade(made, false, true, true));
+}
