@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 // Which open and lock states a game shares, and which of the session's it takes. Only a plain door's open
 // state is shared, whoever opens it: a player, an NPC our game runs, or a script that opens or unlocks a door that
@@ -130,6 +131,78 @@ namespace DoorShare
 	// A door just loaded is first read this long after: its scripts are bound by then, and what its cell's scripts do
 	// to it as it loads (a lock set on load) is where it stands in this game, not news.
 	inline constexpr auto LOAD_SETTLE = std::chrono::seconds(2);
+
+	// The game's load event (TESObjectLoadedEvent) names few of the doors a cell loads: on the rig (2026-10-27) three
+	// of the nineteen doors near the player in Corvega's plant, and none in Sanctuary or Goodneighbor on coming back.
+	// So the loaded doors are found as well by a walk of the loaded cells' reference lists (the interior, or the
+	// attached cells of the grid and the worldspace's persistent cell, where the load doors are), FIND_PER_FRAME
+	// references a frame; a door with its 3D up found that way is polled as one the event named. A pass over every
+	// cell is followed by FIND_REST before the next: an interior of 8000 references takes about half a second a pass, a
+	// 5x5 grid of exterior cells about as long and the Commonwealth's persistent references a second or two more, so a
+	// door in a cell that attaches later is on the poll's list within a few seconds, and read LOAD_SETTLE after.
+	inline constexpr std::size_t FIND_PER_FRAME = 256;
+	inline constexpr auto        FIND_REST = std::chrono::seconds(1);
+
+	// Where the walk stands: which of the pass's cells, and which of its references, is read next. Kept free of the
+	// game: the game gives the cells as a pass begins, and each cell's reference count as it reads it. A cell may gain
+	// or lose references between frames (one read twice or missed in a pass is found by the next).
+	class Walk
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		// Whether a pass may begin: none is under way, and the last ended FIND_REST ago (or none has).
+		[[nodiscard]] bool Due(Clock::time_point a_now) const { return cells.empty() && a_now >= restUntil; }
+
+		// Begins a pass over the cells given, in that order. None: nothing to walk, and the rest begins.
+		void Begin(std::vector<std::uint32_t> a_cells, Clock::time_point a_now)
+		{
+			cells = std::move(a_cells);
+			at = 0;
+			next = 0;
+			if (cells.empty()) {
+				restUntil = a_now + FIND_REST;
+			}
+		}
+
+		// The cell read next (0 when no pass is under way), and the first of its references to read.
+		[[nodiscard]] std::uint32_t Cell() const { return at < cells.size() ? cells[at] : 0; }
+		[[nodiscard]] std::size_t   From() const { return next; }
+
+		// How many of the cell's a_total references are read this frame, from From(): up to FIND_PER_FRAME.
+		[[nodiscard]] std::size_t Chunk(std::size_t a_total) const { return next < a_total ? (std::min)(a_total - next, FIND_PER_FRAME) : 0; }
+
+		// Records a read of a_read of the cell's a_total references. Done with the cell, the next is up; done with them
+		// all, the pass ends and the rest begins.
+		void Read(std::size_t a_read, std::size_t a_total, Clock::time_point a_now)
+		{
+			next += a_read;
+			if (next >= a_total) {
+				Skip(a_now);
+			}
+		}
+
+		// Done with the cell (it is gone, or detached): the next is up.
+		void Skip(Clock::time_point a_now)
+		{
+			++at;
+			next = 0;
+			if (at >= cells.size()) {
+				cells.clear();
+				at = 0;
+				++passes;
+				restUntil = a_now + FIND_REST;
+			}
+		}
+
+		[[nodiscard]] std::uint32_t Passes() const { return passes; }
+
+	private:
+		std::vector<std::uint32_t> cells;  // the pass's, as it began
+		std::size_t                at = 0, next = 0;
+		std::uint32_t              passes = 0;
+		Clock::time_point          restUntil{};
+	};
 
 	// How often one reference is reported at most: REPORT_BURST at once, then one every REPORT_EVERY. A door a script
 	// flips over and over (every frame, or each game's script undoing what the other's did) would otherwise be reported

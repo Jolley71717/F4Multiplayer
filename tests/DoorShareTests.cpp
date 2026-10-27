@@ -628,3 +628,57 @@ TEST("door share: a door an NPC the host's game runs walks through opens and clo
 	CHECK(!DoorShare::WatchesNpcOpen({ .runsHere = true, .sharesOpen = true, .loadDoor = true, .playerDistance = 300.0f }));
 	CHECK(!DoorShare::WatchesNpcOpen({ .runsHere = true, .sharesOpen = DoorShare::SharesOpen(host.doors[SCRIPTED].facts), .playerDistance = 300.0f }));
 }
+
+TEST("door share: the walk of the attached cells reads a few references a frame, every cell of a pass, then rests")
+{
+	using namespace std::chrono_literals;
+	DoorShare::Walk walk;
+	const auto      t0 = DoorShare::Walk::Clock::time_point{} + 10s;
+	REQUIRE(walk.Due(t0));
+	CHECK(walk.Cell() == 0);
+
+	// Two cells: 300 references, then 100. The first takes two frames (256, then 44), the second one.
+	walk.Begin({ 0x1001, 0x1002 }, t0);
+	CHECK(!walk.Due(t0));
+	CHECK(walk.Cell() == 0x1001);
+	CHECK(walk.From() == 0);
+	CHECK(walk.Chunk(300) == DoorShare::FIND_PER_FRAME);
+	walk.Read(DoorShare::FIND_PER_FRAME, 300, t0);
+	CHECK(walk.Cell() == 0x1001);
+	CHECK(walk.From() == DoorShare::FIND_PER_FRAME);
+	CHECK(walk.Chunk(300) == 300 - DoorShare::FIND_PER_FRAME);
+	walk.Read(300 - DoorShare::FIND_PER_FRAME, 300, t0);
+	CHECK(walk.Cell() == 0x1002);
+	CHECK(walk.From() == 0);
+	CHECK(walk.Chunk(100) == 100);
+	walk.Read(100, 100, t0 + 50ms);
+	CHECK(walk.Cell() == 0);
+	CHECK(walk.Passes() == 1);
+
+	// The rest: no pass until FIND_REST after the last ended.
+	CHECK(!walk.Due(t0 + 50ms));
+	CHECK(!walk.Due(t0 + 50ms + DoorShare::FIND_REST - 1ms));
+	CHECK(walk.Due(t0 + 50ms + DoorShare::FIND_REST));
+
+	// A cell that lost references since the last frame is done with; one detached is skipped; an empty cell too.
+	walk.Begin({ 0x1001, 0x1002, 0x1003 }, t0 + 2s);
+	walk.Read(DoorShare::FIND_PER_FRAME, 300, t0 + 2s);
+	CHECK(walk.Chunk(200) == 0);
+	walk.Read(0, 200, t0 + 2s);
+	CHECK(walk.Cell() == 0x1002);
+	walk.Skip(t0 + 2s);
+	CHECK(walk.Cell() == 0x1003);
+	CHECK(walk.Chunk(0) == 0);
+	walk.Read(0, 0, t0 + 2s);
+	CHECK(walk.Cell() == 0);
+	CHECK(walk.Passes() == 2);
+
+	// Nothing attached: nothing to walk, and the rest begins.
+	walk.Begin({}, t0 + 4s);
+	CHECK(walk.Cell() == 0);
+	CHECK(!walk.Due(t0 + 4s));
+	CHECK(walk.Due(t0 + 4s + DoorShare::FIND_REST));
+
+	// Cheap enough to run every frame: a big interior's pass is over in well under a second.
+	static_assert(8000 / DoorShare::FIND_PER_FRAME < 60);
+}

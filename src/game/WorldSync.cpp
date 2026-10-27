@@ -156,7 +156,8 @@ namespace WorldSync
 		};
 		std::unordered_map<std::uint32_t, Watched>           watched;
 		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
-		// Every door the game loaded (TESObjectLoadedEvent), and when it last did, read by a sweep every
+		// Every loaded door, and when it was found loaded: by the game's load event (TESObjectLoadedEvent), which names
+		// few of them, and by the walk of the attached cells (FindDoors), which names the rest. Read by a sweep every
 		// DoorShare::POLL_INTERVAL while it stays loaded, DoorShare::POLL_PER_FRAME a frame: a plain one is put on watch,
 		// so what a script does to it is shared as a player's use is. Kept across a load or a disconnect (a door the
 		// world keeps loaded fires no new event); one gone from the world is dropped when read.
@@ -164,6 +165,8 @@ namespace WorldSync
 		std::vector<std::uint32_t>                           doorSweep;  // the loaded doors as the sweep began, read in turn
 		std::size_t                                          doorSweepAt = 0;
 		Clock::time_point                                    nextDoorPoll{};
+		DoorShare::Walk                                      doorWalk;        // the walk of the attached cells for the doors the load event didn't name (FindDoors)
+		std::uint32_t                                        doorsFound = 0;  // doors the walk put on the list that no load event had
 		std::uint32_t                                        doorsPolled = 0;  // doors put on watch by the poll
 		std::uint32_t                                        reportsHeld = 0;  // changes read too far from the thing for a friend to take them, kept for when we are near
 		std::uint32_t                                        reportsPaced = 0;  // changes held as the thing was reported DoorShare::REPORT_BURST times lately
@@ -1820,6 +1823,82 @@ namespace WorldSync
 			}
 		}
 
+		// The loaded doors the load event didn't name (DoorShare::FIND_PER_FRAME): a walk of the loaded cells'
+		// references, a few a frame, puts every door with its 3D up on the poll's list from when it is found, as the
+		// event does from when it loads (a door on the list already keeps its time). The cells: the interior we are in,
+		// or the attached cells of the grid and the worldspace's persistent cell (a load door, and most doors a quest
+		// holds, is a persistent reference, in no grid cell's list; most of the persistent cell's references have no
+		// 3D up, and are passed over). The cells are the pass's as it began; one detached since is passed over. A door
+		// the poll found not to be shared (an elevator's, a scripted one: opensShared) isn't put back each pass.
+		void FindDoors(Clock::time_point a_now)
+		{
+			const auto tes = RE::TES::GetSingleton();
+			if (!tes) {
+				return;
+			}
+			const auto world = tes->interiorCell ? nullptr : tes->worldSpace;
+			const auto persistent = world ? world->persistentCell : nullptr;
+			if (doorWalk.Due(a_now)) {
+				std::vector<std::uint32_t> cells;
+				if (const auto interior = tes->interiorCell) {
+					cells.push_back(interior->GetFormID());
+				} else if (const auto grid = tes->gridCells) {
+					for (std::uint32_t x = 0; x < grid->dimension; ++x) {
+						for (std::uint32_t y = 0; y < grid->dimension; ++y) {
+							const auto gridCell = grid->Get(x, y);
+							const auto cell = gridCell ? gridCell->cell : nullptr;
+							if (cell && cell->IsAttached()) {
+								cells.push_back(cell->GetFormID());
+							}
+						}
+					}
+					if (persistent) {
+						cells.push_back(persistent->GetFormID());
+					}
+				}
+				doorWalk.Begin(std::move(cells), a_now);
+			}
+			const auto cellId = doorWalk.Cell();
+			if (cellId == 0) {
+				return;
+			}
+			RE::TESObjectCELL* cell = nullptr;
+			if (tes->interiorCell && tes->interiorCell->GetFormID() == cellId) {
+				cell = tes->interiorCell;
+			} else if (persistent && persistent->GetFormID() == cellId) {
+				cell = persistent;
+			} else if (const auto found = RE::TESForm::GetFormByID<RE::TESObjectCELL>(cellId); found && found->IsAttached()) {
+				cell = found;
+			}
+			if (!cell) {
+				doorWalk.Skip(a_now);
+				return;
+			}
+			std::vector<std::uint32_t> doors;
+			std::size_t                total = 0, read = 0;
+			{
+				RE::BSAutoLock l{ cell->spinLock };
+				total = cell->references.size();
+				read = doorWalk.Chunk(total);
+				for (std::size_t i = doorWalk.From(), end = i + read; i < end; ++i) {
+					const auto ref = cell->references[i].get();
+					const auto base = ref ? ref->GetObjectReference() : nullptr;
+					if (base && base->Is(RE::ENUM_FORM_ID::kDOOR) && !ref->IsDeleted() && ref->Get3D() && IsShareableRef(ref->GetFormID())) {
+						doors.push_back(ref->GetFormID());
+					}
+				}
+			}
+			doorWalk.Read(read, total, a_now);
+			for (const auto id : doors) {
+				if (const auto it = opensShared.find(id); it != opensShared.end() && !it->second) {
+					continue;
+				}
+				if (loadedDoors.try_emplace(id, a_now).second) {
+					++doorsFound;
+				}
+			}
+		}
+
 		// Starts watching references the player activated, and reports changes to watched ones.
 		void WatchRefStates(Clock::time_point a_now, const std::vector<Activation>& a_activations)
 		{
@@ -1885,7 +1964,9 @@ namespace WorldSync
 				++it;
 			}
 			// Every loaded plain door is on watch too (DoorShare's poll): a sweep of them every POLL_INTERVAL, a few
-			// a frame (DoorShare::POLL_PER_FRAME), so a cell full of doors costs no frame more than a few of them.
+			// a frame (DoorShare::POLL_PER_FRAME), so a cell full of doors costs no frame more than a few of them. The
+			// loaded doors are the load event's and the walk's (FindDoors); doorPollUs is the two together, per frame.
+			const auto started = Clock::now();
 			if (doorSweepAt >= doorSweep.size() && a_now >= nextDoorPoll) {
 				nextDoorPoll = a_now + DoorShare::POLL_INTERVAL;
 				doorSweep.clear();
@@ -1894,14 +1975,12 @@ namespace WorldSync
 				}
 				doorSweepAt = 0;
 			}
-			if (doorSweepAt < doorSweep.size()) {
-				const auto started = Clock::now();
-				for (std::size_t n = 0; n < DoorShare::POLL_PER_FRAME && doorSweepAt < doorSweep.size(); ++n) {
-					PollDoor(doorSweep[doorSweepAt++], a_now, player);
-				}
-				doorPollUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
-				doorPollUsMax = (std::max)(doorPollUsMax, doorPollUs);
+			for (std::size_t n = 0; n < DoorShare::POLL_PER_FRAME && doorSweepAt < doorSweep.size(); ++n) {
+				PollDoor(doorSweep[doorSweepAt++], a_now, player);
 			}
+			FindDoors(a_now);
+			doorPollUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
+			doorPollUsMax = (std::max)(doorPollUsMax, doorPollUs);
 		}
 
 		// Removes an item another player picked up. Returns false to try again later.
@@ -2839,7 +2918,7 @@ namespace WorldSync
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" polledDoors={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
+		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
 		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied);
 	}
 }
