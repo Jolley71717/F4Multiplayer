@@ -1061,20 +1061,29 @@ container's menu open, and only then.
   `kWeaponArmor`), and the container loot never shares them, so a gift never meets their copies: with
   `bSharedStorage` on, a gun put in the host's chest is given just the same as with it off.
 - **Giving.** WorldSync's event watch posts the player's moves between their inventory and a container
-  (`Gifts::OnMoved`, after the barter filter); a change the open container then shows (one more of a class than we
-  knew of, with a put of its base waiting: `SIGNAL_KEEP`, 1 s) is reported (`kReportDrop` with its holder and a
-  nonce). Nothing is read off the container before the inbox of moves is (every entry point drains it first). On the
-  offer the item leaves the giver's world: taken out of the container, or, while the menu still shows it, left there
-  as the giver's copy of the gift (nothing moves on screen; it goes as the menu closes). Then the record says it left
-  (`made`), and kPlaced goes. An item taken back first, or a container not loaded, is kKept: it never lay anywhere. An
-  offer that comes past 60 s (`PUT_FORGET`) or after a load is kKept too, unless the record says the item left. A
-  refused one (`bContainerGifts` off on the server, the session's share full) stays in the giver's container.
+  (`Gifts::OnMoved`, ahead of the barter filter, so a take in a trade's last second isn't lost): only those at the
+  container the view watches are kept, summed by container and item (`GiftBook::Inbox`), so a Take All of any number
+  of kinds loses none (0.10.0's first cut kept 256 moves a frame, and a gift's take past them stayed unclaimed). A
+  change the open container then shows (one more of a class than we knew of, with a put of its base waiting:
+  `SIGNAL_KEEP`, 1 s) is reported (`kReportDrop` with its holder and a nonce); a put whose event comes late or never
+  isn't (it can't be told from a script's), and stays the player's own. Nothing is read off the container before the
+  inbox of moves is (every entry point drains it first). On the offer the item leaves the giver's world: taken out of
+  the container, or, while the menu still shows it, left there as the giver's copy of the gift (nothing moves on
+  screen; it goes as the menu closes). Then the record says it left (`made`), and kPlaced goes. A take of the
+  player's own of a class whose put still waits for its offer takes that put back (latest first): its offer is kKept,
+  so a like item the container held before is never given in its place. An item no longer there, or a container not
+  loaded, is kKept too: it never lay anywhere. An offer that comes past 60 s (`PUT_FORGET`) or after a load is kKept
+  too, unless the record says the item left. A refused one (`bContainerGifts` off on the server, the session's share
+  full) stays in the giver's container.
 - **No give-back on a link.** Unlike a loose drop's, a gift's offer survives its giver leaving and is saved in the
   session file (takerId `DROP_OFFERED`): the giver's game gives nothing back when the link goes, so only its next
   record says whether the item left its world (laid down, or the offer gone). Nothing anywhere is given back or taken
   again on a timeout alone.
-- **Taking.** A take from the container that left fewer of a class than we knew of, while a take of its base waits,
-  takes a copy first (so it is claimed), then the player's own. The taken copy is held back: taken out of the player's
+- **Taking.** Fewer of a class in the container than we knew of went to the player as far as their take's events say,
+  or, an event lost, as far as their own count of that class rose since the last frame (`unsignaled=`): those take a
+  copy first (so it is claimed), then the player's own. A copy gone anywhere else (another mod's script handing it
+  to a settler) is counted (`copyMissing=`) and that gift isn't shown again in this game until a load, so such a
+  script makes one item of each gift at most, not one a frame. The taken copy is held back: taken out of the player's
   inventory at once (OwnGear `kGiftTake`, only ever our player and only for their own take), claimed (`kTake`, asked
   again every 5 s until answered, never settled by a timeout), and added to their inventory only on the grant (with
   `Took` in the record); a lost claim needs nothing undone (`gifts.taken_first`). So the side the player can't hide an
@@ -1083,16 +1092,30 @@ container's menu open, and only then.
   (`kGiveBack`), and so is one that can't go into the inventory (`giveFailed=`).
 - **Copies.** One item of each gift lying in the viewed container (at most 64 at once, and never more than can be
   claimed: 128 with the takes waiting), with its mods, condition and the player's name (`Drops::AddOneTo`, as the
-  drops' copies are made); none of a gift whose base or mods this game lacks (`unplaceable=`). Copies go as the menu
+  drops' copies are made); none of a gift whose base or mods this game lacks (`unplaceable=`), nor of one that isn't a
+  single weapon or armor of this game's with plugins' mods (`GiftBook::Receivable`, `notGear=`): the server can't tell
+  a gun from a box of ammo, so a modified game's "gift" of anything else would be an item no view sees, left in every
+  friend's copy for good. An add that fails after putting something in all the same has it taken out again
+  (`addUndone=`), a copy's and a grant's alike; a grant's then lies there again. Stacks are read one inventory entry
+  per base, as the engine keeps them and as a stack's index to take one from counts them (`Drops::StacksOf`). Copies go as the menu
   closes (or is found gone for 1 s), as their gift goes, before every save and load and as the session ends: no save
   holds one. OwnGear `kGiftCopy` lets them into a container's inventory only. The engine's changes made here are kept
   out of WorldSync's watch (`Gifts::Applying`).
 - **Reloads.** A taker's save from before the take lacks the item: their record lays it down again. A giver's save from
   before the put has it in the container: their record withdraws the gift. A giver's save from after the put lacks
   it: it lies there again.
-- **Saved.** The session file takes layout 39 only when it holds a gift (a holder on a drop); without one it is
-  written in the layout an older build reads (38 with shared storage's owners, else 36). An older build can't read a
-  39 file; 0.10.0 reads every older layout, their drops as loose ones.
+- **Saved.** The session file takes layout 39 while the server remembers any gift (a holder on a drop): one lying
+  there, offered, or taken, as the server remembers the last 4096 takes (a taken gift keeps its holder: a give-back
+  lays it down in its container again). So a session in which one gun was ever given is written as 39 until that many
+  takes later; one where none was is written in the layout an older build reads (38 with shared storage's owners,
+  else 36). An older build can't read a 39 file; 0.10.0 reads every older layout, their drops as loose ones.
+- **The record's cap.** Gifts share the drops' record (`MAX_DROP_RECORD`, 4096 `made` and 4096 `taken` a session,
+  the oldest forgotten), and fill it sooner: every gift given is a `made`, every take (one's own take-backs too) a
+  `taken`. Past that, the record misreads its oldest: a gift given that early and never taken is withdrawn from the
+  session by the giver's next record (lost), and an early take of one's own back is laid down again (twice). The
+  loose drops have the same limit; left as it is for 0.10.0 (thousands of transfers in one session), and said here.
+- **Off.** With the host's rule off a container no gift lies in isn't watched: no view, no reads of its inventory,
+  and the event watch keeps no move (Gifts' view filter), so the setting off costs nothing.
 - The "stays in your game only" hint is not said for a put in a gift's place with the rule on.
 - `net status` says `gifts=` (on or off, the container viewed, copies, claims, reports waiting and the counters; `ownRefused=`
   must stay 0). The dev channel's `gifts` (`status`, `list`, `view <ref>`, `close`, `count`, `take`, `put`) drives it
@@ -1100,19 +1123,31 @@ container's menu open, and only then.
 
 Tested without the game: `tests/GiftTests.cpp` drives GiftBook::Client and the drops' record (GiftGame.h) against the
 real server and counts every item of each class across every world and what lies in the session, through a give and a
-take, the giver's own take back, a take back before the offer, two friends taking at once, a reload on either side,
-links that go before the grant, the claim, the kPlaced or the offer, a late claim answered twice, a grant after a load,
-an offer past 60 s, others' and replayed confirms, keeps, takes and give-backs, the rule off, the host's server
-stopping, the giver away, places and items that aren't given, saves with a copy shown, a power armor piece's
-condition, Take All beside the player's own like gun, and shared storage on. `tests/DropStoreTests.cpp` and
+take, the giver's own take back, a take back before the offer (with a like item already in the container too), two
+friends taking at once, a reload on either side, links that go before the grant, the claim, the kPlaced or the offer,
+a late claim answered twice, a grant after a load, an offer past 60 s, others' and replayed confirms, keeps, takes and
+give-backs, a forged gift of no weapon or armor, the rule off (no reads at all), the host's server stopping, the giver
+away, places and items that aren't given, saves with a copy shown, a power armor piece's condition, and Take All beside
+the player's own like gun. Its fake engine misbehaves as a real one might: moves whose events are lost (a Take All)
+or come late, an item whose class changes as the copy is made or as it moves, adds that fail (before or after putting
+the item in), and a script moving a copy out with no event; each test checks the counters of what went wrong
+(`copyMissing`, `unheld`, `unsignaled`, `giveFailed`, `takenBack`, `dupRisk`, `overflow`, `notGear`, `addUndone`).
+With shared storage on, the game's own storage and loot code (LootGame.h: StorageView::Client and LootSync::Loot) run
+beside the gifts on the same packets, menus and moves, and are seen to move and send no weapon while the chest's
+stimpaks stay the host's one true copy. The inbox is tested on its own. `tests/DropStoreTests.cpp` and
 `tests/SessionFileTests.cpp` cover the saved offer and the layouts.
 
 Left open, behind the setting (and in the install guide): a giver's save from before the put loaded after a friend
 took the gift has it again, as with a dropped item (the server logs it: `dupRisk`); a gift waits in the session for
 its giver's record when their link went between the offer and their kPlaced (nobody can take it until they come
 back); a container that is the same reference in two games but holds a different thing (a mod changing it) shows the
-gift anyway. A take of a copy the engine makes without the event watch seeing a move of the player's (another mod's
-script) is no claim: that copy goes as missing (`copyMissing=`), and the item stays where the script put it.
+gift anyway. A copy another mod's script moves out of the container is no claim: it goes as missing (`copyMissing=`),
+the item stays where the script put it, and the gift still lies there for the others (one item more, at most one a
+gift and a load). A copy whose class changes as the player takes it (the engine dropping its name, say) can't be held
+back (`unheld=`): granted, it stays with them and nothing is added; lost to a friend who was first, both have it, and
+the game counts it (`dupRisk=`). Both are rig checks. The protocol needs nothing past 55: gifts add no message type,
+only `DroppedItem::holder` on kReportDrop, kDropPlaced and kDropList (listed in 55's line), so a 0.10.0 build from
+before this change passes the hello and can't read those messages: both rig games run the same build.
 
 ### Catching up (join, reconnect, loading a save)
 
