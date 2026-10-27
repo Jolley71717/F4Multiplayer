@@ -143,3 +143,27 @@ TEST("autosaves: going down, a last revive, a cooldown and a session without rev
 	}
 	CHECK(Text::Format("down.bleed_out_loads_save", { { "n", 45 } }) == "If nobody helps you up in 45 seconds, you die and the game loads your last save");
 }
+
+TEST("autosaves: the travel autosave setting is found by its name in Fallout4Prefs.ini's [MAIN], not in a section the code guessed")
+{
+	using AutoSaveRules::FindSetting;
+	using AutoSaveRules::TRAVEL_SECTION;
+	using AutoSaveRules::TRAVEL_SETTING;
+	// The keys the game gives its prefs: "name:Section".
+	const std::vector<std::string_view> prefs{ "bAlwaysActive:General", "bSaveOnPause:MAIN", "bSaveOnTravel:MAIN", "bSaveOnWait:MAIN", "bSaveOnRest:MAIN" };
+	CHECK(FindSetting(prefs, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 2 });
+	// What the first build looked for ("bSaveOnTravel:SaveGame") is not in them: nothing is found for a wrong section's sake.
+	CHECK(std::ranges::find(prefs, std::string_view{ "bSaveOnTravel:SaveGame" }) == prefs.end());
+
+	// [MAIN] wins over another section; case does not matter; a name in another section alone is still found.
+	CHECK(FindSetting({ "bSaveOnTravel:Gameplay", "bSaveOnTravel:MAIN" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 1 });
+	CHECK(FindSetting({ "bsaveontravel:main" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 0 });
+	CHECK(FindSetting({ "bAlwaysActive:General", "bSaveOnTravel:Gameplay" }, TRAVEL_SETTING, TRAVEL_SECTION) == std::optional<std::size_t>{ 1 });
+
+	// Not there: no match, so the game's default stands (on) instead of "off". A longer name, a prefix and a key without a
+	// section are not it.
+	CHECK(!FindSetting({}, TRAVEL_SETTING, TRAVEL_SECTION));
+	CHECK(!FindSetting({ "bSaveOnTravelAlways:MAIN", "bSaveOn:MAIN", "bSaveOnTravel", "bSaveOnRest:MAIN" }, TRAVEL_SETTING, TRAVEL_SECTION));
+	CHECK(AutoSaveRules::TRAVEL_DEFAULT);
+	CHECK(AutoSaveRules::Wanted(Why::kTeleport, Facts{ .saveOnTravel = AutoSaveRules::TRAVEL_DEFAULT }));
+}

@@ -219,6 +219,39 @@ namespace AutoSaveRules
 			when.substr(10, 2), when.substr(12, 2));
 	}
 
+	// The player's own setting for travel autosaves, which the game keeps in Fallout4Prefs.ini under [MAIN] next to
+	// bSaveOnRest, bSaveOnWait and bSaveOnPause ("bSaveOnTravel=1"), not under [SaveGame]. Its collections key a
+	// setting "name:Section", and a lookup that guesses the section finds nothing: the first build asked for
+	// "bSaveOnTravel:SaveGame", took the null for "off" and never made a travel autosave. So the setting is found by
+	// its name in any section, [MAIN] first, and one that is not there at all is the game's default (on), not off.
+	inline constexpr std::string_view TRAVEL_SETTING = "bSaveOnTravel";
+	inline constexpr std::string_view TRAVEL_SECTION = "MAIN";
+	inline constexpr bool             TRAVEL_DEFAULT = true;  // the game's own: all four bSaveOn... settings ship on
+
+	// Which of a_keys ("name:Section" as the game keys an ini setting) is a_name: the one in a_section if there is one,
+	// else the first in another section. Name and section compare without regard to case; a key with no section, or
+	// only a name that merely starts with a_name, is not it. nullopt: no such setting.
+	inline std::optional<std::size_t> FindSetting(const std::vector<std::string_view>& a_keys, std::string_view a_name, std::string_view a_section)
+	{
+		const auto same = [](std::string_view a_a, std::string_view a_b) {
+			return std::ranges::equal(a_a, a_b, [](unsigned char a_x, unsigned char a_y) { return std::tolower(a_x) == std::tolower(a_y); });
+		};
+		std::optional<std::size_t> other;
+		for (std::size_t i = 0; i < a_keys.size(); ++i) {
+			const auto colon = a_keys[i].find(':');
+			if (colon == std::string_view::npos || !same(a_keys[i].substr(0, colon), a_name)) {
+				continue;
+			}
+			if (same(a_keys[i].substr(colon + 1), a_section)) {
+				return i;
+			}
+			if (!other) {
+				other = i;
+			}
+		}
+		return other;
+	}
+
 	// What the player is told of what a death does (Fallout 4 loads their newest save, which in a session can be many
 	// minutes old), at the moments it is near: they just went down and bleed out if nobody comes; they were helped up
 	// for the last time for now, or into the host's cooldown, so the next lethal hit kills; or they joined a session

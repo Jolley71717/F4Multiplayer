@@ -14,21 +14,48 @@ namespace AutoSave
 		AutoSaveRules::Book              book;
 		std::optional<Clock::time_point> saveBegan;  // OnPreSave, for how long the save took
 
-		// The player's own setting for travel autosaves (Settings > Gameplay, "[SaveGame] bSaveOnTravel"), from their
-		// Prefs ini, or the game's ini when it is not there.
+		// The setting in a_collection (the Prefs ini's or the game's ini's), by its name in whatever section it is in.
+		RE::Setting* FindIniSetting(RE::INISettingCollection* a_collection)
+		{
+			if (!a_collection) {
+				return nullptr;
+			}
+			std::vector<std::string_view> keys;
+			std::vector<RE::Setting*>     settings;
+			for (auto* setting : a_collection->settings) {
+				if (setting) {
+					keys.push_back(setting->GetKey());
+					settings.push_back(setting);
+				}
+			}
+			const auto at = AutoSaveRules::FindSetting(keys, AutoSaveRules::TRAVEL_SETTING, AutoSaveRules::TRAVEL_SECTION);
+			return at ? settings[*at] : nullptr;
+		}
+
+		// The player's own setting for travel autosaves (Settings > Gameplay), from their Prefs ini, or the game's ini when
+		// it is not there. Fallout4Prefs.ini keeps it as "[MAIN] bSaveOnTravel", so it is found by its name (the game keys
+		// it "bSaveOnTravel:MAIN"). A setting that is in neither ini is the game's default, on, and the log says it was
+		// missing rather than off.
 		bool SaveOnTravel()
 		{
 			static RE::Setting* const found = [] {
-				const auto prefs = RE::INIPrefSettingCollection::GetSingleton();
-				const auto inPrefs = prefs ? prefs->GetSetting("bSaveOnTravel:SaveGame") : nullptr;
-				const auto setting = inPrefs ? inPrefs : RE::GetINISetting("bSaveOnTravel:SaveGame");
-				if (!setting || setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
-					REX::WARN("Save: the game's bSaveOnTravel setting was not found; no autosave after a teleport");
+				const auto inPrefs = FindIniSetting(RE::INIPrefSettingCollection::GetSingleton());
+				const auto setting = inPrefs ? inPrefs : FindIniSetting(RE::INISettingCollection::GetSingleton());
+				if (!setting) {
+					REX::WARN("Save: the game's {} setting was not found in its Prefs ini or its ini; taking its default ({})", AutoSaveRules::TRAVEL_SETTING,
+						AutoSaveRules::TRAVEL_DEFAULT ? "on" : "off");
 					return static_cast<RE::Setting*>(nullptr);
 				}
+				if (setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
+					REX::WARN("Save: the game's {} setting is not a yes or no (type {}); taking its default ({})", setting->GetKey(), static_cast<int>(setting->GetType()),
+						AutoSaveRules::TRAVEL_DEFAULT ? "on" : "off");
+					return static_cast<RE::Setting*>(nullptr);
+				}
+				REX::INFO("Save: the game's travel autosave setting is {} ({}, in {})", setting->GetBinary() ? "on" : "off", setting->GetKey(),
+					inPrefs ? "its Prefs ini" : "its ini");
 				return setting;
 			}();
-			return found && found->GetBinary();
+			return found ? found->GetBinary() : AutoSaveRules::TRAVEL_DEFAULT;
 		}
 
 		bool Survival()
