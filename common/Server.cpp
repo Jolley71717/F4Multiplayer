@@ -1097,7 +1097,8 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
-		// Offers they never confirmed go: their game may still have those items (common/DropStore.h).
+		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
+		// wait for their next record (common/DropStore.h).
 		drops.DropOffers(a_player.id);
 		objectMovers.Leave(a_player.id);
 		// They view no storage now, and what their game keeps closes to friends until it lists it again.
@@ -2214,10 +2215,26 @@ void Server::Run()
 		if (!item) {
 			return;
 		}
+		const auto refuse = [&] {
+			// Not kept: their game keeps the item as it is (an ordinary item on its ground, or in its container). Said by a
+			// kDropPlaced with no drop ID.
+			auto refused = *item;
+			refused.dropId = 0;
+			refused.ownerId = a_player.id;
+			refused.takerId = 0;
+			send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+		};
+		if (item->holder != 0 && !options.rules.containerGifts) {
+			refuse();  // a gift, without the host's bContainerGifts: the weapon stays in its player's own copy of the container
+			return;
+		}
 		const auto added = drops.Add(a_player.id, *item);
 		switch (added.outcome) {
 		case DropStore::Outcome::kAdded:
 			send(a_player.key, Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true);  // the offer
+			if (added.drop->holder != 0) {
+				dropsChanged();  // a gift's offer is saved (DropStore::DropOffers)
+			}
 			break;
 		case DropStore::Outcome::kRepeat:
 			if (added.drop) {
@@ -2227,13 +2244,7 @@ void Server::Run()
 		case DropStore::Outcome::kFull:
 		case DropStore::Outcome::kOwnerFull:
 			{
-				// Not kept: their game keeps the item it dropped as it is (an ordinary item on its ground). Said by a
-				// kDropPlaced with no drop ID.
-				auto refused = *item;
-				refused.dropId = 0;
-				refused.ownerId = a_player.id;
-				refused.takerId = 0;
-				send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+				refuse();
 				if (!std::exchange(dropsFullLogged, true)) {
 					log(std::format("server: {} items dropped for others lie in the session ({} of player {}); not keeping more", drops.LyingCount(), drops.LyingOf(a_player.id),
 						a_player.id));
