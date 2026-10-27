@@ -11,7 +11,14 @@
 // Holds counts each item: a world's items of a class are what its player carries and its containers hold. With every
 // menu closed (no copy shown) and every packet read, the items of a class across all worlds and lying in the session
 // are as many as there ever were: a gift moved never makes a second, and never none.
+//
+// The engine can be made to misbehave as a real one might: a move's event lost (loseMoves) or late (lateMoves), an item
+// whose class changes as it moves (reshapeMove) or as the engine makes it (reshapeAdd), an add that fails (failAdds, and
+// failAfterAdding: it put the item in all the same), a form that is no weapon or armor (notGear), another mod's script
+// moving an item with no event (ScriptMove). With loot set, the game's shared storage and container loot run beside it
+// (LootGame.h: LootSync::Loot and StorageView::Client), on the same packets, menus and moves, as WorldSync and Storage do.
 
+#include "LootGame.h"
 #include "ServerFixture.h"
 
 #include "game/DropBook.h"
@@ -19,9 +26,11 @@
 
 #include <array>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <thread>
+#include <tuple>
 
 namespace GiftTest
 {
@@ -38,6 +47,8 @@ namespace GiftTest
 	constexpr std::uint32_t RECEIVER = 0x0004F46B;
 	constexpr std::uint32_t LEGENDARY = 0x001C3D37;
 	constexpr std::uint32_t DLC_MOD = 0x01012345;  // a mod of a plugin not every game has
+	constexpr std::uint32_t AMMO = 0x0001F276;     // 10mm rounds: no weapon or armor
+	constexpr std::uint32_t NPC = 0x0002A1C0;      // a settler a script hands things to
 
 	inline bool IsType(const std::vector<std::uint8_t>& a_packet, MT a_type)
 	{
@@ -87,6 +98,21 @@ namespace GiftTest
 		std::uint32_t                                             addsToPlayer = 0;  // items the session put in our player's inventory
 		GiftBook::Client                                          gifts{ *this };
 
+		// The engine misbehaving (see the top).
+		std::set<std::uint32_t>                                   notGear;
+		std::uint32_t                                             loseMoves = 0;
+		std::uint32_t                                             lateMoves = 0;
+		std::function<void(GiftBook::Stack&)>                     reshapeMove;
+		std::function<void(std::uint32_t, GiftBook::Stack&)>      reshapeAdd;
+		std::uint32_t                                             failAdds = 0;
+		bool                                                      failAfterAdding = false;
+		std::uint32_t                                             stacksRead = 0;  // Stacks calls (what a view costs)
+
+		// Shared storage and the container loot in this game (null: none).
+		LootTest::Game*                                           loot = nullptr;
+		std::int64_t                                              lootChangedGear = 0;  // weapon and armor items they moved (must stay 0)
+		std::uint32_t                                             lootSentGear = 0;     // and the session sent them of (must stay 0)
+
 		struct Save
 		{
 			Inventories               inventories;
@@ -100,11 +126,17 @@ namespace GiftTest
 		// Connects and is welcomed, as Session does: Drops binds the record to the session and sends it, Gifts hears the rule.
 		std::uint32_t Join(Fixture& a_f, const std::string& a_name)
 		{
-			const auto welcome = a_f.Join(peer, Fixture::MakeHello(a_name, identity));
-			REQUIRE(welcome);
-			sessionId = welcome->sessionId;
-			localId = welcome->playerId;
-			rule = welcome->rules.containerGifts;
+			if (loot) {
+				RunLoot([&] { localId = loot->Join(a_f, a_name); });
+				sessionId = loot->sessionId;
+				rule = loot->rules.containerGifts;
+			} else {
+				const auto welcome = a_f.Join(peer, Fixture::MakeHello(a_name, identity));
+				REQUIRE(welcome);
+				sessionId = welcome->sessionId;
+				localId = welcome->playerId;
+				rule = welcome->rules.containerGifts;
+			}
 			connected = true;
 			record.Bind(sessionId);
 			gifts.Welcome(localId, rule);
@@ -136,18 +168,91 @@ namespace GiftTest
 
 		void Give(std::uint32_t a_ref, const GiftBook::Stack& a_stack) { AddStack(a_ref, a_stack); }
 
+		// Equipment's menu hook: Storage::OnMenuShown, then Gifts::OnMenuShown.
 		void Open(Fixture& a_f, std::uint32_t a_holder)
 		{
 			menu = a_holder;
+			if (loot) {
+				RunLoot([&] { loot->OpenMenu(a_f, a_holder); });
+			}
 			gifts.Open(a_holder);
 			SendOut(a_f);
 		}
 
+		// WorldSync's MenuWatcher: Storage::OnMenuClosed, then Gifts::OnMenuClosed.
 		void Close(Fixture& a_f)
 		{
 			menu.reset();
+			if (loot) {
+				RunLoot([&] { loot->CloseMenu(a_f); });
+			}
 			gifts.Close();
 			SendOut(a_f);
+		}
+
+		// Another mod's script moves one item of a_class from a_from to a_to: no event of our player's.
+		bool ScriptMove(std::uint32_t a_from, std::uint32_t a_to, const GiftBook::Class& a_class)
+		{
+			auto&      from = inventories[a_from];
+			const auto it = std::ranges::find_if(from, [&](const GiftBook::Stack& a_stack) { return a_stack.count > 0 && GiftBook::ClassOf(a_stack) == a_class; });
+			if (it == from.end()) {
+				return false;
+			}
+			auto one = *it;
+			one.count = 1;
+			if (--it->count == 0) {
+				from.erase(it);
+			}
+			AddStack(a_to, one);
+			return true;
+		}
+
+		// The items of a_base this world holds (or a_ref does), whatever their class.
+		std::int64_t HoldsBase(std::uint32_t a_base) const
+		{
+			std::int64_t n = 0;
+			for (const auto& [ref, stacks] : inventories) {
+				n += InBase(ref, a_base);
+			}
+			return n;
+		}
+
+		std::int64_t InBase(std::uint32_t a_ref, std::uint32_t a_base) const
+		{
+			std::int64_t n = 0;
+			if (const auto it = inventories.find(a_ref); it != inventories.end()) {
+				for (const auto& stack : it->second) {
+					n += stack.base == a_base ? stack.count : 0;
+				}
+			}
+			return n;
+		}
+
+		// The loot and storage code's own move of our player's (a stimpak taken from a chest).
+		void LootTake(Fixture& a_f, std::uint32_t a_holder, std::uint32_t a_item, std::int64_t a_count)
+		{
+			RunLoot([&] { loot->Take(a_f, a_holder, a_item, a_count); });
+		}
+
+		// What the loot and storage code does, with our world's weapons and armor as it reads them (WorldSync reads the
+		// engine's inventories, as Gifts does): anything it changes of them is counted.
+		void RunLoot(const std::function<void()>& a_run)
+		{
+			loot->now = now;
+			const auto gear = Gear();
+			for (const auto& [ref, items] : gear) {
+				for (const auto& [base, n] : items) {
+					(ref == PLAYER ? loot->carried[base] : loot->holders[ref][base]) = n;
+				}
+			}
+			a_run();
+			for (const auto& [ref, items] : gear) {
+				for (const auto& [base, n] : items) {
+					auto& there = ref == PLAYER ? loot->carried[base] : loot->holders[ref][base];
+					lootChangedGear += there > n ? there - n : n - there;
+					there = n;
+				}
+			}
 		}
 
 		// The player moves one item of a_class from their inventory into a_holder (the menu's transfer; its event follows).
@@ -164,8 +269,15 @@ namespace GiftTest
 		// Gifts::Frame, and what it queued sent.
 		void Frame(Fixture& a_f)
 		{
+			if (loot) {
+				RunLoot([&] { loot->Frame(a_f); });
+			}
 			if (connected) {
 				gifts.Frame();
+			}
+			// A late event: it comes after the frame that saw its change.
+			for (const auto& [holder, base, count] : std::exchange(lateEvents, {})) {
+				gifts.Moved(holder, base, count);
 			}
 			SendOut(a_f);
 		}
@@ -192,6 +304,17 @@ namespace GiftTest
 		// a_send false: the link goes before the frame sends what the packets made us queue (Disconnect clears it).
 		void Handle(Fixture& a_f, const Packets& a_packets, bool a_send = true)
 		{
+			if (loot) {
+				for (const auto& packet : a_packets) {
+					lootSentGear += GearIn(packet);
+				}
+				RunLoot([&] { loot->Handle(nullptr, a_packets); });
+				if (menu && !loot->menu) {
+					// Storage hid the menu (StorageView::Engine::HideMenu): its close event reaches Gifts too.
+					menu.reset();
+					gifts.Close();
+				}
+			}
 			for (const auto& packet : a_packets) {
 				if (IsType(packet, MT::kDropPlaced)) {
 					if (const auto msg = Protocol::DecodeDroppedItem(packet)) {
@@ -277,13 +400,14 @@ namespace GiftTest
 
 		std::optional<std::vector<GiftBook::Stack>> Stacks(std::uint32_t a_ref, std::uint32_t a_base) override
 		{
+			++stacksRead;
 			if (away.contains(a_ref)) {
 				return std::nullopt;
 			}
 			std::vector<GiftBook::Stack> out;
 			if (const auto it = inventories.find(a_ref); it != inventories.end()) {
 				for (const auto& stack : it->second) {
-					if (a_base == 0 || stack.base == a_base) {
+					if ((a_base == 0 || stack.base == a_base) && !notGear.contains(stack.base)) {  // the engine's reads weapons and armor only
 						out.push_back(stack);
 					}
 				}
@@ -321,11 +445,30 @@ namespace GiftTest
 			if (away.contains(a_ref) || !Placeable(a_item)) {
 				return false;
 			}
+			if (failAdds > 0) {
+				--failAdds;
+				if (failAfterAdding) {
+					AddStack(a_ref, StackOf(a_item));  // in all the same
+				}
+				return false;
+			}
 			if (a_ref == PLAYER) {
 				++addsToPlayer;
 			}
-			AddStack(a_ref, StackOf(a_item));
+			auto stack = StackOf(a_item);
+			if (reshapeAdd) {
+				reshapeAdd(a_ref, stack);
+			}
+			AddStack(a_ref, std::move(stack));
 			return true;
+		}
+
+		std::optional<LootScope::Item> KindOf(std::uint32_t a_base) override
+		{
+			if (notGear.contains(a_base) || lacking.contains(a_base)) {
+				return std::nullopt;
+			}
+			return a_base == ARMOR ? LootScope::Item::kArmor : LootScope::Item::kWeapon;
 		}
 
 		LootScope::HolderFacts Holder(std::uint32_t a_ref) override
@@ -387,6 +530,66 @@ namespace GiftTest
 	private:
 		std::chrono::steady_clock::time_point recordSentAt{};
 		std::deque<std::chrono::steady_clock::time_point> syncs;
+		std::vector<std::tuple<std::uint32_t, std::uint32_t, std::int32_t>> lateEvents;
+
+		// Our world's weapons and armor by reference and base (PLAYER: carried), with a 0 for each the loot code holds.
+		std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> Gear() const
+		{
+			std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> out;
+			std::set<std::uint32_t>                                        bases;
+			for (const auto& [ref, stacks] : inventories) {
+				for (const auto& stack : stacks) {
+					if (!notGear.contains(stack.base)) {
+						out[ref][stack.base] += stack.count;
+						bases.insert(stack.base);
+					}
+				}
+			}
+			for (const auto& [ref, items] : loot->holders) {
+				for (const auto& [base, n] : items) {
+					if (bases.contains(base) || IsGear(base)) {
+						out[ref][base] += 0;
+						bases.insert(base);
+					}
+				}
+			}
+			for (const auto& [base, n] : loot->carried) {
+				if (bases.contains(base) || IsGear(base)) {
+					out[PLAYER][base] += 0;
+					bases.insert(base);
+				}
+			}
+			for (auto& [ref, items] : out) {
+				for (const auto base : bases) {
+					items[base] += 0;
+				}
+			}
+			return out;
+		}
+
+		bool IsGear(std::uint32_t a_item) const
+		{
+			const auto it = loot->items.find(a_item);
+			return it != loot->items.end() && GiftBook::GiftKind(it->second.kind);
+		}
+
+		// The weapon and armor items a loot or storage packet the session sent us carries.
+		std::uint32_t GearIn(const std::vector<std::uint8_t>& a_packet) const
+		{
+			std::uint32_t n = 0;
+			if (IsType(a_packet, MT::kContainerChanged)) {
+				if (const auto msg = Protocol::DecodeIndexedContainerChange(a_packet); msg && IsGear(msg->change.item)) {
+					++n;
+				}
+			} else if (IsType(a_packet, MT::kStorageContents)) {
+				if (const auto msg = Protocol::DecodeStorageListing(a_packet)) {
+					for (const auto& stack : msg->stacks) {
+						n += IsGear(stack.item) ? 1 : 0;
+					}
+				}
+			}
+			return n;
+		}
 
 		void Pace()
 		{
@@ -429,10 +632,24 @@ namespace GiftTest
 			if (--it->count == 0) {
 				from.erase(it);
 			}
+			if (reshapeMove) {
+				reshapeMove(one);
+			}
 			AddStack(a_to, one);
-			// WorldSync's ContainerWatcher: a move between our player and a container, posted to Gifts.
+			// WorldSync's ContainerWatcher: a move between our player and a container, posted to Gifts (then to the loot's inbox).
 			const auto holder = a_from == PLAYER ? a_to : a_from;
-			gifts.Moved(holder, a_class.base, a_from == PLAYER ? 1 : -1);
+			const auto count = a_from == PLAYER ? 1 : -1;
+			if (loseMoves > 0) {
+				--loseMoves;
+			} else if (lateMoves > 0) {
+				--lateMoves;
+				lateEvents.emplace_back(holder, a_class.base, count);
+			} else {
+				gifts.Moved(holder, a_class.base, count);
+			}
+			if (loot) {
+				loot->moves.push_back({ holder, a_class.base, count });
+			}
 			if (a_frame) {
 				Frame(a_f);
 			}

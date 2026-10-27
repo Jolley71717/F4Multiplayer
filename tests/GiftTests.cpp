@@ -88,6 +88,38 @@ namespace
 	{
 		return Protocol::Encode(Protocol::ClaimDrop{ a_dropId, a_op });
 	}
+
+	// What a game counts going wrong stayed at nothing (a test of one of them checks it on its own).
+	void NoFailures(const Game& a_game)
+	{
+		const auto& s = a_game.gifts.Counters();
+		CHECK(s.copyMissing == 0);
+		CHECK(s.unheld == 0);
+		CHECK(s.unsignaled == 0);
+		CHECK(s.giveFailed == 0);
+		CHECK(s.takenBack == 0);
+		CHECK(s.dupRisk == 0);
+		CHECK(s.overflow == 0);
+		CHECK(s.notGear == 0);
+		CHECK(s.addUndone == 0);
+	}
+
+	void NoFailures(std::initializer_list<const Game*> a_games)
+	{
+		for (const auto* game : a_games) {
+			NoFailures(*game);
+		}
+	}
+
+	// The items of a_base, whatever their class, in every world and lying in the session as a_seenBy heard.
+	std::int64_t TotalBase(std::uint32_t a_base, std::initializer_list<const Game*> a_games, const Game& a_seenBy)
+	{
+		std::int64_t n = std::ranges::count_if(a_seenBy.gifts.Lying(), [&](const auto& a_entry) { return a_entry.second.base == a_base; });
+		for (const auto* game : a_games) {
+			n += game->HoldsBase(a_base);
+		}
+		return n;
+	}
 }
 
 // ---- give and take ---------------------------------------------------------------------------------------------
@@ -144,6 +176,7 @@ TEST("gifts: a gun put in a chest lies there for a friend, who takes it once, an
 	bob.Close(f);
 	SettleAll(f, { &alice, &bob });
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: the giver sees their own gift in the chest and can take it back, through the server like anyone")
@@ -176,6 +209,7 @@ TEST("gifts: the giver sees their own gift in the chest and can take it back, th
 	CHECK(alice.Carried(gun) == 2);  // (GiveGun gave her another)
 	CHECK(!bob.gifts.Lying().contains(again));
 	CHECK(Total(gun, { &alice, &bob }, bob) == 2);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: an item taken back before its offer came was never given, and one whose menu closed first leaves the chest")
@@ -208,6 +242,7 @@ TEST("gifts: an item taken back before its offer came was never given, and one w
 	CHECK(alice.In(CHEST, gun) == 0);
 	CHECK(bob.Lying(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: two friends taking one gift at once: the server's first gets it, the other's take is undone with a notice")
@@ -238,6 +273,7 @@ TEST("gifts: two friends taking one gift at once: the server's first gets it, th
 	CHECK(carol.gifts.Claims() == 0);
 	CHECK(carol.addsToPlayer == 0);
 	CHECK(Total(gun, { &alice, &bob, &carol }, carol) == 1);
+	NoFailures({ &alice, &bob, &carol });
 }
 
 // ---- reloads ---------------------------------------------------------------------------------------------------
@@ -272,6 +308,7 @@ TEST("gifts: a taker's save from before the take puts the gift back in the chest
 	CHECK(!alice.gifts.Lying().contains(id));
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
 	CHECK(!f.Logged("someone else holds too"));
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: a giver's save from before the put takes the gift back out of the session")
@@ -303,6 +340,7 @@ TEST("gifts: a giver's save from before the put takes the gift back out of the s
 	SettleAll(f, { &alice, &bob });
 	CHECK(alice.Holds(gun) == 0);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 // The case that can't be put right, as for a dropped item: behind the host's setting, and in the install guide.
@@ -326,6 +364,7 @@ TEST("gifts: a giver's save from before the put loaded after a friend took it: b
 	CHECK(bob.Carried(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 2);
 	CHECK(f.Logged("someone else holds too"));
+	NoFailures({ &alice, &bob });
 }
 
 // ---- links that go ---------------------------------------------------------------------------------------------
@@ -353,6 +392,7 @@ TEST("gifts: a take whose grant was lost with the link lies there again once the
 	TakeGift(f, bob, gun, { &alice, &bob });
 	CHECK(bob.Carried(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: a take whose claim never went still lies there, and the taker's copy leaves with the link")
@@ -377,6 +417,7 @@ TEST("gifts: a take whose claim never went still lies there, and the taker's cop
 	CHECK(bob.gifts.Lying().contains(id));
 	TakeGift(f, bob, gun, { &alice, &bob });
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: a giver's kPlaced lost with the link: their record says it left their world, and it lies there")
@@ -404,6 +445,7 @@ TEST("gifts: a giver's kPlaced lost with the link: their record says it left the
 	TakeGift(f, bob, gun, { &alice, &bob });
 	CHECK(bob.Carried(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: a giver's offer lost with the link: the item stays in their chest, and the offer goes on their record")
@@ -427,6 +469,7 @@ TEST("gifts: a giver's offer lost with the link: the item stays in their chest, 
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
 	// Nothing of it is left on the server: Bob can't take it, and it isn't saved.
 	CHECK(alice.gifts.Counters().given == 0);
+	NoFailures({ &alice, &bob });
 }
 
 // ---- late answers ----------------------------------------------------------------------------------------------
@@ -449,6 +492,7 @@ TEST("gifts: a claim asked again before its answer is granted once, and the seco
 	CHECK(bob.addsToPlayer == 1);
 	CHECK(bob.gifts.Claims() == 0);
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: a grant that comes after the taker loaded a save gives the gift back, and it lies there once")
@@ -475,6 +519,7 @@ TEST("gifts: a grant that comes after the taker loaded a save gives the gift bac
 	SettleAll(f, { &alice, &bob });
 	CHECK(alice.Lying(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: an offer that comes after the giver stopped waiting for it is kept: the item never left their chest")
@@ -501,6 +546,7 @@ TEST("gifts: an offer that comes after the giver stopped waiting for it is kept:
 	SettleAll(f, { &alice, &bob });
 	CHECK(bob.Lying(gun) == 0);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 // ---- forged and replayed messages ------------------------------------------------------------------------------
@@ -567,6 +613,7 @@ TEST("gifts: the server acts only on a player's own moves, once each: others' co
 	CHECK(carol.Lying(gun) == 1);
 	CHECK(alice.Lying(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob, &carol }, carol) == 1);
+	NoFailures({ &alice, &bob, &carol });
 }
 
 TEST("gifts: without the host's rule a gift is refused, and a game with it off reports none")
@@ -580,9 +627,11 @@ TEST("gifts: without the host's rule a gift is refused, and a game with it off r
 	const auto gun = ClassOf(Gun());
 	alice.Give(PLAYER, Gun());
 	alice.Open(f, CHEST);
+	CHECK(!alice.gifts.Viewing());  // no gift lies in it: the chest isn't watched, nor read, at all
 	REQUIRE(alice.Put(f, CHEST, gun));
+	alice.Wait(f, 2s);
+	CHECK(alice.stacksRead == 0);
 	CHECK(alice.gifts.Puts() == 0);
-	CHECK(alice.gifts.Counters().puts == 1);
 	CHECK(alice.gifts.Counters().reported == 0);
 	alice.Close(f);
 	CHECK(alice.In(CHEST, gun) == 1);  // in her own copy of the chest, as in 0.9.x
@@ -598,6 +647,7 @@ TEST("gifts: without the host's rule a gift is refused, and a game with it off r
 	// Nor is a gift of two decoded, rule or not: a gift is one item.
 	item.count = 2;
 	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(item, MT::kReportDrop)));
+	NoFailures({ &alice, &bob });
 }
 
 // A game that took the rule for on (it can't: the welcome says) or a session full: the server keeps nothing, so the item
@@ -623,6 +673,7 @@ TEST("gifts: a gift the server refuses stays in the giver's chest, with a notice
 	CHECK(alice.In(CHEST, gun) == 1);
 	CHECK(bob.Lying(gun) == 0);
 	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	NoFailures({ &alice, &bob });
 }
 
 // ---- the host leaving ------------------------------------------------------------------------------------------
@@ -678,6 +729,7 @@ TEST("gifts: what lies in a chest and a giver's offer waiting for its record out
 		CHECK(Total(gun, { &alice, &bob }, bob) == 1);
 		CHECK(Total(spareClass, { &alice, &bob }, bob) == 1);
 	}
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: a gift lies there while its giver is away, and their return changes nothing")
@@ -699,6 +751,7 @@ TEST("gifts: a gift lies there while its giver is away, and their return changes
 	CHECK(alice.Holds(gun) == 0);
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
 	CHECK(!f.Logged("someone else holds too"));
+	NoFailures({ &alice, &bob });
 }
 
 // ---- what is a gift --------------------------------------------------------------------------------------------
@@ -740,6 +793,7 @@ TEST("gifts: a workbench, a merchant's chest and a companion aren't gift places,
 	CHECK(alice.In(CHEST, ClassOf(quest)) == 1);
 	CHECK(alice.In(CHEST, ClassOf(runtime)) == 1);
 	CHECK(bob.gifts.Lying().empty());
+	NoFailures({ &alice, &bob });
 }
 
 TEST("gifts: no save holds a copy, and a gift whose mod a game lacks shows there not at all")
@@ -771,6 +825,7 @@ TEST("gifts: no save holds a copy, and a gift whose mod a game lacks shows there
 	TakeGift(f, carol, ClassOf(dlc), { &alice, &bob, &carol });
 	CHECK(carol.Carried(ClassOf(dlc)) == 1);
 	CHECK(Total(ClassOf(dlc), { &alice, &bob, &carol }, bob) == 1);
+	NoFailures({ &alice, &bob, &carol });
 }
 
 TEST("gifts: a power armor piece keeps its condition, and a take-all with the taker's own like gun takes both once")
@@ -820,21 +875,446 @@ TEST("gifts: a power armor piece keeps its condition, and a take-all with the ta
 	CHECK(alice.Lying(gun) == 0);
 }
 
-TEST("gifts: shared storage on, a gift in a home's chest works the same: storage never carries weapons or armor")
+// The game's own shared storage and container loot run beside the gifts (GiftGame's loot: LootSync::Loot and
+// StorageView::Client on the same packets, menus and moves): they never move a weapon or armor, nor does the session
+// send them one, while the stimpaks in the same chest are the host's one true copy as ever.
+TEST("gifts: shared storage on, a gift in the host's home chest: storage and the loot code run beside it and never move or send it")
 {
 	auto options = Gifts();
 	options.rules.sharedStorage = true;
-	Fixture    f{ options };
-	Game       alice{ 1, ALICE_ID };
-	Game       bob{ 2, BOB_ID };
-	alice.Join(f, "Alice");
-	bob.Join(f, "Bob");
+	options.hostIdentity = ALICE_ID;
+	Fixture f{ options };
+	f.fake->SetLocal(1);
+	constexpr std::uint32_t STIMPAK = 0x00023736;
+	LootTest::Game          aliceLoot{ 1, ALICE_ID };
+	LootTest::Game          bobLoot{ 2, BOB_ID };
+	aliceLoot.host = true;
+	Game alice{ 1, ALICE_ID };
+	Game bob{ 2, BOB_ID };
+	alice.loot = &aliceLoot;
+	bob.loot = &bobLoot;
 	for (auto* game : { &alice, &bob }) {
 		game->holderFacts[CHEST] = { .kind = LootScope::Holder::kContainer, .storage = true };
+		game->loot->holderFacts[CHEST] = game->holderFacts[CHEST];
+		game->loot->items[GUN] = { .kind = LootScope::Item::kWeapon };
 	}
+	aliceLoot.holders[CHEST][STIMPAK] = 5;
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	SettleAll(f, { &alice, &bob });
+	REQUIRE(aliceLoot.storage.State().Rule());
+	REQUIRE(bobLoot.storage.State().Rule());
 	const auto gun = ClassOf(Gun());
+
+	// Alice (the host) gives a gun in her home's chest; Bob's menu shows her chest's stimpaks and the gift.
 	GiveGun(f, alice, { &alice, &bob });
+	bob.Open(f, CHEST);
+	SettleAll(f, { &alice, &bob });
+	REQUIRE(bobLoot.storage.State().Viewing());
+	CHECK(bobLoot.In(CHEST, STIMPAK) == 5);
+	CHECK(bob.In(CHEST, gun) == 1);
+	REQUIRE(bob.Take(f, CHEST, gun));
+	bob.LootTake(f, CHEST, STIMPAK, 2);
+	SettleAll(f, { &alice, &bob });
+	bob.Close(f);
+	SettleAll(f, { &alice, &bob });
+	CHECK(bob.Carried(gun) == 1);
+	CHECK(bobLoot.Carried(STIMPAK) == 2);
+	CHECK(aliceLoot.In(CHEST, STIMPAK) == 3);
+	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+
+	// Bob gives it back in the host's chest (a friend's storage to him): a gift there too, and Alice takes it.
+	bob.Open(f, CHEST);
+	SettleAll(f, { &alice, &bob });
+	REQUIRE(bob.Put(f, CHEST, gun));
+	SettleAll(f, { &alice, &bob });
+	bob.Close(f);
+	SettleAll(f, { &alice, &bob });
+	CHECK(bob.Holds(gun) == 0);
+	CHECK(alice.Lying(gun) == 1);
+	TakeGift(f, alice, gun, { &alice, &bob });
+	CHECK(alice.Carried(gun) == 1);
+	CHECK(Total(gun, { &alice, &bob }, bob) == 1);
+	CHECK(aliceLoot.In(CHEST, STIMPAK) + bobLoot.Carried(STIMPAK) == 5);
+	for (const auto* game : { &alice, &bob }) {
+		CHECK(game->lootChangedGear == 0);
+		CHECK(game->lootSentGear == 0);
+	}
+	NoFailures({ &alice, &bob });
+}
+
+// ---- the engine misbehaving ---------------------------------------------------------------------------------------
+
+TEST("gifts: a Take All whose events never came: the copy that went to the taker is claimed by their count, never kept twice")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	const auto gun = ClassOf(Gun());
+	bob.Give(CHEST, Gun());  // his own, like the gift
+	const auto id = GiveGun(f, alice, { &alice, &bob });
+	bob.Open(f, CHEST);
+	REQUIRE(bob.In(CHEST, gun) == 2);
+	bob.loseMoves = 2;  // a Take All past the inbox once did this, or a take in a trade's tail
+	REQUIRE(bob.Take(f, CHEST, gun, false));
+	REQUIRE(bob.Take(f, CHEST, gun));
+	CHECK(bob.gifts.Claiming(id));
+	CHECK(bob.Carried(gun) == 1);  // his own; the gift held back
+	SettleAll(f, { &alice, &bob });
+	bob.Wait(f, 2s);
+	bob.Close(f);
+	CHECK(bob.Carried(gun) == 2);
+	CHECK(bob.addsToPlayer == 1);
+	CHECK(bob.gifts.Counters().unsignaled == 1);
+	CHECK(bob.gifts.Counters().copyMissing == 0);
+	CHECK(!alice.gifts.Lying().contains(id));
+	CHECK(Total(gun, { &alice, &bob }, alice) == 2);
+	bob.Open(f, CHEST);
+	CHECK(bob.gifts.Copies() == 0);  // and no fresh copy to take again
+	bob.Close(f);
+
+	// One take alone, its event lost: the same.
+	const auto again = GiveGun(f, alice, { &alice, &bob });
+	bob.Open(f, CHEST);
+	bob.loseMoves = 1;
+	REQUIRE(bob.Take(f, CHEST, gun));
+	SettleAll(f, { &alice, &bob });
+	bob.Close(f);
+	CHECK(bob.Carried(gun) == 3);
+	CHECK(!alice.gifts.Lying().contains(again));
+	CHECK(Total(gun, { &alice, &bob }, alice) == 3);
+	CHECK(bob.gifts.Counters().unsignaled == 2);
+
+	// Gifts.cpp's inbox: a Take All of hundreds of kinds, the gift's among them, reaches the view whole.
+	const auto third = GiveGun(f, alice, { &alice, &bob });
+	bob.Open(f, CHEST);
+	bob.loseMoves = 1;
+	REQUIRE(bob.Take(f, CHEST, gun, false));
+	GiftBook::Inbox inbox;
+	for (std::uint32_t i = 0; i < 600; ++i) {
+		REQUIRE(inbox.Add(CHEST, 0x00030000 + i, -1));
+	}
+	REQUIRE(inbox.Add(CHEST, GUN, -1));
+	inbox.Drain([&](std::uint32_t a_holder, std::uint32_t a_base, std::int32_t a_count) { bob.gifts.Moved(a_holder, a_base, a_count); });
+	bob.Frame(f);
+	CHECK(bob.gifts.Claiming(third));
+	CHECK(bob.gifts.Counters().unsignaled == 2);  // by its event this time
+	SettleAll(f, { &alice, &bob });
+	bob.Close(f);
+	CHECK(bob.Carried(gun) == 4);
+	CHECK(Total(gun, { &alice, &bob }, alice) == 4);
+	CHECK(bob.gifts.Counters().unheld == 0);
+	CHECK(bob.gifts.Counters().dupRisk == 0);
+	CHECK(bob.gifts.Counters().copyMissing == 0);
+	NoFailures(alice);
+}
+
+TEST("gifts: the move inbox sums moves by container and item, so a Take All of hundreds of kinds leaves none out")
+{
+	GiftBook::Inbox inbox;
+	for (std::uint32_t i = 0; i < 300; ++i) {
+		CHECK(inbox.Add(CHEST, 0x00030000 + i, -5));
+	}
+	CHECK(inbox.Add(CHEST, GUN, -1));
+	CHECK(inbox.Add(CHEST, GUN, 1));
+	CHECK(inbox.Add(CHEST, GUN, -1));
+	CHECK(inbox.Add(BENCH, GUN, 1));
+	CHECK(inbox.Size() == 302);
+	std::map<std::pair<std::uint32_t, std::uint32_t>, std::pair<std::int64_t, std::int64_t>> seen;
+	inbox.Drain([&](std::uint32_t a_holder, std::uint32_t a_base, std::int32_t a_count) {
+		auto& sums = seen[{ a_holder, a_base }];
+		(a_count > 0 ? sums.first : sums.second) += a_count;
+	});
+	CHECK(seen.size() == 302);
+	CHECK((seen[{ CHEST, GUN }] == std::pair<std::int64_t, std::int64_t>{ 1, -2 }));
+	CHECK((seen[{ BENCH, GUN }] == std::pair<std::int64_t, std::int64_t>{ 1, 0 }));
+	CHECK((seen[{ CHEST, 0x00030000 }] == std::pair<std::int64_t, std::int64_t>{ 0, -5 }));
+	CHECK(inbox.Size() == 0);
+	CHECK(inbox.TakeDropped() == 0);
+
+	// Only a container of more kinds than any holds fills it: the rest is counted, not kept.
+	for (std::uint32_t i = 0; i < GiftBook::Inbox::MAX_KINDS + 3; ++i) {
+		inbox.Add(CHEST, 0x00100000 + i, 1);
+	}
+	CHECK(inbox.Size() == GiftBook::Inbox::MAX_KINDS);
+	CHECK(inbox.TakeDropped() == 3);
+	CHECK(inbox.Add(CHEST, 0x00100000, 1));  // a kind already waiting still sums
+}
+
+TEST("gifts: a take or a put whose event comes after its frame: the take is claimed by the count, the put stays its player's")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	const auto gun = ClassOf(Gun());
+	const auto id = GiveGun(f, alice, { &alice, &bob });
+	bob.Open(f, CHEST);
+	bob.lateMoves = 1;
+	REQUIRE(bob.Take(f, CHEST, gun));
+	CHECK(bob.gifts.Claiming(id));
+	CHECK(bob.Carried(gun) == 0);
+	SettleAll(f, { &alice, &bob });
+	bob.Wait(f, 2s);  // the late event changes nothing
+	bob.Close(f);
+	CHECK(bob.Carried(gun) == 1);
+	CHECK(bob.addsToPlayer == 1);
+	CHECK(bob.gifts.Counters().unsignaled == 1);
+	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+
+	// A put whose event is late isn't given (it can't be told from a script's): it stays in his chest, his own.
+	bob.Open(f, CHEST);
+	bob.lateMoves = 1;
+	REQUIRE(bob.Put(f, CHEST, gun));
+	SettleAll(f, { &alice, &bob });
+	bob.Wait(f, 2s);
+	bob.Close(f);
+	CHECK(bob.In(CHEST, gun) == 1);
+	CHECK(bob.gifts.Counters().reported == 0);
+	CHECK(alice.Lying(gun) == 0);
+	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	CHECK(bob.gifts.Counters().copyMissing == 0);
+	CHECK(bob.gifts.Counters().unheld == 0);
+	NoFailures(alice);
+}
+
+TEST("gifts: a copy another mod's script moves out of the chest makes one item at most: it isn't shown again until a load")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	const auto gun = ClassOf(Gun());
+	const auto id = GiveGun(f, alice, { &alice, &bob });
+	const auto save = bob.SaveGame(f);
+	bob.Open(f, CHEST);
+	REQUIRE(bob.gifts.Shows(id));
+	for (int i = 0; i < 12; ++i) {
+		bob.ScriptMove(CHEST, NPC, gun);  // every frame: whatever weapon is in the chest goes to the settler
+		bob.Wait(f, 250ms);
+	}
+	CHECK(bob.In(NPC, gun) == 1);
+	CHECK(bob.gifts.Copies() == 0);
+	CHECK(bob.gifts.Claims() == 0);
+	CHECK(bob.gifts.Counters().copyMissing == 1);
+	CHECK(bob.gifts.Counters().shown == 1);
+	bob.Close(f);
+	bob.Open(f, CHEST);
+	CHECK(bob.gifts.Copies() == 0);
+	bob.Close(f);
+	SettleAll(f, { &alice, &bob });
+	// The documented case, bounded: the settler has one, and the gift still lies there for the others.
+	CHECK(alice.gifts.Lying().contains(id));
+	CHECK(Total(gun, { &alice, &bob }, alice) == 2);
+
+	// A load of a save from before (the settler has none): it shows again.
+	bob.LoadGame(f, save);
+	SettleAll(f, { &alice, &bob });
+	bob.Open(f, CHEST);
+	CHECK(bob.gifts.Shows(id));
+	bob.Close(f);
+	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	CHECK(bob.gifts.Counters().unheld == 0);
+	CHECK(bob.gifts.Counters().dupRisk == 0);
+	NoFailures(alice);
+}
+
+TEST("gifts: a gun put in a chest that holds a like one and taken back before its offer: neither is given")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	const auto gun = ClassOf(Gun());
+	alice.Give(CHEST, Gun());  // her own Old Reliable, kept there
+	alice.Give(PLAYER, Gun());
+	alice.Open(f, CHEST);
+	REQUIRE(alice.Put(f, CHEST, gun));
+	REQUIRE(alice.Take(f, CHEST, gun));  // she changes her mind before the offer comes
+	SettleAll(f, { &alice, &bob });
+	alice.Close(f);
+	SettleAll(f, { &alice, &bob });
+	CHECK(alice.In(CHEST, gun) == 1);
+	CHECK(alice.Carried(gun) == 1);
+	CHECK(alice.gifts.Counters().kept == 1);
+	CHECK(alice.gifts.Counters().given == 0);
+	CHECK(alice.Noticed(Notice::kGiven) == 0);
+	CHECK(bob.Lying(gun) == 0);
+	CHECK(Total(gun, { &alice, &bob }, bob) == 2);
+
+	// Put two, take one back: one is given, and her own stays.
+	alice.Give(PLAYER, Gun());
+	alice.Open(f, CHEST);
+	REQUIRE(alice.Put(f, CHEST, gun));
+	REQUIRE(alice.Put(f, CHEST, gun));
+	REQUIRE(alice.Take(f, CHEST, gun));
+	SettleAll(f, { &alice, &bob });
+	alice.Close(f);
+	SettleAll(f, { &alice, &bob });
+	CHECK(alice.gifts.Counters().kept == 2);
+	CHECK(alice.gifts.Counters().given == 1);
+	CHECK(alice.In(CHEST, gun) == 1);
+	CHECK(alice.Carried(gun) == 1);
+	CHECK(bob.Lying(gun) == 1);
+	CHECK(Total(gun, { &alice, &bob }, bob) == 3);
+	NoFailures({ &alice, &bob });
+}
+
+TEST("gifts: a modified game's gift of no weapon or armor never shows: nothing goes into anyone's chest")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	bob.notGear.insert(AMMO);
+	const GiftBook::Stack ammo{ .base = AMMO, .kind = LootScope::Item::kAmmo, .count = 1 };
+	const auto            item = GiftBook::ItemOf(ammo, CHEST, { .worldspace = 0x0000003C, .x = -79000.0f, .y = 89000.0f, .z = 7800.0f }, 7);
+	Send(f, alice, Protocol::Encode(item, MT::kReportDrop));
+	const auto offers = Decoded(alice.Fetch(f), MT::kDropPlaced, [](auto a_data) { return Protocol::DecodeDroppedItem(a_data); });
+	REQUIRE(offers.size() == 1);
+	REQUIRE(offers[0].dropId != 0);  // the server can't tell a box of ammo from a gun
+	Send(f, alice, Claim(offers[0].dropId, Protocol::DropClaim::kPlaced));
+	SettleAll(f, { &bob });
+	REQUIRE(bob.gifts.Lying().contains(offers[0].dropId));
+	bob.Open(f, CHEST);
+	bob.Wait(f, 1s);
+	CHECK(bob.gifts.Copies() == 0);
+	CHECK(bob.InBase(CHEST, AMMO) == 0);
+	CHECK(bob.gifts.Counters().notGear == 1);
+	bob.Close(f);
+	bob.Open(f, CHEST);
+	bob.Close(f);
+	CHECK(bob.HoldsBase(AMMO) == 0);
+	CHECK(bob.gifts.Counters().notGear == 1);  // tried once a load
+
+	// Nor a weapon with a mod made at runtime, nor one that isn't one item.
+	auto odd = Gun("Odd", { { 0xFF000801, 0, 0 } });
+	CHECK(!GiftBook::Receivable(GiftBook::ItemOf(odd, CHEST, {}, 1), LootScope::Item::kWeapon));
+	auto two = GiftBook::ItemOf(Gun(), CHEST, {}, 1);
+	CHECK(GiftBook::Receivable(two, LootScope::Item::kWeapon));
+	two.count = 2;
+	CHECK(!GiftBook::Receivable(two, LootScope::Item::kWeapon));
+	CHECK(!GiftBook::Receivable(GiftBook::ItemOf(Gun(), CHEST, {}, 1), std::nullopt));
+	CHECK(!GiftBook::Receivable(GiftBook::ItemOf(Gun(), CHEST, {}, 1), LootScope::Item::kAid));
+}
+
+TEST("gifts: an add that fails shows no copy and leaves nothing, and a grant that can't go into the taker's inventory lies there again")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	const auto gun = ClassOf(Gun());
+	const auto id = GiveGun(f, alice, { &alice, &bob });
+
+	// The copy's add fails: no copy, nothing in the chest.
+	bob.failAdds = 1;
+	bob.Open(f, CHEST);
+	CHECK(bob.gifts.Copies() == 0);
+	CHECK(bob.In(CHEST, gun) == 0);
+	CHECK(bob.gifts.Counters().unplaceable == 1);
+	bob.Close(f);
+
+	// It fails after putting the item in all the same: taken out again (tried again after a load).
+	bob.LoadGame(f, bob.SaveGame(f));
+	SettleAll(f, { &alice, &bob });
+	bob.failAdds = 1;
+	bob.failAfterAdding = true;
+	bob.Open(f, CHEST);
+	CHECK(bob.gifts.Copies() == 0);
+	CHECK(bob.In(CHEST, gun) == 0);
+	CHECK(bob.gifts.Counters().addUndone == 1);
+	bob.Close(f);
+	CHECK(bob.Holds(gun) == 0);
+
+	// The grant's add to his inventory fails (after adding, too): undone, given back, and it lies there again.
+	bob.LoadGame(f, bob.SaveGame(f));
+	SettleAll(f, { &alice, &bob });
+	bob.Open(f, CHEST);
+	REQUIRE(bob.gifts.Shows(id));
+	REQUIRE(bob.Take(f, CHEST, gun));
+	bob.failAdds = 1;
+	SettleAll(f, { &alice, &bob });
+	bob.Close(f);
+	SettleAll(f, { &alice, &bob });
+	CHECK(bob.Holds(gun) == 0);
+	CHECK(bob.gifts.Counters().giveFailed == 1);
+	CHECK(bob.gifts.Counters().addUndone == 2);
+	CHECK(alice.gifts.Lying().contains(id));
+	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+
+	// Taken again, it comes.
+	bob.failAfterAdding = false;
 	TakeGift(f, bob, gun, { &alice, &bob });
 	CHECK(bob.Carried(gun) == 1);
 	CHECK(Total(gun, { &alice, &bob }, alice) == 1);
+	CHECK(bob.gifts.Counters().unheld == 0);
+	CHECK(bob.gifts.Counters().dupRisk == 0);
+	CHECK(bob.gifts.Counters().copyMissing == 0);
+	NoFailures(alice);
+}
+
+TEST("gifts: an item whose class the engine changes, as it makes the copy or as it moves, is still taken once")
+{
+	Fixture f{ Gifts() };
+	Game    alice{ 1, ALICE_ID };
+	Game    bob{ 2, BOB_ID };
+	Game    carol{ 3, CAROL_ID };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	carol.Join(f, "Carol");
+	const auto gun = ClassOf(Gun());
+
+	// Bob's engine makes the copy with a condition of its own: the copy is that class, and taken as one.
+	bob.reshapeAdd = [](std::uint32_t, GiftBook::Stack& a_stack) { a_stack.health = 0.99f; };
+	const auto id = GiveGun(f, alice, { &alice, &bob, &carol });
+	bob.Open(f, CHEST);
+	REQUIRE(bob.gifts.Shows(id));
+	auto shown = Gun();
+	shown.health = 0.99f;
+	REQUIRE(bob.Take(f, CHEST, ClassOf(shown)));
+	CHECK(bob.InBase(PLAYER, GUN) == 0);  // held back
+	SettleAll(f, { &alice, &bob, &carol });
+	bob.Close(f);
+	CHECK(bob.InBase(PLAYER, GUN) == 1);
+	CHECK(bob.addsToPlayer == 1);
+	CHECK(TotalBase(GUN, { &alice, &bob, &carol }, alice) == 1);
+	NoFailures(bob);
+	bob.reshapeAdd = nullptr;
+
+	// The move loses its name on the way: it can't be held back, so it stays with Bob and the grant adds nothing.
+	bob.reshapeMove = [](GiftBook::Stack& a_stack) { a_stack.name.clear(); };
+	GiveGun(f, alice, { &alice, &bob, &carol });
+	bob.Open(f, CHEST);
+	REQUIRE(bob.Take(f, CHEST, gun));
+	SettleAll(f, { &alice, &bob, &carol });
+	bob.Close(f);
+	CHECK(bob.InBase(PLAYER, GUN) == 2);
+	CHECK(bob.addsToPlayer == 1);
+	CHECK(bob.gifts.Counters().unheld == 1);
+	CHECK(bob.gifts.Counters().received == 2);
+	CHECK(TotalBase(GUN, { &alice, &bob, &carol }, alice) == 2);
+
+	// ... and lost to Carol, who was first: both have it, and Bob's game counts it (the rig watches dupRisk).
+	GiveGun(f, alice, { &alice, &bob, &carol });
+	carol.Open(f, CHEST);
+	bob.Open(f, CHEST);
+	REQUIRE(carol.Take(f, CHEST, gun));
+	REQUIRE(bob.Take(f, CHEST, gun));
+	SettleAll(f, { &alice, &bob, &carol });
+	carol.Close(f);
+	bob.Close(f);
+	CHECK(carol.Carried(gun) == 1);
+	CHECK(bob.InBase(PLAYER, GUN) == 3);
+	CHECK(bob.gifts.Counters().unheld == 2);
+	CHECK(bob.gifts.Counters().dupRisk == 1);
+	CHECK(TotalBase(GUN, { &alice, &bob, &carol }, alice) == 4);  // three given, one counted twice
+	NoFailures({ &alice, &carol });
 }
