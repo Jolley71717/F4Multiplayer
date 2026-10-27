@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T16:02:48+00:00",
+ "updated": "2026-10-27T16:37:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -32,6 +32,14 @@
    "pr": 188,
    "partial": "0.9.2",
    "desc": "On 0.9.1, power armor frames kept duplicating and turning up in random places around Sanctuary. 0.9.2 stopped a load from keeping the copies of friends' frames. The next release also stops a frame moved in workshop mode from being shared as a building, and removes the copies older versions made that way. Extra frames already in your world from 0.9.1 can be removed in the console: click one, then type disable and markfordelete."
+  },
+  {
+   "id": "19ja",
+   "title": "Log pointers and 3D state around the save-time respawn, to name the ref in an engine use-after-free",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "1ap3",
@@ -364,8 +372,8 @@
    "title": "Borrow a friend's parked power armor frame",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
-   "note": "Held: one crash in rig testing, being looked at",
+   "stage": 5,
+   "note": "",
    "pr": 182,
    "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
   },
