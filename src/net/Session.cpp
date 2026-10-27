@@ -848,8 +848,11 @@ namespace Session
 				state.direction = graph->GetGraphVariableImplFloat(directionVar, direction) ? Protocol::PackDirection(direction) : std::uint8_t{ 0 };
 				state.pitch = Protocol::PackPitch(AimPoint::PitchFromLooking(player->data.angle.x));
 			}
-			// A downed player's stand-in crouches.
-			if (player->IsSneaking() || Downed::IsDown()) {
+			// Not while on the ground: a downed player's stand-in lies down by their status (DownRules::StandInDown), and the
+			// sneak stance the down leaves is stood out of as they get up (DownRules::Self). Sent for being down, as it once
+			// was to crouch the stand-in, it crouched it as it got up, and a stop the graph refused then left it crouched
+			// until its friend sneaked and stood again themselves.
+			if (player->IsSneaking() && !Downed::IsDown()) {
 				state.flags |= Protocol::kSneaking;
 			}
 			if (player->GetWeaponMagicDrawn()) {

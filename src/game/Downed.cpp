@@ -104,12 +104,58 @@ namespace Downed
 			}
 		}
 
-		// Health for getting up; the game stands the player up once the "stay down" flag is off.
-		void GetUp(RE::PlayerCharacter* a_player)
+		// The engine's own start (true) or end (false) of an essential down. 1.11.240: +C83F80.
+		// Start, as a lethal hit on an essential character runs it (KillImpl): the life state to essential-down (which plays
+		// the graph's bleed-out start, and for the player puts on the bleed-out camera and an input layer that takes
+		// activate, jump and the view switch), and the character controller's bleed-out flag (other characters pass through).
+		// End, as the engine's own recovery runs it once the stay-down flag is off and there is health again; only while the
+		// life state is essential-down: back to alive (the graph's bleed-out stop, the camera and the controls back), full
+		// health, and the in-bleed-out-animation and controller flags off.
+		void EssentialDown(RE::PlayerCharacter* a_player, bool a_start)
 		{
-			const auto values = RE::ActorValue::GetSingleton();
+			using start_t = void (*)(RE::Actor*, bool);
+			static REL::Relocation<start_t> start{ REL::ID{ 2230033 } };
+			start(a_player, a_start);
+		}
+
+		void PutDown(RE::PlayerCharacter* a_player)
+		{
+			EssentialDown(a_player, true);
+		}
+
+		// The character controller's flag the engine's essential-down start sets and its end clears: a character controller
+		// with it lets other characters through (its collision filter reads it).
+		constexpr std::uint32_t CONTROLLER_BLEEDOUT = 1u << 27;
+
+		RE::bhkCharacterController* Controller(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			return process && process->middleHigh ? process->middleHigh->charController.get() : nullptr;
+		}
+
+		// Where the player's character controller, 3D and first-person 3D are, the camera and the sneak, for the log: a get-up
+		// that leaves the player sunk into the ground or crouched is then a look at the lines (as they get up, and settled).
+		std::string PoseFacts(RE::PlayerCharacter* a_player)
+		{
+			const auto& state = static_cast<RE::ActorState&>(*a_player);
+			const auto  z = a_player->data.location.z;
+			const auto  third = a_player->Get3D(false);
+			const auto  first = a_player->firstPerson3D.get();
+			const auto  controller = Controller(a_player);
+			const auto  camera = RE::PlayerCamera::GetSingleton();
+			const int   view = camera && camera->currentState ? static_cast<int>(camera->currentState->id.underlying()) : -1;
+			return std::format("life state {}, knock state {}, sneaking {} (stance {}), z {:.1f}, 3D z {}, first-person 3D z {}, camera state {}, in bleed-out animation {}, controller bleed-out flag {}",
+				static_cast<std::uint32_t>(state.lifeState), static_cast<std::uint32_t>(state.knockState), a_player->IsSneaking(), static_cast<std::uint32_t>(state.stance), z,
+				third ? std::format("{:.1f}", third->world.translate.z) : std::string{ "none" }, first ? std::format("{:.1f}", first->world.translate.z) : std::string{ "none" }, view,
+				a_player->boolFlags.all(BoolFlag::kInBleedoutAnimation), controller ? (controller->flags & CONTROLLER_BLEEDOUT) != 0 : false);
+		}
+
+		// Helped up: the health the rules give and the engine's own end of the down, at once. Left to the game, its recovery
+		// stood the player up a few seconds later, the same way; other paths of the game's can stand them up before that.
+		void StandUp(RE::PlayerCharacter* a_player)
+		{
 			SetStayDown(a_player, false);
-			if (values && values->health) {
+			if (const auto values = RE::ActorValue::GetSingleton(); values && values->health) {
 				auto&       owner = static_cast<RE::ActorValueOwner&>(*a_player);
 				const float target = owner.GetPermanentActorValue(*values->health) * self.GetRules().reviveHealth;
 				const float current = owner.GetActorValue(*values->health);
@@ -117,16 +163,42 @@ namespace Downed
 					owner.RestoreActorValue(*values->health, target - current);
 				}
 			}
+			if (InEssentialDown(a_player)) {
+				if (self.standUpAsks <= 3) {
+					REX::INFO("Downed: standing us up (ask {}; {})", self.standUpAsks, PoseFacts(a_player));
+				}
+				EssentialDown(a_player, false);
+			}
 		}
 
-		// The engine's own start of an essential down (Actor, true), as a lethal hit on an essential character runs it
-		// (KillImpl): the life state, the bleed-out camera for the player, and the bleed-out event the animation answers.
-		// 1.11.240: +C83F80.
-		void PutDown(RE::PlayerCharacter* a_player)
+		// Up again after a down, however it ended: what the engine's end of a down takes off and a path of the game's that
+		// stood the player up some other way may have left on. The life state is alive by then; the full end (EssentialDown)
+		// does nothing then, so the rest of it is done here.
+		void FinishGetUp(RE::PlayerCharacter* a_player)
 		{
-			using start_t = void (*)(RE::Actor*, bool);
-			static REL::Relocation<start_t> start{ REL::ID{ 2230033 } };
-			start(a_player, true);
+			std::string left;
+			if (a_player->boolFlags.all(BoolFlag::kInBleedoutAnimation)) {
+				a_player->boolFlags.reset(BoolFlag::kInBleedoutAnimation);
+				left += " in-bleed-out-animation flag;";
+			}
+			if (const auto controller = Controller(a_player); controller && (controller->flags & CONTROLLER_BLEEDOUT) != 0) {
+				controller->flags &= ~CONTROLLER_BLEEDOUT;
+				left += " controller bleed-out flag;";
+			}
+			if (!left.empty()) {
+				REX::WARN("Downed: up again, but the down left on:{} taken off", left);
+			}
+			REX::INFO("Downed: up again ({})", PoseFacts(a_player));
+		}
+
+		// Up and sneaking after a down: stood, as the graph's own sneak-exit event does it (PlayerCharacter::SetSneaking: the
+		// stance and the graph's iIsInSneak), and the graph told the sneak stop an NPC's takes, should it be crouched anyway.
+		void Unsneak(RE::PlayerCharacter* a_player)
+		{
+			static const RE::BSFixedString sneakStop{ "sneakStop" };
+			a_player->SetSneaking(false);
+			static_cast<RE::IAnimationGraphManagerHolder*>(a_player)->NotifyAnimationGraphImpl(sneakStop);
+			REX::INFO("Downed: up again and sneaking; standing us (sneaking now {})", a_player->IsSneaking());
 		}
 
 		// What the game shows of the player as it stands them up while they wait for help, for the log: which of
@@ -210,6 +282,18 @@ namespace Downed
 			if (a_step.revivesBack) {
 				REX::INFO("Downed: revives back (the window or the fight is over)");
 				Hud::Notify(Text::Get("down.revives_back"));
+			}
+			if (a_step.standUp) {
+				StandUp(a_player);
+			}
+			if (a_step.gotUp) {
+				FinishGetUp(a_player);
+			}
+			if (a_step.unsneak) {
+				Unsneak(a_player);
+			}
+			if (a_step.settled) {
+				REX::INFO("Downed: the get-up has played out ({})", PoseFacts(a_player));
 			}
 			if (a_step.kill) {
 				// The character can carry its own copy of the essential flag, which a kill may read instead of the base
@@ -401,7 +485,9 @@ namespace Downed
 			.dead = Dying(player),
 			.paused = GamePaused(),
 			.inCombat = fighting,
-			.console = console };
+			.console = console,
+			.knockedOver = static_cast<RE::ActorState&>(*player).knockState != 0,
+			.sneaking = player->IsSneaking() };
 		Apply(player, self.Frame(facts, now));
 
 		// With the teleport key off, Party doesn't see the hold: watch the fallback key here.
@@ -450,10 +536,10 @@ namespace Downed
 	{
 		const auto player = Player();
 		const auto now = Clock::now();
+		// Stood up by the next Frame (DownRules::Self's standUp), once a knock-down is over.
 		if (!player || !self.Revive(now)) {
 			return;
 		}
-		GetUp(player);
 		const auto name = RemotePlayers::NameOf(a_revive.playerId);
 		REX::INFO("Downed: helped up by player {}", a_revive.playerId);
 		Hud::Notify(Text::Format("down.helped_you", { { "player", name.empty() ? Text::Get("party.a_friend") : name } }));
@@ -509,11 +595,10 @@ namespace Downed
 	void OnGameLoaded()
 	{
 		// A save made while down (the flags were cleared for it): without the essential flag the
-		// game would finish the player off. Stand them up instead, as if helped.
+		// game would finish the player off. Stand them up instead, as if helped (the next Frame).
 		const auto player = Player();
 		if (self.Loaded(player && InEssentialDown(player), Clock::now())) {
 			SetEssential(player, true);
-			GetUp(player);
 			REX::INFO("Downed: loaded a save with the player down; getting them up");
 		}
 	}
@@ -532,8 +617,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, helper.helped,
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
+			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, helper.helped,
 			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
 			crawl.distance, InputFacts());
 	}

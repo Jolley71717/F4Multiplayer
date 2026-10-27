@@ -1534,8 +1534,17 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
   `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed` while
   the player waits for help (not once helped and getting up, so friends help once); a friend within
-  300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag and restores
-  health; the game stands them up a few seconds later with full health, which we cut back to 30%.
+  300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag, restores
+  health and, on their next frame, ends the down the engine's own way (`Actor::EssentialDown(false)`,
+  ID 2230033: life state, bleed-out camera and controls, the graph's bleed-out flag and the character
+  controller's bleed-out collision bit, in that order), asked again every second while it doesn't take
+  and only once a knock-down's ragdoll is over (3 s at most); full health from it is cut back to 30%.
+  However a down ends with the player up (helped, a save loaded while down, stood up by the game, the
+  last friend leaving), the get-up clears any bleed-out flag left on and, if the game still has them
+  sneaking (the stance survives a down, and the sneak key works while down), stands them, once as they
+  get up and once 2 s later when the get-up has played out (`DownRules::Self` gotUp/settled, tested).
+  Friends are not sent the crouch flag while the player is down or getting up, and a stand-in that
+  gets up is told its sneak state again 2 s later, so it is not left crouched.
   45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)
   and `player.kill`; essential stays off until they are dead or the game stands them up, and the
   kill is repeated every 2 s while they are still alive and down. The rules are in

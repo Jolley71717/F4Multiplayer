@@ -54,6 +54,7 @@ namespace Puppets
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
 			bool                                  down = false;      // lying down for its downed friend: placed, not driven (see SetDown)
+			std::chrono::steady_clock::time_point sneakRetell{};     // up from that: its sneak is told again then, whatever was sent (SetDown)
 			bool                                  forceSetUp = false;  // its graph set up on its next update whatever the engine says (ForceGraphSetUp)
 			std::uint32_t                         setUps = 0;        // its graph set up by us (SetUpRebuiltGraph): dev
 			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
@@ -428,7 +429,11 @@ namespace Puppets
 			// Crouching: the graph takes "sneakStart"/"sneakStop" (an NPC has no sneak key).
 			const bool sneaking = (motion.flags & Protocol::kSneaking) != 0;
 			const bool wasSneaking = (a_puppet.appliedFlags & Protocol::kSneaking) != 0;
-			if (sneaking != wasSneaking) {
+			// Up from lying for its downed friend (SetDown), told once more when the get-up has played out, whatever was sent:
+			// the engine's downed pose gets up into whatever sneak its graph had before, and an event sent during the get-up
+			// may be refused. A graph that agrees refuses it.
+			const bool retellSneak = a_puppet.sneakRetell != std::chrono::steady_clock::time_point{} && now >= a_puppet.sneakRetell;
+			if (sneaking != wasSneaking || retellSneak) {
 				graph->NotifyAnimationGraphImpl(sneaking ? sneakStart : sneakStop);
 			}
 
@@ -463,6 +468,9 @@ namespace Puppets
 						entry->graph = kind;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
+						if (retellSneak) {
+							entry->sneakRetell = {};
+						}
 					}
 				}
 				if (step.resent) {
@@ -899,6 +907,10 @@ namespace Puppets
 				entry->idleRelease = {};
 				entry->redraw = true;
 				entry->nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // the get-up plays first
+				entry->sneakRetell = std::chrono::steady_clock::now() + 2s;      // and is over by then
+			}
+			if (a_down) {
+				entry->sneakRetell = {};
 			}
 			entry->down = a_down;
 		}
