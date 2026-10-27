@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T07:54:23+00:00",
+ "updated": "2026-10-27T08:44:58+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -324,10 +324,10 @@
    "title": "A holstered weapon still shows on a friend",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Fixed for the next release; the truly stuck case hasn't been tested.",
-   "pr": 159,
-   "desc": "A player reported that a friend's weapon stayed in view after the friend put it away. The next release keeps asking the friend's character to holster it every so often until it does. Normal drawing and holstering worked on two real games."
+   "stage": 3,
+   "note": "Cause found and fixed: a holster the friend's figure didn't take was never asked again; reviewed.",
+   "pr": 201,
+   "desc": "Sometimes a friend put their weapon away but it stayed in their hand on your screen. The game's 'putting away' state was being read as 'already away', so when the friend's figure missed the holster (mid-throw or mid-reload) it was never asked again. Now it waits for the holster to finish and asks again if it stalls."
   },
   {
    "id": "eiir",
@@ -452,9 +452,10 @@
    "title": "A friend's grenade or Molotov stays stuck in their hand",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Looked into; the code shows no sure cause, though the 0.9.0 grenade-in-hand display is the likely suspect.",
-   "desc": "A player reported a friend's grenade or Molotov staying in the friend's hand. We think the grenade-in-hand display added in 0.9.0 can leave a grenade showing for up to three seconds when it misses the signal that the grenade was thrown, for example with an animation mod. We could not prove it from the code."
+   "stage": 3,
+   "note": "A guard now hides a grenade left in the hand between throws and logs when it does; reviewed.",
+   "pr": 201,
+   "desc": "Sometimes a friend's grenade or Molotov stayed visible in their hand after the throw. We found why nothing ever hid it again, but not what makes it show in the first place. The next release hides a grenade left in the hand between throws, and the log records when it happens so the cause can be found."
   },
   {
    "id": "ktmu",
@@ -470,9 +471,10 @@
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Looked into: the rule the report asks for is already in place.",
-   "desc": "Each game rolls its own loot for world containers and corpses. When one player takes every shared item the container is emptied for the others too, and if one item is left they keep theirs. We looked at whether this should change and found it already follows that rule. 0.9.2 also stopped taking the last item from a container in a home from emptying a friend's own stash."
+   "stage": 3,
+   "note": "Fixed: a friend's Take All now only takes what they took from your copy; reviewed.",
+   "pr": 203,
+   "desc": "Each game rolls its own loot for world containers and corpses. Before, when one player took everything from one, the others lost their whole copy of it too, but if one item was left they kept it all. Now a friend emptying a container takes from your copy only what is left of the items they actually took. Your own roll's other items, items your mods add, and anything you put there yourself stay."
   },
   {
    "id": "l8j",
@@ -720,12 +722,13 @@
   },
   {
    "id": "v7mg",
-   "title": "A constant clicking noise after someone joins or leaves",
+   "title": "A constant clicking noise starts when someone joins or leaves",
    "kind": "bug",
    "priority": 2,
-   "stage": 7,
-   "note": "Probably fixed in 0.9.2, which capped three repeating sounds; we never reproduced it, so we can't be sure.",
-   "desc": "A player reported a constant clicking that began when someone joined or left. We could not reproduce it, but found three things that could repeat a sound over and over, and 0.9.2 caps or softens each of them. If it still happens on 0.9.2, the game's log from a moment when it is clicking will help."
+   "stage": 3,
+   "note": "Not found from the code: the log now names the source of repeated sounds; reviewed.",
+   "pr": 200,
+   "desc": "Some players hear a constant clicking after someone joins or leaves. We could not find the cause from the code alone, so the next release counts every sound the mod makes the game play and writes a line to the log when one repeats far more than normal play does. A friend's voice chat is the main suspect."
   },
   {
    "id": "vxjv",
