@@ -36,6 +36,7 @@
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/Spawns.h"
 #include "game/WeaponFire.h"
@@ -1131,6 +1132,7 @@ namespace RemotePlayers
 			}
 			++framesPlaced;
 			SaveGuard::Track(frame.get());
+			REX::INFO("RemotePlayers: placed frame copy {}", RefTag::Of(frame.get()));
 			return handle;
 		}
 
@@ -2034,7 +2036,7 @@ namespace RemotePlayers
 				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs, a_player.face->overlays);
 			}
 
-			REX::INFO("RemotePlayers: spawned {:08X} for player {}", actor->GetFormID(), a_player.id);
+			REX::INFO("RemotePlayers: spawned {} for player {}", RefTag::Of<RE::TESObjectREFR>(actor), a_player.id);
 			return actor;
 		}
 	}
@@ -2290,6 +2292,7 @@ namespace RemotePlayers
 				LetGoOfLost(a_deleting.id);
 				return true;
 			}
+			REX::INFO("SaveFlush: {} was marked for deletion before; still there", RefTag::Of(ref.get()));
 			SaveGuard::Exclude(ref.get());
 			return false;
 		});
@@ -2306,11 +2309,13 @@ namespace RemotePlayers
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
+				REX::INFO("SaveFlush: {:08X} no longer resolves; let go of", a_grave.id);
 				LetGoOfLost(a_grave.id);
 				Release(a_grave, nullptr);
 				return true;
 			}
 			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_grave.spawnedAt)) {
+				REX::INFO("SaveFlush: {} left alone, its 3D is still loading", RefTag::Of(ref.get()));
 				SaveGuard::Exclude(ref.get());
 				return false;
 			}
@@ -2319,9 +2324,11 @@ namespace RemotePlayers
 			}
 			++flushedBeforeSave;
 			if (!DeferredDelete::MayDelete(now - *a_grave.disabledAt)) {
+				REX::INFO("SaveFlush: {} disabled; deleted after the save", RefTag::Of(ref.get()));
 				SaveGuard::Exclude(ref.get());
 				return false;
 			}
+			REX::INFO("SaveFlush: {} marked for deletion", RefTag::Of(ref.get()));
 			ref->SetDelete(true);
 			SaveGuard::Exclude(ref.get());
 			deleting.push_back({ a_grave.actor, a_grave.id });

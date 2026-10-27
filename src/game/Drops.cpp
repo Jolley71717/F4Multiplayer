@@ -9,6 +9,7 @@
 #include "game/ItemCopies.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
+#include "game/RefTag.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
@@ -503,6 +504,7 @@ namespace Drops
 				return {};
 			}
 			SaveGuard::Track(ref.get());
+			REX::INFO("Drops: placed copy {}", RefTag::Of(ref.get()));
 			// Take only asks the server (OnActivated); the engine's own pickup runs once the server grants it (StartTake).
 			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> blocked{ new Blocked(ref->GetFormID()) };
 			if (!Papyrus::CallMethodThen(blocked, ref.get(), "ObjectReference", "BlockActivation", true, true, false)) {

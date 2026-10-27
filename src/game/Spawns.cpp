@@ -6,6 +6,7 @@
 #include "game/FrameShare.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Rolls.h"
@@ -311,7 +312,7 @@ namespace Spawns
 					placed[a_id] = { handle, a_now, SaveGuard::IdsOf(placedRef.get()) };
 					theirs.Placed(a_id, placedRef->GetFormID(), a_now);
 					++frameCopiesPlaced;
-					REX::INFO("Spawns: {} {:08X} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", placedRef->GetFormID(), at.x, at.y, at.z,
+					REX::INFO("Spawns: {} {} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", RefTag::Of(placedRef.get()), at.x, at.y, at.z,
 						playerId, a_id, base);
 					break;
 				}
@@ -595,7 +596,7 @@ namespace Spawns
 					++copiesPlaced;
 					if (logged < LOGGED) {
 						++logged;
-						REX::INFO("Spawns: placed {:08X} as our copy of player {}'s {:08X}", ref->GetFormID(), playerId, id);
+						REX::INFO("Spawns: placed {} as our copy of player {}'s {:08X}", RefTag::Of(ref.get()), playerId, id);
 					}
 					break;
 				}
