@@ -5,6 +5,7 @@
 
 #include "Config.h"
 #include "game/AutoSave.h"
+#include "game/AutoSaveRules.h"
 #include "game/Compass.h"
 #include "game/DownRules.h"
 #include "game/Downed.h"
@@ -96,6 +97,8 @@ namespace Party
 
 		std::uint32_t                  teleportTarget = 0;
 		std::optional<PendingTeleport> pendingTeleport;
+		// A teleport across the worldspace we were in already (no coc or cow): when its autosave is asked for.
+		std::optional<Clock::time_point> landingSaveAt;
 
 		Clock::time_point killFeedWindow{};
 		int               killFeedShown = 0;
@@ -670,6 +673,12 @@ namespace Party
 		void FinishTeleport(Clock::time_point a_now)
 		{
 			const auto player = Player();
+			if (landingSaveAt && player && a_now >= *landingSaveAt) {
+				landingSaveAt.reset();
+				if (player->Get3D()) {
+					AutoSave::AfterTeleport();  // as below: the engine counts no SetPosition as travel either
+				}
+			}
 			if (!pendingTeleport || !player) {
 				return;
 			}
@@ -1030,6 +1039,7 @@ namespace Party
 		}
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
+		landingSaveAt.reset();  // an earlier teleport's: this one asks for its own below, if it is travel
 
 		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins are taken out first
 		// (RemotePlayers::DespawnAll, as before a save): disabled in this frame, before the engine clears the cells for the
@@ -1037,8 +1047,12 @@ namespace Party
 		// left with no cell crashed the next save). Not deleted at once: a physics job of the frames after still handles a
 		// collision with one just beside the player (the crash a save's flush had). They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
+			const bool travel = AutoSaveRules::TeleportIsTravel(true, state.cell != 0, player->data.location.GetDistance(position));
 			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
+			if (travel) {
+				landingSaveAt = Clock::now() + AutoSaveRules::LANDING_SETTLE;
+			}
 			REX::INFO("Party: teleported to player {}", target->id);
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
 			return;
@@ -1123,6 +1137,7 @@ namespace Party
 		heldXp = 0.0f;
 		killWindowEnd = {};
 		ownWear.Forget();
+		landingSaveAt.reset();  // the teleport was in the game left behind: no autosave of the one just loaded
 	}
 
 	void Reset()
@@ -1140,6 +1155,7 @@ namespace Party
 		xpCredit = 0.0f;
 		teleportTarget = 0;
 		pendingTeleport.reset();
+		landingSaveAt.reset();
 		Downed::Reset();
 		pings.Clear();
 		pingLimit.Reset();

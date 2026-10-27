@@ -453,7 +453,8 @@ namespace
 			// after a load runs that load's own work first (RunAfterLoad), or the stand-ins it took out
 			// would be the ones from before the load.
 			// An exception must not go on into the engine's save, which would crash the game and lose the save; each
-			// step is caught on its own, so one that fails does not leave the others' objects in the save.
+			// step is caught on its own (and each of the session's, Session::OnBeforeSaveOrLoad), so one that fails does not
+			// leave the others' objects in the save.
 			try {
 				RunBeforeSaveOrLoad(
 					[] {

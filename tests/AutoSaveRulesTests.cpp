@@ -33,6 +33,19 @@ TEST("autosaves: landing after a teleport autosaves when the player's travel aut
 	CHECK(!AutoSaveRules::Wanted(Why::kNone, { .saveOnTravel = true, .saveOnDown = true }));
 }
 
+TEST("autosaves: a teleport is travel into another cell or worldspace, or across the worldspace both are in, not a hop")
+{
+	using AutoSaveRules::TeleportIsTravel;
+	using AutoSaveRules::TRAVEL_DISTANCE;
+	CHECK(TeleportIsTravel(false, true, 0.0f));    // coc into a friend's interior
+	CHECK(TeleportIsTravel(false, false, 10.0f));  // cow, however near
+	// Both outside in the Commonwealth: SetPosition, no loading screen, and no autosave from the engine either.
+	CHECK(TeleportIsTravel(true, false, TRAVEL_DISTANCE));
+	CHECK(TeleportIsTravel(true, false, 100000.0f));
+	CHECK(!TeleportIsTravel(true, false, TRAVEL_DISTANCE - 1.0f));  // a friend a few steps away
+	CHECK(!TeleportIsTravel(true, true, 100000.0f));                // within one interior
+}
+
 TEST("autosaves: going down autosaves only with the host's bSaveOnDown, never in Survival")
 {
 	CHECK(AutoSaveRules::Wanted(Why::kDown, DOWN_RULE));

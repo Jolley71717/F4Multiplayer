@@ -1574,7 +1574,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - A death loads the newest save (`src/game/AutoSaveRules.h`, tested; `AutoSave.cpp`). The teleport key's
   `coc`/`cow` is not travel to the engine, so it made none of the autosaves a load door or fast travel makes,
   and a bleed-out could take a player back ten minutes or more while the world, caught up from the session,
-  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace now asks for
+  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace, or 3 s after
+  one across the worldspace both players are in (a `SetPosition` farther than an exterior cell), now asks for
   an autosave (`BGSSaveLoadManager::QueueSaveLoadTask(kAutoSave)`) when the player's own `bSaveOnTravel`
   is on; with the host's `bSaveOnDown` (welcome flag bit 64, no protocol version of its own; off) going down
   does too. Neither in Survival, nor within 60 s of the last save of any kind. Going down, a last revive, a

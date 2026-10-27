@@ -19,8 +19,8 @@
 // so the autosave a load door or fast travel makes never came. A bleed-out then took the player back that far, while
 // the world, caught up from the session after the load, looked current: to the player, "the mod gave me an old save".
 // So:
-// - landing after a teleport into a friend's cell or worldspace is travel: an autosave, when the player's own game
-//   setting for travel autosaves (bSaveOnTravel, Settings > Gameplay) is on;
+// - landing after a teleport into a friend's cell or worldspace, or across the worldspace both are in, is travel: an
+//   autosave, when the player's own game setting for travel autosaves (bSaveOnTravel, Settings > Gameplay) is on;
 // - with the host's bSaveOnDown, going down makes an autosave too, so a bleed-out loads the moment the player went
 //   down (a save made while down loads fine: Downed::OnGameLoaded stands the player up as if helped);
 // - never in Survival, where the game saves only in a bed, and none within MIN_GAP of the last save of any kind, so a
@@ -32,6 +32,18 @@ namespace AutoSaveRules
 
 	inline constexpr auto MIN_GAP = 60s;      // no autosave of ours within this long of the last save began
 	inline constexpr auto ANSWER_TIME = 10s;  // a save that begins within this long of our request is ours
+	// A move within the worldspace the player is in (no coc or cow, no loading screen): the autosave waits this long,
+	// for the cells around the new place to load first.
+	inline constexpr auto LANDING_SETTLE = 3s;
+	inline constexpr float TRAVEL_DISTANCE = 4096.0f;  // an exterior cell: a move within one worldspace this far is travel
+
+	// Whether a teleport to a friend is travel, as a load door or fast travel would be: into another cell or worldspace
+	// (a coc or cow), or across the worldspace both are in, farther than an exterior cell (most teleports: both outside).
+	// A hop within one interior, or to a friend a few steps away outside, is not.
+	constexpr bool TeleportIsTravel(bool a_sameSpace, bool a_interior, float a_distance)
+	{
+		return !a_sameSpace || (!a_interior && a_distance >= TRAVEL_DISTANCE);
+	}
 
 	enum class Why
 	{

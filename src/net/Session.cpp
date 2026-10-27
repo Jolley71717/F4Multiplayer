@@ -1557,27 +1557,42 @@ namespace Session
 		// The player's last moves, and what the last frame left to send, go out now, while their world
 		// stands: after a load they would be forgotten (WorldSync::Reset), and sent ahead of the load's
 		// request they are in its answer, numbered before it.
-		WorldSync::FlushLoot();
-		Storage::BeforeSaveOrLoad();  // no save holds the session's things in a friend's copy
-		SendWorldEvents();
-		Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
-		for (auto& packet : Drops::TakeOutgoing()) {
-			if (welcomed) {
-				SendOut(std::move(packet), true);  // a take given back: before the save, as the moves
+		// Each step on its own: one that throws must not keep the rest from running, or a friend's stand-in or a copy
+		// of an item lying in the session would be written into the save (the save goes on: nothing can stop it here).
+		const auto step = [](std::string_view a_what, auto&& a_work) {
+			try {
+				a_work();
+			} catch (const std::exception& e) {
+				REX::ERROR("Session: before the save or load, {}: {}", a_what, e.what());
+			} catch (...) {
+				REX::ERROR("Session: before the save or load, {}: an unknown exception", a_what);
 			}
-		}
-		Spawns::DiscardCopies();  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
-		RemotePlayers::DespawnAll();
-		NpcSync::ReleaseMirrors();
-		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
-		WeaponFire::DropHandThrowables();
-		Downed::OnBeforeSave();
-		MovedObjects::BeforeSaveOrLoad();
-		Destructibles::BeforeSaveOrLoad();
+		};
+		step("the loot", [] { WorldSync::FlushLoot(); });
+		step("the storage", [] { Storage::BeforeSaveOrLoad(); });  // no save holds the session's things in a friend's copy
+		step("the world events", [] { SendWorldEvents(); });
+		step("the drops", [] {
+			Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
+			for (auto& packet : Drops::TakeOutgoing()) {
+				if (welcomed) {
+					SendOut(std::move(packet), true);  // a take given back: before the save, as the moves
+				}
+			}
+		});
+		step("the spawns", [] { Spawns::DiscardCopies(); });  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
+		step("the stand-ins", [] { RemotePlayers::DespawnAll(); });
+		step("the mirrors", [] { NpcSync::ReleaseMirrors(); });
+		step("the shields", [] { WeaponFire::EndAllShields(); });  // a ghost made against a friend's explosion is never saved
+		step("the throwables", [] { WeaponFire::DropHandThrowables(); });
+		step("going down", [] { Downed::OnBeforeSave(); });
+		step("the moved objects", [] { MovedObjects::BeforeSaveOrLoad(); });
+		step("the destructibles", [] { Destructibles::BeforeSaveOrLoad(); });
 		// The session file is never older than our save. (A load asks too; it costs a write.)
-		if (hostedServer) {
-			hostedServer->RequestSave();
-		}
+		step("the session file", [] {
+			if (hostedServer) {
+				hostedServer->RequestSave();
+			}
+		});
 	}
 
 	void Shutdown()
