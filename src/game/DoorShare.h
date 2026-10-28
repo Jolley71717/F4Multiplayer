@@ -128,9 +128,19 @@ namespace DoorShare
 	// At 60 frames a second up to 960 doors are still read every POLL_INTERVAL; past that a sweep takes longer.
 	inline constexpr std::size_t POLL_PER_FRAME = 32;
 
-	// A door just loaded is first read this long after: its scripts are bound by then, and what its cell's scripts do
-	// to it as it loads (a lock set on load) is where it stands in this game, not news.
-	inline constexpr auto LOAD_SETTLE = std::chrono::seconds(2);
+	// A door is first read this long after it loaded, and after our player came out of the loading screen: its scripts
+	// are bound by then, and what its cell's scripts do to it as it loads (a lock set on load: on a heavily modded game
+	// a cell's OnLoad or OnCellAttach runs many seconds behind, and the loading screen itself is time scripts get no
+	// frames in) is where it stands in this game, not news. A lock a script sets after that is a change, and is shared.
+	inline constexpr auto LOAD_SETTLE = std::chrono::seconds(10);
+
+	// Whether a door loaded at a_loadedAt is to be read at a_now, a_inWorldSince being when our player last came into
+	// the world without a break (the end of a loading screen): the later of the two starts the wait.
+	constexpr bool Settled(std::chrono::steady_clock::time_point a_loadedAt, std::chrono::steady_clock::time_point a_inWorldSince, std::chrono::steady_clock::time_point a_now)
+	{
+		const auto since = a_loadedAt > a_inWorldSince ? a_loadedAt : a_inWorldSince;
+		return a_now - since >= LOAD_SETTLE;
+	}
 
 	// The game's load event (TESObjectLoadedEvent) names few of the doors a cell loads: on the rig (2026-10-27) three
 	// of the nineteen doors near the player in Corvega's plant, and none in Sanctuary or Goodneighbor on coming back.

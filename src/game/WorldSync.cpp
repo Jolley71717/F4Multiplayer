@@ -1842,8 +1842,8 @@ namespace WorldSync
 		void PollDoor(std::uint32_t a_id, Clock::time_point a_now, RE::PlayerCharacter* a_player)
 		{
 			const auto loaded = loadedDoors.find(a_id);
-			if (loaded == loadedDoors.end() || a_now - loaded->second < DoorShare::LOAD_SETTLE) {
-				return;  // dropped since the sweep began, or only just loaded
+			if (loaded == loadedDoors.end() || !DoorShare::Settled(loaded->second, applyingSince, a_now)) {
+				return;  // dropped since the sweep began, or only just loaded, or our player only just out of the loading screen
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto forget = [&] {

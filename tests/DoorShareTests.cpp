@@ -489,6 +489,22 @@ TEST("door share: a look at a watched door: a polled door's first read is its ba
 	static_assert(SharedGates::REACH - SharedGates::REPORT_REACH >= 1500.0f - DoorShare::REPORT_REACH);
 }
 
+TEST("door share: a door is first read ten seconds after it loaded and after the loading screen ended, the later of the two")
+{
+	using namespace std::chrono_literals;
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point start{};
+	static_assert(DoorShare::LOAD_SETTLE == 10s);
+	// Loaded with the cell, our player in the world a moment later: a lock the cell's script sets seconds after the
+	// loading screen is where the door stands here, not news.
+	CHECK(!DoorShare::Settled(start, start + 3s, start + 3s));
+	CHECK(!DoorShare::Settled(start, start + 3s, start + 12s));  // 9 s out of the loading screen
+	CHECK(DoorShare::Settled(start, start + 3s, start + 13s));
+	// Found later in the same stay (a cell that attached): ten seconds from the find.
+	CHECK(!DoorShare::Settled(start + 20s, start, start + 29s));
+	CHECK(DoorShare::Settled(start + 20s, start, start + 30s));
+}
+
 TEST("door share: a change held while far outlives the door's cell")
 {
 	using DoorShare::Look;
