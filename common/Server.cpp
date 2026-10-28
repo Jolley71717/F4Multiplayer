@@ -1518,6 +1518,27 @@ void Server::Run()
 	std::size_t       hitBudgetDropped = 0;  // hits on stand-ins past the reporter's damage a second, since the last line
 	std::size_t       deadReminders = 0;     // deaths told again to a game that had the NPC alive (remindDead)
 
+	// The player whose game brings a dead NPC back (handleClaims): the host's own game when it is here. On a dedicated
+	// server, which has no host's game, the player here longest (the lowest id, as handleTime picks the clock), or no
+	// camp cleared in an earlier session would ever fill again. With a host's identity set and its game away, no one.
+	const auto hostPlayer = [&]() -> const Player* {
+		const Player* host = nullptr;
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.local && (!host || other.id < host->id)) {
+				host = &other;
+			}
+		}
+		if (host || options.hostIdentity != 0) {
+			return host;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && (!host || other.id < host->id)) {
+				host = &other;
+			}
+		}
+		return host;
+	};
+
 	// The session has the NPC dead, and this player's game just had it alive: it hit it, offered to run it, or the NPC
 	// hit a stand-in there (its cell reset in that game, or its save is from before the kill). Told its death again, as
 	// the world state would, at most once per Options::remindDeadEvery for each NPC: its game kills its copy (WorldSync's
@@ -1554,26 +1575,21 @@ void Server::Run()
 		// loaded. A reminder is right only once that game has had the chance for aliveAgainGrace and didn't: its world
 		// not stale, its last request older than the grace, its player within loaded-cell reach of where the NPC fell
 		// (or of the reporter when the fall isn't known), in the same space. Until then the joiner fights its own copy,
-		// as before reminders, and the host's arrival revives it for everyone. A dedicated server has no host's game:
-		// the rule stands as it was.
+		// as before reminders, and the host's arrival revives it for everyone. On a dedicated server the player who
+		// stands for the host (hostPlayer) is the one whose game is waited for. The reporter itself, when it is that
+		// player, has no one to wait for.
 		constexpr float REVIVE_REACH = 8192.0f;
-		bool            hostHere = false, hostNear = false;
-		for (const auto& [otherKey, other] : players) {
-			if (!other.welcomed || !other.local) {
-				continue;
-			}
-			hostHere = true;
-			if (other.worldStale || a_now - other.worldAskedAt < options.aliveAgainGrace || !other.hasState || !a_player.hasState) {
-				break;
-			}
+		const auto      host = hostPlayer();
+		const bool      hostHere = host && host != &a_player;
+		bool            hostNear = false;
+		if (hostHere && !host->worldStale && a_now - host->worldAskedAt >= options.aliveAgainGrace && host->hasState && a_player.hasState) {
 			float x = a_player.state.x, y = a_player.state.y, z = a_player.state.z;
 			if (const auto fell = deathPositions.find(a_refId); fell != deathPositions.end()) {
 				x = fell->second[0], y = fell->second[1], z = fell->second[2];
 			}
-			const float dx = other.state.x - x, dy = other.state.y - y, dz = other.state.z - z;
-			hostNear = other.state.cell == a_player.state.cell && other.state.worldspace == a_player.state.worldspace &&
+			const float dx = host->state.x - x, dy = host->state.y - y, dz = host->state.z - z;
+			hostNear = host->state.cell == a_player.state.cell && host->state.worldspace == a_player.state.worldspace &&
 			           dx * dx + dy * dy + dz * dz <= REVIVE_REACH * REVIVE_REACH;
-			break;
 		}
 		if (hostHere && !hostNear) {
 			reminder.since = a_now;  // the host's grace starts when its game is there to offer the NPC
@@ -2275,7 +2291,8 @@ void Server::Run()
 			// WorldSync::MayClaim), and the host's world is the session's, so it is alive again for everyone and runs
 			// in the host's game. Only well after the host's game last asked for the world and after the death, so a
 			// copy alive only in an older save, or one the news of its death has not reached yet, is not taken for it.
-			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server. Nor
+			// A joiner's game can't do this (its world is not the session's). On a dedicated server the player here longest
+			// does it in the host's place (hostPlayer): there is no other game whose world could be the session's. Nor
 			// can the host's game while its last request for the world is unanswered (owed while its budget refills, or
 			// dropped): what it has alive may be from the save it loaded.
 			// An NPC the claiming game keeps essential never died there (its game holds the death: WorldSync::TryKill), so it
@@ -2299,7 +2316,7 @@ void Server::Run()
 			}
 			if (deadActors.contains(claim.refId)) {
 				const auto died = diedAt.find(claim.refId);
-				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
+				const bool cameBack = (a_player.local || &a_player == hostPlayer()) && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
 				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
 				if (!cameBack) {
 					// A joiner's game has it alive (its own cell reset, or an older save): told it is dead, so it kills its copy

@@ -54,6 +54,17 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 999, a_killed }, MT::kReportDeath);
 	}
 
+	// Where the player says they are (outdoors in the Commonwealth unless a_cell names an interior).
+	std::vector<std::uint8_t> StateAt(std::uint32_t a_sequence, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_cell = 0)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.cell = a_cell;
+		state.worldspace = a_cell ? 0 : 0x0000003C;
+		state.x = a_x, state.y = a_y, state.z = a_z;
+		return Protocol::Encode(state);
+	}
+
 	// A death seen happening: the corpse lies at (a_x, 0, 0) in the reporter's game.
 	auto DeathAt(std::uint32_t a_ref, bool a_killed, float a_x)
 	{
@@ -269,44 +280,52 @@ TEST("server world: a report about a dead NPC is dropped with a log line, and th
 	options.aliveAgainGrace = std::chrono::seconds{ 300 };  // the wait before the first reminder: long, crossed with Fixture::Advance
 	options.remindDeadEvery = std::chrono::seconds{ 150 };
 	Fixture    f{ options };
-	const auto alice = JoinAs(f, 1, "Alice");
-	const auto bob = JoinAs(f, 2, "Bob");
-	f.fake->Deliver(2, DeathAt(NPC, true, 1.0f));  // Bob's kill: the corpse lies at (1, 0, 0) for him
+	const auto bob = JoinAs(f, 1, "Bob");
+	const auto alice = JoinAs(f, 2, "Alice");
+	f.fake->Deliver(1, DeathAt(NPC, true, 1.0f));  // Bob's kill: the corpse lies at (1, 0, 0) for him
+	// Bob has been here longest, so on this dedicated server his game stands in for the host's (Server::hostPlayer):
+	// Alice's game is told the death only once his is in reach of the NPC for the grace.
+	f.fake->Deliver(1, StateAt(1, 50.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.Advance(std::chrono::seconds{ 310 });  // past Bob's own grace since he asked for the world
 	Clear(f, { 1, 2 });
 
 	// Alice's game has it alive (her cell reset, or her save is older): her hit on it goes nowhere, nor do her damage
 	// report and her claims. Her game isn't told the death again at once: a host's game walking in beside hers would
 	// offer the NPC in the same moment, and bring it back for everyone.
 	// (The server answers at most 10 heartbeats a second, and each Received sends one: sparingly below.)
-	f.fake->Deliver(1, Health(NPC, 0.5f));
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
-	f.fake->Deliver(1, Claim(NPC));
-	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+	f.fake->Deliver(2, Health(NPC, 0.5f));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
 	CHECK(f.Logged(std::format("health of {:08X} from player {} dropped: the session has it dead", NPC, alice)));
-	const auto toBob = Received(f, 2);
+	const auto toBob = Received(f, 1);
 	CHECK(Count(toBob, MT::kActorHealth) == 0);
 	CHECK(Count(toBob, MT::kActorDamaged) == 0);
 	// Once her game has reported about it for aliveAgainGrace with the NPC still dead, it is told, with where the NPC
 	// fell, as the world state would say.
 	f.Advance(std::chrono::seconds{ 200 });
-	f.fake->Deliver(1, Health(NPC, 0.4f));  // 200 s in: still nothing
+	Clear(f, { 1 });  // Bob's game is still there (a silent one is dropped)
+	f.fake->Deliver(2, Health(NPC, 0.4f));  // 200 s in: still nothing
 	f.fake->Settle();
 	f.Advance(std::chrono::seconds{ 200 });
-	f.fake->Deliver(1, Hit(bob, 10.0f, false, NPC));  // 400 s in; its copy there still fights Bob's stand-in
-	const auto deaths = Decoded(Received(f, 1), MT::kActorDied, Protocol::DecodeActorDeath);
+	Clear(f, { 1 });
+	f.fake->Deliver(2, Hit(bob, 10.0f, false, NPC));  // 400 s in; its copy there still fights Bob's stand-in
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].refId == NPC);
 	CHECK(deaths[0].playerId == 0);
 	CHECK(!deaths[0].killed);
 	CHECK(deaths[0].x == 1.0f);
 	CHECK(f.Logged(std::format("a hit by {:08X} from player {} dropped: the session has it dead", NPC, alice)));
-	CHECK(Count(Received(f, 2), MT::kPlayerDamaged) == 0);
+	CHECK(Count(Received(f, 1), MT::kPlayerDamaged) == 0);
 	// Not again so soon, then once per remindDeadEvery while her game keeps reporting about it.
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
 	f.fake->Settle();
 	f.Advance(std::chrono::seconds{ 200 });
-	f.fake->Deliver(1, Claim(NPC));
-	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
+	Clear(f, { 1 });
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 1);
 }
 
 TEST("server world: a hit by an NPC the reporter's game can't name reaches its victim with no attacker")
@@ -2102,17 +2121,6 @@ TEST("server trust: an explosion is relayed near its reporter, reliably, with no
 
 namespace
 {
-	// Where the player says they are (outdoors in the Commonwealth unless a_cell names an interior).
-	std::vector<std::uint8_t> StateAt(std::uint32_t a_sequence, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_cell = 0)
-	{
-		Protocol::PlayerState state;
-		state.sequence = a_sequence;
-		state.cell = a_cell;
-		state.worldspace = a_cell ? 0 : 0x0000003C;
-		state.x = a_x, state.y = a_y, state.z = a_z;
-		return Protocol::Encode(state);
-	}
-
 	std::vector<std::uint8_t> ExplosionAt(float a_x, float a_y, float a_z, std::uint32_t a_base = 0x0001D2EE)
 	{
 		return Protocol::Encode(Protocol::Explosion{ 0, a_base, a_x, a_y, a_z, 0, 0x0000003C }, MT::kReportExplosion);
