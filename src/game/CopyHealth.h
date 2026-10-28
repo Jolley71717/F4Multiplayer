@@ -290,7 +290,9 @@ namespace CopyHealth
 			// report's heal stands.
 			if (entry.reportedDrop) {
 				const auto [drop, at] = *entry.reportedDrop;
-				if (entry.ourHit && *entry.ourHit >= at - OURS_GRACE) {
+				// Only a hit whose event came within JUDGE_AFTER of the report: Check may not have run since (the copy had no
+				// 3D), and a hit long after is nothing of the drop the report healed back.
+				if (entry.ourHit && *entry.ourHit >= at - OURS_GRACE && *entry.ourHit <= at + JUDGE_AFTER) {
 					const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
 					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
 					entry.ours += take;

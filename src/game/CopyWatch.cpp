@@ -505,7 +505,8 @@ namespace CopyWatch
 		// not lose the hit booked in it, the bleed's window, or a held report.
 		book.Prune([&](std::uint32_t a_id) {
 			const auto it = copiesSeen.find(a_id);
-			return it != copiesSeen.end() && now - it->second <= COPY_SEEN_KEPT;
+			// ... but not one our game runs now (or the session's end made nobody's): its health is not the book's to keep.
+			return it != copiesSeen.end() && now - it->second <= COPY_SEEN_KEPT && OtherOwner(a_id) != 0;
 		});
 		std::erase_if(lastHits, [&](const auto& a_entry) { return now - a_entry.second.at > LAST_HIT_KEPT; });
 

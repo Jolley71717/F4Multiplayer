@@ -639,3 +639,16 @@ TEST("copy hits: a book pruned with a grace keeps what a hit booked in a frame t
 	gone.Prune(seenAt(RAIDER_1, t0 - seconds{ 6 }));
 	CHECK(gone.Size() == 0);
 }
+
+TEST("copy hits: a drop a report found is not taken by a hit that comes long after, even if the copy was not checked meanwhile")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	// The copy had no 3D for a while: no Check between. A hit of ours 800 ms on is its own; the report's heal stands.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 800 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 800 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+}
