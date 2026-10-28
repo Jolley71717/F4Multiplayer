@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T16:25:47+00:00",
+ "updated": "2026-10-28T21:05:55+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -17,7 +17,7 @@
    "title": "Alternate-start mods work in a session like the Vault 111 start",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release, but not yet tried with a real alternate-start mod; waiting for the long test.",
    "pr": 176,
    "desc": "New characters normally play Vault 111 alone and then join, and alternate-start mods were untested with that. A character from an alternate start has the wrong identity until it is named, so it could not reliably host or join. The next release treats such a character like a Vault 111 one: it can host or join once it has a name. We have not been able to try it with a real alternate-start mod yet, so reports are welcome."
@@ -27,7 +27,7 @@
    "title": "Power armor frames duplicate and appear in odd places in Sanctuary",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release: a 0.9.1 leftover frame now goes; tested in two games.",
    "pr": 188,
    "partial": "0.9.2",
@@ -38,7 +38,7 @@
    "title": "Log pointers and 3D state around the save-time respawn, to name the ref in an engine use-after-free",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 214
   },
@@ -67,7 +67,7 @@
    "title": "The host's Dogmeat is invisible to a friend indoors",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; tested with another companion, not yet with Dogmeat himself.",
    "pr": 152,
    "desc": "A player reported on 0.9.1 that the host's Dogmeat could not be seen by the client inside interiors. The fix brings a companion that followed its player into an interior to the friend's game there too. On two real games we tested it with Codsworth standing in for Dogmeat."
@@ -86,7 +86,7 @@
    "title": "Power armor loans: a lent kit is lost at every return, and the borrower can't get out after the owner loads or leaves",
    "kind": "bug",
    "priority": 0,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; the owner keeps the kit, and the borrower gets out after a load",
    "pr": 224
   },
@@ -104,7 +104,7 @@
    "title": "'You cannot use this at this time' when entering power armor",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged again: one cause fixed and the log now says why a frame is refused; the original case still not reproduced.",
    "pr": 153,
    "partial": "0.9.0",
@@ -133,7 +133,7 @@
    "title": "A dedicated server doesn't retry a failed session save",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested with the dedicated server and in the game.",
    "pr": 190,
    "desc": "The dedicated server saves its session by replacing the session file. On Windows that can fail if another program, such as antivirus, has the file open. The time of day doesn't count as a change, so a failed save is not tried again until something else changes and the saved time can be out of date. We plan to retry a failed save at the next check."
@@ -143,7 +143,7 @@
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "The rig test found the redraw held back by mistake; being fixed.",
    "pr": 202
   },
@@ -162,7 +162,7 @@
    "title": "A legendary enemy in one game is a normal one in another",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release: a copy's own heal no longer sticks; tested in two games.",
    "pr": 187,
    "partial": "0.9.2",
@@ -173,7 +173,7 @@
    "title": "Heavily sculpted faces look warped on friends",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; we couldn't test a face that large, so it still needs confirming.",
    "pr": 155,
    "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
@@ -183,7 +183,7 @@
    "title": "Compare mods lists the HD texture pack as missing",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; waiting for the long test before it ships.",
    "pr": 151,
    "desc": "The mod comparison listed DLCUltraHighResolution.esm as missing on a game that has the file. It is a texture pack with no game records, so one player having it and another not makes no difference in a session. The next release leaves it out of the comparison. We tested it on two real games with the pack on only one."
@@ -211,7 +211,7 @@
    "title": "Give a friend weapons and armor through a chest",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Built behind the host setting bContainerGifts (off by default) and checked; the test on two real games is still to do.",
    "pr": 180,
    "desc": "Players tried dropping items and putting them in containers to give to each other. Since 0.9.0 you can hand items over by dropping them. This work adds weapons and armor through any chest, cabinet or safe: it goes to the first friend who takes it, and the server makes sure it is never in two inventories or lost. It is a host setting, bContainerGifts, off by default."
@@ -230,7 +230,7 @@
    "title": "A chest a friend emptied while away still holds items for you",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release: a take from a far chest now waits for the chest; tested in two games.",
    "pr": 191,
    "partial": "0.9.0",
@@ -241,7 +241,7 @@
    "title": "Shared storage: one true copy of each home and settlement container",
    "kind": "feature",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Built and tested on two real games, off by default behind bSharedStorage; a few stress cases wait for the long test.",
    "pr": 179,
    "desc": "Players asked for items in shared storage to stay in step across games. Until now each game held its own copy of a container, so copies could drift: a friend's take removed that item type from your stash, or a load quietly rolled one copy back. With the host setting bSharedStorage on, the host's game keeps the one true copy of each home and settlement container, and everyone's takes and puts go through it. Only ammo, aid and junk are shared this way; weapons, armor, keys and notes stay per player."
@@ -251,7 +251,7 @@
    "title": "NPCs walk or path oddly in a session",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games, the 6-hour soak still to come.",
    "pr": 193,
    "desc": "A player reported that enemies or other characters move oddly in a session, with other mods installed. We do not know yet which characters, in whose game, or how. A log and an example of where it happens would help."
@@ -270,7 +270,7 @@
    "title": "Misleading storage messages in the log after shared storage settles",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 181,
    "desc": "While testing shared storage we saw two log messages that read as if items went missing when they did not. Item counts stayed correct throughout. We plan to reword or remove those messages so they don't worry anyone reading the log."
@@ -280,7 +280,7 @@
    "title": "After being helped up from going down while sneaking, the sneak key stops working",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 210
   },
@@ -289,7 +289,7 @@
    "title": "Pre-rc review fixes: items and shared storage",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 221
   },
@@ -298,7 +298,7 @@
    "title": "After dying and reloading, you often can't damage enemies",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; checked in two games, not every case could be set up.",
    "pr": 192,
    "partial": "0.9.0",
@@ -318,7 +318,7 @@
    "title": "Codsworth's search for Shaun finished for one player, not the other",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; the Codsworth search itself not yet tried in two games.",
    "pr": 196,
    "partial": "0.9.2",
@@ -329,7 +329,7 @@
    "title": "After a revive you can sink into the ground",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 195,
    "desc": "After being revived, a player can end up partly inside the ground on their own screen, while friends see them moving normally."
@@ -339,7 +339,7 @@
    "title": "Some settlement pieces built in workshop mode don't show for a friend",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Mostly fixed since 0.9.0, with more for the next release; waiting for the long test.",
    "pr": 171,
    "partial": "0.9.0",
@@ -359,7 +359,7 @@
    "title": "Friends' lights stay dark in your game",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "A fix for the next release; not yet tried in a powered camp, so it still needs confirming.",
    "pr": 156,
    "desc": "In a four-player camp on 0.9.1, lights one player built did not light up for the others, who needed their own generator and circuit. We suspect the game's own setup of a new object leaves a piece dark after we show it. The next release shows a friend's powered copy once more after its new object has settled for two seconds. We had no powered camp to test with, so it is unconfirmed."
@@ -369,7 +369,7 @@
    "title": "A holstered weapon still shows on a friend",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 201,
    "desc": "Sometimes a friend put their weapon away but it stayed in their hand on your screen. The game's 'putting away' state was being read as 'already away', so when the friend's figure missed the holster (mid-throw or mid-reload) it was never asked again. Now it waits for the holster to finish and asks again if it stalls."
@@ -379,7 +379,7 @@
    "title": "Host options to make being downed and revived harder",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Shipped in 0.9.0; the next release also tells joiners the host's rules. Waiting for the long test.",
    "pr": 158,
    "partial": "0.9.0",
@@ -399,7 +399,7 @@
    "title": "Pre-rc review fixes: server and session",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 223
   },
@@ -416,7 +416,7 @@
    "title": "Power armor loans: after a borrower gets out away from where the frame stood, their game keeps its copy at the old spot (an extra suit) and has none to borrow at the new spot for minutes",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; one suit where the borrower got out",
    "pr": 227
   },
@@ -425,7 +425,7 @@
    "title": "Borrow a friend's parked power armor frame",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 182,
    "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
@@ -444,7 +444,7 @@
    "title": "One player can't damage wild enemies until the other has",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 194,
    "partial": "0.9.1 and 0.9.2",
@@ -464,7 +464,7 @@
    "title": "Can't move right after joining",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
    "pr": 157,
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
@@ -474,7 +474,7 @@
    "title": "Objects a friend built flicker or look blurry",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; waiting for the long test before it ships.",
    "pr": 160,
    "desc": "Objects another player placed sometimes vibrated or looked blurry on and off, most likely two copies at the same spot. The next release places a friend's building only once the area is loaded in your game, and removes doubled copies a save holds. On two real games a piece waited while the friend was elsewhere, was placed once on return, and scrapped cleanly."
@@ -484,7 +484,7 @@
    "title": "Friends' run, walk and jump animations lag",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "A change for the next release; we can't yet say how much it helps.",
    "pr": 161,
    "desc": "A player reported that a friend's run, walk and jump animations lagged. The next release makes a friend who sets off from standing move at the right pace at once, instead of at the slowest rate. In testing the movement measured the same as before, so we can't yet say how much it helps."
@@ -503,7 +503,7 @@
    "title": "Downed players can crawl toward their friend",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Built for the next release, experimental and off by default (bDownedCrawl); the crawl itself is untested.",
    "pr": 165,
    "desc": "Players asked to be able to crawl while downed, to reach a friend or cover. The next release adds an experimental host setting, bDownedCrawl, off by default. With it on, a downed player crawls slowly with the movement keys; a wall, ledge, railing or lack of ground stops it, and so does being within helping range of a friend. We could only test that the setting reaches every game, not the crawling itself."
@@ -513,7 +513,7 @@
    "title": "Enemy death animations play late for the client",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; not yet tried with real shots.",
    "pr": 170,
    "desc": "A player reported that enemies' death animations played late on the client's screen. The next release reports an enemy as dead as soon as it starts to fall, so friends see the death without a three second wait. On two real games a kill was counted once and the corpses ended up in the same place."
@@ -523,7 +523,7 @@
    "title": "Pre-rc review fixes: power armor loans and frames",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged",
    "pr": 222
   },
@@ -532,7 +532,7 @@
    "title": "A friend's grenade or Molotov stays stuck in their hand",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 201,
    "desc": "Sometimes a friend's grenade or Molotov stayed visible in their hand after the throw. We found why nothing ever hid it again, but not what makes it show in the first place. The next release hides a grenade left in the hand between throws, and the log records when it happens so the cause can be found."
@@ -551,7 +551,7 @@
    "title": "Power armor loans: after loading a save made inside a borrowed frame, the borrower's game briefly shares its loaded lent copy as its own frame; the owner could borrow a copy holding their own lent pieces (possible dupe)",
    "kind": "bug",
    "priority": 0,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged",
    "pr": 227
   },
@@ -560,7 +560,7 @@
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 203,
    "desc": "Each game rolls its own loot for world containers and corpses. Before, when one player took everything from one, the others lost their whole copy of it too, but if one item was left they kept it all. Now a friend emptying a container takes from your copy only what is left of the items they actually took. Your own roll's other items, items your mods add, and anything you put there yourself stay."
@@ -570,7 +570,7 @@
    "title": "Show a friend's LooksMenu look on their character",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Shipped in 0.9.0 but not yet tried with LooksMenu installed; the next release adds a save fix.",
    "pr": 174,
    "partial": "0.9.0",
@@ -581,7 +581,7 @@
    "title": "Explosions from enemies you can't see hit you (DLC you don't own)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; blasts thrown by enemies aren't tested yet.",
    "pr": 167,
    "desc": "If the host has a DLC you don't own, its enemies are not shown in your game, but their explosions could still hit you. The next release names the enemy that set off a blast, so a game without a copy of that enemy doesn't set the blast off. Players' grenades were tested both ways on two real games."
@@ -591,7 +591,7 @@
    "title": "Friends appear out of power armor after the game was quit in it",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 206,
    "partial": "0.9.2",
@@ -620,7 +620,7 @@
    "title": "An enemy is hostile in one game, friendly in another, heals when shot",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 194,
    "partial": "0.9.1 and 0.9.2",
@@ -640,7 +640,7 @@
    "title": "Molotov and fire damage moves who can hurt an enemy",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; Molotov fire itself not yet tried in a real game.",
    "pr": 194,
    "partial": "0.9.0",
@@ -660,7 +660,7 @@
    "title": "An enemy spawned in the host's game can't be taken over by the joiner",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "By design the host's game keeps its spawned enemies; hits always land. The log now says so; reviewed.",
    "pr": 211
   },
@@ -678,7 +678,7 @@
    "title": "Doors and gates opened by scripts stay shut for friends (Vault 114)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; script-locked doors tested in two games; Vault 114 itself not yet.",
    "pr": 189,
    "partial": "0.9.0 and 0.9.2",
@@ -708,7 +708,7 @@
    "title": "Knocked clutter ends in different places when friends stand by it",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Much closer now; small leftovers tracked separately",
    "pr": 213
   },
@@ -717,7 +717,7 @@
    "title": "A friend's game loaded an older save than expected",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 186,
    "desc": "A player reported that their friend ended up with a save from about ten minutes earlier instead of the latest one. Progress may have been lost, so this is a high priority. We need to know which save was loaded (quick, auto or exit save) and the logs from both games."
@@ -727,7 +727,7 @@
    "title": "Tutorial hints off in a session, and menus that pause the game",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Hints off since 0.9.0; the next release adds a hand-off so enemies don't freeze while someone is in a menu.",
    "pr": 168,
    "partial": "0.9.0",
@@ -738,7 +738,7 @@
    "title": "Leftover power armor frame copies pile up at one spot",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged: no more leftover copies, and a player's own frames are kept; tested in two games.",
    "pr": 209
   },
@@ -747,7 +747,7 @@
    "title": "A friend doesn't see the Prydwen arrive",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; checked in two games, the real flyover not yet.",
    "pr": 205,
    "desc": "A friend didn't see the Prydwen arrive. Each game showed the airship moored at Boston Airport only when its own flyover ended, so a friend indoors, far away or on their own story never got it. The next release shares the moored airship as soon as it arrives in any game, and waits while the friend's own flyover is still in the air so there is never a second one."
@@ -757,7 +757,7 @@
    "title": "Power armor loans: the borrower's frame copy loses the lent kit within 0.3 s of the lend, so a borrower wears an empty frame",
    "kind": "bug",
    "priority": 0,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; a borrower wears the full lent kit",
    "pr": 226
   },
@@ -793,7 +793,7 @@
    "title": "A friend's Raider chest piece shows with the wrong mods",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; a plain piece and power armor pieces weren't tested.",
    "pr": 163,
    "desc": "Armor on friends looked right except the Raider chest piece, which was armored in one game and plain in another because a friend's game rolled its own mods onto it. The next release sends a plain piece as plain. A modded chest piece and a leather swap matched in testing on two real games."
@@ -803,7 +803,7 @@
    "title": "After a revive you can be stuck sneaking",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 195,
    "desc": "After being revived, a player can stay crouched in sneak until they get themselves out of it."
@@ -813,7 +813,7 @@
    "title": "Moved objects don't reach a friend who loads the area later",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games, including a late joiner.",
    "pr": 185,
    "desc": "A moved object only reached games that had it loaded at that moment, so a friend arriving later saw it in the old place. The next release keeps where moved objects came to rest in the session, so a game that loads the area later puts them there too."
@@ -823,7 +823,7 @@
    "title": "Pre-rc review fixes: combat, downing, NPC health",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 220
   },
@@ -832,7 +832,7 @@
    "title": "A new character gets back gifts the old one took",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed; checked in two games; waits on the chest redraw fix in the same change.",
    "pr": 202
   },
@@ -841,7 +841,7 @@
    "title": "Pip-Boy and menus that don't pause the game in a session",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Not working yet: our first attempt was dropped. Groundwork for the next attempt is in the next release.",
    "pr": 169,
    "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
@@ -860,7 +860,7 @@
    "title": "An extra power armor frame after saving while a companion steps out",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed for the next release; we couldn't test it with a companion in a frame.",
    "pr": 164,
    "desc": "If the game saved in the few seconds a companion was stepping out of a friend's frame copy, loading that save brought the copy back as an ordinary frame, one extra suit. The next release still sends the companion out after that load, so the copy no longer comes back. 0.9.2 lists this as a known issue."
@@ -870,7 +870,7 @@
    "title": "Pre-rc review fixes: world sync, doors, menus",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 219
   },
@@ -879,7 +879,7 @@
    "title": "A constant clicking noise starts when someone joins or leaves",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged: the log now names the source of repeated sounds; waiting for a report from a game that clicks.",
    "pr": 200,
    "desc": "Some players hear a constant clicking after someone joins or leaves. We could not find the cause from the code alone, so the next release counts every sound the mod makes the game play and writes a line to the log when one repeats far more than normal play does. A friend's voice chat is the main suspect."
@@ -889,7 +889,7 @@
    "title": "A friend's shots look aimed at you",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 204,
    "partial": "0.9.2",
@@ -909,7 +909,7 @@
    "title": "Enemies that heal on every hit can't hurt the client",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release: stuck damage ghosts come off; tested in two games.",
    "pr": 194,
    "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
@@ -919,7 +919,7 @@
    "title": "An opened chest briefly shows loot a friend already took",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; in testing the takes were already in before the chest was opened.",
    "pr": 208
   },
@@ -928,7 +928,7 @@
    "title": "Some explosions aren't shared, like gas canisters",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "A gas canister was shared in testing; logging now names anything that isn't",
    "pr": 217,
    "desc": "Explosions from things a player shoots should happen once in every game. 0.9.2 covered cars, barrels and fuel tanks; gas canisters and similar small props still need checking."
@@ -939,7 +939,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 5,
-   "note": "Logging merged; the rig shares every Mr Gutsy, so the log will name the cause if it happens live",
+   "note": "Logging shipped in 0.10.0; waiting for a live report to name the cause",
    "pr": 225
   },
   {
@@ -964,7 +964,7 @@
    "title": "Pre-save flush re-logs refs marked for deletion at every later save",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 215
   },
@@ -973,7 +973,7 @@
    "title": "Travel autosave: read bSaveOnTravel from the Prefs collection's bare key before the ini file",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 216
   },
@@ -982,7 +982,7 @@
    "title": "A knocked object that rolls on shows in the wrong place for a friend",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release; tested with the friend away from the object.",
    "pr": 207
   },
