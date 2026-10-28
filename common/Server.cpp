@@ -2170,6 +2170,9 @@ void Server::Run()
 			log(std::format("server: player {}'s storage moves can't all be put right ({} changes, past their share of the container table or a full one); "
 							"none is made, and storage others keep stays closed to them until a later settle can",
 				a_player.id, planned));
+			// Their game thinks it settled (one settle a catch-up): it is told, once, so its player is too and not left to
+			// find every shared chest closed one by one.
+			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ 0, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
 		}
 		if (undone + redone != 0) {
 			storageUndone += undone + redone;

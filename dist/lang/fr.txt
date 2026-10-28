@@ -151,6 +151,7 @@ storage.closed = La copie de l'hôte de ce conteneur n'est pas ouverte pour l'in
 storage.take_refused = Ce n'était plus dans le conteneur de l'hôte (un ami l'a pris avant vous ?) : c'est retourné
 storage.put_refused = Ça ne pouvait pas aller dans le conteneur de l'hôte (son jeu n'a pas le mod ?) : vous l'avez récupéré
 storage.short = Le conteneur contenait moins qu'il n'affichait : ce qui n'y était pas a été repris
+storage.settle_cut = Vos déplacements dans les conteneurs de l'hôte n'ont pas pu être tous remis en ordre après votre chargement (le journal de la session est plein, ou votre part est épuisée) : ils restent fermés pour vous jusqu'au prochain chargement
 gifts.given = Vos amis peuvent maintenant le prendre dans leur copie du conteneur (le premier qui le prend le garde) ; d'ici là, vous pouvez le reprendre
 gifts.not_given = Vos amis ne recevront pas cet objet : il reste dans votre copie du conteneur seulement (un objet de quête, un mod que seul votre jeu a, ou la session est pleine)
 gifts.taken_first = Un ami l'a pris avant vous

@@ -147,6 +147,7 @@ storage.closed = La copia del anfitrión de este contenedor no está abierta aho
 storage.take_refused = Eso ya no estaba en el contenedor del anfitrión (¿lo tomó antes un amigo?): regresó
 storage.put_refused = Eso no podía ir al contenedor del anfitrión (¿a su partida le falta el mod?): se te devolvió
 storage.short = El contenedor tenía menos de lo que mostraba: lo que no estaba se retiró
+storage.settle_cut = Tus movimientos en los contenedores del anfitrión no se pudieron corregir del todo tras cargar (el registro de la sesión está lleno o se agotó tu parte): seguirán cerrados para ti hasta que vuelvas a cargar
 gifts.given = Tus amigos ya pueden tomarlo de su copia del contenedor (quien lo tome primero se lo queda); mientras tanto puedes recuperarlo
 gifts.not_given = Esto no les llega a tus amigos: se queda solo en tu copia del contenedor (un objeto de misión, un mod que solo tiene tu partida, o la sesión está llena)
 gifts.taken_first = Un amigo lo tomó primero

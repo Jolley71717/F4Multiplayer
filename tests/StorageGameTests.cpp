@@ -1421,15 +1421,21 @@ TEST("shared storage: undoing and doing again one's own moves counts against one
 		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
 		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ ++asked, 4, 0, std::move(a_lacking), {} }));
 		Pace(FRIEND_PEER);
-		Received(f, FRIEND_PEER);
+		return Received(f, FRIEND_PEER);
 	};
 	settle({ 0, 1, 2, 3 });
 	CHECK(numbered() == 4);  // undone: their share is 8 of 12 now
 	settle({});
 	CHECK(numbered() == 4);  // done again: 12 of 12
 	for (int i = 0; i < 5; ++i) {
-		settle({ 0, 1, 2, 3 });
+		const auto answer = settle({ 0, 1, 2, 3 });
 		CHECK(numbered() == 0);  // nothing more of theirs goes in the log
+		// Their game is told its settle was cut, once for each: no container, all of storage others keep.
+		const auto cut = Decoded(answer, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+		REQUIRE(cut.size() == 1);
+		CHECK(cut[0].container == 0);
+		CHECK(cut[0].item == 0);
+		CHECK(cut[0].reason == Protocol::StorageReason::kClosed);
 	}
 	CHECK(f.Logged("can't all be put right"));
 	CHECK(f.Logged("their share"));

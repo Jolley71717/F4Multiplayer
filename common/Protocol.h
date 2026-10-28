@@ -731,7 +731,9 @@ namespace Protocol
 	};
 
 	// kStorageRefused: the sender's move (container, item, count as reported) didn't go through, all of it, or for kShort
-	// `count` of a numbered take (index). item 0: the sender's view of the container closed (reason kClosed).
+	// `count` of a numbered take (index). item 0: the sender's view of the container closed (reason kClosed). Container 0
+	// with item 0: storage others keep is closed to the sender altogether, as their settle after a load could not be made
+	// (past their share of the log, or a full one), until a later load's settle can.
 	struct StorageRefusal
 	{
 		std::uint32_t container = 0;
@@ -3269,7 +3271,8 @@ namespace Protocol
 		msg.count = static_cast<std::int32_t>(r.U32());
 		msg.index = r.U32();
 		const auto reason = r.U8();
-		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.container) || reason < 1 || reason > static_cast<std::uint8_t>(StorageReason::kNotViewing) ||
+		const bool closedToAll = msg.container == 0 && msg.item == 0 && msg.index == STORAGE_NOT_NUMBERED && reason == static_cast<std::uint8_t>(StorageReason::kClosed);
+		if (!r.Ok() || !r.AtEnd() || !(IsShareableRef(msg.container) || closedToAll) || reason < 1 || reason > static_cast<std::uint8_t>(StorageReason::kNotViewing) ||
 			msg.count < -MAX_ITEM_COUNT || msg.count > MAX_ITEM_COUNT || ((msg.item == 0) != (msg.count == 0))) {
 			return std::nullopt;
 		}

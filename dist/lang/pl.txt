@@ -149,6 +149,7 @@ storage.closed = Kopia tego pojemnika u hosta nie jest teraz otwarta (jest od ni
 storage.take_refused = Tego już nie było w pojemniku hosta (znajomy wziął to pierwszy?): wróciło
 storage.put_refused = To nie mogło trafić do pojemnika hosta (jego grze brakuje moda?): wróciło do ciebie
 storage.short = Pojemnik miał mniej, niż pokazywał: tego, czego nie było, cofnięto
+storage.settle_cut = Twoje ruchy w kontenerach gospodarza nie mogły zostać w całości naprawione po wczytaniu (dziennik sesji jest pełny albo twój udział się wyczerpał): pozostaną dla ciebie zamknięte do następnego wczytania
 gifts.given = Znajomi mogą to teraz wziąć ze swojej kopii pojemnika (kto weźmie pierwszy, ten ma); do tego czasu możesz to odebrać
 gifts.not_given = Znajomi tego nie dostaną: zostaje tylko w twojej kopii pojemnika (przedmiot z zadania, mod, który ma tylko twoja gra, albo sesja jest pełna)
 gifts.taken_first = Znajomy wziął to pierwszy
