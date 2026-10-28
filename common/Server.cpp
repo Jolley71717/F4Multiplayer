@@ -3419,15 +3419,16 @@ void Server::Run()
 			closeOwnViews(a_player);
 		}
 		++a_player.worldAsked;  // the world state that answers it carries the count either way (Protocol::StorageCaughtUp)
-		if (!gap) {
+		if (!gap) {  // a load (or a request that doesn't decode)
 			a_player.storageSettled = !options.rules.sharedStorage;
+			// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
+			// Options::reloadToldEvery for a player (a game asking over and over has every other game resend its runs); one asked
+			// for sooner goes when that time is up (a second load at once threw away what the first had resent).
+			tellReloaded(a_player, Clock::now());
+			// A frame lent to them goes back as it was lent: the loaded game no longer wears it (FrameLoan::AfterLoad). Not at a
+			// gap: its game still wears the frame, and an ended loan would leave the frame its owner's no more under them.
+			endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id; });
 		}
-		// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
-		// Options::reloadToldEvery for a player (a game asking over and over has every other game resend its runs); one asked for
-		// sooner goes when that time is up (a second load at once threw away what the first had resent).
-		tellReloaded(a_player, Clock::now());
-		// A frame lent to them goes back as it was lent: the loaded game no longer wears it (FrameLoan::AfterLoad).
-		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id; });
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.
