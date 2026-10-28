@@ -625,16 +625,21 @@ namespace RemotePlayers
 			}
 		}
 
-		// Our own player is in this frame, or left it last: their own suit, wherever it stands.
+		// Our own player is in this frame (getting in, or wearing it), or left it last: their own suit, wherever it stands.
 		bool OurFrame(RE::TESObjectREFR* a_frame)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			if (!player) {
 				return false;
 			}
+			if (!a_frame) {
+				return false;
+			}
 			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
 			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-			return (occupied && occupied.get() == a_frame) || player->lastUsedPowerArmor.get().get() == a_frame;
+			// Worn all the way in, only the engine's worn frame names it (FriendFrame::Ours).
+			return FriendFrame::Ours({ .seated = occupied && occupied.get() == a_frame, .wearing = Equipment::PowerArmorFrameOf(player).get() == a_frame,
+				.lastUsed = player->lastUsedPowerArmor.get().get() == a_frame });
 		}
 
 		// Another actor in our game (but a_except, the stand-in the frame is for) is in this frame: getting in (the seat) or

@@ -84,9 +84,26 @@ namespace FriendFrame
 	// copy placed anew), and what is done with it then. Nothing buries a copy with anyone in it: an NPC all the way in
 	// wears it (the engine disabled it and cleared the seat), and burying it left them in a frame that was gone, or wrote
 	// a save whose companion wears a frame the save does not have, which the engine fails on as it loads that save.
+	// How our player holds a frame, as the engine tells it.
+	struct OurHold
+	{
+		bool seated = false;    // the furniture they sit in: getting in
+		bool wearing = false;   // the engine's worn frame (ExtraPowerArmor's): all the way in
+		bool lastUsed = false;  // the frame they got out of last
+	};
+
+	// Whether a frame is our player's (Facts::ours, Holders::ours). All the way in, the engine has cleared the seat and has
+	// no last frame for them yet: only its worn frame names it. Read from the seat and the last frame alone, a copy our
+	// player wore on loan was taken for nobody's and buried from under them (its owner's game sharing it again after a
+	// load, or the session ending), and the engine's exit from it never finished: E did nothing, its input layer left on.
+	constexpr bool Ours(const OurHold& a_hold)
+	{
+		return a_hold.seated || a_hold.wearing || a_hold.lastUsed;
+	}
+
 	struct Holders
 	{
-		bool ours = false;        // our player is in it, getting in, or got out of it last
+		bool ours = false;        // our player is in it (getting in, or wearing it), or got out of it last (Ours)
 		bool sendingOut = false;  // someone our game sends out of it (SendsOut) is in it, getting in, or on their way out
 		bool inUse = false;       // anyone else here is in it or getting in (a friend's NPC, say)
 	};
