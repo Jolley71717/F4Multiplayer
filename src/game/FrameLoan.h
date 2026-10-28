@@ -19,9 +19,10 @@
 // pieces and its fusion core) off the frame and sends it; the borrower's game puts copies of it into its copy of the
 // frame, each named as the owner's ("Sam's T-60 Left Arm") so it never stacks with the borrower's own and can be found
 // again. The borrower gets in and out through the engine's own activation. As they get out, every named item is
-// gathered from the copy and from the borrower, its condition read and the item removed, and the copy goes back to
-// being the spawn's: the owner's game moves its frame to where they left it and wears its pieces down to what came
-// back. A return can only lower a condition.
+// gathered from the copy and from the borrower (one whose name was lost, by its base from the copy: TakeUnnamed), its
+// condition read and the item removed, and the copy goes back to being the spawn's: the owner's game moves its frame
+// to where they left it and wears its pieces down to what came back. A return can only lower a condition, and never
+// takes anything of the owner's (AfterReturn).
 namespace FrameLoan
 {
 	using Clock = std::chrono::steady_clock;
@@ -197,9 +198,9 @@ namespace FrameLoan
 	};
 
 	// The return's word on each lent item our copies were made of, in slot order: found, with its condition (the lowest,
-	// should one be found twice), or not found: it left our copy and our player (dropped, sold, stored, a core used up), and
-	// the owner takes theirs out (AfterReturn). With our copy gone (a_copyGone: unloaded with its cell, what was in it with
-	// it) one not found is left out instead: it went with the copy, and the owner keeps theirs.
+	// should one be found twice), or not found: our game could not find it (dropped, sold, stored, a core used up, or a
+	// copy that lost its name), and the owner keeps theirs as it is (AfterReturn). With our copy gone (a_copyGone:
+	// unloaded with its cell, what was in it with it) one not found is left out: it went with the copy.
 	inline std::vector<Protocol::ReturnedItem> ComposeReturn(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found, bool a_copyGone = false)
 	{
 		std::vector<Protocol::ReturnedItem> out;
@@ -230,6 +231,28 @@ namespace FrameLoan
 			out.resize(Protocol::MAX_LENT_ITEMS);
 		}
 		return out;
+	}
+
+	// The tags of a_tags of which no item was found (by slot).
+	inline std::vector<Tag> NotFound(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found)
+	{
+		std::vector<Tag> out;
+		for (const auto& tag : a_tags) {
+			if (std::ranges::none_of(a_found, [&](const Found& a_item) { return a_item.slot == tag.slot; })) {
+				out.push_back(tag);
+			}
+		}
+		return out;
+	}
+
+	// How many lent items of one base, not found by their names (a_unfound), are taken from our copy all the same, as items
+	// of that base it still holds (a_inCopy). The copy was emptied before the kit went in, and nothing gets into it but off
+	// our player: their own pieces, which may stand in for a lent one of the same base, and their own fusion cores the
+	// engine moved in as the lent one ran down (a_reserved: what goes back to them, GiveRest), never taken. A copy left
+	// behind would be a second of the owner's item, which they keep (AfterReturn).
+	constexpr std::int32_t TakeUnnamed(std::int32_t a_unfound, std::int32_t a_inCopy, std::int32_t a_reserved)
+	{
+		return (std::max)(0, (std::min)(a_unfound, a_inCopy - (std::max)(a_reserved, 0)));
 	}
 
 	// ---- The owner's side -----------------------------------------------------------------------------------
@@ -298,15 +321,16 @@ namespace FrameLoan
 		return a_back.health < lent ? std::optional<float>{ a_back.health } : std::nullopt;
 	}
 
-	// What becomes of one lent item of the owner's as a return comes in. Kept as it is when the return says nothing of it
-	// (the borrower's game never made its copy: a mod it lacks), worn down when it came back lower (HealthAfter), and taken
-	// out of the owner's frame when it did not come back at all: its copy left the borrower's frame and player (dropped,
-	// sold, stored, a core used up), so the owner keeping theirs would make it two.
+	// What becomes of one lent item of the owner's as a return comes in: worn down when it came back lower (HealthAfter),
+	// else kept as it is. Kept too when the return says nothing of it (the borrower's game never made its copy: a mod it
+	// lacks) or says it was not found: "not found" is only our game failing to find a copy, never word that the borrower
+	// kept one, and taking the owner's out on it lost every lent kit at its return (0 of 6 found on the rig, after the
+	// borrower's copies were worn). A copy the borrower's game could not gather is theirs to give up (FrameLoans), never
+	// the owner's to lose.
 	enum class Back
 	{
 		kKeep,
 		kWear,
-		kRemove,
 	};
 
 	struct AfterBack
@@ -321,9 +345,6 @@ namespace FrameLoan
 	{
 		if (!a_back) {
 			return {};
-		}
-		if (!a_back->found) {
-			return { .what = Back::kRemove };
 		}
 		if (const auto health = HealthAfter(a_lent, *a_back)) {
 			return { .what = Back::kWear, .health = *health };

@@ -454,12 +454,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   cleared as an older version's copy (`FrameShare::Ghost`) and stands for no friend's frame at its spot
   (`FrameShare::StandsFor`), and the borrower's copy is kept whatever of their own stands where the owner's game has it
   (no `oursThere` while lent). As they get out (2 s settled, and out of power armor) the copies are gathered from the
-  frame and the player and removed, what else of the player's own the
+  frame and the player and removed (one whose name did not hold is taken from the frame by its base, never a core of the
+  player's own; each not found by its name is logged with what the frame and the player hold of its base), what else of the player's own the
   frame holds goes back to them (their cores, as many as they lost to it; their own pieces, put on from the Pip-Boy),
   their copy goes (found by its handle or, the engine having made it anew with its cell, by its id; one not found is put
   back under the save guard by its id and forgotten), and `kReturnFrame` says where it stands and each piece's condition:
-  the owner's game wears its pieces down to that (never up), removes a piece that did not come back (dropped, sold, or in
-  a copy that went), and moves its frame there once the spot is in sight (`NpcSync::MoveOwnFrame`; the server keeps the
+  the owner's game wears its pieces down to that (never up), keeps a piece the borrower's game did not find as it is
+  (a "not found" is only a find that failed, never word that the borrower kept it: taken out on it, every worn kit was
+  lost at its return), and moves its frame there once the spot is in sight (`NpcSync::MoveOwnFrame`; the server keeps the
   spot within 1024 units of the borrower's last state, or it is that state). What came back waits for as long as the
   frame has no inventory here or the owner's player is in it. Every change to an inventory goes through `OwnGear`
   (`kLoan`), and Drops never gives a lent copy away. The core is the vanilla fusion core by its id, never other ammunition
@@ -468,10 +470,12 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   server kept it, each piece found again by base and condition). A loan ends without a return when
   either player leaves, the spawn ends, or the borrower loads a save (`kFrameReturned` with `ended`; an ask not yet
   answered ends the same way, so the owner's game forgets it): the frame stays where it stood, and a borrower still in
-  it keeps it until they get out. A save made in a borrowed frame keeps it and notes it in the co-save's `LOAN` record;
+  it keeps it until they get out: the copy is theirs while they wear it (all the way in, only the engine's worn frame
+  names it, `FriendFrame::Ours`), never buried from under them as its owner's game shares it again or the session ends,
+  and it goes with the copies once they are out. A save made in a borrowed frame keeps it and notes it in the co-save's `LOAN` record;
   loaded again, the player is sent out (again until they are), the copies go, and their own pieces and cores in the
   frame go back to them. Not yet: a loan does not carry over a
-  load, a lent piece may still be sold to a vendor (the owner's goes at the return), and a piece no other game can name
+  load, a lent piece may still be sold to a vendor (the owner keeps theirs: two), and a piece no other game can name
   (one with a runtime mod) is not lent.
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells

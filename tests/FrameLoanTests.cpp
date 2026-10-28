@@ -1,5 +1,6 @@
 #include "Test.h"
 #include "game/FrameLoan.h"
+#include "game/FriendFrame.h"
 
 #include <limits>
 
@@ -107,7 +108,7 @@ TEST("frame loan: the return says of each lent item whether it was found and at 
 	CHECK((gone[0] == Protocol::ReturnedItem{ .slot = 3, .found = true, .health = 0.5f }));
 }
 
-TEST("frame loan: the owner keeps an item the return says nothing of, wears down one that came back, and takes out one that did not")
+TEST("frame loan: the owner wears down an item that came back lower, and keeps every other as it is, one not found too")
 {
 	using FrameLoan::AfterBack;
 	using FrameLoan::AfterReturn;
@@ -118,10 +119,67 @@ TEST("frame loan: the owner keeps an item the return says nothing of, wears down
 	CHECK((AfterReturn(0.8f, &worn) == AfterBack{ .what = Back::kWear, .health = 0.5f }));
 	const ReturnedItem better{ .slot = 0, .found = true, .health = 0.9f };
 	CHECK((AfterReturn(0.8f, &better) == AfterBack{}));
-	// Dropped, sold, stored or used up in the borrower's world: the owner keeping theirs would make it two.
+	// Not found by the borrower's game: only a find that failed (on the rig all 6 of a worn kit, every return), never word
+	// that the borrower kept it. The owner's stays: taken out on it, every lent kit was lost at its return.
 	const ReturnedItem lost{ .slot = 0, .found = false, .health = -1.0f };
-	CHECK(AfterReturn(0.8f, &lost).what == Back::kRemove);
-	CHECK(AfterReturn(-1.0f, &lost).what == Back::kRemove);
+	CHECK((AfterReturn(0.8f, &lost) == AfterBack{}));
+	CHECK((AfterReturn(-1.0f, &lost) == AfterBack{}));
+	const ReturnedItem lostWithHealth{ .slot = 0, .found = false, .health = 0.1f };  // a health with it changes nothing
+	CHECK((AfterReturn(0.8f, &lostWithHealth) == AfterBack{}));
+	// A whole kit of 5 pieces and a core, none found: nothing of the owner's changes.
+	const std::vector<FrameLoan::Tag> kit{ { .slot = 0, .base = 1, .name = "a" }, { .slot = 1, .base = 2, .name = "b" }, { .slot = 2, .base = 3, .name = "c" },
+		{ .slot = 3, .base = 4, .name = "d" }, { .slot = 4, .base = 5, .name = "e" }, { .slot = 5, .base = 0x00075FE4, .name = "f", .core = true } };
+	const auto none = FrameLoan::ComposeReturn(kit, {});
+	REQUIRE(none.size() == 6);
+	for (const auto& item : none) {
+		CHECK(!item.found);
+		CHECK(AfterReturn(0.6f, &item).what == Back::kKeep);
+	}
+}
+
+TEST("frame loan: a lent item whose name did not hold is taken from our copy by its base, never our player's own core")
+{
+	using FrameLoan::Found;
+	using FrameLoan::Tag;
+	using FrameLoan::TakeUnnamed;
+	using FrameLoan::NotFound;
+	const std::vector<Tag> tags{ { .slot = 0, .base = 0x00140C58, .name = "Sam's T-60 Helmet" }, { .slot = 3, .base = 0x00140C5A, .name = "Sam's T-60 Left Arm" },
+		{ .slot = 4, .base = 0x00140C5A, .name = "Sam's T-60 Right Arm" }, { .slot = 7, .base = 0x00075FE4, .name = "Sam's Fusion Core", .core = true } };
+	// Found by name: the helmet. The rest are looked for by base, in the order they were made.
+	const auto missing = NotFound(tags, { Found{ .slot = 0, .health = 0.5f } });
+	REQUIRE(missing.size() == 3);
+	CHECK(missing[0].slot == 3);
+	CHECK(missing[1].slot == 4);
+	CHECK(missing[2].slot == 7);
+	CHECK(NotFound(tags, { { .slot = 0 }, { .slot = 3 }, { .slot = 4 }, { .slot = 7 } }).empty());
+	CHECK(NotFound({}, {}).empty());
+	// Two missing of a base, both in the copy: both taken. One in it: one (the other is somewhere else in our world).
+	CHECK(TakeUnnamed(2, 2, 0) == 2);
+	CHECK(TakeUnnamed(2, 1, 0) == 1);
+	CHECK(TakeUnnamed(1, 3, 0) == 1);  // never more than are missing: an own piece of that base stays for our player
+	CHECK(TakeUnnamed(1, 0, 0) == 0);
+	// A core: what our player lost of their own to the frame goes back to them, never taken as the lent one.
+	CHECK(TakeUnnamed(1, 1, 1) == 0);  // the lent core ran down and one of theirs went in: it is theirs
+	CHECK(TakeUnnamed(1, 2, 1) == 1);
+	CHECK(TakeUnnamed(1, 1, -2) == 1);  // more of their own than as they got in: nothing held back
+	CHECK(TakeUnnamed(1, 5, (std::numeric_limits<std::int32_t>::max)()) == 0);  // after a load, no count of theirs: cores stay
+	CHECK(TakeUnnamed(0, 4, 0) == 0);
+}
+
+TEST("frame loan: a frame our player wears all the way in is theirs, so nothing buries a copy worn on loan from under them")
+{
+	using FriendFrame::ChooseLeave;
+	using FriendFrame::Leave;
+	using FriendFrame::Ours;
+	// All the way in, the engine has cleared the seat and has no last frame for them yet: only its worn frame names it. On the
+	// rig the copy was buried as its owner's game shared it again after a load (or the session ended), and E then did
+	// nothing: the engine's exit never finished.
+	CHECK(Ours({ .wearing = true }));
+	CHECK(ChooseLeave({ .ours = Ours({ .wearing = true }) }) == Leave::kRelease);
+	CHECK(Ours({ .seated = true }));    // getting in
+	CHECK(Ours({ .lastUsed = true }));  // got out of it last
+	CHECK(!Ours({}));
+	CHECK(ChooseLeave({ .ours = Ours({}) }) == Leave::kBury);
 }
 
 TEST("frame loan: the owner lends while they lend, the frame is theirs here, nobody is in it and nobody has it")

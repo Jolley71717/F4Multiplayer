@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <format>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
@@ -129,7 +130,8 @@ namespace FrameLoans
 		Clock::time_point lastSaidAt{};
 		constexpr auto    SAY_AGAIN = std::chrono::seconds(3);
 
-		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesTaken = 0, piecesGiven = 0, movedBack = 0, cleanedUp = 0;
+		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesKept = 0, piecesGiven = 0, movedBack = 0, cleanedUp = 0,
+		              unnamedTaken = 0;  // lent items gathered by their base, their names lost (GatherUnnamed)
 
 		// A notice, not again while it is the last one said a moment ago (a press is asked about more than once).
 		void Say(const std::string& a_text)
@@ -325,6 +327,33 @@ namespace FrameLoans
 			REX::WARN("FrameLoans: lent items in {:08X} did not all go", a_ref->GetFormID());
 		}
 
+		// The stacks of a lent item's base a_ref holds, as the log tells them: each one's count, and its name as against the
+		// one the lent item was given (never the name itself: it holds the owner's), and whether the engine has it as a name
+		// given to it (a custom name: ours are). How a lent item not found by its name stands in our copy or on our player.
+		std::string DescribeStacks(RE::TESObjectREFR* a_ref, const FrameLoan::Tag& a_tag)
+		{
+			const auto list = a_ref ? a_ref->inventoryList : nullptr;
+			if (!list) {
+				return "no inventory";
+			}
+			std::string        out;
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (!item.object || item.object->GetFormID() != a_tag.base) {
+					continue;
+				}
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					const auto extra = stack->extra.get();
+					const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
+					const auto shown = NameOf(extra);
+					const char* name = !text ? "no name data" : shown.empty() ? "no name" : shown == a_tag.name ? "the lent name" : "another name";
+					const bool  given = text && text->ownerInstance.get() == RE::ExtraTextDisplayData::DisplayDataType::kCustomName;
+					out += std::format("{}x{} ({}{})", out.empty() ? "" : ", ", stack->count, name, text && !given ? ", not a given one" : "");
+				}
+			}
+			return out.empty() ? "none" : out;
+		}
+
 		// How many of a_base a_ref holds, every stack of it.
 		std::int32_t CountOf(RE::TESObjectREFR* a_ref, std::uint32_t a_base)
 		{
@@ -358,6 +387,53 @@ namespace FrameLoans
 		}
 
 		void GiveOwn(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player, bool a_cores);
+
+		// The lent items no name found (Gather from the copy and from our player first), taken from our copy all the same by
+		// their base (FrameLoan::TakeUnnamed): one stack of it, one item, each. a_reserved: how many of a base are our player's
+		// own and go back to them (their fusion cores the engine moved in). What each one not found looks like in the copy
+		// and on our player is logged, so the rig tells why its name did not hold. Never anything of a base no lent item
+		// has, and never more of one than lent items of it are missing.
+		template <class F>
+		void GatherUnnamed(RE::TESObjectREFR* a_copy, RE::TESObjectREFR* a_player, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found, F&& a_reserved)
+		{
+			const auto unfound = FrameLoan::NotFound(a_tags, a_found);
+			if (unfound.empty()) {
+				return;
+			}
+			for (const auto& tag : unfound) {
+				REX::INFO("FrameLoans: lent item {} ({:08X}) not found by its name; of its base our copy holds {}; our player {}", tag.slot, tag.base, DescribeStacks(a_copy, tag),
+					DescribeStacks(a_player, tag));
+			}
+			if (!a_copy || !Equipment::MayChange(a_copy, OwnGear::Change::kLoan)) {
+				return;
+			}
+			std::unordered_map<std::uint32_t, std::int32_t> taken;  // by base, taken so far
+			for (const auto& tag : unfound) {
+				const auto missing = std::ranges::count_if(unfound, [&](const FrameLoan::Tag& a_other) { return a_other.base == tag.base; });
+				if (FrameLoan::TakeUnnamed(static_cast<std::int32_t>(missing), CountOf(a_copy, tag.base) + taken[tag.base], a_reserved(tag)) <= taken[tag.base]) {
+					continue;
+				}
+				auto hit = FindStack(a_copy, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
+					if (a_object->GetFormID() != tag.base) {
+						return std::nullopt;
+					}
+					Hit found;
+					if (a_extra && a_extra->HasType(RE::EXTRA_DATA_TYPE::kHealth)) {
+						found.health = a_extra->GetHealthPerc();
+					}
+					return found;
+				});
+				if (!hit) {
+					continue;
+				}
+				hit->count = 1;
+				RemoveStack(a_copy, *hit);
+				++taken[tag.base];
+				++unnamedTaken;
+				a_found.push_back({ .slot = tag.slot, .health = hit->health });
+				REX::INFO("FrameLoans: lent item {} ({:08X}) taken from our copy {:08X} by its base", tag.slot, tag.base, a_copy->GetFormID());
+			}
+		}
 
 		// What of our player's own the engine moved into our copy goes back to them, once the lent items are gathered (none
 		// of those is counted): their own fusion cores, as the lent one ran down (of each base, at most as many as they have
@@ -469,6 +545,12 @@ namespace FrameLoans
 			if (player && !Equipment::InPowerArmor(player)) {
 				Gather(player, borrowed.tags, found);
 			}
+			// A lent item whose name did not hold is taken from the copy by its base: never one of our player's own cores the
+			// engine moved in as the lent one ran down (GiveRest gives those back).
+			GatherUnnamed(copy.get(), player, borrowed.tags, found, [&](const FrameLoan::Tag& a_tag) {
+				const auto own = borrowed.ownCores.find(a_tag.base);
+				return own != borrowed.ownCores.end() && player ? own->second - CountOf(player, a_tag.base) : 0;
+			});
 			if (copy && player) {
 				GiveRest(copy.get(), player);
 			}
@@ -635,7 +717,7 @@ namespace FrameLoans
 		}
 
 		// What came back of the lent items put on our frame (FrameLoan::AfterReturn): each worn down to what came back, never
-		// up, and each that did not come back taken out of it (its copy is somewhere in the borrower's world now). One item
+		// up; one the borrower's game did not find is left as it is (nothing of ours goes on a return's word). One item
 		// of its stack only: one of a stack of the same (fusion cores at full charge share one) is split off with its own
 		// extra data first, so the others keep theirs. False when our frame has no inventory here yet, or our player is in it
 		// (its pieces are on them, and the own-gear rule never changes a frame they are in): tried again.
@@ -647,9 +729,12 @@ namespace FrameLoans
 			if (!Equipment::MayChange(a_frame, OwnGear::Change::kLoan)) {
 				return false;  // a frame of ours made here, nobody in it: refused only while gone (counted and logged there)
 			}
-			std::uint32_t wornDown = 0, removed = 0;
+			std::uint32_t wornDown = 0, notBack = 0;
 			for (const auto& source : a_kit) {
 				const auto back = std::ranges::find(a_items, source.slot, &Protocol::ReturnedItem::slot);
+				if (back != a_items.end() && !back->found) {
+					++notBack;  // kept as it is (AfterReturn)
+				}
 				const auto after = FrameLoan::AfterReturn(source.health, back != a_items.end() ? &*back : nullptr);
 				if (after.what == FrameLoan::Back::kKeep) {
 					continue;
@@ -658,12 +743,6 @@ namespace FrameLoans
 				auto                                    hit = SourceStack(a_frame, source, extra);
 				if (!hit) {
 					REX::WARN("FrameLoans: lent item {} ({:08X}) is no longer in our frame {:08X}", source.slot, source.base, a_frame->GetFormID());
-					continue;
-				}
-				if (after.what == FrameLoan::Back::kRemove) {
-					hit->count = 1;
-					RemoveStack(a_frame, *hit);
-					++removed;
 					continue;
 				}
 				if (hit->count == 1 && extra) {
@@ -682,8 +761,8 @@ namespace FrameLoans
 				++wornDown;
 			}
 			piecesWorn += wornDown;
-			piecesTaken += removed;
-			REX::INFO("FrameLoans: of our frame {:08X}'s lent items, {} came back worn down and {} did not come back (taken out of it)", a_frame->GetFormID(), wornDown, removed);
+			piecesKept += notBack;
+			REX::INFO("FrameLoans: of our frame {:08X}'s lent items, {} came back worn down and {} were not found by the borrower's game (ours kept as they are)", a_frame->GetFormID(), wornDown, notBack);
 			return true;
 		}
 
@@ -768,6 +847,9 @@ namespace FrameLoans
 				Gather(copy, job.record.tags, found);
 			}
 			Gather(player, job.record.tags, found);
+			// No count of our player's own cores as they got in (a load since): a lent core whose name did not hold stays,
+			// and goes back to them with their own.
+			GatherUnnamed(copy, player, job.record.tags, found, [](const FrameLoan::Tag& a_tag) { return a_tag.core ? (std::numeric_limits<std::int32_t>::max)() : 0; });
 			if (copy) {
 				GiveOwn(copy, player, true);  // their own pieces and cores, moved into it as they were sent out
 				if (player->lastUsedPowerArmor.get().get() == copy) {
@@ -1058,6 +1140,16 @@ namespace FrameLoans
 		borrowed.since = Clock::now();
 		++lentHere;
 		REX::INFO("FrameLoans: player {} lent us frame {:08X}; {} of its {} items are in our copy {:08X}", a_lending.ownerId, a_lending.spawnId, borrowed.tags.size(), a_lending.kit.size(), borrowed.copy);
+		// Read back at once: each copy made must be found by its name, as the return finds it (Gather).
+		for (const auto& tag : borrowed.tags) {
+			const auto named = FindStack(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
+				return FrameLoan::IsTagged(tag, a_object->GetFormID(), NameOf(a_extra)) ? std::optional<Hit>{ Hit{} } : std::nullopt;
+			});
+			if (!named) {
+				REX::WARN("FrameLoans: lent item {} ({:08X}) is not found by its name in our copy {:08X} just after it was made; of its base it holds {}", tag.slot, tag.base, borrowed.copy,
+					DescribeStacks(copy.get(), tag));
+			}
+		}
 		Say(Text::Format("party.frame_lent", { { "player", owner } }));
 	}
 
@@ -1285,8 +1377,8 @@ namespace FrameLoans
 
 	std::string Describe()
 	{
-		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} ours: lent={} back={} worn={} taken={} moved={} cleaned={}",
+		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} unnamed={} ours: lent={} back={} worn={} kept={} moved={} cleaned={}",
 			static_cast<int>(borrowed.stage), borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), backs.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds,
-			piecesGiven, lentOut, givenBack, piecesWorn, piecesTaken, movedBack, cleanedUp);
+			piecesGiven, unnamedTaken, lentOut, givenBack, piecesWorn, piecesKept, movedBack, cleanedUp);
 	}
 }
