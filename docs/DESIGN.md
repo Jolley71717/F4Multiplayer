@@ -1959,7 +1959,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   travel one of a downed player: the engine makes an autosave at its next chance, maybe late (in a fight),
   so the `kAutoSave` bit it still holds in `BGSSaveLoadManager::queuedTasks` is cleared when the player goes
   down, before a bleed-out's kill, and while they are dead ("Save: the autosave the game held ... is taken
-  back"); a save of ours that still begins then logs an error. Going down, a last revive, a
+  back"); a save of ours that still begins then logs an error. The down-save is not asked for a player out of
+  revives or in the cooldown (`DownRules::Self::AsksForDownSave`, tested); a death that loads the save made
+  as they went down puts them back on that spot, up as if helped (a checkpoint, not a limit on dying). Going
+  down, a last revive, a
   cooldown and a session without revives say on the HUD that a death loads the last save. Each save logs
   "Save: <kind> (<location>, <date>) begins (the mod's autosave after a teleport | ... | the player's or the
   game's)" and "written (N ms)", and each load "Save: loading ..." (F4SE's message data; the character's

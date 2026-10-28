@@ -399,6 +399,14 @@ namespace DownRules
 			return rules.cooldown.count() > 0 && upAt && a_now - *upAt < rules.cooldown;
 		}
 
+		// Whether going down at a_now asks for the autosave (the host's bSaveOnDown): not for a player out of revives or
+		// in the cooldown, whose deaths the rules mean to be real. Loaded from, such a save stands the player up on the
+		// spot as if helped, which would make the bleed-out a free respawn the revive limits were made to prevent.
+		[[nodiscard]] bool AsksForDownSave(Clock::time_point a_now) const
+		{
+			return rules.saveOnDown && RevivesLeft(a_now) != 0 && !InCooldown(a_now);
+		}
+
 		void GiveUp() { giveUp = phase == Phase::kDown; }
 
 		// A save was loaded: whatever state we were in belongs to the old game. True when the player is down in

@@ -283,7 +283,7 @@ namespace Downed
 				// A death loads the newest save, which in a session can be many minutes old: said before it happens.
 				const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(self.GetRules().bleedOut).count();
 				Hud::Notify(Text::Format(AutoSaveRules::DeathWarning({ .wentDown = true }), { { "n", seconds } }));
-				AutoSave::OnWentDown(self.GetRules().saveOnDown);
+				AutoSave::OnWentDown(self.AsksForDownSave(Clock::now()));
 			}
 			if (a_step.secondsLeft >= 0) {
 				Hud::Notify(Text::Format("down.seconds_left", { { "n", a_step.secondsLeft } }));
