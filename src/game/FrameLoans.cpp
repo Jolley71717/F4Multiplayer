@@ -117,6 +117,8 @@ namespace FrameLoans
 			Clock::time_point    askedAt{};
 			bool                 asked = false;
 			bool                 warned = false;
+
+			std::optional<Clock::time_point> outSince;  // our player first read as out of the frame (FrameLoan::CleanupDue)
 		};
 		std::optional<Cleanup> cleanup;
 		constexpr auto         CLEANUP_AFTER = std::chrono::seconds(2);   // the loaded world settles first
@@ -712,7 +714,8 @@ namespace FrameLoans
 				backs.push_back({ .local = loan.local, .kit = loan.kit, .items = a_return.items, .since = Clock::now() });
 				REX::INFO("FrameLoans: our frame {:08X} has no inventory here now; what came back is put on it once it has", loan.local);
 			}
-			if (frame && FrameLoan::ChoosePlace(a_return) == FrameLoan::Place::kMove) {
+			// Queued with no frame here too (freed with its cell while our player was away): moved once it is loaded again.
+			if (FrameLoan::ChoosePlace(a_return) == FrameLoan::Place::kMove) {
 				if (moves.size() >= MAX_MOVES) {
 					moves.erase(moves.begin());
 				}
@@ -734,6 +737,7 @@ namespace FrameLoans
 			}
 			const auto copy = job.what == FrameLoan::AfterLoad::kAll ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(job.record.copy) : nullptr;
 			if (copy && PlayerIn(copy)) {
+				job.outSince.reset();  // back in before the settle was over
 				if (!job.warned && a_now - job.since >= CLEANUP_WARN) {
 					job.warned = true;
 					REX::WARN("FrameLoans: our player is still in {:08X}, the frame borrowed from player {} as this save was made; still sending them out", job.record.copy, job.record.owner);
@@ -750,7 +754,14 @@ namespace FrameLoans
 				return;
 			}
 			if (Equipment::InPowerArmor(player)) {
+				job.outSince.reset();
 				return;  // in another frame: nothing is gathered from them until they are out of it
+			}
+			if (copy && !job.outSince) {
+				job.outSince = a_now;
+			}
+			if (!FrameLoan::CleanupDue(copy != nullptr, job.outSince ? std::optional<Clock::duration>{ a_now - *job.outSince } : std::nullopt)) {
+				return;  // the engine's exit runs on: the frame re-enabled, its 3D rebuilt, our player's own pieces moved back into it
 			}
 			std::vector<FrameLoan::Found> found;
 			if (copy) {
@@ -794,7 +805,19 @@ namespace FrameLoans
 
 	bool LentToUs(std::uint32_t a_id)
 	{
-		return a_id != 0 && a_id == borrowed.spawnId && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
+		return FrameLoan::HoldsSpawn(borrowed.stage, borrowed.spawnId, a_id);
+	}
+
+	bool BorrowedCopy(std::uint32_t a_local)
+	{
+		if (a_local == 0) {
+			return false;
+		}
+		// Or the copy a loaded save was made in, while the clean-up waits out our player's exit from it (RunCleanup).
+		if (cleanup && cleanup->what == FrameLoan::AfterLoad::kAll && a_local == cleanup->record.copy) {
+			return true;
+		}
+		return a_local == borrowed.copy && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
 	}
 
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner)
@@ -1147,8 +1170,17 @@ namespace FrameLoans
 				return true;
 			}
 			const auto frame = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_move.local);
-			if (!frame || !NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
-				return !frame;
+			if (!frame) {
+				return false;  // unloaded with its cell: tried again once it is back (until MOVE_LIMIT)
+			}
+			if (!Equipment::IsPowerArmorFrame(frame->GetObjectReference())) {
+				// Its id names something else now (made at runtime, freed with its cell, the id handed out again): never moved
+				// in its place (MoveOwnFrame moves whatever it is given).
+				REX::INFO("FrameLoans: our frame {:08X}, given back, is no frame here now; nothing is moved", a_move.local);
+				return true;
+			}
+			if (!NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
+				return false;
 			}
 			++movedBack;
 			return true;
@@ -1177,6 +1209,16 @@ namespace FrameLoans
 	{
 		std::scoped_lock l{ recordLock };
 		recordLoaded.reset();
+	}
+
+	void BeforeLoad()
+	{
+		if (!lent.empty() || !backs.empty() || !moves.empty()) {
+			REX::INFO("FrameLoans: the load ends {} loans of our frames, and lets go of {} gives back and {} moves waiting", lent.size(), backs.size(), moves.size());
+		}
+		lent.clear();
+		backs.clear();
+		moves.clear();
 	}
 
 	void OnGameLoaded()
@@ -1224,6 +1266,11 @@ namespace FrameLoans
 				REX::INFO("FrameLoans: the session ended while our player wears player {}'s frame {:08X}; it goes as they get out", borrowed.owner, borrowed.spawnId);
 				Say(Text::Format("party.frame_owner_left", { { "player", RemotePlayers::NameOf(borrowed.owner) } }));
 			}
+			// The ids of the next session are not this one's: a new spawn under the id we hold would be taken for the frame lent
+			// to us (LentToUs), its copy never placed or moved while we wear on, and every press on a frame copy called busy.
+			// The copy and the tags are all Finish still needs.
+			borrowed.spawnId = 0;
+			borrowed.owner = 0;
 			break;
 		case Stage::kLent:
 			Finish(false, true, "the session ended");  // before Spawns lets the copy go

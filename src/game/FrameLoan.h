@@ -142,6 +142,30 @@ namespace FrameLoan
 		return Step::kNone;
 	}
 
+	// After a load of a save made in a borrowed frame, the clean-up gathers from the copy and buries it once our player
+	// has been out of it for EXIT_SETTLE (a_sinceOut; none while they are in it or in another frame): the engine's exit
+	// runs on after the frame reads as empty (re-enabled, its 3D rebuilt, the player's own pieces moved back into it).
+	// With no copy there is nothing to settle.
+	constexpr bool CleanupDue(bool a_copy, std::optional<Clock::duration> a_sinceOut)
+	{
+		return !a_copy || (a_sinceOut && *a_sinceOut >= EXIT_SETTLE);
+	}
+
+	// Whether the spawn a_id is the one lent to us (a_ours, with a_stage): from the kit coming until the loan ends. Spawn id 0
+	// is none, so a loan worn on past its session (which lets go of its id) holds no spawn of the next session.
+	constexpr bool HoldsSpawn(Stage a_stage, std::uint32_t a_ours, std::uint32_t a_id)
+	{
+		return a_id != 0 && a_id == a_ours && a_stage != Stage::kNone && a_stage != Stage::kAsked;
+	}
+
+	// Whether our status tells the frame we got out of last as our parked one. Not a frame of ours lent out (it stands hidden
+	// here), nor the copy lent to us (a_borrowedCopy): it is its owner's spawn, which their game and every other already
+	// place and move, and a parked copy of it told as ours would stand beside it for the EXIT_SETTLE after we get out.
+	constexpr bool TellsParked(bool a_lentOut, bool a_borrowedCopy)
+	{
+		return !a_lentOut && !a_borrowedCopy;
+	}
+
 	// One lent item as the borrower's game named it: what to gather at the return.
 	struct Tag
 	{

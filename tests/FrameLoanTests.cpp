@@ -204,6 +204,39 @@ TEST("frame loan: the LOAN record reads back as written, and nothing of a damage
 	CHECK(cut && cut->tags.size() == 1 && cut->tags[0].name.size() == FrameLoan::MAX_TAG_NAME);
 }
 
+TEST("frame loan: the spawn lent to us is held from the kit coming until the loan ends, and spawn id 0 is never held")
+{
+	using FrameLoan::HoldsSpawn;
+	CHECK(!HoldsSpawn(Stage::kNone, 7, 7));
+	CHECK(!HoldsSpawn(Stage::kAsked, 7, 7));
+	CHECK(HoldsSpawn(Stage::kLent, 7, 7));
+	CHECK(HoldsSpawn(Stage::kWorn, 7, 7));
+	CHECK(HoldsSpawn(Stage::kOut, 7, 7));
+	CHECK(!HoldsSpawn(Stage::kWorn, 7, 8));
+	// A loan worn on past its session lets go of its id: no spawn of the next session is taken for it.
+	CHECK(!HoldsSpawn(Stage::kWorn, 0, 0));
+	CHECK(!HoldsSpawn(Stage::kWorn, 0, 7));
+}
+
+TEST("frame loan: the frame we got out of is told as parked unless it is lent out or the copy lent to us")
+{
+	using FrameLoan::TellsParked;
+	CHECK(TellsParked(false, false));
+	CHECK(!TellsParked(true, false));
+	CHECK(!TellsParked(false, true));
+	CHECK(!TellsParked(true, true));
+}
+
+TEST("frame loan: the clean-up after a load waits the exit settle once our player is out")
+{
+	using FrameLoan::CleanupDue;
+	CHECK(!CleanupDue(true, std::nullopt));
+	CHECK(!CleanupDue(true, 1s));
+	CHECK(CleanupDue(true, 2s));
+	CHECK(CleanupDue(true, 5s));
+	CHECK(CleanupDue(false, std::nullopt));  // no copy: nothing to settle
+}
+
 TEST("frame loan: after loading a save made in a borrowed frame, our player is sent out and the copy and the lent items go")
 {
 	using FrameLoan::AfterLoad;
