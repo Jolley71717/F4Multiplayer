@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T02:25:28+00:00",
+ "updated": "2026-10-28T03:39:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -86,8 +86,9 @@
    "title": "Power armor loans: a lent kit is lost at every return, and the borrower can't get out after the owner loads or leaves",
    "kind": "bug",
    "priority": 0,
-   "stage": 1,
-   "note": "Found in rig testing; being fixed before the rc"
+   "stage": 3,
+   "note": "Fixed and reviewed; rig test next",
+   "pr": 224
   },
   {
    "id": "3lh",
@@ -280,7 +281,7 @@
    "title": "Pre-rc review fixes: items and shared storage",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 221
   },
@@ -390,7 +391,7 @@
    "title": "Pre-rc review fixes: server and session",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 223
   },
@@ -779,7 +780,7 @@
    "title": "Pre-rc review fixes: combat, downing, NPC health",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 220
   },
