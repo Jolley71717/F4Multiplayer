@@ -285,6 +285,23 @@ namespace CopyHealth
 				}
 				entry.maximum = a_maximum;
 			}
+			// A drop a report healed back before any hit of ours was booked (Heard): a hit of ours that comes after all (its
+			// event a frame behind the damage) means what the report healed back was ours; none within JUDGE_AFTER, and the
+			// report's heal stands.
+			if (entry.reportedDrop) {
+				const auto [drop, at] = *entry.reportedDrop;
+				// Only a hit whose event came within JUDGE_AFTER of the report: Check may not have run since (the copy had no
+				// 3D), and a hit long after is nothing of the drop the report healed back.
+				if (entry.ourHit && *entry.ourHit >= at - OURS_GRACE && *entry.ourHit <= at + JUDGE_AFTER) {
+					const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+					entry.ours += take;
+					entry.unacked += take;
+					entry.reportedDrop.reset();
+				} else if (a_now - at >= JUDGE_AFTER) {
+					entry.reportedDrop.reset();
+				}
+			}
 			// A report held while our hits landed (Heard) stands once they are over: by then the owner's next report would
 			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged, nor on
 			// a fresh drop: either may be ours to send yet (a hit's event can come a frame after its damage).
@@ -396,14 +413,20 @@ namespace CopyHealth
 			}
 			auto&      entry = it->second;
 			const bool lately = OursLately(entry, a_now);
-			if (entry.health && lately && a_before < *entry.health - SLACK) {
-				// With a blow left to the owner around, only what our hits said they took is ours (as in Check).
+			if (entry.health && a_before < *entry.health - SLACK) {
 				const float drop = *entry.health - a_before;
-				const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= a_now;
-				const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
-				entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
-				entry.ours += take;
-				entry.unacked += take;
+				if (lately) {
+					// With a blow left to the owner around, only what our hits said they took is ours (as in Check).
+					const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= a_now;
+					const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+					entry.ours += take;
+					entry.unacked += take;
+				} else if (a_copy) {
+					// No hit of ours is booked yet, but its event can come a frame behind its damage: judged in Check once
+					// the event has had JUDGE_AFTER to come.
+					entry.reportedDrop = { drop, a_now };
+				}
 			}
 			entry.held.reset();
 			float health = a_health;
@@ -473,6 +496,7 @@ namespace CopyHealth
 			bool                             figured = false;  // ... and one of them said what it took
 			float                            unacked = 0.0f;  // taken by hits of ours that the owner's reports may not have yet
 			std::optional<float>             held;  // a report's health not set yet (Heard)
+			std::optional<std::pair<float, Clock::time_point>> reportedDrop;  // a drop a report found with no hit of ours booked yet (Heard): ours if a hit's event follows within JUDGE_AFTER
 			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
 			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)
 			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)

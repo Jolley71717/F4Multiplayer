@@ -570,3 +570,85 @@ TEST("copy hits: a report from the NPC's game during our bleed stands, and a tic
 	CHECK(late.Holds(RAIDER_2));
 	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 100 }) == 80.0f);
 }
+
+TEST("copy hits: a report that lands before the hit's event is heard does not heal the hit back")
+{
+	// The engine takes the shot's health and sends its event a frame later; the runner's report came in between. Set to
+	// the report's health, the shot was healed back and never reached the NPC's game ("my hit did nothing").
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 16 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));
+	CHECK(Near(*book.Health(RAIDER_1), 95.0f));
+}
+
+TEST("copy hits: a drop a report found with no hit of ours after it is someone else's")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 150 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	// Nor does a hit that comes long after take it.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 3000 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 3000 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+}
+
+TEST("copy hits: a drop a report found with a hit of ours booked already is counted once")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	CHECK(book.Check(RAIDER_1, 90.0f, t0, 100.0f) == 0.0f);
+	book.Heard(RAIDER_1, 90.0f, 95.0f, t0 + milliseconds{ 5 }, true);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 20 }, 100.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));  // in all, not 20
+}
+
+TEST("copy hits: a book pruned with a grace keeps what a hit booked in a frame the copy was out of sight")
+{
+	// CopyWatch prunes by when each copy was last seen (5 s), not by this frame's loop: a frame without the copy's 3D
+	// lost the hit booked in it, and the shot never reached the NPC's game.
+	using std::chrono::milliseconds;
+	using std::chrono::seconds;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          seenAt = [&](std::uint32_t a_id, CopyHealth::Clock::time_point a_seen) { return [=](std::uint32_t a_other) { return a_other == a_id && t0 + milliseconds{ 16 } - a_seen <= seconds{ 5 }; }; };
+
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	book.Prune(seenAt(RAIDER_1, t0 - seconds{ 1 }));
+	CHECK(book.Size() == 1);
+	CHECK(book.Check(RAIDER_1, 90.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));
+
+	// Seen last 6 s ago: forgotten.
+	CopyHealth::Book gone;
+	gone.Set(RAIDER_1, 100.0f);
+	gone.OurHit(RAIDER_1, t0, 10.0f);
+	gone.Prune(seenAt(RAIDER_1, t0 - seconds{ 6 }));
+	CHECK(gone.Size() == 0);
+}
+
+TEST("copy hits: a drop a report found is not taken by a hit that comes long after, even if the copy was not checked meanwhile")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	// The copy had no 3D for a while: no Check between. A hit of ours 800 ms on is its own; the report's heal stands.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 800 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 800 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+}

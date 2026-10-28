@@ -350,23 +350,50 @@ TEST("downed: a bleed-out the game ends by standing the player up starts over as
 	CHECK(game.downNotices == 2);
 }
 
-TEST("downed: giving up, or the last friend leaving, bleeds out at once")
+TEST("downed: giving up bleeds out at once")
 {
-	for (const bool leave : { false, true }) {
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.self.GiveUp();
+	game.Run(now, 1s);
+	CHECK(game.kills == 1);
+	CHECK(game.body.dead);
+	CHECK(game.downNotices == 1);
+}
+
+TEST("downed: the last friend leaving does not kill: the player bleeds out on the clock, and a friend back before then can still help")
+{
+	{
 		Game game;
 		auto now = Start();
 		game.Run(now, 1s);
 		game.body.LethalHit();
 		game.Run(now, 2s);
-		if (leave) {
-			game.withFriends = false;
-		} else {
-			game.self.GiveUp();
-		}
+		game.withFriends = false;
+		game.Run(now, 10s);
+		CHECK(game.kills == 0);
+		CHECK(game.self.IsDown());
+		CHECK(game.body.essential);
+		game.withFriends = true;
+		REQUIRE(game.Revived(now));
+		game.Run(now, 5s);
+		CHECK(game.kills == 0);
+		CHECK(game.self.Now() == Phase::kUp);
+	}
+	{
+		Game game;
+		auto now = Start();
 		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 2s);
+		game.withFriends = false;
+		game.Run(now, DownRules::BLEEDOUT_TIME - 5s);
+		CHECK(game.kills == 0);
+		game.Run(now, 10s);
 		CHECK(game.kills == 1);
-		CHECK(game.body.dead);
-		CHECK(game.downNotices == 1);
 	}
 }
 
@@ -1087,6 +1114,48 @@ TEST("downed rules: revives per window come back as each help-up leaves the wind
 	CHECK(game.revivesBack == 1);
 }
 
+TEST("downed rules: going down asks for the autosave only while the player has revives and no cooldown")
+{
+	// With revives, or the cooldown, to run out, a save made as they go down would make their death a respawn on the spot.
+	Protocol::SessionRules session;
+	session.saveOnDown = true;
+	session.maxRevives = 1;
+	session.downCooldownSeconds = 30;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.Run(now, 1s);
+	CHECK(game.self.AsksForDownSave(now));
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	CHECK(game.self.RevivesLeft(now) == 0);
+	CHECK(!game.self.AsksForDownSave(now));
+
+	// In the cooldown alone (revives without limit), and again after it.
+	session.maxRevives = 0;
+	Game other;
+	auto later = Start();
+	other.self.SetRules(DownRules::Rules::From(session));
+	other.Run(later, 1s);
+	other.body.LethalHit();
+	other.Run(later, 1s);
+	REQUIRE(other.Revived(later));
+	other.Run(later, 5s);
+	CHECK(other.self.InCooldown(later));
+	CHECK(!other.self.AsksForDownSave(later));
+	other.Run(later, 30s);
+	CHECK(other.self.AsksForDownSave(later));
+
+	// The host's rule off: never.
+	session.saveOnDown = false;
+	Game off;
+	auto start = Start();
+	off.self.SetRules(DownRules::Rules::From(session));
+	CHECK(!off.self.AsksForDownSave(start));
+}
+
 TEST("downed rules: just helped up, a lethal hit kills until the cooldown is over")
 {
 	Protocol::SessionRules session;
@@ -1314,8 +1383,12 @@ TEST("downed rules: rules that come while the player is down wait until they are
 	game.self.SetRules(DownRules::Rules::From(tighter), SESSION);
 	CHECK(game.self.RulesWaiting());
 	CHECK(game.self.GetRules().bleedOut == DownRules::BLEEDOUT_TIME);
-	game.Run(now, 5s);
+	game.withFriends = false;  // a dropped connection between the rules and the help: the rules still wait
+	game.Run(now, 3s);
+	game.withFriends = true;
+	game.Run(now, 2s);
 	CHECK(!game.body.dead);  // 25 s down, past the new 10 s: the old 45 s still hold
+	CHECK(game.self.RulesWaiting());
 	REQUIRE(game.Revived(now));
 	CHECK(game.self.GetRules().reviveHealth == 0.3f);  // helped up with the health of the rules the down began with
 	game.Run(now, 5s);

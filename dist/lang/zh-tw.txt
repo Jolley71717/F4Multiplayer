@@ -108,6 +108,7 @@ party.teleporting = 正在傳送到 {player} 那裡
 down.went_down = 你倒下了！好友可以扶你起來。按住 {key} 放棄
 down.went_down_crawl = 你倒下了！好友可以扶你起來，你也可以爬行。按住 {key} 放棄
 down.seconds_left = 還有 {n} 秒可以被扶起
+down.friends_gone = 現在沒有人能扶起你；如果朋友不回來，你將在 {n} 秒後失血而死
 down.helping = 正在扶起 {player}……
 down.helped = 你扶起了 {player}
 down.helped_you = {player} 扶起了你

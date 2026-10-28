@@ -110,6 +110,7 @@ party.teleporting = Teleportacja do gracza {player}
 down.went_down = Powalono cię! Znajomy może ci pomóc wstać. Przytrzymaj {key}, by się poddać
 down.went_down_crawl = Powalono cię! Znajomy może ci pomóc wstać, a ty możesz się czołgać. Przytrzymaj {key}, by się poddać
 down.seconds_left = Pozostało {n} s, by ktoś pomógł ci wstać
+down.friends_gone = Nikt nie może ci teraz pomóc wstać; wykrwawisz się za {n} s, jeśli przyjaciel nie wróci
 down.helping = Podnosisz gracza {player}...
 down.helped = {player} wstaje dzięki tobie
 down.helped_you = {player} pomaga ci wstać

@@ -287,7 +287,9 @@ namespace DownRules
 					standingSince.reset();
 					lastPutDown.reset();
 				}
-				if (giveUp || !a_facts.enabled || a_now - downSince >= rules.bleedOut) {
+				// A down ends by its own clock, a give-up, or help; never by the friend count: a dropped connection or
+				// a friend who crashed and comes back within the bleed-out can still help.
+				if (giveUp || a_now - downSince >= rules.bleedOut) {
 					// Bleeding out counts real time, paused or not: friends' games go on while ours is stopped.
 					BleedOut(step, a_now);
 				} else {
@@ -397,6 +399,14 @@ namespace DownRules
 			return rules.cooldown.count() > 0 && upAt && a_now - *upAt < rules.cooldown;
 		}
 
+		// Whether going down at a_now asks for the autosave (the host's bSaveOnDown): not for a player out of revives or
+		// in the cooldown, whose deaths the rules mean to be real. Loaded from, such a save stands the player up on the
+		// spot as if helped, which would make the bleed-out a free respawn the revive limits were made to prevent.
+		[[nodiscard]] bool AsksForDownSave(Clock::time_point a_now) const
+		{
+			return rules.saveOnDown && RevivesLeft(a_now) != 0 && !InCooldown(a_now);
+		}
+
 		void GiveUp() { giveUp = phase == Phase::kDown; }
 
 		// A save was loaded: whatever state we were in belongs to the old game. True when the player is down in
@@ -426,6 +436,12 @@ namespace DownRules
 		// What friends are told: down and still waiting for help. Once helped, friends stop helping; they kept
 		// helping while the game stood the player up, and the helper read "You helped Host up" three times for one down.
 		[[nodiscard]] bool WaitsForHelp() const { return phase == Phase::kDown; }
+		// Whole seconds until a player waiting for help bleeds out (0 when the time is up).
+		[[nodiscard]] std::int64_t BleedOutSecondsLeft(Clock::time_point a_now) const
+		{
+			const auto left = std::chrono::duration_cast<std::chrono::seconds>(rules.bleedOut - (a_now - downSince)).count();
+			return (std::max)(left, std::int64_t{ 0 });
+		}
 		// The session's rule lets the player crawl, and they are down waiting for help (not helped and getting up, not
 		// bled out, not giving up), and really lying there: not while the game has them up and they are being put down
 		// again (StoodUp), when the engine walks them itself and a step of ours could keep the put-down from taking.
