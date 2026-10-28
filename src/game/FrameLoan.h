@@ -233,6 +233,19 @@ namespace FrameLoan
 		return out;
 	}
 
+	// ---- Pieces forfeited -----------------------------------------------------------------------------------
+
+	// A loan worn and then ended leaves its owner every original: a return never takes one out (AfterReturn), and a loan
+	// that ends without one (its owner left or loaded a save, their game let the frame go, the session ended, or we loaded
+	// a save made in the frame) says nothing at all. A lent copy our player had put somewhere by then (a chest, a
+	// workbench, a vendor, the floor), on neither them nor the copy as the lent items were gathered (by name, or from the
+	// copy by base and mods: TakeUnnamed, FitsUnnamed), would be the piece twice. Its tag is forfeit: Drops and Gifts refuse
+	// it as any lent copy, and one our player has on them again (taken back out of the chest, bought back) is removed: one
+	// item for each forfeit, which is then spent (a name is not one loan's alone: the same frame lent again names its copies
+	// the same, so two copies left behind are two forfeits). Kept with the save (the LOAN record), at most MAX_FORFEITS, the
+	// oldest dropped.
+	constexpr std::size_t MAX_FORFEITS = 64;
+
 	// The tags of a_tags of which no item was found (by slot).
 	inline std::vector<Tag> NotFound(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found)
 	{
@@ -243,6 +256,20 @@ namespace FrameLoan
 			}
 		}
 		return out;
+	}
+
+	// a_tags put on a_list, one forfeit each (beside one of the same name already on it: each stands for one item left
+	// behind), the newest last. One with no name is left out (no item is ever tagged so), and past a_max the oldest go.
+	inline void Forfeit(std::vector<Tag>& a_list, const std::vector<Tag>& a_tags, std::size_t a_max = MAX_FORFEITS)
+	{
+		for (const auto& tag : a_tags) {
+			if (!tag.name.empty()) {
+				a_list.push_back(tag);
+			}
+		}
+		if (a_list.size() > a_max) {
+			a_list.erase(a_list.begin(), a_list.begin() + static_cast<std::ptrdiff_t>(a_list.size() - a_max));
+		}
 	}
 
 	// How many lent items of one base, not found by their names (a_unfound), are taken from our copy all the same, as items
@@ -384,7 +411,9 @@ namespace FrameLoan
 	// ---- After a load -------------------------------------------------------------------------------------
 
 	// What a save made while our player wore a frame lent to them notes in its co-save (the LOAN record): the save holds
-	// our copy of it, and the named items, and our player in it. Read back only with that save.
+	// our copy of it, and the named items, and our player in it. Read back only with that save. And, worn or not, the
+	// lent items forfeited in this world (MAX_FORFEITS): a record of those alone has nothing of a loan (copy, base, spawnId
+	// and owner 0, no tags).
 	struct Record
 	{
 		std::uint32_t    copy = 0;     // our copy's form ID
@@ -392,18 +421,33 @@ namespace FrameLoan
 		std::uint32_t    spawnId = 0;  // the spawn it was a copy of
 		std::uint32_t    owner = 0;    // whose it was
 		std::vector<Tag> tags;
+		std::vector<Tag> forfeited;  // from RECORD_VERSION 2
 
 		bool operator==(const Record&) const = default;
 	};
 
 	constexpr std::size_t MAX_TAG_NAME = 255;
 
+	// The record's layout: 1 the loan alone, 2 the forfeited tags after it (a count, then each as a loan's tag is).
+	constexpr std::uint32_t RECORD_VERSION = 2;
+
+	// Always RECORD_VERSION's layout. Of more than MAX_FORFEITS forfeited, the newest.
 	inline std::vector<std::uint8_t> Encode(const Record& a_record)
 	{
 		std::vector<std::uint8_t> out;
 		const auto word = [&](std::uint32_t a_value) {
 			for (int shift = 0; shift < 32; shift += 8) {
 				out.push_back(static_cast<std::uint8_t>(a_value >> shift));
+			}
+		};
+		const auto tag = [&](const Tag& a_tag) {
+			out.push_back(a_tag.slot);
+			word(a_tag.base);
+			out.push_back(static_cast<std::uint8_t>(a_tag.core ? 1 : 0));
+			const auto length = (std::min)(a_tag.name.size(), MAX_TAG_NAME);
+			out.push_back(static_cast<std::uint8_t>(length));
+			for (std::size_t c = 0; c < length; ++c) {
+				out.push_back(static_cast<std::uint8_t>(a_tag.name[c]));
 			}
 		};
 		word(a_record.copy);
@@ -413,22 +457,24 @@ namespace FrameLoan
 		const auto count = (std::min)(a_record.tags.size(), Protocol::MAX_LENT_ITEMS);
 		out.push_back(static_cast<std::uint8_t>(count));
 		for (std::size_t i = 0; i < count; ++i) {
-			const auto& tag = a_record.tags[i];
-			out.push_back(tag.slot);
-			word(tag.base);
-			out.push_back(static_cast<std::uint8_t>(tag.core ? 1 : 0));
-			const auto length = (std::min)(tag.name.size(), MAX_TAG_NAME);
-			out.push_back(static_cast<std::uint8_t>(length));
-			for (std::size_t c = 0; c < length; ++c) {
-				out.push_back(static_cast<std::uint8_t>(tag.name[c]));
-			}
+			tag(a_record.tags[i]);
+		}
+		const auto forfeits = (std::min)(a_record.forfeited.size(), MAX_FORFEITS);
+		out.push_back(static_cast<std::uint8_t>(forfeits));
+		for (std::size_t i = a_record.forfeited.size() - forfeits; i < a_record.forfeited.size(); ++i) {
+			tag(a_record.forfeited[i]);
 		}
 		return out;
 	}
 
-	// None for bytes that are not one whole record.
-	inline std::optional<Record> Decode(const std::vector<std::uint8_t>& a_bytes)
+	// None for bytes that are not one whole record in a_version's layout (and for a version this build does not know), so
+	// a damaged or cut record forfeits nothing; never read past its bytes. Version 1 (saves of the builds before forfeits)
+	// reads with none forfeited.
+	inline std::optional<Record> Decode(const std::vector<std::uint8_t>& a_bytes, std::uint32_t a_version = RECORD_VERSION)
 	{
+		if (a_version < 1 || a_version > RECORD_VERSION) {
+			return std::nullopt;
+		}
 		std::size_t at = 0;
 		bool        ok = true;
 		const auto byte = [&]() -> std::uint8_t {
@@ -445,30 +491,46 @@ namespace FrameLoan
 			}
 			return value;
 		};
+		// A count of at most a_max, then that many tags. False for any of it not there, or not well formed.
+		const auto tags = [&](std::vector<Tag>& a_out, std::size_t a_max) {
+			const auto count = byte();
+			if (!ok || count > a_max) {
+				return false;
+			}
+			for (std::uint8_t i = 0; i < count; ++i) {
+				Tag tag;
+				tag.slot = byte();
+				tag.base = word();
+				const auto core = byte();
+				const auto length = byte();
+				if (!ok || core > 1 || a_bytes.size() - at < length) {
+					return false;
+				}
+				tag.core = core == 1;
+				tag.name.assign(reinterpret_cast<const char*>(a_bytes.data() + at), length);
+				at += length;
+				a_out.push_back(std::move(tag));
+			}
+			return true;
+		};
 		Record record;
 		record.copy = word();
 		record.base = word();
 		record.spawnId = word();
 		record.owner = word();
-		const auto count = byte();
-		if (!ok || count > Protocol::MAX_LENT_ITEMS) {
+		if (!ok || !tags(record.tags, Protocol::MAX_LENT_ITEMS)) {
 			return std::nullopt;
 		}
-		for (std::uint8_t i = 0; i < count && ok; ++i) {
-			Tag tag;
-			tag.slot = byte();
-			tag.base = word();
-			const auto core = byte();
-			const auto length = byte();
-			if (!ok || core > 1 || a_bytes.size() - at < length) {
-				return std::nullopt;
-			}
-			tag.core = core == 1;
-			tag.name.assign(reinterpret_cast<const char*>(a_bytes.data() + at), length);
-			at += length;
-			record.tags.push_back(std::move(tag));
+		if (a_version >= 2 && !tags(record.forfeited, MAX_FORFEITS)) {
+			return std::nullopt;
 		}
-		if (!ok || at != a_bytes.size() || record.copy == 0 || record.base == 0) {
+		if (!ok || at != a_bytes.size()) {
+			return std::nullopt;
+		}
+		// A loan's (a copy, of a base), or the forfeits alone with nothing of a loan.
+		const bool loan = record.copy != 0 && record.base != 0;
+		const bool forfeitsAlone = record.copy == 0 && record.base == 0 && record.spawnId == 0 && record.owner == 0 && record.tags.empty() && !record.forfeited.empty();
+		if (!loan && !forfeitsAlone) {
 			return std::nullopt;
 		}
 		return record;

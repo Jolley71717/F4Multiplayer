@@ -474,9 +474,24 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   names it, `FriendFrame::Ours`), never buried from under them as its owner's game shares it again or the session ends,
   and it goes with the copies once they are out. A save made in a borrowed frame keeps it and notes it in the co-save's `LOAN` record;
   loaded again, the player is sent out (again until they are), the copies go, and their own pieces and cores in the
-  frame go back to them. Not yet: a loan does not carry over a
-  load, a lent piece may still be sold to a vendor (the owner keeps theirs: two), and a piece no other game can name
-  (one with a runtime mod) is not lent.
+  frame go back to them. Since the owner keeps every piece, a lent copy the borrower of a worn loan had put somewhere (a
+  chest, a workbench, a vendor, the floor), on neither them nor the frame as the loan ended (by name, or from the frame
+  by base and mods), is forfeit, one forfeit for each copy left behind, whether the loan ended with a return, without
+  one, or with the clean-up after loading a save made in the frame (`FrameLoan::MAX_FORFEITS`: at most 64, the oldest
+  dropped, kept with the save in the `LOAN` record, version 2; version 1 records are read with none). Drops and Gifts
+  refuse it as any lent copy, and once the borrower has it on them again (taken back out, bought back) one item of its
+  base and very name is removed for each forfeit, which is then spent (the same frame lent again names its copies the
+  same, so never more of a name is taken than copies of it were left behind), at most once a second, only with no loan
+  under way, the player alive, seated in nothing and out of power armor for 2 s, no inventory menu or loading screen
+  up, and one log line for each piece removed. The by-base taking at a loan's end reads the frame alone and the forfeit
+  sweep the player alone, by name, so the two never act on one piece. A reload on either side after a return is not
+  re-settled: the owner loading a save made before the return has their frame as it was lent (any wear the return
+  brought is undone), and the borrower's forfeits are those of the save they load. Both are the ordinary "an old save
+  undoes a trade" of any move of items between worlds; Drops and Gifts re-settle from a record of each world's, and a
+  loan keeps none on the owner's side. Not yet: a loan does not carry over a load, a piece no other game can name (one
+  with a runtime mod) is not lent, and a forfeited piece left in a container for good, sold and not bought back, left on
+  the floor, or put on a frame of the borrower's own is not caught (only what the borrower carries is looked at), nor
+  one whose name did not hold (the sweep knows it by its name).
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
