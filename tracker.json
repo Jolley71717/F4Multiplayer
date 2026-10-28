@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T08:57:34+00:00",
+ "updated": "2026-10-28T16:25:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -412,6 +412,15 @@
    "note": ""
   },
   {
+   "id": "g6s5",
+   "title": "Power armor loans: after a borrower gets out away from where the frame stood, their game keeps its copy at the old spot (an extra suit) and has none to borrow at the new spot for minutes",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "Merged; one suit where the borrower got out",
+   "pr": 227
+  },
+  {
    "id": "g6s7",
    "title": "Borrow a friend's parked power armor frame",
    "kind": "feature",
@@ -536,6 +545,15 @@
    "stage": 7,
    "note": "Fixed in 0.9.0, which made friends' movement roughly two-thirds less uneven.",
    "desc": "The host saw joiners' movement jitter. The cause was how each movement update was timestamped on the sender's side, not the receiving side. 0.9.0 stamps updates with the game frame they were read in, and a friend now carries on through a late update instead of freezing and leaping. On a local network in testing the unevenness dropped from about 36% to about 13%."
+  },
+  {
+   "id": "kud2",
+   "title": "Power armor loans: after loading a save made inside a borrowed frame, the borrower's game briefly shares its loaded lent copy as its own frame; the owner could borrow a copy holding their own lent pieces (possible dupe)",
+   "kind": "bug",
+   "priority": 0,
+   "stage": 5,
+   "note": "Merged",
+   "pr": 227
   },
   {
    "id": "l7oc",
@@ -932,6 +950,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0, tested on two real games.",
    "desc": "A player reported that harvesting plants was not synced. Picking a plant moves nothing into the inventory the usual way, so the mod never saw it. 0.9.0 shares it: a plant a friend picks is picked in your game too, and two players picking the same plant harvest it once."
+  },
+  {
+   "id": "ybqf",
+   "title": "Power armor return: with no fixed object loaded in the new spot's cell, the owner's frame falls back to the player's cell; a parked copy flashes at the old spot for 0.25 s when a waiting move lands",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "yeyc",
