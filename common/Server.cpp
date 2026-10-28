@@ -258,6 +258,7 @@ namespace
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
 		std::array<bool, kTables>        shareLogged{};
+		std::unordered_set<std::uint32_t> placedObjects;  // objects whose place their share paid for: the same one again, after the table forgot it, costs nothing (at most the share)
 		int               connections = 0;  // connections using it (it isn't forgotten while any do)
 		Clock::time_point lastSeen{};
 	};
@@ -737,6 +738,7 @@ void Server::Run()
 		for (auto& [key, budget] : budgets) {
 			budget.added = {};
 			budget.shareLogged = {};
+			budget.placedObjects.clear();
 		}
 		sessionId = NewSessionId();
 		sessionTable.clear();  // the next arrival's load order numbers the new session
@@ -3060,11 +3062,17 @@ void Server::Run()
 			if (rest->kind != Protocol::ObjectRestKind::kRest || pickedUp.contains(rest->refId)) {
 				return;
 			}
+			// Only an object this player's share has not paid for before is charged: one the table forgot (a full Places
+			// drops the one moved longest ago, and a grenade's blast adds dozens) comes back for nothing.
 			if (!objectPlaces.Find(rest->refId)) {
-				if (!withinShare(a_player, kObjectPlaces)) {
-					return;
+				auto& budget = budgetOf(a_player);
+				if (!a_player.local && !budget.placedObjects.contains(rest->refId)) {
+					if (!withinShare(a_player, kObjectPlaces)) {
+						return;
+					}
+					budget.placedObjects.insert(rest->refId);
+					++budget.added[kObjectPlaces];
 				}
-				++budgetOf(a_player).added[kObjectPlaces];
 			}
 			objectPlaces.Rested(*rest);
 			touched();
