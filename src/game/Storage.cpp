@@ -150,6 +150,8 @@ namespace Storage
 
 			void FlushLoot() override { WorldSync::FlushLoot(); }
 
+			bool Reported(const Protocol::ContainerChange& a_change) override { return WorldSync::Loot().Unreport(a_change); }
+
 			void Send(std::vector<std::uint8_t> a_packet) override { WorldSync::QueueEvent(std::move(a_packet)); }
 
 			void Notify(StorageView::Notice a_notice) override { Hud::Notify(Text::Get(TextKey(a_notice))); }
@@ -171,6 +173,7 @@ namespace Storage
 		StorageView::Side&  side = client.State();
 		std::atomic<bool>   ruleOn{ false };  // for the menu's entry points, which run on any thread
 		bool                hosting = false;
+		std::optional<std::uint32_t> menuOn;  // the container our menu is open on (main thread)
 		std::uint64_t       live = 0;  // the session we are welcomed into (0: none)
 		Clock::time_point   scannedAt{};
 		std::unordered_map<std::uint32_t, Clock::time_point> notStorage;  // the host's scan: since when
@@ -294,7 +297,7 @@ namespace Storage
 
 	void OnOwners(const Protocol::StorageOwners& a_owners)
 	{
-		side.Owners(a_owners);
+		client.OnOwners(a_owners, menuOn, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
 	}
 
 	void OnContents(const Protocol::StorageListing& a_contents)
@@ -427,23 +430,26 @@ namespace Storage
 
 	void OnMenuShown(RE::ObjectRefHandle a_container)
 	{
-		if (!ruleOn) {
-			return;
-		}
+		// The container our menu is open on is remembered with the rule off too: it may come on (or the owners arrive) with the menu open.
 		MainThread::Post([a_container] {
 			if (const auto ref = a_container.get()) {
 				const auto id = ref->GetFormID();
-				client.Open(id, KeeperOf(id) == Keeper::kFriend);
+				menuOn = id;
+				if (ruleOn) {
+					client.Open(id, KeeperOf(id) == Keeper::kFriend);
+				}
 			}
 		});
 	}
 
 	void OnMenuClosed()
 	{
-		if (!ruleOn) {
-			return;  // nothing to do without the rule (a friend's storage is never viewed)
-		}
-		MainThread::Post([] { client.MenuClosed(); });
+		MainThread::Post([] {
+			menuOn.reset();
+			if (ruleOn) {  // nothing more to do without the rule (a friend's storage is never viewed)
+				client.MenuClosed();
+			}
+		});
 	}
 
 	Keeper KeeperOf(std::uint32_t a_container)

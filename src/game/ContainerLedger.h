@@ -314,6 +314,18 @@ namespace ContainerLedger
 			reports.push_back({ a_change, world });
 		}
 
+		// A report of ours the server refused (it was never numbered): forgotten. True when it was made in the world we have now.
+		bool Unreport(const Protocol::ContainerChange& a_change)
+		{
+			const auto it = std::ranges::find(reports, a_change, &Report::change);
+			if (it == reports.end()) {
+				return false;
+			}
+			const bool ours = it->world == world;
+			reports.erase(it);
+			return ours;
+		}
+
 		// After a load while connected: a save from no session (made alone, or another character's) or
 		// from another one takes the session we are in, from its first change, so the saves made from it
 		// on carry a record. True when it did (none of the session's changes are in that world).

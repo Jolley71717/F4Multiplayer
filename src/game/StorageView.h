@@ -493,6 +493,18 @@ namespace StorageView
 			return undo;
 		}
 
+		// A move of ours the server refused that we never counted as on its way: it was made at a container nobody kept yet, and
+		// reported as ordinary loot, as the host's game claimed it. It was made at our copy with no view of it: given back
+		// (a take out of our player, a put to them), and put back in our copy.
+		Undo Unflown(const Protocol::ContainerChange& a_move)
+		{
+			if (counts.unmatched > 0) {
+				--counts.unmatched;  // Refused counted this refusal as one for no move we remember, just before
+			}
+			++(a_move.count < 0 ? counts.refusedTakes : counts.refusedPuts);
+			return { .matched = true, .container = a_move.container, .item = a_move.item, .player = a_move.count, .copy = -static_cast<std::int64_t>(a_move.count) };
+		}
+
 		// Our moves with no answer past ANSWER_WITHIN, counted once each. They stay on their way: their number or refusal
 		// may still come, and one the session never had goes late with our next settle.
 		void Expired(Clock::time_point a_now)
@@ -654,6 +666,8 @@ namespace StorageView
 		// The player's moves since the last frame are reported now (WorldSync::FlushLoot): they come back through
 		// Client::Reporting.
 		virtual void FlushLoot() = 0;
+		// WorldSync reported this move of ours as ordinary loot, from the world we have now (forgets the report).
+		virtual bool Reported(const Protocol::ContainerChange&) { return false; }
 		virtual void Send(std::vector<std::uint8_t> a_packet) = 0;
 		virtual void Notify(Notice a_notice) = 0;
 		// The container menu closes, if it is open (Client::MenuClosed follows).
@@ -781,6 +795,19 @@ namespace StorageView
 			engine.Send(Protocol::Encode(Protocol::StorageView{ a_container, true }));
 		}
 
+		// The server says who keeps what. a_menuOn: the container our menu is open on, if any. The moves made before we knew go
+		// out first as what they were (ordinary loot: the server refuses the ones that came after a claim, and OnRefused undoes
+		// them); then, if our menu is open on a container a friend keeps now, the view opens as if the menu had just been shown:
+		// our copy's stacks are set aside and the true copy comes (the menu was shown before the claim, so nothing else would).
+		void OnOwners(const Protocol::StorageOwners& a_owners, std::optional<std::uint32_t> a_menuOn, const std::function<bool(std::uint32_t)>& a_ours)
+		{
+			engine.FlushLoot();
+			side.Owners(a_owners);
+			if (a_menuOn && !side.Viewing() && side.KeeperOf(*a_menuOn, a_ours) == Keeper::kFriend) {
+				Open(*a_menuOn, true);
+			}
+		}
+
 		// Our menu closed. Nothing to do unless it showed a friend's storage.
 		void MenuClosed()
 		{
@@ -829,6 +856,16 @@ namespace StorageView
 				return;
 			}
 			const auto undo = side.Refused(a_refusal);
+			if (!undo.matched && a_refusal.index == Protocol::STORAGE_NOT_NUMBERED && a_refusal.item != Protocol::CONTAINER_EMPTIED &&
+				(a_refusal.reason == Protocol::StorageReason::kNotViewing || a_refusal.reason == Protocol::StorageReason::kClosed)) {
+				const Protocol::ContainerChange move{ a_refusal.container, a_refusal.item, a_refusal.count };
+				if (engine.Reported(move)) {
+					// Reported as ordinary loot in the moment the host's game claimed the container (nobody kept it when we made the
+					// move): given back to our player and to our copy, as a refused move on its way is.
+					UndoUnflown(side.Unflown(move));
+					return;
+				}
+			}
 			Apply(undo, a_refusal.reason == Protocol::StorageReason::kShort ? Notice::kShort :
 			            undo.player < 0                                     ? Notice::kTakeRefused :
 			                                                                  Notice::kPutRefused);
@@ -871,6 +908,30 @@ namespace StorageView
 			auto out = engine.SharedIn(a_container);
 			std::erase_if(out, [&](const auto& a_entry) { return side.Aliased(a_container, a_entry.first); });
 			return out;
+		}
+
+		// A move of ours made at our copy with no view of it, refused (Side::Unflown). If a view of the container has opened since
+		// (OnOwners), our copy shows the true copy now and its own stacks are set aside: the move is put back in those, so they
+		// come back as the copy had them before it.
+		void UndoUnflown(const Undo& a_undo)
+		{
+			const auto done = engine.ChangePlayer(PlayerChange{ a_undo.item, a_undo.player });
+			if (a_undo.player < 0) {
+				++counts.takenBack;
+				counts.usedUp += done - a_undo.player;
+			} else {
+				++counts.givenBack;
+			}
+			if (side.Shows(a_undo.container)) {
+				auto& held = aside[a_undo.item];
+				held = (std::max<std::int64_t>)(held + a_undo.copy, 0);
+				if (held == 0) {
+					aside.erase(a_undo.item);
+				}
+			} else {
+				engine.ChangeCopy(a_undo.container, a_undo.item, a_undo.copy);
+			}
+			Notify(a_undo.player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 		}
 
 		void Apply(const Undo& a_undo, std::optional<Notice> a_notice)

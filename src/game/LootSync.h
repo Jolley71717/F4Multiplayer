@@ -487,6 +487,8 @@ namespace LootSync
 		[[nodiscard]] const ContainerLedger::Receiver&    Numbers() const { return receiver; }
 		[[nodiscard]] const Counts&                       Stats() const { return counts; }
 		[[nodiscard]] bool                                Ours(std::uint32_t a_playerId) const { return receiver.Ours(a_playerId); }
+		// A move of ours the server refused without numbering it: forgotten. True when our world has it (it was made in this world).
+		bool                                              Unreport(const Protocol::ContainerChange& a_change) { return receiver.Unreport(a_change); }
 		// How many world states we asked for on this connection: the hello's, and each request since (a load's, a gap's).
 		// The server counts the same, and says which one each world state answers (Protocol::StorageCaughtUp).
 		[[nodiscard]] std::uint32_t                       Asked() const { return asked; }

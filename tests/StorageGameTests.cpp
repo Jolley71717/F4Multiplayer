@@ -1589,3 +1589,32 @@ TEST("shared storage: an item a quest alias holds a stack of in the friend's cop
 	CHECK(s.guest.loot.Stats().storageKept == 2);
 	CHECK(s.Total(WATER) == 8);
 }
+
+TEST("shared storage: a friend with the menu open on a chest as the host's game claims it: a move in flight is undone, and the view opens where they stand")
+{
+	Session s;
+	Storage(s.host, BOX);
+	Storage(s.guest, BOX);
+	s.host.away.insert(BOX);
+	s.host.holders[BOX][WATER] = 3;
+	s.guest.holders[BOX][WATER] = 3;  // the friend's copy mirrors the host's (an older session's loot sharing)
+	s.Settle();
+	s.guest.OpenMenu(s.f, BOX);  // nobody keeps it: ordinary loot, no view
+	s.host.away.erase(BOX);
+	s.host.Wait(s.f, LootTest::APPLY_INTERVAL);  // the host comes near: listed, claimed (the owners are on their way)
+	s.guest.Take(s.f, BOX, WATER, 1);            // window (a): reported as loot, arrives after the claim
+	s.guest.Take(s.f, BOX, WATER, 1, false);     // window (b): made, not yet reported, as the owners arrive
+	s.Settle();
+	REQUIRE(s.guest.Keeper(BOX) == Keeper::kFriend);
+	CHECK(s.guest.storage.State().Stats().unmatched == 0);
+	CHECK(s.guest.Carried(WATER) == 3);  // both given back (before the fix: 5)
+	CHECK(s.host.In(BOX, WATER) == 3);
+	CHECK(s.guest.loot.Stats().storageKept == 0);
+	CHECK(s.guest.storage.State().Viewing() == BOX);  // the view opened as the owners came
+	CHECK(s.guest.In(BOX, WATER) == 3);                // the host's stacks shown, the mirror set aside
+	s.guest.Take(s.f, BOX, WATER, 2);
+	s.Settle();
+	CHECK(s.host.In(BOX, WATER) == 1);
+	CHECK(s.guest.Carried(WATER) == 5);
+	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) == 6);  // pockets plus the true copy never exceed what the true copy had
+}
