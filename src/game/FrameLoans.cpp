@@ -1011,6 +1011,15 @@ namespace FrameLoans
 
 		// ---- after a load ----
 
+		// A loading screen, or a menu up that shows or moves our player's inventory (or stops the game): nothing is taken
+		// from our player on our own (SweepForfeits, TakeWornBack) until it is gone.
+		bool InventoryBusy()
+		{
+			using OpenMenus::Menu;
+			return Hud::LoadingScreenUp() || OpenMenus::AnyOpen({ Menu::kPipboy, Menu::kContainer, Menu::kBarter, Menu::kExamine, Menu::kCooking, Menu::kPowerArmorMod, Menu::kWorkshop,
+												 Menu::kFader, Menu::kPause, Menu::kConsole });
+		}
+
 		// What stands around our player as the clean-up sends them out of the frame (the log's, for the rig): where they are,
 		// how the engine has them in it, and the copies of friends' frames near them (FrameLoan::KeepsClear).
 		std::string DescribeAround(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_copy)
@@ -1077,7 +1086,7 @@ namespace FrameLoans
 				job.outSince.reset();  // back in before the settle was over
 				job.waitingOut = true;
 				const auto sinceFirst = job.asked ? std::optional<Clock::duration>{ a_now - job.firstAskedAt } : std::nullopt;
-				if (FrameLoan::TakesWornBack(sinceFirst, job.wornTaken)) {
+				if (FrameLoan::TakesWornBack(sinceFirst, job.wornTaken) && !InventoryBusy()) {  // put off while a menu shows their inventory
 					TakeWornBack(job, player, copy, a_now);
 				}
 				if (!job.asked || a_now - job.askedAt >= SEND_OUT_AGAIN) {
@@ -1163,9 +1172,7 @@ namespace FrameLoans
 			if (!player || player->IsDead(false) || !outOfArmorSince || a_now - *outOfArmorSince < FrameLoan::EXIT_SETTLE || a_now - loadedAt < CLEANUP_AFTER) {
 				return;
 			}
-			using OpenMenus::Menu;
-			if (Hud::LoadingScreenUp() || OpenMenus::AnyOpen({ Menu::kPipboy, Menu::kContainer, Menu::kBarter, Menu::kExamine, Menu::kCooking, Menu::kPowerArmorMod, Menu::kWorkshop,
-											  Menu::kFader, Menu::kPause, Menu::kConsole })) {
+			if (InventoryBusy()) {
 				return;
 			}
 			// One item for each forfeit, which is then spent: a name is no lent item's alone (the same owner's same frame lent

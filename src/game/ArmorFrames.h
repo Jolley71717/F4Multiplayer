@@ -826,6 +826,8 @@ namespace ArmorFrames
 		float               turn = 0.0f;        // from the way theirs faces, radians
 		Duration            sincePlaced{};
 		bool                leftCopy = false;   // the copy their stand-in left as they got out stands, of that base, nobody in it
+		bool                keptClear = false;  // a copy there would stand in our player's way out of the frame a loaded save had
+		                                        // them in, while they are sent out of it (FrameLoans::KeepsClear): none until out
 	};
 
 	enum class Park
@@ -836,7 +838,7 @@ namespace ArmorFrames
 		kShow,     // drawn where they parked theirs, solid once nobody stands in it
 		kMove,     // moved onto where they parked theirs (they parked it a little way off, or it was the left copy)
 		kReplace,  // in another place, far off, of another base or never loaded: deleted, placed again next update
-		kDelete,   // no longer wanted (they got in, parked none, it is out of our sight, or ours stands there): deleted
+		kDelete,   // no longer wanted (they got in, parked none, it is out of our sight, ours stands there, or kept clear): deleted
 		kAbandon,  // somebody here is in it: theirs now, neither moved nor deleted
 		kDropLeft, // ours stands where they parked theirs: the copy their stand-in left as they got out goes at once
 	};
@@ -847,7 +849,7 @@ namespace ArmorFrames
 			if (a_facts.occupied) {
 				return Park::kAbandon;
 			}
-			if (!a_facts.told || !a_facts.inView || a_facts.oursThere) {
+			if (!a_facts.told || !a_facts.inView || a_facts.oursThere || a_facts.keptClear) {
 				return Park::kDelete;
 			}
 			if (!a_facts.sameBase || (a_facts.samePlace && !*a_facts.samePlace) || a_facts.distance > MOVE_LIMIT) {
@@ -858,7 +860,7 @@ namespace ArmorFrames
 			}
 			return a_facts.distance > PARK_FOLLOW || a_facts.turn > PARK_TURN ? Park::kMove : Park::kShow;
 		}
-		if (!a_facts.told || !a_facts.inView || a_facts.taken) {
+		if (!a_facts.told || !a_facts.inView || a_facts.taken || a_facts.keptClear) {
 			return Park::kNone;
 		}
 		// Ours stands for theirs (got in and out on the spot, as on the museum roof): the copy left where the stand-in

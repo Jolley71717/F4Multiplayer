@@ -1752,6 +1752,9 @@ namespace RemotePlayers
 				facts.inView = InView(*parked, a_localCell, a_us, a_loading);
 				facts.oursThere = OursThere(a_player.id, *parked);
 				facts.taken = a_player.parkedTaken == parked;
+				// As for the copy Spawns shares of a frame their game made (whose withholding leaves oursThere false here):
+				// none stands in our player's way out of the frame a loaded save had them in (FrameLoans::KeepsClear).
+				facts.keptClear = FrameLoans::KeepsClear({ parked->cell, parked->worldspace, parked->x, parked->y, parked->z });
 			}
 			const RE::NiPoint3 at = parked ? RE::NiPoint3{ parked->x, parked->y, parked->z } : RE::NiPoint3{};
 			const float        heading = parked ? parked->heading : 0.0f;
@@ -1832,7 +1835,8 @@ namespace RemotePlayers
 				break;
 			case ArmorFrames::Park::kDelete:
 				REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} goes: {}", a_player.id, copy->GetFormID(),
-					!facts.told ? "they are in their armor, or left no frame" : facts.oursThere ? "our own copy of that frame, or the one their game shares, stands there" : "it is out of our sight");
+					!facts.told ? "they are in their armor, or left no frame" : facts.oursThere ? "our own copy of that frame, or the one their game shares, stands there" :
+					!facts.inView ? "it is out of our sight" : "it stands in our player's way out of the frame a loaded save had them in, until they are out");
 				DeleteParked(a_player);
 				break;
 			case ArmorFrames::Park::kAbandon:
