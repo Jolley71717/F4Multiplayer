@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T03:39:10+00:00",
+ "updated": "2026-10-28T04:31:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -86,8 +86,8 @@
    "title": "Power armor loans: a lent kit is lost at every return, and the borrower can't get out after the owner loads or leaves",
    "kind": "bug",
    "priority": 0,
-   "stage": 3,
-   "note": "Fixed and reviewed; rig test next",
+   "stage": 5,
+   "note": "Merged; the owner keeps the kit, and the borrower gets out after a load",
    "pr": 224
   },
   {
@@ -506,8 +506,8 @@
    "title": "Pre-rc review fixes: power armor loans and frames",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Most fixes merged (#218); the forfeit list waits on 3a2c",
+   "stage": 5,
+   "note": "Merged",
    "pr": 222
   },
   {
@@ -727,6 +727,14 @@
    "desc": "A friend didn't see the Prydwen arrive. Each game showed the airship moored at Boston Airport only when its own flyover ended, so a friend indoors, far away or on their own story never got it. The next release shares the moored airship as soon as it arrives in any game, and waits while the friend's own flyover is still in the air so there is never a second one."
   },
   {
+   "id": "rhq6",
+   "title": "Power armor loans: the borrower's frame copy loses the lent kit within 0.3 s of the lend, so a borrower wears an empty frame",
+   "kind": "bug",
+   "priority": 0,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "rw9u",
    "title": "A unique character spawned by console doesn't show for friends",
    "kind": "bug",
@@ -889,6 +897,14 @@
    "note": "A gas canister was shared in testing; logging now names anything that isn't",
    "pr": 217,
    "desc": "Explosions from things a player shoots should happen once in every game. 0.9.2 covered cars, barrels and fuel tanks; gas canisters and similar small props still need checking."
+  },
+  {
+   "id": "y4oq",
+   "title": "Nexus report: a Mr Gutsy the joiner met on the road wasn't there for the host, nor the fight",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "y7tn",
