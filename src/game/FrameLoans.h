@@ -39,7 +39,8 @@ namespace FrameLoans
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner);
 
 	// An item of a_base named a_name is one of the copies of a friend's lent pieces our player holds now (Drops never gives
-	// one away: it goes back at the return).
+	// one away: it goes back at the return), or one forfeited as its loan ended with its owner keeping theirs
+	// (FrameLoan::MAX_FORFEITS; taken from our player when they have it again).
 	[[nodiscard]] bool IsLentItem(std::uint32_t a_base, std::string_view a_name);
 
 	// A save or a load is coming (Spawns::DiscardCopies): the copy our player wears on loan is kept as it is.
@@ -65,9 +66,10 @@ namespace FrameLoans
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
-	// The co-save's LOAN record (src/main.cpp). Empty: none to write.
+	// The co-save's LOAN record (src/main.cpp), in FrameLoan::RECORD_VERSION's layout. Empty: none to write. Read in
+	// a_version's (an older save's too); one not read whole is none.
 	std::vector<std::uint8_t> SaveRecord();
-	void                      LoadRecord(const std::vector<std::uint8_t>& a_bytes);
+	void                      LoadRecord(const std::vector<std::uint8_t>& a_bytes, std::uint32_t a_version);
 	void                      RevertRecord();
 
 	// A load is about to begin (kPreLoadGame, after Session::OnBeforeSaveOrLoad): the loans of our frames, the gives back

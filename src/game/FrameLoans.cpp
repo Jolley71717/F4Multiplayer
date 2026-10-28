@@ -7,6 +7,7 @@
 #include "game/Hud.h"
 #include "game/ItemCopies.h"
 #include "game/NpcSync.h"
+#include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
@@ -125,11 +126,24 @@ namespace FrameLoans
 		constexpr auto         SEND_OUT_AGAIN = std::chrono::seconds(3);
 		constexpr auto         CLEANUP_WARN = std::chrono::seconds(30);  // still in it then: logged, and tried on (a save then keeps the record)
 
+		// The lent items of loans ended with no return that were not found as they ended (FrameLoan::MAX_FORFEITS): this world's,
+		// kept with its saves (the LOAN record) and set from each load's. And those a return told the owner's game did not
+		// come back (it took its own out), so that what our player kept of them is theirs: for this run of the game only.
+		std::vector<FrameLoan::Tag> forfeited;
+		std::vector<FrameLoan::Tag> settled;
+		// The forfeited items our player has on them again are looked for this often (SweepForfeits).
+		constexpr auto                   SWEEP_EVERY = std::chrono::seconds(1);
+		Clock::time_point                lastSweep{};
+		Clock::time_point                loadedAt{};       // the last load (or new game): the loaded world settles first
+		std::optional<Clock::time_point> outOfArmorSince;  // our player out of power armor since then
+		bool                             sweepStuck = false;  // an item did not go: not tried again until the next load
+
 		std::string       lastSaid;
 		Clock::time_point lastSaidAt{};
 		constexpr auto    SAY_AGAIN = std::chrono::seconds(3);
 
-		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesTaken = 0, piecesGiven = 0, movedBack = 0, cleanedUp = 0;
+		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesTaken = 0, piecesGiven = 0, movedBack = 0, cleanedUp = 0,
+		              forfeitsTaken = 0;
 
 		// A notice, not again while it is the last one said a moment ago (a press is asked about more than once).
 		void Say(const std::string& a_text)
@@ -292,11 +306,12 @@ namespace FrameLoans
 
 		constexpr int MAX_STACKS = 64;  // stacks looked at once each at most, in case one does not go
 
-		// Every lent item in a_ref (our copy, or our player) found, its condition noted, and removed.
-		void Gather(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found)
+		// Every lent item in a_ref (our copy, or our player) found, its condition noted, and removed. False when some did not
+		// go (still found after MAX_STACKS removals).
+		bool Gather(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found)
 		{
 			if (!Equipment::MayChange(a_ref, OwnGear::Change::kLoan)) {
-				return;  // never our player's frame, nor a reference this game did not place
+				return true;  // never our player's frame, nor a reference this game did not place
 			}
 			for (int i = 0; i < MAX_STACKS; ++i) {
 				const auto hit = FindStack(a_ref, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
@@ -317,12 +332,13 @@ namespace FrameLoans
 					return found;
 				});
 				if (!hit) {
-					return;
+					return true;
 				}
 				a_found.push_back({ .slot = hit->slot, .health = hit->health });
 				RemoveStack(a_ref, *hit);
 			}
 			REX::WARN("FrameLoans: lent items in {:08X} did not all go", a_ref->GetFormID());
+			return false;
 		}
 
 		// How many of a_base a_ref holds, every stack of it.
@@ -477,6 +493,20 @@ namespace FrameLoans
 				player->lastUsedPowerArmor = RE::ObjectRefHandle{};
 			}
 			const auto items = FrameLoan::ComposeReturn(borrowed.tags, found, !copy);
+			// The lent items not found now (FrameLoan::MAX_FORFEITS). Told to the owner's game as not come back (a return, our
+			// copy there): it takes its own out, and what our player kept of them is theirs (settled). Else, worn, and so able
+			// to have been put somewhere: the owner keeps every original (no return, or none of the ones gone with our copy),
+			// and the copies left in our world are forfeit. Never worn, nothing of it left the copy (the transfer menu is
+			// kept out of a lent frame).
+			if (const auto lost = FrameLoan::NotFound(borrowed.tags, found); !lost.empty()) {
+				if (a_send && !borrowed.ownerless && !a_ended && copy) {
+					FrameLoan::Note(settled, lost, forfeited);
+				} else if (borrowed.released) {
+					FrameLoan::Note(forfeited, lost, settled);
+					REX::INFO("FrameLoans: {} lent items of player {}'s frame were not found as the loan ended with their owner keeping theirs; forfeit, taken from our player if they have them again ({} forfeit now)",
+						lost.size(), borrowed.owner, forfeited.size());
+				}
+			}
 			if (a_send && !borrowed.ownerless) {
 				Protocol::FrameReturn back;
 				back.spawnId = borrowed.spawnId;
@@ -775,10 +805,58 @@ namespace FrameLoans
 				}
 				DeleteFrame(copy);
 			}
+			// The loan this save was made in ends here with no return (the server ended it as our game asked for the world
+			// again): its owner keeps every original, and a lent item not found (put somewhere before the save) is forfeit. Not
+			// one a return told the owner's game of in this run (it took its own out): this save is older than that return.
+			if (const auto lost = FrameLoan::Without(FrameLoan::NotFound(job.record.tags, found), settled); !lost.empty()) {
+				FrameLoan::Note(forfeited, lost, settled);
+				REX::INFO("FrameLoans: {} lent items of the frame borrowed as this save was made were not found; forfeit, taken from our player if they have them again ({} forfeit now)", lost.size(), forfeited.size());
+			}
 			++cleanedUp;
 			REX::INFO("FrameLoans: after the load, the frame borrowed from player {} ({:08X}) and {} lent items are gone", job.record.owner, job.record.copy, found.size());
 			Say(Text::Get("party.frame_loan_over"));
 			cleanup.reset();
+		}
+
+		// ---- forfeits ----
+
+		// The forfeited lent items our player has on them again (taken back out of a chest, bought back) removed, as the lent
+		// items are at a return (Gather: only items of a forfeited tag's base and very name, so never our player's own). At
+		// most once a second, and only while nothing else moves what they carry: no loan or clean-up after a load under way
+		// (those gather their own), our player alive and out of power armor for EXIT_SETTLE (the engine moves a frame's
+		// pieces between it and its wearer as they get in and out, and the frame they are in is theirs), no menu up that
+		// shows or moves their inventory, no loading screen, and the loaded world settled. Saves and loads hold the frame's
+		// work (SaveLoadHold), so this never runs inside one.
+		void SweepForfeits(Clock::time_point a_now)
+		{
+			if (forfeited.empty() || sweepStuck || borrowed.stage != Stage::kNone || cleanup || a_now - lastSweep < SWEEP_EVERY) {
+				return;
+			}
+			lastSweep = a_now;
+			const auto player = Player();
+			if (!player || player->IsDead(false) || !outOfArmorSince || a_now - *outOfArmorSince < FrameLoan::EXIT_SETTLE || a_now - loadedAt < CLEANUP_AFTER) {
+				return;
+			}
+			using OpenMenus::Menu;
+			if (Hud::LoadingScreenUp() || OpenMenus::AnyOpen({ Menu::kPipboy, Menu::kContainer, Menu::kBarter, Menu::kExamine, Menu::kCooking, Menu::kPowerArmorMod, Menu::kWorkshop,
+											  Menu::kFader, Menu::kPause, Menu::kConsole })) {
+				return;
+			}
+			// Each by its place in the list for its slot, so that what is found says which it was.
+			auto tags = forfeited;
+			for (std::size_t i = 0; i < tags.size(); ++i) {
+				tags[i].slot = static_cast<std::uint8_t>(i);
+			}
+			std::vector<FrameLoan::Found> found;
+			const bool all = Gather(player, tags, found);
+			for (const auto& item : found) {
+				++forfeitsTaken;
+				REX::INFO("FrameLoans: forfeited {:08X}, a copy of a friend's lent piece whose loan ended with its owner keeping theirs, is taken from our player", tags[item.slot].base);
+			}
+			if (!all) {
+				sweepStuck = true;
+				REX::WARN("FrameLoans: a forfeited lent item would not go from our player; not tried again until the next load");
+			}
 		}
 	}
 
@@ -877,10 +955,10 @@ namespace FrameLoans
 
 	bool IsLentItem(std::uint32_t a_base, std::string_view a_name)
 	{
-		if (borrowed.stage == Stage::kNone || borrowed.stage == Stage::kAsked) {
-			return false;
-		}
-		return std::ranges::any_of(borrowed.tags, [&](const FrameLoan::Tag& a_tag) { return FrameLoan::IsTagged(a_tag, a_base, a_name); });
+		const auto tagged = [&](const FrameLoan::Tag& a_tag) { return FrameLoan::IsTagged(a_tag, a_base, a_name); };
+		const bool lentNow = borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
+		// Or forfeit (a loan ended with its owner keeping theirs): no more ours to give than while it was lent.
+		return (lentNow && std::ranges::any_of(borrowed.tags, tagged)) || std::ranges::any_of(forfeited, tagged);
 	}
 
 	bool KeepsThroughSave(const RE::TESObjectREFR* a_copy)
@@ -900,6 +978,15 @@ namespace FrameLoans
 			// save holds what that one did, and its load cleans it up the same way.
 			record = cleanup->record;
 			REX::INFO("FrameLoans: this save still holds {:08X}, the frame borrowed from player {} as the save loaded was made; noted again", cleanup->record.copy, cleanup->record.owner);
+		}
+		// This world's forfeits, with a loan's record or alone.
+		if (!forfeited.empty()) {
+			if (!record) {
+				record.emplace();
+			}
+			record->forfeited = forfeited;
+		} else if (record) {
+			record->forfeited.clear();
 		}
 		std::scoped_lock l{ recordLock };
 		recordAtSave = std::move(record);
@@ -1142,6 +1229,20 @@ namespace FrameLoans
 				break;
 			}
 		}
+		// The forfeited lent items our player has on them again go (SweepForfeits). Whether they are in power armor is read
+		// every frame, so that no getting in and out between two sweeps is missed; seated in any furniture counts as in it
+		// (a frame's seat comes before its armor, and the engine moves the pieces as they get in).
+		if (!forfeited.empty()) {
+			const auto player = Player();
+			const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			const bool seated = middle && middle->occupiedFurniture.get();
+			if (!player || seated || Equipment::InPowerArmor(player)) {
+				outOfArmorSince.reset();
+			} else if (!outOfArmorSince) {
+				outOfArmorSince = now;
+			}
+			SweepForfeits(now);
+		}
 		// Ours offered and never confirmed: ours again.
 		std::erase_if(lent, [&](const auto& a_entry) {
 			if (a_entry.second.granted || now - a_entry.second.since < LEND_WAIT) {
@@ -1198,9 +1299,9 @@ namespace FrameLoans
 		return recordAtSave ? FrameLoan::Encode(*recordAtSave) : std::vector<std::uint8_t>{};
 	}
 
-	void LoadRecord(const std::vector<std::uint8_t>& a_bytes)
+	void LoadRecord(const std::vector<std::uint8_t>& a_bytes, std::uint32_t a_version)
 	{
-		auto record = FrameLoan::Decode(a_bytes);
+		auto record = FrameLoan::Decode(a_bytes, a_version);
 		std::scoped_lock l{ recordLock };
 		recordLoaded = std::move(record);
 	}
@@ -1238,7 +1339,16 @@ namespace FrameLoans
 			record = std::exchange(recordLoaded, std::nullopt);
 		}
 		cleanup.reset();
-		if (!record) {
+		// This world's forfeits are the loaded save's (none in a new game, or a save without them): a load of an older save
+		// has the world before the loans that forfeited the newer ones.
+		forfeited = record ? record->forfeited : std::vector<FrameLoan::Tag>{};
+		loadedAt = Clock::now();
+		outOfArmorSince.reset();
+		sweepStuck = false;
+		if (!forfeited.empty()) {
+			REX::INFO("FrameLoans: this save holds {} forfeited lent items; taken from our player if they have them", forfeited.size());
+		}
+		if (!record || record->copy == 0) {
 			return;
 		}
 		const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(record->copy);
@@ -1285,8 +1395,8 @@ namespace FrameLoans
 
 	std::string Describe()
 	{
-		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} ours: lent={} back={} worn={} taken={} moved={} cleaned={}",
+		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} forfeit={} settled={} forfeitsTaken={}{} ours: lent={} back={} worn={} taken={} moved={} cleaned={}",
 			static_cast<int>(borrowed.stage), borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), backs.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds,
-			piecesGiven, lentOut, givenBack, piecesWorn, piecesTaken, movedBack, cleanedUp);
+			piecesGiven, forfeited.size(), settled.size(), forfeitsTaken, sweepStuck ? " (stuck)" : "", lentOut, givenBack, piecesWorn, piecesTaken, movedBack, cleanedUp);
 	}
 }

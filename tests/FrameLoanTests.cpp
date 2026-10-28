@@ -204,6 +204,113 @@ TEST("frame loan: the LOAN record reads back as written, and nothing of a damage
 	CHECK(cut && cut->tags.size() == 1 && cut->tags[0].name.size() == FrameLoan::MAX_TAG_NAME);
 }
 
+TEST("frame loan: an ownerless end forfeits the lent items not found")
+{
+	using FrameLoan::Tag;
+	const std::vector<Tag> tags{ { .slot = 0, .base = 0x10, .name = "Sam's T-60 Helmet" }, { .slot = 1, .base = 0x11, .name = "Sam's T-60 Left Arm" },
+		{ .slot = 2, .base = 0x75FE4, .name = "Sam's Fusion Core", .core = true } };
+	const std::vector<FrameLoan::Found> found{ { .slot = 1, .health = 0.5f } };
+	const auto lost = FrameLoan::NotFound(tags, found);
+	CHECK(lost.size() == 2 && lost[0].slot == 0 && lost[1].slot == 2);
+	CHECK(FrameLoan::NotFound(tags, { { .slot = 0 }, { .slot = 1 }, { .slot = 2 } }).empty());
+	std::vector<Tag> forfeited, settled;
+	FrameLoan::Note(forfeited, lost, settled);
+	CHECK(forfeited.size() == 2 && forfeited[0].slot == 0 && forfeited[1].slot == 2);
+	// Matched as a lent item is: its base and very name, never another name or base.
+	CHECK(FrameLoan::Lists(forfeited, { .base = 0x10, .name = "Sam's T-60 Helmet" }));
+	CHECK(!FrameLoan::Lists(forfeited, { .base = 0x10, .name = "T-60 Helmet" }));
+	CHECK(!FrameLoan::Lists(forfeited, { .base = 0x10, .name = "" }));
+	CHECK(!FrameLoan::Lists(forfeited, { .base = 0x11, .name = "Sam's T-60 Helmet" }));
+	CHECK(!FrameLoan::Lists(forfeited, tags[1]));
+	// Forfeit again (a later loan of the same frame): once, the newest last.
+	FrameLoan::Note(forfeited, { tags[0] }, settled);
+	CHECK(forfeited.size() == 2 && forfeited[0].slot == 2 && forfeited[1].slot == 0);
+	// A return that says the helmet did not come back settles it: no longer forfeit, and the cleanup after a load of an
+	// older save leaves it be.
+	FrameLoan::Note(settled, { tags[0] }, forfeited);
+	CHECK(settled.size() == 1 && forfeited.size() == 1 && forfeited[0].slot == 2);
+	CHECK(FrameLoan::Without(lost, settled).size() == 1 && FrameLoan::Without(lost, settled)[0].slot == 2);
+	// A tag with no name is never noted (no item is named so; it would match nothing anyway).
+	FrameLoan::Note(forfeited, { { .slot = 3, .base = 0x12 } }, settled);
+	CHECK(forfeited.size() == 1);
+	// At most MAX_FORFEITS, the oldest going first.
+	std::vector<Tag> many;
+	for (std::uint32_t i = 0; i < FrameLoan::MAX_FORFEITS + 6; ++i) {
+		many.push_back({ .slot = 0, .base = 0x1000 + i, .name = "Sam's piece" });
+	}
+	FrameLoan::Note(forfeited, many, settled);
+	CHECK(forfeited.size() == FrameLoan::MAX_FORFEITS);
+	CHECK(forfeited.front().base == 0x1000 + 6 && forfeited.back().base == 0x1000 + FrameLoan::MAX_FORFEITS + 5);
+}
+
+TEST("frame loan: the LOAN record keeps the forfeits, reads an older build's, and forfeits nothing of a damaged one")
+{
+	using FrameLoan::Decode;
+	using FrameLoan::Encode;
+	FrameLoan::Record record{ .copy = 0xFF0012AB, .base = 0x0019DED9, .spawnId = 0xFF800005, .owner = 3 };
+	record.tags.push_back({ .slot = 0, .base = 0x00140C58, .name = "Sam's T-60 Helmet" });
+	record.forfeited.push_back({ .slot = 2, .base = 0x00140C5A, .name = "Sam's T-60 Left Arm" });
+	record.forfeited.push_back({ .slot = 7, .base = 0x00075FE4, .name = "Sam's Fusion Core", .core = true });
+	const auto bytes = Encode(record);
+	CHECK(Decode(bytes) == record);
+	CHECK(Decode(bytes, FrameLoan::RECORD_VERSION) == record);
+	for (std::size_t cut = 0; cut < bytes.size(); ++cut) {
+		CHECK(!Decode({ bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(cut) }));
+	}
+	auto longer = bytes;
+	longer.push_back(0);
+	CHECK(!Decode(longer));
+	// The forfeits alone, with nothing of a loan (a save made after the loan ended): kept, and nothing to clean up.
+	FrameLoan::Record alone;
+	alone.forfeited = record.forfeited;
+	const auto aloneRead = Decode(Encode(alone));
+	CHECK(aloneRead == alone);
+	CHECK(aloneRead && FrameLoan::ChooseAfterLoad(*aloneRead, false, 0, false) == FrameLoan::AfterLoad::kNothing);
+	CHECK(!Decode(Encode({})));  // nothing at all
+	// A loan's with an empty list.
+	auto none = record;
+	none.forfeited.clear();
+	CHECK(Decode(Encode(none)) == none);
+	// An older build's (version 1: the loan alone, with no count of forfeits after it) reads with none forfeited; read as
+	// the other version, neither layout is taken for the other.
+	auto older = Encode(none);
+	CHECK(older.back() == 0);
+	older.pop_back();
+	CHECK(Decode(older, 1) == none);
+	CHECK(!Decode(older, 2));
+	CHECK(!Decode(bytes, 1));
+	CHECK(!Decode(bytes, 0));
+	CHECK(!Decode(bytes, FrameLoan::RECORD_VERSION + 1));
+	// Damaged: a count over the most, a core flag that is no flag, a name longer than what is left.
+	const std::size_t forfeitsAt = 17 + 1 + 4 + 1 + 1 + record.tags[0].name.size();
+	CHECK(bytes[forfeitsAt] == 2);
+	auto tooMany = bytes;
+	tooMany[forfeitsAt] = static_cast<std::uint8_t>(FrameLoan::MAX_FORFEITS + 1);
+	CHECK(!Decode(tooMany));
+	auto badCore = bytes;
+	badCore[forfeitsAt + 1 + 1 + 4] = 2;
+	CHECK(!Decode(badCore));
+	auto longName = bytes;
+	longName[forfeitsAt + 1 + 1 + 4 + 1] = 255;
+	CHECK(!Decode(longName));
+	// Whatever any byte is, the record reads within its bytes (and a loan with no copy is never read).
+	for (std::size_t i = 0; i < bytes.size(); ++i) {
+		for (const std::uint8_t value : { std::uint8_t{ 0 }, std::uint8_t{ 1 }, std::uint8_t{ 0x7F }, std::uint8_t{ 0xFF } }) {
+			auto changed = bytes;
+			changed[i] = value;
+			const auto read = Decode(changed);
+			CHECK(!read || read->copy != 0 || read->tags.empty());
+		}
+	}
+	// Of more forfeits than the record keeps, the newest.
+	FrameLoan::Record full;
+	for (std::uint32_t i = 0; i < FrameLoan::MAX_FORFEITS + 3; ++i) {
+		full.forfeited.push_back({ .slot = 0, .base = 0x2000 + i, .name = "Sam's piece" });
+	}
+	const auto fullRead = Decode(Encode(full));
+	CHECK(fullRead && fullRead->forfeited.size() == FrameLoan::MAX_FORFEITS && fullRead->forfeited.front().base == 0x2000 + 3);
+}
+
 TEST("frame loan: the spawn lent to us is held from the kit coming until the loan ends, and spawn id 0 is never held")
 {
 	using FrameLoan::HoldsSpawn;

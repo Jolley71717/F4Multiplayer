@@ -10,6 +10,7 @@
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
+#include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
 #include "game/FrameWatch.h"
 #include "game/GhostLedger.h"
@@ -235,8 +236,10 @@ namespace
 	constexpr std::uint32_t KEPT_VERSION = 1;
 	constexpr std::uint32_t KEPT_MAX_LENGTH = 1u << 10;  // FriendFrame::Encode writes at most 768 bytes
 	constexpr std::uint32_t LOAN_RECORD = 'LOAN';
-	constexpr std::uint32_t LOAN_VERSION = 1;
-	constexpr std::uint32_t LOAN_MAX_LENGTH = 1u << 13;  // FrameLoan::Encode: 17 bytes and at most 16 tags of 262
+	constexpr std::uint32_t LOAN_VERSION = FrameLoan::RECORD_VERSION;  // 2: the forfeited lent items after the loan; 1 (read too): the loan alone
+	// FrameLoan::Encode: 17 bytes, at most 16 tags of 262, a byte and at most 64 forfeited of 262.
+	constexpr std::uint32_t LOAN_MAX_LENGTH = 1u << 15;
+	static_assert(17 + 16 * 262 + 1 + FrameLoan::MAX_FORFEITS * 262 <= LOAN_MAX_LENGTH);
 	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
 	constexpr std::uint32_t LOOKS_VERSION = 1;
 	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
@@ -318,10 +321,10 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Storage::LoadRecord(bytes);
 				}
-			} else if (type == LOAN_RECORD && version == LOAN_VERSION && length <= LOAN_MAX_LENGTH) {
+			} else if (type == LOAN_RECORD && version >= 1 && version <= LOAN_VERSION && length <= LOAN_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
-					FrameLoans::LoadRecord(bytes);
+					FrameLoans::LoadRecord(bytes, version);
 				}
 			} else if (type == LOOKS_RECORD && version == LOOKS_VERSION && length <= LOOKS_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
