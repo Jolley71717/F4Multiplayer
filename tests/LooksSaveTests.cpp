@@ -204,6 +204,20 @@ TEST("looks save: a stand-in placed under a listed ID is cleared before its own 
 	CHECK(silent.Listed(OTHER));
 }
 
+TEST("looks save: a stand-in placed twice under a listed ID waits for one removal")
+{
+	BodyMorphs::StandIns standIns;
+	standIns.Restore({ STAND_IN });
+	// One release serves both placings, so LooksMenu must not queue a second removal for the second (it holds the newer
+	// looks in place of the first's while the removal is on its way).
+	standIns.Clearing(STAND_IN);
+	CHECK(standIns.Placing(STAND_IN));
+	CHECK(standIns.Placing(STAND_IN));
+	standIns.Cleared(STAND_IN);
+	CHECK(standIns.Released(STAND_IN));
+	CHECK(!standIns.Released(STAND_IN));
+}
+
 TEST("looks save: the list's rules leave a listed ID that is one of our stand-ins to its own removal")
 {
 	World world;

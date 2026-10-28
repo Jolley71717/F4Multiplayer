@@ -317,6 +317,43 @@ TEST("retry schedule: everything waiting is tried on arriving in the world or in
 	CHECK(listed == 0);
 }
 
+TEST("retry schedule: the pass on arriving is spread over the frames it takes, every id once, and a load in between is still tried")
+{
+	using namespace std::chrono;
+	RetrySchedule              schedule{ 2s, 256 };
+	std::vector<std::uint32_t> waiting;
+	for (std::uint32_t i = 0; i < 600; ++i) {
+		waiting.push_back(0x00100000 + i);
+	}
+	const auto              all = [&] { return waiting; };
+	auto                    now = steady_clock::now();
+	constexpr std::uint32_t SANCTUARY = 0x0000003C, DIAMOND_CITY = 0x0001F000;
+
+	auto plan = schedule.Frame(now, true, SANCTUARY, {}, true, all);
+	CHECK(plan.full);
+	std::set<std::uint32_t> tried(plan.others.begin(), plan.others.end());
+	CHECK(plan.others.size() == 256);
+
+	plan = schedule.Frame(now += 16ms, true, SANCTUARY, { 0x00200000 }, true, all);
+	CHECK(!plan.full);
+	CHECK(plan.others.size() == 256);
+	CHECK((plan.loaded == std::vector<std::uint32_t>{ 0x00200000 }));  // a load arriving meanwhile is tried as it comes
+	tried.insert(plan.others.begin(), plan.others.end());
+
+	plan = schedule.Frame(now += 16ms, true, SANCTUARY, {}, true, all);
+	CHECK(plan.others.size() == 88);
+	tried.insert(plan.others.begin(), plan.others.end());
+	CHECK(tried.size() == 600);  // every id once
+
+	plan = schedule.Frame(now += 16ms, true, SANCTUARY, {}, true, all);
+	CHECK(plan.others.empty());  // done; the slow sweep is not due yet
+
+	// Another cell starts the pass again.
+	plan = schedule.Frame(now += 16ms, true, DIAMOND_CITY, {}, true, all);
+	CHECK(plan.full);
+	CHECK(plan.others.size() == 256);
+}
+
 // ---- what the client relies on --------------------------------------------------------------
 
 TEST("pending loot: a container that never loads doesn't hold up another's changes")

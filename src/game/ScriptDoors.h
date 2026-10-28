@@ -65,8 +65,8 @@
 // marker is held only by its own 15 (enabled), RR304's fragment (enabled) and PrydwenDestructionScript (disabled),
 // and the only conditions on BoSEnable are Liberty Prime's scribes' packages, which read its stage for Prime's 20
 // to 40 (every pex and every record of the plugins, read again at review). Their own flight later sets 15 again,
-// which BoSEnable (no repeated stages) ignores. A game whose own flyover is in the air (the effect enabled, with
-// its 3D: Door::effect, Look::busy) waits for it instead: its script sets 15 itself at the end of the flight, or
+// which BoSEnable (no repeated stages) ignores. A game whose own flyover is on its way (the effect enabled: in the air, or
+// not loaded yet because the player is indoors; Door::effect, Look::busy) waits for it instead: its script sets 15 itself at the end of the flight, or
 // when the player waits, travels or goes indoors, and set sooner the moored airship would stand at the airport
 // while the flying one is still crossing (both players leaving Concord together, the report's case). The flyover
 // itself isn't shared: it is Out of Time's (its 130 also sends Preston's group off to Sanctuary), and the effect
@@ -85,7 +85,7 @@ namespace ScriptDoors
 		std::string_view what;   // which door, for the log
 		std::string_view state;  // what the stage leaves it as, for the log ("open")
 		bool             loaded = true;  // the stage animates it: set only once it is loaded (an enable needs no 3D)
-		std::uint32_t    effect = 0;     // a reference whose loaded 3D means this game's own script is on its way to the stage (the flyover in the air): the session's stage waits for it
+		std::uint32_t    effect = 0;     // a reference that is enabled (its 3D loaded, or not yet: the player indoors) means this game's own script is on its way to the stage (the flyover in the air): the session's stage waits for it
 	};
 
 	// Fallout4.esm's DN142 (Vault 114) 50: Fragment_Stage_0050 calls DN142QuestScript::OpenGearDoor, which plays
@@ -121,7 +121,7 @@ namespace ScriptDoors
 		bool done = false;        // the stage is done here
 		bool doorLoaded = false;  // the door is loaded (has its 3D), so its open animation plays
 		bool canApply = false;    // in the world, out of the opening, no menu pausing scripts
-		bool busy = false;        // this game's own script is on its way to the stage (Door::effect enabled and loaded): it sets it itself
+		bool busy = false;        // this game's own script is on its way to the stage (Door::effect enabled, loaded or not yet): it sets it itself
 	};
 
 	enum class Act
