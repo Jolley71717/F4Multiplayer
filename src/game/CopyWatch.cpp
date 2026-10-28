@@ -436,9 +436,8 @@ namespace CopyWatch
 		TakeHits();  // those that came since Session::Frame took them (the rest of the frame's engine work)
 
 		// Every loaded copy: what something other than our hits took comes back, and what it gained of its own goes.
-		std::unordered_set<std::uint32_t> seen;
-		const auto                        info = HealthInfo();
-		const auto                        lists = RE::ProcessLists::GetSingleton();
+		const auto info = HealthInfo();
+		const auto lists = RE::ProcessLists::GetSingleton();
 		if (info && lists) {
 			std::vector<std::pair<RE::Actor*, std::uint32_t>> copies;
 			for (const auto& handle : lists->highActorHandles) {
@@ -453,7 +452,6 @@ namespace CopyWatch
 				}
 			}
 			for (const auto& [actor, id] : copies) {
-				seen.insert(id);
 				copiesSeen[id] = now;
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
@@ -503,7 +501,12 @@ namespace CopyWatch
 				}
 			}
 		}
-		book.Prune([&](std::uint32_t a_id) { return seen.contains(a_id); });
+		// A copy seen lately keeps its book: a frame without its 3D (moved in, gear changed, dropped by the engine) must
+		// not lose the hit booked in it, the bleed's window, or a held report.
+		book.Prune([&](std::uint32_t a_id) {
+			const auto it = copiesSeen.find(a_id);
+			return it != copiesSeen.end() && now - it->second <= COPY_SEEN_KEPT;
+		});
 		std::erase_if(lastHits, [&](const auto& a_entry) { return now - a_entry.second.at > LAST_HIT_KEPT; });
 
 		for (const auto& death : deaths) {

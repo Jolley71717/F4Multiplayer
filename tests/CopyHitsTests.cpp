@@ -614,3 +614,28 @@ TEST("copy hits: a drop a report found with a hit of ours booked already is coun
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 20 }, 100.0f) == 0.0f);
 	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));  // in all, not 20
 }
+
+TEST("copy hits: a book pruned with a grace keeps what a hit booked in a frame the copy was out of sight")
+{
+	// CopyWatch prunes by when each copy was last seen (5 s), not by this frame's loop: a frame without the copy's 3D
+	// lost the hit booked in it, and the shot never reached the NPC's game.
+	using std::chrono::milliseconds;
+	using std::chrono::seconds;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          seenAt = [&](std::uint32_t a_id, CopyHealth::Clock::time_point a_seen) { return [=](std::uint32_t a_other) { return a_other == a_id && t0 + milliseconds{ 16 } - a_seen <= seconds{ 5 }; }; };
+
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	book.Prune(seenAt(RAIDER_1, t0 - seconds{ 1 }));
+	CHECK(book.Size() == 1);
+	CHECK(book.Check(RAIDER_1, 90.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));
+
+	// Seen last 6 s ago: forgotten.
+	CopyHealth::Book gone;
+	gone.Set(RAIDER_1, 100.0f);
+	gone.OurHit(RAIDER_1, t0, 10.0f);
+	gone.Prune(seenAt(RAIDER_1, t0 - seconds{ 6 }));
+	CHECK(gone.Size() == 0);
+}
