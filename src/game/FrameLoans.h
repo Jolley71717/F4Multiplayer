@@ -40,7 +40,8 @@ namespace FrameLoans
 
 	// a_local is our copy of the frame lent to us, while the loan lasts (not while it is only asked for): the frame our
 	// player gets out of last is it for the settle after they are out, and it is not their parked frame to tell. So is the
-	// copy a loaded save was made in, until the clean-up after that load buries it.
+	// copy a loaded save was made in, from the load until the clean-up after it buries it. Either is a copy, never a frame
+	// of ours to share or to lend (FrameShare::Ours::borrowed).
 	[[nodiscard]] bool BorrowedCopy(std::uint32_t a_local);
 
 	// Our player pressed E on a_frame, our copy of a_owner's frame shared as a_spawnId (RemotePlayers' frame gate): false

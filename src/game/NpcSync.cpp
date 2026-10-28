@@ -1050,12 +1050,25 @@ namespace NpcSync
 			return std::pair{ coords->cellX, coords->cellY };
 		}
 
-		FrameShare::Ours FrameOursOf(RE::TESObjectREFR* a_frame)
+		// What says a frame here is a copy of a friend's (FrameShare::Copy): the session placed it (SaveGuard's books, or
+		// Spawns' copy of a frame a friend's game made), or it is the one lent to us, which the loan knows for a copy after a
+		// load of a save made in it, when those books do not (FrameLoans::BorrowedCopy).
+		FrameShare::Ours CopyFactsOf(const RE::TESObjectREFR* a_frame)
 		{
 			FrameShare::Ours ours;
-			if (!a_frame) {
-				return ours;
+			if (a_frame) {
+				ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
+				ours.borrowed = FrameLoans::BorrowedCopy(a_frame->GetFormID());
 			}
+			return ours;
+		}
+
+		FrameShare::Ours FrameOursOf(RE::TESObjectREFR* a_frame)
+		{
+			if (!a_frame) {
+				return {};
+			}
+			auto       ours = CopyFactsOf(a_frame);
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			ours.found = true;
 			ours.created = a_frame->IsCreated();
@@ -1065,7 +1078,6 @@ namespace NpcSync
 			ours.quest = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 			ours.inUse = FrameInUse(a_frame);
 			ours.wornHere = player && Equipment::PowerArmorFrameOf(player).get() == a_frame;
-			ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
 			ours.marked = WorkshopSync::IsCopyMarked(*a_frame);
 			ours.holdsItems = WorkshopSync::HoldsAnything(a_frame);
 			ours.lastUsed = player && player->lastUsedPowerArmor.get().get() == a_frame;
@@ -1171,8 +1183,10 @@ namespace NpcSync
 					REX::INFO("NpcSync: our player {} frame {:08X}; it is ours to run (owner {})", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used, OwnerOf(used));
 					OnLocalInteraction(used);  // taken over when another game runs it; offered below when nobody does
 				}
-			} else if (const auto made = MadeFrameRef(used); made && !SaveGuard::Placed(made) && usedMade.size() < MAX_MADE_SEEN) {
-				// One our game made: ours, shared as a spawn wherever our world keeps it (ShareMade).
+			} else if (const auto made = MadeFrameRef(used); made && !FrameShare::Copy(CopyFactsOf(made)) && usedMade.size() < MAX_MADE_SEEN) {
+				// One our game made: ours, shared as a spawn wherever our world keeps it (ShareMade). Never a copy of a friend's
+				// frame, the one lent to us among them: after a load of a save made in it, our player is in it, and gets out of
+				// it, before the clean-up removes it.
 				if (usedMade.insert(used).second || wornId != wornFrame) {
 					REX::INFO("NpcSync: our player {} frame {:08X}, made in our game; it is shared as a spawn while it stands", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used);
 				}
