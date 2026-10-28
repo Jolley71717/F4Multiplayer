@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T04:31:21+00:00",
+ "updated": "2026-10-28T05:03:36+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -731,6 +731,15 @@
    "title": "Power armor loans: the borrower's frame copy loses the lent kit within 0.3 s of the lend, so a borrower wears an empty frame",
    "kind": "bug",
    "priority": 0,
+   "stage": 2,
+   "note": "Fix built; in review",
+   "pr": 226
+  },
+  {
+   "id": "rnae",
+   "title": "Stand-in gear: Equipment::Apply and SwitchIntoPowerArmor empty with console removeallitems then add in the same frame; if the console call runs later it may take the gear just given",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -903,8 +912,9 @@
    "title": "Nexus report: a Mr Gutsy the joiner met on the road wasn't there for the host, nor the fight",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Logging reviewed; rig run to name the cause",
+   "pr": 225
   },
   {
    "id": "y7tn",
