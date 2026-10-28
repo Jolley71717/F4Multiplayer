@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -70,6 +71,32 @@ namespace SpawnBook
 			return a_original.id;
 		}
 		return a_own.npc && Protocol::IsShareableRef(a_own.id) ? a_own.id : 0;
+	}
+
+	// Why a runtime NPC of ours, once it is hostile to our player or fighting, is not reported yet: the log says it once
+	// per NPC, so that "the friend never saw it" can be told from "our game never shared it". Nothing is none.
+	enum class Block : std::uint8_t
+	{
+		kNone,
+		kNoBase,   // no NPC every game can place it from (PickBase): all its templates have templates of their own, and its own base is the game's copy
+		kNoPlace,  // not in one cell or one worldspace (the report has to name one)
+	};
+
+	constexpr Block ShareBlock(std::uint32_t a_base, bool a_placeKnown)
+	{
+		return a_base == 0 ? Block::kNoBase : (!a_placeKnown ? Block::kNoPlace : Block::kNone);
+	}
+
+	constexpr std::string_view BlockName(Block a_block)
+	{
+		switch (a_block) {
+		case Block::kNoBase:
+			return "no base the friend's game can place it from";
+		case Block::kNoPlace:
+			return "not in a cell or a worldspace";
+		default:
+			return "none";
+		}
 	}
 
 	// ---- Ours: NPCs our game made, shared under spawn ids --------------------------------------------------------
@@ -353,16 +380,86 @@ namespace SpawnBook
 			if (copy.gone || copy.dead) {
 				return Act::kForget;
 			}
-			if (!a_facts.baseOk || copy.tries >= PLACE_TRIES || (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY)) {
-				return Act::kNone;
+			return WhyNotPlaced(a_id, a_facts, a_now) == Why::kPlace ? Act::kPlace : Act::kNone;
+		}
+
+		// Why a spawn that has no copy here is not placed now (kPlace: nothing stops it). The log says the lasting ones, so a
+		// friend's enemy that never showed can be told from one placed beside us (Spawns::Frame).
+		enum class Why : std::uint8_t
+		{
+			kPlace,         // nothing: Decide places it
+			kHasCopy,       // a copy is placed already
+			kOver,          // it died or its owner's game let it go
+			kBaseNotOk,     // its base is not an NPC we place copies of (a unique one, or a stand-in's)
+			kGaveUp,        // placing it failed PLACE_TRIES times
+			kRetryWait,     // placing it failed lately: tried again in PLACE_RETRY
+			kFarFromUs,     // where its owner's game has it is past PLACE_RANGE of our player, or in another place
+			kOwnerUnheard,  // its owner's stand-in has not said where it is
+			kOwnerFar,      // its owner's stand-in is past OWNER_RANGE of it, or in another place
+			kRollWait,      // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT)
+			kUnknown,       // no such spawn
+		};
+
+		[[nodiscard]] Why WhyNotPlaced(std::uint32_t a_id, const Facts& a_facts, Clock::time_point a_now) const
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return Why::kUnknown;
+			}
+			const auto& copy = it->second;
+			if (copy.local != 0) {
+				return Why::kHasCopy;
+			}
+			if (copy.gone || copy.dead) {
+				return Why::kOver;
+			}
+			if (!a_facts.baseOk) {
+				return Why::kBaseNotOk;
+			}
+			if (copy.tries >= PLACE_TRIES) {
+				return Why::kGaveUp;
+			}
+			if (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY) {
+				return Why::kRetryWait;
 			}
 			if (!RemoteEdits::Within(RemoteEdits::Distance(copy.at, a_facts.player), PLACE_RANGE)) {
-				return Act::kNone;
+				return Why::kFarFromUs;
 			}
-			if (!a_facts.owner || !RemoteEdits::Within(RemoteEdits::Distance(*a_facts.owner, copy.at), OWNER_RANGE)) {
-				return Act::kNone;
+			if (!a_facts.owner) {
+				return Why::kOwnerUnheard;
 			}
-			return a_facts.waiting ? Act::kNone : Act::kPlace;
+			if (!RemoteEdits::Within(RemoteEdits::Distance(*a_facts.owner, copy.at), OWNER_RANGE)) {
+				return Why::kOwnerFar;
+			}
+			return a_facts.waiting ? Why::kRollWait : Why::kPlace;
+		}
+
+		static constexpr std::string_view WhyName(Why a_why)
+		{
+			switch (a_why) {
+			case Why::kPlace:
+				return "nothing stops it";
+			case Why::kHasCopy:
+				return "placed";
+			case Why::kOver:
+				return "over";
+			case Why::kBaseNotOk:
+				return "its base is no NPC we place copies of (unique, or a stand-in's)";
+			case Why::kGaveUp:
+				return "placing it failed every time";
+			case Why::kRetryWait:
+				return "placing it failed lately";
+			case Why::kFarFromUs:
+				return "it is far from our player or in another place";
+			case Why::kOwnerUnheard:
+				return "its owner's stand-in has not said where it is";
+			case Why::kOwnerFar:
+				return "its owner's stand-in is far from it";
+			case Why::kRollWait:
+				return "waiting for its owner's roll of it";
+			default:
+				return "unknown";
+			}
 		}
 
 		// A friend's frame, placed as a friend's parked one is (ArmorFrames::ChoosePark) rather than as an NPC: wherever its

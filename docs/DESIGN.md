@@ -417,6 +417,13 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 - A copy goes when its player leaves it 9000 units behind (placed again on coming back), when its cell unloads,
   before every save and load, and when the spawn is over while it is alive. A dead copy stays as a corpse until
   its player leaves it.
+- Either game shares: a joiner's random encounter reaches the host as the host's reaches the joiner (nothing in the
+  scan, the base pick or the placing looks at the race, the keywords or who hosts). When a friend does not see one,
+  the log says why: our side logs a hostile or fighting runtime NPC it cannot report (`Spawns: ... is hostile to our
+  player or fighting, but not shared`, with its race, its base and the templates the pick found none of) and counts it
+  (`net status`, `spawns: ... notShared=`); the other side logs a spawn it holds no copy of for a lasting reason (`has no
+  copy here`: its base is a unique NPC, placing failed, its owner's stand-in not heard or far) and counts them
+  (`unplaced=base/far/owner`).
 - It is over when it dies, when its owner's game lets it go (unloaded) and when its owner leaves: the server
   forgets it and names nobody as its owner, which ends it in every game. Its death is believed from its owner
   and from a player fighting their copy of it (health reported, or a takeover claim, within 10 s), never kept

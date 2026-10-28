@@ -504,6 +504,62 @@ TEST("spawns: a copy is placed near us beside its owner, and goes when we leave 
 	CHECK(theirs.Decide(SPAWN, Near(), T0) == Act::kForget);
 }
 
+TEST("spawns: a hostile NPC of ours that cannot be reported, and a friend's spawn that cannot be placed, say why")
+{
+	using SpawnBook::Block;
+	using Why = SpawnBook::Theirs::Why;
+	// Ours: no base every game can place (all its templates have templates of their own, its own base is the game's copy),
+	// or no cell or worldspace to name. Any other is reported.
+	CHECK(SpawnBook::ShareBlock(RAIDER, true) == Block::kNone);
+	CHECK(SpawnBook::ShareBlock(0, true) == Block::kNoBase);
+	CHECK(SpawnBook::ShareBlock(RAIDER, false) == Block::kNoPlace);
+	CHECK(SpawnBook::ShareBlock(0, false) == Block::kNoBase);
+	CHECK(!SpawnBook::BlockName(Block::kNoBase).empty() && SpawnBook::BlockName(Block::kNoBase) != SpawnBook::BlockName(Block::kNoPlace));
+
+	// Theirs: one reason for each thing Decide holds a spawn back for, in the order it checks them, and Decide places it
+	// exactly when there is none.
+	SpawnBook::Theirs theirs;
+	constexpr std::uint32_t US = 2;
+	auto spawn = Raider(SPAWN);
+	spawn.playerId = 1;
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0) == Why::kUnknown);
+	REQUIRE(theirs.Add(spawn, US));
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0) == Why::kPlace);
+	CHECK(theirs.Decide(SPAWN, Near(), T0) == Act::kPlace);
+
+	auto unique = Near();
+	unique.baseOk = false;
+	CHECK(theirs.WhyNotPlaced(SPAWN, unique, T0) == Why::kBaseNotOk);
+	CHECK(theirs.WhyNotPlaced(SPAWN, { .player = At(1000.0f + SpawnBook::PLACE_RANGE + 500.0f), .owner = At(1200.0f) }, T0) == Why::kFarFromUs);
+	CHECK(theirs.WhyNotPlaced(SPAWN, { .player = At(1500.0f, 0x0000AAAA), .owner = At(1200.0f) }, T0) == Why::kFarFromUs);  // another place
+	CHECK(theirs.WhyNotPlaced(SPAWN, { .player = At(1500.0f) }, T0) == Why::kOwnerUnheard);
+	CHECK(theirs.WhyNotPlaced(SPAWN, { .player = At(1500.0f), .owner = At(1000.0f + SpawnBook::OWNER_RANGE + 500.0f) }, T0) == Why::kOwnerFar);
+	auto waiting = Near();
+	waiting.waiting = true;
+	CHECK(theirs.WhyNotPlaced(SPAWN, waiting, T0) == Why::kRollWait);
+
+	// Placing failed: a wait before the next try, then given up for good.
+	theirs.Placed(SPAWN, 0, T0);
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0 + 1s) == Why::kRetryWait);
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0 + SpawnBook::PLACE_RETRY) == Why::kPlace);
+	theirs.Placed(SPAWN, 0, T0 + 6s);
+	theirs.Placed(SPAWN, 0, T0 + 12s);
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0 + 30s) == Why::kGaveUp);
+	CHECK(theirs.Decide(SPAWN, Near(), T0 + 30s) == Act::kNone);
+
+	// Placed, or over.
+	constexpr std::uint32_t COPY = 0xFF000777;
+	theirs.Placed(SPAWN, COPY, T0 + 40s);
+	CHECK(theirs.WhyNotPlaced(SPAWN, Placed(1100.0f), T0 + 41s) == Why::kHasCopy);
+	theirs.Gone(SPAWN);
+	theirs.Unplaced(SPAWN);
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0 + 42s) == Why::kUnknown);
+	REQUIRE(theirs.Add(spawn, US));
+	theirs.Gone(SPAWN);
+	CHECK(theirs.WhyNotPlaced(SPAWN, Near(), T0) == Why::kOver);
+	CHECK(SpawnBook::Theirs::WhyName(Why::kFarFromUs) != SpawnBook::Theirs::WhyName(Why::kOwnerFar));
+}
+
 TEST("spawns: two games share an ambush through the server, and the joiner's kill lands in the owner's game")
 {
 	Fixture    f;

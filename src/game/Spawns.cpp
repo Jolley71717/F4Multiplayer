@@ -170,6 +170,100 @@ namespace Spawns
 			return !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) && (a_actor->IsInCombat() || a_actor->GetHostileToActor(a_player));
 		}
 
+		// Our runtime NPCs that are hostile or fighting but cannot be reported (SpawnBook::ShareBlock), by their ids here:
+		// each is said once, for a few lines in all, and counted (`net status`: spawns blocked=). A friend never sees
+		// these, which is how "the host could not see the Mr Gutsy" would show.
+		constexpr std::size_t           MAX_BLOCKED_NOTED = 256;
+		std::unordered_set<std::uint32_t> blockedNoted;
+		std::uint32_t                   blocked = 0, blockedLogged = 0;
+
+		// What the actor's base is put together from, for the log: its own base, the NPC it was placed as, and its templates.
+		std::string DescribeBase(RE::Actor* a_actor)
+		{
+			const auto npc = a_actor->GetNPC();
+			std::string out = std::format("own {:08X}{}", npc ? npc->GetFormID() : 0, npc && npc->UsesTemplate() ? " (uses a template)" : "");
+			if (a_actor->extraList) {
+				if (const auto leveled = a_actor->extraList->GetByType<RE::ExtraLeveledCreature>()) {
+					out += std::format(", placed as {:08X}", leveled->originalBase ? leveled->originalBase->GetFormID() : 0);
+					for (const auto base : leveled->templates) {
+						if (base) {
+							const auto templated = base->As<RE::TESNPC>();
+							out += std::format(", template {:08X}{}", base->GetFormID(), templated ? (templated->UsesTemplate() ? " (has one of its own)" : "") : " (not an NPC)");
+						}
+					}
+				} else {
+					out += ", no leveled data";
+				}
+			}
+			return out;
+		}
+
+		void NoteBlocked(RE::Actor* a_actor, std::uint32_t a_local, SpawnBook::Block a_block)
+		{
+			if (blockedNoted.size() >= MAX_BLOCKED_NOTED) {
+				blockedNoted.clear();
+			}
+			if (!blockedNoted.insert(a_local).second) {
+				return;
+			}
+			++blocked;
+			if (blockedLogged >= LOGGED) {
+				return;
+			}
+			++blockedLogged;
+			const auto name = a_actor->GetDisplayFullName();
+			REX::INFO("Spawns: {:08X} '{}' (race {:08X}) is hostile to our player or fighting, but not shared: {}; friends' games will not see it ({})", a_local, name ? name : "", a_actor->race ? a_actor->race->GetFormID() : 0,
+				SpawnBook::BlockName(a_block), DescribeBase(a_actor));
+		}
+
+		// Friends' spawns that have no copy here and are not about to get one, by spawn id, with the reason last said
+		// (SpawnBook::Theirs::Why): a lasting reason is logged once, after the spawn has been known UNPLACED_AFTER (a few
+		// lines in all), and counted in `net status` (unplaced=). A spawn merely far from our player is the usual case and
+		// only counted.
+		constexpr auto                                                    UNPLACED_AFTER = std::chrono::seconds(3);
+		std::unordered_map<std::uint32_t, SpawnBook::Theirs::Why>        unplacedWhy;
+		std::uint32_t                                                    unplacedLogged = 0;
+
+		void NoteUnplaced(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, SpawnBook::Theirs::Why a_why, const SpawnBook::Facts& a_facts, Clock::time_point a_now)
+		{
+			using Why = SpawnBook::Theirs::Why;
+			if (a_why == Why::kRollWait || a_why == Why::kRetryWait || a_why == Why::kPlace || a_why == Why::kHasCopy) {
+				unplacedWhy.erase(a_id);
+				return;
+			}
+			const auto seen = seenAt.find(a_id);
+			if (seen == seenAt.end() || a_now - seen->second < UNPLACED_AFTER) {
+				return;
+			}
+			auto& last = unplacedWhy.try_emplace(a_id, Why::kPlace).first->second;  // kPlace: none said yet
+			if (last == a_why) {
+				return;
+			}
+			last = a_why;
+			if (a_why == Why::kFarFromUs || unplacedLogged >= LOGGED) {
+				return;
+			}
+			++unplacedLogged;
+			const float fromUs = RemoteEdits::Distance(a_copy.at, a_facts.player);
+			const float fromOwner = a_facts.owner ? RemoteEdits::Distance(*a_facts.owner, a_copy.at) : -1.0f;
+			REX::INFO("Spawns: player {}'s {:08X} (base {:08X}) has no copy here: {} ({:.0f} units from our player, {:.0f} from its owner's stand-in, -1 if not heard)", a_copy.spawn.playerId, a_id, a_copy.spawn.base,
+				SpawnBook::Theirs::WhyName(a_why), fromUs, fromOwner);
+		}
+
+		// For `net status`: our runtime NPCs that are hostile but cannot be shared, and the spawns of friends with no copy here
+		// for a lasting reason: their base is no NPC we place / it is far from our player / its owner's stand-in is unheard or far.
+		std::string Unplaced()
+		{
+			using Why = SpawnBook::Theirs::Why;
+			int base = 0, far = 0, owner = 0;
+			for (const auto& [id, why] : unplacedWhy) {
+				base += why == Why::kBaseNotOk || why == Why::kGaveUp;
+				far += why == Why::kFarFromUs;
+				owner += why == Why::kOwnerUnheard || why == Why::kOwnerFar;
+			}
+			return std::format(" notShared={} unplaced={}/{}/{}", blocked, base, far, owner);
+		}
+
 		void Kill(std::uint32_t a_local)
 		{
 			if (killedHere.size() >= MAX_KILLED_HERE) {
@@ -370,7 +464,8 @@ namespace Spawns
 		}
 		const auto base = BaseToPlace(a_actor);
 		const auto at = SpotOf(a_actor);
-		if (base == 0 || (at.cell == 0) == (at.worldspace == 0)) {
+		if (const auto block = SpawnBook::ShareBlock(base, (at.cell == 0) != (at.worldspace == 0)); block != SpawnBook::Block::kNone) {
+			NoteBlocked(a_actor, local, block);
 			return 0;
 		}
 		const auto id = ours.Offer(local, Clock::now(), [](std::uint32_t a_id) { return theirs.Knows(a_id); });
@@ -574,7 +669,8 @@ namespace Spawns
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
-			switch (theirs.Decide(id, facts, now)) {
+			const auto act = theirs.Decide(id, facts, now);
+			switch (act) {
 			case SpawnBook::Act::kPlace:
 				{
 					if (placedNow >= PLACE_PER_FRAME) {
@@ -618,8 +714,14 @@ namespace Spawns
 			case SpawnBook::Act::kNone:
 				break;
 			}
+			if (act == SpawnBook::Act::kNone && copy->local == 0) {
+				NoteUnplaced(id, *copy, theirs.WhyNotPlaced(id, facts, now), facts, now);
+			} else if (act != SpawnBook::Act::kNone) {
+				unplacedWhy.erase(id);
+			}
 		}
 		// A spawn forgotten some other way (its player gone, the server's word) takes its first sighting with it.
+		std::erase_if(unplacedWhy, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(oursThere, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 	}
@@ -684,6 +786,8 @@ namespace Spawns
 		placed.clear();
 		killedHere.clear();
 		leaving.clear();
+		blockedNoted.clear();  // the loaded world's ids name other NPCs
+		unplacedWhy.clear();
 		oursThere.clear();  // the loaded world's frames are looked at afresh
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
@@ -710,6 +814,8 @@ namespace Spawns
 		}
 		placed.clear();
 		seenAt.clear();
+		unplacedWhy.clear();
+		blockedNoted.clear();
 		theirs.Clear();
 		ours.Clear();
 		ownFrames.clear();
@@ -722,6 +828,6 @@ namespace Spawns
 	{
 		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld) + " " + FrameLoans::Describe();
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }
