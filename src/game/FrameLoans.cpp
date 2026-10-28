@@ -1173,6 +1173,12 @@ namespace FrameLoans
 			if (!frame) {
 				return false;  // unloaded with its cell: tried again once it is back (until MOVE_LIMIT)
 			}
+			if (!Equipment::IsPowerArmorFrame(frame->GetObjectReference())) {
+				// Its id names something else now (made at runtime, freed with its cell, the id handed out again): never moved
+				// in its place (MoveOwnFrame moves whatever it is given).
+				REX::INFO("FrameLoans: our frame {:08X}, given back, is no frame here now; nothing is moved", a_move.local);
+				return true;
+			}
 			if (!NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
 				return false;
 			}
