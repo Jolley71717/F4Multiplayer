@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-27T23:23:19+00:00",
+ "updated": "2026-10-28T02:25:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -80,6 +80,14 @@
    "stage": 7,
    "note": "Shown in the friend's hand since 0.9.0; we are still checking it looks right in real play.",
    "desc": "A cosmetic problem: when a friend wound up a throw, their hand looked empty, though the throw and the explosion were right. 0.9.0 shows the grenade in their hand during the throw, controlled by the setting bGrenadeInHand. It was only tried with a frag grenade, so other throwables still need checking."
+  },
+  {
+   "id": "3a2c",
+   "title": "Power armor loans: a lent kit is lost at every return, and the borrower can't get out after the owner loads or leaves",
+   "kind": "bug",
+   "priority": 0,
+   "stage": 1,
+   "note": "Found in rig testing; being fixed before the rc"
   },
   {
    "id": "3lh",
@@ -268,6 +276,15 @@
    "pr": 210
   },
   {
+   "id": "bd5v",
+   "title": "Pre-rc review fixes: items and shared storage",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": "",
+   "pr": 221
+  },
+  {
    "id": "blj1",
    "title": "After dying and reloading, you often can't damage enemies",
    "kind": "bug",
@@ -367,6 +384,15 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; weapons and armor on corpses stay per player on purpose.",
    "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
+  },
+  {
+   "id": "etlo",
+   "title": "Pre-rc review fixes: server and session",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": "",
+   "pr": 223
   },
   {
    "id": "fhkp",
@@ -473,6 +499,15 @@
    "note": "Fixed for the next release; not yet tried with real shots.",
    "pr": 170,
    "desc": "A player reported that enemies' death animations played late on the client's screen. The next release reports an enemy as dead as soon as it starts to fall, so friends see the death without a three second wait. On two real games a kill was counted once and the corpses ended up in the same place."
+  },
+  {
+   "id": "k3vb",
+   "title": "Pre-rc review fixes: power armor loans and frames",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": "Most fixes merged (#218); the forfeit list waits on 3a2c",
+   "pr": 222
   },
   {
    "id": "krne",
@@ -740,6 +775,15 @@
    "desc": "A moved object only reached games that had it loaded at that moment, so a friend arriving later saw it in the old place. The next release keeps where moved objects came to rest in the session, so a game that loads the area later puts them there too."
   },
   {
+   "id": "t8mf",
+   "title": "Pre-rc review fixes: combat, downing, NPC health",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": "",
+   "pr": 220
+  },
+  {
    "id": "ta1j",
    "title": "A new character gets back gifts the old one took",
    "kind": "bug",
@@ -776,6 +820,15 @@
    "note": "Fixed for the next release; we couldn't test it with a companion in a frame.",
    "pr": 164,
    "desc": "If the game saved in the few seconds a companion was stepping out of a friend's frame copy, loading that save brought the copy back as an ordinary frame, one extra suit. The next release still sends the companion out after that load, so the copy no longer comes back. 0.9.2 lists this as a known issue."
+  },
+  {
+   "id": "v4k6",
+   "title": "Pre-rc review fixes: world sync, doors, menus",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "",
+   "pr": 219
   },
   {
    "id": "v7mg",
