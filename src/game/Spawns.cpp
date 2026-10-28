@@ -171,7 +171,7 @@ namespace Spawns
 		}
 
 		// Our runtime NPCs that are hostile or fighting but cannot be reported (SpawnBook::ShareBlock), by their ids here:
-		// each is said once, for a few lines in all, and counted (`net status`: spawns blocked=). A friend never sees
+		// each is said once, for a few lines in all, and counted (`net status`: spawns notShared=). A friend does not see
 		// these, which is how "the host could not see the Mr Gutsy" would show.
 		constexpr std::size_t           MAX_BLOCKED_NOTED = 256;
 		std::unordered_set<std::uint32_t> blockedNoted;
@@ -212,17 +212,18 @@ namespace Spawns
 			}
 			++blockedLogged;
 			const auto name = a_actor->GetDisplayFullName();
-			REX::INFO("Spawns: {:08X} '{}' (race {:08X}) is hostile to our player or fighting, but not shared: {}; friends' games will not see it ({})", a_local, name ? name : "", a_actor->race ? a_actor->race->GetFormID() : 0,
+			REX::INFO("Spawns: {:08X} '{}' (race {:08X}) is hostile to our player or fighting, but not shared (so far): {}; friends' games do not see it ({})", a_local, name ? name : "", a_actor->race ? a_actor->race->GetFormID() : 0,
 				SpawnBook::BlockName(a_block), DescribeBase(a_actor));
 		}
 
 		// Friends' spawns that have no copy here and are not about to get one, by spawn id, with the reason last said
-		// (SpawnBook::Theirs::Why): a lasting reason is logged once, after the spawn has been known UNPLACED_AFTER (a few
-		// lines in all), and counted in `net status` (unplaced=). A spawn merely far from our player is the usual case and
-		// only counted.
+		// (SpawnBook::Theirs::Why): a reason is logged once, after the spawn has been known UNPLACED_AFTER, a few lines for
+		// each reason in all (an owner's stand-in walking off from its spawns again and again must not use up the lines a
+		// unique base or a failed placing needs), and counted in `net status` (unplaced=). A spawn merely far from our
+		// player is the usual case and only counted.
 		constexpr auto                                                    UNPLACED_AFTER = std::chrono::seconds(3);
 		std::unordered_map<std::uint32_t, SpawnBook::Theirs::Why>        unplacedWhy;
-		std::uint32_t                                                    unplacedLogged = 0;
+		std::array<std::uint32_t, static_cast<std::size_t>(SpawnBook::Theirs::Why::kUnknown) + 1> unplacedLogged{};  // lines said, for each reason
 
 		void NoteUnplaced(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, SpawnBook::Theirs::Why a_why, const SpawnBook::Facts& a_facts, Clock::time_point a_now)
 		{
@@ -240,10 +241,11 @@ namespace Spawns
 				return;
 			}
 			last = a_why;
-			if (a_why == Why::kFarFromUs || unplacedLogged >= LOGGED) {
+			auto& said = unplacedLogged[static_cast<std::size_t>(a_why)];
+			if (a_why == Why::kFarFromUs || said >= LOGGED) {
 				return;
 			}
-			++unplacedLogged;
+			++said;
 			const float fromUs = RemoteEdits::Distance(a_copy.at, a_facts.player);
 			const float fromOwner = a_facts.owner ? RemoteEdits::Distance(*a_facts.owner, a_copy.at) : -1.0f;
 			REX::INFO("Spawns: player {}'s {:08X} (base {:08X}) has no copy here: {} ({:.0f} units from our player, {:.0f} from its owner's stand-in, -1 if not heard)", a_copy.spawn.playerId, a_id, a_copy.spawn.base,
@@ -631,6 +633,7 @@ namespace Spawns
 	void Frame()
 	{
 		if (theirs.Size() == 0) {
+			unplacedWhy.clear();  // none left to have no copy (`net status` counts these)
 			return;
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
