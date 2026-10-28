@@ -558,8 +558,20 @@ namespace Party
 			// there, in the station we parked it in or wherever we left it.
 			// Not while it is lent (FrameLoans): it stands hidden here, and the borrower wears it. Nor the copy lent to us, which
 			// we only just got out of: it is the owner's spawn, and every other game already stands it there.
-			const auto last = LastFrameOf(player);
-			status.parked = FrameLoan::TellsParked(FrameLoans::LentOut(last.ref), FrameLoans::BorrowedCopy(last.ref)) ? ArmorFrames::TellParked(status.powerArmor, last) : std::nullopt;
+			auto last = LastFrameOf(player);
+			// One of ours given back far from where it was lent, waiting to be moved there (FrameLoans::MoveWaiting): told
+			// where it waits to go, as its states tell (NpcSync's FrameState), where every friend's game has its copy. Told
+			// where it still stands here, it matched no copy of theirs (Spawns::FrameCopyAt), and each placed a parked copy of
+			// it there: a second suit at the spot it was lent from, for as long as the move waits.
+			if (const auto waiting = FrameLoans::MoveWaiting(last.ref)) {
+				last.cell = waiting->first.cell;
+				last.worldspace = waiting->first.worldspace;
+				last.x = waiting->first.x;
+				last.y = waiting->first.y;
+				last.z = waiting->first.z;
+				last.heading = waiting->second;
+			}
+			status.parked =FrameLoan::TellsParked(FrameLoans::LentOut(last.ref), FrameLoans::BorrowedCopy(last.ref)) ? ArmorFrames::TellParked(status.powerArmor, last) : std::nullopt;
 			// Whether we lend our own frames to friends who ask (bLendPowerArmor).
 			status.lends = Config::Get().lendPowerArmor;
 			// The chair, bed, workbench or terminal we use: friends put our stand-in in the same one (not a frame: above).
