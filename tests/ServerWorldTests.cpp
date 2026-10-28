@@ -2119,6 +2119,45 @@ namespace
 	}
 }
 
+TEST("server world: on a hosted server a joiner's game isn't told an NPC is dead until the host's game has had the NPC in reach for the grace")
+{
+	Server::Options options = HostedOptions();
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
+	Fixture f{ options };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Alice");
+	JoinAs(f, 3, "Bob");
+	f.fake->Deliver(1, StateAt(1, 20000.0f, 0.0f));  // the host is far from the camp
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(3, DeathAt(NPC, true, 1.0f));  // Bob's kill: the corpse lies at (1, 0, 0)
+	Clear(f, { 1, 2, 3 });
+
+	// Alice walked into the reset camp ahead of the host: her game fights its copy, as it always did.
+	f.fake->Deliver(2, Claim(NPC));
+	f.Advance(std::chrono::seconds{ 400 });
+	f.fake->Deliver(2, Health(NPC, 0.5f));
+	f.Advance(std::chrono::seconds{ 400 });
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+
+	// The host arrives: its game has a grace of its own to offer the NPC alive before hers is told it is dead.
+	f.fake->Deliver(1, StateAt(2, 100.0f, 0.0f));
+	f.Advance(std::chrono::seconds{ 400 });
+	f.fake->Deliver(2, Claim(NPC));  // her grace starts here: the host is near now
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(2, Claim(NPC));
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(2, Claim(NPC));
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].playerId == 0);
+	CHECK(deaths[0].x == 1.0f);
+}
+
 TEST("server trust: an explosion from a player who hasn't said where they are is dropped")
 {
 	Fixture f;

@@ -81,6 +81,16 @@ namespace
 		return Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, a_reason, a_essential } });
 	}
 
+	// A player standing outdoors in the Commonwealth, a_x units east of the origin.
+	std::vector<std::uint8_t> StandAt(std::uint32_t a_sequence, float a_x = 0.0f)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.worldspace = 0x0000003C;
+		state.x = a_x;
+		return Protocol::Encode(state);
+	}
+
 	std::vector<std::uint8_t> Kill(std::uint32_t a_ref, float a_x = 0.0f)
 	{
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 0, true, a_x, 0.0f, 0.0f }, MT::kReportDeath);
@@ -344,6 +354,9 @@ TEST("alive again: a joiner's game can't bring the dead back, whatever it claims
 	CHECK(!bob.Alive(RAIDER));
 	host.Pump();
 	f.Advance(GRACE + 50ms);
+	// Both players stand at the camp: a reminder waits on a host's game being in reach of the NPC (Server::remindDead).
+	f.fake->Deliver(1, StandAt(1));
+	f.fake->Deliver(2, StandAt(1));
 
 	// Bob's camp reset first. His own game knows its raider is back and offers it; the server grants nothing, and says
 	// nothing yet (the host's game may be about to offer it too, which brings it back for everyone).

@@ -1548,6 +1548,36 @@ void Server::Run()
 			it->second = { a_now, a_now, {} };
 		}
 		auto& reminder = it->second;
+		// A hosted session: the host's game brings a dead NPC back (handleClaims, cameBack) when it has it alive and
+		// loaded. A reminder is right only once that game has had the chance for aliveAgainGrace and didn't: its world
+		// not stale, its last request older than the grace, its player within loaded-cell reach of where the NPC fell
+		// (or of the reporter when the fall isn't known), in the same space. Until then the joiner fights its own copy,
+		// as before reminders, and the host's arrival revives it for everyone. A dedicated server has no host's game:
+		// the rule stands as it was.
+		constexpr float REVIVE_REACH = 8192.0f;
+		bool            hostHere = false, hostNear = false;
+		for (const auto& [otherKey, other] : players) {
+			if (!other.welcomed || !other.local) {
+				continue;
+			}
+			hostHere = true;
+			if (other.worldStale || a_now - other.worldAskedAt < options.aliveAgainGrace || !other.hasState || !a_player.hasState) {
+				break;
+			}
+			float x = a_player.state.x, y = a_player.state.y, z = a_player.state.z;
+			if (const auto fell = deathPositions.find(a_refId); fell != deathPositions.end()) {
+				x = fell->second[0], y = fell->second[1], z = fell->second[2];
+			}
+			const float dx = other.state.x - x, dy = other.state.y - y, dz = other.state.z - z;
+			hostNear = other.state.cell == a_player.state.cell && other.state.worldspace == a_player.state.worldspace &&
+			           dx * dx + dy * dy + dz * dz <= REVIVE_REACH * REVIVE_REACH;
+			break;
+		}
+		if (hostHere && !hostNear) {
+			reminder.since = a_now;  // the host's grace starts when its game is there to offer the NPC
+			reminder.last = a_now;
+			return;
+		}
 		reminder.last = a_now;
 		if (a_now - reminder.since < options.aliveAgainGrace || (reminder.told != Clock::time_point{} && a_now - reminder.told < options.remindDeadEvery)) {
 			return;
