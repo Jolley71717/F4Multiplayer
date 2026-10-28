@@ -475,18 +475,36 @@ namespace
 			// Which save is loaded (a death loads the newest one): the line a report of "an old save" is read by.
 			AutoSave::OnPreLoad(MessageText(a_msg));
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
-			RunBeforeSaveOrLoad(
-				[] {
-					WeaponFire::BeforeLoad();  // first: the shields Session ends below would send setghost 0 into the load
-					Session::OnBeforeLoad();
-					Session::OnBeforeSaveOrLoad();
-					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
-					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
-					InertShots::BeforeLoad();  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
-					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
-					RemotePlayers::BeforeLoad();  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
-				},
-				"load");
+			// Guarded like the save's below: an exception must not leave the message handler and crash the game in the middle
+			// of the load; each step is caught on its own, so one that fails does not stop the others.
+			try {
+				RunBeforeSaveOrLoad(
+					[] {
+						const auto step = [](std::string_view a_what, auto&& a_work) {
+							try {
+								a_work();
+							} catch (const std::exception& e) {
+								REX::ERROR("Frame: before the load, {}: {}", a_what, e.what());
+							} catch (...) {
+								REX::ERROR("Frame: before the load, {}: an unknown exception", a_what);
+							}
+						};
+						step("the shields", [] { WeaponFire::BeforeLoad(); });  // first: the shields Session ends below would send setghost 0 into the load
+						step("the binding", [] { Session::OnBeforeLoad(); });
+						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reset under way is ended (enabled) before the load
+						step("the faces", [] { Face::ForgetCopies(); });  // the load sets runtime form IDs back: a mark could name another NPC
+						step("the inert shots", [] { InertShots::BeforeLoad(); });  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
+						step("the strays", [] { SaveGuard::BeforeLoad(); });  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
+						step("the frame copies", [] { RemotePlayers::BeforeLoad(); });  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
+					},
+					"load");
+			} catch (const std::exception& e) {
+				// The work an earlier message handed over, run first (SaveLoadHold::Hold::RunNow), threw.
+				REX::ERROR("Frame: before the load: {}", e.what());
+			} catch (...) {
+				REX::ERROR("Frame: before the load: an unknown exception");
+			}
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
 			AutoSave::OnPreSave(MessageText(a_msg));  // which save, and whether it is one the mod asked for
