@@ -474,8 +474,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   borrower had put somewhere (a chest, a workbench, a vendor, the floor), on neither them nor the frame as it ended, is
   forfeit (`FrameLoan::MAX_FORFEITS`: at most 64, the oldest dropped, kept with the save in the `LOAN` record, version 2;
   version 1 records are read with none): Drops and Gifts refuse it as any lent copy, and once the borrower has it on them
-  again (taken back out, bought back) it is removed through the return's own gathering, at most once a second, only with
-  no loan under way, the player alive, seated in nothing and out of power armor for 2 s, no inventory menu or loading screen up, and one log
+  again (taken back out, bought back) one item is removed for each forfeit, which is then spent (the same frame lent
+  again names its copies the same, so a piece of that name the borrower kept of a return is only ever taken in place of
+  the forfeited one, never beside it), at most once a second, only with no loan under way, the player alive, seated in nothing and out of power armor for 2 s, no inventory menu or loading screen up, and one log
   line for each piece removed. So are the lent items the clean-up after loading a save made in the frame does not find,
   but those a return in this run of the game told the owner did not come back (the owner took theirs out: what the
   borrower kept is theirs, as after any return). A reload on either side after a return is not re-settled: the borrower

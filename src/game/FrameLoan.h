@@ -238,9 +238,10 @@ namespace FrameLoan
 	// session ended, or we loaded a save made in the frame) leaves its owner every original. A lent copy our player had put
 	// somewhere by then (a chest, a workbench, a vendor, the floor), on neither them nor the copy as the lent items were
 	// gathered, would be the piece twice. Its tag is forfeit: Drops and Gifts refuse it as any lent copy, and one our player
-	// has on them again (taken back out of the chest, bought back) is removed. A return that says a piece did not come back
-	// settles it instead (the owner's game took theirs out): what our player kept of it is theirs. Kept with the save (the
-	// LOAN record), at most MAX_FORFEITS, the oldest dropped.
+	// has on them again (taken back out of the chest, bought back) is removed: one item for each forfeit, which is then
+	// spent (a name is not one loan's alone: the same frame lent again names its copies the same). A return that says a
+	// piece did not come back settles it instead (the owner's game took theirs out): what our player kept of it is theirs.
+	// Kept with the save (the LOAN record), at most MAX_FORFEITS, the oldest dropped.
 	constexpr std::size_t MAX_FORFEITS = 64;
 
 	// The tags of a_tags of which no item was found (by slot).

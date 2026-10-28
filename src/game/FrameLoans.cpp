@@ -306,12 +306,11 @@ namespace FrameLoans
 
 		constexpr int MAX_STACKS = 64;  // stacks looked at once each at most, in case one does not go
 
-		// Every lent item in a_ref (our copy, or our player) found, its condition noted, and removed. False when some did not
-		// go (still found after MAX_STACKS removals).
-		bool Gather(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found)
+		// Every lent item in a_ref (our copy, or our player) found, its condition noted, and removed.
+		void Gather(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found)
 		{
 			if (!Equipment::MayChange(a_ref, OwnGear::Change::kLoan)) {
-				return true;  // never our player's frame, nor a reference this game did not place
+				return;  // never our player's frame, nor a reference this game did not place
 			}
 			for (int i = 0; i < MAX_STACKS; ++i) {
 				const auto hit = FindStack(a_ref, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
@@ -332,13 +331,12 @@ namespace FrameLoans
 					return found;
 				});
 				if (!hit) {
-					return true;
+					return;
 				}
 				a_found.push_back({ .slot = hit->slot, .health = hit->health });
 				RemoveStack(a_ref, *hit);
 			}
 			REX::WARN("FrameLoans: lent items in {:08X} did not all go", a_ref->GetFormID());
-			return false;
 		}
 
 		// How many of a_base a_ref holds, every stack of it.
@@ -820,8 +818,8 @@ namespace FrameLoans
 
 		// ---- forfeits ----
 
-		// The forfeited lent items our player has on them again (taken back out of a chest, bought back) removed, as the lent
-		// items are at a return (Gather: only items of a forfeited tag's base and very name, so never our player's own). At
+		// The forfeited lent items our player has on them again (taken back out of a chest, bought back) removed: an item
+		// of a forfeited tag's base and very name, one for each forfeit, which is then spent. At
 		// most once a second, and only while nothing else moves what they carry: no loan or clean-up after a load under way
 		// (those gather their own), our player alive and out of power armor for EXIT_SETTLE (the engine moves a frame's
 		// pieces between it and its wearer as they get in and out, and the frame they are in is theirs), no menu up that
@@ -842,20 +840,38 @@ namespace FrameLoans
 											  Menu::kFader, Menu::kPause, Menu::kConsole })) {
 				return;
 			}
-			// Each by its place in the list for its slot, so that what is found says which it was.
-			auto tags = forfeited;
-			for (std::size_t i = 0; i < tags.size(); ++i) {
-				tags[i].slot = static_cast<std::uint8_t>(i);
-			}
-			std::vector<FrameLoan::Found> found;
-			const bool all = Gather(player, tags, found);
-			for (const auto& item : found) {
+			// One item for each forfeit, which is then spent: a name is no lent item's alone (the same owner's same frame lent
+			// again names its copies the same), so a piece of that name our player kept of a return (settled) is never taken
+			// beside the forfeited one, only in its place.
+			for (int i = 0; i < MAX_STACKS && !forfeited.empty(); ++i) {
+				const auto hit = FindStack(player, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
+					const auto base = a_object->GetFormID();
+					if (std::ranges::none_of(forfeited, [&](const FrameLoan::Tag& a_tag) { return a_tag.base == base; })) {
+						return std::nullopt;
+					}
+					const auto name = NameOf(a_extra);
+					const auto tag = std::ranges::find_if(forfeited, [&](const FrameLoan::Tag& a_tag) { return FrameLoan::IsTagged(a_tag, base, name); });
+					if (tag == forfeited.end()) {
+						return std::nullopt;
+					}
+					Hit found;
+					found.slot = static_cast<std::uint8_t>(tag - forfeited.begin());
+					return found;
+				});
+				if (!hit || !Equipment::MayChange(player, OwnGear::Change::kLoan)) {
+					return;
+				}
+				const auto tag = forfeited[hit->slot];
+				const auto before = CountOf(player, tag.base);
+				RemoveStack(player, Hit{ .object = hit->object, .stack = hit->stack, .count = 1 });
+				if (CountOf(player, tag.base) >= before) {
+					sweepStuck = true;
+					REX::WARN("FrameLoans: forfeited {:08X} would not go from our player; not tried again until the next load", tag.base);
+					return;
+				}
+				forfeited.erase(forfeited.begin() + hit->slot);
 				++forfeitsTaken;
-				REX::INFO("FrameLoans: forfeited {:08X}, a copy of a friend's lent piece whose loan ended with its owner keeping theirs, is taken from our player", tags[item.slot].base);
-			}
-			if (!all) {
-				sweepStuck = true;
-				REX::WARN("FrameLoans: a forfeited lent item would not go from our player; not tried again until the next load");
+				REX::INFO("FrameLoans: forfeited {:08X}, a copy of a friend's lent piece whose loan ended with its owner keeping theirs, is taken from our player ({} forfeit now)", tag.base, forfeited.size());
 			}
 		}
 	}
