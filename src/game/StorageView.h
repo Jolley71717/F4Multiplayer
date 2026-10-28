@@ -615,6 +615,7 @@ namespace StorageView
 		kTakeRefused,  // a take undone: given back
 		kPutRefused,   // a put undone: returned
 		kShort,        // a take the keeper's container held less of: what it lacked is given back
+		kSettleCut,    // the server could not put our moves right after a load: storage others keep stays closed to us until a later load
 		kCount,
 	};
 
@@ -813,6 +814,11 @@ namespace StorageView
 		void OnRefused(const Protocol::StorageRefusal& a_refusal)
 		{
 			if (a_refusal.item == 0) {
+				if (a_refusal.container == 0) {
+					// Not one container: our settle was cut. The server refuses every view and move of ours until a later load.
+					Notify(Notice::kSettleCut);
+					return;
+				}
 				if (!side.Shows(a_refusal.container)) {
 					return;
 				}

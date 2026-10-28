@@ -128,6 +128,8 @@ namespace Storage
 				return "storage.put_refused";
 			case StorageView::Notice::kShort:
 				return "storage.short";
+			case StorageView::Notice::kSettleCut:
+				return "storage.settle_cut";
 			default:
 				return "storage.closed";
 			}

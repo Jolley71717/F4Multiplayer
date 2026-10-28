@@ -1849,6 +1849,44 @@ TEST("moved objects server: a joiner's game gives places to so many objects a ru
 	CHECK(!kept.contains(MADE_UP + 3));
 }
 
+TEST("moved objects server: an object a joiner's share paid for once is kept again after the table forgot it, for nothing; a new one past the share is not")
+{
+	constexpr std::uint64_t HOST_IDENTITY = 0x4057;
+	Server::Options         options;
+	options.hostIdentity = HOST_IDENTITY;
+	options.maxObjectPlaces = 4;
+	options.maxObjectPlacesPerPlayer = 1;  // the joiner's share is one place
+	Fixture f{ options };
+	f.fake->SetLocal(1);
+	JoinAs(f, 1, "Host", HOST_IDENTITY);
+	JoinAs(f, 2, "Alice");
+	Clear(f, { 1, 2 });
+
+	constexpr std::uint32_t A = 0x0001B001, F = 0x0001B0F0;
+	f.fake->Deliver(2, RestPacket(Rest(A, Protocol::ObjectRestKind::kRest, 0, { 1, 2, 3 })));  // kept: her one place
+	// The host's blast rests four more: the table, which holds four, forgets hers.
+	for (std::uint32_t i = 0; i < 4; ++i) {
+		f.fake->Deliver(1, RestPacket(Rest(0x0001B010 + i, Protocol::ObjectRestKind::kRest)));
+	}
+	// She moves it again: it is the same object, so her share is not charged twice, and it is kept again.
+	f.fake->Deliver(2, RestPacket(Rest(A, Protocol::ObjectRestKind::kRest, 0, { 7, 8, 9 })));
+	// A new one is past her share.
+	f.fake->Deliver(2, RestPacket(Rest(F, Protocol::ObjectRestKind::kRest)));
+	Clear(f, { 1, 2 });
+
+	JoinAs(f, 3, "Carol");
+	std::set<std::uint32_t> kept;
+	for (const auto& place : Resteds(Received(f, 3))) {
+		kept.insert(place.refId);
+		if (place.refId == A) {
+			CHECK(Near(place.position, { 7, 8, 9 }));
+			CHECK(place.playerId == 0);
+		}
+	}
+	CHECK(kept.contains(A));
+	CHECK(!kept.contains(F));
+}
+
 TEST("moved objects server: a joiner's share of places is well under what the session keeps, whatever --max-share gives")
 {
 	CHECK(Server::Options{}.maxObjectPlacesPerPlayer * 2 <= ObjectMovers::MAX_PLACES);

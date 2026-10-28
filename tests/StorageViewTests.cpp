@@ -476,6 +476,20 @@ TEST("storage client: the first open sets the copy's own things aside, never to 
 	CHECK(engine.sent.size() == 2);  // the view, and its close
 }
 
+TEST("storage client: a refusal naming no container tells the player their settle was cut, and closes nothing")
+{
+	Engine engine;
+	StorageView::Client client{ engine };
+	Welcome(client, engine);
+	client.State().Owners(Owned(CHEST, FRIEND));
+	client.Open(CHEST, true);
+	client.OnContents({ CHEST, 7, { { STIMPAK, 3 } } });
+	const auto hides = engine.hides;
+	client.OnRefused({ 0, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed });
+	CHECK(engine.notices == std::vector{ StorageView::Notice::kSettleCut });
+	CHECK(engine.hides == hides);  // the menu is left to the server's refusal of its next view or move
+}
+
 TEST("storage client: the server closing the view hides the menu; what was set aside comes back only as it closes")
 {
 	Engine engine;

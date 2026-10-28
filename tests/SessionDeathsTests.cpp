@@ -81,6 +81,16 @@ namespace
 		return Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, a_reason, a_essential } });
 	}
 
+	// A player standing outdoors in the Commonwealth, a_x units east of the origin.
+	std::vector<std::uint8_t> StandAt(std::uint32_t a_sequence, float a_x = 0.0f)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.worldspace = 0x0000003C;
+		state.x = a_x;
+		return Protocol::Encode(state);
+	}
+
 	std::vector<std::uint8_t> Kill(std::uint32_t a_ref, float a_x = 0.0f)
 	{
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 0, true, a_x, 0.0f, 0.0f }, MT::kReportDeath);
@@ -310,6 +320,42 @@ TEST("alive again: a camp cleared together comes back after a cell reset in the 
 	CHECK(carol.deaths.Contains(RAIDER));
 }
 
+TEST("alive again: on a dedicated server the player here longest brings a raider back after a cell reset; a newer player's offer does not")
+{
+	Server::Options options;  // no host's identity: no game is the host's
+	options.aliveAgainGrace = GRACE;
+	options.remindDeadEvery = REMIND;
+	Fixture    f{ options };
+	Game       alice{ f, 1, "Alice" };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+	alice.Loads(RAIDER, true, t0);
+	bob.Loads(RAIDER, true, t0);
+	REQUIRE(bob.Scan(RAIDER, t0));
+	bob.Kills(RAIDER, 40.0f);
+	alice.Pump();
+	bob.Pump();
+	CHECK(alice.deaths.Contains(RAIDER));
+
+	// Days later the camp has reset in both games. Bob's game offers the raider: refused, the session has it dead.
+	f.Advance(GRACE + 50ms);
+	const auto later = Clock::now() + DAYS_LATER;
+	f.fake->Deliver(2, Claim(RAIDER));
+	CHECK(Owners(bob.Pump(later)).empty());
+	CHECK(Owners(alice.Pump(later)).empty());
+	CHECK(!f.Logged(std::format("{:08X} is alive again", RAIDER)));
+
+	// Alice's game offers it: hers is the world that stands for the host's, and the raider is alive again for everyone.
+	alice.Unloads(RAIDER);
+	CHECK(alice.Loads(RAIDER, true, later));
+	REQUIRE(alice.Scan(RAIDER, later));
+	CHECK(HasOwner(Owners(bob.Pump(later)), RAIDER, alice.id));
+	CHECK(HasOwner(Owners(alice.Pump(later)), RAIDER, alice.id));
+	CHECK(f.Logged(std::format("{:08X} is alive again", RAIDER)));
+	Game carol{ f, 3, "Carol" };
+	CHECK(!carol.deaths.Contains(RAIDER));
+}
+
 TEST("alive again: a newcomer is told who runs a raider that came back instead of finding it dead")
 {
 	Fixture f{ HostedOptions() };
@@ -344,6 +390,9 @@ TEST("alive again: a joiner's game can't bring the dead back, whatever it claims
 	CHECK(!bob.Alive(RAIDER));
 	host.Pump();
 	f.Advance(GRACE + 50ms);
+	// Both players stand at the camp: a reminder waits on a host's game being in reach of the NPC (Server::remindDead).
+	f.fake->Deliver(1, StandAt(1));
+	f.fake->Deliver(2, StandAt(1));
 
 	// Bob's camp reset first. His own game knows its raider is back and offers it; the server grants nothing, and says
 	// nothing yet (the host's game may be about to offer it too, which brings it back for everyone).

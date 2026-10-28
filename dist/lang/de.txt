@@ -147,6 +147,7 @@ storage.closed = Die Kopie des Hosts von diesem Behälter ist gerade nicht offen
 storage.take_refused = Das war nicht mehr im Behälter des Hosts (hat ein Freund es zuerst genommen?): Es ging zurück
 storage.put_refused = Das konnte nicht in den Behälter des Hosts (fehlt seinem Spiel die Mod?): Du hast es zurückbekommen
 storage.short = Der Behälter hatte weniger, als er zeigte: Was nicht da war, wurde wieder abgezogen
+storage.settle_cut = Deine Änderungen an den Behältern des Hosts konnten nach dem Laden nicht alle in Ordnung gebracht werden (das Protokoll der Sitzung ist voll oder dein Anteil daran ist aufgebraucht): Sie bleiben dir bis zum nächsten Laden verschlossen
 gifts.given = Freunde können das jetzt aus ihrer Kopie des Behälters nehmen (wer es zuerst nimmt, hat es); bis dahin kannst du es dir zurückholen
 gifts.not_given = Das bekommen Freunde nicht: Es bleibt nur in deiner Kopie des Behälters (ein Questgegenstand, eine Mod nur in deinem Spiel, oder die Sitzung ist voll)
 gifts.taken_first = Ein Freund hat es zuerst genommen

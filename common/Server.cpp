@@ -258,6 +258,7 @@ namespace
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
 		std::array<bool, kTables>        shareLogged{};
+		std::unordered_set<std::uint32_t> placedObjects;  // objects whose place their share paid for: the same one again, after the table forgot it, costs nothing (at most the share)
 		int               connections = 0;  // connections using it (it isn't forgotten while any do)
 		Clock::time_point lastSeen{};
 	};
@@ -322,6 +323,7 @@ namespace
 			Clock::time_point since{};  // its first report of this run (the game has had the NPC alive since)
 			Clock::time_point last{};   // its latest report
 			Clock::time_point told{};   // when the death was last told again (never: zero)
+			bool              hostSeen = false;  // its latest report found the host's game in reach of the NPC (remindDead's gate)
 		};
 		std::unordered_map<std::uint32_t, DeadReminder> deadReminded;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
@@ -737,6 +739,7 @@ void Server::Run()
 		for (auto& [key, budget] : budgets) {
 			budget.added = {};
 			budget.shareLogged = {};
+			budget.placedObjects.clear();
 		}
 		sessionId = NewSessionId();
 		sessionTable.clear();  // the next arrival's load order numbers the new session
@@ -1516,6 +1519,27 @@ void Server::Run()
 	std::size_t       hitBudgetDropped = 0;  // hits on stand-ins past the reporter's damage a second, since the last line
 	std::size_t       deadReminders = 0;     // deaths told again to a game that had the NPC alive (remindDead)
 
+	// The player whose game brings a dead NPC back (handleClaims): the host's own game when it is here. On a dedicated
+	// server, which has no host's game, the player here longest (the lowest id, as handleTime picks the clock), or no
+	// camp cleared in an earlier session would ever fill again. With a host's identity set and its game away, no one.
+	const auto hostPlayer = [&]() -> const Player* {
+		const Player* host = nullptr;
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.local && (!host || other.id < host->id)) {
+				host = &other;
+			}
+		}
+		if (host || options.hostIdentity != 0) {
+			return host;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && (!host || other.id < host->id)) {
+				host = &other;
+			}
+		}
+		return host;
+	};
+
 	// The session has the NPC dead, and this player's game just had it alive: it hit it, offered to run it, or the NPC
 	// hit a stand-in there (its cell reset in that game, or its save is from before the kill). Told its death again, as
 	// the world state would, at most once per Options::remindDeadEvery for each NPC: its game kills its copy (WorldSync's
@@ -1548,6 +1572,34 @@ void Server::Run()
 			it->second = { a_now, a_now, {} };
 		}
 		auto& reminder = it->second;
+		// A hosted session: the host's game brings a dead NPC back (handleClaims, cameBack) when it has it alive and
+		// loaded. A reminder is right only once that game has had the chance for aliveAgainGrace and didn't: its world
+		// not stale, its last request older than the grace, its player within loaded-cell reach of where the NPC fell
+		// (or of the reporter when the fall isn't known), in the same space. Until then the joiner fights its own copy,
+		// as before reminders, and the host's arrival revives it for everyone. On a dedicated server the player who
+		// stands for the host (hostPlayer) is the one whose game is waited for. The reporter itself, when it is that
+		// player, has no one to wait for.
+		constexpr float REVIVE_REACH = 8192.0f;
+		const auto      host = hostPlayer();
+		const bool      hostHere = host && host != &a_player;
+		bool            hostNear = false;
+		if (hostHere && !host->worldStale && a_now - host->worldAskedAt >= options.aliveAgainGrace && host->hasState && a_player.hasState) {
+			float x = a_player.state.x, y = a_player.state.y, z = a_player.state.z;
+			if (const auto fell = deathPositions.find(a_refId); fell != deathPositions.end()) {
+				x = fell->second[0], y = fell->second[1], z = fell->second[2];
+			}
+			const float dx = host->state.x - x, dy = host->state.y - y, dz = host->state.z - z;
+			hostNear = host->state.cell == a_player.state.cell && host->state.worldspace == a_player.state.worldspace &&
+			           dx * dx + dy * dy + dz * dz <= REVIVE_REACH * REVIVE_REACH;
+		}
+		if (hostHere && (!hostNear || !reminder.hostSeen)) {
+			// The host's grace starts when its game is there to offer the NPC: at the first report that finds it there, not
+			// at an earlier one made while it was away (or a sparse reporter would be reminded just as the host arrived).
+			reminder.since = a_now;
+			reminder.last = a_now;
+			reminder.hostSeen = hostNear;
+			return;
+		}
 		reminder.last = a_now;
 		if (a_now - reminder.since < options.aliveAgainGrace || (reminder.told != Clock::time_point{} && a_now - reminder.told < options.remindDeadEvery)) {
 			return;
@@ -2122,6 +2174,9 @@ void Server::Run()
 			log(std::format("server: player {}'s storage moves can't all be put right ({} changes, past their share of the container table or a full one); "
 							"none is made, and storage others keep stays closed to them until a later settle can",
 				a_player.id, planned));
+			// Their game thinks it settled (one settle a catch-up): it is told, once, so its player is too and not left to
+			// find every shared chest closed one by one.
+			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ 0, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
 		}
 		if (undone + redone != 0) {
 			storageUndone += undone + redone;
@@ -2243,7 +2298,8 @@ void Server::Run()
 			// WorldSync::MayClaim), and the host's world is the session's, so it is alive again for everyone and runs
 			// in the host's game. Only well after the host's game last asked for the world and after the death, so a
 			// copy alive only in an older save, or one the news of its death has not reached yet, is not taken for it.
-			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server. Nor
+			// A joiner's game can't do this (its world is not the session's). On a dedicated server the player here longest
+			// does it in the host's place (hostPlayer): there is no other game whose world could be the session's. Nor
 			// can the host's game while its last request for the world is unanswered (owed while its budget refills, or
 			// dropped): what it has alive may be from the save it loaded.
 			// An NPC the claiming game keeps essential never died there (its game holds the death: WorldSync::TryKill), so it
@@ -2267,7 +2323,7 @@ void Server::Run()
 			}
 			if (deadActors.contains(claim.refId)) {
 				const auto died = diedAt.find(claim.refId);
-				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
+				const bool cameBack = (a_player.local || &a_player == hostPlayer()) && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
 				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
 				if (!cameBack) {
 					// A joiner's game has it alive (its own cell reset, or an older save): told it is dead, so it kills its copy
@@ -3030,11 +3086,17 @@ void Server::Run()
 			if (rest->kind != Protocol::ObjectRestKind::kRest || pickedUp.contains(rest->refId)) {
 				return;
 			}
+			// Only an object this player's share has not paid for before is charged: one the table forgot (a full Places
+			// drops the one moved longest ago, and a grenade's blast adds dozens) comes back for nothing.
 			if (!objectPlaces.Find(rest->refId)) {
-				if (!withinShare(a_player, kObjectPlaces)) {
-					return;
+				auto& budget = budgetOf(a_player);
+				if (!a_player.local && !budget.placedObjects.contains(rest->refId)) {
+					if (!withinShare(a_player, kObjectPlaces)) {
+						return;
+					}
+					budget.placedObjects.insert(rest->refId);
+					++budget.added[kObjectPlaces];
 				}
-				++budgetOf(a_player).added[kObjectPlaces];
 			}
 			objectPlaces.Rested(*rest);
 			touched();
