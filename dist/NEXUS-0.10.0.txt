@@ -1,0 +1,12 @@
+New protocol: everyone in a session needs 0.10.0 (it doesn't play with 0.9.2)
+Shared storage (experimental, host setting bSharedStorage): one copy of each home or settlement container for everyone
+Give items by putting them in a chest (experimental, host setting bContainerGifts)
+Borrow a friend's parked power armor frame, pieces and core included
+Optional crawl while downed and autosave on going down (host settings bDownedCrawl, bSaveOnDown)
+NPCs stay alive, hit and owned the same in every game; no more passing an NPC back and forth
+Script-opened doors, the Prydwen's arrival and knocked clutter match in every game
+The host can bring in what a friend built before the session (bShareGuestBuilds)
+Friends move, holster and wear power armor more like they do in their own game
+The dedicated server retries a failed save and takes the new host rules as options
+Many stability fixes for saves, loads, explosions and copies of frames
+Full notes on GitHub
