@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T05:27:12+00:00",
+ "updated": "2026-10-28T08:57:34+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -739,8 +739,8 @@
    "title": "Power armor loans: the borrower's frame copy loses the lent kit within 0.3 s of the lend, so a borrower wears an empty frame",
    "kind": "bug",
    "priority": 0,
-   "stage": 3,
-   "note": "Reviewed; rig test next",
+   "stage": 5,
+   "note": "Merged; a borrower wears the full lent kit",
    "pr": 226
   },
   {
