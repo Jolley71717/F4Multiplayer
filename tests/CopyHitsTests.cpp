@@ -570,3 +570,47 @@ TEST("copy hits: a report from the NPC's game during our bleed stands, and a tic
 	CHECK(late.Holds(RAIDER_2));
 	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 100 }) == 80.0f);
 }
+
+TEST("copy hits: a report that lands before the hit's event is heard does not heal the hit back")
+{
+	// The engine takes the shot's health and sends its event a frame later; the runner's report came in between. Set to
+	// the report's health, the shot was healed back and never reached the NPC's game ("my hit did nothing").
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 16 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));
+	CHECK(Near(*book.Health(RAIDER_1), 95.0f));
+}
+
+TEST("copy hits: a drop a report found with no hit of ours after it is someone else's")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 150 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	// Nor does a hit that comes long after take it.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 3000 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 3000 }, 100.0f) == 0.0f);
+	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+}
+
+TEST("copy hits: a drop a report found with a hit of ours booked already is counted once")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	CHECK(book.Check(RAIDER_1, 90.0f, t0, 100.0f) == 0.0f);
+	book.Heard(RAIDER_1, 90.0f, 95.0f, t0 + milliseconds{ 5 }, true);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 20 }, 100.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));  // in all, not 20
+}

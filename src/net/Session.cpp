@@ -1293,6 +1293,10 @@ namespace Session
 			HandleSteamJoin();
 		}
 
+		// Our hits on copies the engine has told us of are booked before any packet of this frame is heard: a runner's
+		// health report heard first would heal a shot back whose event was not booked yet (CopyHealth::Book::Heard).
+		CopyWatch::TakeHits();
+
 		PERF_NEXT(perf, "Packets");
 		// Events first: reconnecting must not happen before a disconnect has been handled.
 		for (auto& event : client->Poll()) {

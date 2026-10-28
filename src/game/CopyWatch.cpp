@@ -359,14 +359,12 @@ namespace CopyWatch
 		}
 	}
 
-	void Frame()
+	void TakeHits()
 	{
-		std::vector<Hit>   hits;
-		std::vector<Death> deaths;
+		std::vector<Hit> hits;
 		{
 			std::scoped_lock l{ inboxLock };
 			hits.swap(hitInbox);
-			deaths.swap(deathInbox);
 		}
 		const auto now = Clock::now();
 		const auto local = NpcSync::LocalPlayer();
@@ -423,6 +421,19 @@ namespace CopyWatch
 					actor ? HealthOf(actor) : -1.0f, GhostState(actor));
 			}
 		}
+
+	}
+
+	void Frame()
+	{
+		std::vector<Death> deaths;
+		{
+			std::scoped_lock l{ inboxLock };
+			deaths.swap(deathInbox);
+		}
+		const auto now = Clock::now();
+		const auto local = NpcSync::LocalPlayer();
+		TakeHits();  // those that came since Session::Frame took them (the rest of the frame's engine work)
 
 		// Every loaded copy: what something other than our hits took comes back, and what it gained of its own goes.
 		std::unordered_set<std::uint32_t> seen;

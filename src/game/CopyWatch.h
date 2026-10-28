@@ -52,6 +52,10 @@ namespace CopyWatch
 	// RollingLog::WINDOW) and the damage counters every WINDOW. Every frame.
 	void Frame();
 
+	// Books the hits the engine has told us of (queued by NoteHit) in the book and the hit log. Every frame, before any
+	// packet is dispatched: a runner's health report heard first would heal back a shot whose event was not booked yet.
+	void TakeHits();
+
 	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
 	// fraction of the copy's maximum: WorldSync sends it to the game that runs the NPC (kReportDamage).
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, float>> TakeDamage();
