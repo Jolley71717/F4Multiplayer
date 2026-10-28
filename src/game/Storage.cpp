@@ -152,6 +152,8 @@ namespace Storage
 
 			void FlushLoot() override { WorldSync::FlushLoot(); }
 
+			bool Reported(const Protocol::ContainerChange& a_change) override { return WorldSync::Loot().Unreport(a_change); }
+
 			void Send(std::vector<std::uint8_t> a_packet) override { WorldSync::QueueEvent(std::move(a_packet)); }
 
 			void Notify(StorageView::Notice a_notice) override { Hud::Notify(Text::Get(TextKey(a_notice))); }
@@ -173,9 +175,11 @@ namespace Storage
 		StorageView::Side&  side = client.State();
 		std::atomic<bool>   ruleOn{ false };  // for the menu's entry points, which run on any thread
 		bool                hosting = false;
+		std::optional<std::uint32_t> menuOn;  // the container our menu is open on (main thread)
 		std::uint64_t       live = 0;  // the session we are welcomed into (0: none)
 		Clock::time_point   scannedAt{};
 		std::unordered_map<std::uint32_t, Clock::time_point> notStorage;  // the host's scan: since when
+		std::unordered_map<std::uint32_t, Clock::time_point> relistTried;  // listed before, not listable from afar: since when
 
 		// A save's record, read before the game says it has loaded (OnGameLoaded).
 		struct Record
@@ -230,6 +234,30 @@ namespace Storage
 				side.MarkListed(id);
 				++listed;
 			}
+			// What was listed before and the server holds stale now (our world loaded, or we rejoined) is listed again wherever it
+			// is, so friends at a settlement we are not standing in are not shut out of its chests until we walk back. One our game
+			// doesn't hold in memory (or whose inventory isn't made) stays stale until we come near, tried again after a while
+			// (apart from notStorage: the radius pass lists it as soon as we are near). None while the ledger still asks: nothing
+			// can be listed until its catch-up has come, and that is no reason to wait.
+			std::erase_if(relistTried, [&](const auto& a_entry) { return now - a_entry.second >= NOT_STORAGE_FOR; });
+			const bool asking = WorldSync::Loot().Numbers().Numbers().Asking();
+			for (const auto id : asking ? std::vector<std::uint32_t>{} : side.ToRelist()) {
+				if (listed >= LIST_PER_SCAN) {
+					break;
+				}
+				if (notStorage.contains(id) || relistTried.contains(id) || std::ranges::find(found, id) != found.end()) {
+					continue;
+				}
+				const auto facts = Ref(id) ? WorldSync::HolderFactsOf(id) : LootScope::HolderFacts{};
+				const auto listing = facts.storage && !facts.workshop && !facts.vendorChest ? WorldSync::StorageListing(id) : std::nullopt;
+				if (!listing) {
+					relistTried[id] = now;
+					continue;
+				}
+				WorldSync::QueueEvent(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
+				side.MarkListed(id);
+				++listed;
+			}
 		}
 
 		std::uint32_t ParseHex(std::string_view a_text)
@@ -278,6 +306,7 @@ namespace Storage
 		client.OnWelcome(a_rule, a_hosting, a_session);
 		ruleOn = a_rule;
 		notStorage.clear();
+		relistTried.clear();
 		scannedAt = {};
 		REX::INFO("Storage: shared storage {}{} ({} of our moves at a friend's storage still to be answered)", a_rule ? "on" : "off",
 			a_rule && a_hosting ? " (our game keeps the true copies)" : "", side.InFlight());
@@ -296,7 +325,7 @@ namespace Storage
 
 	void OnOwners(const Protocol::StorageOwners& a_owners)
 	{
-		side.Owners(a_owners);
+		client.OnOwners(a_owners, menuOn, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
 	}
 
 	void OnContents(const Protocol::StorageListing& a_contents)
@@ -339,6 +368,7 @@ namespace Storage
 		}
 		client.OnLoad(session, record.unanswered, record.lacks, record.lacksFrom);
 		notStorage.clear();
+		relistTried.clear();
 		if (!record.unanswered.empty() || !record.lacks.empty()) {
 			REX::INFO("Storage: the save was made with {} of our moves at a friend's storage unanswered, and its world lacking {} of them numbered; they are settled once the catch-up has come",
 				record.unanswered.size(), record.lacks.size());
@@ -429,23 +459,26 @@ namespace Storage
 
 	void OnMenuShown(RE::ObjectRefHandle a_container)
 	{
-		if (!ruleOn) {
-			return;
-		}
+		// The container our menu is open on is remembered with the rule off too: it may come on (or the owners arrive) with the menu open.
 		MainThread::Post([a_container] {
 			if (const auto ref = a_container.get()) {
 				const auto id = ref->GetFormID();
-				client.Open(id, KeeperOf(id) == Keeper::kFriend);
+				menuOn = id;
+				if (ruleOn) {
+					client.Open(id, KeeperOf(id) == Keeper::kFriend);
+				}
 			}
 		});
 	}
 
 	void OnMenuClosed()
 	{
-		if (!ruleOn) {
-			return;  // nothing to do without the rule (a friend's storage is never viewed)
-		}
-		MainThread::Post([] { client.MenuClosed(); });
+		MainThread::Post([] {
+			menuOn.reset();
+			if (ruleOn) {  // nothing more to do without the rule (a friend's storage is never viewed)
+				client.MenuClosed();
+			}
+		});
 	}
 
 	Keeper KeeperOf(std::uint32_t a_container)
@@ -486,12 +519,6 @@ namespace Storage
 		REX::INFO("Storage: change {} took {} of {:08X} from {:08X}, but this world's copy of it holds {} fewer than that (a world loaded since, or an item this game doesn't share); "
 				  "the taker's game is asked to give those back",
 			a_index, -a_change.count, a_change.item, a_change.container, a_missing);
-	}
-
-	void UnlistAll()
-	{
-		side.UnlistAll();
-		client.Asked();  // and our moves at a friend's storage settle again after its answer
 	}
 
 	bool Applying()

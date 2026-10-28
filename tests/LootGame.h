@@ -176,7 +176,7 @@ namespace LootTest
 					}
 				} else if (IsType(packet, MT::kStorageOwners)) {
 					if (const auto msg = Protocol::DecodeStorageOwners(packet)) {
-						storage.State().Owners(*msg);
+						storage.OnOwners(*msg, menu, [&](std::uint32_t a_id) { return loot.Ours(a_id); });
 					}
 				} else if (IsType(packet, MT::kStorageContents)) {
 					if (const auto msg = Protocol::DecodeStorageListing(packet)) {
@@ -216,8 +216,6 @@ namespace LootTest
 			if (const auto request = loot.Due(now, *this)) {
 				outbox.push_back(Protocol::Encode(*request));
 				++requests;
-				storage.State().UnlistAll();  // the server holds our listings stale from the request on
-				storage.Asked();               // Storage::UnlistAll: and we settle again after its answer
 			}
 			loot.Retry(*this, APPLY_INTERVAL);
 			if (connected) {
@@ -294,6 +292,8 @@ namespace LootTest
 			}
 			moves.clear();
 		}
+
+		bool Reported(const Protocol::ContainerChange& a_change) override { return loot.Unreport(a_change); }
 
 		void Send(std::vector<std::uint8_t> a_packet) override { outbox.push_back(std::move(a_packet)); }
 

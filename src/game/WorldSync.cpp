@@ -2888,7 +2888,7 @@ namespace WorldSync
 				loot.Unasked();  // never sent from the opening (Session::SendWorldEvents): no world state answers it
 			} else {
 				Queue(Protocol::Encode(*request));
-				Storage::UnlistAll();  // the server holds our storage listings stale from the request on
+				// Our world hasn't changed, so the server keeps our storage listings fresh and nothing is settled again (a gap request).
 				REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, numbers.Waiting());
 			}
 		}

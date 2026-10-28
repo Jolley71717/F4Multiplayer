@@ -172,10 +172,12 @@ TEST("protocol: Hello round trips, including identity")
 
 TEST("protocol: WorldRequest round trips")
 {
-	const auto out = DecodeWorldRequest(Encode(WorldRequest{ 0xABCDEF0123456789ull, 4321 }));
+	const auto out = DecodeWorldRequest(Encode(WorldRequest{ 0xABCDEF0123456789ull, 4321, WorldRequest::kGap }));
 	REQUIRE(out);
 	CHECK(out->sessionId == 0xABCDEF0123456789ull);
 	CHECK(out->containerFrom == 4321);
+	CHECK(out->reason == WorldRequest::kGap);
+	CHECK(DecodeWorldRequest(Encode(WorldRequest{ 1, 2 }))->reason == WorldRequest::kHello);
 }
 
 namespace

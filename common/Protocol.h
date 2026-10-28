@@ -309,8 +309,14 @@ namespace Protocol
 	// before containerFrom, if sessionId is the server's current session (otherwise none).
 	struct WorldRequest
 	{
+		// Why the world is asked for (reason): the hello's request is in Hello, never sent on its own.
+		static constexpr std::uint8_t kHello = 0;
+		static constexpr std::uint8_t kLoad = 1;  // a save was loaded: the game's world is another one
+		static constexpr std::uint8_t kGap = 2;   // a change is still missing: the world is the same, asked again
+
 		std::uint64_t sessionId = 0;
 		std::uint32_t containerFrom = 0;
+		std::uint8_t  reason = kHello;
 	};
 
 	struct Hello
@@ -2265,6 +2271,7 @@ namespace Protocol
 		Writer w{ MessageType::kRequestWorldState };
 		w.U64(a_msg.sessionId);
 		w.U32(a_msg.containerFrom);
+		w.U8(a_msg.reason);
 		return w.Data();
 	}
 
@@ -2275,6 +2282,7 @@ namespace Protocol
 		WorldRequest msg;
 		msg.sessionId = r.U64();
 		msg.containerFrom = r.U32();
+		msg.reason = r.U8();
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}

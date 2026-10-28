@@ -266,7 +266,7 @@ TEST("frame loans: the owner's refusal reaches the asker alone, and only an answ
 	CHECK(Returned(Received(s.f, 1)).empty());
 }
 
-TEST("frame loans: the borrower leaving or loading a save, and the owner's spawn ending, end the loan for everyone")
+TEST("frame loans: the borrower leaving or loading a save (not asking for a gap again), and the owner's spawn ending, end the loan for everyone")
 {
 	{
 		Session s;
@@ -290,6 +290,21 @@ TEST("frame loans: the borrower leaving or loading a save, and the owner's spawn
 		const auto back = Returned(Received(s.f, 1));
 		REQUIRE(back.size() == 1);
 		CHECK(back[0].ended);
+	}
+	{
+		// A gap asked for again is no load: Bob's game still wears the frame, the loan goes on, and nobody is told he reloaded.
+		Session s;
+		s.Borrow();
+		Protocol::WorldRequest gap{};
+		gap.reason = Protocol::WorldRequest::kGap;
+		s.f.fake->Deliver(2, Protocol::Encode(gap));
+		Received(s.f, 2);
+		const auto got = Received(s.f, 1);
+		CHECK(Returned(got).empty());
+		CHECK(Count(got, MT::kPlayerReloaded) == 0);
+		s.f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{}));  // a load still ends it
+		Received(s.f, 2);
+		CHECK(Returned(Received(s.f, 1)).size() == 1);
 	}
 	{
 		Session s;

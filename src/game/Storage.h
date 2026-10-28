@@ -74,7 +74,6 @@ namespace Storage
 	[[nodiscard]] bool                          Reporting(const Protocol::ContainerChange& a_change);
 	void                                        OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking);
 	void                                        Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing);
-	void                                        UnlistAll();  // our world asked the server for the session's changes again (a gap): we settle again
 
 	// Whether this thread is making one of Storage's own inventory changes (WorldSync's ContainerWatcher leaves them out).
 	[[nodiscard]] bool Applying();

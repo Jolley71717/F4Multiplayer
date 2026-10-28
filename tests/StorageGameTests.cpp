@@ -1595,3 +1595,64 @@ TEST("shared storage: an item a quest alias holds a stack of in the friend's cop
 	CHECK(s.guest.loot.Stats().storageKept == 2);
 	CHECK(s.Total(WATER) == 8);
 }
+
+TEST("shared storage: a friend with the menu open on a chest as the host's game claims it: a move in flight is undone, and the view opens where they stand")
+{
+	Session s;
+	Storage(s.host, BOX);
+	Storage(s.guest, BOX);
+	s.host.away.insert(BOX);
+	s.host.holders[BOX][WATER] = 3;
+	s.guest.holders[BOX][WATER] = 3;  // the friend's copy mirrors the host's (an older session's loot sharing)
+	s.Settle();
+	s.guest.OpenMenu(s.f, BOX);  // nobody keeps it: ordinary loot, no view
+	s.host.away.erase(BOX);
+	s.host.Wait(s.f, LootTest::APPLY_INTERVAL);  // the host comes near: listed, claimed (the owners are on their way)
+	s.guest.Take(s.f, BOX, WATER, 1);            // window (a): reported as loot, arrives after the claim
+	s.guest.Take(s.f, BOX, WATER, 1, false);     // window (b): made, not yet reported, as the owners arrive
+	s.Settle();
+	REQUIRE(s.guest.Keeper(BOX) == Keeper::kFriend);
+	CHECK(s.guest.storage.State().Stats().unmatched == 0);
+	CHECK(s.guest.Carried(WATER) == 3);  // both given back (before the fix: 5)
+	CHECK(s.host.In(BOX, WATER) == 3);
+	CHECK(s.guest.loot.Stats().storageKept == 0);
+	CHECK(s.guest.storage.State().Viewing() == BOX);  // the view opened as the owners came
+	CHECK(s.guest.In(BOX, WATER) == 3);                // the host's stacks shown, the mirror set aside
+	s.guest.Take(s.f, BOX, WATER, 2);
+	s.Settle();
+	CHECK(s.host.In(BOX, WATER) == 1);
+	CHECK(s.guest.Carried(WATER) == 5);
+	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) == 6);  // pockets plus the true copy never exceed what the true copy had
+}
+
+TEST("shared storage: a gap asked for again leaves the host's listings fresh: a friend's view stays open")
+{
+	Session s{ Reloads() };
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	CHECK(s.guest.storage.State().Shows(CHEST));
+	s.guest.Take(s.f, CHEST, STIMPAK, 1);
+	s.guest.Take(s.f, CHEST, STIMPAK, 1);
+	// The host's game never gets #0: it asks for it again (a gap, not a load).
+	auto toHost = s.host.Fetch(s.f);
+	const auto lost = std::ranges::find_if(toHost, [](const std::vector<std::uint8_t>& a_packet) {
+		const auto msg = LootTest::IsType(a_packet, MT::kContainerChanged) ? Protocol::DecodeIndexedContainerChange(a_packet) : std::nullopt;
+		return msg && msg->index == 0;
+	});
+	REQUIRE(lost != toHost.end());
+	toHost.erase(lost);
+	s.host.Handle(s.f, toHost);
+	CHECK(s.host.loot.Numbers().Numbers().Waiting() == 1);
+	CHECK(s.host.Wait(s.f, std::chrono::seconds{ 20 }));
+	s.Settle();
+	CHECK(s.host.loot.Numbers().Numbers().Waiting() == 0);
+	CHECK(s.host.storage.State().Listed(CHEST));  // still listed: its world is the same
+	CHECK(s.guest.storage.State().Stats().closedByHost == 0);
+	CHECK(s.guest.storage.State().Shows(CHEST));
+	s.guest.Take(s.f, CHEST, STIMPAK, 1);  // and a take goes through
+	s.Settle();
+	CHECK(s.host.In(CHEST, STIMPAK) == 2);
+	CHECK(s.guest.Carried(STIMPAK) == 3);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+}
