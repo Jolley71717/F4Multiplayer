@@ -810,7 +810,14 @@ namespace FrameLoans
 
 	bool BorrowedCopy(std::uint32_t a_local)
 	{
-		return a_local != 0 && a_local == borrowed.copy && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
+		if (a_local == 0) {
+			return false;
+		}
+		// Or the copy a loaded save was made in, while the clean-up waits out our player's exit from it (RunCleanup).
+		if (cleanup && cleanup->what == FrameLoan::AfterLoad::kAll && a_local == cleanup->record.copy) {
+			return true;
+		}
+		return a_local == borrowed.copy && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
 	}
 
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner)
