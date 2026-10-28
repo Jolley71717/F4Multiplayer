@@ -50,8 +50,22 @@ namespace FrameLoans
 			// The instance mods each lent item's copy was made with, by slot: a lent item not found by its name is taken from our
 			// copy only as a stack of these (FrameLoan::FitsUnnamed), never our player's own piece of its base with other mods.
 			std::unordered_map<std::uint8_t, std::vector<std::uint32_t>> mods;
+			// The slots of the lent items seen by their names, in our copy or on our player, while our player was in the frame
+			// (FrameLoan::Hold): only those can be forfeit as the loan ends (FrameLoan::Forfeits), or noted in a save's record.
+			std::vector<std::uint8_t> held;
+			Clock::time_point         heldReadAt{};  // the last look for them (CONFIRM_EVERY)
+			// The kit's first seconds in our copy (WatchKit): when the lend put it in, how many frames since, and how many lent
+			// items our copy held by name at the last look (-1: not looked at yet), and whether the WATCH_FOR summary is out.
+			Clock::time_point lentAt{};
+			std::uint32_t     framesSinceLent = 0;
+			int               inCopyLast = -1;
+			bool              watchSaid = false;
 		};
 		Borrowed borrowed;
+		// The lent items are looked for while our player is in the frame this often, until every one has been seen.
+		constexpr auto CONFIRM_EVERY = std::chrono::milliseconds(250);
+		// How long after the lend each change in what our copy holds of the kit is logged, frame by frame, and then summed up.
+		constexpr auto WATCH_FOR = std::chrono::seconds(5);
 
 		// ---- the owner's side ----
 
@@ -383,6 +397,110 @@ namespace FrameLoans
 			return out;
 		}
 
+		// The slots of the lent items a_ref holds by their names, each once, and how many stacks it holds in all.
+		struct Seen
+		{
+			std::vector<std::uint8_t> slots;
+			std::uint32_t             stacks = 0;
+		};
+		Seen SeenIn(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags)
+		{
+			Seen out;
+			const auto list = a_ref ? a_ref->inventoryList : nullptr;
+			if (!list) {
+				return out;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (!item.object) {
+					continue;
+				}
+				const auto base = item.object->GetFormID();
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					++out.stacks;
+					if (std::ranges::none_of(a_tags, [&](const FrameLoan::Tag& a_tag) { return a_tag.base == base; })) {
+						continue;
+					}
+					const auto name = NameOf(stack->extra.get());
+					for (const auto& tag : a_tags) {
+						if (FrameLoan::IsTagged(tag, base, name) && std::ranges::find(out.slots, tag.slot) == out.slots.end()) {
+							out.slots.push_back(tag.slot);
+						}
+					}
+				}
+			}
+			return out;
+		}
+
+		// Every stack in a_ref that a_keep does not take (given its base and extra data) removed, there and then: the
+		// engine's own RemoveItem, as the return's Gather removes. Not the console's removeallitems: by all the rig shows it
+		// empties the reference a moment after it is called, as the console's disable does (HavokGuard), so the kit put in
+		// right after it went with it (see OnFrameLent). How many stacks went.
+		template <class F>
+		std::uint32_t RemoveAllBut(RE::TESObjectREFR* a_ref, F&& a_keep)
+		{
+			std::uint32_t removed = 0;
+			for (int i = 0; i < MAX_STACKS; ++i) {
+				const auto hit = FindStack(a_ref, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
+					return a_keep(a_object, a_extra) ? std::nullopt : std::optional<Hit>{ Hit{} };
+				});
+				if (!hit) {
+					return removed;
+				}
+				RemoveStack(a_ref, *hit);
+				++removed;
+			}
+			REX::WARN("FrameLoans: {:08X} still holds stacks after {} were removed", a_ref->GetFormID(), removed);
+			return removed;
+		}
+
+		// The lent items seen while our player is in the frame (Borrowed::held), looked for in our copy and on our player at
+		// once as they get in, then every CONFIRM_EVERY until each has been seen. A piece our player had of a forfeited
+		// item of the same name (an earlier loan of this frame) counts too, but it is also gathered at the return as this
+		// loan's, so it is found, never forfeit.
+		void ConfirmHeld(RE::TESObjectREFR* a_copy, Clock::time_point a_now, bool a_force)
+		{
+			if (borrowed.held.size() >= borrowed.tags.size() || (!a_force && a_now - borrowed.heldReadAt < CONFIRM_EVERY)) {
+				return;
+			}
+			borrowed.heldReadAt = a_now;
+			const auto before = borrowed.held.size();
+			FrameLoan::Hold(borrowed.held, borrowed.tags, SeenIn(a_copy, borrowed.tags).slots);
+			FrameLoan::Hold(borrowed.held, borrowed.tags, SeenIn(Player(), borrowed.tags).slots);
+			if (borrowed.held.size() != before) {
+				REX::INFO("FrameLoans: {} of {} lent items seen in our copy {:08X} or on our player while they are in it", borrowed.held.size(), borrowed.tags.size(), borrowed.copy);
+			}
+		}
+
+		// The kit in our copy in its first WATCH_FOR after the lend, looked at every frame: each change in how many lent
+		// items it holds by name is logged with the time and the frames since the lend, the stage, and whether our player is
+		// in it, and then what it and our player hold at the end. The rig's batch 12 saw all six read back at the lend and
+		// none 0.3 s later, before our player got in: this says in which frame they went.
+		void WatchKit(RE::TESObjectREFR* a_copy, Clock::time_point a_now)
+		{
+			if (borrowed.watchSaid || borrowed.tags.empty() || (borrowed.stage != Stage::kLent && borrowed.stage != Stage::kWorn && borrowed.stage != Stage::kOut)) {
+				return;
+			}
+			++borrowed.framesSinceLent;
+			const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(a_now - borrowed.lentAt).count();
+			const auto inCopy = SeenIn(a_copy, borrowed.tags);
+			const auto count = static_cast<int>(inCopy.slots.size());
+			const bool in = PlayerIn(borrowed.copy);
+			if (count != borrowed.inCopyLast) {
+				REX::INFO("FrameLoans: our copy {:08X} holds {} of {} lent items by name ({} stacks in all{}), {} ms and {} frames after the lend; stage {}, our player {}", borrowed.copy, count,
+					borrowed.tags.size(), inCopy.stacks, a_copy && !a_copy->inventoryList ? ", no inventory list" : "", since, borrowed.framesSinceLent, static_cast<int>(borrowed.stage),
+					in ? "in it" : "not in it");
+				borrowed.inCopyLast = count;
+			}
+			if (a_now - borrowed.lentAt >= WATCH_FOR) {
+				borrowed.watchSaid = true;
+				const auto onPlayer = SeenIn(Player(), borrowed.tags);
+				REX::INFO("FrameLoans: {} s after the lend our copy {:08X} holds {} of {} lent items by name and our player {}; our player {}, {} seen while in it",
+					std::chrono::duration_cast<std::chrono::seconds>(WATCH_FOR).count(), borrowed.copy, count, borrowed.tags.size(), onPlayer.slots.size(), in ? "in it" : "not in it",
+					borrowed.held.size());
+			}
+		}
+
 		// How many of a_base a_ref holds, every stack of it.
 		std::int32_t CountOf(RE::TESObjectREFR* a_ref, std::uint32_t a_base)
 		{
@@ -600,11 +718,19 @@ namespace FrameLoans
 			// The lent items not found now, by name or by base (FrameLoan::MAX_FORFEITS): the owner keeps every original (a
 			// return never takes one out, and an ownerless end says nothing), so a copy of one our player put somewhere while
 			// they wore the frame is forfeit, one each. Never worn, nothing of it left the copy (the transfer menu is kept out of
-			// a lent frame). A core run down and used up by the engine is forfeit too: no item answers to it.
-			if (const auto lost = FrameLoan::NotFound(borrowed.tags, found); !lost.empty() && borrowed.released) {
-				FrameLoan::Forfeit(forfeited, lost);
-				REX::INFO("FrameLoans: {} lent items of player {}'s frame were not found as the loan ended, their owner keeping theirs; forfeit, taken from our player if they have them again ({} forfeit now)",
-					lost.size(), borrowed.owner, forfeited.size());
+			// a lent frame). A core run down and used up by the engine is forfeit too: no item answers to it. Only one seen while
+			// our player was in the frame (FrameLoan::Forfeits): one gone from the copy before that was never in our world.
+			if (borrowed.released) {
+				const auto lost = FrameLoan::Forfeits(borrowed.tags, found, borrowed.held);
+				const auto unseen = FrameLoan::NotFound(borrowed.tags, found).size() - lost.size();
+				if (!lost.empty()) {
+					FrameLoan::Forfeit(forfeited, lost);
+					REX::INFO("FrameLoans: {} lent items of player {}'s frame were not found as the loan ended, their owner keeping theirs; forfeit, taken from our player if they have them again ({} forfeit now)",
+						lost.size(), borrowed.owner, forfeited.size());
+				}
+				if (unseen > 0) {
+					REX::INFO("FrameLoans: {} lent items of player {}'s frame not found were never seen in our copy or on our player while they wore it; not forfeit", unseen, borrowed.owner);
+				}
 			}
 			if (a_send && !borrowed.ownerless) {
 				Protocol::FrameReturn back;
@@ -1089,8 +1215,11 @@ namespace FrameLoans
 	{
 		std::optional<FrameLoan::Record> record;
 		if (borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut) {
-			record = FrameLoan::Record{ .copy = borrowed.copy, .base = borrowed.base, .spawnId = borrowed.spawnId, .owner = borrowed.owner, .tags = borrowed.tags };
-			REX::INFO("FrameLoans: this save holds {:08X}, the frame our player wears on loan from player {}, and {} lent items", borrowed.copy, borrowed.owner, borrowed.tags.size());
+			// Only the lent items seen while our player was in it (FrameLoan::Held): the load's clean-up forfeits whatever of
+			// these it does not find, and one never seen was never here to find.
+			record = FrameLoan::Record{ .copy = borrowed.copy, .base = borrowed.base, .spawnId = borrowed.spawnId, .owner = borrowed.owner, .tags = FrameLoan::Held(borrowed.tags, borrowed.held) };
+			REX::INFO("FrameLoans: this save holds {:08X}, the frame our player wears on loan from player {}, and {} lent items ({} seen while worn)", borrowed.copy, borrowed.owner, borrowed.tags.size(),
+				record->tags.size());
 		} else if (cleanup) {
 			// The clean-up after the last load is not done yet (our player still in the frame, or the world settling): this
 			// save holds what that one did, and its load cleans it up the same way.
@@ -1228,8 +1357,15 @@ namespace FrameLoans
 		// Copies of its kit in our copy, each named as its owner's: never stacked with our player's own, and found again at
 		// the return.
 		// Emptied first: a frame never looked into is filled from its base's container as it is first opened (as for a
-		// stand-in's, Equipment::SwitchIntoPowerArmor), and those would be pieces and a core from nowhere.
-		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", copy->GetFormID()).c_str());
+		// stand-in's, Equipment::SwitchIntoPowerArmor), and those would be pieces and a core from nowhere. Emptied here and
+		// now, stack by stack (RemoveAllBut). This was the console's removeallitems: the kit went in right after it, read back
+		// whole, and was gone from the copy within 0.3 s, before our player got in (the rig's batch 12), with nothing else of
+		// ours taking from the copy then, so every borrower wore an empty frame. The console's command, it seems, empties
+		// the reference a moment after it is called, as its disable is queued (HavokGuard); WatchKit logs the frame the kit
+		// goes in, should it go again. Our copy was emptied as it was placed (RemotePlayers' PlaceCopy), long before a press
+		// could ask for it; this takes what got in since.
+		const bool hadList = copy->inventoryList != nullptr;
+		const auto emptied = RemoveAllBut(copy.get(), [](RE::TESBoundObject*, RE::ExtraDataList*) { return false; });
 		const auto owner = RemotePlayers::NameOf(a_lending.ownerId);
 		bool       coreMade = false;
 		for (const auto& item : a_lending.kit) {
@@ -1262,11 +1398,19 @@ namespace FrameLoans
 			copy->AddObjectToContainer(object, extra, 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
 			borrowed.tags.push_back({ .slot = item.slot, .base = item.base, .name = made.name, .core = item.core });
 		}
+		// Whatever else is in it now goes too: a list the engine made only as the first copy went in may have been filled
+		// from the base's container then. Nothing of a lent item's base: should a name not have held, that is the kit (the
+		// read-back below says so, and the return takes it by its base).
+		const auto strays = RemoveAllBut(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList*) {
+			return std::ranges::any_of(borrowed.tags, [&](const FrameLoan::Tag& a_tag) { return a_tag.base == a_object->GetFormID(); });
+		});
 		borrowed.owner = a_lending.ownerId;
 		borrowed.stage = Stage::kLent;
 		borrowed.since = Clock::now();
+		borrowed.lentAt = borrowed.since;
 		++lentHere;
-		REX::INFO("FrameLoans: player {} lent us frame {:08X}; {} of its {} items are in our copy {:08X}", a_lending.ownerId, a_lending.spawnId, borrowed.tags.size(), a_lending.kit.size(), borrowed.copy);
+		REX::INFO("FrameLoans: player {} lent us frame {:08X}; {} of its {} items are in our copy {:08X} ({} stacks taken out before{}, {} after)", a_lending.ownerId, a_lending.spawnId, borrowed.tags.size(),
+			a_lending.kit.size(), borrowed.copy, emptied, hadList ? "" : ", which had no inventory list", strays);
 		// Read back at once: each copy made must be found by its name, as the return finds it (Gather).
 		for (const auto& tag : borrowed.tags) {
 			const auto named = FindStack(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
@@ -1324,6 +1468,7 @@ namespace FrameLoans
 		if (borrowed.stage != Stage::kNone) {
 			const auto copy = CopyRef();
 			const FrameLoan::WearFacts facts{ .copyThere = copy && !copy->IsDeleted(), .in = PlayerIn(borrowed.copy), .inArmor = Equipment::InPowerArmor(Player()) };
+			const auto                 live = facts.copyThere ? copy.get() : nullptr;  // looked into only while not deleted
 			switch (FrameLoan::NextStep(borrowed.stage, now - borrowed.since, facts)) {
 			case FrameLoan::Step::kGiveUp:
 				{
@@ -1339,11 +1484,13 @@ namespace FrameLoans
 			case FrameLoan::Step::kWorn:
 				if (borrowed.stage == Stage::kLent) {
 					++worn;
-					REX::INFO("FrameLoans: our player got into {:08X}, player {}'s frame lent to us", borrowed.copy, borrowed.owner);
+					REX::INFO("FrameLoans: our player got into {:08X}, player {}'s frame lent to us; it holds {} of {} lent items by name, our player {}", borrowed.copy, borrowed.owner,
+						SeenIn(live, borrowed.tags).slots.size(), borrowed.tags.size(), SeenIn(Player(), borrowed.tags).slots.size());
 					NoteOwnCores(Player());
 				}
 				borrowed.stage = Stage::kWorn;
 				borrowed.since = now;
+				ConfirmHeld(live, now, true);  // as they get in: the kit is in the copy still, or moving onto them
 				// A save made now must hold it, with our player in it (a save in a frame it lacks does not load).
 				if (!borrowed.released) {
 					borrowed.released = true;
@@ -1359,6 +1506,13 @@ namespace FrameLoans
 				break;
 			case FrameLoan::Step::kNone:
 				break;
+			}
+			// Finish (kReturn, kGiveUp) may have ended the loan: nothing of it is looked at then.
+			if (borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut) {
+				ConfirmHeld(live, now, false);
+			}
+			if (borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked) {
+				WatchKit(live, now);
 			}
 		}
 		// The forfeited lent items our player has on them again go (SweepForfeits). Whether they are in power armor is read
@@ -1527,8 +1681,8 @@ namespace FrameLoans
 
 	std::string Describe()
 	{
-		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} unnamed={} forfeit={} forfeitsTaken={}{} ours: lent={} back={} worn={} kept={} moved={} cleaned={}",
-			static_cast<int>(borrowed.stage), borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), backs.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds,
+		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} held={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} unnamed={} forfeit={} forfeitsTaken={}{} ours: lent={} back={} worn={} kept={} moved={} cleaned={}",
+			static_cast<int>(borrowed.stage), borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.held.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), backs.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds,
 			piecesGiven, unnamedTaken, forfeited.size(), forfeitsTaken, sweepStuck ? " (stuck)" : "", lentOut, givenBack, piecesWorn, piecesKept, movedBack, cleanedUp);
 	}
 }

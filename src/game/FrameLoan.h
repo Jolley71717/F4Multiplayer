@@ -272,6 +272,42 @@ namespace FrameLoan
 		}
 	}
 
+	// Only a lent item our game saw while our player was in the frame (by its name, in our copy or on our player: the
+	// engine moves the pieces from the frame onto its wearer as they get in) can be forfeit. One never seen then was never
+	// in our world to be put anywhere: the kit lost from our copy before they got in (the rig's batch 12, every lent item
+	// gone from the copy within 0.3 s of the lend) left all six not found at every return, and each worn loan forfeited
+	// six names that nothing here held, filling the list and making Drops and Gifts refuse them. a_held: the slots seen.
+
+	// The slots of a_seen that name a lent item of a_tags, added to a_held once each.
+	inline void Hold(std::vector<std::uint8_t>& a_held, const std::vector<Tag>& a_tags, const std::vector<std::uint8_t>& a_seen)
+	{
+		for (const auto slot : a_seen) {
+			const bool lent = std::ranges::any_of(a_tags, [&](const Tag& a_tag) { return a_tag.slot == slot; });
+			if (lent && std::ranges::find(a_held, slot) == a_held.end()) {
+				a_held.push_back(slot);
+			}
+		}
+	}
+
+	// The tags of a_tags seen while worn (a_held), in a_tags' order: what a save made in the frame notes (the LOAN record),
+	// so that a load forfeits no more than the loan's end would have.
+	inline std::vector<Tag> Held(const std::vector<Tag>& a_tags, const std::vector<std::uint8_t>& a_held)
+	{
+		std::vector<Tag> out;
+		for (const auto& tag : a_tags) {
+			if (std::ranges::find(a_held, tag.slot) != a_held.end()) {
+				out.push_back(tag);
+			}
+		}
+		return out;
+	}
+
+	// The lent items forfeit as a worn loan ends: seen while worn (a_held), and not found now (a_found).
+	inline std::vector<Tag> Forfeits(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found, const std::vector<std::uint8_t>& a_held)
+	{
+		return NotFound(Held(a_tags, a_held), a_found);
+	}
+
 	// How many lent items of one base, not found by their names (a_unfound), are taken from our copy all the same, as items
 	// of that base it still holds (a_inCopy). The copy was emptied before the kit went in, and nothing gets into it but off
 	// our player: their own pieces, which may stand in for a lent one of the same base, and their own fusion cores the
