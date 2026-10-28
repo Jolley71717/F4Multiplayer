@@ -703,6 +703,33 @@ TEST("spawns: a frame of our own standing where a friend's game has one it made 
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
 }
 
+TEST("spawns: no copy of a friend's frame stands in our player's way out of the frame a loaded save had them in")
+{
+	// The rig's batch 14: a save made in a borrowed frame, loaded; the loan over, the owner's game shows its frame again
+	// where our player got in, and our copy of it stood some 25 units from them as they were sent out. They never got out.
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true, .keptClear = true }, T0) == Act::kNone);
+	// Placed before the send-out began: it goes, and is placed again once they are out.
+	theirs.Placed(SPAWN, COPY, T0);
+	FrameFacts there{ .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f };
+	CHECK(theirs.DecideFrame(SPAWN, there, T0) == Act::kNone);
+	there.keptClear = true;
+	CHECK(theirs.DecideFrame(SPAWN, there, T0) == Act::kDiscard);
+	theirs.Unplaced(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+	// Never one lent to us, nor from under someone in it.
+	theirs.Placed(SPAWN, COPY, T0);
+	FrameFacts lent{ .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f, .lent = true, .keptClear = true };
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
+	lent.lent = false;
+	lent.occupied = true;
+	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kAbandon);
+}
+
 TEST("spawns: our copy of a friend's frame lent to us is held as it is until the loan is over")
 {
 	using SpawnBook::FrameFacts;

@@ -262,6 +262,9 @@ namespace SpawnBook
 		// A frame our own game made, of that base and no copy of ours, stands where their game has theirs (within
 		// FrameShare::SAME_SPOT): ours stands for it (two saves with a shared past hold the same frames). No copy beside it.
 		bool                oursThere = false;
+		// Where their game has it, a copy would stand in our player's way out of the frame a loaded save had them in, while
+		// they are sent out of it (FrameLoans::KeepsClear): no copy there until they are out.
+		bool                keptClear = false;
 	};
 
 	class Theirs
@@ -396,7 +399,7 @@ namespace SpawnBook
 				if (a_facts.occupied) {
 					return Act::kAbandon;
 				}
-				if (copy.gone || !a_facts.inView || !a_facts.copyAt || a_facts.oursThere) {
+				if (copy.gone || !a_facts.inView || !a_facts.copyAt || a_facts.oursThere || a_facts.keptClear) {
 					return Act::kDiscard;
 				}
 				const float distance = RemoteEdits::Distance(*a_facts.copyAt, copy.at);  // NaN in another place
@@ -417,7 +420,7 @@ namespace SpawnBook
 			if (copy.taken || !a_facts.baseOk || copy.tries >= PLACE_TRIES || (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY)) {
 				return Act::kNone;
 			}
-			return a_facts.inView && !a_facts.oursThere ? Act::kPlace : Act::kNone;
+			return a_facts.inView && !a_facts.oursThere && !a_facts.keptClear ? Act::kPlace : Act::kNone;
 		}
 
 		// Somebody here got into our copy of a frame (DecideFrame's kAbandon): it is theirs, no copy of ours any more, and

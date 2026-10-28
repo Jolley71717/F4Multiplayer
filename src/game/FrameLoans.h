@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/RemoteEdits.h"
 
 #include <cstdint>
 #include <string>
@@ -43,6 +44,11 @@ namespace FrameLoans
 	// one away: it goes back at the return), or one forfeited as its loan ended with its owner keeping theirs
 	// (FrameLoan::MAX_FORFEITS; taken from our player when they have it again).
 	[[nodiscard]] bool IsLentItem(std::uint32_t a_base, std::string_view a_name);
+
+	// A copy of a friend's frame placed at a_at would stand in our player's way out of the frame a loaded save had them in,
+	// while the clean-up after that load sends them out of it (FrameLoan::KeepsClear): none is placed there, and one placed
+	// there goes (Spawns), until they are out.
+	[[nodiscard]] bool KeepsClear(const RemoteEdits::Spot& a_at);
 
 	// A save or a load is coming (Spawns::DiscardCopies): the copy our player wears on loan is kept as it is.
 	[[nodiscard]] bool KeepsThroughSave(const RE::TESObjectREFR* a_copy);

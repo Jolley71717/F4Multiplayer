@@ -492,6 +492,30 @@ TEST("frame loan: the clean-up after a load waits the exit settle once our playe
 	CHECK(CleanupDue(false, std::nullopt));  // no copy: nothing to settle
 }
 
+TEST("frame loan: while our player is sent out of the frame a loaded save had them in, no friend's frame copy stands near them")
+{
+	using FrameLoan::KeepsClear;
+	// The rig's batch 14: stuck with the owner's frame copy ~25 units off (3 of 3); out with it 48 units off or more.
+	CHECK(KeepsClear(true, 25.0f));
+	CHECK(KeepsClear(true, 0.0f));
+	CHECK(KeepsClear(true, 48.0f));
+	CHECK(KeepsClear(true, FrameLoan::EXIT_CLEARANCE));
+	CHECK(!KeepsClear(true, FrameLoan::EXIT_CLEARANCE + 1.0f));
+	CHECK(!KeepsClear(true, std::numeric_limits<float>::quiet_NaN()));  // in another place
+	CHECK(!KeepsClear(false, 25.0f));                                    // out of it, or no clean-up: copies stand where they are
+}
+
+TEST("frame loan: a send-out that never gets our player out takes the lent items off them once, after a while")
+{
+	using FrameLoan::TakesWornBack;
+	CHECK(!TakesWornBack(std::nullopt, false));  // not sent out yet
+	CHECK(!TakesWornBack(5s, false));            // the rig's loads were out within 5 s
+	CHECK(!TakesWornBack(19s, false));
+	CHECK(TakesWornBack(FrameLoan::SEND_OUT_LIMIT, false));
+	CHECK(TakesWornBack(10min, false));
+	CHECK(!TakesWornBack(10min, true));  // once
+}
+
 TEST("frame loan: after loading a save made in a borrowed frame, our player is sent out and the copy and the lent items go")
 {
 	using FrameLoan::AfterLoad;

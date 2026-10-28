@@ -156,15 +156,22 @@ namespace FrameLoans
 			FrameLoan::AfterLoad what = FrameLoan::AfterLoad::kNothing;
 			Clock::time_point    since{};
 			Clock::time_point    askedAt{};
+			Clock::time_point    firstAskedAt{};
+			std::uint32_t        sendOuts = 0;
 			bool                 asked = false;
-			bool                 warned = false;
+			// Our player is (or may be) still in the frame: copies of friends' frames are kept clear of them (KeepsClear). From the
+			// load until they first read as out of it.
+			bool                 waitingOut = false;
+			// The lent items our player wore were taken off them while they were still in it (FrameLoan::TakesWornBack), and how
+			// many: the record holds only what is left (a save made now must not forfeit those at its load).
+			bool                 wornTaken = false;
+			std::size_t          taken = 0;
 
 			std::optional<Clock::time_point> outSince;  // our player first read as out of the frame (FrameLoan::CleanupDue)
 		};
 		std::optional<Cleanup> cleanup;
 		constexpr auto         CLEANUP_AFTER = std::chrono::seconds(2);   // the loaded world settles first
 		constexpr auto         SEND_OUT_AGAIN = std::chrono::seconds(3);
-		constexpr auto         CLEANUP_WARN = std::chrono::seconds(30);  // still in it then: logged, and tried on (a save then keeps the record)
 
 		// The lent items of worn loans not found as they ended, one each (FrameLoan::MAX_FORFEITS): this world's, kept with its
 		// saves (the LOAN record) and set from each load's.
@@ -182,7 +189,8 @@ namespace FrameLoans
 
 		std::uint32_t asked = 0, refusedHere = 0, lentHere = 0, worn = 0, returned = 0, ownerlessEnds = 0, lentOut = 0, givenBack = 0, piecesWorn = 0, piecesKept = 0, piecesGiven = 0, movedBack = 0, cleanedUp = 0,
 		              unnamedTaken = 0,  // lent items gathered by their base, their names lost (GatherUnnamed)
-		              forfeitsTaken = 0;
+		              forfeitsTaken = 0,
+		              stuckIn = 0;  // clean-ups after a load whose send-out never got our player out (FrameLoan::TakesWornBack)
 
 		// A notice, not again while it is the last one said a moment ago (a press is asked about more than once).
 		void Say(const std::string& a_text)
@@ -1003,6 +1011,60 @@ namespace FrameLoans
 
 		// ---- after a load ----
 
+		// What stands around our player as the clean-up sends them out of the frame (the log's, for the rig): where they are,
+		// how the engine has them in it, and the copies of friends' frames near them (FrameLoan::KeepsClear).
+		std::string DescribeAround(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_copy)
+		{
+			const auto at = SpotOf(a_player);
+			if (!at) {
+				return "our player in no cell";
+			}
+			const auto middle = a_player->currentProcess ? a_player->currentProcess->middleHigh : nullptr;
+			const auto seat = middle ? middle->occupiedFurniture.get() : nullptr;
+			const auto frame = Equipment::PowerArmorFrameOf(a_player);
+			std::string out = std::format("our player at ({:.0f},{:.0f},{:.0f}), in power armor={}, seated in {:08X}, frame {:08X}; the frame disabled={} 3d={}", at->x, at->y, at->z,
+				Equipment::InPowerArmor(a_player), seat ? seat->GetFormID() : 0, frame ? frame->GetFormID() : 0, a_copy && a_copy->IsDisabled(), a_copy && a_copy->Get3D() != nullptr);
+			float         nearest = -1.0f;
+			std::uint32_t nearestId = 0;
+			bool          nearestLoaded = false;
+			int           within = 0;
+			for (const auto& handle : Spawns::FrameCopies()) {
+				const auto ref = handle.get();
+				const auto spot = ref ? SpotOf(ref.get()) : std::nullopt;
+				const float distance = spot ? RemoteEdits::Distance(*at, *spot) : -1.0f;
+				if (!(distance >= 0.0f)) {
+					continue;
+				}
+				within += distance <= FrameLoan::EXIT_CLEARANCE ? 1 : 0;
+				if (nearest < 0.0f || distance < nearest) {
+					nearest = distance;
+					nearestId = ref->GetFormID();
+					nearestLoaded = ref->Get3D() != nullptr;
+				}
+			}
+			if (nearestId == 0) {
+				return out + "; no copy of a friend's frame in its space";
+			}
+			return out + std::format("; the nearest copy of a friend's frame {:08X} {:.0f} units off (3d={}), {} within {:.0f}", nearestId, nearest, nearestLoaded, within, FrameLoan::EXIT_CLEARANCE);
+		}
+
+		// The send-out did not get our player out (FrameLoan::TakesWornBack): the lent items on them are taken off them where
+		// they stand, as the return gathers them. What is left of the kit (in the frame, which is never changed while they are
+		// in it) stays on the record, and goes as they get out, or with the load of a save made meanwhile.
+		void TakeWornBack(Cleanup& a_job, RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_copy, Clock::time_point a_now)
+		{
+			std::vector<FrameLoan::Found> found;
+			Gather(a_player, a_job.record.tags, found);
+			a_job.wornTaken = true;
+			a_job.taken += found.size();
+			a_job.record.tags = FrameLoan::NotFound(a_job.record.tags, found);
+			++stuckIn;
+			REX::WARN("FrameLoans: our player is still in {:08X}, the frame borrowed from player {} as this save was made, {} s after the first of {} send-outs; {} lent items are taken off them now, and the {} left go as they get out ({})",
+				a_job.record.copy, a_job.record.owner, std::chrono::duration_cast<std::chrono::seconds>(a_now - a_job.firstAskedAt).count(), a_job.sendOuts, found.size(), a_job.record.tags.size(),
+				DescribeAround(a_player, a_copy));
+			Say(Text::Get("party.frame_loan_over"));
+		}
+
 		void RunCleanup(Clock::time_point a_now)
 		{
 			auto&      job = *cleanup;
@@ -1013,20 +1075,33 @@ namespace FrameLoans
 			const auto copy = job.what == FrameLoan::AfterLoad::kAll ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(job.record.copy) : nullptr;
 			if (copy && PlayerIn(copy)) {
 				job.outSince.reset();  // back in before the settle was over
-				if (!job.warned && a_now - job.since >= CLEANUP_WARN) {
-					job.warned = true;
-					REX::WARN("FrameLoans: our player is still in {:08X}, the frame borrowed from player {} as this save was made; still sending them out", job.record.copy, job.record.owner);
+				job.waitingOut = true;
+				const auto sinceFirst = job.asked ? std::optional<Clock::duration>{ a_now - job.firstAskedAt } : std::nullopt;
+				if (FrameLoan::TakesWornBack(sinceFirst, job.wornTaken)) {
+					TakeWornBack(job, player, copy, a_now);
 				}
 				if (!job.asked || a_now - job.askedAt >= SEND_OUT_AGAIN) {
 					const bool first = !job.asked;
 					job.asked = true;
 					job.askedAt = a_now;
+					++job.sendOuts;
+					if (first) {
+						job.firstAskedAt = a_now;
+					}
 					const bool sent = SendOut(player);
 					if (first) {
-						REX::INFO("FrameLoans: this save was made in {:08X}, the frame borrowed from player {}; our player is sent out of it{}", job.record.copy, job.record.owner, sent ? "" : " (the call could not be made)");
+						REX::INFO("FrameLoans: this save was made in {:08X}, the frame borrowed from player {}; our player is sent out of it{} ({})", job.record.copy, job.record.owner,
+							sent ? "" : " (the call could not be made)", DescribeAround(player, copy));
 					}
 				}
 				return;
+			}
+			if (job.waitingOut) {
+				job.waitingOut = false;  // out: copies of friends' frames stand where they are again
+				if (job.asked) {
+					REX::INFO("FrameLoans: our player is out of {:08X} {} ms after the first of {} send-outs", job.record.copy,
+						std::chrono::duration_cast<std::chrono::milliseconds>(a_now - job.firstAskedAt).count(), job.sendOuts);
+				}
 			}
 			if (Equipment::InPowerArmor(player)) {
 				job.outSince.reset();
@@ -1061,8 +1136,11 @@ namespace FrameLoans
 				REX::INFO("FrameLoans: {} lent items of the frame borrowed as this save was made were not found; forfeit, taken from our player if they have them again ({} forfeit now)", lost.size(), forfeited.size());
 			}
 			++cleanedUp;
-			REX::INFO("FrameLoans: after the load, the frame borrowed from player {} ({:08X}) and {} lent items are gone", job.record.owner, job.record.copy, found.size());
-			Say(Text::Get("party.frame_loan_over"));
+			REX::INFO("FrameLoans: after the load, the frame borrowed from player {} ({:08X}) and {} lent items are gone{}", job.record.owner, job.record.copy, found.size() + job.taken,
+				job.wornTaken ? std::format(" ({} of them taken off our player while they were still in it)", job.taken) : std::string{});
+			if (!job.wornTaken) {
+				Say(Text::Get("party.frame_loan_over"));  // said already as the worn ones were taken
+			}
 			cleanup.reset();
 		}
 
@@ -1163,6 +1241,15 @@ namespace FrameLoans
 			return true;
 		}
 		return a_local == borrowed.copy && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
+	}
+
+	bool KeepsClear(const RemoteEdits::Spot& a_at)
+	{
+		if (!cleanup || !cleanup->waitingOut) {
+			return false;
+		}
+		const auto at = SpotOf(Player());
+		return at && FrameLoan::KeepsClear(true, RemoteEdits::Distance(*at, a_at));
 	}
 
 	namespace
@@ -1701,7 +1788,7 @@ namespace FrameLoans
 		REX::INFO("FrameLoans: this save was made in {:08X}, a frame borrowed from player {}: {}", record->copy, record->owner,
 			what == FrameLoan::AfterLoad::kAll ? "our player is sent out of it, and it goes with the lent items" : what == FrameLoan::AfterLoad::kItems ? "it is gone; the lent items go" : "nothing to do");
 		if (what != FrameLoan::AfterLoad::kNothing) {
-			cleanup = Cleanup{ .record = std::move(*record), .what = what, .since = Clock::now() };
+			cleanup = Cleanup{ .record = std::move(*record), .what = what, .since = Clock::now(), .waitingOut = what == FrameLoan::AfterLoad::kAll };
 		}
 	}
 
@@ -1740,8 +1827,8 @@ namespace FrameLoans
 
 	std::string Describe()
 	{
-		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} held={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} unnamed={} forfeit={} forfeitsTaken={}{} ours: lent={} back={} worn={} kept={} moved={} cleaned={}",
+		return std::format("loans: stage={} spawn={:08X} copy={:08X} tags={} held={} ownerless={} lentOut={} heard={} moves={} backs={} asked={} refused={} lent={} worn={} returned={} ended={} given={} unnamed={} forfeit={} forfeitsTaken={}{} ours: lent={} back={} worn={} kept={} moved={} cleaned={} stuckIn={}{}",
 			static_cast<int>(borrowed.stage), borrowed.spawnId, borrowed.copy, borrowed.tags.size(), borrowed.held.size(), borrowed.ownerless, lent.size(), lentTo.size(), moves.size(), backs.size(), asked, refusedHere, lentHere, worn, returned, ownerlessEnds,
-			piecesGiven, unnamedTaken, forfeited.size(), forfeitsTaken, sweepStuck ? " (stuck)" : "", lentOut, givenBack, piecesWorn, piecesKept, movedBack, cleanedUp);
+			piecesGiven, unnamedTaken, forfeited.size(), forfeitsTaken, sweepStuck ? " (stuck)" : "", lentOut, givenBack, piecesWorn, piecesKept, movedBack, cleanedUp, stuckIn, cleanup && cleanup->waitingOut ? " (sending out)" : "");
 	}
 }

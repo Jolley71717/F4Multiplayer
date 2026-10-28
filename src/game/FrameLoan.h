@@ -152,6 +152,30 @@ namespace FrameLoan
 		return !a_copy || (a_sinceOut && *a_sinceOut >= EXIT_SETTLE);
 	}
 
+	// The engine gets nobody out of power armor with no room where the frame is left and they step back to: E does
+	// nothing, and neither does Actor.SwitchToPowerArmor with None, the clean-up's send-out. The rig's batch 14 had our
+	// player stuck so after three loads of three, each with our copy of the owner's frame placed again some 25 units from
+	// them as the load ended (the loan over, the owner's game shows its frame again where it stood, which is where our
+	// player got in, and they had not walked off); every load they got out of had it 48 units away or more. So while the
+	// clean-up waits for them to be out (a_waiting), no copy of a friend's frame stands within EXIT_CLEARANCE of them
+	// (a_distance: NaN in another place): none is placed there, and one placed there goes (Spawns), until they are out.
+	constexpr float EXIT_CLEARANCE = 256.0f;
+	constexpr bool  KeepsClear(bool a_waiting, float a_distance)
+	{
+		return a_waiting && a_distance >= 0.0f && a_distance <= EXIT_CLEARANCE;
+	}
+
+	// Sent out for this long since the first send-out (a_sinceFirst; none before it) and still in: something else holds
+	// them in (a wall at their back, a frame of someone else's), and the lent items they wear are taken off them there and
+	// then, once (a_taken: done already), so that no borrower goes on in them, the owner's pieces, for as long as they stay
+	// in. What is left in the frame (its core: the frame our player is in is never changed) goes as they get out. A load
+	// that got out on the rig was out within 5 s of the first send-out.
+	constexpr auto SEND_OUT_LIMIT = std::chrono::seconds(20);
+	constexpr bool TakesWornBack(std::optional<Clock::duration> a_sinceFirst, bool a_taken)
+	{
+		return !a_taken && a_sinceFirst && *a_sinceFirst >= SEND_OUT_LIMIT;
+	}
+
 	// Whether the spawn a_id is the one lent to us (a_ours, with a_stage): from the kit coming until the loan ends. Spawn id 0
 	// is none, so a loan worn on past its session (which lets go of its id) holds no spawn of the next session.
 	constexpr bool HoldsSpawn(Stage a_stage, std::uint32_t a_ours, std::uint32_t a_id)
