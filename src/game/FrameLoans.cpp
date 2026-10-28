@@ -1,6 +1,7 @@
 #include "game/FrameLoans.h"
 
 #include "Config.h"
+#include "MainThread.h"
 #include "Text.h"
 #include "game/Equipment.h"
 #include "game/FrameLoan.h"
@@ -15,6 +16,7 @@
 #include "game/Spawns.h"
 
 #include <algorithm>
+#include <atomic>
 #include <format>
 #include <limits>
 #include <mutex>
@@ -53,7 +55,8 @@ namespace FrameLoans
 			// The slots of the lent items seen by their names, in our copy or on our player, while our player was in the frame
 			// (FrameLoan::Hold): only those can be forfeit as the loan ends (FrameLoan::Forfeits), or noted in a save's record.
 			std::vector<std::uint8_t> held;
-			Clock::time_point         heldReadAt{};  // the last look for them (CONFIRM_EVERY)
+			Clock::time_point         heldReadAt{};  // the last look for them (FrameLoan::LooksForHeld)
+			Clock::time_point         inAt{};        // our player last got in
 			// The kit's first seconds in our copy (WatchKit): when the lend put it in, how many frames since, and how many lent
 			// items our copy held by name at the last look (-1: not looked at yet), and whether the WATCH_FOR summary is out.
 			Clock::time_point lentAt{};
@@ -62,8 +65,27 @@ namespace FrameLoans
 			bool              watchSaid = false;
 		};
 		Borrowed borrowed;
-		// The lent items are looked for while our player is in the frame this often, until every one has been seen.
-		constexpr auto CONFIRM_EVERY = std::chrono::milliseconds(250);
+		// The frame gate's word (KeepOut): the copy lent to us our player may get into now, as (spawn id << 32) | our copy's
+		// id, or 0. The engine asks the gate as it seats our player, on its own thread, not the main one (the rig's log has
+		// the ask on another thread than the loan's frames), while the main thread may be in the middle of the loan: so
+		// the gate reads only this, which the main thread sets after each change (Publisher), and hands the rest of a
+		// press to the main thread (Press).
+		std::atomic<std::uint64_t> enterable{ 0 };
+
+		void Publish()
+		{
+			const bool ours = borrowed.stage == Stage::kLent || borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut;
+			enterable = ours && borrowed.copy != 0 ? (std::uint64_t{ borrowed.spawnId } << 32) | borrowed.copy : 0;
+		}
+
+		// Publishes the loan's state as the main thread's call that may change it ends, however it ends.
+		struct Publisher
+		{
+			Publisher() = default;
+			Publisher(const Publisher&) = delete;
+			Publisher& operator=(const Publisher&) = delete;
+			~Publisher() { Publish(); }
+		};
 		// How long after the lend each change in what our copy holds of the kit is logged, frame by frame, and then summed up.
 		constexpr auto WATCH_FOR = std::chrono::seconds(5);
 
@@ -454,13 +476,13 @@ namespace FrameLoans
 			return removed;
 		}
 
-		// The lent items seen while our player is in the frame (Borrowed::held), looked for in our copy and on our player at
-		// once as they get in, then every CONFIRM_EVERY until each has been seen. A piece our player had of a forfeited
-		// item of the same name (an earlier loan of this frame) counts too, but it is also gathered at the return as this
-		// loan's, so it is found, never forfeit.
+		// The lent items seen while our player is in the frame (Borrowed::held), looked for in our copy and on our player
+		// (FrameLoan::LooksForHeld: as they get in, just before a save, and for a while after they got in until each has
+		// been seen). A piece our player had of a forfeited item of the same name (an earlier loan of this frame) counts
+		// too, but it is also gathered at the return as this loan's, so it is found, never forfeit.
 		void ConfirmHeld(RE::TESObjectREFR* a_copy, Clock::time_point a_now, bool a_force)
 		{
-			if (borrowed.held.size() >= borrowed.tags.size() || (!a_force && a_now - borrowed.heldReadAt < CONFIRM_EVERY)) {
+			if (!FrameLoan::LooksForHeld(borrowed.held.size(), borrowed.tags.size(), a_force, a_now - borrowed.inAt, a_now - borrowed.heldReadAt)) {
 				return;
 			}
 			borrowed.heldReadAt = a_now;
@@ -672,6 +694,7 @@ namespace FrameLoans
 		// moved or wore down).
 		void Finish(bool a_send, bool a_ended, const char* a_why)
 		{
+			enterable = 0;  // the gate lets nobody into it from here on (Publisher sets it again as the call ends)
 			const auto copy = CopyRef();
 			const auto player = Player();
 			// Our player in it after all (got in as the loan ended unworn): never taken from under them. The owner's game is
@@ -1142,58 +1165,78 @@ namespace FrameLoans
 		return a_local == borrowed.copy && borrowed.stage != Stage::kNone && borrowed.stage != Stage::kAsked;
 	}
 
+	namespace
+	{
+		// Our player's press on a_local, our copy of a_owner's frame shared as a_spawnId (KeepOut), on the main thread: asks
+		// its owner for it, or says why not. Nothing, should it be no such copy by now (gone, or another spawn's since).
+		void Press(std::uint32_t a_local, std::uint32_t a_spawnId, std::uint32_t a_owner)
+		{
+			const Publisher publish;
+			const auto      frame = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local);
+			if (!frame || frame->IsDeleted() || Spawns::CopyIdOf(a_local) != a_spawnId || Spawns::FrameCopyOwnerOf(a_local) != a_owner) {
+				return;
+			}
+			const bool mine = borrowed.stage != Stage::kNone && borrowed.spawnId == a_spawnId;
+			const auto status = lends.find(a_owner);
+			const auto loan = lentTo.find(a_spawnId);
+			FrameLoan::PressFacts facts;
+			facts.ownerHere = status != lends.end();
+			facts.ownerLends = facts.ownerHere && status->second;
+			facts.ours = mine && borrowed.stage != Stage::kAsked;
+			facts.filled = facts.ours && borrowed.copy == a_local;
+			facts.asked = mine && borrowed.stage == Stage::kAsked;
+			facts.otherLoan = borrowed.stage != Stage::kNone && !mine;
+			facts.lentToOther = loan != lentTo.end() && loan->second != NpcSync::LocalPlayer();
+			const auto name = RemotePlayers::NameOf(a_owner);
+			switch (FrameLoan::ChoosePress(facts)) {
+			case FrameLoan::Press::kEnter:
+				return;  // lent to us since the press (the gate's word was a moment behind): the next press gets in
+			case FrameLoan::Press::kAsk:
+				{
+					const auto base = frame->GetObjectReference();
+					borrowed = {};
+					borrowed.stage = Stage::kAsked;
+					borrowed.spawnId = a_spawnId;
+					borrowed.owner = a_owner;
+					borrowed.copy = a_local;
+					borrowed.base = base ? base->GetFormID() : 0;
+					borrowed.handle = frame->GetHandle();
+					borrowed.since = Clock::now();
+					outgoing.push_back(Protocol::Encode(Protocol::FrameBorrow{ 0, a_spawnId }, Protocol::MessageType::kBorrowFrame));
+					++asked;
+					REX::INFO("FrameLoans: asking player {} for their frame {:08X} (our copy {:08X})", a_owner, a_spawnId, a_local);
+					Say(Text::Format("party.frame_asking", { { "player", name } }));
+					return;
+				}
+			case FrameLoan::Press::kWait:
+				Say(Text::Format("party.frame_asking", { { "player", name } }));
+				return;
+			case FrameLoan::Press::kNotLending:
+				Say(Text::Format("party.frame_not_lending", { { "player", name } }));
+				return;
+			case FrameLoan::Press::kBusy:
+				Say(Text::Get("party.frame_busy"));
+				return;
+			case FrameLoan::Press::kLent:
+			case FrameLoan::Press::kOwnerGone:
+				Say(Text::Format("party.frame_refused", { { "player", name } }));
+				return;
+			}
+		}
+	}
+
 	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner)
 	{
+		// Asked on the thread the engine seats our player on (not the main one): it reads only the gate's word, and the
+		// press (an ask, or the HUD's word why not) is the main thread's, before its next frame's work.
 		if (!a_frame) {
 			return true;
 		}
 		const auto local = a_frame->GetFormID();
-		const bool mine = borrowed.stage != Stage::kNone && borrowed.spawnId == a_spawnId;
-		const auto status = lends.find(a_owner);
-		const auto loan = lentTo.find(a_spawnId);
-		FrameLoan::PressFacts facts;
-		facts.ownerHere = status != lends.end();
-		facts.ownerLends = facts.ownerHere && status->second;
-		facts.ours = mine && borrowed.stage != Stage::kAsked;
-		facts.filled = facts.ours && borrowed.copy == local;
-		facts.asked = mine && borrowed.stage == Stage::kAsked;
-		facts.otherLoan = borrowed.stage != Stage::kNone && !mine;
-		facts.lentToOther = loan != lentTo.end() && loan->second != NpcSync::LocalPlayer();
-		const auto name = RemotePlayers::NameOf(a_owner);
-		switch (FrameLoan::ChoosePress(facts)) {
-		case FrameLoan::Press::kEnter:
+		if (enterable.load() == ((std::uint64_t{ a_spawnId } << 32) | local)) {
 			return false;
-		case FrameLoan::Press::kAsk:
-			{
-				const auto base = a_frame->GetObjectReference();
-				borrowed = {};
-				borrowed.stage = Stage::kAsked;
-				borrowed.spawnId = a_spawnId;
-				borrowed.owner = a_owner;
-				borrowed.copy = local;
-				borrowed.base = base ? base->GetFormID() : 0;
-				borrowed.handle = a_frame->GetHandle();
-				borrowed.since = Clock::now();
-				outgoing.push_back(Protocol::Encode(Protocol::FrameBorrow{ 0, a_spawnId }, Protocol::MessageType::kBorrowFrame));
-				++asked;
-				REX::INFO("FrameLoans: asking player {} for their frame {:08X} (our copy {:08X})", a_owner, a_spawnId, local);
-				Say(Text::Format("party.frame_asking", { { "player", name } }));
-				return true;
-			}
-		case FrameLoan::Press::kWait:
-			Say(Text::Format("party.frame_asking", { { "player", name } }));
-			return true;
-		case FrameLoan::Press::kNotLending:
-			Say(Text::Format("party.frame_not_lending", { { "player", name } }));
-			return true;
-		case FrameLoan::Press::kBusy:
-			Say(Text::Get("party.frame_busy"));
-			return true;
-		case FrameLoan::Press::kLent:
-		case FrameLoan::Press::kOwnerGone:
-			Say(Text::Format("party.frame_refused", { { "player", name } }));
-			return true;
 		}
+		MainThread::Post([local, a_spawnId, a_owner] { Press(local, a_spawnId, a_owner); });
 		return true;
 	}
 
@@ -1216,7 +1259,10 @@ namespace FrameLoans
 		std::optional<FrameLoan::Record> record;
 		if (borrowed.stage == Stage::kWorn || borrowed.stage == Stage::kOut) {
 			// Only the lent items seen while our player was in it (FrameLoan::Held): the load's clean-up forfeits whatever of
-			// these it does not find, and one never seen was never here to find.
+			// these it does not find, and one never seen was never here to find. Looked for once more first: the load's
+			// clean-up also gathers only these, and one in the saved world but not seen yet would be left with our player.
+			const auto copy = CopyRef();
+			ConfirmHeld(copy && !copy->IsDeleted() ? copy.get() : nullptr, Clock::now(), true);
 			record = FrameLoan::Record{ .copy = borrowed.copy, .base = borrowed.base, .spawnId = borrowed.spawnId, .owner = borrowed.owner, .tags = FrameLoan::Held(borrowed.tags, borrowed.held) };
 			REX::INFO("FrameLoans: this save holds {:08X}, the frame our player wears on loan from player {}, and {} lent items ({} seen while worn)", borrowed.copy, borrowed.owner, borrowed.tags.size(),
 				record->tags.size());
@@ -1241,6 +1287,7 @@ namespace FrameLoans
 
 	void EndUnwornBeforeSave()
 	{
+		const Publisher publish;  // the gate's word (KeepOut) as this ends
 		if (borrowed.stage == Stage::kLent) {
 			Finish(true, true, "a save came before our player got in");
 		}
@@ -1284,6 +1331,7 @@ namespace FrameLoans
 
 	void OnFrameLent(const Protocol::FrameLending& a_lending)
 	{
+		const Publisher publish;  // the gate's word (KeepOut) as this ends
 		const auto us = NpcSync::LocalPlayer();
 		if (a_lending.refusal == Protocol::LoanRefusal::kNone) {
 			lentTo[a_lending.spawnId] = a_lending.borrowerId;
@@ -1398,11 +1446,17 @@ namespace FrameLoans
 			copy->AddObjectToContainer(object, extra, 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
 			borrowed.tags.push_back({ .slot = item.slot, .base = item.base, .name = made.name, .core = item.core });
 		}
-		// Whatever else is in it now goes too: a list the engine made only as the first copy went in may have been filled
-		// from the base's container then. Nothing of a lent item's base: should a name not have held, that is the kit (the
-		// read-back below says so, and the return takes it by its base).
-		const auto strays = RemoveAllBut(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList*) {
-			return std::ranges::any_of(borrowed.tags, [&](const FrameLoan::Tag& a_tag) { return a_tag.base == a_object->GetFormID(); });
+		// Whatever else is in it now goes too (FrameLoan::KeepsAfterLend): a list the engine made only as the first copy went
+		// in may have been filled from the base's container then, with pieces of a lent item's base as well, which the return
+		// would give our player as their own (GiveOwn). Should a name not have held, every stack of a lent item's base stays:
+		// that is the kit (the read-back below says so, and the return takes it by its base).
+		const bool allNamed = std::ranges::all_of(borrowed.tags, [&](const FrameLoan::Tag& a_tag) {
+			return FindStack(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
+				return FrameLoan::IsTagged(a_tag, a_object->GetFormID(), NameOf(a_extra)) ? std::optional<Hit>{ Hit{} } : std::nullopt;
+			}).has_value();
+		});
+		const auto strays = RemoveAllBut(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+			return FrameLoan::KeepsAfterLend(borrowed.tags, a_object->GetFormID(), NameOf(a_extra), allNamed);
 		});
 		borrowed.owner = a_lending.ownerId;
 		borrowed.stage = Stage::kLent;
@@ -1426,6 +1480,7 @@ namespace FrameLoans
 
 	void OnFrameReturned(const Protocol::FrameReturn& a_return)
 	{
+		const Publisher publish;  // the gate's word (KeepOut) as this ends
 		lentTo.erase(a_return.spawnId);
 		const auto us = NpcSync::LocalPlayer();
 		if (us == 0) {
@@ -1461,6 +1516,7 @@ namespace FrameLoans
 
 	void Frame()
 	{
+		const Publisher publish;  // the gate's word (KeepOut) as this ends
 		const auto now = Clock::now();
 		if (cleanup) {
 			RunCleanup(now);
@@ -1490,6 +1546,7 @@ namespace FrameLoans
 				}
 				borrowed.stage = Stage::kWorn;
 				borrowed.since = now;
+				borrowed.inAt = now;
 				ConfirmHeld(live, now, true);  // as they get in: the kit is in the copy still, or moving onto them
 				// A save made now must hold it, with our player in it (a save in a frame it lacks does not load).
 				if (!borrowed.released) {
@@ -1610,6 +1667,7 @@ namespace FrameLoans
 
 	void OnGameLoaded()
 	{
+		const Publisher publish;  // the gate's word (KeepOut) as this ends
 		// The old world's loans are over: the server ends them as our game asks for the world again, and lets our
 		// spawns go (Spawns::OnGameLoaded).
 		if (borrowed.stage != Stage::kNone) {
@@ -1649,6 +1707,7 @@ namespace FrameLoans
 
 	void Reset()
 	{
+		const Publisher publish;  // the gate's word (KeepOut) as this ends
 		lends.clear();
 		lentTo.clear();
 		lent.clear();

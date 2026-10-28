@@ -308,6 +308,31 @@ namespace FrameLoan
 		return NotFound(Held(a_tags, a_held), a_found);
 	}
 
+	// The lent items are looked for as our player gets in, and just before a save made in the frame (a_force: its record
+	// notes them, and the load forfeits whatever of them it does not find), then every CONFIRM_EVERY while some are not
+	// seen yet, but only for CONFIRM_FOR after they got in (a_sinceIn): the engine moves the pieces onto them within a
+	// moment, and one not seen by then was not in our world (the kit gone before they got in), so a worn loan is not looked
+	// through four times a second for hours. a_sinceLook: since the last look.
+	constexpr auto CONFIRM_EVERY = std::chrono::milliseconds(250);
+	constexpr auto CONFIRM_FOR = std::chrono::seconds(10);
+	constexpr bool LooksForHeld(std::size_t a_held, std::size_t a_tags, bool a_force, Clock::duration a_sinceIn, Clock::duration a_sinceLook)
+	{
+		if (a_held >= a_tags) {
+			return false;
+		}
+		return a_force || (a_sinceIn < CONFIRM_FOR && a_sinceLook >= CONFIRM_EVERY);
+	}
+
+	// What stays in our copy once the kit is in it (OnFrameLent): each lent item's copy, by its name. Anything else goes: a
+	// list the engine made only as the first copy went in is filled from the frame's base container, pieces and a core from
+	// nowhere, which the return would give our player as their own (GiveOwn) were they of a lent item's base. While some
+	// lent item is not found by its name (a_allNamed false), every stack of a lent item's base stays: that may be it, and
+	// the return takes it by its base and mods.
+	inline bool KeepsAfterLend(const std::vector<Tag>& a_tags, std::uint32_t a_base, std::string_view a_name, bool a_allNamed)
+	{
+		return std::ranges::any_of(a_tags, [&](const Tag& a_tag) { return a_allNamed ? IsTagged(a_tag, a_base, a_name) : a_tag.base == a_base; });
+	}
+
 	// How many lent items of one base, not found by their names (a_unfound), are taken from our copy all the same, as items
 	// of that base it still holds (a_inCopy). The copy was emptied before the kit went in, and nothing gets into it but off
 	// our player: their own pieces, which may stand in for a lent one of the same base, and their own fusion cores the

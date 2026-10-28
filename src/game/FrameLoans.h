@@ -15,7 +15,8 @@
 // stands and what wear came back: it moves its own there and wears its pieces down to that. A save made in the frame
 // keeps our copy with our player in it, and notes it (the LOAN record): loaded again, our player is sent out of it and
 // it goes, with the copies. Main thread only, but for the record (SaveRecord, LoadRecord, RevertRecord), which the save
-// and the load call on their own thread.
+// and the load call on their own thread, and the press (KeepOut), which the engine asks as it seats our player, on
+// a thread of its own.
 namespace FrameLoans
 {
 	// The spawn id of the frame our copy a_local is of, while it is lent to us (our wear names it by that); 0 otherwise,

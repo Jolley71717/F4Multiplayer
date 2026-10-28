@@ -350,6 +350,47 @@ TEST("frame loan: the lent items seen while worn are held once each, and only le
 	CHECK(FrameLoan::Held({}, { 0, 3 }).empty());
 }
 
+TEST("frame loan: the lent items are looked for as our player gets in and before a save, then a while, and then no more")
+{
+	using namespace std::chrono_literals;
+	using FrameLoan::LooksForHeld;
+	// As they get in, and before a save (forced): whenever some are not seen yet.
+	CHECK(LooksForHeld(0, 6, true, 0ms, 0ms));
+	CHECK(LooksForHeld(5, 6, true, 2h, 0ms));
+	// All seen: never again, forced or not.
+	CHECK(!LooksForHeld(6, 6, true, 0ms, 1s));
+	CHECK(!LooksForHeld(6, 6, false, 1s, 1s));
+	CHECK(!LooksForHeld(0, 0, true, 0ms, 0ms));
+	// After they got in: every CONFIRM_EVERY, for CONFIRM_FOR, and then it stops (the kit gone before they got in).
+	CHECK(!LooksForHeld(0, 6, false, 1s, FrameLoan::CONFIRM_EVERY - 1ms));
+	CHECK(LooksForHeld(0, 6, false, 1s, FrameLoan::CONFIRM_EVERY));
+	CHECK(LooksForHeld(0, 6, false, FrameLoan::CONFIRM_FOR - 1ms, 1s));
+	CHECK(!LooksForHeld(0, 6, false, FrameLoan::CONFIRM_FOR, 1s));
+	CHECK(!LooksForHeld(0, 6, false, 3h, 1s));
+}
+
+TEST("frame loan: after the lend our copy keeps the kit by its names, and nothing of the base's container, even of a lent base")
+{
+	using FrameLoan::KeepsAfterLend;
+	using FrameLoan::Tag;
+	const std::vector<Tag> tags{ { .slot = 0, .base = 0x75FE4, .name = "Sam's Fusion Core", .core = true }, { .slot = 1, .base = 0x154ABD, .name = "Sam's T-60 Helmet" } };
+	// Every name held: the kit stays, and a piece or core the engine filled the list with goes, of a lent base too.
+	CHECK(KeepsAfterLend(tags, 0x154ABD, "Sam's T-60 Helmet", true));
+	CHECK(KeepsAfterLend(tags, 0x75FE4, "Sam's Fusion Core", true));
+	CHECK(!KeepsAfterLend(tags, 0x154ABD, "", true));
+	CHECK(!KeepsAfterLend(tags, 0x75FE4, "", true));
+	CHECK(!KeepsAfterLend(tags, 0x154ABE, "", true));
+	// A name of the kit on another base is not it.
+	CHECK(!KeepsAfterLend(tags, 0x154ABE, "Sam's T-60 Helmet", true));
+	// A name that did not hold: every stack of a lent base stays (it may be the kit), nothing else.
+	CHECK(KeepsAfterLend(tags, 0x154ABD, "", false));
+	CHECK(KeepsAfterLend(tags, 0x75FE4, "", false));
+	CHECK(!KeepsAfterLend(tags, 0x154ABE, "", false));
+	// No kit: nothing stays.
+	CHECK(!KeepsAfterLend({}, 0x154ABD, "", true));
+	CHECK(!KeepsAfterLend({}, 0x154ABD, "", false));
+}
+
 TEST("frame loan: the LOAN record keeps the forfeits, reads an older build's, and forfeits nothing of a damaged one")
 {
 	using FrameLoan::Decode;
