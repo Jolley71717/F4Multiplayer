@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -22,13 +23,13 @@ public:
 
 	// The keys this pass visits, from a_keys (any order): at most perPass, from after the last key the
 	// previous pass visited, wrapping round to the start.
-	[[nodiscard]] std::vector<Key> Pass(std::vector<Key> a_keys)
+	[[nodiscard]] std::vector<Key> Pass(std::vector<Key> a_keys, std::size_t a_most = (std::numeric_limits<std::size_t>::max)())
 	{
 		std::ranges::sort(a_keys);
 		a_keys.erase(std::unique(a_keys.begin(), a_keys.end()), a_keys.end());
 		auto start = last ? std::ranges::upper_bound(a_keys, *last) : a_keys.begin();
 		std::vector<Key> visit;
-		for (std::size_t i = 0; i < a_keys.size() && visit.size() < perPass; ++i) {
+		for (std::size_t i = 0; i < a_keys.size() && visit.size() < (std::min)(perPass, a_most); ++i) {
 			if (start == a_keys.end()) {
 				start = a_keys.begin();
 			}
@@ -76,21 +77,33 @@ public:
 		Plan plan;
 		if (!a_canApply) {
 			wasInWorld = false;
+			arriving = 0;
 			return plan;
 		}
 		const bool arrived = !wasInWorld || a_cell != lastCell;
 		wasInWorld = true;
 		lastCell = a_cell;
 		if (!a_anyWaiting) {
-			return plan;
-		}
-		if (arrived) {
-			plan.full = true;
-			plan.others = a_waitingIds();
-			nextSweep = a_now + sweepInterval;
+			arriving = 0;
 			return plan;
 		}
 		plan.loaded = std::move(a_loaded);
+		// The pass over everything waiting on arriving is spread over the frames it takes at a sweep's entries a frame
+		// (the server keeps up to 2048 object rests, and every one not loaded here waits): one frame of 2000 tries at
+		// every cell edge was a hitch for the rest of the session. A load in those frames is tried as it comes.
+		if (arrived || arriving > 0) {
+			auto ids = a_waitingIds();
+			if (arrived) {
+				plan.full = true;
+				std::ranges::sort(ids);
+				ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+				arriving = ids.size();
+			}
+			plan.others = cursor.Pass(std::move(ids), arriving);
+			arriving -= (std::min)(arriving, plan.others.size());
+			nextSweep = a_now + sweepInterval;
+			return plan;
+		}
 		if (a_now >= nextSweep) {
 			nextSweep = a_now + sweepInterval;
 			plan.others = cursor.Pass(a_waitingIds());
@@ -104,6 +117,7 @@ private:
 	Clock::time_point          nextSweep{};
 	bool                       wasInWorld = false;
 	std::uint32_t              lastCell = 0;  // the player's parent cell at the last frame in the world
+	std::size_t                arriving = 0;  // how many of what waited on arriving are still to be tried (a few a frame)
 };
 
 // How full the session's shared history looks from what our game was told (dead NPCs, picked-up items,

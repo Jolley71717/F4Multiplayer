@@ -591,6 +591,12 @@ namespace LooksMenu
 		// Placed under an ID a save may have kept another stand-in's looks under: those go first, and these once that is
 		// answered (SetHeld). One whose removal can't be queued is set as before, over them.
 		const auto id = a_standIn->GetFormID();
+		if (const auto held = heldLooks.find(id); held != heldLooks.end()) {
+			// A removal is on its way already (a face arriving again before it was answered): these are set once it is, not
+			// after a second removal that could run after the sets.
+			held->second = Held{ a_standIn->GetHandle(), a_female, a_morphs, a_overlays };
+			return;
+		}
 		if (standIns.Placing(id)) {
 			if (Clear(a_standIn, ActorObject(a_standIn), false)) {
 				REX::INFO("LooksMenu: stand-in {:08X} has an ID a save may keep other looks under; those are taken off first", id);

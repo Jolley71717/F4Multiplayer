@@ -128,9 +128,19 @@ namespace DoorShare
 	// At 60 frames a second up to 960 doors are still read every POLL_INTERVAL; past that a sweep takes longer.
 	inline constexpr std::size_t POLL_PER_FRAME = 32;
 
-	// A door just loaded is first read this long after: its scripts are bound by then, and what its cell's scripts do
-	// to it as it loads (a lock set on load) is where it stands in this game, not news.
-	inline constexpr auto LOAD_SETTLE = std::chrono::seconds(2);
+	// A door is first read this long after it loaded, and after our player came out of the loading screen: its scripts
+	// are bound by then, and what its cell's scripts do to it as it loads (a lock set on load: on a heavily modded game
+	// a cell's OnLoad or OnCellAttach runs many seconds behind, and the loading screen itself is time scripts get no
+	// frames in) is where it stands in this game, not news. A lock a script sets after that is a change, and is shared.
+	inline constexpr auto LOAD_SETTLE = std::chrono::seconds(10);
+
+	// Whether a door loaded at a_loadedAt is to be read at a_now, a_inWorldSince being when our player last came into
+	// the world without a break (the end of a loading screen): the later of the two starts the wait.
+	constexpr bool Settled(std::chrono::steady_clock::time_point a_loadedAt, std::chrono::steady_clock::time_point a_inWorldSince, std::chrono::steady_clock::time_point a_now)
+	{
+		const auto since = a_loadedAt > a_inWorldSince ? a_loadedAt : a_inWorldSince;
+		return a_now - since >= LOAD_SETTLE;
+	}
 
 	// The game's load event (TESObjectLoadedEvent) names few of the doors a cell loads: on the rig (2026-10-27) three
 	// of the nineteen doors near the player in Corvega's plant, and none in Sanctuary or Goodneighbor on coming back.
@@ -233,6 +243,7 @@ namespace DoorShare
 		bool near = false;     // our player is within reach of it (REPORT_REACH; a gate's is SharedGates')
 		bool pending = false;  // the session's state of it waits to be applied here: what it reads now is the old one
 		bool paced = false;    // reported REPORT_BURST times lately (Pace): a change waits its turn
+		bool used = false;     // the player used it since its state was last sent or taken as the poll's baseline: it goes once, unchanged or not, as a used door's first read did before the poll
 	};
 
 	enum class Look
@@ -251,10 +262,18 @@ namespace DoorShare
 		if (a_watch.quiet && !a_watch.seen) {
 			return Look::kBaseline;
 		}
-		if (!a_watch.changed) {
+		if (!a_watch.changed && !a_watch.used) {
 			return Look::kNothing;
 		}
 		return a_watch.near && !a_watch.paced ? Look::kSend : Look::kHold;
+	}
+
+	// An entry with a change not yet sent outlives the door's 3D (its cell unloaded, a reset): its last-sent state is still
+	// the old baseline, so when the door is back the change reads as one and goes when we are near, or reads as gone
+	// back and clears. Forgotten, the door's unlocked state would be taken as a fresh baseline and never reported.
+	constexpr bool KeptWhenGone(bool a_held)
+	{
+		return a_held;
 	}
 
 	// What our watcher takes as already said of a reference once a friend's state of it is taken (OfferRefState), so

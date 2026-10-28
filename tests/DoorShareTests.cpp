@@ -476,12 +476,47 @@ TEST("door share: a look at a watched door: a polled door's first read is its ba
 	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = true, .pending = true }) == Look::kNothing);
 	CHECK(OnLook({ .quiet = false, .seen = false, .changed = true, .near = true, .pending = true }) == Look::kNothing);
 	CHECK(OnLook({}) == Look::kNothing);
+	// Used after the poll took its state as the baseline (a load door the player walks through: no change to read): its
+	// state goes once all the same, so a friend whose save has it otherwise is put right, as before the poll.
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = true, .used = true }) == Look::kSend);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = false, .used = true }) == Look::kHold);
+	CHECK(OnLook({ .quiet = false, .seen = true, .changed = false, .near = true, .pending = true, .used = true }) == Look::kNothing);
 	// From how near: a friend takes a door's report from 1500 (WorldSync's ACTIVATION_REACH), a gate's from
 	// SharedGates::REACH, measured from where they last saw us.
 	static_assert(DoorShare::REPORT_REACH < 1500.0f);
 	static_assert(DoorShare::REPORT_REACH == DoorShare::NPC_REACH);
 	static_assert(SharedGates::REPORT_REACH < SharedGates::REACH);
 	static_assert(SharedGates::REACH - SharedGates::REPORT_REACH >= 1500.0f - DoorShare::REPORT_REACH);
+}
+
+TEST("door share: a door is first read ten seconds after it loaded and after the loading screen ended, the later of the two")
+{
+	using namespace std::chrono_literals;
+	using Clock = std::chrono::steady_clock;
+	const Clock::time_point start{};
+	static_assert(DoorShare::LOAD_SETTLE == 10s);
+	// Loaded with the cell, our player in the world a moment later: a lock the cell's script sets seconds after the
+	// loading screen is where the door stands here, not news.
+	CHECK(!DoorShare::Settled(start, start + 3s, start + 3s));
+	CHECK(!DoorShare::Settled(start, start + 3s, start + 12s));  // 9 s out of the loading screen
+	CHECK(DoorShare::Settled(start, start + 3s, start + 13s));
+	// Found later in the same stay (a cell that attached): ten seconds from the find.
+	CHECK(!DoorShare::Settled(start + 20s, start, start + 29s));
+	CHECK(DoorShare::Settled(start + 20s, start, start + 30s));
+}
+
+TEST("door share: a change held while far outlives the door's cell")
+{
+	using DoorShare::Look;
+	using DoorShare::OnLook;
+	// A quest unlocks a door across a long interior: read while far, it is held.
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = false }) == Look::kHold);
+	// The door's 3D goes (its cell unloads) before we come near: the entry stays, its last-sent state still the old one.
+	CHECK(DoorShare::KeptWhenGone(true));
+	// The door is back and we are near: the same look now reads as the change and sends it.
+	CHECK(OnLook({ .quiet = true, .seen = true, .changed = true, .near = true }) == Look::kSend);
+	// An entry with nothing held is forgotten with the door, as before.
+	CHECK(!DoorShare::KeptWhenGone(false));
 }
 
 TEST("door share: a plain door a script unlocks and opens in the host's game does the same for the friend once the host is near it")

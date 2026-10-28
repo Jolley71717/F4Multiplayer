@@ -153,6 +153,7 @@ namespace WorldSync
 			Protocol::RefState lastSent;        // what the session last heard of it from us, or took as where it stands
 			Clock::time_point  until;
 			bool               quiet = false;  // on watch because it is loaded (DoorShare's poll), not used: its first read isn't reported, and it is read by the poll's sweep only
+			bool               used = false;   // the player used it since its state was last sent (or taken as the poll's baseline): it is sent once, changed or not
 			bool               held = false;   // a change not reported yet (read too far from it for a friend to take, or paced), kept for when it may go
 			DoorShare::Pace    pace;           // how often it was reported lately
 		};
@@ -319,6 +320,7 @@ namespace WorldSync
 		// deaths told again that killed a copy alive here after all (TakeDeath).
 		std::uint32_t healthDropped = 0;
 		LogPace::Pace droppedHealthLog;
+		LogPace::Pace refStateLog;  // the lock lines of a friend's door state applied here
 		std::uint32_t killsRetried = 0;
 		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
 
@@ -1682,7 +1684,10 @@ namespace WorldSync
 				ref->GetLock()->SetLocked(a_state.locked == Protocol::RefState::kYes);
 				ref->AddLockChange();
 				++refStatesApplied;
-				REX::INFO("WorldSync: {:08X} {} (changed in another player's world)", a_state.refId, a_state.locked == Protocol::RefState::kYes ? "locked" : "unlocked");
+				// A door whose script flips its lock is applied every few seconds for as long as both players are near it: one line per interval.
+				if (refStateLog.Due(Clock::now())) {
+					REX::INFO("WorldSync: {:08X} {} (changed in another player's world) ({} such since the last line)", a_state.refId, a_state.locked == Protocol::RefState::kYes ? "locked" : "unlocked", refStateLog.Since());
+				}
 			}
 			if (gate) {
 				if (*gateApply == SharedGates::Apply::kSet) {
@@ -1799,6 +1804,7 @@ namespace WorldSync
 			look.quiet = a_entry.quiet;
 			look.seen = a_entry.lastSent.refId != 0;
 			look.changed = !state->SameState(a_entry.lastSent);
+			look.used = a_entry.used;
 			look.near = a_player && a_player->GetParentCell() &&
 			            a_player->data.location.GetDistance(ref->data.location) <= (IsSharedGate(ref) ? SharedGates::REPORT_REACH : DoorShare::REPORT_REACH);
 			look.pending = pendingRefStates.contains(a_id);
@@ -1815,6 +1821,7 @@ namespace WorldSync
 			case DoorShare::Look::kSend:
 				a_entry.lastSent = *state;
 				a_entry.held = false;
+				a_entry.used = false;
 				a_entry.pace.Spend(a_now);
 				refBook.Sent(*state);
 				Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
@@ -1835,13 +1842,13 @@ namespace WorldSync
 		void PollDoor(std::uint32_t a_id, Clock::time_point a_now, RE::PlayerCharacter* a_player)
 		{
 			const auto loaded = loadedDoors.find(a_id);
-			if (loaded == loadedDoors.end() || a_now - loaded->second < DoorShare::LOAD_SETTLE) {
-				return;  // dropped since the sweep began, or only just loaded
+			if (loaded == loadedDoors.end() || !DoorShare::Settled(loaded->second, applyingSince, a_now)) {
+				return;  // dropped since the sweep began, or only just loaded, or our player only just out of the loading screen
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto forget = [&] {
 				loadedDoors.erase(a_id);
-				if (const auto it = watched.find(a_id); it != watched.end() && it->second.quiet) {
+				if (const auto it = watched.find(a_id); it != watched.end() && it->second.quiet && !DoorShare::KeptWhenGone(it->second.held)) {
 					watched.erase(it);
 				}
 			};
@@ -1947,6 +1954,7 @@ namespace WorldSync
 				auto& entry = watched[activation.ref];
 				entry.until = a_now + WATCH_TIME;
 				entry.quiet = false;  // used: read every frame again, as a door the poll found is only on its ticks
+				entry.used = true;    // and its state goes once all the same: a load door's use changes nothing readable, and the poll's baseline filled lastSent
 				// What the thing is linked to is watched as well: a terminal's door opens without anyone
 				// activating the door, and the friend would otherwise stay locked out. A terminal opens a chain of
 				// gates, each linking the next: the gates linked from a gate are followed too (SharedGates::CHAIN_DEPTH).
@@ -1956,6 +1964,7 @@ namespace WorldSync
 						auto& linked = watched[a_target->GetFormID()];
 						linked.until = a_now + WATCH_TIME;
 						linked.quiet = false;
+						linked.used = true;
 						++linkedWatched;
 						if (IsSharedGate(a_target)) {
 							chain.push_back(a_target);
@@ -1999,7 +2008,12 @@ namespace WorldSync
 					continue;
 				}
 				if (!LookAt(it->first, entry, a_now, player)) {
-					it = watched.erase(it);
+					if (DoorShare::KeptWhenGone(entry.held)) {
+						entry.quiet = true;  // a change not sent yet outlives the door's 3D: the poll settles it when the door is back
+						++it;
+					} else {
+						it = watched.erase(it);
+					}
 					continue;
 				}
 				++it;
@@ -2244,9 +2258,9 @@ namespace WorldSync
 				look.done = QuestStageLayout::IsStageDone(quest, door.stage);
 				look.doorLoaded = ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->Get3D() && ref->GetParentCell();
 				look.canApply = canApply;
-				// Our own game on its way to the stage (the flyover effect enabled and in the air): its script sets it.
+				// Our own game on its way to the stage (the flyover effect enabled: its script plays the flight once its 3D loads, indoors too, and sets the stage itself).
 				const auto effect = scriptDoorEffects[i] != 0 ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(scriptDoorEffects[i]) : nullptr;
-				look.busy = effect && !effect->IsDeleted() && !effect->IsDisabled() && effect->Get3D();
+				look.busy = effect && !effect->IsDeleted() && !effect->IsDisabled();
 				switch (scriptDoors.See(i, look, a_now)) {
 				case ScriptDoors::Act::kReport:
 					Queue(Protocol::Encode(Protocol::QuestStage{ quest->GetFormID(), door.stage }, Protocol::MessageType::kReportQuestStage));
@@ -2260,7 +2274,7 @@ namespace WorldSync
 					REX::INFO("WorldSync: {} {} here now (setting {:08X} stage {}, done in another player's game)", door.what, door.state, quest->GetFormID(), door.stage);
 					break;
 				case ScriptDoors::Act::kHold:
-					REX::INFO("WorldSync: {} is {} in another player's game, and ours is on its way ({:08X} enabled and loaded): waiting for it to set {:08X} stage {}",
+					REX::INFO("WorldSync: {} is {} in another player's game, and ours is on its way ({:08X} enabled): waiting for it to set {:08X} stage {}",
 						door.what, door.state, scriptDoorEffects[i], quest->GetFormID(), door.stage);
 					break;
 				case ScriptDoors::Act::kGiveUp:
@@ -2907,7 +2921,7 @@ namespace WorldSync
 				// Read while it stays loaded (PollDoor), from DoorShare::LOAD_SETTLE on. Loaded again (its cell came back, a
 				// reset relocked it), it is where it stands once more: the poll's look at it starts afresh.
 				loadedDoors.insert_or_assign(id, now);
-				if (const auto it = watched.find(id); it != watched.end() && it->second.quiet) {
+				if (const auto it = watched.find(id); it != watched.end() && it->second.quiet && !DoorShare::KeptWhenGone(it->second.held)) {
 					watched.erase(it);
 				}
 			}
