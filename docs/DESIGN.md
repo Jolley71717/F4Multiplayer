@@ -1912,7 +1912,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   tested). `controls` ends with a `sneak:` line naming what holds the key back (`SneakKey.h`, tested).
   Friends are not sent the crouch flag while the player is down or getting up, and a stand-in that
   gets up is told its sneak state again 2 s later, so it is not left crouched.
-  45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)
+  45 s or giving up (the last friend leaving, or a dropped connection, changes nothing until then; a friend back in
+  time can still help): essential off (base form and the character's own flag)
   and `player.kill`; essential stays off until they are dead or the game stands them up, and the
   kill is repeated every 2 s while they are still alive and down. The rules are in
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands

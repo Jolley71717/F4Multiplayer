@@ -123,6 +123,7 @@ party.teleporting = {player}へテレポート中
 down.went_down = ダウンしました！フレンドが助け起こせます。{key}長押しでギブアップ
 down.went_down_crawl = ダウンしました！フレンドが助け起こせます。這って移動できます。{key}長押しでギブアップ
 down.seconds_left = 助けを待てるのはあと{n}秒
+down.friends_gone = 今は誰も助け起こせません。友達が戻らなければ{n}秒で出血死します
 down.helping = {player}を助け起こし中…
 down.helped = {player}を助け起こしました
 down.helped_you = {player}に助け起こされました

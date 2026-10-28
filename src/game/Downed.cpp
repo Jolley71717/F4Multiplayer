@@ -27,6 +27,8 @@ namespace Downed
 		DownRules::Helper helper;
 		Clock::time_point giveUpHeldSince{};
 		bool              giveUpHeld = false;
+		bool              hadFriends = false;       // whether the last frame had friends to help (Frame)
+		bool              friendsGoneTold = false;  // the player was told this down that nobody can help any more
 		std::optional<Clock::time_point> lastSaveAt;  // OnBeforeSave, for the stand-up log
 		std::optional<Clock::time_point> consoleSeenAt;  // the console last seen open
 		constexpr auto                   CONSOLE_GRACE = std::chrono::seconds{ 2 };  // a command's effect may come as it closes
@@ -496,7 +498,10 @@ namespace Downed
 			return;
 		}
 		// The rules in force: revive turned off while we are down waits until we are up (DownRules::Self::SetRules).
-		const bool enabled = self.GetRules().revive && a_withFriends && WorldSync::InWorld();
+		if (!WorldSync::InWorld()) {
+			return;  // a loading screen: nothing of the down changes, and the stand-ins are not there to help
+		}
+		const bool enabled = self.GetRules().revive && a_withFriends;
 		const auto now = Clock::now();
 		const bool fighting = player->IsInCombat();
 		// A stand-up while the console is open, or just after it closed, is the player's own command (DownRules::Facts).
@@ -514,7 +519,17 @@ namespace Downed
 			.console = console,
 			.knockedOver = static_cast<RE::ActorState&>(*player).knockState != 0,
 			.sneaking = player->IsSneaking() };
-		Apply(player, self.Frame(facts, now));
+		const auto step = self.Frame(facts, now);
+		Apply(player, step);
+
+		// The last friend left (or the connection dropped) while down: the down goes on to its clock, said once.
+		if (!self.WaitsForHelp()) {
+			friendsGoneTold = false;
+		} else if (hadFriends && !enabled && !step.wentDown && !friendsGoneTold) {
+			friendsGoneTold = true;
+			Hud::Notify(Text::Format("down.friends_gone", { { "n", self.BleedOutSecondsLeft(now) } }));
+		}
+		hadFriends = enabled;
 
 		// With the teleport key off, Party doesn't see the hold: watch the fallback key here.
 		if (self.WaitsForHelp() && Config::Get().keyTeleport == 0) {

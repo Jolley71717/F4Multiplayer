@@ -140,6 +140,7 @@ namespace Text
 		{ "down.went_down", "You're down! A friend can help you up. Hold {key} to give up" },
 		{ "down.went_down_crawl", "You're down! A friend can help you up, and you can crawl. Hold {key} to give up" },
 		{ "down.seconds_left", "{n} seconds left to be helped up" },
+		{ "down.friends_gone", "Nobody can help you up now; you bleed out in {n} s unless a friend comes back" },
 		{ "down.helping", "Helping {player} up..." },
 		{ "down.helped", "You helped {player} up" },
 		{ "down.helped_you", "{player} helped you up" },

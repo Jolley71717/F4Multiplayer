@@ -350,23 +350,50 @@ TEST("downed: a bleed-out the game ends by standing the player up starts over as
 	CHECK(game.downNotices == 2);
 }
 
-TEST("downed: giving up, or the last friend leaving, bleeds out at once")
+TEST("downed: giving up bleeds out at once")
 {
-	for (const bool leave : { false, true }) {
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.self.GiveUp();
+	game.Run(now, 1s);
+	CHECK(game.kills == 1);
+	CHECK(game.body.dead);
+	CHECK(game.downNotices == 1);
+}
+
+TEST("downed: the last friend leaving does not kill: the player bleeds out on the clock, and a friend back before then can still help")
+{
+	{
 		Game game;
 		auto now = Start();
 		game.Run(now, 1s);
 		game.body.LethalHit();
 		game.Run(now, 2s);
-		if (leave) {
-			game.withFriends = false;
-		} else {
-			game.self.GiveUp();
-		}
+		game.withFriends = false;
+		game.Run(now, 10s);
+		CHECK(game.kills == 0);
+		CHECK(game.self.IsDown());
+		CHECK(game.body.essential);
+		game.withFriends = true;
+		REQUIRE(game.Revived(now));
+		game.Run(now, 5s);
+		CHECK(game.kills == 0);
+		CHECK(game.self.Now() == Phase::kUp);
+	}
+	{
+		Game game;
+		auto now = Start();
 		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 2s);
+		game.withFriends = false;
+		game.Run(now, DownRules::BLEEDOUT_TIME - 5s);
+		CHECK(game.kills == 0);
+		game.Run(now, 10s);
 		CHECK(game.kills == 1);
-		CHECK(game.body.dead);
-		CHECK(game.downNotices == 1);
 	}
 }
 
@@ -1314,8 +1341,12 @@ TEST("downed rules: rules that come while the player is down wait until they are
 	game.self.SetRules(DownRules::Rules::From(tighter), SESSION);
 	CHECK(game.self.RulesWaiting());
 	CHECK(game.self.GetRules().bleedOut == DownRules::BLEEDOUT_TIME);
-	game.Run(now, 5s);
+	game.withFriends = false;  // a dropped connection between the rules and the help: the rules still wait
+	game.Run(now, 3s);
+	game.withFriends = true;
+	game.Run(now, 2s);
 	CHECK(!game.body.dead);  // 25 s down, past the new 10 s: the old 45 s still hold
+	CHECK(game.self.RulesWaiting());
 	REQUIRE(game.Revived(now));
 	CHECK(game.self.GetRules().reviveHealth == 0.3f);  // helped up with the health of the rules the down began with
 	game.Run(now, 5s);

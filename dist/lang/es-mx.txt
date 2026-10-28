@@ -108,6 +108,7 @@ party.teleporting = Teletransportándote hasta {player}
 down.went_down = ¡Caíste! Un amigo puede levantarte. Mantén {key} para rendirte
 down.went_down_crawl = ¡Caíste! Un amigo puede levantarte, y puedes arrastrarte. Mantén {key} para rendirte
 down.seconds_left = {n} s para que te levanten
+down.friends_gone = Nadie puede levantarte ahora; te desangras en {n} s si no vuelve un amigo
 down.helping = Levantando a {player}...
 down.helped = Levantaste a {player}
 down.helped_you = {player} te levantó
