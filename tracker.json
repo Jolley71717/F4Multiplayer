@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-28T05:21:50+00:00",
+ "updated": "2026-10-28T05:27:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -920,8 +920,8 @@
    "title": "Nexus report: a Mr Gutsy the joiner met on the road wasn't there for the host, nor the fight",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Logging reviewed; rig run to name the cause",
+   "stage": 5,
+   "note": "Logging merged; the rig shares every Mr Gutsy, so the log will name the cause if it happens live",
    "pr": 225
   },
   {
