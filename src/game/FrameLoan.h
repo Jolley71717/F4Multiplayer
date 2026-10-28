@@ -152,6 +152,30 @@ namespace FrameLoan
 		return !a_copy || (a_sinceOut && *a_sinceOut >= EXIT_SETTLE);
 	}
 
+	// The engine gets nobody out of power armor with no room where the frame is left and they step back to: E does
+	// nothing, and neither does Actor.SwitchToPowerArmor with None, the clean-up's send-out. The rig's batch 14 had our
+	// player stuck so after three loads of three, each with our copy of the owner's frame placed again some 25 units from
+	// them as the load ended (the loan over, the owner's game shows its frame again where it stood, which is where our
+	// player got in, and they had not walked off); every load they got out of had it 48 units away or more. So while the
+	// clean-up waits for them to be out (a_waiting), no copy of a friend's frame stands within EXIT_CLEARANCE of them
+	// (a_distance: NaN in another place): none is placed there, and one placed there goes (Spawns), until they are out.
+	constexpr float EXIT_CLEARANCE = 256.0f;
+	constexpr bool  KeepsClear(bool a_waiting, float a_distance)
+	{
+		return a_waiting && a_distance >= 0.0f && a_distance <= EXIT_CLEARANCE;
+	}
+
+	// Sent out for this long since the first send-out (a_sinceFirst; none before it) and still in: something else holds
+	// them in (a wall at their back, a frame of someone else's), and the lent items they wear are taken off them there and
+	// then, once (a_taken: done already), so that no borrower goes on in them, the owner's pieces, for as long as they stay
+	// in. What is left in the frame (its core: the frame our player is in is never changed) goes as they get out. A load
+	// that got out on the rig was out within 5 s of the first send-out.
+	constexpr auto SEND_OUT_LIMIT = std::chrono::seconds(20);
+	constexpr bool TakesWornBack(std::optional<Clock::duration> a_sinceFirst, bool a_taken)
+	{
+		return !a_taken && a_sinceFirst && *a_sinceFirst >= SEND_OUT_LIMIT;
+	}
+
 	// Whether the spawn a_id is the one lent to us (a_ours, with a_stage): from the kit coming until the loan ends. Spawn id 0
 	// is none, so a loan worn on past its session (which lets go of its id) holds no spawn of the next session.
 	constexpr bool HoldsSpawn(Stage a_stage, std::uint32_t a_ours, std::uint32_t a_id)
@@ -270,6 +294,67 @@ namespace FrameLoan
 		if (a_list.size() > a_max) {
 			a_list.erase(a_list.begin(), a_list.begin() + static_cast<std::ptrdiff_t>(a_list.size() - a_max));
 		}
+	}
+
+	// Only a lent item our game saw while our player was in the frame (by its name, in our copy or on our player: the
+	// engine moves the pieces from the frame onto its wearer as they get in) can be forfeit. One never seen then was never
+	// in our world to be put anywhere: the kit lost from our copy before they got in (the rig's batch 12, every lent item
+	// gone from the copy within 0.3 s of the lend) left all six not found at every return, and each worn loan forfeited
+	// six names that nothing here held, filling the list and making Drops and Gifts refuse them. a_held: the slots seen.
+
+	// The slots of a_seen that name a lent item of a_tags, added to a_held once each.
+	inline void Hold(std::vector<std::uint8_t>& a_held, const std::vector<Tag>& a_tags, const std::vector<std::uint8_t>& a_seen)
+	{
+		for (const auto slot : a_seen) {
+			const bool lent = std::ranges::any_of(a_tags, [&](const Tag& a_tag) { return a_tag.slot == slot; });
+			if (lent && std::ranges::find(a_held, slot) == a_held.end()) {
+				a_held.push_back(slot);
+			}
+		}
+	}
+
+	// The tags of a_tags seen while worn (a_held), in a_tags' order: what a save made in the frame notes (the LOAN record),
+	// so that a load forfeits no more than the loan's end would have.
+	inline std::vector<Tag> Held(const std::vector<Tag>& a_tags, const std::vector<std::uint8_t>& a_held)
+	{
+		std::vector<Tag> out;
+		for (const auto& tag : a_tags) {
+			if (std::ranges::find(a_held, tag.slot) != a_held.end()) {
+				out.push_back(tag);
+			}
+		}
+		return out;
+	}
+
+	// The lent items forfeit as a worn loan ends: seen while worn (a_held), and not found now (a_found).
+	inline std::vector<Tag> Forfeits(const std::vector<Tag>& a_tags, const std::vector<Found>& a_found, const std::vector<std::uint8_t>& a_held)
+	{
+		return NotFound(Held(a_tags, a_held), a_found);
+	}
+
+	// The lent items are looked for as our player gets in, and just before a save made in the frame (a_force: its record
+	// notes them, and the load forfeits whatever of them it does not find), then every CONFIRM_EVERY while some are not
+	// seen yet, but only for CONFIRM_FOR after they got in (a_sinceIn): the engine moves the pieces onto them within a
+	// moment, and one not seen by then was not in our world (the kit gone before they got in), so a worn loan is not looked
+	// through four times a second for hours. a_sinceLook: since the last look.
+	constexpr auto CONFIRM_EVERY = std::chrono::milliseconds(250);
+	constexpr auto CONFIRM_FOR = std::chrono::seconds(10);
+	constexpr bool LooksForHeld(std::size_t a_held, std::size_t a_tags, bool a_force, Clock::duration a_sinceIn, Clock::duration a_sinceLook)
+	{
+		if (a_held >= a_tags) {
+			return false;
+		}
+		return a_force || (a_sinceIn < CONFIRM_FOR && a_sinceLook >= CONFIRM_EVERY);
+	}
+
+	// What stays in our copy once the kit is in it (OnFrameLent): each lent item's copy, by its name. Anything else goes: a
+	// list the engine made only as the first copy went in is filled from the frame's base container, pieces and a core from
+	// nowhere, which the return would give our player as their own (GiveOwn) were they of a lent item's base. While some
+	// lent item is not found by its name (a_allNamed false), every stack of a lent item's base stays: that may be it, and
+	// the return takes it by its base and mods.
+	inline bool KeepsAfterLend(const std::vector<Tag>& a_tags, std::uint32_t a_base, std::string_view a_name, bool a_allNamed)
+	{
+		return std::ranges::any_of(a_tags, [&](const Tag& a_tag) { return a_allNamed ? IsTagged(a_tag, a_base, a_name) : a_tag.base == a_base; });
 	}
 
 	// How many lent items of one base, not found by their names (a_unfound), are taken from our copy all the same, as items

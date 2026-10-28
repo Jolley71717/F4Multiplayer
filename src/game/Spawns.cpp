@@ -87,6 +87,10 @@ namespace Spawns
 		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does: no copy.
 		std::unordered_set<std::uint32_t> oursThere;
 		std::uint32_t                     frameCopiesWithheld = 0;
+		// Friends' frames whose copy would stand in our player's way out of the frame a loaded save had them in
+		// (SpawnBook::FrameFacts::keptClear), by spawn id while it would: no copy.
+		std::unordered_set<std::uint32_t> keptClear;
+		std::uint32_t                     frameCopiesKeptClear = 0;
 		std::uint32_t logged = 0;
 
 		std::uint32_t LocalPlayer()
@@ -365,6 +369,19 @@ namespace Spawns
 			} else {
 				oursThere.erase(a_id);
 			}
+			// Our player being sent out of the frame a loaded save had them in, near where their game has this one (the loan of
+			// it over with the load, it stands again where our player got in): no copy of it there until they are out, as the
+			// engine gets nobody out of power armor with a frame where they step back to (FrameLoans::KeepsClear).
+			facts.keptClear = !facts.lent && FrameLoans::KeepsClear(copy->at);
+			if (facts.keptClear) {
+				if (keptClear.insert(a_id).second) {
+					++frameCopiesKeptClear;
+					REX::INFO("Spawns: player {}'s frame {:08X} stands near our player, who is being sent out of the frame a loaded save had them in; no copy of it there until they are out",
+						copy->spawn.playerId, a_id);
+				}
+			} else if (keptClear.erase(a_id) > 0) {
+				REX::INFO("Spawns: player {}'s frame {:08X} is clear of our player again; its copy may stand", copy->spawn.playerId, a_id);
+			}
 			RE::NiPointer<RE::TESObjectREFR> ref;
 			if (copy->local != 0) {
 				ref = CopyOf(a_id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
@@ -421,8 +438,8 @@ namespace Spawns
 			case SpawnBook::Act::kDiscard:
 				if (ref) {
 					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
-					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} oursThere={} {:.0f} units off)", ref->GetFormID(),
-						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, facts.oursThere, off);
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} oursThere={} keptClear={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, facts.oursThere, facts.keptClear, off);
 				}
 				Discard(a_id);
 				break;
@@ -727,6 +744,7 @@ namespace Spawns
 		std::erase_if(unplacedWhy, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(oursThere, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
+		std::erase_if(keptClear, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -792,6 +810,7 @@ namespace Spawns
 		blockedNoted.clear();  // the loaded world's ids name other NPCs
 		unplacedWhy.clear();
 		oursThere.clear();  // the loaded world's frames are looked at afresh
+		keptClear.clear();
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
 		const auto released = ours.Ids();
@@ -823,14 +842,15 @@ namespace Spawns
 		ours.Clear();
 		ownFrames.clear();
 		oursThere.clear();
+		keptClear.clear();
 		killedHere.clear();
 		outgoing.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld) + Unplaced() + " " + FrameLoans::Describe();
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

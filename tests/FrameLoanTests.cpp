@@ -308,6 +308,89 @@ TEST("frame loan: a worn loan's end forfeits the lent items not found, one forfe
 	CHECK(forfeited.front().base == 0x1000 + 6 && forfeited.back().base == 0x1000 + FrameLoan::MAX_FORFEITS + 5);
 }
 
+TEST("frame loan: only a lent item seen while worn is forfeit; one never in our copy is not")
+{
+	using FrameLoan::Tag;
+	const std::vector<Tag> tags{ { .slot = 0, .base = 0x75FE4, .name = "Sam's Fusion Core", .core = true }, { .slot = 1, .base = 0x154ABD, .name = "Sam's T-60 Helmet" },
+		{ .slot = 2, .base = 0x154ABE, .name = "Sam's T-60 Left Arm" } };
+	// The rig's batch 12: the kit gone from our copy before our player got in, nothing seen while worn, nothing found at the
+	// return. Nothing is forfeit (it was six a loan, eight loans filling the list with 48).
+	CHECK(FrameLoan::Forfeits(tags, {}, {}).empty());
+	CHECK(FrameLoan::NotFound(tags, {}).size() == 3);
+	// Seen while worn and found at the return: nothing forfeit.
+	const std::vector<std::uint8_t> all{ 0, 1, 2 };
+	CHECK(FrameLoan::Forfeits(tags, { { .slot = 0 }, { .slot = 1 }, { .slot = 2 } }, all).empty());
+	// Seen while worn and not found at the return (put in a chest): forfeit, one each.
+	const auto lost = FrameLoan::Forfeits(tags, { { .slot = 1, .health = 0.4f } }, all);
+	CHECK(lost.size() == 2 && lost[0] == tags[0] && lost[1] == tags[2]);
+	// Only the ones seen: the arm never was, so it is not forfeit though not found.
+	const auto some = FrameLoan::Forfeits(tags, {}, { 1 });
+	CHECK(some.size() == 1 && some[0] == tags[1]);
+}
+
+TEST("frame loan: the lent items seen while worn are held once each, and only lent ones")
+{
+	using FrameLoan::Tag;
+	const std::vector<Tag> tags{ { .slot = 0, .base = 0x10, .name = "Sam's T-60 Helmet" }, { .slot = 3, .base = 0x11, .name = "Sam's T-60 Torso" } };
+	std::vector<std::uint8_t> held;
+	FrameLoan::Hold(held, tags, {});
+	CHECK(held.empty());
+	FrameLoan::Hold(held, tags, { 3 });
+	CHECK(held == std::vector<std::uint8_t>{ 3 });
+	// Seen again (in the copy as they got in, then on our player): still once.
+	FrameLoan::Hold(held, tags, { 3, 0, 3 });
+	CHECK(held == (std::vector<std::uint8_t>{ 3, 0 }));
+	// A slot no lent item has is never held.
+	FrameLoan::Hold(held, tags, { 7 });
+	CHECK(held.size() == 2);
+	// A save made in the frame notes only those, in the kit's order: its load forfeits no more than the loan's end would.
+	CHECK(FrameLoan::Held(tags, held) == tags);
+	CHECK(FrameLoan::Held(tags, { 3 }) == std::vector<Tag>{ tags[1] });
+	CHECK(FrameLoan::Held(tags, {}).empty());
+	CHECK(FrameLoan::Held({}, { 0, 3 }).empty());
+}
+
+TEST("frame loan: the lent items are looked for as our player gets in and before a save, then a while, and then no more")
+{
+	using namespace std::chrono_literals;
+	using FrameLoan::LooksForHeld;
+	// As they get in, and before a save (forced): whenever some are not seen yet.
+	CHECK(LooksForHeld(0, 6, true, 0ms, 0ms));
+	CHECK(LooksForHeld(5, 6, true, 2h, 0ms));
+	// All seen: never again, forced or not.
+	CHECK(!LooksForHeld(6, 6, true, 0ms, 1s));
+	CHECK(!LooksForHeld(6, 6, false, 1s, 1s));
+	CHECK(!LooksForHeld(0, 0, true, 0ms, 0ms));
+	// After they got in: every CONFIRM_EVERY, for CONFIRM_FOR, and then it stops (the kit gone before they got in).
+	CHECK(!LooksForHeld(0, 6, false, 1s, FrameLoan::CONFIRM_EVERY - 1ms));
+	CHECK(LooksForHeld(0, 6, false, 1s, FrameLoan::CONFIRM_EVERY));
+	CHECK(LooksForHeld(0, 6, false, FrameLoan::CONFIRM_FOR - 1ms, 1s));
+	CHECK(!LooksForHeld(0, 6, false, FrameLoan::CONFIRM_FOR, 1s));
+	CHECK(!LooksForHeld(0, 6, false, 3h, 1s));
+}
+
+TEST("frame loan: after the lend our copy keeps the kit by its names, and nothing of the base's container, even of a lent base")
+{
+	using FrameLoan::KeepsAfterLend;
+	using FrameLoan::Tag;
+	const std::vector<Tag> tags{ { .slot = 0, .base = 0x75FE4, .name = "Sam's Fusion Core", .core = true }, { .slot = 1, .base = 0x154ABD, .name = "Sam's T-60 Helmet" } };
+	// Every name held: the kit stays, and a piece or core the engine filled the list with goes, of a lent base too.
+	CHECK(KeepsAfterLend(tags, 0x154ABD, "Sam's T-60 Helmet", true));
+	CHECK(KeepsAfterLend(tags, 0x75FE4, "Sam's Fusion Core", true));
+	CHECK(!KeepsAfterLend(tags, 0x154ABD, "", true));
+	CHECK(!KeepsAfterLend(tags, 0x75FE4, "", true));
+	CHECK(!KeepsAfterLend(tags, 0x154ABE, "", true));
+	// A name of the kit on another base is not it.
+	CHECK(!KeepsAfterLend(tags, 0x154ABE, "Sam's T-60 Helmet", true));
+	// A name that did not hold: every stack of a lent base stays (it may be the kit), nothing else.
+	CHECK(KeepsAfterLend(tags, 0x154ABD, "", false));
+	CHECK(KeepsAfterLend(tags, 0x75FE4, "", false));
+	CHECK(!KeepsAfterLend(tags, 0x154ABE, "", false));
+	// No kit: nothing stays.
+	CHECK(!KeepsAfterLend({}, 0x154ABD, "", true));
+	CHECK(!KeepsAfterLend({}, 0x154ABD, "", false));
+}
+
 TEST("frame loan: the LOAN record keeps the forfeits, reads an older build's, and forfeits nothing of a damaged one")
 {
 	using FrameLoan::Decode;
@@ -407,6 +490,30 @@ TEST("frame loan: the clean-up after a load waits the exit settle once our playe
 	CHECK(CleanupDue(true, 2s));
 	CHECK(CleanupDue(true, 5s));
 	CHECK(CleanupDue(false, std::nullopt));  // no copy: nothing to settle
+}
+
+TEST("frame loan: while our player is sent out of the frame a loaded save had them in, no friend's frame copy stands near them")
+{
+	using FrameLoan::KeepsClear;
+	// The rig's batch 14: stuck with the owner's frame copy ~25 units off (3 of 3); out with it 48 units off or more.
+	CHECK(KeepsClear(true, 25.0f));
+	CHECK(KeepsClear(true, 0.0f));
+	CHECK(KeepsClear(true, 48.0f));
+	CHECK(KeepsClear(true, FrameLoan::EXIT_CLEARANCE));
+	CHECK(!KeepsClear(true, FrameLoan::EXIT_CLEARANCE + 1.0f));
+	CHECK(!KeepsClear(true, std::numeric_limits<float>::quiet_NaN()));  // in another place
+	CHECK(!KeepsClear(false, 25.0f));                                    // out of it, or no clean-up: copies stand where they are
+}
+
+TEST("frame loan: a send-out that never gets our player out takes the lent items off them once, after a while")
+{
+	using FrameLoan::TakesWornBack;
+	CHECK(!TakesWornBack(std::nullopt, false));  // not sent out yet
+	CHECK(!TakesWornBack(5s, false));            // the rig's loads were out within 5 s
+	CHECK(!TakesWornBack(19s, false));
+	CHECK(TakesWornBack(FrameLoan::SEND_OUT_LIMIT, false));
+	CHECK(TakesWornBack(10min, false));
+	CHECK(!TakesWornBack(10min, true));  // once
 }
 
 TEST("frame loan: after loading a save made in a borrowed frame, our player is sent out and the copy and the lent items go")
