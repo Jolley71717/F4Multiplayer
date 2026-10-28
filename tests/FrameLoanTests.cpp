@@ -166,6 +166,23 @@ TEST("frame loan: a lent item whose name did not hold is taken from our copy by 
 	CHECK(TakeUnnamed(0, 4, 0) == 0);
 }
 
+TEST("frame loan: a lent piece taken by its base is one with the mods its copy was made with, never our player's own with others")
+{
+	using FrameLoan::FitsUnnamed;
+	const std::optional<std::vector<std::uint32_t>> made{ { 0x0001F2A1, 0x0001F2B0 } };
+	CHECK(FitsUnnamed(made, { 0x0001F2A1, 0x0001F2B0 }));
+	CHECK(FitsUnnamed(made, { 0x0001F2B0, 0x0001F2A1 }));  // any order
+	// Our player's own piece of the base, put on from the Pip-Boy in place of the lent one: other mods, or fewer, or none.
+	CHECK(!FitsUnnamed(made, { 0x0001F2A1, 0x0001F2C3 }));
+	CHECK(!FitsUnnamed(made, { 0x0001F2A1 }));
+	CHECK(!FitsUnnamed(made, {}));
+	// A core (no instance): none made, none found.
+	CHECK(FitsUnnamed(std::optional<std::vector<std::uint32_t>>{ std::vector<std::uint32_t>{} }, {}));
+	CHECK(!FitsUnnamed(std::optional<std::vector<std::uint32_t>>{ std::vector<std::uint32_t>{} }, { 0x0001F2A1 }));
+	// Not known (after a load, the co-save keeps no mods): any stack of the base.
+	CHECK(FitsUnnamed(std::nullopt, { 0x0001F2C3 }));
+}
+
 TEST("frame loan: a frame our player wears all the way in is theirs, so nothing buries a copy worn on loan from under them")
 {
 	using FriendFrame::ChooseLeave;

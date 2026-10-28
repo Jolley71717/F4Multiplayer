@@ -255,6 +255,21 @@ namespace FrameLoan
 		return (std::max)(0, (std::min)(a_unfound, a_inCopy - (std::max)(a_reserved, 0)));
 	}
 
+	// Whether a stack in our copy may be taken as a lent item not found by its name (TakeUnnamed): its instance mods (ids,
+	// any order) are the ones our copy of that item was made with. A piece of our player's own of that base, put on the frame
+	// from the Pip-Boy in place of the lent one (now on our player), stays theirs unless it is the same piece in all but its
+	// name and condition. a_made: none when not known (after a load: the co-save keeps no mods), and then any stack fits.
+	inline bool FitsUnnamed(const std::optional<std::vector<std::uint32_t>>& a_made, std::vector<std::uint32_t> a_stack)
+	{
+		if (!a_made) {
+			return true;
+		}
+		auto made = *a_made;
+		std::ranges::sort(made);
+		std::ranges::sort(a_stack);
+		return made == a_stack;
+	}
+
 	// ---- The owner's side -----------------------------------------------------------------------------------
 
 	struct LendFacts

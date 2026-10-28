@@ -46,6 +46,9 @@ namespace FrameLoans
 			// Our player's own fusion cores (none of the lent ones) as they got in, by base: the engine moves one into the frame
 			// as the lent one runs down, and at most what they lost so is given back from it (GiveRest).
 			std::unordered_map<std::uint32_t, std::int32_t> ownCores;
+			// The instance mods each lent item's copy was made with, by slot: a lent item not found by its name is taken from our
+			// copy only as a stack of these (FrameLoan::FitsUnnamed), never our player's own piece of its base with other mods.
+			std::unordered_map<std::uint8_t, std::vector<std::uint32_t>> mods;
 		};
 		Borrowed borrowed;
 
@@ -354,6 +357,20 @@ namespace FrameLoans
 			return out.empty() ? "none" : out;
 		}
 
+		// A stack's instance mods (their ids), as FrameLoan::FitsUnnamed compares them. None when more than the wire carries.
+		std::optional<std::vector<std::uint32_t>> ModsOf(const RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra)
+		{
+			const auto item = ItemCopies::ItemOf(a_object, a_extra);
+			if (!item) {
+				return std::nullopt;
+			}
+			std::vector<std::uint32_t> out;
+			for (const auto& mod : item->mods) {
+				out.push_back(mod.mod);
+			}
+			return out;
+		}
+
 		// How many of a_base a_ref holds, every stack of it.
 		std::int32_t CountOf(RE::TESObjectREFR* a_ref, std::uint32_t a_base)
 		{
@@ -389,12 +406,14 @@ namespace FrameLoans
 		void GiveOwn(RE::TESObjectREFR* a_copy, RE::PlayerCharacter* a_player, bool a_cores);
 
 		// The lent items no name found (Gather from the copy and from our player first), taken from our copy all the same by
-		// their base (FrameLoan::TakeUnnamed): one stack of it, one item, each. a_reserved: how many of a base are our player's
+		// their base (FrameLoan::TakeUnnamed): one stack of it, one item, each, and only a stack with the mods its copy was made
+		// with (a_mods, by slot; none after a load: FrameLoan::FitsUnnamed). a_reserved: how many of a base are our player's
 		// own and go back to them (their fusion cores the engine moved in). What each one not found looks like in the copy
 		// and on our player is logged, so the rig tells why its name did not hold. Never anything of a base no lent item
 		// has, and never more of one than lent items of it are missing.
 		template <class F>
-		void GatherUnnamed(RE::TESObjectREFR* a_copy, RE::TESObjectREFR* a_player, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found, F&& a_reserved)
+		void GatherUnnamed(RE::TESObjectREFR* a_copy, RE::TESObjectREFR* a_player, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found,
+			const std::unordered_map<std::uint8_t, std::vector<std::uint32_t>>& a_mods, F&& a_reserved)
 		{
 			const auto unfound = FrameLoan::NotFound(a_tags, a_found);
 			if (unfound.empty()) {
@@ -413,9 +432,15 @@ namespace FrameLoans
 				if (FrameLoan::TakeUnnamed(static_cast<std::int32_t>(missing), CountOf(a_copy, tag.base) + taken[tag.base], a_reserved(tag)) <= taken[tag.base]) {
 					continue;
 				}
-				auto hit = FindStack(a_copy, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
+				const auto made = a_mods.find(tag.slot);
+				const auto mods = made != a_mods.end() ? std::optional<std::vector<std::uint32_t>>{ made->second } : std::nullopt;
+				auto       hit = FindStack(a_copy, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
 					if (a_object->GetFormID() != tag.base) {
 						return std::nullopt;
+					}
+					const auto stack = ModsOf(a_object, a_extra);
+					if (!stack || !FrameLoan::FitsUnnamed(mods, *stack)) {
+						return std::nullopt;  // our player's own piece of its base, put on from the Pip-Boy: theirs (GiveOwn)
 					}
 					Hit found;
 					if (a_extra && a_extra->HasType(RE::EXTRA_DATA_TYPE::kHealth)) {
@@ -424,6 +449,7 @@ namespace FrameLoans
 					return found;
 				});
 				if (!hit) {
+					REX::INFO("FrameLoans: lent item {} ({:08X}) is not taken by its base: no stack of it in our copy {:08X} has the mods it was made with", tag.slot, tag.base, a_copy->GetFormID());
 					continue;
 				}
 				hit->count = 1;
@@ -547,7 +573,7 @@ namespace FrameLoans
 			}
 			// A lent item whose name did not hold is taken from the copy by its base: never one of our player's own cores the
 			// engine moved in as the lent one ran down (GiveRest gives those back).
-			GatherUnnamed(copy.get(), player, borrowed.tags, found, [&](const FrameLoan::Tag& a_tag) {
+			GatherUnnamed(copy.get(), player, borrowed.tags, found, borrowed.mods, [&](const FrameLoan::Tag& a_tag) {
 				const auto own = borrowed.ownCores.find(a_tag.base);
 				return own != borrowed.ownCores.end() && player ? own->second - CountOf(player, a_tag.base) : 0;
 			});
@@ -849,7 +875,7 @@ namespace FrameLoans
 			Gather(player, job.record.tags, found);
 			// No count of our player's own cores as they got in (a load since): a lent core whose name did not hold stays,
 			// and goes back to them with their own.
-			GatherUnnamed(copy, player, job.record.tags, found, [](const FrameLoan::Tag& a_tag) { return a_tag.core ? (std::numeric_limits<std::int32_t>::max)() : 0; });
+			GatherUnnamed(copy, player, job.record.tags, found, {}, [](const FrameLoan::Tag& a_tag) { return a_tag.core ? (std::numeric_limits<std::int32_t>::max)() : 0; });
 			if (copy) {
 				GiveOwn(copy, player, true);  // their own pieces and cores, moved into it as they were sent out
 				if (player->lastUsedPowerArmor.get().get() == copy) {
@@ -1132,7 +1158,11 @@ namespace FrameLoans
 			coreMade = coreMade || item.core;
 			const std::string own = item.name.empty() ? std::string{ RE::TESFullName::GetFullName(*form) } : item.name;
 			made.name = std::string{ Protocol::Utf8Prefix(Text::Format("party.lent_item", { { "player", owner }, { "item", own } }), Protocol::MAX_ITEM_NAME_LENGTH) };
-			copy->AddObjectToContainer(object, ItemCopies::ExtraFor(made, object), 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
+			const auto extra = ItemCopies::ExtraFor(made, object);
+			if (const auto mods = ModsOf(object, extra.get())) {
+				borrowed.mods[item.slot] = *mods;
+			}
+			copy->AddObjectToContainer(object, extra, 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
 			borrowed.tags.push_back({ .slot = item.slot, .base = item.base, .name = made.name, .core = item.core });
 		}
 		borrowed.owner = a_lending.ownerId;
