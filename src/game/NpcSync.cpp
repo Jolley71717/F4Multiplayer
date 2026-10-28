@@ -1038,6 +1038,18 @@ namespace NpcSync
 			return false;
 		}
 
+		// The grid of an outdoor cell of the land (FrameShare::Ours::grid). None indoors, and none for a worldspace's
+		// persistent or sky cell: those hold references from all over it, and keep no spot of their own.
+		std::optional<std::pair<std::int32_t, std::int32_t>> GridOf(const RE::TESObjectCELL* a_cell)
+		{
+			const auto world = a_cell && a_cell->IsExterior() ? a_cell->worldSpace : nullptr;
+			const auto coords = world && a_cell != world->persistentCell && a_cell != world->skyCell ? a_cell->GetCoordinates() : nullptr;
+			if (!coords) {
+				return std::nullopt;
+			}
+			return std::pair{ coords->cellX, coords->cellY };
+		}
+
 		FrameShare::Ours FrameOursOf(RE::TESObjectREFR* a_frame)
 		{
 			FrameShare::Ours ours;
@@ -1059,6 +1071,7 @@ namespace NpcSync
 			ours.lastUsed = player && player->lastUsedPowerArmor.get().get() == a_frame;
 			ours.owned = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
 			ours.at = SpotOf(a_frame);
+			ours.grid = GridOf(a_frame->GetParentCell());
 			ours.heading = a_frame->data.angle.z;
 			ours.upright = FrameShare::Upright(a_frame->data.angle.x, a_frame->data.angle.y);
 			return ours;
@@ -1204,20 +1217,26 @@ namespace NpcSync
 			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID()), FrameLoans::LentOut(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
 				return std::nullopt;
 			}
+			// One of ours given back, waiting to be moved to where its borrower got out of it (until that spot is in our
+			// sight): that spot, where every other game has it already. Where it still stands here would move their copies
+			// back there, the stale second suit of the 0.10.0 rc soak.
+			const auto waiting = made ? FrameLoans::MoveWaiting(made->GetFormID()) : std::nullopt;
+			const auto at = waiting ? waiting->first : ours.at;
+			const auto heading = waiting ? waiting->second : ours.heading;
 			const auto sent = sentFrames.find(a_id);
-			const bool moved = FrameShare::Moved(sent != sentFrames.end(), sent != sentFrames.end() ? sent->second.at : RemoteEdits::Spot{}, sent != sentFrames.end() ? sent->second.heading : 0.0f, ours.at, ours.heading);
+			const bool moved = FrameShare::Moved(sent != sentFrames.end(), sent != sentFrames.end() ? sent->second.at : RemoteEdits::Spot{}, sent != sentFrames.end() ? sent->second.heading : 0.0f, at, heading);
 			if (!FrameShare::Due(moved, sent != sentFrames.end() ? a_now - sent->second.sentAt : Clock::duration{})) {
 				return std::nullopt;
 			}
 			Protocol::ActorState state;
 			state.refId = a_id;
-			state.cell = ours.at.cell;
-			state.worldspace = ours.at.worldspace;
-			state.x = ours.at.x;
-			state.y = ours.at.y;
-			state.z = ours.at.z;
-			state.heading = ours.heading;
-			sentFrames[a_id] = { ours.at, ours.heading, a_now };
+			state.cell = at.cell;
+			state.worldspace = at.worldspace;
+			state.x = at.x;
+			state.y = at.y;
+			state.z = at.z;
+			state.heading = heading;
+			sentFrames[a_id] = { at, heading, a_now };
 			++frameStates;
 			return state;
 		}
@@ -1235,6 +1254,67 @@ namespace NpcSync
 			}
 			return a_spot.cell == 0 && cell->worldSpace && a_spot.worldspace == cell->worldSpace->GetFormID() &&
 			       StandInRange::Visible(a_spot.x, a_spot.y, a_player->data.location.x, a_player->data.location.y, RemotePlayers::GridsToLoad());
+		}
+
+		// A reference of a plugin's standing loaded in the cell outdoors that a_at is in (FrameShare::CellIndex, a_at's
+		// worldspace), to move a frame onto first as it is brought there: the console's moveto puts what it moves in the cell
+		// of the reference it moves it to, and setpos then moves it within that cell. Moved onto our player as it always was,
+		// a frame brought to a spot in another cell than theirs stayed in our player's cell (the 0.10.0 rc soak), drawn
+		// there but unloaded, and shared no more, once that cell was. 0: our player is in that cell (or the spot is indoors,
+		// in our player's interior: InView), or no such reference is loaded; our player is moved onto then.
+		std::uint32_t AnchorFor(const RemoteEdits::Spot& a_at, std::uint32_t a_moved)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto tes = RE::TES::GetSingleton();
+			if (!player || !tes || a_at.cell != 0) {
+				return 0;
+			}
+			const auto x = FrameShare::CellIndex(a_at.x);
+			const auto y = FrameShare::CellIndex(a_at.y);
+			const auto spotsCell = [&](const RE::TESObjectCELL* a_cell) {
+				const auto grid = GridOf(a_cell);
+				return grid && grid->first == x && grid->second == y && a_cell->worldSpace->GetFormID() == a_at.worldspace;
+			};
+			if (spotsCell(player->GetParentCell())) {
+				return 0;
+			}
+			std::uint32_t anchor = 0;
+			tes->ForEachReferenceInRange(RE::NiPoint3{ a_at.x, a_at.y, a_at.z }, FrameShare::CELL_SIZE, [&](RE::TESObjectREFR* a_ref) {
+				const auto id = a_ref ? a_ref->GetFormID() : 0;
+				if (anchor != 0) {
+					return RE::BSContainer::ForEachResult::kStop;  // the walk goes on through the other cells after a stop
+				}
+				if (id != 0 && id != a_moved && Protocol::IsShareableRef(id) && !a_ref->IsDeleted() && !a_ref->IsDisabled() && !a_ref->As<RE::Actor>() && spotsCell(a_ref->GetParentCell())) {
+					anchor = id;
+					return RE::BSContainer::ForEachResult::kStop;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return anchor;
+		}
+
+		// A frame (a_id) moved through the console to a_at, facing a_heading, upright: onto a reference in the cell that spot
+		// is in (AnchorFor), else onto our player, then put on the spot. The reference it was moved onto (0: our player).
+		std::uint32_t BringFrame(std::uint32_t a_id, const RemoteEdits::Spot& a_at, float a_heading)
+		{
+			const auto anchor = AnchorFor(a_at, a_id);
+			RE::Console::ExecuteCommand((anchor ? std::format("{:08X}.moveto {:08X}", a_id, anchor) : std::format("{:08X}.moveto player", a_id)).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_id, a_at.x).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_id, a_at.y).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", a_id, a_at.z).c_str());
+			// moveto turns it as what it is moved onto is (our player's look up or down too): stood up again, as the owner's is.
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", a_id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", a_id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", a_id, a_heading * 180.0f / std::numbers::pi_v<float>).c_str());
+			meter.Count(7);
+			return anchor;
+		}
+
+		// The cell a reference is kept in (0: none), for the log.
+		std::uint32_t CellIdOf(const RE::TESObjectREFR* a_ref)
+		{
+			const auto cell = a_ref ? a_ref->GetParentCell() : nullptr;
+			return cell ? cell->GetFormID() : 0;
 		}
 
 		const char* MoveText(FrameShare::Move a_move)
@@ -1309,15 +1389,7 @@ namespace NpcSync
 					} else if (verdict == RetryBudget::Verdict::kLast) {
 						REX::INFO("NpcSync: bringing frame {:08X} for the last time; after {} tries it stays where it is here", id, RetryBudget::TRIES);
 					}
-					RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", id).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, theirs.x).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, theirs.y).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, theirs.z).c_str());
-					// moveto turns it as our player is, their look up or down too: stood up again, as the owner's is.
-					RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", id).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", id).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_state.heading * 180.0f / std::numbers::pi_v<float>).c_str());
-					meter.Count(7);
+					BringFrame(id, theirs, a_state.heading);
 					++framesBrought;
 					frameChoices[id] = static_cast<int>(move);
 				}
@@ -2001,24 +2073,21 @@ namespace NpcSync
 		}
 		const auto id = a_frame->GetFormID();
 		const float distance = RemoteEdits::Distance(ours.at, a_at);  // NaN in another place
-		if (ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT)) {
+		// Nudged only within the cell it is kept in: one nudged over a cell's edge stays kept in the cell it left (and is
+		// unloaded, and shared no more, with it). Brought otherwise, into the cell of the spot (BringFrame).
+		const bool nudge = ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT) && FrameShare::KeepsCell(ours, a_at);
+		std::uint32_t anchor = 0;
+		if (nudge) {
 			a_frame->data.location = { a_at.x, a_at.y, a_at.z };
 			a_frame->data.angle = { 0.0f, 0.0f, a_heading };
 			a_frame->Update3DPosition(true);
 			++framesNudged;
 		} else {
-			RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", id).c_str());
-			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, a_at.x).c_str());
-			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, a_at.y).c_str());
-			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, a_at.z).c_str());
-			RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", id).c_str());
-			RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", id).c_str());
-			RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_heading * 180.0f / std::numbers::pi_v<float>).c_str());
-			meter.Count(7);
+			anchor = BringFrame(id, a_at, a_heading);
 			++framesBrought;
 		}
-		REX::INFO("NpcSync: our frame {:08X}, given back, is {} to ({:.0f},{:.0f},{:.0f}) in {:08X}", id, ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT) ? "moved" : "brought", a_at.x, a_at.y, a_at.z,
-			a_at.cell ? a_at.cell : a_at.worldspace);
+		REX::INFO("NpcSync: our frame {:08X}, given back, is {} to ({:.0f},{:.0f},{:.0f}) in {:08X} (onto {:08X}), {:.0f} units from where it stood; it is kept in cell {:08X} now", id, nudge ? "moved" : "brought", a_at.x,
+			a_at.y, a_at.z, a_at.cell ? a_at.cell : a_at.worldspace, anchor, distance, CellIdOf(a_frame));
 		return true;
 	}
 

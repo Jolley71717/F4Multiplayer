@@ -395,6 +395,67 @@ TEST("frame share: ours is moved to where its owner's game has it: in place when
 	CHECK(Decide(facts, SANCTUARY_STATION, 1.0f, true) == Move::kInUse);
 }
 
+TEST("frame share: the grid cell of a spot outdoors counts from the cell's lower edge, below zero too")
+{
+	using FrameShare::CellIndex;
+	using FrameShare::CELL_SIZE;
+	// The 0.10.0 rc soak: a frame given back at (-71366,93990) stood in a cell the player at (-73700,94480) was not in.
+	CHECK(CellIndex(-71366.0f) == -18);
+	CHECK(CellIndex(-73700.0f) == -18);
+	CHECK(CellIndex(93990.0f) == 22);
+	CHECK(CellIndex(94480.0f) == 23);
+	CHECK(CellIndex(0.0f) == 0);
+	CHECK(CellIndex(-0.5f) == -1);
+	CHECK(CellIndex(CELL_SIZE - 0.5f) == 0);
+	CHECK(CellIndex(CELL_SIZE) == 1);
+	CHECK(CellIndex(-CELL_SIZE) == -1);
+	CHECK(CellIndex(-CELL_SIZE - 0.5f) == -2);
+	CHECK(CellIndex(std::numeric_limits<float>::quiet_NaN()) == 0);
+	CHECK(CellIndex(std::numeric_limits<float>::infinity()) == 0);
+}
+
+TEST("frame share: a frame is moved in place only within the cell it is kept in, and brought over a cell's edge")
+{
+	using FrameShare::Decide;
+	using FrameShare::KeepsCell;
+	// Kept in the cell the station is in (-20, 21).
+	auto ours = Standing();
+	ours.grid = std::pair{ -20, 21 };
+	CHECK(KeepsCell(ours, SANCTUARY_STATION));
+	CHECK(Decide(ours, SANCTUARY_STATION, 1.5f, true) == Move::kNudge);
+	// A little way off, in the same cell: moved in place.
+	auto there = SANCTUARY_STATION;
+	there.x += 100.0f;
+	CHECK(KeepsCell(ours, there));
+	CHECK(Decide(ours, there, 1.0f, true) == Move::kNudge);
+	// As near, but past the cell's edge (x -77824 starts cell -19): brought, so it is kept in that cell and loads,
+	// unloads and saves with it. Moved in place it would stay kept in the cell it left.
+	ours.at.x = -77900.0f;
+	there.x = -77700.0f;
+	CHECK(RemoteEdits::Within(RemoteEdits::Distance(ours.at, there), FrameShare::NUDGE_LIMIT));
+	CHECK(!KeepsCell(ours, there));
+	CHECK(Decide(ours, there, 1.0f, true) == Move::kBring);
+	there.y = 21.0f * FrameShare::CELL_SIZE - 10.0f;  // and past the y edge too
+	CHECK(!KeepsCell(ours, there));
+	// Already standing outside the cell it is kept in (left so by an older version): brought into the right one.
+	ours.at = SANCTUARY_STATION;
+	ours.grid = std::pair{ -19, 21 };
+	CHECK(Decide(ours, SANCTUARY_STATION, 1.0f, true) == Move::kThere);  // there already: nothing to move
+	CHECK(Decide(ours, SANCTUARY_STATION, 1.5f, true) == Move::kBring);
+	// Its cell not known (indoors, or the engine said none): moved in place as before.
+	ours.grid.reset();
+	CHECK(KeepsCell(ours, there));
+	there.x = SANCTUARY_STATION.x + 100.0f;
+	there.y = SANCTUARY_STATION.y;
+	CHECK(Decide(ours, there, 1.0f, true) == Move::kNudge);
+	// Indoors: the same interior.
+	const Spot inside{ MUSEUM_CELL, 0, 100.0f, 200.0f, 0.0f };
+	Ours in{ .found = true, .frame = true, .loaded = true, .at = inside };
+	CHECK(KeepsCell(in, Spot{ MUSEUM_CELL, 0, 150.0f, 200.0f, 0.0f }));
+	CHECK(!KeepsCell(in, Spot{ MUSEUM_CELL + 1, 0, 150.0f, 200.0f, 0.0f }));
+	CHECK(Decide(in, Spot{ MUSEUM_CELL, 0, 150.0f, 200.0f, 0.0f }, 0.0f, true) == Move::kNudge);
+}
+
 TEST("frame share: a frame another game runs that leans here is stood up in place, even at their spot and heading")
 {
 	using FrameShare::Decide;

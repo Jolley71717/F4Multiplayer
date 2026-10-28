@@ -4,8 +4,10 @@
 #include "game/RemoteEdits.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // Power armor lent between players (the rules: FrameLoan.h). A friend presses E on our copy of a frame their game made
@@ -27,6 +29,11 @@ namespace FrameLoans
 	// The friend our own frame a_local is lent to (or offered to, the server's word on it not in yet); 0 if none.
 	[[nodiscard]] std::uint32_t LentOutTo(std::uint32_t a_local);
 	[[nodiscard]] bool          LentOut(std::uint32_t a_local);
+
+	// Where our own frame a_local was given back, and its heading, while it waits to be moved there (until that spot is in
+	// our sight, NpcSync::MoveOwnFrame): it stands there in every other game already (Spawns::GivenBack), and its states
+	// say that spot meanwhile, not where it still stands here, which would move their copies back. None: no move waits.
+	[[nodiscard]] std::optional<std::pair<RemoteEdits::Spot, float>> MoveWaiting(std::uint32_t a_local);
 
 	// Our copy of the spawn a_id is lent to us: held as it is for the loan (SpawnBook::FrameFacts::lent).
 	[[nodiscard]] bool LentToUs(std::uint32_t a_id);

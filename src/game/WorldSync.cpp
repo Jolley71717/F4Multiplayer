@@ -1929,7 +1929,7 @@ namespace WorldSync
 				total = cell->references.size();
 				read = doorWalk.Chunk(total);
 				for (std::size_t i = doorWalk.From(), end = i + read; i < end; ++i) {
-					const auto ref = cell->references[i].get();
+					const auto ref = cell->references[static_cast<std::uint32_t>(i)].get();  // the array's index type (i < its size)
 					const auto base = ref ? ref->GetObjectReference() : nullptr;
 					if (base && base->Is(RE::ENUM_FORM_ID::kDOOR) && !ref->IsDeleted() && ref->Get3D() && IsShareableRef(ref->GetFormID())) {
 						doors.push_back(ref->GetFormID());

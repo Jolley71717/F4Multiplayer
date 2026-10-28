@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <utility>
 
 // A power armor frame standing in the world, shared between games the way an NPC is (NpcSync): one game runs it (its
 // owner, granted by the server on a claim) and tells where it stands; every other game moves its own reference of
@@ -46,6 +48,9 @@ namespace FrameShare
 		bool  owned = false;     // it has an owner of its own (ExtraOwnership): the engine gives a frame its wearer's
 		                         // ownership as they get in, so one our player ever used has one, not only the last
 		Spot  at;                // where it stands here
+		// Outdoors, the grid of the cell the engine keeps it in (its parent cell: CellIndex): moved in place, a reference
+		// stays in that cell wherever it is put, and is drawn, unloaded and saved with it. None indoors, or not known.
+		std::optional<std::pair<std::int32_t, std::int32_t>> grid;
 		float heading = 0.0f;
 		bool  upright = true;    // not leaning (its x and y angles within TURNED of none): one leaning past
 		                         // fFurnitureUprightAngle cannot be got into (FrameUse.h)
@@ -231,6 +236,28 @@ namespace FrameShare
 	// in another place, it is moved as a reference is between cells.
 	constexpr float NUDGE_LIMIT = 256.0f;
 
+	// Outdoors a worldspace is cut into cells CELL_SIZE units square: cell (x, y) holds the spots from x * CELL_SIZE up to
+	// (not including) (x + 1) * CELL_SIZE, and the same for y. The grid index of a coordinate.
+	constexpr float CELL_SIZE = 4096.0f;
+
+	inline std::int32_t CellIndex(float a_coord)
+	{
+		return std::isfinite(a_coord) ? static_cast<std::int32_t>(std::floor(a_coord / CELL_SIZE)) : 0;
+	}
+
+	// Whether a frame moved in place to a_to (its location set, as a nudge does) is still in the cell a_to is in. A move in
+	// place never changes the cell the engine keeps a reference in, and the console's setpos neither: a frame moved so
+	// past its cell's edge stands in one cell and is kept in another, unloaded with that one even while it stands in sight
+	// (and saved with it). The 0.10.0 rc soak had a frame given back 2400 units off still in its old cell. Indoors, the
+	// same interior. Not known (no grid): taken as kept, as before.
+	inline bool KeepsCell(const Ours& a_ours, const Spot& a_to)
+	{
+		if (a_to.cell != 0) {
+			return a_ours.at.cell == a_to.cell;
+		}
+		return !a_ours.grid || (a_ours.grid->first == CellIndex(a_to.x) && a_ours.grid->second == CellIndex(a_to.y));
+	}
+
 	// Whether a frame's x and y angles leave it standing up (FrameOursOf's upright): the owner's game parks its frames
 	// upright and sends no tilt, so ours leaning (left so by a console move, or by a save) is not there yet. An angle
 	// that is not a number is not upright.
@@ -265,6 +292,6 @@ namespace FrameShare
 		if (!a_inView) {
 			return Move::kOutOfView;
 		}
-		return a_ours.loaded && RemoteEdits::Within(distance, NUDGE_LIMIT) ? Move::kNudge : Move::kBring;
+		return a_ours.loaded && RemoteEdits::Within(distance, NUDGE_LIMIT) && KeepsCell(a_ours, a_theirs) ? Move::kNudge : Move::kBring;
 	}
 }

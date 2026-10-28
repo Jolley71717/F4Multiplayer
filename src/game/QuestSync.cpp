@@ -150,6 +150,9 @@ namespace QuestSync
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
+		// Stages logged as never done in time, once each while the game runs: some never read as done here at all (a
+		// dialogue quest's stage 0 a friend's game set, 000190BC each load in the 0.10.0 rc soak); gaveUp counts the rest.
+		std::unordered_set<std::uint64_t>                gaveUpLogged;
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -849,8 +852,10 @@ namespace QuestSync
 			CheckReleased(a_inSession);
 			for (const auto& stage : waiting.Poll(now, game, paused)) {
 				++gaveUp;
-				REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next", stage.quest, stage.stage,
-					std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
+				if (gaveUpLogged.insert(Key(stage.quest, stage.stage)).second) {
+					REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next (logged once; gaveUp counts each)", stage.quest, stage.stage,
+						std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
+				}
 			}
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 			std::erase_if(catchingUp, [](std::uint32_t a_quest) {

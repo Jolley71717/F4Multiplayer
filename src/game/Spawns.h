@@ -54,6 +54,12 @@ namespace Spawns
 	// Its owner's state (NpcSync): where our copy is placed.
 	void OnState(const Protocol::ActorState& a_state);
 
+	// A friend's frame was given back from a loan (kFrameReturned with a place: FrameLoan::ChoosePlace), or our player
+	// gives one back (FrameLoans, as the return goes): it stands where its borrower got out of it from now on, in every
+	// game, and our copy is placed there, not where the owner's frame stood as it was lent (SpawnBook::RETURN_HOLD).
+	// False when it says no place, or we know no such spawn.
+	bool GivenBack(const Protocol::FrameReturn& a_return);
+
 	// A spawn died in another game (kActorDied): our copy, or our own NPC (a friend's believed kill), is killed here.
 	void ApplyDeath(const Protocol::ActorDeath& a_death);
 
