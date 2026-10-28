@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <utility>
 
 // A power armor frame standing in the world, shared between games the way an NPC is (NpcSync): one game runs it (its
 // owner, granted by the server on a claim) and tells where it stands; every other game moves its own reference of
@@ -39,6 +41,10 @@ namespace FrameShare
 		bool  wornHere = false;  // our own player is in it (off, too)
 		bool  copy = false;      // one the session placed here (a friend's stand-in's, the one they left, a copy of a
 		                         // frame their game made): never ours to share
+		bool  borrowed = false;  // our copy of a friend's frame lent to us (FrameLoans::BorrowedCopy): the one our player
+		                         // wears or just got out of, and the one a loaded save was made in, from the load until the
+		                         // clean-up after it removes it. The load leaves the session's books (Spawns, SaveGuard)
+		                         // without that one, so only the loan knows it for a copy (Copy)
 		bool  marked = false;    // it carries the keyword WorkshopSync gives every workshop copy (saved with the copy): a
 		                         // copy an older version's workshop sync made of a frame, not a suit of the player's own (Ghost)
 		bool  holdsItems = false;  // anything is in it
@@ -46,10 +52,25 @@ namespace FrameShare
 		bool  owned = false;     // it has an owner of its own (ExtraOwnership): the engine gives a frame its wearer's
 		                         // ownership as they get in, so one our player ever used has one, not only the last
 		Spot  at;                // where it stands here
+		// Outdoors, the grid of the cell the engine keeps it in (its parent cell: CellIndex): moved in place, a reference
+		// stays in that cell wherever it is put, and is drawn, unloaded and saved with it. None indoors, or not known.
+		std::optional<std::pair<std::int32_t, std::int32_t>> grid;
 		float heading = 0.0f;
 		bool  upright = true;    // not leaning (its x and y angles within TURNED of none): one leaning past
 		                         // fFurnitureUprightAngle cannot be got into (FrameUse.h)
 	};
+
+	// Whether our reference is a copy of a friend's frame rather than a frame of our world: one the session placed (copy),
+	// or the one lent to us (borrowed). Every rule below that tells our frames from copies asks this, so none of them
+	// takes a copy for ours. A save made in a borrowed frame holds our copy with our player in it, and after its load the
+	// copy is a runtime frame our game made, as far as the engine says, standing where our player got out once the
+	// clean-up sends them out: taken for ours, it was shared as our own frame for the seconds until the clean-up removed
+	// it (the 0.10.0-rc1 soak), every friend's game placed a copy of it, and a friend pressing E on that copy (its owner
+	// too) would have been lent it, the owner's lent pieces in it with it.
+	constexpr bool Copy(const Ours& a_ours)
+	{
+		return a_ours.copy || a_ours.borrowed;
+	}
 
 	// ---- Running one: what our game shares -------------------------------------------------------------------
 
@@ -148,7 +169,7 @@ namespace FrameShare
 	// FrameLoans): it is the suit they wear, and its pieces come back to it.
 	constexpr bool Ghost(const Ours& a_ours, bool a_lent = false)
 	{
-		if (a_lent || !a_ours.found || !a_ours.created || !a_ours.frame || !a_ours.marked || a_ours.copy) {
+		if (a_lent || !a_ours.found || !a_ours.created || !a_ours.frame || !a_ours.marked || Copy(a_ours)) {
 			return false;
 		}
 		if (a_ours.holdsItems || a_ours.off || a_ours.inUse || a_ours.wornHere || a_ours.lastUsed || a_ours.owned || a_ours.quest) {
@@ -177,7 +198,7 @@ namespace FrameShare
 	// stands: every copy keeps its spawn id, the borrower's the one they wear.
 	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere, bool a_lent = false)
 	{
-		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy || Ghost(a_ours, a_lent)) {
+		if (!a_ours.found || !a_ours.created || !a_ours.frame || Copy(a_ours) || Ghost(a_ours, a_lent)) {
 			return false;
 		}
 		if (a_ours.wornHere || a_ours.off || a_ours.inUse) {
@@ -209,7 +230,7 @@ namespace FrameShare
 	// keep that frame's copy out of our game for the whole loan, with nothing of ours shown at the spot.
 	constexpr bool StandsFor(const Ours& a_ours, bool a_lent)
 	{
-		return !a_ours.copy && !a_lent && !Ghost(a_ours);
+		return !Copy(a_ours) && !a_lent && !Ghost(a_ours);
 	}
 
 	// ---- A frame another game runs: ours is moved to where theirs stands ---------------------------------------
@@ -230,6 +251,28 @@ namespace FrameShare
 	// Nearer than this to where theirs stands, loaded in the same cell or world, ours is moved in place; farther, or
 	// in another place, it is moved as a reference is between cells.
 	constexpr float NUDGE_LIMIT = 256.0f;
+
+	// Outdoors a worldspace is cut into cells CELL_SIZE units square: cell (x, y) holds the spots from x * CELL_SIZE up to
+	// (not including) (x + 1) * CELL_SIZE, and the same for y. The grid index of a coordinate.
+	constexpr float CELL_SIZE = 4096.0f;
+
+	inline std::int32_t CellIndex(float a_coord)
+	{
+		return std::isfinite(a_coord) ? static_cast<std::int32_t>(std::floor(a_coord / CELL_SIZE)) : 0;
+	}
+
+	// Whether a frame moved in place to a_to (its location set, as a nudge does) is still in the cell a_to is in. A move in
+	// place never changes the cell the engine keeps a reference in, and the console's setpos neither: a frame moved so
+	// past its cell's edge stands in one cell and is kept in another, unloaded with that one even while it stands in sight
+	// (and saved with it). The 0.10.0 rc soak had a frame given back 2400 units off still in its old cell. Indoors, the
+	// same interior. Not known (no grid): taken as kept, as before.
+	inline bool KeepsCell(const Ours& a_ours, const Spot& a_to)
+	{
+		if (a_to.cell != 0) {
+			return a_ours.at.cell == a_to.cell;
+		}
+		return !a_ours.grid || (a_ours.grid->first == CellIndex(a_to.x) && a_ours.grid->second == CellIndex(a_to.y));
+	}
 
 	// Whether a frame's x and y angles leave it standing up (FrameOursOf's upright): the owner's game parks its frames
 	// upright and sends no tilt, so ours leaning (left so by a console move, or by a save) is not there yet. An angle
@@ -265,6 +308,6 @@ namespace FrameShare
 		if (!a_inView) {
 			return Move::kOutOfView;
 		}
-		return a_ours.loaded && RemoteEdits::Within(distance, NUDGE_LIMIT) ? Move::kNudge : Move::kBring;
+		return a_ours.loaded && RemoteEdits::Within(distance, NUDGE_LIMIT) && KeepsCell(a_ours, a_theirs) ? Move::kNudge : Move::kBring;
 	}
 }

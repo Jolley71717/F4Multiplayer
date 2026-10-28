@@ -2,6 +2,7 @@
 
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
 #include "game/FrameShare.h"
 #include "game/NpcSync.h"
@@ -612,7 +613,23 @@ namespace Spawns
 
 	void OnState(const Protocol::ActorState& a_state)
 	{
-		theirs.Moved(a_state.refId, RemoteEdits::SpotOf(a_state), a_state.heading);
+		theirs.Moved(a_state.refId, RemoteEdits::SpotOf(a_state), a_state.heading, Clock::now());
+	}
+
+	bool GivenBack(const Protocol::FrameReturn& a_return)
+	{
+		if (FrameLoan::ChoosePlace(a_return) != FrameLoan::Place::kMove) {
+			return false;
+		}
+		const RemoteEdits::Spot at{ a_return.cell, a_return.worldspace, a_return.x, a_return.y, a_return.z };
+		const auto              copy = theirs.Find(a_return.spawnId);
+		const float             from = copy ? RemoteEdits::Distance(copy->at, at) : -1.0f;
+		if (!theirs.GivenBack(a_return.spawnId, at, a_return.heading, Clock::now())) {
+			return false;
+		}
+		REX::INFO("Spawns: player {}'s frame {:08X} was given back at ({:.0f},{:.0f},{:.0f}) in {:08X}, {:.0f} units from where our book had it; our copy stands there now", copy->spawn.playerId,
+			a_return.spawnId, at.x, at.y, at.z, at.cell ? at.cell : at.worldspace, from);
+		return true;
 	}
 
 	void ApplyDeath(const Protocol::ActorDeath& a_death)

@@ -478,7 +478,7 @@ TEST("spawns: a copy is placed near us beside its owner, and goes when we leave 
 	CHECK(theirs.Decide(SPAWN, loading, T0 + 7s) == Act::kNone);
 	CHECK(theirs.Decide(SPAWN, loading, T0 + 6s + SpawnBook::LOAD_WAIT) == Act::kDiscard);
 	// Its owner's game moves it: kept while we stand near it.
-	theirs.Moved(SPAWN, At(4000.0f), 1.0f);
+	theirs.Moved(SPAWN, At(4000.0f), 1.0f, T0);
 	CHECK(theirs.Find(SPAWN)->at.x == 4000.0f);
 	CHECK(theirs.Decide(SPAWN, Placed(4000.0f), T0) == Act::kNone);
 	// We left it behind, or its cell went: deleted, placed again on coming back.
@@ -491,7 +491,7 @@ TEST("spawns: a copy is placed near us beside its owner, and goes when we leave 
 	CHECK(theirs.IdOf(COPY) == 0);
 
 	// Its owner's game let it go alive: the copy goes, and the record with it.
-	theirs.Moved(SPAWN, At(1000.0f), 0.0f);
+	theirs.Moved(SPAWN, At(1000.0f), 0.0f, T0);
 	theirs.Placed(SPAWN, COPY, T0);
 	theirs.Gone(SPAWN);
 	CHECK(theirs.Decide(SPAWN, Placed(1100.0f), T0) == Act::kDiscard);
@@ -670,15 +670,15 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	CHECK(theirs.DecideFrame(SPAWN, loading, T0 + 1s) == Act::kNone);
 	CHECK(theirs.DecideFrame(SPAWN, loading, T0 + SpawnBook::LOAD_WAIT) == Act::kDiscard);
 	// Nudged or turned in its owner's game: ours is moved in place. Far off or in another place: placed again.
-	theirs.Moved(SPAWN, At(1010.0f), 0.5f);
+	theirs.Moved(SPAWN, At(1010.0f), 0.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, there(1000.0f), T0) == Act::kMove);
 	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f, 1.5f), T0) == Act::kMove);
 	CHECK(theirs.DecideFrame(SPAWN, there(1010.5f), T0) == Act::kNone);
-	theirs.Moved(SPAWN, At(1010.0f + FrameShare::NUDGE_LIMIT + 10.0f), 0.5f);
+	theirs.Moved(SPAWN, At(1010.0f + FrameShare::NUDGE_LIMIT + 10.0f), 0.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f), T0) == Act::kDiscard);
-	theirs.Moved(SPAWN, At(1010.0f, 0x0000AAAA), 0.5f);
+	theirs.Moved(SPAWN, At(1010.0f, 0x0000AAAA), 0.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f), T0) == Act::kDiscard);
-	theirs.Moved(SPAWN, At(1010.0f), 0.5f);
+	theirs.Moved(SPAWN, At(1010.0f), 0.5f, T0);
 	// Out of our sight: it goes, and is placed again on coming back. No cell, or taken from under us by the engine.
 	auto away = there(1010.0f);
 	away.inView = false;
@@ -728,6 +728,66 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kForget);
 }
 
+TEST("spawns: a friend's frame given back from a loan is placed where its borrower got out of it, not where it stood as it was lent")
+{
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	const auto there = [](float a_x, float a_heading = 0.5f) { return FrameFacts{ .inView = true, .copyThere = true, .copyAt = At(a_x), .copyHeading = a_heading }; };
+
+	// Lent where it stood (1000), worn and walked off with, got out of 30 s later far off (6000; the 0.10.0 rc soak's
+	// borrower got out over 2000 units from it). The lent copy goes as the loan ends, and one is placed again: there.
+	CHECK(theirs.GivenBack(SPAWN, At(6000.0f), 1.5f, T0));
+	CHECK(theirs.Find(SPAWN)->at.x == 6000.0f);
+	CHECK(theirs.Find(SPAWN)->heading == 1.5f);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+	theirs.Placed(SPAWN, COPY, T0);
+	CHECK(theirs.DecideFrame(SPAWN, there(6000.0f, 1.5f), T0 + 1s) == Act::kNone);
+	// The owner's states sent before their game heard of the return still say the old spot: not taken, so ours is not
+	// sent back there (and placed at the old spot again, the stale second suit) for a moment.
+	theirs.Moved(SPAWN, At(1000.0f), 0.5f, T0 + 1s);
+	CHECK(theirs.Find(SPAWN)->at.x == 6000.0f);
+	CHECK(theirs.DecideFrame(SPAWN, there(6000.0f, 1.5f), T0 + 1s) == Act::kNone);
+	theirs.Moved(SPAWN, At(1000.0f), 0.5f, T0 + SpawnBook::RETURN_HOLD - 1s);
+	CHECK(theirs.Find(SPAWN)->at.x == 6000.0f);
+	// One near where it was given back is the owner's own word on it (moved there in their game): taken at once.
+	theirs.Moved(SPAWN, At(6010.0f), 1.5f, T0 + 2s);
+	CHECK(theirs.Find(SPAWN)->at.x == 6010.0f);
+	CHECK(theirs.DecideFrame(SPAWN, there(6000.0f, 1.5f), T0 + 2s) == Act::kMove);
+	// Past the hold their game's word stands wherever it puts the frame: moved again in their game, ours follows.
+	theirs.Moved(SPAWN, At(1000.0f), 0.5f, T0 + SpawnBook::RETURN_HOLD);
+	CHECK(theirs.Find(SPAWN)->at.x == 1000.0f);
+	CHECK(theirs.DecideFrame(SPAWN, there(6010.0f, 1.5f), T0 + SpawnBook::RETURN_HOLD) == Act::kDiscard);
+
+	// Lent and given back again: the hold starts anew from the second return.
+	CHECK(theirs.GivenBack(SPAWN, At(9000.0f), 0.0f, T0 + 60s));
+	theirs.Moved(SPAWN, At(1000.0f), 0.5f, T0 + 61s);
+	CHECK(theirs.Find(SPAWN)->at.x == 9000.0f);
+	// Given back into another place (an interior): the old outdoor spot is no word on it either.
+	CHECK(theirs.GivenBack(SPAWN, { 0x0000BEEF, 0, 10.0f, 20.0f, 30.0f }, 0.0f, T0 + 90s));
+	theirs.Moved(SPAWN, At(9000.0f), 0.0f, T0 + 91s);
+	CHECK(theirs.Find(SPAWN)->at.cell == 0x0000BEEFu);
+
+	// A spawn we never heard of: nothing to place.
+	CHECK(!theirs.GivenBack(SPAWN2, At(6000.0f), 0.0f, T0));
+	CHECK(!theirs.Knows(SPAWN2));
+}
+
+TEST("spawns: a state holds off a return only for a while, and only one far from where the frame was given back")
+{
+	const auto back = std::optional<Spot>{ At(6000.0f) };
+	CHECK(SpawnBook::HoldsReturn(back, 0s, At(1000.0f)));
+	CHECK(SpawnBook::HoldsReturn(back, SpawnBook::RETURN_HOLD - 1s, At(1000.0f)));
+	CHECK(!SpawnBook::HoldsReturn(back, SpawnBook::RETURN_HOLD, At(1000.0f)));
+	CHECK(!SpawnBook::HoldsReturn(back, 1s, At(6000.0f + FrameShare::NUDGE_LIMIT - 1.0f)));  // near: their own word
+	CHECK(SpawnBook::HoldsReturn(back, 1s, At(6000.0f + FrameShare::NUDGE_LIMIT + 1.0f)));
+	CHECK(SpawnBook::HoldsReturn(back, 1s, At(6000.0f, 0x0000AAAA)));  // another place: no distance, held
+	CHECK(!SpawnBook::HoldsReturn(back, -1s, At(1000.0f)));  // a clock gone back: never held for long
+	CHECK(!SpawnBook::HoldsReturn(std::nullopt, 0s, At(1000.0f)));  // never given back
+}
+
 TEST("spawns: a frame of our own standing where a friend's game has one it made stands for it, and no copy goes beside it")
 {
 	// Two saves with a shared past: the frame the one game made before the saves parted stands in both, at the same
@@ -755,7 +815,7 @@ TEST("spawns: a frame of our own standing where a friend's game has one it made 
 	CHECK(theirs.DecideFrame(SPAWN, ours, T0) == Act::kAbandon);
 	// Their game moved theirs away from ours (they got in and parked it elsewhere): a copy stands there, ours stays ours.
 	theirs.Unplaced(SPAWN);
-	theirs.Moved(SPAWN, At(3000.0f), 0.5f);
+	theirs.Moved(SPAWN, At(3000.0f), 0.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
 }
 
@@ -807,7 +867,7 @@ TEST("spawns: our copy of a friend's frame lent to us is held as it is until the
 	// Our player in it: never given up to them (it goes back), and not moved after its owner's word.
 	lent.occupied = true;
 	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
-	theirs.Moved(SPAWN, At(1010.0f), 1.5f);
+	theirs.Moved(SPAWN, At(1010.0f), 1.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, lent, T0) == Act::kNone);
 	// Worn far off, out of our sight of where its owner's game had it, or with its 3D gone: still held.
 	lent.copyAt = At(9000.0f, 0x0000AAAA);
@@ -892,7 +952,7 @@ TEST("spawns: a frame one game made goes through the server as a spawn: a joiner
 	const auto relayed = Decoded(Received(f, 2), MT::kActorStatesRelay, [](auto a_data) { return Protocol::DecodeActorStates(a_data); });
 	REQUIRE(relayed.size() == 1);
 	REQUIRE(relayed[0].size() == 1);
-	bobTheirs.Moved(*id, RemoteEdits::SpotOf(relayed[0][0]), relayed[0][0].heading);
+	bobTheirs.Moved(*id, RemoteEdits::SpotOf(relayed[0][0]), relayed[0][0].heading, T0);
 	CHECK(bobTheirs.DecideFrame(*id, { .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f }, T0) == Act::kMove);
 	f.fake->Deliver(2, Protocol::Encode(std::vector<Protocol::ActorState>{ state }, MT::kActorStates));
 	CHECK(Count(Received(f, 1), MT::kActorStatesRelay) == 0);

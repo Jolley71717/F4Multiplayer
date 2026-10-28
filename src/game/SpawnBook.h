@@ -249,6 +249,19 @@ namespace SpawnBook
 	// its 3D is still missing this long after it was placed, or has gone.
 	constexpr auto  LOAD_WAIT = std::chrono::seconds(10);
 
+	// A friend's frame given back from a loan (kFrameReturned) stands where its borrower got out of it, in every game, from
+	// that moment: our copy is placed there (Theirs::GivenBack), not where the owner's frame stood as it was lent, which
+	// is all our book had of it (a lent frame never moves in its owner's game). The owner's states sent before their game
+	// heard of the return still say the old spot, and come in after it: for this long, one farther than
+	// FrameShare::NUDGE_LIMIT from where it was given back is not taken (Theirs::Moved), so our copy is not sent back to
+	// the old spot and placed again a moment later. Past it, the owner's word stands, wherever their game has the frame.
+	constexpr auto RETURN_HOLD = std::chrono::seconds(5);
+
+	inline bool HoldsReturn(const std::optional<Spot>& a_givenBack, Clock::duration a_since, const Spot& a_state)
+	{
+		return a_givenBack && a_since >= Clock::duration::zero() && a_since < RETURN_HOLD && !RemoteEdits::Within(RemoteEdits::Distance(*a_givenBack, a_state), FrameShare::NUDGE_LIMIT);
+	}
+
 	// What the game sees of one spawn, for Theirs::Decide.
 	struct Facts
 	{
@@ -311,6 +324,8 @@ namespace SpawnBook
 			Clock::time_point triedAt{};
 			Clock::time_point placedAt{};       // when our copy was placed
 			bool              taken = false;     // a frame: somebody here got into our copy, and it is theirs now
+			std::optional<Spot> givenBack;       // a frame: where it was last given back from a loan (RETURN_HOLD)
+			Clock::time_point givenBackAt{};
 		};
 
 		// A friend's game shares one. False when it is ours (the server never grants one id twice, but a book can lag),
@@ -332,13 +347,31 @@ namespace SpawnBook
 			return true;
 		}
 
-		// Its owner's game says where it is now (a state).
-		void Moved(std::uint32_t a_id, const Spot& a_at, float a_heading)
+		// Its owner's game says where it is now (a state). Not taken while it holds a return (HoldsReturn): sent before their
+		// game heard of it.
+		void Moved(std::uint32_t a_id, const Spot& a_at, float a_heading, Clock::time_point a_now)
 		{
-			if (const auto it = copies.find(a_id); it != copies.end()) {
-				it->second.at = a_at;
-				it->second.heading = a_heading;
+			const auto it = copies.find(a_id);
+			if (it == copies.end() || HoldsReturn(it->second.givenBack, a_now - it->second.givenBackAt, a_at)) {
+				return;
 			}
+			it->second.at = a_at;
+			it->second.heading = a_heading;
+		}
+
+		// A frame of a friend's was given back from a loan at a_at (kFrameReturned with a place, or our own return as we
+		// send it): it stands there now, and our copy is placed there. False when we know no such spawn.
+		bool GivenBack(std::uint32_t a_id, const Spot& a_at, float a_heading, Clock::time_point a_now)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return false;
+			}
+			it->second.at = a_at;
+			it->second.heading = a_heading;
+			it->second.givenBack = a_at;
+			it->second.givenBackAt = a_now;
+			return true;
 		}
 
 		// It died. Our copy to kill (0: none placed, or it was known dead already).

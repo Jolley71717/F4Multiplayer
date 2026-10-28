@@ -395,6 +395,67 @@ TEST("frame share: ours is moved to where its owner's game has it: in place when
 	CHECK(Decide(facts, SANCTUARY_STATION, 1.0f, true) == Move::kInUse);
 }
 
+TEST("frame share: the grid cell of a spot outdoors counts from the cell's lower edge, below zero too")
+{
+	using FrameShare::CellIndex;
+	using FrameShare::CELL_SIZE;
+	// The 0.10.0 rc soak: a frame given back at (-71366,93990) stood in a cell the player at (-73700,94480) was not in.
+	CHECK(CellIndex(-71366.0f) == -18);
+	CHECK(CellIndex(-73700.0f) == -18);
+	CHECK(CellIndex(93990.0f) == 22);
+	CHECK(CellIndex(94480.0f) == 23);
+	CHECK(CellIndex(0.0f) == 0);
+	CHECK(CellIndex(-0.5f) == -1);
+	CHECK(CellIndex(CELL_SIZE - 0.5f) == 0);
+	CHECK(CellIndex(CELL_SIZE) == 1);
+	CHECK(CellIndex(-CELL_SIZE) == -1);
+	CHECK(CellIndex(-CELL_SIZE - 0.5f) == -2);
+	CHECK(CellIndex(std::numeric_limits<float>::quiet_NaN()) == 0);
+	CHECK(CellIndex(std::numeric_limits<float>::infinity()) == 0);
+}
+
+TEST("frame share: a frame is moved in place only within the cell it is kept in, and brought over a cell's edge")
+{
+	using FrameShare::Decide;
+	using FrameShare::KeepsCell;
+	// Kept in the cell the station is in (-20, 21).
+	auto ours = Standing();
+	ours.grid = std::pair{ -20, 21 };
+	CHECK(KeepsCell(ours, SANCTUARY_STATION));
+	CHECK(Decide(ours, SANCTUARY_STATION, 1.5f, true) == Move::kNudge);
+	// A little way off, in the same cell: moved in place.
+	auto there = SANCTUARY_STATION;
+	there.x += 100.0f;
+	CHECK(KeepsCell(ours, there));
+	CHECK(Decide(ours, there, 1.0f, true) == Move::kNudge);
+	// As near, but past the cell's edge (x -77824 starts cell -19): brought, so it is kept in that cell and loads,
+	// unloads and saves with it. Moved in place it would stay kept in the cell it left.
+	ours.at.x = -77900.0f;
+	there.x = -77700.0f;
+	CHECK(RemoteEdits::Within(RemoteEdits::Distance(ours.at, there), FrameShare::NUDGE_LIMIT));
+	CHECK(!KeepsCell(ours, there));
+	CHECK(Decide(ours, there, 1.0f, true) == Move::kBring);
+	there.y = 21.0f * FrameShare::CELL_SIZE - 10.0f;  // and past the y edge too
+	CHECK(!KeepsCell(ours, there));
+	// Already standing outside the cell it is kept in (left so by an older version): brought into the right one.
+	ours.at = SANCTUARY_STATION;
+	ours.grid = std::pair{ -19, 21 };
+	CHECK(Decide(ours, SANCTUARY_STATION, 1.0f, true) == Move::kThere);  // there already: nothing to move
+	CHECK(Decide(ours, SANCTUARY_STATION, 1.5f, true) == Move::kBring);
+	// Its cell not known (indoors, or the engine said none): moved in place as before.
+	ours.grid.reset();
+	CHECK(KeepsCell(ours, there));
+	there.x = SANCTUARY_STATION.x + 100.0f;
+	there.y = SANCTUARY_STATION.y;
+	CHECK(Decide(ours, there, 1.0f, true) == Move::kNudge);
+	// Indoors: the same interior.
+	const Spot inside{ MUSEUM_CELL, 0, 100.0f, 200.0f, 0.0f };
+	Ours in{ .found = true, .frame = true, .loaded = true, .at = inside };
+	CHECK(KeepsCell(in, Spot{ MUSEUM_CELL, 0, 150.0f, 200.0f, 0.0f }));
+	CHECK(!KeepsCell(in, Spot{ MUSEUM_CELL + 1, 0, 150.0f, 200.0f, 0.0f }));
+	CHECK(Decide(in, Spot{ MUSEUM_CELL, 0, 150.0f, 200.0f, 0.0f }, 0.0f, true) == Move::kNudge);
+}
+
 TEST("frame share: a frame another game runs that leans here is stood up in place, even at their spot and heading")
 {
 	using FrameShare::Decide;
@@ -543,4 +604,88 @@ TEST("frame share: a frame lent to a friend is never cleared as an older version
 	ghost.holdsItems = true;  // fitted out: the player's own, and no leftover
 	CHECK(StandsFor(ghost, false));
 	CHECK(!StandsFor(ghost, true));
+}
+
+TEST("frame share: our copy of a friend's frame lent to us is never ours to share, to clear, or to stand for theirs, the one a loaded save was made in too")
+{
+	using FrameShare::Copy;
+	using FrameShare::Ghost;
+	using FrameShare::StandsFor;
+	// What tells a copy from ours: one the session placed, or the one lent to us. Nothing else makes one a copy.
+	CHECK(!Copy(Standing()));
+	auto placed = Standing();
+	placed.copy = true;
+	CHECK(Copy(placed));
+	auto borrowed = Standing();
+	borrowed.borrowed = true;
+	CHECK(Copy(borrowed));
+
+	// The 0.10.0-rc1 soak: a save made in a borrowed frame, loaded. The load leaves the session's books without our copy
+	// (no spawn of the owner's under it, nothing SaveGuard placed), so to the engine it is a frame our game made, and our
+	// player is in it. Only the loan knows it (borrowed), from the load until the clean-up after it removes it.
+	auto loaded = Standing();
+	loaded.created = true;
+	loaded.borrowed = true;
+	loaded.holdsItems = true;  // the owner's lent pieces and core, named copies the clean-up takes back
+	loaded.owned = true;       // the engine gave it our player's ownership as they got in
+	// Worn as the load ends: shared by no rule (the engine disables a worn frame).
+	loaded.wornHere = true;
+	loaded.off = true;
+	loaded.lastUsed = true;
+	for (const bool hosting : { false, true }) {
+		for (const bool usedHere : { false, true }) {
+			for (const bool lent : { false, true }) {
+				CHECK(!FrameShare::SharesMade(loaded, hosting, usedHere, lent));
+			}
+		}
+	}
+	// Sent out: it stands again, enabled and loaded, the frame our player got out of last, in the seconds until the
+	// clean-up gathers the lent items and removes it. Ours by every other fact (used here, standing loaded in the host's
+	// cells), and shared then before: each friend's game placed a copy, and the owner pressing E on theirs was lent the
+	// owner's own pieces from it. A copy now: shared by no rule, whoever hosts and however our player used it.
+	loaded.wornHere = false;
+	loaded.off = false;
+	for (const bool hosting : { false, true }) {
+		for (const bool usedHere : { false, true }) {
+			for (const bool lent : { false, true }) {
+				CHECK(!FrameShare::SharesMade(loaded, hosting, usedHere, lent));
+			}
+		}
+	}
+	// Nor in a cell since unloaded (our player walked off before the clean-up was due).
+	loaded.loaded = false;
+	CHECK(!FrameShare::SharesMade(loaded, true, true));
+	loaded.loaded = true;
+	// It stands for no friend's frame at its spot (the owner's, given back where our player got in): that copy goes by the
+	// clean-up's own rule (FrameLoans::KeepsClear) and stands there again once our player is out.
+	CHECK(!StandsFor(loaded, false));
+	// Nor is it cleared as an older version's leftover: the clean-up gathers the lent items from it first.
+	auto marked = loaded;
+	marked.holdsItems = false;
+	marked.owned = false;
+	marked.lastUsed = false;
+	marked.marked = true;
+	CHECK(!Ghost(marked));
+	marked.borrowed = false;
+	CHECK(Ghost(marked));  // the rule the loan's fact keeps it from
+
+	// The same frame with the loan's fact gone, which only the clean-up's end does (it is buried then: disabled, then
+	// deleted), would be ours by every rule: the fact is what keeps it from being shared.
+	auto unknown = loaded;
+	unknown.borrowed = false;
+	CHECK(FrameShare::SharesMade(unknown, false, true));
+	CHECK(FrameShare::SharesMade(unknown, true, false));
+	auto buried = unknown;
+	buried.off = true;
+	CHECK(!FrameShare::SharesMade(buried, true, true));
+	buried.found = false;
+	CHECK(!FrameShare::SharesMade(buried, true, true));
+
+	// During a live loan the copy our player wears or just got out of is a copy as well, whatever the spawn book says.
+	auto live = Standing();
+	live.created = true;
+	live.borrowed = true;
+	live.lastUsed = true;
+	CHECK(!FrameShare::SharesMade(live, true, true));
+	CHECK(!StandsFor(live, false));
 }

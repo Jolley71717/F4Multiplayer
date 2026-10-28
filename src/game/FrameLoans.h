@@ -4,8 +4,10 @@
 #include "game/RemoteEdits.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // Power armor lent between players (the rules: FrameLoan.h). A friend presses E on our copy of a frame their game made
@@ -28,12 +30,18 @@ namespace FrameLoans
 	[[nodiscard]] std::uint32_t LentOutTo(std::uint32_t a_local);
 	[[nodiscard]] bool          LentOut(std::uint32_t a_local);
 
+	// Where our own frame a_local was given back, and its heading, while it waits to be moved there (until that spot is in
+	// our sight, NpcSync::MoveOwnFrame): it stands there in every other game already (Spawns::GivenBack), and its states
+	// say that spot meanwhile, not where it still stands here, which would move their copies back. None: no move waits.
+	[[nodiscard]] std::optional<std::pair<RemoteEdits::Spot, float>> MoveWaiting(std::uint32_t a_local);
+
 	// Our copy of the spawn a_id is lent to us: held as it is for the loan (SpawnBook::FrameFacts::lent).
 	[[nodiscard]] bool LentToUs(std::uint32_t a_id);
 
 	// a_local is our copy of the frame lent to us, while the loan lasts (not while it is only asked for): the frame our
 	// player gets out of last is it for the settle after they are out, and it is not their parked frame to tell. So is the
-	// copy a loaded save was made in, until the clean-up after that load buries it.
+	// copy a loaded save was made in, from the load until the clean-up after it buries it. Either is a copy, never a frame
+	// of ours to share or to lend (FrameShare::Ours::borrowed).
 	[[nodiscard]] bool BorrowedCopy(std::uint32_t a_local);
 
 	// Our player pressed E on a_frame, our copy of a_owner's frame shared as a_spawnId (RemotePlayers' frame gate): false

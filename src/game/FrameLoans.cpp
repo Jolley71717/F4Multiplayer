@@ -779,6 +779,9 @@ namespace FrameLoans
 					back.items = items;
 				}
 				outgoing.push_back(Protocol::Encode(back, Protocol::MessageType::kReturnFrame));
+				// Where we leave it is where it stands from now on, here as in its owner's game: our copy placed again once this
+				// one goes (DropLentCopy, below) stands there, never where the owner's frame stood as it was lent.
+				Spawns::GivenBack(back);
 			}
 			const auto foundCount = std::ranges::count_if(items, &Protocol::ReturnedItem::found);
 			REX::INFO("FrameLoans: player {}'s frame {:08X} (our copy {:08X}) given back ({}): {} of {} lent items found{}", borrowed.owner, borrowed.spawnId, borrowed.copy, a_why, foundCount, borrowed.tags.size(),
@@ -1233,6 +1236,18 @@ namespace FrameLoans
 		return LentOutTo(a_local) != 0;
 	}
 
+	std::optional<std::pair<RemoteEdits::Spot, float>> MoveWaiting(std::uint32_t a_local)
+	{
+		if (a_local == 0) {
+			return std::nullopt;
+		}
+		const auto it = std::ranges::find_if(moves, [&](const Move& a_move) { return a_move.local == a_local; });
+		if (it == moves.end()) {
+			return std::nullopt;
+		}
+		return std::pair{ it->at, it->heading };
+	}
+
 	bool LentToUs(std::uint32_t a_id)
 	{
 		return FrameLoan::HoldsSpawn(borrowed.stage, borrowed.spawnId, a_id);
@@ -1584,6 +1599,9 @@ namespace FrameLoans
 			OnReturnedToUs(a_return);
 			return;
 		}
+		// A friend's frame given back where its borrower got out of it (ours, heard back with the server's word on the spot,
+		// or someone else's): our copy stands there from now on, as the owner's frame is moved there.
+		Spawns::GivenBack(a_return);
 		if (a_return.borrowerId != us || borrowed.spawnId != a_return.spawnId || !a_return.ended) {
 			return;  // our own return, heard back; or someone else's
 		}
@@ -1715,6 +1733,12 @@ namespace FrameLoans
 				// Its id names something else now (made at runtime, freed with its cell, the id handed out again): never moved
 				// in its place (MoveOwnFrame moves whatever it is given).
 				REX::INFO("FrameLoans: our frame {:08X}, given back, is no frame here now; nothing is moved", a_move.local);
+				return true;
+			}
+			if (InUse(frame)) {
+				// Got into where it stood before that spot came in sight: it goes where they take it, never moved out from under
+				// them later (MoveOwnFrame would leave one in use where it stands too, but only once the spot is in sight).
+				REX::INFO("FrameLoans: our frame {:08X}, given back, is in use where it stood; it is not moved", a_move.local);
 				return true;
 			}
 			if (!NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
