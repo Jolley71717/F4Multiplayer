@@ -2166,6 +2166,40 @@ TEST("server world: on a hosted server a joiner's game isn't told an NPC is dead
 	CHECK(deaths[0].x == 1.0f);
 }
 
+TEST("server world: a joiner who reports now and then is not told an NPC is dead just as the host's game arrives, but a grace after")
+{
+	Server::Options options = HostedOptions();
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
+	Fixture f{ options };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Alice");
+	JoinAs(f, 3, "Bob");
+	f.fake->Deliver(1, StateAt(1, 20000.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(3, DeathAt(NPC, true, 1.0f));
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 310 });  // past the host's own grace since it asked for the world
+	Clear(f, { 1, 2, 3 });
+
+	f.fake->Deliver(2, Claim(NPC));  // the host is away
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 280 });
+	f.fake->Deliver(1, StateAt(2, 100.0f, 0.0f));  // the host arrives
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 10 });
+	f.fake->Deliver(2, Claim(NPC));  // her first report that finds it there
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 11 });
+	f.fake->Deliver(2, Claim(NPC));  // 301 s after her first: the host's game has had 21 s, not a grace
+	f.fake->Settle();
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	f.Advance(std::chrono::seconds{ 290 });
+	f.fake->Deliver(2, Claim(NPC));  // a grace after the host came
+	f.fake->Settle();
+	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 1);
+}
+
 TEST("server trust: an explosion from a player who hasn't said where they are is dropped")
 {
 	Fixture f;

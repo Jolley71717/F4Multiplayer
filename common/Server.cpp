@@ -323,6 +323,7 @@ namespace
 			Clock::time_point since{};  // its first report of this run (the game has had the NPC alive since)
 			Clock::time_point last{};   // its latest report
 			Clock::time_point told{};   // when the death was last told again (never: zero)
+			bool              hostSeen = false;  // its latest report found the host's game in reach of the NPC (remindDead's gate)
 		};
 		std::unordered_map<std::uint32_t, DeadReminder> deadReminded;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
@@ -1591,9 +1592,12 @@ void Server::Run()
 			hostNear = host->state.cell == a_player.state.cell && host->state.worldspace == a_player.state.worldspace &&
 			           dx * dx + dy * dy + dz * dz <= REVIVE_REACH * REVIVE_REACH;
 		}
-		if (hostHere && !hostNear) {
-			reminder.since = a_now;  // the host's grace starts when its game is there to offer the NPC
+		if (hostHere && (!hostNear || !reminder.hostSeen)) {
+			// The host's grace starts when its game is there to offer the NPC: at the first report that finds it there, not
+			// at an earlier one made while it was away (or a sparse reporter would be reminded just as the host arrived).
+			reminder.since = a_now;
 			reminder.last = a_now;
+			reminder.hostSeen = hostNear;
 			return;
 		}
 		reminder.last = a_now;
