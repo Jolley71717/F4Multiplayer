@@ -169,6 +169,38 @@ TEST("storage view: contents count our moves on their way, so a redraw doesn't u
 	CHECK((*after == std::map<std::uint32_t, std::int64_t>{ { STIMPAK, 3 }, { WATER, 1 } }));
 }
 
+TEST("storage view: contents sent again after our move was numbered already hold it: its echo takes it out of the copy once more")
+{
+	Side side = Friend();
+	side.Open(CHEST);
+	side.Reported({ CHEST, STIMPAK, -2 }, T0);
+	side.Reported({ CHEST, WATER, 1 }, T0);
+	// The server numbered both (#10, #11) and sent the contents again before the echoes reached us: they hold the moves, and
+	// Contents counted them on top.
+	const auto want = side.Contents({ CHEST, 12, { { STIMPAK, 3 }, { WATER, 1 } } });
+	REQUIRE(want);
+	CHECK((*want == std::map<std::uint32_t, std::int64_t>{ { STIMPAK, 1 }, { WATER, 2 } }));
+	const auto take = side.Own({ 10, US, { CHEST, STIMPAK, -2 } }, false);
+	REQUIRE(take);
+	CHECK(take->matched);
+	CHECK(take->copy == 2);
+	CHECK(take->player == 0);
+	const auto put = side.Own({ 11, US, { CHEST, WATER, 1 } }, false);
+	REQUIRE(put);
+	CHECK(put->copy == -1);
+	CHECK(side.InFlight() == 0);
+
+	// A move numbered at or past what the contents hold is not in them: nothing to put right.
+	side.Reported({ CHEST, STIMPAK, -1 }, T0);
+	CHECK(!side.Own({ 12, US, { CHEST, STIMPAK, -1 } }, false));
+
+	// Contents still to come count the flight, and the echo before them has nothing to put right.
+	Side early = Friend();
+	early.Open(CHEST);
+	early.Reported({ CHEST, STIMPAK, -2 }, T0);
+	CHECK(!early.Own({ 10, US, { CHEST, STIMPAK, -2 } }, false));
+}
+
 TEST("storage view: a refused take comes back out of our player, and into our copy while we still view it")
 {
 	Side side = Friend();

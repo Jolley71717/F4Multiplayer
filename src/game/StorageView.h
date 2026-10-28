@@ -423,6 +423,11 @@ namespace StorageView
 			}
 			if (const auto it = std::ranges::find(flights, change, &Flight::change); it != flights.end()) {
 				flights.erase(it);
+				// The contents we show were made after the server numbered this move (a listing sent again while it was on its
+				// way): they hold it already, and Contents counted it a second time on top. Taken out of our copy once more.
+				if (view && view->container == change.container && !view->closed && view->from != NOT_YET && a_change.index < view->from) {
+					return Undo{ .matched = true, .container = change.container, .item = change.item, .copy = -static_cast<std::int64_t>(change.count) };
+				}
 				return std::nullopt;
 			}
 			if (change.count <= 0) {
