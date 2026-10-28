@@ -341,11 +341,11 @@ namespace ContainerLedger
 			return true;
 		}
 
-		// What to ask the server for: everything our world lacks. Counts as asked.
-		Protocol::WorldRequest Request(Clock::time_point a_now)
+		// What to ask the server for: everything our world lacks. Counts as asked. a_reason: WorldRequest::kHello, kLoad or kGap.
+		Protocol::WorldRequest Request(Clock::time_point a_now, std::uint8_t a_reason = Protocol::WorldRequest::kHello)
 		{
 			ledger.OnRequest(ledger.Next(), a_now);
-			return { session, ledger.Next() };
+			return { session, ledger.Next(), a_reason };
 		}
 
 		// What our world has, without asking (for the save's record).

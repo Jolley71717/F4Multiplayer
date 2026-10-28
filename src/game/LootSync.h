@@ -273,7 +273,7 @@ namespace LootSync
 				pending.clear();
 			}
 			++asked;
-			return receiver.Request(a_now);
+			return receiver.Request(a_now, Protocol::WorldRequest::kLoad);
 		}
 
 		// A request Due made that was never sent (the game held it back): no world state will answer it.
@@ -425,7 +425,7 @@ namespace LootSync
 				return std::nullopt;
 			}
 			++asked;
-			return receiver.Request(a_now);
+			return receiver.Request(a_now, Protocol::WorldRequest::kGap);
 		}
 
 		// ---- shared storage (StorageView) ------------------------------------------------------------

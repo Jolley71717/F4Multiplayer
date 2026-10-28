@@ -216,8 +216,6 @@ namespace LootTest
 			if (const auto request = loot.Due(now, *this)) {
 				outbox.push_back(Protocol::Encode(*request));
 				++requests;
-				storage.State().UnlistAll();  // the server holds our listings stale from the request on
-				storage.Asked();               // Storage::UnlistAll: and we settle again after its answer
 			}
 			loot.Retry(*this, APPLY_INTERVAL);
 			if (connected) {

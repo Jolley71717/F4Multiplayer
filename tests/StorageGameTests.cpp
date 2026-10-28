@@ -1618,3 +1618,35 @@ TEST("shared storage: a friend with the menu open on a chest as the host's game 
 	CHECK(s.guest.Carried(WATER) == 5);
 	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) == 6);  // pockets plus the true copy never exceed what the true copy had
 }
+
+TEST("shared storage: a gap asked for again leaves the host's listings fresh: a friend's view stays open")
+{
+	Session s{ Reloads() };
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	CHECK(s.guest.storage.State().Shows(CHEST));
+	s.guest.Take(s.f, CHEST, STIMPAK, 1);
+	s.guest.Take(s.f, CHEST, STIMPAK, 1);
+	// The host's game never gets #0: it asks for it again (a gap, not a load).
+	auto toHost = s.host.Fetch(s.f);
+	const auto lost = std::ranges::find_if(toHost, [](const std::vector<std::uint8_t>& a_packet) {
+		const auto msg = LootTest::IsType(a_packet, MT::kContainerChanged) ? Protocol::DecodeIndexedContainerChange(a_packet) : std::nullopt;
+		return msg && msg->index == 0;
+	});
+	REQUIRE(lost != toHost.end());
+	toHost.erase(lost);
+	s.host.Handle(s.f, toHost);
+	CHECK(s.host.loot.Numbers().Numbers().Waiting() == 1);
+	CHECK(s.host.Wait(s.f, std::chrono::seconds{ 20 }));
+	s.Settle();
+	CHECK(s.host.loot.Numbers().Numbers().Waiting() == 0);
+	CHECK(s.host.storage.State().Listed(CHEST));  // still listed: its world is the same
+	CHECK(s.guest.storage.State().Stats().closedByHost == 0);
+	CHECK(s.guest.storage.State().Shows(CHEST));
+	s.guest.Take(s.f, CHEST, STIMPAK, 1);  // and a take goes through
+	s.Settle();
+	CHECK(s.host.In(CHEST, STIMPAK) == 2);
+	CHECK(s.guest.Carried(STIMPAK) == 3);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+}

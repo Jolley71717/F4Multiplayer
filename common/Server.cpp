@@ -3408,12 +3408,20 @@ void Server::Run()
 		}
 		a_player.worldAskedAt = Clock::now();
 		a_player.worldStale = true;
-		// What its game keeps in storage closes to friends until its loaded world lists it again (StorageBook::Stale), and
-		// what it does at storage others keep waits for its settle after this world state (handleStorageSettle).
-		tellViewsClosed(storage.Stale(a_player.id));
-		closeOwnViews(a_player);
-		++a_player.worldAsked;
-		a_player.storageSettled = !options.rules.sharedStorage;
+		const auto request = Protocol::DecodeWorldRequest(a_data);
+		// A gap asked for again (a change still missing) leaves its world as it is: what its game lists stays fresh, and nothing
+		// it did at storage others keep is left unsettled.
+		const bool gap = request && request->reason == Protocol::WorldRequest::kGap;
+		if (!gap) {
+			// What its game keeps in storage closes to friends until its loaded world lists it again (StorageBook::Stale), and
+			// what it does at storage others keep waits for its settle after this world state (handleStorageSettle).
+			tellViewsClosed(storage.Stale(a_player.id));
+			closeOwnViews(a_player);
+		}
+		++a_player.worldAsked;  // the world state that answers it carries the count either way (Protocol::StorageCaughtUp)
+		if (!gap) {
+			a_player.storageSettled = !options.rules.sharedStorage;
+		}
 		// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
 		// Options::reloadToldEvery for a player (a game asking over and over has every other game resend its runs); one asked for
 		// sooner goes when that time is up (a second load at once threw away what the first had resent).
@@ -3423,7 +3431,7 @@ void Server::Run()
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.
-		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
+		if (request) {
 			giveWorldState(a_player, request->sessionId == sessionId ? request->containerFrom : 0);
 			// The copies of what others built went with the world the game threw away: they come with the
 			// world state, and wait with it while it is owed.

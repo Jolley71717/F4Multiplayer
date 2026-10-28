@@ -463,6 +463,30 @@ TEST("storage view: the host's listings: each once, again after a shortfall or a
 	CHECK(side.Stats().listed == 2);
 }
 
+TEST("storage view: what was listed before is to be listed again wherever the host is, after a load or a hello")
+{
+	Side side;
+	side.OnWelcome(true, true, SESSION, T0);
+	CHECK(side.ToRelist().empty());
+	side.MarkListed(CHEST);
+	side.MarkListed(BOX);
+	CHECK(side.ToRelist().empty());  // listed now
+	side.UnlistAll();
+	auto again = side.ToRelist();
+	std::ranges::sort(again);
+	CHECK((again == std::vector<std::uint32_t>{ (std::min)(CHEST, BOX), (std::max)(CHEST, BOX) }));
+	side.MarkListed(CHEST);
+	CHECK((side.ToRelist() == std::vector<std::uint32_t>{ BOX }));
+
+	// A hello into the same session (the host rejoined) keeps them; another session starts from none.
+	side.OnWelcome(true, true, SESSION, T0);
+	CHECK((side.ToRelist() == std::vector<std::uint32_t>{ BOX, CHEST } || side.ToRelist() == std::vector<std::uint32_t>{ CHEST, BOX }));
+	side.OnLoad(SESSION, {}, {}, 0, T0);
+	CHECK(side.ToRelist().size() == 2);
+	side.OnWelcome(true, true, SESSION + 1, T0);
+	CHECK(side.ToRelist().empty());
+}
+
 TEST("storage view: past MAX_IN_FLIGHT a move isn't sent; a Take All and a Store All of the fullest chest are within it")
 {
 	static_assert(StorageView::MAX_IN_FLIGHT >= 2 * Protocol::MAX_STORAGE_STACKS);

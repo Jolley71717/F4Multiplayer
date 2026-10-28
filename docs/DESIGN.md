@@ -777,11 +777,12 @@ counts every item across the host's chest and the players' inventories in each s
   adds the friends' changes numbered after the listing's number, and tells everyone the owner (`kStorageOwners` 169).
   The design had the first claim win; the host alone is simpler and safer: a friend's game is never anybody's truth, a
   listing from another game is ignored, and a host whose ID changed (a reconnect) takes its old entries over.
-- *Stale.* The host's hello, any world request it sends (a load, or a gap asked again) and its leaving make all its
-  listings stale: the friends viewing one are told it closed (`kStorageRefused`, item 0, `kClosed`), and every move there
-  is refused until the host's game lists it again. A gap asked again stales listings that were still right; the host's
-  scan lists them again within seconds, and telling a reload from a gap would need the protocol to say which, so it
-  stays. The owners are saved with the session and come back stale. They are read and written whatever the rule: a run
+- *Stale.* The host's hello, the world request it sends after a load (`WorldRequest::reason` 1) and its leaving make all
+  its listings stale: the friends viewing one are told it closed (`kStorageRefused`, item 0, `kClosed`), and every move
+  there is refused until the host's game lists it again. A gap asked again (reason 2) stales nothing: its world is the
+  same, and nothing is settled again. After a load or a hello the host's scan lists what it listed before wherever it is,
+  not only within its radius (`Side::ToRelist`), so friends at a settlement the host isn't standing in are not shut out
+  until it walks back; a container its game doesn't hold in memory stays stale until the host comes near. The owners are saved with the session and come back stale. They are read and written whatever the rule: a run
   with it off keeps them as they were and never asks the book (no container has a keeper; views and shortfalls are
   ignored), so turning it on again finds each container claimed since it was, and the claim's take-back (below) never
   runs a second time over moves made while the host kept it. The session file is written as layout 38 (the owners and
@@ -830,7 +831,7 @@ counts every item across the host's chest and the players' inventories in each s
   its world lacks (`lacking=`, `lacks=` kept; at most 4096, `lacksFrom` saying where the list is whole from,
   `lacksDropped=` past it), and the moves it still has on their way that the session never numbered (`late=`).
   While the ledger waits, the game tries the last marker again each frame, so a gap it gives up on settles too (no
-  further world state would come); a gap request held back in the opening isn't counted. Lacks numbered past where
+  further world state would come); a gap request held back in the opening isn't counted. A gap asked again is no reason to settle again (the server keeps the game settled, and the game only waits for a settle after a hello or a load). Lacks numbered past where
   the log now ends (a server whose host quit before saving them rewound it) are forgotten at the settle: those
   numbers will be other moves.
   Until the settle comes the server shows the player no storage (a view is answered closed) and refuses every move

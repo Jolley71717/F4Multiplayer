@@ -34,7 +34,7 @@
 //   number or refusal may still come, and should the session never have numbered it (the server dropped it, the
 //   connection went), it goes again late with our next settle.
 //   While the menu is closed nothing of the session's goes into that copy, and the player's own moves there stay theirs.
-// - Settling (a load, a rejoin, a gap asked for again). A player can always move an item out of their own inventory
+// - Settling (a load, a rejoin; not a gap asked for again: our world is the same, WorldRequest::kGap). A player can always move an item out of their own inventory
 //   before a correction reaches it, never out of the host's container without the server, so what a load or a lost
 //   connection leaves wrong is put right in the true copy, never on our player: our world keeps what its save has. From
 //   the request until its catch-up has come, nothing is done at a friend's storage (the menu closes; the server refuses
@@ -178,6 +178,7 @@ namespace StorageView
 				lacks.clear();
 				lacksFrom = 0;
 				movesSession = a_session;
+				known.clear();
 			}
 			for (auto& flight : flights) {
 				flight.due = a_now + ANSWER_WITHIN;
@@ -563,15 +564,31 @@ namespace StorageView
 		{
 			if (listed.size() < MAX_OWNERS) {
 				listed.insert(a_container);
+				if (known.size() < MAX_OWNERS) {
+					known.insert(a_container);
+				}
 				++counts.listed;
 			}
+		}
+
+		// Containers listed before (in this session) that are to be listed again, the server holding them stale (a load, a
+		// rejoin): the scan tries these wherever the host is, so friends at a settlement the host isn't standing in are not
+		// shut out of its chests until the host walks back. Not the ones listed already.
+		[[nodiscard]] std::vector<std::uint32_t> ToRelist() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto container : known) {
+				if (!listed.contains(container)) {
+					out.push_back(container);
+				}
+			}
+			return out;
 		}
 
 		// Listed again soon (a shortfall, our own menu closed on it).
 		void Unlist(std::uint32_t a_container) { listed.erase(a_container); }
 
-		// Every container is listed again (our world asked the server for the session's changes again: the server holds
-		// our listings stale until then).
+		// Every container is listed again (the server holds our listings stale: a load or a hello; not a gap asked for again).
 		void UnlistAll() { listed.clear(); }
 
 		void NoteShort() { ++counts.shorts; }
@@ -622,6 +639,7 @@ namespace StorageView
 		std::uint32_t                                    lacksFrom = 0;
 		std::map<std::uint32_t, Protocol::ContainerChange> numbered;  // our numbered takes, by index
 		std::unordered_set<std::uint32_t>                listed;    // ours listed since our world last loaded
+		std::unordered_set<std::uint32_t>                known;     // ours listed at any time in this session (ToRelist)
 		Counts                                           counts;
 	};
 

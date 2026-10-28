@@ -231,6 +231,26 @@ namespace Storage
 				side.MarkListed(id);
 				++listed;
 			}
+			// What was listed before and the server holds stale now (our world loaded, or we rejoined) is listed again wherever it
+			// is, so friends at a settlement we are not standing in are not shut out of its chests until we walk back. One our game
+			// doesn't hold in memory (or whose inventory isn't made) stays stale until we come near, tried again after a while.
+			for (const auto id : side.ToRelist()) {
+				if (listed >= LIST_PER_SCAN) {
+					break;
+				}
+				if (notStorage.contains(id) || std::ranges::find(found, id) != found.end()) {
+					continue;
+				}
+				const auto facts = Ref(id) ? WorldSync::HolderFactsOf(id) : LootScope::HolderFacts{};
+				const auto listing = facts.storage && !facts.workshop && !facts.vendorChest ? WorldSync::StorageListing(id) : std::nullopt;
+				if (!listing) {
+					notStorage[id] = now;
+					continue;
+				}
+				WorldSync::QueueEvent(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
+				side.MarkListed(id);
+				++listed;
+			}
 		}
 
 		std::uint32_t ParseHex(std::string_view a_text)
@@ -490,12 +510,6 @@ namespace Storage
 		REX::INFO("Storage: change {} took {} of {:08X} from {:08X}, but this world's copy of it holds {} fewer than that (a world loaded since, or an item this game doesn't share); "
 				  "the taker's game is asked to give those back",
 			a_index, -a_change.count, a_change.item, a_change.container, a_missing);
-	}
-
-	void UnlistAll()
-	{
-		side.UnlistAll();
-		client.Asked();  // and our moves at a friend's storage settle again after its answer
 	}
 
 	bool Applying()
