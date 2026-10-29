@@ -600,21 +600,27 @@ TEST("workshop power: a hush ends when its builder's game says otherwise, or a l
 	t += REFRESH;
 	CHECK(mirror.Refresh(game, t) == 1);
 	CHECK(game.shown.at(key));
-	// The game takes the hush but not the show after: tried a few times, then let be.
+	// The game takes the hush but not the show after: it is shown as any copy is, with the usual tries, and is not left
+	// unpowered for good while they last.
 	CHECK(mirror.Hush(game, t) == 1);
 	game.graphReady = false;
 	mirror.SaveDone();
-	for (std::uint8_t i = 0; i < MAX_TRIES; ++i) {
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);
+	game.graphReady = true;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);  // the graph came back: powered again
+	CHECK(game.shown.at(key));
+	CHECK(mirror.GivenUp() == 0);
+	// ... and after MAX_TRIES of them, let be.
+	CHECK(mirror.Hush(game, t) == 1);
+	game.graphReady = false;
+	mirror.SaveDone();
+	for (std::uint8_t i = 0; i < MAX_TRIES + 1; ++i) {
 		t += REFRESH;
 		CHECK(mirror.Refresh(game, t) == 0);
 	}
 	CHECK(mirror.GivenUp() == 1);
-	game.graphReady = true;
-	t += SETTLE * 2;
-	CHECK(mirror.Refresh(game, t) == 1);  // let be, but for the settled 3D's one more show
-	CHECK(game.shown.at(key));
-	t += REFRESH;
-	CHECK(mirror.Refresh(game, t) == 0);
 	// A hush the game won't take is no hush: nothing is shown again for it.
 	FriendGame deaf;
 	deaf.drawn[key] = 0x1000;

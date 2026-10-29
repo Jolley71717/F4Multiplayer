@@ -78,7 +78,9 @@ namespace WorkshopSync
 	// Someone left: their copies keep what they show, and are not shown again until their game says so (main thread).
 	void OnPlayerLeft(std::uint32_t a_playerId);
 
-	// A save is about to be written: no grid of ours may name a copy (main thread).
+	// A save is about to be written (main thread): no grid of ours may name a copy, and each friend's piece shown powered is shown
+	// unpowered for it (Mirror::Hush: a save keeps what a copy's graph was told, and a load would bring a friend's generator back
+	// running, with no session to stop it); AfterSave shows them as their builders' games say again.
 	void BeforeSave();
 
 	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again.

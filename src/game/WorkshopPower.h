@@ -412,12 +412,12 @@ namespace WorkshopPower
 					if (!saveDone && a_now - want.hushedAt < HUSH_LIMIT) {
 						continue;
 					}
-					if (a_engine.Drawn(key) == 0 || a_engine.Show(key, want.powered)) {
-						want.hushed = false;
+					want.hushed = false;
+					if (a_engine.Drawn(key) != 0 && a_engine.Show(key, want.powered)) {
 						++shown;
-					} else if (++want.tries >= MAX_TRIES) {
-						want.hushed = false;  // the game won't take it: let be
-						++givenUp;
+					} else {
+						want.shown = false;  // not drawn, or the game won't take it yet: shown as any copy is, with the usual tries
+						want.tries = 0;
 					}
 					continue;
 				}
