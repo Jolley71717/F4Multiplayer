@@ -86,11 +86,12 @@ namespace RuntimeSupport
 
 	inline constexpr std::string_view DEFAULT_SAVE_FOLDER = "Fallout4";
 
-	// F4SE's task interface gained AddTaskPermanent with its version 2 (F4SE 0.7); old-gen's 0.6.23 has version 1, with
-	// one-shot tasks only.
-	constexpr bool HasPermanentTasks(std::uint32_t a_taskInterfaceVersion)
+	// F4SE's task interface has AddTaskPermanent from F4SE 0.7.0 on. Its interface version does not say so: 0.6.23's is
+	// 2 as well (F4SETaskInterface::kInterfaceVersion, with AddTask and AddUITask only), so calling AddTaskPermanent there
+	// would jump through whatever follows its interface. Asked of F4SE's own version instead.
+	constexpr bool HasPermanentTasks(const Version& a_f4se)
 	{
-		return a_taskInterfaceVersion >= 2;
+		return a_f4se >= Version{ 0, 7, 0, 0 };
 	}
 
 	// One entry of F4SE's Address Library (format 0): an ID and its offset from the game's image, sorted by ID.

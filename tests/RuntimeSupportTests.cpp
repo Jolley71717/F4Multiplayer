@@ -50,11 +50,15 @@ TEST("RuntimeSupport: the save folder's name is asked of F4SE 0.7.1 and later on
 	CHECK(DEFAULT_SAVE_FOLDER == "Fallout4");
 }
 
-TEST("RuntimeSupport: permanent tasks come with the task interface's version 2")
+TEST("RuntimeSupport: permanent tasks come with F4SE 0.7, whatever the task interface's version says")
 {
-	CHECK(!HasPermanentTasks(1));  // F4SE 0.6.23
-	CHECK(HasPermanentTasks(2));   // F4SE 0.7.x
-	CHECK(HasPermanentTasks(3));
+	// 0.6.23's task interface says version 2 too, without AddTaskPermanent: only F4SE's own version tells them apart.
+	CHECK(!HasPermanentTasks({ 0, 6, 23, 0 }));  // old-gen
+	CHECK(!HasPermanentTasks(Unpack(0x00060170)));
+	CHECK(HasPermanentTasks({ 0, 7, 0, 0 }));
+	CHECK(HasPermanentTasks({ 0, 7, 2, 0 }));     // next-gen
+	CHECK(HasPermanentTasks(Unpack(0x00070090)));  // the Anniversary update's 0.7.9: the permanent task, never our thread
+	CHECK(HasPermanentTasks({ 1, 0, 0, 0 }));
 }
 
 TEST("RuntimeSupport: an Address Library ID is found only when it is there")

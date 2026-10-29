@@ -1106,9 +1106,15 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 		return false;
 	}
 
-	// The frame's driver: F4SE's permanent task, or on old-gen's F4SE, which has none, a thread of ours (FrameDriver.h).
-	const auto tasks = F4SE::GetTaskInterface();
-	if (tasks && RuntimeSupport::HasPermanentTasks(tasks->Version())) {
+	// The frame's driver: F4SE's permanent task (F4SE 0.7, next-gen and the Anniversary update), or on old-gen's F4SE
+	// 0.6, which has none, a thread of ours (FrameDriver.h). Chosen by F4SE's version, never by the task interface's
+	// (RuntimeSupport::HasPermanentTasks): the thread never runs where the permanent task exists.
+	if (RuntimeSupport::HasPermanentTasks(ToSupport(a_f4se->F4SEVersion()))) {
+		const auto tasks = F4SE::GetTaskInterface();
+		if (!tasks) {
+			REX::ERROR("Frame: F4SE gave no task interface; multiplayer is off this run");
+			return false;
+		}
 		tasks->AddTaskPermanent(OnFrame);
 	} else if (!FrameDriver::Start(OnFrame, [] { return gameDataReady && Quitting(); })) {
 		return false;
