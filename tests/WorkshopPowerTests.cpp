@@ -573,6 +573,18 @@ TEST("workshop power: a frozen copy (its builder left) is hushed for a save and 
 	mirror.SaveDone();
 	CHECK(mirror.Refresh(game, t + REFRESH) == 1);
 	CHECK(game.shown.at(key));
+	// Their game comes back while the copy is hushed (no save message yet): shown at once, not after the limit.
+	mirror.Freeze(BUILDER);
+	CHECK(mirror.Hush(game, t + 2 * REFRESH) == 1);
+	mirror.Set(BUILDER, { GENERATOR, true });
+	CHECK(mirror.Refresh(game, t + 3 * REFRESH) == 1);
+	CHECK(game.shown.at(key));
+	// A copy drawn anew between the hush and the show after is not shown again for it.
+	CHECK(mirror.Hush(game, t + 4 * REFRESH) == 1);
+	game.drawn[key] = 0x2000;
+	mirror.SaveDone();
+	CHECK(mirror.Refresh(game, t + 5 * REFRESH) == 1);
+	CHECK(mirror.Refresh(game, t + 6 * REFRESH) == 0);
 }
 
 TEST("workshop power: a hush ends when its builder's game says otherwise, or a load comes, and a game that won't take it is let be")

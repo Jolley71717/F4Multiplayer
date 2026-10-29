@@ -325,6 +325,7 @@ namespace WorkshopPower
 				it->second.frozen = false;
 			} else if (it->second.frozen) {
 				it->second.frozen = false;  // their game is back: shown afresh
+				it->second.hushed = false;
 				it->second.shown = false;
 				it->second.tries = 0;
 			}
@@ -413,7 +414,9 @@ namespace WorkshopPower
 						continue;
 					}
 					want.hushed = false;
-					if (a_engine.Drawn(key) != 0 && a_engine.Show(key, want.powered)) {
+					const auto now3D = a_engine.Drawn(key);
+					if (now3D != 0 && a_engine.Show(key, want.powered)) {
+						want.drawn = now3D;  // drawn anew meanwhile: this is the show for it
 						++shown;
 					} else {
 						want.shown = false;  // not drawn, or the game won't take it yet: shown as any copy is, with the usual tries
