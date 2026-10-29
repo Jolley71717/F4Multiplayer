@@ -2208,8 +2208,8 @@ pieces, and both games show the result.
 
 **A save never keeps a copy running.** A copy's graph keeps what it was told, and a save writes it: a friend's generator
 shown "Powered" came back from the save running, with no session to tell it otherwise, and a copy can't be scrapped (the block
-keyword), so its engine ran on in a game with no friend in it (found on the rig with a Nexus report of a generator sound that
-never stops, F4Multiplayer-238o: show a copy on, save, `net leave`, load: the sound is there and nothing stops it; with the copy
+keyword), so its engine ran on in a game with no friend in it (found on the rig, after a Nexus report of a generator sound that
+never stops: show a copy on, save, `net leave`, load: the sound is there and nothing stops it; with the copy
 shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
 shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
 `HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
