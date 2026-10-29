@@ -2135,6 +2135,11 @@ namespace WorkshopSync
 		powerReceived += static_cast<std::uint32_t>(a_power.entries.size());
 	}
 
+	void SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered)
+	{
+		mirror.Set(a_player, WorkshopPower::Entry{ a_ref, a_powered });
+	}
+
 	void OnPlayerJoined()
 	{
 		reporter.SendAll();
@@ -2148,6 +2153,18 @@ namespace WorkshopSync
 	void BeforeSave()
 	{
 		AuditPower("save");
+		// A copy shown powered is saved running (its graph keeps the state), and a load brings it back running with no
+		// session to stop it: shown unpowered for the save, powered again after (AfterSave).
+		MirrorEngine engine;
+		const auto   hushed = mirror.Hush(engine, Clock::now());
+		if (hushed > 0) {
+			REX::INFO("WorkshopSync: {} friends' pieces shown unpowered for the save", hushed);
+		}
+	}
+
+	void AfterSave()
+	{
+		mirror.SaveDone();
 	}
 
 	bool IsCopyMarked(const RE::TESObjectREFR& a_ref)
@@ -2207,9 +2224,9 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeGrids(RE::TESObjectREFR* a_bench)

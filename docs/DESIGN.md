@@ -2206,6 +2206,16 @@ pieces, and both games show the result.
   handler: that fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio
   beacon's) would act on them as if the piece were ours.
 
+**A save never keeps a copy running.** A copy's graph keeps what it was told, and a save writes it: a friend's generator
+shown "Powered" came back from the save running, with no session to tell it otherwise, and a copy can't be scrapped (the block
+keyword), so its engine ran on in a game with no friend in it (found on the rig with a Nexus report of a generator sound that
+never stops, F4Multiplayer-238o: show a copy on, save, `net leave`, load: the sound is there and nothing stops it; with the copy
+shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
+shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
+`HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
+`wspower`. Not done: a copy a save from before this holds running (or one nobody reports any more: its piece is gone from the
+friend's game) stays so in a game that has it; the session's reports show the ones it names, the others stay.
+
 Trade-offs:
 
 - A real shared grid (copies as real workshop items of the receiver's workbench, the game computing power on

@@ -552,6 +552,8 @@ namespace
 		case F4SE::MessagingInterface::kPostSaveGame:
 			AutoSave::OnPostSave(MessageText(a_msg));
 			if (gameDataReady) {
+				// The copies of friends' powered pieces, shown unpowered for the save, run again.
+				MainThread::Post([] { WorkshopSync::AfterSave(); });
 				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
 				// (WeaponFire::AfterSave waits for the next frame: no console command is sent from the save's own message.)
 				if (OnMainThread()) {

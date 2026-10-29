@@ -81,6 +81,12 @@ namespace WorkshopSync
 	// A save is about to be written: no grid of ours may name a copy (main thread).
 	void BeforeSave();
 
+	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again.
+	void AfterSave();
+
+	// Dev: a friend's game said this piece of theirs is powered or not, as the server's relay would say (wspower want).
+	void SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered);
+
 	// Whether the reference carries the keyword every workshop copy is given (the game's WorkshopBlockInteractionKeyword,
 	// since 0.9.0, saved with the copy): a power armor frame made at runtime that has it is a copy an older version's
 	// workshop sync made of a frame (FrameShare::Ghost), never a suit of the player's own.
