@@ -58,20 +58,25 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 <!-- END BEADS INTEGRATION -->
 
 
+## Project rules
+
+The maintainer's standing rules for every agent are in AGENTS.md ("Project rules"). Read them before any change,
+merge, release, rig test or message to anyone.
+
+@AGENTS.md
+
 ## Build & Test
 
-_Add your build and test commands here_
+See CONTRIBUTING.md. In short:
 
 ```bash
-# Example:
-# npm install
-# npm test
+xmake config -m releasedbg
+xmake build -y
+build/windows/x64/releasedbg/F4MPTests.exe   # exit code = failed tests; a substring runs only matching tests
 ```
+
+Anything that touches the game (`src/game`, `src/steam`, the sync classes) is only tested in a game.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
-
-## Conventions & Patterns
-
-_Add your project-specific conventions here_
+See docs/DESIGN.md (how each system syncs and why) and docs/PLAN.md.
