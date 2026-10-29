@@ -367,7 +367,11 @@ namespace WorkshopPower
 			std::size_t hushed = 0;
 			saveDone = false;
 			for (auto& [key, want] : wants) {
-				if (!want.powered || !want.shown || want.hushed || a_engine.Drawn(key) == 0) {
+				if (want.hushed) {
+					want.hushedAt = a_now;  // still hushed from a save just before: this one's too
+					continue;
+				}
+				if (!want.powered || !want.shown || a_engine.Drawn(key) == 0) {
 					continue;
 				}
 				if (a_engine.Show(key, false)) {

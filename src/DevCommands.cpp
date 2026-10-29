@@ -1962,8 +1962,7 @@ namespace DevCommands
 				if (!player || !theirRef) {
 					return "error: usage: wspower want <builderIdHex> <theirRefHex> on|off";
 				}
-				WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on");
-				return "ok";
+				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
 			}
 			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
 		}

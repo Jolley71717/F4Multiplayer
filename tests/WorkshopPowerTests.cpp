@@ -585,6 +585,12 @@ TEST("workshop power: a frozen copy (its builder left) is hushed for a save and 
 	mirror.SaveDone();
 	CHECK(mirror.Refresh(game, t + 5 * REFRESH) == 1);
 	CHECK(mirror.Refresh(game, t + 6 * REFRESH) == 0);
+	// A second save while it is hushed renews the hush: the first one's time doesn't end it.
+	const auto later = t + 10 * REFRESH;
+	CHECK(mirror.Hush(game, later) == 1);
+	CHECK(mirror.Hush(game, later + HUSH_LIMIT - REFRESH) == 0);
+	CHECK(mirror.Refresh(game, later + HUSH_LIMIT + REFRESH) == 0);
+	CHECK(mirror.Refresh(game, later + 2 * HUSH_LIMIT) == 1);
 }
 
 TEST("workshop power: a hush ends when its builder's game says otherwise, or a load comes, and a game that won't take it is let be")

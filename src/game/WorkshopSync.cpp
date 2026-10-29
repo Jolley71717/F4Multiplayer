@@ -2135,9 +2135,9 @@ namespace WorkshopSync
 		powerReceived += static_cast<std::uint32_t>(a_power.entries.size());
 	}
 
-	void SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered)
+	bool SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered)
 	{
-		mirror.Set(a_player, WorkshopPower::Entry{ a_ref, a_powered });
+		return mirror.Set(a_player, WorkshopPower::Entry{ a_ref, a_powered });
 	}
 
 	void OnPlayerJoined()
