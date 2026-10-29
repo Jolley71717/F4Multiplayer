@@ -94,7 +94,9 @@ target("F4Multiplayer")
     add_rules("commonlibf4.plugin", {
         name = "F4Multiplayer",
         author = "Jolley71717",
-        description = "Multiplayer for Fallout 4"
+        description = "Multiplayer for Fallout 4",
+        -- our own version data: the Anniversary update's bits only, not next-gen's (res/commonlibf4-plugin.cpp.in)
+        plugin_template = path.join(os.scriptdir(), "res", "commonlibf4-plugin.cpp.in")
     })
 
     add_deps("F4MPCommon")

@@ -1,4 +1,5 @@
 ﻿#include "DevCommands.h"
+#include "Runtime.h"
 
 #include "DevChannel.h"
 #include "Log.h"
@@ -1862,6 +1863,11 @@ namespace DevCommands
 			if (!data || !spline) {
 				return "error: the first reference isn't one of a workbench's items (with its workshop data)";
 			}
+			// Workshop::ExtraData::AddConnection, 1.11.240's (old-gen and next-gen not read yet).
+			constexpr REL::ID ADD_CONNECTION{ 0, 0, 2194998 };
+			if (!Runtime::Has(ADD_CONNECTION)) {
+				return "error: the workshop's wire connection is not known on " + Runtime::Describe();
+			}
 			RE::NEW_REFR_DATA place;
 			place.location = from->data.location;
 			place.direction = from->data.angle;
@@ -1875,7 +1881,7 @@ namespace DevCommands
 				return "error: no wire made";
 			}
 			using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&, RE::TESObjectREFR&, RE::TESObjectREFR*);
-			static REL::Relocation<add_t> addConnection{ REL::ID{ 2194998 } };
+			static Runtime::Relocation<add_t> addConnection{ ADD_CONNECTION };
 			RE::SplineUtils::ConnectSpline(from, 0, to, 0, wire.get());
 			addConnection(data, *from, *to, wire.get());
 			wire->SetLinkedRef(bench, keyword);
@@ -2285,7 +2291,7 @@ namespace DevCommands
 				if (!light || static_cast<int>(light->data.radius) < minRadius || (id >> 24) >= 0x02 || count >= 40) {
 					continue;
 				}
-				out += std::format("{:08X} r={} c={:06X} f={:04X} fov={:.0f} fade={:.1f} | ", id, light->data.radius, light->data.color & 0xFFFFFF, light->data.flags, light->data.fov, light->fade);
+				out += std::format("{:08X} r={} c={:06X} f={:04X} fov={:.0f} fade={:.1f} | ", id, light->data.radius, light->data.color & 0xFFFFFF, light->data.flags.underlying(), light->data.fov, light->fade);
 				++count;
 			}
 			return out.empty() ? "none" : out;

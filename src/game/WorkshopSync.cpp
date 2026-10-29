@@ -1,4 +1,5 @@
 #include "game/WorkshopSync.h"
+#include "Runtime.h"
 
 #include "game/BuiltWalk.h"
 #include "game/Drops.h"
@@ -91,7 +92,7 @@ namespace WorkshopSync
 		// the reference. Not one with the keyword that blocks scrapping; one whose base has a scrap
 		// recipe, or a misc item with components. The bool is false in the game's own scrap check
 		// (Workshop::CanScrapPlacementRef), which lets loose weapons, armor and misc items through.
-		constexpr REL::ID CAN_SCRAP_REF{ 2194959 };
+		constexpr REL::ID CAN_SCRAP_REF{ 0, 0, 2194959 };
 
 		// WorkshopKeyword: on the base of every settlement's workbench.
 		constexpr std::uint32_t WORKSHOP_KEYWORD = 0x00054BA7;
@@ -99,7 +100,7 @@ namespace WorkshopSync
 		bool CanScrap(RE::TESObjectREFR& a_ref)
 		{
 			using func_t = bool (*)(RE::TESObjectREFR&, bool);
-			static REL::Relocation<func_t> func{ CAN_SCRAP_REF };
+			static Runtime::Relocation<func_t> func{ CAN_SCRAP_REF };
 			return func(a_ref, false);
 		}
 
@@ -635,21 +636,21 @@ namespace WorkshopSync
 		// The default object WorkshopBlockInteractionKeyword's keyword (a BGSKeyword*): workshop mode won't pick a
 		// reference that has it (Workshop's pick test, 2195179, which the picker 2195312 asks), so it can't be wired,
 		// stored, scrapped or moved there.
-		constexpr REL::ID BLOCK_INTERACTION_KEYWORD{ 4797360 };
+		constexpr REL::ID BLOCK_INTERACTION_KEYWORD{ 0, 0, 4797360 };
 		// Workshop::ExtraData::RemoveItem(TESObjectREFR&): takes the reference off the workbench's power grids (its
 		// links with it), as scrapping it does (Workshop::FinishDestroyItem).
-		constexpr REL::ID REMOVE_GRID_ITEM{ 2194997 };
+		constexpr REL::ID REMOVE_GRID_ITEM{ 0, 0, 2194997 };
 		// SplineUtils::DisconnectSpline(TESObjectREFR&): takes the reference out of the power links (ExtraPowerLinks) of
 		// everything it is linked to, and drops its own; for a wire, what scrapping it does.
-		constexpr REL::ID DISCONNECT_SPLINE{ 2195074 };
+		constexpr REL::ID DISCONNECT_SPLINE{ 750682, 2195074, 2195074 };
 		// Workshop::IsPowered(TESObjectREFR&): whether a workshop item of a workbench is powered (a generator: whether
 		// it makes power).
-		constexpr REL::ID IS_POWERED{ 2194916 };
+		constexpr REL::ID IS_POWERED{ 0, 0, 2194916 };
 		// PowerUtils::ItemGeneratesPower(TESObjectREFR&): its power generated (an actor value) is above 0.
-		constexpr REL::ID ITEM_GENERATES_POWER{ 2195079 };
+		constexpr REL::ID ITEM_GENERATES_POWER{ 0, 0, 2195079 };
 		// TESObjectLIGH::SwitchLight(TESObjectREFR&, bool off): the lights of a reference's 3D on or off (a LIGH's own, or one in a
 		// model), as the game's own powering does for every piece (the power handler, 2195089, passes the "off" it fires PowerOffEvent for).
-		constexpr REL::ID SWITCH_LIGHT{ 2198253 };
+		constexpr REL::ID SWITCH_LIGHT{ 0, 0, 2198253 };
 
 		bool                     blockCopies = true;  // dev (wspower block off): copies can be picked, to try the repair
 		std::uint32_t            copiesBlocked = 0;
@@ -674,7 +675,7 @@ namespace WorkshopSync
 		// (a crash) stays out of reach too.
 		void BlockInteraction(RE::TESObjectREFR& a_copy)
 		{
-			static REL::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
+			static Runtime::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
 			if (!blockCopies || !*keyword) {
 				return;
 			}
@@ -686,7 +687,7 @@ namespace WorkshopSync
 
 		bool Blocked(const RE::TESObjectREFR& a_ref)
 		{
-			static REL::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
+			static Runtime::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
 			return *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword);
 		}
 
@@ -799,8 +800,8 @@ namespace WorkshopSync
 				}
 				using remove_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
 				using disconnect_t = void (*)(RE::TESObjectREFR&);
-				static REL::Relocation<remove_t>     removeItem{ REMOVE_GRID_ITEM };
-				static REL::Relocation<disconnect_t> disconnect{ DISCONNECT_SPLINE };
+				static Runtime::Relocation<remove_t>     removeItem{ REMOVE_GRID_ITEM };
+				static Runtime::Relocation<disconnect_t> disconnect{ DISCONNECT_SPLINE };
 				const auto                           bench = BenchOf(*copy);
 				if (bench) {
 					powerBenches.insert(bench->GetFormID());
@@ -1467,7 +1468,7 @@ namespace WorkshopSync
 
 		// What links a build-area volume (a primitive) to its workbench: the form of the default object
 		// WorkshopLinkedPrimitiveKeyword, as Workshop::IsLocationWithinBuildableArea reads it.
-		constexpr REL::ID BUILD_AREA_KEYWORD{ 4797312 };
+		constexpr REL::ID BUILD_AREA_KEYWORD{ 0, 0, 4797312 };
 		// How far a build area reaches from its workbench while none of its volumes is loaded.
 		constexpr float   BUILD_AREA_RADIUS = RemoteEdits::BUILD_AREA_RADIUS;
 
@@ -1477,7 +1478,7 @@ namespace WorkshopSync
 		// it is asked about, and around the workbench only outside workshop mode.
 		RemoteEdits::BuildArea BuildAreaState(const RE::TESObjectREFR& a_bench)
 		{
-			static REL::Relocation<RE::BGSKeyword**> keyword{ BUILD_AREA_KEYWORD };
+			static Runtime::Relocation<RE::BGSKeyword**> keyword{ BUILD_AREA_KEYWORD };
 			const auto children = a_bench.extraList ? a_bench.extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
 			if (!children || !*keyword) {
 				return RemoteEdits::BuildArea::kNoVolumes;
@@ -1796,7 +1797,7 @@ namespace WorkshopSync
 		bool IsPowerPiece(const RE::TESObjectREFR& a_ref)
 		{
 			using generates_t = bool (*)(const RE::TESObjectREFR&);
-			static REL::Relocation<generates_t> generates{ ITEM_GENERATES_POWER };
+			static Runtime::Relocation<generates_t> generates{ ITEM_GENERATES_POWER };
 			return RE::PowerUtils::ItemIsPowerReceiver(&a_ref) || RE::PowerUtils::ItemIsPowerConnection(&a_ref) || generates(a_ref);
 		}
 
@@ -1837,7 +1838,7 @@ namespace WorkshopSync
 			std::optional<bool> Powered(std::uint32_t a_id)
 			{
 				using powered_t = bool (*)(RE::TESObjectREFR&);
-				static REL::Relocation<powered_t>      isPowered{ IS_POWERED };
+				static Runtime::Relocation<powered_t>      isPowered{ IS_POWERED };
 				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) };
 				if (!ref || !OwnPowerPiece(*ref)) {
 					return std::nullopt;
@@ -1871,7 +1872,7 @@ namespace WorkshopSync
 			static const RE::BSFixedString        powered{ "Powered" };
 			static const RE::BSFixedString        unpowered{ "Unpowered" };
 			using switch_t = void (*)(RE::TESObjectREFR&, bool);
-			static REL::Relocation<switch_t>      switchLight{ SWITCH_LIGHT };
+			static Runtime::Relocation<switch_t>      switchLight{ SWITCH_LIGHT };
 			if (!a_copy.Get3D()) {
 				return false;
 			}
@@ -1937,8 +1938,23 @@ namespace WorkshopSync
 		}
 	}
 
+	namespace
+	{
+		// The engine addresses above (1.11.240's; old-gen has the wire one only so far): the workshop's sharing is off on
+		// a runtime without all of them, said once in the log.
+		bool Available()
+		{
+			static const Runtime::Feature feature{ "WorkshopSync", { CAN_SCRAP_REF, BLOCK_INTERACTION_KEYWORD, REMOVE_GRID_ITEM, DISCONNECT_SPLINE, IS_POWERED,
+																ITEM_GENERATES_POWER, SWITCH_LIGHT, BUILD_AREA_KEYWORD } };
+			return feature.On();
+		}
+	}
+
 	bool WorkshopModeScraps(RE::TESObjectREFR& a_ref)
 	{
+		if (!Available()) {
+			return false;
+		}
 		return CanScrap(a_ref);
 	}
 
@@ -1967,6 +1983,9 @@ namespace WorkshopSync
 			return;
 		}
 		installed = true;
+		if (!Available()) {
+			return;
+		}
 		RE::Workshop::RegisterForItemPlaced(&placedSink);
 		RE::Workshop::RegisterForItemMoved(&movedSink);
 		RE::Workshop::RegisterForItemDestroyed(&destroyedSink);
@@ -1975,6 +1994,9 @@ namespace WorkshopSync
 
 	void Frame(bool a_host)
 	{
+		if (!Available()) {
+			return;
+		}
 		const auto now = Clock::now();
 		const bool shares = BuiltWalk::Shares(a_host, HostRules::Get());
 		++frameNumber;  // what the grids name is read again (GridNamed)
@@ -2052,11 +2074,17 @@ namespace WorkshopSync
 
 	void Apply(const Protocol::WorkshopItem& a_item)
 	{
+		if (!Available()) {
+			return;
+		}
 		inbox.Arrive({ a_item.playerId, a_item.refId }, a_item);
 	}
 
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
 	{
+		if (!Available()) {
+			return;
+		}
 		ReportRef(a_ref, a_workshop, a_op);
 	}
 
@@ -2129,6 +2157,9 @@ namespace WorkshopSync
 
 	void ApplyPower(const Protocol::PowerStates& a_power)
 	{
+		if (!Available()) {
+			return;
+		}
 		for (const auto& entry : a_power.entries) {
 			mirror.Set(a_power.playerId, entry);
 		}
@@ -2147,11 +2178,17 @@ namespace WorkshopSync
 
 	void BeforeSave()
 	{
+		if (!Available()) {
+			return;
+		}
 		AuditPower("save");
 	}
 
 	bool IsCopyMarked(const RE::TESObjectREFR& a_ref)
 	{
+		if (!Available()) {
+			return false;
+		}
 		return Blocked(a_ref);
 	}
 
@@ -2163,7 +2200,10 @@ namespace WorkshopSync
 	void SetBlockCopies(bool a_block)
 	{
 		blockCopies = a_block;
-		static REL::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
+		if (!Available()) {
+			return;
+		}
+		static Runtime::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
 		if (!*keyword) {
 			return;
 		}

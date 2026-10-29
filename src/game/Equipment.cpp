@@ -1,4 +1,5 @@
 #include "game/Equipment.h"
+#include "Runtime.h"
 
 #include "MainThread.h"
 #include "Protocol.h"
@@ -25,13 +26,13 @@ namespace Equipment
 {
 	namespace
 	{
-		constexpr REL::ID POWER_ARMOR_FURNITURE_KEYWORD{ 2194741 };  // PowerArmor::GetFurnitureKeyword
-		constexpr REL::ID POWER_ARMOR_FRAME_KEYWORD{ 2194744 };      // PowerArmor::GetFrameKeyword (+374890)
-		constexpr REL::ID POWER_ARMOR_DEFAULT_FRAME{ 2194757 };      // PowerArmor::GetDefaultFrame (+374AB0)
-		constexpr REL::ID POWER_ARMOR_RACE{ 2194755 };               // PowerArmor::GetPowerArmorRace (+374A70)
+		constexpr REL::ID POWER_ARMOR_FURNITURE_KEYWORD{ 0, 0, 2194741 };  // PowerArmor::GetFurnitureKeyword
+		constexpr REL::ID POWER_ARMOR_FRAME_KEYWORD{ 0, 0, 2194744 };      // PowerArmor::GetFrameKeyword (+374890)
+		constexpr REL::ID POWER_ARMOR_DEFAULT_FRAME{ 0, 0, 2194757 };      // PowerArmor::GetDefaultFrame (+374AB0)
+		constexpr REL::ID POWER_ARMOR_RACE{ 0, 0, 2194755 };               // PowerArmor::GetPowerArmorRace (+374A70)
 		// PowerArmor's frame pick (+987EF0): the frame item the switch-in puts on the actor (see ArmorFrames::ChoosePick).
 		// With true it always picks afresh from what the actor has on, touching nothing.
-		constexpr REL::ID POWER_ARMOR_FRAME_PICK{ 2219424 };
+		constexpr REL::ID POWER_ARMOR_FRAME_PICK{ 0, 0, 2219424 };
 		// PowerArmor's switch-in (+989D90), the one the Papyrus native SwitchToPowerArmor (+10FC2E0) calls with false
 		// once the frame is furniture with the frame keyword and the actor is in no frame. With false it does, in order:
 		// creates the actor's ExtraPowerArmor (state 1), sets the frame as its frame, unequips what the race's body slot
@@ -43,15 +44,15 @@ namespace Equipment
 		// holds a load for the actor), promotes the frame to persist for the power armor race, queues the frame's
 		// disabling, and sets state 2. No package, no AI and no animation are involved. The power armor skeleton is on the
 		// actor only once that task has run, a frame or more later.
-		constexpr REL::ID SWITCH_INTO_POWER_ARMOR{ 2219442 };
-		constexpr REL::ID GET_POWER_ARMOR_HANDLE{ 2190600 };  // ExtraDataList::GetPowerArmorHandle (+2908C0)
-		constexpr REL::ID SET_OWNER{ 2202623 };               // TESObjectREFR::SetOwner(TESForm*) (+562380)
+		constexpr REL::ID SWITCH_INTO_POWER_ARMOR{ 0, 0, 2219442 };
+		constexpr REL::ID GET_POWER_ARMOR_HANDLE{ 0, 0, 2190600 };  // ExtraDataList::GetPowerArmorHandle (+2908C0)
+		constexpr REL::ID SET_OWNER{ 0, 0, 2202623 };               // TESObjectREFR::SetOwner(TESForm*) (+562380)
 		// What the engine asks before it lets our player into furniture (see FrameUse.h).
-		constexpr REL::ID GET_MARKER_ENABLED{ 2198041 };      // TESFurniture::GetMarkerEnabled(uint) (+44C590)
-		constexpr REL::ID GET_MARKER_USER{ 2202566 };         // TESObjectREFR::GetMarkerUser(ActorHandle&, uint, bool) (+55EA40)
-		constexpr REL::ID HAS_FREE_MARKER{ 2202569 };         // TESObjectREFR::HasFreeMarker(bool) (+55F0B0)
-		constexpr REL::ID HAS_USERS_OTHER_THAN{ 2202574 };    // TESObjectREFR::HasUsersOtherThan(Actor*, bool) (+55F5A0)
-		constexpr REL::ID UPRIGHT_ANGLE_COSINE{ 4796566 };    // InteractionUtils::QUprightAngleCosine's value (+30EC270)
+		constexpr REL::ID GET_MARKER_ENABLED{ 0, 0, 2198041 };      // TESFurniture::GetMarkerEnabled(uint) (+44C590)
+		constexpr REL::ID GET_MARKER_USER{ 0, 0, 2202566 };         // TESObjectREFR::GetMarkerUser(ActorHandle&, uint, bool) (+55EA40)
+		constexpr REL::ID HAS_FREE_MARKER{ 0, 0, 2202569 };         // TESObjectREFR::HasFreeMarker(bool) (+55F0B0)
+		constexpr REL::ID HAS_USERS_OTHER_THAN{ 0, 0, 2202574 };    // TESObjectREFR::HasUsersOtherThan(Actor*, bool) (+55F5A0)
+		constexpr REL::ID UPRIGHT_ANGLE_COSINE{ 0, 0, 4796566 };    // InteractionUtils::QUprightAngleCosine's value (+30EC270)
 		constexpr std::uint32_t FURNITURE_MARKERS = 22;       // the markers a piece of furniture can have (its loops' bound)
 		// A bone the power armor skeleton has and the human one has not (Meshes\Actors\PowerArmor\CharacterAssets\
 		// skeleton.nif against Meshes\Actors\Character\CharacterAssets\skeleton.nif in Fallout4 - Meshes.ba2: the armor
@@ -61,15 +62,32 @@ namespace Equipment
 		// A leg bone both skeletons have (Fallout 4's own bone names; the power armor one adds its armor bones to them).
 		constexpr const char* LEG_BONE = "LLeg_Thigh";
 
+		// The power armor calls above: off together on a runtime without all of them, said once in the log. Each answers as
+		// if no frame were there.
+		bool PowerArmorKnown()
+		{
+			static const Runtime::Feature feature{ "Equipment: power armor", { POWER_ARMOR_FURNITURE_KEYWORD, POWER_ARMOR_FRAME_KEYWORD, POWER_ARMOR_DEFAULT_FRAME,
+				POWER_ARMOR_RACE, POWER_ARMOR_FRAME_PICK, SWITCH_INTO_POWER_ARMOR, GET_POWER_ARMOR_HANDLE, SET_OWNER } };
+			return feature.On();
+		}
+
+		// The furniture marker calls above (FrameUseOf).
+		bool MarkersKnown()
+		{
+			static const Runtime::Feature feature{ "Equipment: furniture markers", { GET_MARKER_ENABLED, GET_MARKER_USER, HAS_FREE_MARKER, HAS_USERS_OTHER_THAN,
+				UPRIGHT_ANGLE_COSINE } };
+			return feature.On();
+		}
+
 		RE::BGSKeyword* FrameKeyword()
 		{
-			static REL::Relocation<RE::BGSKeyword* (*)()> keyword{ POWER_ARMOR_FRAME_KEYWORD };
+			static Runtime::Relocation<RE::BGSKeyword* (*)()> keyword{ POWER_ARMOR_FRAME_KEYWORD };
 			return keyword();
 		}
 
 		RE::TESObjectARMO* DefaultFrame()
 		{
-			static REL::Relocation<RE::TESObjectARMO* (*)()> frame{ POWER_ARMOR_DEFAULT_FRAME };
+			static Runtime::Relocation<RE::TESObjectARMO* (*)()> frame{ POWER_ARMOR_DEFAULT_FRAME };
 			return frame();
 		}
 
@@ -535,10 +553,10 @@ namespace Equipment
 	bool IsPowerArmorFrame(const RE::TESForm* a_base)
 	{
 		const auto furniture = a_base && a_base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? a_base->As<RE::TESFurniture>() : nullptr;
-		if (!furniture) {
+		if (!furniture || !PowerArmorKnown()) {
 			return false;
 		}
-		static REL::Relocation<RE::BGSKeyword* (*)()> furnitureKeyword{ POWER_ARMOR_FURNITURE_KEYWORD };
+		static Runtime::Relocation<RE::BGSKeyword* (*)()> furnitureKeyword{ POWER_ARMOR_FURNITURE_KEYWORD };
 		const auto keyword = furnitureKeyword();
 		return keyword && static_cast<const RE::BGSKeywordForm*>(furniture)->HasKeyword(keyword);
 	}
@@ -546,7 +564,7 @@ namespace Equipment
 	bool IsFrameItem(const RE::TESForm* a_item)
 	{
 		const auto armor = a_item && a_item->GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_item->As<RE::TESObjectARMO>() : nullptr;
-		if (!armor) {
+		if (!armor || !PowerArmorKnown()) {
 			return false;
 		}
 		if (armor == DefaultFrame()) {
@@ -564,10 +582,10 @@ namespace Equipment
 
 	std::uint32_t FramePick(RE::Actor* a_actor)
 	{
-		if (!a_actor) {
+		if (!a_actor || !PowerArmorKnown()) {
 			return 0;
 		}
-		static REL::Relocation<RE::TESObjectARMO* (*)(RE::Actor*, bool)> pick{ POWER_ARMOR_FRAME_PICK };
+		static Runtime::Relocation<RE::TESObjectARMO* (*)(RE::Actor*, bool)> pick{ POWER_ARMOR_FRAME_PICK };
 		const auto frame = pick(a_actor, true);
 		return frame ? frame->GetFormID() : 0;
 	}
@@ -670,10 +688,10 @@ namespace Equipment
 
 	RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor)
 	{
-		if (!InPowerArmor(a_actor)) {
+		if (!InPowerArmor(a_actor) || !PowerArmorKnown()) {
 			return {};
 		}
-		static REL::Relocation<bool (*)(RE::ExtraDataList*, RE::ObjectRefHandle&)> powerArmorHandle{ GET_POWER_ARMOR_HANDLE };
+		static Runtime::Relocation<bool (*)(RE::ExtraDataList*, RE::ObjectRefHandle&)> powerArmorHandle{ GET_POWER_ARMOR_HANDLE };
 		RE::ObjectRefHandle handle;
 		if (!powerArmorHandle(a_actor->extraList.get(), handle)) {
 			return {};
@@ -697,11 +715,11 @@ namespace Equipment
 		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", a_frame->GetFormID()).c_str());
 		// The actor's own: the engine's switch-in sounds the steal alarm when the frame, or else its cell, has an owner the
 		// actor is not. It gives a frame to the NPC getting out of it in the same way.
-		static REL::Relocation<void (*)(RE::TESObjectREFR*, RE::TESForm*)> setOwner{ SET_OWNER };
+		static Runtime::Relocation<void (*)(RE::TESObjectREFR*, RE::TESForm*)> setOwner{ SET_OWNER };
 		if (const auto owner = OriginalBase(a_actor)) {
 			setOwner(a_frame, owner);
 		}
-		static REL::Relocation<void (*)(RE::Actor&, RE::TESObjectREFR*, bool)> switchIn{ SWITCH_INTO_POWER_ARMOR };
+		static Runtime::Relocation<void (*)(RE::Actor&, RE::TESObjectREFR*, bool)> switchIn{ SWITCH_INTO_POWER_ARMOR };
 		switchIn(*a_actor, a_frame, false);
 		return PowerArmorFrameOf(a_actor).get() == a_frame;
 	}
@@ -735,7 +753,10 @@ namespace Equipment
 
 	void ReleasePowerArmorFrame(RE::TESObjectREFR* a_frame)
 	{
-		static REL::Relocation<RE::TESRace* (*)()> powerArmorRace{ POWER_ARMOR_RACE };
+		if (!PowerArmorKnown()) {
+			return;
+		}
+		static Runtime::Relocation<RE::TESRace* (*)()> powerArmorRace{ POWER_ARMOR_RACE };
 		const auto manager = RE::BGSDynamicPersistenceManager::GetSingleton();
 		const auto race = powerArmorRace();
 		if (a_frame && manager && race) {
@@ -1070,17 +1091,17 @@ namespace Equipment
 		const auto      base = a_frame ? a_frame->GetObjectReference() : nullptr;
 		const auto      furniture = base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? base->As<RE::TESFurniture>() : nullptr;
 		const auto      player = RE::PlayerCharacter::GetSingleton();
-		if (!furniture || !player) {
+		if (!furniture || !player || !MarkersKnown()) {
 			return facts;
 		}
-		static REL::Relocation<float*> upMin{ UPRIGHT_ANGLE_COSINE };
+		static Runtime::Relocation<float*> upMin{ UPRIGHT_ANGLE_COSINE };
 		facts.upMin = *upMin;
 		facts.playerBusy = PlayerBusy(player);
 		// TESObjectREFR::GetOrientation builds a non-actor's from its angle (NiMatrix3::FromEulerAnglesXYZ), and the
 		// engine compares the z of its up axis: cos x times cos y.
 		facts.up = std::cos(a_frame->data.angle.x) * std::cos(a_frame->data.angle.y);
-		static REL::Relocation<bool (*)(const RE::TESFurniture*, std::uint32_t)>                          markerEnabled{ GET_MARKER_ENABLED };
-		static REL::Relocation<RE::ActorHandle* (*)(RE::TESObjectREFR*, RE::ActorHandle*, std::uint32_t, bool)> markerUser{ GET_MARKER_USER };
+		static Runtime::Relocation<bool (*)(const RE::TESFurniture*, std::uint32_t)>                          markerEnabled{ GET_MARKER_ENABLED };
+		static Runtime::Relocation<RE::ActorHandle* (*)(RE::TESObjectREFR*, RE::ActorHandle*, std::uint32_t, bool)> markerUser{ GET_MARKER_USER };
 		for (std::uint32_t i = 0; i < FURNITURE_MARKERS; ++i) {
 			if (!markerEnabled(furniture, i)) {
 				continue;
@@ -1100,8 +1121,8 @@ namespace Equipment
 				facts.userIn = (occupied && occupied.get() == a_frame) || PowerArmorFrameOf(user.get()).get() == a_frame;
 			}
 		}
-		static REL::Relocation<bool (*)(RE::TESObjectREFR*, RE::Actor*, bool)> usersOtherThan{ HAS_USERS_OTHER_THAN };
-		static REL::Relocation<bool (*)(RE::TESObjectREFR*, bool)>             freeMarker{ HAS_FREE_MARKER };
+		static Runtime::Relocation<bool (*)(RE::TESObjectREFR*, RE::Actor*, bool)> usersOtherThan{ HAS_USERS_OTHER_THAN };
+		static Runtime::Relocation<bool (*)(RE::TESObjectREFR*, bool)>             freeMarker{ HAS_FREE_MARKER };
 		facts.othersThanPlayer = usersOtherThan(a_frame, player, false);
 		facts.free = freeMarker(a_frame, true);
 		return facts;
@@ -1142,11 +1163,11 @@ namespace Equipment
 
 	namespace
 	{
-		constexpr REL::ID SET_MARKER_USED{ 2202567 };         // TESObjectREFR::SetMarkerUsed(uint, Actor&, bool used, bool force) (+55EB70)
-		constexpr REL::ID FURNITURE_ACTIVATE{ 2198054 };      // TESFurniture::Activate (+44CA40)
-		constexpr REL::ID PLAYER_USE_FURNITURE{ 2232956 };    // the player's furniture use, which asks for a free marker (+D5D6B0)
-		constexpr REL::ID PLAYER_ENTER_FURNITURE{ 2233039 };  // the player's furniture enter, which picks the animation (+D69B80)
-		constexpr REL::ID SHOW_HUD_MESSAGE{ 2222440 };        // the HUD's corner message (+A37270)
+		constexpr REL::ID SET_MARKER_USED{ 0, 0, 2202567 };         // TESObjectREFR::SetMarkerUsed(uint, Actor&, bool used, bool force) (+55EB70)
+		constexpr REL::ID FURNITURE_ACTIVATE{ 37704, 2198054, 2198054 };  // TESFurniture::Activate (+44CA40)
+		constexpr REL::ID PLAYER_USE_FURNITURE{ 0, 0, 2232956 };    // the player's furniture use, which asks for a free marker (+D5D6B0)
+		constexpr REL::ID PLAYER_ENTER_FURNITURE{ 0, 0, 2233039 };  // the player's furniture enter, which picks the animation (+D69B80)
+		constexpr REL::ID SHOW_HUD_MESSAGE{ 1163005, 2222440, 2222440 };  // the HUD's corner message (+A37270)
 		constexpr std::size_t CALL_STUB = 14;                 // what a write_call<5> takes of the trampoline (one per target)
 
 		using UseFn = bool (*)(RE::PlayerCharacter*, RE::TESObjectREFR*);
@@ -1187,7 +1208,7 @@ namespace Equipment
 					++framesStoodUp;
 				}
 				if (mend.freeSeat && facts.userMarker >= 0) {
-					static REL::Relocation<void (*)(RE::TESObjectREFR*, std::uint32_t, RE::Actor&, bool, bool)> setMarkerUsed{ SET_MARKER_USED };
+					static Runtime::Relocation<void (*)(RE::TESObjectREFR*, std::uint32_t, RE::Actor&, bool, bool)> setMarkerUsed{ SET_MARKER_USED };
 					setMarkerUsed(a_ref, static_cast<std::uint32_t>(facts.userMarker), *a_player, false, true);
 					++seatsFreed;
 				}
@@ -1214,13 +1235,18 @@ namespace Equipment
 			originalMessage(a_text, a_sound, a_throttle, a_warning);
 		}
 
-		// The call at a_function + a_offset, if it calls a_target as 1.11.240 has it.
+		// The call at a_function + a_offset, if it calls a_target as 1.11.240 has it (none on a runtime without either).
 		std::optional<std::uintptr_t> CallAt(const REL::ID& a_function, std::size_t a_offset, const REL::ID& a_target)
 		{
-			const auto                  site = a_function.address() + a_offset;
+			const auto function = Runtime::TryAddress(a_function);
+			const auto target = Runtime::TryAddress(a_target);
+			if (!function || !target) {
+				return std::nullopt;
+			}
+			const auto                  site = *function + a_offset;
 			std::array<std::uint8_t, 5> bytes{};
 			std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
-			if (TextureFlush::CallTarget(bytes, site) != a_target.address()) {
+			if (TextureFlush::CallTarget(bytes, site) != *target) {
 				return std::nullopt;
 			}
 			return site;
@@ -1473,6 +1499,12 @@ namespace Equipment
 	void InstallFrameUse()
 	{
 		if (originalUse) {
+			return;
+		}
+		// FrameUse's offsets are 1.11.240's: a runtime given these IDs needs the two calls read again too.
+		static const Runtime::Feature feature{ "Equipment: power armor entry", { FURNITURE_ACTIVATE, PLAYER_USE_FURNITURE, PLAYER_ENTER_FURNITURE, SHOW_HUD_MESSAGE,
+			SET_MARKER_USED } };
+		if (!feature.On()) {
 			return;
 		}
 		auto& trampoline = REL::GetTrampoline();

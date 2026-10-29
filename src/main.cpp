@@ -32,7 +32,9 @@
 #include "Log.h"
 #include "MainThread.h"
 #include "Platform.h"
+#include "FrameDriver.h"
 #include "NestedPump.h"
+#include "Runtime.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
@@ -733,8 +735,10 @@ namespace
 	// loop, Main::Run_WindowsMessageLoop (+C336B0), and Main::Run (+C314F0), which calls it.
 	NestedPump::Seen WhereDispatched()
 	{
-		static const NestedPump::Range pump = FunctionAt(REL::ID(2228998).address());
-		static const std::array<NestedPump::Range, 2> outer{ FunctionAt(REL::ID(2228915).address()), FunctionAt(REL::ID(4484191).address()) };
+		// A function this runtime has no address for is no range: the check then finds neither and puts no frame off.
+		const auto functionAt = [](const REL::ID& a_id) { return FunctionAt(Runtime::TryAddress(a_id).value_or(0)); };
+		static const NestedPump::Range pump = functionAt(REL::ID{ 0, 0, 2228998 });
+		static const std::array<NestedPump::Range, 2> outer{ functionAt(REL::ID{ 847266, 2228915, 2228915 }), functionAt(REL::ID{ 1125396, 2718225, 4484191 }) };
 		void*      frames[48];
 		const auto count = RtlCaptureStackBackTrace(1, static_cast<unsigned long>(std::size(frames)), frames, nullptr);
 		std::array<std::uintptr_t, std::size(frames)> addresses{};
@@ -1040,10 +1044,42 @@ namespace MainThread
 	}
 }
 
+namespace
+{
+	RuntimeSupport::Version ToSupport(const REL::Version& a_version)
+	{
+		return { a_version.major(), a_version.minor(), a_version.patch(), a_version.build() };
+	}
+
+	// The game's save folder, My Games\<name>: F4SE 0.7.1 and later say; old-gen's 0.6.23 has no such call (its game
+	// always uses Fallout4), and calling it there would jump through whatever follows its interface.
+	std::string_view SaveFolderName(const F4SE::QueryInterface* a_f4se)
+	{
+		return RuntimeSupport::HasSaveFolderName(ToSupport(a_f4se->F4SEVersion())) ? a_f4se->GetSaveFolderName() : RuntimeSupport::DEFAULT_SAVE_FOLDER;
+	}
+
+	void OnFrame();  // the F4SE permanent task, above
+}
+
+// Old-gen's F4SE (0.6.23) asks every plugin through this before loading it, and never reads F4SEPlugin_Version; F4SE 0.7
+// never calls it. Yes on 1.10.163 only: next-gen and the Anniversary update are the version data's business.
+F4SE_PLUGIN_QUERY(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info)
+{
+	const auto data = F4SE::PluginVersionData::GetSingleton();
+	if (a_info) {
+		const auto version = data ? data->GetPluginVersion() : REL::Version{};
+		a_info->infoVersion = F4SE::PluginInfo::kVersion;
+		a_info->name = data ? data->GetPluginName().data() : "F4Multiplayer";
+		a_info->version = (static_cast<std::uint32_t>(version.major()) << 24) | (static_cast<std::uint32_t>(version.minor()) << 16) |
+		                  (static_cast<std::uint32_t>(version.patch() & 0xFFF) << 4);
+	}
+	return a_f4se && RuntimeSupport::QueryAccepts(ToSupport(a_f4se->RuntimeVersion()), a_f4se->IsEditor());
+}
+
 F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
-	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
+	const auto notKept = Log::RotateBeforeInit(SaveFolderName(a_f4se));
 	// 192 of 320 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two), HavokGuard::Install's two detours (2 x 56), and InertShots::Install's jump (a
 	// 14-byte branch stub and a 10-byte continuation).
@@ -1055,6 +1091,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	}
 
 	REX::INFO("F4Multiplayer loaded");
+	REX::INFO("Runtime: {} (F4SE {})", Runtime::Describe(), a_f4se->F4SEVersion());  // one DLL for every runtime (Runtime.h)
 	if constexpr (sizeof(F4MP_BUILD_LABEL) > 1) {
 		REX::INFO("F4Multiplayer build {}", F4MP_BUILD_LABEL);  // a release candidate names itself
 	}
@@ -1069,7 +1106,13 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 		return false;
 	}
 
-	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
+	// The frame's driver: F4SE's permanent task, or on old-gen's F4SE, which has none, a thread of ours (FrameDriver.h).
+	const auto tasks = F4SE::GetTaskInterface();
+	if (tasks && RuntimeSupport::HasPermanentTasks(tasks->Version())) {
+		tasks->AddTaskPermanent(OnFrame);
+	} else if (!FrameDriver::Start(OnFrame, [] { return gameDataReady && Quitting(); })) {
+		return false;
+	}
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)

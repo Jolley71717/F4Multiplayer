@@ -20,6 +20,17 @@ namespace FrameClock
 			static const RE::BSTimer* timer = RE::BSTimer::GetSingleton();
 			return timer;
 		}
+
+		// The timer's mark of the frame: the 64-bit field at +18, the one this has always read (BSTimer::lastTime in the
+		// CommonLibF4 it was written against). The library now names +18 realDeltaMs on 1.11.240 and puts lastTime at +20
+		// there (+18 on old-gen and next-gen, BSTimer::QLastTime); read by offset, 1.11.240 reads what it always did.
+		// Which of the two is the better mark there is for a test on the rig, not for a library switch.
+		constexpr std::size_t MARK_OFFSET = 0x18;
+
+		std::uint64_t Mark(const RE::BSTimer* a_timer)
+		{
+			return *reinterpret_cast<const std::uint64_t*>(reinterpret_cast<const std::byte*>(a_timer) + MARK_OFFSET);
+		}
 	}
 
 	Clock::time_point Now()
@@ -30,7 +41,7 @@ namespace FrameClock
 			return wall;
 		}
 		std::scoped_lock l{ lock };
-		return frames.Now(wall, timer->lastTime, EngineClock::FrameSeconds(timer->delta, timer->realTimeDelta));
+		return frames.Now(wall, Mark(timer), EngineClock::FrameSeconds(timer->delta, timer->realTimeDelta));
 	}
 
 	Clock::time_point Previous()
@@ -41,13 +52,13 @@ namespace FrameClock
 			return wall;
 		}
 		std::scoped_lock l{ lock };
-		return frames.Previous(wall, timer->lastTime, EngineClock::FrameSeconds(timer->delta, timer->realTimeDelta));
+		return frames.Previous(wall, Mark(timer), EngineClock::FrameSeconds(timer->delta, timer->realTimeDelta));
 	}
 
 	Raw Read()
 	{
 		const auto timer = Timer();
-		return timer ? Raw{ timer->delta, timer->realTimeDelta, timer->lastTime, true } : Raw{};
+		return timer ? Raw{ timer->delta, timer->realTimeDelta, Mark(timer), true } : Raw{};
 	}
 
 	void SetStamp(Stamp a_stamp) { stamp.store(a_stamp, std::memory_order_relaxed); }

@@ -1,4 +1,5 @@
 ﻿#include "game/Puppets.h"
+#include "Runtime.h"
 
 #include "game/AimPoint.h"
 #include "game/ClickWatch.h"
@@ -118,15 +119,18 @@ namespace Puppets
 		// the actor's movement state (+C9CB00; FLT_MIN takes the race's own turn rate, then 1 and 1, as
 		// AIProcess::SetHeadTrackPathingFaceTarget passes), the aim modifier reads it back through +C9CC80, and
 		// Actor::ClearLookAtTarget forgets it (+C9CF00).
-		constexpr REL::ID SET_LOOK_AT{ 2230283 };
-		constexpr REL::ID LOOK_AT_POINT{ 2230288 };
-		constexpr REL::ID CLEAR_LOOK_AT{ 2230291 };
+		constexpr REL::ID SET_LOOK_AT{ 0, 0, 2230283 };
+		constexpr REL::ID LOOK_AT_POINT{ 0, 0, 2230288 };
+		constexpr REL::ID CLEAR_LOOK_AT{ 0, 0, 2230291 };
 
 		// The engine reaches the point through the actor's mover and movement controller, which it does not
 		// check for: an actor without them (no 3D yet) is left alone.
+		// The three are 1.11.240's (old-gen and next-gen not read yet): without them a stand-in does not aim, said once in
+		// the log.
 		bool CanAim(const RE::Actor* a_actor)
 		{
-			return a_actor->actorMover != nullptr && a_actor->movementController.get() != nullptr;
+			static const Runtime::Feature feature{ "Puppets: aim", { SET_LOOK_AT, LOOK_AT_POINT, CLEAR_LOOK_AT } };
+			return feature.On() && a_actor->actorMover != nullptr && a_actor->movementController.get() != nullptr;
 		}
 
 		void SetAimPoint(RE::Actor* a_actor, const AimPoint::Point& a_point)
@@ -134,7 +138,7 @@ namespace Puppets
 			if (!CanAim(a_actor)) {
 				return;
 			}
-			static REL::Relocation<void (*)(RE::Actor*, RE::NiPoint3&, float, float, float)> setLookAt{ SET_LOOK_AT };
+			static Runtime::Relocation<void (*)(RE::Actor*, RE::NiPoint3&, float, float, float)> setLookAt{ SET_LOOK_AT };
 			RE::NiPoint3 point{ a_point.x, a_point.y, a_point.z };
 			setLookAt(a_actor, point, std::numeric_limits<float>::min(), 1.0f, 1.0f);
 		}
@@ -144,7 +148,7 @@ namespace Puppets
 			if (!CanAim(a_actor)) {
 				return std::nullopt;
 			}
-			static REL::Relocation<bool (*)(const RE::Actor*, RE::NiPoint3&)> lookAtPoint{ LOOK_AT_POINT };
+			static Runtime::Relocation<bool (*)(const RE::Actor*, RE::NiPoint3&)> lookAtPoint{ LOOK_AT_POINT };
 			RE::NiPoint3 point;
 			if (!lookAtPoint(a_actor, point)) {
 				return std::nullopt;
@@ -157,7 +161,7 @@ namespace Puppets
 			if (!CanAim(a_actor)) {
 				return;
 			}
-			static REL::Relocation<void (*)(RE::Actor*)> clearLookAt{ CLEAR_LOOK_AT };
+			static Runtime::Relocation<void (*)(RE::Actor*)> clearLookAt{ CLEAR_LOOK_AT };
 			clearLookAt(a_actor);
 		}
 
@@ -521,14 +525,22 @@ namespace Puppets
 
 		// AIProcess::GetQueuedModifyInitialAnimationPose (+D343A0): set by AIProcess::DoUpdate3dModel when it rebuilt an
 		// actor's 3D (and so its animation graph) before the graph's subgraphs were loaded, so it could not set the graph up.
-		constexpr REL::ID QUEUED_INITIAL_POSE{ 2232337 };
+		constexpr REL::ID QUEUED_INITIAL_POSE{ 0, 0, 2232337 };
 		// (+CFDD10) whether the actor's subgraph sets (its middle-high process's three) are loaded, asked at a priority;
 		// Actor::Update asks at 7.
-		constexpr REL::ID SUBGRAPHS_LOADED{ 2231748 };
+		constexpr REL::ID SUBGRAPHS_LOADED{ 0, 0, 2231748 };
 		constexpr std::uint32_t SUBGRAPH_PRIORITY = 7;
 
 		// ExtraDataList::OverrideEssential(bool) (+2929C0): the reference's own essential setting, over its base's (see SetDown).
-		constexpr REL::ID OVERRIDE_ESSENTIAL{ 2190653 };
+		constexpr REL::ID OVERRIDE_ESSENTIAL{ 0, 0, 2190653 };
+
+		// The two above are 1.11.240's (old-gen and next-gen not read yet): without them a rebuilt graph is left as the
+		// engine left it, said once in the log.
+		bool GraphSetUpKnown()
+		{
+			static const Runtime::Feature feature{ "Puppets: rebuilt graph set-up", { QUEUED_INITIAL_POSE, SUBGRAPHS_LOADED } };
+			return feature.On();
+		}
 
 		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
 		std::atomic<std::uint64_t> graphsSetUp{ 0 };
@@ -542,11 +554,11 @@ namespace Puppets
 		bool SetUpRebuiltGraph(RE::Actor* a_actor, Puppet& a_puppet)
 		{
 			const auto process = a_actor->currentProcess;
-			if (!process || !process->middleHigh) {
+			if (!process || !process->middleHigh || !GraphSetUpKnown()) {
 				return false;
 			}
-			static REL::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
-			static REL::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
+			static Runtime::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
+			static Runtime::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
 			// Asked for (ForceGraphSetUp): set up whatever the engine says, once, as a remedy for a graph that plays nothing.
 			const bool forced = a_puppet.forceSetUp;
 			const bool wasQueued = queued(process);
@@ -922,8 +934,11 @@ namespace Puppets
 		if (!process || !process->middleHigh) {
 			return "setup=no process";
 		}
-		static REL::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
-		static REL::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
+		if (!GraphSetUpKnown()) {
+			return "setup=not known on " + Runtime::Describe();
+		}
+		static Runtime::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
+		static Runtime::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
 		std::uint32_t setUps = 0;
 		{
 			std::scoped_lock l{ lock };
@@ -966,8 +981,11 @@ namespace Puppets
 		// essential-down that is neither back up at once (SetLifeState alive). The kEssential that SuppressBehavior sets
 		// was gone by then: laid down, the stand-in got up 20 ms later, every time (rig, 2026-10-20). Its base is a settler
 		// the world's own settlers share, never made essential itself.
-		static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideEssential{ OVERRIDE_ESSENTIAL };
-		if (a_actor->extraList) {
+		// 1.11.240's (old-gen and next-gen not read yet): without it the stand-in is laid down all the same and gets up at
+		// once, said once in the log.
+		static const Runtime::Feature essential{ "Puppets: downed stand-ins stay down", { OVERRIDE_ESSENTIAL } };
+		static Runtime::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideEssential{ OVERRIDE_ESSENTIAL };
+		if (a_actor->extraList && essential.On()) {
 			overrideEssential(a_actor->extraList.get(), a_down);
 		}
 		using BoolFlag = RE::Actor::BOOL_FLAGS;
