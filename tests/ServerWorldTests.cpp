@@ -426,6 +426,16 @@ TEST("server world: damage a player took off their copy of an NPC goes to the ga
 	REQUIRE(refused.size() == 1);
 	CHECK(refused[0].why == Why::kDeadThere);
 	CHECK(refused[0].playerId == alice);
+	// Carol neither runs the NPC nor ran it lately: her answer to Bob's hit goes nowhere (it would refund his copy a hit
+	// Alice took off).
+	f.fake->Deliver(3, Answer(NPC, 11, bob, Why::kDeadThere, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+	// Alice says "not mine" without echoing the damage (0): nothing to send on; Bob is told it can't be stood by.
+	f.fake->Deliver(1, Answer(NPC, 12, bob, Why::kNotTheRunner, 0.0f));
+	const auto unsent = Answers(Received(f, 2));
+	REQUIRE(unsent.size() == 1);
+	CHECK(unsent[0].why == Why::kNoHealthThere);
+	CHECK(unsent[0].seq == 12);
 }
 
 TEST("server world: numbered damage nobody can take is refused to its sender with the reason: nobody runs it, the sender runs it, the session has it dead, over budget")

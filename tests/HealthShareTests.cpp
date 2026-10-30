@@ -946,6 +946,11 @@ TEST("copy health: a report that would raise a copy is set to the owner's word l
 	CHECK(book.Check(RAIDER, 52.0f, t0 + 5s + CopyHealth::OURS_GRACE + FRAME) == 0.0f);
 	CHECK(Near(book.Heard(RAIDER, 52.0f, 65.0f, t0 + 15s), 55.0f, 0.01f));  // a stimpak there: 65 less our 10, still on its way
 	CHECK(book.Check(RAIDER, 55.0f, t0 + 20s) == 0.0f);
+	// A report at or under MIN_LEFT (the NPC all but dead there) is set as it comes, not floored above it; one just
+	// above it with more than that on its way stops at MIN_LEFT (its death comes as its own report).
+	CHECK(Near(book.Heard(RAIDER, 55.0f, 8.0f, t0 + 21s), CopyHealth::MIN_LEFT, 0.01f));
+	CHECK(book.Heard(RAIDER, 1.0f, 0.0f, t0 + 22s) == 0.0f);
+	book.Set(RAIDER, 55.0f);
 	// Refused after all (held too long there): the copy gets exactly the hit back, now (65: the owner's word), and
 	// nothing of it is ours to send.
 	CHECK(Near(book.Answered(RAIDER, second->seq, CopyHealth::Answer::kRefused), 10.0f, 0.01f));
@@ -972,10 +977,13 @@ TEST("copy health: a hit answered as ours to run keeps its drop, and one never a
 	CHECK(book.InFlight(RAIDER) == 0.0f);
 	CHECK(book.Refused() == 0);
 
-	// Health the copy couldn't take when its answer came (no 3D that frame) is parked, and comes with the next TakeLost.
+	// Health the copy couldn't take when its answer came (no 3D that frame) is parked, apart from what is lost, and
+	// comes with TakeParked.
 	book.Park(RAIDER, 4.0f);
-	CHECK(Near(book.TakeLost(RAIDER, t0 + 500ms), 4.0f, 0.01f));
-	CHECK(book.TakeLost(RAIDER, t0 + 600ms) == 0.0f);
+	CHECK(book.TakeLost(RAIDER, t0 + 500ms) == 0.0f);
+	CHECK(Near(book.TakeParked(RAIDER), 4.0f, 0.01f));
+	CHECK(book.TakeParked(RAIDER) == 0.0f);
+	CHECK(book.Lost() == 0.0f);
 
 	// A hit whose answer never comes (the runner crashed): given back once LOST_AFTER has passed, not before.
 	book.OurHit(RAIDER, t0 + 1s, 15.0f);
@@ -986,7 +994,7 @@ TEST("copy health: a hit answered as ours to run keeps its drop, and one never a
 	CHECK(Near(book.InFlight(RAIDER), 15.0f, 0.01f));
 	CHECK(Near(book.TakeLost(RAIDER, t0 + 1s + CopyHealth::LOST_AFTER), 15.0f, 0.01f));
 	CHECK(book.InFlight(RAIDER) == 0.0f);
-	CHECK(Near(book.Lost(), 19.0f, 0.01f));  // the parked 4 and the lost 15
+	CHECK(Near(book.Lost(), 15.0f, 0.01f));
 	CHECK(book.Answered(RAIDER, second->seq, CopyHealth::Answer::kApplied) == 0.0f);  // a late answer is nothing now
 
 	// Numbers count up over every copy, so an answer names one hit.

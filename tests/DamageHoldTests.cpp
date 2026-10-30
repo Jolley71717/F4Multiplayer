@@ -201,6 +201,7 @@ TEST("damage hold: every reason has a name for the log, and an answer for the fr
 	for (const auto why : { Why::kNotInWorld, Why::kNoOwnerYet, Why::kNotLoaded, Why::kExpired }) {
 		CHECK(DamageHold::Answer(why) == Out::kHeldTooLong);
 	}
+	CHECK(std::string_view{ Protocol::Name(Out::kHoldFull) } != "?");  // a full book answers that itself (WorldSync::TakeDamage)
 }
 
 TEST("log pace: one line per interval, counting what went by unlogged")

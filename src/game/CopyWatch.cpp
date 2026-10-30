@@ -79,6 +79,7 @@ namespace CopyWatch
 		float         healthRefunded = 0.0f;
 		std::uint32_t lostGiven = 0;       // damage of ours never answered (CopyHealth::LOST_AFTER), given back
 		float         healthLost = 0.0f;
+		std::uint32_t owedGiven = 0;       // refunds a copy couldn't take as they came (no 3D), given back later (Book::Park)
 		std::uint32_t leftToOwner = 0;  // throws' blows of ours on copies, left to the NPC's own game (OwnersToDeal)
 		std::uint32_t blastsThere = 0, blastsOurs = 0;  // explosions' blows on copies judged: its owner's game sets it off too / ours alone
 		std::uint32_t effectHits = 0;     // hits of ours on copies that put an effect on them (an enchantment's, a spell's: Book::OurEffect)
@@ -340,14 +341,13 @@ namespace CopyWatch
 			return a_health;  // one of our game's own, never shared: no copy of anyone's
 		}
 		const auto  owner = OtherOwner(wire);
-		const float inFlight = owner != 0 ? book.InFlight(wire) : 0.0f;
 		const float health = book.Heard(wire, a_before, a_health, Clock::now(), owner != 0);
 		if (owner != 0) {
 			++reportsSet;
 			if (reportLog.Take(Clock::now())) {
 				if (health < a_health - CopyHealth::SLACK) {
-					REX::INFO("CopyWatch: a report would raise our copy {:08X}{} (player {}'s) to {:.1f} health with {:.1f} of our hits on their way; set to {:.1f} (from {:.1f})",
-						a_refId, SpawnNote(a_refId, wire), owner, a_health, inFlight, health, a_before);
+					REX::INFO("CopyWatch: a report of {:.1f} health for our copy {:08X}{} (player {}'s), with {:.1f} of our hits on their way: set to {:.1f} (from {:.1f})", a_health, a_refId,
+						SpawnNote(a_refId, wire), owner, book.OnWay(wire), health, a_before);
 				} else {
 					REX::INFO("CopyWatch: a report set our copy {:08X}{} (player {}'s) to {:.1f} health (from {:.1f})", a_refId, SpawnNote(a_refId, wire), owner, health, a_before);
 				}
@@ -491,6 +491,17 @@ namespace CopyWatch
 			for (const auto& [actor, id] : copies) {
 				copiesSeen[id] = now;
 				auto& values = static_cast<RE::ActorValueOwner&>(*actor);
+				// A refund the copy couldn't take when its answer came (Answered parked it): given back now it is seen.
+				if (const float owed = book.TakeParked(id); owed > 0.0f) {
+					const float was = values.GetActorValue(*info);
+					values.RestoreActorValue(*info, owed);
+					book.Set(id, values.GetActorValue(*info));
+					++owedGiven;
+					if (answerLog.Take(now)) {
+						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) was owed {:.1f} health from a refused hit; given back ({:.1f} -> {:.1f})", actor->GetFormID(),
+							SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), owed, was, values.GetActorValue(*info));
+					}
+				}
 				// A damage of ours never answered (CopyHealth::LOST_AFTER: the runner crashed, the server restarted): given back,
 				// logged as lost. The copy can't stand below the NPC for good.
 				if (const float lost = book.TakeLost(id, now); lost > 0.0f) {
@@ -613,9 +624,9 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={}",
-			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, gainsTaken, healthTaken, reportsSet, damageSent, damageTotal, answersTaken, refundsGiven, healthRefunded, lostGiven, healthLost,
-			leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied);
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={}",
+			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, gainsTaken, healthTaken, reportsSet, damageSent, damageTotal, answersTaken, refundsGiven, healthRefunded, owedGiven, lostGiven,
+			healthLost, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied);
 	}
 
 	std::vector<Damage> TakeDamage()

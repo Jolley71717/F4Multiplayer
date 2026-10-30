@@ -1883,19 +1883,36 @@ void Server::Run()
 	// on its way) the refusal goes through as it is. A runner that changed since can't refuse the same hit twice (it is
 	// the one on record).
 	const auto handleDamageAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!allowEvent(a_player)) {
+		// Not against the event budget: an answer is a reply to a damage the server itself sent on (bounded by the
+		// hitter's budget), and one dropped here would leave the hitter's copy below the NPC for 30 s, then refund it.
+		if (!a_player.welcomed) {
 			return;
 		}
 		const auto answer = Protocol::DecodeDamageAnswer(a_data);
 		if (!answer || answer->playerId == a_player.id || answer->playerId == 0) {
 			return;
 		}
+		const auto owner = actorOwners.find(answer->refId);
+		const auto now = Clock::now();
+		// Only the game the damage could have gone to answers it: the runner on record, or one that ran the NPC until a
+		// moment ago (noteRan: a release or a takeover crossed the damage). Anyone else refusing a friend's hit would
+		// refund their copy a hit the runner took off.
+		if ((owner == actorOwners.end() || owner->second.playerId != a_player.id) && !wasFighting(a_player, answer->refId, now)) {
+			return;
+		}
+		// A damage the answerer didn't echo as it was (none, or more than all of it) can't be sent on or stood by.
+		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner && !(answer->health > 0.0f && answer->health <= 1.0f)) {
+			auto out = *answer;
+			out.playerId = a_player.id;
+			out.why = Protocol::DamageAnswer::Why::kNoHealthThere;
+			out.health = std::clamp(answer->health, 0.0f, 1.0f);
+			answerDamage(answer->playerId, out);
+			return;
+		}
 		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner) {
-			const auto owner = actorOwners.find(answer->refId);
 			if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
 				if (const auto key = keyOfPlayer(owner->second.playerId)) {
 					++damageRerouted;
-					const auto now = Clock::now();
 					if (now - damageReroutedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 						damageReroutedLogged = now;
 						log(std::format("server: damage on {:08X} from player {} sent on to player {}, who runs it now; player {} no longer does ({} sent on since the last such line)",

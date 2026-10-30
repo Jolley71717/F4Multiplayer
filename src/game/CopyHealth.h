@@ -315,8 +315,11 @@ namespace CopyHealth
 					const float scale = a_maximum / entry.maximum;
 					*entry.health *= scale;
 					for (auto& flight : entry.inFlight) {
-						flight.amount *= scale;  // what is on its way is a share of the maximum too
+						flight.amount *= scale;  // what is on its way is a share of the maximum too, and so is what is owed
 					}
+					entry.ours *= scale;
+					entry.lost *= scale;
+					entry.parked *= scale;
 				}
 				entry.maximum = a_maximum;
 			}
@@ -445,10 +448,11 @@ namespace CopyHealth
 			float health = a_health;
 			if (!a_copy) {
 				entry.inFlight.clear();  // ours to run: its health here is the truth, whatever was on its way
-			} else if (const float onWay = InFlight(a_id) + entry.ours; onWay > 0.0f) {
+			} else if (const float onWay = OnWay(a_id); onWay > 0.0f && a_health > MIN_LEFT) {
 				// What our hits took that is still on its way (sent and unanswered, or booked this frame and not yet sent)
 				// comes off the report: the runner's game hasn't taken it off yet. A refusal gives it back to the report's
-				// figure, so the copy never ends up above the runner's word by a refunded hit.
+				// figure, so the copy never ends up above the runner's word by a refunded hit. Never below MIN_LEFT: the
+				// NPC's death comes as its own report (a report at or under MIN_LEFT itself is set as it comes).
 				health = (std::max)(MIN_LEFT, a_health - onWay);
 			}
 			entry.health = health;
@@ -519,17 +523,31 @@ namespace CopyHealth
 			return sum;
 		}
 
-		// Health the copy is owed that it couldn't take when its answer came (no 3D that frame): given back with TakeLost
-		// once it is seen again.
+		// ... and what our hits took that is booked but not sent yet, with it: everything a report can't have yet.
+		[[nodiscard]] float OnWay(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it == entries.end() ? 0.0f : InFlight(a_id) + it->second.ours;
+		}
+
+		// Health the copy is owed from a refusal it couldn't take when the answer came (no 3D that frame): given back with
+		// TakeParked once it is seen again.
 		void Park(std::uint32_t a_id, float a_amount)
 		{
 			if (const auto it = entries.find(a_id); it != entries.end() && a_amount > 0.0f) {
-				it->second.lost += a_amount;
+				it->second.parked += a_amount;
 			}
 		}
 
-		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT), and what was
-		// parked (Park): given up on, and to be given back to the copy now (0: nothing).
+		// What was parked for the copy (Park), to be given back now (0: nothing).
+		float TakeParked(std::uint32_t a_id)
+		{
+			const auto it = entries.find(a_id);
+			return it == entries.end() ? 0.0f : std::exchange(it->second.parked, 0.0f);
+		}
+
+		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT): given up on, and
+		// to be given back to the copy now (0: nothing).
 		float TakeLost(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto it = entries.find(a_id);
@@ -592,7 +610,8 @@ namespace CopyHealth
 			bool                             unknown = false;  // ... and one of them said nothing
 			bool                             figured = false;  // ... and one of them said what it took
 			std::vector<Flight>              inFlight;         // sent (TakeOurs) and not answered yet (Answered)
-			float                            lost = 0.0f;      // given up on, or parked, not yet given back (TakeLost)
+			float                            lost = 0.0f;      // given up on, not yet given back (TakeLost)
+			float                            parked = 0.0f;    // refused and owed to the copy, not yet given back (Park, TakeParked)
 			std::optional<std::pair<float, Clock::time_point>> reportedDrop;  // a drop a report found with no hit of ours booked yet (Heard): ours if a hit's event follows within JUDGE_AFTER
 			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
 			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)

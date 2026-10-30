@@ -618,8 +618,9 @@ namespace Protocol
 			kNoHealthThere,  // the runner: the NPC has no maximum health to take a share of
 			kHeldTooLong,    // the runner: held (a loading screen, not loaded there) past its hold
 			kOverBudget,     // the server: the sender's event budget was spent
+			kHoldFull,       // the runner: it holds as many hits as it will already
 		};
-		static constexpr Why LAST_WHY = Why::kOverBudget;
+		static constexpr Why LAST_WHY = Why::kHoldFull;
 
 		std::uint32_t refId = 0;
 		std::uint32_t seq = 0;
@@ -638,7 +639,7 @@ namespace Protocol
 		case DamageAnswer::Why::kNobodyRuns:
 			return "nobody runs it";
 		case DamageAnswer::Why::kYouRunIt:
-			return "we run it ourselves";
+			return "the sender runs it";
 		case DamageAnswer::Why::kNotTheRunner:
 			return "the game it went to doesn't run it";
 		case DamageAnswer::Why::kDeadThere:
@@ -651,6 +652,8 @@ namespace Protocol
 			return "the runner's game held it too long";
 		case DamageAnswer::Why::kOverBudget:
 			return "over our event budget";
+		case DamageAnswer::Why::kHoldFull:
+			return "the runner's game holds as many hits as it will";
 		}
 		return "?";
 	}

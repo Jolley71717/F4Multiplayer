@@ -2167,13 +2167,15 @@ namespace WorldSync
 						REX::WARN("WorldSync: player {}'s damage on {:08X} ({:.0f}% of its health) refused: {} hits held already ({} refused since the last line)", a_from, a_refId,
 							a_damage * 100.0f, DamageHold::MAX_HELD, droppedDamageLog.Since());
 					}
-					AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kHeldTooLong, a_damage);
+					AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kHoldFull, a_damage);
 				}
 				break;
 			case DamageHold::Verdict::kDrop:
 				// Refused, and the friend told why: their copy gives the health back at once. Up to 0.10.0 this was a log line
-				// here and a heal there. One for an NPC another game runs is the server's to send on to that game (its table
-				// was ahead of ours, or ours behind): it answers the friend itself.
+				// here and a heal there. One for an NPC another game runs: the server sends damage to the runner it has on
+				// record, and its grant to us comes ahead of any damage addressed to us on the same ordered connection, so
+				// our table naming another game means we let the NPC go since (a release or a hand-off on its way to the
+				// server): the server sends the hit on to whoever runs it now, and answers the friend itself.
 				++(decision.why == DamageHold::Why::kNotOurs ? damageIgnored : damageDropped);
 				if (droppedDamageLog.Due(a_now)) {
 					REX::INFO("WorldSync: player {}'s damage on {:08X} ({:.0f}% of its health) refused: {} ({} refused since the last line)", a_from, a_refId, a_damage * 100.0f,
