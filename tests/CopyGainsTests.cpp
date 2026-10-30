@@ -107,45 +107,60 @@ TEST("copy gains: a gain taken back never leaves the copy with less than MIN_LEF
 	CHECK(std::abs(give - (CopyHealth::MIN_LEFT - 40.0f)) < 0.01f);
 }
 
-TEST("copy gains: without a maximum the gain is judged by rounding alone, and a report held after our hits still stands later")
+TEST("copy gains: without a maximum the gain is judged by rounding alone, and a report from before our hit never heals it while the hit is unanswered")
 {
 	Book book;
 	CHECK(book.Check(GHOUL, 80.0f, T0) == 0.0f);
 	book.OurHit(GHOUL, T0 + milliseconds{ 50 }, 10.0f);
 	CHECK(book.Check(GHOUL, 70.0f, T0 + milliseconds{ 50 }) == 0.0f);
-	// The owner's report from before our hit reached it: held (Heard), and stands once our hits are over.
+	const auto sent = book.TakeOurs(GHOUL, T0 + milliseconds{ 50 });
+	REQUIRE(sent);
+	// The owner's report from before our hit reached it: the copy keeps the hit, for as long as it is on its way (up to
+	// 0.10.0 the report stood a second after the hit, as if the hit had arrived: a dropped one was healed back).
 	CHECK(book.Heard(GHOUL, 70.0f, 80.0f, T0 + milliseconds{ 100 }) == 70.0f);
-	CHECK(book.Holds(GHOUL));
 	CHECK(book.Check(GHOUL, 70.0f, T0 + milliseconds{ 200 }) == 0.0f);
-	CHECK(book.Check(GHOUL, 70.0f, T0 + milliseconds{ 50 } + CopyHealth::OURS_GRACE + milliseconds{ 50 }) == 10.0f);
+	CHECK(book.Check(GHOUL, 70.0f, T0 + milliseconds{ 50 } + CopyHealth::OURS_GRACE + milliseconds{ 50 }) == 0.0f);
+	CHECK(book.Check(GHOUL, 70.0f, T0 + std::chrono::seconds{ 20 }) == 0.0f);
+	// Answered as taken off: the owner's next report says where it stands (80: it healed there meanwhile).
+	CHECK(book.Answered(GHOUL, sent->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(book.Heard(GHOUL, 70.0f, 80.0f, T0 + std::chrono::seconds{ 21 }) == 80.0f);
 	book.Set(GHOUL, 80.0f);
-	CHECK(!book.Holds(GHOUL));
-	CHECK(book.Check(GHOUL, 80.1f, T0 + milliseconds{ 2000 }) == 0.0f);
-	CHECK(book.Check(GHOUL, 80.1f, T0 + milliseconds{ 2000 } + CopyHealth::JUDGE_AFTER) < 0.0f);
+	CHECK(book.Check(GHOUL, 80.1f, T0 + std::chrono::seconds{ 22 }) == 0.0f);
+	CHECK(book.Check(GHOUL, 80.1f, T0 + std::chrono::seconds{ 22 } + CopyHealth::JUDGE_AFTER) < 0.0f);
 }
 
-TEST("copy gains: a report held after our hits stands where it said once the copy's own heal got there first, not below it")
+TEST("copy gains: a copy's own heal is taken back to the owner's word less our hit on its way, and stands at the owner's word once the hit is answered")
 {
 	Book book;
 	CHECK(book.Check(GHOUL, 100.0f, T0, 100.0f) == 0.0f);
 	book.OurHit(GHOUL, T0 + milliseconds{ 50 }, 20.0f);
 	CHECK(book.Check(GHOUL, 80.0f, T0 + milliseconds{ 50 }, 100.0f) == 0.0f);
-	CHECK(book.TakeOurs(GHOUL) == 20.0f);
-	// The owner's report from before our hit reached it: held, the copy left at 80.
+	const auto sent = book.TakeOurs(GHOUL, T0 + milliseconds{ 50 });
+	REQUIRE(sent);
+	CHECK(sent->amount == 20.0f);
+	// The owner's report from before our hit reached it: the copy stays at 80 (100 less the 20 on its way).
 	CHECK(book.Heard(GHOUL, 80.0f, 100.0f, T0 + milliseconds{ 100 }) == 80.0f);
-	CHECK(book.Holds(GHOUL));
-	// Once our hits are over, the copy's own heal (its mutation) has it at the report's figure already: the report stands
-	// there, and nothing is taken back. Before, the gain was taken back to 80, below the owner's 100 until its next report.
+	// The copy's own heal (its mutation) takes it to 100: a gain of its own, taken back to 80, where the NPC stands in its
+	// game once our hit lands there.
 	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 1100 }, 100.0f) == 0.0f);
-	CHECK(!book.Holds(GHOUL));
+	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 1100 } + CopyHealth::JUDGE_AFTER, 100.0f) == -20.0f);
+	book.Set(GHOUL, 80.0f);
+	// Answered, and the owner's next report says 100 after all (it healed there): the copy follows, and nothing is a gain.
+	CHECK(book.Answered(GHOUL, sent->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(book.Heard(GHOUL, 80.0f, 100.0f, T0 + milliseconds{ 1300 }) == 100.0f);
+	book.Set(GHOUL, 100.0f);
+	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 1400 }, 100.0f) == 0.0f);
 	CHECK(Near(book.Health(GHOUL), 100.0f));
-	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 1100 } + CopyHealth::JUDGE_AFTER, 100.0f) == 0.0f);
 	// Past the report's figure: only what it has beyond that is its own.
 	book.Set(GHOUL, 80.0f);
 	book.OurHit(GHOUL, T0 + milliseconds{ 2000 }, 5.0f);
 	CHECK(book.Check(GHOUL, 75.0f, T0 + milliseconds{ 2000 }, 100.0f) == 0.0f);
-	CHECK(book.Heard(GHOUL, 75.0f, 90.0f, T0 + milliseconds{ 2050 }) == 85.0f);
-	CHECK(book.Holds(GHOUL));
+	CHECK(book.Heard(GHOUL, 75.0f, 90.0f, T0 + milliseconds{ 2050 }) == 85.0f);  // the 5 not sent yet is on its way too
+	const auto second = book.TakeOurs(GHOUL, T0 + milliseconds{ 2050 });
+	REQUIRE(second);
+	CHECK(book.Answered(GHOUL, second->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(book.Heard(GHOUL, 85.0f, 90.0f, T0 + milliseconds{ 2100 }) == 90.0f);
+	book.Set(GHOUL, 90.0f);
 	CHECK(book.Check(GHOUL, 95.0f, T0 + milliseconds{ 3100 }, 100.0f) == 0.0f);
 	CHECK(book.Check(GHOUL, 95.0f, T0 + milliseconds{ 3100 } + CopyHealth::JUDGE_AFTER, 100.0f) == -5.0f);
 }

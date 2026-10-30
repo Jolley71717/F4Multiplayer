@@ -310,6 +310,8 @@ namespace WorldSync
 		std::uint32_t                     damageIgnored = 0;   // ... that came for one we don't run (its runner takes it off)
 		std::uint32_t                     damageDropped = 0;   // ... dropped for good for any other reason (DamageHold::Why)
 		std::uint32_t                     damageLate = 0;      // ... taken off after a hold (DamageHold)
+		std::uint32_t                     damageAnswered = 0;     // friends' numbered damage answered as applied (AnswerDamage)
+		std::uint32_t                     damageRefusedHere = 0;  // ... answered as refused, for any reason
 		// Friends' damage on NPCs we run that can't be taken off yet (DamageHold): a loading screen, the server's word
 		// that we run it on its way, the NPC not loaded here yet. Tried again every frame in the world, before the
 		// NPC's health is shared.
@@ -2115,9 +2117,22 @@ namespace WorldSync
 			}
 		}
 
+		// The answer to a friend's numbered damage on an NPC (Protocol::DamageAnswer: a_seq their number for it, a_from whose
+		// it is), to the server for them: taken off here, or why not. Their copy keeps the drop until it comes, and gives it
+		// back on a refusal (CopyHealth). An unnumbered one (an older sim, the bot) is answered to nobody.
+		void AnswerDamage(std::uint32_t a_refId, std::uint32_t a_seq, std::uint32_t a_from, Protocol::DamageAnswer::Why a_why, float a_damage)
+		{
+			if (a_seq == 0 || a_from == 0) {
+				return;
+			}
+			Queue(Protocol::Encode(Protocol::DamageAnswer{ a_refId, a_seq, a_from, a_why, std::clamp(a_damage, 0.0f, 1.0f) }, Protocol::MessageType::kReportDamageAnswer));
+			++(a_why == Protocol::DamageAnswer::Why::kApplied ? damageAnswered : damageRefusedHere);
+		}
+
 		// Takes a friend's damage (a fraction of the NPC's maximum) off the NPC we run, if it can be now (DamageHold::Decide):
-		// what can't be yet is held (a_retry: it is held already, so it stays), what can never be is dropped.
-		DamageHold::Decision TakeDamage(std::uint32_t a_refId, float a_damage, Clock::time_point a_now, bool a_retry)
+		// what can't be yet is held (a_retry: it is held already, so it stays), what can never be is refused. Either way the
+		// friend is answered (AnswerDamage), at once or at the end of the hold.
+		DamageHold::Decision TakeDamage(std::uint32_t a_refId, float a_damage, Clock::time_point a_now, bool a_retry, std::uint32_t a_seq, std::uint32_t a_from)
 		{
 			// A spawn's: our own NPC (a copy of a friend's is not ours to hurt). A plugin's reference is the same everywhere.
 			const auto local = Protocol::IsSpawnRef(a_refId) ? Spawns::LocalOf(a_refId) : IsShareableRef(a_refId) ? a_refId : 0;
@@ -2141,29 +2156,30 @@ namespace WorldSync
 				if (a_retry) {
 					break;  // held already, and stays
 				}
-				if (heldDamage.Hold(a_refId, a_damage, decision.why, a_now)) {
+				if (heldDamage.Hold({ a_refId, a_damage, decision.why, a_now, a_seq, a_from })) {
 					if (heldDamageLog.Due(a_now)) {
-						REX::INFO("WorldSync: player's damage on {:08X} ({:.0f}% of its health) held: {} ({} held since the last line, {} waiting)", a_refId,
+						REX::INFO("WorldSync: player {}'s damage on {:08X} ({:.0f}% of its health) held: {} ({} held since the last line, {} waiting)", a_from, a_refId,
 							a_damage * 100.0f, DamageHold::Name(decision.why), heldDamageLog.Since(), heldDamage.Size());
 					}
 				} else {
 					++damageDropped;
 					if (droppedDamageLog.Due(a_now)) {
-						REX::WARN("WorldSync: player's damage on {:08X} ({:.0f}% of its health) dropped: {} NPCs held for already ({} dropped since the last line)", a_refId,
+						REX::WARN("WorldSync: player {}'s damage on {:08X} ({:.0f}% of its health) refused: {} hits held already ({} refused since the last line)", a_from, a_refId,
 							a_damage * 100.0f, DamageHold::MAX_HELD, droppedDamageLog.Since());
 					}
+					AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kHeldTooLong, a_damage);
 				}
 				break;
 			case DamageHold::Verdict::kDrop:
-				if (decision.why == DamageHold::Why::kNotOurs) {
-					++damageIgnored;  // its runner takes it off: every game but the sender's hears of it
-					break;
-				}
-				++damageDropped;
+				// Refused, and the friend told why: their copy gives the health back at once. Up to 0.10.0 this was a log line
+				// here and a heal there. One for an NPC another game runs is the server's to send on to that game (its table
+				// was ahead of ours, or ours behind): it answers the friend itself.
+				++(decision.why == DamageHold::Why::kNotOurs ? damageIgnored : damageDropped);
 				if (droppedDamageLog.Due(a_now)) {
-					REX::INFO("WorldSync: player's damage on {:08X} ({:.0f}% of its health) dropped: {} ({} dropped since the last line)", a_refId, a_damage * 100.0f,
+					REX::INFO("WorldSync: player {}'s damage on {:08X} ({:.0f}% of its health) refused: {} ({} refused since the last line)", a_from, a_refId, a_damage * 100.0f,
 						DamageHold::Name(decision.why), droppedDamageLog.Since());
 				}
+				AnswerDamage(a_refId, a_seq, a_from, DamageHold::Answer(decision.why), a_damage);
 				break;
 			case DamageHold::Verdict::kApply: {
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
@@ -2173,6 +2189,9 @@ namespace WorldSync
 				if (a_retry) {
 					++damageLate;
 				}
+				// Before the health report that has it (ShareHealth, later this frame): the friend's copy learns the hit
+				// landed, then where the NPC stands.
+				AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kApplied, a_damage);
 				// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
 				if (values.GetActorValue(*info) <= 0.0f && !Protocol::IsSpawnRef(a_refId)) {
 					std::erase_if(friendsBlows, [&](const auto& a_entry) { return a_now - a_entry.second > FRIENDS_BLOW_KEEP; });
@@ -2199,16 +2218,17 @@ namespace WorldSync
 				return;
 			}
 			heldDamage.Retry([&](DamageHold::Held& a_held) {
-				const auto decision = TakeDamage(a_held.id, (std::min)(a_held.fraction, 1.0f), a_now, true);
+				const auto decision = TakeDamage(a_held.id, (std::min)(a_held.fraction, 1.0f), a_now, true, a_held.seq, a_held.from);
 				a_held.why = decision.why;
 				return decision.verdict != DamageHold::Verdict::kHold;
 			});
 			for (const auto& gone : heldDamage.Expire(a_now)) {
 				++damageDropped;
 				if (droppedDamageLog.Due(a_now)) {
-					REX::INFO("WorldSync: player's damage on {:08X} ({:.0f}% of its health) dropped: {} ({}; {} dropped since the last line)", gone.id, gone.fraction * 100.0f,
+					REX::INFO("WorldSync: player {}'s damage on {:08X} ({:.0f}% of its health) refused: {} ({}; {} refused since the last line)", gone.from, gone.id, gone.fraction * 100.0f,
 						DamageHold::Name(DamageHold::Why::kExpired), DamageHold::Name(gone.why), droppedDamageLog.Since());
 				}
+				AnswerDamage(gone.id, gone.seq, gone.from, Protocol::DamageAnswer::Why::kHeldTooLong, gone.fraction);
 			}
 		}
 
@@ -2642,12 +2662,17 @@ namespace WorldSync
 		}
 	}
 
-	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage)
+	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage, std::uint32_t a_seq, std::uint32_t a_from)
 	{
 		if (!(a_damage > 0.0f && a_damage <= 1.0f)) {
 			return;
 		}
-		TakeDamage(a_refId, a_damage, Clock::now(), false);
+		TakeDamage(a_refId, a_damage, Clock::now(), false, a_seq, a_from);
+	}
+
+	void OnDamageAnswer(const Protocol::DamageAnswer& a_answer)
+	{
+		CopyWatch::Answered(a_answer.refId, a_answer.seq, a_answer.playerId, a_answer.why);
 	}
 
 	bool MayClaim(std::uint32_t a_refId, bool a_essential)
@@ -2804,8 +2829,8 @@ namespace WorldSync
 			ShareHealth(*info, Clock::now());
 		}
 		// What our hits took off copies of NPCs other games run: theirs to take off (their health comes back shared).
-		for (const auto& [wire, damage] : CopyWatch::TakeDamage()) {
-			Queue(Protocol::Encode(Protocol::ActorHealth{ wire, damage }, Protocol::MessageType::kReportDamage));
+		for (const auto& damage : CopyWatch::TakeDamage()) {
+			Queue(Protocol::Encode(Protocol::ActorHealth{ damage.id, damage.fraction, damage.seq }, Protocol::MessageType::kReportDamage));
 			++damageReported;
 		}
 		// Our hits (CopyHealth::Judge): our player's, and on a copy of an NPC another game runs, those of the actors our
@@ -3098,9 +3123,9 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Corrected(), killsRetried, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
-			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
+			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
 		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);

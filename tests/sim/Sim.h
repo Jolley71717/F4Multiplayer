@@ -265,8 +265,13 @@ namespace Sim
 		// companion's: CopyHealth::Credited), not when something else of ours or nothing killed it.
 		void Died(std::uint32_t a_ref, bool a_killed);
 		void Hurt(std::uint32_t a_ref, float a_health);
-		// What our player took off our copy of an NPC another game runs (a fraction of its maximum), as WorldSync sends it.
-		void Damage(std::uint32_t a_ref, float a_damage) { Send(Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage }, MT::kReportDamage), true); }
+		// What our player took off our copy of an NPC another game runs (a fraction of its maximum), as WorldSync sends it,
+		// numbered a_seq (0: unnumbered, answered to nobody).
+		void Damage(std::uint32_t a_ref, float a_damage, std::uint32_t a_seq = 0) { Send(Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage, a_seq }, MT::kReportDamage), true); }
+		// Our answer to a friend's numbered damage on an NPC we run (a_answer.playerId: whose hit), as WorldSync sends it.
+		void Answer(const Protocol::DamageAnswer& a_answer) { Send(Protocol::Encode(a_answer, MT::kReportDamageAnswer), true); }
+		// The answers to our damage the session passed on since the last call (kDamageAnswer).
+		std::vector<Protocol::DamageAnswer> TakeAnswers() { return std::exchange(answersHeard, {}); }
 		void Loot(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
 		void PickUp(std::uint32_t a_ref);
 		void Door(std::uint32_t a_ref, std::uint8_t a_open, std::uint8_t a_locked);
@@ -495,6 +500,7 @@ namespace Sim
 		std::map<std::uint32_t, std::vector<std::uint32_t>> npcGear;
 		std::map<std::uint32_t, float>                npcHealth;
 		std::vector<Protocol::ActorHealth>            damageHeard;
+		std::vector<Protocol::DamageAnswer>           answersHeard;
 		std::map<std::uint32_t, std::uint32_t>        killedBy;  // deaths the session told us of: whose kill (0: nobody's)
 		WorkshopCells::Waiting<WorkshopKey, Protocol::WorkshopItem> copies;  // the others' builds, waiting for their settlement's cell
 		std::set<WorkshopKey>                         copyKeys;
@@ -921,6 +927,7 @@ namespace Sim
 		npcGear.clear();
 		npcHealth.clear();
 		damageHeard.clear();
+		answersHeard.clear();
 		killedBy.clear();
 		copies.Clear();
 		copyKeys.clear();
@@ -1505,6 +1512,15 @@ namespace Sim
 			if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
 				if (damageHeard.size() < 4096) {
 					damageHeard.push_back(*msg);
+				}
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kDamageAnswer:
+			if (const auto msg = Protocol::DecodeDamageAnswer(a_data)) {
+				if (answersHeard.size() < 4096) {
+					answersHeard.push_back(*msg);
 				}
 			} else {
 				unless(false);

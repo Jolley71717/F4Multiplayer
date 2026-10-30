@@ -346,27 +346,203 @@ TEST("server world: a hit by an NPC the reporter's game can't name reaches its v
 	CHECK(damage[0].attacker == 0u);
 }
 
-TEST("server world: damage a player took off their copy of an NPC is relayed to the others as damage, never none, more than all of it, or for the dead")
+namespace
 {
-	Fixture f;
-	JoinAs(f, 1, "Alice");
-	JoinAs(f, 2, "Bob");
-	Clear(f, { 1, 2 });
+	auto CopyDamage(std::uint32_t a_ref, float a_fraction, std::uint32_t a_seq = 0)
+	{
+		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_fraction, a_seq }, MT::kReportDamage);
+	}
 
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.25f }, MT::kReportDamage));
-	const auto damage = Decoded(Received(f, 2), MT::kActorDamaged, Protocol::DecodeActorHealth);
+	auto Answer(std::uint32_t a_ref, std::uint32_t a_seq, std::uint32_t a_hitter, Protocol::DamageAnswer::Why a_why, float a_fraction)
+	{
+		return Protocol::Encode(Protocol::DamageAnswer{ a_ref, a_seq, a_hitter, a_why, a_fraction }, MT::kReportDamageAnswer);
+	}
+
+	std::vector<Protocol::DamageAnswer> Answers(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kDamageAnswer, [](auto a_data) { return Protocol::DecodeDamageAnswer(a_data); });
+	}
+
+	std::vector<Protocol::ActorHealth> Damaged(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kActorDamaged, Protocol::DecodeActorHealth);
+	}
+}
+
+TEST("server world: damage a player took off their copy of an NPC goes to the game that runs it alone, named as theirs, and never none, more than all of it, or on a runtime reference")
+{
+	using Why = Protocol::DamageAnswer::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
+	// Up to 0.10.0 it went to everyone but the sender, each game judging by its own table: with two tables a round trip
+	// behind, every game dropped it, and the hitter's copy was healed by the runner's next report.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.25f, 7));
+	const auto damage = Damaged(Received(f, 1));
 	REQUIRE(damage.size() == 1);
 	CHECK(damage[0].refId == NPC);
 	CHECK(damage[0].health == 0.25f);
-	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+	CHECK(damage[0].seq == 7);
+	CHECK(damage[0].playerId == bob);
+	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
+	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
+	CHECK(Answers(Received(f, 2)).empty());  // nothing to answer yet: the runner will
 
 	for (const float bad : { 0.0f, -0.5f, 1.5f }) {
-		f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, bad }, MT::kReportDamage));
+		f.fake->Deliver(2, CopyDamage(NPC, bad, 8));
 	}
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ RUNTIME, 0.2f }, MT::kReportDamage));
-	f.fake->Deliver(1, Death(NPC));
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Deliver(2, CopyDamage(RUNTIME, 0.2f, 9));
+	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+	CHECK(Answers(Received(f, 2)).empty());
+
+	// The runner's answer goes to the player whose hit it was, as that runner's; one it addresses to itself, or to
+	// nobody, goes nowhere.
+	f.fake->Deliver(1, Answer(NPC, 7, bob, Why::kApplied, 0.25f));
+	f.fake->Deliver(1, Answer(NPC, 7, alice, Why::kApplied, 0.25f));
+	f.fake->Deliver(1, Answer(NPC, 7, 0, Why::kApplied, 0.25f));
+	const auto answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].refId == NPC);
+	CHECK(answers[0].seq == 7);
+	CHECK(answers[0].playerId == alice);
+	CHECK(answers[0].why == Why::kApplied);
+	CHECK(answers[0].health == 0.25f);
+	CHECK(Answers(Received(f, 1)).empty());
+	CHECK(Answers(Received(f, 3)).empty());
+	f.fake->Deliver(1, Answer(NPC, 10, bob, Why::kDeadThere, 0.1f));
+	const auto refused = Answers(Received(f, 2));
+	REQUIRE(refused.size() == 1);
+	CHECK(refused[0].why == Why::kDeadThere);
+	CHECK(refused[0].playerId == alice);
+}
+
+TEST("server world: numbered damage nobody can take is refused to its sender with the reason: nobody runs it, the sender runs it, the session has it dead, over budget")
+{
+	using Why = Protocol::DamageAnswer::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2 });
+
+	// Nobody runs NPC2 (the hit's claim, ahead of the damage, was not granted): the sender is told, and gives its copy the
+	// health back. Unnumbered damage (an older sim, the bot) is dropped without a word, as before.
+	f.fake->Deliver(2, CopyDamage(NPC2, 0.3f, 1));
+	auto answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].refId == NPC2);
+	CHECK(answers[0].seq == 1);
+	CHECK(answers[0].playerId == 0);  // the server's own answer
+	CHECK(answers[0].why == Why::kNobodyRuns);
+	CHECK(answers[0].health == 0.3f);
+	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+	f.fake->Deliver(2, CopyDamage(NPC2, 0.3f, 0));
+	CHECK(Answers(Received(f, 2)).empty());
+	CHECK(f.Logged(std::format("damage on {:08X} from player {} refused: nobody runs it", NPC2, 2)));
+
+	// The sender runs it (its hit's claim took it over): the drop on what was its copy is the truth now, nothing to send on.
+	f.fake->Deliver(1, CopyDamage(NPC, 0.2f, 2));
+	answers = Answers(Received(f, 1));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kYouRunIt);
+	CHECK(answers[0].seq == 2);
 	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
+
+	// Dead for the session: refused, and the sender's game is told the death again as before.
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, CopyDamage(NPC, 0.2f, 3));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kDeadInSession);
+	CHECK(answers[0].seq == 3);
+	CHECK(f.Logged(std::format("damage of {:08X} from player {} dropped: the session has it dead", NPC, 2)));
+
+	// Over the sender's event budget: still answered (a small packet to the sender alone), so the hit is not lost without
+	// a word. Alice runs NPC3; Bob's first hundreds reach her, the one past the budget comes back refused.
+	f.fake->Deliver(1, Claim(NPC3));
+	Clear(f, { 1, 2 });
+	f.HoldClock();
+	std::size_t reached = 0;
+	std::size_t refused = 0;
+	for (std::uint32_t i = 0; i < 520; ++i) {
+		f.fake->Deliver(2, CopyDamage(NPC3, 0.001f, 100 + i));
+	}
+	Sync(f, 2);
+	reached = Damaged(f.fake->Take(1)).size();
+	for (const auto& answer : Answers(f.fake->Take(2))) {
+		refused += answer.why == Why::kOverBudget;
+	}
+	CHECK(reached > 400);
+	CHECK(refused > 0);
+	CHECK(reached + refused == 520);
+	CHECK(f.Logged(std::format("player {} sends too many events", 2)));
+	(void)alice;
+}
+
+TEST("server world: a game that says it doesn't run the NPC it was sent damage for has it sent on to the runner on record, once; with nobody on record the hitter is told")
+{
+	using Why = Protocol::DamageAnswer::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
+	// Bob's damage goes to Alice. Before she applies it, Carol's hit takes the NPC over: Alice's game, told so, answers
+	// that she doesn't run it. The server sends the damage on to Carol, as Bob's, and Bob hears nothing of the detour.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.25f, 5));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
+	f.fake->Deliver(3, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, carol));
+	Clear(f, { 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 5, bob, Why::kNotTheRunner, 0.25f));
+	const auto rerouted = Damaged(Received(f, 3));
+	REQUIRE(rerouted.size() == 1);
+	CHECK(rerouted[0].seq == 5);
+	CHECK(rerouted[0].playerId == bob);
+	CHECK(rerouted[0].health == 0.25f);
+	CHECK(Answers(Received(f, 2)).empty());
+	// Carol applies it and says so: Bob's copy learns the hit landed, as Carol's answer.
+	f.fake->Deliver(3, Answer(NPC, 5, bob, Why::kApplied, 0.25f));
+	auto answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kApplied);
+	CHECK(answers[0].playerId == carol);
+
+	// Carol lets the NPC go (unloaded) as Bob's next hit is on its way to her: nobody runs it now, and Bob is told so, as
+	// Carol's answer, so his copy gets the hit back and his game offers the NPC as any other.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 6));
+	REQUIRE(Damaged(Received(f, 3)).size() == 1);
+	f.fake->Deliver(3, Protocol::EncodeRelease({ NPC }));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(3, Answer(NPC, 6, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kNobodyRuns);
+	CHECK(answers[0].seq == 6);
+	CHECK(answers[0].playerId == carol);
+	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+
+	// Bob's own hit's claim took it over meanwhile, and the game it went to says "not mine": Bob runs it himself now.
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 7));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.Advance(5100ms);
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 7, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kYouRunIt);
+	CHECK(answers[0].playerId == alice);
 }
 
 // ---- containers -------------------------------------------------------------------------

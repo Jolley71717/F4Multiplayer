@@ -1766,14 +1766,49 @@ void Server::Run()
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
+	// The answer to a player's numbered damage report (Protocol::DamageAnswer), to that player if they are still here.
+	std::size_t       damageRefused = 0;  // by the server itself, since the last line about them
+	Clock::time_point damageRefusedLogged{};
+	std::size_t       damageRerouted = 0;  // sent on to the runner on record after the game it went to said it doesn't run the NPC
+	const auto        answerDamage = [&](std::uint32_t a_hitter, const Protocol::DamageAnswer& a_answer) {
+		if (const auto key = keyOfPlayer(a_hitter)) {
+			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
+		}
+	};
+
 	// A health report (kReportHealth: its health now, passed on as kActorHealth), or what the sender took off an NPC
 	// another game runs (kReportDamage, as kActorDamaged: the game that runs it takes it off). Both tell the server the
 	// sender fights it.
+	//
+	// Damage goes to the game that runs the NPC alone, as the server has it, whatever the sender's own table said: the
+	// sender's table can be a round trip behind (a takeover, a hand-off, a release), and up to 0.10.0 the damage went to
+	// every other game, where each one judged by its own table; with two tables behind, every game dropped it and the
+	// hitter's copy got the health back with the runner's next report, as a heal. And a numbered one (ActorHealth::seq)
+	// is answered whatever becomes of it (docs/HEALTH-SYNC.md): the hitter's copy keeps the drop until the answer
+	// comes, and gives it back on a refusal, so a hit the session can't deal is a bounce the player sees at once, and
+	// the log says why, instead of a heal a second later that nothing explains.
 	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data, Protocol::MessageType a_out) {
+		const bool damage = a_out == Protocol::MessageType::kActorDamaged;
+		const auto health = Protocol::DecodeActorHealth(a_data);
+		const auto refuse = [&](Protocol::DamageAnswer::Why a_why) {
+			if (!damage || !health || health->seq == 0) {
+				return;
+			}
+			++damageRefused;
+			const auto now = Clock::now();
+			if (now - damageRefusedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				damageRefusedLogged = now;
+				log(std::format("server: damage on {:08X} from player {} refused: {} ({} refused since the last such line)", health->refId, a_player.id, Protocol::Name(a_why),
+					std::exchange(damageRefused, 0)));
+			}
+			answerDamage(a_player.id, { health->refId, health->seq, 0, a_why, std::clamp(health->health, 0.0f, 1.0f) });
+		};
 		if (!allowEvent(a_player)) {
+			if (a_player.welcomed) {
+				refuse(Protocol::DamageAnswer::Why::kOverBudget);  // the one event over the budget that is still answered: a small packet, to the sender alone
+			}
 			return;
 		}
-		const auto health = Protocol::DecodeActorHealth(a_data);
 		// A spawn's health goes to its owner too, whoever hit their copy of it.
 		const bool spawn = health && spawns.contains(health->refId);
 		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId))) {
@@ -1787,24 +1822,44 @@ void Server::Run()
 			if (now - deadHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 				deadHealthLogged = now;
 				log(std::format("server: {} of {:08X} from player {} dropped: the session has it dead ({} since the last such line)",
-					a_out == Protocol::MessageType::kActorDamaged ? "damage" : "health", health->refId, a_player.id, std::exchange(deadHealthDropped, 0)));
+					damage ? "damage" : "health", health->refId, a_player.id, std::exchange(deadHealthDropped, 0)));
 			}
 			remindDead(a_player, health->refId, now);
+			refuse(Protocol::DamageAnswer::Why::kDeadInSession);
 			return;
 		}
-		if (a_out == Protocol::MessageType::kActorDamaged && !(health->health > 0.0f && health->health <= 1.0f)) {
+		if (damage && !(health->health > 0.0f && health->health <= 1.0f)) {
 			return;  // no damage, or more than all of it
 		}
 		if (!spawn) {
 			noteHostHadAlive(a_player, health->refId);  // hit and still alive
 		}
 		noteFighting(a_player, health->refId, Clock::now());
+		const auto owner = actorOwners.find(health->refId);
+		if (damage) {
+			if (owner == actorOwners.end()) {
+				refuse(Protocol::DamageAnswer::Why::kNobodyRuns);  // the hit's claim (ahead of it) was not granted: its game is told, and offers the NPC as any other
+				return;
+			}
+			if (owner->second.playerId == a_player.id) {
+				refuse(Protocol::DamageAnswer::Why::kYouRunIt);  // its claim took the NPC over: the drop on what was its copy is the truth now
+				return;
+			}
+			const auto key = keyOfPlayer(owner->second.playerId);
+			if (key == 0) {
+				refuse(Protocol::DamageAnswer::Why::kNobodyRuns);  // the runner's connection is gone; its NPCs are released in a moment
+				return;
+			}
+			auto out = *health;
+			out.playerId = a_player.id;
+			send(key, Protocol::Encode(out, Protocol::MessageType::kActorDamaged), true);
+			return;
+		}
 		// Where an NPC's health stands is said by the game that runs it, or by anyone while nobody does. A report from
 		// any other game is from before it learnt who runs the NPC now: a takeover by a friend's hit, granted while the
 		// game that had run it sent its last report. Passed on, it set the new runner's NPC back to that older health,
 		// undoing the very hit that took it over (and the runner then shared that as where it stood): the hit healed.
-		if (const auto owner = actorOwners.find(health->refId);
-			a_out == Protocol::MessageType::kActorHealth && !spawn && owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+		if (!spawn && owner != actorOwners.end() && owner->second.playerId != a_player.id) {
 			++staleHealthDropped;
 			if (const auto now = Clock::now(); now - staleHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 				staleHealthLogged = now;
@@ -1814,6 +1869,39 @@ void Server::Run()
 			return;
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
+	};
+
+	// The game a damage report went to answers it (kReportDamageAnswer, playerId whose hit it was): applied, or refused and
+	// why. Passed to the hitter as the answer of that game (kDamageAnswer, playerId who answered). One refused as "not the
+	// runner" by a game whose table was behind the server's goes on to the runner the server has on record now, once: a
+	// release or a takeover crossed the damage on the wire. When the server has nobody, or the refuser itself, the hitter
+	// is told so instead. A runner that changed since can't refuse the same hit twice (it is the one on record).
+	const auto handleDamageAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto answer = Protocol::DecodeDamageAnswer(a_data);
+		if (!answer || answer->playerId == a_player.id || answer->playerId == 0) {
+			return;
+		}
+		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner) {
+			const auto owner = actorOwners.find(answer->refId);
+			if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
+				if (const auto key = keyOfPlayer(owner->second.playerId)) {
+					++damageRerouted;
+					send(key, Protocol::Encode(Protocol::ActorHealth{ answer->refId, answer->health, answer->seq, answer->playerId }, Protocol::MessageType::kActorDamaged), true);
+					return;
+				}
+			}
+			auto out = *answer;
+			out.playerId = a_player.id;
+			out.why = owner != actorOwners.end() && owner->second.playerId == answer->playerId ? Protocol::DamageAnswer::Why::kYouRunIt : Protocol::DamageAnswer::Why::kNobodyRuns;
+			answerDamage(answer->playerId, out);
+			return;
+		}
+		auto out = *answer;
+		out.playerId = a_player.id;
+		answerDamage(answer->playerId, out);
 	};
 
 	// Container changes are numbered and echoed to their sender too, so every player knows exactly
@@ -3792,6 +3880,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportDamage:
 			handleHealth(a_player, a_data, MessageType::kActorDamaged);
+			break;
+		case MessageType::kReportDamageAnswer:
+			handleDamageAnswer(a_player, a_data);
 			break;
 		case MessageType::kReportContainer:
 			handleContainer(a_player, a_data);

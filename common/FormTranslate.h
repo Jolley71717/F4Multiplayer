@@ -406,6 +406,10 @@ namespace FormTranslate
 		case MessageType::kActorDamaged:
 			Apply<ActorHealth>(a_packet, ctx, DecodeActorHealth, [&](ActorHealth& m) { return ctx.Key(m.refId); }, typed);
 			break;
+		case MessageType::kReportDamageAnswer:
+		case MessageType::kDamageAnswer:
+			Apply<DamageAnswer>(a_packet, ctx, DecodeDamageAnswer, [&](DamageAnswer& m) { return ctx.Key(m.refId); }, typed);
+			break;
 		case MessageType::kReportContainer:
 			Apply<ContainerChange>(a_packet, ctx, DecodeContainerChange, [&](ContainerChange& m) { return ctx.Change(m); }, typed);
 			break;

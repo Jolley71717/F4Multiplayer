@@ -557,17 +557,22 @@ TEST("copy hits: a report from the NPC's game during our bleed stands, and a tic
 	book.Set(RAIDER_1, 55.0f);
 	CHECK(book.Health(RAIDER_1) == std::optional{ 55.0f });
 
-	// A report that would raise the copy within the effect's window is held for what our ticks took that may still be
-	// on its way, as after a hit; one after the window is set at once.
+	// A report that would raise the copy is set only to what it says less our ticks still on their way (sent and
+	// unanswered, or not sent yet); once they are answered, a report is set as it comes.
 	CopyHealth::Book late;
 	late.Set(RAIDER_2, 100.0f);
 	late.OurHit(RAIDER_2, t0, 20.0f);
 	late.OurEffect(RAIDER_2, t0);
 	CHECK(late.Check(RAIDER_2, 80.0f, t0 + FRAME) == 0.0f);
+	const auto shot = late.TakeOurs(RAIDER_2, t0 + FRAME);
+	REQUIRE(shot);
 	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
 	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
-	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + milliseconds{ 1700 }) == 75.0f);  // the owner's report from before the tick: held
-	CHECK(late.Holds(RAIDER_2));
+	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + milliseconds{ 1700 }) == 75.0f);  // the owner's report from before the shot and the tick
+	const auto tick = late.TakeOurs(RAIDER_2, t0 + milliseconds{ 1700 });
+	REQUIRE(tick);
+	CHECK(late.Answered(RAIDER_2, shot->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(late.Answered(RAIDER_2, tick->seq, CopyHealth::Answer::kApplied) == 0.0f);
 	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 100 }) == 80.0f);
 }
 

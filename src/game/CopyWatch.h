@@ -2,6 +2,8 @@
 
 #include "game/CopyHealth.h"
 
+#include "Protocol.h"
+
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -56,9 +58,22 @@ namespace CopyWatch
 	// packet is dispatched: a runner's health report heard first would heal back a shot whose event was not booked yet.
 	void TakeHits();
 
-	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
-	// fraction of the copy's maximum: WorldSync sends it to the game that runs the NPC (kReportDamage).
-	[[nodiscard]] std::vector<std::pair<std::uint32_t, float>> TakeDamage();
+	// A damage of ours to send: the copy's session id, what our hits took as a fraction of its maximum, and its number
+	// (CopyHealth::Book::TakeOurs), which the game that runs the NPC answers.
+	struct Damage
+	{
+		std::uint32_t id = 0;
+		float         fraction = 0.0f;
+		std::uint32_t seq = 0;
+	};
+
+	// What our hits took off our copies since the last call: WorldSync sends each to the game that runs the NPC
+	// (kReportDamage), and it stays in flight on the copy until Answered.
+	[[nodiscard]] std::vector<Damage> TakeDamage();
+
+	// The answer to a damage of ours on the copy a_wire (its session id), numbered a_seq, from a_from (0: the server):
+	// applied, ours to run now, or refused, in which case the copy gets the health back at once (CopyHealth::Answer).
+	void Answered(std::uint32_t a_wire, std::uint32_t a_seq, std::uint32_t a_from, Protocol::DamageAnswer::Why a_why);
 
 	void Reset();
 
