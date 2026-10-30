@@ -55,6 +55,59 @@ namespace CopyHealth
 	constexpr float           MIN_LEFT = 1.0f;    // a gain taken back never leaves the copy with less (it would die here)
 	constexpr std::size_t     MAX_COPIES = 1024;  // copies watched at once (a guard)
 
+	// Our player's shot (or swing) aimed at the copy (OurShot), when no hit event of the game's came for it: a drop that
+	// begins within SHOT_REACH of the shot is the shot's (the bullet's flight; a frame either side for the order things
+	// are seen in). On the rig, a host's shot took 24.6 off a friend's raider in the host's game and no hit event for it
+	// ever reached the mod: CopyWatch gave it back as "no hit of ours", so the shot healed what it hit, the raider never
+	// lost a point in the game that ran it, and the host could not kill it while the friend could. A game whose hit events
+	// stop (another mod's sink can stop them before ours; the cause on the rig is not known) turned every shot at an NPC
+	// a friend runs into that. Only a drop with nothing else around it: no other hit on the copy within EFFECT_WINDOW
+	// before it (its burn may still tick), no blow of ours left to the owner, no hit of ours seen.
+	constexpr Clock::duration SHOT_REACH = std::chrono::milliseconds{ 1000 };
+
+	// Where our player aims as a shot leaves: the eyes, and the view's angles as the game keeps them (radians: yaw from
+	// +y toward +x, pitch down positive).
+	struct Aim
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float z = 0.0f;
+		float yaw = 0.0f;
+		float pitch = 0.0f;
+	};
+
+	constexpr float AIM_REACH = 8192.0f;    // farther than this, a shot is nobody's in particular
+	constexpr float AIM_RADIUS = 48.0f;     // half an actor's width, about
+	constexpr float AIM_BOTTOM = -16.0f;    // an actor's reach below where it stands ...
+	constexpr float AIM_TOP = 160.0f;       // ... and above: a standing human is about 128 tall
+	constexpr float AIM_SLACK = 0.07f;      // radians (4 degrees): the third-person camera, the gun's spread
+
+	// Whether a shot aimed so could be the one that hit an actor standing at (a_x, a_y, a_z): the view points at its body,
+	// give or take AIM_SLACK.
+	inline bool AimedAt(const Aim& a_aim, float a_x, float a_y, float a_z)
+	{
+		constexpr float PI = 3.14159265f;
+		const float     dx = a_x - a_aim.x;
+		const float     dy = a_y - a_aim.y;
+		const float     flat = (std::max)(std::hypot(dx, dy), 1.0f);
+		if (std::hypot(flat, a_z - a_aim.z) > AIM_REACH) {
+			return false;
+		}
+		float off = std::atan2(dx, dy) - a_aim.yaw;
+		while (off > PI) {
+			off -= 2.0f * PI;
+		}
+		while (off < -PI) {
+			off += 2.0f * PI;
+		}
+		if (std::abs(off) > std::atan2(AIM_RADIUS, flat) + AIM_SLACK) {
+			return false;
+		}
+		const float top = -std::atan2(a_z + AIM_TOP - a_aim.z, flat);        // the pitch that looks at its head
+		const float bottom = -std::atan2(a_z + AIM_BOTTOM - a_aim.z, flat);  // ... and at its feet
+		return a_aim.pitch >= top - AIM_SLACK && a_aim.pitch <= bottom + AIM_SLACK;
+	}
+
 	// What struck a hit (or a killing blow), as our game knows it on the main thread a frame later.
 	struct Cause
 	{
@@ -208,6 +261,7 @@ namespace CopyHealth
 				entry.figured = false;
 			}
 			entry.ourHit = a_now;
+			entry.eventHit = a_now;
 			if (a_damage) {
 				entry.dealt += *a_damage;
 				entry.figured = true;
@@ -235,6 +289,17 @@ namespace CopyHealth
 				it->second.effect = a_now;
 			} else if (entries.size() < MAX_COPIES) {
 				entries[a_id] = Entry{ .effect = a_now };
+			}
+		}
+
+		// Our player's shot (or swing) left aimed at the copy now (AimedAt). Whether it hit is the hit event's to say; with
+		// none, a drop that follows alone is the shot's all the same (SHOT_REACH).
+		void OurShot(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				it->second.ourShot = a_now;
+			} else if (entries.size() < MAX_COPIES) {
+				entries[a_id] = Entry{ .ourShot = a_now };
 			}
 		}
 
@@ -390,9 +455,29 @@ namespace CopyHealth
 			if (a_now - *entry.dropSince < JUDGE_AFTER) {
 				return 0.0f;
 			}
+			// No hit event of ours came, but our player's shot left aimed at it just before: the shot's (SHOT_REACH), as
+			// though its event had come with no figure, so the owner's report that may follow is held as after any hit.
+			if (ShotUnseen(entry, *entry.dropSince)) {
+				const float drop = *entry.health - a_health;
+				entry.ours += drop;
+				entry.unacked += drop;
+				entry.ourHit = *entry.dropSince;
+				entry.dealt = 0.0f;
+				entry.unknown = true;
+				entry.figured = false;
+				entry.ourShot.reset();  // one drop a shot
+				entry.health = a_health;
+				entry.dropSince.reset();
+				++unseen;
+				return 0.0f;
+			}
 			entry.dropSince.reset();
 			return *entry.health - a_health;
 		}
+
+		// How many drops were taken for our player's shots with no hit event for them (OurShot): a game whose hit events
+		// don't reach the mod.
+		[[nodiscard]] std::uint32_t Unseen() const { return unseen; }
 
 		// Another game's report would set the copy from a_before to a_health now: the health to set it to. What a hit of ours
 		// took off it since it was last checked (the report came between the blow and the next frame) is ours all the same.
@@ -499,6 +584,8 @@ namespace CopyHealth
 			std::optional<std::pair<float, Clock::time_point>> reportedDrop;  // a drop a report found with no hit of ours booked yet (Heard): ours if a hit's event follows within JUDGE_AFTER
 			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
 			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)
+			std::optional<Clock::time_point> ourShot;     // our player's last shot aimed at it whose drop is not judged yet (OurShot)
+			std::optional<Clock::time_point> eventHit;    // the last hit of ours whose event came (OurHit; ourHit is also set by a shot taken for one)
 			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
 			float                            peak = 0.0f;     // ... and the most it has read since then
 			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
@@ -526,6 +613,25 @@ namespace CopyHealth
 		// A blow left to the owner landed around the drop being judged (from OURS_GRACE before it on).
 		static bool OwnersAround(const Entry& a_entry) { return a_entry.ownersBlow && a_entry.dropSince && *a_entry.ownersBlow + OURS_GRACE >= *a_entry.dropSince; }
 
+		// A drop from a_since on that our player's shot explains with no hit event (SHOT_REACH): the shot left at most
+		// SHOT_REACH before it (or a frame's JUDGE_AFTER after: the shot is seen by its animation, a frame apart from the
+		// health), and nothing else around it: no other hit within EFFECT_WINDOW (its effect may still tick), no blow of
+		// ours left to the owner, no hit of ours seen since the shot (its event said what it took: Check went by that).
+		static bool ShotUnseen(const Entry& a_entry, Clock::time_point a_since)
+		{
+			if (!a_entry.ourShot || a_since + JUDGE_AFTER < *a_entry.ourShot || a_since > *a_entry.ourShot + SHOT_REACH) {
+				return false;
+			}
+			if (a_entry.otherHit && *a_entry.otherHit + EFFECT_WINDOW >= a_since) {
+				return false;
+			}
+			if (a_entry.ownersBlow && *a_entry.ownersBlow + OURS_GRACE >= a_since) {
+				return false;
+			}
+			return !(a_entry.eventHit && *a_entry.eventHit + JUDGE_AFTER >= *a_entry.ourShot);
+		}
+
 		std::unordered_map<std::uint32_t, Entry> entries;
+		std::uint32_t                            unseen = 0;
 	};
 }

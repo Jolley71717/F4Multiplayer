@@ -1407,6 +1407,9 @@ namespace Session
 		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one. Each
 		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods).
 		const auto shots = WeaponFire::TakeShots();
+		if (shots) {
+			CopyWatch::OurShots();  // a drop on a copy it points at, with no hit event, is the shot's (CopyHealth::SHOT_REACH)
+		}
 		const auto npcShots = WeaponFire::TakeNpcShots();
 		const auto sound = shots ? WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton()) : 0;
 		if (welcomed) {

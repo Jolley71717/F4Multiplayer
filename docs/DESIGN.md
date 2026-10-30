@@ -327,6 +327,13 @@
   sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
   left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
   What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
+- A drop on a copy with no hit event of ours, in the second after our player's shot or swing aimed at it (the view on
+  its body, `CopyHealth::AimedAt`), is the shot's: sent to the owner's game as any hit's damage, not given back
+  (`CopyHealth::SHOT_REACH`, `copyUnseen=`; the first logs a warning). Not with another hit on the copy in the 10 s
+  before (its effect may still tick) or a blow of ours left to the owner around it. On the rig a host's shot took 24.6
+  off a friend's raider and no hit event for it reached the mod: it was given back, the raider never lost a point in
+  the game that ran it, and only the friend could kill it. A game whose hit events stop (another mod can stop them
+  before ours) made every NPC a friend runs one its player couldn't kill.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
