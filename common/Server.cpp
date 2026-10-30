@@ -1769,7 +1769,8 @@ void Server::Run()
 	// The answer to a player's numbered damage report (Protocol::DamageAnswer), to that player if they are still here.
 	std::size_t       damageRefused = 0;  // by the server itself, since the last line about them
 	Clock::time_point damageRefusedLogged{};
-	std::size_t       damageRerouted = 0;  // sent on to the runner on record after the game it went to said it doesn't run the NPC
+	std::size_t       damageRerouted = 0;  // sent on to the runner on record after the game it went to said it doesn't run the NPC, since the last line
+	Clock::time_point damageReroutedLogged{};
 	const auto        answerDamage = [&](std::uint32_t a_hitter, const Protocol::DamageAnswer& a_answer) {
 		if (const auto key = keyOfPlayer(a_hitter)) {
 			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
@@ -1801,7 +1802,7 @@ void Server::Run()
 				log(std::format("server: damage on {:08X} from player {} refused: {} ({} refused since the last such line)", health->refId, a_player.id, Protocol::Name(a_why),
 					std::exchange(damageRefused, 0)));
 			}
-			answerDamage(a_player.id, { health->refId, health->seq, 0, a_why, std::clamp(health->health, 0.0f, 1.0f) });
+			send(a_player.key, Protocol::Encode(Protocol::DamageAnswer{ health->refId, health->seq, 0, a_why, std::clamp(health->health, 0.0f, 1.0f) }, Protocol::MessageType::kDamageAnswer), true);
 		};
 		if (!allowEvent(a_player)) {
 			if (a_player.welcomed) {
@@ -1809,9 +1810,11 @@ void Server::Run()
 			}
 			return;
 		}
-		// A spawn's health goes to its owner too, whoever hit their copy of it.
+		// A spawn's health goes to its owner too, whoever hit their copy of it. One the session no longer has (its owner's
+		// game let it go: handleRelease) is nobody's to take damage for.
 		const bool spawn = health && spawns.contains(health->refId);
 		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId))) {
+			refuse(Protocol::DamageAnswer::Why::kNobodyRuns);
 			return;
 		}
 		// Dead for the session: nothing to pass on, and the sender's game, which has it alive, is told so (remindDead).
@@ -1829,7 +1832,8 @@ void Server::Run()
 			return;
 		}
 		if (damage && !(health->health > 0.0f && health->health <= 1.0f)) {
-			return;  // no damage, or more than all of it
+			refuse(Protocol::DamageAnswer::Why::kNoHealthThere);  // no damage, or more than all of it: no share of a health to send on
+			return;
 		}
 		if (!spawn) {
 			noteHostHadAlive(a_player, health->refId);  // hit and still alive
@@ -1874,8 +1878,10 @@ void Server::Run()
 	// The game a damage report went to answers it (kReportDamageAnswer, playerId whose hit it was): applied, or refused and
 	// why. Passed to the hitter as the answer of that game (kDamageAnswer, playerId who answered). One refused as "not the
 	// runner" by a game whose table was behind the server's goes on to the runner the server has on record now, once: a
-	// release or a takeover crossed the damage on the wire. When the server has nobody, or the refuser itself, the hitter
-	// is told so instead. A runner that changed since can't refuse the same hit twice (it is the one on record).
+	// release or a takeover crossed the damage on the wire. When the server has nobody on record the hitter is told so
+	// ("nobody runs it"), when it has the hitter "you run it", and when it still has the refuser itself (its release is
+	// on its way) the refusal goes through as it is. A runner that changed since can't refuse the same hit twice (it is
+	// the one on record).
 	const auto handleDamageAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1889,13 +1895,23 @@ void Server::Run()
 			if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
 				if (const auto key = keyOfPlayer(owner->second.playerId)) {
 					++damageRerouted;
+					const auto now = Clock::now();
+					if (now - damageReroutedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+						damageReroutedLogged = now;
+						log(std::format("server: damage on {:08X} from player {} sent on to player {}, who runs it now; player {} no longer does ({} sent on since the last such line)",
+							answer->refId, answer->playerId, owner->second.playerId, a_player.id, std::exchange(damageRerouted, 0)));
+					}
 					send(key, Protocol::Encode(Protocol::ActorHealth{ answer->refId, answer->health, answer->seq, answer->playerId }, Protocol::MessageType::kActorDamaged), true);
 					return;
 				}
 			}
 			auto out = *answer;
 			out.playerId = a_player.id;
-			out.why = owner != actorOwners.end() && owner->second.playerId == answer->playerId ? Protocol::DamageAnswer::Why::kYouRunIt : Protocol::DamageAnswer::Why::kNobodyRuns;
+			if (owner == actorOwners.end()) {
+				out.why = Protocol::DamageAnswer::Why::kNobodyRuns;
+			} else if (owner->second.playerId == answer->playerId) {
+				out.why = Protocol::DamageAnswer::Why::kYouRunIt;
+			}
 			answerDamage(answer->playerId, out);
 			return;
 		}

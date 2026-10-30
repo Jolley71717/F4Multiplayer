@@ -63,9 +63,11 @@ Four rules. The first three are implemented in this PR; the fourth is written do
 
 ### 1. One truth, and a copy is "the runner's word minus my hits in flight"
 
-The runner's game is the only source of an NPC's health. A copy never shows a heal for a hit that is still on its
-way, however long that takes. A copy is raised only when the runner's word, minus every hit of ours not yet
-acknowledged, is above where the copy stands; that is a real heal in the runner's game (a stimpak, a mutation there).
+The runner's game is the only source of an NPC's health. Every report sets the copy to the runner's word minus every
+hit of ours not yet answered, whichever way that moves it, however long the hits take. A copy never shows a heal for
+a hit that is still on its way; a rise above where it stands is a real heal in the runner's game (a stimpak, a
+mutation there). What our hits take off a copy goes out at most ten times a second per copy, so a runner's 15 s hold
+puts at most 150 hits in flight.
 
 ### 2. Every hit is a numbered request that ends in exactly one of two answers
 
@@ -78,8 +80,9 @@ Each damage report carries a number (per sender, counting up). It ends either:
   too long, over budget).
 
 Nothing in between. On a refusal the hitter's copy gets the health back **at once** and the game logs why: the player
-sees the bounce immediately instead of a heal seconds later, and the log names the reason. "You run it yourself" is the
-one refusal that keeps the drop: the hit's claim took the NPC over, and the copy's health is now the truth.
+sees the bounce immediately instead of a heal seconds later, and the log names the reason (a copy without its 3D that
+frame is owed it, and gets it as soon as it is seen). "You run it yourself" is the one refusal that keeps the drop:
+the hit's claim took the NPC over, and the copy's health is now the truth.
 
 A hit whose answer never comes (a crash, a server restart) is given back after 30 s with a "lost" line. That is the
 only timer left, and it errs on the side of showing the player the truth.

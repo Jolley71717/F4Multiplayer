@@ -540,9 +540,13 @@ TEST("copy hits: a report from the NPC's game during our bleed stands, and a tic
 	book.OurHit(RAIDER_1, t0, 20.0f);
 	book.OurEffect(RAIDER_1, t0);
 	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 20.0f);
+	const auto shot = book.TakeOurs(RAIDER_1, t0 + FRAME);
+	REQUIRE(shot);
+	CHECK(shot->amount == 20.0f);
 
-	// The owner took a friend's shot there too: 80 -> 60 by its report, set as it comes.
+	// The owner took a friend's shot there too, and ours: 80 -> 60 by its report, set as it comes once our shot is
+	// answered (with it still on its way, the report less the shot: 40).
+	CHECK(book.Answered(RAIDER_1, shot->seq, CopyHealth::Answer::kApplied) == 0.0f);
 	CHECK(book.Heard(RAIDER_1, 80.0f, 60.0f, t0 + milliseconds{ 1200 }) == 60.0f);
 	book.Set(RAIDER_1, 60.0f);
 	// Our next tick is from there, ours.
@@ -564,14 +568,14 @@ TEST("copy hits: a report from the NPC's game during our bleed stands, and a tic
 	late.OurHit(RAIDER_2, t0, 20.0f);
 	late.OurEffect(RAIDER_2, t0);
 	CHECK(late.Check(RAIDER_2, 80.0f, t0 + FRAME) == 0.0f);
-	const auto shot = late.TakeOurs(RAIDER_2, t0 + FRAME);
-	REQUIRE(shot);
+	const auto lateShot = late.TakeOurs(RAIDER_2, t0 + FRAME);
+	REQUIRE(lateShot);
 	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
 	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
-	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + milliseconds{ 1700 }) == 75.0f);  // the owner's report from before the shot and the tick
+	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + milliseconds{ 1700 }) == 55.0f);  // the owner's report from before the shot (on its way) and the tick (not sent yet): 80 less both
 	const auto tick = late.TakeOurs(RAIDER_2, t0 + milliseconds{ 1700 });
 	REQUIRE(tick);
-	CHECK(late.Answered(RAIDER_2, shot->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(late.Answered(RAIDER_2, lateShot->seq, CopyHealth::Answer::kApplied) == 0.0f);
 	CHECK(late.Answered(RAIDER_2, tick->seq, CopyHealth::Answer::kApplied) == 0.0f);
 	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 100 }) == 80.0f);
 }

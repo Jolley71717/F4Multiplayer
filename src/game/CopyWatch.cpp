@@ -72,6 +72,7 @@ namespace CopyWatch
 		std::uint32_t copiesDied = 0;
 		std::uint32_t reportsSet = 0;
 		std::vector<Damage> damageOut;  // what our hits took off copies, by session id, to send
+		std::unordered_map<std::uint32_t, Clock::time_point> lastDamageSent;  // when each copy's last went out (CopyHealth::SEND_EVERY)
 		std::uint32_t damageSent = 0;
 		std::uint32_t answersTaken = 0;    // answers to our damage heard (applied, ours to run, or refused; a late one for nothing in flight too)
 		std::uint32_t refundsGiven = 0;    // ... refused: the copy got the health back
@@ -372,21 +373,26 @@ namespace CopyWatch
 			return;
 		}
 		// Refused: nothing took it off anywhere, so the copy gets it back now, where the player can see it, and the log says
-		// why. Up to 0.10.0 the copy kept the drop until the runner's next report healed it, a second or more later.
+		// why. Up to 0.10.0 the copy kept the drop until the runner's next report healed it, a second or more later. A copy
+		// that can't take it this frame (no 3D, or dead here) is owed it: parked, and given back when it is seen again.
 		++refundsGiven;
 		healthRefunded += give;
 		const auto  local = Protocol::IsSpawnRef(a_wire) ? Spawns::LocalOf(a_wire) : a_wire;
 		const auto  actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
 		const auto  info = HealthInfo();
-		const float before = actor && info ? HealthOf(actor) : -1.0f;
-		if (actor && info && actor->Get3D() && !actor->IsDead(false)) {
+		const bool  takes = actor && info && actor->Get3D() && !actor->IsDead(false);
+		const float before = takes ? HealthOf(actor) : -1.0f;
+		if (takes) {
 			auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 			values.RestoreActorValue(*info, give);
 			book.Set(a_wire, values.GetActorValue(*info));
+		} else {
+			book.Park(a_wire, give);
 		}
 		if (answerLog.Take(Clock::now())) {
-			REX::INFO("CopyWatch: our hit on copy {:08X}{} ({:.1f} health, #{}) was refused by {}: {}; given back ({:.1f} -> {:.1f})", local, SpawnNote(local, a_wire), give, a_seq,
-				a_from != 0 ? std::format("player {}", a_from) : std::string{ "the server" }, Protocol::Name(a_why), before, actor && info ? HealthOf(actor) : -1.0f);
+			REX::INFO("CopyWatch: our hit on copy {:08X}{} ({:.1f} health, #{}) was refused by {}: {}; {}", local, SpawnNote(local, a_wire), give, a_seq,
+				a_from != 0 ? std::format("player {}", a_from) : std::string{ "the server" }, Protocol::Name(a_why),
+				takes ? std::format("given back ({:.1f} -> {:.1f})", before, HealthOf(actor)) : std::string{ "owed to it until it is seen again" });
 		}
 	}
 
@@ -501,12 +507,17 @@ namespace CopyWatch
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
 				const float give = book.Check(id, health, now, maximum);
-				// What our hits took off it, for the game that runs it (WorldSync sends it), numbered, in flight until answered.
+				// What our hits took off it, for the game that runs it (WorldSync sends it), numbered, in flight until answered;
+				// at most every CopyHealth::SEND_EVERY for one copy (what lands meanwhile goes with the next).
 				if (maximum > 0.0f && damageOut.size() < MAX_INBOX) {
-					if (const auto sent = book.TakeOurs(id, now)) {
-						damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
-						++damageSent;
-						damageTotal += sent->amount;
+					const auto last = lastDamageSent.find(id);
+					if (last == lastDamageSent.end() || now - last->second >= CopyHealth::SEND_EVERY) {
+						if (const auto sent = book.TakeOurs(id, now)) {
+							lastDamageSent[id] = now;
+							damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
+							++damageSent;
+							damageTotal += sent->amount;
+						}
 					}
 				}
 				if (give < 0.0f) {
@@ -545,6 +556,7 @@ namespace CopyWatch
 			return it != copiesSeen.end() && now - it->second <= COPY_SEEN_KEPT && OtherOwner(a_id) != 0;
 		});
 		std::erase_if(lastHits, [&](const auto& a_entry) { return now - a_entry.second.at > LAST_HIT_KEPT; });
+		std::erase_if(lastDamageSent, [&](const auto& a_entry) { return now - a_entry.second > LAST_HIT_KEPT; });
 
 		for (const auto& death : deaths) {
 			const auto wire = WireOf(death.id);
@@ -594,6 +606,7 @@ namespace CopyWatch
 		}
 		book.Clear();
 		damageOut.clear();
+		lastDamageSent.clear();
 		lastHits.clear();
 		copiesSeen.clear();
 	}

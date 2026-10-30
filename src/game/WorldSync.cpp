@@ -2218,7 +2218,7 @@ namespace WorldSync
 				return;
 			}
 			heldDamage.Retry([&](DamageHold::Held& a_held) {
-				const auto decision = TakeDamage(a_held.id, (std::min)(a_held.fraction, 1.0f), a_now, true, a_held.seq, a_held.from);
+				const auto decision = TakeDamage(a_held.id, a_held.fraction, a_now, true, a_held.seq, a_held.from);
 				a_held.why = decision.why;
 				return decision.verdict != DamageHold::Verdict::kHold;
 			});

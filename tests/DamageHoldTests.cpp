@@ -112,10 +112,12 @@ TEST("damage hold: the book holds each hit on its own, with its number and whose
 	CHECK(book.Hold({ RAIDER, 0.15f, Why::kNoOwnerYet, t0 + 100ms, 2, FRIEND }));
 	CHECK(book.Size() == 2);
 	const auto held = book.HeldFor(RAIDER);
-	REQUIRE(held);
-	CHECK(std::abs(held->fraction - 0.25f) < 0.0001f);  // what is held for the NPC, summed
-	CHECK(held->why == Why::kNoOwnerYet);
-	CHECK(held->since == t0);  // held since the first
+	REQUIRE(held.size() == 2);
+	CHECK(std::abs(held[0].fraction + held[1].fraction - 0.25f) < 0.0001f);
+	CHECK(held[0].why == Why::kNotLoaded);
+	CHECK(held[1].why == Why::kNoOwnerYet);
+	CHECK(held[0].since == t0);  // oldest first
+	CHECK(book.HeldFor(RAIDER2).empty());
 
 	// Tried again: still held (the NPC isn't loaded), then applied, each hit with its number so each can be answered.
 	int tries = 0;
@@ -126,7 +128,7 @@ TEST("damage hold: the book holds each hit on its own, with its number and whose
 	});
 	CHECK(tries == 2);
 	CHECK(book.Size() == 2);
-	CHECK(book.HeldFor(RAIDER)->why == Why::kNotLoaded);
+	CHECK(book.HeldFor(RAIDER)[1].why == Why::kNotLoaded);
 	float                      applied = 0.0f;
 	std::vector<std::uint32_t> answered;
 	book.Retry([&](DamageHold::Held& a_held) {

@@ -392,12 +392,20 @@ TEST("server world: damage a player took off their copy of an NPC goes to the ga
 	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
 	CHECK(Answers(Received(f, 2)).empty());  // nothing to answer yet: the runner will
 
+	// None of these is sent on; each numbered one is still answered, so the hitter's copy doesn't wait 30 s on it.
 	for (const float bad : { 0.0f, -0.5f, 1.5f }) {
 		f.fake->Deliver(2, CopyDamage(NPC, bad, 8));
 	}
-	f.fake->Deliver(2, CopyDamage(RUNTIME, 0.2f, 9));
+	f.fake->Deliver(2, CopyDamage(RUNTIME, 0.2f, 9));  // a spawn the session no longer has
 	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
-	CHECK(Answers(Received(f, 2)).empty());
+	const auto refusals = Answers(Received(f, 2));
+	REQUIRE(refusals.size() == 4);
+	for (std::size_t i = 0; i < 3; ++i) {
+		CHECK(refusals[i].seq == 8);
+		CHECK(refusals[i].why == Why::kNoHealthThere);
+	}
+	CHECK(refusals[3].seq == 9);
+	CHECK(refusals[3].why == Why::kNobodyRuns);
 
 	// The runner's answer goes to the player whose hit it was, as that runner's; one it addresses to itself, or to
 	// nobody, goes nowhere.
@@ -543,6 +551,19 @@ TEST("server world: a game that says it doesn't run the NPC it was sent damage f
 	REQUIRE(answers.size() == 1);
 	CHECK(answers[0].why == Why::kYouRunIt);
 	CHECK(answers[0].playerId == alice);
+	CHECK(f.Logged(std::format("damage on {:08X} from player {} sent on to player {}, who runs it now", NPC, bob, carol)));
+
+	// The runner on record itself says "not mine" (its release is still on its way): the refusal goes through as it is,
+	// so the hitter's log says what happened rather than "nobody runs it" while the table still names a runner.
+	f.fake->Deliver(2, Protocol::EncodeRelease({ NPC }));
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 8, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kNotTheRunner);
+	CHECK(answers[0].playerId == alice);
+	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
 }
 
 // ---- containers -------------------------------------------------------------------------

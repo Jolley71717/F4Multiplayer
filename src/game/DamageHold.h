@@ -30,7 +30,9 @@ namespace DamageHold
 	using Clock = std::chrono::steady_clock;
 
 	constexpr Clock::duration HOLD = std::chrono::seconds{ 15 };
-	constexpr std::size_t     MAX_HELD = 256;  // hits held at once (a guard: a flood of damage for NPCs we never load)
+	// Hits held at once (a guard: a flood of damage for NPCs we never load). Each friend's copy sends at most ten a second
+	// (CopyHealth::SEND_EVERY), so a HOLD's worth from several friends on several NPCs fits with room to spare.
+	constexpr std::size_t MAX_HELD = 2048;
 
 	// What our game finds of the NPC the damage names, as WorldSync reads it. Nothing of the actor is read out of the
 	// world (a_inWorld false: only whether the id names anything of ours).
@@ -190,19 +192,13 @@ namespace DamageHold
 			std::erase_if(entries, [&](auto& a_entry) { return a_try(a_entry); });
 		}
 
-		// What is held for the NPC (nothing: none held): the hits summed, as the oldest of them.
-		[[nodiscard]] std::optional<Held> HeldFor(std::uint32_t a_id) const
+		// The hits held for the NPC, oldest first (none: nothing held for it).
+		[[nodiscard]] std::vector<Held> HeldFor(std::uint32_t a_id) const
 		{
-			std::optional<Held> out;
+			std::vector<Held> out;
 			for (const auto& entry : entries) {
-				if (entry.id != a_id) {
-					continue;
-				}
-				if (!out) {
-					out = entry;
-				} else {
-					out->fraction += entry.fraction;
-					out->why = entry.why;
+				if (entry.id == a_id) {
+					out.push_back(entry);
 				}
 			}
 			return out;

@@ -57,7 +57,13 @@ namespace CopyHealth
 	// A damage sent and never answered (the runner crashed, the server restarted, an answer lost) is given back after
 	// this long, as lost: the copy must not stand below the NPC for good.
 	constexpr Clock::duration LOST_AFTER = std::chrono::seconds{ 30 };
-	constexpr std::size_t     MAX_IN_FLIGHT = 64;  // hits in flight on one copy (a guard: past it the oldest is given back)
+	// What our hits took off a copy goes out at most this often for one copy (CopyWatch::Frame asks TakeOurs no more
+	// often): under automatic fire one damage a frame would put hundreds in flight through a runner's loading screen
+	// (DamageHold::HOLD), each to be answered.
+	constexpr Clock::duration SEND_EVERY = std::chrono::milliseconds{ 100 };
+	// Hits in flight on one copy (a guard: past it the oldest is given back as lost). Well above what a hold of
+	// DamageHold::HOLD at SEND_EVERY can put there (150), so a held hit is never written off before the runner answers.
+	constexpr std::size_t MAX_IN_FLIGHT = 1024;
 	// How long after a hit of ours that put an effect on the copy (a weapon's enchantment: a legendary's bleed, burn or
 	// poison; a mod's spell) the copy's drops with no hit behind them are still ours: the effect's ticks fire no hit
 	// event, and the NPC's own game never deals them (the effect is on our copy alone). Before, every tick after the
@@ -408,10 +414,11 @@ namespace CopyHealth
 		// took off it since it was last checked (the report came between the blow and the next frame) is ours all the same.
 		//
 		// On a copy (a_copy) the report is the runner's word, which can't have our damage still in flight (InFlight) taken
-		// off yet: the copy is raised only to the report less what is in flight, however long that takes (a report that
-		// lowers it is set at once). Once the runner answers (Answered), its next report has the hit in it. Up to 0.10.0 the
-		// hits of the last second were taken for on their way and any older one for arrived, so a dropped hit was healed
-		// back by the next report a second later.
+		// off yet: the copy is set to the report less what is in flight, whichever way that moves it, however long the
+		// hits take (never below MIN_LEFT: the NPC's death comes as its own report). Once the runner answers (Answered),
+		// its next report has the hit in it; a refusal gives the hit back, and the copy is at the report again. Up to
+		// 0.10.0 the hits of the last second were taken for on their way and any older one for arrived, so a dropped hit
+		// was healed back by the next report a second later.
 		float Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now, bool a_copy = true)
 		{
 			const auto it = entries.find(a_id);
@@ -438,10 +445,11 @@ namespace CopyHealth
 			float health = a_health;
 			if (!a_copy) {
 				entry.inFlight.clear();  // ours to run: its health here is the truth, whatever was on its way
-			} else if (a_health > a_before + SLACK) {
+			} else if (const float onWay = InFlight(a_id) + entry.ours; onWay > 0.0f) {
 				// What our hits took that is still on its way (sent and unanswered, or booked this frame and not yet sent)
-				// comes off the report: the runner's game hasn't taken it off yet. More than that is a heal there.
-				health = (std::max)(a_before, a_health - InFlight(a_id) - entry.ours);
+				// comes off the report: the runner's game hasn't taken it off yet. A refusal gives it back to the report's
+				// figure, so the copy never ends up above the runner's word by a refunded hit.
+				health = (std::max)(MIN_LEFT, a_health - onWay);
 			}
 			entry.health = health;
 			entry.dropSince.reset();
@@ -450,14 +458,14 @@ namespace CopyHealth
 		}
 
 		// What hits of ours took off the copy since this was last asked (nothing: none): for the game that runs it to take
-		// off, numbered, and in flight until Answered.
+		// off, numbered, and in flight until Answered. CopyWatch asks at most every SEND_EVERY for one copy.
 		std::optional<Sent> TakeOurs(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto it = entries.find(a_id);
 			if (it == entries.end() || it->second.ours <= 0.0f) {
 				return std::nullopt;
 			}
-			auto& entry = it->second;
+			auto&      entry = it->second;
 			const Sent sent{ ++lastSeq, std::exchange(entry.ours, 0.0f) };
 			if (entry.inFlight.size() >= MAX_IN_FLIGHT) {
 				entry.lost += entry.inFlight.front().amount;  // the oldest is given up on (TakeLost)
@@ -511,8 +519,17 @@ namespace CopyHealth
 			return sum;
 		}
 
-		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT): given up on, and
-		// to be given back to the copy now (0: nothing).
+		// Health the copy is owed that it couldn't take when its answer came (no 3D that frame): given back with TakeLost
+		// once it is seen again.
+		void Park(std::uint32_t a_id, float a_amount)
+		{
+			if (const auto it = entries.find(a_id); it != entries.end() && a_amount > 0.0f) {
+				it->second.lost += a_amount;
+			}
+		}
+
+		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT), and what was
+		// parked (Park): given up on, and to be given back to the copy now (0: nothing).
 		float TakeLost(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto it = entries.find(a_id);
@@ -575,7 +592,7 @@ namespace CopyHealth
 			bool                             unknown = false;  // ... and one of them said nothing
 			bool                             figured = false;  // ... and one of them said what it took
 			std::vector<Flight>              inFlight;         // sent (TakeOurs) and not answered yet (Answered)
-			float                            lost = 0.0f;      // given up on, not yet given back (TakeLost)
+			float                            lost = 0.0f;      // given up on, or parked, not yet given back (TakeLost)
 			std::optional<std::pair<float, Clock::time_point>> reportedDrop;  // a drop a report found with no hit of ours booked yet (Heard): ours if a hit's event follows within JUDGE_AFTER
 			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
 			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)

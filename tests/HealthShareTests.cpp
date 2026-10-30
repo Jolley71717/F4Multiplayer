@@ -361,7 +361,7 @@ TEST("health share: a host's report that lands between Bob's shot and his next f
 	f.bobGame.health -= 10.0f;  // Bob's shot lands
 	f.bobGame.copy.OurHit(RAIDER, f.bobGame.now);
 	f.Deliver();  // the host's report of 98 comes before Bob's next frame
-	CHECK(Near(f.bobGame.health, 90.0f));  // a raise just after his hit, from before it reached the host: held (it showed 98)
+	CHECK(Near(f.bobGame.health, 88.0f));  // a raise just after his hit, from before it reached the host: the report less his shot on its way (it showed 98 up to 0.9.2)
 	f.Pass();
 	CHECK(Near(f.hostGame.health, 88.0f));
 	CHECK(Near(f.bobGame.health, 88.0f));
@@ -582,12 +582,15 @@ TEST("copy health: a report heard between our shot and the next frame books only
 	book.OurHit(RAIDER, t1, 10.0f);
 	book.OwnersBlow(RAIDER, t1);
 	// The owner's report: its own blast, and a burn, not yet our shot. A raise just after our hit: it does not heal the
-	// shot back (the shot is on its way, Heard).
-	CHECK(Near(book.Heard(RAIDER, 60.0f, 65.0f, t1), 60.0f, 0.01f));
-	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	// shot back; the copy is set to the report less the shot on its way (Heard).
+	CHECK(Near(book.Heard(RAIDER, 60.0f, 65.0f, t1), 55.0f, 0.01f));
+	const auto sent = book.TakeOurs(RAIDER, t1);
+	REQUIRE(sent);
+	CHECK(Near(sent->amount, 10.0f, 0.01f));
 	CHECK(Near(book.InFlight(RAIDER), 10.0f, 0.01f));
-	// Its next report, our shot taken off: set as it comes.
-	CHECK(Near(book.Heard(RAIDER, 60.0f, 55.0f, t1 + FRAME), 55.0f, 0.01f));
+	// Its next report, our shot taken off and answered: set as it comes.
+	CHECK(book.Answered(RAIDER, sent->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(Near(book.Heard(RAIDER, 55.0f, 55.0f, t1 + FRAME), 55.0f, 0.01f));
 	CHECK(book.TakeOurs(RAIDER) == 0.0f);
 }
 
@@ -792,9 +795,10 @@ TEST("health share: Bob's hit the host's game holds for seconds is not healed ba
 	for (int i = 0; i < 4; ++i) {
 		f.hostGame.Burn(2.0f);
 		f.Pass();
-		CHECK(Near(f.bobGame.health, 70.0f));  // the host's report of 98, 96, 94, 92 raises nothing: 30 is on its way
+		CHECK(Near(f.bobGame.health, f.hostGame.health - 30.0f));  // the host's report of 98, 96, 94, 92, less the 30 on its way: never a heal
 	}
 	CHECK(Near(f.hostGame.health, 92.0f));
+	CHECK(Near(f.bobGame.health, 62.0f));
 	CHECK(f.bobGame.refunded == 0.0f);
 	CHECK(f.bobGame.answersHeard.empty());
 	// The host's game is back: the hit comes off, is answered, and both games agree on 62.
@@ -900,9 +904,10 @@ TEST("health share: a host's report on its way as Bob's shot takes the raider ov
 		REQUIRE(f->bob.OwnerOf(RAIDER) == f->bob.Id());
 		f->Pass();
 	}
-	// Bob's copy kept his shot, and his game's first reading as it runs the raider told the host so.
-	CHECK(Near(fixed.bobGame.health, 70.0f));
-	CHECK(Near(fixed.hostGame.health, 70.0f));
+	// Bob's copy kept his shot (the host's report of 95, less the 30 on its way, is where his raider stands: the burn's
+	// 5 and his shot), and his game's first reading as it runs the raider told the host so.
+	CHECK(Near(fixed.bobGame.health, 65.0f));
+	CHECK(Near(fixed.hostGame.health, 65.0f));
 	// Up to 0.9.2 the report set Bob's copy back to 95, and his first reading healed the host's copy to it as well.
 	CHECK(Near(v092.bobGame.health, 95.0f));
 	CHECK(Near(v092.hostGame.health, 95.0f));
@@ -920,27 +925,29 @@ TEST("copy health: a report that would raise a copy is set to the owner's word l
 	REQUIRE(first);
 	CHECK(Near(first->amount, 30.0f, 0.01f));
 	CHECK(Near(book.InFlight(RAIDER), 30.0f, 0.01f));
-	// The owner's report of 95, sent before our damage reached its game: the copy keeps our hit.
-	CHECK(Near(book.Heard(RAIDER, 70.0f, 95.0f, t0 + 2 * FRAME), 70.0f, 0.01f));
-	CHECK(book.Check(RAIDER, 70.0f, t0 + 3 * FRAME) == 0.0f);
-	// Its next report, our damage taken off (its answer came first): a drop, set at once.
+	// The owner's report of 95 (a burn there), sent before our damage reached its game: the copy keeps our hit, and takes
+	// the burn: the report less the 30 on its way.
+	CHECK(Near(book.Heard(RAIDER, 70.0f, 95.0f, t0 + 2 * FRAME), 65.0f, 0.01f));
+	CHECK(book.Check(RAIDER, 65.0f, t0 + 3 * FRAME) == 0.0f);
+	// Its next report, our damage taken off (its answer came first): set as it comes.
 	CHECK(book.Answered(RAIDER, first->seq, CopyHealth::Answer::kApplied) == 0.0f);
 	CHECK(book.InFlight(RAIDER) == 0.0f);
-	CHECK(Near(book.Heard(RAIDER, 70.0f, 65.0f, t0 + 4 * FRAME), 65.0f, 0.01f));
+	CHECK(Near(book.Heard(RAIDER, 65.0f, 65.0f, t0 + 4 * FRAME), 65.0f, 0.01f));
 	CHECK(book.Check(RAIDER, 65.0f, t0 + 4 * FRAME + CopyHealth::OURS_GRACE + FRAME) == 0.0f);
 
 	// No answer for a long while (the owner's game holds it: a loading screen, the NPC not loaded there): the copy keeps
-	// the hit through every report meanwhile, however long. Up to 0.10.0 a report a second after the hit healed it back.
+	// the hit off every report meanwhile, however long. Up to 0.10.0 a report a second after the hit healed it back.
 	book.OurHit(RAIDER, t0 + 5s);
 	CHECK(book.Check(RAIDER, 55.0f, t0 + 5s) == 0.0f);  // our 10
 	const auto second = book.TakeOurs(RAIDER, t0 + 5s);
 	REQUIRE(second);
-	CHECK(Near(book.Heard(RAIDER, 55.0f, 62.0f, t0 + 5s + FRAME), 55.0f, 0.01f));
-	CHECK(book.Check(RAIDER, 55.0f, t0 + 5s + 2 * FRAME) == 0.0f);
-	CHECK(book.Check(RAIDER, 55.0f, t0 + 5s + CopyHealth::OURS_GRACE + FRAME) == 0.0f);
-	CHECK(Near(book.Heard(RAIDER, 55.0f, 65.0f, t0 + 15s), 55.0f, 0.01f));
+	CHECK(Near(book.Heard(RAIDER, 55.0f, 62.0f, t0 + 5s + FRAME), 52.0f, 0.01f));  // a burn there: 62 less our 10
+	CHECK(book.Check(RAIDER, 52.0f, t0 + 5s + 2 * FRAME) == 0.0f);
+	CHECK(book.Check(RAIDER, 52.0f, t0 + 5s + CopyHealth::OURS_GRACE + FRAME) == 0.0f);
+	CHECK(Near(book.Heard(RAIDER, 52.0f, 65.0f, t0 + 15s), 55.0f, 0.01f));  // a stimpak there: 65 less our 10, still on its way
 	CHECK(book.Check(RAIDER, 55.0f, t0 + 20s) == 0.0f);
-	// Refused after all (held too long there): the copy gets exactly the hit back, now, and nothing of it is ours to send.
+	// Refused after all (held too long there): the copy gets exactly the hit back, now (65: the owner's word), and
+	// nothing of it is ours to send.
 	CHECK(Near(book.Answered(RAIDER, second->seq, CopyHealth::Answer::kRefused), 10.0f, 0.01f));
 	CHECK(book.Refused() == 1);
 	CHECK(book.TakeOurs(RAIDER) == 0.0f);
@@ -965,6 +972,11 @@ TEST("copy health: a hit answered as ours to run keeps its drop, and one never a
 	CHECK(book.InFlight(RAIDER) == 0.0f);
 	CHECK(book.Refused() == 0);
 
+	// Health the copy couldn't take when its answer came (no 3D that frame) is parked, and comes with the next TakeLost.
+	book.Park(RAIDER, 4.0f);
+	CHECK(Near(book.TakeLost(RAIDER, t0 + 500ms), 4.0f, 0.01f));
+	CHECK(book.TakeLost(RAIDER, t0 + 600ms) == 0.0f);
+
 	// A hit whose answer never comes (the runner crashed): given back once LOST_AFTER has passed, not before.
 	book.OurHit(RAIDER, t0 + 1s, 15.0f);
 	CHECK(book.Check(RAIDER, 65.0f, t0 + 1s) == 0.0f);
@@ -974,7 +986,7 @@ TEST("copy health: a hit answered as ours to run keeps its drop, and one never a
 	CHECK(Near(book.InFlight(RAIDER), 15.0f, 0.01f));
 	CHECK(Near(book.TakeLost(RAIDER, t0 + 1s + CopyHealth::LOST_AFTER), 15.0f, 0.01f));
 	CHECK(book.InFlight(RAIDER) == 0.0f);
-	CHECK(Near(book.Lost(), 15.0f, 0.01f));
+	CHECK(Near(book.Lost(), 19.0f, 0.01f));  // the parked 4 and the lost 15
 	CHECK(book.Answered(RAIDER, second->seq, CopyHealth::Answer::kApplied) == 0.0f);  // a late answer is nothing now
 
 	// Numbers count up over every copy, so an answer names one hit.
