@@ -596,6 +596,21 @@ TEST("server world: a game that says it doesn't run the NPC it was sent damage f
 	f.fake->Deliver(1, Answer(NPC, 9, bob, Why::kDeadThere, 0.1f));
 	CHECK(Answers(Received(f, 2)).empty());
 
+	// The game a hit went to leaves: the hit is answered for it, "nobody runs it", as that game's, so the hitter's copy
+	// gets it back now rather than after its lost timer.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 15));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Disconnect(1);
+	REQUIRE(f.LoggedSoon(std::format("player {} left", alice)));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].seq == 15);
+	CHECK(answers[0].why == Why::kNobodyRuns);
+	CHECK(answers[0].playerId == alice);
+	JoinAs(f, 1, "Alice");  // back, with whatever id
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
 	// Dead for the session since it was sent on: a "not mine" answer isn't sent on to anyone; the hitter is told the
 	// session has it dead, and (a joiner) reminded of the death as for any report about the dead.
 	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 10));

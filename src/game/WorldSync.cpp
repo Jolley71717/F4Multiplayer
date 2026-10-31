@@ -2245,6 +2245,12 @@ namespace WorldSync
 				}
 				const auto decision = TakeDamage(a_held.id, a_held.fraction, a_now, true, a_held.seq, a_held.from, of->second);
 				a_held.why = decision.why;
+				// One of the hits took the last of its health: the rest held for it find it dead (the facts are read once a
+				// pass), and are refused as such rather than taken off a corpse and answered applied.
+				if (decision.verdict == DamageHold::Verdict::kApply && of->second.actor && of->second.info &&
+					static_cast<RE::ActorValueOwner&>(*of->second.actor).GetActorValue(*of->second.info) <= 0.0f) {
+					of->second.facts.deadHere = true;
+				}
 				return decision.verdict != DamageHold::Verdict::kHold;
 			});
 			for (const auto& gone : heldDamage.Expire(a_now)) {
@@ -2451,7 +2457,7 @@ namespace WorldSync
 	{
 		friendlyFire = a_friendlyFire;
 		dead.Expect(Clock::now());  // the session's world state follows the welcome
-		heldDamage.Clear();         // what was held was for the session we were in before
+		heldDamage.Clear();         // what was held was for the session we were in before (its server answers those hits for us as we leave it)
 	}
 
 	LootSync::Loot& Loot()

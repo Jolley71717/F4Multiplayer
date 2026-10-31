@@ -1186,7 +1186,50 @@ void Server::Run()
 		endLoans([&](const Protocol::FrameLending& a_loan) { return !spawns.contains(a_loan.spawnId); });
 	};
 
-	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
+	// The answer to a player's numbered damage report (Protocol::DamageAnswer), to that player if they are still here.
+	std::size_t       damageRefused = 0;  // by the server itself, since the last line about them
+	Clock::time_point damageRefusedLogged{};
+	std::size_t       damageRerouted = 0;  // sent on to the runner on record after the game it went to said it doesn't run the NPC, since the last line
+	Clock::time_point damageReroutedLogged{};
+	const auto        answerDamage = [&](std::uint32_t a_hitter, const Protocol::DamageAnswer& a_answer) {
+		if (const auto key = keyOfPlayer(a_hitter)) {
+			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
+		}
+	};
+	// Each numbered damage sent on, by whose it is and its number: the player it went to, who alone may answer it (a
+	// release or a takeover can cross it on the wire, so that player need not be the runner on record by then). Gone
+	// with the answer, or answered for a game that leaves (answerRoutedTo); one a game neither answers nor leaves
+	// stays until the table is full, which starts it over (the hitters' copies give those up as lost on their own).
+	constexpr std::size_t                              MAX_ROUTED_DAMAGE = 8192;
+	std::unordered_map<std::uint64_t, std::uint32_t>   routedDamage;
+	const auto                                         routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
+	const auto                                         noteRouted = [&](std::uint32_t a_hitter, std::uint32_t a_seq, std::uint32_t a_to) {
+		if (a_seq == 0) {
+			return;
+		}
+		if (routedDamage.size() >= MAX_ROUTED_DAMAGE && !routedDamage.contains(routeKey(a_hitter, a_seq))) {
+			log(std::format("server: {} hits sent on were never answered; forgetting them", routedDamage.size()));
+			routedDamage.clear();
+		}
+		routedDamage[routeKey(a_hitter, a_seq)] = a_to;
+	};
+	// The game hits were sent to is gone (it left, or was dropped): each is answered for it, "nobody runs it", so the
+	// hitters' copies get them back now rather than after their lost timer, and the table doesn't keep them.
+	const auto answerRoutedTo = [&](std::uint32_t a_gone) {
+		for (auto it = routedDamage.begin(); it != routedDamage.end();) {
+			if (it->second != a_gone) {
+				++it;
+				continue;
+			}
+			const auto hitter = static_cast<std::uint32_t>(it->first >> 32);
+			const auto seq = static_cast<std::uint32_t>(it->first & 0xFFFFFFFFu);
+			answerDamage(hitter, { 0, seq, a_gone, Protocol::DamageAnswer::Why::kNobodyRuns, 0.0f });
+			it = routedDamage.erase(it);
+		}
+	};
+
+	// The player is gone: the others are told, the NPCs they ran are free for someone else, and the hits sent to their
+	// game are answered for it.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
 			if (const auto member = members.find(a_player.helloId); member != members.end()) {
@@ -1196,6 +1239,7 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
+		answerRoutedTo(a_player.id);
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
@@ -1766,32 +1810,6 @@ void Server::Run()
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
-	// The answer to a player's numbered damage report (Protocol::DamageAnswer), to that player if they are still here.
-	std::size_t       damageRefused = 0;  // by the server itself, since the last line about them
-	Clock::time_point damageRefusedLogged{};
-	std::size_t       damageRerouted = 0;  // sent on to the runner on record after the game it went to said it doesn't run the NPC, since the last line
-	Clock::time_point damageReroutedLogged{};
-	const auto        answerDamage = [&](std::uint32_t a_hitter, const Protocol::DamageAnswer& a_answer) {
-		if (const auto key = keyOfPlayer(a_hitter)) {
-			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
-		}
-	};
-	// Each numbered damage sent on, by whose it is and its number: the player it went to, who alone may answer it (a
-	// release or a takeover can cross it on the wire, so that player need not be the runner on record by then). Gone
-	// with the answer; a hit never answered stays until the table is full, which starts it over (the hitters' copies
-	// give those up as lost on their own).
-	constexpr std::size_t                              MAX_ROUTED_DAMAGE = 8192;
-	std::unordered_map<std::uint64_t, std::uint32_t>   routedDamage;
-	const auto                                         routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
-	const auto                                         noteRouted = [&](std::uint32_t a_hitter, std::uint32_t a_seq, std::uint32_t a_to) {
-		if (a_seq == 0) {
-			return;
-		}
-		if (routedDamage.size() >= MAX_ROUTED_DAMAGE && !routedDamage.contains(routeKey(a_hitter, a_seq))) {
-			routedDamage.clear();
-		}
-		routedDamage[routeKey(a_hitter, a_seq)] = a_to;
-	};
 	const auto playerById = [&](std::uint32_t a_id) -> Player* {
 		for (auto& [key, other] : players) {
 			if (other.welcomed && !other.kicked && other.id == a_id) {
@@ -1929,10 +1947,9 @@ void Server::Run()
 		auto       out = *answer;
 		out.playerId = a_player.id;
 		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner) {
-			// A damage the answerer didn't echo as it was (none, or more than all of it) can't be sent on or stood by.
-			if (!(answer->health > 0.0f && answer->health <= 1.0f)) {
+			// A damage the answerer didn't echo (0: the decoder refuses more than all of it) can't be sent on or stood by.
+			if (answer->health <= 0.0f) {
 				out.why = Protocol::DamageAnswer::Why::kNoHealthThere;
-				out.health = std::clamp(answer->health, 0.0f, 1.0f);
 			} else if (deadActors.contains(answer->refId)) {
 				// Dead for the session since it was sent on: nobody takes it, and the hitter's game is told the death again
 				// as for any report about the dead (remindDead).

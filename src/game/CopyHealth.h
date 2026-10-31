@@ -450,7 +450,8 @@ namespace CopyHealth
 			}
 			float health = a_health;
 			if (!a_copy) {
-				entry.inFlight.clear();  // ours to run: its health here is the truth, whatever was on its way
+				entry.inFlight.clear();  // ours to run: its health here is the truth, whatever was on its way, or booked and not sent
+				entry.ours = 0.0f;
 				entry.lastReport.reset();
 			} else {
 				entry.lastReport = a_health;
@@ -549,11 +550,12 @@ namespace CopyHealth
 			}
 		}
 
-		// What was parked for the copy (Park), to be given back now (0: nothing).
+		// What was parked for the copy (Park), to be given back now (0: nothing): no more than takes the copy to the
+		// runner's last word, which may have come since.
 		float TakeParked(std::uint32_t a_id)
 		{
 			const auto it = entries.find(a_id);
-			return it == entries.end() ? 0.0f : std::exchange(it->second.parked, 0.0f);
+			return it == entries.end() ? 0.0f : Refundable(it->second, std::exchange(it->second.parked, 0.0f));
 		}
 
 		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT): given up on, and
