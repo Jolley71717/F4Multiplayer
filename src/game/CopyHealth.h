@@ -589,7 +589,8 @@ namespace CopyHealth
 				entry.lost += a_flight.amount;
 				return true;
 			});
-			const float lost = Refundable(entry, std::exchange(entry.lost, 0.0f));
+			const float lost = Refundable(entry, entry.lost);
+			entry.lost -= lost;  // the rest once the copy is back at the runner's word
 			lostTotal += lost;
 			return lost;
 		}

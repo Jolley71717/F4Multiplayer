@@ -432,13 +432,13 @@ TEST("server world: damage a player took off their copy of an NPC goes to the ga
 	// Alice took off).
 	f.fake->Deliver(3, Answer(NPC, 11, bob, Why::kDeadThere, 0.1f));
 	CHECK(Answers(Received(f, 2)).empty());
-	// Alice says "not mine" without echoing the damage (0): nothing to send on; Bob is told it can't be stood by.
+	// Alice, on record, says "not mine": passed through as it is, whatever she echoed of the damage.
 	f.fake->Deliver(2, CopyDamage(NPC, 0.2f, 12));
 	REQUIRE(Damaged(Received(f, 1)).size() == 1);
 	f.fake->Deliver(1, Answer(NPC, 12, bob, Why::kNotTheRunner, 0.0f));
 	const auto unsent = Answers(Received(f, 2));
 	REQUIRE(unsent.size() == 1);
-	CHECK(unsent[0].why == Why::kNoHealthThere);
+	CHECK(unsent[0].why == Why::kNotTheRunner);
 	CHECK(unsent[0].seq == 12);
 }
 

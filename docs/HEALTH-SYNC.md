@@ -41,7 +41,7 @@ wrong guess is now a local, immediate bounce rather than a later heal; **open** 
 
 | # | Path | Rule it assumes | How real play breaks it | Verdict |
 |---|---|---|---|---|
-| 1 | Runner change (takeover by a hit, handoff to a nearer player, release on unload, the 0.10.0 menu-pause handover) | Everyone's owner table matches the server's | Tables lag by a round trip; the old runner drops damage addressed to it ("not ours"), the hitter's table may still name it; with two games disagreeing, both drop and both give the drop back: "neither can kill it" | closed: the server routes damage by its own table, to the runner only, and re-routes a runner's "not mine" once |
+| 1 | Runner change (takeover by a hit, handoff to a nearer player, release on unload, the 0.10.0 menu-pause handover) | Everyone's owner table matches the server's | Tables lag by a round trip; the old runner drops damage addressed to it ("not ours"), the hitter's table may still name it; with two games disagreeing, both drop and both give the drop back: "neither can kill it" | closed: the server routes damage by its own table, to the runner only, and sends a runner's "not mine" on to the runner on record, at most twice |
 | 2 | HealthShare (runner's periodic report) and the ack-less report after the runner's own hit | A report older than 1 s after your hit includes your hit | Any dropped or slow delta: the report heals it. The 1 s is a guess | closed: no timer; a copy shows "runner's word minus my hits not yet acknowledged", for as long as that takes |
 | 3 | The server's stale-report rule (#150) | Only the runner's word counts | Right, but it also drops the old runner's *acknowledgement* when it rides on a report | closed: acks are their own message, always forwarded |
 | 4 | DamageHold (#192) | Held damage gets applied within 15 s | After 15 s it is dropped with a log line only; a runner whose NPC never loads (far away, kept by a hold) drops it | closed: expiry is a refusal; the hitter's copy gets the health back at once, logged |
@@ -92,7 +92,7 @@ only timer left, and it errs on the side of showing the player the truth.
 
 The hitter's table no longer decides who applies the hit. The server sends damage to the runner it has on record;
 anyone else learns through the runner's report. A runner that answers "not mine" (its table is behind) has the damage
-re-routed by the server to whoever runs it now, once; if nobody does, the hitter is told.
+sent on by the server to whoever runs it now, at most twice; if nobody does, the hitter is told.
 
 ### 4. What should persist, and which world wins (follow-up)
 

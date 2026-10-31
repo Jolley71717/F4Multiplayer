@@ -1207,8 +1207,10 @@ void Server::Run()
 		std::uint32_t     to = 0;
 		std::uint32_t     refId = 0;
 		Clock::time_point at{};
+		std::uint8_t      hops = 0;  // times sent on after a refusal (MAX_HOPS: an NPC trading hands fast can't keep a hit bouncing)
 	};
 	constexpr std::size_t                        MAX_ROUTED_DAMAGE = 8192;
+	constexpr std::uint8_t                       MAX_HOPS = 2;
 	constexpr auto                               ROUTE_KEEP = std::chrono::minutes{ 3 };
 	std::unordered_map<std::uint64_t, Routed>    routedDamage;
 	const auto                                   routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
@@ -1942,7 +1944,7 @@ void Server::Run()
 
 	// The game a damage report went to answers it (kReportDamageAnswer, playerId whose hit it was): applied, or refused and
 	// why. Passed to the hitter as the answer of that game (kDamageAnswer, playerId who answered). One refused as "not the
-	// runner" by a game whose table was behind the server's goes on to the runner the server has on record now, once: a
+	// runner" by a game whose table was behind the server's goes on to the runner the server has on record now, at most twice: a
 	// release or a takeover crossed the damage on the wire. When the server has nobody on record the hitter is told so
 	// ("nobody runs it"), when it has the hitter "you run it", and when it still has the refuser itself (its release is
 	// on its way) the refusal goes through as it is. A runner that changed since can't refuse the same hit twice (it is
@@ -1974,10 +1976,7 @@ void Server::Run()
 		// stands as it is.
 		const bool runs = owner != actorOwners.end() && owner->second.playerId == a_player.id;
 		if (answer->why != Protocol::DamageAnswer::Why::kApplied && (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner || !runs)) {
-			// A damage the answerer didn't echo (0: the decoder refuses more than all of it) can't be sent on or stood by.
-			if (answer->health <= 0.0f) {
-				out.why = Protocol::DamageAnswer::Why::kNoHealthThere;
-			} else if (deadActors.contains(answer->refId)) {
+			if (deadActors.contains(answer->refId)) {
 				// Dead for the session since it was sent on: nobody takes it, and the hitter's game is told the death again
 				// as for any report about the dead (remindDead).
 				out.why = Protocol::DamageAnswer::Why::kDeadInSession;
@@ -1985,7 +1984,11 @@ void Server::Run()
 					remindDead(*hitter, answer->refId, now);
 				}
 			} else if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
-				if (const auto key = keyOfPlayer(owner->second.playerId)) {
+				// Sent on to the runner on record, at most MAX_HOPS times (an NPC trading hands fast), and only with the damage
+				// echoed (0: the decoder refuses more than all of it).
+				const auto key = answer->health > 0.0f && routed->second.hops < MAX_HOPS ? keyOfPlayer(owner->second.playerId) : 0;
+				if (key != 0) {
+					++routed->second.hops;
 					++damageRerouted;
 					if (now - damageReroutedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 						damageReroutedLogged = now;

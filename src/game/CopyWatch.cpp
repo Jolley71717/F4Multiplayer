@@ -382,10 +382,11 @@ namespace CopyWatch
 	void Answered(std::uint32_t a_wire, std::uint32_t a_seq, std::uint32_t a_from, Protocol::DamageAnswer::Why a_why)
 	{
 		using Why = Protocol::DamageAnswer::Why;
-		// A refusal for an NPC no other game runs now (ours to run since the hit: its claim took it over; or nobody's,
-		// which fights here on its own AI) keeps the drop: the health here is the truth, and a refund would heal an NPC
-		// we share. The server says "the sender runs it" in that case, but a late one from the game it went to can't.
-		const bool ours = OtherOwner(a_wire) == 0;
+		// A refusal for an NPC ours to run since the hit (its claim took it over) keeps the drop: the health here is the
+		// truth, and a refund would heal an NPC we share. The server says "the sender runs it" in that case, but a late
+		// one from the game it went to can't. (Its book entry goes with the next frame anyway: Prune keeps copies only.)
+		const auto localPlayer = NpcSync::LocalPlayer();
+		const bool ours = localPlayer != 0 && NpcSync::Owner(a_wire) == localPlayer;
 		const auto answer = a_why == Why::kApplied ? CopyHealth::Answer::kApplied : a_why == Why::kYouRunIt || ours ? CopyHealth::Answer::kOurs : CopyHealth::Answer::kRefused;
 		const float give = book.Answered(a_wire, a_seq, answer);
 		++answersTaken;
