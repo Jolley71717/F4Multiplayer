@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T21:07:38+00:00",
+ "updated": "2026-10-31T23:07:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -58,6 +58,14 @@
    "stage": 1,
    "note": "We know why it looks round and have a plan; not built yet.",
    "desc": "At night your own light is a beam, but a friend's light beside you shows as a round glow around them. We plan to make it a beam that starts at their head and points where they face and look. In power armor it should match the helmet light's cone."
+  },
+  {
+   "id": "1dra",
+   "title": "Rig loot check: does a VM removeallitems after opening reach the host?",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "238o",
@@ -386,6 +394,14 @@
    "pr": 171,
    "partial": "0.9.0",
    "desc": "Some structures built in workshop mode did not show up for the other player. 0.9.0 added power wires, building done before the session started, and moved settlement pieces. The next release adds a host setting, bShareGuestBuilds (off by default), so a guest's earlier building only comes into the host's world when the host turns it on, and a second friend reporting the same piece makes no second copy. Tested on two real games; the three-player case and large settlements are still to check."
+  },
+  {
+   "id": "d3lb",
+   "title": "Rig check: compare power-armor stand-in distance at the same timestamp",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "e0xc",
@@ -739,6 +755,14 @@
    "desc": "A player reported that throwing a Molotov seemed to hand the ability to damage an enemy to the other player. Burn damage was being healed back by the other player's next hit, and the thrower's blast counted twice. 0.9.0 fixed the main cause by having the game that runs the enemy share its health whenever it changes. The next release also stops a thrower's own hit in the same second from counting twice."
   },
   {
+   "id": "nyqc",
+   "title": "Rig hits check: damageAnswered and damageHeld do not move for copy hits; kill step does not kill in 8 shots",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "nz4w",
    "title": "Friends run at full speed while you're in VATS slow motion",
    "kind": "feature",
@@ -1031,6 +1055,14 @@
    "stage": 7,
    "note": "Merged for the next release; in testing the takes were already in before the chest was opened.",
    "pr": 208
+  },
+  {
+   "id": "xegs",
+   "title": "Dev session file keeps test-built pieces that come back as friends' copies at every join",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "xl7e",
