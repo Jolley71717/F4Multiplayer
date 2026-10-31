@@ -80,6 +80,9 @@ namespace CopyWatch
 		float         damageTotal = 0.0f;
 		std::uint32_t gainsTaken = 0;  // times a copy's gain of its own (no report behind it) was taken back
 		float         healthTaken = 0.0f;
+		std::uint32_t unseenHits = 0;  // drops on copies taken for our player's shots that no hit event came for (Book::Unseen)
+		// Our player's aim as their last shot left (OurShots), for the next Frame to book on the copies it points at.
+		std::optional<std::pair<CopyHealth::Aim, Clock::time_point>> shotAim;
 		// Lines of each kind a RollingLog::WINDOW (they were for the whole run: a long session's log had none of its
 		// later fights), and the counters every WINDOW.
 		RollingLog::Budget hitLog{ 100 };
@@ -87,6 +90,7 @@ namespace CopyWatch
 		RollingLog::Budget reportLog{ 40 };
 		RollingLog::Budget deathLog{ 40 };
 		RollingLog::Budget gainLog{ 40 };
+		RollingLog::Budget unseenLog{ 20 };
 		RollingLog::Every  summary;
 
 		const RE::ActorValueInfo* HealthInfo()
@@ -359,6 +363,19 @@ namespace CopyWatch
 		}
 	}
 
+	void OurShots()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+		// The eyes of a standing player (a crouch is lower: AIM_SLACK and the actor's height cover it).
+		constexpr float EYES = 120.0f;
+		const auto&     at = player->data.location;
+		const auto&     angle = player->data.angle;
+		shotAim = { CopyHealth::Aim{ .x = at.x, .y = at.y, .z = at.z + EYES, .yaw = angle.z, .pitch = angle.x }, Clock::now() };
+	}
+
 	void TakeHits()
 	{
 		std::vector<Hit> hits;
@@ -451,13 +468,39 @@ namespace CopyWatch
 					copies.emplace_back(actor, wire);
 				}
 			}
+			// Our player's last shot is booked on the nearest copy it points at (one: a drop on a neighbour is not its).
+			if (const auto aim = std::exchange(shotAim, std::nullopt); aim && !copies.empty()) {
+				std::vector<std::array<float, 3>> at;
+				at.reserve(copies.size());
+				for (const auto& [actor, id] : copies) {
+					at.push_back({ actor->data.location.x, actor->data.location.y, actor->data.location.z });
+				}
+				if (const auto aimed = CopyHealth::NearestAimed(aim->first, at)) {
+					book.OurShot(copies[*aimed].second, aim->second);
+				}
+			}
 			for (const auto& [actor, id] : copies) {
 				copiesSeen[id] = now;
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
 				const bool  held = book.Holds(id);
+				const auto  unseenBefore = book.Unseen();
 				const float give = book.Check(id, health, now, maximum);
+				if (book.Unseen() != unseenBefore) {
+					// A drop no hit event came for, just after our player's shot at the copy: the shot's (SHOT_REACH).
+					// Before, given back: the shot healed what it hit, and the NPC never took it in its own game.
+					++unseenHits;
+					if (unseenLog.Take(now)) {
+						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) lost health just after our player's shot at it, and no hit event came for it; "
+						          "taken for the shot's and sent to its game, {:.1f} now ({} so far). Last hit on it: {}",
+							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), health, unseenHits, LastHitOn(id, now));
+					}
+					if (unseenHits == 1) {
+						REX::WARN("CopyWatch: our player's shot hurt a friend's NPC here and the game told the mod of no hit: this game's hit events may not reach "
+						          "the mod (another mod can stop them first). Such drops are counted as the shots' (copyUnseen in `net status`)");
+					}
+				}
 				// What our hits took off it, for the game that runs it (WorldSync sends it).
 				if (const float ours = book.TakeOurs(id); ours > 0.0f) {
 					if (maximum > 0.0f && damageOut.size() < MAX_INBOX) {
@@ -556,6 +599,7 @@ namespace CopyWatch
 			hitInbox.clear();
 			deathInbox.clear();
 		}
+		shotAim.reset();
 		book.Clear();
 		damageOut.clear();
 		lastHits.clear();
@@ -564,9 +608,9 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyHeld={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={}",
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyHeld={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={}",
 			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, gainsTaken, healthTaken, reportsSet, reportsHeld, damageSent, damageTotal, leftToOwner, blastsThere, blastsOurs, effectHits,
-			friendsBlasts, copiesDied);
+			friendsBlasts, copiesDied, unseenHits);
 	}
 
 	std::vector<std::pair<std::uint32_t, float>> TakeDamage()

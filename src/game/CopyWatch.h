@@ -56,6 +56,11 @@ namespace CopyWatch
 	// packet is dispatched: a runner's health report heard first would heal back a shot whose event was not booked yet.
 	void TakeHits();
 
+	// Our player fired (or swung) just now (WeaponFire::TakeShots): where they aim is kept, and the next Frame books the
+	// shot on each copy it points at (CopyHealth::Book::OurShot), so that a drop that follows with no hit event is the
+	// shot's, not something to give back (CopyHealth::SHOT_REACH). Main thread.
+	void OurShots();
+
 	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
 	// fraction of the copy's maximum: WorldSync sends it to the game that runs the NPC (kReportDamage).
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, float>> TakeDamage();
