@@ -141,19 +141,24 @@ function HexMatches([byte[]]$Bytes, [string]$Pattern) {
 	return $true
 }
 
-# Every ID the plugin names: REL::ID NAME{ n } and REL::ID(n).
+# Every ID the plugin names: REL::ID NAME{ og, ng, ae } and REL::ID{ og, ng, ae } (src/Runtime.h), checked here by its
+# last number, 1.11.240's. One written with a single number would be taken for every runtime: a failure.
 $ids = [ordered]@{}
 Get-ChildItem (Join-Path $root 'src') -Recurse -Include *.cpp, *.h | ForEach-Object {
 	$file = $_
 	$text = [IO.File]::ReadAllText($file.FullName)
-	foreach ($m in [regex]::Matches($text, 'REL::ID\s*(\w*)\s*[\{\(]\s*(\d+)\s*[\}\)]')) {
-		$id = [uint64]$m.Groups[2].Value
+	foreach ($m in [regex]::Matches($text, 'REL::ID\s*(\w*)\s*\{\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}')) {
+		$id = [uint64]$m.Groups[4].Value
 		if (-not $ids.Contains($id)) {
 			$name = if ($m.Groups[1].Value) { $m.Groups[1].Value } else { 'REL::ID' }
 			$ids[$id] = '{0} ({1})' -f $name, $file.Name
 		}
 	}
+	foreach ($m in [regex]::Matches($text, 'REL::ID\s*(\w*)\s*[\{\(]\s*(\d+)\s*[\}\)]')) {
+		Report $false ('{0} ({1}): one number for every runtime; write REL::ID{{ og, ng, ae }}' -f $m.Value, $file.Name)
+	}
 }
+Report ($ids.Count -gt 0) ('{0} IDs of ours found in src' -f $ids.Count)
 
 foreach ($id in $ids.Keys) {
 	$offset = Resolve $id

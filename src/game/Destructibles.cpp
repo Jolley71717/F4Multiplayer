@@ -1,4 +1,5 @@
 #include "game/Destructibles.h"
+#include "Runtime.h"
 
 #include "game/DestructionRules.h"
 #include "game/Story.h"
@@ -32,59 +33,67 @@ namespace Destructibles
 
 		// BGSDestructibleObjectForm::GetDestructibleForm(TESForm*): a form's destruction data by its form type (a
 		// static, an activator, a container, ...), none for a type that has none.
-		constexpr REL::ID GET_DESTRUCTIBLE{ 2192671 };
+		constexpr REL::ID GET_DESTRUCTIBLE{ 0, 0, 2192671 };
 		// ExtraDataList::GetHealth: the reference's ExtraObjectHealth (-1 when it has none: never damaged).
-		constexpr REL::ID GET_HEALTH{ 2190518 };
+		constexpr REL::ID GET_HEALTH{ 0, 0, 2190518 };
 		// ExtraDataList::SetHealth(float): sets it (makes it when it has none), as the engine's damage does.
-		constexpr REL::ID SET_HEALTH{ 2190519 };
+		constexpr REL::ID SET_HEALTH{ 0, 0, 2190519 };
 		// ExtraDataList::SetModelSwap(BGSModelMaterialSwap*, TESBoundObject* base): the reference's model in its base's
 		// place, as a stage's replacement model does (BGSDestructibleObjectForm's damage, 2192675).
-		constexpr REL::ID SET_MODEL_SWAP{ 2190483 };
+		constexpr REL::ID SET_MODEL_SWAP{ 0, 0, 2190483 };
 		// ExtraDataList::RemoveByType: what the engine's damage drops with the old model, its saved physics (kSavedHavokData).
-		constexpr REL::ID REMOVE_EXTRA{ 2190971 };
+		constexpr REL::ID REMOVE_EXTRA{ 0, 0, 2190971 };
 		// BGSDestructibleObjectForm's damage stage on the 3D (destruction data, reference, force): the model's damaged
 		// look for the reference's health, as loading its 3D does (TESObjectREFR::Load3D).
-		constexpr REL::ID APPLY_DAMAGE_STAGE{ 2192683 };
+		constexpr REL::ID APPLY_DAMAGE_STAGE{ 0, 0, 2192683 };
+
+		// The engine calls above (1.11.240; old-gen and next-gen not read yet): the sync is off on a runtime without all of them,
+		// said once in the log.
+		bool Available()
+		{
+			static const Runtime::Feature feature{ "Destructibles", { GET_DESTRUCTIBLE, GET_HEALTH, SET_HEALTH, SET_MODEL_SWAP, REMOVE_EXTRA, APPLY_DAMAGE_STAGE } };
+			return feature.On();
+		}
 
 		RE::BGSDestructibleObjectForm* DestructibleOf(RE::TESForm* a_base)
 		{
 			using func_t = RE::BGSDestructibleObjectForm* (*)(RE::TESForm*);
-			static REL::Relocation<func_t> func{ GET_DESTRUCTIBLE };
+			static Runtime::Relocation<func_t> func{ GET_DESTRUCTIBLE };
 			return a_base ? func(a_base) : nullptr;
 		}
 
 		float HealthOf(RE::ExtraDataList* a_list)
 		{
 			using func_t = float (*)(RE::ExtraDataList*);
-			static REL::Relocation<func_t> func{ GET_HEALTH };
+			static Runtime::Relocation<func_t> func{ GET_HEALTH };
 			return a_list ? func(a_list) : -1.0f;
 		}
 
 		void SetHealth(RE::ExtraDataList* a_list, float a_health)
 		{
 			using func_t = void (*)(RE::ExtraDataList*, float);
-			static REL::Relocation<func_t> func{ SET_HEALTH };
+			static Runtime::Relocation<func_t> func{ SET_HEALTH };
 			func(a_list, a_health);
 		}
 
 		void SetModelSwap(RE::ExtraDataList* a_list, RE::BGSModelMaterialSwap* a_swap, RE::TESBoundObject* a_base)
 		{
 			using func_t = void (*)(RE::ExtraDataList*, RE::BGSModelMaterialSwap*, RE::TESBoundObject*);
-			static REL::Relocation<func_t> func{ SET_MODEL_SWAP };
+			static Runtime::Relocation<func_t> func{ SET_MODEL_SWAP };
 			func(a_list, a_swap, a_base);
 		}
 
 		void RemoveExtra(RE::ExtraDataList* a_list, RE::EXTRA_DATA_TYPE a_type)
 		{
 			using func_t = void (*)(RE::ExtraDataList*, std::uint8_t);
-			static REL::Relocation<func_t> func{ REMOVE_EXTRA };
+			static Runtime::Relocation<func_t> func{ REMOVE_EXTRA };
 			func(a_list, static_cast<std::uint8_t>(a_type));
 		}
 
 		bool ApplyDamageStage(RE::BGSDestructibleObjectForm* a_form, RE::TESObjectREFR* a_ref)
 		{
 			using func_t = bool (*)(RE::BGSDestructibleObjectForm*, RE::TESObjectREFR*, bool);
-			static REL::Relocation<func_t> func{ APPLY_DAMAGE_STAGE };
+			static Runtime::Relocation<func_t> func{ APPLY_DAMAGE_STAGE };
 			return func(a_form, a_ref, false);
 		}
 
@@ -400,6 +409,9 @@ namespace Destructibles
 
 	void Frame(bool a_welcomed)
 	{
+		if (!Available()) {
+			return;
+		}
 		const auto now = Clock::now();
 		std::vector<std::uint32_t> hits;
 		{
@@ -465,6 +477,9 @@ namespace Destructibles
 
 	void Apply(const Protocol::Destructions& a_message)
 	{
+		if (!Available()) {
+			return;
+		}
 		for (const auto& entry : a_message.entries) {
 			if (!WorldSync::InWorld() || Story::InOpening() || !TryApply(entry, a_message.playerId)) {
 				waiting.Add(entry);
@@ -488,6 +503,9 @@ namespace Destructibles
 
 	bool ClaimsExplosion(RE::TESObjectREFR* a_explosion)
 	{
+		if (!Available()) {
+			return false;
+		}
 		const auto base = a_explosion ? a_explosion->GetObjectReference() : nullptr;
 		const auto tes = RE::TES::GetSingleton();
 		if (!base || !tes) {
@@ -532,6 +550,9 @@ namespace Destructibles
 
 	bool ApplyWaiting(std::uint32_t a_ref)
 	{
+		if (!Available()) {
+			return false;
+		}
 		const auto report = waiting.Find(a_ref);
 		if (!report) {
 			return false;
@@ -570,6 +591,9 @@ namespace Destructibles
 
 	std::string Command(std::string_view a_args)
 	{
+		if (!Available()) {
+			return std::format("error: destructibles are off on {}", Runtime::Describe());
+		}
 		if (a_args.empty() || a_args == "status") {
 			return Describe();
 		}

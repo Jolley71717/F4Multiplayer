@@ -1,4 +1,5 @@
 #include "game/ExitMusic.h"
+#include "Runtime.h"
 
 namespace ExitMusic
 {
@@ -19,15 +20,15 @@ namespace ExitMusic
 
 		// void(BSTEventSink<MainStatus::StageEvent>*): adds the sink to the stage event source, a game
 		// singleton that is never deleted. Nothing takes the sink off again, so it is a static.
-		constexpr REL::ID REGISTER_FOR_STAGE_EVENTS{ 2228981 };
+		constexpr REL::ID REGISTER_FOR_STAGE_EVENTS{ 0, 0, 2228981 };
 
 		// The BGSPlayerMusicChanger, a function static in the game: all zero until the game first uses it.
-		constexpr REL::ID MUSIC_CHANGER{ 4798157 };
+		constexpr REL::ID MUSIC_CHANGER{ 0, 0, 4798157 };
 
 		// void(BGSPlayerMusicChanger*): stops the music the changer holds at once (BSMusicEvent 2, to the
 		// music manager, which is still there at stage 3) and forgets it. It touches nothing else of the
 		// changer. The game's own TESAudio reset calls it (+0xBA50E5).
-		constexpr REL::ID CLEAR_MUSIC{ 2232684 };
+		constexpr REL::ID CLEAR_MUSIC{ 0, 0, 2232684 };
 
 		struct MusicChanger
 		{
@@ -95,12 +96,18 @@ namespace ExitMusic
 			return;
 		}
 		installed = true;
+		// The addresses above are 1.11.240's (old-gen and next-gen not read yet): without them the music is the game's
+		// own at exit, said once in the log.
+		static const Runtime::Feature feature{ "ExitMusic", { REGISTER_FOR_STAGE_EVENTS, MUSIC_CHANGER, CLEAR_MUSIC } };
+		if (!feature.On()) {
+			return;
+		}
 
-		changer = REL::Relocation<MusicChanger*>{ MUSIC_CHANGER }.get();
+		changer = Runtime::Relocation<MusicChanger*>{ MUSIC_CHANGER }.get();
 		changerVtable = RE::VTABLE::BGSPlayerMusicChanger[0].address();
-		clearMusic = REL::Relocation<void (*)(MusicChanger*)>{ CLEAR_MUSIC }.get();
+		clearMusic = Runtime::Relocation<void (*)(MusicChanger*)>{ CLEAR_MUSIC }.get();
 
-		REL::Relocation<void (*)(RE::BSTEventSink<StageEvent>*)> registerForStageEvents{ REGISTER_FOR_STAGE_EVENTS };
+		Runtime::Relocation<void (*)(RE::BSTEventSink<StageEvent>*)> registerForStageEvents{ REGISTER_FOR_STAGE_EVENTS };
 		registerForStageEvents(&watcher);
 		REX::INFO("ExitMusic: installed");
 	}

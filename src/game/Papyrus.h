@@ -8,12 +8,15 @@
 // hits the neighbouring slot. We call the real slots explicitly instead.
 namespace Papyrus
 {
-	// What a functor given to the VM's ForEachBoundObject answers. The engine goes on to the next bound script on 1,
-	// which CommonLibF4 names kStop, and stops on 0, its kContinue: answered kContinue, it visited only the first of a
-	// gate's two scripts, which the two games bind in different orders (the rig, 2026-10-20, dev command `scripts`).
-	// Other engine walks (a cell's references, an inventory) read the names as written.
-	inline constexpr auto BOUND_NEXT = RE::BSContainer::ForEachResult::kStop;
-	inline constexpr auto BOUND_DONE = RE::BSContainer::ForEachResult::kContinue;
+	// What a functor given to the VM's ForEachBoundObject answers. The engine goes on to the next bound script on 1 and
+	// stops on 0: answered 0, it visited only the first of a gate's two scripts, which the two games bind in different
+	// orders (the rig, 2026-10-20, dev command `scripts`). The libxse CommonLibF4 named 0 kContinue and 1 kStop; the
+	// Dear-Modding fork swapped the names to the engine's (kStop 0, kContinue 1). The engine's numbers are what count,
+	// so they are pinned here: a library that renames them again fails the build instead of the gates' script walk.
+	// The other walks we use (a cell's references, a keyword list) are the library's own loops, which compare by name.
+	inline constexpr auto BOUND_NEXT = RE::BSContainer::ForEachResult::kContinue;
+	inline constexpr auto BOUND_DONE = RE::BSContainer::ForEachResult::kStop;
+	static_assert(std::to_underlying(BOUND_NEXT) == 1 && std::to_underlying(BOUND_DONE) == 0);
 
 	namespace detail
 	{

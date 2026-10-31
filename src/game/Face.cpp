@@ -1,4 +1,5 @@
 #include "game/Face.h"
+#include "Runtime.h"
 
 #include "Config.h"
 #include "game/EngineRefs.h"
@@ -21,7 +22,7 @@ namespace Face
 		std::optional<std::uint32_t> parts;
 
 		// The engine's "prebuilt head?" check (FaceHeads.h), BSFaceGenManager's +6DF3A0, and the six calls to it.
-		constexpr REL::ID USES_PREPROCESSED_HEAD{ 2209308 };
+		constexpr REL::ID USES_PREPROCESSED_HEAD{ 969238, 2209308, 2209308 };
 
 		struct Site
 		{
@@ -29,12 +30,12 @@ namespace Face
 			std::ptrdiff_t offset;
 		};
 		constexpr std::array<Site, 6> SITES{ {
-			{ REL::ID(2192002), 0x191 },  // the head task's processing, QueuedHead +2CC280: a runtime head?
-			{ REL::ID(2207435), 0x3B },   // TESNPC's head part update +655910: skipped for a prebuilt head
-			{ REL::ID(2209307), 0xA7 },   // BSFaceGenManager's head data queue +6DED10: head part meshes, or FaceGen textures
-			{ REL::ID(2209326), 0x63 },   // BSFaceGenPendingHeadData::DoOnQueueMe +6E0E50: the FaceGen nif asked for, or not
-			{ REL::ID(2209355), 0x62 },   // the head build +6E25A0: the FaceGen nif loaded...
-			{ REL::ID(2209355), 0x88 },   // ... or, with none, no head at all; else the head built from its parts
+			{ REL::ID{ 0, 0, 2192002 }, 0x191 },           // the head task's processing, QueuedHead +2CC280: a runtime head?
+			{ REL::ID{ 134537, 2207435, 2207435 }, 0x3B },  // TESNPC's head part update +655910: skipped for a prebuilt head
+			{ REL::ID{ 0, 0, 2209307 }, 0xA7 },            // BSFaceGenManager's head data queue +6DED10: head part meshes, or FaceGen textures
+			{ REL::ID{ 0, 0, 2209326 }, 0x63 },            // BSFaceGenPendingHeadData::DoOnQueueMe +6E0E50: the FaceGen nif asked for, or not
+			{ REL::ID{ 0, 0, 2209355 }, 0x62 },            // the head build +6E25A0: the FaceGen nif loaded...
+			{ REL::ID{ 0, 0, 2209355 }, 0x88 },            // ... or, with none, no head at all; else the head built from its parts
 		} };
 
 		FaceHeads::Copies<512>       copies;  // our copies with their own head
@@ -115,7 +116,7 @@ namespace Face
 			                                         RE::VTABLE::BGSCharacterTint__TextureSetEntry;
 			*static_cast<std::uintptr_t*>(memory) = vtable[0].address();
 			const auto entry = static_cast<Tint::Entry*>(memory);
-			entry->templateEntry = reinterpret_cast<Tint::Entry*>(a_template);
+			entry->templateEntry = a_template;
 			entry->idLink = a_tint.templateId;
 			entry->tintingValue = a_tint.value;
 			if (palette) {
@@ -129,11 +130,18 @@ namespace Face
 
 	bool Install()
 	{
-		const auto target = USES_PREPROCESSED_HEAD.address();
+		// The offsets in SITES are 1.11.240's: a runtime given these IDs needs its calls read again too, not only the IDs.
+		static_assert(SITES.size() == 6);
+		static const Runtime::Feature feature{ "Face", { USES_PREPROCESSED_HEAD, SITES[0].function, SITES[1].function, SITES[2].function, SITES[3].function,
+			SITES[4].function, SITES[5].function } };
+		if (!feature.On()) {
+			return false;
+		}
+		const auto target = *Runtime::TryAddress(USES_PREPROCESSED_HEAD);
 		std::array<std::uintptr_t, SITES.size()>               at{};
 		std::array<std::array<std::uint8_t, 5>, SITES.size()> bytes{};
 		for (std::size_t i = 0; i < SITES.size(); ++i) {
-			at[i] = SITES[i].function.address() + SITES[i].offset;
+			at[i] = *Runtime::TryAddress(SITES[i].function) + SITES[i].offset;
 			std::memcpy(bytes[i].data(), reinterpret_cast<const void*>(at[i]), bytes[i].size());
 		}
 		const auto sites = FaceHeads::Check(bytes, at, target);

@@ -1,4 +1,5 @@
 ﻿#include "game/RemotePlayers.h"
+#include "Runtime.h"
 #include "game/ArmorFrames.h"
 #include "game/ClickWatch.h"
 #include "game/DeferredDelete.h"
@@ -829,11 +830,17 @@ namespace RemotePlayers
 		// How far a reference stands from where it stood before it was first moved in our world (see
 		// ArmorFrames::START_TOLERANCE). TESObjectREFR::GetStartingPosition gives the position the engine noted then
 		// (ExtraStartingPosition) and leaves the one it is given alone when it noted none.
-		constexpr REL::ID GET_STARTING_POSITION{ 2201162 };  // TESObjectREFR::GetStartingPosition(NiPoint3&) (+516FC0)
+		constexpr REL::ID GET_STARTING_POSITION{ 0, 0, 2201162 };  // TESObjectREFR::GetStartingPosition(NiPoint3&) (+516FC0)
 
+		// 1.11.240's (old-gen and next-gen not read yet): without it every reference counts as where it started, said once
+		// in the log.
 		float FromStart(RE::TESObjectREFR* a_ref)
 		{
-			static REL::Relocation<void (*)(RE::TESObjectREFR*, RE::NiPoint3&)> startingPosition{ GET_STARTING_POSITION };
+			static const Runtime::Feature feature{ "Power armor frames: starting position", { GET_STARTING_POSITION } };
+			if (!feature.On()) {
+				return 0.0f;
+			}
+			static Runtime::Relocation<void (*)(RE::TESObjectREFR*, RE::NiPoint3&)> startingPosition{ GET_STARTING_POSITION };
 			RE::NiPoint3 start = a_ref->data.location;
 			startingPosition(a_ref, start);
 			return a_ref->data.location.GetDistance(start);

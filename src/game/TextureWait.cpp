@@ -1,4 +1,5 @@
 #include "game/TextureWait.h"
+#include "Runtime.h"
 
 #include "HangWatch.h"
 #include "game/TextureFlush.h"
@@ -32,26 +33,56 @@ namespace TextureWait
 		constexpr std::uintptr_t WAIT_LENGTH = 0x310;  // the texture update's blocking wait, to its last ret
 		constexpr std::size_t    LOOK_CALLERS = 64;
 
+		// The texture update's state and functions by Address Library ID (1.11.240; old-gen and next-gen not read yet).
+		constexpr REL::ID PENDING{ 0, 0, 2698346 };
+		constexpr REL::ID DONE{ 0, 0, 2698349 };
+		constexpr REL::ID SECOND{ 0, 0, 2698350 };
+		constexpr REL::ID CURRENT{ 0, 0, 2698351 };
+		constexpr REL::ID MAIN_BATCH{ 0, 0, 2698368 };
+		constexpr REL::ID TOTAL{ 0, 0, 2698352 };
+		constexpr REL::ID STAGE{ 0, 0, 2698354 };
+		constexpr REL::ID OWNER{ 0, 0, 2698358 };
+		constexpr REL::ID COUNT{ 0, 0, 2698359 };
+		constexpr REL::ID TEXTURES{ 0, 0, 2703490 };
+		constexpr REL::ID PUMP{ 0, 0, 2228998 };
+		constexpr REL::ID WAIT{ 0, 0, 2229488 };
+		constexpr REL::ID SUBMIT_BATCH{ 0, 0, 2275477 };
+		constexpr REL::ID ADD_TO_BATCH{ 0, 0, 2275476 };
+		constexpr REL::ID ON_IDLE{ 633524, 2228917, 2228917 };  // Main::OnIdle
+
+		// Every part of this file asks first: off on a runtime without all of them (said once in the log).
+		bool Available()
+		{
+			static const Runtime::Feature feature{ "Texture wait", { PENDING, DONE, SECOND, CURRENT, MAIN_BATCH, TOTAL, STAGE, OWNER, COUNT, TEXTURES, PUMP, WAIT,
+				SUBMIT_BATCH, ADD_TO_BATCH, ON_IDLE } };
+			return feature.On();
+		}
+
+		std::uintptr_t Address(const REL::ID& a_id)
+		{
+			return Runtime::TryAddress(a_id).value_or(0);
+		}
+
 		struct Engine
 		{
-			std::uint8_t*  pending = reinterpret_cast<std::uint8_t*>(REL::ID(2698346).address());
-			std::uint32_t* done = reinterpret_cast<std::uint32_t*>(REL::ID(2698349).address());
-			void**         second = reinterpret_cast<void**>(REL::ID(2698350).address());
-			void**         current = reinterpret_cast<void**>(REL::ID(2698351).address());
-			std::uintptr_t mainBatch = REL::ID(2698368).address();  // the main thread's batch (a static one): current but while the wait runs
-			std::uint32_t* total = reinterpret_cast<std::uint32_t*>(REL::ID(2698352).address());
-			std::uint32_t* stage = reinterpret_cast<std::uint32_t*>(REL::ID(2698354).address());
-			std::uint32_t* owner = reinterpret_cast<std::uint32_t*>(REL::ID(2698358).address());  // the lock's owner thread
-			std::uint32_t* count = reinterpret_cast<std::uint32_t*>(REL::ID(2698359).address());  // and its count
-			RE::NiTexture** textures = reinterpret_cast<RE::NiTexture**>(REL::ID(2703490).address());  // every NiTexture, linked by next
-			std::uintptr_t pump = REL::ID(2228998).address();
-			std::uintptr_t wait = REL::ID(2229488).address();
+			std::uint8_t*  pending = reinterpret_cast<std::uint8_t*>(Address(PENDING));
+			std::uint32_t* done = reinterpret_cast<std::uint32_t*>(Address(DONE));
+			void**         second = reinterpret_cast<void**>(Address(SECOND));
+			void**         current = reinterpret_cast<void**>(Address(CURRENT));
+			std::uintptr_t mainBatch = Address(MAIN_BATCH);  // the main thread's batch (a static one): current but while the wait runs
+			std::uint32_t* total = reinterpret_cast<std::uint32_t*>(Address(TOTAL));
+			std::uint32_t* stage = reinterpret_cast<std::uint32_t*>(Address(STAGE));
+			std::uint32_t* owner = reinterpret_cast<std::uint32_t*>(Address(OWNER));  // the lock's owner thread
+			std::uint32_t* count = reinterpret_cast<std::uint32_t*>(Address(COUNT));  // and its count
+			RE::NiTexture** textures = reinterpret_cast<RE::NiTexture**>(Address(TEXTURES));  // every NiTexture, linked by next
+			std::uintptr_t pump = Address(PUMP);
+			std::uintptr_t wait = Address(WAIT);
 
 			// SubmitBatch: hands the batch's list to the streamer, empties it and wakes the streamer.
 			bool Submit(void* a_batch) const
 			{
 				using Fn = bool (*)(void*);
-				static REL::Relocation<Fn> fn{ REL::ID(2275477) };
+				static Runtime::Relocation<Fn> fn{ SUBMIT_BATCH };
 				return fn(a_batch);
 			}
 
@@ -60,7 +91,7 @@ namespace TextureWait
 			bool Add(void* a_batch, RE::NiTexture* a_texture, std::uint32_t a_level) const
 			{
 				using Fn = bool (*)(void*, RE::NiTexture*, std::uint32_t*, std::uint32_t*, std::uint32_t);
-				static REL::Relocation<Fn> fn{ REL::ID(2275476) };
+				static Runtime::Relocation<Fn> fn{ ADD_TO_BATCH };
 				return fn(a_batch, a_texture, done, total, a_level);
 			}
 		};
@@ -356,8 +387,11 @@ namespace TextureWait
 
 	bool Install()
 	{
+		if (!Available()) {
+			return false;
+		}
 		const auto& e = Game();
-		const auto  site = REL::ID(2228917).address() + PUMP_CALL;  // Main::OnIdle
+		const auto  site = Address(ON_IDLE) + PUMP_CALL;
 		std::array<std::uint8_t, 5> bytes{};
 		std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
 		if (TextureFlush::CallTarget(bytes, site) != e.pump) {
@@ -371,6 +405,9 @@ namespace TextureWait
 
 	std::string DescribePump(void* a_window)
 	{
+		if (!Available()) {
+			return {};
+		}
 		const auto& e = Game();
 		const auto  mainThread = HangWatch::WindowThread(a_window);
 		const auto  main = HangWatch::LookAtThread(mainThread, LOOK_CALLERS);
@@ -412,6 +449,9 @@ namespace TextureWait
 		const auto split = a_args.find(' ');
 		const auto verb = a_args.substr(0, split);
 		const auto rest = split == std::string_view::npos ? std::string_view{} : a_args.substr(split + 1);
+		if (!Available()) {
+			return std::format("error: the texture update's addresses are not known on {}", Runtime::Describe());
+		}
 		if (verb.empty() || verb == "status") {
 			return Status();
 		}
