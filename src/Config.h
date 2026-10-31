@@ -151,6 +151,13 @@ namespace Config
 		bool containerGifts = false;
 		// A player's game makes an autosave as they go down, so a bleed-out loads that moment, not an older save (AutoSaveRules.h).
 		bool saveOnDown = false;
+		// Which level every game rolls a leveled NPC at (sNpcLevel, Protocol::NpcLevelRule): 1 highest (the highest any
+		// player has had in the session), 2 host (the host's), 0 own (each game its own player's, as before 0.10.2).
+		std::uint8_t npcLevel = 1;
+
+		// Not a host's rule: leveled NPCs are made with the session's roll (docs/SHARED-ROLLS.md). Off only to rule the
+		// hooks out when something goes wrong (bSharedRolls).
+		bool sharedRolls = true;
 
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;

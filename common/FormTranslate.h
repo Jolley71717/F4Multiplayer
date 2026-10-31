@@ -363,6 +363,7 @@ namespace FormTranslate
 		case MessageType::kPlayerReloaded:
 		case MessageType::kPartyXp:
 		case MessageType::kHeartbeatAck:
+		case MessageType::kSessionWorld:
 		case MessageType::kRevived:
 		case MessageType::kVoiceRelay:
 		case MessageType::kRenamed:

@@ -45,6 +45,8 @@
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
+#include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
 #include "game/SneakKey.h"
@@ -1993,6 +1995,31 @@ namespace DevCommands
 			return id ? NpcSync::DescribeMirror(*id) : "error: usage: mirror <refHex>";
 		}
 
+		// rolls [show|pick <refHex>]: the session's rolls of leveled NPCs (docs/SHARED-ROLLS.md). Alone, the counters;
+		// show, an NPC's roll as our game built it and whether the session has one of it (the line two games compare);
+		// pick, what the session's deterministic pick of it is now (made nowhere).
+		std::string RollsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return RollHook::Describe();
+			}
+			const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!ref || (args[0] != "show" && args[0] != "pick")) {
+				return "error: usage: rolls [show|pick <refHex>]";
+			}
+			if (args[0] == "pick") {
+				return RollHook::DescribePick(ref);
+			}
+			const auto actor = ref->As<RE::Actor>();
+			if (!actor) {
+				return "error: not an actor";
+			}
+			const auto session = NpcSync::RollOf(actor->GetFormID());
+			return std::format("{:08X} {} session={}{}", actor->GetFormID(), Rolls::Describe(actor), RollHook::Knows(actor->GetFormID()) ? "kept" : "none",
+				session ? std::format(" runner={} legendary={}", session->playerId, (session->flags & Protocol::NpcIdentity::kLegendary) != 0) : std::string{});
+		}
+
 		// motion <refHex>: the engine's movement numbers for an actor (what its locomotion graph is fed).
 		std::string MotionInfo(std::string_view a_args)
 		{
@@ -3705,6 +3732,7 @@ namespace DevCommands
 			Entry{ "sneak", Sneak },
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
+			Entry{ "rolls", RollsCommand },
 			Entry{ "ghosts", Ghosts },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },

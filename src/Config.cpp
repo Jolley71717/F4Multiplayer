@@ -3,6 +3,7 @@
 #include "IniFile.h"
 #include "Log.h"
 #include "Platform.h"
+#include "SessionLevel.h"
 #include "StorySetting.h"
 
 namespace Config
@@ -148,6 +149,14 @@ namespace Config
 				settings.containerGifts = ParseBool(value);
 			} else if (key == "bSaveOnDown") {
 				settings.saveOnDown = ParseBool(value);
+			} else if (key == "sNpcLevel") {
+				if (const auto rule = SessionLevel::Parse(value)) {
+					settings.npcLevel = static_cast<std::uint8_t>(*rule);
+				} else {
+					REX::WARN("Config: sNpcLevel = '{}' is none of highest, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(settings.npcLevel)));
+				}
+			} else if (key == "bSharedRolls") {
+				settings.sharedRolls = ParseBool(value);
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {

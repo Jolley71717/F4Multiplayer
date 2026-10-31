@@ -978,3 +978,108 @@ TEST("spawns: a frame one game made goes through the server as a spawn: a joiner
 	CHECK(anew[0].x == 1300.0f);
 	CHECK(anew[0].playerId == alice);
 }
+
+TEST("spawns: a runtime NPC of our own standing where a friend's game has its spawn stands for it: no copy placed, and one placed beside it goes")
+{
+	using Why = SpawnBook::Theirs::Why;
+	SpawnBook::Theirs theirs;
+	constexpr std::uint32_t THEIRS = 0xFF0013ED;
+	constexpr std::uint32_t COPY = 0xFF002001;
+	auto                    spawn = Raider(THEIRS);
+	spawn.playerId = 1;
+	REQUIRE(theirs.Add(spawn, 2));
+
+	// Nothing of ours there: placed as ever.
+	CHECK(theirs.WhyNotPlaced(THEIRS, Near(), T0) == Why::kPlace);
+	CHECK(theirs.Decide(THEIRS, Near(), T0) == Act::kPlace);
+
+	// One of ours stands there: not placed, and the reason says so (the no-copy log names it).
+	auto ours = Near();
+	ours.oursThere = true;
+	CHECK(theirs.WhyNotPlaced(THEIRS, ours, T0) == Why::kOursThere);
+	CHECK(theirs.Decide(THEIRS, ours, T0) == Act::kNone);
+	CHECK(SpawnBook::Theirs::WhyName(Why::kOursThere) != SpawnBook::Theirs::WhyName(Why::kUnknown));
+	// A base no copy is placed from, or a spawn over, comes first.
+	auto noBase = ours;
+	noBase.baseOk = false;
+	CHECK(theirs.WhyNotPlaced(THEIRS, noBase, T0) == Why::kBaseNotOk);
+
+	// Placed before ours appeared beside it (our game rolled the encounter after the friend's): the copy goes, and the
+	// record stays, unplaced, for the spawn's life.
+	theirs.Placed(THEIRS, COPY, T0);
+	CHECK(theirs.Decide(THEIRS, Placed(1100.0f), T0) == Act::kNone);
+	auto placedOurs = Placed(1100.0f);
+	placedOurs.oursThere = true;
+	CHECK(theirs.Decide(THEIRS, placedOurs, T0) == Act::kDiscard);
+	theirs.Unplaced(THEIRS);
+	CHECK(theirs.Knows(THEIRS));
+	CHECK(theirs.Decide(THEIRS, ours, T0) == Act::kNone);
+	CHECK(theirs.WhyNotPlaced(THEIRS, ours, T0) == Why::kOursThere);
+	// A copy gone from under us is still a loss, whatever stands there.
+	theirs.Placed(THEIRS, COPY, T0);
+	auto lost = placedOurs;
+	lost.copyThere = false;
+	CHECK(theirs.Decide(THEIRS, lost, T0) == Act::kLost);
+}
+
+TEST("spawns: two games that rolled one encounter each share their raiders through the server, and neither places a copy on top of its own")
+{
+	using Why = SpawnBook::Theirs::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	SpawnBook::Ours   aliceOurs, bobOurs;
+	SpawnBook::Theirs aliceTheirs, bobTheirs;
+	constexpr std::uint32_t ALICE_RAIDER = 0xFF0013ED;  // the encounter's raider in Alice's game
+	constexpr std::uint32_t BOB_RAIDER = 0xFF0014A2;    // the same encounter's raider in Bob's game, at the same marker
+	const auto deliver = [&](PeerId a_peer, SpawnBook::Ours& a_ours, SpawnBook::Theirs& a_theirs, std::uint32_t a_us) {
+		for (const auto& packet : Received(f, a_peer)) {
+			if (packet[0] == Type(MT::kSpawned)) {
+				a_theirs.Add(*Protocol::DecodeSpawn(packet), a_us);
+			} else if (packet[0] == Type(MT::kActorOwners)) {
+				const auto owners = Protocol::DecodeOwners(packet);
+				for (const auto& owner : *owners) {
+					if (!a_ours.Answered(owner.refId, owner.playerId, a_us, T0) && owner.playerId == 0) {
+						a_theirs.Gone(owner.refId);
+					}
+				}
+			} else if (packet[0] == Type(MT::kActorDied)) {
+				const auto death = *Protocol::DecodeActorDeath(packet);
+				if (a_theirs.Knows(death.refId)) {
+					a_theirs.Died(death.refId);
+				}
+			}
+		}
+	};
+
+	// Both games cross the trigger: each shares its raider, standing at the marker.
+	const auto aliceId = aliceOurs.Offer(ALICE_RAIDER, T0, [&](std::uint32_t a_id) { return aliceTheirs.Knows(a_id); });
+	const auto bobId = bobOurs.Offer(BOB_RAIDER, T0, [&](std::uint32_t a_id) { return bobTheirs.Knows(a_id); });
+	REQUIRE(aliceId && bobId);
+	f.fake->Deliver(1, Report(Raider(*aliceId)));
+	f.fake->Deliver(2, Report(Raider(*bobId)));
+	deliver(1, aliceOurs, aliceTheirs, alice);
+	deliver(2, bobOurs, bobTheirs, bob);
+	CHECK(aliceOurs.IdOf(ALICE_RAIDER) == *aliceId);
+	CHECK(bobOurs.IdOf(BOB_RAIDER) == *bobId);
+	REQUIRE(aliceTheirs.Knows(*bobId));
+	REQUIRE(bobTheirs.Knows(*aliceId));
+
+	// Each game finds its own raider where the friend's game has theirs: ours stands for it, no copy on top of it.
+	auto ours = Near();
+	ours.oursThere = true;
+	CHECK(aliceTheirs.Decide(*bobId, ours, T0) == Act::kNone);
+	CHECK(aliceTheirs.WhyNotPlaced(*bobId, ours, T0) == Why::kOursThere);
+	CHECK(bobTheirs.Decide(*aliceId, ours, T0) == Act::kNone);
+	CHECK(bobTheirs.WhyNotPlaced(*aliceId, ours, T0) == Why::kOursThere);
+	// Without one of its own there (the friend's raider ran off from the marker before ours spawned), a copy is placed.
+	CHECK(bobTheirs.Decide(*aliceId, Near(), T0) == Act::kPlace);
+
+	// Alice's raider dies in her game: Bob's book forgets it; his own raider is his to fight on.
+	f.fake->Deliver(1, Death(*aliceId));
+	deliver(2, bobOurs, bobTheirs, bob);
+	CHECK(bobTheirs.Decide(*aliceId, ours, T0) == Act::kForget);
+	CHECK(bobOurs.IdOf(BOB_RAIDER) == *bobId);
+}

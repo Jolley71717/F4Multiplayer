@@ -27,6 +27,7 @@
 #include "game/OpenMenus.h"
 #include "game/RealTime.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -468,6 +469,7 @@ namespace
 					REX::ERROR("Session: shutting down: {}", e.what());
 				}
 			});
+			RollHook::OnDataReady();  // before any session: the plugins' names key every roll
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");
@@ -1047,9 +1049,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 192 of 320 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
-	// Equipment::InstallFrameUse's two), HavokGuard::Install's two detours (2 x 56), and InertShots::Install's jump (a
-	// 14-byte branch stub and a 10-byte continuation).
+	// 206 of 320 bytes used: five 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two, RollHook::Install's one), HavokGuard::Install's two detours (2 x 56), and
+	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
@@ -1081,6 +1083,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
 	Equipment::InstallFrameGate();  // and its Transfer
+	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

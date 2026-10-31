@@ -39,7 +39,10 @@ namespace Protocol
 	// 56: a hit on a copy is a numbered request the game that runs the NPC answers (ActorHealth::seq and playerId;
 	// DamageAnswer: kReportDamageAnswer, kDamageAnswer), and the server sends damage to the runner alone
 	// (docs/HEALTH-SYNC.md). 0.10.0 (55) is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 56;
+	// 57: one roll per leveled NPC for the session (docs/SHARED-ROLLS.md): the host's NPC level rule in the welcome
+	// (SessionRules::npcLevel, a byte after the limits), the session's NPC level (kSessionWorld: SessionWorld), and the
+	// server keeps every NPC's roll for the session's life and tells a joiner all of them. 0.10.1 (56) is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 57;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -243,6 +246,7 @@ namespace Protocol
 		kFrameLent = 174,         // a frame is lent (to everyone, and to a joiner for each loan there is); a refusal, to the friend who asked alone (FrameLending)
 		kFrameReturned = 175,     // a lent frame came back, or the loan ended without a return (FrameReturn::ended)
 		kDamageAnswer = 176,      // to the player whose damage it was: applied by the NPC's runner, or refused (by the runner or the server) and why (DamageAnswer)
+		kSessionWorld = 177,      // the session's NPC level, after the welcome and whenever it changes (SessionWorld; also in the session file)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -362,6 +366,15 @@ namespace Protocol
 	// The host's rules for everyone in the session (protocol 49): the host's ini (F4MPServer: its options), sent with the
 	// welcome, so every game, the host's own included, plays by the same ones. The defaults are the mod's behaviour before
 	// there were rules (and VATS in real time, which is new).
+	// The level every game rolls leveled NPCs at (sNpcLevel; common/SessionLevel.h, docs/SHARED-ROLLS.md).
+	enum class NpcLevelRule : std::uint8_t
+	{
+		kOwn = 0,      // each game its own player's: the rolls are made the same only by the reports (before 0.10.2's way)
+		kHighest = 1,  // the highest any player has had in the session (the default)
+		kHost = 2,     // the host's
+	};
+	inline constexpr std::uint8_t NPC_LEVEL_RULES = 3;
+
 	struct SessionRules
 	{
 		// Downed and revive (src/game/DownRules.h).
@@ -402,6 +415,10 @@ namespace Protocol
 		// Bit 128 is the flag byte's last: a further rule needs a byte of its own after the limits.
 		bool saveOnDown = false;
 
+		// Leveled NPCs (src/game/SharedRoll.h): the level every game rolls them at (sNpcLevel; protocol 57, a byte of its own
+		// after the limits). With kOwn each game rolls at its own player's level and only the reports make the rolls agree.
+		NpcLevelRule npcLevel = NpcLevelRule::kHighest;
+
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
 		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
@@ -417,6 +434,9 @@ namespace Protocol
 			out.reviveHealth = std::clamp(reviveHealth, MIN_REVIVE_HEALTH, MAX_REVIVE_HEALTH);
 			out.reviveWindowMinutes = (std::min)(reviveWindowMinutes, MAX_REVIVE_WINDOW);
 			out.downCooldownSeconds = (std::min)(downCooldownSeconds, MAX_DOWN_COOLDOWN);
+			if (static_cast<std::uint8_t>(npcLevel) >= NPC_LEVEL_RULES) {
+				out.npcLevel = NpcLevelRule::kHighest;
+			}
 			return out;
 		}
 
@@ -2396,6 +2416,7 @@ namespace Protocol
 		w.U8(rules.maxRevives);
 		w.U16(rules.reviveWindowMinutes);
 		w.U16(rules.downCooldownSeconds);
+		w.U8(static_cast<std::uint8_t>(rules.npcLevel));  // protocol 57
 		return w.Data();
 	}
 
@@ -2427,9 +2448,11 @@ namespace Protocol
 			rules.maxRevives = r.U8();
 			rules.reviveWindowMinutes = r.U16();
 			rules.downCooldownSeconds = r.U16();
+			const auto npcLevel = r.U8();  // protocol 57
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
+			rules.npcLevel = npcLevel < NPC_LEVEL_RULES ? static_cast<NpcLevelRule>(npcLevel) : NpcLevelRule::kHighest;
 			msg.rules = rules.Clamped();
 		}
 		return msg;
@@ -4086,6 +4109,36 @@ namespace Protocol
 		const bool listed = (msg.flags & NpcIdentity::kFactions) != 0;
 		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || msg.level > MAX_IDENTITY_LEVEL || (msg.mask != 0 && msg.originalBase == 0) ||
 			(!listed && (!msg.factions.empty() || (msg.flags & NpcIdentity::kFactionsCut) != 0))) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The session's NPC level (protocol 57, common/SessionLevel.h): the level every game rolls a leveled NPC at, server ->
+	// client whenever it changes and after the welcome. 0 = none (the host's rule is "own": each game its own player's).
+	inline constexpr std::size_t MAX_SESSION_ROLLS = 4096;  // the NPC rolls the server keeps for a session
+
+	struct SessionWorld
+	{
+		std::uint16_t level = 0;
+
+		bool operator==(const SessionWorld&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const SessionWorld& a_msg)
+	{
+		Writer w{ MessageType::kSessionWorld };
+		w.U16(a_msg.level);
+		return w.Data();
+	}
+
+	inline std::optional<SessionWorld> DecodeSessionWorld(std::span<const std::uint8_t> a_data)
+	{
+		Reader       r{ a_data };
+		r.U8();
+		SessionWorld msg;
+		msg.level = r.U16();
+		if (!r.Ok() || !r.AtEnd() || msg.level > MAX_IDENTITY_LEVEL) {
 			return std::nullopt;
 		}
 		return msg;

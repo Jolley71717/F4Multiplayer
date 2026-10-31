@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "RulesSummary.h"
+#include "SessionLevel.h"
 #include "Text.h"
 
 #include <algorithm>
@@ -39,16 +40,17 @@ namespace HostRules
 		rules.sharedStorage = a_settings.sharedStorage;
 		rules.containerGifts = a_settings.containerGifts;
 		rules.saveOnDown = a_settings.saveOnDown;
+		rules.npcLevel = static_cast<Protocol::NpcLevelRule>(a_settings.npcLevel);
 		return rules.Clamped();
 	}
 
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} containerGifts={} saveOnDown={}",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} containerGifts={} saveOnDown={} npcLevel={}",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
-			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage, a_rules.containerGifts, a_rules.saveOnDown);
+			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage, a_rules.containerGifts, a_rules.saveOnDown, SessionLevel::Name(a_rules.npcLevel));
 	}
 
 	// What a player reads of the rules for being down, in their language: "Host's rules: 3 revives per fight, 30 s to bleed

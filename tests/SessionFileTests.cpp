@@ -120,8 +120,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
 	// Before the first file (protocol 22), the layouts of the destructibles' and shared storage's own test
-	// builds (35, 37), a layout to come (41), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 41 }, std::uint16_t{ 0xE526 } }) {
+	// builds (35, 37), a layout to come (42), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 42 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));

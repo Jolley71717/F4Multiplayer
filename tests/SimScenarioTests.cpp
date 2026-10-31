@@ -844,3 +844,76 @@ TEST_KNOWN_BUG("sim: two friends working the same door at the same moment end up
 	// session kept his own.
 	KNOWN_CHECK(doorOf(bob) == shut);
 }
+
+// ---- leveled NPCs: one roll for the session ----------------------------------------------------------------------
+
+TEST("sim: friends at different levels, one who leaves, a server restart and a late joiner at level 4 all build the session's raiders the same, at the session's level")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   dana = s.Player("Dana");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(dana.Join());
+	const auto status = [](std::uint16_t a_level) {
+		Protocol::PlayerStatus out;
+		out.level = a_level;
+		out.health = 100;
+		return out;
+	};
+	host.Status(status(10));
+	bob.Status(status(18));
+	dana.Status(status(27));
+	s.Settle();
+	for (const auto player : { &host, &bob, &dana }) {
+		CHECK(player->NpcLevel() == 27);  // the highest: every game rolls at it
+	}
+
+	// The host's game runs two raiders and reports their rolls; Bob's runs a third.
+	const auto roll = [](std::uint32_t a_ref, std::uint32_t a_template, bool a_legendary) {
+		Protocol::NpcIdentity identity{ .refId = a_ref, .originalBase = 0x0001A000, .level = 27, .flags = static_cast<std::uint8_t>(a_legendary ? Protocol::NpcIdentity::kLegendary : 0), .mask = 0x0103 };
+		identity.templates[0] = a_template;
+		identity.templates[1] = a_template;
+		identity.templates[8] = a_template;
+		return identity;
+	};
+	host.Claim(RAIDER_1);
+	host.Claim(RAIDER_2);
+	bob.Claim(RAIDER_3);
+	s.Settle();
+	host.ReportRoll(roll(RAIDER_1, 0x0001C012, false));
+	host.ReportRoll(roll(RAIDER_2, 0x0001C099, true));
+	bob.ReportRoll(roll(RAIDER_3, 0x0001C030, false));
+	s.Settle();
+	CHECK(bob.Rolls().contains(RAIDER_1) && bob.Rolls().contains(RAIDER_2));
+	CHECK(host.Rolls().contains(RAIDER_3));
+	CHECK(dana.Rolls().size() == 3);
+
+	// RAIDER_2 dies (its roll goes); the host lets RAIDER_1 go and Dana's game takes it on: her report of another roll
+	// changes nothing, the session's is the host's.
+	host.Kill(RAIDER_2);
+	host.Release(RAIDER_1);
+	s.Settle();
+	dana.Claim(RAIDER_1);
+	s.Settle();
+	dana.ReportRoll(roll(RAIDER_1, 0x0001C001, false));
+	s.Settle();
+	CHECK(bob.Rolls().at(RAIDER_1).templates[0] == 0x0001C012);
+
+	// Dana goes home; the server restarts; a late joiner, new to the game, comes in.
+	dana.Leave();
+	s.RestartServer();
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	auto& erin = s.Player("Erin");
+	REQUIRE(erin.Join());
+	erin.Status(status(4));
+	s.Settle();
+	CHECK(erin.NpcLevel() == 27);  // the session's level never went down
+	REQUIRE(erin.Rolls().contains(RAIDER_1));
+	CHECK(erin.Rolls().at(RAIDER_1).templates == roll(RAIDER_1, 0x0001C012, false).templates);
+	CHECK(erin.Rolls().contains(RAIDER_3));
+	CHECK(!erin.Rolls().contains(RAIDER_2));  // the dead are no one's roll
+	CheckAllDecoded({ &host, &bob, &erin });
+}

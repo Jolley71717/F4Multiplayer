@@ -165,6 +165,10 @@ namespace ProtocolSamples
 		s.push_back({ "WorldRequest", Encode(WorldRequest{ 0xABCDEF0123456789ull, 5 }), D(DecodeWorldRequest) });
 		s.push_back({ "PlayerState", Encode(MakeState(3)), D(DecodePlayerState) });
 		s.push_back({ "Welcome", Encode(Welcome{ 9, 0x1122334455667788ull, true, true, SessionRules{ .revive = true, .bleedOutSeconds = 60, .maxRevives = 2, .realTimeVats = false } }), D(DecodeWelcome), false });
+		s.push_back({ "WelcomeNpcLevelHost", Encode(Welcome{ 9, 0x1122334455667788ull, false, true, SessionRules{ .npcLevel = NpcLevelRule::kHost } }), D(DecodeWelcome), false });
+		s.push_back({ "WelcomeNpcLevelOwn", Encode(Welcome{ 9, 0x1122334455667788ull, false, true, SessionRules{ .npcLevel = NpcLevelRule::kOwn } }), D(DecodeWelcome), false });
+		s.push_back({ "SessionWorld", Encode(SessionWorld{ 23 }), D(DecodeSessionWorld) });
+		s.push_back({ "SessionWorldNone", Encode(SessionWorld{ 0 }), D(DecodeSessionWorld) });
 		s.push_back({ "Reject", Encode(Reject{ "Server is full" }), D(DecodeReject), false });
 		s.push_back({ "PlayerJoined", Encode(PlayerJoined{ 4, "Bob", 0x0001ABCD }), D(DecodePlayerJoined), false });
 		s.push_back({ "PlayerLeft", Encode(PlayerLeft{ 4 }), D(DecodePlayerLeft), false });
@@ -433,6 +437,7 @@ namespace ProtocolSamples
 		case MT::kLendFrame:
 		case MT::kReturnFrame:
 		case MT::kWelcome:
+		case MT::kSessionWorld:
 		case MT::kReject:
 		case MT::kPlayerJoined:
 		case MT::kPlayerLeft:

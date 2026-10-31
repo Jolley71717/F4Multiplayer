@@ -52,7 +52,11 @@ namespace SessionFile
 	// drop made since keys: a loose one's taker, forgotten with a restart, would have a new character of theirs lay it
 	// down again, a copy of the one in the old character's saves), is written as 40. One with neither stays 38 or 36, so
 	// an older build still reads it. A 39 file (0.10.0's test builds) reads as one with no characters.
-	inline constexpr std::uint16_t FORMAT = 40;
+	// 41 adds to 40 every leveled NPC's roll the session keeps (Snapshot::npcIdentities, as kNpcIdentity packets) and the
+	// session's NPC level (Snapshot::npcLevel, a kSessionWorld packet; docs/SHARED-ROLLS.md), so a restarted server's
+	// session builds the same NPCs it did. A session with neither is written as before (40, 38 or 36).
+	inline constexpr std::uint16_t FORMAT = 41;
+	inline constexpr std::uint16_t ROLLS = 41;
 	inline constexpr std::uint16_t CHARACTERS = 40;
 	inline constexpr std::uint16_t GIFTS = 39;
 	inline constexpr std::uint16_t STORAGE = 38;
@@ -69,7 +73,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 41 (35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 42 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -84,12 +88,13 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasStorageOwners(std::uint16_t a_format) { return a_format >= STORAGE; }
 	[[nodiscard]] constexpr bool HasHolders(std::uint16_t a_format) { return a_format >= GIFTS; }
 	[[nodiscard]] constexpr bool HasCharacters(std::uint16_t a_format) { return a_format >= CHARACTERS; }
+	[[nodiscard]] constexpr bool HasRolls(std::uint16_t a_format) { return a_format >= ROLLS; }
 
-	// The layout a snapshot is written in: the oldest that holds it, so a session without gifts or drops with known
-	// characters (a_characters) or shared storage is still one an older build reads.
-	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage)
+	// The layout a snapshot is written in: the oldest that holds it, so a session without NPC rolls (a_rolls), gifts or
+	// drops with known characters (a_characters) or shared storage is still one an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false)
 	{
-		return a_characters ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
+		return a_rolls ? ROLLS : a_characters ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
 	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
@@ -137,11 +142,15 @@ namespace SessionFile
 		std::vector<Protocol::StorageOwner>                 storageOwners;
 		// Friends' numbered moves the true copy undid for their loaded worlds (StorageBook::Settle): none is undone twice.
 		std::vector<Protocol::StorageReversal>              storageReversals;
+		// Each leveled NPC's roll the session keeps (the first runner's report, Server's npcIdentities), plugin references
+		// only (a spawn ends with the run), and the session's NPC level (common/SessionLevel.h; 0 none). Layout 41.
+		std::vector<Protocol::NpcIdentity>                  npcIdentities;
+		std::uint16_t                                       npcLevel = 0;
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty();
+			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty() && npcIdentities.empty() && npcLevel == 0;
 		}
 	};
 
@@ -162,7 +171,8 @@ namespace SessionFile
 		const bool characters = std::ranges::any_of(a_snapshot.drops, [](const Protocol::DroppedItem& a_drop) {
 			return a_drop.holder != 0 || a_drop.ownerCharacter != 0 || a_drop.takerCharacter != 0;
 		});
-		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty());
+		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
+			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0);
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -235,6 +245,14 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.storageReversals.size(); i += Protocol::MAX_STORAGE_REVERSALS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.storageReversals.size(), i + Protocol::MAX_STORAGE_REVERSALS_PER_PACKET);
 			packet(Protocol::Encode(Protocol::StorageReversals{ { a_snapshot.storageReversals.begin() + i, a_snapshot.storageReversals.begin() + end } }));
+		}
+		if (HasRolls(layout)) {
+			for (const auto& identity : a_snapshot.npcIdentities) {
+				packet(Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity));
+			}
+			if (a_snapshot.npcLevel != 0) {
+				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel }));
+			}
 		}
 		return out;
 	}
@@ -387,6 +405,22 @@ namespace SessionFile
 					return std::nullopt;
 				}
 				snapshot.storageReversals.insert(snapshot.storageReversals.end(), reversals->entries.begin(), reversals->entries.end());
+				break;
+			}
+			case Protocol::MessageType::kNpcIdentity: {
+				auto identity = HasRolls(version) ? Protocol::DecodeNpcIdentity(packet) : std::nullopt;
+				if (!identity || Protocol::IsSpawnRef(identity->refId) || snapshot.npcIdentities.size() >= Protocol::MAX_SESSION_ROLLS) {
+					return std::nullopt;
+				}
+				snapshot.npcIdentities.push_back(std::move(*identity));
+				break;
+			}
+			case Protocol::MessageType::kSessionWorld: {
+				const auto world = HasRolls(version) ? Protocol::DecodeSessionWorld(packet) : std::nullopt;
+				if (!world) {
+					return std::nullopt;
+				}
+				snapshot.npcLevel = world->level;
 				break;
 			}
 			default:

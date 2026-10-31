@@ -259,10 +259,11 @@ TEST("npc roll: a newcomer is told the run NPCs' rolls, and one taken over keeps
 	CHECK(told->templates[0] == GLOWING);
 }
 
-TEST("npc roll: forgotten when the NPC dies, when its runner lets it go and when its runner leaves")
+TEST("npc roll: a plugin's NPC's roll is kept for the session's life, through a release and its runner leaving, and forgotten when it dies")
 {
 	Fixture f;
-	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
 	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
 	REQUIRE(bob);
 	constexpr std::uint32_t OTHER = 0x0001F0B2;
@@ -281,26 +282,29 @@ TEST("npc roll: forgotten when the NPC dies, when its runner lets it go and when
 	f.fake->Deliver(1, Protocol::EncodeRelease(std::vector<std::uint32_t>{ OTHER }));
 	Sync(f, 1);
 
-	// Bob runs the released one now: his roll is the session's.
+	// Bob runs the released one now: Alice's roll is still the session's (protocol 57), his own goes no further.
 	f.fake->Deliver(2, Claim(OTHER));
 	auto bobs = Rolled(PLAIN, PLAIN);
 	bobs.refId = OTHER;
 	f.fake->Deliver(2, Report(bobs));
-	const auto taken = Told(*f.fake, 1);
-	REQUIRE(taken);
-	CHECK(taken->playerId == bob->playerId);
+	CHECK(!Told(*f.fake, 1, 300ms));
 
-	// Alice leaves: hers go with her. Carol hears Bob's only.
+	// Alice leaves: her rolls stay the session's, the one nobody runs too. Carol is told both, the dead one's not.
 	f.fake->Drop(1);
 	REQUIRE(f.fake->WaitFor(2, Type(MT::kPlayerLeft)));
-	f.fake->Deliver(2, Claim(THIRD));  // runs it now, with no roll of its own sent
-	Sync(f, 2);
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
-	const auto told = Told(*f.fake, 3);
-	REQUIRE(told);
-	CHECK(told->refId == OTHER);
-	CHECK(told->playerId == bob->playerId);
-	CHECK(!Told(*f.fake, 3, 300ms));
+	std::map<std::uint32_t, NpcIdentity> told;
+	while (const auto roll = Told(*f.fake, 3, 300ms)) {
+		told[roll->refId] = *roll;
+	}
+	CHECK(told.size() == 2);
+	CHECK(!told.contains(BLOATFLY));
+	REQUIRE(told.contains(OTHER));
+	REQUIRE(told.contains(THIRD));
+	CHECK(told[OTHER].templates[0] == GLOWING);
+	CHECK(told[OTHER].playerId == bob->playerId);  // run by Bob now: his, as the session's
+	CHECK(told[THIRD].templates[0] == GLOWING);
+	CHECK(told[THIRD].playerId == alice->playerId);  // nobody runs it: still hers
 }
 
 TEST("npc roll: one taken over keeps its first runner's roll when they leave, as its runner's now")

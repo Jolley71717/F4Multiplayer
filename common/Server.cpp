@@ -10,6 +10,7 @@
 #include "Redact.h"
 #include "SaveRetry.h"
 #include "SessionFile.h"
+#include "SessionLevel.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
@@ -500,11 +501,18 @@ void Server::Run()
 	};
 	std::unordered_map<std::uint32_t, Loan> loans;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
-	// What each run NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
+	// What each NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
 	// game still has its own roll (it could not make the session's) does not replace it, so nobody's NPC changes again
-	// when a fight hands it over. Gone with the NPC (dead, or nobody runs it) and with that player.
+	// when a fight hands it over. A plugin's NPC's is kept for the session's life (protocol 57, docs/SHARED-ROLLS.md):
+	// through releases and its runner leaving, in the session file, and told to every joiner, so a game that meets it
+	// later builds it the same. Gone when it dies (it comes back rolled anew) and with the session. A spawn's goes with
+	// the spawn. At most Protocol::MAX_SESSION_ROLLS.
 	std::unordered_map<std::uint32_t, Protocol::NpcIdentity> npcIdentities;
+	bool                                                     rollsFullLogged = false;
+	// The session's NPC level (common/SessionLevel.h, the host's rule options.rules.npcLevel): the level every game rolls
+	// a leveled NPC at. Saved with the session; told after each welcome and whenever it changes (kSessionWorld).
+	std::uint16_t                                            sessionLevel = 0;
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
@@ -638,8 +646,12 @@ void Server::Run()
 			for (const auto& place : saved->objectPlaces) {
 				objectPlaces.Rested(place);
 			}
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others)", deadActors.size(),
-				containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount()));
+			for (const auto& identity : saved->npcIdentities) {
+				npcIdentities[identity.refId] = identity;
+			}
+			sessionLevel = saved->npcLevel;
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others, {} NPC rolls, NPC level {})",
+				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount(), npcIdentities.size(), sessionLevel));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -692,6 +704,13 @@ void Server::Run()
 			snapshot.destructions.push_back(destruction);
 		}
 		snapshot.objectPlaces = objectPlaces.All();
+		for (const auto& [ref, identity] : npcIdentities) {
+			if (!Protocol::IsSpawnRef(ref)) {  // a spawn ends with the run
+				snapshot.npcIdentities.push_back(identity);
+			}
+		}
+		std::ranges::sort(snapshot.npcIdentities, {}, &Protocol::NpcIdentity::refId);  // the same session, the same file
+		snapshot.npcLevel = sessionLevel;
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
@@ -726,6 +745,8 @@ void Server::Run()
 		loans.clear();
 		npcEquipment.clear();
 		npcIdentities.clear();
+		rollsFullLogged = false;
+		sessionLevel = 0;
 		workshop.Clear();
 		drops.Clear();
 		storage.Clear();
@@ -818,6 +839,29 @@ void Server::Run()
 				send(key, a_packet, a_reliable);
 			}
 		}
+	};
+
+	// The session's NPC level after the players' statuses (common/SessionLevel.h): told to everyone when it changes.
+	// Without a host game (a dedicated server) the host rule has no host: it is the highest.
+	const auto updateSessionLevel = [&] {
+		auto rule = options.rules.Clamped().npcLevel;
+		if (rule == Protocol::NpcLevelRule::kHost && options.hostIdentity == 0) {
+			rule = Protocol::NpcLevelRule::kHighest;
+		}
+		std::vector<SessionLevel::Player> levels;
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.status) {
+				levels.push_back({ other.status->level, other.local });
+			}
+		}
+		const auto next = SessionLevel::Next(rule, sessionLevel, levels);
+		if (next == sessionLevel) {
+			return;
+		}
+		log(std::format("server: the session's NPC level is {} (was {}, rule {})", next, sessionLevel, SessionLevel::Name(rule)));
+		sessionLevel = next;
+		touched();
+		broadcast(Protocol::Encode(Protocol::SessionWorld{ sessionLevel }), true, 0);
 	};
 
 	const auto welcomedCount = [&] {
@@ -1092,13 +1136,15 @@ void Server::Run()
 			}
 			released.push_back({ a_entry.first, 0 });
 			npcEquipment.erase(a_entry.first);
-			npcIdentities.erase(a_entry.first);
-			spawns.erase(a_entry.first);  // nobody else's game has it to run: the others' copies go
+			if (spawns.erase(a_entry.first) != 0) {  // nobody else's game has it to run: the others' copies go
+				npcIdentities.erase(a_entry.first);
+			}
 			return true;
 		});
 		// The rolls they gave NPCs someone else runs now stay the session's, under that runner: their game was made that
 		// roll (or tried), its report was refused for it, and it never reports the same again (NpcRoll::Sent). A newcomer
-		// is told it as theirs; the runner's next change is the session's.
+		// is told it as theirs; the runner's next change is the session's. Those nobody runs stay the session's too, as
+		// theirs (protocol 57): the next game to meet the NPC builds it so, and its report of the same goes no further.
 		for (auto& [ref, identity] : npcIdentities) {
 			if (identity.playerId != a_playerId) {
 				continue;
@@ -1107,7 +1153,7 @@ void Server::Run()
 				identity.playerId = runner->second.playerId;
 			}
 		}
-		std::erase_if(npcIdentities, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; });
+		std::erase_if(npcIdentities, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId && Protocol::IsSpawnRef(a_entry.first); });
 		sendOwners(released, 0);
 	};
 
@@ -1448,6 +1494,8 @@ void Server::Run()
 		a_player.worldAsked = 1;
 		a_player.storageSettled = !options.rules.sharedStorage;
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
+		// The level the session's NPCs are rolled at, before any of them (none with the rule "own").
+		send(a_player.key, Protocol::Encode(Protocol::SessionWorld{ options.rules.Clamped().npcLevel == Protocol::NpcLevelRule::kOwn ? std::uint16_t{ 0 } : sessionLevel }), true);
 		// Whose game keeps each storage container, ahead of the world state: their game judges its changes there by it.
 		if (options.rules.sharedStorage) {
 			sendStorageOwners(storage.Owners(), a_player.key);
@@ -1501,11 +1549,10 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
-		// ... and what they were rolled as.
+		// ... and what every NPC of the session was rolled as, run now or not (protocol 57): their game builds it so when
+		// it first meets it (src/game/RollHook.h).
 		for (const auto& [ref, identity] : npcIdentities) {
-			if (actorOwners.contains(ref)) {
-				send(a_player.key, Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity), true);
-			}
+			send(a_player.key, Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity), true);
 		}
 		sendWorkshop(a_player);
 
@@ -2844,7 +2891,15 @@ void Server::Run()
 		if (known != npcIdentities.end() && (known->second.playerId != a_player.id || known->second == *identity)) {
 			return;
 		}
+		if (known == npcIdentities.end() && npcIdentities.size() >= Protocol::MAX_SESSION_ROLLS) {
+			if (!std::exchange(rollsFullLogged, true)) {
+				log(std::format("server: the session keeps {} NPC rolls, its most; a newer one goes to the games here now and is not kept", npcIdentities.size()));
+			}
+			broadcast(Protocol::Encode(*identity, Protocol::MessageType::kNpcIdentity), true, a_player.key);
+			return;
+		}
 		npcIdentities[identity->refId] = *identity;
+		touched();
 		broadcast(Protocol::Encode(*identity, Protocol::MessageType::kNpcIdentity), true, a_player.key);
 	};
 
@@ -2862,8 +2917,10 @@ void Server::Run()
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
-				npcIdentities.erase(ref);  // nobody runs it: whoever runs it next has it as it is there (the roll made the session's, if it took)
-				spawns.erase(ref);        // a spawn its owner's game let go of (unloaded) is gone: the copies go
+				// A plugin's NPC keeps the session's roll while nobody runs it (protocol 57): the next game to meet it builds it so.
+				if (spawns.erase(ref) != 0) {  // a spawn its owner's game let go of (unloaded) is gone: the copies go
+					npcIdentities.erase(ref);
+				}
 				noteFighting(a_player, ref, now);  // it ran in their game until now (see noteRan)
 				released.push_back({ ref, 0 });
 			}
@@ -3149,6 +3206,7 @@ void Server::Run()
 		status->playerId = a_player.id;
 		a_player.status = *status;
 		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
+		updateSessionLevel();
 	};
 
 	// The session's clock is the host's: the host's own game, else the player here longest.
