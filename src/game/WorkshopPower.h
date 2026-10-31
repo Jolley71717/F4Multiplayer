@@ -293,6 +293,9 @@ namespace WorkshopPower
 	// grid dark, so a friend who came to a camp already lit saw their copies stay dark. A 3D made anew sooner than this
 	// is never shown twice.
 	inline constexpr auto SETTLE = 2s;
+	// A copy shown powered is shown unpowered while a save is written (Mirror::Hush) and powered again once it is over
+	// (SaveDone), or this long after, should no message say the save is over.
+	inline constexpr auto HUSH_LIMIT = 5s;
 
 	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once its 3D is
 	// there and the game took it (a graph not loaded yet doesn't), once more when that 3D has settled (SETTLE), and again
@@ -316,11 +319,13 @@ namespace WorkshopPower
 			}
 			if (it->second.powered != a_entry.powered) {
 				it->second.powered = a_entry.powered;  // shown again; a 3D already there and settled isn't shown twice
+				it->second.hushed = false;
 				it->second.shown = false;
 				it->second.tries = 0;
 				it->second.frozen = false;
 			} else if (it->second.frozen) {
 				it->second.frozen = false;  // their game is back: shown afresh
+				it->second.hushed = false;
 				it->second.shown = false;
 				it->second.tries = 0;
 			}
@@ -347,13 +352,50 @@ namespace WorkshopPower
 				want.shown = false;
 				want.tries = 0;
 				want.settle = true;
+				want.hushed = false;
 			}
+		}
+
+		// A save is about to be written. A copy's 3D keeps what it was shown: a graph told "Powered" is saved so, and the
+		// game puts it back at the load with the copy, which the save holds. A friend's generator then ran its engine in a
+		// game with no session to say it had stopped (or one whose friend has no such piece any more), and its copy can't
+		// be scrapped (it carries the block keyword). So each copy shown powered is shown unpowered now, and powered again
+		// after the save (SaveDone, or HUSH_LIMIT after if no message says it is over). How many it hushed.
+		template <class Engine>
+		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
+		{
+			std::size_t hushed = 0;
+			saveDone = false;
+			for (auto& [key, want] : wants) {
+				if (want.hushed) {
+					want.hushedAt = a_now;  // still hushed from a save just before: this one's too
+					continue;
+				}
+				if (!want.powered || !want.shown || a_engine.Drawn(key) == 0) {
+					continue;
+				}
+				if (a_engine.Show(key, false)) {
+					want.hushed = true;
+					want.hushedAt = a_now;
+					++hushed;
+				}
+			}
+			hushedTotal += hushed;
+			return hushed;
+		}
+
+		// The save is over: what it hushed is shown powered again at the next look.
+		void SaveDone()
+		{
+			saveDone = true;
+			nextRefresh = {};
 		}
 
 		void Clear()
 		{
 			wants.clear();
 			nextRefresh = {};
+			saveDone = false;
 		}
 
 		// Shows the copies that don't show what their builder's game says yet; how many it showed. The Engine gives:
@@ -370,6 +412,22 @@ namespace WorkshopPower
 			nextRefresh = a_now + REFRESH;
 			std::size_t shown = 0;
 			for (auto& [key, want] : wants) {
+				if (want.hushed) {
+					// Back to what its builder's game says (a frozen copy's too: it keeps what it showed), once the save is over.
+					if (!saveDone && a_now - want.hushedAt < HUSH_LIMIT) {
+						continue;
+					}
+					want.hushed = false;
+					const auto now3D = a_engine.Drawn(key);
+					if (now3D != 0 && a_engine.Show(key, want.powered)) {
+						want.drawn = now3D;  // drawn anew meanwhile: this is the show for it
+						++shown;
+					} else {
+						want.shown = false;  // not drawn, or the game won't take it yet: shown as any copy is, with the usual tries
+						want.tries = 0;
+					}
+					continue;
+				}
 				if (want.frozen) {
 					continue;
 				}
@@ -421,6 +479,7 @@ namespace WorkshopPower
 		[[nodiscard]] std::size_t Dropped() const { return dropped; }
 		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
 		[[nodiscard]] std::size_t RedrawsCapped() const { return redrawsCapped; }
+		[[nodiscard]] std::size_t Hushed() const { return hushedTotal; }
 
 		// How many copies show what their builder's game says (or were given up on).
 		[[nodiscard]] std::size_t Shown() const
@@ -440,6 +499,8 @@ namespace WorkshopPower
 			Clock::time_point redrawsSince{};
 			bool           settle = false;          // its 3D is to be shown once more, at settleAt (SETTLE after its first show)
 			Clock::time_point settleAt{};
+			bool           hushed = false;          // shown unpowered for a save (Hush), to be shown powered again
+			Clock::time_point hushedAt{};
 		};
 
 		// A show again of a copy already shown (drawn anew, or settled) counted in its window: false if that is one too
@@ -461,6 +522,8 @@ namespace WorkshopPower
 		std::size_t         dropped = 0;
 		std::size_t         givenUp = 0;
 		std::size_t         redrawsCapped = 0;
+		std::size_t         hushedTotal = 0;
+		bool                saveDone = false;  // the save a hush was for is over (SaveDone)
 		Clock::time_point   nextRefresh{};
 	};
 }

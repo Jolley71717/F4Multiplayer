@@ -505,6 +505,179 @@ TEST("workshop power: two builders' pieces with the same ID are told apart; a sc
 	CHECK(mirror.Size() == 1);
 }
 
+TEST("workshop power: a copy shown powered is shown unpowered for a save and powered again after it (a save keeps what its graph was told)")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  lit{ BUILDER, GENERATOR };
+	const Key  dark{ BUILDER, LIGHT };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	mirror.Set(BUILDER, { LIGHT, false });
+	game.drawn[lit] = 0x1000;
+	game.drawn[dark] = 0x2000;
+	CHECK(mirror.Refresh(game, t) == 2);
+	CHECK(game.shown.at(lit));
+	CHECK(!game.shown.at(dark));
+	t += SETTLE * 2;
+	CHECK(mirror.Refresh(game, t) == 2);  // each once more, settled
+	game.shown.clear();
+	CHECK(mirror.Hush(game, t) == 1);  // only the one running
+	CHECK(!game.shown.at(lit));         // told unpowered: what the save keeps
+	CHECK(!game.shown.contains(dark));
+	CHECK(mirror.Hushed() == 1);
+	CHECK(mirror.Hush(game, t) == 0);   // once for a save
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // the save isn't over
+	CHECK(!game.shown.at(lit));
+	mirror.SaveDone();
+	CHECK(mirror.Refresh(game, t) == 1);  // at once, not at the next look
+	CHECK(game.shown.at(lit));
+	t += SETTLE * 3;
+	CHECK(mirror.Refresh(game, t) == 0);  // and no more
+	CHECK(mirror.Hush(game, t) == 1);     // the next save hushes it again
+	game.shown.clear();
+	mirror.SaveDone();
+	CHECK(mirror.Refresh(game, t + REFRESH) == 1);
+	CHECK(game.shown.at(lit));
+}
+
+TEST("workshop power: a copy hushed for a save is shown again after HUSH_LIMIT if nothing says the save is over")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  key{ BUILDER, GENERATOR };
+	const auto t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[key] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(mirror.Hush(game, t) == 1);
+	CHECK(mirror.Refresh(game, t + REFRESH) == 0);
+	CHECK(!game.shown.at(key));
+	CHECK(mirror.Refresh(game, t + HUSH_LIMIT + REFRESH) == 1);
+	CHECK(game.shown.at(key));
+}
+
+TEST("workshop power: a frozen copy (its builder left) is hushed for a save and keeps what it showed after it")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  key{ BUILDER, GENERATOR };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[key] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	mirror.Freeze(BUILDER);
+	CHECK(mirror.Hush(game, t) == 1);
+	CHECK(!game.shown.at(key));
+	mirror.SaveDone();
+	CHECK(mirror.Refresh(game, t + REFRESH) == 1);
+	CHECK(game.shown.at(key));
+	// Their game comes back while the copy is hushed (no save message yet): shown at once, not after the limit.
+	mirror.Freeze(BUILDER);
+	CHECK(mirror.Hush(game, t + 2 * REFRESH) == 1);
+	mirror.Set(BUILDER, { GENERATOR, true });
+	CHECK(mirror.Refresh(game, t + 3 * REFRESH) == 1);
+	CHECK(game.shown.at(key));
+	// A copy drawn anew between the hush and the show after is not shown again for it.
+	CHECK(mirror.Hush(game, t + 4 * REFRESH) == 1);
+	game.drawn[key] = 0x2000;
+	mirror.SaveDone();
+	CHECK(mirror.Refresh(game, t + 5 * REFRESH) == 1);
+	CHECK(mirror.Refresh(game, t + 6 * REFRESH) == 0);
+	// A second save while it is hushed renews the hush: the first one's time doesn't end it.
+	const auto later = t + 10 * REFRESH;
+	CHECK(mirror.Hush(game, later) == 1);
+	CHECK(mirror.Hush(game, later + HUSH_LIMIT - REFRESH) == 0);
+	CHECK(mirror.Refresh(game, later + HUSH_LIMIT + REFRESH) == 0);
+	CHECK(mirror.Refresh(game, later + 2 * HUSH_LIMIT) == 1);
+}
+
+TEST("workshop power: a hush ends when its builder's game says otherwise, or a load comes, and a game that won't take it is let be")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  key{ BUILDER, GENERATOR };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[key] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(mirror.Hush(game, t) == 1);
+	mirror.Set(BUILDER, { GENERATOR, false });  // their generator went off in the meantime
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);  // shown as it is now, once
+	CHECK(!game.shown.at(key));
+	CHECK(mirror.Refresh(game, t + REFRESH) == 0);
+	// A load after a hush: every copy is shown again as usual.
+	mirror.Set(BUILDER, { GENERATOR, true });
+	t += REFRESH * 2;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(mirror.Hush(game, t) == 1);
+	mirror.Invalidate();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.shown.at(key));
+	// The game takes the hush but not the show after: it is shown as any copy is, with the usual tries, and is not left
+	// unpowered for good while they last.
+	CHECK(mirror.Hush(game, t) == 1);
+	game.graphReady = false;
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);
+	game.graphReady = true;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);  // the graph came back: powered again
+	CHECK(game.shown.at(key));
+	CHECK(mirror.GivenUp() == 0);
+	// ... and after MAX_TRIES of them, let be.
+	CHECK(mirror.Hush(game, t) == 1);
+	game.graphReady = false;
+	mirror.SaveDone();
+	for (std::uint8_t i = 0; i < MAX_TRIES + 1; ++i) {
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 0);
+	}
+	CHECK(mirror.GivenUp() == 1);
+	// A hush the game won't take is no hush: nothing is shown again for it.
+	FriendGame deaf;
+	deaf.drawn[key] = 0x1000;
+	deaf.graphReady = false;
+	CHECK(mirror.Hush(deaf, t) == 0);
+}
+
+TEST("workshop power: a copy gone between a save's hush and the show after is shown powered when it is made again, and one scrapped is let go")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  gone{ BUILDER, GENERATOR };
+	const Key  scrapped{ BUILDER, LIGHT };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	mirror.Set(BUILDER, { LIGHT, true });
+	game.drawn[gone] = 0x1000;
+	game.drawn[scrapped] = 0x2000;
+	CHECK(mirror.Refresh(game, t) == 2);
+	CHECK(mirror.Hush(game, t) == 2);
+	// The save is over, but the copy's cell went (a travel's save) and the other was scrapped by its builder.
+	game.drawn.erase(gone);
+	game.drawn.erase(scrapped);
+	mirror.Forget(scrapped);
+	game.shown.clear();
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // nothing to show it on
+	CHECK(game.shown.empty());
+	CHECK(mirror.Size() == 1);
+	t += HUSH_LIMIT;
+	CHECK(mirror.Refresh(game, t) == 0);  // nor later, while it isn't drawn
+	game.drawn[gone] = 0x3000;            // made again
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.shown.at(gone));
+	CHECK(!game.shown.contains(scrapped));
+}
+
 TEST("workshop power: no more than MAX_MIRRORED pieces are kept")
 {
 	Mirror mirror;

@@ -1931,7 +1931,8 @@ namespace DevCommands
 
 		// wspower: settlement power across games. wspower block on|off: whether friends' copies are kept out of workshop
 		// mode's reach (off: to try the repair); wspower audit: look for copies on our grids now; wspower copies: each copy and whose piece it is; wspower show <refHex>
-		// on|off: show the reference powered or not, as a friend's copy is shown.
+		// on|off: show the reference powered or not, as a friend's copy is shown; wspower want <builderId> <theirRef> on|off: what their game said
+		// of the piece, as the relay says it (the copy is then shown so, and unpowered for a save).
 		std::string WsPower(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -1955,7 +1956,15 @@ namespace DevCommands
 				}
 				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
 			}
-			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
+			if (args[0] == "want" && args.size() == 4 && (args[3] == "on" || args[3] == "off")) {
+				const auto player = ParseHex(args[1]);
+				const auto theirRef = ParseHex(args[2]);
+				if (!player || !theirRef) {
+					return "error: usage: wspower want <builderIdHex> <theirRefHex> on|off";
+				}
+				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
+			}
+			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
 		}
 
 		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still

@@ -551,6 +551,9 @@ namespace
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
 			AutoSave::OnPostSave(MessageText(a_msg));
+			// The copies of friends' powered pieces, shown unpowered for the save, run again (whatever the game's state: the
+			// pre-save step hushed them, and no later message may come).
+			MainThread::Post([] { WorkshopSync::AfterSave(); });
 			if (gameDataReady) {
 				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
 				// (WeaponFire::AfterSave waits for the next frame: no console command is sent from the save's own message.)
