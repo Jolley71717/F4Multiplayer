@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T04:57:39+00:00",
+ "updated": "2026-10-31T05:13:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -176,6 +176,14 @@
    "pr": 187,
    "partial": "0.9.2",
    "desc": "A player saw a legendary black bloatfly and a legendary ghoul in their game while a friend saw normal ones, because each game rolls its own version of an enemy. Since 0.9.2 the game that runs the enemy shares its roll, and the other games use it the next time the enemy loads. An enemy that is already loaded keeps looking different until it loads again, for example after leaving and coming back."
+  },
+  {
+   "id": "64x3",
+   "title": "A friend sneaking and moving glides instead of sneak-walking",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Looking into why a sneaking friend glides instead of sneak-walking"
   },
   {
    "id": "6dko",
