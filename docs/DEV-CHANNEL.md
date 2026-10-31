@@ -94,8 +94,8 @@ describes each one.
 | Step | Tool |
 |---|---|
 | Build | `xmake build` |
-| Deploy, restart Fallout 4 through F4SE, wait for the main menu, load a cell, turn on god mode | `tools/restart-game.ps1` |
-| Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` |
+| Deploy, restart Fallout 4 through F4SE, wait for the main menu, load a cell, turn on god mode | `tools/restart-game.ps1` (CrossOver on a Mac: `tools/crossover.sh restart`) |
+| Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` (Mac: `tools/crossover.sh dev`) |
 | Add other players | `F4MPBot.exe`: a fake player that joins the session and can stand somewhere, shoot, loot, talk, hit you, report quest stages or take over an NPC |
 | Press a key or fire | `tools/input.ps1 -Click` / `-Key <code>`: real mouse and keyboard input sent to the game window (brings it to the front) |
 | Go through workshop mode, the Pip-Boy and a conversation for an hour | `tools/menustress.sh`, or `tools/stress.ps1` from PowerShell (see below) |
