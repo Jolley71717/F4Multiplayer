@@ -226,6 +226,13 @@
   change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`). Items with neither
   mods nor templates still go in by `additem`.
 - Weapon drawn/holstered follows the `kWeaponDrawn` state flag (`DrawWeaponMagicHands`).
+- Sneaking and moving (`kSneaking`): the weapon-away sneak (MTBehavior's `MTSneakIdleLocomotion_SM`) sets off
+  from its sneak idle only on `moveStartAnimated` (its `moveStart` waits on a condition that never holds), so a
+  sneaking stand-in's start sends `moveStartAnimated` then `moveStart` and the graph in use takes its own
+  (`MoveSync::NamesOf`, tested in SneakMoveTests). The resend every `MoveSync::RESYNC` is `moveStart` alone:
+  `moveStartAnimated` is a wildcard there and would replay the set-off clip. The weapon-drawn sneak walks or runs by
+  `iSyncSneakWalkRun` and `sneakWalkStart`/`sneakRunStart`; `iIsInSneak` is set every frame as
+  `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states.
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 

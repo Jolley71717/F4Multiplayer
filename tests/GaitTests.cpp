@@ -87,7 +87,7 @@ namespace
 		const auto  gait = Gait::Pick(gaitSpeed, a_puppet.gait, a_moveMode);
 		a_graph.SetSync(Gait::SyncValue(gait));
 		const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, a_speed, a_now, [&](MoveSync::Event a_event) {
-			return a_graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
+			return a_graph.Notify(MoveSync::NamesOf(a_event, false).first);
 		});
 		if (Gait::Send(step.moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
 			a_graph.Notify(Gait::Event(gait));
@@ -432,7 +432,7 @@ namespace
 		const auto  gait = Gait::Pick(gaitSpeed, a_puppet.gait, RUNNING);
 		a_graph.SetSync(Gait::SyncValue(gait));
 		const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, a_speed, a_now, [&](MoveSync::Event a_event) {
-			return a_graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
+			return a_graph.Notify(MoveSync::NamesOf(a_event, false).first);
 		});
 		if (Gait::Send(step.moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
 			a_graph.Notify(Gait::Event(gait));

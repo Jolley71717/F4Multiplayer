@@ -84,7 +84,7 @@ namespace
 			a_graph.sync = Gait::SyncValue(plan.gait);
 		}
 		const auto step = MoveSync::Drive(a_copy.moving, a_copy.nextResync, a_state.speed, a_copy.now += FRAME, [&](MoveSync::Event a_event) {
-			return a_graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
+			return a_graph.Notify(MoveSync::NamesOf(a_event, false).first);
 		});
 		a_graph.walkRate = plan.walkRate;
 		a_graph.runRate = plan.runRate;

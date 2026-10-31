@@ -1232,7 +1232,7 @@ namespace Sim
 					graph.walking = graph.landsWalking;
 				}
 				f.graph = MoveSync::Drive(f.graph.moving, f.graph.nextResync, f.state->speed, frameClock, [&](MoveSync::Event a_event) {
-					const bool start = a_event == MoveSync::Event::kStart;
+					const bool start = MoveSync::Starts(a_event);
 					if (graph.busy > 0 || graph.walking == start) {
 						return false;  // refused
 					}

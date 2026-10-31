@@ -374,8 +374,6 @@ namespace Puppets
 			static const RE::BSFixedString directionVar{ "Direction" };
 			static const RE::BSFixedString pitchVar{ "Pitch" };
 			static const RE::BSFixedString idleLocomotionVar{ "iSyncIdleLocomotion" };
-			static const RE::BSFixedString moveStart{ "moveStart" };
-			static const RE::BSFixedString moveStop{ "moveStop" };
 			static const RE::BSFixedString jumpStart{ "jumpStart" };
 			static const RE::BSFixedString jumpFall{ "jumpFall" };
 			static const RE::BSFixedString jumpLand{ "jumpLand" };
@@ -388,6 +386,8 @@ namespace Puppets
 			static const RE::BSFixedString weaponRunMultVar{ MirrorGait::WEAPON_RUN_RATE };
 			static const RE::BSFixedString gaitSyncVar{ MirrorGait::GAIT_VARIABLE };
 			static const RE::BSFixedString weaponGaitVar{ MirrorGait::WEAPON_GAIT_VARIABLE };
+			static const RE::BSFixedString sneakGaitVar{ MirrorGait::SNEAK_GAIT_VARIABLE };
+			static const RE::BSFixedString inSneakVar{ "iIsInSneak" };
 			static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
 
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
@@ -406,9 +406,17 @@ namespace Puppets
 			const float gaitSpeed = Gait::Smoothed(a_puppet.gaitSpeed, motion.speed, seconds);
 			const auto  person = MirrorGait::Person(own, motion.gait, motion.gaitRate, (motion.flags & Protocol::kWeaponDrawn) != 0, gaitSpeed, a_puppet.gait, motion.moveMode);
 			const auto  gait = humanoid ? person.gait : a_puppet.gait;
+			// Crouching (sent below as "sneakStart"/"sneakStop": an NPC has no sneak key).
+			const bool  sneaking = (motion.flags & Protocol::kSneaking) != 0;
 			if (humanoid) {
 				graph->SetGraphVariableInt(gaitSyncVar, Gait::SyncValue(gait));
 				graph->SetGraphVariableInt(weaponGaitVar, Gait::WeaponState(gait));
+				graph->SetGraphVariableInt(sneakGaitVar, Gait::WeaponState(gait));
+				// What the engine's Actor::SetSneaking keeps for an actor and our bare events do not: every state machine
+				// with a standing and a sneaking version (the weapon-away graph's, its weapon-drawn one's, a draw, a jump, a
+				// reload) enters the one it names. Without it a graph that came back from a jump or a weapon change, or was
+				// built again, stood up while its friend sneaked. (bIsSneaking and IsSneaking are the graph's own outputs.)
+				graph->SetGraphVariableInt(inSneakVar, sneaking ? 1 : 0);
 			}
 			// A dog's (CreatureGait.h): the gait and rate its owner's graph plays, its state set first for the same reason.
 			const bool dog = kind.family == MirrorGait::Family::kDog;
@@ -428,8 +436,14 @@ namespace Puppets
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
 			// A refused start is tested with a stop; a mirrored NPC's that the stop does not explain (an idle
 			// holds it) is ReleaseIdle's, right after.
+			// Sneaking, a humanoid's set-off is "moveStartAnimated" or "moveStart", whichever its graph has (MoveSync::NamesOf).
 			const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, motion.speed, now, [&](MoveSync::Event a_event) {
-				return graph->NotifyAnimationGraphImpl(a_event == MoveSync::Event::kStart ? moveStart : moveStop);
+				const auto names = MoveSync::NamesOf(a_event, sneaking && humanoid);
+				bool       taken = graph->NotifyAnimationGraphImpl(VariableName(names.first));
+				if (names.second) {
+					taken = graph->NotifyAnimationGraphImpl(VariableName(names.second)) || taken;
+				}
+				return taken;
 			});
 			const bool moving = step.moving;
 			if (humanoid) {
@@ -444,6 +458,9 @@ namespace Puppets
 						graph->NotifyAnimationGraphImpl(VariableName(event));
 					}
 					graph->NotifyAnimationGraphImpl(VariableName(Gait::WeaponEvent(gait)));
+					if (sneaking) {
+						graph->NotifyAnimationGraphImpl(VariableName(Gait::SneakEvent(gait)));
+					}
 				}
 			}
 			if (dog) {
@@ -461,8 +478,7 @@ namespace Puppets
 			// moving version by it. Set before the sneak and jump events below.
 			graph->SetGraphVariableInt(idleLocomotionVar, moving ? 1 : 0);
 
-			// Crouching: the graph takes "sneakStart"/"sneakStop" (an NPC has no sneak key).
-			const bool sneaking = (motion.flags & Protocol::kSneaking) != 0;
+			// Crouching: the graph takes "sneakStart"/"sneakStop".
 			const bool wasSneaking = (a_puppet.appliedFlags & Protocol::kSneaking) != 0;
 			// Up from lying for its downed friend (SetDown), told once more when the get-up has played out, whatever was sent:
 			// the engine's downed pose gets up into whatever sneak its graph had before, and an event sent during the get-up
@@ -1078,6 +1094,7 @@ namespace Puppets
 			std::vector<const char*> list{
 				Gait::Event(Gait::Kind::kWalk), Gait::Event(Gait::Kind::kRun),
 				Gait::WeaponEvent(Gait::Kind::kWalk), Gait::WeaponEvent(Gait::Kind::kRun),
+				Gait::SneakEvent(Gait::Kind::kWalk), Gait::SneakEvent(Gait::Kind::kRun),
 				CreatureGait::RANGE_VARIABLE, CreatureGait::MARKER_VARIABLE,
 				MirrorGait::PERSON_MARKER, MirrorGait::GAIT_VARIABLE, MirrorGait::WEAPON_GAIT_VARIABLE,
 				MirrorGait::WALK_RATE, MirrorGait::RUN_RATE, MirrorGait::WEAPON_WALK_RATE, MirrorGait::WEAPON_RUN_RATE,
@@ -1089,6 +1106,13 @@ namespace Puppets
 			}
 			for (const auto variable : MirrorGait::CREATURE_VARIABLES) {
 				list.push_back(variable);
+			}
+			for (const auto event : { MoveSync::Event::kStart, MoveSync::Event::kStop, MoveSync::Event::kStillMoving }) {
+				for (const bool sneaking : { false, true }) {
+					const auto sent = MoveSync::NamesOf(event, sneaking);
+					list.push_back(sent.first);
+					list.push_back(sent.second);
+				}
 			}
 			std::vector<Entry> table;
 			for (const auto name : list) {
@@ -1163,9 +1187,9 @@ namespace Puppets
 		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate
 		// each clip plays at (played= is the gait a dog's copy was last told, -1 standing: not ownerGait's when the speed
 		// rules that one out, CreatureGait::Fits); a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and
-		// iSyncIdleLocomotion is 1 while a graph moves.
+		// iSyncIdleLocomotion is 1 while a graph moves; iIsInSneak and iSyncSneakWalkRun are what a sneaking one was told.
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
-		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fTrotClipMult", "fTrotFastClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "iIsInSneak", "iSyncSneakWalkRun", "fWalkClipMult", "fTrotClipMult", "fTrotFastClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
 			const RE::BSFixedString var{ name };
 			float                   f = 0.0f;
 			std::int32_t            n = 0;

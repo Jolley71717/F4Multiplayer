@@ -27,6 +27,7 @@ namespace MirrorGait
 	// A person's: the weapon-away graph's state (Gait::Kind), the weapon-drawn graph's, and the clips' playback rates.
 	inline constexpr const char* GAIT_VARIABLE = "iSyncLocomotionSpeed";
 	inline constexpr const char* WEAPON_GAIT_VARIABLE = "iLocomotionSpeedState";
+	inline constexpr const char* SNEAK_GAIT_VARIABLE = "iSyncSneakWalkRun";  // the weapon-drawn sneak's (Gait::SneakEvent)
 	inline constexpr const char* WALK_RATE = "WalkSpeedMult";
 	inline constexpr const char* RUN_RATE = "RunSpeedMult";
 	inline constexpr const char* WEAPON_WALK_RATE = "fLocomotionWalkPlaybackSpeed";
