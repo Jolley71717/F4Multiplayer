@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T20:43:29+00:00",
+ "updated": "2026-10-31T21:07:38+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -64,8 +64,8 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "A save no longer keeps a friend's generator running. Merged for 0.10.1; the case reported after joining is still being looked into.",
+   "stage": 1,
+   "note": "Save fix shipped in 0.10.1; the reporter's always-on sound is still being looked into",
    "pr": 230
   },
   {
@@ -895,7 +895,7 @@
    "title": "Enemies heal on hit for one player",
    "kind": "bug",
    "priority": 0,
-   "stage": 5,
+   "stage": 7,
    "note": "Every hit now gets an answer, so none can be silently undone. Merged; in 0.10.1-rc1, soaking now.",
    "pr": 231
   },
