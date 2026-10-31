@@ -646,6 +646,38 @@ TEST("workshop power: a hush ends when its builder's game says otherwise, or a l
 	CHECK(mirror.Hush(deaf, t) == 0);
 }
 
+TEST("workshop power: a copy gone between a save's hush and the show after is shown powered when it is made again, and one scrapped is let go")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  gone{ BUILDER, GENERATOR };
+	const Key  scrapped{ BUILDER, LIGHT };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	mirror.Set(BUILDER, { LIGHT, true });
+	game.drawn[gone] = 0x1000;
+	game.drawn[scrapped] = 0x2000;
+	CHECK(mirror.Refresh(game, t) == 2);
+	CHECK(mirror.Hush(game, t) == 2);
+	// The save is over, but the copy's cell went (a travel's save) and the other was scrapped by its builder.
+	game.drawn.erase(gone);
+	game.drawn.erase(scrapped);
+	mirror.Forget(scrapped);
+	game.shown.clear();
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // nothing to show it on
+	CHECK(game.shown.empty());
+	CHECK(mirror.Size() == 1);
+	t += HUSH_LIMIT;
+	CHECK(mirror.Refresh(game, t) == 0);  // nor later, while it isn't drawn
+	game.drawn[gone] = 0x3000;            // made again
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.shown.at(gone));
+	CHECK(!game.shown.contains(scrapped));
+}
+
 TEST("workshop power: no more than MAX_MIRRORED pieces are kept")
 {
 	Mirror mirror;
