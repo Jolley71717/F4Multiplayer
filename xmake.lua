@@ -6,7 +6,7 @@ end
 
 -- set project constants
 set_project("F4Multiplayer")
-set_version("0.10.0")
+set_version("0.10.1")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")
