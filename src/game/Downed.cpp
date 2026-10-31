@@ -1,4 +1,5 @@
 #include "game/Downed.h"
+#include "Runtime.h"
 
 #include "Config.h"
 #include "game/AutoSave.h"
@@ -115,10 +116,20 @@ namespace Downed
 		// End, as the engine's own recovery runs it once the stay-down flag is off and there is health again; only while the
 		// life state is essential-down: back to alive (the graph's bleed-out stop, the camera and the controls back), full
 		// health, and the in-bleed-out-animation and controller flags off.
+		constexpr REL::ID ESSENTIAL_DOWN{ 0, 0, 2230033 };
+
+		// Its address (1.11.240's; old-gen and next-gen not read yet): without it nobody is put down here, so a lethal hit
+		// is the game's own (revive off), said once in the log.
+		bool Available()
+		{
+			static const Runtime::Feature feature{ "Downed", { ESSENTIAL_DOWN } };
+			return feature.On();
+		}
+
 		void EssentialDown(RE::PlayerCharacter* a_player, bool a_start)
 		{
 			using start_t = void (*)(RE::Actor*, bool);
-			static REL::Relocation<start_t> start{ REL::ID{ 2230033 } };
+			static Runtime::Relocation<start_t> start{ ESSENTIAL_DOWN };
 			start(a_player, a_start);
 		}
 
@@ -501,7 +512,7 @@ namespace Downed
 		if (!WorldSync::InWorld()) {
 			return;  // a loading screen: nothing of the down changes, and the stand-ins are not there to help
 		}
-		const bool enabled = self.GetRules().revive && a_withFriends;
+		const bool enabled = self.GetRules().revive && a_withFriends && Available();
 		const auto now = Clock::now();
 		const bool fighting = player->IsInCombat();
 		// A stand-up while the console is open, or just after it closed, is the player's own command (DownRules::Facts).

@@ -1,4 +1,5 @@
 #include "game/HavokGuard.h"
+#include "Runtime.h"
 
 #include "game/Equipment.h"
 #include "game/HavokNan.h"
@@ -353,7 +354,12 @@ namespace HavokGuard
 	bool Install()
 	{
 		static_assert(HavokNan::FUNCTION_ID == 2263389);  // the number spelled out for tools/addrcheck.ps1
-		const auto function = REL::ID(2263389).address();
+		constexpr REL::ID CONSTRAINT_SETUP{ 0, 0, 2263389 };  // old-gen and next-gen not read yet
+		static const Runtime::Feature feature{ "Havok NaN", { CONSTRAINT_SETUP } };
+		if (!feature.On()) {
+			return false;
+		}
+		const auto function = *Runtime::TryAddress(CONSTRAINT_SETUP);
 		auto&      trampoline = REL::GetTrampoline();
 		for (std::size_t i = 0; i < HavokNan::SITES.size(); ++i) {
 			const auto                                     site = function + HavokNan::SITES[i];

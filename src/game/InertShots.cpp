@@ -1,4 +1,5 @@
 #include "game/InertShots.h"
+#include "Runtime.h"
 
 #include "game/InertShot.h"
 #include "game/Puppets.h"
@@ -288,7 +289,12 @@ namespace InertShots
 			return true;
 		}
 		static_assert(InertShot::LAUNCH_ID == 2236958);  // the number spelled out for tools/addrcheck.ps1
-		const auto function = REL::ID(2236958).address();
+		constexpr REL::ID LAUNCH{ 0, 0, 2236958 };  // old-gen and next-gen not read yet
+		static const Runtime::Feature feature{ "InertShots", { LAUNCH } };
+		if (!feature.On()) {
+			return false;
+		}
+		const auto function = *Runtime::TryAddress(LAUNCH);
 		std::array<std::uint8_t, InertShot::ENTRY_BYTES.size()> bytes{};
 		std::memcpy(bytes.data(), reinterpret_cast<const void*>(function), bytes.size());
 		if (!InertShot::EntryMatches(bytes)) {
@@ -312,7 +318,7 @@ namespace InertShots
 		mainThread = std::this_thread::get_id();
 		trampoline.write_jmp<5>(function, &LaunchHook);
 		installed = true;
-		REX::INFO("InertShots: Projectile::Launch (+{:X}) hooked: a stand-in's or a copy's shot that would go off is launched inert", REL::ID(2236958).offset());
+		REX::INFO("InertShots: Projectile::Launch (+{:X}) hooked: a stand-in's or a copy's shot that would go off is launched inert", function - REX::FModule::GetExecutingModule().GetBaseAddress());
 		return true;
 	}
 

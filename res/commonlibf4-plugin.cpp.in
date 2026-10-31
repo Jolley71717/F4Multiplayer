@@ -1,0 +1,20 @@
+#include <F4SE/F4SE.h>
+
+// F4SE 0.7's version data (F4SEPlugin_Version), read on next-gen and the Anniversary update; old-gen's F4SE 0.6.23 asks
+// F4SEPlugin_Query instead (src/main.cpp). Our own copy of CommonLibF4's template, which also sets the next-gen
+// (1.10.980) Address Library and layout bits: with those, next-gen's F4SE 0.7.2 would load the plugin, and next-gen is
+// not supported yet. Until it is, only the Anniversary update's bits are set, as before the library moved to
+// Dear-Modding-FO4/CommonLibF4.
+F4SE_PLUGIN_VERSION = []() noexcept {
+    F4SE::PluginVersionData v{};
+    v.PluginVersion({ ${COMMONLIB_PLUGIN_VERSION_MAJOR}, ${COMMONLIB_PLUGIN_VERSION_MINOR}, ${COMMONLIB_PLUGIN_VERSION_PATCH}, 0 });
+    v.PluginName("${COMMONLIB_PLUGIN_NAME}");
+    v.AuthorName("${COMMONLIB_PLUGIN_AUTHOR}");
+    v.UsesSigScanning(${COMMONLIBF4_OPTION_SIG_SCANNING});
+    v.UsesAddressLibraryAE(${COMMONLIBF4_OPTION_ADDRESS_LIBRARY});
+    v.HasNoStructUse(${COMMONLIBF4_OPTION_NO_STRUCT_USE});
+    v.IsLayoutDependentAE(${COMMONLIBF4_OPTION_LAYOUT_DEPENDENT});
+    v.CompatibleVersions({ F4SE::RUNTIME_LATEST });
+    v.MinimumRequiredXSEVersion({ ${COMMONLIB_PLUGIN_XSE_VERSION_MAJOR}, ${COMMONLIB_PLUGIN_XSE_VERSION_MINOR}, ${COMMONLIB_PLUGIN_XSE_VERSION_PATCH}, 0 });
+    return v;
+}();

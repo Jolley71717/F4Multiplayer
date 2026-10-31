@@ -1,4 +1,5 @@
 #include "game/SaveGuard.h"
+#include "Runtime.h"
 #include "game/DeferredDelete.h"
 #include "game/Equipment.h"
 #include "game/FrameLeftovers.h"
@@ -34,7 +35,7 @@ namespace SaveGuard
 		// form of ours whose record was dropped (they all are, as they go: DespawnAll) stays in memory through the
 		// load, and a stand-in so kept points at its base, a face copy with a record, which the load frees: the
 		// next load crashed on it (Actor::LoadGame, the process lists, RevertAllChanges). See BeforeLoad.
-		constexpr REL::ID RELEASE_CREATED_REFERENCE{ 2227909 };
+		constexpr REL::ID RELEASE_CREATED_REFERENCE{ 0, 0, 2227909 };
 		// Not RemoveChanges(TESForm*) (+BECB60): it leaves a record alone once the form's cell has unloaded
 		// and the record was written out to a buffer (UnloadForm), so a stand-in whose cell had unloaded
 		// was saved all the same. ClearChanges takes the record out whether buffered or not, frees the
@@ -42,14 +43,14 @@ namespace SaveGuard
 		// A buffered reference also stays listed under its cell (+E0) until that cell loads. That list is
 		// only for this run (built again from the records at every load, never saved), and loading the
 		// cell skips an id that has no record, so it is left as it is.
-		constexpr REL::ID SAVE_LOAD_GAME{ 2697789 };
-		constexpr REL::ID CLEAR_CHANGES{ 2227903 };
-		constexpr REL::ID HAS_CHANGES{ 2227913 };
+		constexpr REL::ID SAVE_LOAD_GAME{ 177947, 2697789, 2697789 };
+		constexpr REL::ID CLEAR_CHANGES{ 0, 0, 2227903 };
+		constexpr REL::ID HAS_CHANGES{ 0, 0, 2227913 };
 		// The engine's own test of what a reference is saved under (+BF82F0, TESObjectREFR* in, TESForm* out): its
 		// worldspace, or its cell when it has no worldspace or the cell's flag 0x2000 is set. Null only when it has
 		// neither. It takes no lock. The save (SaveInitialData) and the engine unloading a created reference's record read
 		// what it returns without a check (see SaveStrays::Doomed).
-		constexpr REL::ID SAVE_ANCHOR{ 2228018 };
+		constexpr REL::ID SAVE_ANCHOR{ 0, 0, 2228018 };
 
 		std::uint32_t excluded = 0;          // records removed (by anyone)
 		std::uint32_t straysSaved = 0;       // strays whose record was kept out of a save
@@ -130,22 +131,33 @@ namespace SaveGuard
 			refusalsLoggedAt = a_now;
 		}
 
+		// The addresses above (1.11.240's; old-gen's save object only so far): without all of them nothing is kept out of
+		// saves or let go of at a load here, said once in the log. Such a runtime is not one to play a session on.
+		bool Available()
+		{
+			static const Runtime::Feature feature{ "SaveGuard", { RELEASE_CREATED_REFERENCE, SAVE_LOAD_GAME, CLEAR_CHANGES, HAS_CHANGES, SAVE_ANCHOR } };
+			return feature.On();
+		}
+
 		void* SaveLoadGame()
 		{
-			static REL::Relocation<void**> game{ SAVE_LOAD_GAME };
+			if (!Available()) {
+				return nullptr;
+			}
+			static Runtime::Relocation<void**> game{ SAVE_LOAD_GAME };
 			return *game;
 		}
 
 		bool HasChanges(std::uint32_t a_id)
 		{
-			static REL::Relocation<bool (*)(void*, std::uint32_t)> hasChanges{ HAS_CHANGES };
+			static Runtime::Relocation<bool (*)(void*, std::uint32_t)> hasChanges{ HAS_CHANGES };
 			const auto game = SaveLoadGame();
 			return game && hasChanges(game, a_id);
 		}
 
 		bool ExcludeId(std::uint32_t a_id)
 		{
-			static REL::Relocation<void (*)(void*, std::uint32_t)> clearChanges{ CLEAR_CHANGES };
+			static Runtime::Relocation<void (*)(void*, std::uint32_t)> clearChanges{ CLEAR_CHANGES };
 			if (!HasChanges(a_id)) {
 				return false;  // nothing would be saved for it
 			}
@@ -485,7 +497,7 @@ namespace SaveGuard
 		// The engine's own letting go of a created reference at a load (see RELEASE_CREATED_REFERENCE).
 		void ReleaseNow(RE::TESObjectREFR* a_ref)
 		{
-			static REL::Relocation<void (*)(void*, RE::TESObjectREFR*)> release{ RELEASE_CREATED_REFERENCE };
+			static Runtime::Relocation<void (*)(void*, RE::TESObjectREFR*)> release{ RELEASE_CREATED_REFERENCE };
 			if (const auto game = SaveLoadGame()) {
 				release(game, a_ref);
 			}
@@ -698,7 +710,11 @@ namespace SaveGuard
 
 	bool Anchored(RE::TESObjectREFR* a_ref)
 	{
-		static REL::Relocation<RE::TESForm* (*)(RE::TESObjectREFR*)> saveAnchor{ SAVE_ANCHOR };
+		// Unknown here: taken as anchored, so nothing is let go of as adrift on a guess.
+		if (!Available()) {
+			return a_ref != nullptr;
+		}
+		static Runtime::Relocation<RE::TESForm* (*)(RE::TESObjectREFR*)> saveAnchor{ SAVE_ANCHOR };
 		return a_ref && saveAnchor(a_ref) != nullptr;
 	}
 

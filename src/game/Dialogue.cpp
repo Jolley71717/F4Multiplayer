@@ -1,4 +1,5 @@
 #include "game/Dialogue.h"
+#include "Runtime.h"
 #include "game/StrandedDialogue.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
@@ -18,7 +19,7 @@ namespace Dialogue
 		// and the speaker always none, whatever the player was doing. The wrong ID is the library's
 		// (ID::MenuTopicManager::Singleton in RE/IDs.h); lib/commonlibf4 is a submodule kept as published,
 		// so the right one is used here instead.
-		constexpr REL::ID TOPIC_MANAGER{ 4796064 };
+		constexpr REL::ID TOPIC_MANAGER{ 1391114, 2688800, 4796064 };
 
 		// The reset every conversation ends with (SpeakerShutMenu's last step; starting one runs it too):
 		// it lets go of the conversation's input layer, which is what takes the player's weapons, Pip-Boy
@@ -26,7 +27,7 @@ namespace Dialogue
 		// MenuTopicManager::SpeakerShutMenu (2227155) is not used: before the reset it walks the player
 		// out of the dialogue scene they are in (BGSScene::SetPlayerWalkAway and StartWalkAway on the
 		// player's current scene, whichever scene it is passed), which can end a quest's scene.
-		constexpr REL::ID RESET_MENU{ 2227138 };
+		constexpr REL::ID RESET_MENU{ 0, 0, 2227138 };
 
 		// Being in dialogue without the dialogue menu this long is logged, with what holds the player.
 		constexpr auto HELD_REPORT = std::chrono::seconds(10);
@@ -37,10 +38,18 @@ namespace Dialogue
 		bool                      heldReported = false;
 		bool                      wrongManagerReported = false;
 
+		// The reset's address (1.11.240's; old-gen and next-gen not read yet): without it a conversation left without its
+		// speaker is only logged, not ended, said once in the log.
+		bool ResetKnown()
+		{
+			static const Runtime::Feature feature{ "Dialogue: ending a conversation left without its speaker", { RESET_MENU } };
+			return feature.On();
+		}
+
 		void ResetMenu(RE::MenuTopicManager* a_manager)
 		{
 			using func_t = void (*)(RE::MenuTopicManager*);
-			static REL::Relocation<func_t> func{ RESET_MENU };
+			static Runtime::Relocation<func_t> func{ RESET_MENU };
 			func(a_manager);
 		}
 
@@ -92,7 +101,7 @@ namespace Dialogue
 
 	RE::MenuTopicManager* TopicManager()
 	{
-		static REL::Relocation<RE::MenuTopicManager**> singleton{ TOPIC_MANAGER };
+		static Runtime::Relocation<RE::MenuTopicManager**> singleton{ TOPIC_MANAGER };
 		const auto manager = *singleton;
 		if (!manager) {
 			return nullptr;
@@ -161,7 +170,7 @@ namespace Dialogue
 			return;
 		}
 		ReportHeld(topics, speaker.get(), menu, watch.Ours(), now);
-		if (!due) {
+		if (!due || !ResetKnown()) {
 			return;
 		}
 		const auto id = watch.Speaker();
@@ -186,6 +195,9 @@ namespace Dialogue
 		const auto topics = TopicManager();
 		if (!topics) {
 			return "none";
+		}
+		if (!ResetKnown()) {
+			return "error: the conversation reset's address is not known on " + Runtime::Describe();
 		}
 		const auto state = [&] {
 			const auto speaker = topics->speaker.get();
