@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <string_view>
+#include <vector>
 
 using namespace std::chrono_literals;
 using DamageHold::Decide;
@@ -66,6 +67,20 @@ TEST("damage hold: damage that can't be taken off yet is held: a loading screen,
 	CHECK(Decide(unloaded).why == Why::kNotLoaded);
 }
 
+TEST("damage hold: damage that crossed our own release of the NPC is refused as not ours, not held for the server's word")
+{
+	// Our game let the NPC go (a hand-off, an unload): our table says nobody runs it. The server, whose table still
+	// named us, sent a friend's hit here; held for its word, it waited out the hold while the new runner never got it.
+	auto facts = Ours();
+	facts.owner = 0;
+	CHECK(Decide(facts).verdict == Verdict::kHold);
+	CHECK(Decide(facts).why == Why::kNoOwnerYet);
+	facts.letGo = true;
+	CHECK(Decide(facts).verdict == Verdict::kDrop);
+	CHECK(Decide(facts).why == Why::kNotOurs);
+	CHECK(DamageHold::Answer(Decide(facts).why) == Protocol::DamageAnswer::Why::kNotTheRunner);
+}
+
 TEST("damage hold: damage that can never be taken off is dropped, each for its reason")
 {
 	auto nobody = Ours();
@@ -103,52 +118,58 @@ TEST("damage hold: damage that can never be taken off is dropped, each for its r
 	CHECK(Decide(loadingCorpse).verdict == Verdict::kHold);
 }
 
-TEST("damage hold: the book sums what is held for an NPC and gives it back to be applied once it can be")
+TEST("damage hold: the book holds each hit on its own, with its number and whose it is, and gives each back to be applied once it can be")
 {
 	DamageHold::Book book;
 	const auto       t0 = Clock::now();
-	CHECK(book.Hold(RAIDER, 0.10f, Why::kNotLoaded, t0));
-	CHECK(book.Hold(RAIDER, 0.15f, Why::kNoOwnerYet, t0 + 100ms));
-	CHECK(book.Size() == 1);
+	CHECK(book.Hold({ RAIDER, 0.10f, Why::kNotLoaded, t0, 1, FRIEND }));
+	CHECK(book.Hold({ RAIDER, 0.15f, Why::kNoOwnerYet, t0 + 100ms, 2, FRIEND }));
+	CHECK(book.Size() == 2);
 	const auto held = book.HeldFor(RAIDER);
-	REQUIRE(held);
-	CHECK(std::abs(held->fraction - 0.25f) < 0.0001f);
-	CHECK(held->why == Why::kNoOwnerYet);
-	CHECK(held->since == t0);  // held since the first
+	REQUIRE(held.size() == 2);
+	CHECK(std::abs(held[0].fraction + held[1].fraction - 0.25f) < 0.0001f);
+	CHECK(held[0].why == Why::kNotLoaded);
+	CHECK(held[1].why == Why::kNoOwnerYet);
+	CHECK(held[0].since == t0);  // oldest first
+	CHECK(book.HeldFor(RAIDER2).empty());
 
-	// Tried again: still held (the NPC isn't loaded), then applied.
+	// Tried again: still held (the NPC isn't loaded), then applied, each hit with its number so each can be answered.
 	int tries = 0;
 	book.Retry([&](DamageHold::Held& a_held) {
 		++tries;
 		a_held.why = Why::kNotLoaded;
 		return false;
 	});
-	CHECK(tries == 1);
-	CHECK(book.Size() == 1);
-	CHECK(book.HeldFor(RAIDER)->why == Why::kNotLoaded);
-	float applied = 0.0f;
+	CHECK(tries == 2);
+	CHECK(book.Size() == 2);
+	CHECK(book.HeldFor(RAIDER)[1].why == Why::kNotLoaded);
+	float                      applied = 0.0f;
+	std::vector<std::uint32_t> answered;
 	book.Retry([&](DamageHold::Held& a_held) {
-		applied = a_held.fraction;
+		applied += a_held.fraction;
+		answered.push_back(a_held.seq);
+		CHECK(a_held.from == FRIEND);
 		return true;
 	});
 	CHECK(std::abs(applied - 0.25f) < 0.0001f);
+	CHECK((answered == std::vector<std::uint32_t>{ 1, 2 }));
 	CHECK(book.Size() == 0);
-	CHECK(book.HeldCount() == 1);
+	CHECK(book.HeldCount() == 2);
 	CHECK(book.Expired() == 0);
 }
 
-TEST("damage hold: what is held too long is dropped, but a loading screen's time doesn't count")
+TEST("damage hold: what is held too long is refused as such, with its number so the friend's copy gets it back; a loading screen's time doesn't count")
 {
 	DamageHold::Book book;
 	const auto       t0 = Clock::now();
-	book.Hold(RAIDER, 0.2f, Why::kNotInWorld, t0);
-	book.Hold(RAIDER2, 0.3f, Why::kNotLoaded, t0 + 1s);
+	book.Hold({ RAIDER, 0.2f, Why::kNotInWorld, t0, 5, FRIEND });
+	book.Hold({ RAIDER2, 0.3f, Why::kNotLoaded, t0 + 1s, 6, FRIEND });
 	CHECK(book.Expire(t0 + DamageHold::HOLD - 1ms).empty());
 	// The world comes back after a long loading screen: the hold starts afresh.
 	book.BackInWorld(t0 + DamageHold::HOLD + 10s);
 	CHECK(book.Expire(t0 + DamageHold::HOLD + 11s).empty());
 	CHECK(book.Size() == 2);
-	// In the world for HOLD with no chance to apply it: dropped, and said why it waited.
+	// In the world for HOLD with no chance to apply it: taken out to be refused, each with why it waited and its number.
 	const auto gone = book.Expire(t0 + DamageHold::HOLD + 10s + DamageHold::HOLD);
 	REQUIRE(gone.size() == 2);
 	CHECK(book.Size() == 0);
@@ -156,28 +177,45 @@ TEST("damage hold: what is held too long is dropped, but a loading screen's time
 	for (const auto& entry : gone) {
 		CHECK(entry.id == RAIDER || entry.id == RAIDER2);
 		CHECK(entry.why == (entry.id == RAIDER ? Why::kNotInWorld : Why::kNotLoaded));
+		CHECK(entry.seq == (entry.id == RAIDER ? 5u : 6u));
+		CHECK(entry.from == FRIEND);
+		CHECK(DamageHold::Answer(entry.why) == Protocol::DamageAnswer::Why::kHeldTooLong);
 	}
 }
 
-TEST("damage hold: the book holds for at most MAX_HELD NPCs, and says so")
+TEST("damage hold: the book holds at most MAX_HELD hits, and says so")
 {
 	DamageHold::Book book;
 	const auto       t0 = Clock::now();
 	for (std::uint32_t i = 0; i < DamageHold::MAX_HELD; ++i) {
-		CHECK(book.Hold(0x00010000 + i, 0.1f, Why::kNotLoaded, t0));
+		CHECK(book.Hold({ 0x00010000 + i, 0.1f, Why::kNotLoaded, t0, i + 1, FRIEND }));
 	}
-	CHECK(!book.Hold(RAIDER, 0.1f, Why::kNotLoaded, t0));
-	CHECK(book.Hold(0x00010000, 0.1f, Why::kNotLoaded, t0));  // more for one held already always fits
+	CHECK(!book.Hold({ RAIDER, 0.1f, Why::kNotLoaded, t0, 999, FRIEND }));
+	CHECK(!book.Hold({ 0x00010000, 0.1f, Why::kNotLoaded, t0, 1000, FRIEND }));  // nor one more for an NPC held for already: each hit is one
 	CHECK(book.Size() == DamageHold::MAX_HELD);
 	book.Clear();
 	CHECK(book.Size() == 0);
 }
 
-TEST("damage hold: every reason has a name for the log")
+TEST("damage hold: every reason has a name for the log, and an answer for the friend whose hit it was")
 {
+	using Out = Protocol::DamageAnswer::Why;
 	for (const auto why : { Why::kApplied, Why::kNotInWorld, Why::kNoOwnerYet, Why::kNotLoaded, Why::kNoActor, Why::kDeadHere, Why::kLedgerDead, Why::kNotOurs, Why::kNoHealth, Why::kExpired }) {
 		CHECK(std::string_view{ DamageHold::Name(why) } != "?");
+		CHECK(std::string_view{ Protocol::Name(DamageHold::Answer(why)) } != "?");
 	}
+	// Applied is applied; a drop names its reason; a hold's reason answers "held too long" (it is answered only at the
+	// end of the hold); another game running it is for the server to send on.
+	CHECK(DamageHold::Answer(Why::kApplied) == Out::kApplied);
+	CHECK(DamageHold::Answer(Why::kDeadHere) == Out::kDeadThere);
+	CHECK(DamageHold::Answer(Why::kLedgerDead) == Out::kDeadThere);
+	CHECK(DamageHold::Answer(Why::kNoActor) == Out::kNoActorThere);
+	CHECK(DamageHold::Answer(Why::kNoHealth) == Out::kNoHealthThere);
+	CHECK(DamageHold::Answer(Why::kNotOurs) == Out::kNotTheRunner);
+	for (const auto why : { Why::kNotInWorld, Why::kNoOwnerYet, Why::kNotLoaded, Why::kExpired }) {
+		CHECK(DamageHold::Answer(why) == Out::kHeldTooLong);
+	}
+	CHECK(std::string_view{ Protocol::Name(Out::kHoldFull) } != "?");  // a full book answers that itself (WorldSync::TakeDamage)
 }
 
 TEST("log pace: one line per interval, counting what went by unlogged")

@@ -55,6 +55,9 @@ namespace NpcSync
 
 	// Whether the local player hit or talked to this NPC lately (NpcHold::FOUGHT).
 	[[nodiscard]] bool FoughtLately(std::uint32_t a_refId);
+	// Whether our game ran the NPC and let it go in the last moments (a hand-off, an unload): a friend's damage the server
+	// sent us for it crossed our release (WorldSync's DamageHold facts).
+	[[nodiscard]] bool LetGoLately(std::uint32_t a_refId);
 
 	// The local player activated this reference (talking to an NPC starts this way).
 	void OnActivated(std::uint32_t a_refId);

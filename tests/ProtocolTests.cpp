@@ -331,13 +331,40 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 			CHECK(out->killed == killed);
 		}
 	}
-	for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
-		const auto packet = Encode(ActorHealth{ REF_A, 0.625f }, type);
+	// A damage report carries its number and whose it is; a health report, the most frequent NPC message, carries neither.
+	for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
+		const bool numbered = DamageNumbered(type);
+		const auto packet = Encode(ActorHealth{ REF_A, 0.625f, 41, 2 }, type);
 		CHECK(PeekType(packet) == type);
+		CHECK(packet.size() == (numbered ? 17u : 9u));
 		const auto out = DecodeActorHealth(packet);
 		REQUIRE(out);
 		CHECK(out->refId == REF_A);
 		CHECK(out->health == 0.625f);
+		CHECK(out->seq == (numbered ? 41u : 0u));
+		CHECK(out->playerId == (numbered ? 2u : 0u));
+	}
+	// A damage answer: the hit's number and whose it was, applied or why not, and the damage as it was sent.
+	for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {
+		for (const auto why : { DamageAnswer::Why::kApplied, DamageAnswer::Why::kNotTheRunner, DamageAnswer::LAST_WHY }) {
+			const auto packet = Encode(DamageAnswer{ REF_A, 41, 2, why, 0.125f }, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeDamageAnswer(packet);
+			REQUIRE(out);
+			CHECK(out->refId == REF_A);
+			CHECK(out->seq == 41);
+			CHECK(out->playerId == 2);
+			CHECK(out->why == why);
+			CHECK(out->health == 0.125f);
+		}
+	}
+	{
+		// An unknown reason, or damage outside 0..1, is refused.
+		auto packet = Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, 0.5f }, MT::kDamageAnswer);
+		packet[1 + 4 + 4 + 4] = std::to_underlying(DamageAnswer::LAST_WHY) + 1;
+		CHECK(!DecodeDamageAnswer(packet));
+		CHECK(!DecodeDamageAnswer(Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, 1.5f }, MT::kDamageAnswer)));
+		CHECK(!DecodeDamageAnswer(Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, -0.5f }, MT::kDamageAnswer)));
 	}
 	for (const auto type : { MT::kReportPickup, MT::kRefPickedUp }) {
 		const auto packet = Encode(RefPickedUp{ REF_B }, type);

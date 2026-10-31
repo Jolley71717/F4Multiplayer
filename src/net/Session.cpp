@@ -658,7 +658,12 @@ namespace Session
 				break;
 			case MessageType::kActorDamaged:
 				if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
-					WorldSync::ApplyRemoteDamage(msg->refId, msg->health);
+					WorldSync::ApplyRemoteDamage(msg->refId, msg->health, msg->seq, msg->playerId);
+				}
+				break;
+			case MessageType::kDamageAnswer:
+				if (const auto msg = Protocol::DecodeDamageAnswer(a_data)) {
+					WorldSync::OnDamageAnswer(*msg);
 				}
 				break;
 			case MessageType::kContainerChanged:

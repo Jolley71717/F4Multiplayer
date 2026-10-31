@@ -59,6 +59,7 @@ namespace
 	constexpr int  MAX_ACTOR_BATCHES_PER_SECOND = 120;             // NPC state batches (20 Hz, one per 64 NPCs)
 	// "Take all" from a big container reports one event per item type.
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
+	constexpr int  OVER_BUDGET_ANSWERS = 50;  // damage reports over the budget still answered as such, a second (handleHealth)
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
@@ -1186,7 +1187,71 @@ void Server::Run()
 		endLoans([&](const Protocol::FrameLending& a_loan) { return !spawns.contains(a_loan.spawnId); });
 	};
 
-	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
+	// The answer to a player's numbered damage report (Protocol::DamageAnswer), to that player if they are still here.
+	std::size_t       damageRefused = 0;  // by the server itself, since the last line about them
+	Clock::time_point damageRefusedLogged{};
+	std::size_t       damageRerouted = 0;  // sent on to the runner on record after the game it went to said it doesn't run the NPC, since the last line
+	Clock::time_point damageReroutedLogged{};
+	const auto        answerDamage = [&](std::uint32_t a_hitter, const Protocol::DamageAnswer& a_answer) {
+		if (const auto key = keyOfPlayer(a_hitter)) {
+			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
+		}
+	};
+	// Each numbered damage sent on, by whose it is and its number: the NPC it was on and the player it went to, who alone
+	// may answer it (a release or a takeover can cross it on the wire, so that player need not be the runner on record
+	// by then). Gone with the answer, or answered for a game that leaves (answerRoutedTo); one a game neither answers
+	// nor leaves is dropped once older than any hitter's copy waits for it (ROUTE_KEEP, past CopyHealth::LOST_AFTER),
+	// when the table is full.
+	struct Routed
+	{
+		std::uint32_t     to = 0;
+		std::uint32_t     refId = 0;
+		Clock::time_point at{};
+		std::uint8_t      hops = 0;  // times sent on after a refusal (MAX_HOPS: an NPC trading hands fast can't keep a hit bouncing)
+	};
+	constexpr std::size_t                        MAX_ROUTED_DAMAGE = 8192;
+	constexpr std::uint8_t                       MAX_HOPS = 2;
+	constexpr auto                               ROUTE_KEEP = std::chrono::minutes{ 3 };
+	std::unordered_map<std::uint64_t, Routed>    routedDamage;
+	const auto                                   routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
+	const auto                                   noteRouted = [&](std::uint32_t a_hitter, std::uint32_t a_seq, std::uint32_t a_refId, std::uint32_t a_to, Clock::time_point a_now) {
+		if (a_seq == 0) {
+			return;
+		}
+		if (routedDamage.size() >= MAX_ROUTED_DAMAGE && !routedDamage.contains(routeKey(a_hitter, a_seq))) {
+			std::erase_if(routedDamage, [&](const auto& a_entry) { return a_now - a_entry.second.at >= ROUTE_KEEP; });
+			if (routedDamage.size() >= MAX_ROUTED_DAMAGE) {
+				// Full of hits still waiting: the oldest makes room, answered for the game it went to as if that game were
+				// gone, so its hitter's copy gets it back rather than waits out its lost timer.
+				const auto oldest = std::ranges::min_element(routedDamage, {}, [](const auto& a_entry) { return a_entry.second.at; });
+				answerDamage(static_cast<std::uint32_t>(oldest->first >> 32),
+					{ oldest->second.refId, static_cast<std::uint32_t>(oldest->first & 0xFFFFFFFFu), oldest->second.to, Protocol::DamageAnswer::Why::kNobodyRuns, 0.0f });
+				routedDamage.erase(oldest);
+			}
+		}
+		routedDamage[routeKey(a_hitter, a_seq)] = { a_to, a_refId, a_now };
+	};
+	// A player is gone (left, or dropped): the hits sent to their game are answered for it, "nobody runs it", so the
+	// hitters' copies get them back now rather than after their lost timer; the hits of their own go with them.
+	const auto answerRoutedTo = [&](std::uint32_t a_gone) {
+		for (auto it = routedDamage.begin(); it != routedDamage.end();) {
+			const auto hitter = static_cast<std::uint32_t>(it->first >> 32);
+			if (hitter == a_gone) {
+				it = routedDamage.erase(it);
+				continue;
+			}
+			if (it->second.to != a_gone) {
+				++it;
+				continue;
+			}
+			const auto seq = static_cast<std::uint32_t>(it->first & 0xFFFFFFFFu);
+			answerDamage(hitter, { it->second.refId, seq, a_gone, Protocol::DamageAnswer::Why::kNobodyRuns, 0.0f });
+			it = routedDamage.erase(it);
+		}
+	};
+
+	// The player is gone: the others are told, the NPCs they ran are free for someone else, and the hits sent to their
+	// game are answered for it.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
 			if (const auto member = members.find(a_player.helloId); member != members.end()) {
@@ -1196,6 +1261,7 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
+		answerRoutedTo(a_player.id);
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
@@ -1766,17 +1832,55 @@ void Server::Run()
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
+	const auto playerById = [&](std::uint32_t a_id) -> Player* {
+		const auto key = keyOfPlayer(a_id);
+		const auto it = key != 0 ? players.find(key) : players.end();
+		return it != players.end() ? &it->second : nullptr;
+	};
+
 	// A health report (kReportHealth: its health now, passed on as kActorHealth), or what the sender took off an NPC
 	// another game runs (kReportDamage, as kActorDamaged: the game that runs it takes it off). Both tell the server the
 	// sender fights it.
+	//
+	// Damage goes to the game that runs the NPC alone, as the server has it, whatever the sender's own table said: the
+	// sender's table can be a round trip behind (a takeover, a hand-off, a release), and up to 0.10.0 the damage went to
+	// every other game, where each one judged by its own table; with two tables behind, every game dropped it and the
+	// hitter's copy got the health back with the runner's next report, as a heal. And a numbered one (ActorHealth::seq)
+	// is answered whatever becomes of it (docs/HEALTH-SYNC.md): the hitter's copy keeps the drop until the answer
+	// comes, and gives it back on a refusal, so a hit the session can't deal is a bounce the player sees at once, and
+	// the log says why, instead of a heal a second later that nothing explains.
 	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data, Protocol::MessageType a_out) {
+		const bool                           damage = a_out == Protocol::MessageType::kActorDamaged;
+		std::optional<Protocol::ActorHealth> health;
+		const auto                           refuse = [&](Protocol::DamageAnswer::Why a_why) {
+			if (!damage || !health || health->seq == 0) {
+				return;
+			}
+			++damageRefused;
+			const auto now = Clock::now();
+			if (now - damageRefusedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				damageRefusedLogged = now;
+				log(std::format("server: damage on {:08X} from player {} refused: {} ({} refused since the last such line)", health->refId, a_player.id, Protocol::Name(a_why),
+					std::exchange(damageRefused, 0)));
+			}
+			send(a_player.key, Protocol::Encode(Protocol::DamageAnswer{ health->refId, health->seq, 0, a_why, std::clamp(health->health, 0.0f, 1.0f) }, Protocol::MessageType::kDamageAnswer), true);
+		};
 		if (!allowEvent(a_player)) {
+			// Damage is still answered, so the hit is not lost without a word: a small packet, to the sender alone, for the
+			// first few over the budget each second; past those a flood would only be reflected (the sender's copies give
+			// the rest up as lost on their own). Nothing else over the budget is even read.
+			if (damage && a_player.welcomed && a_player.rate.events <= MAX_EVENTS_PER_SECOND + OVER_BUDGET_ANSWERS) {
+				health = Protocol::DecodeActorHealth(a_data);
+				refuse(Protocol::DamageAnswer::Why::kOverBudget);
+			}
 			return;
 		}
-		const auto health = Protocol::DecodeActorHealth(a_data);
-		// A spawn's health goes to its owner too, whoever hit their copy of it.
+		health = Protocol::DecodeActorHealth(a_data);
+		// A spawn's health goes to its owner too, whoever hit their copy of it. One the session no longer has (its owner's
+		// game let it go: handleRelease) is nobody's to take damage for.
 		const bool spawn = health && spawns.contains(health->refId);
 		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId))) {
+			refuse(Protocol::DamageAnswer::Why::kNobodyRuns);
 			return;
 		}
 		// Dead for the session: nothing to pass on, and the sender's game, which has it alive, is told so (remindDead).
@@ -1787,24 +1891,46 @@ void Server::Run()
 			if (now - deadHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 				deadHealthLogged = now;
 				log(std::format("server: {} of {:08X} from player {} dropped: the session has it dead ({} since the last such line)",
-					a_out == Protocol::MessageType::kActorDamaged ? "damage" : "health", health->refId, a_player.id, std::exchange(deadHealthDropped, 0)));
+					damage ? "damage" : "health", health->refId, a_player.id, std::exchange(deadHealthDropped, 0)));
 			}
 			remindDead(a_player, health->refId, now);
+			refuse(Protocol::DamageAnswer::Why::kDeadInSession);
 			return;
 		}
-		if (a_out == Protocol::MessageType::kActorDamaged && !(health->health > 0.0f && health->health <= 1.0f)) {
-			return;  // no damage, or more than all of it
+		if (damage && !(health->health > 0.0f && health->health <= 1.0f)) {
+			refuse(Protocol::DamageAnswer::Why::kNoHealthThere);  // no damage, or more than all of it: no share of a health to send on
+			return;
 		}
 		if (!spawn) {
 			noteHostHadAlive(a_player, health->refId);  // hit and still alive
 		}
 		noteFighting(a_player, health->refId, Clock::now());
+		const auto owner = actorOwners.find(health->refId);
+		if (damage) {
+			if (owner == actorOwners.end()) {
+				refuse(Protocol::DamageAnswer::Why::kNobodyRuns);  // the hit's claim (ahead of it) was not granted: its game is told, and offers the NPC as any other
+				return;
+			}
+			if (owner->second.playerId == a_player.id) {
+				refuse(Protocol::DamageAnswer::Why::kYouRunIt);  // its claim took the NPC over: the drop on what was its copy is the truth now
+				return;
+			}
+			const auto key = keyOfPlayer(owner->second.playerId);
+			if (key == 0) {
+				refuse(Protocol::DamageAnswer::Why::kNobodyRuns);  // the runner's connection is gone; its NPCs are released in a moment
+				return;
+			}
+			auto out = *health;
+			out.playerId = a_player.id;
+			noteRouted(a_player.id, health->seq, health->refId, owner->second.playerId, Clock::now());
+			send(key, Protocol::Encode(out, Protocol::MessageType::kActorDamaged), true);
+			return;
+		}
 		// Where an NPC's health stands is said by the game that runs it, or by anyone while nobody does. A report from
 		// any other game is from before it learnt who runs the NPC now: a takeover by a friend's hit, granted while the
 		// game that had run it sent its last report. Passed on, it set the new runner's NPC back to that older health,
 		// undoing the very hit that took it over (and the runner then shared that as where it stood): the hit healed.
-		if (const auto owner = actorOwners.find(health->refId);
-			a_out == Protocol::MessageType::kActorHealth && !spawn && owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+		if (!spawn && owner != actorOwners.end() && owner->second.playerId != a_player.id) {
 			++staleHealthDropped;
 			if (const auto now = Clock::now(); now - staleHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 				staleHealthLogged = now;
@@ -1814,6 +1940,76 @@ void Server::Run()
 			return;
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
+	};
+
+	// The game a damage report went to answers it (kReportDamageAnswer, playerId whose hit it was): applied, or refused and
+	// why. Passed to the hitter as the answer of that game (kDamageAnswer, playerId who answered). One refused as "not the
+	// runner" by a game whose table was behind the server's goes on to the runner the server has on record now, at most twice: a
+	// release or a takeover crossed the damage on the wire. When the server has nobody on record the hitter is told so
+	// ("nobody runs it"), when it has the hitter "you run it", and when it still has the refuser itself (its release is
+	// on its way) the refusal goes through as it is. A runner that changed since can't refuse the same hit twice (it is
+	// the one on record).
+	const auto handleDamageAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		// Not against the event budget: an answer is a reply to a damage the server itself sent on (bounded by the
+		// hitter's budget), and one dropped here would leave the hitter's copy below the NPC for 30 s, then refund it.
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto answer = Protocol::DecodeDamageAnswer(a_data);
+		if (!answer || answer->playerId == a_player.id || answer->playerId == 0) {
+			return;
+		}
+		// Only the game the damage was sent to answers it (routedDamage: the runner on record then, whoever runs the NPC
+		// now). Anyone else refusing a friend's hit would refund their copy a hit the runner took off, or have it sent
+		// on and taken off twice.
+		const auto routed = routedDamage.find(routeKey(answer->playerId, answer->seq));
+		if (routed == routedDamage.end() || routed->second.to != a_player.id || routed->second.refId != answer->refId) {
+			return;
+		}
+		const auto owner = actorOwners.find(answer->refId);
+		const auto now = Clock::now();
+		auto       out = *answer;
+		out.playerId = a_player.id;
+		// Any refusal from a game that no longer runs the NPC is judged by who does now, as "not the runner" is: the
+		// hit is theirs to take (sent on), or the hitter's own (its claim took the NPC over meanwhile: the drop on its
+		// copy is the truth, and a refund would heal an NPC it shares), or nobody's. A refusal from the runner on record
+		// stands as it is.
+		const bool runs = owner != actorOwners.end() && owner->second.playerId == a_player.id;
+		if (answer->why != Protocol::DamageAnswer::Why::kApplied && (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner || !runs)) {
+			if (deadActors.contains(answer->refId)) {
+				// Dead for the session since it was sent on: nobody takes it, and the hitter's game is told the death again
+				// as for any report about the dead (remindDead).
+				out.why = Protocol::DamageAnswer::Why::kDeadInSession;
+				if (const auto hitter = playerById(answer->playerId)) {
+					remindDead(*hitter, answer->refId, now);
+				}
+			} else if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
+				// Sent on to the runner on record, at most MAX_HOPS times (an NPC trading hands fast), and only with the damage
+				// echoed (0: the decoder refuses more than all of it).
+				const auto key = answer->health > 0.0f && routed->second.hops < MAX_HOPS ? keyOfPlayer(owner->second.playerId) : 0;
+				if (key != 0) {
+					++routed->second.hops;
+					++damageRerouted;
+					if (now - damageReroutedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+						damageReroutedLogged = now;
+						log(std::format("server: damage on {:08X} from player {} sent on to player {}, who runs it now; player {} no longer does ({} sent on since the last such line)",
+							answer->refId, answer->playerId, owner->second.playerId, a_player.id, std::exchange(damageRerouted, 0)));
+					}
+					routed->second.to = owner->second.playerId;
+					routed->second.at = now;
+					send(key, Protocol::Encode(Protocol::ActorHealth{ answer->refId, answer->health, answer->seq, answer->playerId }, Protocol::MessageType::kActorDamaged), true);
+					return;
+				}
+				out.why = Protocol::DamageAnswer::Why::kNobodyRuns;  // the runner on record is gone; its NPCs are released in a moment
+			} else if (owner == actorOwners.end()) {
+				out.why = Protocol::DamageAnswer::Why::kNobodyRuns;
+			} else if (owner->second.playerId == answer->playerId) {
+				out.why = Protocol::DamageAnswer::Why::kYouRunIt;
+			}
+			// (the runner on record itself saying "not mine": passed through as it is)
+		}
+		routedDamage.erase(routed);
+		answerDamage(answer->playerId, out);
 	};
 
 	// Container changes are numbered and echoed to their sender too, so every player knows exactly
@@ -3792,6 +3988,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportDamage:
 			handleHealth(a_player, a_data, MessageType::kActorDamaged);
+			break;
+		case MessageType::kReportDamageAnswer:
+			handleDamageAnswer(a_player, a_data);
 			break;
 		case MessageType::kReportContainer:
 			handleContainer(a_player, a_data);

@@ -36,7 +36,10 @@ namespace Protocol
 	// 55: 0.10.0's changes together, one number for the whole release: each wire change merged for it from here on
 	// rides on it, and is listed in docs/DESIGN.md's protocol line as it lands (an NPC state's sentMs among them).
 	// 0.9.2 (50) is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 55;
+	// 56: a hit on a copy is a numbered request the game that runs the NPC answers (ActorHealth::seq and playerId;
+	// DamageAnswer: kReportDamageAnswer, kDamageAnswer), and the server sends damage to the runner alone
+	// (docs/HEALTH-SYNC.md). 0.10.0 (55) is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 56;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -176,6 +179,7 @@ namespace Protocol
 		kBorrowFrame = 72,        // the sender asks to borrow a friend's power armor frame, a spawn of the friend's game (FrameBorrow)
 		kLendFrame = 73,          // the sender's game lends its frame to the friend who asked, with its pieces and core, or says why not (FrameLending)
 		kReturnFrame = 74,        // the sender got out of a frame lent to them: where it stands, and what came back of its pieces (FrameReturn)
+		kReportDamageAnswer = 75,  // the game that runs an NPC answers a friend's numbered damage on it: applied, or refused and why (DamageAnswer)
 
 		// server -> client
 		kWelcome = 101,
@@ -238,6 +242,7 @@ namespace Protocol
 		kLoanAsked = 173,         // to a frame's owner alone: a friend asks to borrow it (FrameBorrow, playerId the friend)
 		kFrameLent = 174,         // a frame is lent (to everyone, and to a joiner for each loan there is); a refusal, to the friend who asked alone (FrameLending)
 		kFrameReturned = 175,     // a lent frame came back, or the loan ended without a return (FrameReturn::ended)
+		kDamageAnswer = 176,      // to the player whose damage it was: applied by the NPC's runner, or refused (by the runner or the server) and why (DamageAnswer)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -580,11 +585,78 @@ namespace Protocol
 	// Health as a fraction of maximum: leveled actors can have different max health in each
 	// player's world, so absolute values don't transfer. kReportDamage and kActorDamaged carry the damage dealt the same
 	// way (a fraction of the maximum taken off).
+	//
+	// A hit on a copy of an NPC another game runs is a numbered request (docs/HEALTH-SYNC.md): kReportDamage carries the
+	// sender's number for it (seq, counting up per sender; 0 is unnumbered), kActorDamaged the same with the sender's
+	// id (playerId), and the game that runs the NPC answers each one (DamageAnswer). A health report (kReportHealth,
+	// kActorHealth) carries neither.
 	struct ActorHealth
 	{
 		std::uint32_t refId = 0;
 		float         health = 0.0f;  // 0..1
+		std::uint32_t seq = 0;        // damage: the sender's number for this hit (0: none)
+		std::uint32_t playerId = 0;   // kActorDamaged: whose hit it is (the server sets it; 0 otherwise)
 	};
+
+	// The answer to a numbered damage report (ActorHealth::seq): the game that runs the NPC took it off (kApplied),
+	// or it was refused, by that game or by the server, and why. The player whose hit it was gives their copy the health
+	// back on any refusal but kYouRunIt (their hit's claim took the NPC over: the copy's health is the truth now).
+	// kReportDamageAnswer is the runner's (playerId: whose hit); kDamageAnswer the server's to the hitter (playerId: who
+	// answered, 0 the server). health: the damage, as sent, so the server can send a refused one on to the runner it
+	// has on record when the refuser's table was behind (Server.cpp, handleDamageAnswer).
+	struct DamageAnswer
+	{
+		enum class Why : std::uint8_t
+		{
+			kApplied = 0,
+			kDeadInSession,  // the server: the session has the NPC dead
+			kNobodyRuns,     // the server: nobody runs it (the hit's claim was not granted)
+			kYouRunIt,       // the server: the sender runs it (its hit's claim took it over): the drop is the truth
+			kNotTheRunner,   // the runner: its game doesn't run the NPC (its table is behind; the server sends it on once)
+			kDeadThere,      // the runner: the NPC is dead in its game, or in its ledger
+			kNoActorThere,   // the runner: no such actor there
+			kNoHealthThere,  // the runner: the NPC has no maximum health to take a share of
+			kHeldTooLong,    // the runner: held (a loading screen, not loaded there) past its hold
+			kOverBudget,     // the server: the sender's event budget was spent
+			kHoldFull,       // the runner: it holds as many hits as it will already
+		};
+		static constexpr Why LAST_WHY = Why::kHoldFull;
+
+		std::uint32_t refId = 0;
+		std::uint32_t seq = 0;
+		std::uint32_t playerId = 0;
+		Why           why = Why::kApplied;
+		float         health = 0.0f;  // the damage answered, as it was sent (0..1)
+	};
+
+	constexpr const char* Name(DamageAnswer::Why a_why)
+	{
+		switch (a_why) {
+		case DamageAnswer::Why::kApplied:
+			return "applied";
+		case DamageAnswer::Why::kDeadInSession:
+			return "the session has it dead";
+		case DamageAnswer::Why::kNobodyRuns:
+			return "nobody runs it";
+		case DamageAnswer::Why::kYouRunIt:
+			return "the sender runs it";
+		case DamageAnswer::Why::kNotTheRunner:
+			return "the game it went to doesn't run it";
+		case DamageAnswer::Why::kDeadThere:
+			return "it is dead in the runner's game";
+		case DamageAnswer::Why::kNoActorThere:
+			return "the runner's game has no such actor";
+		case DamageAnswer::Why::kNoHealthThere:
+			return "it has no health there";
+		case DamageAnswer::Why::kHeldTooLong:
+			return "the runner's game held it too long";
+		case DamageAnswer::Why::kOverBudget:
+			return "over our event budget";
+		case DamageAnswer::Why::kHoldFull:
+			return "the runner's game holds as many hits as it will";
+		}
+		return "?";
+	}
 
 	// Items added to (count > 0) or removed from (count < 0) a container or corpse.
 	struct ContainerChange
@@ -2932,22 +3004,66 @@ namespace Protocol
 		return msg;
 	}
 
+	// A damage report (kReportDamage, kActorDamaged) carries its number and whose it is; a health report (the most
+	// frequent NPC message, to everyone) carries neither.
+	constexpr bool DamageNumbered(MessageType a_type)
+	{
+		return a_type == MessageType::kReportDamage || a_type == MessageType::kActorDamaged;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const ActorHealth& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
 		w.U32(a_msg.refId);
 		w.F32(a_msg.health);
+		if (DamageNumbered(a_type)) {
+			w.U32(a_msg.seq);
+			w.U32(a_msg.playerId);
+		}
 		return w.Data();
 	}
 
 	inline std::optional<ActorHealth> DecodeActorHealth(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
-		r.U8();
+		const auto type = static_cast<MessageType>(r.U8());
 		ActorHealth msg;
 		msg.refId = r.U32();
 		msg.health = r.F32();
+		if (DamageNumbered(type)) {
+			msg.seq = r.U32();
+			msg.playerId = r.U32();
+		}
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// kReportDamageAnswer (client -> server) or kDamageAnswer (server -> client).
+	inline std::vector<std::uint8_t> Encode(const DamageAnswer& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.U32(a_msg.seq);
+		w.U32(a_msg.playerId);
+		w.U8(std::to_underlying(a_msg.why));
+		w.F32(a_msg.health);
+		return w.Data();
+	}
+
+	inline std::optional<DamageAnswer> DecodeDamageAnswer(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DamageAnswer msg;
+		msg.refId = r.U32();
+		msg.seq = r.U32();
+		msg.playerId = r.U32();
+		const auto why = r.U8();
+		msg.why = static_cast<DamageAnswer::Why>(why);
+		msg.health = r.F32();
+		if (!r.Ok() || !r.AtEnd() || why > std::to_underlying(DamageAnswer::LAST_WHY) || !std::isfinite(msg.health) || msg.health < 0.0f || msg.health > 1.0f) {
 			return std::nullopt;
 		}
 		return msg;

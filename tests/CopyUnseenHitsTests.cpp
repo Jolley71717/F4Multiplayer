@@ -21,6 +21,13 @@ namespace
 	constexpr std::uint32_t RAIDER = 0x0007BD0E;
 	const CopyHealth::Clock::time_point T0{};
 
+	// What our hits took off the copy, sent now (CopyHealth::Book::TakeOurs): the amount, 0 for nothing.
+	float Took(Book& a_book, std::uint32_t a_id, CopyHealth::Clock::time_point a_now = T0 + milliseconds{ 5000 })
+	{
+		const auto sent = a_book.TakeOurs(a_id, a_now);
+		return sent ? sent->amount : 0.0f;
+	}
+
 	bool Near(float a_value, float a_expected, float a_slack = 0.01f)
 	{
 		return std::abs(a_value - a_expected) < a_slack;
@@ -50,7 +57,7 @@ TEST("unseen hits: our shot's damage with no hit event goes to the NPC's game, n
 	// The bullet lands a frame later: 30 -> 5.4, and no hit event comes.
 	CHECK(book.Check(RAIDER, 5.4f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
 	CHECK(book.Check(RAIDER, 5.4f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 24.6f));
+	CHECK(Near(Took(book, RAIDER), 24.6f));
 	CHECK(book.Unseen() == 1);
 	CHECK(book.Health(RAIDER) && Near(*book.Health(RAIDER), 5.4f));
 }
@@ -60,7 +67,7 @@ TEST("unseen hits: a drop with no shot of ours and no hit is still given back (a
 	auto book = Seen();
 	CHECK(book.Check(RAIDER, 20.0f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
 	CHECK(Near(book.Check(RAIDER, 20.0f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f), 10.0f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER) == 0.0f);
 	CHECK(book.Unseen() == 0);
 }
 
@@ -71,7 +78,7 @@ TEST("unseen hits: a drop long after our shot is not the shot's (a missed shot m
 	const auto late = T0 + milliseconds{ 1000 } + CopyHealth::SHOT_REACH + milliseconds{ 50 };
 	CHECK(book.Check(RAIDER, 20.0f, late, 30.0f) == 0.0f);
 	CHECK(Near(book.Check(RAIDER, 20.0f, late + CopyHealth::JUDGE_AFTER, 30.0f), 10.0f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER) == 0.0f);
 }
 
 TEST("unseen hits: another's hit around the drop keeps it given back (a fire or a friend's blast is not our shot)")
@@ -81,7 +88,7 @@ TEST("unseen hits: another's hit around the drop keeps it given back (a fire or 
 	book.OurShot(RAIDER, T0 + milliseconds{ 1000 });
 	CHECK(book.Check(RAIDER, 25.0f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
 	CHECK(Near(book.Check(RAIDER, 25.0f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f), 5.0f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER) == 0.0f);
 	CHECK(book.Unseen() == 0);
 }
 
@@ -92,7 +99,7 @@ TEST("unseen hits: a blow of ours left to the owner around the drop keeps it giv
 	book.OurShot(RAIDER, T0 + milliseconds{ 1000 });
 	CHECK(book.Check(RAIDER, 10.0f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
 	CHECK(Near(book.Check(RAIDER, 10.0f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f), 20.0f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER) == 0.0f);
 }
 
 TEST("unseen hits: when the hit event comes, its figure is what goes, as before (the shot adds nothing twice)")
@@ -101,7 +108,7 @@ TEST("unseen hits: when the hit event comes, its figure is what goes, as before 
 	book.OurShot(RAIDER, T0 + milliseconds{ 1000 });
 	book.OurHit(RAIDER, T0 + milliseconds{ 1050 }, 15.6f);
 	CHECK(book.Check(RAIDER, 14.4f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 15.6f));
+	CHECK(Near(Took(book, RAIDER), 15.6f));
 	CHECK(book.Unseen() == 0);
 }
 
@@ -119,7 +126,7 @@ TEST("unseen hits: a burst with no events: every shot's damage goes, none is giv
 		at += milliseconds{ 400 };  // slower than the judging: each shot's drop is judged alone
 	}
 	CHECK(given == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 72.0f));
+	CHECK(Near(Took(book, RAIDER), 72.0f));
 }
 
 TEST("unseen hits: a drop well after a credited shot, with no shot of its own, is given back again")
@@ -128,11 +135,11 @@ TEST("unseen hits: a drop well after a credited shot, with no shot of its own, i
 	book.OurShot(RAIDER, T0 + milliseconds{ 1000 });
 	CHECK(book.Check(RAIDER, 20.0f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
 	CHECK(book.Check(RAIDER, 20.0f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 10.0f));
+	CHECK(Near(Took(book, RAIDER), 10.0f));
 	const auto later = T0 + milliseconds{ 4000 };
 	CHECK(book.Check(RAIDER, 15.0f, later, 30.0f) == 0.0f);
 	CHECK(Near(book.Check(RAIDER, 15.0f, later + CopyHealth::JUDGE_AFTER, 30.0f), 5.0f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER) == 0.0f);
 }
 
 TEST("unseen hits: a shot aims at the actor the view points at, and at nothing beside, behind, above or out of reach")
@@ -162,13 +169,15 @@ TEST("unseen hits: the owner's report from before our damage reached it is held,
 	book.OurShot(RAIDER, T0 + milliseconds{ 1000 });
 	CHECK(book.Check(RAIDER, 5.4f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
 	CHECK(book.Check(RAIDER, 5.4f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 24.6f));
-	// The owner's game reports 30 still: sent before our damage got there.
+	const auto sent = book.TakeOurs(RAIDER, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER);
+	CHECK(sent && Near(sent->amount, 24.6f));
+	// The owner's game reports 30 still: sent before our damage got there. The shot is in flight, kept off the copy.
 	CHECK(Near(book.Heard(RAIDER, 5.4f, 30.0f, T0 + milliseconds{ 1200 }), 5.4f));
-	CHECK(book.Holds(RAIDER));
-	// Its next report has our damage taken off: that one stands.
+	CHECK(Near(book.InFlight(RAIDER), 24.6f));
+	// The owner's game applies it; its next report has our damage taken off: that one stands.
+	CHECK(sent && book.Answered(RAIDER, sent->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(book.InFlight(RAIDER) == 0.0f);
 	CHECK(Near(book.Heard(RAIDER, 5.4f, 5.4f, T0 + milliseconds{ 1400 }), 5.4f));
-	CHECK(!book.Holds(RAIDER));
 }
 
 TEST("unseen hits: an automatic weapon's shots closer together than a drop is judged in: all of it is ours")
@@ -188,7 +197,7 @@ TEST("unseen hits: an automatic weapon's shots closer together than a drop is ju
 		given += book.Check(RAIDER, health, T0 + milliseconds{ ms }, 100.0f);
 	}
 	CHECK(given == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 42.0f));
+	CHECK(Near(Took(book, RAIDER), 42.0f));
 	CHECK(Near(health, 58.0f));
 }
 

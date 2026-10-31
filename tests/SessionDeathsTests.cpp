@@ -472,12 +472,15 @@ TEST("alive again: both camps reset together, the joiner's offer first: the host
 	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", RAIDER)));
 	CHECK(bob.Alive(RAIDER));
 	CHECK(!bob.deaths.Contains(RAIDER));
-	// Nor later: the raider lives for the session, and its reports go through.
+	// Nor later: the raider lives for the session, and its reports go through: Bob's damage reaches the host's game, which
+	// runs it, and his hit's takeover is granted without a word of the death.
 	f.Advance(GRACE + 50ms);
-	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
 	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ RAIDER, 0.5f }, MT::kReportDamage));
-	CHECK(Count(bob.Pump(later), MT::kActorDied) == 0);
 	CHECK(Count(host.Pump(later), MT::kActorDamaged) == 1);
+	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
+	const auto afterHit = bob.Pump(later);
+	CHECK(Count(afterHit, MT::kActorDied) == 0);
+	CHECK(HasOwner(Owners(afterHit), RAIDER, bob.id));
 }
 
 TEST("alive again: a joiner whose copy lies dead no longer has the raider dead once the host's game runs it, and takes its hits")
