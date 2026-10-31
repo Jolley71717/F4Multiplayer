@@ -317,7 +317,9 @@ character your game places where your friend is, and moves as they move.
 - **Where:** wherever they are, once you are in the same interior or near each other outside. They are not a
   settler and don't join a settlement. Walk away and the stand-in goes; come back and it is there again. The F6
   list says where every friend is, and your compass marks friends in the same interior as you, or outside in the
-  same land (the Commonwealth, Far Harbor, Nuka-World), however far.
+  same land (the Commonwealth, Far Harbor, Nuka-World), however far. The Pip-Boy's world map shows each friend in
+  that land with their name, in their compass color and shape (a friend indoors at the door out, faded), and the
+  local map shows friends on it.
 - **How they look:** their own face, hair, skin, face paint and sculpting, their sex and body shape (and their
   LooksMenu body sliders if you both have LooksMenu). If another mod has changed the part of the game that builds
   faces, friends keep a settler's face instead (the log says so).
