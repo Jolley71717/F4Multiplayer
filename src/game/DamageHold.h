@@ -44,6 +44,7 @@ namespace DamageHold
 		bool          ledgerDead = false;  // dead for the session, as our game knows it (SessionDeaths)
 		std::uint32_t local = 0;           // our player's id in the session (0: none)
 		std::uint32_t owner = 0;           // who the server says runs the NPC, as our game last heard (0: nobody, or not yet)
+		bool          letGo = false;       // ... and 0 because our game let it go lately (NpcSync::LetGoLately): the damage crossed our release
 		bool          loaded = false;      // loaded here with 3D, in a cell
 		bool          hasHealth = false;   // its maximum health is above 0
 	};
@@ -94,8 +95,11 @@ namespace DamageHold
 		if (a_facts.local == 0 || (a_facts.owner != 0 && a_facts.owner != a_facts.local)) {
 			return { Verdict::kDrop, Why::kNotOurs };
 		}
+		// Nobody's as far as we know: the server's word that we run it (a claim's answer, the owners after a load) is on
+		// its way, unless we let the NPC go ourselves a moment ago, in which case the damage crossed our release and the
+		// server sends it on to whoever runs it now once we say it isn't ours.
 		if (a_facts.owner == 0) {
-			return { Verdict::kHold, Why::kNoOwnerYet };
+			return a_facts.letGo ? Decision{ Verdict::kDrop, Why::kNotOurs } : Decision{ Verdict::kHold, Why::kNoOwnerYet };
 		}
 		if (!a_facts.loaded) {
 			return { Verdict::kHold, Why::kNotLoaded };

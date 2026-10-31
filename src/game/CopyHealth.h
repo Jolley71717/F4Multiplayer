@@ -453,8 +453,11 @@ namespace CopyHealth
 			}
 			float health = a_health;
 			if (!a_copy) {
-				entry.inFlight.clear();  // ours to run: its health here is the truth, whatever was on its way, or booked and not sent
+				// Ours to run: its health here is the truth, whatever was on its way, booked and not sent, or owed to it.
+				entry.inFlight.clear();
 				entry.ours = 0.0f;
+				entry.parked = 0.0f;
+				entry.lost = 0.0f;
 				entry.lastReport.reset();
 			} else {
 				entry.lastReport = a_health;
@@ -520,7 +523,11 @@ namespace CopyHealth
 				return 0.0f;
 			}
 			++refused;
-			return Refundable(it->second, amount);
+			// What the runner's last word doesn't cover now (the copy reads above it: a gain of its own being judged) is
+			// owed, and comes once the copy is back at the word (TakeParked).
+			const float now = Refundable(it->second, amount);
+			it->second.parked += amount - now;
+			return now;
 		}
 
 		// What is on its way for the copy: sent and not answered yet.
@@ -558,7 +565,12 @@ namespace CopyHealth
 		float TakeParked(std::uint32_t a_id)
 		{
 			const auto it = entries.find(a_id);
-			return it == entries.end() ? 0.0f : Refundable(it->second, std::exchange(it->second.parked, 0.0f));
+			if (it == entries.end() || it->second.parked <= 0.0f) {
+				return 0.0f;
+			}
+			const float now = Refundable(it->second, it->second.parked);
+			it->second.parked -= now;  // the rest stays owed
+			return now;
 		}
 
 		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT): given up on, and

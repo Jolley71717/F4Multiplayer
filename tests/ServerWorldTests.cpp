@@ -612,6 +612,22 @@ TEST("server world: a game that says it doesn't run the NPC it was sent damage f
 	f.fake->Deliver(1, Claim(NPC));
 	Clear(f, { 1, 2, 3 });
 
+	// A late refusal of any kind from a game that no longer runs the NPC is judged by who does now, as "not mine" is:
+	// Alice's hold ran out after Bob's own claim took the NPC over, so Bob is told he runs it (his copy keeps the drop).
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 17));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.Advance(5100ms);
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 17, bob, Why::kHeldTooLong, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kYouRunIt);
+	CHECK(answers[0].seq == 17);
+	f.fake->Deliver(2, Protocol::EncodeRelease({ NPC }));
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
 	// An answer that names another NPC than the hit was on goes nowhere: it would send the hit on under that NPC's id.
 	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 16));
 	REQUIRE(Damaged(Received(f, 1)).size() == 1);

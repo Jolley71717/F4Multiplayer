@@ -148,6 +148,10 @@ namespace NpcSync
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
+		// NPCs we ran and let go (a hand-off, an unload), and when: a friend's damage the server sent us for one, crossing
+		// our release on the wire, is refused as not ours rather than held for the server's word (LetGoLately).
+		std::unordered_map<std::uint32_t, Clock::time_point> letGoAt;
+		constexpr auto                                       LET_GO_KEPT = 30s;
 		std::uint32_t                                        handOffs = 0;
 		// Our game stopped by a menu (GameStop), and for how long as of this frame: past PauseHandOff::AFTER, Scan offers
 		// to run nothing new and hands ours to friends near them.
@@ -541,6 +545,7 @@ namespace NpcSync
 			hold.Expire(a_now);
 			hands.Expire(a_now);
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
+			std::erase_if(letGoAt, [&](const auto& a_entry) { return a_now - a_entry.second >= LET_GO_KEPT; });
 
 			// NPCs we run that are no longer loaded go back to the pool, and so do the ones a friend is
 			// much nearer to (their game claims them). One that died here is kept until our report of its
@@ -556,6 +561,7 @@ namespace NpcSync
 				sentRolls.Forget(a_id);
 				hold.Forget(a_id);
 				handedOffAt[a_id] = a_now;
+				letGoAt[a_id] = a_now;
 				released.push_back(a_id);
 			};
 			for (const auto id : handOff) {
@@ -580,6 +586,7 @@ namespace NpcSync
 					}
 					hold.Forget(it->first);
 					released.push_back(it->first);
+					letGoAt[it->first] = a_now;
 					owners.erase(it->first);
 					sentGear.erase(it->first);
 					sentRolls.Forget(it->first);
@@ -1864,6 +1871,12 @@ namespace NpcSync
 		return hold.FoughtLately(a_refId, Clock::now());
 	}
 
+	bool LetGoLately(std::uint32_t a_refId)
+	{
+		const auto it = letGoAt.find(a_refId);
+		return it != letGoAt.end() && Clock::now() - it->second < LET_GO_KEPT;
+	}
+
 	void OnActivated(std::uint32_t a_refId)
 	{
 		lastActivated = a_refId;
@@ -2046,6 +2059,7 @@ namespace NpcSync
 		ownedBlocked.clear();
 		fightingStandIns = 0;
 		handedOffAt.clear();
+		letGoAt.clear();
 		stop.Reset();
 		stoppedFor = {};
 		talkingTo = 0;

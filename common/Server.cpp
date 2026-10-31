@@ -1219,8 +1219,12 @@ void Server::Run()
 		if (routedDamage.size() >= MAX_ROUTED_DAMAGE && !routedDamage.contains(routeKey(a_hitter, a_seq))) {
 			std::erase_if(routedDamage, [&](const auto& a_entry) { return a_now - a_entry.second.at >= ROUTE_KEEP; });
 			if (routedDamage.size() >= MAX_ROUTED_DAMAGE) {
-				log(std::format("server: {} hits sent on in the last minutes were never answered; forgetting them", routedDamage.size()));
-				routedDamage.clear();
+				// Full of hits still waiting: the oldest makes room, answered for the game it went to as if that game were
+				// gone, so its hitter's copy gets it back rather than waits out its lost timer.
+				const auto oldest = std::ranges::min_element(routedDamage, {}, [](const auto& a_entry) { return a_entry.second.at; });
+				answerDamage(static_cast<std::uint32_t>(oldest->first >> 32),
+					{ oldest->second.refId, static_cast<std::uint32_t>(oldest->first & 0xFFFFFFFFu), oldest->second.to, Protocol::DamageAnswer::Why::kNobodyRuns, 0.0f });
+				routedDamage.erase(oldest);
 			}
 		}
 		routedDamage[routeKey(a_hitter, a_seq)] = { a_to, a_refId, a_now };
@@ -1844,9 +1848,9 @@ void Server::Run()
 	// comes, and gives it back on a refusal, so a hit the session can't deal is a bounce the player sees at once, and
 	// the log says why, instead of a heal a second later that nothing explains.
 	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data, Protocol::MessageType a_out) {
-		const bool damage = a_out == Protocol::MessageType::kActorDamaged;
-		const auto health = Protocol::DecodeActorHealth(a_data);
-		const auto refuse = [&](Protocol::DamageAnswer::Why a_why) {
+		const bool                           damage = a_out == Protocol::MessageType::kActorDamaged;
+		std::optional<Protocol::ActorHealth> health;
+		const auto                           refuse = [&](Protocol::DamageAnswer::Why a_why) {
 			if (!damage || !health || health->seq == 0) {
 				return;
 			}
@@ -1860,14 +1864,16 @@ void Server::Run()
 			send(a_player.key, Protocol::Encode(Protocol::DamageAnswer{ health->refId, health->seq, 0, a_why, std::clamp(health->health, 0.0f, 1.0f) }, Protocol::MessageType::kDamageAnswer), true);
 		};
 		if (!allowEvent(a_player)) {
-			// Still answered, so the hit is not lost without a word: a small packet, to the sender alone, for the first few
-			// over the budget each second; past those a flood would only be reflected (the sender's copies give the rest
-			// up as lost on their own).
-			if (a_player.welcomed && a_player.rate.events <= MAX_EVENTS_PER_SECOND + OVER_BUDGET_ANSWERS) {
+			// Damage is still answered, so the hit is not lost without a word: a small packet, to the sender alone, for the
+			// first few over the budget each second; past those a flood would only be reflected (the sender's copies give
+			// the rest up as lost on their own). Nothing else over the budget is even read.
+			if (damage && a_player.welcomed && a_player.rate.events <= MAX_EVENTS_PER_SECOND + OVER_BUDGET_ANSWERS) {
+				health = Protocol::DecodeActorHealth(a_data);
 				refuse(Protocol::DamageAnswer::Why::kOverBudget);
 			}
 			return;
 		}
+		health = Protocol::DecodeActorHealth(a_data);
 		// A spawn's health goes to its owner too, whoever hit their copy of it. One the session no longer has (its owner's
 		// game let it go: handleRelease) is nobody's to take damage for.
 		const bool spawn = health && spawns.contains(health->refId);
@@ -1962,7 +1968,12 @@ void Server::Run()
 		const auto now = Clock::now();
 		auto       out = *answer;
 		out.playerId = a_player.id;
-		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner) {
+		// Any refusal from a game that no longer runs the NPC is judged by who does now, as "not the runner" is: the
+		// hit is theirs to take (sent on), or the hitter's own (its claim took the NPC over meanwhile: the drop on its
+		// copy is the truth, and a refund would heal an NPC it shares), or nobody's. A refusal from the runner on record
+		// stands as it is.
+		const bool runs = owner != actorOwners.end() && owner->second.playerId == a_player.id;
+		if (answer->why != Protocol::DamageAnswer::Why::kApplied && (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner || !runs)) {
 			// A damage the answerer didn't echo (0: the decoder refuses more than all of it) can't be sent on or stood by.
 			if (answer->health <= 0.0f) {
 				out.why = Protocol::DamageAnswer::Why::kNoHealthThere;
@@ -1992,6 +2003,7 @@ void Server::Run()
 			} else if (owner->second.playerId == answer->playerId) {
 				out.why = Protocol::DamageAnswer::Why::kYouRunIt;
 			}
+			// (the runner on record itself saying "not mine": passed through as it is)
 		}
 		routedDamage.erase(routed);
 		answerDamage(answer->playerId, out);

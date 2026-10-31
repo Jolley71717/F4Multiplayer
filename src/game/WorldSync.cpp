@@ -2152,6 +2152,7 @@ namespace WorldSync
 			facts.inWorld = CanApply();
 			facts.local = NpcSync::LocalPlayer();
 			facts.owner = NpcSync::Owner(a_refId);
+			facts.letGo = facts.owner == 0 && NpcSync::LetGoLately(a_refId);
 			out.info = HealthInfo();
 			if (facts.known && facts.inWorld) {
 				facts.ledgerDead = dead.Contains(out.local);

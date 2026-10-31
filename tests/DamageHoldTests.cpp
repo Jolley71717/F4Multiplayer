@@ -67,6 +67,20 @@ TEST("damage hold: damage that can't be taken off yet is held: a loading screen,
 	CHECK(Decide(unloaded).why == Why::kNotLoaded);
 }
 
+TEST("damage hold: damage that crossed our own release of the NPC is refused as not ours, not held for the server's word")
+{
+	// Our game let the NPC go (a hand-off, an unload): our table says nobody runs it. The server, whose table still
+	// named us, sent a friend's hit here; held for its word, it waited out the hold while the new runner never got it.
+	auto facts = Ours();
+	facts.owner = 0;
+	CHECK(Decide(facts).verdict == Verdict::kHold);
+	CHECK(Decide(facts).why == Why::kNoOwnerYet);
+	facts.letGo = true;
+	CHECK(Decide(facts).verdict == Verdict::kDrop);
+	CHECK(Decide(facts).why == Why::kNotOurs);
+	CHECK(DamageHold::Answer(Decide(facts).why) == Protocol::DamageAnswer::Why::kNotTheRunner);
+}
+
 TEST("damage hold: damage that can never be taken off is dropped, each for its reason")
 {
 	auto nobody = Ours();
