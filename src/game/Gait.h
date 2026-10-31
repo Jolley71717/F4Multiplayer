@@ -123,6 +123,14 @@ namespace Gait
 		return a_gait == Kind::kWalk ? 0 : 1;
 	}
 
+	// The weapon-drawn graph's sneak (SneakWPNLocomotion_SM), walk or run: its start state by the sync variable
+	// iSyncSneakWalkRun (0 walk, 1 run, as WeaponState), and while moving these events. The weapon-away sneak has
+	// one locomotion, a blend by Speed, and needs neither.
+	constexpr const char* SneakEvent(Kind a_gait)
+	{
+		return a_gait == Kind::kWalk ? "sneakWalkStart" : "sneakRunStart";
+	}
+
 	// Whether the gait's events go this frame: while moving, when the gait changed, when the graph has just
 	// started moving (a moveStart enters by the sync variable, which a graph that was moving before may have
 	// kept), or when the graph was found out of step and told again (a jump, a stagger or a weapon change put

@@ -24,9 +24,42 @@ namespace MoveSync
 
 	enum class Event
 	{
-		kStart,  // "moveStart"
-		kStop,   // "moveStop"
+		kStart,        // set off from standing: "moveStart" (and, sneaking, "moveStartAnimated": Names)
+		kStop,         // "moveStop"
+		kStillMoving,  // a moving graph told again that it moves (RESYNC): "moveStart"
 	};
+
+	// Whether the event asks the graph to move (a start, or a moving graph told again).
+	constexpr bool Starts(Event a_event)
+	{
+		return a_event != Event::kStop;
+	}
+
+	// The graph's own events for one of Drive's, sent in order; the event counts as taken if one of them is. A humanoid
+	// sneaking with its weapon away (MTBehavior's MTSneakIdleLocomotion_SM) sets off from its sneak idle only on
+	// "moveStartAnimated", the event the engine's ActionMoveStart sends for such an actor (its idle MTSneakMoveStart):
+	// the sneak idle's "moveStart" is held by a condition that never holds ("iSyncIdleLocomotion=18"), so a friend who
+	// sneaked and moved slid along in the sneak idle pose. Its weapon drawn (WeaponBehavior's WPNSneakReady_SM), and in
+	// every other locomotion, "moveStart" sets off, and "moveStartAnimated" is nobody's: both go, the animated one first,
+	// and the graph in use takes its own. A moving graph is told again with "moveStart" alone: "moveStartAnimated" is a
+	// wildcard of the sneak's locomotion, which would play its set-off clip again from its walk every RESYNC.
+	struct Names
+	{
+		const char* first = nullptr;
+		const char* second = nullptr;  // null: none
+	};
+	constexpr Names NamesOf(Event a_event, bool a_sneakingHumanoid)
+	{
+		switch (a_event) {
+		case Event::kStart:
+			return a_sneakingHumanoid ? Names{ "moveStartAnimated", "moveStart" } : Names{ "moveStart" };
+		case Event::kStillMoving:
+			return Names{ "moveStart" };
+		case Event::kStop:
+		default:
+			return Names{ "moveStop" };
+		}
+	}
 
 	struct Step
 	{
@@ -62,7 +95,7 @@ namespace MoveSync
 			step.moving = false;
 		} else if (due) {
 			resync = true;
-			if (a_notify(a_moving ? Event::kStart : Event::kStop)) {
+			if (a_notify(a_moving ? Event::kStillMoving : Event::kStop)) {
 				step.resent = a_moving ? "moveStart" : "moveStop";
 			}
 		}
