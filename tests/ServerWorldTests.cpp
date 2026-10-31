@@ -604,12 +604,21 @@ TEST("server world: a game that says it doesn't run the NPC it was sent damage f
 	REQUIRE(f.LoggedSoon(std::format("player {} left", alice)));
 	answers = Answers(Received(f, 2));
 	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].refId == NPC);  // the copy finds the hit by it
 	CHECK(answers[0].seq == 15);
 	CHECK(answers[0].why == Why::kNobodyRuns);
 	CHECK(answers[0].playerId == alice);
 	JoinAs(f, 1, "Alice");  // back, with whatever id
 	f.fake->Deliver(1, Claim(NPC));
 	Clear(f, { 1, 2, 3 });
+
+	// An answer that names another NPC than the hit was on goes nowhere: it would send the hit on under that NPC's id.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 16));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(1, Answer(NPC2, 16, bob, Why::kApplied, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+	f.fake->Deliver(1, Answer(NPC, 16, bob, Why::kApplied, 0.1f));
+	CHECK(Answers(Received(f, 2)).size() == 1);
 
 	// Dead for the session since it was sent on: a "not mine" answer isn't sent on to anyone; the hitter is told the
 	// session has it dead, and (a joiner) reminded of the death as for any report about the dead.

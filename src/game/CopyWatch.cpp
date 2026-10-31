@@ -342,10 +342,9 @@ namespace CopyWatch
 		}
 		// A copy of anyone's, or of nobody's (a hand-off window: the release heard, the grant not yet, and any game's
 		// word passed on meanwhile): our hits on their way stay off it. Only one we run ourselves is the truth here.
+		const auto  owner = OtherOwner(wire);
 		const auto  local = NpcSync::LocalPlayer();
-		const auto  runner = NpcSync::Owner(wire);
-		const auto  owner = local != 0 && runner != 0 && runner != local ? runner : 0;  // as OtherOwner
-		const bool  ours = local != 0 && runner == local;
+		const bool  ours = owner == 0 && local != 0 && NpcSync::Owner(wire) == local;
 		const float health = book.Heard(wire, a_before, a_health, Clock::now(), !ours);
 		if (owner != 0) {
 			++reportsSet;

@@ -59,6 +59,7 @@ namespace
 	constexpr int  MAX_ACTOR_BATCHES_PER_SECOND = 120;             // NPC state batches (20 Hz, one per 64 NPCs)
 	// "Take all" from a big container reports one event per item type.
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
+	constexpr int  OVER_BUDGET_ANSWERS = 50;  // damage reports over the budget still answered as such, a second (handleHealth)
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
@@ -1196,34 +1197,49 @@ void Server::Run()
 			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
 		}
 	};
-	// Each numbered damage sent on, by whose it is and its number: the player it went to, who alone may answer it (a
-	// release or a takeover can cross it on the wire, so that player need not be the runner on record by then). Gone
-	// with the answer, or answered for a game that leaves (answerRoutedTo); one a game neither answers nor leaves
-	// stays until the table is full, which starts it over (the hitters' copies give those up as lost on their own).
-	constexpr std::size_t                              MAX_ROUTED_DAMAGE = 8192;
-	std::unordered_map<std::uint64_t, std::uint32_t>   routedDamage;
-	const auto                                         routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
-	const auto                                         noteRouted = [&](std::uint32_t a_hitter, std::uint32_t a_seq, std::uint32_t a_to) {
+	// Each numbered damage sent on, by whose it is and its number: the NPC it was on and the player it went to, who alone
+	// may answer it (a release or a takeover can cross it on the wire, so that player need not be the runner on record
+	// by then). Gone with the answer, or answered for a game that leaves (answerRoutedTo); one a game neither answers
+	// nor leaves is dropped once older than any hitter's copy waits for it (ROUTE_KEEP, past CopyHealth::LOST_AFTER),
+	// when the table is full.
+	struct Routed
+	{
+		std::uint32_t     to = 0;
+		std::uint32_t     refId = 0;
+		Clock::time_point at{};
+	};
+	constexpr std::size_t                        MAX_ROUTED_DAMAGE = 8192;
+	constexpr auto                               ROUTE_KEEP = std::chrono::minutes{ 3 };
+	std::unordered_map<std::uint64_t, Routed>    routedDamage;
+	const auto                                   routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
+	const auto                                   noteRouted = [&](std::uint32_t a_hitter, std::uint32_t a_seq, std::uint32_t a_refId, std::uint32_t a_to, Clock::time_point a_now) {
 		if (a_seq == 0) {
 			return;
 		}
 		if (routedDamage.size() >= MAX_ROUTED_DAMAGE && !routedDamage.contains(routeKey(a_hitter, a_seq))) {
-			log(std::format("server: {} hits sent on were never answered; forgetting them", routedDamage.size()));
-			routedDamage.clear();
+			std::erase_if(routedDamage, [&](const auto& a_entry) { return a_now - a_entry.second.at >= ROUTE_KEEP; });
+			if (routedDamage.size() >= MAX_ROUTED_DAMAGE) {
+				log(std::format("server: {} hits sent on in the last minutes were never answered; forgetting them", routedDamage.size()));
+				routedDamage.clear();
+			}
 		}
-		routedDamage[routeKey(a_hitter, a_seq)] = a_to;
+		routedDamage[routeKey(a_hitter, a_seq)] = { a_to, a_refId, a_now };
 	};
-	// The game hits were sent to is gone (it left, or was dropped): each is answered for it, "nobody runs it", so the
-	// hitters' copies get them back now rather than after their lost timer, and the table doesn't keep them.
+	// A player is gone (left, or dropped): the hits sent to their game are answered for it, "nobody runs it", so the
+	// hitters' copies get them back now rather than after their lost timer; the hits of their own go with them.
 	const auto answerRoutedTo = [&](std::uint32_t a_gone) {
 		for (auto it = routedDamage.begin(); it != routedDamage.end();) {
-			if (it->second != a_gone) {
+			const auto hitter = static_cast<std::uint32_t>(it->first >> 32);
+			if (hitter == a_gone) {
+				it = routedDamage.erase(it);
+				continue;
+			}
+			if (it->second.to != a_gone) {
 				++it;
 				continue;
 			}
-			const auto hitter = static_cast<std::uint32_t>(it->first >> 32);
 			const auto seq = static_cast<std::uint32_t>(it->first & 0xFFFFFFFFu);
-			answerDamage(hitter, { 0, seq, a_gone, Protocol::DamageAnswer::Why::kNobodyRuns, 0.0f });
+			answerDamage(hitter, { it->second.refId, seq, a_gone, Protocol::DamageAnswer::Why::kNobodyRuns, 0.0f });
 			it = routedDamage.erase(it);
 		}
 	};
@@ -1811,12 +1827,9 @@ void Server::Run()
 	};
 
 	const auto playerById = [&](std::uint32_t a_id) -> Player* {
-		for (auto& [key, other] : players) {
-			if (other.welcomed && !other.kicked && other.id == a_id) {
-				return &other;
-			}
-		}
-		return nullptr;
+		const auto key = keyOfPlayer(a_id);
+		const auto it = key != 0 ? players.find(key) : players.end();
+		return it != players.end() ? &it->second : nullptr;
 	};
 
 	// A health report (kReportHealth: its health now, passed on as kActorHealth), or what the sender took off an NPC
@@ -1847,8 +1860,11 @@ void Server::Run()
 			send(a_player.key, Protocol::Encode(Protocol::DamageAnswer{ health->refId, health->seq, 0, a_why, std::clamp(health->health, 0.0f, 1.0f) }, Protocol::MessageType::kDamageAnswer), true);
 		};
 		if (!allowEvent(a_player)) {
-			if (a_player.welcomed) {
-				refuse(Protocol::DamageAnswer::Why::kOverBudget);  // the one event over the budget that is still answered: a small packet, to the sender alone
+			// Still answered, so the hit is not lost without a word: a small packet, to the sender alone, for the first few
+			// over the budget each second; past those a flood would only be reflected (the sender's copies give the rest
+			// up as lost on their own).
+			if (a_player.welcomed && a_player.rate.events <= MAX_EVENTS_PER_SECOND + OVER_BUDGET_ANSWERS) {
+				refuse(Protocol::DamageAnswer::Why::kOverBudget);
 			}
 			return;
 		}
@@ -1898,7 +1914,7 @@ void Server::Run()
 			}
 			auto out = *health;
 			out.playerId = a_player.id;
-			noteRouted(a_player.id, health->seq, owner->second.playerId);
+			noteRouted(a_player.id, health->seq, health->refId, owner->second.playerId, Clock::now());
 			send(key, Protocol::Encode(out, Protocol::MessageType::kActorDamaged), true);
 			return;
 		}
@@ -1939,7 +1955,7 @@ void Server::Run()
 		// now). Anyone else refusing a friend's hit would refund their copy a hit the runner took off, or have it sent
 		// on and taken off twice.
 		const auto routed = routedDamage.find(routeKey(answer->playerId, answer->seq));
-		if (routed == routedDamage.end() || routed->second != a_player.id) {
+		if (routed == routedDamage.end() || routed->second.to != a_player.id || routed->second.refId != answer->refId) {
 			return;
 		}
 		const auto owner = actorOwners.find(answer->refId);
@@ -1965,7 +1981,8 @@ void Server::Run()
 						log(std::format("server: damage on {:08X} from player {} sent on to player {}, who runs it now; player {} no longer does ({} sent on since the last such line)",
 							answer->refId, answer->playerId, owner->second.playerId, a_player.id, std::exchange(damageRerouted, 0)));
 					}
-					routed->second = owner->second.playerId;
+					routed->second.to = owner->second.playerId;
+					routed->second.at = now;
 					send(key, Protocol::Encode(Protocol::ActorHealth{ answer->refId, answer->health, answer->seq, answer->playerId }, Protocol::MessageType::kActorDamaged), true);
 					return;
 				}

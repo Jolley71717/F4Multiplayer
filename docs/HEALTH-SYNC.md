@@ -84,7 +84,8 @@ sees the bounce immediately instead of a heal seconds later, and the log names t
 frame is owed it, and gets it as soon as it is seen). "You run it yourself" is the one refusal that keeps the drop:
 the hit's claim took the NPC over, and the copy's health is now the truth.
 
-A hit whose answer never comes (a crash, a server restart) is given back after 30 s with a "lost" line. That is the
+A hit whose answer never comes (a server restart, an answer lost) is given back after two minutes with a "lost" line:
+longer than any hold the runner's game can keep it in, and the server answers for a game that leaves. That is the
 only timer left, and it errs on the side of showing the player the truth.
 
 ### 3. The server routes damage, by its own table, to the runner alone

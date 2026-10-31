@@ -55,15 +55,18 @@ namespace CopyHealth
 	constexpr Clock::duration OURS_GRACE = std::chrono::milliseconds{ 1000 };
 	constexpr Clock::duration JUDGE_AFTER = std::chrono::milliseconds{ 100 };
 	// A damage sent and never answered (the runner crashed, the server restarted, an answer lost) is given back after
-	// this long, as lost: the copy must not stand below the NPC for good.
-	constexpr Clock::duration LOST_AFTER = std::chrono::seconds{ 30 };
+	// this long, as lost: the copy must not stand below the NPC for good. Longer than the runner's game can hold a hit
+	// (DamageHold::HOLD of time in its world, which a loading screen of a minute doesn't count towards), so a held hit
+	// is never written off before it is answered; the server answers for a runner that leaves (Server.cpp,
+	// answerRoutedTo), so this is for what nothing answers.
+	constexpr Clock::duration LOST_AFTER = std::chrono::minutes{ 2 };
 	// What our hits took off a copy goes out at most this often for one copy (CopyWatch::Frame asks TakeOurs no more
 	// often): under automatic fire one damage a frame would put hundreds in flight through a runner's loading screen
 	// (DamageHold::HOLD), each to be answered.
 	constexpr Clock::duration SEND_EVERY = std::chrono::milliseconds{ 100 };
-	// Hits in flight on one copy (a guard: past it the oldest is given back as lost). Well above what a hold of
-	// DamageHold::HOLD at SEND_EVERY can put there (150), so a held hit is never written off before the runner answers.
-	constexpr std::size_t MAX_IN_FLIGHT = 1024;
+	// Hits in flight on one copy (a guard: past it the oldest is given back as lost). Above what LOST_AFTER at
+	// SEND_EVERY can put there (1200), so the timer, not the cap, is what gives a hit up.
+	constexpr std::size_t MAX_IN_FLIGHT = 2048;
 	// How long after a hit of ours that put an effect on the copy (a weapon's enchantment: a legendary's bleed, burn or
 	// poison; a mod's spell) the copy's drops with no hit behind them are still ours: the effect's ticks fire no hit
 	// event, and the NPC's own game never deals them (the effect is on our copy alone). Before, every tick after the
