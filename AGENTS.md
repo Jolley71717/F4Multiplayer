@@ -8,8 +8,9 @@ and ask.
 
 ### Changes and merges
 
-- Work on a branch, open a pull request against `main`, never push to `main` directly. Merging needs the
-  maintainer's approval (standing or for that PR).
+- Work on a branch, open a pull request against `main`, never push to `main` directly. A PR that is reviewed (below)
+  and tested may be merged without asking the maintainer: keep things moving. Releases still follow the rc-and-soak
+  rule below.
 - Every PR gets a code review at its current head before it merges: a PR comment starting "Code review at <sha>" and
   the `reviewed` label. New commits remove the label (`.github/workflows/review-label.yml`); review again.
 - Merge locally (`git merge --no-ff origin/<branch>`, then push `main`), not with `gh pr merge`.
@@ -60,6 +61,17 @@ and ask.
 ### Product constraints
 
 - Fallout 4 only (no Fallout 76), played over Steam (not a VPN). No Vortex-specific features. The project is GPL.
+
+### New bugs and requests go on the tracker
+
+- Every new bug, crash or feature request, wherever it comes from (a player's Nexus or GitHub report, a rig run, a
+  review, something noticed in passing), gets an issue in beads (`bd create`, labelled with its source, for example
+  `nexus-0.10.0`) the moment it is found, not at the end of the task.
+- Then put it on the maintainer's tracker: set its tracker stage (0 Queued) and sync both the private tracker and the
+  public status site, and move the stage as the work moves (looked into, PR, reviewed, rig-tested, merged, rc,
+  shipped). The maintainer follows the work there.
+- An agent that can't reach beads (a cloud session) lists the new bugs in its PR or hand-off so they get filed.
+- Close or update the matching item when work lands; a GitHub issue that a fix covers gets a comment and is closed.
 
 ### Reporting
 
