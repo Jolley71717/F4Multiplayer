@@ -92,10 +92,11 @@ namespace LaunchReport
 		}
 		lines.push_back({ false, std::format("Launch: SteamAppId {}, SteamGameId {}; {}{}", AppId(a_facts.steamAppId), AppId(a_facts.steamGameId), overlay, started) });
 
-		// On Wine the overlay comes only with a start through Steam (LD_PRELOAD): without it, Shift+Tab, the overlay's
-		// Invite to Game and the menu's invite do nothing. On Windows it may come in later, so Steam's own answer
-		// (logged once Steam is up, and when hosting starts) decides there.
-		if (Wine(a_facts) && !a_facts.overlayPreloaded) {
+		// On Wine the overlay comes only with a start through Steam: without it, Shift+Tab, the overlay's Invite to Game
+		// and the menu's invite do nothing. Linux's Steam preloads it (LD_PRELOAD); a Windows Steam in the same Wine
+		// prefix (CrossOver on a Mac) puts it in as on Windows, so it is in the game already. On Windows it may come in
+		// later, so Steam's own answer (logged once Steam is up, and when hosting starts) decides there.
+		if (Wine(a_facts) && !a_facts.overlayPreloaded && !a_facts.overlayModule) {
 			lines.push_back({ true, "Launch: this game was not started by Steam, so Steam's overlay is not in it: Shift+Tab, Invite to Game and the "
 									"F1 menu's invite won't open. Start Fallout 4 from Steam with f4se_loader as its launch command (INSTALL.md, Linux)" });
 		}
