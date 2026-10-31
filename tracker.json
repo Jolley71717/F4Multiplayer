@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T04:38:20+00:00",
+ "updated": "2026-10-31T04:43:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -459,7 +459,7 @@
    "id": "gkz8",
    "title": "A friend's resource pieces count for both players' settlements",
    "kind": "feature",
-   "priority": 3,
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -519,6 +519,14 @@
    "note": "Fixed for the next release; waiting for the long test before it ships.",
    "pr": 160,
    "desc": "Objects another player placed sometimes vibrated or looked blurry on and off, most likely two copies at the same spot. The next release places a friend's building only once the area is loaded in your game, and removes doubled copies a save holds. On two real games a piece waited while the friend was elsewhere, was placed once on return, and scrapped cleanly."
+  },
+  {
+   "id": "irq2",
+   "title": "Shared workshop materials and settlement supply lines",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "iwoy",
