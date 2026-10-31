@@ -7,9 +7,11 @@
 #include "Test.h"
 #include "game/CopyHealth.h"
 
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <optional>
+#include <vector>
 
 namespace
 {
@@ -152,4 +154,56 @@ TEST("unseen hits: a shot aims at the actor the view points at, and at nothing b
 	CHECK(AimedAt(Looking(30.0f, 20.0f), 0.0f, 70.0f, 0.0f));
 	// One below on a slope, the view down at it.
 	CHECK(AimedAt(Looking(0.0f, 20.0f), 0.0f, 600.0f, -200.0f));
+}
+
+TEST("unseen hits: the owner's report from before our damage reached it is held, not set (the shot would heal back a moment later)")
+{
+	auto book = Seen();
+	book.OurShot(RAIDER, T0 + milliseconds{ 1000 });
+	CHECK(book.Check(RAIDER, 5.4f, T0 + milliseconds{ 1050 }, 30.0f) == 0.0f);
+	CHECK(book.Check(RAIDER, 5.4f, T0 + milliseconds{ 1050 } + CopyHealth::JUDGE_AFTER, 30.0f) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 24.6f));
+	// The owner's game reports 30 still: sent before our damage got there.
+	CHECK(Near(book.Heard(RAIDER, 5.4f, 30.0f, T0 + milliseconds{ 1200 }), 5.4f));
+	CHECK(book.Holds(RAIDER));
+	// Its next report has our damage taken off: that one stands.
+	CHECK(Near(book.Heard(RAIDER, 5.4f, 5.4f, T0 + milliseconds{ 1400 }), 5.4f));
+	CHECK(!book.Holds(RAIDER));
+}
+
+TEST("unseen hits: an automatic weapon's shots closer together than a drop is judged in: all of it is ours")
+{
+	auto  book = Seen(100.0f);
+	float health = 100.0f;
+	float given = 0.0f;
+	// Frames every 20 ms; a shot every 80 ms from 1000 ms, each landing 40 ms after it leaves; 6 shots.
+	for (int ms = 1000; ms <= 2000; ms += 20) {
+		const int since = ms - 1000;
+		if (since % 80 == 0 && since / 80 < 6) {
+			book.OurShot(RAIDER, T0 + milliseconds{ ms });
+		}
+		if (since >= 40 && (since - 40) % 80 == 0 && (since - 40) / 80 < 6) {
+			health -= 7.0f;
+		}
+		given += book.Check(RAIDER, health, T0 + milliseconds{ ms }, 100.0f);
+	}
+	CHECK(given == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 42.0f));
+	CHECK(Near(health, 58.0f));
+}
+
+TEST("unseen hits: a shot is booked on the nearest actor the view points at, not on one behind it or beside it")
+{
+	using CopyHealth::NearestAimed;
+	const auto aim = Looking(0.0f, 5.0f);
+	// Two raiders in line ahead, one 1.5 bodies to the side of the near one, one behind the player.
+	const std::vector<std::array<float, 3>> at{ { 0.0f, 900.0f, 0.0f }, { 0.0f, 400.0f, 0.0f }, { 150.0f, 400.0f, 0.0f }, { 0.0f, -300.0f, 0.0f } };
+	const auto aimed = NearestAimed(aim, at);
+	CHECK(aimed && *aimed == 1);
+	// Turned toward the one to the side.
+	const auto side = NearestAimed(Looking(20.5f, 5.0f), at);
+	CHECK(side && *side == 2);
+	// At nobody.
+	CHECK(!NearestAimed(Looking(90.0f, 5.0f), at));
+	CHECK(!NearestAimed(aim, {}));
 }

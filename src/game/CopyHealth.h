@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // Our copy of an NPC another game runs has its health there: the owner's game deals what the NPC takes, our player's
 // hits are reported (WorldSync's health reports, then the server's belief in our kill), and another player's hits come
@@ -106,6 +108,26 @@ namespace CopyHealth
 		const float top = -std::atan2(a_z + AIM_TOP - a_aim.z, flat);        // the pitch that looks at its head
 		const float bottom = -std::atan2(a_z + AIM_BOTTOM - a_aim.z, flat);  // ... and at its feet
 		return a_aim.pitch >= top - AIM_SLACK && a_aim.pitch <= bottom + AIM_SLACK;
+	}
+
+	// Of actors standing at a_at (x, y, z each), the one a shot aimed so would hit: the nearest the view points at
+	// (AimedAt), or none. A shot hits one actor, and a drop on a neighbour in the same cone is not its.
+	inline std::optional<std::size_t> NearestAimed(const Aim& a_aim, const std::vector<std::array<float, 3>>& a_at)
+	{
+		std::optional<std::size_t> best;
+		float                      bestDistance = 0.0f;
+		for (std::size_t i = 0; i < a_at.size(); ++i) {
+			const auto& [x, y, z] = a_at[i];
+			if (!AimedAt(a_aim, x, y, z)) {
+				continue;
+			}
+			const float distance = std::hypot(x - a_aim.x, y - a_aim.y, z - a_aim.z);
+			if (!best || distance < bestDistance) {
+				best = i;
+				bestDistance = distance;
+			}
+		}
+		return best;
 	}
 
 	// What struck a hit (or a killing blow), as our game knows it on the main thread a frame later.
@@ -261,7 +283,6 @@ namespace CopyHealth
 				entry.figured = false;
 			}
 			entry.ourHit = a_now;
-			entry.eventHit = a_now;
 			if (a_damage) {
 				entry.dealt += *a_damage;
 				entry.figured = true;
@@ -585,7 +606,6 @@ namespace CopyHealth
 			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
 			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)
 			std::optional<Clock::time_point> ourShot;     // our player's last shot aimed at it whose drop is not judged yet (OurShot)
-			std::optional<Clock::time_point> eventHit;    // the last hit of ours whose event came (OurHit; ourHit is also set by a shot taken for one)
 			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
 			float                            peak = 0.0f;     // ... and the most it has read since then
 			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
@@ -616,7 +636,7 @@ namespace CopyHealth
 		// A drop from a_since on that our player's shot explains with no hit event (SHOT_REACH): the shot left at most
 		// SHOT_REACH before it (or a frame's JUDGE_AFTER after: the shot is seen by its animation, a frame apart from the
 		// health), and nothing else around it: no other hit within EFFECT_WINDOW (its effect may still tick), no blow of
-		// ours left to the owner, no hit of ours seen since the shot (its event said what it took: Check went by that).
+		// ours left to the owner. (A hit of ours whose event came is OursLately: Check goes by its figure before this.)
 		static bool ShotUnseen(const Entry& a_entry, Clock::time_point a_since)
 		{
 			if (!a_entry.ourShot || a_since + JUDGE_AFTER < *a_entry.ourShot || a_since > *a_entry.ourShot + SHOT_REACH) {
@@ -625,10 +645,7 @@ namespace CopyHealth
 			if (a_entry.otherHit && *a_entry.otherHit + EFFECT_WINDOW >= a_since) {
 				return false;
 			}
-			if (a_entry.ownersBlow && *a_entry.ownersBlow + OURS_GRACE >= a_since) {
-				return false;
-			}
-			return !(a_entry.eventHit && *a_entry.eventHit + JUDGE_AFTER >= *a_entry.ourShot);
+			return !(a_entry.ownersBlow && *a_entry.ownersBlow + OURS_GRACE >= a_since);
 		}
 
 		std::unordered_map<std::uint32_t, Entry> entries;

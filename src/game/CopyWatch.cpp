@@ -468,15 +468,19 @@ namespace CopyWatch
 					copies.emplace_back(actor, wire);
 				}
 			}
-			const auto aim = std::exchange(shotAim, std::nullopt);
+			// Our player's last shot is booked on the nearest copy it points at (one: a drop on a neighbour is not its).
+			if (const auto aim = std::exchange(shotAim, std::nullopt); aim && !copies.empty()) {
+				std::vector<std::array<float, 3>> at;
+				at.reserve(copies.size());
+				for (const auto& [actor, id] : copies) {
+					at.push_back({ actor->data.location.x, actor->data.location.y, actor->data.location.z });
+				}
+				if (const auto aimed = CopyHealth::NearestAimed(aim->first, at)) {
+					book.OurShot(copies[*aimed].second, aim->second);
+				}
+			}
 			for (const auto& [actor, id] : copies) {
 				copiesSeen[id] = now;
-				if (aim) {
-					const auto& at = actor->data.location;
-					if (CopyHealth::AimedAt(aim->first, at.x, at.y, at.z)) {
-						book.OurShot(id, aim->second);
-					}
-				}
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
