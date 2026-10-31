@@ -146,11 +146,12 @@ namespace SessionFile
 		// only (a spawn ends with the run), and the session's NPC level (common/SessionLevel.h; 0 none). Layout 41.
 		std::vector<Protocol::NpcIdentity>                  npcIdentities;
 		std::uint16_t                                       npcLevel = 0;
+		std::uint16_t                                       legendaryMult = 0;  // the session's legendary chance multiplier, thousandths (SessionWorld)
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty() && npcIdentities.empty() && npcLevel == 0;
+			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty() && npcIdentities.empty() && npcLevel == 0 && legendaryMult == 0;
 		}
 	};
 
@@ -172,7 +173,7 @@ namespace SessionFile
 			return a_drop.holder != 0 || a_drop.ownerCharacter != 0 || a_drop.takerCharacter != 0;
 		});
 		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
-			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0);
+			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0);
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -250,8 +251,8 @@ namespace SessionFile
 			for (const auto& identity : a_snapshot.npcIdentities) {
 				packet(Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity));
 			}
-			if (a_snapshot.npcLevel != 0) {
-				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel }));
+			if (a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0) {
+				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel, a_snapshot.legendaryMult }));
 			}
 		}
 		return out;
@@ -421,6 +422,7 @@ namespace SessionFile
 					return std::nullopt;
 				}
 				snapshot.npcLevel = world->level;
+				snapshot.legendaryMult = world->legendaryMult;
 				break;
 			}
 			default:

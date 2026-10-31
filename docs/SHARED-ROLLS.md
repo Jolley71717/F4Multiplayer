@@ -57,19 +57,52 @@ session this count should stay at 0. Protocol 50's write-after on the next load 
 
 The host's rule, in `[Host]` `sNpcLevel` (the dedicated server takes `--npc-level`):
 
-- `highest` (the default): the highest level any player has had in the session. It never goes down, so an NPC rolled
-  at it stays that NPC, and a late joiner new to the game meets the same raiders as the others.
+- `average` (the default): the mean of the levels of the players in the session now, rounded to the nearest, with a
+  half rounded up (10 and 11 give 11). It is worked out again whenever a player joins (once their first status
+  arrives), leaves or levels up, so it can go down. With nobody in the session it keeps its last value. A dedicated
+  server works it out the same way.
+- `highest`: the highest level any player has had in the session. It never goes down, so a late joiner new to the game
+  meets the same raiders as the others did earlier.
 - `host`: the host's level, whoever else is there. It is kept while the host is away. A dedicated server has no host
   game, so it uses `highest`.
 - `own`: there is no session level, and each game rolls at its own player's level, as before. Session rolls and spawn
   rolls still apply. Only the pick is off.
 
+A roll already made keeps its level whatever the session's level does later. The session's roll of a plugin NPC is
+kept for the session's life, so only NPCs built after a change are picked at the new level. Two games that build the
+same not-yet-rolled NPC around the moment the level changes can pick at different levels. That is the same race as a
+level-up under `highest`, and the runner's report still corrects it at the next load.
+
 The server works the level out from the players' statuses, sends it in `kSessionWorld` (177) whenever it changes and
 right after each welcome, and keeps it in the session file. The rule travels in the welcome as a byte after the
 limits.
 
-Players see the difference: under `highest` a level-5 player walking with a level-30 friend meets level-30 raiders.
-That is the cost of seeing the same NPC. `own` is there for a host who would rather not.
+Players see the difference: under `average` a level-5 player walking with a level-30 friend meets level-18 raiders
+(17.5, rounded up). That is the cost of seeing the same NPC. `own` is there for a host who would rather not.
+
+## The session's legendary chance (`sLegendaryDifficulty`)
+
+Fallout 4 multiplies an NPC's legendary chance by a factor that depends on the game's difficulty
+(`GetLegendaryMults`, ID 2209078). Each player picks their own difficulty, so before this rule two games on different
+difficulties could disagree on whether the same raider was legendary. This is the host's rule `sLegendaryDifficulty`
+(the dedicated server takes `--legendary-difficulty`), the byte after `sNpcLevel` in the welcome:
+
+- `average` (the default): the mean of the multipliers of the games in the session now, rounded to the nearest
+  thousandth with a half up. It follows joins, leaves and difficulty changes, as `average` does for the level.
+- `host`: the host game's multiplier, kept while the host is away. A dedicated server has no host game, so it uses
+  `average`.
+- `own`: each game uses its own difficulty's multiplier, as before.
+
+**What is averaged: the multipliers, not the difficulty steps.** Each game reports its difficulty (`RE::DifficultyLevel`,
+0 Very Easy to 6 Survival) and the multiplier the engine gives it, in thousandths (`PlayerStatus::difficulty` and
+`legendaryMult`). The server averages the multipliers. Averaging the steps was ruled out because they are not evenly
+spaced (CommonLib names 5 the old Survival and 6 the one players pick), so a rounded step average could land on a step no
+player picked, and the server cannot turn a step into a multiplier without the game's data. The difficulty is
+reported for the logs.
+
+The server sends the multiplier in `kSessionWorld` with the level (0 means each game uses its own) and keeps it in the
+session file. A game's pick uses it in place of its own difficulty's. Only the legendary chance changes: each player's
+difficulty still sets the damage they deal and take.
 
 `bSharedRolls = false` in F4Multiplayer.ini turns the hooks off: every game rolls its own NPCs again, and protocol 50's
 report and write-after still apply. It is a kill switch and is not in the shipped ini.
@@ -149,9 +182,8 @@ unexpected leaves the engine's own roll.
 - **The variance** the engine cycles through is each game's own count, so the pick leaves it out.
 - **The legendary cooldown** between legendaries (a per-game counter) is not kept, so a session can see two
   legendaries close together.
-- **The difficulty multiplier** is each game's own, since each player picks a difficulty. Two games on different
-  difficulties can pick legendary differently. A game on Survival and one on Normal give the same raider only when
-  the draw is below both chances. A host rule for this could come later.
+- **The difficulty multiplier** is the session's (`sLegendaryDifficulty`, above). With `own`, it is each game's own,
+  and two games on different difficulties can pick legendary differently.
 - **Chance-none and use-all lists** are read as plain lists.
 - **The level variance on the NPC's own level** for `kPCLevelMult` NPCs is not reproduced.
 

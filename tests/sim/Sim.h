@@ -437,6 +437,7 @@ namespace Sim
 		// The session's NPC level as the server last said (kSessionWorld), and every NPC roll it told this player of
 		// (kNpcIdentity), by reference: what this game would build each leveled NPC as (docs/SHARED-ROLLS.md).
 		[[nodiscard]] std::optional<std::uint16_t> NpcLevel() const { return npcLevel; }
+		[[nodiscard]] std::optional<std::uint16_t> LegendaryMult() const { return legendaryMult; }
 		[[nodiscard]] const std::map<std::uint32_t, Protocol::NpcIdentity>& Rolls() const { return rolls; }
 		// Reports the roll of an NPC this player's game runs (kReportNpcIdentity).
 		void ReportRoll(const Protocol::NpcIdentity& a_identity) { Send(Protocol::Encode(a_identity, MT::kReportNpcIdentity), true); }
@@ -514,6 +515,7 @@ namespace Sim
 		std::map<std::uint32_t, std::uint8_t>         markers;
 		std::optional<Protocol::WorldTime>            time;
 		std::optional<std::uint16_t>                  npcLevel;
+		std::optional<std::uint16_t>                  legendaryMult;
 		std::map<std::uint32_t, Protocol::NpcIdentity> rolls;
 		std::vector<std::string>                      rejections;
 		std::vector<Protocol::PlayerHit>              damage;
@@ -1716,6 +1718,7 @@ namespace Sim
 		case MT::kSessionWorld:
 			if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
 				npcLevel = msg->level;
+				legendaryMult = msg->legendaryMult;
 			} else {
 				unless(false);
 			}

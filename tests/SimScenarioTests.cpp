@@ -849,7 +849,9 @@ TEST_KNOWN_BUG("sim: two friends working the same door at the same moment end up
 
 TEST("sim: friends at different levels, one who leaves, a server restart and a late joiner at level 4 all build the session's raiders the same, at the session's level")
 {
-	Session s;
+	Server::Options options;
+	options.rules.npcLevel = Protocol::NpcLevelRule::kHighest;  // the late joiner meets the level the session reached
+	Session s{ options };
 	auto&   host = s.Host();
 	auto&   bob = s.Player("Bob");
 	auto&   dana = s.Player("Dana");
@@ -868,6 +870,7 @@ TEST("sim: friends at different levels, one who leaves, a server restart and a l
 	s.Settle();
 	for (const auto player : { &host, &bob, &dana }) {
 		CHECK(player->NpcLevel() == 27);  // the highest: every game rolls at it
+		CHECK(player->LegendaryMult() == 0);  // nobody's game said its difficulty: each game its own
 	}
 
 	// The host's game runs two raiders and reports their rolls; Bob's runs a third.

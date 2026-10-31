@@ -172,11 +172,15 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
   `bReviveOutOfCombat` (false), `bDownedCrawl` (false) and `bSaveOnDown` (false). Guests play by the host's. See
   [Going down](#going-down).
-- `sNpcLevel` (highest): the level every game builds leveled enemies at (raiders, ghouls, bloatflies, legendaries),
-  so you all meet the same ones. `highest` is the highest level anyone in the session has reached, `host` is the
-  host's, and `own` lets each game use its own player's level, as before (you may then see different enemies). A
-  low-level friend playing with a high-level one meets the high-level enemies. Enemies your game built during a
-  session keep that level in your save. The dedicated server takes it as `--npc-level`.
+- `sNpcLevel` (average): the level every game builds leveled enemies at (raiders, ghouls, bloatflies, legendaries),
+  so you all meet the same ones. `average` is the average level of the players in the session now (it changes as
+  players join, leave and level up), `highest` is the highest level anyone in the session has reached, `host` is the
+  host's, and `own` lets each game use its own player's level, as before (you may then see different enemies). An
+  enemy keeps the level it was built at, in your save too. The dedicated server takes it as `--npc-level`.
+- `sLegendaryDifficulty` (average): whose difficulty sets the chance of a legendary enemy. `average` uses the average
+  of the players in the session now, `host` the host's, and `own` each game's own (one of you may then see a
+  legendary where another sees a plain one). Your own difficulty still sets the damage you deal and take. The
+  dedicated server takes it as `--legendary-difficulty`.
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
 

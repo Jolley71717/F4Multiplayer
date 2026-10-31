@@ -632,8 +632,8 @@ TEST("protocol: PlayerStatus round trips the downed, opening, light and power ar
 				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening, light, armor, armor ? 0x0017F6E4u : 0u, armor ? REF_B : 0u };
 				const auto         packet = Encode(in, type);
 				// downed is bit 0, opening bit 1, the Pip-Boy light bit 2 and power armor bit 3 of the flags byte, then the
-				// frame base, the frame reference and the menu (protocol 48).
-				CHECK(packet[packet.size() - 10] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
+				// frame base, the frame reference, the menu (protocol 48), and the difficulty and its multiplier (protocol 57).
+				CHECK(packet[packet.size() - 13] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
 				const auto out = DecodePlayerStatus(packet);
 				REQUIRE(out);
 				CHECK(*out == in);
@@ -654,6 +654,8 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U32(0);  // no frame
 	w.U32(0);  // no frame reference
 	w.U8(MenuKind::kNone);
+	w.U8(NO_DIFFICULTY);  // protocol 57: the game's difficulty and its legendary chance multiplier
+	w.U16(0);
 	const auto out = DecodePlayerStatus(w.Data());
 	REQUIRE(out);
 	CHECK(!out->downed);
@@ -669,7 +671,7 @@ TEST("protocol: PlayerStatus carries the kind of menu the player is in, and refu
 			in.light = true;
 			in.menu = menu;
 			const auto packet = Encode(in, type);
-			CHECK(packet.back() == menu);  // the last byte, after the seat
+			CHECK(packet[packet.size() - 4] == menu);  // after the seat, before the difficulty and its multiplier (protocol 57)
 			const auto out = DecodePlayerStatus(packet);
 			REQUIRE(out);
 			CHECK(*out == in);

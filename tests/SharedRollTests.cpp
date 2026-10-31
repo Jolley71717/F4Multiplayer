@@ -355,15 +355,91 @@ TEST("shared rolls: the session's level never goes down with highest, a late joi
 	CHECK(Level(NpcLevelRule::kHost, 9, { { 20, false }, { 7, true } }) == 7);  // down too: the host's is the host's
 }
 
-TEST("shared rolls: sNpcLevel and --npc-level read highest, host and own in any case, and nothing else")
+TEST("shared rolls: sNpcLevel and --npc-level read average, highest, host and own in any case, sLegendaryDifficulty average, host and own, and nothing else")
 {
+	CHECK(SessionLevel::Parse("Average") == Protocol::NpcLevelRule::kAverage);
 	CHECK(SessionLevel::Parse("highest") == Protocol::NpcLevelRule::kHighest);
 	CHECK(SessionLevel::Parse("Host") == Protocol::NpcLevelRule::kHost);
 	CHECK(SessionLevel::Parse("OWN") == Protocol::NpcLevelRule::kOwn);
 	CHECK(!SessionLevel::Parse(""));
 	CHECK(!SessionLevel::Parse("max"));
-	for (const auto rule : { Protocol::NpcLevelRule::kOwn, Protocol::NpcLevelRule::kHighest, Protocol::NpcLevelRule::kHost }) {
+	for (const auto rule : { Protocol::NpcLevelRule::kOwn, Protocol::NpcLevelRule::kHighest, Protocol::NpcLevelRule::kHost, Protocol::NpcLevelRule::kAverage }) {
 		CHECK(SessionLevel::Parse(SessionLevel::Name(rule)) == rule);
+	}
+	CHECK(SessionLevel::ParseLegendary("AVERAGE") == Protocol::LegendaryRule::kAverage);
+	CHECK(SessionLevel::ParseLegendary("host") == Protocol::LegendaryRule::kHost);
+	CHECK(SessionLevel::ParseLegendary("Own") == Protocol::LegendaryRule::kOwn);
+	CHECK(!SessionLevel::ParseLegendary("highest"));
+	CHECK(!SessionLevel::ParseLegendary("survival"));
+	for (const auto rule : { Protocol::LegendaryRule::kOwn, Protocol::LegendaryRule::kAverage, Protocol::LegendaryRule::kHost }) {
+		CHECK(SessionLevel::ParseLegendary(SessionLevel::Name(rule)) == rule);
+	}
+	// The defaults, for a host who sets neither.
+	CHECK(Protocol::SessionRules{}.npcLevel == Protocol::NpcLevelRule::kAverage);
+	CHECK(Protocol::SessionRules{}.legendary == Protocol::LegendaryRule::kAverage);
+}
+
+TEST("shared rolls: with average, the session's level is the mean of the players' here now, rounded to the nearest, a half up, and follows them as they come, go and level up")
+{
+	using Protocol::NpcLevelRule;
+	CHECK(Level(NpcLevelRule::kAverage, 0, { { 10, true }, { 11, false } }) == 11);             // 10.5: a tie goes up
+	CHECK(Level(NpcLevelRule::kAverage, 0, { { 10, true }, { 11, false }, { 11, false } }) == 11);  // 10.67
+	CHECK(Level(NpcLevelRule::kAverage, 0, { { 10, true }, { 10, false }, { 11, false } }) == 10);  // 10.33
+	CHECK(Level(NpcLevelRule::kAverage, 0, { { 3, false }, { 12, true }, { 21, false }, { 30, false }, { 45, false } }) == 22);  // 22.2
+	CHECK(Level(NpcLevelRule::kAverage, 0, { { 1, false }, { 2, false } }) == 2);  // 1.5
+
+	// An evening: two friends, a third joins new to the game, one levels up, one goes home.
+	auto level = Level(NpcLevelRule::kAverage, 0, { { 10, true }, { 20, false } });
+	CHECK(level == 15);
+	level = Level(NpcLevelRule::kAverage, level, { { 10, true }, { 20, false }, { 0, false } });  // the joiner's status is yet to come
+	CHECK(level == 15);
+	level = Level(NpcLevelRule::kAverage, level, { { 10, true }, { 20, false }, { 4, false } });
+	CHECK(level == 11);  // 11.33: it goes down too
+	level = Level(NpcLevelRule::kAverage, level, { { 10, true }, { 23, false }, { 4, false } });
+	CHECK(level == 12);  // 12.33
+	level = Level(NpcLevelRule::kAverage, level, { { 10, true }, { 4, false } });
+	CHECK(level == 7);
+	CHECK(Level(NpcLevelRule::kAverage, 7, {}) == 7);  // everyone gone: the session keeps its level
+	CHECK(Level(NpcLevelRule::kAverage, 0, { { 5000, false }, { 5000, false } }) == Protocol::MAX_IDENTITY_LEVEL);
+
+	// Every game picks at the one level, whoever's game it is: the five players build the same raiders at 22.
+	const auto world = Raiders(10.0f);
+	CHECK(Rolls(world, 22) == Rolls(world, Level(NpcLevelRule::kAverage, 0, { { 45, false }, { 30, false }, { 21, true }, { 12, false }, { 3, false } })));
+}
+
+TEST("shared rolls: the legendary chance's multiplier is the mean of the games' here now, a half up, the host game's, or each game's own")
+{
+	using Protocol::LegendaryRule;
+	const auto legendary = [](LegendaryRule a_rule, std::uint16_t a_current, std::vector<SessionLevel::Player> a_players) {
+		return SessionLevel::NextLegendary(a_rule, a_current, a_players);
+	};
+	// Mixed difficulties: Normal (1x) and a game whose difficulty gives twice the chance.
+	CHECK(legendary(LegendaryRule::kAverage, 0, { { 10, true, 1000 }, { 30, false, 2000 } }) == 1500);
+	CHECK(legendary(LegendaryRule::kAverage, 0, { { 10, true, 1000 }, { 30, false, 1001 } }) == 1001);  // 1000.5: a tie goes up
+	CHECK(legendary(LegendaryRule::kAverage, 0, { { 10, true, 1000 }, { 30, false, 1000 }, { 3, false, 1001 } }) == 1000);
+	CHECK(legendary(LegendaryRule::kAverage, 0, { { 10, true, 750 }, { 30, false, 1000 }, { 3, false, 2000 } }) == 1250);
+	// A join and a leave change it; a game that hasn't said yet (0) counts for nothing; nobody: it stays.
+	auto mult = legendary(LegendaryRule::kAverage, 0, { { 10, true, 1000 } });
+	CHECK(mult == 1000);
+	mult = legendary(LegendaryRule::kAverage, mult, { { 10, true, 1000 }, { 5, false, 0 } });
+	CHECK(mult == 1000);
+	mult = legendary(LegendaryRule::kAverage, mult, { { 10, true, 1000 }, { 5, false, 3000 } });
+	CHECK(mult == 2000);
+	mult = legendary(LegendaryRule::kAverage, mult, { { 5, false, 3000 } });  // the host left
+	CHECK(mult == 3000);
+	CHECK(legendary(LegendaryRule::kAverage, mult, {}) == 3000);
+	CHECK(legendary(LegendaryRule::kAverage, 0, { { 1, false, 60000 } }) == Protocol::MAX_LEGENDARY_MULT);
+
+	CHECK(legendary(LegendaryRule::kHost, 0, { { 10, false, 3000 }, { 10, true, 1000 } }) == 1000);
+	CHECK(legendary(LegendaryRule::kHost, 1200, { { 10, false, 3000 } }) == 1200);  // the host away: theirs is kept
+	CHECK(legendary(LegendaryRule::kOwn, 1200, { { 10, true, 3000 } }) == 0);
+
+	// The pick at the session's multiplier is the same in every game, whatever each game's own difficulty.
+	const auto half = Raiders(50.0f);
+	for (std::uint64_t i = 0; i < 100; ++i) {
+		const auto seed = SharedRoll::SeedOf(SESSION, i, 0);
+		const auto shared = legendary(LegendaryRule::kAverage, 0, { { 10, true, 1000 }, { 30, false, 2000 } }) / 1000.0f;
+		CHECK(SharedRoll::Pick(RAIDER, At(14), seed, shared, half).picked->legendary == SharedRoll::Pick(RAIDER, At(14), seed, shared, Raiders(50.0f)).picked->legendary);
 	}
 }
 
@@ -371,20 +447,48 @@ TEST("shared rolls: sNpcLevel and --npc-level read highest, host and own in any 
 
 TEST("shared rolls: the welcome carries the host's NPC level rule, and the session's level reads back within its bounds")
 {
-	for (const auto rule : { Protocol::NpcLevelRule::kOwn, Protocol::NpcLevelRule::kHighest, Protocol::NpcLevelRule::kHost }) {
+	for (const auto rule : { Protocol::NpcLevelRule::kOwn, Protocol::NpcLevelRule::kHighest, Protocol::NpcLevelRule::kHost, Protocol::NpcLevelRule::kAverage }) {
 		const auto welcome = Protocol::DecodeWelcome(Protocol::Encode(Protocol::Welcome{ 3, SESSION, false, true, Protocol::SessionRules{ .npcLevel = rule } }));
 		REQUIRE(welcome);
 		CHECK(welcome->rules.npcLevel == rule);
 	}
 	// A rule this build doesn't know is the default.
-	auto odd = Protocol::Encode(Protocol::Welcome{ 3, SESSION, false, true, {} });
+	for (const auto rule : { Protocol::LegendaryRule::kOwn, Protocol::LegendaryRule::kAverage, Protocol::LegendaryRule::kHost }) {
+		const auto welcome = Protocol::DecodeWelcome(Protocol::Encode(Protocol::Welcome{ 3, SESSION, false, true, Protocol::SessionRules{ .legendary = rule } }));
+		REQUIRE(welcome);
+		CHECK(welcome->rules.legendary == rule);
+	}
+	// Rules this build doesn't know are the defaults.
+	auto odd = Protocol::Encode(Protocol::Welcome{ 3, SESSION, false, true, Protocol::SessionRules{ .npcLevel = Protocol::NpcLevelRule::kOwn, .legendary = Protocol::LegendaryRule::kOwn } });
+	odd[odd.size() - 2] = 9;
 	odd.back() = 9;
 	const auto read = Protocol::DecodeWelcome(odd);
 	REQUIRE(read);
-	CHECK(read->rules.npcLevel == Protocol::NpcLevelRule::kHighest);
-	CHECK(Protocol::SessionRules{ .npcLevel = static_cast<Protocol::NpcLevelRule>(7) }.Clamped().npcLevel == Protocol::NpcLevelRule::kHighest);
+	CHECK(read->rules.npcLevel == Protocol::NpcLevelRule::kAverage);
+	CHECK(read->rules.legendary == Protocol::LegendaryRule::kAverage);
+	CHECK(Protocol::SessionRules{ .npcLevel = static_cast<Protocol::NpcLevelRule>(7) }.Clamped().npcLevel == Protocol::NpcLevelRule::kAverage);
+	CHECK(Protocol::SessionRules{ .legendary = static_cast<Protocol::LegendaryRule>(7) }.Clamped().legendary == Protocol::LegendaryRule::kAverage);
 
 	CHECK(Protocol::DecodeSessionWorld(Protocol::Encode(Protocol::SessionWorld{ 23 }))->level == 23);
+	CHECK((Protocol::DecodeSessionWorld(Protocol::Encode(Protocol::SessionWorld{ 23, 1500 })) == Protocol::SessionWorld{ 23, 1500 }));
+	CHECK(!Protocol::DecodeSessionWorld(Protocol::Encode(Protocol::SessionWorld{ 23, static_cast<std::uint16_t>(Protocol::MAX_LEGENDARY_MULT + 1) })));
+
+	// Each game's difficulty and its multiplier, in its status.
+	Protocol::PlayerStatus status;
+	status.level = 21;
+	CHECK(Protocol::DecodePlayerStatus(Protocol::Encode(status, MT::kReportStatus))->difficulty == Protocol::NO_DIFFICULTY);
+	status.difficulty = 6;
+	status.legendaryMult = 2000;
+	const auto back = Protocol::DecodePlayerStatus(Protocol::Encode(status, MT::kReportStatus));
+	REQUIRE(back);
+	CHECK(back->difficulty == 6);
+	CHECK(back->legendaryMult == 2000);
+	CHECK(*back == status);
+	status.difficulty = 7;
+	CHECK(!Protocol::DecodePlayerStatus(Protocol::Encode(status, MT::kReportStatus)));
+	status.difficulty = 2;
+	status.legendaryMult = Protocol::MAX_LEGENDARY_MULT + 1;
+	CHECK(!Protocol::DecodePlayerStatus(Protocol::Encode(status, MT::kReportStatus)));
 	CHECK(!Protocol::DecodeSessionWorld(Protocol::Encode(Protocol::SessionWorld{ static_cast<std::uint16_t>(Protocol::MAX_IDENTITY_LEVEL + 1) })));
 	auto shortened = Protocol::Encode(Protocol::SessionWorld{ 23 });
 	shortened.pop_back();
@@ -403,6 +507,7 @@ TEST("shared rolls: the session file keeps every plugin NPC's roll and the sessi
 	roll.templates[1] = LEGEND;
 	snapshot.npcIdentities = { roll };
 	snapshot.npcLevel = 21;
+	snapshot.legendaryMult = 1250;
 	const auto bytes = SessionFile::Encode(snapshot);
 	std::uint16_t layout = 0;
 	std::memcpy(&layout, bytes.data() + 4, sizeof(layout));
@@ -411,6 +516,7 @@ TEST("shared rolls: the session file keeps every plugin NPC's roll and the sessi
 	REQUIRE(read);
 	CHECK(read->npcIdentities == snapshot.npcIdentities);
 	CHECK(read->npcLevel == 21);
+	CHECK(read->legendaryMult == 1250);
 	CHECK(read->deadActors == snapshot.deadActors);
 	CHECK(!read->Empty());
 
@@ -418,6 +524,7 @@ TEST("shared rolls: the session file keeps every plugin NPC's roll and the sessi
 	auto older = snapshot;
 	older.npcIdentities.clear();
 	older.npcLevel = 0;
+	older.legendaryMult = 0;
 	const auto olderBytes = SessionFile::Encode(older);
 	std::memcpy(&layout, olderBytes.data() + 4, sizeof(layout));
 	CHECK(layout == SessionFile::OBJECT_PLACES);
@@ -431,11 +538,25 @@ TEST("shared rolls: the session file keeps every plugin NPC's roll and the sessi
 
 namespace
 {
-	std::vector<std::uint8_t> Status(std::uint16_t a_level)
+	std::vector<std::uint8_t> Status(std::uint16_t a_level, std::uint16_t a_legendaryMult = 0, std::uint8_t a_difficulty = Protocol::NO_DIFFICULTY)
 	{
 		Protocol::PlayerStatus status;
 		status.level = a_level;
+		status.legendaryMult = a_legendaryMult;
+		status.difficulty = a_difficulty;
 		return Protocol::Encode(status, MT::kReportStatus);
+	}
+
+	// The last session world a_peer was told within a_wait (nothing if none).
+	std::optional<Protocol::SessionWorld> LastWorld(Fixture& a_f, PeerId a_peer, std::chrono::milliseconds a_wait = 500ms)
+	{
+		std::optional<Protocol::SessionWorld> last;
+		while (const auto packet = a_f.fake->WaitFor(a_peer, Type(MT::kSessionWorld), a_wait)) {
+			const auto world = Protocol::DecodeSessionWorld(*packet);
+			REQUIRE(world);
+			last = *world;
+		}
+		return last;
 	}
 
 	// The last session level a_peer was told within a_wait (nothing if none).
@@ -451,9 +572,11 @@ namespace
 	}
 }
 
-TEST("shared rolls: the server keeps the session's NPC level from its players' statuses and tells everyone when it changes")
+TEST("shared rolls: the server keeps the session's NPC level from its players' statuses and tells everyone when it changes (highest)")
 {
-	Fixture f;
+	Server::Options options;
+	options.rules.npcLevel = Protocol::NpcLevelRule::kHighest;
+	Fixture f{ options };
 	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
 	CHECK(LastLevel(f, 1) == 0);  // after the welcome: none yet
 	f.fake->Deliver(1, Status(12));
@@ -474,39 +597,79 @@ TEST("shared rolls: the server keeps the session's NPC level from its players' s
 	CHECK(f.LoggedSoon("the session's NPC level is 21"));
 }
 
+TEST("shared rolls: by default the session's level and legendary chance are the averages of the players here, told to everyone as players join, level up and leave")
+{
+	Fixture f;  // average and average, the defaults
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Deliver(1, Status(10, 1000, 2));  // Normal
+	f.fake->Deliver(2, Status(21, 2000, 6));  // Survival, as its game says
+	Sync(f, 1);
+	Sync(f, 2);
+	CHECK((LastWorld(f, 1) == Protocol::SessionWorld{ 16, 1500 }));  // 15.5 up
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	CHECK((LastWorld(f, 3) == Protocol::SessionWorld{ 16, 1500 }));  // a joiner is told it with the welcome
+	f.fake->Deliver(3, Status(4, 1000, 2));
+	Sync(f, 3);
+	CHECK((LastWorld(f, 2) == Protocol::SessionWorld{ 12, 1333 }));  // 11.67, 1333.3
+	f.fake->Deliver(1, Status(13, 1000, 2));  // Alice levelled up
+	Sync(f, 1);
+	CHECK((LastWorld(f, 3) == Protocol::SessionWorld{ 13, 1333 }));  // 12.67
+	// Bob goes home: the average is of Alice and Carol.
+	f.fake->Drop(2);
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kPlayerLeft)));
+	CHECK((LastWorld(f, 1) == Protocol::SessionWorld{ 9, 1000 }));  // 8.5 up
+	CHECK(f.LoggedSoon("the session's legendary chance is x1.000"));
+	// Alice goes too: Carol's alone. Then Carol: with nobody here the session keeps it for whoever comes next.
+	f.fake->Drop(1);
+	REQUIRE(f.fake->WaitFor(3, Type(MT::kPlayerLeft)));
+	CHECK((LastWorld(f, 3) == Protocol::SessionWorld{ 4, 1000 }));
+	f.fake->Drop(3);
+	REQUIRE(f.Join(4, Fixture::MakeHello("Dana")));
+	CHECK((LastWorld(f, 4) == Protocol::SessionWorld{ 4, 1000 }));
+}
+
 TEST("shared rolls: with the host's rule, the session's level is the host game's; with own, there is none")
 {
 	{
 		Server::Options options;
 		options.hostIdentity = 0x4805;
 		options.rules.npcLevel = Protocol::NpcLevelRule::kHost;
+		options.rules.legendary = Protocol::LegendaryRule::kHost;
 		Fixture f{ options };
 		f.fake->SetLocal(1);
 		REQUIRE(f.Join(1, Fixture::MakeHello("Host", 0x4805)));
 		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
-		f.fake->Deliver(2, Status(30));
+		f.fake->Deliver(2, Status(30, 2000));
 		CHECK(LastLevel(f, 2).value_or(0) == 0);
-		f.fake->Deliver(1, Status(8));
-		CHECK(LastLevel(f, 2) == 8);
+		f.fake->Deliver(1, Status(8, 750));
+		CHECK((LastWorld(f, 2) == Protocol::SessionWorld{ 8, 750 }));
 	}
 	{
 		Server::Options options;
 		options.rules.npcLevel = Protocol::NpcLevelRule::kOwn;
+		options.rules.legendary = Protocol::LegendaryRule::kOwn;
 		Fixture f{ options };
 		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
 		REQUIRE(welcome);
 		CHECK(welcome->rules.npcLevel == Protocol::NpcLevelRule::kOwn);
-		f.fake->Deliver(1, Status(30));
-		CHECK(LastLevel(f, 1).value_or(0) == 0);
+		CHECK(welcome->rules.legendary == Protocol::LegendaryRule::kOwn);
+		f.fake->Deliver(1, Status(30, 2000));
+		CHECK(LastWorld(f, 1).value_or(Protocol::SessionWorld{}) == Protocol::SessionWorld{});
 	}
 	{
-		// A dedicated server has no host game: its host rule is the highest.
+		// A dedicated server has no host game: its host rules are the highest level and the average legendary chance.
 		Server::Options options;
 		options.rules.npcLevel = Protocol::NpcLevelRule::kHost;
+		options.rules.legendary = Protocol::LegendaryRule::kHost;
 		Fixture f{ options };
 		REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
-		f.fake->Deliver(1, Status(17));
-		CHECK(LastLevel(f, 1) == 17);
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		f.fake->Deliver(1, Status(17, 1000));
+		f.fake->Deliver(2, Status(5, 2000));
+		Sync(f, 1);
+		Sync(f, 2);
+		CHECK((LastWorld(f, 1) == Protocol::SessionWorld{ 17, 1500 }));
 	}
 }
 

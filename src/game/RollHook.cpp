@@ -8,9 +8,11 @@
 #include "game/SharedRoll.h"
 #include "game/TextureFlush.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <format>
@@ -66,6 +68,7 @@ namespace RollHook
 		// The session (main thread writes, the resolver's thread reads).
 		std::atomic<std::uint64_t> sessionId{ 0 };
 		std::atomic<std::uint16_t> sessionLevel{ 0 };
+		std::atomic<std::uint16_t> sessionLegendary{ 0 };  // the legendary chance multiplier, thousandths; 0 = our difficulty's
 		std::atomic<std::uint8_t>  rule{ static_cast<std::uint8_t>(Protocol::NpcLevelRule::kOwn) };
 
 		// The plugins' names (OnDataReady), by load order slot: a form's key whatever the load order.
@@ -192,6 +195,10 @@ namespace RollHook
 			static REL::Relocation<LegendaryMultsFn> legendaryMults{ LEGENDARY_MULTS };
 			float                                    count = 1.0f;
 			legendaryMults(difficulty(), &a_out.legendaryMult, &count);
+			// The session's (sLegendaryDifficulty: the average of the games there, or the host's), where it has one.
+			if (const auto session = sessionLegendary.load(std::memory_order_relaxed); session != 0) {
+				a_out.legendaryMult = static_cast<float>(session) / 1000.0f;
+			}
 			a_out.legendaryAllowed = !a_ref->IsDead(false) && (a_ref->GetFormFlags() & DELETED_FLAG) == 0;
 		}
 
@@ -573,17 +580,68 @@ namespace RollHook
 		REX::INFO("RollHook: session {:016X}, NPC level rule {} ({})", a_sessionId, SessionLevel::Name(a_rule), installed ? (enabled ? "hooked" : "off after a fault") : "not hooked");
 	}
 
-	void SetSessionLevel(std::uint16_t a_level)
+	void SetSessionWorld(const Protocol::SessionWorld& a_world)
 	{
-		if (sessionLevel.exchange(a_level) != a_level) {
-			REX::INFO("RollHook: the session's NPC level is {}", a_level);
+		if (sessionLevel.exchange(a_world.level) != a_world.level) {
+			REX::INFO("RollHook: the session's NPC level is {}", a_world.level);
 		}
+		if (sessionLegendary.exchange(a_world.legendaryMult) != a_world.legendaryMult) {
+			if (a_world.legendaryMult != 0) {
+				REX::INFO("RollHook: the session's legendary chance is x{:.3f} (our difficulty's: x{:.3f})", a_world.legendaryMult / 1000.0, OwnDifficulty().legendaryMult / 1000.0);
+			} else {
+				REX::INFO("RollHook: the legendary chance is our difficulty's");
+			}
+		}
+	}
+
+	namespace
+	{
+		void ReadDifficultyUnguarded(std::int32_t& a_level, float& a_chance)
+		{
+			static REL::Relocation<DifficultyFn>     difficulty{ DIFFICULTY };
+			static REL::Relocation<LegendaryMultsFn> legendaryMults{ LEGENDARY_MULTS };
+			float                                    count = 1.0f;
+			a_level = difficulty();
+			legendaryMults(a_level, &a_chance, &count);
+		}
+
+		bool ReadDifficultyGuarded(std::int32_t* a_level, float* a_chance)
+		{
+			__try {
+				ReadDifficultyUnguarded(*a_level, *a_chance);
+				return true;
+			} __except (1) {
+				return false;
+			}
+		}
+
+		bool ReadDifficulty(Difficulty* a_out)
+		{
+			std::int32_t level = -1;
+			float        chance = 1.0f;
+			if (!ReadDifficultyGuarded(&level, &chance) || level < 0 || level > Protocol::MAX_DIFFICULTY || !std::isfinite(chance) || chance <= 0.0f) {
+				return false;
+			}
+			a_out->level = static_cast<std::uint8_t>(level);
+			a_out->legendaryMult = static_cast<std::uint16_t>((std::min)(std::lround(chance * 1000.0f), static_cast<long>(Protocol::MAX_LEGENDARY_MULT)));
+			return true;
+		}
+	}
+
+	Difficulty OwnDifficulty()
+	{
+		Difficulty out;
+		if (!ReadDifficulty(&out)) {
+			return {};
+		}
+		return out;
 	}
 
 	void Clear()
 	{
 		sessionId = 0;
 		sessionLevel = 0;
+		sessionLegendary = 0;
 		rule = static_cast<std::uint8_t>(Protocol::NpcLevelRule::kOwn);
 		{
 			std::scoped_lock lock{ storeLock };
@@ -697,9 +755,10 @@ namespace RollHook
 			std::scoped_lock lock{ storeLock };
 			kept = store.size();
 		}
-		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={}",
+		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
 			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), notWhole.load(), unconsumed.load(), levelsSet.load(),
-			prewritten.load(), differ.load(), faults.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())));
+			prewritten.load(), differ.load(), faults.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
+			sessionLegendary.load() ? std::format("{:.3f}", sessionLegendary.load() / 1000.0) : std::string{ "own" });
 	}
 
 	std::string DescribePick(RE::TESObjectREFR* a_ref)

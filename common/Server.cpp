@@ -510,9 +510,11 @@ void Server::Run()
 	// the spawn. At most Protocol::MAX_SESSION_ROLLS.
 	std::unordered_map<std::uint32_t, Protocol::NpcIdentity> npcIdentities;
 	bool                                                     rollsFullLogged = false;
-	// The session's NPC level (common/SessionLevel.h, the host's rule options.rules.npcLevel): the level every game rolls
-	// a leveled NPC at. Saved with the session; told after each welcome and whenever it changes (kSessionWorld).
+	// The session's NPC level and legendary chance multiplier (common/SessionLevel.h, the host's rules
+	// options.rules.npcLevel and legendary): what every game rolls a leveled NPC at. Saved with the session; told after
+	// each welcome and whenever either changes (kSessionWorld).
 	std::uint16_t                                            sessionLevel = 0;
+	std::uint16_t                                            sessionLegendary = 0;
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
@@ -650,8 +652,9 @@ void Server::Run()
 				npcIdentities[identity.refId] = identity;
 			}
 			sessionLevel = saved->npcLevel;
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others, {} NPC rolls, NPC level {})",
-				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount(), npcIdentities.size(), sessionLevel));
+			sessionLegendary = saved->legendaryMult;
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
+				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -711,6 +714,7 @@ void Server::Run()
 		}
 		std::ranges::sort(snapshot.npcIdentities, {}, &Protocol::NpcIdentity::refId);  // the same session, the same file
 		snapshot.npcLevel = sessionLevel;
+		snapshot.legendaryMult = sessionLegendary;
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
@@ -747,6 +751,7 @@ void Server::Run()
 		npcIdentities.clear();
 		rollsFullLogged = false;
 		sessionLevel = 0;
+		sessionLegendary = 0;
 		workshop.Clear();
 		drops.Clear();
 		storage.Clear();
@@ -841,27 +846,42 @@ void Server::Run()
 		}
 	};
 
-	// The session's NPC level after the players' statuses (common/SessionLevel.h): told to everyone when it changes.
-	// Without a host game (a dedicated server) the host rule has no host: it is the highest.
-	const auto updateSessionLevel = [&] {
-		auto rule = options.rules.Clamped().npcLevel;
-		if (rule == Protocol::NpcLevelRule::kHost && options.hostIdentity == 0) {
-			rule = Protocol::NpcLevelRule::kHighest;
-		}
-		std::vector<SessionLevel::Player> levels;
-		for (const auto& [key, other] : players) {
-			if (other.welcomed && other.status) {
-				levels.push_back({ other.status->level, other.local });
+	// The session's NPC level and legendary chance after the statuses of the players here (common/SessionLevel.h; not
+	// a_leaving's, who is on their way out): told to everyone when either changes. Without a host game (a dedicated
+	// server) the host rules have no host: the level is the highest, the legendary chance the average.
+	const auto updateSessionLevel = [&](ConnectionKey a_leaving) {
+		const auto rules = options.rules.Clamped();
+		auto       rule = rules.npcLevel;
+		auto       legendaryRule = rules.legendary;
+		if (options.hostIdentity == 0) {
+			if (rule == Protocol::NpcLevelRule::kHost) {
+				rule = Protocol::NpcLevelRule::kHighest;
+			}
+			if (legendaryRule == Protocol::LegendaryRule::kHost) {
+				legendaryRule = Protocol::LegendaryRule::kAverage;
 			}
 		}
-		const auto next = SessionLevel::Next(rule, sessionLevel, levels);
-		if (next == sessionLevel) {
+		std::vector<SessionLevel::Player> here;
+		for (const auto& [key, other] : players) {
+			if (key != a_leaving && other.welcomed && other.status) {
+				here.push_back({ other.status->level, other.local, other.status->legendaryMult });
+			}
+		}
+		const auto level = SessionLevel::Next(rule, sessionLevel, here);
+		const auto legendary = SessionLevel::NextLegendary(legendaryRule, sessionLegendary, here);
+		if (level == sessionLevel && legendary == sessionLegendary) {
 			return;
 		}
-		log(std::format("server: the session's NPC level is {} (was {}, rule {})", next, sessionLevel, SessionLevel::Name(rule)));
-		sessionLevel = next;
+		if (level != sessionLevel) {
+			log(std::format("server: the session's NPC level is {} (was {}, rule {})", level, sessionLevel, SessionLevel::Name(rule)));
+		}
+		if (legendary != sessionLegendary) {
+			log(std::format("server: the session's legendary chance is x{:.3f} (was x{:.3f}, rule {})", legendary / 1000.0, sessionLegendary / 1000.0, SessionLevel::Name(legendaryRule)));
+		}
+		sessionLevel = level;
+		sessionLegendary = legendary;
 		touched();
-		broadcast(Protocol::Encode(Protocol::SessionWorld{ sessionLevel }), true, 0);
+		broadcast(Protocol::Encode(Protocol::SessionWorld{ sessionLevel, sessionLegendary }), true, 0);
 	};
 
 	const auto welcomedCount = [&] {
@@ -1313,6 +1333,10 @@ void Server::Run()
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
 		// wait for their next record (common/DropStore.h).
 		drops.DropOffers(a_player.id);
+		// An average of the players here is one without them now.
+		if (a_player.welcomed) {
+			updateSessionLevel(a_player.key);
+		}
 		objectMovers.Leave(a_player.id);
 		// They view no storage now, and what their game keeps closes to friends until it lists it again.
 		tellViewsClosed(storage.Left(a_player.id));
@@ -1494,8 +1518,14 @@ void Server::Run()
 		a_player.worldAsked = 1;
 		a_player.storageSettled = !options.rules.sharedStorage;
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
-		// The level the session's NPCs are rolled at, before any of them (none with the rule "own").
-		send(a_player.key, Protocol::Encode(Protocol::SessionWorld{ options.rules.Clamped().npcLevel == Protocol::NpcLevelRule::kOwn ? std::uint16_t{ 0 } : sessionLevel }), true);
+		// The level and legendary chance the session's NPCs are rolled at, before any of them (none with the rule "own").
+		{
+			const auto rules = options.rules.Clamped();
+			send(a_player.key,
+				Protocol::Encode(Protocol::SessionWorld{ rules.npcLevel == Protocol::NpcLevelRule::kOwn ? std::uint16_t{ 0 } : sessionLevel,
+					rules.legendary == Protocol::LegendaryRule::kOwn ? std::uint16_t{ 0 } : sessionLegendary }),
+				true);
+		}
 		// Whose game keeps each storage container, ahead of the world state: their game judges its changes there by it.
 		if (options.rules.sharedStorage) {
 			sendStorageOwners(storage.Owners(), a_player.key);
@@ -3206,7 +3236,7 @@ void Server::Run()
 		status->playerId = a_player.id;
 		a_player.status = *status;
 		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
-		updateSessionLevel();
+		updateSessionLevel(0);
 	};
 
 	// The session's clock is the host's: the host's own game, else the player here longest.

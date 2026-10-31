@@ -37,8 +37,18 @@ namespace RollHook
 	// Welcomed into a session (main thread): its id seeds every roll; a_rule is the host's sNpcLevel.
 	void OnWelcome(std::uint64_t a_sessionId, Protocol::NpcLevelRule a_rule);
 
-	// The session's NPC level (kSessionWorld): 0 = none (each game its own player's).
-	void SetSessionLevel(std::uint16_t a_level);
+	// The session's NPC level and legendary chance multiplier (kSessionWorld): 0 = none for either (each game its own
+	// player's level, its own difficulty's multiplier).
+	void SetSessionWorld(const Protocol::SessionWorld& a_world);
+
+	// Our game's difficulty (RE::DifficultyLevel, Protocol::NO_DIFFICULTY if it can't be read) and the legendary chance
+	// multiplier it gives, in thousandths (0 if it can't be read): reported in our status (Party).
+	struct Difficulty
+	{
+		std::uint8_t  level = Protocol::NO_DIFFICULTY;
+		std::uint16_t legendaryMult = 0;
+	};
+	[[nodiscard]] Difficulty OwnDifficulty();
 
 	// The session ended: back to the game's own rolls.
 	void Clear();

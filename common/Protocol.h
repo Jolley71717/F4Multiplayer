@@ -39,9 +39,11 @@ namespace Protocol
 	// 56: a hit on a copy is a numbered request the game that runs the NPC answers (ActorHealth::seq and playerId;
 	// DamageAnswer: kReportDamageAnswer, kDamageAnswer), and the server sends damage to the runner alone
 	// (docs/HEALTH-SYNC.md). 0.10.0 (55) is refused at the hello.
-	// 57: one roll per leveled NPC for the session (docs/SHARED-ROLLS.md): the host's NPC level rule in the welcome
-	// (SessionRules::npcLevel, a byte after the limits), the session's NPC level (kSessionWorld: SessionWorld), and the
-	// server keeps every NPC's roll for the session's life and tells a joiner all of them. 0.10.1 (56) is refused at the hello.
+	// 57: one roll per leveled NPC for the session (docs/SHARED-ROLLS.md): the host's NPC level and legendary chance rules
+	// in the welcome (SessionRules::npcLevel and legendary, a byte each after the limits), each game's difficulty and its
+	// legendary chance multiplier in its status (PlayerStatus::difficulty, legendaryMult), the session's NPC level and
+	// multiplier (kSessionWorld: SessionWorld), and the server keeps every NPC's roll for the session's life and tells a
+	// joiner all of them. 0.10.1 (56) is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 57;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -370,10 +372,21 @@ namespace Protocol
 	enum class NpcLevelRule : std::uint8_t
 	{
 		kOwn = 0,      // each game its own player's: the rolls are made the same only by the reports (before 0.10.2's way)
-		kHighest = 1,  // the highest any player has had in the session (the default)
+		kHighest = 1,  // the highest any player has had in the session
+		kHost = 2,     // the host's
+		kAverage = 3,  // the mean of the players' here now, rounded (the default)
+	};
+	inline constexpr std::uint8_t NPC_LEVEL_RULES = 4;
+
+	// The legendary chance's multiplier every game rolls leveled NPCs with (sLegendaryDifficulty; common/SessionLevel.h):
+	// the game's own comes from its difficulty (Survival's is higher than Normal's), so each player's game had its own.
+	enum class LegendaryRule : std::uint8_t
+	{
+		kOwn = 0,      // each game its own difficulty's
+		kAverage = 1,  // the mean of the multipliers of the players here now (the default)
 		kHost = 2,     // the host's
 	};
-	inline constexpr std::uint8_t NPC_LEVEL_RULES = 3;
+	inline constexpr std::uint8_t LEGENDARY_RULES = 3;
 
 	struct SessionRules
 	{
@@ -417,7 +430,9 @@ namespace Protocol
 
 		// Leveled NPCs (src/game/SharedRoll.h): the level every game rolls them at (sNpcLevel; protocol 57, a byte of its own
 		// after the limits). With kOwn each game rolls at its own player's level and only the reports make the rolls agree.
-		NpcLevelRule npcLevel = NpcLevelRule::kHighest;
+		NpcLevelRule npcLevel = NpcLevelRule::kAverage;
+		// Their legendary chance (sLegendaryDifficulty; protocol 57, the byte after npcLevel): whose difficulty's multiplier.
+		LegendaryRule legendary = LegendaryRule::kAverage;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -435,7 +450,10 @@ namespace Protocol
 			out.reviveWindowMinutes = (std::min)(reviveWindowMinutes, MAX_REVIVE_WINDOW);
 			out.downCooldownSeconds = (std::min)(downCooldownSeconds, MAX_DOWN_COOLDOWN);
 			if (static_cast<std::uint8_t>(npcLevel) >= NPC_LEVEL_RULES) {
-				out.npcLevel = NpcLevelRule::kHighest;
+				out.npcLevel = NpcLevelRule::kAverage;
+			}
+			if (static_cast<std::uint8_t>(legendary) >= LEGENDARY_RULES) {
+				out.legendary = LegendaryRule::kAverage;
 			}
 			return out;
 		}
@@ -1618,6 +1636,10 @@ namespace Protocol
 	}
 
 	// playerId is ignored client -> server in all of these.
+	inline constexpr std::uint8_t  NO_DIFFICULTY = 0xFF;
+	inline constexpr std::uint8_t  MAX_DIFFICULTY = 6;
+	inline constexpr std::uint16_t MAX_LEGENDARY_MULT = 10000;  // 10x, in thousandths: past any difficulty's
+
 	struct PlayerStatus
 	{
 		std::uint32_t playerId = 0;
@@ -1644,6 +1666,11 @@ namespace Protocol
 		// They lend a frame they parked to a friend who asks (their bLendPowerArmor; protocol 55): the server passes on
 		// a friend's kBorrowFrame to them only then.
 		bool lends = false;
+		// Their game's difficulty (RE::DifficultyLevel, 0 Very Easy to 6 Survival; NO_DIFFICULTY unknown) and the legendary
+		// chance multiplier it gives, in thousandths (0 unknown; protocol 57): the session's legendary chance is made of
+		// these (sLegendaryDifficulty, common/SessionLevel.h).
+		std::uint8_t  difficulty = NO_DIFFICULTY;
+		std::uint16_t legendaryMult = 0;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -2417,6 +2444,7 @@ namespace Protocol
 		w.U16(rules.reviveWindowMinutes);
 		w.U16(rules.downCooldownSeconds);
 		w.U8(static_cast<std::uint8_t>(rules.npcLevel));  // protocol 57
+		w.U8(static_cast<std::uint8_t>(rules.legendary));
 		return w.Data();
 	}
 
@@ -2449,10 +2477,12 @@ namespace Protocol
 			rules.reviveWindowMinutes = r.U16();
 			rules.downCooldownSeconds = r.U16();
 			const auto npcLevel = r.U8();  // protocol 57
+			const auto legendary = r.U8();
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
-			rules.npcLevel = npcLevel < NPC_LEVEL_RULES ? static_cast<NpcLevelRule>(npcLevel) : NpcLevelRule::kHighest;
+			rules.npcLevel = npcLevel < NPC_LEVEL_RULES ? static_cast<NpcLevelRule>(npcLevel) : NpcLevelRule::kAverage;
+			rules.legendary = legendary < LEGENDARY_RULES ? static_cast<LegendaryRule>(legendary) : LegendaryRule::kAverage;
 			msg.rules = rules.Clamped();
 		}
 		return msg;
@@ -4114,13 +4144,15 @@ namespace Protocol
 		return msg;
 	}
 
-	// The session's NPC level (protocol 57, common/SessionLevel.h): the level every game rolls a leveled NPC at, server ->
-	// client whenever it changes and after the welcome. 0 = none (the host's rule is "own": each game its own player's).
+	// The session's NPC level and legendary chance multiplier (protocol 57, common/SessionLevel.h): what every game rolls
+	// a leveled NPC at, server -> client whenever either changes and after the welcome. 0 = none for either (the host's
+	// rule is "own": each game its own player's level, or its own difficulty's multiplier).
 	inline constexpr std::size_t MAX_SESSION_ROLLS = 4096;  // the NPC rolls the server keeps for a session
 
 	struct SessionWorld
 	{
 		std::uint16_t level = 0;
+		std::uint16_t legendaryMult = 0;  // thousandths (1000 = 1x, Normal's), 0 = none
 
 		bool operator==(const SessionWorld&) const = default;
 	};
@@ -4129,6 +4161,7 @@ namespace Protocol
 	{
 		Writer w{ MessageType::kSessionWorld };
 		w.U16(a_msg.level);
+		w.U16(a_msg.legendaryMult);
 		return w.Data();
 	}
 
@@ -4138,7 +4171,8 @@ namespace Protocol
 		r.U8();
 		SessionWorld msg;
 		msg.level = r.U16();
-		if (!r.Ok() || !r.AtEnd() || msg.level > MAX_IDENTITY_LEVEL) {
+		msg.legendaryMult = r.U16();
+		if (!r.Ok() || !r.AtEnd() || msg.level > MAX_IDENTITY_LEVEL || msg.legendaryMult > MAX_LEGENDARY_MULT) {
 			return std::nullopt;
 		}
 		return msg;
@@ -4353,6 +4387,8 @@ namespace Protocol
 			w.F32(seat.z);
 		}
 		w.U8(a_msg.menu);
+		w.U8(a_msg.difficulty);  // protocol 57
+		w.U16(a_msg.legendaryMult);
 		return w.Data();
 	}
 
@@ -4396,6 +4432,11 @@ namespace Protocol
 			msg.seat = seat;
 		}
 		msg.menu = r.U8();
+		msg.difficulty = r.U8();
+		msg.legendaryMult = r.U16();
+		if ((msg.difficulty > MAX_DIFFICULTY && msg.difficulty != NO_DIFFICULTY) || msg.legendaryMult > MAX_LEGENDARY_MULT) {
+			return std::nullopt;
+		}
 		// A frame is parked, and a seat is told, only while they are out of power armor (a frame is furniture too, but
 		// a frame's own path handles that).
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || msg.menu > MenuKind::kMax || (msg.powerArmorFrameRef != 0 && !IsActorRef(msg.powerArmorFrameRef)) ||

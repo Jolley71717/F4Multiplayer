@@ -10,7 +10,9 @@
 // (bReviveOutOfCombat), --downed-crawl (bDownedCrawl), --slow-vats (bRealTimeVats = false), --share-guest-builds
 // (bShareGuestBuilds; with no host game, every player is a guest), --container-gifts
 // (bContainerGifts: a weapon or armor put in a container is given to whoever takes it first), --save-on-down (bSaveOnDown),
-// --npc-level highest|host|own (sNpcLevel: the level every game rolls leveled NPCs at, docs/SHARED-ROLLS.md).
+// --npc-level average|highest|host|own (sNpcLevel: the level every game rolls leveled NPCs at, docs/SHARED-ROLLS.md),
+// --legendary-difficulty average|host|own (sLegendaryDifficulty: whose difficulty's legendary chance they roll with;
+// with no host game, host is the average).
 // --ban-file: where the bans are kept, so they outlive the server; without it they last until it stops.
 // While it runs, the console takes the host controls (Server::Console): help, players, kick <n>, ban <n>, bans,
 // unban <n | ~alias | all>, password <text> (password - removes it), lock and unlock. The answers go to the output,
@@ -120,6 +122,9 @@ int main(int argc, char* argv[])
 			options.rules.saveOnDown = true;
 		} else if (const auto rule = hasValue ? SessionLevel::Parse(argv[i + 1]) : std::nullopt; arg == "--npc-level" && rule) {
 			options.rules.npcLevel = *rule;
+			++i;
+		} else if (const auto legendary = hasValue ? SessionLevel::ParseLegendary(argv[i + 1]) : std::nullopt; arg == "--legendary-difficulty" && legendary) {
+			options.rules.legendary = *legendary;
 			++i;
 		} else if (arg == "--ban-file" && hasValue) {
 			options.banFile = argv[++i];

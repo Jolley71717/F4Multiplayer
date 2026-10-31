@@ -796,7 +796,7 @@ namespace Session
 				break;
 			case MessageType::kSessionWorld:
 				if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
-					RollHook::SetSessionLevel(msg->level);
+					RollHook::SetSessionWorld(*msg);
 				}
 				break;
 			case MessageType::kPlayerFace:

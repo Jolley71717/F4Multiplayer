@@ -11,7 +11,7 @@
 #
 # What it checks (PASS, FAIL, or SKIP with the reason), each with the lines it read:
 #  1 install     rollHook=hooked and rollFaults=0 in both games (the hooks' bytes and slot matched 1.11.240)
-#  2 level       npcLevel and npcLevelRule the same in both games, npcLevel > 0 unless the rule is own
+#  2 level       npcLevel, npcLevelRule and legendaryMult the same in both games, npcLevel > 0 unless the rule is own
 #  3 agreement   every plugin NPC near the host's player (not dead, not FF): `rolls show` the same roll in both games
 #  4 differ      rollsDiffer=0 in both after the agreement pass (no runner's report differed from what a game built)
 #  5 spawn copy  -SpawnBase: the host spawns a leveled NPC; the guest's copy is built from the host's roll as it is
@@ -130,8 +130,10 @@ if (-not $installed) {
 $rule = Field $hostCounters 'npcLevelRule'
 $hostLevel = Field $hostCounters 'npcLevel'
 $guestLevel = Field $guestCounters 'npcLevel'
-$levelOk = $hostLevel -eq $guestLevel -and $rule -eq (Field $guestCounters 'npcLevelRule') -and ($rule -eq 'own' -or [int]$hostLevel -gt 0)
-Report 'level' $(if ($levelOk) { 'PASS' } else { 'FAIL' }) "host npcLevel=$hostLevel guest npcLevel=$guestLevel rule=$rule"
+$hostMult = Field $hostCounters 'legendaryMult'
+$guestMult = Field $guestCounters 'legendaryMult'
+$levelOk = $hostLevel -eq $guestLevel -and $rule -eq (Field $guestCounters 'npcLevelRule') -and ($rule -eq 'own' -or [int]$hostLevel -gt 0) -and $hostMult -eq $guestMult
+Report 'level' $(if ($levelOk) { 'PASS' } else { 'FAIL' }) "host npcLevel=$hostLevel legendaryMult=$hostMult guest npcLevel=$guestLevel legendaryMult=$guestMult rule=$rule (average: the mean of both players' levels)"
 
 # ---- 3, 4 agreement and differ ----------------------------------------------------------------------------------
 Wait-Enter 'Walk both players (real movement, no teleport) to a place with leveled NPCs, within sight of each other'
