@@ -164,6 +164,10 @@ namespace Config
 				settings.compassMarkers = ParseBool(value);
 			} else if (key == "bMenuIcons") {
 				settings.menuIcons = ParseBool(value);
+			} else if (key == "bFriendsOnMap") {
+				settings.friendsOnMap = ParseBool(value);
+			} else if (key == "bFriendsOnMapNames") {
+				settings.friendsOnMapNames = ParseBool(value);
 			} else if (key == "bSyncTime") {
 				settings.syncTime = ParseBool(value);
 			} else if (key == "bSaveSession") {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/PlayerMarks.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>

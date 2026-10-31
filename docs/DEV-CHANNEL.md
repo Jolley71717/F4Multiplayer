@@ -58,6 +58,10 @@ game's own code can:
   of drawn at their size, added to their parent again after each move, made anew on each move, or all
   drawn into the parent's own graphics. `net status` names each friend's menu kind and how often their
   stand-in raised and lowered its Pip-Boy (`menu= pipboyRaises= lowers=`).
+- **Friends on the Pip-Boy's maps** (DESIGN.md, Map): `friendmap` says, for the world and the local map, how many
+  markers the page has and how many were read, whether the fit came out (`used`, `worst` in pixels, `fallback` for a
+  local map taken at its texture's size), its scale and offset, the page's marker scale, and the friends drawn; and
+  where each friend goes (friend IDs, no names). Run it with the map up.
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.
