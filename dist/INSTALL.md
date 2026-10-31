@@ -172,6 +172,11 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
   `bReviveOutOfCombat` (false), `bDownedCrawl` (false) and `bSaveOnDown` (false). Guests play by the host's. See
   [Going down](#going-down).
+- `sNpcLevel` (highest): the level every game builds leveled enemies at (raiders, ghouls, bloatflies, legendaries),
+  so you all meet the same ones. `highest` is the highest level anyone in the session has reached, `host` is the
+  host's, and `own` lets each game use its own player's level, as before (you may then see different enemies). A
+  low-level friend playing with a high-level one meets the high-level enemies. Enemies your game built during a
+  session keep that level in your save. The dedicated server takes it as `--npc-level`.
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
 
