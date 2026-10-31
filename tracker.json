@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T18:32:45+00:00",
+ "updated": "2026-10-31T20:37:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -532,8 +532,9 @@
    "title": "Legendary enemies differ between players",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Reported by a 5-player group"
+   "stage": 2,
+   "note": "Fix built: every game builds the same enemy, legendary or not; waiting for a test in a game",
+   "pr": 236
   },
   {
    "id": "ikzy",
@@ -606,8 +607,9 @@
    "title": "Some NPCs appear in the wrong place or stacked on each other",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Looked into: the likely causes are a random encounter both games rolled (its raiders doubled, one on top of the other) and an NPC brought over landing on the player; two fixes in the works."
+   "stage": 2,
+   "note": "Fix built for copies made in each game; waiting for a test in a game",
+   "pr": 236
   },
   {
    "id": "krne",
