@@ -320,6 +320,9 @@ namespace CopyHealth
 					entry.ours *= scale;
 					entry.lost *= scale;
 					entry.parked *= scale;
+					if (entry.lastReport) {
+						*entry.lastReport *= scale;
+					}
 				}
 				entry.maximum = a_maximum;
 			}
@@ -448,12 +451,17 @@ namespace CopyHealth
 			float health = a_health;
 			if (!a_copy) {
 				entry.inFlight.clear();  // ours to run: its health here is the truth, whatever was on its way
-			} else if (const float onWay = OnWay(a_id); onWay > 0.0f && a_health > MIN_LEFT) {
-				// What our hits took that is still on its way (sent and unanswered, or booked this frame and not yet sent)
-				// comes off the report: the runner's game hasn't taken it off yet. A refusal gives it back to the report's
-				// figure, so the copy never ends up above the runner's word by a refunded hit. Never below MIN_LEFT: the
-				// NPC's death comes as its own report (a report at or under MIN_LEFT itself is set as it comes).
-				health = (std::max)(MIN_LEFT, a_health - onWay);
+				entry.lastReport.reset();
+			} else {
+				entry.lastReport = a_health;
+				if (const float onWay = OnWay(a_id); onWay > 0.0f && a_health > MIN_LEFT) {
+					// What our hits took that is still on its way (sent and unanswered, or booked this frame and not yet sent)
+					// comes off the report: the runner's game hasn't taken it off yet. A refusal gives it back, up to the
+					// report's figure (Refundable), so the copy never ends up above the runner's word by a refunded hit. Never
+					// below MIN_LEFT: the NPC's death comes as its own report (a report at or under MIN_LEFT itself is set as
+					// it comes).
+					health = (std::max)(MIN_LEFT, a_health - onWay);
+				}
 			}
 			entry.health = health;
 			entry.dropSince.reset();
@@ -479,15 +487,17 @@ namespace CopyHealth
 			return sent;
 		}
 
-		// The same, unnumbered, for the older tests and the sim: what the hits took (0: nothing), sent now.
-		float TakeOurs(std::uint32_t a_id)
+		// What our hits took that can't be sent (the copy's maximum reads 0): forgotten, with nothing in flight for it.
+		void Discard(std::uint32_t a_id)
 		{
-			const auto sent = TakeOurs(a_id, Clock::now());
-			return sent ? sent->amount : 0.0f;
+			if (const auto it = entries.find(a_id); it != entries.end()) {
+				it->second.ours = 0.0f;
+			}
 		}
 
 		// The answer to a damage of ours (its seq) came: what to give the copy back (0: nothing, it was taken off, or it is
-		// ours to run now). An answer to nothing we sent (answered already, or lost) gives nothing back.
+		// ours to run now). An answer to nothing we sent (answered already, or lost) gives nothing back. Never more than
+		// takes the copy to the runner's last word (Refundable).
 		float Answered(std::uint32_t a_id, std::uint32_t a_seq, Answer a_answer)
 		{
 			const auto it = entries.find(a_id);
@@ -506,7 +516,7 @@ namespace CopyHealth
 				return 0.0f;
 			}
 			++refused;
-			return amount;
+			return Refundable(it->second, amount);
 		}
 
 		// What is on its way for the copy: sent and not answered yet.
@@ -562,7 +572,7 @@ namespace CopyHealth
 				entry.lost += a_flight.amount;
 				return true;
 			});
-			const float lost = std::exchange(entry.lost, 0.0f);
+			const float lost = Refundable(entry, std::exchange(entry.lost, 0.0f));
 			lostTotal += lost;
 			return lost;
 		}
@@ -612,6 +622,7 @@ namespace CopyHealth
 			std::vector<Flight>              inFlight;         // sent (TakeOurs) and not answered yet (Answered)
 			float                            lost = 0.0f;      // given up on, not yet given back (TakeLost)
 			float                            parked = 0.0f;    // refused and owed to the copy, not yet given back (Park, TakeParked)
+			std::optional<float>             lastReport;       // the runner's last word (Heard, on a copy): no refund takes the copy past it
 			std::optional<std::pair<float, Clock::time_point>> reportedDrop;  // a drop a report found with no hit of ours booked yet (Heard): ours if a hit's event follows within JUDGE_AFTER
 			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
 			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)
@@ -622,6 +633,16 @@ namespace CopyHealth
 
 		// A gain smaller than this is not taken back (yet).
 		static float RaiseSlack(const Entry& a_entry) { return (std::max)(SLACK, RAISE_SHARE * a_entry.maximum); }
+
+		// How much of a_amount a refund may give the copy: not past the runner's last word, where it stands (a report
+		// under MIN_LEFT, or more on its way than it had, left the copy above the word less its hits).
+		static float Refundable(const Entry& a_entry, float a_amount)
+		{
+			if (!a_entry.lastReport || !a_entry.health) {
+				return a_amount;
+			}
+			return std::clamp(a_amount, 0.0f, (std::max)(0.0f, *a_entry.lastReport - *a_entry.health));
+		}
 
 		// Our hits around the drop said nothing of what they took: all of it is ours. Not when one of them did: a hit event
 		// with no figure beside one with (a legendary's effect riding along with the shot, a blocked blow) adds nothing, so

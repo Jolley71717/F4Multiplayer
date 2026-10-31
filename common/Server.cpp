@@ -1776,6 +1776,30 @@ void Server::Run()
 			send(key, Protocol::Encode(a_answer, Protocol::MessageType::kDamageAnswer), true);
 		}
 	};
+	// Each numbered damage sent on, by whose it is and its number: the player it went to, who alone may answer it (a
+	// release or a takeover can cross it on the wire, so that player need not be the runner on record by then). Gone
+	// with the answer; a hit never answered stays until the table is full, which starts it over (the hitters' copies
+	// give those up as lost on their own).
+	constexpr std::size_t                              MAX_ROUTED_DAMAGE = 8192;
+	std::unordered_map<std::uint64_t, std::uint32_t>   routedDamage;
+	const auto                                         routeKey = [](std::uint32_t a_hitter, std::uint32_t a_seq) { return (std::uint64_t{ a_hitter } << 32) | a_seq; };
+	const auto                                         noteRouted = [&](std::uint32_t a_hitter, std::uint32_t a_seq, std::uint32_t a_to) {
+		if (a_seq == 0) {
+			return;
+		}
+		if (routedDamage.size() >= MAX_ROUTED_DAMAGE && !routedDamage.contains(routeKey(a_hitter, a_seq))) {
+			routedDamage.clear();
+		}
+		routedDamage[routeKey(a_hitter, a_seq)] = a_to;
+	};
+	const auto playerById = [&](std::uint32_t a_id) -> Player* {
+		for (auto& [key, other] : players) {
+			if (other.welcomed && !other.kicked && other.id == a_id) {
+				return &other;
+			}
+		}
+		return nullptr;
+	};
 
 	// A health report (kReportHealth: its health now, passed on as kActorHealth), or what the sender took off an NPC
 	// another game runs (kReportDamage, as kActorDamaged: the game that runs it takes it off). Both tell the server the
@@ -1856,6 +1880,7 @@ void Server::Run()
 			}
 			auto out = *health;
 			out.playerId = a_player.id;
+			noteRouted(a_player.id, health->seq, owner->second.playerId);
 			send(key, Protocol::Encode(out, Protocol::MessageType::kActorDamaged), true);
 			return;
 		}
@@ -1892,25 +1917,30 @@ void Server::Run()
 		if (!answer || answer->playerId == a_player.id || answer->playerId == 0) {
 			return;
 		}
+		// Only the game the damage was sent to answers it (routedDamage: the runner on record then, whoever runs the NPC
+		// now). Anyone else refusing a friend's hit would refund their copy a hit the runner took off, or have it sent
+		// on and taken off twice.
+		const auto routed = routedDamage.find(routeKey(answer->playerId, answer->seq));
+		if (routed == routedDamage.end() || routed->second != a_player.id) {
+			return;
+		}
 		const auto owner = actorOwners.find(answer->refId);
 		const auto now = Clock::now();
-		// Only the game the damage could have gone to answers it: the runner on record, or one that ran the NPC until a
-		// moment ago (noteRan: a release or a takeover crossed the damage). Anyone else refusing a friend's hit would
-		// refund their copy a hit the runner took off.
-		if ((owner == actorOwners.end() || owner->second.playerId != a_player.id) && !wasFighting(a_player, answer->refId, now)) {
-			return;
-		}
-		// A damage the answerer didn't echo as it was (none, or more than all of it) can't be sent on or stood by.
-		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner && !(answer->health > 0.0f && answer->health <= 1.0f)) {
-			auto out = *answer;
-			out.playerId = a_player.id;
-			out.why = Protocol::DamageAnswer::Why::kNoHealthThere;
-			out.health = std::clamp(answer->health, 0.0f, 1.0f);
-			answerDamage(answer->playerId, out);
-			return;
-		}
+		auto       out = *answer;
+		out.playerId = a_player.id;
 		if (answer->why == Protocol::DamageAnswer::Why::kNotTheRunner) {
-			if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
+			// A damage the answerer didn't echo as it was (none, or more than all of it) can't be sent on or stood by.
+			if (!(answer->health > 0.0f && answer->health <= 1.0f)) {
+				out.why = Protocol::DamageAnswer::Why::kNoHealthThere;
+				out.health = std::clamp(answer->health, 0.0f, 1.0f);
+			} else if (deadActors.contains(answer->refId)) {
+				// Dead for the session since it was sent on: nobody takes it, and the hitter's game is told the death again
+				// as for any report about the dead (remindDead).
+				out.why = Protocol::DamageAnswer::Why::kDeadInSession;
+				if (const auto hitter = playerById(answer->playerId)) {
+					remindDead(*hitter, answer->refId, now);
+				}
+			} else if (owner != actorOwners.end() && owner->second.playerId != a_player.id && owner->second.playerId != answer->playerId) {
 				if (const auto key = keyOfPlayer(owner->second.playerId)) {
 					++damageRerouted;
 					if (now - damageReroutedLogged >= DROPPED_DEATH_LOG_INTERVAL) {
@@ -1918,22 +1948,18 @@ void Server::Run()
 						log(std::format("server: damage on {:08X} from player {} sent on to player {}, who runs it now; player {} no longer does ({} sent on since the last such line)",
 							answer->refId, answer->playerId, owner->second.playerId, a_player.id, std::exchange(damageRerouted, 0)));
 					}
+					routed->second = owner->second.playerId;
 					send(key, Protocol::Encode(Protocol::ActorHealth{ answer->refId, answer->health, answer->seq, answer->playerId }, Protocol::MessageType::kActorDamaged), true);
 					return;
 				}
-			}
-			auto out = *answer;
-			out.playerId = a_player.id;
-			if (owner == actorOwners.end()) {
+				out.why = Protocol::DamageAnswer::Why::kNobodyRuns;  // the runner on record is gone; its NPCs are released in a moment
+			} else if (owner == actorOwners.end()) {
 				out.why = Protocol::DamageAnswer::Why::kNobodyRuns;
 			} else if (owner->second.playerId == answer->playerId) {
 				out.why = Protocol::DamageAnswer::Why::kYouRunIt;
 			}
-			answerDamage(answer->playerId, out);
-			return;
 		}
-		auto out = *answer;
-		out.playerId = a_player.id;
+		routedDamage.erase(routed);
 		answerDamage(answer->playerId, out);
 	};
 

@@ -48,9 +48,9 @@ wrong guess is now a local, immediate bounce rather than a later heal; **open** 
 | 5 | Runner drops: dead here, dead in its ledger, no such actor, no health | The hitter's copy and the runner's NPC are the same creature | They aren't after a cell reset in one game, a reload of an older save, or a crash mid-fight | closed for the heal (refused, given back, logged); the identity question itself is path 9 |
 | 6 | The server's event budget (500/s per player) | A player can't send more than that | A minigun on several copies plus loot and doors can | closed: an over-budget damage is refused, not dropped |
 | 7 | Dead ledger / SessionDeaths (each game) | A death learned from the session is final until the host's game offers the NPC alive | The host's game forgets a death on load only if it *saw the corpse in this run*; in a new run it kills the respawned NPC instead (F2a in the study). A joiner is reminded and kills its copy; the host is never told its damage was dropped | narrowed: the host's game is now told (refusal "dead for the session"); revival rule is path 9, open |
-| 8 | The server's dead list in the session file | What the file has dead is dead in the host's world | The host's cells reset (days pass), the host reloads an older save, the host starts a new character on the same file (hash check only) | open: see "What should persist" |
+| 8 | The server's dead list in the session file | What the file has dead is dead in the host's world | The host's cells reset (days pass), the host reloads an older save, the host starts a new character on the same file (hash check only) | open, but ruled out for s5ax on the rig (fix/s5ax: a reload with the same file, an older save and a console resurrect never healed anything): see "What should persist" |
 | 9 | Identity across respawns | A form id names one creature | A respawned NPC has the same id as the corpse the session remembers; the session can't tell them apart | open: game-time stamp on deaths (below) |
-| 10 | CopyWatch attribution (OwnersToDeal: explosion, throwable, spell-alone, "threw lately") | The hit event's flags tell a gun from a throw | Unverified flags on this runtime (the 0.9.0 regression was exactly this); a mod's weapon dealing damage through a spell | narrowed: a wrong call gives the drop back within 100 ms, visibly, and never sends it; it can no longer be healed later |
+| 10 | CopyWatch attribution: a drop with no hit event of ours is given back (and OwnersToDeal: explosion, throwable, spell-alone, "threw lately") | Every hit of ours comes with a hit event, and the flags tell a gun from a throw | **Reproduced on the rig for s5ax (fix/s5ax, PR #232):** the host's shot on a client-run copy fired no hit event at all (copyHits=0), so the drop was "no hit of ours" and given back; seen once, after a long stall behind the "Creations are loaded" box and a load while hosting; a 136-mod load order with another plugin eating hit events is the other suspect. Also: unverified flags on this runtime (the 0.9.0 regression), a mod's weapon dealing damage through a spell | narrowed: PR #232 widens attribution (a drop within 1 s of our shot at the aimed enemy, no hit event, nothing else hit it in 10 s, is ours); with this PR the attributed hit is then sent and answered; a drop still unattributed is given back within 100 ms, visibly and logged, never healed later |
 | 11 | Ghosts / BlastShield / GhostLedger | A copy is a ghost only while a friend's explosion lands | A stuck ghost (fixed in #194); while it lasts, the ghosted player's shots simply pass through | narrowed: the shot is never booked, so nothing is in flight; the symptom is "no damage", never "heal" |
 | 12 | Legendary mutation / DoT / restores (#187, #194) | A copy's health only moves by reports and our hits | The copy's own legendary heal; a bleed's ticks with no hit event | unchanged: a gain of its own is taken back (#187); an effect of ours is ours for 10 s (#194). Both local |
 | 13 | Load and cell reset | After a load the ledger is rebuilt from the world state before anything is offered | The world request can be refused (too many loads): the game carries on after 15 s with an empty ledger and the server keeps the host's offers unanswered ("worldStale") | open: part of path 8/9 |
@@ -110,6 +110,27 @@ needs a game-time field on `ActorDeath` and in the session file (a layout bump).
 
 Nothing else about NPCs should persist: not ownership (it doesn't), not health (the runner's save holds it), not
 spawn deaths (they don't).
+
+### Should a copy give health back at all? (the s5ax finding, PR #232)
+
+The one heal reproduced on the rig for s5ax was not a dropped delta but a hit that never had a hit event: CopyWatch
+saw the copy drop with "no hit of ours" and gave it back. That is the attribution rule, not the pipe. Three options:
+
+- **Never give back** (send every unexplained drop as our damage): wrong. The runner's game deals a copy's hazard
+  damage itself (the fire a Molotov leaves, radiation), and a friend's explosion is replayed here; sent as ours too,
+  the NPC takes those twice. The give-back exists for exactly those drops.
+- **Make a copy immune to everything but our hits** so nothing needs giving back: not possible with the engine's
+  ghost flag (a ghost passes our hits by too), which is why BlastShield ghosts only for the moment of a blast.
+- **Keep the give-back, attribute better, and make what is given back loud.** This is the design: PR #232's rule
+  (a drop within a second of our shot at the aimed enemy, with no hit event and nothing else hitting it, is ours)
+  widens attribution to cover the missing-event case; this PR then guarantees an attributed hit lands or bounces
+  with a reason; and a drop still given back is counted (`copyRestores=`) and logged with the last hit seen, so a
+  recurrence names itself.
+
+So **#232 is folded in, not superseded**: merge it first (small, reviewed, tested on the rig), then this PR on top
+(they touch different lines of `CopyWatch`; the only overlap is the counters string). #232's aim check is coarse
+(third person, VATS); with the loop closed, a wrong attribution there costs one refused hit and a log line, not a
+heal.
 
 ### Trade-offs
 

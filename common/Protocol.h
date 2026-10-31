@@ -3004,25 +3004,36 @@ namespace Protocol
 		return msg;
 	}
 
+	// A damage report (kReportDamage, kActorDamaged) carries its number and whose it is; a health report (the most
+	// frequent NPC message, to everyone) carries neither.
+	constexpr bool DamageNumbered(MessageType a_type)
+	{
+		return a_type == MessageType::kReportDamage || a_type == MessageType::kActorDamaged;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const ActorHealth& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
 		w.U32(a_msg.refId);
 		w.F32(a_msg.health);
-		w.U32(a_msg.seq);
-		w.U32(a_msg.playerId);
+		if (DamageNumbered(a_type)) {
+			w.U32(a_msg.seq);
+			w.U32(a_msg.playerId);
+		}
 		return w.Data();
 	}
 
 	inline std::optional<ActorHealth> DecodeActorHealth(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
-		r.U8();
+		const auto type = static_cast<MessageType>(r.U8());
 		ActorHealth msg;
 		msg.refId = r.U32();
 		msg.health = r.F32();
-		msg.seq = r.U32();
-		msg.playerId = r.U32();
+		if (DamageNumbered(type)) {
+			msg.seq = r.U32();
+			msg.playerId = r.U32();
+		}
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health)) {
 			return std::nullopt;
 		}

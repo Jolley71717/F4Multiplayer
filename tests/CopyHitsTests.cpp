@@ -33,6 +33,13 @@ namespace
 
 	constexpr auto FRAME = std::chrono::milliseconds{ 50 };
 
+	// What our hits took off the copy, sent now (CopyHealth::Book::TakeOurs): the amount, 0 for nothing.
+	float Took(CopyHealth::Book& a_book, std::uint32_t a_id, CopyHealth::Clock::time_point a_now)
+	{
+		const auto sent = a_book.TakeOurs(a_id, a_now);
+		return sent ? sent->amount : 0.0f;
+	}
+
 	// Health that went through a report: a fraction of the maximum on the wire.
 	bool Near(float a_health, float a_expected)
 	{
@@ -476,12 +483,12 @@ TEST("copy hits: a legendary weapon's bleed or burn put on a copy by our hit sta
 	book.OurHit(RAIDER_1, t0);
 	book.OurEffect(RAIDER_1, t0);
 	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 20.0f);
+	CHECK(Took(book, RAIDER_1, t0 + FRAME) == 20.0f);
 
 	// A tick a second and a half later, long after the hit's grace: ours, nothing given back.
 	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
 	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 5.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
 	CHECK(book.Health(RAIDER_1) == std::optional{ 75.0f });
 
 	// And so on to the end of the effect's window; a drop after it is something else's again.
@@ -490,11 +497,11 @@ TEST("copy hits: a legendary weapon's bleed or burn put on a copy by our hit sta
 		health -= 5.0f;
 		CHECK(book.Check(RAIDER_1, health, at) == 0.0f);
 		CHECK(book.Check(RAIDER_1, health, at + CopyHealth::JUDGE_AFTER) == 0.0f);
-		CHECK(book.TakeOurs(RAIDER_1) == 5.0f);
+		CHECK(Took(book, RAIDER_1, at + CopyHealth::JUDGE_AFTER) == 5.0f);
 	}
 	CHECK(book.Check(RAIDER_1, health - 5.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 }) == 0.0f);
 	CHECK(book.Check(RAIDER_1, health - 5.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
 }
 
 TEST("copy hits: a bleed of ours on a copy stops being ours once something else hits the copy, and what a friend's grenade took beyond our hits is given back")
@@ -506,14 +513,14 @@ TEST("copy hits: a bleed of ours on a copy stops being ours once something else 
 	book.OurHit(RAIDER_1, t0, 20.0f);
 	book.OurEffect(RAIDER_1, t0);
 	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 20.0f);
+	CHECK(Took(book, RAIDER_1, t0 + FRAME) == 20.0f);
 
 	// A fire in our world (a hazard's hit, no cause) reaches the copy: from then on a drop with no hit behind it may be
 	// the fire's as well as the bleed's, so it is given back as before.
 	book.OtherHit(RAIDER_1, t0 + milliseconds{ 2000 });
 	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 2500 }) == 0.0f);
 	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
 
 	// A friend's grenade set off here (its blow the owner's: OwnersBlow) beside our own shot: our shot's figure is ours,
 	// the rest the grenade's, given back; the NPC's own game deals the grenade's blow.
@@ -524,9 +531,9 @@ TEST("copy hits: a bleed of ours on a copy stops being ours once something else 
 	other.OtherHit(RAIDER_2, t0 + milliseconds{ 20 });
 	other.OwnersBlow(RAIDER_2, t0 + milliseconds{ 20 });
 	CHECK(other.Check(RAIDER_2, 30.0f, t0 + FRAME) == 0.0f);
-	CHECK(other.TakeOurs(RAIDER_2) == 20.0f);
+	CHECK(Took(other, RAIDER_2, t0 + FRAME) == 20.0f);
 	CHECK(other.Check(RAIDER_2, 30.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 50.0f);
-	CHECK(other.TakeOurs(RAIDER_2) == 0.0f);
+	CHECK(Took(other, RAIDER_2, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 0.0f);
 }
 
 TEST("copy hits: a report from the NPC's game during our bleed stands, and a tick given back never raises the copy above it")
@@ -552,7 +559,7 @@ TEST("copy hits: a report from the NPC's game during our bleed stands, and a tic
 	// Our next tick is from there, ours.
 	CHECK(book.Check(RAIDER_1, 55.0f, t0 + milliseconds{ 1500 }) == 0.0f);
 	CHECK(book.Check(RAIDER_1, 55.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 5.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
 
 	// A fire's hit ends the effect's claim: the next drop is given back, to where the copy stood, no higher.
 	book.OtherHit(RAIDER_1, t0 + milliseconds{ 2000 });
@@ -589,10 +596,10 @@ TEST("copy hits: a report that lands before the hit's event is heard does not he
 	CopyHealth::Book                    book;
 	book.Set(RAIDER_1, 100.0f);
 	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
-	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0) == 0.0f);
 	book.OurHit(RAIDER_1, t0 + milliseconds{ 16 }, 10.0f);
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));
+	CHECK(Near(Took(book, RAIDER_1, t0 + milliseconds{ 16 }), 10.0f));
 	CHECK(Near(*book.Health(RAIDER_1), 95.0f));
 }
 
@@ -604,11 +611,11 @@ TEST("copy hits: a drop a report found with no hit of ours after it is someone e
 	book.Set(RAIDER_1, 100.0f);
 	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 150 }, 100.0f) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 150 }) == 0.0f);
 	// Nor does a hit that comes long after take it.
 	book.OurHit(RAIDER_1, t0 + milliseconds{ 3000 }, 10.0f);
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 3000 }, 100.0f) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 3000 }) == 0.0f);
 }
 
 TEST("copy hits: a drop a report found with a hit of ours booked already is counted once")
@@ -621,7 +628,7 @@ TEST("copy hits: a drop a report found with a hit of ours booked already is coun
 	CHECK(book.Check(RAIDER_1, 90.0f, t0, 100.0f) == 0.0f);
 	book.Heard(RAIDER_1, 90.0f, 95.0f, t0 + milliseconds{ 5 }, true);
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 20 }, 100.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));  // in all, not 20
+	CHECK(Near(Took(book, RAIDER_1, t0 + milliseconds{ 20 }), 10.0f));  // in all, not 20
 }
 
 TEST("copy hits: a book pruned with a grace keeps what a hit booked in a frame the copy was out of sight")
@@ -639,7 +646,7 @@ TEST("copy hits: a book pruned with a grace keeps what a hit booked in a frame t
 	book.Prune(seenAt(RAIDER_1, t0 - seconds{ 1 }));
 	CHECK(book.Size() == 1);
 	CHECK(book.Check(RAIDER_1, 90.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER_1), 10.0f));
+	CHECK(Near(Took(book, RAIDER_1, t0 + milliseconds{ 16 }), 10.0f));
 
 	// Seen last 6 s ago: forgotten.
 	CopyHealth::Book gone;
@@ -659,5 +666,5 @@ TEST("copy hits: a drop a report found is not taken by a hit that comes long aft
 	// The copy had no 3D for a while: no Check between. A hit of ours 800 ms on is its own; the report's heal stands.
 	book.OurHit(RAIDER_1, t0 + milliseconds{ 800 }, 10.0f);
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 800 }, 100.0f) == 0.0f);
-	CHECK(book.TakeOurs(RAIDER_1) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 800 }) == 0.0f);
 }

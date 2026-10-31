@@ -331,15 +331,18 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 			CHECK(out->killed == killed);
 		}
 	}
+	// A damage report carries its number and whose it is; a health report, the most frequent NPC message, carries neither.
 	for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
+		const bool numbered = DamageNumbered(type);
 		const auto packet = Encode(ActorHealth{ REF_A, 0.625f, 41, 2 }, type);
 		CHECK(PeekType(packet) == type);
+		CHECK(packet.size() == (numbered ? 17u : 9u));
 		const auto out = DecodeActorHealth(packet);
 		REQUIRE(out);
 		CHECK(out->refId == REF_A);
 		CHECK(out->health == 0.625f);
-		CHECK(out->seq == 41);
-		CHECK(out->playerId == 2);
+		CHECK(out->seq == (numbered ? 41u : 0u));
+		CHECK(out->playerId == (numbered ? 2u : 0u));
 	}
 	// A damage answer: the hit's number and whose it was, applied or why not, and the damage as it was sent.
 	for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {

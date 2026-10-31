@@ -174,8 +174,11 @@ namespace ProtocolSamples
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
 			s.push_back({ "ActorDeath found dead", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .foundDead = true }, type), D(DecodeActorDeath) });
 		}
-		for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
-			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f, 7, 3 }, type), D(DecodeActorHealth) });
+		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
+			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });
+		}
+		for (const auto type : { MT::kReportDamage, MT::kActorDamaged }) {
+			s.push_back({ "ActorHealth damage", Encode(ActorHealth{ REF_A, 0.25f, 7, 3 }, type), D(DecodeActorHealth) });
 		}
 		for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {
 			s.push_back({ "DamageAnswer", Encode(DamageAnswer{ REF_A, 7, 3, DamageAnswer::Why::kHeldTooLong, 0.25f }, type), D(DecodeDamageAnswer) });

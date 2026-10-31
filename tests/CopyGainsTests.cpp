@@ -22,6 +22,13 @@ namespace
 	{
 		return a_health && std::abs(*a_health - a_expected) < a_slack;
 	}
+
+	// What our hits took off the copy, sent now (Book::TakeOurs): the amount, 0 for nothing.
+	float Took(Book& a_book, std::uint32_t a_id, CopyHealth::Clock::time_point a_now)
+	{
+		const auto sent = a_book.TakeOurs(a_id, a_now);
+		return sent ? sent->amount : 0.0f;
+	}
 }
 
 TEST("copy gains: a copy's heal of its own (a legendary's mutation) is taken back once it has stood, all of it")
@@ -37,7 +44,7 @@ TEST("copy gains: a copy's heal of its own (a legendary's mutation) is taken bac
 	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 100 } + CopyHealth::JUDGE_AFTER, 100.0f) == -55.0f);
 	book.Set(GHOUL, 45.0f);
 	CHECK(book.Check(GHOUL, 45.0f, T0 + milliseconds{ 300 }, 100.0f) == 0.0f);
-	CHECK(book.TakeOurs(GHOUL) == 0.0f);  // nothing of it goes to the owner's game
+	CHECK(Took(book, GHOUL, T0 + milliseconds{ 300 }) == 0.0f);  // nothing of it goes to the owner's game
 }
 
 TEST("copy gains: our hit's damage still goes to the owner's game when the copy's mutation heals it a frame later")
@@ -48,7 +55,7 @@ TEST("copy gains: our hit's damage still goes to the owner's game when the copy'
 	CHECK(book.Check(GHOUL, 40.0f, T0 + milliseconds{ 50 }, 100.0f) == 0.0f);
 	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 100 }, 100.0f) == 0.0f);
 	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 100 } + CopyHealth::JUDGE_AFTER, 100.0f) == -60.0f);
-	CHECK(book.TakeOurs(GHOUL) == 20.0f);
+	CHECK(Took(book, GHOUL, T0 + milliseconds{ 200 }) == 20.0f);
 }
 
 TEST("copy gains: a report's raise stands, and a gain gone again before it was judged is nothing")
@@ -174,7 +181,7 @@ TEST("copy gains: our hit in the tenth of a second after the copy's own heal sti
 	CHECK(book.Check(GHOUL, 80.0f, T0 + milliseconds{ 100 }, 100.0f) == 0.0f);
 	// Judged: the 20 our hit took off the gained health is ours, and the rest of the gain goes.
 	CHECK(book.Check(GHOUL, 80.0f, T0 + milliseconds{ 50 } + CopyHealth::JUDGE_AFTER, 100.0f) == -55.0f);
-	CHECK(book.TakeOurs(GHOUL) == 20.0f);
+	CHECK(Took(book, GHOUL, T0 + milliseconds{ 150 }) == 20.0f);
 	book.Set(GHOUL, 25.0f);
 	CHECK(book.Check(GHOUL, 25.0f, T0 + milliseconds{ 300 }, 100.0f) == 0.0f);
 
@@ -182,5 +189,5 @@ TEST("copy gains: our hit in the tenth of a second after the copy's own heal sti
 	CHECK(book.Check(GHOUL, 100.0f, T0 + milliseconds{ 5000 }, 100.0f) == 0.0f);
 	CHECK(book.Check(GHOUL, 90.0f, T0 + milliseconds{ 5050 }, 100.0f) == 0.0f);
 	CHECK(book.Check(GHOUL, 90.0f, T0 + milliseconds{ 5000 } + CopyHealth::JUDGE_AFTER, 100.0f) == -65.0f);
-	CHECK(book.TakeOurs(GHOUL) == 0.0f);
+	CHECK(Took(book, GHOUL, T0 + milliseconds{ 5100 }) == 0.0f);
 }

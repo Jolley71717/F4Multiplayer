@@ -2132,25 +2132,41 @@ namespace WorldSync
 		// Takes a friend's damage (a fraction of the NPC's maximum) off the NPC we run, if it can be now (DamageHold::Decide):
 		// what can't be yet is held (a_retry: it is held already, so it stays), what can never be is refused. Either way the
 		// friend is answered (AnswerDamage), at once or at the end of the hold.
-		DamageHold::Decision TakeDamage(std::uint32_t a_refId, float a_damage, Clock::time_point a_now, bool a_retry, std::uint32_t a_seq, std::uint32_t a_from)
+		// What our game finds of the NPC a friend's damage names (DamageHold::Facts), and the actor and health value to take
+		// it off: read once per NPC, for every hit on it this frame (RetryHeldDamage).
+		struct DamageFacts
 		{
+			DamageHold::Facts         facts;
+			std::uint32_t             local = 0;
+			RE::Actor*                actor = nullptr;
+			const RE::ActorValueInfo* info = nullptr;
+		};
+
+		DamageFacts FactsOf(std::uint32_t a_refId)
+		{
+			DamageFacts out;
 			// A spawn's: our own NPC (a copy of a friend's is not ours to hurt). A plugin's reference is the same everywhere.
-			const auto local = Protocol::IsSpawnRef(a_refId) ? Spawns::LocalOf(a_refId) : IsShareableRef(a_refId) ? a_refId : 0;
-			DamageHold::Facts facts;
-			facts.known = local != 0;
+			out.local = Protocol::IsSpawnRef(a_refId) ? Spawns::LocalOf(a_refId) : IsShareableRef(a_refId) ? a_refId : 0;
+			auto& facts = out.facts;
+			facts.known = out.local != 0;
 			facts.inWorld = CanApply();
 			facts.local = NpcSync::LocalPlayer();
 			facts.owner = NpcSync::Owner(a_refId);
-			const auto info = HealthInfo();
-			RE::Actor* actor = nullptr;
+			out.info = HealthInfo();
 			if (facts.known && facts.inWorld) {
-				facts.ledgerDead = dead.Contains(local);
-				actor = LoadedActor(local);
-				facts.loaded = actor != nullptr;
-				facts.deadHere = actor && actor->IsDead(false);
-				facts.hasHealth = actor && info && static_cast<RE::ActorValueOwner&>(*actor).GetPermanentActorValue(*info) > 0.0f;
+				facts.ledgerDead = dead.Contains(out.local);
+				out.actor = LoadedActor(out.local);
+				facts.loaded = out.actor != nullptr;
+				facts.deadHere = out.actor && out.actor->IsDead(false);
+				facts.hasHealth = out.actor && out.info && static_cast<RE::ActorValueOwner&>(*out.actor).GetPermanentActorValue(*out.info) > 0.0f;
 			}
-			const auto decision = DamageHold::Decide(facts);
+			return out;
+		}
+
+		DamageHold::Decision TakeDamage(std::uint32_t a_refId, float a_damage, Clock::time_point a_now, bool a_retry, std::uint32_t a_seq, std::uint32_t a_from, const DamageFacts& a_of)
+		{
+			const auto& [facts, local, actor, info] = a_of;
+			const auto  decision = DamageHold::Decide(facts);
 			switch (decision.verdict) {
 			case DamageHold::Verdict::kHold:
 				if (a_retry) {
@@ -2219,8 +2235,15 @@ namespace WorldSync
 			if (!inWorld || heldDamage.Size() == 0) {
 				return;
 			}
+			// The facts of each NPC once a pass, however many hits are held for it (a friend's automatic fire through our
+			// loading screen is hundreds).
+			std::unordered_map<std::uint32_t, DamageFacts> facts;
 			heldDamage.Retry([&](DamageHold::Held& a_held) {
-				const auto decision = TakeDamage(a_held.id, a_held.fraction, a_now, true, a_held.seq, a_held.from);
+				auto of = facts.find(a_held.id);
+				if (of == facts.end()) {
+					of = facts.emplace(a_held.id, FactsOf(a_held.id)).first;
+				}
+				const auto decision = TakeDamage(a_held.id, a_held.fraction, a_now, true, a_held.seq, a_held.from, of->second);
 				a_held.why = decision.why;
 				return decision.verdict != DamageHold::Verdict::kHold;
 			});
@@ -2669,7 +2692,7 @@ namespace WorldSync
 		if (!(a_damage > 0.0f && a_damage <= 1.0f)) {
 			return;
 		}
-		TakeDamage(a_refId, a_damage, Clock::now(), false, a_seq, a_from);
+		TakeDamage(a_refId, a_damage, Clock::now(), false, a_seq, a_from, FactsOf(a_refId));
 	}
 
 	void OnDamageAnswer(const Protocol::DamageAnswer& a_answer)

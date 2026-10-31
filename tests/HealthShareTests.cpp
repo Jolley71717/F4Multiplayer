@@ -33,6 +33,13 @@ namespace
 		return std::abs(a_health - a_expected) < a_slack;
 	}
 
+	// What our hits took off the copy, sent now (CopyHealth::Book::TakeOurs): the amount, 0 for nothing.
+	float Took(CopyHealth::Book& a_book, std::uint32_t a_id, CopyHealth::Clock::time_point a_now)
+	{
+		const auto sent = a_book.TakeOurs(a_id, a_now);
+		return sent ? sent->amount : 0.0f;
+	}
+
 	// One player's game with the raider (100 health at most). Its player's shot is a hit; a burn is damage with no hit
 	// (the fire a Molotov leaves). Each frame, as CopyWatch and WorldSync do: a copy (another game runs the raider) sends
 	// what our hits took off it as damage and gets back what nothing of ours took; the game that runs it shares its
@@ -424,13 +431,13 @@ TEST("copy health: what our hits take off a copy is booked once as ours to send;
 	book.Check(RAIDER, 100.0f, t0);
 	book.OurHit(RAIDER, t0 + FRAME);
 	CHECK(book.Check(RAIDER, 80.0f, t0 + FRAME) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 20.0f, 0.01f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);  // once
+	CHECK(Near(Took(book, RAIDER, t0 + FRAME), 20.0f, 0.01f));
+	CHECK(Took(book, RAIDER, t0 + FRAME) == 0.0f);  // once
 
 	// Long after the hit: a fire's 5 is given back, and none of it is ours.
 	book.Check(RAIDER, 75.0f, t0 + std::chrono::seconds{ 5 });
 	CHECK(Near(book.Check(RAIDER, 75.0f, t0 + std::chrono::seconds{ 5 } + CopyHealth::JUDGE_AFTER), 5.0f, 0.01f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER, t0 + std::chrono::seconds{ 5 } + CopyHealth::JUDGE_AFTER) == 0.0f);
 }
 
 TEST("health share: Bob's Molotov on his copy of the host's raider hurts it once, in the host's game, where its explosion goes off too")
@@ -539,9 +546,9 @@ TEST("copy health: our 10-point shot and a throw's 30-point blast on a copy in t
 	book.OurHit(RAIDER, t1, 10.0f);
 	book.OwnersBlow(RAIDER, t1);
 	CHECK(book.Check(RAIDER, 60.0f, t1) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(Took(book, RAIDER, t1), 10.0f, 0.01f));
 	CHECK(Near(book.Check(RAIDER, 60.0f, t1 + CopyHealth::JUDGE_AFTER), 30.0f, 0.01f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER, t1 + CopyHealth::JUDGE_AFTER) == 0.0f);
 	book.Set(RAIDER, 90.0f);
 
 	// The drop is seen before the blast's hit event: held, not taken for ours, then given back all the same.
@@ -551,7 +558,7 @@ TEST("copy health: our 10-point shot and a throw's 30-point blast on a copy in t
 	book.OwnersBlow(RAIDER, t2 + FRAME);
 	CHECK(book.Check(RAIDER, 50.0f, t2 + FRAME) == 0.0f);
 	CHECK(Near(book.Check(RAIDER, 50.0f, t2 + CopyHealth::JUDGE_AFTER), 30.0f, 0.01f));
-	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(Took(book, RAIDER, t2 + CopyHealth::JUDGE_AFTER), 10.0f, 0.01f));
 }
 
 TEST("copy health: with no blow of the owner's around, a drop beside our hit is all ours though its event's figure says less, as is one beside a hit whose event had no figure")
@@ -563,14 +570,14 @@ TEST("copy health: with no blow of the owner's around, a drop beside our hit is 
 	book.OurHit(RAIDER, t1, 10.0f);  // a sneak attack's figure short of what it took
 	CHECK(book.Check(RAIDER, 75.0f, t1) == 0.0f);
 	CHECK(book.Check(RAIDER, 75.0f, t1 + CopyHealth::JUDGE_AFTER) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 25.0f, 0.01f));
+	CHECK(Near(Took(book, RAIDER, t1 + CopyHealth::JUDGE_AFTER), 25.0f, 0.01f));
 
 	// No hit around it with a figure: the whole drop is ours, as before, an owner's blow beside it or not.
 	const auto t2 = t0 + std::chrono::seconds{ 5 };
 	book.OurHit(RAIDER, t2);
 	book.OwnersBlow(RAIDER, t2);
 	CHECK(book.Check(RAIDER, 45.0f, t2) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 30.0f, 0.01f));
+	CHECK(Near(Took(book, RAIDER, t2), 30.0f, 0.01f));
 }
 
 TEST("copy health: a report heard between our shot and the next frame books only the shot as ours when a throw's blast landed with it")
@@ -591,7 +598,7 @@ TEST("copy health: a report heard between our shot and the next frame books only
 	// Its next report, our shot taken off and answered: set as it comes.
 	CHECK(book.Answered(RAIDER, sent->seq, CopyHealth::Answer::kApplied) == 0.0f);
 	CHECK(Near(book.Heard(RAIDER, 55.0f, 55.0f, t1 + FRAME), 55.0f, 0.01f));
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER, t1 + FRAME) == 0.0f);
 }
 
 TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own hit, the burn its fire leaves) is the NPC's own game's to deal: no report, a claim only for a kill")
@@ -950,12 +957,15 @@ TEST("copy health: a report that would raise a copy is set to the owner's word l
 	// above it with more than that on its way stops at MIN_LEFT (its death comes as its own report).
 	CHECK(Near(book.Heard(RAIDER, 55.0f, 8.0f, t0 + 21s), CopyHealth::MIN_LEFT, 0.01f));
 	CHECK(book.Heard(RAIDER, 1.0f, 0.0f, t0 + 22s) == 0.0f);
-	book.Set(RAIDER, 55.0f);
+	// A refund never takes the copy past the runner's last word: at 0 there is nothing to give back; healed there to 65
+	// (less our 10 on its way: 55), the whole hit comes back on a refusal.
+	CHECK(book.Answered(RAIDER, 999, CopyHealth::Answer::kRefused) == 0.0f);
+	CHECK(Near(book.Heard(RAIDER, 0.0f, 65.0f, t0 + 23s), 55.0f, 0.01f));
 	// Refused after all (held too long there): the copy gets exactly the hit back, now (65: the owner's word), and
 	// nothing of it is ours to send.
 	CHECK(Near(book.Answered(RAIDER, second->seq, CopyHealth::Answer::kRefused), 10.0f, 0.01f));
 	CHECK(book.Refused() == 1);
-	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	CHECK(Took(book, RAIDER, t0 + 22s) == 0.0f);
 	CHECK(book.InFlight(RAIDER) == 0.0f);
 	// The same answer again (or one for nothing we sent) gives nothing.
 	CHECK(book.Answered(RAIDER, second->seq, CopyHealth::Answer::kRefused) == 0.0f);
@@ -1141,7 +1151,7 @@ TEST("copy health: a fresh drop whose hit event comes a frame later is ours, wit
 	book.Check(RAIDER, 100.0f, t0);
 	book.OurHit(RAIDER, t1, 10.0f);
 	CHECK(book.Check(RAIDER, 90.0f, t1) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(Took(book, RAIDER, t1), 10.0f, 0.01f));
 	CHECK(Near(book.Heard(RAIDER, 90.0f, 100.0f, t1 + FRAME), 90.0f, 0.01f));
 	// Our next shot, a second later as a semi-auto fires: its damage lands as the last one's grace runs out, its event
 	// a frame later. The held report must not stand on that frame: it would heal the shot back, and the copy, set to
@@ -1151,7 +1161,7 @@ TEST("copy health: a fresh drop whose hit event comes a frame later is ours, wit
 	book.OurHit(RAIDER, t2 + FRAME, 10.0f);
 	CHECK(book.Check(RAIDER, 80.0f, t2 + FRAME) == 0.0f);
 	CHECK(book.Check(RAIDER, 80.0f, t2 + CopyHealth::JUDGE_AFTER + FRAME) == 0.0f);
-	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(Took(book, RAIDER, t2 + CopyHealth::JUDGE_AFTER + FRAME), 10.0f, 0.01f));
 }
 
 TEST("health share: after a host's reload brings the raider back at its save's health, Bob's copy is told, and his next shot comes off that")

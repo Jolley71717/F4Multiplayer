@@ -421,6 +421,8 @@ TEST("server world: damage a player took off their copy of an NPC goes to the ga
 	CHECK(answers[0].health == 0.25f);
 	CHECK(Answers(Received(f, 1)).empty());
 	CHECK(Answers(Received(f, 3)).empty());
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 10));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
 	f.fake->Deliver(1, Answer(NPC, 10, bob, Why::kDeadThere, 0.1f));
 	const auto refused = Answers(Received(f, 2));
 	REQUIRE(refused.size() == 1);
@@ -431,6 +433,8 @@ TEST("server world: damage a player took off their copy of an NPC goes to the ga
 	f.fake->Deliver(3, Answer(NPC, 11, bob, Why::kDeadThere, 0.1f));
 	CHECK(Answers(Received(f, 2)).empty());
 	// Alice says "not mine" without echoing the damage (0): nothing to send on; Bob is told it can't be stood by.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.2f, 12));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
 	f.fake->Deliver(1, Answer(NPC, 12, bob, Why::kNotTheRunner, 0.0f));
 	const auto unsent = Answers(Received(f, 2));
 	REQUIRE(unsent.size() == 1);
@@ -568,11 +572,42 @@ TEST("server world: a game that says it doesn't run the NPC it was sent damage f
 	f.fake->Deliver(2, Protocol::EncodeRelease({ NPC }));
 	f.fake->Deliver(1, Claim(NPC));
 	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 8));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
 	f.fake->Deliver(1, Answer(NPC, 8, bob, Why::kNotTheRunner, 0.1f));
 	answers = Answers(Received(f, 2));
 	REQUIRE(answers.size() == 1);
 	CHECK(answers[0].why == Why::kNotTheRunner);
 	CHECK(answers[0].playerId == alice);
+	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
+
+	// Only the game the damage was sent to may answer it, however the table moved since: Carol, who never had hit 9, is
+	// not heard; Alice, who had it, is, long after any grace.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 9));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(3, Answer(NPC, 9, bob, Why::kDeadThere, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+	f.Advance(60s);
+	f.fake->Deliver(1, Answer(NPC, 9, bob, Why::kApplied, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kApplied);
+	// The same hit answered twice: the second is nothing.
+	f.fake->Deliver(1, Answer(NPC, 9, bob, Why::kDeadThere, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+
+	// Dead for the session since it was sent on: a "not mine" answer isn't sent on to anyone; the hitter is told the
+	// session has it dead, and (a joiner) reminded of the death as for any report about the dead.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 10));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(3, Claim(NPC));  // Carol has it alive from an older save: refused, the dead can't be claimed
+	f.fake->Deliver(1, Answer(NPC, 10, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kDeadInSession);
+	CHECK(answers[0].seq == 10);
 	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
 }
 
