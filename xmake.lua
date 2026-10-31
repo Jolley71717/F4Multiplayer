@@ -4,6 +4,11 @@ if is_plat("windows") then
     includes("lib/commonlibf4")
 end
 
+-- the plugin built for Windows on a Mac (tools/xwin.lua)
+if is_host("macosx") then
+    includes("tools/xwin.lua")
+end
+
 -- set project constants
 set_project("F4Multiplayer")
 set_version("0.10.1")

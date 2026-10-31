@@ -40,6 +40,47 @@ hand-declared functions in `src/steam/SteamApi.cpp`.
 
 If you already cloned without submodules: `git submodule update --init --recursive`.
 
+### On a Mac
+
+The server, the bot and the tests build natively, with Homebrew's LLVM: Apple's own compiler lacks
+parts of C++23 the server uses before macOS 26.
+
+```sh
+brew install xmake llvm
+LLVM=$(brew --prefix llvm)
+xmake f -m releasedbg --toolchain=llvm --sdk=$LLVM --cxflags=-D_LIBCPP_DISABLE_AVAILABILITY \
+    --ldflags="-L$LLVM/lib/c++ -Wl,-rpath,$LLVM/lib/c++"
+xmake build -y F4MPCommon F4MPServer F4MPBot F4MPTests
+xmake run F4MPTests
+```
+
+The plugin is built for Windows with clang-cl, against the Microsoft C++ runtime and Windows SDK
+that [xwin](https://github.com/Jake-Shadle/xwin) downloads (running it accepts Microsoft's license
+for them). `tools/xwin.lua` holds the toolchain. Keep this build's configuration apart from the
+native one with `XMAKE_CONFIGDIR`:
+
+```sh
+brew install lld xwin
+xwin --accept-license --arch x86_64 splat --output ~/.xwin
+export XMAKE_CONFIGDIR=$PWD/.xmake/win
+xmake f -p windows -a x64 -m releasedbg --toolchain=xwin
+xmake build -y F4Multiplayer
+```
+
+The DLL lands in `build/windows/x64/releasedbg/` as on Windows, and runs in Fallout 4 under
+CrossOver. `tools/crossover.sh` does there what `deploy.ps1`, `restart-game.ps1` and `devctl.ps1`
+do on Windows, with `XSE_FO4_GAME_PATH` set to the game folder in the bottle:
+
+```sh
+tools/crossover.sh restart               # deploy, start through Steam, load SanctuaryExt
+tools/crossover.sh dev status pos
+```
+
+It starts the game through Steam, so Steam's overlay is in it. For Steam's Play to start F4SE, rename
+`Fallout4Launcher.exe` in the game folder to `Fallout4Launcher.exe.bak` and copy `f4se_loader.exe`
+to `Fallout4Launcher.exe` (a game update or a file check puts the launcher back). Releases are still
+built with MSVC on Windows, and a pull request tested with a clang-cl build says so.
+
 ## Tests
 
 ```bat

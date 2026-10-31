@@ -348,7 +348,10 @@ namespace Sim
 		// in anyone's hands). Frames (a second or so) let the scan see it come to rest; the rest goes to the server if
 		// the plugin's rule (ObjectShare::KnockWatch) makes it this game's to report, and a friend's rest of it that comes
 		// back puts it where they say.
-		void Knock(std::uint32_t a_ref, std::array<float, 3> a_to, Knocked a_how = {});
+		void Knock(std::uint32_t a_ref, std::array<float, 3> a_to, Knocked a_how);
+		// An overload rather than a default argument: clang refuses "= {}" for a nested struct with default member
+		// initializers inside its enclosing class (MSVC and gcc accept it).
+		void Knock(std::uint32_t a_ref, std::array<float, 3> a_to) { Knock(a_ref, a_to, Knocked{}); }
 		[[nodiscard]] std::optional<std::array<float, 3>> ObjectAt(std::uint32_t a_ref) const
 		{
 			const auto it = world.objects.find(a_ref);
