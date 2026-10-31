@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T23:07:28+00:00",
+ "updated": "2026-10-31T23:40:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -198,8 +198,8 @@
    "title": "A friend sneaking and moving glides instead of sneak-walking",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Fix reviewed; in-game check after the release soak",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 235
   },
   {
@@ -922,6 +922,14 @@
    "stage": 7,
    "note": "Every hit now gets an answer, so none can be silently undone. Merged; in 0.10.1-rc1, soaking now.",
    "pr": 231
+  },
+  {
+   "id": "ssr0",
+   "title": "Rig checks follow-ups from the PR 240 review",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "st04",
