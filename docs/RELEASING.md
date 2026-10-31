@@ -42,6 +42,15 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
    in `Documents\My Games\Fallout4\F4SE` finds nothing from this rc's sessions, and neither do
    `-Pattern '7656\d{13}'` nor an IP address other than 127.0.0.1.
 
+`tools/rig/smoke.sh` is steps 2 to 4 with a verdict: the standing set above, each number checked against a threshold
+(movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe, reconnect, `perf`), the
+plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash logs; its exit code is
+the number of failed checks. `tools/rig/hits.sh` is the health check: both players shoot the same NPCs, and the two
+games' health must agree, never rise, and survive a pause menu. Both need the rig held (`tools/rig/guard.sh`) and leave
+no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`). `tools/rig/backup.sh` saves and restores the ini and
+session files on both machines. Nothing about a person or a machine is in the repository: the rig's own folder holds
+`rig.conf` (see `tools/rig/env.sh`).
+
 Before the rig run, `tools/addrcheck.ps1` (Windows PowerShell, read-only, the game is not started) resolves every
 Address Library ID the plugin names against the installed `version-1-11-240-0.bin` and checks the game code the
 plugin relies on by hand (the call from Main::Run into the message loop, the engine's message pump the frame
