@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-10-31T05:13:23+00:00",
+ "updated": "2026-10-31T18:32:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -12,6 +12,14 @@
   "Shipped"
  ],
  "items": [
+  {
+   "id": "007j",
+   "title": "Friend glides if they holster mid sneak-walk",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
   {
    "id": "0df",
    "title": "Alternate-start mods work in a session like the Vault 111 start",
@@ -182,8 +190,9 @@
    "title": "A friend sneaking and moving glides instead of sneak-walking",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Looking into why a sneaking friend glides instead of sneak-walking"
+   "stage": 3,
+   "note": "Fix reviewed; in-game check after the release soak",
+   "pr": 235
   },
   {
    "id": "6dko",
@@ -519,6 +528,14 @@
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
   },
   {
+   "id": "ikwn",
+   "title": "Legendary enemies differ between players",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Reported by a 5-player group"
+  },
+  {
    "id": "ikzy",
    "title": "Objects a friend built flicker or look blurry",
    "kind": "bug",
@@ -589,8 +606,8 @@
    "title": "Some NPCs appear in the wrong place or stacked on each other",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Looked into: the likely causes are a random encounter both games rolled (its raiders doubled, one on top of the other) and an NPC brought over landing on the player; two fixes in the works."
   },
   {
    "id": "krne",
