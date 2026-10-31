@@ -2,3 +2,4 @@
 .oss-scanner/Dockerfile text eol=lf
 tools/rig/*.sh text eol=lf
 tools/rig/*.awk text eol=lf
+tools/crossover.sh text eol=lf
