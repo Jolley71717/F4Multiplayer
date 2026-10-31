@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Questions and help (GitHub Discussions)
+    url: https://github.com/Jolley71717/F4Multiplayer/discussions/categories/q-a
+    about: Ask how something works or get help getting a session going. Answers stay searchable for the next player.
   - name: Support chat on Nexus Mods
     url: https://www.nexusmods.com/fallout4/mods/109812?tab=posts
     about: Questions, "does this work with X", and help getting a session going. Bugs and ideas go in the forms here.
