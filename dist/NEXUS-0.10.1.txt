@@ -1,0 +1,6 @@
+New protocol: everyone in a session needs 0.10.1 (it doesn't play with 0.10.0)
+Your hits on an enemy another player's game runs now stick: each is answered, and a refused one is undone at once instead of healing the enemy later
+A shot the game sends no hit event for no longer heals the enemy it hit
+A friend's hit on an enemy whose game is in a menu or loading is held and applied instead of lost
+A save no longer keeps a friend's generator running: its engine sound no longer plays on after you leave the session
+Full notes on GitHub
