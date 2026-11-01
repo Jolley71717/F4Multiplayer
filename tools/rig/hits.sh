@@ -64,21 +64,23 @@ enter_with_runner() {
 	dc "$r" "console coc CorvegaAssemblyPlant01" >/dev/null; sleep 25; wait_ingame "$r" 30
 	dc "$o" "console coc CorvegaAssemblyPlant01" >/dev/null; sleep 25; wait_ingame "$o" 30
 }
-# spot_for <shooter> <other> "<x,y x,y ...>" <both 1|0>: "x y z degrees" for a raider 250 u from the shooter, the first of a few headings off
-# its own with a clear line from the shooter (and, with both=1, from the other player too: neither within 50 u of the other's line to it, ahead of them), 150 u or more from the
-# other player, and is clear of the spots already taken (110 u apart, out of every line to them). Empty if none is.
-# Both coc'd to the same marker, so the other player often stands beside the shooter: a raider behind them takes no shot (the
-# 0.10.1 runs' kill step fired 16 shots that hit a barrel and a stand-in, never the raider).
+# spot_for "<shooter's pos>" "<other's pos>" "<x,y x,y ...>" <both 1|0>: "x y z degrees" for a raider 250 or 450 u from the
+# shooter, the first of a few headings off its own with a clear line from the shooter (and, with both=1, from the other player
+# too: nothing within 35 u of the line, past the first 10 u), 150 u or more from the other player, and clear of the spots already
+# taken (110 u apart, out of every line to them). Empty if none is. The positions (dev pos lines) are read once per phase: a
+# player's heading can drift while raiders are moved around it (2026-10-31: the VM's turned 90 degrees during a set-up, and the
+# last two spots landed behind it). Both coc'd to the same marker, the players stand about 45 u apart side by side, so near
+# raiders on either side are in one player's line: the far ring gives the second raider both can shoot (the 0.10.1 runs' kill
+# step fired 16 shots that hit a barrel and a stand-in, never the raider).
 spot_for() {
-	local ps po; ps=$(dc "$1" pos); po=$(dc "$2" pos)
-	awk -v px="$(field "$ps" x)" -v py="$(field "$ps" y)" -v pz="$(field "$ps" z)" -v yaw="$(field "$ps" rz)" -v ox="$(field "$po" x)" -v oy="$(field "$po" y)" -v taken="$3" -v both="$4" '
-	# blk: q stands in the line of fire from a to b (more than 30 u ahead of a, short of b, within 50 u of the line)
-	function blk(ax, ay, bx, by, qx, qy,   dx, dy, l, s, d) { dx = bx - ax; dy = by - ay; l = sqrt(dx * dx + dy * dy); if (l == 0) return 0; s = ((qx - ax) * dx + (qy - ay) * dy) / l; d = ((qx - ax) * dy - (qy - ay) * dx) / l; if (d < 0) d = -d; return s > 30 && s < l - 20 && d < 50 }
+	awk -v px="$(field "$1" x)" -v py="$(field "$1" y)" -v pz="$(field "$1" z)" -v yaw="$(field "$1" rz)" -v ox="$(field "$2" x)" -v oy="$(field "$2" y)" -v taken="$3" -v both="$4" '
+	# blk: q stands in the line of fire from a to b (more than 10 u ahead of a, short of b, within 35 u of the line: a body)
+	function blk(ax, ay, bx, by, qx, qy,   dx, dy, l, s, d) { dx = bx - ax; dy = by - ay; l = sqrt(dx * dx + dy * dy); if (l == 0) return 0; s = ((qx - ax) * dx + (qy - ay) * dy) / l; d = ((qx - ax) * dy - (qy - ay) * dx) / l; if (d < 0) d = -d; return s > 10 && s < l - 20 && d < 35 }
 	BEGIN {
-		if (px == "" || ox == "") exit
-		n = split(taken, T, " "); nc = split("0 -15 15 -30 30 -45 45 -60 60 -90 90 -120 120", C, " ")
-		for (i = 1; i <= nc; i++) {
-			a = (yaw + C[i]) * 3.14159265 / 180; nx = px + 250 * sin(a); ny = py + 250 * cos(a); ok = 1
+		if (px == "" || ox == "" || yaw == "") exit
+		n = split(taken, T, " "); nc = split("0 -15 15 -30 30 -45 45 -60 60 -90 90", C, " ")
+		for (i = 1; i <= nc; i++) for (rr = 250; rr <= 450; rr += 200) {
+			a = (yaw + C[i]) * 3.14159265 / 180; nx = px + rr * sin(a); ny = py + rr * cos(a); ok = 1
 			if (blk(px, py, nx, ny, ox, oy) || (both && blk(ox, oy, nx, ny, px, py)) || sqrt((nx - ox) ^ 2 + (ny - oy) ^ 2) < 150) ok = 0
 			for (j = 1; j <= n && ok; j++) { split(T[j], q, ",")
 				if (sqrt((nx - q[1]) ^ 2 + (ny - q[2]) ^ 2) < 110 || blk(px, py, nx, ny, q[1], q[2]) || (both && blk(ox, oy, nx, ny, q[1], q[2])) || blk(px, py, q[1], q[2], nx, ny) || blk(ox, oy, q[1], q[2], nx, ny)) ok = 0 }
@@ -95,18 +97,30 @@ put_at() {
 # unhurt <who> <ref>: alive in that game, with at least T_TARGET_HP health (a raider an earlier run hurt can die of the copy hit:
 # a kill leaves no runner and no "you run it" answer to check)
 T_TARGET_HP=${T_TARGET_HP:-25}
+T_TOUGH_HP=${T_TOUGH_HP:-120}   # kill and pause targets get this much health in both games (pick_targets)
 unhurt() { local i; i=$(rinfo "$1" "$2"); [ "$(field "$i" dead)" = false ] && is_num "$(field "$i" hp)" && awk -v h="$(field "$i" hp)" -v m="$T_TARGET_HP" 'BEGIN{exit !(h >= m)}'; }
 pick_targets() {
-	local r=$1 s a k=0 ro rv sp taken="" x y z off; s=$(other_of "$r"); TG=()
-	echo "phase $r runs: shooter $s at $(dc "$s" pos | cut -d' ' -f2-5), $r at $(dc "$r" pos | cut -d' ' -f2-5)" >> "$A_OUT/targets.txt"
+	local r=$1 s a k=0 ro rv sp taken="" x y z off ps po; s=$(other_of "$r"); TG=(); ps=$(dc "$s" pos); po=$(dc "$r" pos)
+	echo "phase $r runs: shooter $s at $(cut -d' ' -f2-5 <<<"$ps"), $r at $(cut -d' ' -f2-5 <<<"$po")" >> "$A_OUT/targets.txt"
 	for a in $(host 'actors 3000' | tr ';' '\n' | grep "Raider' dead=false" | grep -o "[0-9A-F]\{8\}"); do
 		[ $k -ge 4 ] && break
 		case " ${ALL_TG[*]} " in *":$a:"*) continue;; esac   # not one an earlier phase already shot
 		unhurt host "$a" && unhurt vm "$a" || continue   # the actors list can call one alive that a game has dead; a hurt one can die of one hit
 		ro=$(runner host "$a"); rv=$(runner vm "$a")
 		if [ "$ro" = "${MYID[$r]}" ] && [ "$rv" = "${MYID[$r]}" ]; then
-			sp=$(spot_for "$s" "$r" "$taken" "$([ $k -lt 2 ] && echo 1 || echo 0)"); [ -z "$sp" ] && break
+			sp=$(spot_for "$ps" "$po" "$taken" "$([ $k -lt 2 ] && echo 1 || echo 0)"); [ -z "$sp" ] && break
 			read -r x y z off <<<"$sp"; put_at "$r" "$a" "$x" "$y" "$z"; taken="$taken $x,$y"
+			# a spot can be inside something that kills it (2026-10-31: one placed raider died there at once): the spot stays
+			# taken, and the next raider tries the next one
+			sleep 1.5; if ! unhurt host "$a" || ! unhurt vm "$a"; then echo "raider $a died or was hurt at $x $y: spot skipped" >> "$A_OUT/targets.txt"; continue; fi
+			# kill and pause are shot by both players: a raider of 30 hp died of the pair's first two hits (2026-10-31), and a hit
+			# that kills a copy goes the death path, never routed damage, so neither step saw damageAnswered. Both games give
+			# them T_TOUGH_HP (health syncs as a fraction of the most, so both must agree on the most).
+			if [ $k -lt 2 ]; then
+				dc host "console $a.setav health $T_TOUGH_HP" >/dev/null; dc vm "console $a.setav health $T_TOUGH_HP" >/dev/null; sleep 1
+				echo "raider $a health: host $(field "$(rinfo host "$a")" hp), vm $(field "$(rinfo vm "$a")" hp)" >> "$A_OUT/targets.txt"
+				if ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt host "$a" || ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt vm "$a"; then echo "raider $a: health not raised, skipped" >> "$A_OUT/targets.txt"; continue; fi
+			fi
 			TG+=("$r:$a:$a:${ROLES[$k]}"); echo "target $r:$a role ${ROLES[$k]} at $x $y ($off degrees off the shooter's heading)" >> "$A_OUT/targets.txt"; k=$((k + 1))
 		fi
 	done
@@ -152,7 +166,7 @@ fire() {
 # on this rig (turnto, click and the health reads go through the dev channel of a slow host game), longer than the server's 5 s
 # takeover cooldown: a shooter's hit a whole fire() after the runner's takes the raider over, as designed (2026-10-31 runs). The
 # gap between the two clicks is left in PAIR_GAP (ms) for the step to check against T_PAIR_GAP_MS.
-T_PAIR_GAP_MS=${T_PAIR_GAP_MS:-3000}
+T_PAIR_GAP_MS=${T_PAIR_GAP_MS:-4000}   # gaps up to 3.5 s were seen on the rig (2026-10-31); still inside the 5 s cooldown
 pair_shot() {
 	local o=$1 p=$2 t=$3 a b so sp
 	so=$(shots_of "$o"); sp=$(shots_of "$p")
@@ -231,7 +245,7 @@ run_phase() {
 	t=$(tg_by $o kill)
 	if [ -n "$t" ] && armed "$o" && armed "$p"; then
 		local gap=0; ro=$(tg_ro "$t"); n=0; snap K0
-		while [ $n -lt 8 ]; do
+		while [ $n -lt 24 ]; do   # a T_TOUGH_HP raider takes several hits
 			[ "$(deadv "$o" "$ro")" = true ] && break
 			pair_shot "$o" "$p" "$t"; n=$((n + 2)); [ "$PAIR_GAP" -gt "$gap" ] && gap=$PAIR_GAP
 		done
