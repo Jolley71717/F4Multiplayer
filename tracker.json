@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T06:23:03+00:00",
+ "updated": "2026-11-01T07:16:09+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -36,7 +36,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 2,
-   "note": "Found on the test rig: a piece its builder no longer has keeps coming back for friends"
+   "note": "Review fixes: per-character lists, reversible removal, stricter missing checks"
   },
   {
    "id": "161b",
@@ -209,6 +209,14 @@
    "stage": 5,
    "note": "Merged; ships in the next release",
    "pr": 235
+  },
+  {
+   "id": "676k",
+   "title": "Two characters of one PC share workshop store keys: the second's piece under an ID the first's has replaces it",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found while fixing orphan pieces; needs a store key per character"
   },
   {
    "id": "6dko",
