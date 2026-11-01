@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T22:49:28+00:00",
+ "updated": "2026-11-01T23:30:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -410,8 +410,9 @@
    "title": "Rig: a virtual gamepad per game for scripted tests (no focus, smooth analog movement)",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 253
   },
   {
    "id": "briz",
