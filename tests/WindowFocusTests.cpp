@@ -33,3 +33,17 @@ TEST("window focus: a window title fits a one-line answer")
 	CHECK(WindowFocus::Printable("").empty());
 	CHECK(WindowFocus::Printable("caf\xC3\xA9") == "caf??");
 }
+
+TEST("window focus: a click outside the game's window is moved to its middle")
+{
+	const WindowFocus::Rect screen{ 0, 0, 2560, 1440 };
+	CHECK(WindowFocus::Contains(screen, 1919, 360));
+	CHECK(WindowFocus::Contains(screen, 0, 0));
+	CHECK(!WindowFocus::Contains(screen, 2560, 360));
+	CHECK(!WindowFocus::Contains(screen, -5, 360));
+	CHECK((WindowFocus::Middle(screen) == std::pair<long, long>{ 1280, 720 }));
+	// minimised, then restored without being moved back: parked off every screen, where no click lands
+	const WindowFocus::Rect parked{ -32000, -32000, -29440, -30560 };
+	CHECK(!WindowFocus::Contains(parked, 1919, 360));
+	CHECK((WindowFocus::Middle(parked) == std::pair<long, long>{ -30720, -31280 }));
+}

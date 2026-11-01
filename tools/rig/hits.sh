@@ -44,7 +44,12 @@
 #   loaded there (tests/DamageHoldTests.cpp).
 #
 #   Preflight: both machines run the same DLL, and with CHECK_DLL=<the F4Multiplayer.dll built for the run, or its md5> the one
-#   given (dll_preflight in steps.sh; a mismatch stops the run).
+#   given (dll_preflight in steps.sh; a mismatch stops the run). Each game's click must fire and its keys move its player, after
+#   leftover menus are closed, the level-up prompt of a fresh game is waited out and the window is in front and on a screen (a
+#   game minimised during its first load stays parked off every screen; the dev channel moves it back). Input that still does
+#   nothing twice stops the run (assert.sh: rig_input_ready). rig.sh join loads each game with its window in front, and restarts
+#   a game whose player does not move on a real key after its load: about one fresh game in three comes out of its first load
+#   with its player's input dead for good (keys reach the game, the player never moves), a cause not found yet.
 #
 # Exit code = number of failed checks. About 11 minutes (two cell entries of about a minute each). Needs both games joined and the rig held (see guard.sh).
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
@@ -607,6 +612,12 @@ pass "baseline counters taken" "copyHits host $(cget A host copyHits) vm $(cget 
 # Every step needs both games' clicks: a game whose mouse never came up (2026-11-01: the VM, started by in-vm-3-game.ps1, fired
 # nothing for the whole run, 18 failures that proved nothing) is stopped here, before ten minutes of misses.
 # (assert.sh's circuit breaker: two rig-broken failures end the run; one game that can't fire ruins every step, so it ends here)
+# Each probe first closes what a player would (a message box, the Pip-Boy, the pause menu, the console), waits out a loading
+# screen or the level-up prompt a fresh game shows once, and brings the window to the front and onto a screen (rig_input_ready),
+# and tries twice. (2026-11-01: every run right after a deploy and join failed here: the host game, minimised during its first
+# load, sat in front but off every screen, and its clicks landed on the window under the cursor.) Input that still does nothing
+# is real, and trips the breaker as before: a game whose player input died at its first load (rig.sh join restarts those) or a
+# real regression.
 dead=""; for g in host vm; do rig_click_fires $g "preflight: $g's click fires its gun" || dead="$dead $g"; done
 for g in host vm; do rig_keys_move $g "preflight: $g's keys move its player"; done
 [ -n "$dead" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop input

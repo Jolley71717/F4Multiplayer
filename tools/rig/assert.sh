@@ -100,21 +100,80 @@ rig_up() {
 	done
 	pass "$1" "$a, both joined"; return 0
 }
-# rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks)
+# rig_input_ready <who> [seconds]: before an input probe, that game is brought to the front and its player left free to act:
+# nothing open but the HUD (dev `menus`). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
+# a container (Tab), the pause menu (Esc), the console (~). Anything else is waited out, up to <seconds> (default 30): a loading
+# screen, a fade, or the engine's level-up prompt (PromptMenu, its input layer up for about 20 s), which a game shows once,
+# half a minute after its first load (2026-11-01: a hits run started right after a deploy and join met it). INPUT_READY says
+# what was closed or waited for (empty when nothing was); returns 1 if something is still open then, and the probe goes on (its
+# own result decides). A build without `menus` counts as ready.
+rig_input_ready() {
+	local w=$1 limit=${2:-30} t0=$SECONDS m open did="" waited=""
+	INPUT_READY=""
+	dc "$w" focus >/dev/null
+	while :; do
+		m=$(dc "$w" menus | grep -oE 'open=[^ ]*'); [ -n "$m" ] || break
+		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu' | tr '\n' ' '); open=${open% }
+		[ -z "$open" ] && break
+		if [ $((SECONDS - t0)) -ge "$limit" ]; then INPUT_READY="${did:+closed$did; }${waited:+waited for$waited; }still open after $limit s: $open"; return 1; fi
+		dc "$w" focus >/dev/null
+		case " $open " in
+		*" MessageBoxMenu "*) dc "$w" "key 0x0D 60" >/dev/null; did="$did MessageBoxMenu" ;;
+		*" PipboyMenu "*|*" TerminalMenu "*|*" TerminalHolotapeMenu "*|*" ContainerMenu "*) dc "$w" "key 0x09 60" >/dev/null; did="$did $(grep -oE 'PipboyMenu|TerminalHolotapeMenu|TerminalMenu|ContainerMenu' <<<"$open" | head -1)" ;;
+		*" PauseMenu "*) dc "$w" "key 0x1B 60" >/dev/null; did="$did PauseMenu" ;;
+		*" Console "*) dc "$w" "key 0xC0 60" >/dev/null; did="$did Console" ;;
+		*) case "$waited " in *" $open "*) ;; *) waited="$waited $open";; esac ;;
+		esac
+		sleep 1.5
+	done
+	[ -n "$did$waited" ] && INPUT_READY="${did:+closed$did}${did:+${waited:+; }}${waited:+waited for$waited ($((SECONDS - t0)) s)}"
+	# Last, the window in front, on a screen, and kept there a moment: the mod reads no input while it is not (InputGate: polling
+	# off), and a click that brings it back is kept from the game. `focus` answers whether the game was in front as it came in, so
+	# the second of a pair says whether the first brought it there. Two ways the front goes, both seen 2026-11-01:
+	#  - the window parked off every screen: a game minimised during its first load into the world (started while another window
+	#    had the front) keeps the minimised spot (-32000, -32000) once restored. It is "in front" and takes keys, but a real click
+	#    lands on the window under the cursor (a folder window on the host), which takes the front: a click "fires nothing", for
+	#    the game's whole life. The dev channel now counts such a window as not in front, and `focus` moves it back to the primary
+	#    screen; `click` puts the cursor over the game's window first.
+	#  - the host's desktop is shared: another window can take the front for seconds.
+	local f k
+	INPUT_FRONT=yes
+	for k in 1 2 3 4 5 6; do dc "$w" focus >/dev/null; sleep 1; f=$(dc "$w" focus); case "$f" in front=no*) ;; *) break;; esac; done
+	case "$f" in front=no*) INPUT_FRONT=no; INPUT_READY="${INPUT_READY:+$INPUT_READY; }not in front after $k tries: ${f%% input:*}";; esac
+	[ "$INPUT_FRONT" = yes ] && [ "$k" -gt 1 ] && INPUT_READY="${INPUT_READY:+$INPUT_READY; }brought to the front (try $k)"
+	return 0
+}
+# What a probe that failed twice says. With the window in front and on a screen, a click or key that still does nothing is real
+# dead input (a game whose player input died at its first load, about one fresh game in three, which only a restart mends and
+# rig.sh join restarts; or a real regression); one that would not come to the front is the desktop's or a build without the fix.
+RIG_INPUT_DEAD="its window was in front and on a screen, and its input still never reached the player"
+RIG_INPUT_NOFRONT="its window would not stay in front and on a screen (another window kept taking it, or it is parked off every screen and the DLL can't move it): no input goes to a game that is not in front"
+rig_input_why() { [ "$INPUT_FRONT" = no ] && echo "$RIG_INPUT_NOFRONT" || echo "$RIG_INPUT_DEAD"; }
+# rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks); the game
+# made ready first (rig_input_ready), and once more before a second click if the first fired nothing
 # mouse_why <who>: what that game's raw input looked like (the `mousedev` answer), for a click that fired nothing; empty from a build
 # without the command
 mouse_why() { local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) printf ' [mousedev: %s]' "$m" ;; esac; }
 rig_click_fires() {
-	local s0 s1; dc "$1" focus >/dev/null; sleep 1; s0=$(field "$(dc "$1" 'net status')" shots); dc "$1" "click 120" >/dev/null; sleep 2; s1=$(field "$(dc "$1" 'net status')" shots)
-	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "$2" "shots $s0 -> $s1"; return 0; fi
-	rig_broken input "$2" "$1's click fired nothing (shots '$s0' -> '$s1'): its mouse input does not reach the game$(mouse_why "$1")"; return 1
+	local s0 s1 try note=""
+	for try in 1 2; do
+		rig_input_ready "$1"; [ -n "$INPUT_READY" ] && note="$note${note:+; }before click $try: $INPUT_READY"
+		sleep 1; s0=$(field "$(dc "$1" 'net status')" shots); dc "$1" "click 120" >/dev/null; sleep 2; s1=$(field "$(dc "$1" 'net status')" shots)
+		if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "$2" "shots $s0 -> $s1$( [ $try -gt 1 ] && echo " on the second click")${note:+ ($note)}"; return 0; fi
+	done
+	rig_broken input "$2" "$1's click fired nothing, twice (shots '$s0' -> '$s1')${note:+ ($note)}: $(rig_input_why)$(mouse_why "$1")"; return 1
 }
-# rig_keys_move <who> <label>: a real key press (forward, 0.8 s) moves that game's player at least 20 u
+# rig_keys_move <who> <label>: a real key press (forward, 0.8 s) moves that game's player at least 20 u; made ready and tried
+# twice as rig_click_fires
 rig_keys_move() {
-	local p0 p1 d; dc "$1" focus >/dev/null; sleep 1; p0=$(dc "$1" pos); dc "$1" "key 0x57 800" >/dev/null; sleep 1.6; p1=$(dc "$1" pos)
-	d=$(awk -v a="$(field "$p0" x)" -v b="$(field "$p0" y)" -v c="$(field "$p1" x)" -v e="$(field "$p1" y)" 'BEGIN{if (a=="" || c=="") {print ""; exit}; printf "%d", sqrt((c-a)^2 + (e-b)^2)}')
-	if is_num "$d" && [ "$d" -ge 20 ]; then pass "$2" "moved $d u"; return 0; fi
-	rig_broken input "$2" "$1's player moved '${d}' u on a forward key: its keys do not reach the game"; return 1
+	local p0 p1 d try note=""
+	for try in 1 2; do
+		rig_input_ready "$1"; [ -n "$INPUT_READY" ] && note="$note${note:+; }before press $try: $INPUT_READY"
+		sleep 1; p0=$(dc "$1" pos); dc "$1" "key 0x57 800" >/dev/null; sleep 1.6; p1=$(dc "$1" pos)
+		d=$(awk -v a="$(field "$p0" x)" -v b="$(field "$p0" y)" -v c="$(field "$p1" x)" -v e="$(field "$p1" y)" 'BEGIN{if (a=="" || c=="") {print ""; exit}; printf "%d", sqrt((c-a)^2 + (e-b)^2)}')
+		if is_num "$d" && [ "$d" -ge 20 ]; then pass "$2" "moved $d u$( [ $try -gt 1 ] && echo " on the second press")${note:+ ($note)}"; return 0; fi
+	done
+	rig_broken input "$2" "$1's player moved '${d}' u on a forward key, twice${note:+ ($note)}: $(rig_input_why)"; return 1
 }
 
 is_num() { [[ $1 =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; }
@@ -297,6 +356,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "rig_click_fires: shots that stay put are signal input" "$o" "rig broken (input): vm's click fired nothing"
 	o=$(brk 'sleep() { :; }; cf=$(mktemp); echo 0 > "$cf"; dc() { case "$2" in "net status") n=$(( $(cat "$cf") + 1 )); echo $n > "$cf"; echo "status=joined shots=$n";; *) echo ok;; esac; }; rig_click_fires vm "fires" >/dev/null; rm -f "$cf"')
 	hasnt "rig_click_fires: a shot that counts is no failure" "$o" "rig broken"
+	o=$(brk 'sleep() { :; }; cf=$(mktemp); echo 0 > "$cf"; dc() { case "$2" in "net status") n=$(( $(cat "$cf") + 1 )); echo $n > "$cf"; [ $n -ge 4 ] && echo "status=joined shots=4" || echo "status=joined shots=3";; *) echo ok;; esac; }; rig_click_fires vm "fires"; rm -f "$cf"')
+	hasnt "rig_click_fires: a second click that fires is no failure" "$o" "rig broken"; has "rig_click_fires: ... and says it took two" "$o" "on the second click"
+	o=$(brk 'sleep() { :; }; kf=$(mktemp); dc() { case "$2" in menus) grep -q 0x0D "$kf" && echo "open=HUDMenu:2.0 longest=none" || echo "open=HUDMenu:1.0,MessageBoxMenu:0.5 longest=MessageBoxMenu:0.5";; key*) echo "$2" >> "$kf"; echo pressing;; "net status") echo x >> "$kf.n"; echo "status=joined shots=$(wc -l < "$kf.n")";; *) echo ok;; esac; }; rig_click_fires host "fires"; rm -f "$kf" "$kf.n"')
+	hasnt "rig_input_ready: a message box left open is closed before the click" "$o" "rig broken"; has "rig_input_ready: ... and named" "$o" "closed MessageBoxMenu"
 	o=$(brk 'sleep() { :; }; dc() { case "$2" in pos) echo "x=10.0 y=20.0 z=0";; *) echo ok;; esac; }; rig_keys_move host "moves" >/dev/null')
 	has "rig_keys_move: no movement is signal input" "$o" "rig broken (input): host's player moved '0' u"
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"

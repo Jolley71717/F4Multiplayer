@@ -85,6 +85,13 @@ __declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
 __declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
 __declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
 __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
+// the game's window back on a screen, and the cursor over it for a click (WindowFocus::Rect is a RECT)
+__declspec(dllimport) int __stdcall IsIconic(void* a_window);
+__declspec(dllimport) void* __stdcall MonitorFromWindow(void* a_window, unsigned long a_flags);
+__declspec(dllimport) int __stdcall GetWindowRect(void* a_window, void* a_rect);
+__declspec(dllimport) int __stdcall SetWindowPos(void* a_window, void* a_after, int a_x, int a_y, int a_cx, int a_cy, unsigned int a_flags);
+__declspec(dllimport) int __stdcall GetCursorPos(void* a_point);
+__declspec(dllimport) int __stdcall SetCursorPos(int a_x, int a_y);
 // for MouseCapture: the raw input registrations, and a count of the WM_INPUT messages the game takes
 __declspec(dllimport) unsigned int __stdcall GetRegisteredRawInputDevices(void* a_list, unsigned int* a_count, unsigned int a_size);
 __declspec(dllimport) int __stdcall RegisterRawInputDevices(const void* a_list, unsigned int a_count, unsigned int a_size);
@@ -315,13 +322,21 @@ namespace DevCommands
 			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u | (extended ? 1u : 0u), 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY)
 		}
 
-		// Whether a window of this process (the game's) is the one in front. Sends no window a message, so it
-		// is safe on the game thread.
+		// Whether a window can be seen: not minimised, and on a screen (MONITOR_DEFAULTTONULL: none for one off them all).
+		// Sends it no message.
+		bool OnScreen(void* a_window)
+		{
+			return !IsIconic(a_window) && MonitorFromWindow(a_window, 0) != nullptr;
+		}
+
+		// Whether a window of this process (the game's) is the one in front, where it can be seen: one in front but
+		// parked off every screen takes keys, while a click lands on the window under the cursor (WindowFocus::Rect).
+		// Sends no window a message, so it is safe on the game thread.
 		bool GameInFront()
 		{
 			unsigned long pid = 0;
 			const auto    front = GetForegroundWindow();
-			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId();
+			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId() && OnScreen(front);
 		}
 
 		// The window in front, for a report: its process and title when it is another process's (reading the
@@ -335,7 +350,7 @@ namespace DevCommands
 			unsigned long pid = 0;
 			GetWindowThreadProcessId(front, &pid);
 			if (pid == GetCurrentProcessId()) {
-				return "the game";
+				return OnScreen(front) ? "the game" : "the game, its window minimised or off every screen";
 			}
 			std::array<char, 128> title{};
 			GetWindowTextA(front, title.data(), static_cast<int>(title.size()));
@@ -382,6 +397,12 @@ namespace DevCommands
 				KeyEvent(0x12, true);
 				KeyEvent(0x12, false);
 				ShowWindow(window, 9);  // SW_RESTORE
+				if (MonitorFromWindow(window, 0) == nullptr) {
+					WindowFocus::Rect was{};
+					GetWindowRect(window, &was);
+					SetWindowPos(window, nullptr, 0, 0, 0, 0, 0x0001u | 0x0004u | 0x0010u);  // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+					REX::INFO("DevCommands: the game's window was off every screen (at {}, {}); moved to the primary screen's corner", was.left, was.top);
+				}
 				BringWindowToTop(window);
 				SetForegroundWindow(window);
 				std::this_thread::sleep_for(std::chrono::milliseconds(WindowFocus::FRONT_STEP_MS));
@@ -622,6 +643,26 @@ namespace DevCommands
 			return std::format("moving {}", FrontNow());
 		}
 
+		// Off the game thread: the cursor over the game's window if it isn't, so a click lands on the game and not on the window
+		// under the cursor (another screen's, or one beside a smaller game window). SetCursorPos makes no raw mouse movement:
+		// the camera doesn't turn.
+		void PutCursorOverGame()
+		{
+			const auto window = GameWindow();
+			WindowFocus::Rect rect{};
+			struct
+			{
+				long x;
+				long y;
+			} cursor{};
+			if (!window || !GetWindowRect(window, &rect) || !GetCursorPos(&cursor) || WindowFocus::Contains(rect, cursor.x, cursor.y)) {
+				return;
+			}
+			const auto [x, y] = WindowFocus::Middle(rect);
+			SetCursorPos(static_cast<int>(x), static_cast<int>(y));
+			REX::INFO("DevCommands: the cursor was outside the game's window ({}, {}); moved to its middle for a click", cursor.x, cursor.y);
+		}
+
 		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
 		std::string Click(std::string_view a_args)
 		{
@@ -632,6 +673,7 @@ namespace DevCommands
 					return;
 				}
 				WantMouseCapture();
+				PutCursorOverGame();
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
 				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
@@ -3424,6 +3466,46 @@ namespace DevCommands
 				facts.handlerOn, off.empty() ? "none" : off, forced, facts.lifeState, facts.knockState, facts.meleeAttackState, facts.leftLeg, facts.rightLeg, view);
 		}
 
+		// Where a key that reaches the game can still stop short of its player: the input manager's polling, the keys and buttons
+		// the devices hold down now (device:code=seconds), the player controls' block, which of its handlers take no events, and
+		// the move and look the handlers made of the input this frame. For a game whose Pip-Boy opens on Tab while its player
+		// neither moves, turns nor fires (2026-11-01: a fresh game, about one in three, holds W down and moves (0,0)).
+		std::string PlayerInputFacts()
+		{
+			const auto input = RE::BSInputDeviceManager::GetSingleton();
+			const auto controls = RE::PlayerControls::GetSingleton();
+			if (!controls) {
+				return "player: no controls";
+			}
+			std::string held;
+			if (input) {
+				for (std::size_t i = 0; i < 3; ++i) {  // keyboard, mouse, gamepad
+					if (const auto device = input->devices[i]) {
+						for (const auto& [code, button] : device->deviceButtons) {
+							if (button && button->heldDownSecs > 0.0f) {
+								held += std::format("{}{}:{:X}={:.1f}", held.empty() ? "" : ",", i, button->keyCode, button->heldDownSecs);
+							}
+						}
+					}
+				}
+			}
+			// each a PlayerInputHandler, whose BSInputEventUser is at its start (the classes are only declared here)
+			const std::array<std::pair<const char*, const void*>, 14> handlers{ { { "movement", controls->movementHandler }, { "look", controls->lookHandler },
+				{ "sprint", controls->sprintHandler }, { "readyWeapon", controls->readyWeaponHandler }, { "autoMove", controls->autoMoveHandler },
+				{ "toggleRun", controls->toggleRunHandler }, { "activate", controls->activateHandler }, { "jump", controls->jumpHandler },
+				{ "attack", controls->attackHandler }, { "run", controls->runHandler }, { "sneak", controls->sneakHandler },
+				{ "togglePOV", controls->togglePOVHandler }, { "meleeThrow", controls->meleeThrowHandler }, { "grabRotation", controls->grabRotationHandler } } };
+			std::string off;
+			for (const auto& [name, handler] : handlers) {
+				if (handler && !static_cast<const RE::BSInputEventUser*>(handler)->inputEventHandlingEnabled) {
+					off += std::format("{}{}", off.empty() ? "" : ",", name);
+				}
+			}
+			const auto& d = controls->data;
+			return std::format("player: polling={} held={} block={} handlersOff={} move=({:.2f},{:.2f}) look=({:.2f},{:.2f})", input ? (input->pollingEnabled ? "on" : "off") : "?",
+				held.empty() ? "none" : held, controls->blockPlayerInput, off.empty() ? "none" : off, d.moveInputVec.x, d.moveInputVec.y, d.lookInputVec.x, d.lookInputVec.y);
+		}
+
 		// controls [contextHex]: the control map's stack of input contexts (uppermost last), and with a context,
 		// its user events and their keys (keyboard, mouse, pad), for `input`. 0 is gameplay, 1 menu navigation,
 		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest).
@@ -3450,7 +3532,7 @@ namespace DevCommands
 					}
 					out += std::format(" layers={}{}", enable->layers.size(), held);
 				}
-				return out + " | " + SneakFacts();
+				return out + " | " + PlayerInputFacts() + " | " + SneakFacts();
 			}
 			const auto id = ParseHex(a_args);
 			if (!id || *id >= static_cast<std::uint32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal)) {
