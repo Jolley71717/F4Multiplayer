@@ -4,6 +4,7 @@
 #include "DropStore.h"
 #include "EnetTransport.h"
 #include "FormIds.h"
+#include "NpcHealths.h"
 #include "Name.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
@@ -68,6 +69,8 @@ namespace
 	// A game says what its world holds of the items given (kDropRecord) after its welcome and each load; one sooner than
 	// this after the last waits (the latest kept) for the tick.
 	constexpr auto DROP_RECORD_INTERVAL = std::chrono::milliseconds(250);
+	// Pieces a player reports before their record says whose world it is, noted to be tagged with it (Player::untagged).
+	constexpr std::size_t MAX_UNTAGGED = 4096;
 	// What lies in the session (kDropList, up to ~385 KB) answers the first record after a welcome, and a later one only
 	// this long after the last list: a game that loads a save already knows what lies there (each change is told to every
 	// game), so a game sending records over and over isn't sent the whole list each time.
@@ -338,6 +341,11 @@ namespace
 		Clock::time_point          dropRecordAt{};  // when their last kDropRecord was answered
 		std::optional<Protocol::DropRecord> heldDropRecord;  // one that came sooner than DROP_RECORD_INTERVAL after
 		std::optional<Clock::time_point>    dropListAt;      // when they were last sent what lies there (kDropList), if since their welcome
+		// Whose world their game plays is known (their record since their welcome or their last load said: DropStore::CharacterOf).
+		// Until then what they build is tagged with no character, and noted (untagged) to be tagged once their record comes.
+		bool                       characterKnown = false;
+		std::vector<std::uint32_t> untagged;      // pieces reported (placed) since their welcome or load, before their record
+		bool                       ownListOwed = false;  // their record, once it comes, is answered with kOwnWorkshopItems
 	};
 
 	struct Ownership
@@ -501,6 +509,7 @@ void Server::Run()
 	};
 	std::unordered_map<std::uint32_t, Loan> loans;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	NpcHealths::Book npcHealths;  // the health of each run NPC hurt here, from its runner: sent to a joiner and after a load
 	// What each NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
 	// game still has its own roll (it could not make the session's) does not replace it, so nobody's NPC changes again
@@ -661,8 +670,8 @@ void Server::Run()
 			}
 			sessionLevel = saved->npcLevel;
 			sessionLegendary = saved->legendaryMult;
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
-				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
+				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -707,7 +716,7 @@ void Server::Run()
 		for (const auto& [ref, flags] : markers) {
 			snapshot.markers.emplace_back(ref, flags);
 		}
-		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
+		workshop.ForEachKept([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		snapshot.drops = drops.All();
 		snapshot.storageOwners = storage.Owners();
 		snapshot.storageReversals = storage.Reversals();
@@ -760,6 +769,7 @@ void Server::Run()
 		spawns.clear();
 		loans.clear();
 		npcEquipment.clear();
+		npcHealths.Clear();
 		npcIdentities.clear();
 		rollsFullLogged = false;
 		rollLives.clear();
@@ -1098,6 +1108,22 @@ void Server::Run()
 		for (const auto& place : objectPlaces.All()) {
 			send(a_to, Protocol::Encode(place, Protocol::MessageType::kObjectRested), true);
 		}
+		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
+		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
+		const auto  receiver = players.find(a_to);
+		const auto  receiverId = receiver != players.end() ? receiver->second.id : 0;
+		std::size_t healths = 0;
+		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
+			const auto owner = actorOwners.find(a_ref);
+			if (owner == actorOwners.end() || owner->second.playerId == receiverId || deadActors.contains(a_ref)) {
+				return;
+			}
+			send(a_to, Protocol::Encode(Protocol::ActorHealth{ a_ref, a_fraction }, Protocol::MessageType::kActorHealth), true);
+			++healths;
+		});
+		if (healths != 0) {
+			log(std::format("server: {} told the health of {} hurt NPCs others run", describe(a_to), healths));
+		}
 	};
 
 	// A player gets the world state they need (on joining, after loading a save) now if their budget
@@ -1147,6 +1173,22 @@ void Server::Run()
 		}
 	};
 
+	// What the session keeps as built by the player themselves in the world their game plays now, for it to look for there
+	// (WorkshopAudit): it answers with what it lacks (kReportWorkshopGone), and that goes for everyone, and with what it has
+	// again of what it lacked (kLost), which comes back. Sent once their record after the welcome or a load says whose world
+	// it is (the player ID is the PC's: another character's world has none of the first's pieces): a save from before a
+	// piece was built has none of it.
+	const auto sendOwnWorkshop = [&](const Player& a_player) {
+		if (!a_player.characterKnown) {
+			return;
+		}
+		const auto own = workshop.BuiltBy(a_player.id, drops.CharacterOf(a_player.id));
+		for (std::size_t i = 0; i < own.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+			const auto end = (std::min)(own.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+			send(a_player.key, Protocol::Encode(std::vector<Protocol::WorkshopItem>(own.begin() + i, own.begin() + end), Protocol::MessageType::kOwnWorkshopItems), true);
+		}
+	};
+
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
@@ -1169,6 +1211,7 @@ void Server::Run()
 			}
 			released.push_back({ a_entry.first, 0 });
 			npcEquipment.erase(a_entry.first);
+			npcHealths.Forget(a_entry.first);  // its next runner reports its own reading
 			if (spawns.erase(a_entry.first) != 0) {  // nobody else's game has it to run: the others' copies go
 				npcIdentities.erase(a_entry.first);
 			}
@@ -1620,6 +1663,10 @@ void Server::Run()
 			}
 		}
 		sendWorkshop(a_player);
+		// What they built, for their game to look for, once their record says whose world it plays (handleDropRecord).
+		a_player.characterKnown = false;
+		a_player.untagged.clear();
+		a_player.ownListOwed = true;
 
 		// Not to the host's own game: its clock is the session's, and a saved time would turn its clock back to
 		// when the session was last saved. (A dedicated server has no such game; it restores the saved time.)
@@ -1816,6 +1863,7 @@ void Server::Run()
 		spawns.erase(it);
 		actorOwners.erase(a_death.refId);
 		npcEquipment.erase(a_death.refId);
+		npcHealths.Forget(a_death.refId);
 		npcIdentities.erase(a_death.refId);
 		a_death.playerId = a_player.id;
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
@@ -1939,6 +1987,7 @@ void Server::Run()
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
 		npcEquipment.erase(death->refId);
+		npcHealths.Forget(death->refId);
 		npcIdentities.erase(death->refId);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
@@ -2058,6 +2107,12 @@ void Server::Run()
 					owner->second.playerId, std::exchange(staleHealthDropped, 0)));
 			}
 			return;
+		}
+		// The runner's word on a plugin's NPC is kept for whoever joins or loads later (NpcHealths). Not one nobody runs
+		// (whoever runs it next reports its own), nor a spawn's: a joiner's copy of one is placed some frames after it
+		// hears of it, and a report before then has nothing to set (WorldSync::ApplyRemoteHealth).
+		if (!spawn && owner != actorOwners.end()) {
+			npcHealths.Heard(health->refId, health->health);
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
 	};
@@ -2731,10 +2786,14 @@ void Server::Run()
 			return;
 		}
 		auto item = Protocol::DecodeWorkshopItem(a_data);
-		if (!item) {
-			return;
+		if (!item || item->refId == item->workshop) {
+			return;  // a settlement's workbench is never one of its own pieces: kept, it would move or scrap everyone's workbench
 		}
 		item->playerId = a_player.id;
+		// Whose world built it: the one their last record named, or, before their record since their welcome or load came, none
+		// yet (tagged when it comes: until then CharacterOf may still be the world they had before the load).
+		item->character = a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0;
+		const bool wasLost = item->op == Protocol::WorkshopOp::kPlaced && workshop.IsLost({ item->playerId, item->refId });
 		// Past their share, what they already have kept can still move or go; nothing new is kept.
 		if (workshop.Adds(*item) && !withinShare(a_player, kWorkshop)) {
 			return;
@@ -2748,10 +2807,46 @@ void Server::Run()
 			log(std::format("server: the session keeps at most {} {}; not keeping {:08X} from player {}, nor any more", scrap ? MAX_WORLD_SCRAPS : MAX_WORKSHOP_ITEMS,
 				scrap ? "scrapped pieces of the world" : "built objects", item->refId, a_player.id));
 		}
+		if (outcome.relay && item->op == Protocol::WorkshopOp::kPlaced && !a_player.characterKnown && a_player.untagged.size() < MAX_UNTAGGED) {
+			a_player.untagged.push_back(item->refId);
+		}
+		if (outcome.relay && wasLost) {
+			log(std::format("server: player {}'s world has {:08X} again, a piece it had lacked: back for everyone", a_player.id, item->refId));
+		}
 		if (outcome.relay) {
 			touched();  // relayed: what is kept changed
 			broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
 		}
+	};
+
+	// Pieces kept as the player's own building that their world no longer has (the answer to kOwnWorkshopItems): gone
+	// for everyone, as a scrap of theirs would be. Only their own built pieces: nothing of another player's, no piece of
+	// the world, and nothing their game has built since under the same reference ID (WorkshopStore::Gone).
+	const auto handleWorkshopGone = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto items = Protocol::DecodeWorkshopItems(a_data);
+		if (!items || !a_player.characterKnown) {
+			return;  // a world not yet known to be theirs: the answer to a list sent for the world before their load
+		}
+		const auto                          character = drops.CharacterOf(a_player.id);
+		std::vector<Protocol::WorkshopItem> scraps;
+		for (auto& item : *items) {
+			item.playerId = a_player.id;
+			if (auto scrap = workshop.Gone(item, character)) {
+				scraps.push_back(*scrap);
+			}
+		}
+		if (scraps.empty()) {
+			return;
+		}
+		auto& added = budgetOf(a_player).added[kWorkshop];
+		added -= (std::min)(added, scraps.size());
+		touched();
+		broadcast(Protocol::Encode(scraps), true, a_player.key);
+		log(std::format("server: player {}'s world no longer has {} of the pieces kept as theirs (a save from before they were built): removed for everyone",
+			a_player.id, scraps.size()));
 	};
 
 	// Items given between players (common/DropStore.h). A drop is offered to its dropper's game first: it swaps the item
@@ -2856,6 +2951,9 @@ void Server::Run()
 
 	const auto answerDropRecord = [&](Player& a_player, const Protocol::DropRecord& a_record, Clock::time_point a_now) {
 		a_player.dropRecordAt = a_now;
+		if (std::exchange(a_player.ownListOwed, false)) {
+			sendOwnWorkshop(a_player);  // whose world it plays is known now (handleDropRecord)
+		}
 		const auto out = drops.Reconcile(a_player.id, a_record, sessionId);
 		for (const auto& gone : out.withdrawn) {
 			broadcast(Protocol::Encode(gone), true, 0);
@@ -2905,6 +3003,10 @@ void Server::Run()
 			return;
 		}
 		drops.SetCharacter(a_player.id, record->character);  // their drops and takes from now on are that world's, held or not
+		// And what they built since their welcome or load, before saying so; what they build from now on is tagged as it comes.
+		workshop.Tag(a_player.id, a_player.untagged, record->character);
+		a_player.untagged.clear();
+		a_player.characterKnown = true;
 		if (const auto now = Clock::now(); now - a_player.dropRecordAt >= DROP_RECORD_INTERVAL) {
 			a_player.heldDropRecord.reset();
 			answerDropRecord(a_player, *record, now);
@@ -2990,6 +3092,7 @@ void Server::Run()
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
+				npcHealths.Forget(ref);   // ... and its health (a first reading)
 				// A plugin's NPC keeps the session's roll while nobody runs it (protocol 57): the next game to meet it builds it so.
 				if (spawns.erase(ref) != 0) {  // a spawn its owner's game let go of (unloaded) is gone: the copies go
 					npcIdentities.erase(ref);
@@ -3821,6 +3924,12 @@ void Server::Run()
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.
+		if (request && !gap) {
+			// A loaded world: whose it is, their record (sent after this request, not after a gap's) says.
+			a_player.characterKnown = false;
+			a_player.untagged.clear();
+			a_player.ownListOwed = true;
+		}
 		if (request) {
 			giveWorldState(a_player, request->sessionId == sessionId ? request->containerFrom : 0);
 			// The copies of what others built went with the world the game threw away: they come with the
@@ -4164,6 +4273,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopItem:
 			handleWorkshopItem(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopGone:
+			handleWorkshopGone(a_player, a_data);
 			break;
 		case MessageType::kReportDrop:
 			handleReportDrop(a_player, a_data);
