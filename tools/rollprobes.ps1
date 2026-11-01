@@ -17,8 +17,8 @@
 #  5 spawn copy  -SpawnBase: the host spawns a leveled NPC; the guest's copy is built from the host's roll as it is
 #                placed (net status copiesRolled=built/not: built goes up, not stays)
 #  6 pre-write   rollsPrewritten in the guest's game (information: it counts after walking away from rolled NPCs)
-#  7 legendary   -LegendaryGlobal: that global set to 100 then 0 in both games; a fresh spawn is legendary, then not,
-#                the same in both (the global is put back after)
+#  7 legendary   -LegendaryGlobal and -LegendaryGlobalId (ChanceLegendary, 0016556E): that global set to 100 then 0 in
+#                both games; host spawns come out legendary, then not (the global is put back after)
 #  8 late joiner -HostAddress: the guest leaves and joins again; its sessionRolls and npcLevel match the host's and
 #                the agreement pass still holds
 #  9 recycle     -RecycleRef: that NPC recycled (recycleactor) in both games; `rolls show` still the same in both
@@ -28,10 +28,12 @@ param(
 	[int]$HostPort = 7790,
 	[string]$SpawnBase = '',
 	[string]$LegendaryGlobal = '',
+	[string]$LegendaryGlobalId = '',
 	[string]$HostAddress = '',
 	[string]$RecycleRef = '',
 	[float]$Radius = 4000,
-	[int]$SettleSeconds = 8
+	[int]$SettleSeconds = 8,
+	[switch]$NoWait  # the players are already in place (a scripted run): don't stop to ask
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,7 +82,14 @@ function NearbyNpcs {
 	return @($refs)
 }
 
-# Each NPC's roll as both games built it: the part after the ref and before "session=" must be the same.
+# A roll as `rolls show` prints it, without what is each game's own: the part from "session=" on, the built copy's
+# form id (base=FFxxxxxx: the engine numbers the copy it makes from the template in each game separately), and what
+# the NPC's worn gear and the fight make (health now, dr: the outfit is rolled by each game, not part of this roll).
+function RollOf([string]$Line) {
+	return (($Line -replace '\s+session=.*$', '') -replace 'base=FF[0-9A-F]{6}', 'base=FF*') -replace ' (health|dr)=\S+', ''
+}
+
+# Each NPC's roll as both games built it: RollOf must be the same.
 function Agreement([string]$Probe) {
 	$refs = NearbyNpcs
 	if ($refs.Count -eq 0) {
@@ -97,8 +106,8 @@ function Agreement([string]$Probe) {
 			$missing += "$ref (host: $hostLine; guest: $guestLine)"
 			continue
 		}
-		$hostRoll = ($hostLine -replace '\s+session=.*$', '')
-		$guestRoll = ($guestLine -replace '\s+session=.*$', '')
+		$hostRoll = RollOf $hostLine
+		$guestRoll = RollOf $guestLine
 		if ($hostRoll -eq $guestRoll) { $same++ } else { $differ += "host '$hostLine' guest '$guestLine'" }
 	}
 	$detail = "$same of $($refs.Count) the same"
@@ -111,6 +120,7 @@ function Agreement([string]$Probe) {
 }
 
 function Wait-Enter([string]$What) {
+	if ($NoWait) { return }
 	Read-Host "$What, then press Enter" | Out-Null
 }
 
@@ -171,24 +181,40 @@ $guestCounters = Counters 'guest'
 Report 'pre-write' 'INFO' "guest rollsPrewritten=$(Field $guestCounters 'rollsPrewritten') sessionRolls=$(Field $guestCounters 'sessionRolls') (walk away and back to see it rise)"
 
 # ---- 7 legendary ------------------------------------------------------------------------------------------------
-if ($LegendaryGlobal -and $SpawnBase) {
-	$was = Dev 'host' "global $LegendaryGlobal"
-	foreach ($chance in 100, 0) {
-		foreach ($game in 'host', 'guest') { Dev $game "console set $LegendaryGlobal to $chance" | Out-Null }
-		$spawned = Dev 'host' "spawn $SpawnBase 600"
-		Start-Sleep -Seconds $SettleSeconds
-		$ref = if ($spawned -match '([0-9A-F]{8})') { $Matches[1] } else { '' }
-		$hostLine = if ($ref) { Dev 'host' "rolls show $ref" } else { 'no ref' }
-		$want = if ($chance -eq 100) { 'legendary' } else { 'plain' }
-		$isLegendary = $hostLine -match 'legendary'
-		$ok = $ref -and (($chance -eq 100) -eq $isLegendary)
-		Report "legendary $chance" $(if ($ok) { 'PASS' } else { 'FAIL' }) "want $want; spawn: $spawned; host: $hostLine (compare the guest's copy in its log: 'built as the spawn's roll')"
+# A host spawn is the host game's own legendary decision, cooldown and all (docs/SHARED-ROLLS.md, what is not shared):
+# at 100 the first spawns can still come out plain, so up to 6 are tried. The guest's copy is built from that roll.
+# The global is read first by its form id in each game and put back after; without that reading nothing is changed.
+if ($LegendaryGlobal -and $LegendaryGlobalId -and $SpawnBase) {
+	$was = @{}
+	foreach ($game in 'host', 'guest') {
+		$line = Dev $game "global $LegendaryGlobalId"
+		if ($line -match '^[0-9A-F]{8} (-?[0-9.]+)$') { $was[$game] = $Matches[1] }
 	}
-	if ($was -match '([0-9.]+)\s*$') {
-		foreach ($game in 'host', 'guest') { Dev $game "console set $LegendaryGlobal to $($Matches[1])" | Out-Null }
+	if ($was.Count -ne 2) {
+		Report 'legendary' 'SKIP' "could not read $LegendaryGlobalId in both games: nothing changed"
+	} else {
+		foreach ($chance in 100, 0) {
+			foreach ($game in 'host', 'guest') { Dev $game "console set $LegendaryGlobal to $chance" | Out-Null }
+			$tries = if ($chance -eq 100) { 6 } else { 3 }
+			$seen = @()
+			$ok = $chance -ne 100
+			for ($i = 0; $i -lt $tries; $i++) {
+				$spawned = Dev 'host' "spawn $SpawnBase 600"
+				Start-Sleep -Seconds 2
+				$ref = if ($spawned -match 'ref=([0-9A-F]{8})') { $Matches[1] } else { '' }
+				$hostLine = if ($ref) { Dev 'host' "rolls show $ref" } else { 'no ref' }
+				$isLegendary = $hostLine -match '\slegendary=true\b'
+				$seen += "$ref legendary=$isLegendary"
+				if ($chance -eq 100 -and $isLegendary) { $ok = $true; break }
+				if ($chance -eq 0 -and $isLegendary) { $ok = $false }
+			}
+			$want = if ($chance -eq 100) { 'a legendary within 6 spawns' } else { 'no legendary in 3 spawns' }
+			Report "legendary $chance" $(if ($ok) { 'PASS' } else { 'FAIL' }) "want $want; host spawns: $($seen -join ', ') (the guest's copies: 'built as the spawn's roll' in its log)"
+		}
+		foreach ($game in 'host', 'guest') { Dev $game "console set $LegendaryGlobal to $($was[$game])" | Out-Null }
 	}
 } else {
-	Report 'legendary' 'SKIP' 'needs -LegendaryGlobal (the legendary chance global''s editor id) and -SpawnBase'
+	Report 'legendary' 'SKIP' 'needs -LegendaryGlobal (the legendary chance global''s editor id), -LegendaryGlobalId (its form id, hex) and -SpawnBase'
 }
 
 # ---- 8 late joiner ----------------------------------------------------------------------------------------------
@@ -212,7 +238,7 @@ if ($RecycleRef) {
 	Start-Sleep -Seconds $SettleSeconds
 	$hostLine = Dev 'host' "rolls show $RecycleRef"
 	$guestLine = Dev 'guest' "rolls show $RecycleRef"
-	$ok = ($hostLine -replace '\s+session=.*$', '') -eq ($guestLine -replace '\s+session=.*$', '') -and $hostLine -notlike 'error*'
+	$ok = (RollOf $hostLine) -eq (RollOf $guestLine) -and $hostLine -notlike 'error*'
 	Report 'recycle' $(if ($ok) { 'PASS' } else { 'FAIL' }) "host '$hostLine' guest '$guestLine'"
 } else {
 	Report 'recycle' 'SKIP' 'no -RecycleRef'
