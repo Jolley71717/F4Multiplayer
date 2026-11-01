@@ -18,6 +18,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/InputGate.h"
+#include "game/VirtualPad.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -419,8 +420,9 @@ namespace
 			return;
 		}
 		const bool enabled = setting->GetBinary();
-		// Off, the window matters only while the gate is closed (see InputGate::Gate::Frame).
-		const bool front = (enabled || inputGate.Now() != InputGate::Gate::State::kOpen) ? Hotkeys::GameInFront() : true;
+		// Off, the window matters only while the gate is closed (see InputGate::Gate::Frame), or to the dev channel's pad.
+		const bool pad = VirtualPad::Plugged();
+		const bool front = (enabled || pad || inputGate.Now() != InputGate::Gate::State::kOpen) ? Hotkeys::GameInFront() : true;
 		const auto step = inputGate.Frame(enabled, front, front && enabled && MouseButtonDown());
 		if (step.polling) {
 			input->pollingEnabled = *step.polling;
@@ -432,6 +434,7 @@ namespace
 				}
 			}
 		}
+		VirtualPad::GateFrame(*input, front);  // the dev channel's pad goes on being read in the background, alone
 		if ((step.closed || step.opened) && inputGateLogged < INPUT_GATE_LOGGED * 2) {
 			++inputGateLogged;
 			REX::INFO("Input: {}", step.closed ? "the game's window is not in front: no input reaches the game until it is (it runs on)" :
@@ -1084,6 +1087,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
 	Equipment::InstallFrameGate();  // and its Transfer
 	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
+	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);
