@@ -6,6 +6,7 @@
 #   tools/crossovermac.sh restart [cell] [--no-deploy]  # close, deploy, start through Steam, SanctuaryExt in god mode
 #   tools/crossovermac.sh restart ''                    # stop at the main menu
 #   tools/crossovermac.sh dev status pos "console coc QASmoke"
+#   tools/crossovermac.sh test [name]                   # the Windows build's F4MPTests.exe; [name]: only those tests
 #
 # XSE_FO4_GAME_PATH is the game's folder inside a CrossOver bottle (as for xmake install); the bottle, its CrossOver
 # and its Documents follow from it. F4MP_DEV_PORT and F4MP_DEV_TOKEN as for devctl.ps1. restart starts the game the
@@ -115,9 +116,20 @@ restart() {
 	dev "console tgm" > /dev/null
 }
 
+# The Windows build's tests, against Microsoft's C++ library as on Windows: the native build's libc++ fails a test
+# MSVC passes. The exit code is the number of failed tests.
+run_tests() {
+	local wine
+	wine=$(crossover_wine)
+	# tests read the sources (SourceTree.h), so they run from the repo; the 2> drops Wine's own msync lines
+	"$wine" --bottle "$bottle" --no-update --workdir "$root" "$root/build/windows/x64/releasedbg/F4MPTests.exe" "$@" \
+		2> >(grep -v '^msync:' >&2) | tr -d '\r'
+}
+
 case ${1:-} in
 deploy) shift; deploy "$@" ;;
 restart) shift; restart "$@" ;;
 dev) shift; dev "$@" ;;
-*) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+test) shift; run_tests "$@" ;;
+*) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

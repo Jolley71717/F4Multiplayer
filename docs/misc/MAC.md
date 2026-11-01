@@ -1,10 +1,11 @@
 # Building and testing on a Mac
 
-The project is built and released on Windows. On a Mac (Apple silicon) the server, the bot and the
-tests build natively, the plugin builds for Windows with clang-cl, and the game runs under CrossOver.
-Releases are still built with MSVC on Windows; a pull request tested with a clang-cl build says so.
+The project is built and released on Windows. On a Mac (Apple silicon) the server and the bot build
+natively, the plugin and the tests build for Windows with clang-cl, and the game and the tests run
+under CrossOver. Releases are still built with MSVC on Windows; a pull request tested with a clang-cl
+build says so.
 
-## Server, bot and tests
+## Server and bot
 
 With Homebrew's LLVM: Apple's own compiler lacks parts of C++23 the server uses before macOS 26.
 
@@ -13,11 +14,10 @@ brew install xmake llvm
 LLVM=$(brew --prefix llvm)
 xmake f -m releasedbg --toolchain=llvm --sdk=$LLVM --cxflags=-D_LIBCPP_DISABLE_AVAILABILITY \
     --ldflags="-L$LLVM/lib/c++ -Wl,-rpath,$LLVM/lib/c++"
-xmake build -y F4MPCommon F4MPServer F4MPBot F4MPTests
-xmake run F4MPTests
+xmake build -y F4MPCommon F4MPServer F4MPBot
 ```
 
-## The plugin
+## The plugin and the tests
 
 clang-cl against the Microsoft C++ runtime and Windows SDK that
 [xwin](https://github.com/Jake-Shadle/xwin) downloads (running it accepts Microsoft's license for
@@ -29,10 +29,13 @@ brew install lld xwin
 xwin --accept-license --arch x86_64 splat --output ~/.xwin
 export XMAKE_CONFIGDIR=$PWD/.xmake/win
 xmake f -p windows -a x64 -m releasedbg --toolchain=xwin
-xmake build -y F4Multiplayer
+xmake build -y F4Multiplayer F4MPTests
 ```
 
-The DLL lands in `build/windows/x64/releasedbg/`, as on Windows.
+Both land in `build/windows/x64/releasedbg/`, as on Windows. The tests run under a bottle's Wine
+(below), against Microsoft's C++ library as on Windows: built natively with libc++, one passes on
+Windows and fails. `tools/crossovermac.sh test` runs them; as on Windows, the exit code is the number
+failed and a name runs only the tests whose names hold it.
 
 ## The game under CrossOver
 
