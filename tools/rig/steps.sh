@@ -159,17 +159,19 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # chest's take emptied it in the VM's game (the menu take happened), and no item of the session's kind the VM took is left in the
 # host's copy (each take went across, and the emptying gave up the rest of what the host's roll had more of).
 _loot() {
-	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0
+	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened
 	conts=$(host 'refs 31 2500' | grep -o "[0-9A-F]\{8\} base=" | cut -c1-8 | head -8)
 	for c in $conts; do
 		[ "$(dcf host "refinfo $c" locked)" = yes ] && continue   # a locked chest opens the lockpick, not the container menu
 		hb=$(host "contents $c"); vb=$(vm "contents $c")
 		has_items "$hb" && has_items "$vb" || continue
+		# The take is pressed only once the container menu is open, and the activate is tried again once. A chest that opens by
+		# a script of its own (2026-10-31/11-01: 00152CD5, base 0016628C, "opened by a script or itself" in the plugin log) never
+		# opened the menu for a console activate in three runs: it is left out (a WARN), not counted as a take that failed.
+		vm focus >/dev/null; sleep 0.3; opened=0
+		for i in 1 2; do vm "console $c.activate player" >/dev/null; menu_open vm ContainerMenu 4 && { opened=1; break; }; echo "$c: activate $i opened no container menu" >> "$A_OUT/looted.txt"; done
+		if [ $opened = 0 ]; then nomenu="$nomenu $c"; continue; fi
 		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
-		# 2026-10-31: one activate of three opened no menu (ContainerMenu counted 2 opens), so the take is pressed only once the
-		# menu is open, and the activate is tried again once; the menu is closed and gone before the next chest
-		vm focus >/dev/null; sleep 0.3
-		for i in 1 2; do vm "console $c.activate player" >/dev/null; menu_open vm ContainerMenu 4 && break; echo "$c: activate $i opened no container menu" >> "$A_OUT/looted.txt"; done
 		sleep 0.5; vm "key 0x52 60" >/dev/null; sleep 1; vm "key 0x09 60" >/dev/null; sleep 1
 		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
 		va=$(vm "contents $c"); has_items "$va" && notaken="$notaken $c"
@@ -189,6 +191,7 @@ _loot() {
 			taken=$((taken + 1)); n=$(count_in "$ha" "$i"); [ "$n" -gt 0 ] && left="$left $c:${i}x$n"
 		done <<<"$(stacks_of "$vb")"
 	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
+	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice; a chest with its own opening script)"
 	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no unlocked chest with items in both games within 2500 u: nothing was looted (inconclusive)"; return; fi
 	if [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
 	if [ $taken -eq 0 ] && [ $other -gt 0 ]; then warn "loot: the VM's takes reach the host's chests" "the host's rolls held none of the $other shared stack(s) the VM took (each game rolls a chest on its own; what only one roll put there stays by design): nothing to see, inconclusive"
@@ -361,17 +364,20 @@ step_pa() {
 	# While moving, the driver and its stand-in are compared at the same moment: both games trace (dev `trace`, 20 Hz, each row
 	# stamped with its machine's clock) and the driver's own path is read at each stand-in sample's time, the VM's clock offset
 	# taken out (trace.sh clock). Reading the two games one after the other used to count up to ~0.3 s of running as distance.
-	local clk did tr
-	clk=$(bash "$RIG/trace.sh" clock 2>/dev/null | grep -oE -- '-?[0-9]+ ms from the host' | grep -oE -- '^-?[0-9]+')
+	local clk clk0 clk1 did tr
+	# trace.sh clock resyncs the VM's time service; a reading right after it once said 1078 ms and then -14 (2026-11-01: the step
+	# still settling), so the offset is read again before and after the trace, and must hold still across it
+	bash "$RIG/trace.sh" clock >/dev/null 2>&1; sleep 3; clk0=$(bash "$RIG/trace.sh" offset 2>/dev/null)
 	did=$(dcf $d 'net status' id)
 	bash "$RIG/dcfast.sh" both "trace start 20" >/dev/null 2>&1; dc $d focus >/dev/null; sleep 0.3
 	dc $d "key 0x57 3000" >/dev/null; dc $d "mouse 600 0" >/dev/null
 	for i in $(seq 1 12); do
 		case $i in 3) dc $d "key 0x57 2500" >/dev/null;; 5) dc $d "key 0x20 80" >/dev/null;; 6) dc $d "mouse 1587 0" >/dev/null; dc $d "key 0x57 3000" >/dev/null;; esac; sleep 0.6
 	done
-	sleep 1.5; host 'trace stop' >/dev/null; vm 'trace stop' >/dev/null; settled=$(_dist)
+	sleep 1.5; host 'trace stop' >/dev/null; vm 'trace stop' >/dev/null; settled=$(_dist); clk1=$(bash "$RIG/trace.sh" offset 2>/dev/null)
+	clk=""; is_num "$clk0" && is_num "$clk1" && [ $(( clk1 > clk0 ? clk1 - clk0 : clk0 - clk1 )) -le 50 ] && clk=$(( (clk0 + clk1) / 2 ))
 	cp -f "$HOST_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-host.csv" 2>/dev/null; scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-vm.csv" 2>/dev/null
-	if ! is_num "$clk" || [ "${clk#-}" -gt 500 ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "the VM's clock offset is unknown or over 500 ms ('$clk'): the two traces can't be lined up"
+	if ! is_num "$clk" || [ "${clk#-}" -gt 500 ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "the VM's clock offset is unknown, moved over 50 ms during the trace or is over 500 ms (before '$clk0', after '$clk1'): the two traces can't be lined up"
 	elif [ -z "$did" ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "no player id in the driver's net status"
 	else
 		tr=$(pa_same_time "$A_OUT/pa-$d-$d.csv" "$A_OUT/pa-$d-$v.csv" "p$did" "$([ $d = vm ] && echo "$clk" || echo 0)" "$([ $v = vm ] && echo "$clk" || echo 0)")

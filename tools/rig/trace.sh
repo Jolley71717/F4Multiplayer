@@ -208,5 +208,6 @@ run) rig_guard || exit 2; run $2 ;;   # drives the games: only with the rig held
 analyse) analyse $2 $3 $4 ;;
 npcs) npcs $2 $3 ;;
 clock) clock ;;
-*) echo "usage: trace.sh run [seconds] | analyse [host.csv vm.csv [vmClockMs]] | npcs <host.csv> <vm.csv> | clock" ;;
+offset) clock_offset ;;   # the VM's clock minus the host's in ms, measured only: no resync, no limit
+*) echo "usage: trace.sh run [seconds] | analyse [host.csv vm.csv [vmClockMs]] | npcs <host.csv> <vm.csv> | clock | offset" ;;
 esac

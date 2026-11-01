@@ -98,6 +98,7 @@ put_at() {
 # a kill leaves no runner and no "you run it" answer to check)
 T_TARGET_HP=${T_TARGET_HP:-25}
 T_TOUGH_HP=${T_TOUGH_HP:-120}   # kill and pause targets get this much health in both games (pick_targets)
+declare -A TOUGH_WAS   # their health before, put back at the end of the phase
 unhurt() { local i; i=$(rinfo "$1" "$2"); [ "$(field "$i" dead)" = false ] && is_num "$(field "$i" hp)" && awk -v h="$(field "$i" hp)" -v m="$T_TARGET_HP" 'BEGIN{exit !(h >= m)}'; }
 pick_targets() {
 	local r=$1 s a k=0 ro rv sp taken="" x y z off ps po; s=$(other_of "$r"); TG=(); ps=$(dc "$s" pos); po=$(dc "$r" pos)
@@ -117,7 +118,7 @@ pick_targets() {
 			# that kills a copy goes the death path, never routed damage, so neither step saw damageAnswered. Both games give
 			# them T_TOUGH_HP (health syncs as a fraction of the most, so both must agree on the most).
 			if [ $k -lt 2 ]; then
-				dc host "console $a.setav health $T_TOUGH_HP" >/dev/null; dc vm "console $a.setav health $T_TOUGH_HP" >/dev/null; sleep 1
+				TOUGH_WAS[$a]=$(field "$(rinfo host "$a")" hp); dc host "console $a.setav health $T_TOUGH_HP" >/dev/null; dc vm "console $a.setav health $T_TOUGH_HP" >/dev/null; sleep 1
 				echo "raider $a health: host $(field "$(rinfo host "$a")" hp), vm $(field "$(rinfo vm "$a")" hp)" >> "$A_OUT/targets.txt"
 				if ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt host "$a" || ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt vm "$a"; then echo "raider $a: health not raised, skipped" >> "$A_OUT/targets.txt"; continue; fi
 			fi
@@ -279,6 +280,9 @@ run_phase() {
 	fi
 
 	for t in "${TG[@]}"; do dc "$o" "console $(tg_ro "$t").setrestrained 0" >/dev/null; dc "$p" "console $(tg_ro "$t").setrestrained 0" >/dev/null; done
+	# the raised health stays in both running games (a console setav, nobody's session state): put back, or a later run on the
+	# same games (smoke's health compare, 2026-11-01) finds 120 in one and 30 in a game that restarted since
+	for a in "${!TOUGH_WAS[@]}"; do dc host "console $a.setav health ${TOUGH_WAS[$a]}" >/dev/null; dc vm "console $a.setav health ${TOUGH_WAS[$a]}" >/dev/null; done
 	ALL_TG+=("${TG[@]}")
 }
 
