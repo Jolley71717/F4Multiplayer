@@ -61,6 +61,7 @@
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
+#include "game/VirtualPad.h"
 #include "game/WindowFocus.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
@@ -3901,6 +3902,8 @@ namespace DevCommands
 			Entry{ "turnto", TurnTo },
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
+			Entry{ "pad", VirtualPad::Command },
+			Entry{ "walkto", VirtualPad::WalkTo },
 			Entry{ "mouse", Mouse },
 			Entry{ "click", Click },
 			Entry{ "mousedev", MouseDev },
@@ -4025,6 +4028,7 @@ namespace DevCommands
 		InputFrame();
 		MenuClock::Frame();
 		MouseFrame();
+		VirtualPad::Frame();
 		if (!turn.active) {
 			return;
 		}

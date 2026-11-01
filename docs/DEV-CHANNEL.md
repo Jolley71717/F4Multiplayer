@@ -169,6 +169,28 @@ The commands it uses:
   the game is logged as such, not as an option the menu ignored. On the VM a scheduled task (a screenshot,
   `input.ps1`) takes the front for a moment; a press sent then went nowhere, and on 2026-10-11 that was
   read as a dialogue that no longer took input.
+- `pad`: a virtual gamepad of the game's own, for scripted movement that needs neither the window in front nor
+  Windows' input (src/game/VirtualPad.h). The plugin hooks the game's XInput imports (Fallout4.exe takes
+  `XInputGetState`, `XInputGetCapabilities` and `XInputSetState` from XINPUT1_3.dll, by ordinal); once a pad
+  command plugs it in, pad 0 is ours and the game's own gamepad code reads it as a real pad (the game asks
+  `XInputGetCapabilities` until a pad is there, then reads `XInputGetState` every frame). Each game process has its
+  own, so the host's and the VM's are driven apart, and the keyboard and mouse of whoever sits at the PC are not
+  touched. `pad stick l|r <x> <y> [ms]` (-1..1, y forward; held until set again, or for the time given),
+  `pad button <a|b|x|y|lb|rb|back|start|ls|rs|up|down|left|right>[+...] [ms]` (a 100 ms tap by default),
+  `pad trigger l|r <0-1> [ms]`, `pad off` (everything let go, still plugged in), `pad unplug`, and `pad` for its
+  state: the reads per pad index, `gameSeesPad=`, `front=`, `polling=`, `muted=`. Stick values are mapped past
+  XInput's dead zone along the stick's direction, so a small push still moves. With the window not in front the
+  input gate (src/game/InputGate.h) turns the game's polling off; while the pad is plugged in, polling stays on for it
+  and the game's keyboard and mouse skip their polls instead (`muted=true`), so keys typed into another window never
+  reach the game. `pad unplug` gives the gate back its own way.
+- `walkto <refHex> [speed] [radius] [timeoutS]` or `walkto <x> <y> [speed] [radius] [timeoutS]`: walks the player to
+  a reference (followed as it moves) or a point with the pad's sticks, re-aimed every frame: the left stick pushes
+  toward the target as the player faces, the right stick turns the player to face it, easing off near it. It ends
+  arrived (within the radius, 80 by default), stuck (no 30 units gained in 4 s, after an 8 s start; a wall, or a game
+  dropping the player's input) or timed out (120 s by default); `walkto` gives the walk's state or the last one's
+  end, `walkto stop` stops it. Progress is logged once a second (`Pad: walkto`). A reference is a form id given as
+  `0x...`, eight hex digits, or with a hex letter in it. `tools/rig/walkto.sh <host|vm> <target...>` runs one and
+  waits for its end. Speed 1 runs; the stick never sets a position or a velocity, the game's own movement does.
 - `mousedev [fix]`: the game's mouse as Windows feeds it. The game reads the mouse through Raw Input
   (WM_INPUT to its window), and a game that came up behind another window was seen taking keys and never a
   click. The answer gives the raw input registrations (`raw=1:2 flags=0x0 to=game` is the mouse registered
