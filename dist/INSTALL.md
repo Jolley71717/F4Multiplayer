@@ -10,7 +10,7 @@ Four players by default; the host can allow more (`iMaxPlayers`, see [Settings](
 - Ideally **the same mods** as everyone else, in any order: what comes from a mod only one of you has (its NPCs, items, quests) is left out in the other game
 
 **Everyone must use the same version of this mod.** Back up your saves (or start a fresh one)
-before playing; this is an early alpha.
+before playing; this is an alpha.
 
 Always start the game with F4SE (`f4se_loader.exe`, or your mod manager's F4SE launcher).
 
