@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T00:28:05+00:00",
+ "updated": "2026-11-01T00:37:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -672,6 +672,14 @@
    "pr": 227
   },
   {
+   "id": "l15g",
+   "title": "Shared rolls: a respawned NPC is rebuilt as the same roll, so a legendary spot stays legendary for the whole session",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Respawned enemies come back as the same roll; a legendary one stays legendary"
+  },
+  {
    "id": "l7oc",
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
@@ -845,6 +853,14 @@
    "note": "",
    "pr": 186,
    "desc": "A player reported that their friend ended up with a save from about ten minutes earlier instead of the latest one. Progress may have been lost, so this is a high priority. We need to know which save was loaded (quick, auto or exit save) and the logs from both games."
+  },
+  {
+   "id": "r2av",
+   "title": "Spawns: a friend's spawn copy is withheld or removed for good when any hostile runtime NPC of ours is within 128 units",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "A friend's enemy can vanish from your game when one of your own enemies runs next to it"
   },
   {
    "id": "r4al",
