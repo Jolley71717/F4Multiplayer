@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T22:24:08+00:00",
+ "updated": "2026-11-01T22:49:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -404,6 +404,14 @@
    "pr": 192,
    "partial": "0.9.0",
    "desc": "After a player died and reloaded, they often could not hurt enemies. Enemies are made untouchable for a moment during a friend's explosion, and a save written at that moment kept them that way. 0.9.0 stops that from being saved, and the next release repairs enemies an older save kept in that state. We tested the repair on two real games but not yet with a real old save."
+  },
+  {
+   "id": "bopa",
+   "title": "Rig: a virtual gamepad per game for scripted tests (no focus, smooth analog movement)",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "briz",
