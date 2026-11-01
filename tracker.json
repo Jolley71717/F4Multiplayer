@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T07:43:13+00:00",
+ "updated": "2026-11-01T09:27:51+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -36,7 +36,8 @@
    "kind": "bug",
    "priority": 3,
    "stage": 2,
-   "note": "Review fixes: per-character lists, reversible removal, stricter missing checks"
+   "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
+   "pr": 245
   },
   {
    "id": "161b",
