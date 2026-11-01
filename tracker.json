@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T07:16:09+00:00",
+ "updated": "2026-11-01T07:23:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -590,7 +590,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 2,
-   "note": "Fixed in a PR: a game that joins, rejoins or loads now gets the health of hurt NPCs; rig test next",
+   "note": "Fixed in a PR and passed a two-game test (rejoin and load); awaiting review",
    "pr": 246
   },
   {
