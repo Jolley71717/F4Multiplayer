@@ -39,13 +39,15 @@ run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {
 	section "cleanup (test pieces left in Sanctuary)"
-	local r left="" st
-	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed.txt" > "$A_OUT/cleanup-end.log" 2>&1; tail -3 "$A_OUT/cleanup-end.log"
-	# What this run placed must be gone. Pieces the session file already held ("N built" in the server's log line) come back as friends'
-	# copies at every join and cannot be taken out of that file from here: counted and reported, not failed.
+	local r left="" st rc
+	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed.txt" > "$A_OUT/cleanup-end.log" 2>&1; rc=$?; tail -4 "$A_OUT/cleanup-end.log"
+	# What this run placed must be gone, and so must every test piece a game can still take out (its own, or a copy whose builder's
+	# game still has it: cleanup.sh exits 1). Copies of pieces only the session file still holds (orphans: no game has them to scrap)
+	# come back at every join until the session file is one without them; they are listed, and are not this run's doing.
 	for r in $(cat "$A_OUT/ws-placed.txt" 2>/dev/null); do st=$(host "refinfo $r"); case "$st" in *"deleted=true"*) ;; *) left="$left $r";; esac; done
 	if [ -z "$left" ]; then pass "the pieces this run placed are removed" "$(wc -w < "$A_OUT/ws-placed.txt" 2>/dev/null) piece(s)"; else fail "the pieces this run placed are removed" "still there:$left"; fi
-	if grep -q "still has test pieces" "$A_OUT/cleanup-end.log"; then warn "replayed copies of older test pieces remain" "$(grep 'still has' "$A_OUT/cleanup-end.log" | tr '\n' ' ' | cut -c1-150): the session file's built list brings them back at each join; start from a session file with no built pieces (backup.sh) for a clean save"; fi
+	if [ "$rc" = 0 ]; then pass "no test piece left that a game can take out (own pieces, copies whose builder has them)" "$(grep -c orphaned "$A_OUT/cleanup-end.log") game(s) show orphans of the session file (cleanup-end.log)"
+	else fail "no test piece left that a game can take out (own pieces, copies whose builder has them)" "$(grep 'still has' "$A_OUT/cleanup-end.log" | tr '\n' ' ' | cut -c1-170)"; fi
 }
 case " $skip " in *" cleanup "*) ;; *) case " $steps " in *" cleanup "*) smoke_cleanup_end;; esac;; esac
 run final     step_final

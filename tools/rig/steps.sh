@@ -14,8 +14,8 @@ T_HP_DIFF=${T_HP_DIFF:-2}               # hp, the same actor in both games
 # health agreement needs at least this many actors read in BOTH games (an actor one game cannot answer for is only reported as
 # missing): with fewer, "nothing differs" would mean "almost nothing was compared", which is a FAIL, not a pass
 T_HP_MIN_COMPARED=${T_HP_MIN_COMPARED:-3}
-# power armor: the stand-in's distance from the driver, read one game after the other (up to ~0.3 s of running apart)
-T_PA_MOVING_FAIL=${T_PA_MOVING_FAIL:-450}; T_PA_MOVING_WARN=${T_PA_MOVING_WARN:-200}; T_PA_SETTLED=${T_PA_SETTLED:-40}
+# power armor: the stand-in's distance from the driver at the same moment (both games' traces lined up on the clock), and after stopping
+T_PA_MOVING=${T_PA_MOVING:-200}; T_PA_SETTLED=${T_PA_SETTLED:-40}
 # perf (docs/PERF.md): ours_in_hitches must stay 0. The 0.8.7 baseline had p99 at most 2.1 ms (1.7 host, 2.1 VM) and p50 0.13 to 0.35 ms;
 # the limits below (p50 1.0 ms, p99 4.0 ms) are about twice the baseline's worst p99 and several times its p50: loose on purpose,
 # they catch a real regression and not rig noise. Compare against the baseline in docs/PERF.md for anything finer.
@@ -142,6 +142,47 @@ step_combat() {
 }
 
 has_items() { grep -qE "[0-9A-F]{8}x[0-9]+" <<<"$1"; }   # contents: "REF: 000FD9A8x1 0003377Bx1 (2 stacks)" or "REF: empty"
+stacks_of() { grep -oE "[0-9A-F]{8}x[0-9]+" <<<"$1" | tr x ' '; }   # contents -> "<item> <count>" lines
+count_in() { stacks_of "$1" | awk -v i="$2" '$1==i {n+=$2} END{print n+0}'; }   # count_in <contents> <item>
+# The loot the session shares (src/game/LootScope.h, Of): a take from a chest is everyone's unless the item is a weapon or armor
+# (only the base form would travel), a key, a note or a book (each player collects their own), or featured or a quest item
+# (rare in a chest, not told apart here). By form type (dev `edid`: ARMO 29, BOOK 30, WEAP 43, KEYM 47, NOTE 50).
+declare -A _ITYPE
+shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" type); _ITYPE[$1]=${t:-?}; }; case "$t" in 29|30|43|47|50|"?") return 1;; esac; return 0; }
+# _loot: the VM loots the host's chests near Red Rocket the way a player does: opens each (activate), takes all (R in the
+# container menu) and closes it (Tab). Console removeallitems used to stand in for the take; it goes through the same container
+# event, but the old check then wanted the host's chest EMPTY, which the design never does: weapons, armor, keys, notes and books
+# stay in a friend's copy, and so does what only the host's own roll of the chest put there (LootSync TryEmpty). Asserted: every
+# chest's take emptied it in the VM's game (the menu take happened), and no item of the session's kind the VM took is left in the
+# host's copy (each take went across, and the emptying gave up the rest of what the host's roll had more of).
+_loot() {
+	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0
+	conts=$(host 'refs 31 2500' | grep -o "[0-9A-F]\{8\} base=" | cut -c1-8 | head -8)
+	for c in $conts; do
+		[ "$(dcf host "refinfo $c" locked)" = yes ] && continue   # a locked chest opens the lockpick, not the container menu
+		hb=$(host "contents $c"); vb=$(vm "contents $c")
+		has_items "$hb" && has_items "$vb" || continue
+		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
+		vm focus >/dev/null; sleep 0.3; vm "console $c.activate player" >/dev/null; sleep 1.5; vm "key 0x52 60" >/dev/null; sleep 1; vm "key 0x09 60" >/dev/null; sleep 1
+		va=$(vm "contents $c"); has_items "$va" && notaken="$notaken $c"
+		echo "$c vm after the take: $va" >> "$A_OUT/looted.txt"
+	done
+	sleep 5
+	while read -r c _; do
+		[ -n "$c" ] || continue
+		vb=$(sed -n "s/^$c host .* | vm //p" "$A_OUT/looted.txt" | head -1); ha=$(host "contents $c"); echo "$c host after: $ha" >> "$A_OUT/looted.txt"
+		while read -r i vn; do
+			[ -n "$i" ] || continue
+			if ! shared_item "$i"; then kept=$((kept + 1)); continue; fi
+			taken=$((taken + 1)); n=$(count_in "$ha" "$i"); [ "$n" -gt 0 ] && left="$left $c:${i}x$n"
+		done <<<"$(stacks_of "$vb")"
+	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
+	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no unlocked chest with items in both games within 2500 u: nothing was looted (inconclusive)"; return; fi
+	if [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
+	if [ $taken -eq 0 ]; then fail "loot: the VM's takes reach the host's chests" "the VM took no item of the kind the session shares (only weapons, armor, keys, notes, books: $kept stack(s)): inconclusive"
+	elif [ -z "$left" ]; then pass "loot: the VM's takes reach the host's chests" "$taken shared stack(s) gone from the host's copies; $kept weapon/armor/personal stack(s) stay by design"
+	else fail "loot: the VM's takes reach the host's chests" "still in the host's copy:$left (of $taken shared stacks taken; details in looted.txt)"; fi
+}
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
 _useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; dc "$who" "key 0x09 60" >/dev/null; sleep 2; }
 _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper Mart safe through the storage terminal
@@ -169,20 +210,7 @@ step_terminals() {
 		l=$(dcf $who 'net status' linked)
 		expect_ge "terminal used by $who: linked refs watched" "$l" 1
 	done
-	# the VM loots the host's containers (removeallitems after opening); the host's game must see them empty
-	local conts nonempty=0 emptied=0 left=""
-	conts=$(host 'refs 31 2500' | grep -o "[0-9A-F]\{8\} base=" | cut -c1-8 | head -8)
-	for c in $conts; do
-		before=$(host "contents $c"); if has_items "$before"; then nonempty=$((nonempty + 1)); echo "$c" >> "$A_OUT/looted.txt"; fi
-		vm "console $c.activate player" >/dev/null; sleep 1.5; vm "key 0x09 60" >/dev/null; sleep 0.5; vm "console $c.removeallitems player" >/dev/null; sleep 0.5
-	done
-	sleep 5
-	for c in $(cat "$A_OUT/looted.txt" 2>/dev/null); do
-		after=$(host "contents $c"); if has_items "$after"; then left="$left $c"; else emptied=$((emptied + 1)); fi
-	done
-	if [ $nonempty -eq 0 ]; then warn "loot: VM empties containers, host sees them empty" "no container with items found to loot (already emptied by an earlier run?)"
-	elif [ -z "$left" ]; then pass "loot: VM empties containers, host sees them empty" "$emptied of $nonempty"
-	else warn "loot: VM empties containers, host sees them empty" "UNRESOLVED: still holding items on the host:$left (not yet known whether removeallitems after opening is a loot the sync shares; a run with a real pickup is needed)"; fi
+	_loot
 	expect_match "loot: both games up" "$(alive)" '^host=ingame=true vm=ingame=true$'
 	ns host; ns vm
 	expect_le "loot: host pending loot settled" "$(nsf host pendingLoot)" 5; expect_le "loot: vm pending loot settled" "$(nsf vm pendingLoot)" 5
@@ -269,6 +297,28 @@ step_workshop() {
 # ---- power armor, both ways ---------------------------------------------------------------------------------------------------
 # step_pa <driver>: the driver places a frame, walks up and presses E (a real key); the other game's stand-in must wear it,
 # keep up while the driver runs, turns and jumps, and the driver must climb out again.
+# pa_same_time <driver.csv> <viewer.csv> <stand-in's who> <driver clock ms> <viewer clock ms>: for each sample of the driver's
+# stand-in in the viewer's trace, the distance to where the driver's own trace had them at that same moment (each file's clock,
+# that machine's minus the host's, taken out; the driver's path interpolated between its samples). "n= mean= p95= max=" in u.
+pa_same_time() {
+	awk -F, -v who="$3" -v doff="$4" -v voff="$5" '
+	FNR == 1 { f++; next }
+	f == 1 && $2 == "me" { n++; t[n] = $1 - doff; x[n] = $3; y[n] = $4 }
+	f == 2 && $2 == who { m++; vt[m] = $1 - voff; vx[m] = $3; vy[m] = $4 }
+	END {
+		j = 1; k = 0
+		for (i = 1; i <= m; i++) {
+			if (n < 2 || vt[i] < t[1] || vt[i] > t[n]) continue
+			while (j < n - 1 && t[j + 1] < vt[i]) j++
+			u = (t[j + 1] == t[j]) ? 0 : (vt[i] - t[j]) / (t[j + 1] - t[j])
+			d[++k] = sqrt((x[j] + (x[j + 1] - x[j]) * u - vx[i]) ^ 2 + (y[j] + (y[j + 1] - y[j]) * u - vy[i]) ^ 2); s += d[k]
+		}
+		if (k == 0) { print "n=0"; exit }
+		for (a = 2; a <= k; a++) { v = d[a]; b = a - 1; while (b > 0 && d[b] > v) { d[b + 1] = d[b]; b-- } d[b + 1] = v }
+		p = int(k * 0.95); if (p < 1) p = 1
+		printf "n=%d mean=%.0f p95=%.0f max=%.0f\n", k, s / k, d[p], d[k]
+	}' "$1" "$2"
+}
 step_pa() {
 	local d=$1 v tries f worst settled i hp vx vy hx hy dd s skel pieces dx dy ang
 	v=$([ "$d" = host ] && echo vm || echo host)
@@ -295,14 +345,28 @@ step_pa() {
 	if [ -z "$hp" ]; then fail "power armor ($d): stand-in found" "no puppet=FF.. in the other game's net status"; return; fi
 	_xy() { grep -o " [xy]=[-0-9]*" <<<"$1" | cut -d= -f2 | tr '\n' ' '; }
 	_dist() { local hq; hq=$(dc $v "refinfo $hp"); read -r vx vy <<<"$(_xy "$(dc $d 'refinfo 00000014')")"; read -r hx hy <<<"$(_xy "$hq")"; awk -v a=$vx -v b=$vy -v c=$hx -v e=$hy 'BEGIN{printf "%d", sqrt((a-c)^2+(b-e)^2)}'; }
+	# While moving, the driver and its stand-in are compared at the same moment: both games trace (dev `trace`, 20 Hz, each row
+	# stamped with its machine's clock) and the driver's own path is read at each stand-in sample's time, the VM's clock offset
+	# taken out (trace.sh clock). Reading the two games one after the other used to count up to ~0.3 s of running as distance.
+	local clk did tr
+	clk=$(bash "$RIG/trace.sh" clock 2>/dev/null | grep -oE -- '-?[0-9]+ ms from the host' | grep -oE -- '^-?[0-9]+')
+	did=$(dcf $d 'net status' id)
+	bash "$RIG/dcfast.sh" both "trace start 20" >/dev/null 2>&1; dc $d focus >/dev/null; sleep 0.3
 	dc $d "key 0x57 3000" >/dev/null; dc $d "mouse 600 0" >/dev/null
-	worst=0; for i in $(seq 1 12); do
-		dd=$(_dist); [ -n "$dd" ] && [ "$dd" -gt "$worst" ] && worst=$dd
+	for i in $(seq 1 12); do
 		case $i in 3) dc $d "key 0x57 2500" >/dev/null;; 5) dc $d "key 0x20 80" >/dev/null;; 6) dc $d "mouse 1587 0" >/dev/null; dc $d "key 0x57 3000" >/dev/null;; esac; sleep 0.6
 	done
-	sleep 1.5; settled=$(_dist)
-	expect_le "power armor ($d): stand-in distance while moving (fail)" "$worst" "$T_PA_MOVING_FAIL" u
-	warn_gt "power armor ($d): stand-in distance while moving (soft)" "$worst" "$T_PA_MOVING_WARN" u
+	sleep 1.5; host 'trace stop' >/dev/null; vm 'trace stop' >/dev/null; settled=$(_dist)
+	cp -f "$HOST_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-host.csv" 2>/dev/null; scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-vm.csv" 2>/dev/null
+	if ! is_num "$clk" || [ "${clk#-}" -gt 500 ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "the VM's clock offset is unknown or over 500 ms ('$clk'): the two traces can't be lined up"
+	elif [ -z "$did" ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "no player id in the driver's net status"
+	else
+		tr=$(pa_same_time "$A_OUT/pa-$d-$d.csv" "$A_OUT/pa-$d-$v.csv" "p$did" "$([ $d = vm ] && echo "$clk" || echo 0)" "$([ $v = vm ] && echo "$clk" || echo 0)")
+		echo "$tr" > "$A_OUT/pa-$d-distance.txt"
+		if [ "$(field "$tr" n)" -ge 40 ] 2>/dev/null; then
+			expect_le "power armor ($d): stand-in distance while moving, at the same moment (max of $(field "$tr" n) samples; mean $(field "$tr" mean) u, p95 $(field "$tr" p95) u; VM clock $clk ms)" "$(field "$tr" max)" "$T_PA_MOVING" u
+		else fail "power armor ($d): stand-in distance while moving, at the same moment" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
+	fi
 	expect_le "power armor ($d): stand-in distance after stopping" "$settled" "$T_PA_SETTLED" u
 	for tries in 1 2 3; do dc $d "mouse 0 -900" >/dev/null; sleep 0.3; dc $d "key 0x45 1300" >/dev/null; sleep 6; [ "$(dcf $d pa extraPA)" = "false" ] && break; done
 	expect_eq "power armor ($d): climbed out" "$(dcf $d pa extraPA)" false
@@ -390,7 +454,7 @@ step_final() {
 smoke_cleanup_start() {
 	section "known-clean start (test pieces from earlier runs)"
 	bash "$RIG/cleanup.sh" scan --enter > "$A_OUT/cleanup-start.log" 2>&1
-	if [ $? -eq 0 ]; then pass "no test pieces in the save at the start" ""
+	if [ $? -eq 0 ]; then pass "no test pieces in the save at the start" "$(grep -c orphaned "$A_OUT/cleanup-start.log") game(s) show orphans of the session file (cleanup.sh: no game can scrap them)"
 	else warn "test pieces from an earlier run were in the save" "removing them: $(grep 'still has' "$A_OUT/cleanup-start.log" | tr '\n' ' ')"
 		bash "$RIG/cleanup.sh" run >> "$A_OUT/cleanup-start.log" 2>&1 && pass "test pieces removed before the run" "" || fail "test pieces removed before the run" "see $A_OUT/cleanup-start.log"
 	fi
