@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T16:41:22+00:00",
+ "updated": "2026-11-01T18:39:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -332,6 +332,14 @@
    "desc": "A player reported that enemies or other characters move oddly in a session, with other mods installed. We do not know yet which characters, in whose game, or how. A log and an example of where it happens would help."
   },
   {
+   "id": "9v41",
+   "title": "A friend's stand-in often never gets into a seat: left standing (0.10.0, 253 times in a 5-player session, mostly one plugin's furniture)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "af5k",
    "title": "A friend in power armor slides along without walking",
    "kind": "bug",
@@ -510,6 +518,14 @@
    "stage": 7,
    "note": "",
    "pr": 223
+  },
+  {
+   "id": "f3qg",
+   "title": "Four joiner games ended without a shutdown in one 7-hour 0.10.0 session (crash suspected, no crash logs)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "fhkp",
