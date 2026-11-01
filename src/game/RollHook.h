@@ -57,6 +57,10 @@ namespace RollHook
 	// game's report (kept only where the session has none yet). A spawn's is not kept (its copy is armed: Placement).
 	void Learn(const Protocol::NpcIdentity& a_identity, bool a_session);
 
+	// How many times a plugin's NPC died in the session, from the server (kRollLives): the next pick of it is its next
+	// life's, and the roll we kept of it goes. True when that is news (a death we hadn't counted).
+	bool SetLives(const Protocol::RollLife& a_life);
+
 	// Main thread, once a frame: the session's rolls written on our references that have one of their own but are not
 	// loaded, so the next time their cell loads they are the session's (Rolls::Apply's write; counted as prewritten).
 	void Frame();

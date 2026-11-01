@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <excpt.h>
 #include <format>
 #include <mutex>
 #include <unordered_map>
@@ -38,6 +39,14 @@ namespace RollHook
 		constexpr REL::ID     DIFFICULTY{ 2233056 };            // the game's difficulty, 0-6 (+D6D600)
 		constexpr REL::ID     LEGENDARY_MULTS{ 2209078 };       // (difficulty, float* chanceMult, float* countMult) (+6CEEA0)
 		constexpr std::size_t CALL_STUB = 14;                   // what a write_call<5> takes of the trampoline
+
+		// The fault guards catch an access violation alone (data not as 1.11.240 has it); anything else, a C++ exception
+		// among them, goes on to whoever handles it, with its unwinding intact.
+		constexpr unsigned long ACCESS_VIOLATION = 0xC0000005;  // EXCEPTION_ACCESS_VIOLATION
+		int OnlyAccessViolations(unsigned long a_code)
+		{
+			return a_code == ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH;
+		}
 
 		// BGSEncounterZone (no CommonLib layout): its ENCOUNTER_ZONE_DATA at +0x20, so minLevel +0x31, flags +0x32, maxLevel
 		// +0x33, as the engine's zone level reads them (+494EC0).
@@ -84,6 +93,9 @@ namespace RollHook
 		};
 		std::mutex                                storeLock;
 		std::unordered_map<std::uint32_t, Entry>  store;
+		// How many times each plugin's NPC died this session (the server's count, kRollLives): its pick's seed takes it, so
+		// a life a cell reset brings back is another roll, the same in every game. Under storeLock.
+		std::unordered_map<std::uint32_t, std::uint16_t> lives;
 		bool                                      storeFullLogged = false;
 		std::deque<std::uint32_t>                 prewrites;  // main thread only
 		std::unordered_set<std::uint32_t>         prewriteQueued;
@@ -136,6 +148,7 @@ namespace RollHook
 
 		std::atomic<std::uint32_t> forced{ 0 }, placedN{ 0 }, picked{ 0 }, missed{ 0 }, notWhole{ 0 }, unconsumed{ 0 }, faults{ 0 }, levelsSet{ 0 }, logBudget{ 0 };
 		std::atomic<std::uint32_t> prewritten{ 0 }, differ{ 0 };
+		std::atomic<std::uint32_t> pickedNoZone{ 0 };  // picks made with no encounter zone for the reference (one not loaded yet reads as none)
 		std::atomic<bool>          faultLogged{ false }, missLogged{ false }, notWholeLogged{ false };
 
 		// ---- Reading the game ---------------------------------------------------------------------------------
@@ -207,7 +220,7 @@ namespace RollHook
 			__try {
 				ReadFactsUnguarded(a_ref, *a_out);
 				return true;
-			} __except (1) {
+			} __except (OnlyAccessViolations(GetExceptionCode())) {
 				return false;
 			}
 		}
@@ -269,7 +282,7 @@ namespace RollHook
 			__try {
 				PickUnguarded(*a_args, *a_out);
 				return true;
-			} __except (1) {
+			} __except (OnlyAccessViolations(GetExceptionCode())) {
 				return false;
 			}
 		}
@@ -313,6 +326,13 @@ namespace RollHook
 			SharedRoll::Templates ids{};
 			std::ranges::copy(a_identity.templates, ids.begin());
 			return Resolve(ids, a_identity.mask, a_out);
+		}
+
+		std::uint32_t LivesOf(std::uint32_t a_refId)
+		{
+			std::scoped_lock lock{ storeLock };
+			const auto       it = lives.find(a_refId);
+			return it != lives.end() ? it->second : 0;
 		}
 
 		// What a_ref, about to be rolled, is to be: nothing for the game's own roll.
@@ -375,6 +395,7 @@ namespace RollHook
 					return false;
 				}
 				key = *own;
+				ordinal = LivesOf(id);  // its life in the session: one a cell reset brought back is rolled anew
 			} else if ((id >> 24) == 0xFF) {
 				const auto original = KeyOf(baseId);
 				const auto place = facts.placeId ? KeyOf(facts.placeId) : std::optional<std::uint64_t>{ 0 };
@@ -392,6 +413,8 @@ namespace RollHook
 			std::optional<SharedRoll::Zone> zone;
 			if (facts.zone) {
 				zone = SharedRoll::Zone{ facts.zoneMin, facts.zoneMax, (facts.zoneFlags & ZONE_MATCH_BELOW_MIN) != 0, facts.zoneScaleValue };
+			} else {
+				++pickedNoZone;
 			}
 			PickArgs args;
 			args.original = baseId;
@@ -610,7 +633,7 @@ namespace RollHook
 			__try {
 				ReadDifficultyUnguarded(*a_level, *a_chance);
 				return true;
-			} __except (1) {
+			} __except (OnlyAccessViolations(GetExceptionCode())) {
 				return false;
 			}
 		}
@@ -646,6 +669,7 @@ namespace RollHook
 		{
 			std::scoped_lock lock{ storeLock };
 			store.clear();
+			lives.clear();
 			storeFullLogged = false;
 		}
 		{
@@ -678,6 +702,21 @@ namespace RollHook
 		if (a_session && prewrites.size() < MAX_PREWRITE_QUEUE && prewriteQueued.insert(a_identity.refId).second) {
 			prewrites.push_back(a_identity.refId);
 		}
+	}
+
+	bool SetLives(const Protocol::RollLife& a_life)
+	{
+		std::scoped_lock lock{ storeLock };
+		if (!lives.contains(a_life.refId) && lives.size() >= Protocol::MAX_SESSION_ROLLS) {
+			return false;  // the server keeps no more than that
+		}
+		auto& current = lives[a_life.refId];
+		if (current == a_life.lives) {
+			return false;
+		}
+		current = a_life.lives;
+		store.erase(a_life.refId);  // that life's roll is over: the next is the session's pick of the next life
+		return true;
 	}
 
 	void Frame()
@@ -755,8 +794,8 @@ namespace RollHook
 			std::scoped_lock lock{ storeLock };
 			kept = store.size();
 		}
-		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
-			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), notWhole.load(), unconsumed.load(), levelsSet.load(),
+		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
+			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), pickedNoZone.load(), notWhole.load(), unconsumed.load(), levelsSet.load(),
 			prewritten.load(), differ.load(), faults.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
 			sessionLegendary.load() ? std::format("{:.3f}", sessionLegendary.load() / 1000.0) : std::string{ "own" });
 	}
@@ -783,7 +822,7 @@ namespace RollHook
 		args.levels.legendary = SharedRoll::ListLevel(level, 1.0f, zone);
 		args.levels.allBelow = facts.allBelow < 0 ? SharedRoll::AllBelow::kNever : facts.allBelow == 1 ? SharedRoll::AllBelow::kAlways : SharedRoll::AllBelow::kDefault;
 		args.levels.legendaryAllowed = facts.legendaryAllowed;
-		args.seed = SharedRoll::SeedOf(session, key.value_or(0), 0);
+		args.seed = SharedRoll::SeedOf(session, key.value_or(0), key ? LivesOf(facts.refId) : 0);
 		args.legendaryMult = facts.legendaryMult;
 		std::string out = std::format("{:08X} placed as {:08X}: session {:016X} level {} rule {} zone={} modifier={:.2f} allBelow={} legendaryMult={:.2f}{}", facts.refId, facts.baseId, session, level,
 			SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())), zone ? std::format("{}-{}x{:.2f}", zone->min, zone->max, zone->scale) : std::string{ "none" }, facts.modifier,

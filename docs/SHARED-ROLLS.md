@@ -25,12 +25,12 @@ Every game builds the NPC the same way the first time. It doesn't wait for anyon
    `CreateReferenceAtLocation`. The resolver then builds our copy as that roll. `net status` shows
    `copiesRolled=consumed/armed`; one that is armed and not consumed is logged.
 2. **The session's roll of a plugin's NPC.** The server keeps it for the session's life, not only while someone runs
-   the NPC. It goes when the NPC dies. It is saved in the session file and sent to a joiner with the welcome. Rolls
-   from our own game's reports are kept too, while the session has none. A roll is used only when the NPC it was
-   placed as matches ours and each template is an NPC in our game. Otherwise the engine's roll stands
-   (`rollsNotWhole=`).
+   the NPC. It goes when the NPC dies. It is saved in the session file and sent to a joiner with the welcome, 16 to a
+   packet (`kNpcIdentities`, 179). Rolls from our own game's reports are kept too, while the session has none. A roll
+   is used only when the NPC it was placed as matches ours and each template is an NPC in our game. Otherwise the
+   engine's roll stands (`rollsNotWhole=`).
 3. **The session's pick.** This is `SharedRoll::Pick`: the engine's resolver over the game's own data, with our dice.
-   The seed is the session id, the reference's key and an ordinal:
+   The seed is the session id, the reference's key and an ordinal (a plugin's reference: its life, below):
    - A plugin's reference is keyed by its plugin's file name (any case) and its id within the plugin, so the key is
      the same whatever the load order.
    - A runtime reference (FF) is keyed by the NPC it was placed as, its cell or worldspace, its spot on a 256-unit grid,
@@ -39,11 +39,27 @@ Every game builds the NPC the same way the first time. It doesn't wait for anyon
 
    It is made only when the session has a level and the rule isn't `own`.
 
+   **The lists must match.** The pick reads each game's own leveled lists. Two games whose lists differ (a plugin one
+   of them lacks, or entries a script added in one game only) can pick differently. The runner's report then corrects
+   the copy at the next load, and `rollsDiffer=` counts it.
+
+**A new life is a new roll.** Each accepted death of a plugin's NPC is a new life: the server counts the deaths
+(`kRollLives`, 178), tells every game, the runner's too, and keeps the count in the session file. A joiner gets the
+counts with the welcome, before the rolls. A game drops its stored roll of an NPC whose count changed, and its next
+roll (the cell reset) is seeded with the new count. So a respawned raider is rolled anew, the same in every game,
+legendary or not.
+
+**The legendary draw has its own dice**, seeded with the NPC's seed and the level its lists would be read at as a
+legendary. The template slots roll the same whether or not the NPC can be legendary, and the draw is not one number
+for every level.
+
 Each build is logged for a session's first 32, for example
 `RollHook: 0001F0B1 built as the session's pick of 0001A000 ...`. Counters are in `net status` (`rolls` on the dev
-console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNotWhole rollsUnconsumed rollLevels
-rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rolls show <ref>` gives the roll the session has for
-a ref, and `rolls pick <ref>` gives what the pick would be now.
+console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNoZone rollsNotWhole rollsUnconsumed
+rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks made for an NPC
+whose encounter zone wasn't loaded yet (the pick then reads the lists at the session's level, which can differ from
+the zone's). `rolls show <ref>` gives the roll the session has for a ref, and `rolls pick <ref>` gives what the pick
+would be now.
 
 **Pre-write.** A session roll that arrives for a reference in memory that is not loaded is written onto it straight
 away (`Rolls::Apply`, 8 a frame on the main thread). It takes at the next cell load. The reference must have no 3D,
@@ -171,9 +187,10 @@ The engine adds a small variance that it cycles through.
   decision.
 
 **Crash safety.** Both hooks check their bytes or slot at install. If either doesn't match, they are not installed,
-with a warning. The game's data is read under SEH (`ReadFacts`, `Pick`). A fault turns the hooks off for the rest of
-the run and is logged once. A template that isn't an NPC in our game, a mask without the NPC's use flags, or anything
-unexpected leaves the engine's own roll.
+with a warning. The game's data is read under SEH (`ReadFacts`, `Pick`), which catches access violations only. A
+fault turns the hooks off for the rest of the run and is logged once. A template that isn't an NPC in our game, or
+anything unexpected, leaves the engine's own roll. A session roll's slots are not checked against our NPC's template
+use flags.
 
 ## Where we differ from the engine, on purpose or not yet
 
@@ -190,9 +207,11 @@ unexpected leaves the engine's own roll.
 ## Changes to note
 
 - The ours-there stopgap (a friend's spawn that our own game made too) is folded in here and not shipped on its own:
-  `Spawns::OwnMadeNpcAt`, `npcOursThere=`.
+  `Spawns::OwnMadeNpcAt`, `npcOursThere=`. It looks only when a friend's spawn copy is about to be placed, at most once
+  a second, and only for one of ours of the same NPC or the same leveled list within 128 units. A copy already placed
+  stays.
 - The brief proposed carrying the roll in `NEW_REFR_DATA`. Arming a thread_local around the placement was used
   instead: it needs no knowledge of that struct's layout, and the resolver runs inside `CreateReferenceAtLocation`
   on the same thread.
-- A session file with rolls or a level is layout 41. A file with neither is still written in the older layout, so
-  0.10.1 can read it.
+- A session file with rolls, lives or a level is layout 41, which 0.10.1 can't read. A file with none of them is still
+  written in the older layout, so 0.10.1 can read it.

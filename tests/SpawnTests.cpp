@@ -979,7 +979,7 @@ TEST("spawns: a frame one game made goes through the server as a spawn: a joiner
 	CHECK(anew[0].playerId == alice);
 }
 
-TEST("spawns: a runtime NPC of our own standing where a friend's game has its spawn stands for it: no copy placed, and one placed beside it goes")
+TEST("spawns: a runtime NPC of our own standing where a friend's game has its spawn stands for it: no copy placed, and one placed already stays")
 {
 	using Why = SpawnBook::Theirs::Why;
 	SpawnBook::Theirs theirs;
@@ -1004,22 +1004,37 @@ TEST("spawns: a runtime NPC of our own standing where a friend's game has its sp
 	noBase.baseOk = false;
 	CHECK(theirs.WhyNotPlaced(THEIRS, noBase, T0) == Why::kBaseNotOk);
 
-	// Placed before ours appeared beside it (our game rolled the encounter after the friend's): the copy goes, and the
-	// record stays, unplaced, for the spawn's life.
+	// Ours gone (dead, or off fighting elsewhere: Spawns doesn't keep the finding), the copy is placed.
+	CHECK(theirs.Decide(THEIRS, Near(), T0) == Act::kPlace);
+
+	// Placed before one of ours came to stand beside it: the copy stays (the friend is still fighting their raider, and
+	// ours may be another encounter's), whatever is said of the spot.
 	theirs.Placed(THEIRS, COPY, T0);
 	CHECK(theirs.Decide(THEIRS, Placed(1100.0f), T0) == Act::kNone);
 	auto placedOurs = Placed(1100.0f);
 	placedOurs.oursThere = true;
-	CHECK(theirs.Decide(THEIRS, placedOurs, T0) == Act::kDiscard);
-	theirs.Unplaced(THEIRS);
-	CHECK(theirs.Knows(THEIRS));
-	CHECK(theirs.Decide(THEIRS, ours, T0) == Act::kNone);
-	CHECK(theirs.WhyNotPlaced(THEIRS, ours, T0) == Why::kOursThere);
+	CHECK(theirs.Decide(THEIRS, placedOurs, T0) == Act::kNone);
 	// A copy gone from under us is still a loss, whatever stands there.
 	theirs.Placed(THEIRS, COPY, T0);
 	auto lost = placedOurs;
 	lost.copyThere = false;
 	CHECK(theirs.Decide(THEIRS, lost, T0) == Act::kLost);
+}
+
+TEST("spawns: one of our own stands for a friend's spawn only as the same encounter's NPC, never for being hostile")
+{
+	constexpr std::uint32_t OUR_RAIDER = 0x0001A2B3, GUNNER = 0x0001C4D5;  // the NPCs a copy is placed from
+	constexpr std::uint32_t LVL_RAIDER = 0x0002898B, LVL_GUNNER = 0x000DE969;  // the leveled NPCs they were rolled from
+	// Placed from the same NPC, or rolled from the same leveled NPC (another raider of the group, another roll).
+	CHECK(SpawnBook::StandsFor(OUR_RAIDER, LVL_RAIDER, OUR_RAIDER, LVL_RAIDER));
+	CHECK(SpawnBook::StandsFor(OUR_RAIDER, 0, OUR_RAIDER, 0));
+	CHECK(SpawnBook::StandsFor(0x0001A2B4, LVL_RAIDER, OUR_RAIDER, LVL_RAIDER));
+	// A mixed fight: our raider beside a friend's gunner is not it, however hostile both are.
+	CHECK(!SpawnBook::StandsFor(OUR_RAIDER, LVL_RAIDER, GUNNER, LVL_GUNNER));
+	// Nothing known matches nothing.
+	CHECK(!SpawnBook::StandsFor(0, 0, 0, 0));
+	CHECK(!SpawnBook::StandsFor(OUR_RAIDER, 0, GUNNER, 0));
+	CHECK(!SpawnBook::StandsFor(0, LVL_RAIDER, GUNNER, 0));
 }
 
 TEST("spawns: two games that rolled one encounter each share their raiders through the server, and neither places a copy on top of its own")

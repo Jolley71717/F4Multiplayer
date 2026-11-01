@@ -111,7 +111,9 @@ namespace SharedRoll
 		return Combine(Combine(Combine(a_original, a_place), static_cast<std::uint64_t>(gx)), static_cast<std::uint64_t>(gy));
 	}
 
-	// The seed of one roll: the session's, the reference's key, and an ordinal (0 for a plugin's reference).
+	// The seed of one roll: the session's, the reference's key, and an ordinal: for a plugin's reference, its life in the
+	// session (how many times it died: the server's count, kRollLives), so one a cell reset brings back is another roll;
+	// for a runtime one, the how-many-th of a group at one spot (Ordinals).
 	[[nodiscard]] constexpr std::uint64_t SeedOf(std::uint64_t a_session, std::uint64_t a_key, std::uint32_t a_ordinal)
 	{
 		return Combine(Combine(a_session, a_key), a_ordinal);
@@ -269,6 +271,8 @@ namespace SharedRoll
 		bool          legendaryAllowed = true;  // the engine makes none of a reference dead or deleted as it rolls
 	};
 
+	inline constexpr std::uint64_t LEGENDARY_STREAM = 0x4C4547454E440000ull;  // "LEGEND": the legendary draw's dice
+
 	// a_original: the NPC the reference was placed as. a_legendaryMultiplier: the difficulty's (1 on Normal). a_look(id):
 	// the Form, or nothing for one that isn't there.
 	template <class Look>
@@ -282,8 +286,10 @@ namespace SharedRoll
 		}
 		Rng rng{ a_seed };
 
-		// The legendary chance, drawn whether or not the NPC can be one, so one that can't rolls its slots the same either way.
-		const auto draw = rng.Below(100);
+		// The legendary chance, on dice of its own (the seed and the level the lists are read at for a legendary): the slots
+		// roll the same whether or not the NPC can be one, and the draw is not one number for every level.
+		Rng        legendRng{ Combine(a_seed, LEGENDARY_STREAM ^ a_levels.legendary) };
+		const auto draw = legendRng.Below(100);
 		const auto chance = npc->legendChance * (std::isfinite(a_legendaryMultiplier) ? a_legendaryMultiplier : 1.0f);
 		Picked     picked;
 		picked.legendary = a_levels.legendaryAllowed && npc->legendTemplate != 0 && npc->legendChance > 0.0f && static_cast<float>(draw) < chance;

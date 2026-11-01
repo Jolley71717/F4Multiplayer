@@ -43,7 +43,8 @@ namespace Protocol
 	// in the welcome (SessionRules::npcLevel and legendary, a byte each after the limits), each game's difficulty and its
 	// legendary chance multiplier in its status (PlayerStatus::difficulty, legendaryMult), the session's NPC level and
 	// multiplier (kSessionWorld: SessionWorld), and the server keeps every NPC's roll for the session's life and tells a
-	// joiner all of them. 0.10.1 (56) is refused at the hello.
+	// joiner all of them (kNpcIdentities), and how many times each plugin's NPC died (kRollLives: RollLife), so one a cell
+	// reset brings back is rolled anew. 0.10.1 (56) is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 57;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -249,6 +250,8 @@ namespace Protocol
 		kFrameReturned = 175,     // a lent frame came back, or the loan ended without a return (FrameReturn::ended)
 		kDamageAnswer = 176,      // to the player whose damage it was: applied by the NPC's runner, or refused (by the runner or the server) and why (DamageAnswer)
 		kSessionWorld = 177,      // the session's NPC level, after the welcome and whenever it changes (SessionWorld; also in the session file)
+		kRollLives = 178,         // how many times plugins' NPCs died this session (RollLife): a life's roll is seeded with it (also in the session file)
+		kNpcIdentities = 179,     // several kNpcIdentity at once: a joiner's catch-up of the session's rolls
 	};
 
 	enum StateFlags : std::uint8_t
@@ -4144,6 +4147,48 @@ namespace Protocol
 		return msg;
 	}
 
+	// kNpcIdentities: a joiner's catch-up of the session's rolls, up to MAX_IDENTITIES_PER_PACKET in one packet (the
+	// sender splits more), each a kNpcIdentity packet as it would go alone. One reliable send per packet, not per roll.
+	inline constexpr std::size_t MAX_IDENTITIES_PER_PACKET = 16;
+
+	inline std::vector<std::uint8_t> Encode(const std::vector<NpcIdentity>& a_msg)
+	{
+		Writer     w{ MessageType::kNpcIdentities };
+		const auto count = (std::min)(a_msg.size(), MAX_IDENTITIES_PER_PACKET);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.Bytes(Encode(a_msg[i], MessageType::kNpcIdentity));
+		}
+		return w.Data();
+	}
+
+	inline std::optional<std::vector<NpcIdentity>> DecodeNpcIdentities(std::span<const std::uint8_t> a_data)
+	{
+		Reader     r{ a_data };
+		r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_IDENTITIES_PER_PACKET) {
+			return std::nullopt;
+		}
+		std::vector<NpcIdentity> out;
+		out.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto packet = r.Bytes(0xFFFF);
+			if (!r.Ok() || packet.empty() || packet[0] != static_cast<std::uint8_t>(MessageType::kNpcIdentity)) {
+				return std::nullopt;
+			}
+			auto identity = DecodeNpcIdentity(packet);
+			if (!identity) {
+				return std::nullopt;
+			}
+			out.push_back(std::move(*identity));
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return out;
+	}
+
 	// The session's NPC level and legendary chance multiplier (protocol 57, common/SessionLevel.h): what every game rolls
 	// a leveled NPC at, server -> client whenever either changes and after the welcome. 0 = none for either (the host's
 	// rule is "own": each game its own player's level, or its own difficulty's multiplier).
@@ -4178,6 +4223,17 @@ namespace Protocol
 		return msg;
 	}
 
+	// How many times a plugin's NPC died in the session (protocol 57, docs/SHARED-ROLLS.md): its roll's seed takes it, so
+	// one a cell reset brings back is rolled anew, the same in every game. Server -> client: each accepted death to every
+	// game (the reporter's too) and a joiner all of them; the session file keeps them. At most MAX_SESSION_ROLLS NPCs.
+	struct RollLife
+	{
+		std::uint32_t refId = 0;
+		std::uint16_t lives = 0;
+
+		bool operator==(const RollLife&) const = default;
+	};
+
 	// Generic list packets: a count byte followed by fixed-size entries.
 	template <class T, class WriteFn>
 	std::vector<std::uint8_t> EncodeList(MessageType a_type, const std::vector<T>& a_items, WriteFn a_write)
@@ -4209,6 +4265,34 @@ namespace Protocol
 			return std::nullopt;
 		}
 		return items;
+	}
+
+	// Up to MAX_ACTORS_PER_PACKET entries (the sender splits more).
+	inline std::vector<std::uint8_t> Encode(const std::vector<RollLife>& a_msg)
+	{
+		return EncodeList(MessageType::kRollLives, a_msg, [](Writer& w, const RollLife& a) { w.U32(a.refId); w.U16(a.lives); });
+	}
+
+	// Plugins' NPCs (no spawn, no runtime form), each once, each of at least one life.
+	inline std::optional<std::vector<RollLife>> DecodeRollLives(std::span<const std::uint8_t> a_data)
+	{
+		auto lives = DecodeList<RollLife>(a_data, [](Reader& r) {
+			RollLife a;
+			a.refId = r.U32();
+			a.lives = r.U16();
+			return a;
+		});
+		if (!lives) {
+			return std::nullopt;
+		}
+		for (std::size_t i = 0; i < lives->size(); ++i) {
+			const auto& entry = (*lives)[i];
+			if (!IsShareableRef(entry.refId) || entry.lives == 0 ||
+				std::any_of(lives->begin(), lives->begin() + static_cast<std::ptrdiff_t>(i), [&](const RollLife& a_other) { return a_other.refId == entry.refId; })) {
+				return std::nullopt;
+			}
+		}
+		return lives;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const std::vector<ActorClaim>& a_msg)

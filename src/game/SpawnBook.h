@@ -269,6 +269,16 @@ namespace SpawnBook
 	// ours within this of a copy's spot is the same encounter's, whichever of the group's NPCs it is.
 	constexpr float NPC_SAME_SPOT = 128.0f;
 
+	// Whether a runtime NPC of our own there is the same encounter's NPC as a friend's spawn, so it stands for it: placed
+	// from the same NPC (PickBase's choice, a_ourBase against the spawn's base), or rolled from the same leveled NPC (its
+	// original, against the friend's roll of the spawn; 0 where either isn't known). Hostility alone is no match: in a
+	// mixed fight a raider of ours beside a friend's spawn of another encounter (their gunner) is not it, and the friend's
+	// spawn, still fighting them, must not vanish from our game.
+	[[nodiscard]] constexpr bool StandsFor(std::uint32_t a_ourBase, std::uint32_t a_ourOriginal, std::uint32_t a_spawnBase, std::uint32_t a_spawnOriginal)
+	{
+		return (a_ourBase != 0 && a_ourBase == a_spawnBase) || (a_ourOriginal != 0 && a_ourOriginal == a_spawnOriginal);
+	}
+
 	// What the game sees of one spawn, for Theirs::Decide.
 	struct Facts
 	{
@@ -279,10 +289,10 @@ namespace SpawnBook
 		bool                copyLoaded = true;  // its 3D is in
 		bool                baseOk = true;      // its base is an NPC we place copies of (not unique, not the player's)
 		bool                waiting = false;    // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT): not placed yet
-		// A runtime NPC of our own (no copy, no stand-in; alive) stands within NPC_SAME_SPOT of where their game has it, of
-		// its base or hostile to our player: ours stands for it (Spawns keeps it so for the spawn's life). No copy is
-		// placed, and one placed before ours appeared there goes: each game then fights its own, as before spawns were
-		// shared, instead of its own and a copy of the friend's on the same spot.
+		// A runtime NPC of our own (no copy, no stand-in; alive), the same encounter's (StandsFor), stands within
+		// NPC_SAME_SPOT of where their game has it: ours stands for it, and no copy is placed while it does (each game
+		// fights its own instead of its own and a copy of the friend's on the same spot). Only for a copy about to be
+		// placed: one placed already stays, whatever comes to stand beside it.
 		bool                oursThere = false;
 	};
 
@@ -415,7 +425,7 @@ namespace SpawnBook
 				if (!a_facts.copyThere) {
 					return Act::kLost;
 				}
-				if ((copy.gone && !copy.dead) || a_facts.oursThere) {
+				if (copy.gone && !copy.dead) {
 					return Act::kDiscard;
 				}
 				// Not loaded (its cell went: no 3D, past the wait for its first), or we left it behind: it goes, a corpse too.

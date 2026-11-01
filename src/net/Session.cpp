@@ -794,6 +794,23 @@ namespace Session
 					NpcSync::ApplyIdentity(*msg);
 				}
 				break;
+			case MessageType::kNpcIdentities:
+				if (const auto msg = Protocol::DecodeNpcIdentities(a_data)) {
+					for (const auto& identity : *msg) {
+						NpcSync::ApplyIdentity(identity);
+					}
+				}
+				break;
+			case MessageType::kRollLives:
+				if (const auto msg = Protocol::DecodeRollLives(a_data)) {
+					// A death the session took: that NPC's roll is over, its next life another (RollHook), reported anew by its runner.
+					for (const auto& life : *msg) {
+						if (RollHook::SetLives(life)) {
+							NpcSync::ForgetRoll(life.refId);
+						}
+					}
+				}
+				break;
 			case MessageType::kSessionWorld:
 				if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
 					RollHook::SetSessionWorld(*msg);

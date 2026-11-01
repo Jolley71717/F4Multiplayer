@@ -226,6 +226,72 @@ TEST("shared rolls: the legendary chance is drawn every time, times the difficul
 	CHECK(SharedRoll::Pick(RAIDER, split, 7, 1.0f, legendList).picked->templates[0] == VETERAN);
 }
 
+TEST("shared rolls: a plugin NPC's next life (its cell reset) is rolled anew, legendary or not, and the legendary draw isn't the same for every level")
+{
+	const auto half = Raiders(50.0f);
+	const auto key = SharedRoll::StableKey("Fallout4.esm", 0x0001F0B1);
+	constexpr SharedRoll::Levels LEVELS{ .plain = 3, .legendary = 14 };  // at 3 the list has two to pick from
+	int        legendaries = 0;
+	std::set<std::uint32_t> plainPicks;
+	constexpr int LIVES = 200;
+	for (std::uint16_t life = 0; life < LIVES; ++life) {
+		const auto seed = SharedRoll::SeedOf(SESSION, key, life);
+		const auto pick = SharedRoll::Pick(RAIDER, LEVELS, seed, 1.0f, half).picked;
+		const auto again = SharedRoll::Pick(RAIDER, LEVELS, seed, 1.0f, half).picked;  // the same life is the same everywhere
+		CHECK(again->legendary == pick->legendary);
+		CHECK(again->templates == pick->templates);
+		legendaries += pick->legendary;
+		if (!pick->legendary) {
+			plainPicks.insert(pick->templates[0]);
+		}
+	}
+	CHECK(legendaries > LIVES * 30 / 100);  // a legendary spot isn't legendary forever, nor a plain one never
+	CHECK(legendaries < LIVES * 70 / 100);
+	CHECK(plainPicks.size() > 1);  // and a plain one's slots are rolled anew
+
+	// One seed, levels apart: the legendary verdict is drawn per level, so it is not one number for them all.
+	int levelsDiffered = 0;
+	for (std::uint64_t i = 0; i < 100; ++i) {
+		const auto seed = SharedRoll::SeedOf(SESSION, i, 0);
+		std::set<bool> verdicts;
+		for (std::uint16_t level = 1; level <= 30; ++level) {
+			verdicts.insert(SharedRoll::Pick(RAIDER, At(level), seed, 1.0f, half).picked->legendary);
+		}
+		levelsDiffered += verdicts.size() == 2;
+		// The plain slots don't hang on the legendary level.
+		const auto never = Raiders(0.0f);
+		CHECK(SharedRoll::Pick(RAIDER, { .plain = 3, .legendary = 14 }, seed, 1.0f, never).picked->templates ==
+			  SharedRoll::Pick(RAIDER, { .plain = 3, .legendary = 29 }, seed, 1.0f, never).picked->templates);
+	}
+	CHECK(levelsDiffered > 90);
+}
+
+TEST("shared rolls: lives and packed rolls read back, and damage is refused")
+{
+	const std::vector<Protocol::RollLife> lives{ { 0x0001F0B1, 1 }, { 0x0001F0B2, 7 } };
+	CHECK(Protocol::DecodeRollLives(Protocol::Encode(lives)) == lives);
+	CHECK(!Protocol::DecodeRollLives(Protocol::Encode(std::vector<Protocol::RollLife>{ { 0x0001F0B1, 0 } })));                    // no life
+	CHECK(!Protocol::DecodeRollLives(Protocol::Encode(std::vector<Protocol::RollLife>{ { 0xFF001234, 1 } })));                    // a spawn
+	CHECK(!Protocol::DecodeRollLives(Protocol::Encode(std::vector<Protocol::RollLife>{ { 0x0001F0B1, 1 }, { 0x0001F0B1, 2 } })));  // twice
+
+	std::vector<Protocol::NpcIdentity> rolls;
+	for (std::uint32_t i = 0; i < Protocol::MAX_IDENTITIES_PER_PACKET; ++i) {
+		Protocol::NpcIdentity roll{ .playerId = 2, .refId = 0x0001F000 + i, .originalBase = RAIDER, .level = 9, .mask = TRAITS };
+		roll.templates[0] = VETERAN;
+		rolls.push_back(roll);
+	}
+	CHECK(Protocol::DecodeNpcIdentities(Protocol::Encode(rolls)) == rolls);
+	auto more = rolls;
+	more.push_back(rolls[0]);
+	CHECK(Protocol::DecodeNpcIdentities(Protocol::Encode(more)) == rolls);  // more than a packet holds: the sender splits
+	auto cut = Protocol::Encode(rolls);
+	cut.pop_back();
+	CHECK(!Protocol::DecodeNpcIdentities(cut));
+	auto bad = rolls;
+	bad[3].level = static_cast<std::uint16_t>(Protocol::MAX_IDENTITY_LEVEL + 1);
+	CHECK(!Protocol::DecodeNpcIdentities(Protocol::Encode(bad)));  // one bad entry spoils the packet
+}
+
 TEST("shared rolls: what can't be rolled whole is left to the game, and says why")
 {
 	auto world = Raiders();
@@ -508,6 +574,7 @@ TEST("shared rolls: the session file keeps every plugin NPC's roll and the sessi
 	snapshot.npcIdentities = { roll };
 	snapshot.npcLevel = 21;
 	snapshot.legendaryMult = 1250;
+	snapshot.rollLives = { { 0x0001F0B0, 1 }, { 0x0001F0B1, 3 } };
 	const auto bytes = SessionFile::Encode(snapshot);
 	std::uint16_t layout = 0;
 	std::memcpy(&layout, bytes.data() + 4, sizeof(layout));
@@ -517,14 +584,24 @@ TEST("shared rolls: the session file keeps every plugin NPC's roll and the sessi
 	CHECK(read->npcIdentities == snapshot.npcIdentities);
 	CHECK(read->npcLevel == 21);
 	CHECK(read->legendaryMult == 1250);
+	CHECK(read->rollLives == snapshot.rollLives);
 	CHECK(read->deadActors == snapshot.deadActors);
 	CHECK(!read->Empty());
+	// Lives alone (every roll since died) are rolls' news too: layout 41.
+	auto livesOnly = snapshot;
+	livesOnly.npcIdentities.clear();
+	livesOnly.npcLevel = 0;
+	livesOnly.legendaryMult = 0;
+	const auto livesBytes = SessionFile::Encode(livesOnly);
+	std::memcpy(&layout, livesBytes.data() + 4, sizeof(layout));
+	CHECK(layout == SessionFile::ROLLS);
+	const auto livesRead = SessionFile::Decode(livesBytes);
+	REQUIRE(livesRead);
+	CHECK(livesRead->rollLives == snapshot.rollLives);
 
 	// Without rolls the layout is 36's, as before: a build of 0.10.1 still reads it.
-	auto older = snapshot;
-	older.npcIdentities.clear();
-	older.npcLevel = 0;
-	older.legendaryMult = 0;
+	auto older = livesOnly;
+	older.rollLives.clear();
 	const auto olderBytes = SessionFile::Encode(older);
 	std::memcpy(&layout, olderBytes.data() + 4, sizeof(layout));
 	CHECK(layout == SessionFile::OBJECT_PLACES);
@@ -695,12 +772,91 @@ TEST("shared rolls: a restarted server's session still has every NPC's roll and 
 		CHECK(f.LoggedSoon("1 NPC rolls, NPC level 21"));
 		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 		CHECK(LastLevel(f, 2) == 21);
-		const auto told = f.fake->WaitFor(2, Type(MT::kNpcIdentity));
-		REQUIRE(told);
-		const auto identity = Protocol::DecodeNpcIdentity(*told);
-		REQUIRE(identity);
-		CHECK(identity->refId == roll.refId);
-		CHECK(identity->templates[0] == VETERAN);
-		CHECK(identity->level == 21);
+		auto told = WelcomeRolls(f, 2);
+		REQUIRE(told.size() == 1);
+		REQUIRE(told.contains(roll.refId));
+		CHECK(told[roll.refId].templates[0] == VETERAN);
+		CHECK(told[roll.refId].level == 21);
 	}
+}
+
+TEST("shared rolls: each death of a plugin's NPC is a new life, told to every game (its runner too), kept through a restart and told to a newcomer before the rolls")
+{
+	const TempSessionFile   file;
+	Server::Options         options;
+	options.sessionFile = file.path.string();
+	constexpr std::uint32_t REF = 0x0001F0B1;
+	const auto              lifeOf = [](const std::vector<std::vector<std::uint8_t>>& a_packets, std::uint32_t a_ref) {
+		std::optional<std::uint16_t> last;
+		for (const auto& lives : Decoded(a_packets, MT::kRollLives, [](auto a_data) { return Protocol::DecodeRollLives(a_data); })) {
+			for (const auto& life : lives) {
+				if (life.refId == a_ref) {
+					last = life.lives;
+				}
+			}
+		}
+		return last;
+	};
+	const auto death = Protocol::Encode(Protocol::ActorDeath{ REF, 0, true }, MT::kReportDeath);
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		f.fake->Deliver(1, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { REF, Protocol::ClaimReason::kUnowned } }));
+		Protocol::NpcIdentity roll{ .refId = REF, .originalBase = RAIDER, .level = 9, .mask = TRAITS };
+		roll.templates[0] = VETERAN;
+		f.fake->Deliver(1, Protocol::Encode(roll, MT::kReportNpcIdentity));
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, death);
+		Sync(f, 1);
+		CHECK(lifeOf(Received(f, 1), REF) == 1);  // the runner's game is told too: its own next roll takes it
+		CHECK(lifeOf(Received(f, 2), REF) == 1);
+		f.fake->Deliver(2, death);  // the same death again, from another game: no new life
+		Sync(f, 2);
+		CHECK(!lifeOf(Received(f, 1), REF));
+		// Another plugin NPC rolled before: the newcomer is told its roll after the lives.
+		constexpr std::uint32_t OTHER = 0x0001F0B2;
+		f.fake->Deliver(1, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { OTHER, Protocol::ClaimReason::kUnowned } }));
+		roll.refId = OTHER;
+		f.fake->Deliver(1, Protocol::Encode(roll, MT::kReportNpcIdentity));
+		Sync(f, 1);
+		f.fake->Deliver(1, Protocol::EncodeRelease(std::vector<std::uint32_t>{ OTHER }));
+		Sync(f, 1);
+	}  // stopping saves
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+		auto       got = Received(f, 3);
+		CHECK(lifeOf(got, REF) == 1);
+		const auto livesAt = std::ranges::find_if(got, [](const auto& a_p) { return !a_p.empty() && a_p[0] == Type(MT::kRollLives); });
+		const auto rollsAt = std::ranges::find_if(got, [](const auto& a_p) { return !a_p.empty() && a_p[0] == Type(MT::kNpcIdentities); });
+		CHECK(livesAt < rollsAt);  // a roll told is seeded with its life: the life comes first
+	}
+}
+
+TEST("shared rolls: a newcomer is told the session's rolls packed, many to a packet")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	constexpr std::uint32_t COUNT = 40;
+	std::vector<Protocol::ActorClaim> claims;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		claims.push_back({ 0x0001F000 + i, Protocol::ClaimReason::kUnowned });
+	}
+	f.fake->Deliver(1, Protocol::Encode(claims));
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		Protocol::NpcIdentity roll{ .refId = 0x0001F000 + i, .originalBase = RAIDER, .level = 9, .mask = TRAITS };
+		roll.templates[0] = VETERAN;
+		f.fake->Deliver(1, Protocol::Encode(roll, MT::kReportNpcIdentity));
+	}
+	Sync(f, 1);
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	const auto got = Received(f, 2);
+	CHECK(Count(got, MT::kNpcIdentity) == 0);
+	CHECK(Count(got, MT::kNpcIdentities) == (COUNT + Protocol::MAX_IDENTITIES_PER_PACKET - 1) / Protocol::MAX_IDENTITIES_PER_PACKET);
+	std::size_t told = 0;
+	for (const auto& list : Decoded(got, MT::kNpcIdentities, [](auto a_data) { return Protocol::DecodeNpcIdentities(a_data); })) {
+		told += list.size();
+	}
+	CHECK(told == COUNT);
 }

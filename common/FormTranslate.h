@@ -307,6 +307,24 @@ namespace FormTranslate
 			return a_ctx.Key(a_item.refId) && a_ctx.Key(a_item.base) && a_ctx.Key(a_item.workshop);
 		}
 
+		// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the NPC it
+		// was placed as there is no roll to make: the slots go. A faction it lacks is left out.
+		inline bool MapIdentity(Context& a_ctx, Protocol::NpcIdentity& a_msg)
+		{
+			if (!a_ctx.Key(a_msg.refId)) {
+				return false;
+			}
+			if (a_msg.originalBase != 0 && !a_ctx.Detail(a_msg.originalBase)) {
+				a_msg.mask = 0;
+				a_msg.templates = {};
+			}
+			for (auto& slot : a_msg.templates) {
+				a_ctx.Detail(slot);
+			}
+			a_ctx.Entries(a_msg.factions, [&](Protocol::FactionRank& a_entry) { return a_ctx.Key(a_entry.faction); });
+			return true;
+		}
+
 		inline bool MapWorldState(Context& a_ctx, Protocol::WorldState& a_msg)
 		{
 			a_ctx.Ids(a_msg.deadActors);
@@ -514,22 +532,19 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportNpcIdentity:
 		case MessageType::kNpcIdentity:
-			// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the
-			// NPC it was placed as there is no roll to make: the slots go. A faction it lacks is left out.
-			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) {
-				if (!ctx.Key(m.refId)) {
-					return false;
-				}
-				if (m.originalBase != 0 && !ctx.Detail(m.originalBase)) {
-					m.mask = 0;
-					m.templates = {};
-				}
-				for (auto& slot : m.templates) {
-					ctx.Detail(slot);
-				}
-				ctx.Entries(m.factions, [&](FactionRank& a_entry) { return ctx.Key(a_entry.faction); });
+			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) { return detail::MapIdentity(ctx, m); }, typed);
+			break;
+		case MessageType::kNpcIdentities:
+			Apply<std::vector<NpcIdentity>>(a_packet, ctx, DecodeNpcIdentities, [&](std::vector<NpcIdentity>& m) {
+				ctx.Entries(m, [&](NpcIdentity& a_entry) { return detail::MapIdentity(ctx, a_entry); });
 				return true;
-			}, typed);
+			}, plain);
+			break;
+		case MessageType::kRollLives:
+			Apply<std::vector<RollLife>>(a_packet, ctx, DecodeRollLives, [&](std::vector<RollLife>& m) {
+				ctx.Entries(m, [&](RollLife& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, plain);
 			break;
 		case MessageType::kReportFace:
 		case MessageType::kPlayerFace:

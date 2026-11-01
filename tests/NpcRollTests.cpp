@@ -253,10 +253,10 @@ TEST("npc roll: a newcomer is told the run NPCs' rolls, and one taken over keeps
 	CHECK(!Told(*f.fake, 1, 300ms));
 
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
-	const auto told = Told(*f.fake, 3);
-	REQUIRE(told);
-	CHECK(told->playerId == alice->playerId);
-	CHECK(told->templates[0] == GLOWING);
+	auto told = WelcomeRolls(f, 3);  // packed with the welcome
+	REQUIRE(told.size() == 1);
+	CHECK(told[BLOATFLY].playerId == alice->playerId);
+	CHECK(told[BLOATFLY].templates[0] == GLOWING);
 }
 
 TEST("npc roll: a plugin's NPC's roll is kept for the session's life, through a release and its runner leaving, and forgotten when it dies")
@@ -293,10 +293,7 @@ TEST("npc roll: a plugin's NPC's roll is kept for the session's life, through a 
 	f.fake->Drop(1);
 	REQUIRE(f.fake->WaitFor(2, Type(MT::kPlayerLeft)));
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
-	std::map<std::uint32_t, NpcIdentity> told;
-	while (const auto roll = Told(*f.fake, 3, 300ms)) {
-		told[roll->refId] = *roll;
-	}
+	auto told = WelcomeRolls(f, 3);
 	CHECK(told.size() == 2);
 	CHECK(!told.contains(BLOATFLY));
 	REQUIRE(told.contains(OTHER));
@@ -325,12 +322,12 @@ TEST("npc roll: one taken over keeps its first runner's roll when they leave, as
 	f.fake->Drop(1);
 	REQUIRE(f.fake->WaitFor(2, Type(MT::kPlayerLeft)));
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
-	const auto told = Told(*f.fake, 3);
-	REQUIRE(told);
-	CHECK(told->refId == BLOATFLY);
-	CHECK(told->playerId == bob->playerId);
-	CHECK(told->templates[0] == GLOWING);
-	CHECK(told->templates[3] == LEGENDARY);
+	auto told = WelcomeRolls(f, 3);
+	REQUIRE(told.size() == 1);
+	REQUIRE(told.contains(BLOATFLY));
+	CHECK(told[BLOATFLY].playerId == bob->playerId);
+	CHECK(told[BLOATFLY].templates[0] == GLOWING);
+	CHECK(told[BLOATFLY].templates[3] == LEGENDARY);
 
 	// His next change is the session's.
 	f.fake->Deliver(2, Report(Rolled(PLAIN, PLAIN)));

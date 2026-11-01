@@ -268,6 +268,12 @@ namespace ProtocolSamples
 			s.push_back({ "NpcIdentity", Encode(roll, type), D(DecodeNpcIdentity) });
 			s.push_back({ "NpcIdentityFactions", Encode(NpcIdentity{ .playerId = 2, .refId = RUNTIME_REF, .level = 8, .flags = NpcIdentity::kFactions, .factions = { { 0x0001BCC0, 0 }, { 0x00058302, 1 } } }, type), D(DecodeNpcIdentity) });
 		}
+		{
+			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .mask = 0b0000'0000'0001 };
+			roll.templates[0] = 0x0002A1B5;
+			s.push_back({ "NpcIdentities", Encode(std::vector<NpcIdentity>{ roll, NpcIdentity{ .playerId = 3, .refId = REF_B, .level = 4 } }), D(DecodeNpcIdentities) });
+			s.push_back({ "RollLives", Encode(std::vector<RollLife>{ { REF_A, 1 }, { REF_B, 3 } }), D(DecodeRollLives) });
+		}
 		for (const auto type : { MT::kReportFace, MT::kPlayerFace }) {
 			s.push_back({ "Face", Encode(MakeFace(), type), D(DecodeFace) });
 		}
@@ -438,6 +444,8 @@ namespace ProtocolSamples
 		case MT::kReturnFrame:
 		case MT::kWelcome:
 		case MT::kSessionWorld:
+		case MT::kRollLives:
+		case MT::kNpcIdentities:
 		case MT::kReject:
 		case MT::kPlayerJoined:
 		case MT::kPlayerLeft:

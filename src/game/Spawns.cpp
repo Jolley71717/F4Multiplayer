@@ -85,18 +85,22 @@ namespace Spawns
 		std::uint32_t reported = 0, granted = 0, refused = 0, received = 0;
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
-		std::uint32_t copiesUnloaded = 0, copiesBack = 0;
-		std::uint32_t copiesRolled = 0, copiesNotRolled = 0;  // copies of leveled spawns built from their owner's roll as placed (RollHook), or not  // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
-		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does, and
-		// friends' NPC spawns a runtime NPC of our own stands for (SpawnBook::Facts::oursThere), for the spawn's life: no copy.
+		std::uint32_t copiesUnloaded = 0, copiesBack = 0;      // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
+		std::uint32_t copiesRolled = 0, copiesNotRolled = 0;  // copies of leveled spawns built from their owner's roll as placed (RollHook), or not
+		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does: no copy.
 		std::unordered_set<std::uint32_t> oursThere;
 		std::uint32_t                     frameCopiesWithheld = 0;
-		// NPC spawns: how many were never placed for one of ours standing there, how many placed copies went when one of ours
-		// appeared beside them (our game rolled the encounter after the friend's), and when each placed copy was last looked
-		// around (OwnMadeNpcAt, every OURS_THERE_LOOK).
-		std::uint32_t                                        npcCopiesWithheld = 0, npcCopiesStoodDown = 0;
-		std::unordered_map<std::uint32_t, Clock::time_point> oursThereLooked;
-		constexpr auto                                       OURS_THERE_LOOK = std::chrono::seconds(1);
+		// Friends' NPC spawns not placed yet: when we last looked for one of our own of the same encounter where their game
+		// has it (OwnMadeNpcAt, at most every OURS_THERE_LOOK while the copy would be placed), and what we found (0: none).
+		// Not kept past that: ours gone (dead, or off fighting elsewhere), the copy is placed. How many times one was found.
+		struct OursLook
+		{
+			Clock::time_point at{};
+			std::uint32_t     own = 0;
+		};
+		std::unordered_map<std::uint32_t, OursLook> oursThereLooked;
+		std::uint32_t                               npcCopiesWithheld = 0;
+		constexpr auto                              OURS_THERE_LOOK = std::chrono::seconds(1);
 		// Friends' frames whose copy would stand in our player's way out of the frame a loaded save had them in
 		// (SpawnBook::FrameFacts::keptClear), by spawn id while it would: no copy.
 		std::unordered_set<std::uint32_t> keptClear;
@@ -344,16 +348,22 @@ namespace Spawns
 			theirs.Unplaced(a_id);
 		}
 
+		// The leveled NPC an NPC was placed as (its ExtraLeveledCreature's original), 0 for one that isn't leveled.
+		std::uint32_t LeveledOriginal(RE::Actor* a_actor)
+		{
+			const auto leveled = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
+			return leveled && leveled->originalBase ? leveled->originalBase->GetFormID() : 0;
+		}
+
 		// A runtime NPC of our own standing within SpawnBook::NPC_SAME_SPOT of a_spot: alive, loaded, no copy of a friend's
-		// spawn, no stand-in, not our companion, and of a_base (as BaseToPlace picks it: the same encounter's roll) or
-		// hostile to our player (the same encounter's other NPCs, rolled otherwise). The id of the first found, 0 for none.
-		// Asked only as a copy is about to be placed, and once a second around each placed copy: a walk of the references
-		// within 128 units is cheap, and ForEachReferenceInRange finds the persistent ones too.
-		std::uint32_t OwnMadeNpcAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot)
+		// spawn, no stand-in, not our companion, and the same encounter's NPC as the friend's spawn (SpawnBook::StandsFor: of
+		// a_base as BaseToPlace picks it, or placed as the same leveled NPC, a_original). The id of the first found, 0 for
+		// none. Asked only as a copy is about to be placed: a walk of the references within 128 units is cheap, and
+		// ForEachReferenceInRange finds the persistent ones too.
+		std::uint32_t OwnMadeNpcAt(std::uint32_t a_base, std::uint32_t a_original, const RemoteEdits::Spot& a_spot)
 		{
 			const auto tes = RE::TES::GetSingleton();
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			if (!tes || !player) {
+			if (!tes) {
 				return 0;
 			}
 			std::uint32_t found = 0;
@@ -370,7 +380,7 @@ namespace Spawns
 				if (!RemoteEdits::Within(RemoteEdits::Distance(SpotOf(actor), a_spot), SpawnBook::NPC_SAME_SPOT)) {
 					return RE::BSContainer::ForEachResult::kContinue;  // the walk's range is a box
 				}
-				if (BaseToPlace(actor) == a_base || actor->GetHostileToActor(player)) {
+				if (SpawnBook::StandsFor(BaseToPlace(actor), LeveledOriginal(actor), a_base, a_original)) {
 					found = id;
 					return RE::BSContainer::ForEachResult::kStop;
 				}
@@ -760,30 +770,26 @@ namespace Spawns
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
-			// A runtime NPC of our own standing where their game has it stands for it (SpawnBook::Facts::oursThere), for the
-			// spawn's life: looked for as a copy is about to be placed, and once a second around a placed copy (our game
-			// rolled the encounter after the friend's: ours appears beside the copy, which then goes).
-			if (!oursThere.contains(id)) {
-				std::optional<RemoteEdits::Spot> around;
-				if (copy->local == 0) {
-					if (theirs.WhyNotPlaced(id, facts, now) == SpawnBook::Theirs::Why::kPlace) {
-						around = copy->at;
+			// A runtime NPC of our own of the same encounter standing where their game has it stands for it
+			// (SpawnBook::Facts::oursThere): looked for only as the copy is about to be placed, never around one placed
+			// already, and not kept: ours gone, the copy is placed.
+			if (copy->local == 0 && theirs.WhyNotPlaced(id, facts, now) == SpawnBook::Theirs::Why::kPlace) {
+				auto& look = oursThereLooked[id];
+				if (look.at == Clock::time_point{} || now - look.at >= OURS_THERE_LOOK) {
+					look.at = now;
+					const auto roll = NpcSync::RollOf(id);
+					const auto own = OwnMadeNpcAt(copy->spawn.base, roll ? roll->originalBase : 0, copy->at);
+					if (own != 0 && own != look.own) {
+						++npcCopiesWithheld;
+						REX::INFO("Spawns: {:08X} of our own, the same encounter's, stands where player {}'s spawn {:08X} (base {:08X}) is: ours stands for it, no copy is placed while it does",
+							own, copy->spawn.playerId, id, copy->spawn.base);
 					}
-				} else if (facts.copyAt && facts.copyLoaded) {
-					if (auto& looked = oursThereLooked[id]; now - looked >= OURS_THERE_LOOK) {
-						looked = now;
-						around = facts.copyAt;
-					}
+					look.own = own;
 				}
-				if (const auto own = around ? OwnMadeNpcAt(copy->spawn.base, *around) : 0) {
-					oursThere.insert(id);
-					oursThereLooked.erase(id);
-					++(copy->local == 0 ? npcCopiesWithheld : npcCopiesStoodDown);
-					REX::INFO("Spawns: {:08X} of our own stands where player {}'s spawn {:08X} (base {:08X}) is: ours stands for it, {}", own, copy->spawn.playerId, id,
-						copy->spawn.base, copy->local == 0 ? "no copy is placed" : "our copy goes");
-				}
+				facts.oursThere = look.own != 0;
+			} else if (copy->local != 0) {
+				oursThereLooked.erase(id);
 			}
-			facts.oursThere = oursThere.contains(id);
 			const auto act = theirs.Decide(id, facts, now);
 			switch (act) {
 			case SpawnBook::Act::kPlace:
@@ -945,8 +951,8 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={}/{} copiesRolled={}/{}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, npcCopiesStoodDown, copiesRolled, copiesNotRolled) + Unplaced() + " " + FrameLoans::Describe();
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

@@ -506,10 +506,15 @@ void Server::Run()
 	// game still has its own roll (it could not make the session's) does not replace it, so nobody's NPC changes again
 	// when a fight hands it over. A plugin's NPC's is kept for the session's life (protocol 57, docs/SHARED-ROLLS.md):
 	// through releases and its runner leaving, in the session file, and told to every joiner, so a game that meets it
-	// later builds it the same. Gone when it dies (it comes back rolled anew) and with the session. A spawn's goes with
-	// the spawn. At most Protocol::MAX_SESSION_ROLLS.
+	// later builds it the same. Gone when it dies, and with the session. A spawn's goes with the spawn. At most
+	// Protocol::MAX_SESSION_ROLLS.
 	std::unordered_map<std::uint32_t, Protocol::NpcIdentity> npcIdentities;
 	bool                                                     rollsFullLogged = false;
+	// How many times each plugin's NPC died this session (kRollLives): every game's roll of it takes this in its seed, so
+	// the one a cell reset brings back is rolled anew, and the same in every game (docs/SHARED-ROLLS.md). Told to every
+	// game at each death and to a joiner, saved with the session. At most Protocol::MAX_SESSION_ROLLS NPCs: past that
+	// a death isn't counted, and the NPC comes back as the same roll.
+	std::unordered_map<std::uint32_t, std::uint16_t>         rollLives;
 	// The session's NPC level and legendary chance multiplier (common/SessionLevel.h, the host's rules
 	// options.rules.npcLevel and legendary): what every game rolls a leveled NPC at. Saved with the session; told after
 	// each welcome and whenever either changes (kSessionWorld).
@@ -651,6 +656,9 @@ void Server::Run()
 			for (const auto& identity : saved->npcIdentities) {
 				npcIdentities[identity.refId] = identity;
 			}
+			for (const auto& life : saved->rollLives) {
+				rollLives[life.refId] = life.lives;
+			}
 			sessionLevel = saved->npcLevel;
 			sessionLegendary = saved->legendaryMult;
 			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
@@ -713,6 +721,10 @@ void Server::Run()
 			}
 		}
 		std::ranges::sort(snapshot.npcIdentities, {}, &Protocol::NpcIdentity::refId);  // the same session, the same file
+		for (const auto& [ref, lives] : rollLives) {
+			snapshot.rollLives.push_back({ ref, lives });
+		}
+		std::ranges::sort(snapshot.rollLives, {}, &Protocol::RollLife::refId);
 		snapshot.npcLevel = sessionLevel;
 		snapshot.legendaryMult = sessionLegendary;
 		snapshot.plugins = sessionTable;
@@ -750,6 +762,7 @@ void Server::Run()
 		npcEquipment.clear();
 		npcIdentities.clear();
 		rollsFullLogged = false;
+		rollLives.clear();
 		sessionLevel = 0;
 		sessionLegendary = 0;
 		workshop.Clear();
@@ -1580,9 +1593,31 @@ void Server::Run()
 			}
 		}
 		// ... and what every NPC of the session was rolled as, run now or not (protocol 57): their game builds it so when
-		// it first meets it (src/game/RollHook.h).
-		for (const auto& [ref, identity] : npcIdentities) {
-			send(a_player.key, Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity), true);
+		// it first meets it (src/game/RollHook.h). How many times each died first (a roll's seed takes it), then the rolls,
+		// packed: a session's thousands of rolls are a few hundred reliable sends, not one each.
+		{
+			std::vector<Protocol::RollLife> lives;
+			for (const auto& [ref, count] : rollLives) {
+				lives.push_back({ ref, count });
+				if (lives.size() == Protocol::MAX_ACTORS_PER_PACKET) {
+					send(a_player.key, Protocol::Encode(lives), true);
+					lives.clear();
+				}
+			}
+			if (!lives.empty()) {
+				send(a_player.key, Protocol::Encode(lives), true);
+			}
+			std::vector<Protocol::NpcIdentity> rolls;
+			for (const auto& [ref, identity] : npcIdentities) {
+				rolls.push_back(identity);
+				if (rolls.size() == Protocol::MAX_IDENTITIES_PER_PACKET) {
+					send(a_player.key, Protocol::Encode(rolls), true);
+					rolls.clear();
+				}
+			}
+			if (!rolls.empty()) {
+				send(a_player.key, Protocol::Encode(rolls), true);
+			}
 		}
 		sendWorkshop(a_player);
 
@@ -1907,6 +1942,14 @@ void Server::Run()
 		npcIdentities.erase(death->refId);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
+		// Its next life (a cell reset) is another roll, the same in every game: each is told the count, the reporter too.
+		if (const auto life = rollLives.find(death->refId); life != rollLives.end() || rollLives.size() < Protocol::MAX_SESSION_ROLLS) {
+			auto& lives = rollLives[death->refId];
+			if (lives < 0xFFFF) {
+				++lives;
+			}
+			broadcast(Protocol::Encode(std::vector<Protocol::RollLife>{ { death->refId, lives } }), true, 0);
+		}
 	};
 
 	const auto playerById = [&](std::uint32_t a_id) -> Player* {

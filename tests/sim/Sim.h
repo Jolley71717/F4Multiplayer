@@ -439,6 +439,7 @@ namespace Sim
 		[[nodiscard]] std::optional<std::uint16_t> NpcLevel() const { return npcLevel; }
 		[[nodiscard]] std::optional<std::uint16_t> LegendaryMult() const { return legendaryMult; }
 		[[nodiscard]] const std::map<std::uint32_t, Protocol::NpcIdentity>& Rolls() const { return rolls; }
+		[[nodiscard]] const std::map<std::uint32_t, std::uint16_t>& RollLives() const { return rollLives; }
 		// Reports the roll of an NPC this player's game runs (kReportNpcIdentity).
 		void ReportRoll(const Protocol::NpcIdentity& a_identity) { Send(Protocol::Encode(a_identity, MT::kReportNpcIdentity), true); }
 		// How many packets of a kind arrived since joining (any connection), and how many didn't decode.
@@ -517,6 +518,7 @@ namespace Sim
 		std::optional<std::uint16_t>                  npcLevel;
 		std::optional<std::uint16_t>                  legendaryMult;
 		std::map<std::uint32_t, Protocol::NpcIdentity> rolls;
+		std::map<std::uint32_t, std::uint16_t>          rollLives;  // kRollLives: each plugin NPC's deaths this session
 		std::vector<std::string>                      rejections;
 		std::vector<Protocol::PlayerHit>              damage;
 		std::vector<std::uint32_t>                    revivedBy;
@@ -1726,6 +1728,25 @@ namespace Sim
 		case MT::kNpcIdentity:
 			if (const auto msg = Protocol::DecodeNpcIdentity(a_data)) {
 				rolls[msg->refId] = *msg;
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kNpcIdentities:  // a joiner's catch-up, packed
+			if (const auto msg = Protocol::DecodeNpcIdentities(a_data)) {
+				for (const auto& roll : *msg) {
+					rolls[roll.refId] = roll;
+				}
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kRollLives:  // a plugin NPC died: its next life is another roll
+			if (const auto msg = Protocol::DecodeRollLives(a_data)) {
+				for (const auto& life : *msg) {
+					rollLives[life.refId] = life.lives;
+					rolls.erase(life.refId);
+				}
 			} else {
 				unless(false);
 			}

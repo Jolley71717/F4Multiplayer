@@ -53,8 +53,9 @@ namespace SessionFile
 	// down again, a copy of the one in the old character's saves), is written as 40. One with neither stays 38 or 36, so
 	// an older build still reads it. A 39 file (0.10.0's test builds) reads as one with no characters.
 	// 41 adds to 40 every leveled NPC's roll the session keeps (Snapshot::npcIdentities, as kNpcIdentity packets) and the
-	// session's NPC level (Snapshot::npcLevel, a kSessionWorld packet; docs/SHARED-ROLLS.md), so a restarted server's
-	// session builds the same NPCs it did. A session with neither is written as before (40, 38 or 36).
+	// session's NPC level (Snapshot::npcLevel, a kSessionWorld packet; docs/SHARED-ROLLS.md) and how many times each
+	// plugin's NPC died (Snapshot::rollLives, kRollLives packets), so a restarted server's session builds the same NPCs it
+	// did. A session with none of them is written as before (40, 38 or 36).
 	inline constexpr std::uint16_t FORMAT = 41;
 	inline constexpr std::uint16_t ROLLS = 41;
 	inline constexpr std::uint16_t CHARACTERS = 40;
@@ -147,11 +148,13 @@ namespace SessionFile
 		std::vector<Protocol::NpcIdentity>                  npcIdentities;
 		std::uint16_t                                       npcLevel = 0;
 		std::uint16_t                                       legendaryMult = 0;  // the session's legendary chance multiplier, thousandths (SessionWorld)
+		std::vector<Protocol::RollLife>                     rollLives;          // how many times each plugin's NPC died (a roll's seed takes it)
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty() && npcIdentities.empty() && npcLevel == 0 && legendaryMult == 0;
+			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty() && npcIdentities.empty() && npcLevel == 0 && legendaryMult == 0 &&
+			       rollLives.empty();
 		}
 	};
 
@@ -173,7 +176,7 @@ namespace SessionFile
 			return a_drop.holder != 0 || a_drop.ownerCharacter != 0 || a_drop.takerCharacter != 0;
 		});
 		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
-			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0);
+			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty());
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -253,6 +256,10 @@ namespace SessionFile
 			}
 			if (a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0) {
 				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel, a_snapshot.legendaryMult }));
+			}
+			for (std::size_t i = 0; i < a_snapshot.rollLives.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+				const auto end = (std::min)(a_snapshot.rollLives.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+				packet(Protocol::Encode(std::vector<Protocol::RollLife>{ a_snapshot.rollLives.begin() + i, a_snapshot.rollLives.begin() + end }));
 			}
 		}
 		return out;
@@ -423,6 +430,14 @@ namespace SessionFile
 				}
 				snapshot.npcLevel = world->level;
 				snapshot.legendaryMult = world->legendaryMult;
+				break;
+			}
+			case Protocol::MessageType::kRollLives: {
+				const auto lives = HasRolls(version) ? Protocol::DecodeRollLives(packet) : std::nullopt;
+				if (!lives || snapshot.rollLives.size() + lives->size() > Protocol::MAX_SESSION_ROLLS) {
+					return std::nullopt;
+				}
+				snapshot.rollLives.insert(snapshot.rollLives.end(), lives->begin(), lives->end());
 				break;
 			}
 			default:

@@ -2057,6 +2057,12 @@ namespace NpcSync
 		return rolls.Find(a_refId);
 	}
 
+	void ForgetRoll(std::uint32_t a_refId)
+	{
+		rolls.Forget(a_refId);
+		sentRolls.Forget(a_refId);
+	}
+
 	void Reset()
 	{
 		ReleaseMirrors();
