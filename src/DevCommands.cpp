@@ -92,6 +92,7 @@ __declspec(dllimport) unsigned int __stdcall GetRawInputData(void* a_input, unsi
 __declspec(dllimport) void* __stdcall SetWindowsHookExA(int a_id, long long(__stdcall* a_proc)(int, unsigned long long, long long), void* a_module, unsigned long a_thread);
 __declspec(dllimport) long long __stdcall CallNextHookEx(void* a_hook, int a_code, unsigned long long a_wParam, long long a_lParam);
 __declspec(dllimport) int __stdcall GetGUIThreadInfo(unsigned long a_thread, void* a_info);
+__declspec(dllimport) int __stdcall IsWindow(void* a_window);
 }
 
 namespace DevCommands
@@ -446,16 +447,29 @@ namespace DevCommands
 		};
 		static_assert(sizeof(RawDevice) == 16);
 
-		std::vector<MouseCapture::Registration> RawRegistrations()
+		// The process's registrations, or nothing when they can't be read (more than the list holds, or an error): an
+		// unread list is never taken for "no mouse registered", which would register one over the game's own.
+		std::optional<std::vector<MouseCapture::Registration>> RawRegistrations()
 		{
-			std::array<RawDevice, 16> list{};
+			std::array<RawDevice, 32> list{};
 			unsigned int              count = static_cast<unsigned int>(list.size());
 			const auto                n = GetRegisteredRawInputDevices(list.data(), &count, sizeof(RawDevice));
+			if (n == static_cast<unsigned int>(-1) || n > list.size()) {
+				return std::nullopt;
+			}
 			std::vector<MouseCapture::Registration> out;
-			for (unsigned int i = 0; n != static_cast<unsigned int>(-1) && i < n && i < list.size(); ++i) {
+			for (unsigned int i = 0; i < n; ++i) {
 				out.push_back({ list[i].page, list[i].usage, list[i].flags, reinterpret_cast<std::uintptr_t>(list[i].target) });
 			}
 			return out;
+		}
+
+		// A raw input target that is still a window of this process (one gone, or another process's, is stale).
+		bool LiveWindowOfOurs(std::uintptr_t a_window)
+		{
+			unsigned long pid = 0;
+			const auto    window = reinterpret_cast<void*>(a_window);
+			return IsWindow(window) != 0 && GetWindowThreadProcessId(window, &pid) != 0 && pid == GetCurrentProcessId();
 		}
 
 		// WM_INPUT messages the game's window thread took off its queue (a WH_GETMESSAGE hook on that thread only; it reads
@@ -506,8 +520,12 @@ namespace DevCommands
 				return "not in front";
 			}
 			const auto window = GameWindow();
-			const auto list = RawRegistrations();
-			const auto fix = MouseCapture::Fix(list, reinterpret_cast<std::uintptr_t>(window));
+			const auto read = RawRegistrations();
+			if (!read) {
+				return "registrations unreadable";
+			}
+			const auto& list = *read;
+			const auto  fix = MouseCapture::Fix(list, reinterpret_cast<std::uintptr_t>(window), LiveWindowOfOurs);
 			if (!fix) {
 				return "ok";
 			}
@@ -575,8 +593,9 @@ namespace DevCommands
 			const auto thread = window ? GetWindowThreadProcessId(window, nullptr) : 0;
 			const bool gui = thread != 0 && GetGUIThreadInfo(thread, &info) != 0;
 			const auto whose = [&](void* a_window) { return !a_window ? "none" : (a_window == window ? "game" : "other"); };
+			const auto  read = RawRegistrations();
 			std::string out = std::format("raw={} front={} focus={} active={} hook={} wmInput mouse={} leftDown={} keys={} fixed={}",
-				MouseCapture::Describe(RawRegistrations(), reinterpret_cast<std::uintptr_t>(window)), GameInFront() ? "yes" : "no",
+				read ? MouseCapture::Describe(*read, reinterpret_cast<std::uintptr_t>(window)) : std::string{ "unreadable" }, GameInFront() ? "yes" : "no",
 				gui ? whose(info.focus) : "?", gui ? whose(info.active) : "?", rawHook ? "on" : "off", rawMouse.load(), rawMouseDown.load(), rawKeys.load(), mouseFixed);
 			if (a_args.find("fix") != std::string_view::npos) {
 				out += " fix: " + FixMouseIfLost();

@@ -174,8 +174,9 @@ The commands it uses:
   click. The answer gives the raw input registrations (`raw=1:2 flags=0x0 to=game` is the mouse registered
   for the game's window), whether the window is in front and has the keyboard focus, and how many WM_INPUT
   messages the game has taken (`wmInput mouse= leftDown= keys=`): a click that raises none never reached
-  the game. With the dev channel on, the plugin registers the mouse for the game's window when it isn't
-  (every 2 s with the window in front, before each `focus`, `click` and `mouse`, and on `mousedev fix`),
+  the game. With the dev channel on, the plugin registers the mouse for the game's window when it isn't, or is
+  registered for a window that is gone (every 2 s with the window in front, before each `focus`, `click` and `mouse`, and
+  on `mousedev fix`; a live window of the game is never taken from, nor an unreadable list read as none),
   logs it, and counts it in `fixed=`.
 
 `tools/hangcatch.ps1` can also run beside it on its own, as on the VM (which needs WinDbg too). When the game's window hasn't

@@ -13,8 +13,8 @@
 // presses still moved the player).
 //
 // So the dev channel reads the process's raw input registrations and, with the window in front, registers the mouse for
-// the game's window when it isn't (every 2 s, before each `focus`, `click` and `mouse`, and on `mousedev fix`), keeping
-// the game's own flags if it had a registration for another window. `mousedev` also counts the WM_INPUT messages the game
+// the game's window when it isn't, or is registered for a window that is gone (every 2 s, before each `focus`, `click`
+// and `mouse`, and on `mousedev fix`), keeping the game's own flags if it had one. A list it can't read is left alone. `mousedev` also counts the WM_INPUT messages the game
 // takes off its queue, mouse and keyboard, so a dead mouse shows whether raw input stopped arriving at all. Never for a
 // player: the dev channel is off in their games. Pure, so the decision is unit tested; DevCommands calls user32.
 namespace MouseCapture
@@ -43,17 +43,20 @@ namespace MouseCapture
 		return std::nullopt;
 	}
 
-	// What the mouse should be registered as for the game's window to get it, or nothing when it already does: no
-	// registration at all, or one for another window (a stale or destroyed one), gets a registration for a_window with
-	// the flags the game used. A registration that follows the keyboard focus (target 0) is left alone: the window in
-	// front has the focus.
-	inline std::optional<Registration> Fix(std::span<const Registration> a_list, std::uintptr_t a_window)
+	// What the mouse should be registered as for the game's window to get it, or nothing when it already does or is not
+	// ours to move: no registration at all, or one for a window that is gone (a_live(target) false: destroyed, or not a
+	// window of this process), gets a registration for a_window with the flags the game used. A registration that follows
+	// the keyboard focus (target 0) is left alone (the window in front has the focus), and so is one for another live
+	// window of this process: a_window is only the first visible unowned window found, and moving the mouse off the window
+	// the game registered would lose it there.
+	template <class Live>
+	std::optional<Registration> Fix(std::span<const Registration> a_list, std::uintptr_t a_window, Live&& a_live)
 	{
 		if (a_window == 0) {
 			return std::nullopt;
 		}
 		const auto mouse = MouseOf(a_list);
-		if (mouse && (mouse->target == 0 || mouse->target == a_window)) {
+		if (mouse && (mouse->target == 0 || mouse->target == a_window || a_live(mouse->target))) {
 			return std::nullopt;
 		}
 		return Registration{ kPageGeneric, kUsageMouse, mouse ? mouse->flags : 0u, a_window };

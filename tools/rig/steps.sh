@@ -148,6 +148,11 @@ menu_open() { local w=0; while :; do grep -qE "[=,]$2:" <<<"$(dc "$1" menus | gr
 has_items() { grep -qE "[0-9A-F]{8}x[0-9]+" <<<"$1"; }   # contents: "REF: 000FD9A8x1 0003377Bx1 (2 stacks)" or "REF: empty"
 stacks_of() { grep -oE "[0-9A-F]{8}x[0-9]+" <<<"$1" | tr x ' '; }   # contents -> "<item> <count>" lines
 count_in() { stacks_of "$1" | awk -v i="$2" '$1==i {n+=$2} END{print n+0}'; }   # count_in <contents> <item>
+# contents_ok <contents>: a whole answer of `contents`, every stack listed ("REF: <item>x<n> ... (N stacks)", N at most 60, the
+# most it lists; or "REF: empty"). An error, a timed-out read (empty), "no inventory" or a list cut short is no reading: it must
+# never pass as "nothing left in it".
+_CONTENTS_RE='^[0-9A-F]{8}:( [0-9A-F]{8}x-?[0-9]+)* (\(([0-9]+) stacks\)|empty)$'
+contents_ok() { [[ $1 =~ $_CONTENTS_RE ]] && { [ -z "${BASH_REMATCH[3]}" ] || [ "${BASH_REMATCH[3]}" -le 60 ]; }; }
 # The loot the session shares (src/game/LootScope.h, Of): a take from a chest is everyone's unless the item is a weapon or armor
 # (only the base form would travel), a key, a note or a book (each player collects their own), or featured or a quest item
 # (rare in a chest, not told apart here). By form type (dev `edid`: ARMO 29, BOOK 30, WEAP 43, KEYM 47, NOTE 50).
@@ -160,12 +165,12 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # chest's take emptied it in the VM's game (the menu take happened), and no item of the session's kind the VM took is left in the
 # host's copy (each take went across, and the emptying gave up the rest of what the host's roll had more of).
 _loot() {
-	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened
+	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread=""
 	conts=$(host 'refs 31 2500' | grep -o "[0-9A-F]\{8\} base=" | cut -c1-8 | head -8)
 	for c in $conts; do
 		[ "$(dcf host "refinfo $c" locked)" = yes ] && continue   # a locked chest opens the lockpick, not the container menu
 		hb=$(host "contents $c"); vb=$(vm "contents $c")
-		has_items "$hb" && has_items "$vb" || continue
+		contents_ok "$hb" && contents_ok "$vb" && has_items "$hb" && has_items "$vb" || continue
 		# The take is pressed only once the container menu is open, and the activate is tried again once. A chest that opens by
 		# a script of its own (2026-10-31/11-01: 00152CD5, base 0016628C, "opened by a script or itself" in the plugin log) never
 		# opened the menu for a console activate in three runs: it is left out (a WARN), not counted as a take that failed.
@@ -175,7 +180,7 @@ _loot() {
 		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
 		sleep 0.5; vm "key 0x52 60" >/dev/null; sleep 1; vm "key 0x09 60" >/dev/null; sleep 1
 		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
-		va=$(vm "contents $c"); has_items "$va" && notaken="$notaken $c"
+		va=$(vm "contents $c"); if ! contents_ok "$va"; then unread="$unread $c"; elif has_items "$va"; then notaken="$notaken $c"; fi
 		echo "$c vm after the take: $va" >> "$A_OUT/looted.txt"
 	done
 	sleep 5
@@ -183,6 +188,7 @@ _loot() {
 		[ -n "$c" ] || continue
 		vb=$(sed -n "s/^$c host .* | vm //p" "$A_OUT/looted.txt" | head -1); hb=$(sed -n "s/^$c host \(.*\) | vm .*/\1/p" "$A_OUT/looted.txt" | head -1)
 		ha=$(host "contents $c"); echo "$c host after: $ha" >> "$A_OUT/looted.txt"
+		contents_ok "$ha" || { hunread="$hunread $c"; continue; }   # no reading of the host's copy: nothing about it is known
 		while read -r i vn; do
 			[ -n "$i" ] || continue
 			if ! shared_item "$i"; then kept=$((kept + 1)); continue; fi
@@ -194,8 +200,10 @@ _loot() {
 	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
 	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice; a chest with its own opening script)"
 	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no unlocked chest with items in both games within 2500 u: nothing was looted (inconclusive)"; return; fi
-	if [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
-	if [ $taken -eq 0 ] && [ $other -gt 0 ]; then warn "loot: the VM's takes reach the host's chests" "the host's rolls held none of the $other shared stack(s) the VM took (each game rolls a chest on its own; what only one roll put there stays by design): nothing to see, inconclusive"
+	if [ -n "$unread" ]; then fail "loot: VM takes all from $chests chest(s) in the container menu" "the VM's contents after the take could not be read for:$unread${notaken:+; still holding items:$notaken}"
+	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
+	if [ -n "$hunread" ]; then fail "loot: the VM's takes reach the host's chests" "the host's contents after the takes could not be read for:$hunread (looted.txt): nothing is known of those"
+	elif [ $taken -eq 0 ] && [ $other -gt 0 ]; then warn "loot: the VM's takes reach the host's chests" "the host's rolls held none of the $other shared stack(s) the VM took (each game rolls a chest on its own; what only one roll put there stays by design): nothing to see, inconclusive"
 	elif [ $taken -eq 0 ]; then fail "loot: the VM's takes reach the host's chests" "the VM took no item of the kind the session shares (only weapons, armor, keys, notes, books: $kept stack(s)): inconclusive"
 	elif [ -z "$left" ]; then pass "loot: the VM's takes reach the host's chests" "$taken shared stack(s) both games held gone from the host's copies; $other only the VM's roll had; $kept weapon/armor/personal stack(s) stay by design"
 	else fail "loot: the VM's takes reach the host's chests" "still in the host's copy:$left (of $taken shared stacks taken; details in looted.txt)"; fi

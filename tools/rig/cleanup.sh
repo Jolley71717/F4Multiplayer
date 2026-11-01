@@ -45,13 +45,25 @@ whose() {
 	if [ "$(field "$w" copy)" = true ]; then echo "copy $(field "$w" builder) $(field "$w" theirRef)"; else echo own; fi
 }
 # held_by_builder <builder id> <their ref>: the game of that player still has the piece: a test base there, not deleted (a
-# runtime id is used again after a load, so the id alone says nothing)
+# runtime id is used again after a load, so the id alone says nothing). Only a builder's game SEEN without the piece makes an
+# orphan: an answer that can't be read (a dev channel that timed out, no builder in the copy's wsinfo, a game whose id is unread
+# while no game has the builder's) counts as still held, so a read failure is a failure, never a pass.
 held_by_builder() {
-	local g w; for g in host vm; do
-		[ "$(field "$(dc $g 'net status')" id)" = "$1" ] || continue
-		w=$(dc $g "wsinfo $2"); [ "$(field "$w" deleted)" = false ] || continue
-		case " $BASES " in *" $(field "$w" base) "*) return 0;; esac
+	local g w id unread=0
+	[ -n "$1" ] && [ -n "$2" ] || return 0
+	for g in host vm; do
+		id=$(field "$(dc $g 'net status')" id)
+		[ -n "$id" ] || { unread=1; continue; }
+		[ "$id" = "$1" ] || continue
+		w=$(dc $g "wsinfo $2")
+		case "$w" in "error: usage"*) return 1;; esac   # no such reference in the builder's game
+		case "$(field "$w" deleted)" in
+		false) case " $BASES " in *" $(field "$w" base) "*) return 0;; esac; return 1;;   # its id is now another piece's
+		true) return 1;;
+		*) return 0;;
+		esac
 	done
+	[ $unread = 1 ] && return 0
 	return 1
 }
 

@@ -45,6 +45,7 @@ while [ $# -gt 0 ]; do case "$1" in *) echo "unknown option $1"; exit 2;; esac; 
 rig_guard || exit 2
 a_init hits; tunnel
 trap a_interrupted INT TERM
+trap put_back EXIT   # an exit part-way (interrupt, circuit breaker) still lets the raiders go and puts their health back
 SERIES=$A_OUT/hp-series.txt; : > "$SERIES"
 
 # --- targets: "<owner>:<ref in the owner's game>:<ref in the other game>:<role>" -----------------------------------------------------
@@ -93,6 +94,7 @@ spot_for() {
 }
 # put_at <runner> <ref> <x> <y> <z>: the runner's console moves the NPC there (never a player) and holds it still
 put_at() {
+	HELD+=("$2")
 	dc "$1" "console $2.setrestrained 1" >/dev/null
 	dc "$1" "console $2.setpos x $3" >/dev/null; dc "$1" "console $2.setpos y $4" >/dev/null; dc "$1" "console $2.setpos z $5" >/dev/null
 }
@@ -101,10 +103,12 @@ put_at() {
 # a kill leaves no runner and no "you run it" answer to check)
 T_TARGET_HP=${T_TARGET_HP:-25}
 T_TOUGH_HP=${T_TOUGH_HP:-120}   # kill and pause targets get this much health in both games (pick_targets)
-declare -A TOUGH_WAS   # their health before, put back at the end of the phase
+declare -A TOUGH_BASE   # "<game>:<ref>" -> that game's base health before it was raised, put back by put_back
+HELD=()                 # raiders put_at holds still (setrestrained 1), let go by put_back
+PAUSE_WHO=""            # the game whose pause menu the pause step has open
 unhurt() { local i; i=$(rinfo "$1" "$2"); [ "$(field "$i" dead)" = false ] && is_num "$(field "$i" hp)" && awk -v h="$(field "$i" hp)" -v m="$T_TARGET_HP" 'BEGIN{exit !(h >= m)}'; }
 pick_targets() {
-	local r=$1 s a k=0 ro rv sp taken="" x y z off ps po; s=$(other_of "$r"); TG=(); ps=$(dc "$s" pos); po=$(dc "$r" pos)
+	local r=$1 s a g k=0 ro rv sp taken="" x y z off ps po; s=$(other_of "$r"); TG=(); ps=$(dc "$s" pos); po=$(dc "$r" pos)
 	echo "phase $r runs: shooter $s at $(cut -d' ' -f2-5 <<<"$ps"), $r at $(cut -d' ' -f2-5 <<<"$po")" >> "$A_OUT/targets.txt"
 	for a in $(host 'actors 3000' | tr ';' '\n' | grep "Raider' dead=false" | grep -o "[0-9A-F]\{8\}"); do
 		[ $k -ge 4 ] && break
@@ -121,7 +125,9 @@ pick_targets() {
 			# that kills a copy goes the death path, never routed damage, so neither step saw damageAnswered. Both games give
 			# them T_TOUGH_HP (health syncs as a fraction of the most, so both must agree on the most).
 			if [ $k -lt 2 ]; then
-				TOUGH_WAS[$a]=$(field "$(rinfo host "$a")" hp); dc host "console $a.setav health $T_TOUGH_HP" >/dev/null; dc vm "console $a.setav health $T_TOUGH_HP" >/dev/null; sleep 1
+				for g in host vm; do TOUGH_BASE[$g:$a]=$(field "$(rinfo $g "$a")" baseHp); done
+				if ! is_num "${TOUGH_BASE[host:$a]}" || ! is_num "${TOUGH_BASE[vm:$a]}"; then echo "raider $a: base health unread (host '${TOUGH_BASE[host:$a]}' vm '${TOUGH_BASE[vm:$a]}'), not raised, skipped" >> "$A_OUT/targets.txt"; unset "TOUGH_BASE[host:$a]" "TOUGH_BASE[vm:$a]"; continue; fi
+				dc host "console $a.setav health $T_TOUGH_HP" >/dev/null; dc vm "console $a.setav health $T_TOUGH_HP" >/dev/null; sleep 1
 				echo "raider $a health: host $(field "$(rinfo host "$a")" hp), vm $(field "$(rinfo vm "$a")" hp)" >> "$A_OUT/targets.txt"
 				if ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt host "$a" || ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt vm "$a"; then echo "raider $a: health not raised, skipped" >> "$A_OUT/targets.txt"; continue; fi
 			fi
@@ -312,9 +318,11 @@ run_phase() {
 		# shooter fires at once: well inside the cooldown. The menu closes about 1 s later, well before the paused game's hand-off
 		# (PauseHandOff::AFTER, 5 s): nothing is read while it is open (the reads took it past 5 s, 2026-11-01).
 		pair_shot "$o" "$p" "$t" esc
+		PAUSE_WHO=$o   # put_back closes it if the run stops before this step does
 		local pm; pm=$(field "$(dc "$o" paused)" pauseMenu)   # one read while it is open
 		sleep 0.5; dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1.5
 		[ "$(field "$(dc "$o" paused)" pauseMenu)" = true ] && { dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1; }
+		PAUSE_WHO=""
 		expect_le "pause ($o runs the NPC): the shooter's click came soon after the runner's (ms; the takeover cooldown is 5000)" "$PAIR_GAP" "$T_PAIR_GAP_MS"
 		expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" 4500
 		if [ "$pm" = true ]; then pass "pause ($o runs the NPC): the pause menu was open for the shot" "pauseMenu=true"; else fail "pause ($o runs the NPC): the pause menu was open for the shot" "paused said pauseMenu=$pm"; fi
@@ -327,15 +335,34 @@ run_phase() {
 		answered "pause ($o runs the NPC)" "$o" "$p" P0 P1
 	fi
 
-	for t in "${TG[@]}"; do dc "$o" "console $(tg_ro "$t").setrestrained 0" >/dev/null; dc "$p" "console $(tg_ro "$t").setrestrained 0" >/dev/null; done
-	# the raised health stays in both running games (a console setav, nobody's session state): put back, or a later run on the
-	# same games (smoke's health compare, 2026-11-01) finds 120 in one and 30 in a game that restarted since. The damage is
-	# taken off first: a raider left at 1 of 120 put back to a base of 30 sits at -89, and the copy died of it in one game
-	# while the runner's stayed up (2026-11-01: smoke then found it dead in the VM only)
-	for a in "${!TOUGH_WAS[@]}"; do dc host "console $a.restoreav health 1000" >/dev/null; dc vm "console $a.restoreav health 1000" >/dev/null; done
-	sleep 1
-	for a in "${!TOUGH_WAS[@]}"; do dc host "console $a.setav health ${TOUGH_WAS[$a]}" >/dev/null; dc vm "console $a.setav health ${TOUGH_WAS[$a]}" >/dev/null; done
+	put_back
 	ALL_TG+=("${TG[@]}")
+}
+# put_back: what the run changed in the running games is undone: the pause menu closed if the pause step left it open, the held
+# raiders let go, and the raised health put back. At the end of each phase, and on every exit (the EXIT trap: an interrupt, the
+# circuit breaker, a normal end), so a run that stops part-way leaves no raider held or at T_TOUGH_HP. The raised health stays in
+# both running games (a console setav, nobody's session state): left, a later run on the same games (smoke's health compare,
+# 2026-11-01) finds 120 in one and 30 in a game that restarted since. The damage is taken off first: a raider left at 1 of 120
+# put back to a base of 30 sits at -89, and the copy died of it in one game while the runner's stayed up (2026-11-01: smoke then
+# found it dead in the VM only). Each game gets its own base back (baseHp, read before the raise; hp would set a hurt raider's
+# base to what it had left). Each change is undone once; a game that does not answer is skipped (a broken rig: each call would
+# wait out its timeouts).
+put_back() {
+	local r k g up=""
+	[ -n "$PAUSE_WHO${HELD[*]}${!TOUGH_BASE[*]}" ] || return 0
+	for g in host vm; do [ -n "$(dc $g status)" ] && up="$up $g"; done
+	sender() { case " $up " in *" $1 "*) dc "$@";; esac; }
+	for g in host vm; do case " $up " in *" $g "*) ;; *) echo "put_back: $g did not answer: what this run held or raised there is left (restart that game)";; esac; done
+	if [ -n "$PAUSE_WHO" ]; then [ "$(field "$(sender "$PAUSE_WHO" paused)" pauseMenu)" = true ] && sender "$PAUSE_WHO" "key 0x1B 100" >/dev/null; PAUSE_WHO=""; fi
+	for r in "${HELD[@]}"; do sender host "console $r.setrestrained 0" >/dev/null; sender vm "console $r.setrestrained 0" >/dev/null; done; HELD=()
+	[ "${#TOUGH_BASE[@]}" -gt 0 ] || return 0
+	for k in "${!TOUGH_BASE[@]}"; do sender "${k%%:*}" "console ${k#*:}.restoreav health 1000" >/dev/null; done
+	sleep 1
+	for k in "${!TOUGH_BASE[@]}"; do
+		g=${k%%:*}; r=${k#*:}
+		is_num "${TOUGH_BASE[$k]}" && sender "$g" "console $r.setav health ${TOUGH_BASE[$k]}" >/dev/null
+	done
+	TOUGH_BASE=()
 }
 
 # ============================================================ run ============================================================
