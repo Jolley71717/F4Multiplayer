@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T03:51:31+00:00",
+ "updated": "2026-11-01T05:46:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -575,6 +575,14 @@
    "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
    "pr": 157,
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
+  },
+  {
+   "id": "i27c",
+   "title": "A rejoining game's copies of NPCs a friend runs keep their own health until the NPC's health next changes",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ikwn",
