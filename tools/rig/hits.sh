@@ -325,7 +325,9 @@ run_phase() {
 		PAUSE_WHO=""
 		expect_le "pause ($o runs the NPC): the shooter's click came soon after the runner's (ms; the takeover cooldown is 5000)" "$PAIR_GAP" "$T_PAIR_GAP_MS"
 		expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" 4500
-		if [ "$pm" = true ]; then pass "pause ($o runs the NPC): the pause menu was open for the shot" "pauseMenu=true"; else fail "pause ($o runs the NPC): the pause menu was open for the shot" "paused said pauseMenu=$pm"; fi
+		# the runner's game counts a friend's hit it applied with the pause menu open (damageAnswered=<applied>/<refused>/<in pause>):
+		# the proof the hit landed while the menu was up, not just that the menu was up by the time of the read (pm)
+		expect_ge "pause ($o runs the NPC): the shooter's hit was applied while the runner's pause menu was open ($o's damageAnswered in pause; paused read pauseMenu=$pm)" "$(delta "$o" P0 damageAnswered P1 3)" 1
 		fired "$o" "$(cut -d' ' -f1 <<<"$PAIR_SHOTS")" "$(shots_of "$o")"; fired "$p" "$(cut -d' ' -f2 <<<"$PAIR_SHOTS")" "$(shots_of "$p")"
 		settle "$t"; sleep 3; sample "$t" afterpause; snap P1
 		agree "pause ($o runs the NPC): after the menu closes" "$t"; landed "pause ($o runs the NPC)" "$t"

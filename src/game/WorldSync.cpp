@@ -22,6 +22,7 @@
 #include "game/SessionDeaths.h"
 #include "game/NpcHold.h"
 #include "game/NpcSync.h"
+#include "game/OpenMenus.h"
 #include "game/PendingContainers.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
@@ -311,6 +312,7 @@ namespace WorldSync
 		std::uint32_t                     damageDropped = 0;   // ... dropped for good for any other reason (DamageHold::Why)
 		std::uint32_t                     damageLate = 0;      // ... taken off after a hold (DamageHold)
 		std::uint32_t                     damageAnswered = 0;     // friends' numbered damage answered as applied (AnswerDamage)
+		std::uint32_t                     damageAnsweredInPause = 0;  // of those, applied with the pause menu open (the rig's hits check)
 		std::uint32_t                     damageRefusedHere = 0;  // ... answered as refused, for any reason
 		// Friends' damage on NPCs we run that can't be taken off yet (DamageHold): a loading screen, the server's word
 		// that we run it on its way, the NPC not loaded here yet. Tried again every frame in the world, before the
@@ -2127,6 +2129,9 @@ namespace WorldSync
 			}
 			Queue(Protocol::Encode(Protocol::DamageAnswer{ a_refId, a_seq, a_from, a_why, std::clamp(a_damage, 0.0f, 1.0f) }, Protocol::MessageType::kReportDamageAnswer));
 			++(a_why == Protocol::DamageAnswer::Why::kApplied ? damageAnswered : damageRefusedHere);
+			if (a_why == Protocol::DamageAnswer::Why::kApplied && OpenMenus::Open(OpenMenus::Menu::kPause)) {
+				++damageAnsweredInPause;
+			}
 		}
 
 		// Takes a friend's damage (a fraction of the NPC's maximum) off the NPC we run, if it can be now (DamageHold::Decide):
@@ -3155,9 +3160,9 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Corrected(), killsRetried, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
-			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
+			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
 		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);
