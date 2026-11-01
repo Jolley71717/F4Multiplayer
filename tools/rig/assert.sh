@@ -101,10 +101,13 @@ rig_up() {
 	pass "$1" "$a, both joined"; return 0
 }
 # rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks)
+# mouse_why <who>: what that game's raw input looked like (the `mousedev` answer), for a click that fired nothing; empty from a build
+# without the command
+mouse_why() { local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) printf ' [mousedev: %s]' "$m" ;; esac; }
 rig_click_fires() {
 	local s0 s1; dc "$1" focus >/dev/null; sleep 1; s0=$(field "$(dc "$1" 'net status')" shots); dc "$1" "click 120" >/dev/null; sleep 2; s1=$(field "$(dc "$1" 'net status')" shots)
 	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "$2" "shots $s0 -> $s1"; return 0; fi
-	rig_broken input "$2" "$1's click fired nothing (shots '$s0' -> '$s1'): its mouse input does not reach the game"; return 1
+	rig_broken input "$2" "$1's click fired nothing (shots '$s0' -> '$s1'): its mouse input does not reach the game$(mouse_why "$1")"; return 1
 }
 # rig_keys_move <who> <label>: a real key press (forward, 0.8 s) moves that game's player at least 20 u
 rig_keys_move() {

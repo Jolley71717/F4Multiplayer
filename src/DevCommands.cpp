@@ -1,5 +1,6 @@
 ﻿#include "DevCommands.h"
 
+#include "Config.h"
 #include "DevChannel.h"
 #include "Log.h"
 #include "net/Session.h"
@@ -28,6 +29,7 @@
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
+#include "game/MouseCapture.h"
 #include "game/Destructibles.h"
 #include "game/MovedObjects.h"
 #include "game/FrameStats.h"
@@ -83,6 +85,13 @@ __declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
 __declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
 __declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
 __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
+// for MouseCapture: the raw input registrations, and a count of the WM_INPUT messages the game takes
+__declspec(dllimport) unsigned int __stdcall GetRegisteredRawInputDevices(void* a_list, unsigned int* a_count, unsigned int a_size);
+__declspec(dllimport) int __stdcall RegisterRawInputDevices(const void* a_list, unsigned int a_count, unsigned int a_size);
+__declspec(dllimport) unsigned int __stdcall GetRawInputData(void* a_input, unsigned int a_command, void* a_data, unsigned int* a_size, unsigned int a_headerSize);
+__declspec(dllimport) void* __stdcall SetWindowsHookExA(int a_id, long long(__stdcall* a_proc)(int, unsigned long long, long long), void* a_module, unsigned long a_thread);
+__declspec(dllimport) long long __stdcall CallNextHookEx(void* a_hook, int a_code, unsigned long long a_wParam, long long a_lParam);
+__declspec(dllimport) int __stdcall GetGUIThreadInfo(unsigned long a_thread, void* a_info);
 }
 
 namespace DevCommands
@@ -427,6 +436,154 @@ namespace DevCommands
 			return std::format("pressing {:02X} for {} ms {}", *vk, args[1], FrontNow());
 		}
 
+		// ---- the mouse's raw input registration (game/MouseCapture.h) ----
+		struct RawDevice  // RAWINPUTDEVICE
+		{
+			std::uint16_t page;
+			std::uint16_t usage;
+			std::uint32_t flags;
+			void*         target;
+		};
+		static_assert(sizeof(RawDevice) == 16);
+
+		std::vector<MouseCapture::Registration> RawRegistrations()
+		{
+			std::array<RawDevice, 16> list{};
+			unsigned int              count = static_cast<unsigned int>(list.size());
+			const auto                n = GetRegisteredRawInputDevices(list.data(), &count, sizeof(RawDevice));
+			std::vector<MouseCapture::Registration> out;
+			for (unsigned int i = 0; n != static_cast<unsigned int>(-1) && i < n && i < list.size(); ++i) {
+				out.push_back({ list[i].page, list[i].usage, list[i].flags, reinterpret_cast<std::uintptr_t>(list[i].target) });
+			}
+			return out;
+		}
+
+		// WM_INPUT messages the game's window thread took off its queue (a WH_GETMESSAGE hook on that thread only; it reads
+		// each message's data and leaves the message to the game).
+		std::atomic<std::uint32_t> rawMouse{ 0 };
+		std::atomic<std::uint32_t> rawMouseDown{ 0 };  // left button downs
+		std::atomic<std::uint32_t> rawKeys{ 0 };
+		void*                      rawHook = nullptr;
+
+		long long __stdcall RawCount(int a_code, unsigned long long a_wParam, long long a_lParam)
+		{
+			struct Msg
+			{
+				void*              window;
+				unsigned int       message;
+				unsigned long long wParam;
+				long long          lParam;
+			};
+			if (a_code >= 0 && a_wParam == 1) {  // HC_ACTION, PM_REMOVE
+				const auto msg = reinterpret_cast<const Msg*>(a_lParam);
+				if (msg && msg->message == 0x00FF) {  // WM_INPUT
+					std::array<std::uint8_t, 64> input{};  // RAWINPUTHEADER (24) + RAWMOUSE (24) or RAWKEYBOARD (16)
+					unsigned int                 size = static_cast<unsigned int>(input.size());
+					if (GetRawInputData(reinterpret_cast<void*>(msg->lParam), 0x10000003, input.data(), &size, 24) != static_cast<unsigned int>(-1)) {  // RID_INPUT
+						const auto type = *reinterpret_cast<const std::uint32_t*>(input.data());
+						if (type == 0) {  // RIM_TYPEMOUSE
+							++rawMouse;
+							if ((*reinterpret_cast<const std::uint16_t*>(input.data() + 28) & 0x0001) != 0) {  // usButtonFlags: RI_MOUSE_LEFT_BUTTON_DOWN
+								++rawMouseDown;
+							}
+						} else if (type == 1) {  // RIM_TYPEKEYBOARD
+							++rawKeys;
+						}
+					}
+				}
+			}
+			return CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
+		}
+
+		std::atomic<bool> mouseFixWanted{ false };
+		std::uint32_t     mouseFixed = 0;  // times the mouse was registered for the game's window (for `mousedev`)
+
+		// With the window in front: the mouse registered for the game's window if it isn't (MouseCapture::Fix). Returns
+		// what was done, for a report.
+		std::string FixMouseIfLost()
+		{
+			if (!GameInFront()) {
+				return "not in front";
+			}
+			const auto window = GameWindow();
+			const auto list = RawRegistrations();
+			const auto fix = MouseCapture::Fix(list, reinterpret_cast<std::uintptr_t>(window));
+			if (!fix) {
+				return "ok";
+			}
+			const RawDevice device{ fix->page, fix->usage, fix->flags, reinterpret_cast<void*>(fix->target) };
+			const bool      done = RegisterRawInputDevices(&device, 1, sizeof(RawDevice)) != 0;
+			if (done) {
+				++mouseFixed;
+			}
+			REX::INFO("DevCommands: the mouse wasn't registered for the game's window ({}); registering it (flags 0x{:X}) {}, {} time(s) so far",
+				MouseCapture::Describe(list, reinterpret_cast<std::uintptr_t>(window)), fix->flags, done ? "worked" : "failed", mouseFixed);
+			return done ? "registered" : "register failed";
+		}
+
+		// Off the game thread (the input threads): asks the next frame to check the mouse, and waits for it.
+		void WantMouseCapture()
+		{
+			mouseFixWanted = true;
+			for (int i = 0; i < 20 && mouseFixWanted.load(); ++i) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+		}
+
+		// Each frame (dev channel only): the WM_INPUT count hooked once the window exists, and the mouse checked when an
+		// input command asks and every 2 s while the window is in front, so a mouse lost to a focus change comes back before
+		// the next click.
+		void MouseFrame()
+		{
+			static const bool dev = Config::Get().devChannel;
+			if (!dev) {
+				return;
+			}
+			if (!rawHook) {
+				if (const auto window = GameWindow()) {
+					rawHook = SetWindowsHookExA(3, RawCount, nullptr, GetWindowThreadProcessId(window, nullptr));  // WH_GETMESSAGE
+				}
+			}
+			static auto next = std::chrono::steady_clock::now();
+			const auto  now = std::chrono::steady_clock::now();
+			if (mouseFixWanted.exchange(false) || now >= next) {
+				next = now + std::chrono::seconds(2);
+				FixMouseIfLost();
+			}
+		}
+
+		// mousedev [fix]: the game's raw input: its registrations, which window has the keyboard focus, the WM_INPUT
+		// messages it took so far (mouse, left button downs, keyboard), and (fix) the mouse registered now if it wasn't.
+		std::string MouseDev(std::string_view a_args)
+		{
+			struct GuiThreadInfo  // GUITHREADINFO
+			{
+				unsigned long cbSize;
+				unsigned long flags;
+				void*         active;
+				void*         focus;
+				void*         capture;
+				void*         menuOwner;
+				void*         moveSize;
+				void*         caret;
+				long          rect[4];
+			};
+			static_assert(sizeof(GuiThreadInfo) == 72);
+			const auto    window = GameWindow();
+			GuiThreadInfo info{};
+			info.cbSize = sizeof(info);
+			const auto thread = window ? GetWindowThreadProcessId(window, nullptr) : 0;
+			const bool gui = thread != 0 && GetGUIThreadInfo(thread, &info) != 0;
+			const auto whose = [&](void* a_window) { return !a_window ? "none" : (a_window == window ? "game" : "other"); };
+			std::string out = std::format("raw={} front={} focus={} active={} hook={} wmInput mouse={} leftDown={} keys={} fixed={}",
+				MouseCapture::Describe(RawRegistrations(), reinterpret_cast<std::uintptr_t>(window)), GameInFront() ? "yes" : "no",
+				gui ? whose(info.focus) : "?", gui ? whose(info.active) : "?", rawHook ? "on" : "off", rawMouse.load(), rawMouseDown.load(), rawKeys.load(), mouseFixed);
+			if (a_args.find("fix") != std::string_view::npos) {
+				out += " fix: " + FixMouseIfLost();
+			}
+			return out;
+		}
+
 		// mouse <dx> <dy>: moves the mouse by that much (relative units), to turn the camera; with the
 		// free camera (tfc) this is the only way to aim it from a script.
 		std::string Mouse(std::string_view a_args)
@@ -439,6 +596,7 @@ namespace DevCommands
 			const auto dy = std::stoi(std::string{ args[1] });
 			std::thread([dx, dy] {
 				if (SendToGame("mouse")) {
+					WantMouseCapture();
 					mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
 				}
 			}).detach();
@@ -454,6 +612,7 @@ namespace DevCommands
 				if (!SendToGame("click")) {
 					return;
 				}
+				WantMouseCapture();
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
 				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
@@ -469,7 +628,10 @@ namespace DevCommands
 			// running this command (waiting here deadlocked the game on 2026-10-09).
 			const auto now = FrontNow();
 			if (!GameInFront()) {
-				std::thread([] { BringGameToFront(); }).detach();
+				std::thread([] {
+					BringGameToFront();
+					WantMouseCapture();
+				}).detach();
 			}
 			return std::format("{} input: {}", now, inputTally.Describe());
 		}
@@ -3640,6 +3802,7 @@ namespace DevCommands
 			Entry{ "focus", Focus },
 			Entry{ "mouse", Mouse },
 			Entry{ "click", Click },
+			Entry{ "mousedev", MouseDev },
 			Entry{ "pa", PowerArmorInfo },
 			Entry{ "paframes", PowerArmorFrames },
 			Entry{ "findnpc", FindNpc },
@@ -3760,6 +3923,7 @@ namespace DevCommands
 		TraceFrame();
 		InputFrame();
 		MenuClock::Frame();
+		MouseFrame();
 		if (!turn.active) {
 			return;
 		}

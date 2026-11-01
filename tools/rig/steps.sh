@@ -445,7 +445,7 @@ _vm_ready_to_fire() {
 		is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ] && break
 	done
 	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "reconnect: the restarted VM game fires a real click" "shots $s0 -> $s1 (try $try)"
-	else rig_broken input "reconnect: the restarted VM game fires a real click" "shots '$s0' -> '$s1' after 2 tries: its mouse and attacks are dead (restart it with focus sent during start-up); later VM steps on this game will fail"; fi
+	else rig_broken input "reconnect: the restarted VM game fires a real click" "shots '$s0' -> '$s1' after 2 tries: its mouse and attacks are dead (restart it with focus sent during start-up); later VM steps on this game will fail$(mouse_why vm)"; fi
 }
 nsf_now() { field "$(dc "$1" 'net status')" "$2"; }
 step_reconnect() {
