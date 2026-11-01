@@ -26,17 +26,28 @@ nowms() { local t=$EPOCHREALTIME; t=${t/./}; echo $((t / 1000)); }  # the host's
 
 # clock_offset: prints the VM's clock minus the host's in ms. The VM prints its clock 20 times, 50 ms
 # apart, and each line is stamped on arrival here; the largest (VM - arrival) is the offset less the
-# shortest one-way delay over the virtual switch (a few ms). Fails if the VM didn't answer.
+# shortest one-way delay over the virtual switch (a few ms). A line can only arrive late, never early, so
+# the noise is one-sided and the largest is the estimate (a median would carry the late ones in).
+# Late is common: this side stalls for 0.3 s to 4 s now and then with a game running (2026-11-01: 4 bursts
+# in 10 held a stall, the lines queued and were stamped up to 4700 ms late), and a stall over a whole burst
+# read the offset 91 ms off (-103, with -12 before and after) and failed the power armor step as a clock that
+# moved. So a reading needs a floor: at least 5 lines within 5 ms of the largest (lines that came through
+# with no stall). Up to 4 bursts are pooled until one is seen. Fails if the VM didn't answer or no floor was.
 clock_offset() {
-	local enc best= n=0 v t d
+	local enc best= n=0 v t d k all="" near
 	enc=$(printf '%s' '1..20 | ForEach-Object { [Console]::Out.WriteLine([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()); [Console]::Out.Flush(); Start-Sleep -Milliseconds 50 }' | iconv -f utf-8 -t utf-16le | base64 -w0)
-	while read -r v; do
-		t=$(nowms); v=${v//[^0-9]/}; [ -n "$v" ] || continue
-		d=$((v - t)); n=$((n + 1))
-		if [ -z "$best" ] || [ $d -gt $best ]; then best=$d; fi
-	done < <(timeout 30 ssh -i "$K" -o LogLevel=ERROR -o ConnectTimeout=8 "$H" "powershell -NoProfile -NonInteractive -EncodedCommand $enc" 2>/dev/null)
-	[ -n "$best" ] && [ $n -ge 5 ] || return 1
-	echo "$best"
+	for k in 1 2 3 4; do
+		while read -r v; do
+			t=$(nowms); v=${v//[^0-9]/}; [ -n "$v" ] || continue
+			d=$((v - t)); n=$((n + 1)); all="$all $d"
+			if [ -z "$best" ] || [ $d -gt $best ]; then best=$d; fi
+		done < <(timeout 30 ssh -i "$K" -o LogLevel=ERROR -o ConnectTimeout=8 "$H" "powershell -NoProfile -NonInteractive -EncodedCommand $enc" 2>/dev/null)
+		[ -n "$best" ] || continue
+		near=0; for d in $all; do [ $((best - d)) -le 5 ] && near=$((near + 1)); done
+		[ $near -ge 5 ] && { echo "$best"; return 0; }
+	done
+	echo "VM clock: no steady reading in $k bursts ($n lines, the largest '$best', $near within 5 ms of it)" >&2
+	return 1
 }
 
 # clock_resync: starts the VM's time service and resyncs it (ssh on the VM is elevated). Prints the result.
@@ -208,5 +219,6 @@ run) rig_guard || exit 2; run $2 ;;   # drives the games: only with the rig held
 analyse) analyse $2 $3 $4 ;;
 npcs) npcs $2 $3 ;;
 clock) clock ;;
-*) echo "usage: trace.sh run [seconds] | analyse [host.csv vm.csv [vmClockMs]] | npcs <host.csv> <vm.csv> | clock" ;;
+offset) clock_offset ;;   # the VM's clock minus the host's in ms, measured only: no resync, no limit
+*) echo "usage: trace.sh run [seconds] | analyse [host.csv vm.csv [vmClockMs]] | npcs <host.csv> <vm.csv> | clock | offset" ;;
 esac
