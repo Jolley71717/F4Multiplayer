@@ -103,6 +103,7 @@ namespace Party
 		std::optional<PendingTeleport> pendingTeleport;
 		// The landing after a teleport's last move: its autosave waits for the player on the ground (TeleportRules.h).
 		TeleportRules::Landing landing;
+		bool                   fallLogged = false;  // the held fall's start logged once a landing
 
 		Clock::time_point killFeedWindow{};
 		int               killFeedShown = 0;
@@ -723,6 +724,10 @@ namespace Party
 				// The fall counts from here, so landing from it does the damage of no fall. Never raised: a start the
 				// engine already put lower stays.
 				if (const auto controller = Controller(a_player)) {
+					if (!fallLogged) {
+						fallLogged = true;  // the field's units, once: the player's z beside it
+						REX::INFO("Party: holding the fall after the teleport: fall start {:.0f}, player z {:.0f}", controller->fallStartHeight, a_player->data.location.z);
+					}
 					controller->fallStartHeight = (std::min)(controller->fallStartHeight, a_player->data.location.z);
 					controller->fallTime = 0.0f;
 				}
@@ -781,6 +786,7 @@ namespace Party
 			player->SetPosition(to, true);
 			pendingTeleport.reset();
 			landing.Begin(a_now, true);
+			fallLogged = false;
 		}
 
 		// Why the player can't teleport right now (the key of the text saying so; "" = they can). Teleporting out of a
@@ -1146,6 +1152,7 @@ namespace Party
 			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
 			landing.Begin(Clock::now(), travel);
+			fallLogged = false;
 			REX::INFO("Party: teleported to player {}, from {} to {}", target->id, Where(from), Where(position));
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
 			return;
@@ -1233,6 +1240,7 @@ namespace Party
 		killWindowEnd = {};
 		ownWear.Forget();
 		landing.Cancel();  // the teleport was in the game left behind: no autosave of the one just loaded
+		pendingTeleport.reset();  // and no move into the one just loaded
 	}
 
 	void Reset()
