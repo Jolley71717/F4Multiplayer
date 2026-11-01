@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T09:27:51+00:00",
+ "updated": "2026-11-01T09:48:27+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -35,7 +35,7 @@
    "title": "Furniture a host no longer has can keep showing for friends",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
+   "stage": 5,
    "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
    "pr": 245
   },
@@ -247,6 +247,14 @@
    "stage": 0,
    "note": "Asked for on 0.9.1; not started.",
    "desc": "When a friend uses a workbench, chem station, cooking station or armor or weapon bench, their character does not show them using it in your game."
+  },
+  {
+   "id": "6tba",
+   "title": "A built piece reported just before a character switch while joined can be tagged with the new world and removed for good",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "7gi3",
