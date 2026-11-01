@@ -2786,8 +2786,8 @@ void Server::Run()
 			return;
 		}
 		auto item = Protocol::DecodeWorkshopItem(a_data);
-		if (!item) {
-			return;
+		if (!item || item->refId == item->workshop) {
+			return;  // a settlement's workbench is never one of its own pieces: kept, it would move or scrap everyone's workbench
 		}
 		item->playerId = a_player.id;
 		// Whose world built it: the one their last record named, or, before their record since their welcome or load came, none

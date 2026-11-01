@@ -246,6 +246,11 @@ namespace WorkshopSync
 			if (!base || IsCopy(a_ref) || Drops::IsCopyRef(a_ref->GetFormID())) {
 				return false;  // a copy of a friend's piece, or of a friend's drop: theirs, not something we built
 			}
+			if (a_ref == a_workshop || IsWorkbenchAnchor(a_ref)) {
+				// A settlement's workbench is never one of its pieces (a console report of the wrong reference): kept as built,
+				// it would be sent at every join, and scrapped, every friend's game would scrap its own workbench.
+				return false;
+			}
 			if ((base->GetFormID() >> 24) == 0xFF) {
 				return false;  // a base made at runtime exists only here
 			}

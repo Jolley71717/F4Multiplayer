@@ -417,3 +417,29 @@ TEST("orphan pieces: a lost piece its builder's world has again (a later save) c
 	Load(f, 1, HOST_A);
 	CHECK(Own(Received(f, 1), true).empty());
 }
+
+TEST("orphan pieces: a report naming a settlement's workbench as its own piece is neither kept nor passed on")
+{
+	Fixture    f{ Hosted() };
+	const auto host = JoinHost(f, 1);
+	JoinFriend(f, 2, "Bob", BOB, BOB_A);
+	Clear(f, { 1, 2 });
+	// The workbench reported as built at itself (a console report of the wrong reference), then as scrapped: kept, every
+	// friend's game would scrap its own workbench. And one made at runtime, said to be its own piece.
+	auto bench = Chair(BENCH, 0.0f);
+	bench.base = 0x000ABE13;
+	f.fake->Deliver(1, Built(bench));
+	auto scrap = bench;
+	scrap.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(1, Built(scrap));
+	auto made = Chair(0xFF000010, 0.0f);
+	made.workshop = made.refId;
+	f.fake->Deliver(1, Built(made));
+	f.fake->Deliver(1, Built(Chair(0xFF000011, 100.0f)));  // a real piece still goes
+	Sync(f, 1);
+	CHECK((Others(Received(f, 2)) == std::map<Key, bool>{ { { host, 0xFF000011 }, true } }));
+	JoinFriend(f, 3, "Carol", CAROL, CAROL_A);
+	CHECK((Others(Received(f, 3)) == std::map<Key, bool>{ { { host, 0xFF000011 }, true } }));
+	Load(f, 1, HOST_A);
+	CHECK((Own(Received(f, 1)) == std::set<std::uint32_t>{ 0xFF000011 }));
+}
