@@ -111,20 +111,21 @@ put_at() {
 	dc "$1" "console $2.setrestrained 1" >/dev/null
 	dc "$1" "console $2.setpos x $3" >/dev/null; dc "$1" "console $2.setpos y $4" >/dev/null; dc "$1" "console $2.setpos z $5" >/dev/null
 }
-# placed_ok <ref> <x> <y> <z>: the raider stands where it was put, on the players' floor, in both games (within 30 u across and
-# 12 u up or down). One put into a prop is pushed out of it or stands on it (2026-11-01: 18 u up at one spot, 63 u off and 48 u
-# up at another), behind or above what the shot meets: the spot is not used. Prints what was read, for targets.txt.
+# placed_ok <ref> <x> <y> <z>: the raider stands where it was put, in both games (within 30 u across and 30 u up or down: the
+# lobby's west side is a step 16 u up, where raiders stand just where they were put). One put into a prop is pushed out of it
+# (2026-11-01: 63 u off and 48 u up at one spot, 43 u off at another): the spot is not used. Prints what was read, for targets.txt.
 placed_ok() {
 	local g i bad=0 out=""
 	for g in host vm; do
 		i=$(rinfo $g "$1")
 		out="$out $g=($(field "$i" x),$(field "$i" y),$(field "$i" z))"
 		awk -v x="$(field "$i" x)" -v y="$(field "$i" y)" -v z="$(field "$i" z)" -v px="$2" -v py="$3" -v pz="$4" \
-			'BEGIN{ if (x == "" || z == "") exit 1; dz = z - pz; if (dz < 0) dz = -dz; exit !(sqrt((x - px) ^ 2 + (y - py) ^ 2) <= 30 && dz <= 12) }' || bad=1
+			'BEGIN{ if (x == "" || z == "") exit 1; dz = z - pz; if (dz < 0) dz = -dz; exit !(sqrt((x - px) ^ 2 + (y - py) ^ 2) <= 30 && dz <= 30) }' || bad=1
 	done
 	echo "$out"; return $bad
 }
-# Where the phase's targets stand: SPOT[<ref>]="x,y" for each raider placed, AVOID the spots found bad (a raider pushed off or up,
+# Where the phase's targets stand: SPOT[<ref>]="x,y" for each raider placed; AVOID the spots found bad, kept for the whole run
+# (the players stand within 15 u of where they stood the phase before; the killed raider's body is added) (a raider pushed off,
 # hurt or killed there, or a line that the shots proved blocked). PS_PH and PO_PH are the shooter's and the runner's pos lines,
 # read once per phase (spot_for).
 declare -A SPOT; AVOID=""; PS_PH=""; PO_PH=""
@@ -177,7 +178,7 @@ HELD=()                 # raiders put_at holds still (setrestrained 1), let go b
 PAUSE_WHO=""            # the game whose pause menu the pause step has open
 unhurt() { local i; i=$(rinfo "$1" "$2"); [ "$(field "$i" dead)" = false ] && is_num "$(field "$i" hp)" && awk -v h="$(field "$i" hp)" -v m="$T_TARGET_HP" 'BEGIN{exit !(h >= m)}'; }
 pick_targets() {
-	local r=$1 s a g k=0 ro rv x y z off rc; s=$(other_of "$r"); TG=(); SPOT=(); AVOID=""; SPARE=(); PS_PH=$(dc "$s" pos); PO_PH=$(dc "$r" pos)
+	local r=$1 s a g k=0 ro rv x y z off rc; s=$(other_of "$r"); TG=(); SPOT=(); SPARE=(); PS_PH=$(dc "$s" pos); PO_PH=$(dc "$r" pos)
 	echo "phase $r runs: shooter $s at $(cut -d' ' -f2-5 <<<"$PS_PH"), $r at $(cut -d' ' -f2-5 <<<"$PO_PH")" >> "$A_OUT/targets.txt"
 	for a in $(host 'actors 3000' | tr ';' '\n' | grep "Raider' dead=false" | grep -o "[0-9A-F]\{8\}"); do
 		case " ${ALL_TG[*]} " in *":$a:"*) continue;; esac   # not one an earlier phase already shot
@@ -304,11 +305,11 @@ top_up() {
 runner_reaches() {
 	local o ro h0 h1 k
 	o=$(tg_o "$1"); ro=$(tg_ro "$1")
-	for k in 1 2; do
-		h0=$(hpv "$o" "$ro"); fire "$o" "$1"; sleep 0.5; h1=$(hpv "$o" "$ro")
+	for k in 1 2 3; do
+		h0=$(hpv "$o" "$ro"); fire "$o" "$1"; sleep 1; h1=$(hpv "$o" "$ro")
 		if is_num "$h0" && is_num "$h1" && _cmp "$h1" '<' "$h0"; then RL="the runner's hp $h0 -> $h1 (shot $k)"; return 0; fi
 	done
-	RL="the runner's own 2 shots did not reach it (hp $h0 -> $h1)"; return 1
+	RL="the runner's own 3 shots did not reach it (hp $h0 -> $h1)"; return 1
 }
 # reached <shooter> <runner> <ref> <shooter's copyHits before> <runner's hp before>: the shooter's shot reached the raider: the
 # shooter's game took a hit on its copy (copyHits rose), or the raider's health fell in the runner's game. Neither: the bullet met
@@ -414,7 +415,7 @@ run_phase() {
 			reached "$p" "$o" "$ro" "$c0" "$h0" && { ok=1; break; }
 			echo "$rl $ro: try $k: the shooter's shot did not reach it ($REACH)" >> "$A_OUT/targets.txt"
 			[ $k = 3 ] && break
-			if [ $k = 2 ] && swap_spare "$t"; then t=$SWAPPED; else re_place "$t" "the shooter's shot did not reach it" || break; fi
+			if [ $k = 2 ] && swap_spare "$t"; then t=$SWAPPED; else re_place "$t" "the shooter's shot did not reach it" || { swap_spare "$t" && t=$SWAPPED; } || break; fi
 		done
 		[ "$ok" = skip ] && continue
 		ro=$(tg_ro "$t")
@@ -445,7 +446,7 @@ run_phase() {
 			# the shooter running it now: that pair's hit took it over, so the runner's own claim had not come first
 			[ "$(runner "$o" "$ro")" = "${MYID[$p]}" ] && { ha=$(hpv "$o" "$ro"); handed="after $n shots (pair gap $PAIR_GAP ms; health in the runner's game $hb -> $ha over that pair)"; break; }
 		done
-		sleep 4; sample "$t" killed; snap K1
+		sleep 4; sample "$t" killed; snap K1; AVOID="$AVOID ${SPOT[$ro]}"   # its body lies there: the next phase puts no raider on it
 		if [ $inTime -gt 0 ]; then expect_le "kill ($o's NPC $ro): each shooter's click came soon after the runner's (ms, the most of $inTime pair(s) in time; the takeover cooldown is 5000)" "$gap" "$T_PAIR_GAP_MS"
 		else fail "kill ($o's NPC $ro): set-up: pairs in time (the shooter's click at most $T_PAIR_GAP_MS ms after the runner's)" "none:$late ms (the games' main threads hitched; targets.txt has each pair's timings)"; fi
 		if [ -n "$late" ]; then
