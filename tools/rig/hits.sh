@@ -154,7 +154,7 @@ declare -A NOFIRE
 shots_of() { dc "$1" "net status" | grep -oE ' shots=[0-9]+' | head -1 | cut -d= -f2; }
 fired() {  # fired <who> <shots before> <shots after>
 	if is_num "$2" && is_num "$3" && [ "$3" -le "$2" ] && [ -z "${NOFIRE[$1]}" ]; then
-		NOFIRE[$1]=1; fail "$1's click fired its gun (its player's shots counter rose)" "shots=$2 before and $3 after: the click did not reach the game (its later misses are this, not the mod)"
+		NOFIRE[$1]=1; rig_broken input "$1's click fired its gun (its player's shots counter rose)" "shots=$2 before and $3 after: the click did not reach the game (its later misses are this, not the mod)"
 	fi
 }
 fire() {
@@ -289,7 +289,7 @@ run_phase() {
 # ============================================================ run ============================================================
 section "preflight"
 ALL_TG=()
-expect_match "both games up" "$(alive)" '^host=ingame=true vm=ingame=true$'
+rig_up "both games up"
 crash_snapshot; log_mark host; log_mark vm
 for g in host vm; do dc $g "console player.additem 00004822 1" >/dev/null; dc $g "console player.additem 0001F276 400" >/dev/null; dc $g "console player.equipitem 00004822" >/dev/null; dc $g "draw on" >/dev/null; done
 sleep 2; snap A
@@ -301,12 +301,10 @@ done
 pass "baseline counters taken" "copyHits host $(cget A host copyHits) vm $(cget A vm copyHits); copyUnseen $(cget A host copyUnseen)/$(cget A vm copyUnseen)"
 # Every step needs both games' clicks: a game whose mouse never came up (2026-11-01: the VM, started by in-vm-3-game.ps1, fired
 # nothing for the whole run, 18 failures that proved nothing) is stopped here, before ten minutes of misses.
-dead=""
-for g in host vm; do
-	dc $g focus >/dev/null; sleep 1; s0=$(shots_of $g); dc $g "click 120" >/dev/null; sleep 2; s1=$(shots_of $g)
-	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "preflight: $g's click fires its gun" "shots $s0 -> $s1"; else fail "preflight: $g's click fires its gun" "shots '$s0' -> '$s1': its mouse input is dead (restart that game with focus sent during start-up); the run stops here"; dead="$dead $g"; fi
-done
-if [ -n "$dead" ]; then a_summary; exit 1; fi
+# (assert.sh's circuit breaker: two rig-broken failures end the run; one game that can't fire ruins every step, so it ends here)
+dead=""; for g in host vm; do rig_click_fires $g "preflight: $g's click fires its gun" || dead="$dead $g"; done
+for g in host vm; do rig_keys_move $g "preflight: $g's keys move its player"; done
+[ -n "$dead" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop input
 
 run_phase host
 run_phase vm
@@ -334,7 +332,7 @@ done
 [ "${#FLIPPED[@]}" -gt 0 ] && echo "NPCs the shooter ran before its copy shot: ${!FLIPPED[*]}"
 
 section "end checks"
-expect_match "both games up" "$(alive)" '^host=ingame=true vm=ingame=true$'
+rig_up "both games up"
 crash_verdict "hits"
 for g in host vm; do log_check $g "$g"; log_privacy $g "$g"; done
 a_summary

@@ -50,7 +50,8 @@ dll_md5() {  # dll_md5 <who>
 step_preflight() {
 	section "preflight"
 	local a h v hd vd want
-	a=$(alive); expect_match "both games up" "$a" '^host=ingame=true vm=ingame=true$'
+	rig_up "both games up"; rig_ssh_up "ssh to the VM"
+	for a in host vm; do rig_keys_move $a "$a's keys move its player"; done
 	hd=$(dll_md5 host); vd=$(dll_md5 vm); A_DLL=$hd
 	if [ -n "$hd" ] && [ "$hd" = "$vd" ]; then pass "same DLL on both machines" "$hd"; else fail "same DLL on both machines" "host '$hd' vm '$vd'"; fi
 	if [ -n "$SMOKE_ZIP" ]; then
@@ -444,7 +445,7 @@ _vm_ready_to_fire() {
 		is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ] && break
 	done
 	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "reconnect: the restarted VM game fires a real click" "shots $s0 -> $s1 (try $try)"
-	else fail "reconnect: the restarted VM game fires a real click" "shots '$s0' -> '$s1' after 2 tries: its mouse and attacks are dead (restart it with focus sent during start-up); later VM steps on this game will fail"; fi
+	else rig_broken input "reconnect: the restarted VM game fires a real click" "shots '$s0' -> '$s1' after 2 tries: its mouse and attacks are dead (restart it with focus sent during start-up); later VM steps on this game will fail"; fi
 }
 nsf_now() { field "$(dc "$1" 'net status')" "$2"; }
 step_reconnect() {
@@ -458,7 +459,7 @@ step_reconnect() {
 	# the players list names people: only its length is used, never printed
 	np=$(grep -oE 'players: \[.*' <<<"${NS[host]}" | grep -oE "puppet=FF[0-9A-F]+" | sort -u | wc -l)
 	expect_ge "reconnect: host lists the VM's player (puppets known)" "$np" 1
-	expect_match "reconnect: both games up" "$(alive)" '^host=ingame=true vm=ingame=true$'
+	rig_up "reconnect: both games up"
 	# A game started by in-vm-3-game.ps1 can come up taking keys but not the mouse or the attack actions (2026-10-31: after
 	# run 1's reconnect, run 2's VM grenade and power armor steps failed; hits.sh saw the same as shots=0). Steam's windows pop
 	# over the game after a lobby join, so they are minimised and the game brought to the front, and one real click must fire

@@ -46,6 +46,7 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 }
 
 section() {  # section <title>
+	[ -z "$A_RIG_STOPPED" ] && [ -n "$A_RESULTS" ] && [ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && _rig_stop "$(_rig_last_signal)"
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"
 	A_SECTION=$1; A_SEC_T0=$SECONDS; echo; echo "=== $1 ($(date +%T))"
 }
@@ -57,6 +58,61 @@ record() {  # record <PASS|FAIL|WARN> <name> <reason>
 pass() { record PASS "$1" "$2"; }
 fail() { record FAIL "$1" "$2"; }
 warn() { record WARN "$1" "$2"; }
+
+# --- the circuit breaker: a broken rig ends the run ------------------------------------------------------------
+# A check that finds the RIG broken, not the mod, says so with rig_broken: a game's input not reaching it (a click that
+# fires nothing, keys that move nobody), a game not running or not connected, ssh to the VM down. Such a failure is a FAIL
+# like any other, and RIG_BREAK_AT of them (2) end the run at once as FAIL "run stopped: rig broken (<signal>)": the rest
+# would measure the rig (2026-11-01: a VM whose mouse never came up made 18 failures that proved nothing). A failure of the
+# mod is a plain fail and never trips it. They are counted in results.tsv, so one made in a subshell counts too; section()
+# looks again, for a trip made where an exit can't end the run.
+RIG_BREAK_AT=${RIG_BREAK_AT:-2}
+_rig_last_signal() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {s=substr($4, 13); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
+_rig_broken_count() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
+_rig_stop() {  # _rig_stop <signal>: the run ends here, its verdict FAIL
+	A_RIG_STOPPED=1
+	record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
+	echo "STOP: rig broken ($1)"
+	declare -F crash_verdict >/dev/null && [ -n "$A_NAME" ] && crash_verdict "$A_NAME"   # a game that went down may have crashed: that is the mod's, and is said
+	a_summary
+}
+rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
+	record FAIL "$2" "rig broken ($1): $3"
+	[ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop "$1"
+	return 0
+}
+# rig_ssh_up <label>: the VM answers ssh
+rig_ssh_up() { if [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ]; then pass "$1" "ssh to the VM answers"; return 0; fi; rig_broken ssh "$1" "ssh to the VM does not answer"; return 1; }
+# rig_up <label>: both games run, are in the game and connected; a game that is not is a broken rig (signal game, or ssh
+# when the VM's game does not answer and ssh does not either)
+rig_up() {
+	local a w s down=""; a=$(alive)
+	for w in host vm; do
+		case "$a" in *"$w=ingame=true"*) ;; *) down="$down $w";; esac
+	done
+	if [ -n "$down" ]; then
+		case "$down" in *vm*) [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ] || { rig_broken ssh "$1" "$a: the VM's game does not answer and ssh to the VM is down"; return 1; };; esac
+		rig_broken game "$1" "$a: not running or not in the game:$down"; return 1
+	fi
+	for w in host vm; do
+		s=$(field "$(dc $w 'net status')" status)
+		[ "$s" = joined ] || { rig_broken game "$1" "$w is not connected to the session (status='$s')"; return 1; }
+	done
+	pass "$1" "$a, both joined"; return 0
+}
+# rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks)
+rig_click_fires() {
+	local s0 s1; dc "$1" focus >/dev/null; sleep 1; s0=$(field "$(dc "$1" 'net status')" shots); dc "$1" "click 120" >/dev/null; sleep 2; s1=$(field "$(dc "$1" 'net status')" shots)
+	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "$2" "shots $s0 -> $s1"; return 0; fi
+	rig_broken input "$2" "$1's click fired nothing (shots '$s0' -> '$s1'): its mouse input does not reach the game"; return 1
+}
+# rig_keys_move <who> <label>: a real key press (forward, 0.8 s) moves that game's player at least 20 u
+rig_keys_move() {
+	local p0 p1 d; dc "$1" focus >/dev/null; sleep 1; p0=$(dc "$1" pos); dc "$1" "key 0x57 800" >/dev/null; sleep 1.6; p1=$(dc "$1" pos)
+	d=$(awk -v a="$(field "$p0" x)" -v b="$(field "$p0" y)" -v c="$(field "$p1" x)" -v e="$(field "$p1" y)" 'BEGIN{if (a=="" || c=="") {print ""; exit}; printf "%d", sqrt((c-a)^2 + (e-b)^2)}')
+	if is_num "$d" && [ "$d" -ge 20 ]; then pass "$2" "moved $d u"; return 0; fi
+	rig_broken input "$2" "$1's player moved '${d}' u on a forward key: its keys do not reach the game"; return 1
+}
 
 is_num() { [[ $1 =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; }
 _cmp() { awk -v a="$1" -v b="$3" "BEGIN{exit !(a $2 b)}"; }  # _cmp a <= b
@@ -209,6 +265,37 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	rm -rf "$sd"
 	[ "$r" -ge 1 ] && echo "ok   interrupted run exits non-zero ($r)" || { echo "FAIL interrupted run exits non-zero: got $r"; bad=1; }
 	case "$sigout" in *"VERDICT: FAIL"*"run interrupted"*|*"run interrupted"*"VERDICT: FAIL"*) echo "ok   interrupted run says VERDICT FAIL";; *) echo "FAIL interrupted run says VERDICT FAIL: [$sigout]"; bad=1;; esac
+	# the circuit breaker: each case is a run of its own (a subshell with its own folder), its output and exit code read
+	brk() {  # brk <body>: runs the body as a fresh run; prints "<exit code>|<output>"
+		local o r sd; sd=$(mktemp -d); o=$( ( A_OUT=$sd; A_RIG_STOPPED=""; A_SECTION=""; a_init brk >/dev/null; section b1 >/dev/null; eval "$1"; echo "REACHED"; a_summary ) 2>&1 ); r=$?; rm -rf "$sd"; echo "$r|$o"
+	}
+	has() { case "$2" in *"$3"*) echo "ok   $1";; *) echo "FAIL $1: no [$3] in [${2:0:300}]"; bad=1;; esac; }
+	hasnt() { case "$2" in *"$3"*) echo "FAIL $1: [$3] in [${2:0:300}]"; bad=1;; *) echo "ok   $1";; esac; }
+	o=$(brk 'rig_broken input "c1" "no shots" >/dev/null')
+	has "breaker: one rig-broken failure lets the run go on" "$o" REACHED; has "breaker: ... and it is a FAIL" "$o" "rig broken (input): no shots"
+	o=$(brk 'fail "a mod check" "hp differs" >/dev/null; fail "another" "x" >/dev/null; rig_broken game "c1" "down" >/dev/null')
+	has "breaker: mod failures never trip it" "$o" REACHED
+	o=$(brk 'rig_broken game "c1" "host down" >/dev/null; rig_broken input "c2" "no shots"')
+	hasnt "breaker: two rig-broken failures stop the run at once" "$o" REACHED; has "breaker: the stop line names the signal" "$o" "STOP: rig broken (input)"
+	has "breaker: the stop is a FAIL check" "$o" "run stopped: rig broken (input)"; has "breaker: the verdict is FAIL" "$o" "VERDICT: FAIL"
+	[ "${o%%|*}" -ge 1 ] 2>/dev/null && echo "ok   breaker: a stopped run exits non-zero" || { echo "FAIL breaker: a stopped run exits non-zero: [${o%%|*}]"; bad=1; }
+	o=$(brk '( rig_broken ssh "c1" "x" >/dev/null ); ( rig_broken ssh "c2" "y" >/dev/null ); section b2')
+	hasnt "breaker: trips made in subshells stop the run at the next section" "$o" REACHED; has "breaker: ... naming their signal" "$o" "STOP: rig broken (ssh)"
+	# the probes, with the games and ssh faked
+	o=$(brk 'alive() { echo "host=ingame=true vm=DOWN"; }; vmssh() { :; }; rig_up "up" >/dev/null')
+	has "rig_up: VM down and ssh down is signal ssh" "$o" "rig broken (ssh)"
+	o=$(brk 'alive() { echo "host=DOWN vm=ingame=true"; }; vmssh() { echo up; }; rig_up "up" >/dev/null')
+	has "rig_up: a game down is signal game" "$o" "rig broken (game)"
+	o=$(brk 'alive() { echo "host=ingame=true vm=ingame=true"; }; dc() { case "$1 $2" in "vm net status") echo "status=connecting id=0";; *) echo "status=joined id=1";; esac; }; rig_up "up" >/dev/null')
+	has "rig_up: a game not connected is signal game" "$o" "not connected to the session"
+	o=$(brk 'alive() { echo "host=ingame=true vm=ingame=true"; }; dc() { echo "status=joined id=1"; }; rig_up "up" >/dev/null')
+	hasnt "rig_up: both up and joined is no failure" "$o" "rig broken"
+	o=$(brk 'sleep() { :; }; dc() { case "$2" in "net status") echo "status=joined shots=3";; *) echo ok;; esac; }; rig_click_fires vm "fires" >/dev/null')
+	has "rig_click_fires: shots that stay put are signal input" "$o" "rig broken (input): vm's click fired nothing"
+	o=$(brk 'sleep() { :; }; cf=$(mktemp); echo 0 > "$cf"; dc() { case "$2" in "net status") n=$(( $(cat "$cf") + 1 )); echo $n > "$cf"; echo "status=joined shots=$n";; *) echo ok;; esac; }; rig_click_fires vm "fires" >/dev/null; rm -f "$cf"')
+	hasnt "rig_click_fires: a shot that counts is no failure" "$o" "rig broken"
+	o=$(brk 'sleep() { :; }; dc() { case "$2" in pos) echo "x=10.0 y=20.0 z=0";; *) echo ok;; esac; }; rig_keys_move host "moves" >/dev/null')
+	has "rig_keys_move: no movement is signal input" "$o" "rig broken (input): host's player moved '0' u"
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	rm -rf "$d" "$F4MP_CHECKS"; exit $bad
 fi
