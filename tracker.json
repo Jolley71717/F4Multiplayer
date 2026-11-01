@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T21:10:24+00:00",
+ "updated": "2026-11-01T22:24:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -132,6 +132,15 @@
    "stage": 7,
    "note": "Merged; the owner keeps the kit, and the borrower gets out after a load",
    "pr": 224
+  },
+  {
+   "id": "3jt1",
+   "title": "F7 teleport to a far-away friend in the same exterior worldspace lands far off and high in the air; the player falls and goes down",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 2,
+   "note": "",
+   "pr": 252
   },
   {
    "id": "3lh",
@@ -403,6 +412,14 @@
    "priority": 2,
    "stage": 0,
    "note": "Feature request: lower players earn more XP until levels even out"
+  },
+  {
+   "id": "cb82",
+   "title": "Dropping an item that was picked up from the world is never shared",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "celo",
