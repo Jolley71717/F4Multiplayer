@@ -86,7 +86,8 @@ restart() {
 	local wine
 	wine=$(crossover_wine)
 
-	pkill -f '\\Fallout4\.exe' || true
+	# the bottle's own taskkill: a pkill would close every bottle's game, a second bottle's joiner too
+	"$wine" --bottle "$bottle" --no-update taskkill /f /im Fallout4.exe > /dev/null 2>&1 || true
 	sleep 3
 	[ $deploy_build = 0 ] || deploy
 	local launched

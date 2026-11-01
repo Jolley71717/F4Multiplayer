@@ -81,6 +81,12 @@ It starts the game through Steam, so Steam's overlay is in it. For Steam's Play 
 to `Fallout4Launcher.exe` (a game update or a file check puts the launcher back). Releases are still
 built with MSVC on Windows, and a pull request tested with a clang-cl build says so.
 
+Two games on one Mac: a second bottle (`cp -c` clones a bottle without the disk space), its Steam
+offline, both with `sTransport = enet`. A bottle's `Documents` is a link to the Mac's own, so the
+second one needs a folder of its own: with the first's, both games are the same player
+(`F4Multiplayer_player.id`) and write one log. Give the second another `iDevChannelPort` and
+`sPlayerName`, and `F4MP_DEV_PORT` to match when driving it.
+
 ## Tests
 
 ```bat
