@@ -1,7 +1,7 @@
 -- Builds the plugin for Windows on a Mac: clang-cl and lld-link (LLVM) against the MSVC runtime and the
 -- Windows SDK that xwin (https://github.com/Jake-Shadle/xwin) downloads from Microsoft. xmake's own clang-cl
 -- toolchain only works on a Windows host, or on Linux with a Visual Studio installed under Wine; this one needs
--- neither. Only tried on macOS. CONTRIBUTING.md says how to set it up. A release is still built with MSVC on
+-- neither. Only tried on macOS. docs/misc/MAC.md says how to set it up. A release is still built with MSVC on
 -- Windows (tools/package.ps1).
 --
 --   xmake f -p windows -a x64 -m releasedbg --toolchain=xwin [--xwin=~/.xwin] [--llvm=<LLVM folder>]

@@ -1,15 +1,15 @@
 #!/bin/bash
 # Fallout 4 under CrossOver on a Mac: what deploy.ps1, restart-game.ps1 and devctl.ps1 do on Windows, for the plugin
-# built with tools/xwin.lua (CONTRIBUTING.md, "On a Mac").
+# built with tools/xwin.lua (docs/misc/MAC.md).
 #
-#   tools/crossover.sh deploy [mode]                  # the build into the game; the ini only if the game has none
-#   tools/crossover.sh restart [cell] [--no-deploy]   # close, deploy, start through Steam, load SanctuaryExt in god mode
-#   tools/crossover.sh restart ''                     # stop at the main menu
-#   tools/crossover.sh dev status pos "console coc QASmoke"
+#   tools/crossovermac.sh deploy [mode]                 # the build into the game; the ini only if the game has none
+#   tools/crossovermac.sh restart [cell] [--no-deploy]  # close, deploy, start through Steam, SanctuaryExt in god mode
+#   tools/crossovermac.sh restart ''                    # stop at the main menu
+#   tools/crossovermac.sh dev status pos "console coc QASmoke"
 #
 # XSE_FO4_GAME_PATH is the game's folder inside a CrossOver bottle (as for xmake install); the bottle, its CrossOver
 # and its Documents follow from it. F4MP_DEV_PORT and F4MP_DEV_TOKEN as for devctl.ps1. restart starts the game the
-# way Steam's Play button does, so Steam's overlay is in it: Steam must start F4SE (CONTRIBUTING.md says how).
+# way Steam's Play button does, so Steam's overlay is in it: Steam must start F4SE (docs/misc/MAC.md says how).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -36,7 +36,7 @@ deploy() {
 
 # One reply line per command, as devctl.ps1 prints them.
 dev() {
-	[ $# -gt 0 ] || { echo "usage: crossover.sh dev <command> [<command> ...]" >&2; exit 2; }
+	[ $# -gt 0 ] || { echo "usage: crossovermac.sh dev <command> [<command> ...]" >&2; exit 2; }
 	local token=${F4MP_DEV_TOKEN:-}
 	if [ -z "$token" ]; then
 		[ -f "$f4se_docs/F4Multiplayer_dev.token" ] || { echo "no dev token in $f4se_docs: is the game running with bDevChannel = true?" >&2; exit 1; }
@@ -80,7 +80,7 @@ restart() {
 		esac
 	done
 	if ! cmp -s "$game/f4se_loader.exe" "$game/Fallout4Launcher.exe"; then
-		echo "Steam's Play starts Fallout4Launcher.exe, which is not f4se_loader.exe: see CONTRIBUTING.md, On a Mac" >&2
+		echo "Steam's Play starts Fallout4Launcher.exe, which is not f4se_loader.exe: see docs/misc/MAC.md" >&2
 		exit 1
 	fi
 	local wine
