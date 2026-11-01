@@ -397,7 +397,9 @@ namespace StateBuffer
 			}
 			const float motionAngle = v && ((*v)[0] != 0.0f || (*v)[1] != 0.0f) ? std::atan2((*v)[0], (*v)[1]) : held.heading;
 			auto        out = sampled(held, motionAngle, snaps.size(), static_cast<float>(held.pitch));
-			out.ahead = v && past < EXTRAPOLATE;
+			// As atNewest: Frame's wait puts the drawn time at EXTRAPOLATE past the newest state, a few nanoseconds either side
+			// (the delay is float seconds); a hair short of it is past it, not still on the way with its speed already gone.
+			out.ahead = v && past + std::chrono::microseconds(1) < EXTRAPOLATE;
 			out.held = !out.ahead;
 			out.heldSpeed = newest.state.speed;
 			return out;
