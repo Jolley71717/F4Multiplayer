@@ -284,6 +284,12 @@ namespace ProtocolSamples
 		wire.wire = WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
 		s.push_back({ "WorkshopItem (wire)", Encode(wire, MT::kWorkshopItem), D(DecodeWorkshopItem) });
 		s.push_back({ "WorkshopItems", Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), wire }), D(DecodeWorkshopItems) });
+		s.push_back({ "OwnWorkshopItems", Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), wire }, MT::kOwnWorkshopItems), D(DecodeWorkshopItems) });
+		{
+			auto gone = MakeWorkshopItem();
+			gone.op = WorkshopOp::kScrapped;
+			s.push_back({ "WorkshopGone", Encode(std::vector<WorkshopItem>{ gone }, MT::kReportWorkshopGone), D(DecodeWorkshopItems) });
+		}
 		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
 		}
@@ -422,6 +428,7 @@ namespace ProtocolSamples
 		case MT::kReportNpcIdentity:
 		case MT::kReportFace:
 		case MT::kReportWorkshopItem:
+		case MT::kReportWorkshopGone:
 		case MT::kReportExplosion:
 		case MT::kReportActivation:
 		case MT::kReportSpawn:
@@ -480,6 +487,7 @@ namespace ProtocolSamples
 		case MT::kPlayerFace:
 		case MT::kWorkshopItem:
 		case MT::kWorkshopItems:
+		case MT::kOwnWorkshopItems:
 		case MT::kExplosion:
 		case MT::kActivation:
 		case MT::kSpawned:

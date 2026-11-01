@@ -555,10 +555,14 @@ namespace FormTranslate
 			Apply<WorkshopItem>(a_packet, ctx, DecodeWorkshopItem, [&](WorkshopItem& m) { return detail::MapWorkshopItem(ctx, m); }, typed);
 			break;
 		case MessageType::kWorkshopItems:
+		case MessageType::kOwnWorkshopItems:
+		case MessageType::kReportWorkshopGone:
+			// A piece of ours whose object or workbench this game lacks is left out of kOwnWorkshopItems: never looked for, so
+			// never called gone (WorkshopAudit).
 			Apply<std::vector<WorkshopItem>>(a_packet, ctx, DecodeWorkshopItems, [&](std::vector<WorkshopItem>& m) {
 				ctx.Entries(m, [&](WorkshopItem& a_item) { return detail::MapWorkshopItem(ctx, a_item); });
 				return true;
-			}, plain);
+			}, typed);
 			break;
 		case MessageType::kReportExplosion:
 		case MessageType::kExplosion:
