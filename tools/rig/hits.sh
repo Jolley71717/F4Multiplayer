@@ -17,9 +17,11 @@
 #   counters    copyOwed = 0 once settled on both games; copyUnseen, the session's ignored hits and copyLost unchanged;
 #               copyHits and copyAnswers rose where a copy was shot; give-backs (copyRestores) are reported.
 #   pause       the runner of an NPC opens the pause menu while the other player shoots it (0.10.1's "held" case): the
-#               hits wait, then land; health agrees again after the menu closes, and damageHeld/damageAnswered moved.
+#               hits wait, then land; health agrees again after the menu closes.
+#   warns       (printed in the summary, never a FAIL) damageAnswered rising on the runner, damageHeld/damageAnswered moving across the pause,
+#               give-backs, real heals: the counters may count something else, so they are reported, not asserted.
 #
-# Exit code = number of failed checks. About 8 minutes (two cell entries of about a minute each). Needs both games joined and the rig held (see guard.sh).
+# Exit code = number of failed checks. About 11 minutes (two cell entries of about a minute each). Needs both games joined and the rig held (see guard.sh).
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
@@ -29,7 +31,7 @@ ROUNDS=${HITS_ROUNDS:-2}; SHOTS=${HITS_SHOTS:-1}
 while [ $# -gt 0 ]; do case "$1" in --rounds) ROUNDS=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
 rig_guard || exit 2
 a_init hits; tunnel
-trap 'echo "interrupted"; a_summary' INT TERM
+trap a_interrupted INT TERM
 SERIES=$A_OUT/hp-series.txt; : > "$SERIES"
 
 # --- targets: "<owner>:<ref in the owner's game>:<ref in the other game>:<role>" -----------------------------------------------------

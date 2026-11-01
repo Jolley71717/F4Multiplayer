@@ -14,8 +14,8 @@
 #   crash_stamp <listing>             "name (mtime as a date)" of the newest log, for a status line
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 CL_HOST_DIR="$HOST_F4SE"
-CL_KEY=$VM_KEY
-CL_VM=$VM_SSH
+CL_KEY="$VM_KEY"
+CL_VM="$VM_SSH"
 
 crash_list_host() {
 	local f
@@ -26,7 +26,7 @@ crash_list_host() {
 crash_list_vm() {  # three tries: one ssh hiccup must not read as "the VM has no crash logs"
 	local t out
 	for t in 1 2 3; do
-		out=$(ssh -i $CL_KEY -o LogLevel=ERROR -o ConnectTimeout=20 $CL_VM '"ok"; Get-ChildItem "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE" -Filter "crash-*.log" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name + " " + [DateTimeOffset]::new($_.LastWriteTimeUtc).ToUnixTimeSeconds() }' 2>/dev/null | tr -d '\r')
+		out=$(ssh -i "$CL_KEY" -o LogLevel=ERROR -o ConnectTimeout=20 "$CL_VM" '"ok"; Get-ChildItem "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE" -Filter "crash-*.log" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name + " " + [DateTimeOffset]::new($_.LastWriteTimeUtc).ToUnixTimeSeconds() }' 2>/dev/null | tr -d '\r')
 		case "$out" in ok*) echo ok; printf '%s\n' "$out" | grep '^crash-' | LC_ALL=C sort; return;; esac
 		sleep 3
 	done

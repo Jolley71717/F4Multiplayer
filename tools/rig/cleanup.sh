@@ -6,15 +6,18 @@
 # out: a scrap is reported first (so the other game scraps its copy, as for a player), then the reference is removed.
 #   scan   lists them and exits 1 if there are any
 #   run    scraps and removes them (the refs a test wrote to <refs-file>, then whatever a scan still finds), then scans again
-# --enter loads Sanctuary in both games first (the scan only sees what is near the player).
+# --enter loads Sanctuary in both games first (the scan only sees what is near the player). run and --enter need the rig held (guard.sh: F4MP_RIG_OWNER); a plain scan does not.
 # A removed piece is still listed by `refs` (deleted=true), so a scan skips those. What counts as a test piece: a runtime-made reference (id FF......) of a base in $WS_TEST_BASES (the chair, 000DF45C,
 # by default) near the player. Nothing else is touched.
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+. "$RIG/guard.sh"
 BASES=${WS_TEST_BASES:-000DF45C}; BENCH=${WS_BENCH:-250FE}
 # the pieces are furniture (form type 42); `refs` lists at most 40 per call, so a few radii and the name filter are used
 NAME=${WS_TEST_NAME:-Chair}; RADII=${WS_SCAN_RADII:-"400 1200 3000 8000"}
 mode=$1; shift; enter=0; reffile=""
 for a in "$@"; do case "$a" in --enter) enter=1;; *) reffile=$a;; esac; done
+# run (and --enter) drive the games: only with the rig held (guard.sh), like smoke.sh and hits.sh. A plain scan only reads.
+if [ "$mode" = run ] || [ $enter = 1 ]; then rig_guard || exit 2; fi
 
 scan_one() {  # scan_one <who>: the test pieces this game has near its player, one ref per line
 	local r b
