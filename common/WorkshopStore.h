@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <utility>
+#include <vector>
 
 // What the server keeps of settlement building for whoever joins later: what each player built
 // (placed or moved: the last report of each), and the pieces of the world itself (the junk a
@@ -68,6 +70,40 @@ public:
 			return !built.contains(key);
 		}
 		return Protocol::IsShareableRef(a_item.refId) && !scraps.contains(key) && !built.contains(key);
+	}
+
+	// What the player built that is kept (not a piece of the world they moved, kept as built too): after their welcome and
+	// each load, their game is asked which of these its world still has (WorkshopAudit). Only a scrap from its builder
+	// takes a built piece out, and a game reports no scrap of a piece it lacks: one its builder's game lost (a save from
+	// before it was built loaded) would stay for everyone else, at every join, with nobody able to take it out.
+	[[nodiscard]] std::vector<Protocol::WorkshopItem> BuiltBy(std::uint32_t a_player) const
+	{
+		std::vector<Protocol::WorkshopItem> out;
+		for (auto it = built.lower_bound({ a_player, 0 }); it != built.end() && it->first.first == a_player; ++it) {
+			if (!Protocol::IsShareableRef(it->first.second)) {
+				out.push_back(it->second);
+			}
+		}
+		return out;
+	}
+
+	// The builder's game says its world lacks the piece (a_item: its playerId set by the server, the base its game looked
+	// for). Forgotten if what is kept is still that (the same base: a piece its game built since under the same reference
+	// ID, already reported, stays), and the scrap to pass on to the others. Never a piece of the world: neither a scrap,
+	// kept apart, nor one its player moved.
+	std::optional<Protocol::WorkshopItem> Gone(const Protocol::WorkshopItem& a_item)
+	{
+		if (Protocol::IsShareableRef(a_item.refId)) {
+			return std::nullopt;
+		}
+		const auto it = built.find({ a_item.playerId, a_item.refId });
+		if (it == built.end() || it->second.base != a_item.base) {
+			return std::nullopt;
+		}
+		auto scrap = it->second;
+		scrap.op = Protocol::WorkshopOp::kScrapped;
+		built.erase(it);
+		return scrap;
 	}
 
 	// An item from the saved session, kept as it was.

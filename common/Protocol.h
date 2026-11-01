@@ -186,6 +186,7 @@ namespace Protocol
 		kLendFrame = 73,          // the sender's game lends its frame to the friend who asked, with its pieces and core, or says why not (FrameLending)
 		kReturnFrame = 74,        // the sender got out of a frame lent to them: where it stands, and what came back of its pieces (FrameReturn)
 		kReportDamageAnswer = 75,  // the game that runs an NPC answers a friend's numbered damage on it: applied, or refused and why (DamageAnswer)
+		kReportWorkshopGone = 76,  // pieces the server keeps as the sender's own building that the sender's world no longer has (the answer to kOwnWorkshopItems; WorkshopAudit)
 
 		// server -> client
 		kWelcome = 101,
@@ -252,6 +253,7 @@ namespace Protocol
 		kSessionWorld = 177,      // the session's NPC level, after the welcome and whenever it changes (SessionWorld; also in the session file)
 		kRollLives = 178,         // how many times plugins' NPCs died this session (RollLife): a life's roll is seeded with it (also in the session file)
 		kNpcIdentities = 179,     // several kNpcIdentity at once: a joiner's catch-up of the session's rolls
+		kOwnWorkshopItems = 180,  // after the welcome and each load: what the server keeps as built by you, for your game to say which it no longer has (WorkshopAudit)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -3663,10 +3665,12 @@ namespace Protocol
 		return msg;
 	}
 
-	// kWorkshopItems: up to MAX_ACTORS_PER_PACKET items in one packet (a joiner's catch-up).
-	inline std::vector<std::uint8_t> Encode(const std::vector<WorkshopItem>& a_msg)
+	// kWorkshopItems: up to MAX_ACTORS_PER_PACKET items in one packet (a joiner's catch-up). The same list is kOwnWorkshopItems
+	// (what the server keeps as the receiver's own building) and kReportWorkshopGone (which of those the sender's world lacks,
+	// each kScrapped).
+	inline std::vector<std::uint8_t> Encode(const std::vector<WorkshopItem>& a_msg, MessageType a_type = MessageType::kWorkshopItems)
 	{
-		Writer     w{ MessageType::kWorkshopItems };
+		Writer     w{ a_type };
 		const auto count = (std::min)(a_msg.size(), MAX_ACTORS_PER_PACKET);
 		w.U8(static_cast<std::uint8_t>(count));
 		for (std::size_t i = 0; i < count; ++i) {

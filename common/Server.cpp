@@ -1166,6 +1166,17 @@ void Server::Run()
 		}
 	};
 
+	// What the session keeps as built by the player themselves, for their game to look for in its world (WorkshopAudit): it
+	// answers with what it lacks (kReportWorkshopGone), and that goes for everyone. Sent with the others' building, after
+	// the welcome and after each load: a save from before a piece was built has none of it.
+	const auto sendOwnWorkshop = [&](const Player& a_player) {
+		const auto own = workshop.BuiltBy(a_player.id);
+		for (std::size_t i = 0; i < own.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+			const auto end = (std::min)(own.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+			send(a_player.key, Protocol::Encode(std::vector<Protocol::WorkshopItem>(own.begin() + i, own.begin() + end), Protocol::MessageType::kOwnWorkshopItems), true);
+		}
+	};
+
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
@@ -1640,6 +1651,7 @@ void Server::Run()
 			}
 		}
 		sendWorkshop(a_player);
+		sendOwnWorkshop(a_player);
 
 		// Not to the host's own game: its clock is the session's, and a saved time would turn its clock back to
 		// when the session was last saved. (A dedicated server has no such game; it restores the saved time.)
@@ -2782,6 +2794,35 @@ void Server::Run()
 		}
 	};
 
+	// Pieces kept as the player's own building that their world no longer has (the answer to kOwnWorkshopItems): gone
+	// for everyone, as a scrap of theirs would be. Only their own built pieces: nothing of another player's, no piece of
+	// the world, and nothing their game has built since under the same reference ID (WorkshopStore::Gone).
+	const auto handleWorkshopGone = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto items = Protocol::DecodeWorkshopItems(a_data);
+		if (!items) {
+			return;
+		}
+		std::vector<Protocol::WorkshopItem> scraps;
+		for (auto& item : *items) {
+			item.playerId = a_player.id;
+			if (auto scrap = workshop.Gone(item)) {
+				scraps.push_back(*scrap);
+			}
+		}
+		if (scraps.empty()) {
+			return;
+		}
+		auto& added = budgetOf(a_player).added[kWorkshop];
+		added -= (std::min)(added, scraps.size());
+		touched();
+		broadcast(Protocol::Encode(scraps), true, a_player.key);
+		log(std::format("server: player {}'s world no longer has {} of the pieces kept as theirs (a save from before they were built): removed for everyone",
+			a_player.id, scraps.size()));
+	};
+
 	// Items given between players (common/DropStore.h). A drop is offered to its dropper's game first: it swaps the item
 	// it dropped for a copy like everyone's, and says so (kPlaced), and only then is the drop told to the others, so nobody
 	// can take an item still in its dropper's world. Each change to what lies there is saved right away: an item given lies
@@ -3858,6 +3899,7 @@ void Server::Run()
 				a_player.workshopOwed = true;
 			} else {
 				sendWorkshop(a_player);
+				sendOwnWorkshop(a_player);
 			}
 		}
 	};
@@ -4194,6 +4236,9 @@ void Server::Run()
 		case MessageType::kReportWorkshopItem:
 			handleWorkshopItem(a_player, a_data);
 			break;
+		case MessageType::kReportWorkshopGone:
+			handleWorkshopGone(a_player, a_data);
+			break;
 		case MessageType::kReportDrop:
 			handleReportDrop(a_player, a_data);
 			break;
@@ -4415,6 +4460,7 @@ void Server::Run()
 				player.worldStale = false;
 				if (std::exchange(player.workshopOwed, false)) {
 					sendWorkshop(player);
+					sendOwnWorkshop(player);
 				}
 				log(std::format("server: sent player {} the world they asked for", player.id));
 			}

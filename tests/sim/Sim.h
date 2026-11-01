@@ -35,6 +35,7 @@
 #include "game/ObjectShare.h"
 #include "game/SendPacer.h"
 #include "game/StandInGear.h"
+#include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 
 #include <cmath>
@@ -1629,6 +1630,28 @@ namespace Sim
 			if (const auto msg = Protocol::DecodeWorkshopItems(a_data)) {
 				for (const auto& item : *msg) {
 					ApplyWorkshop(item);
+				}
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kOwnWorkshopItems:
+			// What the session keeps as ours, looked for in our world (WorkshopSync::AuditOwn). The stand-in's world is all
+			// in memory: a piece is ours there, or gone (WorkshopAudit's kStands or kGone, never left to wait for a cell).
+			if (const auto msg = Protocol::DecodeWorkshopItems(a_data)) {
+				struct Engine
+				{
+					const World& world;
+					WorkshopAudit::Seen Look(const Protocol::WorkshopItem& a_item) const
+					{
+						const auto it = world.built.find(a_item.refId);
+						return it != world.built.end() && it->second.base == a_item.base ? WorkshopAudit::Seen::kStands : WorkshopAudit::Seen::kGone;
+					}
+				} engine{ world };
+				WorkshopAudit::Audit audit;
+				audit.Add(*msg);
+				if (const auto gone = audit.Look(engine, frameClock); !gone.empty()) {
+					SendWorkshop(Protocol::Encode(gone, MT::kReportWorkshopGone));
 				}
 			} else {
 				unless(false);

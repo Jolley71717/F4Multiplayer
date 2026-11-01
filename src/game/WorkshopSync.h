@@ -29,6 +29,10 @@ namespace WorkshopSync
 	// few a frame (Frame).
 	void Apply(const Protocol::WorkshopItem& a_item);
 
+	// One packet of what the session keeps as built by us (after the welcome and each load): each piece is looked for in
+	// our world, and what it lacks is reported gone, for the server to take out for everyone (WorkshopAudit).
+	void AuditOwn(const std::vector<Protocol::WorkshopItem>& a_items);
+
 	// Whether the reference is a settlement's workbench (whatever its state): what a friend's build or scrap
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);

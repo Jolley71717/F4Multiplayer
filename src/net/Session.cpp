@@ -833,6 +833,11 @@ namespace Session
 					}
 				}
 				break;
+			case MessageType::kOwnWorkshopItems:
+				if (const auto msg = Protocol::DecodeWorkshopItems(a_data)) {
+					WorkshopSync::AuditOwn(*msg);
+				}
+				break;
 			case MessageType::kWorkshopPower:
 				if (const auto msg = Protocol::DecodePowerStates(a_data)) {
 					WorkshopSync::ApplyPower(*msg);

@@ -9,6 +9,7 @@
 #include "game/SaveStrays.h"
 #include "game/SendPacer.h"
 #include "game/WorkshopApply.h"
+#include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
@@ -135,19 +136,28 @@ namespace WorkshopSync
 		// (SavedScraps::Ledger: each once).
 		SavedScraps::Ledger sentScraps;
 
+		// What the session keeps as ours, looked for in our world (WorkshopAudit): what it lacks is reported gone. Under
+		// its own lock: Push (from the event sinks, maybe off the game thread) takes out what we report.
+		std::mutex           auditLock;
+		WorkshopAudit::Audit audit;  // under auditLock
+
 		// False if it's dropped (too many waiting to be sent).
 		bool Push(const Protocol::WorkshopItem& a_item)
 		{
 			const auto worldScrap = a_item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(a_item.refId) ? a_item.refId : 0;
-			std::scoped_lock l{ outLock };
-			if (!outgoing.Push({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap })) {
-				++dropped;
-				if (!std::exchange(droppedWarned, true)) {
-					REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.Size());
+			{
+				std::scoped_lock l{ outLock };
+				if (!outgoing.Push({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap })) {
+					++dropped;
+					if (!std::exchange(droppedWarned, true)) {
+						REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.Size());
+					}
+					return false;
 				}
-				return false;
+				++reported;
 			}
-			++reported;
+			std::scoped_lock a{ auditLock };
+			audit.Reported(a_item.refId);
 			return true;
 		}
 
@@ -1707,6 +1717,60 @@ namespace WorkshopSync
 			}
 		}
 
+		// ---- Which of the pieces the session keeps as ours our world lacks (WorkshopAudit) ----------------------------
+
+		struct AuditEngine
+		{
+			WorkshopAudit::Seen Look(const Protocol::WorkshopItem& a_item)
+			{
+				using WorkshopAudit::Seen;
+				if (Hud::LoadingScreenUp()) {
+					return Seen::kUnseen;  // the world is being made
+				}
+				if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId) }) {
+					const auto base = ref->GetObjectReference();
+					if (ref->IsDeleted() || !base || base->GetFormID() != a_item.base || IsCopy(ref.get()) || Drops::IsCopyRef(ref->GetFormID())) {
+						return Seen::kGone;  // the ID is something else here now
+					}
+					return Seen::kStands;
+				}
+				// A piece that isn't persistent is in memory only while its cell is loaded: missing means gone only there.
+				const auto cell = CellFor(a_item);
+				if (!cell) {
+					return Seen::kUnseen;  // its workbench isn't loaded here, or is in another worldspace or interior
+				}
+				if (cell->IsInterior()) {
+					return cell->IsAttached() ? Seen::kMissing : Seen::kUnseen;
+				}
+				return SpotAttached(a_item) ? Seen::kMissing : Seen::kUnseen;
+			}
+		};
+
+		// A round of looks; what is gone is reported, in line behind our other reports.
+		void AuditFrame(Clock::time_point a_now)
+		{
+			std::vector<Protocol::WorkshopItem> gone;
+			{
+				AuditEngine      engine;
+				std::scoped_lock l{ auditLock };
+				gone = audit.Look(engine, a_now);
+			}
+			if (gone.empty()) {
+				return;
+			}
+			for (const auto& item : gone) {
+				REX::INFO("WorkshopSync: our world has no {:08X} (base {:08X}) the session keeps as ours (a save from before it was built): reported gone", item.refId, item.base);
+			}
+			std::scoped_lock l{ outLock };
+			for (std::size_t i = 0; i < gone.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+				const auto end = (std::min)(gone.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+				if (!outgoing.Push({ Protocol::Encode(std::vector<Protocol::WorkshopItem>(gone.begin() + i, gone.begin() + end), Protocol::MessageType::kReportWorkshopGone), 0 })) {
+					REX::WARN("WorkshopSync: {} reports wait to be sent; {} pieces our world lacks stay for the others until our next load", outgoing.Size(), gone.size() - i);
+					break;
+				}
+			}
+		}
+
 		void ClearWalk()
 		{
 			attachedCells.clear();
@@ -2027,6 +2091,7 @@ namespace WorkshopSync
 		ReportMovedWires(now);
 		DrawShapedWires(now);
 		PowerFrame(now);
+		AuditFrame(now);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending)
@@ -2055,6 +2120,13 @@ namespace WorkshopSync
 		inbox.Arrive({ a_item.playerId, a_item.refId }, a_item);
 	}
 
+	void AuditOwn(const std::vector<Protocol::WorkshopItem>& a_items)
+	{
+		std::scoped_lock l{ auditLock };
+		audit.Add(a_items);
+		REX::DEBUG("WorkshopSync: the session keeps {} more pieces as ours; {} to look for in our world", a_items.size(), audit.Waiting());
+	}
+
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
 	{
 		ReportRef(a_ref, a_workshop, a_op);
@@ -2080,6 +2152,10 @@ namespace WorkshopSync
 			settle.Clear();
 		}
 		sentScraps.Clear();
+		{
+			std::scoped_lock a{ auditLock };
+			audit.Clear();
+		}
 		reporter.Clear();
 		mirror.Clear();
 		keptTied.clear();
@@ -2105,6 +2181,10 @@ namespace WorkshopSync
 			copyIds.clear();
 		}
 		ClearWalk();
+		{
+			std::scoped_lock a{ auditLock };
+			audit.Clear();  // the server sends what it keeps as ours again after the load, to be looked for in this world
+		}
 		// Our pieces are sent again (the load may have set them otherwise), and friends' are shown again on the copies
 		// found or made after the load. The workbenches are looked for again.
 		reporter.SendAll();
@@ -2115,6 +2195,10 @@ namespace WorkshopSync
 
 	void OnWorldGone()
 	{
+		{
+			std::scoped_lock a{ auditLock };
+			audit.Clear();
+		}
 		copies.clear();
 		twins.clear();
 		graveyard.clear();
@@ -2289,7 +2373,10 @@ namespace WorkshopSync
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
-		       std::format(" framesCleared={}", counts.framesCleared);
+		       std::format(" framesCleared={}", counts.framesCleared) + [] {
+			       std::scoped_lock a{ auditLock };
+			       return std::format(" ownLooking={} ownFound={} ownGone={}", audit.Waiting(), audit.Found(), audit.Lost());
+		       }();
 	}
 
 	std::string DescribeRef(RE::TESObjectREFR* a_ref)
