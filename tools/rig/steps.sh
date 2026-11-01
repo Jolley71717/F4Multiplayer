@@ -47,21 +47,43 @@ dll_md5() {  # dll_md5 <who>
 }
 
 # ---- preflight --------------------------------------------------------------------------------------------------
+# dll_preflight: both machines have the same F4Multiplayer.dll in the game's plugins folder, and it is the one the run was given:
+# CHECK_DLL=<a built F4Multiplayer.dll, or its md5> (a branch's build), or SMOKE_ZIP=<an rc zip> (the zip's). rig.sh deploy copies
+# the main checkout's build folder to both games, so a run meant for a branch's build has to have copied that build there first;
+# one that didn't tests main's DLL and nothing says so (2026-11-01: a hits run's result was read as "the VM may not have run the
+# branch's DLL", and nothing in it could say which DLL either game had). A running game holds its DLL open, so the file is the one
+# it loaded. A mismatch, or no reading, stops the run: every check after it would be about another build. With neither given the
+# hash is only reported (a WARN), so the run's results name the build they tested.
+dll_preflight() {
+	local hd vd want="" what=""
+	hd=$(dll_md5 host); vd=$(dll_md5 vm); A_DLL=$hd
+	if [ -n "$CHECK_DLL" ]; then
+		if [[ $CHECK_DLL =~ ^[0-9A-Fa-f]{32}$ ]]; then want=$(tr A-F a-f <<<"$CHECK_DLL"); what="CHECK_DLL"
+		else want=$(md5sum "$CHECK_DLL" 2>/dev/null | cut -c1-32); what="CHECK_DLL $CHECK_DLL"; fi
+	elif [ -n "$SMOKE_ZIP" ]; then want=$(unzip -p "$SMOKE_ZIP" F4SE/Plugins/F4Multiplayer.dll 2>/dev/null | md5sum | cut -c1-32); what="SMOKE_ZIP $SMOKE_ZIP"
+		[ "$want" = d41d8cd98f00b204e9800998ecf8427e ] && want=""   # the md5 of nothing: no DLL in the zip
+	fi
+	if [ -z "$hd" ] || [ -z "$vd" ]; then rig_broken dll "the DLL both games run is read" "host '$hd' vm '$vd': a machine's DLL could not be hashed"; [ -z "$A_RIG_STOPPED" ] && _rig_stop dll; return 1; fi
+	if [ "$hd" != "$vd" ]; then rig_broken dll "same DLL on both machines" "host $hd vm $vd: the games run different builds"; [ -z "$A_RIG_STOPPED" ] && _rig_stop dll; return 1; fi
+	pass "same DLL on both machines" "$hd"
+	if [ -n "$CHECK_DLL$SMOKE_ZIP" ]; then
+		if [ -z "$want" ]; then rig_broken dll "the DLL is the one given" "$what: no DLL hash could be read from it"; [ -z "$A_RIG_STOPPED" ] && _rig_stop dll; return 1; fi
+		if [ "$hd" != "$want" ]; then rig_broken dll "the DLL is the one given" "$what is $want, both games run $hd: the deploy put another build there"; [ -z "$A_RIG_STOPPED" ] && _rig_stop dll; return 1; fi
+		pass "the DLL is the one given" "$what ($want)"
+	else
+		warn "the DLL is the one given" "no CHECK_DLL (or SMOKE_ZIP) given: both games run $hd, unchecked against the build meant for the run"
+	fi
+}
 step_preflight() {
 	section "preflight"
-	local a h v hd vd want
+	local a h v
 	rig_up "both games up"; rig_ssh_up "ssh to the VM"
 	for a in host vm; do rig_keys_move $a "$a's keys move its player"; done
-	hd=$(dll_md5 host); vd=$(dll_md5 vm); A_DLL=$hd
-	if [ -n "$hd" ] && [ "$hd" = "$vd" ]; then pass "same DLL on both machines" "$hd"; else fail "same DLL on both machines" "host '$hd' vm '$vd'"; fi
-	if [ -n "$SMOKE_ZIP" ]; then
-		want=$(unzip -p "$SMOKE_ZIP" F4SE/Plugins/F4Multiplayer.dll | md5sum | cut -c1-32)
-		if [ "$hd" = "$want" ] && [ "$vd" = "$want" ]; then pass "DLL is the zip's" "$want"; else fail "DLL is the zip's" "zip $want host $hd vm $vd"; fi
-	fi
 	ns host; ns vm
 	expect_match "host session is up" "$(nsf host status)" "^(hosting|host|joined)$"
 	expect_eq "vm session joined" "$(nsf vm status)" joined
 	crash_snapshot; log_mark host; log_mark vm
+	dll_preflight
 	WS0_HOST=$(working_set host); WS0_VM=$(working_set vm)
 	host 'perf reset' >/dev/null; vm 'perf reset' >/dev/null
 	pass "baselines taken" "crash logs host $(crash_count "$C_HOST0") vm $(crash_count "$C_VM0"); working set host ${WS0_HOST:-?} MB vm ${WS0_VM:-?} MB"
@@ -145,6 +167,21 @@ step_combat() {
 # menu_open <who> <menu> <seconds>: the menu is open in that game (dev `menus`: "open=HUDMenu:2051.3,ContainerMenu:1.2 ..."),
 # waiting up to that many seconds for it
 menu_open() { local w=0; while :; do grep -qE "[=,]$2:" <<<"$(dc "$1" menus | grep -oE 'open=[^ ]*')" && return 0; [ "$w" -ge "$(( $3 * 4 ))" ] && return 1; sleep 0.25; w=$((w + 1)); done; }
+# clear_menus <who>: closes what would swallow the next activate or key in that game: a message box (Enter: its one button,
+# OK), the Pip-Boy, a terminal or a container menu (Tab). 2026-11-01: a Tab after a take opened the Pip-Boy, and an ammo stack
+# added to a magazine rack opened "You can only place Magazines on the Rack"; each made every activate after it open nothing.
+# Echoes what it closed; false when something is still open after four tries.
+clear_menus() {
+	local i m closed=""
+	for i in 1 2 3 4; do
+		m=$(dc "$1" menus | grep -oE 'open=[^ ]*')
+		if grep -q 'MessageBoxMenu:' <<<"$m"; then dc "$1" focus >/dev/null; dc "$1" "key 0x0D 60" >/dev/null; closed="$closed MessageBoxMenu"
+		elif grep -qE '(PipboyMenu|TerminalMenu|TerminalHolotapeMenu|ContainerMenu):' <<<"$m"; then dc "$1" focus >/dev/null; dc "$1" "key 0x09 60" >/dev/null; closed="$closed $(grep -oE '(PipboyMenu|TerminalMenu|TerminalHolotapeMenu|ContainerMenu)' <<<"$m" | head -1)"
+		else echo "${closed# }"; return 0; fi
+		sleep 1.2
+	done
+	echo "${closed# } (still open: $m)"; return 1
+}
 has_items() { grep -qE "[0-9A-F]{8}x[0-9]+" <<<"$1"; }   # contents: "REF: 000FD9A8x1 0003377Bx1 (2 stacks)" or "REF: empty"
 stacks_of() { grep -oE "[0-9A-F]{8}x[0-9]+" <<<"$1" | tr x ' '; }   # contents -> "<item> <count>" lines
 count_in() { stacks_of "$1" | awk -v i="$2" '$1==i {n+=$2} END{print n+0}'; }   # count_in <contents> <item>
@@ -164,25 +201,51 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # stay in a friend's copy, and so does what only the host's own roll of the chest put there (LootSync TryEmpty). Asserted: every
 # chest's take emptied it in the VM's game (the menu take happened), and no item of the session's kind the VM took is left in the
 # host's copy (each take went across, and the emptying gave up the rest of what the host's roll had more of).
+# Which chests (2026-11-01): every container within 2500 u, not the first eight the list gives. Left out, each with its reason in
+# looted.txt: the workshop and its container, racks and displays (a magazine rack answers an ammo stack with a message box that
+# blocks every activate after it), a locked chest (it opens the lockpick), one that can't be read, and one a console activate opens
+# no menu for (a WARN). Menus left open (a Pip-Boy a stray Tab opened, after the terminals or a take) are closed first: the
+# 00152CD5 and 000587FD "opened no container menu" of earlier runs came right after the terminal step. Every chosen chest is
+# stocked in BOTH games with the same stack first (console additem, 10mm rounds: a from-nothing add the mod never reports), so
+# each game's copy holds a shared stack whatever earlier runs took or each game rolled: the cross-game check always has something
+# to see. Up to LOOT_CHESTS (3) are looted.
+LOOT_ITEM=0001F276; LOOT_N=7; LOOT_CHESTS=${LOOT_CHESTS:-3}
 _loot() {
-	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread=""
-	conts=$(host 'refs 31 2500' | grep -o "[0-9A-F]\{8\} base=" | cut -c1-8 | head -8)
-	for c in $conts; do
-		[ "$(dcf host "refinfo $c" locked)" = yes ] && continue   # a locked chest opens the lockpick, not the container menu
-		hb=$(host "contents $c"); vb=$(vm "contents $c")
-		contents_ok "$hb" && contents_ok "$vb" && has_items "$hb" && has_items "$vb" || continue
-		# The take is pressed only once the container menu is open, and the activate is tried again once. A chest that opens by
-		# a script of its own (2026-10-31/11-01: 00152CD5, base 0016628C, "opened by a script or itself" in the plugin log) never
-		# opened the menu for a console activate in three runs: it is left out (a WARN), not counted as a take that failed.
-		vm focus >/dev/null; sleep 0.3; opened=0
+	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl
+	: > "$A_OUT/looted.txt"
+	cl=$(clear_menus vm) || { fail "loot: set-up: no menu open in the VM's game before looting" "$cl"; return; }
+	[ -n "$cl" ] && echo "closed in the VM's game before looting: $cl" >> "$A_OUT/looted.txt"
+	conts=$(host 'refs 31 2500' | tr ';' '\n' | grep -oE "[0-9A-F]{8} base=[0-9A-F]+ '[^']*'" | sed -E "s/ base=[0-9A-F]+ /|/")
+	while IFS='|' read -r c name; do
+		[ -n "$c" ] || continue
+		[ $chests -ge "$LOOT_CHESTS" ] && break
+		skip=""
+		case "$name" in *Workshop*) skip="a workshop (its own menu)";; *Rack*|*Display*|*Mannequin*) skip="takes only its own kind of item (a rack or display)";; esac
+		[ -z "$skip" ] && [ "$(dcf host "refinfo $c" locked)" = yes ] && skip="locked (opens the lockpick)"
+		[ -z "$skip" ] && [ "$(dcf vm "refinfo $c" locked)" = yes ] && skip="locked in the VM's game"
+		if [ -z "$skip" ]; then
+			host "console $c.additem $LOOT_ITEM $LOOT_N" >/dev/null; vm "console $c.additem $LOOT_ITEM $LOOT_N" >/dev/null; sleep 1
+			cl="$(clear_menus host)$(clear_menus vm)"   # a container that takes only its own kind says so in a message box
+			hb=$(host "contents $c"); vb=$(vm "contents $c")
+			if [ -n "$cl" ]; then skip="the stocking opened a menu (closed: $cl)"
+			elif ! contents_ok "$hb" || ! contents_ok "$vb"; then skip="contents not read (host: $hb | vm: $vb)"
+			elif [ "$(count_in "$hb" $LOOT_ITEM)" -lt $LOOT_N ] || [ "$(count_in "$vb" $LOOT_ITEM)" -lt $LOOT_N ]; then skip="the stocked stack is not in both copies (host: $hb | vm: $vb)"; fi
+		fi
+		if [ -n "$skip" ]; then echo "$c $name: left out: $skip" >> "$A_OUT/looted.txt"; continue; fi
+		# The take is pressed only once the container menu is open, and the activate is tried again once. A chest that opens by a
+		# script of its own never opens the menu for a console activate: it is left out (a WARN), not counted as a take that failed.
+		clear_menus vm >/dev/null; vm focus >/dev/null; sleep 0.3; opened=0
 		for i in 1 2; do vm "console $c.activate player" >/dev/null; menu_open vm ContainerMenu 4 && { opened=1; break; }; echo "$c: activate $i opened no container menu" >> "$A_OUT/looted.txt"; done
 		if [ $opened = 0 ]; then nomenu="$nomenu $c"; continue; fi
 		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
-		sleep 0.5; vm "key 0x52 60" >/dev/null; sleep 1; vm "key 0x09 60" >/dev/null; sleep 1
+		# R (take all) also closes the menu: a Tab after it opens the Pip-Boy, and every activate after that opens nothing
+		# (2026-11-01: one chest looted, then each one after it "opened no container menu"). Tab only while the menu is still up.
+		sleep 0.5; vm "key 0x52 60" >/dev/null; sleep 1.5
 		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
+		cl=$(clear_menus vm); [ -n "$cl" ] && echo "$c: closed after the take: $cl" >> "$A_OUT/looted.txt"
 		va=$(vm "contents $c"); if ! contents_ok "$va"; then unread="$unread $c"; elif has_items "$va"; then notaken="$notaken $c"; fi
 		echo "$c vm after the take: $va" >> "$A_OUT/looted.txt"
-	done
+	done <<<"$conts"
 	sleep 5
 	while read -r c _; do
 		[ -n "$c" ] || continue
@@ -198,8 +261,8 @@ _loot() {
 			taken=$((taken + 1)); n=$(count_in "$ha" "$i"); [ "$n" -gt 0 ] && left="$left $c:${i}x$n"
 		done <<<"$(stacks_of "$vb")"
 	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
-	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice; a chest with its own opening script)"
-	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no unlocked chest with items in both games within 2500 u: nothing was looted (inconclusive)"; return; fi
+	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice, or known to open by a script of its own)"
+	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no chest within 2500 u could be stocked in both games and opened (reasons in looted.txt): nothing was looted (inconclusive)"; return; fi
 	if [ -n "$unread" ]; then fail "loot: VM takes all from $chests chest(s) in the container menu" "the VM's contents after the take could not be read for:$unread${notaken:+; still holding items:$notaken}"
 	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
 	if [ -n "$hunread" ]; then fail "loot: the VM's takes reach the host's chests" "the host's contents after the takes could not be read for:$hunread (looted.txt): nothing is known of those"
@@ -209,7 +272,7 @@ _loot() {
 	else fail "loot: the VM's takes reach the host's chests" "still in the host's copy:$left (of $taken shared stacks taken; details in looted.txt)"; fi
 }
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
-_useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; dc "$who" "key 0x09 60" >/dev/null; sleep 2; }
+_useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$who" >/dev/null; sleep 1; }   # a blind second Tab opened the Pip-Boy when the first closed the terminal
 _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper Mart safe through the storage terminal
 	local actor=$1 other safe term=001CA8C8 b_a b_o a_a a_o
 	other=$([ "$actor" = host ] && echo vm || echo host)
@@ -219,7 +282,7 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	b_a=$(dcf "$actor" "refinfo $safe" locked); b_o=$(dcf "$other" "refinfo $safe" locked)
 	[ -n "$b_a" ] && [ -n "$b_o" ] && [ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
 	dc "$actor" focus >/dev/null; sleep 1; dc "$actor" "console $term.activate player" >/dev/null; sleep 3
-	dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x09 60" >/dev/null; sleep 1.5; dc "$actor" "key 0x09 60" >/dev/null; sleep 4
+	dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$actor" >/dev/null; sleep 3
 	a_a=$(dcf "$actor" "refinfo $safe" locked); a_o=$(dcf "$other" "refinfo $safe" locked)
 	expect_eq "safe ($actor unlocks): unlocked in the actor's game" "$a_a" no
 	expect_eq "safe ($actor unlocks): the other game sees it unlocked" "$a_o" no

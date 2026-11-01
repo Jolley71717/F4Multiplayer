@@ -7,7 +7,8 @@
 #
 # Needs both games running and joined (tools/rig: `rig.sh deploy` then `rig.sh join` in the rig's stage folder), and the
 # rig held by you: take it first, `bash $STAGE/rigq.sh take <name>`, and pass that name as F4MP_RIG_OWNER.
-# SMOKE_ZIP=<rc zip> also checks that the DLL on both machines is the zip's.
+# SMOKE_ZIP=<rc zip> also checks that the DLL on both machines is the zip's; CHECK_DLL=<a built F4Multiplayer.dll, or its md5> that it
+# is that build (a branch's: rig.sh deploy copies the main checkout's build folder). A mismatch stops the run.
 #
 # Steps, in order: preflight cleanup movement combat terminals grenades workshop pa_vm pa_host churn reconnect fuzz final (our frame cost is read after each phase)
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
