@@ -3,7 +3,7 @@
 #
 # The standing two-game set with a verdict. The rc gate's step 2 (docs/RELEASING.md): every number the old soak only
 # printed is now a named check with a threshold (tools/rig/steps.sh holds them), the plugin log and the crash logs are
-# read, and the exit code is the number of failed checks (0 = PASS). About 17 minutes.
+# read, and the exit code is the number of failed checks (0 = PASS). About 20 minutes.
 #
 # Needs both games running and joined (tools/rig: `rig.sh deploy` then `rig.sh join` in the rig's stage folder), and the
 # rig held by you: take it first, `bash $STAGE/rigq.sh take <name>`, and pass that name as F4MP_RIG_OWNER.
@@ -21,7 +21,7 @@ while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) sk
 steps=${only:-$ALL}
 rig_guard || exit 2
 a_init smoke; A_NOTE=""
-trap 'echo "interrupted"; a_summary' INT TERM
+trap a_interrupted INT TERM
 tunnel
 run() { case " $skip " in *" $1 "*) return;; esac; case " $steps " in *" $1 "*) ;; *) return;; esac; "${@:2}"; case "$1" in movement|combat|terminals|grenades|workshop|pa_vm|pa_host|churn) perf_phase "$1";; esac; [ "$1" = combat ] && ws_mark; [ "$1" = churn ] && ws_check; return 0; }
 

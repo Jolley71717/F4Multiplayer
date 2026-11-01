@@ -11,9 +11,14 @@ T_MOVE_SAMPLES=${T_MOVE_SAMPLES:-100}   # samples each side of the fit
 # NPC trace: a stand-in floating or sunk shows as dz over 120 u; a trace with no tracks is a failed trace, not a pass
 T_NPC_TRACKS=${T_NPC_TRACKS:-10}
 T_HP_DIFF=${T_HP_DIFF:-2}               # hp, the same actor in both games
+# health agreement needs at least this many actors read in BOTH games (an actor one game cannot answer for is only reported as
+# missing): with fewer, "nothing differs" would mean "almost nothing was compared", which is a FAIL, not a pass
+T_HP_MIN_COMPARED=${T_HP_MIN_COMPARED:-3}
 # power armor: the stand-in's distance from the driver, read one game after the other (up to ~0.3 s of running apart)
 T_PA_MOVING_FAIL=${T_PA_MOVING_FAIL:-450}; T_PA_MOVING_WARN=${T_PA_MOVING_WARN:-200}; T_PA_SETTLED=${T_PA_SETTLED:-40}
-# perf (docs/PERF.md): ours_in_hitches must stay 0; 0.8.7 baseline p99 at most 2.1 ms
+# perf (docs/PERF.md): ours_in_hitches must stay 0. The 0.8.7 baseline had p99 at most 2.1 ms (1.7 host, 2.1 VM) and p50 0.13 to 0.35 ms;
+# the limits below (p50 1.0 ms, p99 4.0 ms) are about twice the baseline's worst p99 and several times its p50: loose on purpose,
+# they catch a real regression and not rig noise. Compare against the baseline in docs/PERF.md for anything finer.
 T_PERF_P50=${T_PERF_P50:-1.0}; T_PERF_P99=${T_PERF_P99:-4.0}
 T_WS_GROWTH_MB=${T_WS_GROWTH_MB:-1000} # working set growth between two warm points of a run (a warning, not a failure: no baseline yet)
 
@@ -102,7 +107,8 @@ hp_compare() {
 	done
 	HP_N=$n; HP_BAD=$bad; HP_MISS=$miss
 	if [ $n -lt 5 ]; then fail "$1 health: actors compared" "only $n actors listed"; return; fi
-	if [ $bad -eq 0 ]; then pass "$1 health agrees (within $T_HP_DIFF hp)" "$n actors compared, $miss missing in one game"; else fail "$1 health agrees (within $T_HP_DIFF hp)" "$bad of $n differ:$odd"; fi
+	if [ $((n - miss)) -lt "$T_HP_MIN_COMPARED" ]; then fail "$1 health: actors compared" "only $((n - miss)) of $n actors read in both games (want at least $T_HP_MIN_COMPARED), $miss missing in one game:$odd"; return; fi
+	if [ $bad -eq 0 ]; then pass "$1 health agrees (within $T_HP_DIFF hp)" "$((n - miss)) of $n actors compared, $miss missing in one game"; else fail "$1 health agrees (within $T_HP_DIFF hp)" "$bad of $n differ:$odd"; fi
 }
 step_combat() {
 	section "combat (Corvega: NPC trace, health agreement)"
@@ -145,7 +151,7 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	if [ -z "$safe" ]; then fail "safe ($actor unlocks)" "the safe was not found near the player"; return; fi
 	host "console $safe.lock 25" >/dev/null; vm "console $safe.lock 25" >/dev/null; host "console $term.unlock" >/dev/null; vm "console $term.unlock" >/dev/null; sleep 1
 	b_a=$(dcf "$actor" "refinfo $safe" locked); b_o=$(dcf "$other" "refinfo $safe" locked)
-	[ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
+	[ -n "$b_a" ] && [ -n "$b_o" ] && [ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
 	dc "$actor" focus >/dev/null; sleep 1; dc "$actor" "console $term.activate player" >/dev/null; sleep 3
 	dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x09 60" >/dev/null; sleep 1.5; dc "$actor" "key 0x09 60" >/dev/null; sleep 4
 	a_a=$(dcf "$actor" "refinfo $safe" locked); a_o=$(dcf "$other" "refinfo $safe" locked)
@@ -186,7 +192,32 @@ step_terminals() {
 }
 
 # ---- grenades ------------------------------------------------------------------------------------------------------------
-_expl() { ns "$1"; echo "$(field "${NS[$1]}" explosions) $(field "${NS[$1]}" ghosts)"; }   # "reported/setOff ghosts"
+# The step throws GRENADE_ITEM (the frag grenade); its projectile 000E574E goes off as GRENADE_EXPLOSION. The throw can set off other
+# explosions at the same instant (a frag near a car or a mine adds its own, e.g. 00054A73 radius 32 beside the grenade's 000E574F radius
+# 500), which the plugin correctly reports and replays too; so the counts are of the grenade's own explosion base only, read from the
+# plugin log, not the all-explosions counters of `net status`. Override GRENADE_ITEM and GRENADE_EXPLOSION together for another throwable.
+GRENADE_ITEM=${GRENADE_ITEM:-000EEBED}; GRENADE_EXPLOSION=${GRENADE_EXPLOSION:-000E574F}
+_gh() { ns "$1"; echo "$(field "${NS[$1]}" ghosts)"; }   # ghost projectiles of that game
+# The count window is its own log mark, kept apart from the run's (MARK_*[host|vm]) so the final plugin-log check still covers the whole run.
+_blast_mark() {  # _blast_mark <who>: remember where that game's log is now
+	_log_fetch "$1" "$A_OUT/blastmark-$1"
+	MARK_SIZE[b$1]=$(stat -c %s "$A_OUT/blastmark-$1/0.log" 2>/dev/null || echo 0); MARK_FIRST[b$1]=$(head -1 "$A_OUT/blastmark-$1/0.log" 2>/dev/null)
+}
+_blast_read() {  # _blast_read <who>: writes the lines since _blast_mark to $A_OUT/blastdelta-<who>.txt and prints its path
+	_log_fetch "$1" "$A_OUT/blastnow-$1"; _log_delta "b$1" "$A_OUT/blastnow-$1" > "$A_OUT/blastdelta-$1.txt"; echo "$A_OUT/blastdelta-$1.txt"
+}
+# _blast_count <delta file> sent|setoff <explosion base>: how many explosions of that base the lines hold
+#   sent    "WeaponFire: our explosion <ref> (<base>) at ... : reported"   (this game's own throw, reported to the friend)
+#   setoff  "WeaponFire: explosion <base> radius N from player N: set off"  (a friend's throw, replayed here)
+# Prints nothing when the file is empty (the log was not read), so the caller can tell "none" from "unknown".
+_blast_count() {
+	[ -s "$1" ] || return 0
+	case "$2" in
+		sent) grep -cE "WeaponFire: our explosion [0-9A-F]+ \($3\) .*: reported" "$1";;
+		setoff) grep -cE "WeaponFire: explosion $3 radius [0-9]+ from player [0-9]+: set off" "$1";;
+	esac
+	return 0
+}
 _throw() {  # _throw <who>: that player throws the grenade in hand (a real key)
 	if [ "$1" = host ]; then host focus >/dev/null; sleep 1; powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Key 0x12 -HoldMs 400 >/dev/null 2>&1
 	else vm focus >/dev/null; sleep 1; vm "key 0x12 700" >/dev/null; fi
@@ -194,24 +225,26 @@ _throw() {  # _throw <who>: that player throws the grenade in hand (a real key)
 }
 step_grenades() {
 	section "grenades both ways"
-	local who other b_t b_o a_t a_o try
+	local who other g_t0 g_o0 g_t1 g_o1 sent setoff try
 	enter_both SanctuaryExt 14
 	place host -80500 89300 7784 45; place vm -80400 89250 7784 300
-	for who in host vm; do dc $who "console player.additem 000EEBED 5" >/dev/null; dc $who "console player.unequipitem 0015B043" >/dev/null; dc $who "console player.equipitem 000EEBED" >/dev/null; done; sleep 4
+	for who in host vm; do dc $who "console player.additem $GRENADE_ITEM 5" >/dev/null; dc $who "console player.unequipitem 0015B043" >/dev/null; dc $who "console player.equipitem $GRENADE_ITEM" >/dev/null; done; sleep 4
 	for who in host vm; do
 		other=$([ $who = host ] && echo vm || echo host); try=1
 		while :; do
-			b_t=$(_expl $who); b_o=$(_expl $other); _throw $who; a_t=$(_expl $who); a_o=$(_expl $other)
-			# explosions=<reported by the thrower's game>/<set off here from a friend's throw>
-			sent=$(( $(part "$(cut -d' ' -f1 <<<"$a_t")" 1) - $(part "$(cut -d' ' -f1 <<<"$b_t")" 1) ))
-			setoff=$(( $(part "$(cut -d' ' -f1 <<<"$a_o")" 2) - $(part "$(cut -d' ' -f1 <<<"$b_o")" 2) ))
-			[ "$sent" -ge 1 ] && break
+			g_t0=$(_gh $who); g_o0=$(_gh $other); _blast_mark $who; _blast_mark $other
+			_throw $who
+			g_t1=$(_gh $who); g_o1=$(_gh $other)
+			sent=$(_blast_count "$(_blast_read $who)" sent "$GRENADE_EXPLOSION"); setoff=$(_blast_count "$(_blast_read $other)" setoff "$GRENADE_EXPLOSION")
+			is_num "$sent" && [ "$sent" -ge 1 ] && break
 			[ $try -ge 2 ] && break
-			warn "grenade thrown by $who" "first throw was not reported by its game (sent +$sent): throwing again"; try=$((try + 1))
+			warn "grenade thrown by $who" "first throw was not reported by its game (own-base explosions reported: '${sent:-log not read}'): throwing again"; try=$((try + 1))
 		done
-		expect_eq "grenade thrown by $who: reported by the thrower's game" "$sent" 1
-		expect_eq "grenade thrown by $who: replayed once in the other game" "$setoff" 1
-		expect_eq "grenade thrown by $who: no new ghost projectiles (either game)" "$(cut -d' ' -f2 <<<"$a_t")/$(cut -d' ' -f2 <<<"$a_o")" "$(cut -d' ' -f2 <<<"$b_t")/$(cut -d' ' -f2 <<<"$b_o")"
+		if is_num "$sent"; then expect_eq "grenade thrown by $who: reported by the thrower's game" "$sent" 1; else fail "grenade thrown by $who: reported by the thrower's game" "the thrower's plugin log was not read (no new lines since the throw)"; fi
+		if is_num "$setoff"; then expect_eq "grenade thrown by $who: replayed once in the other game" "$setoff" 1; else fail "grenade thrown by $who: replayed once in the other game" "the other game's plugin log was not read (no new lines since the throw)"; fi
+		if is_num "$g_t0" && is_num "$g_o0" && is_num "$g_t1" && is_num "$g_o1"; then
+			expect_eq "grenade thrown by $who: no new ghost projectiles (either game)" "$g_t1/$g_o1" "$g_t0/$g_o0"
+		else fail "grenade thrown by $who: no new ghost projectiles (either game)" "ghosts counter unreadable (before $who '$g_t0' $other '$g_o0', after $who '$g_t1' $other '$g_o1')"; fi
 	done
 }
 
@@ -308,7 +341,7 @@ perf_phase() {
 	local who p h p50 p99 fr bad
 	for who in host vm; do
 		p=$(dc $who perf); h=$(field "$p" ours_in_hitches); p50=$(field "$p" p50); p99=$(field "$p" p99); fr=$(field "$p" frames); bad=""
-		if ! is_num "$h" || ! is_num "$p99"; then fail "perf after $1 ($who)" "no perf numbers: ${p:0:120}"; continue; fi
+		if ! is_num "$h" || ! is_num "$p50" || ! is_num "$p99"; then fail "perf after $1 ($who)" "no perf numbers (ours_in_hitches '$h', p50 '$p50', p99 '$p99'): ${p:0:120}"; continue; fi
 		[ "$h" != 0 ] && bad="$bad ours_in_hitches=$h (want 0);"
 		_cmp "$p50" "<=" "$T_PERF_P50" || bad="$bad p50 $p50 ms (limit $T_PERF_P50);"
 		_cmp "$p99" "<=" "$T_PERF_P99" || bad="$bad p99 $p99 ms (limit $T_PERF_P99);"

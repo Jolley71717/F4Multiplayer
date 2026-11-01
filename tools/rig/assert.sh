@@ -13,6 +13,7 @@
 #     expect_zero "label" "$got"           # shorthand for expect_eq "$got" 0
 #     warn_gt "label" "$got" 5 u           # number above a soft limit: WARN (printed in the summary), never a FAIL
 #     a_summary                            # one screen: counts, every FAIL and WARN, times; exits non-zero on a FAIL
+#     trap a_interrupted INT TERM          # after a_init: a run stopped by a signal records a FAIL ("run interrupted") and ends in VERDICT FAIL
 #
 # Reading the games (both are driven through the dev channel, see env.sh):
 #     field "<text>" key                   # the value after "key=" up to a space, ';', '|' or ','  (empty if absent)
@@ -30,6 +31,8 @@
 # `bash assert.sh selftest` checks all of this without touching a game.
 #
 # Every check is appended to $A_OUT/results.tsv as it happens, so a check made in a subshell is not lost.
+# the self-test needs no game, so no VM: env.sh insists on VM_SSH, give it a placeholder only for `assert.sh selftest`
+[ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ] && : "${VM_SSH:=selftest-no-vm}"
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 A_SECTION=""
@@ -158,6 +161,11 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 	exit "$nf"
 }
 
+a_interrupted() {  # the INT/TERM trap of a run (trap a_interrupted INT TERM): an interrupted run is a FAILED run, never a PASS with fewer checks
+	fail "run interrupted" "stopped by a signal before the end: the checks after this point were not made"
+	echo "interrupted"; a_summary
+}
+
 # --- self-test: the helpers without a game ---------------------------------------------------------------------
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	export F4MP_CHECKS=$(mktemp -d); CHECKS=$F4MP_CHECKS; A_OUT=""; a_init selftest >/dev/null; bad=0
@@ -196,6 +204,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	rm -f "$d/1.log"; t "delta, mark rotated out of sight: the newest file" "$(_log_delta t "$d" | wc -l)" 2
 	t "prefixes" "$(_prefixes "$d/0.log" W)" "C x1; "
 	A_OUT=$A_OUT; ( a_summary >/dev/null ); r=$?; t "summary exit code = failures" "$r" "$(grep -c '^FAIL' "$A_RESULTS")"
+	# an interrupted run must fail: a signal while nothing had failed yet used to end in VERDICT PASS and exit 0
+	sd=$(mktemp -d); sigout=$( ( A_OUT=$sd; a_init sigtest >/dev/null; section s2 >/dev/null; pass "a check" ok >/dev/null; trap a_interrupted INT TERM; kill -TERM "$BASHPID"; sleep 1; echo "not reached" ) 2>&1 ); r=$?
+	rm -rf "$sd"
+	[ "$r" -ge 1 ] && echo "ok   interrupted run exits non-zero ($r)" || { echo "FAIL interrupted run exits non-zero: got $r"; bad=1; }
+	case "$sigout" in *"VERDICT: FAIL"*"run interrupted"*|*"run interrupted"*"VERDICT: FAIL"*) echo "ok   interrupted run says VERDICT FAIL";; *) echo "FAIL interrupted run says VERDICT FAIL: [$sigout]"; bad=1;; esac
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	rm -rf "$d" "$F4MP_CHECKS"; exit $bad
 fi

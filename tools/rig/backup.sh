@@ -9,16 +9,26 @@
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 cmd=$1; name=${2:?name}; B=$STAGE/backup/$name
 HOST_INI="$HOST_GAME/Data/F4SE/Plugins/F4Multiplayer.ini"; VM_INI="$VM_GAME/Data/F4SE/Plugins/F4Multiplayer.ini"
-scp_vm() { scp -q -p -i "$VM_KEY" -o LogLevel=ERROR "$@" 2>&1 | grep -v "quantum\|openssh\|store now"; }
+scp_vm() {  # scp with its complaints shown (only the ssh banner noise is dropped); returns scp's own exit status
+	local out rc; out=$(scp -q -p -i "$VM_KEY" -o LogLevel=ERROR "$@" 2>&1); rc=$?
+	printf '%s\n' "$out" | grep -v "quantum\|openssh\|store now" | grep .
+	return $rc
+}
 hashes() { (cd "$1" && sha256sum * 2>/dev/null | sort -k2); }
 case "$cmd" in
 save)
 	[ -e "$B" ] && { echo "backup $name already exists: $B"; exit 1; }
 	mkdir -p "$B/host" "$B/vm"
-	cp -p "$HOST_F4SE"/F4Multiplayer*.session* "$HOST_F4SE/F4Multiplayer_player.id" "$HOST_INI" "$B/host/" 2>/dev/null
-	scp_vm "$VM_SSH:$VM_F4SE/F4Multiplayer*.session*" "$VM_SSH:$VM_F4SE/F4Multiplayer_player.id" "$VM_SSH:$VM_INI" "$B/vm/"
+	bad=0; files=()
+	for f in "$HOST_F4SE"/F4Multiplayer*.session* "$HOST_F4SE/F4Multiplayer_player.id" "$HOST_INI"; do [ -e "$f" ] && files+=("$f"); done   # the ones that exist: a pattern with no match is not an error
+	cp -p "${files[@]}" "$B/host/" || { echo "backup $name: copying the host's files failed (above)"; bad=1; }
+	scp_vm "$VM_SSH:$VM_F4SE/F4Multiplayer*.session*" "$VM_SSH:$VM_F4SE/F4Multiplayer_player.id" "$VM_SSH:$VM_INI" "$B/vm/" || { echo "backup $name: copying the VM's files failed (above)"; bad=1; }
 	hashes "$B/host" > "$B/host.sha256"; hashes "$B/vm" > "$B/vm.sha256"
-	echo "saved $(ls "$B/host" | wc -l) host files and $(ls "$B/vm" | wc -l) vm files to $B" ;;
+	nh=$(ls "$B/host" | wc -l); nv=$(ls "$B/vm" | wc -l)
+	[ "$nh" -gt 0 ] || { echo "backup $name: no host files were saved"; bad=1; }
+	[ "$nv" -gt 0 ] || { echo "backup $name: no vm files were saved"; bad=1; }
+	echo "saved $nh host files and $nv vm files to $B"
+	[ $bad = 0 ] || { echo "backup $name is NOT usable: do not start the test on it"; exit 1; } ;;
 restore|check)
 	[ -d "$B" ] || { echo "no backup $name"; exit 1; }
 	if [ "$cmd" = restore ]; then
@@ -41,6 +51,9 @@ restore|check)
 		now=$(vmssh "(Get-FileHash -Algorithm SHA256 \"\$(if ('$p' -like 'C:*') { '$p' } else { \$env:USERPROFILE + '\' + ('$p' -replace '/','\') })\").Hash" | tr -d '[:space:]' | tr A-F a-f)
 		[ "$h" = "$now" ] || { echo "DIFF vm $n"; bad=1; }
 	done < "$B/vm.sha256"
+	# a backup that holds no files proves nothing: "all identical" over an empty list must not pass
+	[ "$(wc -l < "$B/host.sha256")" -gt 0 ] || { echo "backup $name holds no host files"; bad=1; }
+	[ "$(wc -l < "$B/vm.sha256")" -gt 0 ] || { echo "backup $name holds no vm files"; bad=1; }
 	[ $bad = 0 ] && echo "all files identical to backup $name (host $(wc -l < "$B/host.sha256"), vm $(wc -l < "$B/vm.sha256"))"; exit $bad ;;
 *) echo "usage: backup.sh save|restore|check <name>" ;;
 esac

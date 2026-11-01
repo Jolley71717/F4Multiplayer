@@ -3,6 +3,7 @@
 # jump) while both games sample positions at 20 Hz (dev command "trace"), then fetches both files
 # and compares the VM player's own path with the host's stand-in copy of it (and the reverse).
 # trace.sh analyse [host.csv vm.csv [vmClockMs]] re-runs the comparison on fetched files. Outputs in stage/trace/.
+# (run needs the rig held, see guard.sh: F4MP_RIG_OWNER.)
 # trace.sh clock resyncs the VM's clock and prints how far it is from the host's (no game needed).
 #
 # The two files are stamped with each machine's wall clock, so a VM clock that is off reads as lag and
@@ -12,8 +13,9 @@
 # measures again after the run (drift), and the fit takes the measured offset out of the VM's samples.
 # The offset is saved in stage/trace/clock.txt next to the CSVs, where analyse finds it.
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+. "$RIG/guard.sh"
 K=$VM_KEY; H=$VM_SSH
-O=$STAGE/trace; mkdir -p $O
+O=$STAGE/trace; mkdir -p "$O"
 HOSTCSV="$HOST_F4SE/F4Multiplayer_trace.csv"
 MAX_CLOCK_MS=500   # a VM clock further off than this is not fitted at all
 MAX_LAG_MS=1500    # the lag search's upper bound; a best lag there means the fit hit the limit
@@ -32,14 +34,14 @@ clock_offset() {
 		t=$(nowms); v=${v//[^0-9]/}; [ -n "$v" ] || continue
 		d=$((v - t)); n=$((n + 1))
 		if [ -z "$best" ] || [ $d -gt $best ]; then best=$d; fi
-	done < <(timeout 30 ssh -i $K -o LogLevel=ERROR -o ConnectTimeout=8 $H "powershell -NoProfile -NonInteractive -EncodedCommand $enc" 2>/dev/null)
+	done < <(timeout 30 ssh -i "$K" -o LogLevel=ERROR -o ConnectTimeout=8 "$H" "powershell -NoProfile -NonInteractive -EncodedCommand $enc" 2>/dev/null)
 	[ -n "$best" ] && [ $n -ge 5 ] || return 1
 	echo "$best"
 }
 
 # clock_resync: starts the VM's time service and resyncs it (ssh on the VM is elevated). Prints the result.
 clock_resync() {
-	timeout 40 ssh -i $K -o LogLevel=ERROR -o ConnectTimeout=8 $H 'Start-Service w32time -ErrorAction SilentlyContinue; "w32time: " + (Get-Service w32time).Status; w32tm /resync /force 2>&1 | Select-Object -Last 1' 2>&1 | tr -d '\r' | grep -v '^$' | sed 's/^/  /'
+	timeout 40 ssh -i "$K" -o LogLevel=ERROR -o ConnectTimeout=8 "$H" 'Start-Service w32time -ErrorAction SilentlyContinue; "w32time: " + (Get-Service w32time).Status; w32tm /resync /force 2>&1 | Select-Object -Last 1' 2>&1 | tr -d '\r' | grep -v '^$' | sed 's/^/  /'
 }
 
 abs() { local v=$1; echo $((v < 0 ? -v : v)); }
@@ -76,13 +78,13 @@ run() {
 	echo "host: $(host 'trace stop')"; echo "vm:   $(vm 'trace stop')"
 	[ -n "$NETSIM" ] && echo "host netsim after: $(host netsim)" && host "netsim off" >/dev/null
 	[ -n "$NETSIM_VM" ] && echo "vm netsim after: $(vm netsim)" && vm "netsim off" >/dev/null
-	cp "$HOSTCSV" $O/host.csv
-	scp -q -i $K "$H:$VM_F4SE/F4Multiplayer_trace.csv" $O/vm.csv
+	cp "$HOSTCSV" "$O/host.csv"
+	scp -q -i "$K" "$H:$VM_F4SE/F4Multiplayer_trace.csv" "$O/vm.csv"
 	# Again after the run: a clock that moved during it is drift the fit can't take out.
 	after=$(clock_offset) || after=$before
 	echo "VM clock: $after ms after the run (drift $((after - before)) ms)"
-	echo "$(( (before + after) / 2 )) $before $after" > $O/clock.txt
-	analyse $O/host.csv $O/vm.csv $(( (before + after) / 2 ))
+	echo "$(( (before + after) / 2 )) $before $after" > "$O/clock.txt"
+	analyse "$O/host.csv" "$O/vm.csv" $(( (before + after) / 2 ))
 }
 
 # compare <ownerCsv> <ownerWho> <viewerCsv> <viewerWho> <label> [ownerClockMs viewerClockMs]: the owner's own
@@ -158,8 +160,8 @@ npcs() {
 # not fitted; with none known the files are fitted as they are, with a warning.
 analyse() {
 	h=${1:-$O/host.csv}; v=${2:-$O/vm.csv}; off=$3
-	if [ -z "$off" ] && [ "$h" = "$O/host.csv" ] && [ "$v" = "$O/vm.csv" ] && [ -s $O/clock.txt ] && ! [ $O/vm.csv -nt $O/clock.txt ]; then
-		read -r off _ < $O/clock.txt
+	if [ -z "$off" ] && [ "$h" = "$O/host.csv" ] && [ "$v" = "$O/vm.csv" ] && [ -s "$O/clock.txt" ] && ! [ "$O/vm.csv" -nt "$O/clock.txt" ]; then
+		read -r off _ < "$O/clock.txt"
 	fi
 	if [ -z "$off" ]; then
 		echo "VM clock: unknown for these files (none given, no clock.txt from their run): lag and error include whatever the VM's clock was off"
@@ -188,7 +190,7 @@ analyse() {
 		awk -f $(dirname "$0")/smooth.awk -v who=qp2 -v label="smooth: VM player as the host draws them, at the frame before" "$h"
 		awk -f $(dirname "$0")/smooth.awk -v who=fme -v label="smooth: host player in their own game, frame time" "$h"
 	fi
-	svg "$v" me "$h" p2 $O/vm-as-host-sees.svg; svg "$h" me "$v" p1 $O/host-as-vm-sees.svg
+	svg "$v" me "$h" p2 "$O/vm-as-host-sees.svg"; svg "$h" me "$v" p1 "$O/host-as-vm-sees.svg"
 	echo "plots: $O/vm-as-host-sees.svg $O/host-as-vm-sees.svg"
 }
 
@@ -202,7 +204,7 @@ clock() {
 }
 
 case "$1" in
-run) run $2 ;;
+run) rig_guard || exit 2; run $2 ;;   # drives the games: only with the rig held (guard.sh)
 analyse) analyse $2 $3 $4 ;;
 npcs) npcs $2 $3 ;;
 clock) clock ;;
