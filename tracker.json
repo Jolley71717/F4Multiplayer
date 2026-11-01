@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T18:39:22+00:00",
+ "updated": "2026-11-01T19:29:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -73,8 +73,9 @@
    "title": "Rig loot check: does a VM removeallitems after opening reach the host?",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 243
   },
   {
    "id": "238o",
@@ -450,8 +451,9 @@
    "title": "Rig check: compare power-armor stand-in distance at the same timestamp",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 243
   },
   {
    "id": "e0xc",
@@ -843,8 +845,9 @@
    "title": "Rig hits check: damageAnswered and damageHeld do not move for copy hits; kill step does not kill in 8 shots",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 243
   },
   {
    "id": "nz4w",
@@ -872,6 +875,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; we still want a two-game test to confirm it.",
    "desc": "On a friend's screen the host's gun had its parts floating apart, like a dismantled weapon. We think this happened when a held gun was swapped for another copy of the same gun with different mods: it was removed and re-added in one frame and rebuilt half-assembled. 0.9.0 removes the old one first and gives the new one a moment later."
+  },
+  {
+   "id": "pbne",
+   "title": "Rig check messages: trace.sh run reports 0 ms drift when the second clock reading fails; two messages blame ssh for 'no steady reading'; one error can show a blank count",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "pcg4",
@@ -1178,8 +1189,9 @@
    "title": "Dev session file keeps test-built pieces that come back as friends' copies at every join",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 243
   },
   {
    "id": "xl7e",
