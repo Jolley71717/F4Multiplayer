@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T19:29:39+00:00",
+ "updated": "2026-11-01T21:10:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -76,6 +76,14 @@
    "stage": 5,
    "note": "",
    "pr": 243
+  },
+  {
+   "id": "1vf3",
+   "title": "MuzzleFlash: takenDown is counted but missing from the status line",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "238o",
@@ -868,6 +876,14 @@
    "pr": 211
   },
   {
+   "id": "otu0",
+   "title": "Stand-in hold test fails when built natively against libc++ (Mac)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ou8y",
    "title": "The host's gun looks taken apart on a friend's screen",
    "kind": "bug",
@@ -1119,6 +1135,14 @@
    "desc": "If the game saved in the few seconds a companion was stepping out of a friend's frame copy, loading that save brought the copy back as an ordinary frame, one extra suit. The next release still sends the companion out after that load, so the copy no longer comes back. 0.9.2 lists this as a known issue."
   },
   {
+   "id": "uyru",
+   "title": "Quest sim: a stage the plugin defers for the opening is set at once (kOpeningWaits not handled)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "v4k6",
    "title": "Pre-rc review fixes: world sync, doors, menus",
    "kind": "bug",
@@ -1242,6 +1266,14 @@
    "title": "Power armor return: with no fixed object loaded in the new spot's cell, the owner's frame falls back to the player's cell; a parked copy flashes at the old spot for 0.25 s when a waiting move lands",
    "kind": "bug",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "yeie",
+   "title": "Unused variables: count in MenuIcons.cpp, BENCH in WorkshopPowerTests.cpp",
+   "kind": "feature",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
