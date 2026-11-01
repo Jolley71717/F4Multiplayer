@@ -262,6 +262,23 @@ namespace SpawnBook
 		return a_givenBack && a_since >= Clock::duration::zero() && a_since < RETURN_HOLD && !RemoteEdits::Within(RemoteEdits::Distance(*a_givenBack, a_state), FrameShare::NUDGE_LIMIT);
 	}
 
+	// A runtime NPC of our own standing this close to where a friend's game has a spawn of theirs stands for it
+	// (Facts::oursThere). Two players crossing one random encounter's trigger each roll the encounter in their own game,
+	// at the same markers, and each game shared its NPCs: every raider stood twice in each game, our own and the copy of
+	// the friend's, on top of each other (a Nexus report on 0.10.0). A group spawns at its markers together, so one of
+	// ours within this of a copy's spot is the same encounter's, whichever of the group's NPCs it is.
+	constexpr float NPC_SAME_SPOT = 128.0f;
+
+	// Whether a runtime NPC of our own there is the same encounter's NPC as a friend's spawn, so it stands for it: placed
+	// from the same NPC (PickBase's choice, a_ourBase against the spawn's base), or rolled from the same leveled NPC (its
+	// original, against the friend's roll of the spawn; 0 where either isn't known). Hostility alone is no match: in a
+	// mixed fight a raider of ours beside a friend's spawn of another encounter (their gunner) is not it, and the friend's
+	// spawn, still fighting them, must not vanish from our game.
+	[[nodiscard]] constexpr bool StandsFor(std::uint32_t a_ourBase, std::uint32_t a_ourOriginal, std::uint32_t a_spawnBase, std::uint32_t a_spawnOriginal)
+	{
+		return (a_ourBase != 0 && a_ourBase == a_spawnBase) || (a_ourOriginal != 0 && a_ourOriginal == a_spawnOriginal);
+	}
+
 	// What the game sees of one spawn, for Theirs::Decide.
 	struct Facts
 	{
@@ -272,6 +289,11 @@ namespace SpawnBook
 		bool                copyLoaded = true;  // its 3D is in
 		bool                baseOk = true;      // its base is an NPC we place copies of (not unique, not the player's)
 		bool                waiting = false;    // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT): not placed yet
+		// A runtime NPC of our own (no copy, no stand-in; alive), the same encounter's (StandsFor), stands within
+		// NPC_SAME_SPOT of where their game has it: ours stands for it, and no copy is placed while it does (each game
+		// fights its own instead of its own and a copy of the friend's on the same spot). Only for a copy about to be
+		// placed: one placed already stays, whatever comes to stand beside it.
+		bool                oursThere = false;
 	};
 
 	enum class Act
@@ -433,6 +455,7 @@ namespace SpawnBook
 			kOwnerUnheard,  // its owner's stand-in has not said where it is
 			kOwnerFar,      // its owner's stand-in is past OWNER_RANGE of it, or in another place
 			kRollWait,      // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT)
+			kOursThere,     // a runtime NPC of our own stands where their game has it: ours stands for it (Facts::oursThere)
 			kUnknown,       // no such spawn
 		};
 
@@ -451,6 +474,9 @@ namespace SpawnBook
 			}
 			if (!a_facts.baseOk) {
 				return Why::kBaseNotOk;
+			}
+			if (a_facts.oursThere) {
+				return Why::kOursThere;
 			}
 			if (copy.tries >= PLACE_TRIES) {
 				return Why::kGaveUp;
@@ -493,6 +519,8 @@ namespace SpawnBook
 				return "its owner's stand-in is far from it";
 			case Why::kRollWait:
 				return "waiting for its owner's roll of it";
+			case Why::kOursThere:
+				return "an NPC our own game made stands there and stands for it";
 			default:
 				return "unknown";
 			}

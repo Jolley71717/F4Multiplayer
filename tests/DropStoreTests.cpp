@@ -530,7 +530,7 @@ TEST("session file: a session with gifts takes layout 40; one without stays 36 o
 	const std::uint16_t storage = SessionFile::STORAGE;
 	std::memcpy(older.data() + 4, &storage, sizeof(storage));
 	CHECK(!SessionFile::Decode(older));
-	CHECK(!SessionFile::Readable(41));  // a later build's
+	CHECK(!SessionFile::Readable(42));  // a later build's
 }
 
 // ---- whose world: a drop's characters (DropRecord::character) ---------------------------------------------------

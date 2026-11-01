@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <iterator>
+#include <map>
 #include <random>
 #include <string_view>
 #include <system_error>
@@ -212,6 +213,18 @@ namespace TestServer
 	inline std::vector<Protocol::WorldState> WorldStates(const std::vector<std::vector<std::uint8_t>>& a_packets)
 	{
 		return Decoded(a_packets, MT::kWorldState, [](auto a_data) { return Protocol::DecodeWorldState(a_data); });
+	}
+
+	// The session's NPC rolls a_peer was told so far in packed lists (kNpcIdentities: a joiner's catch-up), by reference.
+	inline std::map<std::uint32_t, Protocol::NpcIdentity> WelcomeRolls(Fixture& a_f, PeerId a_peer)
+	{
+		std::map<std::uint32_t, Protocol::NpcIdentity> out;
+		for (const auto& list : Decoded(Received(a_f, a_peer), MT::kNpcIdentities, [](auto a_data) { return Protocol::DecodeNpcIdentities(a_data); })) {
+			for (const auto& roll : list) {
+				out[roll.refId] = roll;
+			}
+		}
+		return out;
 	}
 
 	// Waits up to a_timeout for a_peer to be sent a packet of a_type, keeping everything that came in a_got.

@@ -25,6 +25,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
+#include "game/RollHook.h"
 #include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SettlerCommand.h"
@@ -173,6 +174,7 @@ namespace NpcSync
 		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
 		NpcRoll::Book                                                 rolls;      // mirrored NPCs: their owners' reports
 		std::uint32_t                                                 rollsSent = 0, rollsWritten = 0, rollsKept = 0, factionsSet = 0;
+		std::unordered_set<std::uint32_t>                             rollsDiffered;  // NPCs whose runner's report differed from ours (counted once)
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -833,6 +835,7 @@ namespace NpcSync
 					continue;
 				}
 				outgoing.push_back({ Protocol::Encode(*identity, Protocol::MessageType::kReportNpcIdentity), true });
+				RollHook::Learn(*identity, false);  // ours, until the session's says otherwise: a load of an older save builds it so again
 				++rollsSent;
 			}
 		}
@@ -855,6 +858,12 @@ namespace NpcSync
 				const bool copy = Spawns::CopyIdOf(actor->GetFormID()) != 0;
 				const auto ours = Rolls::ReadOurs(actor, copy);
 				const auto plan = NpcRoll::Decide(ours, *theirs, [&](std::uint32_t a_npc) { return Rolls::ReachOf(ours.originalBase).Has(a_npc); });
+				// The check the runner's report became (protocol 57): with one roll per session every game built the same NPC,
+				// so a report that differs from ours is counted (net status: rolls ... differ=) and logged, once per NPC.
+				if ((plan.templates || plan.level) && rollsDiffered.size() < NpcRoll::Book::MAX && rollsDiffered.insert(id).second) {
+					RollHook::NoteDiffer();
+					REX::INFO("NpcSync: {:08X} differs from player {}'s roll of it ({}): {}", id, theirs->playerId, Rolls::Name(plan.roll), Rolls::Describe(actor));
+				}
 				if (!plan.Any()) {
 					rolls.Settled(id);
 					if (plan.roll != NpcRoll::Roll::kSame) {
@@ -1733,7 +1742,9 @@ namespace NpcSync
 				ownedBlocked.erase(entry.refId);  // not ours to find blocked any more; logged again if it is when we run it next
 				sentGear.erase(entry.refId);  // the server forgot its gear with its runner: report it afresh when we run it
 				sentRolls.Forget(entry.refId);  // and its roll
-				rolls.Forget(entry.refId);
+				if (Protocol::IsSpawnRef(entry.refId)) {
+					rolls.Forget(entry.refId);  // a spawn's goes with it; a plugin's NPC's is the session's for good (protocol 57)
+				}
 				StopMirroring(entry.refId);
 				continue;
 			}
@@ -2029,16 +2040,27 @@ namespace NpcSync
 
 	void ApplyIdentity(const Protocol::NpcIdentity& a_identity)
 	{
+		// The session's roll: any game that builds the NPC from here on builds it so (RollHook), whoever runs it.
+		RollHook::Learn(a_identity, true);
 		// Not for one we run: what our game has is what we report.
 		if (OwnerOf(a_identity.refId) == localId && localId != 0) {
 			return;
 		}
-		rolls.Learn(a_identity, localId);
+		// A welcome tells every NPC the session rolled: one we don't mirror now is checked once we do (rolls.Check).
+		if (rolls.Learn(a_identity, localId) && !mirrors.contains(a_identity.refId)) {
+			rolls.Settled(a_identity.refId);
+		}
 	}
 
 	const Protocol::NpcIdentity* RollOf(std::uint32_t a_refId)
 	{
 		return rolls.Find(a_refId);
+	}
+
+	void ForgetRoll(std::uint32_t a_refId)
+	{
+		rolls.Forget(a_refId);
+		sentRolls.Forget(a_refId);
 	}
 
 	void Reset()
@@ -2052,6 +2074,7 @@ namespace NpcSync
 		knownGear.clear();
 		sentRolls.Clear();
 		rolls.Clear();
+		rollsDiffered.clear();
 		owners.clear();
 		claimBook.Clear();
 		hold.Clear();

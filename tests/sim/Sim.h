@@ -434,6 +434,14 @@ namespace Sim
 		// Friends' explosions the server passed on, in order (a test sets them off in its own model of this game).
 		[[nodiscard]] const std::vector<Protocol::Explosion>& Explosions() const { return explosions; }
 		[[nodiscard]] const std::optional<Protocol::WorldTime>& Time() const { return time; }
+		// The session's NPC level as the server last said (kSessionWorld), and every NPC roll it told this player of
+		// (kNpcIdentity), by reference: what this game would build each leveled NPC as (docs/SHARED-ROLLS.md).
+		[[nodiscard]] std::optional<std::uint16_t> NpcLevel() const { return npcLevel; }
+		[[nodiscard]] std::optional<std::uint16_t> LegendaryMult() const { return legendaryMult; }
+		[[nodiscard]] const std::map<std::uint32_t, Protocol::NpcIdentity>& Rolls() const { return rolls; }
+		[[nodiscard]] const std::map<std::uint32_t, std::uint16_t>& RollLives() const { return rollLives; }
+		// Reports the roll of an NPC this player's game runs (kReportNpcIdentity).
+		void ReportRoll(const Protocol::NpcIdentity& a_identity) { Send(Protocol::Encode(a_identity, MT::kReportNpcIdentity), true); }
 		// How many packets of a kind arrived since joining (any connection), and how many didn't decode.
 		[[nodiscard]] std::size_t        Heard(MT a_type) const
 		{
@@ -507,6 +515,10 @@ namespace Sim
 		std::map<std::uint32_t, std::uint32_t>        hiddenFrames;  // our copy of a placed frame -> the friend wearing theirs
 		std::map<std::uint32_t, std::uint8_t>         markers;
 		std::optional<Protocol::WorldTime>            time;
+		std::optional<std::uint16_t>                  npcLevel;
+		std::optional<std::uint16_t>                  legendaryMult;
+		std::map<std::uint32_t, Protocol::NpcIdentity> rolls;
+		std::map<std::uint32_t, std::uint16_t>          rollLives;  // kRollLives: each plugin NPC's deaths this session
 		std::vector<std::string>                      rejections;
 		std::vector<Protocol::PlayerHit>              damage;
 		std::vector<std::uint32_t>                    revivedBy;
@@ -1704,6 +1716,40 @@ namespace Sim
 			break;
 		case MT::kRemoved:
 			unless(Protocol::DecodeRemoved(a_data).has_value());
+			break;
+		case MT::kSessionWorld:
+			if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
+				npcLevel = msg->level;
+				legendaryMult = msg->legendaryMult;
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kNpcIdentity:
+			if (const auto msg = Protocol::DecodeNpcIdentity(a_data)) {
+				rolls[msg->refId] = *msg;
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kNpcIdentities:  // a joiner's catch-up, packed
+			if (const auto msg = Protocol::DecodeNpcIdentities(a_data)) {
+				for (const auto& roll : *msg) {
+					rolls[roll.refId] = roll;
+				}
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kRollLives:  // a plugin NPC died: its next life is another roll
+			if (const auto msg = Protocol::DecodeRollLives(a_data)) {
+				for (const auto& life : *msg) {
+					rollLives[life.refId] = life.lives;
+					rolls.erase(life.refId);
+				}
+			} else {
+				unless(false);
+			}
 			break;
 		default:
 			unless(false);  // nothing a player's game knows

@@ -23,6 +23,7 @@
 #include "game/PingRules.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "game/StandInSeat.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
@@ -524,6 +525,10 @@ namespace Party
 			status.cell = SpaceOf(player).first;
 			status.health = DownRules::StatusHealth(player->IsDead(false), Downed::IsDown(), current, maximum);
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
+			// What the session's legendary chance is made of (sLegendaryDifficulty, docs/SHARED-ROLLS.md).
+			const auto difficulty = RollHook::OwnDifficulty();
+			status.difficulty = difficulty.level;
+			status.legendaryMult = difficulty.legendaryMult;
 			status.downed = Downed::WaitsForHelp();
 			status.opening = Story::InOpening();
 			status.light = player->IsPipboyLightOn();

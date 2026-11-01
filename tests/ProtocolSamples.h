@@ -165,6 +165,10 @@ namespace ProtocolSamples
 		s.push_back({ "WorldRequest", Encode(WorldRequest{ 0xABCDEF0123456789ull, 5 }), D(DecodeWorldRequest) });
 		s.push_back({ "PlayerState", Encode(MakeState(3)), D(DecodePlayerState) });
 		s.push_back({ "Welcome", Encode(Welcome{ 9, 0x1122334455667788ull, true, true, SessionRules{ .revive = true, .bleedOutSeconds = 60, .maxRevives = 2, .realTimeVats = false } }), D(DecodeWelcome), false });
+		s.push_back({ "WelcomeNpcLevelHost", Encode(Welcome{ 9, 0x1122334455667788ull, false, true, SessionRules{ .npcLevel = NpcLevelRule::kHost } }), D(DecodeWelcome), false });
+		s.push_back({ "WelcomeNpcLevelOwn", Encode(Welcome{ 9, 0x1122334455667788ull, false, true, SessionRules{ .npcLevel = NpcLevelRule::kOwn } }), D(DecodeWelcome), false });
+		s.push_back({ "SessionWorld", Encode(SessionWorld{ 23 }), D(DecodeSessionWorld) });
+		s.push_back({ "SessionWorldNone", Encode(SessionWorld{ 0 }), D(DecodeSessionWorld) });
 		s.push_back({ "Reject", Encode(Reject{ "Server is full" }), D(DecodeReject), false });
 		s.push_back({ "PlayerJoined", Encode(PlayerJoined{ 4, "Bob", 0x0001ABCD }), D(DecodePlayerJoined), false });
 		s.push_back({ "PlayerLeft", Encode(PlayerLeft{ 4 }), D(DecodePlayerLeft), false });
@@ -263,6 +267,12 @@ namespace ProtocolSamples
 			roll.templates[7] = 0x0002A1B5;
 			s.push_back({ "NpcIdentity", Encode(roll, type), D(DecodeNpcIdentity) });
 			s.push_back({ "NpcIdentityFactions", Encode(NpcIdentity{ .playerId = 2, .refId = RUNTIME_REF, .level = 8, .flags = NpcIdentity::kFactions, .factions = { { 0x0001BCC0, 0 }, { 0x00058302, 1 } } }, type), D(DecodeNpcIdentity) });
+		}
+		{
+			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .mask = 0b0000'0000'0001 };
+			roll.templates[0] = 0x0002A1B5;
+			s.push_back({ "NpcIdentities", Encode(std::vector<NpcIdentity>{ roll, NpcIdentity{ .playerId = 3, .refId = REF_B, .level = 4 } }), D(DecodeNpcIdentities) });
+			s.push_back({ "RollLives", Encode(std::vector<RollLife>{ { REF_A, 1 }, { REF_B, 3 } }), D(DecodeRollLives) });
 		}
 		for (const auto type : { MT::kReportFace, MT::kPlayerFace }) {
 			s.push_back({ "Face", Encode(MakeFace(), type), D(DecodeFace) });
@@ -433,6 +443,9 @@ namespace ProtocolSamples
 		case MT::kLendFrame:
 		case MT::kReturnFrame:
 		case MT::kWelcome:
+		case MT::kSessionWorld:
+		case MT::kRollLives:
+		case MT::kNpcIdentities:
 		case MT::kReject:
 		case MT::kPlayerJoined:
 		case MT::kPlayerLeft:

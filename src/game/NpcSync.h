@@ -49,6 +49,9 @@ namespace NpcSync
 
 	// The roll its owner's game reported for an NPC another game runs (nothing: none came).
 	[[nodiscard]] const Protocol::NpcIdentity* RollOf(std::uint32_t a_refId);
+	// A plugin's NPC died in the session (kRollLives): its roll is forgotten, and what its runner's game makes of its next
+	// life (a cell reset) is reported again.
+	void ForgetRoll(std::uint32_t a_refId);
 
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);

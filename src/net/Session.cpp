@@ -47,6 +47,7 @@
 #include "game/RadiantSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
 #include "game/Storage.h"
@@ -490,6 +491,7 @@ namespace Session
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
+					RollHook::OnWelcome(msg->sessionId, msg->rules.npcLevel);  // its level follows (kSessionWorld)
 					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr, msg->sessionId);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
@@ -792,6 +794,28 @@ namespace Session
 					NpcSync::ApplyIdentity(*msg);
 				}
 				break;
+			case MessageType::kNpcIdentities:
+				if (const auto msg = Protocol::DecodeNpcIdentities(a_data)) {
+					for (const auto& identity : *msg) {
+						NpcSync::ApplyIdentity(identity);
+					}
+				}
+				break;
+			case MessageType::kRollLives:
+				if (const auto msg = Protocol::DecodeRollLives(a_data)) {
+					// A death the session took: that NPC's roll is over, its next life another (RollHook), reported anew by its runner.
+					for (const auto& life : *msg) {
+						if (RollHook::SetLives(life)) {
+							NpcSync::ForgetRoll(life.refId);
+						}
+					}
+				}
+				break;
+			case MessageType::kSessionWorld:
+				if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
+					RollHook::SetSessionWorld(*msg);
+				}
+				break;
 			case MessageType::kPlayerFace:
 				if (auto msg = Protocol::DecodeFace(a_data)) {
 					RemotePlayers::SetFace(msg->playerId, std::move(*msg));
@@ -1004,6 +1028,7 @@ namespace Session
 			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
 			HostRules::Clear();  // out of a session, nothing of the host's rules applies
+			RollHook::Clear();   // and every game rolls its own leveled NPCs again
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -1512,6 +1537,7 @@ namespace Session
 		PERF_NEXT(perf, "NpcSync");
 		if (welcomed) {
 			NpcSync::Frame(hostedServer && hostedServer->Running());
+			RollHook::Frame();  // the session's rolls written on our NPCs that aren't loaded
 			Spawns::Frame();
 		}
 		PERF_NEXT(perf, "QuestSync");
@@ -1785,7 +1811,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
