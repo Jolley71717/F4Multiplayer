@@ -295,6 +295,14 @@ for g in host vm; do
 	expect_match "set up: $g has the pistol equipped" "$(dc $g 'equipped 00000014' | cut -c1-80)" '00004822'
 done
 pass "baseline counters taken" "copyHits host $(cget A host copyHits) vm $(cget A vm copyHits); copyUnseen $(cget A host copyUnseen)/$(cget A vm copyUnseen)"
+# Every step needs both games' clicks: a game whose mouse never came up (2026-11-01: the VM, started by in-vm-3-game.ps1, fired
+# nothing for the whole run, 18 failures that proved nothing) is stopped here, before ten minutes of misses.
+dead=""
+for g in host vm; do
+	dc $g focus >/dev/null; sleep 1; s0=$(shots_of $g); dc $g "click 120" >/dev/null; sleep 2; s1=$(shots_of $g)
+	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "preflight: $g's click fires its gun" "shots $s0 -> $s1"; else fail "preflight: $g's click fires its gun" "shots '$s0' -> '$s1': its mouse input is dead (restart that game with focus sent during start-up); the run stops here"; dead="$dead $g"; fi
+done
+if [ -n "$dead" ]; then a_summary; exit 1; fi
 
 run_phase host
 run_phase vm
