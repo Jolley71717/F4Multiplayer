@@ -720,9 +720,10 @@ namespace Party
 			const auto state = static_cast<const RE::IMovementState&>(*a_player).DoGetCharacterState();
 			const bool inAir = state == CharacterState::kJumping || state == CharacterState::kInAir;
 			if (inAir && landing.HoldsFall(a_now)) {
-				// The fall counts from here, so landing from it does the damage of no fall.
+				// The fall counts from here, so landing from it does the damage of no fall. Never raised: a start the
+				// engine already put lower stays.
 				if (const auto controller = Controller(a_player)) {
-					controller->fallStartHeight = a_player->data.location.z;
+					controller->fallStartHeight = (std::min)(controller->fallStartHeight, a_player->data.location.z);
 					controller->fallTime = 0.0f;
 				}
 			}
@@ -769,6 +770,12 @@ namespace Party
 			// stands in the cell it loaded, beside the friend's spot (else this SetPosition is the far one again).
 			const auto to = pendingTeleport->position;
 			if (pendingTeleport->worldspace != 0 && TeleportRules::NeedsLoad(player->data.location.x, player->data.location.y, to.x, to.y)) {
+				return;
+			}
+			// Down or dead since the friend's spot came: moved now, the bleed-out or death would play out there.
+			if (player->IsDead(false) || Downed::IsDown()) {
+				REX::INFO("Party: the teleport is called off: the player is down or dead");
+				pendingTeleport.reset();
 				return;
 			}
 			player->SetPosition(to, true);

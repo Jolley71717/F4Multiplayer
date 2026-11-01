@@ -2029,7 +2029,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - A death loads the newest save (`src/game/AutoSaveRules.h`, tested; `AutoSave.cpp`). The teleport key's
   `coc`/`cow` is not travel to the engine, so it made none of the autosaves a load door or fast travel makes,
   and a bleed-out could take a player back ten minutes or more while the world, caught up from the session,
-  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace, or across the
+  looked current. Landing after a teleport into another cell or worldspace, or across the
   worldspace both players are in (farther than an exterior cell), now asks for an autosave, once the player has
   stood on the ground for 1 s, at least 3 s after the move, alive and not down (none if that doesn't come in 30 s:
   one made in the air loaded the fall again at each bleed-out, TeleportRules.h), with
