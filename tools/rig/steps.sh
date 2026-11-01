@@ -447,7 +447,9 @@ step_pa() {
 	# taken out (trace.sh clock). Reading the two games one after the other used to count up to ~0.3 s of running as distance.
 	local clk clk0 clk1 did tr
 	# trace.sh clock resyncs the VM's time service; a reading right after it once said 1078 ms and then -14 (2026-11-01: the step
-	# still settling), so the offset is read again before and after the trace, and must hold still across it
+	# still settling), so the offset is read again before and after the trace, and must hold still across it. A reading of -103
+	# between two of -12 (2026-11-01) was this side stalling through a whole read, not the VM's clock: trace.sh offset now takes
+	# a reading only once enough of its lines came through with no stall, and says unknown otherwise
 	bash "$RIG/trace.sh" clock >/dev/null 2>&1; sleep 3; clk0=$(bash "$RIG/trace.sh" offset 2>/dev/null)
 	did=$(dcf $d 'net status' id)
 	bash "$RIG/dcfast.sh" both "trace start 20" >/dev/null 2>&1; dc $d focus >/dev/null; sleep 0.3
