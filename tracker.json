@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T05:46:18+00:00",
+ "updated": "2026-11-01T06:23:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -35,7 +35,7 @@
    "title": "Furniture a host no longer has can keep showing for friends",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
+   "stage": 2,
    "note": "Found on the test rig: a piece its builder no longer has keeps coming back for friends"
   },
   {
@@ -581,8 +581,9 @@
    "title": "A rejoining game's copies of NPCs a friend runs keep their own health until the NPC's health next changes",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fixed in a PR: a game that joins, rejoins or loads now gets the health of hurt NPCs; rig test next",
+   "pr": 246
   },
   {
    "id": "ikwn",
@@ -1156,6 +1157,14 @@
    "note": "A gas canister was shared in testing; logging now names anything that isn't",
    "pr": 217,
    "desc": "Explosions from things a player shoots should happen once in every game. 0.9.2 covered cars, barrels and fuel tanks; gas canisters and similar small props still need checking."
+  },
+  {
+   "id": "y2c9",
+   "title": "A joiner's copy of a friend's spawn stands at full health until its next health report",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found while fixing the rejoin health bug"
   },
   {
    "id": "y4oq",
