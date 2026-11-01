@@ -1940,9 +1940,13 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   how their day count differs from the host's, and from then on move forward like waiting does
   (stopping at 23:59 and letting the game roll the date over). Ahead of the host, they only go back
   within the same day. Weather is forced only outside in the same worldspace.
-- Teleport: same cell or worldspace: `SetPosition`. Elsewhere: `coc <cell editor ID>` or
-  `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
-  `SetPosition` once loaded. Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`; not one a
+- Teleport: same interior, or a friend outside in the cells next to ours (the 3 x 3 around us): `SetPosition`.
+  Elsewhere, or farther across our worldspace: `coc <cell editor ID>` or `cow <worldspace editor ID> x y`
+  (cells and worldspaces keep their editor IDs at runtime), then `SetPosition` once loaded (for a cow within our
+  worldspace: once we stand in the friend's cell). A `SetPosition` beyond the loaded cells landed the player
+  thousands of units short of the friend, in the air, and they fell and went down (src/game/TeleportRules.h,
+  tested). Until the player has stood on the ground for 1 s after the move (at most 15 s), a fall does no damage
+  (`bhkCharacterController::fallStartHeight` follows the player down). Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`; not one a
   friend's stage started here, `QuestSync::SessionScene`: the friend is playing it and their stages end it),
   furniture (sit/sleep state) and Survival (`GetDifficultyLevel`), where it could strand a quest.
 - Compass (src/game/Compass.cpp): each friend in our cell or worldspace gets a shape in their color
@@ -2025,9 +2029,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - A death loads the newest save (`src/game/AutoSaveRules.h`, tested; `AutoSave.cpp`). The teleport key's
   `coc`/`cow` is not travel to the engine, so it made none of the autosaves a load door or fast travel makes,
   and a bleed-out could take a player back ten minutes or more while the world, caught up from the session,
-  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace, or 3 s after
-  one across the worldspace both players are in (a `SetPosition` farther than an exterior cell), now asks for
-  an autosave (`BGSSaveLoadManager::QueueSaveLoadTask(kAutoSave)`) when the player's own `bSaveOnTravel`
+  looked current (F4Multiplayer-qx9n). Landing after a teleport into another cell or worldspace, or across the
+  worldspace both players are in (farther than an exterior cell), now asks for an autosave, once the player has
+  stood on the ground for 1 s, at least 3 s after the move, alive and not down (none if that doesn't come in 30 s:
+  one made in the air loaded the fall again at each bleed-out, TeleportRules.h), with
+  `BGSSaveLoadManager::QueueSaveLoadTask(kAutoSave)`, when the player's own `bSaveOnTravel`
   is on; with the host's `bSaveOnDown` (welcome flag bit 128, no protocol version of its own; off) going down
   does too. Neither in Survival, nor within 60 s of the last save of any kind, nor of a dead player, nor a
   travel one of a downed player: the engine makes an autosave at its next chance, maybe late (in a fight),
