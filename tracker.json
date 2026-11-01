@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T01:09:49+00:00",
+ "updated": "2026-11-01T02:08:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -523,6 +523,14 @@
    "desc": "In power armor the friend's marker and ping rings did not show on the compass, though the text line for pings did. Power armor draws its own compass and the mod only drew on the normal one. 0.9.0 draws on both."
   },
   {
+   "id": "gvs4",
+   "title": "smoke: a host grenade counted as 2 explosions (reported 2, replayed 2) once",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "h5jc",
    "title": "One player can't damage wild enemies until the other has",
    "kind": "bug",
@@ -565,8 +573,8 @@
    "title": "Legendary enemies differ between players",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
-   "note": "Shared-rolls fix passed rig probes; in code review",
+   "stage": 5,
+   "note": "Merged for the next release",
    "pr": 236
   },
   {
@@ -640,8 +648,8 @@
    "title": "Some NPCs appear in the wrong place or stacked on each other",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
-   "note": "Shared-rolls fix passed rig probes; in code review",
+   "stage": 5,
+   "note": "Merged for the next release",
    "pr": 236
   },
   {
@@ -677,8 +685,8 @@
    "title": "Shared rolls: a respawned NPC is rebuilt as the same roll, so a legendary spot stays legendary for the whole session",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fixed in PR #236, needs review",
+   "stage": 5,
+   "note": "Merged for the next release",
    "pr": 236
   },
   {
@@ -861,8 +869,8 @@
    "title": "Spawns: a friend's spawn copy is withheld or removed for good when any hostile runtime NPC of ours is within 128 units",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fixed in PR #236, needs review",
+   "stage": 5,
+   "note": "Merged for the next release",
    "pr": 236
   },
   {
@@ -967,6 +975,14 @@
    "note": "Merged for the next release; tested in two games.",
    "pr": 195,
    "desc": "After being revived, a player can stay crouched in sneak until they get themselves out of it."
+  },
+  {
+   "id": "t7ak",
+   "title": "DESIGN.md: the ours-there paragraph still describes the old stopgap (hostile counts, latched, placed copy goes)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "t8kx",
