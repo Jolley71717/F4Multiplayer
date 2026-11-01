@@ -18,9 +18,11 @@
 
 #include "game/DeferredDelete.h"
 #include "game/Equipment.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/MenuWatch.h"
 #include "game/Papyrus.h"
+#include "game/Story.h"
 #include "Text.h"
 
 // A grid's links are kept in sets (BSTSet<PowerUtils::GridConnection>), which CommonLibF4 gives no equality: the same
@@ -140,6 +142,19 @@ namespace WorkshopSync
 		// its own lock: Push (from the event sinks, maybe off the game thread) takes out what we report.
 		std::mutex           auditLock;
 		WorkshopAudit::Audit audit;  // under auditLock
+		// How long each attached cell has been (CellAges), and the audit's time: frames while the world is settled (AuditFrame).
+		WorkshopAudit::CellAges cellAges;      // under auditLock
+		WorkshopAudit::Duration auditClock{};  // under auditLock
+		std::optional<std::chrono::steady_clock::time_point> lastAuditFrame;  // under auditLock
+
+		// Forgets the list and the cells' ages (a load, the world gone, the session left).
+		void ClearAudit()
+		{
+			std::scoped_lock a{ auditLock };
+			audit.Clear();
+			cellAges.Clear();
+			lastAuditFrame.reset();
+		}
 
 		// False if it's dropped (too many waiting to be sent).
 		bool Push(const Protocol::WorkshopItem& a_item)
@@ -1343,8 +1358,8 @@ namespace WorkshopSync
 		std::set<std::uint32_t> attachedCells;  // the cells attached at the last look
 		Clock::time_point       nextCellLook{};
 
-		// The cells attached since the last look (after a game load, all of them).
-		std::vector<AttachedCell> NewlyAttachedCells()
+		// The cells attached since the last look (after a game load, all of them), and (a_all) every cell attached now.
+		std::vector<AttachedCell> NewlyAttachedCells(std::vector<WorkshopCells::Where>* a_all = nullptr)
 		{
 			std::vector<AttachedCell> fresh;
 			const auto                tes = RE::TES::GetSingleton();
@@ -1353,18 +1368,20 @@ namespace WorkshopSync
 			}
 			std::set<std::uint32_t> attached;
 			const auto note = [&](RE::TESObjectCELL* a_cell) {
-				const auto id = a_cell->GetFormID();
-				attached.insert(id);
-				if (attachedCells.contains(id)) {
-					return;
-				}
+				const auto           id = a_cell->GetFormID();
 				WorkshopCells::Where where;
 				if (a_cell->IsInterior()) {
 					where = WorkshopCells::Interior(id);
 				} else if (const auto exterior = a_cell->cellData.exterior; exterior && a_cell->worldSpace) {
 					where = { a_cell->worldSpace->GetFormID(), exterior->cellX, exterior->cellY };
 				}
-				fresh.push_back({ id, where });
+				if (a_all && where.space != 0) {
+					a_all->push_back(where);
+				}
+				attached.insert(id);
+				if (!attachedCells.contains(id)) {
+					fresh.push_back({ id, where });
+				}
 			};
 			if (tes->interiorCell) {
 				note(tes->interiorCell);
@@ -1719,14 +1736,21 @@ namespace WorkshopSync
 
 		// ---- Which of the pieces the session keeps as ours our world lacks (WorkshopAudit) ----------------------------
 
+		// The world is settled enough to say what it lacks: the player in a cell, no loading screen or load under way, no
+		// menu stopping the game, not the opening (a new game's world isn't the session's yet). As the session ends
+		// (OnWorldGone, Reset) the list is gone already.
+		bool AuditSettled()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return player && player->GetParentCell() && !Hud::LoadingScreenUp() && Hud::IsSettled() && !GameStop::Now() && !Story::InOpening();
+		}
+
+		// Under auditLock (cellAges, auditClock).
 		struct AuditEngine
 		{
 			WorkshopAudit::Seen Look(const Protocol::WorkshopItem& a_item)
 			{
 				using WorkshopAudit::Seen;
-				if (Hud::LoadingScreenUp()) {
-					return Seen::kUnseen;  // the world is being made
-				}
 				if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId) }) {
 					const auto base = ref->GetObjectReference();
 					if (ref->IsDeleted() || !base || base->GetFormID() != a_item.base || IsCopy(ref.get()) || Drops::IsCopyRef(ref->GetFormID())) {
@@ -1734,30 +1758,66 @@ namespace WorkshopSync
 					}
 					return Seen::kStands;
 				}
-				// A piece that isn't persistent is in memory only while its cell is loaded: missing means gone only there.
-				const auto cell = CellFor(a_item);
-				if (!cell) {
-					return Seen::kUnseen;  // its workbench isn't loaded here, or is in another worldspace or interior
+				// A piece that isn't persistent is in memory only while the cell it was built in is loaded, and one moved
+				// since keeps that cell: missing means gone only with every cell around its spot loaded long enough to have
+				// made its references, while we stand in its settlement's build area (the cells around us are loaded).
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto here = player ? player->GetParentCell() : nullptr;
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop);
+				const auto benchCell = bench ? bench->GetParentCell() : nullptr;
+				if (!here || !benchCell) {
+					return Seen::kUnseen;  // its workbench isn't loaded here (or a plugin's we lack)
 				}
-				if (cell->IsInterior()) {
-					return cell->IsAttached() ? Seen::kMissing : Seen::kUnseen;
+				if (benchCell->IsInterior()) {
+					if (benchCell != here || !cellAges.Settled(WorkshopCells::Interior(here->GetFormID()), auditClock)) {
+						return Seen::kUnseen;
+					}
+				} else {
+					if (here->IsInterior() || benchCell->worldSpace != here->worldSpace || !here->worldSpace) {
+						return Seen::kUnseen;
+					}
+					const auto space = here->worldSpace->GetFormID();
+					for (const auto& [x, y] : WorkshopAudit::Spots(a_item)) {
+						if (!cellAges.SettledAround(space, x, y, auditClock)) {
+							return Seen::kUnseen;
+						}
+					}
 				}
-				return SpotAttached(a_item) ? Seen::kMissing : Seen::kUnseen;
+				return InBuildArea(*bench, player->data.location) ? Seen::kMissing : Seen::kUnseen;
 			}
 		};
 
-		// A round of looks; what is gone is reported, in line behind our other reports.
+		// A frame's part of the audit: its time goes on while the world is settled, and a round of looks may run. What is
+		// gone is reported, in line behind our other reports; a lost piece found standing is reported placed again.
 		void AuditFrame(Clock::time_point a_now)
 		{
-			std::vector<Protocol::WorkshopItem> gone;
+			// A frame longer than this (a hitch, a save) counts as this: the audit's time is the world's, seen running.
+			constexpr auto LONGEST_FRAME = std::chrono::milliseconds(250);
+			const bool     settled = AuditSettled();
+			WorkshopAudit::Round round;
 			{
-				AuditEngine      engine;
 				std::scoped_lock l{ auditLock };
-				gone = audit.Look(engine, a_now);
+				const auto       last = std::exchange(lastAuditFrame, a_now);
+				if (!settled) {
+					return;
+				}
+				if (last) {
+					auditClock += (std::min)(std::chrono::duration_cast<WorkshopAudit::Duration>(a_now - *last), std::chrono::duration_cast<WorkshopAudit::Duration>(LONGEST_FRAME));
+				}
+				AuditEngine engine;
+				round = audit.Look(engine, auditClock);
 			}
-			if (gone.empty()) {
+			for (const auto& item : round.found) {
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(item.refId) };
+				const auto                             bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(item.workshop);
+				if (ref && bench && ReportRef(ref.get(), bench, Protocol::WorkshopOp::kPlaced)) {
+					REX::INFO("WorkshopSync: our world has {:08X} (base {:08X}) again, which it had lacked: reported placed, back for everyone", item.refId, item.base);
+				}
+			}
+			if (round.gone.empty()) {
 				return;
 			}
+			const auto& gone = round.gone;
 			for (const auto& item : gone) {
 				REX::INFO("WorkshopSync: our world has no {:08X} (base {:08X}) the session keeps as ours (a save from before it was built): reported gone", item.refId, item.base);
 			}
@@ -2055,7 +2115,12 @@ namespace WorkshopSync
 		});
 		if (now >= nextCellLook) {
 			nextCellLook = now + CELL_LOOK_INTERVAL;
-			const auto fresh = NewlyAttachedCells();
+			std::vector<WorkshopCells::Where> attachedNow;
+			const auto                        fresh = NewlyAttachedCells(&attachedNow);
+			{
+				std::scoped_lock a{ auditLock };
+				cellAges.Update(attachedNow, auditClock);  // how long each has been, for the audit (AuditEngine)
+			}
 			// The host's world is the session's: a friend's save may have scrapped other things, and those
 			// stay theirs.
 			if (a_host) {
@@ -2152,10 +2217,7 @@ namespace WorkshopSync
 			settle.Clear();
 		}
 		sentScraps.Clear();
-		{
-			std::scoped_lock a{ auditLock };
-			audit.Clear();
-		}
+		ClearAudit();
 		reporter.Clear();
 		mirror.Clear();
 		keptTied.clear();
@@ -2181,10 +2243,7 @@ namespace WorkshopSync
 			copyIds.clear();
 		}
 		ClearWalk();
-		{
-			std::scoped_lock a{ auditLock };
-			audit.Clear();  // the server sends what it keeps as ours again after the load, to be looked for in this world
-		}
+		ClearAudit();  // the server sends what it keeps as ours again after the load, to be looked for in this world
 		// Our pieces are sent again (the load may have set them otherwise), and friends' are shown again on the copies
 		// found or made after the load. The workbenches are looked for again.
 		reporter.SendAll();
@@ -2195,10 +2254,7 @@ namespace WorkshopSync
 
 	void OnWorldGone()
 	{
-		{
-			std::scoped_lock a{ auditLock };
-			audit.Clear();
-		}
+		ClearAudit();
 		copies.clear();
 		twins.clear();
 		graveyard.clear();
@@ -2375,7 +2431,7 @@ namespace WorkshopSync
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={}", counts.framesCleared) + [] {
 			       std::scoped_lock a{ auditLock };
-			       return std::format(" ownLooking={} ownFound={} ownGone={}", audit.Waiting(), audit.Found(), audit.Lost());
+			       return std::format(" ownLooking={} ownFound={} ownGone={} ownLostLooking={} ownBack={} auditCells={}", audit.Waiting(), audit.Found(), audit.Lost(), audit.LostWaiting(), audit.Restored(), cellAges.Size());
 		       }();
 	}
 

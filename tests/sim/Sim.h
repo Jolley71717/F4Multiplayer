@@ -125,6 +125,9 @@ namespace Sim
 		std::map<std::uint32_t, Protocol::WorkshopItem>                built;     // by this player, by their reference ID
 		std::set<std::uint32_t>                                        scrapped;  // pieces of the world itself, gone
 		std::map<std::uint32_t, std::array<float, 3>>                  objects;   // where each loose object knocked about lies (its physics', or a friend's rest)
+		// Whose world it is (CharacterBinding::World's key: kept in each of its saves, a fresh one for a new character), said in
+		// the game's record after each welcome and load (Protocol::DropRecord::character).
+		std::uint64_t                                                  character = 0;
 
 		// Container contents with the untouched entries left out, for comparing.
 		[[nodiscard]] std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> Contents() const
@@ -229,7 +232,9 @@ namespace Sim
 	public:
 		Client(Session& a_session, std::string a_name, std::uint64_t a_identity, bool a_host) :
 			session(a_session), name(std::move(a_name)), identity(a_identity), host(a_host)
-		{}
+		{
+			world.character = NextCharacter();
+		}
 
 		Client(const Client&) = delete;
 		Client& operator=(const Client&) = delete;
@@ -370,6 +375,17 @@ namespace Sim
 		// Loads a save: the world goes back to it, and a game in a session asks for what changed since
 		// (Session::OnGameLoaded).
 		void LoadGame(const Save& a_save);
+		// Starts a new character (a new game, with nothing built), while out of the session: a guest whose character changes
+		// leaves (Session::OnGameLoaded), and joins again as the new one. Same PC, so same identity and player ID.
+		void NewCharacter()
+		{
+			world = World{};
+			world.character = NextCharacter();
+			copies = {};
+			copyKeys.clear();
+			audit.Clear();
+		}
+		[[nodiscard]] std::uint64_t Character() const { return world.character; }
 
 		// ---- what the player's game shows ----
 
@@ -535,6 +551,12 @@ namespace Sim
 		SendPacer::Queue<Packet>    workshopOut{ SendPacer::WORKSHOP_PER_SECOND, SendPacer::WORKSHOP_QUEUED };  // WorkshopSync's outgoing line
 		bool                        pacedWorkshop = true;
 		Clock::time_point           frameClock{};  // this game's frames, 30 a second
+		// What the session keeps as ours, looked for in our world each frame (WorkshopSync's AuditFrame; the stand-in's world is
+		// all in memory and always settled).
+		WorkshopAudit::Audit        audit;
+		std::uint64_t               charactersMade = 0;  // made so far (NextCharacter)
+		std::uint64_t NextCharacter() { return (identity << 8) ^ 0xC4A0000000000000ull ^ ++charactersMade; }
+		void          Audit();
 
 		// Loose objects: what moved each lately (Knock's a_how, for KNOCKED_FOR of this game's frames), and the scan.
 		struct LooseHow
@@ -757,6 +779,19 @@ namespace Sim
 			Deliver();
 			std::this_thread::sleep_for(a_wait);
 			Settle();
+		}
+
+		// a_time goes by in every game (its frames: what looks again later, as WorkshopAudit does, gets its looks) and on the
+		// server, a second at a time, the session settled after each.
+		void Play(std::chrono::seconds a_time)
+		{
+			for (auto s = a_time.count(); s > 0; --s) {
+				for (auto& client : clients) {
+					client->Frames(30);
+				}
+				Advance(std::chrono::seconds(1));  // and on the server
+				Settle();
+			}
 		}
 
 		[[nodiscard]] const Server::Options& ServerOptions() const { return options; }
@@ -1189,8 +1224,10 @@ namespace Sim
 		// WorldSync's record of the save, then (Session) the world is bound to the session we're in and asks
 		// for what came since.
 		loot.LoadRecord(a_save.resync.sessionId, a_save.resync.containerFrom, {});  // session 0: the save has no record
+		audit.Clear();  // WorkshopSync::OnGameLoaded: the server sends what it keeps as ours again
 		if (const auto request = welcomed ? loot.AfterLoad(LootSync::Clock::now()) : std::nullopt) {
 			Send(Protocol::Encode(*request), true);
+			Send(Protocol::Encode(Protocol::DropRecord{ .character = world.character }), true);  // Drops::SendRecord
 		}
 	}
 
@@ -1226,6 +1263,7 @@ namespace Sim
 	{
 		for (int i = 0; i < a_count; ++i) {
 			frameClock += std::chrono::milliseconds(33);
+			Audit();
 			if (frameClock >= nextKnockScan) {
 				nextKnockScan = frameClock + KNOCK_SCAN;
 				ScanKnocks();
@@ -1252,6 +1290,33 @@ namespace Sim
 					graph.walking = start;
 					return true;
 				});
+			}
+		}
+	}
+
+	inline void Client::Audit()
+	{
+		struct Engine
+		{
+			const World& world;
+			WorkshopAudit::Seen Look(const Protocol::WorkshopItem& a_item) const
+			{
+				const auto it = world.built.find(a_item.refId);
+				return it != world.built.end() && it->second.base == a_item.base ? WorkshopAudit::Seen::kStands : WorkshopAudit::Seen::kGone;
+			}
+		} engine{ world };
+		if (!connected || !welcomed) {
+			return;
+		}
+		const auto round = audit.Look(engine, frameClock.time_since_epoch());
+		if (!round.gone.empty()) {
+			SendWorkshop(Protocol::Encode(round.gone, MT::kReportWorkshopGone));
+		}
+		for (const auto& item : round.found) {
+			if (const auto it = world.built.find(item.refId); it != world.built.end()) {
+				auto report = it->second;
+				report.playerId = playerId;
+				SendWorkshop(Protocol::Encode(report, MT::kReportWorkshopItem));  // back for everyone
 			}
 		}
 	}
@@ -1415,6 +1480,8 @@ namespace Sim
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;
 				}
+				// Drops::OnWelcome: our record, which says whose world it is.
+				Send(Protocol::Encode(Protocol::DropRecord{ .character = world.character }), true);
 				// Session forgets what gear it sent on a welcome, so its next check sends it again.
 				if (myGear) {
 					Send(Protocol::Encode(Protocol::Equipment{ 0, *myGear }, MT::kEquipment), true);
@@ -1639,23 +1706,13 @@ namespace Sim
 			// What the session keeps as ours, looked for in our world (WorkshopSync::AuditOwn). The stand-in's world is all
 			// in memory: a piece is ours there, or gone (WorkshopAudit's kStands or kGone, never left to wait for a cell).
 			if (const auto msg = Protocol::DecodeWorkshopItems(a_data)) {
-				struct Engine
-				{
-					const World& world;
-					WorkshopAudit::Seen Look(const Protocol::WorkshopItem& a_item) const
-					{
-						const auto it = world.built.find(a_item.refId);
-						return it != world.built.end() && it->second.base == a_item.base ? WorkshopAudit::Seen::kStands : WorkshopAudit::Seen::kGone;
-					}
-				} engine{ world };
-				WorkshopAudit::Audit audit;
 				audit.Add(*msg);
-				if (const auto gone = audit.Look(engine, frameClock); !gone.empty()) {
-					SendWorkshop(Protocol::Encode(gone, MT::kReportWorkshopGone));
-				}
 			} else {
 				unless(false);
 			}
+			break;
+		case MT::kDropList:
+			unless(Protocol::DecodeDropList(a_data).has_value());  // the answer to our record: our stand-in drops nothing
 			break;
 		case MT::kWorldTime:
 			if (const auto msg = Protocol::DecodeWorldTime(a_data)) {

@@ -1078,6 +1078,10 @@ namespace Protocol
 	{
 		inline constexpr std::uint8_t kPlaced = 0;  // placed, or moved (same message, new transform)
 		inline constexpr std::uint8_t kScrapped = 1;
+		// Only in kOwnWorkshopItems and the server's session file: a piece kept as the receiver's own building that their world
+		// said it lacked (WorkshopStore's lost pieces). Taken out for everyone, but its game looks for it still: one it finds
+		// standing (a later save loaded) it reports placed again, and it comes back for everyone.
+		inline constexpr std::uint8_t kLost = 2;
 	}
 
 	// An explosion the sender's player (or an NPC its game runs) set off: a grenade, a Molotov, a missile, a shell, an
@@ -1255,6 +1259,10 @@ namespace Protocol
 		float                    rotation[3] = { 0.0f, 0.0f, 0.0f };
 		float                    scale = 1.0f;
 		std::optional<WireShape> wire;  // a power wire's shape (since protocol 38); none for anything else
+		// Whose world built it (the builder's DropRecord::character when the server heard the report; 0 not known): the server's
+		// own, never on the wire but in its session file (EncodeKeptWorkshopItems). Only that character's world is asked
+		// whether it still has the piece (WorkshopStore::BuiltBy).
+		std::uint64_t character = 0;
 
 		bool operator==(const WorkshopItem&) const = default;
 	};
@@ -3608,8 +3616,9 @@ namespace Protocol
 		}
 
 		// False if the item is not one we would accept. a_withWire: the wire's byte is there (written since
-		// protocol 38; a session file of an older layout has none).
-		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg, bool a_withWire = true)
+		// protocol 38; a session file of an older layout has none). a_lost: kLost may be its op (kOwnWorkshopItems, the session
+		// file), which no player's report may have.
+		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg, bool a_withWire = true, bool a_lost = false)
 		{
 			msg.playerId = r.U32();
 			msg.refId = r.U32();
@@ -3643,7 +3652,8 @@ namespace Protocol
 					msg.wire = wire;
 				}
 			}
-			return r.Ok() && finite && msg.refId != 0 && msg.op <= WorkshopOp::kScrapped && (msg.op != WorkshopOp::kPlaced || (msg.base != 0 && (msg.base >> 24) != 0xFF));
+			return r.Ok() && finite && msg.refId != 0 && (msg.op <= WorkshopOp::kScrapped || (a_lost && msg.op == WorkshopOp::kLost)) &&
+			       (msg.op == WorkshopOp::kScrapped || (msg.base != 0 && (msg.base >> 24) != 0xFF));
 		}
 	}
 
@@ -3681,18 +3691,23 @@ namespace Protocol
 
 	namespace detail
 	{
-		inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data, bool a_withWire)
+		// a_characters: each item is followed by its character (the session file's, EncodeKeptWorkshopItems).
+		inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data, bool a_withWire, bool a_characters = false)
 		{
-			Reader r{ a_data };
-			r.U8();
+			Reader     r{ a_data };
+			const auto type = static_cast<MessageType>(r.U8());
+			const bool lost = a_characters || type == MessageType::kOwnWorkshopItems;  // what the server keeps: kLost may be there
 			const auto count = r.U8();
 			if (!r.Ok() || count > MAX_ACTORS_PER_PACKET) {
 				return std::nullopt;
 			}
 			std::vector<WorkshopItem> items(count);
 			for (auto& item : items) {
-				if (!ReadWorkshopItem(r, item, a_withWire)) {
+				if (!ReadWorkshopItem(r, item, a_withWire, lost)) {
 					return std::nullopt;
+				}
+				if (a_characters) {
+					item.character = r.U64();
 				}
 			}
 			if (!r.AtEnd()) {
@@ -3711,6 +3726,25 @@ namespace Protocol
 	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItemsBeforeWires(std::span<const std::uint8_t> a_data)
 	{
 		return detail::DecodeWorkshopItems(a_data, false);
+	}
+
+	// The server's session file since its layout 42 (SessionFile::WORKSHOP_CHARACTERS): kWorkshopItems with each item's
+	// character after it, and its lost pieces (kLost) among them.
+	inline std::vector<std::uint8_t> EncodeKeptWorkshopItems(const std::vector<WorkshopItem>& a_msg)
+	{
+		Writer     w{ MessageType::kWorkshopItems };
+		const auto count = (std::min)(a_msg.size(), MAX_ACTORS_PER_PACKET);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteWorkshopItem(w, a_msg[i]);
+			w.U64(a_msg[i].character);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<std::vector<WorkshopItem>> DecodeKeptWorkshopItems(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorkshopItems(a_data, true, true);
 	}
 
 	// Up to MAX_POWER_ENTRIES entries (any more are left off: the sender splits them, WorkshopPower::Chunks).
