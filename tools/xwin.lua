@@ -69,7 +69,7 @@ toolchain("xwin")
 		end
 		local root = xwin_root()
 		if not os.isdir(path.join(root, "sdk", "include", "um")) then
-			cprint("${color.error}xwin toolchain: no Windows SDK in %s (xwin --accept-license --arch x86_64 splat --output %s)", root, root)
+			cprint("${color.error}xwin toolchain: no Windows SDK in %s (docs/misc/MAC.md: xwin ... splat --output %s)", root, root)
 			found = false
 		end
 		return found
@@ -86,9 +86,6 @@ toolchain("xwin")
 		for _, flag in ipairs(xwin_cxflags()) do
 			a_toolchain:add("cxflags", flag)
 		end
-		-- CommonLibF4's F4SE/RegistrationMap*.cpp have a bare "return;" in templates that are never instantiated; MSVC
-		-- never looks inside them, clang refuses them at parse
-		a_toolchain:add("cxxflags", "-Wno-return-mismatch")
 		for _, dir in ipairs(XWIN_INCLUDES) do
 			a_toolchain:add("mrcflags", "/I" .. path.join(xwin_root(), dir))
 		end
@@ -124,6 +121,7 @@ if get_config("toolchain") == "xwin" then
 		set_description("Reliable UDP networking library (built with clang-cl for the xwin toolchain)")
 		set_license("MIT")
 		add_urls("https://github.com/lsalzman/enet.git")
+		add_versions("v1.3.18", "2662c0de09e36f2a2030ccc2c528a3e4c9e8138a")
 		add_syslinks("winmm", "ws2_32")
 
 		on_install(function(a_package)
@@ -141,6 +139,7 @@ if get_config("toolchain") == "xwin" then
 		set_description("Fast C++ logging library (built with clang-cl for the xwin toolchain)")
 		set_license("MIT")
 		add_urls("https://github.com/gabime/spdlog.git")
+		add_versions("v1.16.0", "486b55554f11c9cccc913e11a87085b2a91f706f")
 		add_configs("header_only", { description = "Use header only version.", default = true, type = "boolean" })
 		add_configs("std_format", { description = "Use std::format instead of fmt library.", default = false, type = "boolean" })
 		add_configs("wchar", { description = "Support wchar api.", default = false, type = "boolean" })

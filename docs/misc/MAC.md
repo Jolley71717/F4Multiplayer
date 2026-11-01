@@ -5,6 +5,14 @@ natively, the plugin and the tests build for Windows with clang-cl, and the game
 under CrossOver. Releases are still built with MSVC on Windows; a pull request tested with a clang-cl
 build says so.
 
+A fresh clone needs its submodules first (CommonLibF4 among them):
+
+```sh
+git submodule update --init --recursive
+```
+
+Tested with Homebrew's xmake 3.1.2, LLVM and lld 23.1.4, and xwin 0.10.0.
+
 ## Server and bot
 
 With Homebrew's LLVM: Apple's own compiler lacks parts of C++23 the server uses before macOS 26.
@@ -26,7 +34,7 @@ the native one:
 
 ```sh
 brew install lld xwin
-xwin --accept-license --arch x86_64 splat --output ~/.xwin
+xwin --accept-license --arch x86_64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 splat --output ~/.xwin
 export XMAKE_CONFIGDIR=$PWD/.xmake/win
 xmake f -p windows -a x64 -m releasedbg --toolchain=xwin
 xmake build -y F4Multiplayer F4MPTests
