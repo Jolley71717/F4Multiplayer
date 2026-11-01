@@ -329,7 +329,11 @@ run_phase() {
 
 	for t in "${TG[@]}"; do dc "$o" "console $(tg_ro "$t").setrestrained 0" >/dev/null; dc "$p" "console $(tg_ro "$t").setrestrained 0" >/dev/null; done
 	# the raised health stays in both running games (a console setav, nobody's session state): put back, or a later run on the
-	# same games (smoke's health compare, 2026-11-01) finds 120 in one and 30 in a game that restarted since
+	# same games (smoke's health compare, 2026-11-01) finds 120 in one and 30 in a game that restarted since. The damage is
+	# taken off first: a raider left at 1 of 120 put back to a base of 30 sits at -89, and the copy died of it in one game
+	# while the runner's stayed up (2026-11-01: smoke then found it dead in the VM only)
+	for a in "${!TOUGH_WAS[@]}"; do dc host "console $a.restoreav health 1000" >/dev/null; dc vm "console $a.restoreav health 1000" >/dev/null; done
+	sleep 1
 	for a in "${!TOUGH_WAS[@]}"; do dc host "console $a.setav health ${TOUGH_WAS[$a]}" >/dev/null; dc vm "console $a.setav health ${TOUGH_WAS[$a]}" >/dev/null; done
 	ALL_TG+=("${TG[@]}")
 }
