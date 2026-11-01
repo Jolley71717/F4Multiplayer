@@ -31,7 +31,9 @@
 #               bodies): a raider put into one is moved on (placed_ok), and every step proves its shots reach the raider before it
 #               counts anything. A copy hit's shot is its own proof: one that meets something else changes nothing in either game
 #               (no hit: no claim, no damage), so the raider is moved and shot again, or replaced by a spare, up to 3 tries; then
-#               it FAILS as set-up, naming the blocked line, and the step is not run. Each try is in targets.txt.
+#               it FAILS as set-up, naming the blocked line, and the step is not run. Each try is in targets.txt. A shot that hurt
+#               the copy in the shooter's game, with no hit counted and no damage passed on, reached it: it FAILS as the mod's,
+#               never retried.
 #   end         no living NPC's health rose in a copy alone (a heal-back: the 0.10.1 bug); copyOwed = 0 on both games;
 #               copyUnseen, the session's ignored hits and copyLost unchanged; give-backs and real heals are reported.
 #   Targets must be alive in both games when the shooting starts (a raider the session has dead can read alive in `actors`).
@@ -302,6 +304,7 @@ fresh_target() {
 	if [ "$(field "$i" dead)" = false ] && is_num "$h" && _cmp "$h" '<' "$T_TOUGH_HP"; then
 		dc "$o" "console $ro.restoreav health 1000" >/dev/null
 		for k in 1 2 3 4; do sleep 1; i=$(rinfo "$o" "$ro"); h=$(field "$i" hp); is_num "$h" && _cmp "$h" '>=' "$T_TOUGH_HP" && break; done
+		healed_sample "$t"
 	fi
 	if [ "$(field "$i" dead)" = false ] && [ "$(field "$i" owner)" = "${MYID[$o]}" ] && is_num "$h" && _cmp "$h" '>=' "$((T_TOUGH_HP * 9 / 10))"; then
 		pass "$l: set-up: the target is alive, $o's and at full health as the step starts" "hp $h, player $(field "$i" owner)"; return 0
@@ -314,6 +317,7 @@ top_up() {
 	local o ro i h k; o=$(tg_o "$1"); ro=$(tg_ro "$1")
 	dc "$o" "console $ro.restoreav health 1000" >/dev/null
 	for k in 1 2 3 4; do sleep 1; i=$(rinfo "$o" "$ro"); h=$(field "$i" hp); is_num "$h" && _cmp "$h" '>=' "$T_TOUGH_HP" && break; done
+	healed_sample "$1"
 	[ "$(field "$i" dead)" = false ] && [ "$(field "$i" owner)" = "${MYID[$o]}" ]
 }
 # runner_reaches <target>: one of two shots of the runner's own reaches its raider (health falls in the runner's game). RL says what was seen.
@@ -329,14 +333,19 @@ runner_reaches() {
 	done
 	RL="the runner's own 3 shots did not reach it (hp $h0 -> $h1)"; return 1
 }
-# reached <shooter> <runner> <ref> <shooter's copyHits before> <runner's hp before>: the shooter's shot reached the raider: the
-# shooter's game took a hit on its copy (copyHits rose), or the raider's health fell in the runner's game. Neither: the bullet met
-# something else, and changed nothing in either game (no hit, so no claim and no damage): the spot is the cause, not the mod.
-# REACH says what was read.
+# reached <shooter> <runner> <ref> <shooter's copyHits before> <runner's hp before> <the copy's hp before, in the shooter's game>:
+# 0 when the shooter's shot reached the raider: the shooter's game took a hit on its copy (copyHits rose), or the raider's health
+# fell in the runner's game. 1 when neither, and the copy's health is unchanged: the bullet met something else and changed nothing
+# in either game (no hit, so no claim and no damage): the spot is the cause, not the mod. 2 when neither, but the copy was hurt
+# in the shooter's game: the bullet hit it, and the mod neither counted a hit on a copy nor passed the damage on (the shooter's
+# game took it for an NPC of its own, or lost it): the mod's failure, which a new spot must never retry away. REACH says what was read.
 reached() {
-	local c1 h1; sleep 1.5; c1=$(field "$(dc "$1" 'net status')" copyHits); h1=$(hpv "$2" "$3")
-	REACH="the shooter's copyHits $4 -> $c1, the runner's hp $5 -> $h1"
-	{ is_num "$4" && is_num "$c1" && [ "$c1" -gt "$4" ]; } || { is_num "$5" && is_num "$h1" && _cmp "$h1" '<' "$5"; }
+	local c1 h1 p1; sleep 1.5; c1=$(field "$(dc "$1" 'net status')" copyHits); h1=$(hpv "$2" "$3"); p1=$(hpv "$1" "$3")
+	REACH="the shooter's copyHits $4 -> $c1, the runner's hp $5 -> $h1, the copy's hp in the shooter's game $6 -> $p1"
+	{ is_num "$4" && is_num "$c1" && [ "$c1" -gt "$4" ]; } && return 0
+	{ is_num "$5" && is_num "$h1" && _cmp "$h1" '<' "$5"; } && return 0
+	{ is_num "$6" && is_num "$p1" && _cmp "$p1" '<' "$6"; } && return 2
+	return 1
 }
 # prove_lines <label> <target>: before a kill or pause step, both players' shots must reach its raider: the runner's own
 # (runner_reaches), then the shooter's in one pair_shot (its copyHits rises; the runner keeps the raider, the pair being inside
@@ -381,8 +390,22 @@ copy_shot() {
 	fire "$s" "$t"
 }
 settle() { local t=$1 i; for i in 1 2 3 4 5 6 7 8; do sleep 0.8; sample "$t" settle; done; }
+# A "healed" sample (healed_sample, after a restoreav of the run's own) starts the count afresh: the check's own heal is no heal of
+# the raider's, and counted as one it would offset a copy-only rise anywhere in that raider's series.
 series_rises() {  # series_rises <ref>: "<rises in the owner's game> <rises in the other's>", while neither game has it dead
-	awk -v r="$1" '$1==r && $4!="true" && $7!="true" && $3!="" && $6!="" { if (n && $3>po+0.5) ro++; if (n && $6>pp+0.5) rp++; po=$3; pp=$6; n=1 } END{print ro+0, rp+0}' "$SERIES"
+	awk -v r="$1" '$1==r && $4!="true" && $7!="true" && $3!="" && $6!="" { if (n && $8!="healed" && $3>po+0.5) ro++; if (n && $8!="healed" && $6>pp+0.5) rp++; po=$3; pp=$6; n=1 } END{print ro+0, rp+0}' "$SERIES"
+}
+# healed_sample <target>: after a restoreav of the run's own in the runner's game, waits (up to about 5 s) for the copy to follow,
+# then samples both games as "healed" (series_rises counts neither rise into it). A copy that has not followed by then rises in a
+# later sample alone, and the heal-back check FAILS on it.
+healed_sample() {
+	local o p k a b; o=$(tg_o "$1"); p=$(other_of "$o")
+	for k in 1 2 3 4 5 6; do
+		a=$(hpv "$o" "$(tg_ro "$1")"); b=$(hpv "$p" "$(tg_rp "$1")")
+		is_num "$a" && is_num "$b" && awk -v a="$a" -v b="$b" -v d="$T_HP_DIFF" 'BEGIN{exit !(b >= a - d)}' && break
+		sleep 0.8
+	done
+	sample "$1" healed
 }
 last_hp() { awk -v r="$1" '$1==r {o=$3; p=$6; od=$4; pd=$7} END{print o, p, od, pd}' "$SERIES"; }
 start_hp() { awk -v r="$1" '$1==r && $8=="start" {print $3, $6; exit}' "$SERIES"; }
@@ -428,17 +451,22 @@ run_phase() {
 		# The copy hit's own shot proves the shooter's line: one that meets something else changes nothing in either game, so
 		# the raider is moved (re_place) or, the third time, another raider is put in (swap_spare), and it is shot again. Nothing
 		# is counted until a shot reaches it; at none of 3 tries it FAILS as set-up and the step is not run.
-		local k c0 h0 ok=0
+		# A shot that hurt the copy in the shooter's game with no hit counted and no damage passed on reached it: that is the
+		# mod's failure (reached 2), FAILED as such and never retried at another spot.
+		local k c0 h0 p0 rc ok=0
 		for k in 1 2 3; do
-			ro=$(tg_ro "$t"); snap "${rl}0"; c0=$(cget "${rl}0" "$p" copyHits); h0=$(hpv "$o" "$ro")
+			ro=$(tg_ro "$t"); snap "${rl}0"; c0=$(cget "${rl}0" "$p" copyHits); h0=$(hpv "$o" "$ro"); p0=$(hpv "$p" "$(tg_rp "$t")")
 			copy_shot "$p" "$t" || { ok=skip; break; }
-			reached "$p" "$o" "$ro" "$c0" "$h0" && { ok=1; break; }
+			reached "$p" "$o" "$ro" "$c0" "$h0" "$p0"; rc=$?
+			[ $rc = 0 ] && { ok=1; break; }
+			[ $rc = 2 ] && { ok=lost; break; }
 			echo "$rl $ro: try $k: the shooter's shot did not reach it ($REACH)" >> "$A_OUT/targets.txt"
 			[ $k = 3 ] && break
 			if [ $k = 2 ] && swap_spare "$t"; then t=$SWAPPED; else re_place "$t" "the shooter's shot did not reach it" || { swap_spare "$t" && t=$SWAPPED; } || break; fi
 		done
 		[ "$ok" = skip ] && continue
 		ro=$(tg_ro "$t")
+		if [ "$ok" = lost ]; then fail "$rl, $o's $ro: the shooter's hit on the copy was counted, or its damage passed on" "try $k: $REACH: the shot hurt the copy, so its line was clear, and the mod lost the hit (the shooter's game took the raider for its own, or dropped the hit): the step is not run"; continue; fi
 		if [ "$ok" != 1 ]; then fail "$rl, $o's $ro: set-up: the shooter's shot reaches the target" "not in $k tries ($REACH after the last): its line was blocked at each spot (targets.txt): the step is not run"; continue; fi
 		pass "$rl, $o's $ro: set-up: the shooter's shot reaches the target" "try $k: $REACH"
 		settle "$t"; snap "${rl}1"
@@ -510,6 +538,7 @@ run_phase() {
 			PAUSE_WHO=""
 			[ $lateTry = 0 ] && [ $try -lt 4 ] && [ "$PAIR_GAP" -gt "$T_PAIR_GAP_MS" ] && [ "$(runner "$o" "$ro")" = "${MYID[$o]}" ] && top_up "$t" || break
 			lateTry=1; paired=0
+			warn "pause ($o runs the NPC): a late pair fired again" "the first pair came $PAIR_GAP ms apart (over $T_PAIR_GAP_MS; the runner kept it): its counts are not used; the raider was healed and the pair fired once more (targets.txt)"
 			echo "pause $ro: the pair came $PAIR_GAP ms apart (over $T_PAIR_GAP_MS): fired again" >> "$A_OUT/targets.txt"; sleep 2
 		done
 		if [ $paired = 0 ]; then
