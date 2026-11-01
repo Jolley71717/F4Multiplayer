@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T00:37:10+00:00",
+ "updated": "2026-11-01T01:09:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -379,8 +379,9 @@
    "title": "Shared rolls: one NPC of 36 built with a different trait slot on simultaneous arrival",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Two games arriving at once: one NPC came out different on the slower machine"
+   "stage": 1,
+   "note": "Counter added; fix after #236 merges",
+   "pr": 236
   },
   {
    "id": "cp4d",
@@ -676,8 +677,9 @@
    "title": "Shared rolls: a respawned NPC is rebuilt as the same roll, so a legendary spot stays legendary for the whole session",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Respawned enemies come back as the same roll; a legendary one stays legendary"
+   "stage": 2,
+   "note": "Fixed in PR #236, needs review",
+   "pr": 236
   },
   {
    "id": "l7oc",
@@ -859,8 +861,9 @@
    "title": "Spawns: a friend's spawn copy is withheld or removed for good when any hostile runtime NPC of ours is within 128 units",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "A friend's enemy can vanish from your game when one of your own enemies runs next to it"
+   "stage": 2,
+   "note": "Fixed in PR #236, needs review",
+   "pr": 236
   },
   {
    "id": "r4al",
