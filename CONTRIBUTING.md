@@ -40,6 +40,8 @@ hand-declared functions in `src/steam/SteamApi.cpp`.
 
 If you already cloned without submodules: `git submodule update --init --recursive`.
 
+On a Mac: [docs/misc/MAC.md](docs/misc/MAC.md).
+
 ## Tests
 
 ```bat

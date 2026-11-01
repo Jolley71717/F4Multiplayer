@@ -4,16 +4,27 @@ if is_plat("windows") then
     includes("lib/commonlibf4")
 end
 
+-- the plugin built for Windows on a Mac (tools/xwin.lua)
+if is_host("macosx") then
+    includes("tools/xwin.lua")
+end
+
 -- set project constants
 set_project("F4Multiplayer")
 set_version("0.10.1")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")
-if not is_plat("windows") then
-    -- gcc's -Wextra warns on every aggregate init that leaves fields to their defaults, which the code
-    -- does on purpose everywhere (MSVC, the plugin's compiler, says nothing)
+if not is_plat("windows") or get_config("toolchain") == "xwin" then
+    -- gcc's and clang's -Wextra warn on every aggregate init that leaves fields to their defaults, which the
+    -- code does on purpose everywhere (MSVC, the plugin's compiler, says nothing)
     add_cxxflags("-Wno-missing-field-initializers")
+end
+if get_config("toolchain") == "xwin" then
+    -- clang-cl: the same for designated initializers; and CommonLibF4's F4SE/RegistrationMap*.cpp have a bare
+    -- "return;" in templates that are never instantiated, which MSVC never looks inside and clang refuses at parse.
+    -- Set here rather than in the toolchain so they come after set_warnings' -W4, which would turn them back on.
+    add_cxxflags("-Wno-missing-designated-field-initializers", "-Wno-return-mismatch")
 end
 
 -- add common rules

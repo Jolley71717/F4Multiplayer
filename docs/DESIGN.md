@@ -2396,6 +2396,7 @@ that changes the world cannot ship without a row here.
 
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
+- `tools/crossovermac.sh`: both of the above for the game under CrossOver on a Mac (docs/misc/MAC.md).
 - Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
   `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
   markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
