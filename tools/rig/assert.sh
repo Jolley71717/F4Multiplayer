@@ -113,7 +113,7 @@ rig_input_ready() {
 	dc "$w" focus >/dev/null
 	while :; do
 		m=$(dc "$w" menus | grep -oE 'open=[^ ]*'); [ -n "$m" ] || break
-		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu' | tr '\n' ' '); open=${open% }
+		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|none' | tr '\n' ' '); open=${open% }
 		[ -z "$open" ] && break
 		if [ $((SECONDS - t0)) -ge "$limit" ]; then INPUT_READY="${did:+closed$did; }${waited:+waited for$waited; }still open after $limit s: $open"; return 1; fi
 		dc "$w" focus >/dev/null
@@ -139,7 +139,9 @@ rig_input_ready() {
 	local f k
 	INPUT_FRONT=yes
 	for k in 1 2 3 4 5 6; do dc "$w" focus >/dev/null; sleep 1; f=$(dc "$w" focus); case "$f" in front=no*) ;; *) break;; esac; done
-	case "$f" in front=no*) INPUT_FRONT=no; INPUT_READY="${INPUT_READY:+$INPUT_READY; }not in front after $k tries: ${f%% input:*}";; esac
+	case "$f" in front=no*) INPUT_FRONT=no; INPUT_READY="${INPUT_READY:+$INPUT_READY; }not in front after $k tries: ${f%% input:*}";;
+	front=*) ;;
+	*) INPUT_FRONT=unknown; INPUT_READY="${INPUT_READY:+$INPUT_READY; }the dev channel gave no answer to focus";; esac
 	[ "$INPUT_FRONT" = yes ] && [ "$k" -gt 1 ] && INPUT_READY="${INPUT_READY:+$INPUT_READY; }brought to the front (try $k)"
 	return 0
 }
@@ -148,7 +150,7 @@ rig_input_ready() {
 # rig.sh join restarts; or a real regression); one that would not come to the front is the desktop's or a build without the fix.
 RIG_INPUT_DEAD="its window was in front and on a screen, and its input still never reached the player"
 RIG_INPUT_NOFRONT="its window would not stay in front and on a screen (another window kept taking it, or it is parked off every screen and the DLL can't move it): no input goes to a game that is not in front"
-rig_input_why() { [ "$INPUT_FRONT" = no ] && echo "$RIG_INPUT_NOFRONT" || echo "$RIG_INPUT_DEAD"; }
+rig_input_why() { case "$INPUT_FRONT" in no) echo "$RIG_INPUT_NOFRONT" ;; unknown) echo "the dev channel gave no answer to focus, so whether its window was in front is not known" ;; *) echo "$RIG_INPUT_DEAD" ;; esac; }
 # rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks); the game
 # made ready first (rig_input_ready), and once more before a second click if the first fired nothing
 # mouse_why <who>: what that game's raw input looked like (the `mousedev` answer), for a click that fired nothing; empty from a build
