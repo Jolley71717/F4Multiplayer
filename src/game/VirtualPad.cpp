@@ -186,6 +186,7 @@ namespace VirtualPad
 		PollFn keyboardPoll = nullptr;
 		PollFn mousePoll = nullptr;
 		bool   devicesHooked = false;
+		bool   devicesShared = false;  // one class for both: they can't be muted apart, so they never are
 
 		void KeyboardPollHook(RE::BSInputDevice* a_this, float a_delta)
 		{
@@ -209,8 +210,8 @@ namespace VirtualPad
 		// The keyboard's and the mouse's Poll, hooked in their classes' vtables (read from the devices themselves).
 		bool HookDesktopDevices(RE::BSInputDeviceManager& a_input)
 		{
-			if (devicesHooked) {
-				return true;
+			if (devicesHooked || devicesShared) {
+				return devicesHooked;
 			}
 			const auto keyboard = a_input.devices[std::to_underlying(RE::BSInputDeviceManager::BS_DEVICES::kKeyboard)];
 			const auto mouse = a_input.devices[std::to_underlying(RE::BSInputDeviceManager::BS_DEVICES::kMouse)];
@@ -221,7 +222,7 @@ namespace VirtualPad
 			const auto mouseSlot = *reinterpret_cast<std::uintptr_t*>(mouse) + sizeof(void*) * POLL_INDEX;
 			if (keyboardSlot == mouseSlot) {
 				REX::WARN("Pad: the keyboard and the mouse share a class; they are not muted in the background");
-				devicesHooked = true;
+				devicesShared = true;
 				return false;
 			}
 			keyboardPoll = *reinterpret_cast<PollFn*>(keyboardSlot);
