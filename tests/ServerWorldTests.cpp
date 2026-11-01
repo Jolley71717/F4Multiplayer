@@ -1148,6 +1148,111 @@ TEST("server world: an NPC's health is said by the game that runs it; the last w
 	CHECK(deaths[0].playerId == alice);
 }
 
+// ---- health for whoever comes later (NpcHealths) ----------------------------------------------
+
+namespace
+{
+	// The health the server sent a_peer, by NPC (the last of each).
+	std::map<std::uint32_t, float> HealthsSent(Fixture& a_f, PeerId a_peer)
+	{
+		std::map<std::uint32_t, float> out;
+		for (const auto& health : Decoded(Received(a_f, a_peer), MT::kActorHealth, Protocol::DecodeActorHealth)) {
+			out[health.refId] = health.health;
+		}
+		return out;
+	}
+}
+
+TEST("server world: a late joiner is told the health of the hurt NPCs others run; not one at full health, nor the dead, nor one nobody runs")
+{
+	// A player who joins mid-fight: before, nothing told their game how hurt the raiders were, and their copies stood at
+	// full health until each one was hit again.
+	constexpr std::uint32_t NPC4 = 0x0001F004;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned }, { NPC3, Reason::kUnowned } }));
+	f.fake->Deliver(1, Health(NPC, 0.4f));   // hurt
+	f.fake->Deliver(1, Health(NPC2, 1.0f));  // her game's first reading of one it came to run: never hurt
+	f.fake->Deliver(1, Health(NPC3, 0.5f));
+	f.fake->Deliver(1, Death(NPC3));         // a death is shared as one
+	f.fake->Deliver(1, Health(NPC4, 0.3f));  // nobody runs it: each game that has it runs its own
+	Clear(f, { 1 });
+
+	JoinAs(f, 2, "Bob");
+	const auto sent = HealthsSent(f, 2);
+	CHECK((sent == std::map<std::uint32_t, float>{ { NPC, 0.4f } }));
+	CHECK(f.Logged("told the health of 1 hurt NPCs others run"));
+	// Alice heard nothing more of her own NPC.
+	CHECK(Count(Received(f, 1), MT::kActorHealth) == 0);
+}
+
+TEST("server world: a game that rejoins after a crash, or loads a save, is told where the NPCs others run stand; the one that runs them is not")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice", 0xA11CE);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, Claim(NPC));
+	f.fake->Deliver(1, Health(NPC, 0.8f));
+	f.fake->Deliver(1, Health(NPC, 0.25f));  // the last word is what counts
+	Clear(f, { 1, 2 });
+
+	// Bob's game crashed and he joins again, before the old connection timed out.
+	JoinAs(f, 3, "Bob", 0xB0B);
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.25f } }));
+
+	// He loads a save: his copies go back to the save's health, so he is told again.
+	f.fake->Deliver(3, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.25f } }));
+
+	// Alice's game runs it: her own load goes by her own reading (HealthShare reports it), not the session's.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK(HealthsSent(f, 1).empty());
+}
+
+TEST("server world: health kept for joiners follows the NPC's runner: two runners, a takeover, a healed NPC, a release and a runner who leaves")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	f.fake->Deliver(2, Claim(NPC2));
+	f.fake->Deliver(1, Health(NPC, 0.4f));
+	f.fake->Deliver(2, Health(NPC2, 0.7f));
+	Clear(f, { 1, 2 });
+
+	// Two runners: a joiner hears both; each runner, after a load, only the other's.
+	JoinAs(f, 3, "Carol");
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.4f }, { NPC2, 0.7f } }));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 2) == std::map<std::uint32_t, float>{ { NPC, 0.4f } }));
+
+	// Bob takes Alice's NPC over with a hit; her game's report on its way is not the session's word (nor kept), his is.
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	REQUIRE(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	f.fake->Deliver(1, Health(NPC, 0.9f));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 1) == std::map<std::uint32_t, float>{ { NPC, 0.4f }, { NPC2, 0.7f } }));
+	f.fake->Deliver(2, Health(NPC, 0.3f));
+	// It heals back to full in Bob's game: a joiner whose save has it hurt is told it is whole.
+	f.fake->Deliver(2, Health(NPC2, 1.0f));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 1) == std::map<std::uint32_t, float>{ { NPC, 0.3f }, { NPC2, 1.0f } }));
+
+	// Bob's game lets NPC2 go (its cell unloaded): whoever runs it next reports its own reading. (Carol loads: Alice has
+	// asked for the world as often as the server allows.)
+	f.fake->Deliver(2, Release(NPC2));
+	Clear(f, { 3 });
+	f.fake->Deliver(3, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.3f } }));
+
+	// Bob leaves: his NPCs are nobody's, and nothing of theirs is kept.
+	f.fake->Drop(2);
+	JoinAs(f, 4, "Dave");
+	CHECK(HealthsSent(f, 4).empty());
+	(void)alice;
+}
+
 TEST("server world: a companion goes to its player, but not away from another's companion")
 {
 	Fixture    f;

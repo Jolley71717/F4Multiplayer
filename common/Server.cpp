@@ -4,6 +4,7 @@
 #include "DropStore.h"
 #include "EnetTransport.h"
 #include "FormIds.h"
+#include "NpcHealths.h"
 #include "Name.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
@@ -501,6 +502,7 @@ void Server::Run()
 	};
 	std::unordered_map<std::uint32_t, Loan> loans;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	NpcHealths::Book npcHealths;  // the health of each run NPC hurt here, from its runner: sent to a joiner and after a load
 	// What each NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
 	// game still has its own roll (it could not make the session's) does not replace it, so nobody's NPC changes again
@@ -760,6 +762,7 @@ void Server::Run()
 		spawns.clear();
 		loans.clear();
 		npcEquipment.clear();
+		npcHealths.Clear();
 		npcIdentities.clear();
 		rollsFullLogged = false;
 		rollLives.clear();
@@ -1098,6 +1101,22 @@ void Server::Run()
 		for (const auto& place : objectPlaces.All()) {
 			send(a_to, Protocol::Encode(place, Protocol::MessageType::kObjectRested), true);
 		}
+		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
+		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
+		const auto  receiver = players.find(a_to);
+		const auto  receiverId = receiver != players.end() ? receiver->second.id : 0;
+		std::size_t healths = 0;
+		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
+			const auto owner = actorOwners.find(a_ref);
+			if (owner == actorOwners.end() || owner->second.playerId == receiverId || deadActors.contains(a_ref)) {
+				return;
+			}
+			send(a_to, Protocol::Encode(Protocol::ActorHealth{ a_ref, a_fraction }, Protocol::MessageType::kActorHealth), true);
+			++healths;
+		});
+		if (healths != 0) {
+			log(std::format("server: {} told the health of {} hurt NPCs others run", describe(a_to), healths));
+		}
 	};
 
 	// A player gets the world state they need (on joining, after loading a save) now if their budget
@@ -1169,6 +1188,7 @@ void Server::Run()
 			}
 			released.push_back({ a_entry.first, 0 });
 			npcEquipment.erase(a_entry.first);
+			npcHealths.Forget(a_entry.first);  // its next runner reports its own reading
 			if (spawns.erase(a_entry.first) != 0) {  // nobody else's game has it to run: the others' copies go
 				npcIdentities.erase(a_entry.first);
 			}
@@ -1816,6 +1836,7 @@ void Server::Run()
 		spawns.erase(it);
 		actorOwners.erase(a_death.refId);
 		npcEquipment.erase(a_death.refId);
+		npcHealths.Forget(a_death.refId);
 		npcIdentities.erase(a_death.refId);
 		a_death.playerId = a_player.id;
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
@@ -1939,6 +1960,7 @@ void Server::Run()
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
 		npcEquipment.erase(death->refId);
+		npcHealths.Forget(death->refId);
 		npcIdentities.erase(death->refId);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
@@ -2058,6 +2080,12 @@ void Server::Run()
 					owner->second.playerId, std::exchange(staleHealthDropped, 0)));
 			}
 			return;
+		}
+		// The runner's word on a plugin's NPC is kept for whoever joins or loads later (NpcHealths). Not one nobody runs
+		// (whoever runs it next reports its own), nor a spawn's: a joiner's copy of one is placed some frames after it
+		// hears of it, and a report before then has nothing to set (WorldSync::ApplyRemoteHealth).
+		if (!spawn && owner != actorOwners.end()) {
+			npcHealths.Heard(health->refId, health->health);
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
 	};
@@ -2990,6 +3018,7 @@ void Server::Run()
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
+				npcHealths.Forget(ref);   // ... and its health (a first reading)
 				// A plugin's NPC keeps the session's roll while nobody runs it (protocol 57): the next game to meet it builds it so.
 				if (spawns.erase(ref) != 0) {  // a spawn its owner's game let go of (unloaded) is gone: the copies go
 					npcIdentities.erase(ref);

@@ -1231,3 +1231,46 @@ TEST("health share: up to 0.9.2 the mutation's heal stood on Bob's copy: his sho
 	m.f.Pass();
 	CHECK(Near(m.f.bobGame.health, 35.0f));  // then it jumped down to the host's
 }
+
+TEST("health share: a friend who joins mid-fight, or whose game crashed and rejoins, sees the raider as hurt as the host's game has it, and their shot comes off that")
+{
+	// Before, the server passed each report on and forgot it, and the host's game reports the raider's health only when it
+	// changes: a game that came in later had its copy at full health until the raider was hit again.
+	Fight f;
+	f.hostGame.Shoot(25.0f);
+	f.hostGame.Burn(1.0f, 15);
+	f.Pass();
+	REQUIRE(Near(f.hostGame.health, 60.0f));
+	REQUIRE(Near(f.bobGame.health, 60.0f));
+
+	// Carol joins now; nothing more happens to the raider in the host's game.
+	Client& carol = f.s.Player("Carol");
+	REQUIRE(carol.Join());
+	f.s.Settle();
+	Game carolGame{ carol };
+	carolGame.Frame();
+	carolGame.Apply(true);
+	CHECK(Near(carolGame.health, 60.0f));
+
+	// Bob's game crashes and comes back from his save, where the raider was whole.
+	f.bob.Vanish();
+	REQUIRE(f.bob.Join());
+	f.s.Settle();
+	Game bobAgain{ f.bob };
+	bobAgain.Frame();
+	bobAgain.Apply(true);
+	CHECK(Near(bobAgain.health, 60.0f));
+
+	// Carol's shot comes off what the raider has, in every game.
+	carolGame.Shoot(10.0f);
+	f.s.Settle();
+	f.hostGame.Apply(false);
+	CHECK(Near(f.hostGame.health, 50.0f));
+	f.hostGame.Wait(HealthShare::THROTTLE);
+	f.s.Settle();
+	carolGame.Apply(true);
+	bobAgain.Apply(true);
+	CHECK(Near(carolGame.health, 50.0f));
+	CHECK(Near(bobAgain.health, 50.0f));
+	CHECK(carolGame.givenBack == 0.0f);
+}
