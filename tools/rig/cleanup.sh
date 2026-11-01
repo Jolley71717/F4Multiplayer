@@ -21,6 +21,8 @@
 # that held orphans before the run holds them again after it.
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 . "$RIG/guard.sh"
+# field <line> <name>: as assert.sh's (env.sh has none; without it every piece read as the game's own, 2026-10-31)
+field() { grep -oE "(^|[] [(;|,:])$2=[^] ;|,)]*" <<<"$1" | head -1 | sed 's/^[^=]*=//'; }
 BASES=${WS_TEST_BASES:-000DF45C}; BENCH=${WS_BENCH:-250FE}
 # the pieces are furniture (form type 42); `refs` lists at most 40 per call, so a few radii and the name filter are used
 NAME=${WS_TEST_NAME:-Chair}; RADII=${WS_SCAN_RADII:-"400 1200 3000 8000"}

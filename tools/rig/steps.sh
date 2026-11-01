@@ -141,6 +141,9 @@ step_combat() {
 	sleep 5; hp_compare "after the VM shot"
 }
 
+# menu_open <who> <menu> <seconds>: the menu is open in that game (dev `menus`: "open=HUDMenu:2051.3,ContainerMenu:1.2 ..."),
+# waiting up to that many seconds for it
+menu_open() { local w=0; while :; do grep -qE "[=,]$2:" <<<"$(dc "$1" menus | grep -oE 'open=[^ ]*')" && return 0; [ "$w" -ge "$(( $3 * 4 ))" ] && return 1; sleep 0.25; w=$((w + 1)); done; }
 has_items() { grep -qE "[0-9A-F]{8}x[0-9]+" <<<"$1"; }   # contents: "REF: 000FD9A8x1 0003377Bx1 (2 stacks)" or "REF: empty"
 stacks_of() { grep -oE "[0-9A-F]{8}x[0-9]+" <<<"$1" | tr x ' '; }   # contents -> "<item> <count>" lines
 count_in() { stacks_of "$1" | awk -v i="$2" '$1==i {n+=$2} END{print n+0}'; }   # count_in <contents> <item>
@@ -156,31 +159,41 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # chest's take emptied it in the VM's game (the menu take happened), and no item of the session's kind the VM took is left in the
 # host's copy (each take went across, and the emptying gave up the rest of what the host's roll had more of).
 _loot() {
-	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0
+	local conts c hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0
 	conts=$(host 'refs 31 2500' | grep -o "[0-9A-F]\{8\} base=" | cut -c1-8 | head -8)
 	for c in $conts; do
 		[ "$(dcf host "refinfo $c" locked)" = yes ] && continue   # a locked chest opens the lockpick, not the container menu
 		hb=$(host "contents $c"); vb=$(vm "contents $c")
 		has_items "$hb" && has_items "$vb" || continue
 		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
-		vm focus >/dev/null; sleep 0.3; vm "console $c.activate player" >/dev/null; sleep 1.5; vm "key 0x52 60" >/dev/null; sleep 1; vm "key 0x09 60" >/dev/null; sleep 1
+		# 2026-10-31: one activate of three opened no menu (ContainerMenu counted 2 opens), so the take is pressed only once the
+		# menu is open, and the activate is tried again once; the menu is closed and gone before the next chest
+		vm focus >/dev/null; sleep 0.3
+		for i in 1 2; do vm "console $c.activate player" >/dev/null; menu_open vm ContainerMenu 4 && break; echo "$c: activate $i opened no container menu" >> "$A_OUT/looted.txt"; done
+		sleep 0.5; vm "key 0x52 60" >/dev/null; sleep 1; vm "key 0x09 60" >/dev/null; sleep 1
+		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
 		va=$(vm "contents $c"); has_items "$va" && notaken="$notaken $c"
 		echo "$c vm after the take: $va" >> "$A_OUT/looted.txt"
 	done
 	sleep 5
 	while read -r c _; do
 		[ -n "$c" ] || continue
-		vb=$(sed -n "s/^$c host .* | vm //p" "$A_OUT/looted.txt" | head -1); ha=$(host "contents $c"); echo "$c host after: $ha" >> "$A_OUT/looted.txt"
+		vb=$(sed -n "s/^$c host .* | vm //p" "$A_OUT/looted.txt" | head -1); hb=$(sed -n "s/^$c host \(.*\) | vm .*/\1/p" "$A_OUT/looted.txt" | head -1)
+		ha=$(host "contents $c"); echo "$c host after: $ha" >> "$A_OUT/looted.txt"
 		while read -r i vn; do
 			[ -n "$i" ] || continue
 			if ! shared_item "$i"; then kept=$((kept + 1)); continue; fi
+			# each game rolls a chest on its own: an item the host's copy never held proves nothing (2026-10-31: no chest's two
+			# rolls had an item in common, and the old count passed on items that were never there)
+			[ "$(count_in "$hb" "$i")" -gt 0 ] || { other=$((other + 1)); continue; }
 			taken=$((taken + 1)); n=$(count_in "$ha" "$i"); [ "$n" -gt 0 ] && left="$left $c:${i}x$n"
 		done <<<"$(stacks_of "$vb")"
 	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
 	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no unlocked chest with items in both games within 2500 u: nothing was looted (inconclusive)"; return; fi
 	if [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
-	if [ $taken -eq 0 ]; then fail "loot: the VM's takes reach the host's chests" "the VM took no item of the kind the session shares (only weapons, armor, keys, notes, books: $kept stack(s)): inconclusive"
-	elif [ -z "$left" ]; then pass "loot: the VM's takes reach the host's chests" "$taken shared stack(s) gone from the host's copies; $kept weapon/armor/personal stack(s) stay by design"
+	if [ $taken -eq 0 ] && [ $other -gt 0 ]; then warn "loot: the VM's takes reach the host's chests" "the host's rolls held none of the $other shared stack(s) the VM took (each game rolls a chest on its own; what only one roll put there stays by design): nothing to see, inconclusive"
+	elif [ $taken -eq 0 ]; then fail "loot: the VM's takes reach the host's chests" "the VM took no item of the kind the session shares (only weapons, armor, keys, notes, books: $kept stack(s)): inconclusive"
+	elif [ -z "$left" ]; then pass "loot: the VM's takes reach the host's chests" "$taken shared stack(s) both games held gone from the host's copies; $other only the VM's roll had; $kept weapon/armor/personal stack(s) stay by design"
 	else fail "loot: the VM's takes reach the host's chests" "still in the host's copy:$left (of $taken shared stacks taken; details in looted.txt)"; fi
 }
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
@@ -415,6 +428,19 @@ perf_phase() {
 }
 
 # ---- reconnect: the VM's game restarts and rejoins ----------------------------------------------------------------------------------
+_vm_minsteam() { vmssh "& C:\\F4MP\\in-vm-run.ps1 -Name \"F4MP-MinSteam-\$(Get-Date -Format HHmmssfff)\" -Exe C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Arguments '-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File C:\\F4MP\\minsteam.ps1'" >/dev/null; }
+_vm_ready_to_fire() {
+	local s0 s1 try
+	vm "console player.additem 00004822 1" >/dev/null; vm "console player.additem 0001F276 20" >/dev/null; vm "console player.equipitem 00004822" >/dev/null
+	for try in 1 2; do
+		_vm_minsteam; sleep 2; vm focus >/dev/null; sleep 1; vm "draw on" >/dev/null; sleep 1.5
+		s0=$(nsf_now vm shots); vm "click 120" >/dev/null; sleep 2; s1=$(nsf_now vm shots)
+		is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ] && break
+	done
+	if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "reconnect: the restarted VM game fires a real click" "shots $s0 -> $s1 (try $try)"
+	else fail "reconnect: the restarted VM game fires a real click" "shots '$s0' -> '$s1' after 2 tries: its mouse and attacks are dead (restart it with focus sent during start-up); later VM steps on this game will fail"; fi
+}
+nsf_now() { field "$(dc "$1" 'net status')" "$2"; }
 step_reconnect() {
 	section "reconnect (the VM's game restarts and rejoins)"
 	local j
@@ -427,6 +453,11 @@ step_reconnect() {
 	np=$(grep -oE 'players: \[.*' <<<"${NS[host]}" | grep -oE "puppet=FF[0-9A-F]+" | sort -u | wc -l)
 	expect_ge "reconnect: host lists the VM's player (puppets known)" "$np" 1
 	expect_match "reconnect: both games up" "$(alive)" '^host=ingame=true vm=ingame=true$'
+	# A game started by in-vm-3-game.ps1 can come up taking keys but not the mouse or the attack actions (2026-10-31: after
+	# run 1's reconnect, run 2's VM grenade and power armor steps failed; hits.sh saw the same as shots=0). Steam's windows pop
+	# over the game after a lobby join, so they are minimised and the game brought to the front, and one real click must fire
+	# (`net status` shots counts our player's attacks): a game that can't is said here, not as later steps' failures.
+	_vm_ready_to_fire
 	sleep 20; WSB_VM=$(working_set vm)   # the VM's new baseline: the world is loaded and the rejoin has settled
 }
 
