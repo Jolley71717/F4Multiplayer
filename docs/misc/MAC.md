@@ -33,8 +33,8 @@ xmake build -y F4Multiplayer F4MPTests
 ```
 
 Both land in `build/windows/x64/releasedbg/`, as on Windows. The tests run under a bottle's Wine
-(below), against Microsoft's C++ library as on Windows: built natively with libc++, one passes on
-Windows and fails. `tools/crossovermac.sh test` runs them; as on Windows, the exit code is the number
+(below), against Microsoft's C++ library as on Windows: built natively against libc++, one test
+fails that passes on Windows. `tools/crossovermac.sh test` runs them; as on Windows, the exit code is the number
 failed and a name runs only the tests whose names hold it.
 
 ## The game under CrossOver
@@ -69,13 +69,16 @@ rm "$D/Documents/My Games/Fallout4/F4SE/F4Multiplayer_player.id"
 ```
 
 One Steam account plays in one place at a time, so the clone's Steam goes offline (or uses another
-account that owns the game), and the games connect without Steam (INSTALL.md, "Without Steam"), to a
-host or to `F4MPServer --port 7779 --loopback-only`. In the clone's `F4Multiplayer.ini`, another
+account that owns the game), and the games connect without Steam (INSTALL.md, "Without Steam"): both
+`sTransport = enet`, the host's `bHost = true`, the joiner's `sServerAddress = 127.0.0.1`. The joiner
+starts where its own save is; F7 takes it to the host. In the clone's `F4Multiplayer.ini`, another
 `iDevChannelPort` and `sPlayerName`; drive it with `F4MP_DEV_PORT` to match:
 
 ```sh
 XSE_FO4_GAME_PATH=<the game folder in Steam-2> F4MP_DEV_PORT=7791 tools/crossovermac.sh restart
 ```
 
-`restart` closes only its own bottle's game, and the one in the background keeps running in a
-session (`bRunInBackground`).
+`restart` closes only its own bottle's game. The game in the background keeps running while it is in
+a session (`bRunInBackground`), but out of one it pauses, and a joiner that lost the host connects
+again only once its window is in front: `bAlwaysActive=1` under `[General]` in both bottles' `Fallout4Prefs.ini` keeps both
+running. `sIntroSequence=` under `[General]` in `Fallout4Custom.ini` skips the intro video.
