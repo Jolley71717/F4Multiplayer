@@ -182,9 +182,16 @@ pick_targets() {
 	echo "phase $r runs: shooter $s at $(cut -d' ' -f2-5 <<<"$PS_PH"), $r at $(cut -d' ' -f2-5 <<<"$PO_PH")" >> "$A_OUT/targets.txt"
 	for a in $(host 'actors 3000' | tr ';' '\n' | grep "Raider' dead=false" | grep -o "[0-9A-F]\{8\}"); do
 		case " ${ALL_TG[*]} " in *":$a:"*) continue;; esac   # not one an earlier phase already shot
-		unhurt host "$a" && unhurt vm "$a" || continue   # the actors list can call one alive that a game has dead; a hurt one can die of one hit
+		[ "$(deadv host "$a")" = false ] && [ "$(deadv vm "$a")" = false ] || continue   # the actors list can call one alive that a game has dead
 		ro=$(runner host "$a"); rv=$(runner vm "$a")
 		[ "$ro" = "${MYID[$r]}" ] && [ "$rv" = "${MYID[$r]}" ] || continue
+		# A hurt one can die of one hit. Earlier runs' hits leave raiders hurt, and the pool shrank with each run (2026-11-01: one
+		# raider left for a phase): its runner heals it (a console restoreav, as top_up does; the copy follows).
+		if ! unhurt host "$a" || ! unhurt vm "$a"; then
+			dc "$r" "console $a.restoreav health 1000" >/dev/null; sleep 1
+			if ! unhurt host "$a" || ! unhurt vm "$a"; then echo "raider $a: hurt, and still under $T_TARGET_HP after its runner healed it: skipped" >> "$A_OUT/targets.txt"; continue; fi
+			echo "raider $a was hurt (earlier hits): healed by its runner" >> "$A_OUT/targets.txt"
+		fi
 		if [ $k -ge 4 ]; then SPARE+=("$a"); [ ${#SPARE[@]} -ge 3 ] && break; continue; fi   # spares for a copy hit whose raider no spot suits
 		place_raider "$r" "$a" "$([ $k -lt 2 ] && echo 1 || echo 0)"; rc=$?
 		[ $rc = 1 ] && break; [ $rc = 2 ] && continue
@@ -258,20 +265,31 @@ ready() {  # ready <who> <who>: both games answer `status` within T_READY_MS, up
 	done; return 1
 }
 pair_shot() {
-	local o=$1 p=$2 t=$3 a b c0 so sp rd
-	so=$(shots_of "$o"); sp=$(shots_of "$p")
+	local o=$1 p=$2 t=$3 a b c0 so sp rd ro hr0 hr1
+	so=$(shots_of "$o"); sp=$(shots_of "$p"); ro=$(tg_ro "$t"); hr0=$(hpv "$o" "$ro"); PAIR_MISS=""
 	dc "$o" "turnto $(tg_ref "$t" "$o") 300" >/dev/null; dc "$p" "turnto $(tg_ref "$t" "$p") 300" >/dev/null
 	dc "$o" focus >/dev/null; dc "$p" focus >/dev/null; ready "$o" "$p" && rd=ready || rd="NOT ready"; sleep 0.3
-	c0=$(date +%s%3N); dc "$o" "click 80" >/dev/null; a=$(date +%s%3N); sleep 0.4
+	c0=$(date +%s%3N); dc "$o" "click 80" >/dev/null; a=$(date +%s%3N)
+	# The runner's own hit has to land first: its claim is what starts the takeover cooldown. A hip-fired 10mm misses now and
+	# then at 450 u (2026-11-01: a pause pair's runner shot missed, the shooter's hit took the raider over, as designed, and the
+	# step read it as the mod's). One health read in the runner's game (it takes the place of a 0.4 s wait): unchanged, the pair
+	# stops here, before the menu or the shooter's click, and returns 2 (PAIR_MISS says why); the caller fires it again.
+	hr1=$(hpv "$o" "$ro"); is_num "$hr0" && is_num "$hr1" && ! _cmp "$hr1" '<' "$hr0" && { sleep 0.3; hr1=$(hpv "$o" "$ro"); }   # a hit a frame late
+	if is_num "$hr0" && is_num "$hr1" && ! _cmp "$hr1" '<' "$hr0"; then
+		PAIR_MISS="the runner's own shot did not land (its hp $hr0 -> $hr1 after its click): the shooter held its fire"
+		echo "pair $o then $p at $ro ($(tg_role "$t"))${4:+ with $4}: $PAIR_MISS" >> "$A_OUT/targets.txt"
+		sleep 0.6; fired "$o" "$so" "$(shots_of "$o")"; return 2
+	fi
 	[ "$4" = esc ] && { dc "$o" "key 0x1B 100" >/dev/null; PAIR_ESC=$(date +%s%3N); }
 	dc "$p" "click 80" >/dev/null; b=$(date +%s%3N)
 	PAIR_GAP=$((b - a))
-	echo "pair $o then $p at $(tg_ro "$t") ($(tg_role "$t"))${4:+ with $4}: before it $rd ($READY_MS); the runner's click answered in $((a - c0)) ms, the shooter's $PAIR_GAP ms after that" >> "$A_OUT/targets.txt"
+	echo "pair $o then $p at $ro ($(tg_role "$t"))${4:+ with $4}: before it $rd ($READY_MS); the runner's click answered in $((a - c0)) ms and landed (hp $hr0 -> $hr1), the shooter's $PAIR_GAP ms after that" >> "$A_OUT/targets.txt"
 	# with esc the menu is open from here: every read waits for after it closes (PAIR_SHOTS), or the runner sits in it past
 	# PauseHandOff's 5 s and hands the raider over (2026-11-01: closed 5-6 s after it opened, the shooter ran the raider after)
-	if [ "$4" = esc ]; then PAIR_SHOTS="$so $sp"; return; fi
+	if [ "$4" = esc ]; then PAIR_SHOTS="$so $sp"; return 0; fi
 	sleep 0.6; sample "$t" "pair-$o-$p"
 	fired "$o" "$so" "$(shots_of "$o")"; fired "$p" "$sp" "$(shots_of "$p")"
+	return 0
 }
 # fresh_target <label> <target>: before a kill or pause step, its raider is alive, still the runner's, and at its tough health in
 # the runner's game (restored there if it was hurt; the copy follows): the raiders fight back while the other steps shoot, and
@@ -327,7 +345,7 @@ reached() {
 # (re_place) and the proof starts again, up to 3 spots. Nothing is counted until it passes. FAILS as set-up, and the step is not
 # run, if no spot gives both lines; a pair that hands the raider over FAILS as that (as the kill step's would).
 prove_lines() {
-	local l=$1 t=$2 o p ro k c0 c1 why=""
+	local l=$1 t=$2 o p ro k m c0 c1 why=""
 	o=$(tg_o "$t"); p=$(other_of "$o"); ro=$(tg_ro "$t")
 	fresh_target "$l" "$t" || return 1
 	for k in 1 2 3; do
@@ -335,17 +353,19 @@ prove_lines() {
 		if ! runner_reaches "$t"; then why=$RL
 		else
 			c0=$(field "$(dc "$p" 'net status')" copyHits)
-			pair_shot "$o" "$p" "$t"; sleep 1.5; c1=$(field "$(dc "$p" 'net status')" copyHits)
-			if [ "$(runner "$o" "$ro")" = "${MYID[$p]}" ]; then
+			for m in 1 2 3; do pair_shot "$o" "$p" "$t" && break; sleep 1; done   # a runner shot that missed: the pair again
+			sleep 1.5; c1=$(field "$(dc "$p" 'net status')" copyHits)
+			if [ -n "$PAIR_MISS" ]; then why="the runner's own shot missed in 3 pairs in a row (the last: $PAIR_MISS)"
+			elif [ "$(runner "$o" "$ro")" = "${MYID[$p]}" ]; then
 				if [ "$PAIR_GAP" -gt 5000 ]; then fail "$l: set-up: both players' shots reach the target" "the line proof's pair came $PAIR_GAP ms apart, past the 5 s cooldown, and the shooter took it over (as designed): the step is not run"
 				else fail "$l: the runner kept it through the line proof's pair (inside the takeover cooldown)" "the shooter took it over (pair gap $PAIR_GAP ms; $RL): see both plugin logs for that pair's hits; the step is not run"; fi
 				return 1
 			fi
 			# the pair's runner shot alone drops the health: the shooter's game must have taken the hit on its copy
-			if is_num "$c0" && is_num "$c1" && [ "$c1" -gt "$c0" ]; then
+			if [ -z "$PAIR_MISS" ] && is_num "$c0" && is_num "$c1" && [ "$c1" -gt "$c0" ]; then
 				pass "$l: set-up: both players' shots reach the target" "spot $k: $RL; the shooter's copyHits $c0 -> $c1 in a pair $PAIR_GAP ms apart"; return 0
 			fi
-			why="the shooter's shot in the pair did not reach it (its copyHits $c0 -> $c1)"
+			[ -z "$PAIR_MISS" ] && why="the shooter's shot in the pair did not reach it (its copyHits $c0 -> $c1)"
 		fi
 		echo "$l: spot $k: $why" >> "$A_OUT/targets.txt"
 		[ $k -lt 3 ] && { re_place "$t" "$why" || break; }
@@ -437,16 +457,18 @@ run_phase() {
 		# A pair whose shooter click came over T_PAIR_GAP_MS after the runner's (a game's main thread hitched in between) is
 		# late: its hits still count while the runner keeps the raider, the gap check covers the pairs in time, and the late
 		# ones are reported; more than 2 late pairs, or a late pair past the 5 s cooldown that let the shooter take it over (as
-		# designed), FAIL as set-up.
-		local gap=0 inTime=0 late="" handed="" hb ha; n=0; snap K0
+		# designed), FAIL as set-up. A pair whose runner shot missed stops before the shooter's click (pair_shot): one shot, no
+		# pair, counted in misses (a WARN).
+		local gap=0 inTime=0 late="" handed="" hb ha misses=0; n=0; snap K0
 		while [ $n -lt 30 ]; do   # a T_TOUGH_HP raider takes several hits
 			[ "$(deadv "$o" "$ro")" = true ] && break
-			hb=$(hpv "$o" "$ro"); pair_shot "$o" "$p" "$t"; n=$((n + 2))
+			hb=$(hpv "$o" "$ro"); if ! pair_shot "$o" "$p" "$t"; then n=$((n + 1)); misses=$((misses + 1)); sleep 1; continue; fi; n=$((n + 2))
 			if [ "$PAIR_GAP" -gt "$T_PAIR_GAP_MS" ]; then late="$late $PAIR_GAP"; else inTime=$((inTime + 1)); [ "$PAIR_GAP" -gt "$gap" ] && gap=$PAIR_GAP; fi
 			# the shooter running it now: that pair's hit took it over, so the runner's own claim had not come first
 			[ "$(runner "$o" "$ro")" = "${MYID[$p]}" ] && { ha=$(hpv "$o" "$ro"); handed="after $n shots (pair gap $PAIR_GAP ms; health in the runner's game $hb -> $ha over that pair)"; break; }
 		done
 		sleep 4; sample "$t" killed; snap K1; AVOID="$AVOID ${SPOT[$ro]}"   # its body lies there: the next phase puts no raider on it
+		[ $misses -gt 0 ] && warn "kill ($o's NPC $ro): pairs stopped before the shooter fired (the runner's own shot missed)" "$misses (targets.txt)"
 		if [ $inTime -gt 0 ]; then expect_le "kill ($o's NPC $ro): each shooter's click came soon after the runner's (ms, the most of $inTime pair(s) in time; the takeover cooldown is 5000)" "$gap" "$T_PAIR_GAP_MS"
 		else fail "kill ($o's NPC $ro): set-up: pairs in time (the shooter's click at most $T_PAIR_GAP_MS ms after the runner's)" "none:$late ms (the games' main threads hitched; targets.txt has each pair's timings)"; fi
 		if [ -n "$late" ]; then
@@ -471,35 +493,42 @@ run_phase() {
 	section "$o runs the NPCs, $p shoots: a hit while the runner is in the pause menu"
 	t=$(tg_by $o pause)
 	if [ -n "$t" ] && armed "$o" && armed "$p" && ro=$(tg_ro "$t") && prove_lines "pause ($o runs the NPC)" "$t"; then
-		local menu_ms pm try
+		local menu_ms pm try paired=0 lateTry=0
 		# The runner's own shot keeps the raider (its claim starts the server's 5 s takeover cooldown), the menu opens, and the
 		# shooter fires at once: well inside the cooldown. The menu closes about 1 s later, well before the paused game's hand-off
-		# (PauseHandOff::AFTER, 5 s): nothing is read while it is open (the reads took it past 5 s, 2026-11-01). A pair that came
-		# late (a game's main thread hitched) is fired again once, the raider's health put back first, if the runner still has it.
-		for try in 1 2; do
+		# (PauseHandOff::AFTER, 5 s): nothing is read while it is open (the reads took it past 5 s, 2026-11-01). A pair whose
+		# runner shot missed stops before the menu and the shooter's click (pair_shot) and is fired again; a pair that came late (a
+		# game's main thread hitched) is fired again once, the raider's health put back first, if the runner still has it.
+		for try in 1 2 3 4; do
 			snap P0
-			pair_shot "$o" "$p" "$t" esc
+			if ! pair_shot "$o" "$p" "$t" esc; then sleep 1.5; continue; fi
+			paired=1
 			PAUSE_WHO=$o   # put_back closes it if the run stops before this step does
 			pm=$(field "$(dc "$o" paused)" pauseMenu)   # one read while it is open
 			sleep 0.5; dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1.5
 			[ "$(field "$(dc "$o" paused)" pauseMenu)" = true ] && { dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1; }
 			PAUSE_WHO=""
-			[ $try = 1 ] && [ "$PAIR_GAP" -gt "$T_PAIR_GAP_MS" ] && [ "$(runner "$o" "$ro")" = "${MYID[$o]}" ] && top_up "$t" || break
+			[ $lateTry = 0 ] && [ $try -lt 4 ] && [ "$PAIR_GAP" -gt "$T_PAIR_GAP_MS" ] && [ "$(runner "$o" "$ro")" = "${MYID[$o]}" ] && top_up "$t" || break
+			lateTry=1; paired=0
 			echo "pause $ro: the pair came $PAIR_GAP ms apart (over $T_PAIR_GAP_MS): fired again" >> "$A_OUT/targets.txt"; sleep 2
 		done
-		expect_le "pause ($o runs the NPC): the shooter's click came soon after the runner's (ms; the takeover cooldown is 5000)" "$PAIR_GAP" "$T_PAIR_GAP_MS"
-		expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" 4500
-		fired "$o" "$(cut -d' ' -f1 <<<"$PAIR_SHOTS")" "$(shots_of "$o")"; fired "$p" "$(cut -d' ' -f2 <<<"$PAIR_SHOTS")" "$(shots_of "$p")"
-		settle "$t"; sleep 3; sample "$t" afterpause; snap P1
-		# the runner's game counts a friend's hit it applied with the pause menu open (damageAnswered=<applied>/<refused>/<in pause>):
-		# the proof the hit landed while the menu was up, not just that the menu was up by the time of the read (pm). Read from P1:
-		# it used to be read before P1 was taken (2026-11-01: against no P1 at all, "no number to compare (got '')")
-		expect_ge "pause ($o runs the NPC): the shooter's hit was applied while the runner's pause menu was open ($o's damageAnswered in pause; paused read pauseMenu=$pm)" "$(delta "$o" P0 damageAnswered P1 3)" 1
-		agree "pause ($o runs the NPC): after the menu closes" "$t"; landed "pause ($o runs the NPC)" "$t"
-		local k1 k2; k1=$(runner "$o" "$ro"); k2=$(runner "$p" "$(tg_rp "$t")")
-		if [ "$k1" = "${MYID[$o]}" ] && [ "$k2" = "${MYID[$o]}" ]; then pass "pause ($o runs the NPC): the runner kept it (its own hit just before was within the takeover cooldown)" "player $k1"; else fail "pause ($o runs the NPC): the runner kept it (its own hit just before was within the takeover cooldown)" "runner says player '$k1', shooter says '$k2', runner is ${MYID[$o]}"; fi
-		expect_ge "pause ($o runs the NPC): the runner applied the shooter's hit sent while it was in the menu ($o's damageAnswered)" "$(delta "$o" P0 damageAnswered P1 1)" 1
-		answered "pause ($o runs the NPC)" "$o" "$p" P0 P1
+		if [ $paired = 0 ]; then
+			fail "pause ($o runs the NPC): set-up: a pair whose runner shot landed" "none in $try tries (the last: ${PAIR_MISS:-a late pair}; targets.txt): the step is not run"
+		else
+			expect_le "pause ($o runs the NPC): the shooter's click came soon after the runner's (ms; the takeover cooldown is 5000)" "$PAIR_GAP" "$T_PAIR_GAP_MS"
+			expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" 4500
+			fired "$o" "$(cut -d' ' -f1 <<<"$PAIR_SHOTS")" "$(shots_of "$o")"; fired "$p" "$(cut -d' ' -f2 <<<"$PAIR_SHOTS")" "$(shots_of "$p")"
+			settle "$t"; sleep 3; sample "$t" afterpause; snap P1
+			# the runner's game counts a friend's hit it applied with the pause menu open (damageAnswered=<applied>/<refused>/<in pause>):
+			# the proof the hit landed while the menu was up, not just that the menu was up by the time of the read (pm). Read from P1:
+			# it used to be read before P1 was taken (2026-11-01: against no P1 at all, "no number to compare (got '')")
+			expect_ge "pause ($o runs the NPC): the shooter's hit was applied while the runner's pause menu was open ($o's damageAnswered in pause; paused read pauseMenu=$pm)" "$(delta "$o" P0 damageAnswered P1 3)" 1
+			agree "pause ($o runs the NPC): after the menu closes" "$t"; landed "pause ($o runs the NPC)" "$t"
+			local k1 k2; k1=$(runner "$o" "$ro"); k2=$(runner "$p" "$(tg_rp "$t")")
+			if [ "$k1" = "${MYID[$o]}" ] && [ "$k2" = "${MYID[$o]}" ]; then pass "pause ($o runs the NPC): the runner kept it (its own hit just before was within the takeover cooldown)" "player $k1"; else fail "pause ($o runs the NPC): the runner kept it (its own hit just before was within the takeover cooldown)" "runner says player '$k1', shooter says '$k2', runner is ${MYID[$o]}"; fi
+			expect_ge "pause ($o runs the NPC): the runner applied the shooter's hit sent while it was in the menu ($o's damageAnswered)" "$(delta "$o" P0 damageAnswered P1 1)" 1
+			answered "pause ($o runs the NPC)" "$o" "$p" P0 P1
+		fi
 	fi
 
 	put_back
