@@ -23,6 +23,9 @@
 #   kill        (before pause) runner and shooter fire in pairs (pair_shot: both aim, then the runner clicks and the shooter
 #               within T_PAIR_GAP_MS, well inside the 5 s cooldown, so the runner keeps the raider and the shooter's hits go to it as
 #               damage) until it dies: dead in both games, and the runner's damageAnswered rose.
+#   before both the raider is checked alive, the runner's and at full health (restored if a fight hurt it: fresh_target), and
+#               one shot of the runner's own must reach it (runner_line); either failing FAILS as set-up and skips the step. A kill
+#               whose raider the shooter takes over mid-way FAILS as that, not as missing damage.
 #   end         no living NPC's health rose in a copy alone (a heal-back: the 0.10.1 bug); copyOwed = 0 on both games;
 #               copyUnseen, the session's ignored hits and copyLost unchanged; give-backs and real heals are reported.
 #   Targets must be alive in both games when the shooting starts (a raider the session has dead can read alive in `actors`).
@@ -174,10 +177,44 @@ pair_shot() {
 	dc "$o" "turnto $(tg_ref "$t" "$o") 300" >/dev/null; dc "$p" "turnto $(tg_ref "$t" "$p") 300" >/dev/null
 	dc "$o" focus >/dev/null; dc "$p" focus >/dev/null; sleep 0.5
 	a=$(date +%s%3N); dc "$o" "click 80" >/dev/null; sleep 0.4
-	[ "$4" = esc ] && dc "$o" "key 0x1B 100" >/dev/null
+	[ "$4" = esc ] && { dc "$o" "key 0x1B 100" >/dev/null; PAIR_ESC=$(date +%s%3N); }
 	dc "$p" "click 80" >/dev/null; b=$(date +%s%3N)
-	PAIR_GAP=$((b - a)); sleep 0.6; sample "$t" "pair-$o-$p"
+	PAIR_GAP=$((b - a))
+	# with esc the menu is open from here: every read waits for after it closes (PAIR_SHOTS), or the runner sits in it past
+	# PauseHandOff's 5 s and hands the raider over (2026-11-01: closed 5-6 s after it opened, the shooter ran the raider after)
+	if [ "$4" = esc ]; then PAIR_SHOTS="$so $sp"; return; fi
+	sleep 0.6; sample "$t" "pair-$o-$p"
 	fired "$o" "$so" "$(shots_of "$o")"; fired "$p" "$sp" "$(shots_of "$p")"
+}
+# fresh_target <label> <target>: before a kill or pause step, its raider is alive, still the runner's, and at its tough health in
+# the runner's game (restored there if it was hurt; the copy follows): the raiders fight back while the other steps shoot, and
+# a grenade or a fire before the step (2026-11-01: a pause target dead of a raider's grenade, a kill target burnt from 120 to
+# 42 hp) made the step test nothing while it read as the mod's failure. FAILS, and the step is not run, if it can't be.
+fresh_target() {
+	local l=$1 t=$2 o ro i h k
+	o=$(tg_o "$t"); ro=$(tg_ro "$t")
+	i=$(rinfo "$o" "$ro"); h=$(field "$i" hp)
+	if [ "$(field "$i" dead)" = false ] && is_num "$h" && _cmp "$h" '<' "$T_TOUGH_HP"; then
+		dc "$o" "console $ro.restoreav health 1000" >/dev/null
+		for k in 1 2 3 4; do sleep 1; i=$(rinfo "$o" "$ro"); h=$(field "$i" hp); is_num "$h" && _cmp "$h" '>=' "$T_TOUGH_HP" && break; done
+	fi
+	if [ "$(field "$i" dead)" = false ] && [ "$(field "$i" owner)" = "${MYID[$o]}" ] && is_num "$h" && _cmp "$h" '>=' "$((T_TOUGH_HP * 9 / 10))"; then
+		pass "$l: set-up: the target is alive, $o's and at full health as the step starts" "hp $h, player $(field "$i" owner)"; return 0
+	fi
+	fail "$l: set-up: the target is alive, $o's and at full health as the step starts" "dead=$(field "$i" dead) runner=player '$(field "$i" owner)' hp=$h (hurt, killed or taken before its step; the raiders fight back): the step is not run"; return 1
+}
+# runner_line <label> <target>: the runner's own shot reaches its raider (health falls in the runner's game), up to 2 tries.
+# The kill and pause steps lean on the runner's hit landing just before the shooter's: one that hit furniture instead
+# (2026-11-01: a desk fan in front of a seated raider) let the shooter's hit take the raider over, as designed, and the step
+# read that as routed damage that never came. FAILS, and the step is not run, if neither shot lands.
+runner_line() {
+	local o ro h0 h1 k
+	o=$(tg_o "$2"); ro=$(tg_ro "$2")
+	for k in 1 2; do
+		h0=$(hpv "$o" "$ro"); fire "$o" "$2"; sleep 0.5; h1=$(hpv "$o" "$ro")
+		if is_num "$h0" && is_num "$h1" && _cmp "$h1" '<' "$h0"; then pass "$1: set-up: the runner's own shot reaches the target" "hp $h0 -> $h1 (shot $k)"; return 0; fi
+	done
+	fail "$1: set-up: the runner's own shot reaches the target" "hp $h0 -> $h1 after 2 shots: its line is blocked (furniture, a seated raider): the step is not run"; return 1
 }
 # copy_shot <shooter> <target>: one shot at an NPC the OTHER game runs (read in the shooter's game first: one it runs already is
 # no copy hit, and is skipped with a FAIL)
@@ -244,33 +281,44 @@ run_phase() {
 
 	section "$o runs the NPCs, $p shoots: kill (the runner keeps it, the shooter's hits go to it as damage)"
 	t=$(tg_by $o kill)
-	if [ -n "$t" ] && armed "$o" && armed "$p"; then
-		local gap=0; ro=$(tg_ro "$t"); n=0; snap K0
+	if [ -n "$t" ] && armed "$o" && armed "$p" && ro=$(tg_ro "$t") && fresh_target "kill ($o's NPC $ro)" "$t" && runner_line "kill ($o's NPC $ro)" "$t"; then
+		local gap=0 handed="" hb ha; n=0; snap K0
 		while [ $n -lt 24 ]; do   # a T_TOUGH_HP raider takes several hits
 			[ "$(deadv "$o" "$ro")" = true ] && break
-			pair_shot "$o" "$p" "$t"; n=$((n + 2)); [ "$PAIR_GAP" -gt "$gap" ] && gap=$PAIR_GAP
+			hb=$(hpv "$o" "$ro"); pair_shot "$o" "$p" "$t"; n=$((n + 2)); [ "$PAIR_GAP" -gt "$gap" ] && gap=$PAIR_GAP
+			# the shooter running it now: that pair's hit took it over, so the runner's own claim had not come first
+			[ "$(runner "$o" "$ro")" = "${MYID[$p]}" ] && { ha=$(hpv "$o" "$ro"); handed="after $n shots (pair gap $PAIR_GAP ms; health in the runner's game $hb -> $ha over that pair)"; break; }
 		done
 		sleep 4; sample "$t" killed; snap K1
 		expect_le "kill ($o's NPC $ro): each shooter's click came soon after the runner's (ms, the most; the takeover cooldown is 5000)" "$gap" "$T_PAIR_GAP_MS"
-		landed "kill ($o's NPC $ro)" "$t"
-		expect_eq "kill ($o's NPC $ro): dead in the runner's game after $n shots" "$(deadv "$o" "$ro")" true
-		expect_eq "kill ($o's NPC $ro): dead in the other game" "$(deadv "$p" "$ro")" true
-		expect_ge "kill ($o's NPC $ro): the runner applied the shooter's hits ($o's damageAnswered)" "$(delta "$o" K0 damageAnswered K1 1)" 1
-		expect_zero "kill ($o's NPC $ro): nothing given back to the shooter ($p's copyAnswers refunds)" "$(delta "$p" K0 copyAnswers K1 2)"
+		if [ -n "$handed" ]; then
+			# no routed damage to look for once the shooter runs it. The runner's line was shown clear (runner_line), so this is
+			# either that pair's runner shot missing after all or the claim not holding: the log has which
+			fail "kill ($o's NPC $ro): the runner kept it while both shot (each pair inside the takeover cooldown)" "the shooter took it over $handed: see both plugin logs for that pair's hits; the damage checks are not run"
+		else
+			landed "kill ($o's NPC $ro)" "$t"
+			expect_eq "kill ($o's NPC $ro): dead in the runner's game after $n shots" "$(deadv "$o" "$ro")" true
+			expect_eq "kill ($o's NPC $ro): dead in the other game" "$(deadv "$p" "$ro")" true
+			expect_ge "kill ($o's NPC $ro): the runner applied the shooter's hits ($o's damageAnswered)" "$(delta "$o" K0 damageAnswered K1 1)" 1
+			expect_zero "kill ($o's NPC $ro): nothing given back to the shooter ($p's copyAnswers refunds)" "$(delta "$p" K0 copyAnswers K1 2)"
+		fi
 	fi
 
 	section "$o runs the NPCs, $p shoots: a hit while the runner is in the pause menu"
 	t=$(tg_by $o pause)
-	if [ -n "$t" ] && armed "$o" && armed "$p"; then
-		ro=$(tg_ro "$t"); snap P0
+	if [ -n "$t" ] && armed "$o" && armed "$p" && ro=$(tg_ro "$t") && fresh_target "pause ($o runs the NPC)" "$t" && runner_line "pause ($o runs the NPC)" "$t"; then
+		local menu_ms; snap P0
 		# The runner's own shot keeps the raider (its claim starts the server's 5 s takeover cooldown), the menu opens, and the
-		# shooter fires at once: well inside the cooldown, and before the paused game's hand-off (PauseHandOff::AFTER, 5 s).
+		# shooter fires at once: well inside the cooldown. The menu closes about 1 s later, well before the paused game's hand-off
+		# (PauseHandOff::AFTER, 5 s): nothing is read while it is open (the reads took it past 5 s, 2026-11-01).
 		pair_shot "$o" "$p" "$t" esc
+		local pm; pm=$(field "$(dc "$o" paused)" pauseMenu)   # one read while it is open
+		sleep 0.5; dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1.5
+		[ "$(field "$(dc "$o" paused)" pauseMenu)" = true ] && { dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1; }
 		expect_le "pause ($o runs the NPC): the shooter's click came soon after the runner's (ms; the takeover cooldown is 5000)" "$PAIR_GAP" "$T_PAIR_GAP_MS"
-		if [ "$(field "$(dc "$o" paused)" pauseMenu)" = true ]; then pass "pause ($o runs the NPC): the pause menu was open for the shot" "pauseMenu=true"; else fail "pause ($o runs the NPC): the pause menu was open for the shot" "paused says pauseMenu=$(field "$(dc "$o" paused)" pauseMenu)"; fi
-		sleep 2.5; sample "$t" paused
-		dc "$o" "key 0x1B 100" >/dev/null; sleep 1.5
-		[ "$(field "$(dc "$o" paused)" pauseMenu)" = true ] && { dc "$o" "key 0x1B 100" >/dev/null; sleep 1; }
+		expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" 4500
+		if [ "$pm" = true ]; then pass "pause ($o runs the NPC): the pause menu was open for the shot" "pauseMenu=true"; else fail "pause ($o runs the NPC): the pause menu was open for the shot" "paused said pauseMenu=$pm"; fi
+		fired "$o" "$(cut -d' ' -f1 <<<"$PAIR_SHOTS")" "$(shots_of "$o")"; fired "$p" "$(cut -d' ' -f2 <<<"$PAIR_SHOTS")" "$(shots_of "$p")"
 		settle "$t"; sleep 3; sample "$t" afterpause; snap P1
 		agree "pause ($o runs the NPC): after the menu closes" "$t"; landed "pause ($o runs the NPC)" "$t"
 		local k1 k2; k1=$(runner "$o" "$ro"); k2=$(runner "$p" "$(tg_rp "$t")")
