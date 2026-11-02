@@ -203,7 +203,7 @@ namespace Text
 		{ "menu.join_other", "Join someone else" },
 		// The entry in the game's main and pause menus (MainMenuEntry), in capitals as the game's own entries are.
 		{ "mainmenu.entry", "MULTIPLAYER" },
-		// The multiplayer menu of our own (MpMenu), in capitals as the main menu's entries are.
+		// The multiplayer menu of our own (MPMenu), in capitals as the main menu's entries are.
 		{ "mpmenu.back", "BACK" },
 		{ "mpmenu.host", "HOST A GAME" },
 		{ "mpmenu.join", "JOIN A FRIEND" },

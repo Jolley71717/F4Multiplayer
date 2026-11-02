@@ -4,7 +4,7 @@
 #include "Text.h"
 #include "game/Hud.h"
 #include "game/MainMenuPlace.h"
-#include "game/MpMenu.h"
+#include "game/MPMenu.h"
 
 #include <array>
 #include <format>
@@ -144,6 +144,30 @@ namespace MainMenuEntry
 			}
 		}
 
+		// While matching our menu's look: how the game draws this menu (its renderer and flags) and the shader targets it
+		// tints and shades, by the name of each one's object.
+		void LogRendering(RE::IMenu* a_menu, const Hooked& a_hooked)
+		{
+			const auto game = static_cast<RE::GameMenuBase*>(a_menu);
+			REX::INFO("MainMenuEntry: the {} renders with '{}', flags {:X}, depth {}, {} shader targets", a_hooked.menu, a_menu->customRendererName.c_str(),
+				a_menu->menuFlags.underlying(), static_cast<int>(a_menu->depthPriority), game->shaderFXObjects.size());
+			for (const auto target : game->shaderFXObjects) {
+				if (!target) {
+					continue;
+				}
+				GValue name;
+				GValue shaded;
+				const bool display = target->IsDisplayObject();
+				if (display) {
+					target->GetMember("name", &name);
+					target->GetMember("bUseShadedBackground", &shaded);
+				}
+				REX::INFO("MainMenuEntry: shader target '{}' color {} background {} shaded member {}", name.IsString() ? name.GetString() : "?",
+					static_cast<int>(target->HUDColorType.get()), static_cast<int>(target->backgroundColorType.get()),
+					shaded.IsBoolean() ? (shaded.GetBoolean() ? "true" : "false") : "none");
+			}
+		}
+
 		void LogLayout(Scaleform::GFx::Movie* a_movie, const Hooked& a_hooked)
 		{
 			REX::INFO("MainMenuEntry: the {}'s layout, once", a_hooked.menu);
@@ -191,7 +215,7 @@ namespace MainMenuEntry
 						std::scoped_lock l{ boxLock };
 						box = mainBox;
 					}
-					MpMenu::Open(static_cast<float>(box.x), static_cast<float>(box.y), static_cast<float>(box.x + box.width), static_cast<float>(box.y + box.height)); });
+					MPMenu::Open(static_cast<float>(box.x), static_cast<float>(box.y), static_cast<float>(box.x + box.width), static_cast<float>(box.y + box.height)); });
 			}
 		};
 		PressHandler* handler = nullptr;  // made on the first update (Scaleform's heap is up by then), never let go
@@ -212,6 +236,7 @@ namespace MainMenuEntry
 			}
 			if (!std::exchange(a_hooked.loggedLayout, true)) {
 				LogLayout(movie, a_hooked);
+				LogRendering(a_menu, a_hooked);
 			}
 			// The main panel's box on the stage: ours goes beside it, as the game's own second column does.
 			GValue box;

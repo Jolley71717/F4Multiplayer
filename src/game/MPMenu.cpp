@@ -1,4 +1,4 @@
-#include "game/MpMenu.h"
+#include "game/MPMenu.h"
 
 #include "MainThread.h"
 #include "Text.h"
@@ -8,18 +8,28 @@
 #include <array>
 #include <format>
 #include <atomic>
+#include <memory>
 #include <string>
+#include <vector>
 
-namespace MpMenu
+namespace MPMenu
 {
 	namespace
 	{
 		using GValue = Scaleform::GFx::Value;
 
 		constexpr const char* NAME = "F4MPMenu";
-		constexpr const char* MOVIE = "Interface/F4MPMenu.swf";
+		constexpr const char* MOVIE = "Interface/F4Multiplayer/MPMenu.swf";
 
-		// The movie's calls into us (BGSCodeObj in F4MPMenu.as), by the ID each is mapped with.
+		// On: drawn as the game draws its menus, white in the movie and tinted with the player's HUD color by the renderer
+		// through shader targets on the movie's layers (FlatScreenModel, kCustomRendering; the main menu's own targets are
+		// color 3, kPlayerSetColor, and for its panel backgrounds color 0 with a shaded background of 2). The tint works,
+		// but through that renderer the panel's translucent ground comes out opaque, and the game's shaded background on a
+		// layer of ours drew nothing (white, or black with the no-color filter). Off, as now: the movie draws in the same
+		// HUD color itself, and its ground is translucent.
+		constexpr bool SHADED = false;
+
+		// The movie's calls into us (BGSCodeObj in MPMenu.as), by the ID each is mapped with.
 		enum class Code : std::uintptr_t
 		{
 			kPressed,
@@ -76,7 +86,7 @@ namespace MpMenu
 						const auto index = a_params.argCount > 0 && a_params.args[0].IsNumber() ? static_cast<int>(a_params.args[0].GetNumber()) :
 						                   a_params.argCount > 0 && a_params.args[0].IsInt()    ? a_params.args[0].GetInt() :
 						                                                                          -1;
-						REX::INFO("MpMenu: entry {} pressed", index);
+						REX::INFO("MPMenu: entry {} pressed", index);
 						MainThread::Post([] {
 							Hide();
 							Menu::Open();
@@ -93,7 +103,7 @@ namespace MpMenu
 					break;
 				case Code::kLog:
 					if (a_params.argCount > 0 && a_params.args[0].IsString()) {
-						REX::INFO("MpMenu: movie says {}", a_params.args[0].GetString());
+						REX::INFO("MPMenu: movie says {}", a_params.args[0].GetString());
 					}
 					break;
 				}
@@ -108,23 +118,30 @@ namespace MpMenu
 			{
 				menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kUsesCursor, RE::UI_MENU_FLAGS::kUsesMenuContext,
 					RE::UI_MENU_FLAGS::kModal, RE::UI_MENU_FLAGS::kDisablePauseMenu, RE::UI_MENU_FLAGS::kUpdateUsesCursor);
+				if constexpr (SHADED) {
+					menuFlags.set(RE::UI_MENU_FLAGS::kCustomRendering);  // through GameMenuBase's renderer, FlatScreenModel
+				}
 				// Above the main and pause menus (kPauseMenu), as a message box is.
 				depthPriority = RE::UI_DEPTH_PRIORITY::kMessage;
 				inputContext = RE::UserEvents::INPUT_CONTEXT_ID::kBasicMenuNav;
 				const auto scaleform = RE::BSScaleformManager::GetSingleton();
 				if (!scaleform || !scaleform->LoadMovieEx(*this, MOVIE, "root")) {
-					REX::ERROR("MpMenu: {} could not be loaded; is it in Data/Interface?", MOVIE);
+					REX::ERROR("MPMenu: {} could not be loaded; is it in Data/Interface?", MOVIE);
 					return;
 				}
 				SetCode();
+				RefreshPlatform();  // again, now that the movie can answer: keyboard or gamepad, for the back hint
 				Fill();
+				if constexpr (SHADED) {
+					Shade();
+				}
 			}
 
 			// The game's user events go on to the movie (ProcessUserEvent), but for the way back out, read here.
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
 				if (a_event && a_event->QJustPressed()) {
-					REX::DEBUG("MpMenu: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
+					REX::DEBUG("MPMenu: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
 					// The way back out of a menu: Esc or Tab, or the gamepad's B. None comes as a user event to a menu of
 					// ours (the game's own menus get theirs from their own input handling), so they are read by code.
 					const bool keyboard = a_event->device.get() == RE::INPUT_DEVICE::kKeyboard;
@@ -140,11 +157,32 @@ namespace MpMenu
 			}
 
 		private:
+			// The game's own color and background shaders on the movie's layers (MPMenu.as names them).
+			void Shade()
+			{
+				// The panel's ground is the movie's own: the game's shaded background on a layer of ours drew it black.
+				for (const auto [path, background] : { std::pair{ "root.Panel_mc.Content_mc", false }, std::pair{ "root.Hint_mc", false } }) {
+					auto target = std::make_unique<RE::BSGFxShaderFXTarget>(*uiMovie, path);
+					// As the main menu sets its own (MainMenuEntry logs them): panel backgrounds shaded with the gameplay HUD
+					// color and no tint, everything else tinted with the color the player set.
+					if (background) {
+						target->CreateAndSetFiltersToHUD(RE::HUDColorTypes::kNoColorMultiplier);
+						target->EnableShadedBackground(RE::HUDColorTypes::kGameplayHUDColor);
+					} else {
+						target->CreateAndSetFiltersToHUD(RE::HUDColorTypes::kPlayerSetColor);
+					}
+					shaderFXObjects.push_back(target.get());
+					targets.push_back(std::move(target));
+				}
+			}
+
+			std::vector<std::unique_ptr<RE::BSGFxShaderFXTarget>> targets;  // before the base's list of them goes
+
 			void SetCode()
 			{
 				GValue engines;
 				const bool had = menuObj.GetMember("BGSCodeObj", &engines);
-				REX::INFO("MpMenu: the game's code object: {} (type {}, Pressed {})", had, static_cast<int>(engines.GetType()),
+				REX::INFO("MPMenu: the game's code object: {} (type {}, Pressed {})", had, static_cast<int>(engines.GetType()),
 					engines.IsObject() && engines.HasMember("Pressed"));
 				if (!codeHandler) {
 					codeHandler = new CodeHandler();
@@ -158,7 +196,7 @@ namespace MpMenu
 					code.SetMember(name, function);
 				}
 				if (!menuObj.SetMember("BGSCodeObj", code)) {
-					REX::WARN("MpMenu: the movie took no BGSCodeObj");
+					REX::WARN("MPMenu: the movie took no BGSCodeObj");
 				}
 			}
 
@@ -176,11 +214,11 @@ namespace MpMenu
 				}
 				const auto footer = std::format("F4Multiplayer {}", version);
 				const auto back = Text::Get("mpmenu.back");
-				const std::array<GValue, 8> args{ labels, GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
-					GValue(static_cast<double>(boxRight.load())), GValue(static_cast<double>(boxBottom.load())), GValue(static_cast<double>(HudColor())),
-					GValue(footer.c_str()), GValue(back.c_str()) };
+				const std::array<GValue, 9> args{ labels, GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
+					GValue(static_cast<double>(boxRight.load())), GValue(static_cast<double>(boxBottom.load())),
+					GValue(static_cast<double>(HudColor())), GValue(footer.c_str()), GValue(back.c_str()), GValue(SHADED) };
 				if (!menuObj.Invoke("SetEntries", nullptr, args.data(), args.size())) {
-					REX::WARN("MpMenu: the movie has no SetEntries");
+					REX::WARN("MPMenu: the movie has no SetEntries");
 				}
 			}
 		};
@@ -195,13 +233,13 @@ namespace MpMenu
 	{
 		if (const auto ui = RE::UI::GetSingleton()) {
 			ui->RegisterMenu(NAME, &Create);
-			REX::INFO("MpMenu: registered {}", NAME);
+			REX::INFO("MPMenu: registered {}", NAME);
 		}
 	}
 
 	void Open(float a_left, float a_top, float a_right, float a_bottom)
 	{
-		MainThread::Assert("MpMenu::Open");
+		MainThread::Assert("MPMenu::Open");
 		boxLeft = a_left;
 		boxTop = a_top;
 		boxRight = a_right;
