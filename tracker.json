@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T08:05:06+00:00",
+ "updated": "2026-11-02T08:09:17+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1256,6 +1256,14 @@
    "title": "Quest sim: a stage the plugin defers for the opening is set at once (kOpeningWaits not handled)",
    "kind": "bug",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "v4bw",
+   "title": "Power armor frame-entry hook updates plain counters and reads game state off the main thread",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
