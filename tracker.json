@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T08:09:17+00:00",
+ "updated": "2026-11-02T15:57:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -185,8 +185,9 @@
    "title": "Frame gate: RemotePlayers::KeepOutOfFrame reads main-thread maps on the engine's seat thread",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 262
   },
   {
    "id": "5393",
@@ -972,8 +973,9 @@
    "title": "Stand-in hold test fails when built natively against libc++ (Mac)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 261
   },
   {
    "id": "ou8y",
@@ -1210,8 +1212,9 @@
    "title": "Mac support: build and play under CrossOver (contributor PR #233)",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 233
   },
   {
    "id": "tnl5",
