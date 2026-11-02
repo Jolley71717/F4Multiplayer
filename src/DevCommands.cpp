@@ -2838,6 +2838,62 @@ namespace DevCommands
 			return std::format("handle={:X} played={}", handle.soundID, played);
 		}
 
+		// Copies a_count qwords at a_from, false if the memory can't be read. Plain data only (SEH).
+		bool ReadQwords(const void* a_from, std::uintptr_t* a_to, std::size_t a_count)
+		{
+			__try {
+				std::memcpy(a_to, a_from, a_count * sizeof(std::uintptr_t));
+				return true;
+			} __except (1) {  // EXCEPTION_EXECUTE_HANDLER
+				return false;
+			}
+		}
+
+		// sounds: every sound the audio manager holds (its handle ID), the reference whose 3D it follows, if any, and that
+		// reference's distance from the player. One that follows the player is marked PLAYER: it is heard wherever the player
+		// goes. Which sound each one is isn't read (the engine's BSGameSound is not mapped; its first 0x180 bytes hold no
+		// pointer to its descriptor). Read while the audio thread runs, so a dev probe only.
+		std::string Sounds(std::string_view)
+		{
+			const auto audio = RE::BSAudioManager::GetSingleton();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!audio || !player) {
+				return "error: no audio manager";
+			}
+			std::string out = std::format("sounds={} following={}", audio->soundMap.size(), audio->movingRefrMap.size());
+			std::size_t shown = 0;
+			for (const auto& [id, sound] : audio->soundMap) {
+				if (++shown > 64) {
+					out += " ...";
+					break;
+				}
+				out += std::format(" | {:X}", id);
+				const auto follow = audio->movingRefrMap.find(id);
+				if (follow == audio->movingRefrMap.end() || !follow->second) {
+					continue;
+				}
+				const RE::NiAVObject* node = follow->second.get();
+				RE::TESObjectREFR*    ref = nullptr;
+				for (auto at = node; at && !ref; at = at->parent) {
+					// The user data of a reference's 3D root is the reference: taken only if it reads as a form the game
+					// knows by its own ID (TESForm::formID at 0x14).
+					std::array<std::uintptr_t, 3> head{};
+					if (at->userData && ReadQwords(reinterpret_cast<const void*>(at->userData), head.data(), head.size())) {
+						const auto formId = static_cast<std::uint32_t>(head[2] >> 32);
+						const auto form = RE::TESForm::GetFormByID(formId);
+						if (form && reinterpret_cast<std::uintptr_t>(form) == at->userData) {
+							ref = form->As<RE::TESObjectREFR>();
+						}
+					}
+				}
+				out += std::format(" follows {}", node->name.c_str() ? node->name.c_str() : "?");
+				if (ref) {
+					out += std::format(" of {:08X}{} at {:.0f}", ref->GetFormID(), ref == player ? " PLAYER" : "", ref->data.location.GetDistance(player->data.location));
+				}
+			}
+			return out;
+		}
+
 		// gs <text>: game settings whose name contains the text (case-sensitive), with their values.
 		std::string GameSettings(std::string_view a_args)
 		{
@@ -3999,6 +4055,7 @@ namespace DevCommands
 			Entry{ "proj", Proj },
 			Entry{ "muzzle", Muzzle },
 			Entry{ "playsound", PlaySoundCmd },
+			Entry{ "sounds", Sounds },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
 			Entry{ "anim", Anim },

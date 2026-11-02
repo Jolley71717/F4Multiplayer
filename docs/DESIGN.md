@@ -2417,7 +2417,8 @@ that changes the world cannot ship without a row here.
   [hide|force]` (open or close a menu, not the dialogue or the workshop menu: `workshop enter|exit`),
   `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
   <member> <value>` (look at and change a menu's Flash objects, on the main thread between frames), `weapsound <actor>` (the sounds
-  of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
+  of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `sounds` (every sound the audio manager holds and the reference each follows, PLAYER for one that follows
+  the player: one heard wherever the player goes), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
   objectives with their state), `stages <quest>` (the stages done here and those from friends still
   waiting), `aliases <quest>` (its aliases, how each is filled and what fills it here), `global <global>` (a global's value), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
