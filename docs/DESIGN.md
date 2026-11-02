@@ -1107,7 +1107,18 @@ trap's `Disarming`, which snaps on nobody) when the report came in the last 3 s 
 (within 512 units); otherwise spent quietly through its script (Inactive, Busy and destroyed, TrapFired
 and destroyed, Disarming; a mine disabled). A disarm is done as the trap's disarmed look, never its
 disarm function, which gives the disarm's reward and XP to whoever's game runs it. A take disables it.
-What that does in the receiver's game is in the session already, so it isn't reported back. A trap's
+What that does in the receiver's game is in the session already, so it isn't reported back. A mine's warning
+(2026-11-01, a Nexus report of mines going off at once for a joiner, without the beep): the engine starts a mine's
+countdown when an actor comes within its proximity (times `fMineExteriorRadiusMult` outdoors), at the record's timer
+plus `fMinesDelayMin` for our player (1.5 + 0.2 s for a frag mine, beeping all along) and at `fMinesDelayMin` alone (0.2 s)
+for anyone else, a friend's stand-in among them. Measured on the rig with the probe below, both ways: the walker's mine
+started its 1.7 s; the friend's copy started 0.2 s later, as the stand-in arrived, ran 0.2 s and went off 1.3 s before
+the walker's, and its report set the walker's off 0.5 s into the warning: each player heard a blip and the blast came at
+once in both games. So a mine whose countdown starts here with a friend's stand-in in its reach (and no other actor but
+our player) is given the walker's countdown, less what it ran (`TrapRules::MineCountdown`, looked at each frame, as 0.2 s
+is a few frames; `countdowns=`): on the rig both games then beeped the whole 1.7 s and went off within 0.1 to 0.2 s of
+each other (whichever came first of our own countdown and the walker's report), in both directions. One an NPC may have
+started (a raider, a copy of a friend's NPC, a companion in reach) keeps the engine's, as in every game. A trap's
 activation is no longer pressed by the presser's stand-in (`acts=` refused): that disarmed our copy and
 gave our player the XP. For 8 s after a trap went off in our game, explosions within 1500 units of it,
 and any at a mine we watch, are the trap's (`Traps::Claims`): WeaponFire's explosion watch doesn't
@@ -1115,8 +1126,9 @@ report them as our player's, or they would go off twice. While a trap set off fo
 our copies near it stay ghosts (BlastShield, renewed each look). A mine picked up was not shared before:
 the pickup pairing matches the activated reference's base (the mine's projectile) with the item added
 (its weapon), which never match. `traps=` watched/known, `sent=`, `got=`, `live=`, `quiet=`,
-`disarmed=`, `taken=`, `blasts=` (explosions left to the trap); the dev channel's `traps` lists the watched ones, and
-`traps <ref>` says how one was classified.
+`disarmed=`, `taken=`, `blasts=` (explosions left to the trap), `countdowns=` (mines a stand-in set counting, given the
+walker's countdown); the dev channel's `traps` lists the watched ones, `traps <ref>` says how one was classified, and
+`traps probe on|off` logs each watched mine's countdown, countdown sound and the actors near it each frame while it counts.
 
 The Prydwen (src/game/ScriptDoors.h, with Vault 114's gear door; 2026-10-27, a Nexus report on 0.9.2 of a friend who
 didn't see it arrive): its arrival is the story's. Out of Time's 130 (set when "Sanctuary" starts, Preston's talk after
