@@ -168,6 +168,7 @@ menu.invite = Inviter des amis
 menu.stop_hosting = Ne plus héberger
 menu.leave = Quitter
 menu.join_other = Rejoindre un autre ami
+mainmenu.entry = MULTIJOUEUR
 menu.host = Héberger une session
 menu.join = Rejoindre un ami
 menu.look_again = Actualiser

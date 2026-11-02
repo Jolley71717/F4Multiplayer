@@ -187,6 +187,7 @@ menu.invite = Пригласить друзей
 menu.stop_hosting = Остановить хостинг
 menu.leave = Выйти из сессии
 menu.join_other = Присоединиться к другому игроку
+mainmenu.entry = МУЛЬТИПЛЕЕР
 menu.host = Создать сессию
 menu.join = Присоединиться к другу
 menu.look_again = Обновить

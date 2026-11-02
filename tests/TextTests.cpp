@@ -368,6 +368,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.stop_hosting", {}, "Stop hosting" },
 		{ "menu.leave", {}, "Leave" },
 		{ "menu.join_other", {}, "Join someone else" },
+		{ "mainmenu.entry", {}, "MULTIPLAYER" },
 		{ "menu.host", {}, "Host a session" },
 		{ "menu.join", {}, "Join a friend" },
 		{ "menu.look_again", {}, "Look again" },

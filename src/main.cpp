@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/MainMenuEntry.h"
 #include "game/AutoSave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
@@ -1091,6 +1092,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Equipment::InstallFrameGate();  // and its Transfer
 	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
+	MainMenuEntry::Install();  // a Multiplayer entry in the main and pause menus, after Load (MainMenuPlace.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

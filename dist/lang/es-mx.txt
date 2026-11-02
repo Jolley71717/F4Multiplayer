@@ -164,6 +164,7 @@ menu.invite = Invitar a amigos
 menu.stop_hosting = Dejar de hospedar
 menu.leave = Salir
 menu.join_other = Unirse a otra partida
+mainmenu.entry = MULTIJUGADOR
 menu.host = Hospedar una sesión
 menu.join = Unirse a un amigo
 menu.look_again = Volver a buscar

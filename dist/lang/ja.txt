@@ -183,6 +183,7 @@ menu.invite = フレンドを招待
 menu.stop_hosting = ホストを停止
 menu.leave = 退出
 menu.join_other = 別のゲームに参加
+mainmenu.entry = マルチプレイ
 menu.host = セッションをホスト
 menu.join = フレンドに参加
 menu.look_again = もう一度探す

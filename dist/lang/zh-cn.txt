@@ -164,6 +164,7 @@ menu.invite = 邀请好友
 menu.stop_hosting = 停止当主机
 menu.leave = 离开
 menu.join_other = 加入其他人
+mainmenu.entry = 多人联机
 menu.host = 创建房间
 menu.join = 加入好友
 menu.look_again = 重新查找
