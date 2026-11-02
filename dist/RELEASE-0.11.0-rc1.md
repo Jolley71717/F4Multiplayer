@@ -11,9 +11,9 @@ New:
   legendary status itself, at its own player's level, so friends saw different raiders, a legendary in one game was
   plain in another, and a scene that places its NPCs at runtime could end up with a copy per player. The session now
   rolls each one once and every game builds the same NPC. It is rolled at the average level of the players there, or
-  the host can choose the highest, the host's own, or each game's own (`sNpcLevel` in the ini); the legendary chance
-  follows `sLegendaryDifficulty` the same way. An NPC brought back by a cell reset is rolled anew, the same for
-  everyone.
+  the host can choose the highest, the host's own, or each game's own (`sNpcLevel` in the ini). The chance of a
+  legendary follows the players' difficulty the same way: their average by default, or the host's, or each game's own
+  (`sLegendaryDifficulty`). An NPC brought back by a cell reset is rolled anew, the same for everyone.
 
 Fixed:
 
@@ -21,10 +21,11 @@ Fixed:
   almost at once, and its report cut the warning short in theirs too.
 - Catching up a friend's main quest no longer pulls a joiner into Kellogg's memory. Catch-up now never sets a quest
   stage whose scripts move the player (the memory lounger, DiMA's memories, Vault 118, the pre-war opening).
-- A Mr Gutsy or other NPC from a random encounter that only a friend's game has now shows up in yours, with its fight.
+- A leveled NPC that only a friend's game has, like the Mr Gutsy a random encounter puts on the road, now shows up in
+  yours, with its fight.
 - A teleport to a friend far across the map now lands next to them: their cell is loaded first. The autosave after a
   teleport waits until you are standing on the ground, so it can no longer save you mid-fall and loop you into a
-  fall death on every load. The fall after a teleport does no damage.
+  fall death on every load. A fall after a teleport should do no damage.
 - On some starts a player had no input at all (no walking, looking or shooting, though menus worked). The game had
   marked the player as in a synced animation with none running; the mark is now cleared at game start and on load.
 - A friend who sneaks now sneak-walks instead of gliding along crouched.
@@ -43,6 +44,13 @@ Known issues:
 - Settler jobs aren't shared: each game keeps its own. A friend sees the settler go to work but not the job.
 - Storing a pre-placed settlement crop during a session removes it from the host's world but not the friend's.
 - Mines were tested indoors with frag mines; other mine types and outdoor mines haven't been tested yet.
+- A robot such as a Mr Gutsy that a friend's game runs can stay alive at low health in their game when you land the
+  killing blow: its long fall outlasts the time the kill is accepted.
+- Pieces built before 0.11.0 aren't covered by the fix for built pieces a builder's save no longer has: one that is
+  already stuck in a friend's game stays.
+- A late joiner still sees an enemy a friend's game spawned (not one from the world) at full health until it is next
+  hurt.
+- Players whose mods change the leveled lists differently can still see different enemies.
 
 For testers:
 
