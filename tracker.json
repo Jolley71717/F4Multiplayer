@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T07:02:25+00:00",
+ "updated": "2026-11-02T07:54:01+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -601,8 +601,9 @@
    "title": "Catching up a friend's story can send you into Kellogg's memories",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 266
   },
   {
    "id": "fhkp",
@@ -800,7 +801,7 @@
    "title": "Menus that open by themselves while catching up on a friend's quests",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
