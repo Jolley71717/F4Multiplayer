@@ -41,8 +41,7 @@ xmake build -y F4Multiplayer F4MPTests
 ```
 
 Both land in `build/windows/x64/releasedbg/`, as on Windows. The tests run under a bottle's Wine
-(below), against Microsoft's C++ library as on Windows: built natively against libc++, one test
-fails that passes on Windows. `tools/crossovermac.sh test` runs them; as on Windows, the exit code is the number
+(below), against Microsoft's C++ library as on Windows. `tools/crossovermac.sh test` runs them; as on Windows, the exit code is the number
 failed and a name runs only the tests whose names hold it.
 
 ## The game under CrossOver
