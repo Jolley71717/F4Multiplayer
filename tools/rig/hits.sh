@@ -20,6 +20,8 @@
 #               player shoots it at once (one pair_shot): the damage goes to the runner's game while it is in a menu (0.10.1: held and applied,
 #               not lost). Health agrees after the menu closes, the runner still runs it in both games, and its damageAnswered
 #               rose. It runs last: a menu open past 5 s hands the runner's NPCs to friends (PauseHandOff), the other targets too.
+#               A pair whose shooter's shot never reached the raider (its copyHits did not rise), that came late, or whose menu
+#               stayed open past T_MENU_MS tests nothing: it is fired again (up to 4 tries), and FAILS as set-up if no try does.
 #   kill        (before pause) runner and shooter fire in pairs (pair_shot: both aim, then the runner clicks and the shooter
 #               within T_PAIR_GAP_MS, well inside the 5 s cooldown, so the runner keeps the raider and the shooter's hits go to it as
 #               damage) until it dies: dead in both games, and the runner's damageAnswered rose.
@@ -278,6 +280,7 @@ fire() {
 # 4448 ms with the host game's frames at 45 ms and hitches of several seconds). Before the pair both games must answer a call
 # within T_READY_MS (ready): one in a hitch would press its click late. Each pair's timings go to targets.txt.
 T_PAIR_GAP_MS=${T_PAIR_GAP_MS:-4000}   # gaps up to 3.5 s were seen on the rig (2026-10-31); still inside the 5 s cooldown
+T_MENU_MS=${T_MENU_MS:-4500}           # the pause step's menu closed by then: PauseHandOff hands a stopped game's NPCs to friends at 5 s
 T_READY_MS=${T_READY_MS:-1000}
 call_ms() { local a; a=$(date +%s%3N); dc "$1" "$2" >/dev/null; echo $(( $(date +%s%3N) - a )); }
 ready() {  # ready <who> <who>: both games answer `status` within T_READY_MS, up to 4 tries 1.5 s apart; READY_MS says what they took
@@ -544,37 +547,46 @@ run_phase() {
 	section "$o runs the NPCs, $p shoots: a hit while the runner is in the pause menu"
 	t=$(tg_by $o pause)
 	if [ -n "$t" ] && armed "$o" && armed "$p" && ro=$(tg_ro "$t") && prove_lines "pause ($o runs the NPC)" "$t"; then
-		local menu_ms pm try paired=0 lateTry=0
+		local menu_ms try paired=0 why="" redos="" c0 c1
 		# The runner's own shot keeps the raider (its claim starts the server's 5 s takeover cooldown), the menu opens, and the
 		# shooter fires at once: well inside the cooldown. The menu closes about 1 s later, well before the paused game's hand-off
-		# (PauseHandOff::AFTER, 5 s): nothing is read while it is open (the reads took it past 5 s, 2026-11-01). A pair whose
-		# runner shot missed stops before the menu and the shooter's click (pair_shot) and is fired again; a pair that came late (a
-		# game's main thread hitched) is fired again once, the raider's health put back first, if the runner still has it.
+		# (PauseHandOff::AFTER, 5 s): nothing is read while it is open (the reads took it past 5 s, 2026-11-01; a pauseMenu read
+		# there took it to 5.7 s, 2026-11-02: the in-pause count of damageAnswered is the proof the menu was up). A pair whose
+		# runner shot missed stops before the menu and the shooter's click (pair_shot) and is fired again. A pair that tests
+		# nothing is fired again too, the raider's health put back first, while the runner still has it: the shooter's shot did
+		# not reach the raider (its copyHits did not rise: 2026-11-02, a hip-fired 10mm at 450 u missed, and the step read the
+		# missing hit as the mod's), the pair came late (a game's main thread hitched), or the menu stayed open past T_MENU_MS.
 		for try in 1 2 3 4; do
-			snap P0
+			snap P0; c0=$(cget P0 "$p" copyHits)
 			if ! pair_shot "$o" "$p" "$t" esc; then sleep 1.5; continue; fi
 			paired=1
 			PAUSE_WHO=$o   # put_back closes it if the run stops before this step does
-			pm=$(field "$(dc "$o" paused)" pauseMenu)   # one read while it is open
 			sleep 0.5; dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1.5
 			[ "$(field "$(dc "$o" paused)" pauseMenu)" = true ] && { dc "$o" "key 0x1B 100" >/dev/null; menu_ms=$(( $(date +%s%3N) - PAIR_ESC )); sleep 1; }
 			PAUSE_WHO=""
-			[ $lateTry = 0 ] && [ $try -lt 4 ] && [ "$PAIR_GAP" -gt "$T_PAIR_GAP_MS" ] && [ "$(runner "$o" "$ro")" = "${MYID[$o]}" ] && top_up "$t" || break
-			lateTry=1; paired=0
-			warn "pause ($o runs the NPC): a late pair fired again" "the first pair came $PAIR_GAP ms apart (over $T_PAIR_GAP_MS; the runner kept it): its counts are not used; the raider was healed and the pair fired once more (targets.txt)"
-			echo "pause $ro: the pair came $PAIR_GAP ms apart (over $T_PAIR_GAP_MS): fired again" >> "$A_OUT/targets.txt"; sleep 2
+			c1=$(field "$(dc "$p" 'net status')" copyHits); why=""
+			if ! { is_num "$c0" && is_num "$c1" && [ "$c1" -gt "$c0" ]; }; then why="the shooter's shot did not reach it (its copyHits $c0 -> $c1)"
+			elif [ "$PAIR_GAP" -gt "$T_PAIR_GAP_MS" ]; then why="the pair came $PAIR_GAP ms apart (over $T_PAIR_GAP_MS)"
+			elif [ "$menu_ms" -gt "$T_MENU_MS" ]; then why="the menu was open $menu_ms ms (over $T_MENU_MS)"; fi
+			[ -z "$why" ] && break
+			echo "pause $ro: try $try: $why" >> "$A_OUT/targets.txt"
+			[ $try -lt 4 ] && [ "$(runner "$o" "$ro")" = "${MYID[$o]}" ] && top_up "$t" || break
+			paired=0; redos="$redos; try $try: $why"; sleep 2
 		done
+		[ -n "$redos" ] && warn "pause ($o runs the NPC): pairs that tested nothing, fired again" "${redos#; } (their counts are not used; targets.txt)"
 		if [ $paired = 0 ]; then
-			fail "pause ($o runs the NPC): set-up: a pair whose runner shot landed" "none in $try tries (the last: ${PAIR_MISS:-a late pair}; targets.txt): the step is not run"
+			fail "pause ($o runs the NPC): set-up: a pair whose runner shot landed" "none in $try tries (the last: ${PAIR_MISS:-$why}; targets.txt): the step is not run"
+		elif [[ $why == "the shooter's shot did not reach it"* ]]; then
+			fail "pause ($o runs the NPC): set-up: the shooter's shot reached the raider in a paused pair" "none in $try tries (the last: $why; targets.txt): the step is not run"
 		else
 			expect_le "pause ($o runs the NPC): the shooter's click came soon after the runner's (ms; the takeover cooldown is 5000)" "$PAIR_GAP" "$T_PAIR_GAP_MS"
-			expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" 4500
+			expect_le "pause ($o runs the NPC): the menu was closed before the paused game's hand-off (ms open; PauseHandOff is 5000)" "$menu_ms" "$T_MENU_MS"
 			fired "$o" "$(cut -d' ' -f1 <<<"$PAIR_SHOTS")" "$(shots_of "$o")"; fired "$p" "$(cut -d' ' -f2 <<<"$PAIR_SHOTS")" "$(shots_of "$p")"
 			settle "$t"; sleep 3; sample "$t" afterpause; snap P1
 			# the runner's game counts a friend's hit it applied with the pause menu open (damageAnswered=<applied>/<refused>/<in pause>):
-			# the proof the hit landed while the menu was up, not just that the menu was up by the time of the read (pm). Read from P1:
-			# it used to be read before P1 was taken (2026-11-01: against no P1 at all, "no number to compare (got '')")
-			expect_ge "pause ($o runs the NPC): the shooter's hit was applied while the runner's pause menu was open ($o's damageAnswered in pause; paused read pauseMenu=$pm)" "$(delta "$o" P0 damageAnswered P1 3)" 1
+			# the proof the hit landed while the menu was up. Read from P1: it used to be read before P1 was taken (2026-11-01:
+			# against no P1 at all, "no number to compare (got '')")
+			expect_ge "pause ($o runs the NPC): the shooter's hit was applied while the runner's pause menu was open ($o's damageAnswered in pause)" "$(delta "$o" P0 damageAnswered P1 3)" 1
 			agree "pause ($o runs the NPC): after the menu closes" "$t"; landed "pause ($o runs the NPC)" "$t"
 			local k1 k2; k1=$(runner "$o" "$ro"); k2=$(runner "$p" "$(tg_rp "$t")")
 			if [ "$k1" = "${MYID[$o]}" ] && [ "$k2" = "${MYID[$o]}" ]; then pass "pause ($o runs the NPC): the runner kept it (its own hit just before was within the takeover cooldown)" "player $k1"; else fail "pause ($o runs the NPC): the runner kept it (its own hit just before was within the takeover cooldown)" "runner says player '$k1', shooter says '$k2', runner is ${MYID[$o]}"; fi
