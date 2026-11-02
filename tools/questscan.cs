@@ -27,7 +27,7 @@ public static class GearScan
     }
 
     // ---------------- ESM ----------------
-    public class Quest { public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; }
+    public class Quest { public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>(); }
 
     public static List<Quest> Quests(string path, int fileIndex)
     {
@@ -74,7 +74,7 @@ public static class GearScan
                             int d = s + 6;
                             if (st == "EDID") q.Edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                             if (st == "DNAM" && ss >= 12) { q.Flags = BitConverter.ToUInt16(body, d); q.Type = body[d + 8]; }
-                            if (st == "INDX") q.Stages++;
+                            if (st == "INDX") { q.Stages++; if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
                             if (st == "QOBJ") q.Objectives++;
                             s = d + ss;
                         }
@@ -122,7 +122,15 @@ public static class GearScan
 
     // ---------------- PEX ----------------
     public class Instr { public int Op; public List<string> Args = new List<string>(); }
-    public class Func { public string Obj; public string State; public string Name; public List<Instr> Code = new List<Instr>(); }
+    public class Func
+    {
+        public string Obj; public string State; public string Name; public List<Instr> Code = new List<Instr>();
+        // each parameter's and local's type, by name, so a call on one can be followed into its script
+        public Dictionary<string, string> Types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public List<string> Params = new List<string>();  // in order
+    }
+    // a script object: its parent, and its properties' and variables' types by name
+    public class Obj { public string Name; public string Parent = ""; public Dictionary<string, string> Types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); }
 
     class R
     {
@@ -156,8 +164,8 @@ public static class GearScan
     {
         var f = new Func { Obj = obj, State = state, Name = name };
         r.U16(); r.U16(); r.U32(); r.U8();
-        int pc = r.U16(); for (int i = 0; i < pc; i++) { r.U16(); r.U16(); }
-        int lc = r.U16(); for (int i = 0; i < lc; i++) { r.U16(); r.U16(); }
+        int pc = r.U16(); for (int i = 0; i < pc; i++) { var n = r.Str(); f.Types[n] = r.Str(); f.Params.Add(n); }
+        int lc = r.U16(); for (int i = 0; i < lc; i++) { var n = r.Str(); f.Types[n] = r.Str(); }
         int ic = r.U16();
         for (int i = 0; i < ic; i++)
         {
@@ -174,8 +182,11 @@ public static class GearScan
         return f;
     }
 
-    public static List<Func> Pex(byte[] b)
+    public static List<Func> Pex(byte[] b) { List<Obj> objs; return Pex(b, out objs); }
+
+    public static List<Func> Pex(byte[] b, out List<Obj> a_objs)
     {
+        a_objs = new List<Obj>();
         var r = new R { B = b };
         if (r.U32() != 0xFA57C0DE) throw new Exception("magic");
         r.U8(); r.U8(); r.U16(); r.U64(); r.W(); r.W(); r.W();
@@ -193,14 +204,15 @@ public static class GearScan
         for (int o = 0; o < oc; o++)
         {
             string oname = r.Str(); r.U32();
-            r.U16(); r.U16(); r.U8(); r.U32(); r.U16();
+            var obj = new Obj { Name = oname, Parent = r.Str() }; a_objs.Add(obj);
+            r.U16(); r.U8(); r.U32(); r.U16();
             int structs = r.U16();
             for (int s = 0; s < structs; s++) { r.U16(); int m = r.U16(); for (int k = 0; k < m; k++) { r.U16(); r.U16(); r.U32(); r.Var(); r.U8(); r.U16(); } }
-            int vc = r.U16(); for (int v = 0; v < vc; v++) { r.U16(); r.U16(); r.U32(); r.Var(); r.U8(); }
+            int vc = r.U16(); for (int v = 0; v < vc; v++) { var vn = r.Str(); obj.Types[vn] = r.Str(); r.U32(); r.Var(); r.U8(); }
             int pcnt = r.U16();
             for (int p = 0; p < pcnt; p++)
             {
-                string pn = r.Str(); r.U16(); r.U16(); r.U32(); byte fl = r.U8();
+                string pn = r.Str(); obj.Types[pn] = r.Str(); r.U16(); r.U32(); byte fl = r.U8();
                 if ((fl & 4) != 0) r.U16();
                 else { if ((fl & 1) != 0) ReadFunc(r, oname, "", pn + ".get"); if ((fl & 2) != 0) ReadFunc(r, oname, "", pn + ".set"); }
             }
@@ -383,6 +395,252 @@ public static class CrossScan
             }
             foreach (var l in lines) sb.AppendLine(l);
         }
+        return sb.ToString();
+    }
+}
+
+// The shared quests' stages that move the player (src/game/StageRules.h's kMoves): a stage whose fragment, or a script
+// function it calls (its quest's own script through kmyQuest, or any script a property or local is typed with, a few
+// calls deep), moves the player (MoveTo on the player), fades the screen out (Game.FadeOutGame(true, ...)), takes their
+// movement away (DisablePlayerControls with movement, EnableMovement(false)) or makes them use a door (Activate on a
+// *Door* with the player); or that sets a stage of its own quest or of ANY other quest (shared or not, matched by the
+// property's name) or starts one (Start(), or a SetStage on it, running its start-up stages too), that does. MQ202 300,
+// Dangerous Minds' lounger, does nothing to the player itself: it sets MQ203 10 (Kellogg's memories, not shared), whose
+// fragment calls MQ203Script.StartQuest, which fades out and moves the player into the memory. One line per stage that
+// moves: file, quest, stage, quest name, and the first way found that it moves (a chain of what it sets and calls).
+// What it does not see: a scene a stage starts, a timer or event a script waits for, a call through a variable whose
+// type has no script (an ObjectReference property's attached script), a quest matched by no property name.
+public static class MoveScan
+{
+    class Script { public GearScan.Obj Obj; public Dictionary<string, GearScan.Func> Funcs = new Dictionary<string, GearScan.Func>(StringComparer.OrdinalIgnoreCase); }
+
+    static readonly Dictionary<string, Script> scripts = new Dictionary<string, Script>(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, Tuple<GearScan.Quest, int>> byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
+    // per quest (file, id): its stage fragments, by stage
+    static readonly Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>> fragments = new Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>>();
+    static readonly Dictionary<string, string> funcMoves = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, string> stageMoves = new Dictionary<string, string>();
+
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+    static bool Own(string a_var) { return Is(a_var, "self") || Is(a_var, "kmyQuest") || Is(a_var, "__temp"); }
+
+    static GearScan.Func Find(string a_type, string a_func, out string a_owner)
+    {
+        a_owner = null;
+        for (int depth = 0; !string.IsNullOrEmpty(a_type) && depth < 16; depth++)
+        {
+            Script s;
+            if (!scripts.TryGetValue(a_type, out s)) return null;
+            GearScan.Func f;
+            if (s.Funcs.TryGetValue(a_func, out f)) { a_owner = a_type; return f; }
+            a_type = s.Obj.Parent;
+        }
+        return null;
+    }
+
+    static string TypeOf(GearScan.Func f, string a_var)
+    {
+        if (Is(a_var, "self")) return f.Obj;
+        string t;
+        if (f.Types.TryGetValue(a_var, out t)) return t;
+        Script s;
+        for (var o = f.Obj; !string.IsNullOrEmpty(o) && scripts.TryGetValue(o, out s); o = s.Obj.Parent)
+            if (s.Obj.Types.TryGetValue(a_var, out t) || s.Obj.Types.TryGetValue(Bare(a_var), out t)) return t;
+        return null;
+    }
+
+    static Tuple<GearScan.Quest, int> QuestOf(string a_var)
+    {
+        var n = Bare(a_var);
+        Tuple<GearScan.Quest, int> t;
+        if (byEdid.TryGetValue(n, out t)) return t;
+        if (n.Length > 1 && (n[0] == 'p' || n[0] == 'P') && byEdid.TryGetValue(n.Substring(1), out t)) return t;
+        return null;
+    }
+
+    static bool Literal(string a) { int n; float x; return a == "True" || a == "False" || a == "None" || a.StartsWith("\"") || int.TryParse(a, out n) || float.TryParse(a, out x); }
+
+    // The instructions a call can run, in order: with the literal arguments it is called with (null: not known), a branch
+    // on a parameter compared to a constant goes one way (MQ302Script.ControlToggle(1) gives the controls back; its 0
+    // takes them).
+    static List<GearScan.Instr> Reachable(GearScan.Func f, string[] a_args)
+    {
+        var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (int k = 0; a_args != null && k < a_args.Length && k < f.Params.Count; k++) if (a_args[k] != null) known[f.Params[k]] = a_args[k];
+        Func<string, string> value = v => Literal(v) ? v : known.ContainsKey(v) ? known[v] : null;
+        // a variable written twice isn't known; a compare of two known values is
+        var writes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in f.Code) if (i.Op != 20 && i.Op != 21 && i.Op != 22 && i.Op != 26 && i.Op != 23 && i.Op != 24 && i.Op != 25 && i.Args.Count > 0) writes[i.Args[0]] = writes.ContainsKey(i.Args[0]) ? writes[i.Args[0]] + 1 : 1;
+        foreach (var w in writes) if (w.Value > 0) known.Remove(w.Key);
+        foreach (var i in f.Code)
+        {
+            if (i.Args.Count == 0 || writes.ContainsKey(i.Args[0]) && writes[i.Args[0]] > 1) continue;
+            if (i.Op == 15) { var a = value(i.Args[1]); var b = value(i.Args[2]); if (a != null && b != null) known[i.Args[0]] = a.Equals(b, StringComparison.OrdinalIgnoreCase) ? "True" : "False"; }
+            if (i.Op == 10) { var a = value(i.Args[1]); if (a == "True" || a == "False") known[i.Args[0]] = a == "True" ? "False" : "True"; }
+            if (i.Op == 13) { var a = value(i.Args[1]); if (a != null) known[i.Args[0]] = a; }
+        }
+        var seen = new bool[f.Code.Count + 1];
+        var todo = new Stack<int>(); todo.Push(0);
+        while (todo.Count > 0)
+        {
+            int pc = todo.Pop();
+            if (pc < 0 || pc >= f.Code.Count || seen[pc]) continue;
+            seen[pc] = true;
+            var i = f.Code[pc];
+            int off;
+            if (i.Op == 26) continue;
+            if (i.Op == 20 && int.TryParse(i.Args[0], out off)) { todo.Push(pc + off); continue; }
+            if ((i.Op == 21 || i.Op == 22) && int.TryParse(i.Args[1], out off))
+            {
+                var c = value(i.Args[0]);
+                bool jumps = i.Op == 21 ? c == "True" : c == "False", falls = i.Op == 21 ? c == "False" : c == "True";
+                if (c == null || (c != "True" && c != "False")) { jumps = true; falls = true; }
+                if (jumps) todo.Push(pc + off);
+                if (falls) todo.Push(pc + 1);
+                continue;
+            }
+            todo.Push(pc + 1);
+        }
+        var code = new List<GearScan.Instr>();
+        for (int k = 0; k < f.Code.Count; k++) if (seen[k]) code.Add(f.Code[k]);
+        return code;
+    }
+
+    // What a function does to the player itself (not through what it calls), or null.
+    static string Direct(List<GearScan.Instr> a_code)
+    {
+        var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Func<string, bool> player = v => players.Contains(v) || Bare(v).IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0;
+        foreach (var i in a_code)
+        {
+            if (i.Op == 25 && Is(i.Args[0], "game") && Is(i.Args[1], "GetPlayer")) { players.Add(i.Args[2]); continue; }
+            if (i.Op == 25 && Is(i.Args[0], "game") && Is(i.Args[1], "FadeOutGame") && i.Args.Count > 3 && Is(i.Args[3], "True")) return "FadeOutGame";
+            if (i.Op == 25 && Is(i.Args[0], "game") && Is(i.Args[1], "DisablePlayerControls") && (i.Args.Count <= 3 || Is(i.Args[3], "True"))) return "DisablePlayerControls";
+            if (i.Op == 13 || i.Op == 14) { if (player(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); continue; }
+            if (i.Op != 23) continue;
+            var m = i.Args[0]; var self = i.Args[1];
+            if ((Is(m, "GetReference") || Is(m, "GetRef") || Is(m, "GetActorRef") || Is(m, "GetActorReference")) && Bare(self).IndexOf("Player", StringComparison.OrdinalIgnoreCase) >= 0) { players.Add(i.Args[2]); continue; }
+            if ((Is(m, "MoveTo") || Is(m, "MoveToNode") || Is(m, "MoveToMyEditorLocation")) && player(self)) return "MoveTo " + Bare(i.Args.Count > 3 ? i.Args[3] : "");
+            if (Is(m, "DisablePlayerControls") && (i.Args.Count <= 3 || Is(i.Args[3], "True"))) return "DisablePlayerControls";
+            if (Is(m, "EnableMovement") && i.Args.Count > 3 && Is(i.Args[3], "False")) return "EnableMovement(false)";
+            if (Is(m, "Activate") && i.Args.Count > 3 && player(i.Args[3]) && Bare(self).IndexOf("Door", StringComparison.OrdinalIgnoreCase) >= 0) return "the player through " + Bare(self);
+            players.Remove(i.Args[2]);
+        }
+        return null;
+    }
+
+    // How a function moves the player, itself or through the functions it calls, or null. a_quest: the quest whose
+    // script or fragment it is (what its SetStage on self sets), when known.
+    static string Moves(GearScan.Func f, string[] a_args, Tuple<GearScan.Quest, int> a_quest, HashSet<string> a_seen)
+    {
+        var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")@" + (a_quest == null ? "" : a_quest.Item2 + ":" + a_quest.Item1.Id);
+        string cached;
+        if (funcMoves.TryGetValue(key, out cached)) return cached;
+        if (!a_seen.Add(key)) return null;
+        var code = Reachable(f, a_args);
+        string why = Direct(code);
+        if (why != null) why = f.Obj + "." + f.Name + ": " + why;
+        for (int n = 0; why == null && n < code.Count; n++)
+        {
+            var i = code[n];
+            if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
+            if (i.Op == 23 && (Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start")))
+            {
+                var own = Own(i.Args[1]);
+                var target = own ? a_quest : QuestOf(i.Args[1]);
+                if (target == null) continue;
+                var stages = new List<int>();
+                int s;
+                if (Is(i.Args[0], "SetStage") && i.Args.Count > 3 && int.TryParse(i.Args[3], out s)) stages.Add(s);
+                if (!own) stages.AddRange(target.Item1.Startup);  // starts it, if it isn't running
+                foreach (var st in stages)
+                {
+                    var w = Stage(target.Item2, target.Item1, st, a_seen);
+                    if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
+                }
+                continue;
+            }
+            string type, name;
+            if (i.Op == 25) { type = i.Args[0]; name = i.Args[1]; }
+            else if (i.Op == 24) { Script sc; type = scripts.TryGetValue(f.Obj, out sc) ? sc.Obj.Parent : null; name = i.Args[0]; }
+            else { type = TypeOf(f, i.Args[1]); name = i.Args[0]; }
+            if (type == null) continue;
+            string owner;
+            var g = Find(type, name, out owner);
+            if (g == null) continue;
+            // a call on the quest's own script keeps the quest (kmyQuest.StartQuest), another script's doesn't
+            var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : null;
+            int first = i.Op == 24 ? 2 : 3;
+            var args = i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray();
+            var w2 = Moves(g, args, q, a_seen);
+            if (w2 != null) why = owner + "." + name + " -> " + w2;
+        }
+        a_seen.Remove(key);
+        // only moves are kept: a no found while a caller up the chain was still open may have missed a cycle through it
+        if (why != null) funcMoves[key] = why;
+        return why;
+    }
+
+    static string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen)
+    {
+        var key = a_file + ":" + a_quest.Id + ":" + a_stage;
+        string cached;
+        if (stageMoves.TryGetValue(key, out cached)) return cached;
+        if (!a_seen.Add(key)) return null;
+        Dictionary<int, List<GearScan.Func>> stages;
+        List<GearScan.Func> funcs;
+        string why = null;
+        if (fragments.TryGetValue(Tuple.Create(a_file, a_quest.Id & 0xFFFFFF), out stages) && stages.TryGetValue(a_stage, out funcs))
+            foreach (var f in funcs) { why = Moves(f, null, Tuple.Create(a_quest, a_file), a_seen); if (why != null) break; }
+        a_seen.Remove(key);
+        if (why != null) stageMoves[key] = why;
+        return why;
+    }
+
+    public static string Run(string data)
+    {
+        var sb = new StringBuilder();
+        var files = new[] { new { Esm = "Fallout4.esm", Ba2 = "Fallout4 - Misc.ba2" }, new { Esm = "DLCCoast.esm", Ba2 = "DLCCoast - Main.ba2" } };
+        var perFile = new List<Dictionary<uint, GearScan.Quest>>();
+        for (int file = 0; file < files.Length; file++)
+        {
+            var d = new Dictionary<uint, GearScan.Quest>();
+            foreach (var q in GearScan.Quests(Path.Combine(data, files[file].Esm), file)) { d[q.Id & 0xFFFFFF] = q; if (!byEdid.ContainsKey(q.Edid)) byEdid[q.Edid] = Tuple.Create(q, file); }
+            perFile.Add(d);
+            foreach (var kv in GearScan.Ba2(Path.Combine(data, files[file].Ba2), n => n.EndsWith(".pex", StringComparison.OrdinalIgnoreCase)))
+            {
+                List<GearScan.Obj> objs; List<GearScan.Func> funcs;
+                try { funcs = GearScan.Pex(kv.Value, out objs); } catch { continue; }
+                foreach (var o in objs) scripts[o.Name] = new Script { Obj = o };
+                foreach (var f in funcs) { Script s; if (scripts.TryGetValue(f.Obj, out s) && !s.Funcs.ContainsKey(f.Name)) s.Funcs[f.Name] = f; }
+                if (kv.Key.IndexOf(@"\fragments\quests\", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                var name = Path.GetFileNameWithoutExtension(kv.Key);
+                uint id;
+                if (!uint.TryParse(name.Substring(name.LastIndexOf('_') + 1), System.Globalization.NumberStyles.HexNumber, null, out id) || !d.ContainsKey(id & 0xFFFFFF)) continue;
+                var key = Tuple.Create(file, id & 0xFFFFFF);
+                if (!fragments.ContainsKey(key)) fragments[key] = new Dictionary<int, List<GearScan.Func>>();
+                foreach (var f in funcs)
+                {
+                    int stage;
+                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase) || !int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+                    if (!fragments[key].ContainsKey(stage)) fragments[key][stage] = new List<GearScan.Func>();
+                    fragments[key][stage].Add(f);
+                }
+            }
+        }
+        var lines = new SortedSet<string>();
+        foreach (var kv in fragments)
+        {
+            var quest = perFile[kv.Key.Item1][kv.Key.Item2];
+            if (QuestScan.Shared(quest, kv.Key.Item1) == "not shared") continue;
+            foreach (var st in kv.Value.Keys)
+            {
+                var why = Stage(kv.Key.Item1, quest, st, new HashSet<string>());
+                if (why != null) lines.Add(string.Format("{0} {1:X6} {2,5} {3,-34} {4}", kv.Key.Item1, quest.Id & 0xFFFFFF, st, quest.Edid, why));
+            }
+        }
+        foreach (var l in lines) sb.AppendLine(l);
         return sb.ToString();
     }
 }
