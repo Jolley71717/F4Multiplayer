@@ -550,6 +550,7 @@ namespace Sim
 			situation.live = live != liveAt.end() && now - live->second.at < StageRules::LIVE_FOR;
 			const bool unlocking = Unlocking(a_id);
 			situation.held = combatHold && !unlocking;
+			situation.opening = opening;
 			if (lock) {
 				situation.releaseComing = waiting.Contains(releaseId, lock->releaseStage) || Has(releaseId, lock->releaseStage);
 			}
@@ -573,6 +574,8 @@ namespace Sim
 			case StageRules::Verdict::kLater:
 				return StageLog::Set::kLater;
 			case StageRules::Verdict::kQuestWaits:
+				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kOpeningWaits:  // it moves the player, and this game is still in the opening
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
 				break;
