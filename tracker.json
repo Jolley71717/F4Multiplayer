@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T01:38:24+00:00",
+ "updated": "2026-11-02T03:14:58+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1175,6 +1175,14 @@
    "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
   },
   {
+   "id": "tyn3",
+   "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "A robot killed in one game can stay alive in the other"
+  },
+  {
    "id": "ub47",
    "title": "Mines go off at once for the client, without the warning beep",
    "kind": "bug",
@@ -1307,9 +1315,9 @@
    "title": "Nexus report: a Mr Gutsy the joiner met on the road wasn't there for the host, nor the fight",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Logging shipped in 0.10.0; waiting for a live report to name the cause",
-   "pr": 225
+   "stage": 2,
+   "note": "Found: a quest NPC from a cell only one game loaded; fix rig-tested, waiting for review",
+   "pr": 256
   },
   {
    "id": "y7tn",
