@@ -591,7 +591,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   that catches one loads it as nothing), forced to full fade every frame (the clone nested in the actor's 3D
   stays at fade 0 otherwise) and ended at the projectile's flash time. MuzzleFlashBook keeps one flash per
   shooter (an automatic gun's next shot keeps it up), 50 ms between two, and 12 at once. `muzzle mode always`
-  shows it on every shot, to try it; the status line's `flash=` counts both.
+  shows it on every shot, to try it; the status line's `flash=` counts both, and `takenDown=` the flashes of ours taken down.
 
 ### Who sets off an explosion (WeaponFire.cpp, RemoteEdits.h, CopyWatch.cpp)
 
