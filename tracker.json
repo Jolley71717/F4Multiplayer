@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T16:22:50+00:00",
+ "updated": "2026-11-02T16:28:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -271,8 +271,9 @@
    "title": "Nexus: a friend's NPC conversation lines flash by too fast at the top; show them as subtitles, timed with the speech",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 270
   },
   {
    "id": "6qex",
