@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T21:03:21+00:00",
+ "updated": "2026-11-02T21:44:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -219,6 +219,15 @@
    "desc": "Players asked for a friend's distance on their compass marker. Text drawn by the mod does not show up on the compass, which is why markers are plain shapes. Since 0.9.0, pressing F10 (iKeyWhere) prints each friend's distance and direction on screen, and pings name what they point at with its distance. We are still looking for a way to put the number on the marker."
   },
   {
+   "id": "592p",
+   "title": "PR 270: a friend's blank (whitespace-only) NPC line counts as dropped and shows an empty notice",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 2,
+   "note": "",
+   "pr": 270
+  },
+  {
    "id": "5ylb",
    "title": "A legendary enemy in one game is a normal one in another",
    "kind": "bug",
@@ -279,7 +288,7 @@
    "title": "Nexus: a friend's NPC conversation lines flash by too fast at the top; show them as subtitles, timed with the speech",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 2,
    "note": "",
    "pr": 270
   },
@@ -479,8 +488,9 @@
    "title": "Dropping an item that was picked up from the world is never shared",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 273
   },
   {
    "id": "cdu1",
@@ -1000,6 +1010,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0 and tested on two real games.",
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
+  },
+  {
+   "id": "of65",
+   "title": "A plugin-placed item picked up and dropped again may vanish from the dropper's own world on a rejoin or catch-up",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "oif6",
