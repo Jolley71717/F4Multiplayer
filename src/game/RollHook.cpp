@@ -32,6 +32,8 @@ namespace RollHook
 		constexpr REL::ID     COPY_FROM_TEMPLATES{ 2207448 };   // TESNPC's TESActorBaseData::CopyFromTemplateForms(TESActorBase**) (+6580A0)
 		constexpr std::size_t COPY_FROM_TEMPLATES_SLOT = 7;     // in VTABLE::TESNPC[1] (the TESActorBaseData at +0x68)
 		constexpr REL::ID     REF_ENCOUNTER_ZONE{ 2202627 };    // TESObjectREFR::GetEncounterZone (+562950)
+		constexpr REL::ID     EXTRA_ENCOUNTER_ZONE{ 2190356 };  // ExtraDataList's ExtraEncounterZone, or none (+285A40)
+		constexpr REL::ID     CELL_OWN_ENCOUNTER_ZONE{ 2200243 };  // TESObjectCELL's zone from its own data, not its loaded copy (+4C9480)
 		constexpr REL::ID     DEFAULT_ENCOUNTER_ZONE{ 4798032 };  // the zone the engine takes for none (+31ED400): no bounds
 		constexpr REL::ID     ZONE_LEVEL{ 2199472 };            // BGSEncounterZone's level for the player (+494EC0)
 		constexpr std::size_t ZONE_SCALE_LOAD = 0x4A;           // its mulss xmm1, [rip+disp32]: the scale above the minimum
@@ -63,6 +65,8 @@ namespace RollHook
 		using IsResolvedFn = bool (*)(RE::TESObjectREFR*);
 		using CopyFn = void (*)(RE::TESActorBaseData*, RE::TESActorBase**);
 		using ZoneFn = void* (*)(RE::TESObjectREFR*);
+		using ExtraZoneFn = void* (*)(RE::ExtraDataList*);
+		using CellZoneFn = void* (*)(RE::TESObjectCELL*);
 		using ModifierFn = void (*)(RE::ExtraDataList*, float*, std::int32_t*);
 		using DifficultyFn = std::int32_t (*)();
 		using LegendaryMultsFn = void (*)(std::int32_t, float*, float*);
@@ -148,7 +152,8 @@ namespace RollHook
 
 		std::atomic<std::uint32_t> forced{ 0 }, placedN{ 0 }, picked{ 0 }, missed{ 0 }, notWhole{ 0 }, unconsumed{ 0 }, faults{ 0 }, levelsSet{ 0 }, logBudget{ 0 };
 		std::atomic<std::uint32_t> prewritten{ 0 }, differ{ 0 };
-		std::atomic<std::uint32_t> pickedNoZone{ 0 };  // picks made with no encounter zone for the reference (one not loaded yet reads as none)
+		std::atomic<std::uint32_t> pickedNoZone{ 0 };  // picks made with no encounter zone for the reference
+		std::atomic<std::uint32_t> cellZone{ 0 };      // picks that read the cell's own zone where the engine's read gave another (SharedRoll::ChooseZone)
 		std::atomic<bool>          faultLogged{ false }, missLogged{ false }, notWholeLogged{ false };
 
 		// ---- Reading the game ---------------------------------------------------------------------------------
@@ -174,6 +179,7 @@ namespace RollHook
 			std::uint32_t placeId = 0;  // its interior cell, or its worldspace
 			float         x = 0, y = 0;
 			bool          zone = false;
+			bool          zoneLate = false;  // the engine's own read gives another zone now (SharedRoll::ChooseZone)
 			std::uint8_t  zoneMin = 0, zoneMax = 0, zoneFlags = 0;
 			float         zoneScaleValue = 1.0f;
 			float         modifier = 1.0f;
@@ -191,9 +197,20 @@ namespace RollHook
 			if (const auto cell = a_ref->GetParentCell()) {
 				a_out.placeId = cell->IsInterior() ? cell->GetFormID() : (cell->worldSpace ? cell->worldSpace->GetFormID() : 0);
 			}
-			static REL::Relocation<ZoneFn> zoneOf{ REF_ENCOUNTER_ZONE };
-			static REL::Relocation<void**> noZone{ DEFAULT_ENCOUNTER_ZONE };
-			if (const auto zone = static_cast<const std::uint8_t*>(zoneOf(a_ref)); zone && zone != *noZone) {
+			// The zone as the engine finds it, with the cell's read from its own data: a loaded cell's copy of it is made only
+			// after the cell's references are set up (SharedRoll::ChooseZone).
+			static REL::Relocation<ZoneFn>      zoneOf{ REF_ENCOUNTER_ZONE };
+			static REL::Relocation<ExtraZoneFn> extraZoneOf{ EXTRA_ENCOUNTER_ZONE };
+			static REL::Relocation<CellZoneFn>  cellZoneOf{ CELL_OWN_ENCOUNTER_ZONE };
+			static REL::Relocation<void**>      noZone{ DEFAULT_ENCOUNTER_ZONE };
+			const auto refExtra = a_ref->extraList.get();
+			const auto own = static_cast<const std::uint8_t*>(refExtra ? extraZoneOf(refExtra) : nullptr);
+			const auto cell = own ? nullptr : a_ref->GetParentCell();
+			const auto cellOwn = static_cast<const std::uint8_t*>(cell && cell->extraList ? cellZoneOf(cell) : nullptr);
+			const auto engine = static_cast<const std::uint8_t*>(zoneOf(a_ref));
+			const auto choice = SharedRoll::ChooseZone(own, cellOwn, engine, static_cast<const std::uint8_t*>(*noZone));
+			a_out.zoneLate = choice.late;
+			if (const auto zone = choice.zone) {
 				a_out.zone = true;
 				a_out.zoneMin = zone[ZONE_MIN];
 				a_out.zoneFlags = zone[ZONE_FLAGS];
@@ -415,6 +432,9 @@ namespace RollHook
 				zone = SharedRoll::Zone{ facts.zoneMin, facts.zoneMax, (facts.zoneFlags & ZONE_MATCH_BELOW_MIN) != 0, facts.zoneScaleValue };
 			} else {
 				++pickedNoZone;
+			}
+			if (facts.zoneLate) {
+				++cellZone;
 			}
 			PickArgs args;
 			args.original = baseId;
@@ -794,8 +814,8 @@ namespace RollHook
 			std::scoped_lock lock{ storeLock };
 			kept = store.size();
 		}
-		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
-			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), pickedNoZone.load(), notWhole.load(), unconsumed.load(), levelsSet.load(),
+		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsCellZone={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
+			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), pickedNoZone.load(), cellZone.load(), notWhole.load(), unconsumed.load(), levelsSet.load(),
 			prewritten.load(), differ.load(), faults.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
 			sessionLegendary.load() ? std::format("{:.3f}", sessionLegendary.load() / 1000.0) : std::string{ "own" });
 	}
@@ -824,8 +844,8 @@ namespace RollHook
 		args.levels.legendaryAllowed = facts.legendaryAllowed;
 		args.seed = SharedRoll::SeedOf(session, key.value_or(0), key ? LivesOf(facts.refId) : 0);
 		args.legendaryMult = facts.legendaryMult;
-		std::string out = std::format("{:08X} placed as {:08X}: session {:016X} level {} rule {} zone={} modifier={:.2f} allBelow={} legendaryMult={:.2f}{}", facts.refId, facts.baseId, session, level,
-			SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())), zone ? std::format("{}-{}x{:.2f}", zone->min, zone->max, zone->scale) : std::string{ "none" }, facts.modifier,
+		std::string out = std::format("{:08X} placed as {:08X}: session {:016X} level {} rule {} zone={}{} modifier={:.2f} allBelow={} legendaryMult={:.2f}{}", facts.refId, facts.baseId, session, level,
+			SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())), zone ? std::format("{}-{}x{:.2f}", zone->min, zone->max, zone->scale) : std::string{ "none" }, facts.zoneLate ? " (its cell's own: the engine reads another now)" : "", facts.modifier,
 			facts.allBelow, facts.legendaryMult, key ? "" : " (no plugin key: a runtime reference's pick is keyed by its spot, ordinal 0 here)");
 		if (!key && Protocol::IsShareableRef(facts.refId)) {
 			return out + "; no key";

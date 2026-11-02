@@ -55,11 +55,12 @@ for every level.
 
 Each build is logged for a session's first 32, for example
 `RollHook: 0001F0B1 built as the session's pick of 0001A000 ...`. Counters are in `net status` (`rolls` on the dev
-console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNoZone rollsNotWhole rollsUnconsumed
-rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks made for an NPC
-whose encounter zone wasn't loaded yet (the pick then reads the lists at the session's level, which can differ from
-the zone's). `rolls show <ref>` gives the roll the session has for a ref, and `rolls pick <ref>` gives what the pick
-would be now.
+console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNoZone rollsCellZone rollsNotWhole
+rollsUnconsumed rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks
+made for an NPC with no encounter zone at all (the pick then reads the lists at the session's level). `rollsCellZone=`
+counts picks that read the cell's own zone while the engine's own read gave another, because the cell's loaded copy
+of its zone wasn't made yet (below, "The zone"). `rolls show <ref>` gives the roll the session has for a ref, and
+`rolls pick <ref>` gives what the pick would be now.
 
 **Pre-write.** A session roll that arrives for a reference in memory that is not loaded is written onto it straight
 away (`Rolls::Apply`, 8 a frame on the main thread). It takes at the next cell load. The reference must have no 3D,
@@ -134,6 +135,8 @@ report and write-after still apply. It is a kill switch and is not in the shippe
 | ... its slot in `VTABLE::TESNPC[1]` (the TESActorBaseData at +0x68) | 1220548 | slot 7 | high |
 | `TESObjectREFR::SetLeveledCreature` (resolver +0x607 calls it) | | +563A10 | high |
 | `TESObjectREFR::GetEncounterZone` | 2202627 | +562950 | high |
+| `ExtraDataList`'s `ExtraEncounterZone` (type 0x70, +0x18) | 2190356 | +285A40 | high |
+| a cell's zone from its own data (not `LOADED_CELL_DATA`'s copy) | 2200243 | +4C9480 | high |
 | the default encounter zone | 4798032 | | medium |
 | `BGSEncounterZone` level for the player | 2199472 | +494EC0 | high |
 | ... its scale above the minimum: `mulss xmm1, [rip+disp]` at +0x4A | | | medium (bytes checked at install) |
@@ -173,6 +176,17 @@ roll. `GetCalcLevel` uses the ref's encounter zone:
   level when the zone's flag bit 1 (match PC below minimum) is set. Above it the result is
   `min + (pl - min) x scale`, capped at the maximum (+0x33, 0 for none).
 - With no zone, the worldspace grid's level or the player's level is used.
+
+**The zone.** `GetEncounterZone(ref)` takes the first of: the ref's own `ExtraEncounterZone`; its cell's zone; the
+location its worldspace has at its position, and that location's zone; the worldspace's own zone. Its cell's zone
+(+4C9460) is `LOADED_CELL_DATA::encounterZone` (+0x1F0) when the cell has loaded data, and otherwise worked out from
+the cell's own data (+4C9480: its `ExtraEncounterZone`, its location's zone, its worldspace's zone). The engine makes
+the loaded data with no zone, sets up the cell's references, and only then stores the zone (+4DC060, the store at
++4DC4DC). A reference resolved in between reads no zone or the worldspace's, at another level than the zone's. A
+slower game's cells take longer, so two games that load the same cell at once can read different levels: the engine's
+own roll is off in that window too. The pick reads the cell's zone from the cell's own data instead (+4C9480 directly),
+which is what the loaded copy holds once it is made, so every game reads one zone whenever it builds the NPC
+(`SharedRoll::ChooseZone`; `rollsCellZone=` counts the picks where that mattered).
 
 The engine adds a small variance that it cycles through.
 
