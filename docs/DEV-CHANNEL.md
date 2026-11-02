@@ -59,7 +59,7 @@ game's own code can:
   drawn into the parent's own graphics. `net status` names each friend's menu kind and how often their
   stand-in raised and lowered its Pip-Boy (`menu= pipboyRaises= lowers=`).
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
-  sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
+  sound. `sounds` lists the sounds playing and what each follows (PLAYER: heard wherever you go). `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.
 
 The full list is the `COMMANDS` table at the bottom of `src/DevCommands.cpp`. DESIGN.md also
