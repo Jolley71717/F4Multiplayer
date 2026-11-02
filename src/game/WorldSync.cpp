@@ -1406,6 +1406,7 @@ namespace WorldSync
 					return false;
 				}
 				Queue(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
+				Drops::OnPickedUp(match->ref);  // dropped again, the item comes back into the world as this reference
 				recentActivations.erase(match);
 				return true;
 			});
