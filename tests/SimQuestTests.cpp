@@ -1487,6 +1487,36 @@ TEST("sim quests: with a shared story, the host's talk with Codsworth and his se
 	CHECK(carol.Quests().Skipped().empty());
 }
 
+TEST("sim quests: with a shared story, a friend's teleport into the Institute waits while your game is in the opening, though you stand beside them, and takes you along once you are out of the vault")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	InTheVault(host, { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
+	host.Quests().opening = false;
+	InTheVault(bob, { 0, 1, 2 });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(1200.0f, 1000.0f);
+	Settled(s);
+
+	Reach(host, MQ206, { 500, 1000, 1050, 1200 });
+	s.PlayFor(15s);
+	CHECK(Done(bob, MQ206).empty());  // still in the vault: the vault's own scripts have the screen and the controls
+	CHECK(bob.Quests().moved == 0);
+	CHECK(bob.Quests().Controls());
+
+	Reach(bob, MQ102, { 3, 4, 5, 6, 7, 8, 9 });
+	OutOfTheVault(bob);
+	s.PlayFor(30s);
+	CHECK((Order(bob, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(bob.Quests().Controls());
+	CHECK(!bob.Quests().Locked());
+	CHECK(bob.Quests().Skipped().empty());
+}
+
 TEST("sim quests: with a shared story, a friend's talk with Codsworth starts his search scene in the host's game too, and the friend's stages carry the host through it instead of the scene holding them back")
 {
 	Session s{ SharedStory() };
