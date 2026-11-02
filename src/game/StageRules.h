@@ -54,6 +54,15 @@ namespace StageRules
 	// that a stage starts; nor that a shared stage sets a stage of another quest, whose own taking is listed under that
 	// quest (a misc one reads as never shared). So it is no proof that no shared stage does; OwnGear guards the local
 	// player's gear from what the session itself does, not from what a stage's own scripts do once it is set.
+	// kMoves is checked against tools/questscan.ps1 -Moves, which follows what the first scan did not: a call into the
+	// quest's own script (kmyQuest.StartQuest) or any other script, a few calls deep, with a branch on a literal argument
+	// followed one way (ControlToggle(1) gives the controls back), and a stage of ANY quest a stage sets or starts, shared
+	// or not, with that quest's start-up stages. Dangerous Minds' lounger (MQ202 300) does nothing to the player itself:
+	// it sets MQ203 10, whose MQ203Script.StartQuest fades out and moves the player into Kellogg's memory, and a joiner
+	// catching up a friend's story was sent there (up to 0.10.1). Every stage it lists has kMoves here but two: MQ203's 0
+	// and MQ204's 0, debug stages (no start-up flag: never set in a game played through) that set MQ202 300 and MQ203
+	// 1000; Starting() judges every stage that starts their quest by its 0, so with them no stage of MQ204 (The Glowing
+	// Sea) would ever be caught up.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
 		{ 0, 0x019955, 210, kPays, 0 },  // DialogueBunkerHill: 10 caps
@@ -78,6 +87,17 @@ namespace StageRules
 		{ 0, 0x0229E7, 900, 0, 20 },
 		{ 0, 0x0229E8, 0, kMoves | kBridge, 40 },  // MQ201
 		{ 0, 0x0229E9, 160, kMoves, 0 },  // MQ202
+		{ 0, 0x0229E9, 300, kMoves, 100 },  // the lounger: sets MQ203 10, whose script fades out and moves the player into Kellogg's memory
+		{ 0, 0x0229EA, 1, kMoves, 100 },  // MQ203, Kellogg's memories (not its 0, see above; 1-8 its debug starts)
+		{ 0, 0x0229EA, 2, kMoves, 100 },
+		{ 0, 0x0229EA, 3, kMoves, 100 },
+		{ 0, 0x0229EA, 4, kMoves, 100 },
+		{ 0, 0x0229EA, 5, kMoves, 100 },
+		{ 0, 0x0229EA, 6, kMoves, 100 },
+		{ 0, 0x0229EA, 7, kMoves, 100 },
+		{ 0, 0x0229EA, 8, kMoves, 100 },
+		{ 0, 0x0229EA, 10, kMoves, 100 },  // MQ203Script.StartQuest: into the memory
+		{ 0, 0x0229EA, 1000, kMoves, 111 },  // MQ203Script.FinishQuest: out of it, back on the lounger
 		{ 0, 0x0229EC, 5, 0, 10 },  // MQ207
 		{ 0, 0x0229EC, 10, 0, 1 },
 		{ 0, 0x0229EC, 190, kMoves, 60 },
@@ -91,6 +111,7 @@ namespace StageRules
 		{ 0, 0x0229EE, 855, kMoves | kBridge, 1 },  // the ending's slides
 		{ 0, 0x0229F6, 0, kMoves, 20 },  // MS01
 		{ 0, 0x0229F6, 1050, 0, 50 },
+		{ 0, 0x0229F7, 17, kMoves, 0 },  // MS02: MS02Script.Freeze takes the controls
 		{ 0, 0x0229FD, 35, kMoves, 75 },  // MS07b
 		{ 0, 0x0229FD, 37, kMoves, 45 },
 		{ 0, 0x0229FE, 0, kMoves | kBridge | kStory, 30 },  // MS07c
@@ -137,6 +158,7 @@ namespace StageRules
 		{ 0, 0x022A08, 465, kMoves, 10 },
 		{ 0, 0x022A08, 467, kMoves, 10 },
 		{ 0, 0x022A08, 470, kMoves, 10 },
+		{ 0, 0x022A0A, 60, kMoves, 0 },  // MS19: MS19Script.Freeze takes the controls
 		{ 0, 0x026340, 1, kMoves, 20 },  // DN121
 		{ 0, 0x026340, 2, kMoves, 20 },
 		{ 0, 0x026340, 3, kMoves | kBridge, 20 },
@@ -281,6 +303,8 @@ namespace StageRules
 		{ 0, 0x0B9F9D, 1, kMoves | kBridge, 90 },
 		{ 0, 0x0B9F9D, 2, kMoves | kBridge, 90 },
 		{ 0, 0x0B9F9D, 155, 0, 100 },
+		{ 0, 0x0BA4F2, 150, kMoves, 0 },  // MQ101TVStation: sets a stage of MQ101, the pre-war opening, whose start-up stage takes the controls
+		{ 0, 0x0BA4F2, 200, kMoves, 0 },
 		{ 0, 0x0BACFF, 0, kMoves, 20 },  // Inst307
 		{ 0, 0x0BACFF, 30, 0, 50 },
 		{ 0, 0x0BACFF, 35, kMoves, 60 },
@@ -293,6 +317,8 @@ namespace StageRules
 		{ 0, 0x0BAD00, 40, kMoves, 20 },
 		{ 0, 0x0BDB04, 0, 0, 10 },  // MinDefendCastle
 		{ 0, 0x0C30DC, 0, kMoves | kBridge, 20 },  // BosR02
+		{ 0, 0x0C3309, 91, kMoves, 0 },  // MQ101SanctuaryHills: the same
+		{ 0, 0x0C3309, 500, kMoves, 0 },
 		{ 0, 0x0C8675, 0, kMoves | kBridge, 60 },  // BoSR03
 		{ 0, 0x0C9B0B, 50, kMoves | kBridge, 0 },  // MQ00: the ending's slides
 		{ 0, 0x0C9B0B, 60, kMoves | kBridge, 1 },
@@ -313,6 +339,7 @@ namespace StageRules
 		{ 0, 0x0FDC8C, 220, 0, 30 },
 		{ 0, 0x107A1C, 0, kMoves | kBridge, 100 },  // BoS302B
 		{ 0, 0x108EC0, 30, kMoves, 0 },  // FFGoodneighbor01
+		{ 0, 0x108EC0, 40, kMoves, 110 },  // the Memory Den's sequence (FFGoodneighbor01MemorySequence 10: fades out, into the memory)
 		{ 0, 0x108EC0, 70, kMoves, 0 },
 		{ 0, 0x108EC0, 80, kMoves, 0 },
 		{ 0, 0x108EC0, 100, kStory, 0 },
@@ -370,10 +397,13 @@ namespace StageRules
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
 		{ 1, 0x01055C, 30, 0, 45 },  // DLC03CoA_FFNucleus01
+		{ 1, 0x01CBFA, 1, kMoves, 50 },  // DLC03MQ04_01: into DiMA's memories (MQ04Script.EnterVR)
+		{ 1, 0x01E3FE, 350, kMoves, 50 },  // DLC03MQ04_05: out of them
 		{ 1, 0x02127F, 1, kMoves | kBridge, 85 },  // DLC03MQ06a
 		{ 1, 0x02127F, 200, kMoves, 95 },
 		{ 1, 0x02127F, 255, 0, 15 },
 		{ 1, 0x02127F, 760, 0, 40 },
+		{ 1, 0x036763, 548, kMoves, 82 },  // DLC03_V118_Quest: the date (faded out, moved to it)
 	};
 
 	// Stages whose script takes the player's controls away until a later stage gives them back. They

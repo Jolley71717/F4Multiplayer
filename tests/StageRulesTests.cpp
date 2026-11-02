@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iterator>
 #include <tuple>
+#include <utility>
 
 namespace
 {
@@ -164,6 +165,48 @@ TEST("stage rules: a friend's stage that starts its quest here is judged and hel
 	REQUIRE(vault);
 	CHECK(StageRules::Judge(&*vault, { .live = true }) == Verdict::kSkip);  // Vault 81's 400 takes the player's fusion cores
 	CHECK((FlagsOf(0x0B8464, 400) & StageRules::kPays) != 0);
+}
+
+TEST("stage rules: a stage that moves the player through another quest it sets (Dangerous Minds' lounger into Kellogg's memory) is not caught up")
+{
+	using namespace StageRules;
+	// tools/questscan.ps1 -Moves: MQ202 300 sets MQ203 10, whose MQ203Script.StartQuest fades out and moves the player
+	// into the memory; MQ203 1000's FinishQuest moves them back to the lounger. A joiner catching up a friend's story
+	// from the session was sent into the memory (rig, 2026-11-01).
+	CHECK(FlagsOf(0x0229E9, 160) == kMoves);  // MQ202: the surgery, controls taken (was already so)
+	CHECK(FlagsOf(0x0229E9, 300) == kMoves);
+	CHECK(FlagsOf(0x0229EA, 10) == kMoves);
+	CHECK(FlagsOf(0x0229EA, 1000) == kMoves);
+	for (const auto& [quest, stage] : { std::pair{ 0x0229E9u, 300 }, std::pair{ 0x0229EAu, 10 }, std::pair{ 0x0229EAu, 1000 } }) {
+		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
+		REQUIRE(rule);
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);                                  // caught up from the session
+		CHECK(Judge(rule, { .sharedStory = true, .live = true }) == Verdict::kSkip);                    // live, the friend far away
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);  // with the friend at the lounger
+		CHECK(Judge(rule, { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
+	}
+	// The rest of the memory quest and the story after it are set: MQ203 20 (which starts MQ203 here once 10 was
+	// skipped) is judged by MQ203's 0, and MQ204's first stage by MQ204's 0; both are debug stages left out of the
+	// table, so The Glowing Sea is caught up.
+	CHECK(!Find(0x0229EA, 0));
+	CHECK(!Find(0x06B500, 0));
+	CHECK(!Starting(Find(0x0229EA, 0), Find(0x0229EA, 20)));
+	CHECK(!Starting(Find(0x06B500, 0), Find(0x06B500, 10)));
+	CHECK(Judge(nullptr, { .sharedStory = true }) == Verdict::kSet);
+	// The lounger's script waits 10 s (MQ203Script.StartQuest): set beside the friend, what comes after waits it out.
+	CHECK(Hold(Find(0x0229E9, 300)) == 11s);
+
+	// The other memory and teleport sequences the scan found behind a script or another quest's stage.
+	CHECK(FlagsOf(0x108EC0, 40) == kMoves);               // FFGoodneighbor01: the Memory Den's memory (FFGoodneighbor01MemorySequence 10)
+	CHECK(FlagsOf(0x01CBFA, 1, File::kCoast) == kMoves);   // DLC03MQ04_01: into DiMA's memories
+	CHECK(FlagsOf(0x01E3FE, 350, File::kCoast) == kMoves); // DLC03MQ04_05: out of them
+	CHECK(FlagsOf(0x036763, 548, File::kCoast) == kMoves); // DLC03_V118_Quest: the date
+	CHECK(FlagsOf(0x0229F7, 17) == kMoves);                // MS02: controls frozen
+	CHECK(FlagsOf(0x022A0A, 60) == kMoves);                // MS19: controls frozen
+	CHECK(FlagsOf(0x0BA4F2, 150) == kMoves);               // MQ101TVStation: would start MQ101, the pre-war opening, again
+	CHECK(FlagsOf(0x0C3309, 500) == kMoves);               // MQ101SanctuaryHills: the same
+	// A branch on the argument is followed one way: MQ302 800 calls ControlToggle(1), which gives the controls back.
+	CHECK(FlagsOf(0x0229EE, 800) == 0);
 }
 
 TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")

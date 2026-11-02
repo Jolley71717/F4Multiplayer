@@ -1,13 +1,15 @@
-# questscan.ps1 [-Data <game Data folder>] [-SetsOther]: reads the game's own files (Fallout4.esm, DLCCoast.esm and their
-# script archives; nothing is written there) and lists every quest stage whose own fragment takes something from the
-# player, unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with
-# whether a session shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is listed
-# in src/game/StageRules.h). src/game/StageRules.h's kPays rules
+# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves]: reads the game's own files (Fallout4.esm, DLCCoast.esm
+# and their script archives; nothing is written there) and lists every quest stage whose own fragment takes something
+# from the player, unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property,
+# with whether a session shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is
+# listed in src/game/StageRules.h). src/game/StageRules.h's kPays rules
 # (stages a friend's game never sets here) were checked against it; tests/StageRulesTests.cpp and QuestFilterTests.cpp
 # hold what it found. With -SetsOther: the shared quests' stages whose fragment sets a stage of another quest, what
-# src/game/StageRules.h's SETS_ANOTHER was made from. Windows PowerShell 5.1 compiles the reader (tools/questscan.cs) on
-# the fly.
-param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther)
+# src/game/StageRules.h's SETS_ANOTHER was made from. With -Moves: the shared quests' stages that move the player, by
+# their own fragment, a script it calls or a stage of any quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's
+# memories), what src/game/StageRules.h's kMoves is checked against. Windows PowerShell 5.1 compiles the reader
+# (tools/questscan.cs) on the fly.
+param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves)
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
-if ($SetsOther) { [CrossScan]::Run($Data) } else { [QuestScan]::Run($Data) }
+if ($Moves) { [MoveScan]::Run($Data) } elseif ($SetsOther) { [CrossScan]::Run($Data) } else { [QuestScan]::Run($Data) }
