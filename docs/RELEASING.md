@@ -59,9 +59,12 @@ Library changed, or an ID in `src/` is wrong: look at it before going further.
 
 ## Promotion to the release
 
-The release is the rc that held, not a new build. After a multi-hour soak of the rc's zip (`soak.sh 3`:
-the standing set in a loop with periodic VM restarts) ends with no crash on either machine and no
-report against the rc points at a regression, the soak's verdict goes in `dist/out/soak-verdict.txt`:
+The release is the rc that held, not a new build. The soak of the rc's zip is a churn-heavy run of about 90 minutes
+after the gate passes: `tools/rig/smoke.sh --only preflight,churn,reconnect,final --churn 75` (cells hopped, saves
+reloaded, roles swapped, working sets read before and after). It replaced the 3-hour `soak.sh 3` loop in 0.11.0: that
+loop asserted only that both games were alive, and the one crash it caught in eight soaks came during the churn. When
+it exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict
+goes in `dist/out/soak-verdict.txt`:
 
 ```
 commit=<the rc's commit, as in its manifest>
