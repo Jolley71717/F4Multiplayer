@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T06:12:08+00:00",
+ "updated": "2026-11-02T06:32:17+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1408,7 +1408,7 @@
    "title": "Settlers can't be given jobs during a session",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 5,
    "note": "Probably fixed in 0.9.2; not yet tried in a real game.",
    "pr": 264,
    "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
