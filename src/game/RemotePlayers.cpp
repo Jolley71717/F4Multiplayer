@@ -3157,8 +3157,10 @@ namespace RemotePlayers
 			SendOutOfFriendsFrames(now);  // a companion ordered into a friend's frame copy
 			BuryWaitedOut();
 			ShareKeptOut();
+			Equipment::ShareSeat();  // our player as the frame use hook (the engine's seating thread) reads them
 		} else {
 			PutKept({});  // the world is going: none of its frames is asked about until it is back, and what the gate had may name another
+			Equipment::ClearSeat();
 		}
 		const auto playedNow = played.Advance(now, loading || GameStop::Now());
 		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).

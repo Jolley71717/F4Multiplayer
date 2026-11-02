@@ -154,8 +154,15 @@ namespace Equipment
 	std::string DescribeHands(RE::Actor* a_actor);
 
 	// What the engine looks at as our player tries to get into a frame (see FrameUse.h): its tilt, its markers' users,
-	// and the engine's own two answers. Main thread.
+	// and the engine's own two answers. Main thread (the use hook, on the engine's seating thread, reads our player's
+	// part from ShareSeat's word instead).
 	[[nodiscard]] FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame);
+
+	// Puts down our player's seat word (FrameUse::Seat: busy, the furniture they occupy, the frame they wear) for the use
+	// hook below, which runs on the engine's seating thread and reads our player's state only from it. Each frame, on the
+	// main thread; ClearSeat during a loading screen.
+	void ShareSeat();
+	void ClearSeat();
 
 	// That, with what else holds our player off it (FrameUse::Holds: the gate asked to look, FrameAsk::kLook, nothing told;
 	// its activation block; its state; our player's input), for the log and the paframes dev command.

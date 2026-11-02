@@ -212,3 +212,77 @@ TEST("frame use: everything that holds is named, each once, in one line")
 	CHECK(all.find("player input blocked") != std::string::npos);
 	CHECK(all.find("kept out") == 0);
 }
+
+// The use hook runs on the engine's seating thread and takes our player's part of the facts from the main thread's last
+// word (FrameUse::Seat, Equipment::ShareSeat), not from the player live.
+namespace
+{
+	constexpr std::uint32_t FRAME = 0xFF000801;
+	constexpr std::uint32_t OTHER_FRAME = 0xFF000802;
+
+	// The seat the game still has as our player's after they got out (as the stale-use tests above).
+	Facts StaleSeat()
+	{
+		auto frame = Standing();
+		frame.used = 1;
+		frame.user = PLAYER;
+		frame.userMarker = 0;
+		frame.userIsPlayer = true;
+		frame.free = false;
+		return frame;
+	}
+}
+
+TEST("frame use: the seat word has our player in a frame they occupy or wear, and in no other")
+{
+	CHECK(!FrameUse::SeatedIn({}, FRAME));
+	CHECK(FrameUse::SeatedIn({ .busy = true, .occupied = FRAME }, FRAME));
+	CHECK(FrameUse::SeatedIn({ .busy = true, .worn = FRAME }, FRAME));
+	CHECK(!FrameUse::SeatedIn({ .busy = true, .worn = OTHER_FRAME }, FRAME));
+	CHECK(!FrameUse::SeatedIn({}, 0));  // no frame: nobody is in it, whatever the word says
+}
+
+TEST("frame use: from the seat word, a stale seat of our player's out of everything is given back, as the live read did")
+{
+	auto read = StaleSeat();
+	read.userIn = true;  // whatever the hook might have read: the word decides
+	read.playerBusy = true;
+	const auto facts = FrameUse::WithSeat(read, {}, FRAME);
+	CHECK(!facts.userIn);
+	CHECK(!facts.playerBusy);
+	CHECK(FrameUse::Judge(facts) == Verdict::kStaleUse);
+	CHECK(FrameUse::ChooseMend(facts).freeSeat);
+}
+
+TEST("frame use: from the seat word, the seat of a frame our player is in is theirs and is not given back")
+{
+	const auto facts = FrameUse::WithSeat(StaleSeat(), { .busy = true, .worn = FRAME }, FRAME);
+	CHECK(facts.userIn);
+	CHECK(facts.playerBusy);
+	CHECK(FrameUse::Judge(facts) == Verdict::kInUse);
+	CHECK(!FrameUse::ChooseMend(facts).freeSeat);
+}
+
+TEST("frame use: from the seat word, our player busy in other furniture keeps their stale seat here as it is")
+{
+	const auto facts = FrameUse::WithSeat(StaleSeat(), { .busy = true, .occupied = OTHER_FRAME }, FRAME);
+	CHECK(!facts.userIn);
+	CHECK(facts.playerBusy);
+	CHECK(!FrameUse::ChooseMend(facts).freeSeat);
+}
+
+TEST("frame use: the seat word changes nothing of another user's seat, nor of a free frame")
+{
+	auto other = StaleSeat();
+	other.user = RAIDER;
+	other.userIsPlayer = false;
+	other.userIn = true;
+	other.othersThanPlayer = true;
+	const auto facts = FrameUse::WithSeat(other, {}, FRAME);
+	CHECK(facts.userIn);
+	CHECK(FrameUse::Judge(facts) == Verdict::kOtherUser);
+	CHECK(!FrameUse::ChooseMend(facts).Any());
+	const auto free = FrameUse::WithSeat(Standing(), { .busy = false }, FRAME);
+	CHECK(FrameUse::Judge(free) == Verdict::kFree);
+	CHECK(!free.userIn);
+}
