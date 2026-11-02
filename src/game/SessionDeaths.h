@@ -130,6 +130,14 @@ namespace SessionDeaths
 		void Forget(std::uint32_t a_id) { dead.erase(a_id); }
 
 		[[nodiscard]] bool Contains(std::uint32_t a_id) const { return dead.contains(a_id); }
+
+		// Known dead from another game's word (its report, or the session's dead list), not from our own game's report:
+		// a copy of it that falls here was killed for that word (WorldSync's console kill), by no blow of ours.
+		[[nodiscard]] bool ToldDead(std::uint32_t a_id) const
+		{
+			const auto it = dead.find(a_id);
+			return it != dead.end() && !it->second.reported;
+		}
 		[[nodiscard]] std::size_t Size() const { return dead.size(); }
 
 		// A load or a lost connection: what we knew described another world. Nothing is known until the session's

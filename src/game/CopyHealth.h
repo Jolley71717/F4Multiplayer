@@ -399,6 +399,7 @@ namespace CopyHealth
 			// Alive: a fall judged before (Fell) is over, and the next one is judged again.
 			entry.fellSince.reset();
 			entry.fellJudged = false;
+			entry.fellOurs = false;
 			// A new maximum (our level set to the owner's: Rolls) moves its health with it, the engine's reading as well as
 			// where it stands: the same share of it.
 			if (a_maximum > 0.0f) {
@@ -533,7 +534,12 @@ namespace CopyHealth
 		// leave it a sliver). With a blow left to the owner around, only what our hits said they took (as in Check): the
 		// owner's game deals its own blow. A hit's event can come a frame behind its damage: true while the fall is to be
 		// asked about again (for JUDGE_AFTER), false once it is judged. Judged once a fall; TakeOurs sends it.
-		bool Fell(std::uint32_t a_id, float a_health, Clock::time_point a_now)
+		//
+		// a_toldDead: our game killed the copy for the session's word (another game's report of its death, or the
+		// session's dead list: the console kill), so the fall is no blow of ours, whatever hit of ours is still in its
+		// window. It was counted as our kill, and its damage sent only to be refused. A report's drop still waiting for its
+		// hit's event (Heard) is part of a fall of ours: all the copy stood at is booked, so it is not judged again.
+		bool Fell(std::uint32_t a_id, float a_health, Clock::time_point a_now, bool a_toldDead = false)
 		{
 			const auto it = entries.find(a_id);
 			if (it == entries.end() || !it->second.health || it->second.fellJudged) {
@@ -542,6 +548,10 @@ namespace CopyHealth
 			auto& entry = it->second;
 			if (!entry.fellSince) {
 				entry.fellSince = a_now;
+			}
+			if (a_toldDead) {
+				entry.fellJudged = true;
+				return false;
 			}
 			if (!OursLately(entry, *entry.fellSince)) {
 				if (a_now - *entry.fellSince < JUDGE_AFTER) {
@@ -559,8 +569,10 @@ namespace CopyHealth
 			entry.health = a_health;
 			entry.dropSince.reset();
 			entry.raiseSince.reset();
+			entry.reportedDrop.reset();
 			entry.fellJudged = true;
 			if (take > 0.0f) {
+				entry.fellOurs = true;
 				++lethal;
 			}
 			return false;
@@ -568,6 +580,14 @@ namespace CopyHealth
 
 		// How many falls of copies were booked as ours (Fell).
 		[[nodiscard]] std::uint32_t Lethal() const { return lethal; }
+
+		// Whether the copy's fall (this one: until it is checked alive again) was booked as ours (Fell). For a fall that
+		// was not, what TakeOurs sends is only what earlier hits of ours booked.
+		[[nodiscard]] bool FellToUs(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() && it->second.fellOurs;
+		}
 
 		// How many drops were taken for our player's shots with no hit event for them (OurShot): a game whose hit events
 		// don't reach the mod.
@@ -804,6 +824,7 @@ namespace CopyHealth
 			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
 			std::optional<Clock::time_point> fellSince;       // first seen dead here, this fall (Fell)
 			bool                             fellJudged = false;  // ... and the fall's blow judged
+			bool                             fellOurs = false;    // ... and booked as ours
 		};
 
 		// A gain smaller than this is not taken back (yet).

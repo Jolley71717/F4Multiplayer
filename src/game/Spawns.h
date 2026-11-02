@@ -73,6 +73,9 @@ namespace Spawns
 	// A spawn died in another game (kActorDied): our copy, or our own NPC (a friend's believed kill), is killed here.
 	void ApplyDeath(const Protocol::ActorDeath& a_death);
 
+	// Whether our runtime NPC a_local was killed here for another game's report (ApplyDeath), its death event not yet come.
+	[[nodiscard]] bool KilledHere(std::uint32_t a_local);
+
 	// One of our runtime NPCs died here: the spawn id to report its death under (0: none, or one we were told of).
 	std::uint32_t OnLocalDeath(std::uint32_t a_local);
 

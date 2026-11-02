@@ -789,6 +789,11 @@ namespace Spawns
 		REX::INFO("Spawns: killed {:08X}: spawn {:08X} died in player {}'s game", local, a_death.refId, a_death.playerId);
 	}
 
+	bool KilledHere(std::uint32_t a_local)
+	{
+		return killedHere.contains(a_local);
+	}
+
 	std::uint32_t OnLocalDeath(std::uint32_t a_local)
 	{
 		if (killedHere.erase(a_local)) {

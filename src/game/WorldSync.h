@@ -77,6 +77,9 @@ namespace WorldSync
 	// end of its health it goes down and gets up, so going down is never reported as a death, and a death heard
 	// of for it waits until it can die here.
 	[[nodiscard]] bool IsEssential(RE::Actor* a_actor);
+	// Whether we know a_refId dead from another game's word (its report, or the session's dead list), not from our own
+	// game's report: our copy of it was killed here for that word (SessionDeaths::Ledger::ToldDead).
+	[[nodiscard]] bool ToldDead(std::uint32_t a_refId);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
 	// Any thread (the container menu's show, on the UI's): our player opened a_container's menu. The other players' changes
 	// waiting for it go in on the main thread's next frame, as when it loads (LootSync::Loot::Opened), not at the slow

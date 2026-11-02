@@ -6,6 +6,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RollingLog.h"
+#include "game/SessionDeaths.h"
 #include "game/Spawns.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -526,13 +527,19 @@ namespace CopyWatch
 				if (wire == 0 || OtherOwner(wire) == 0) {
 					continue;
 				}
+				const auto lifeState = static_cast<RE::ActorState&>(*actor).lifeState;
 				if (!actor->IsDead(false)) {
 					copies.emplace_back(actor, wire);
+				} else if (SessionDeaths::GetsUp(static_cast<std::int32_t>(lifeState), WorldSync::IsEssential(actor))) {
+					// Down, not dead (essential down, bleeding out: the game's IsDead answers true for it too), and it gets up
+					// again, as WorldSync's DeadHere has it. Not a fall: the blow that downed it is no kill of ours, and it is
+					// checked again once it stands.
+					continue;
 				} else if (const auto seen = copiesSeen.find(wire); seen != copiesSeen.end()) {
 					// Still a copy while it falls: its death event comes at the end of the fall, which for a robot was 10 s
 					// after the killing blow, and COPY_SEEN_KEPT after the blow took its death for a takeover's. Only one
 					// that was a copy alive: an NPC that became a friend's as it died is still none.
-					if (static_cast<RE::ActorState&>(*actor).lifeState == static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kDying)) {
+					if (lifeState == static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kDying)) {
 						seen->second = now;
 					}
 					fallen.emplace_back(actor, wire);
@@ -544,21 +551,28 @@ namespace CopyWatch
 			for (const auto& [actor, id] : fallen) {
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
-				book.Fell(id, health, now);
+				// Killed here for another game's word (the session's console kill: WorldSync's, or Spawns' for a spawn): no
+				// blow of ours, though a hit of ours may still be in its window, and the NPC is dead there already. Nothing
+				// is sent: it would only be refused.
+				const bool toldDead = WorldSync::ToldDead(id) || Spawns::KilledHere(actor->GetFormID());
+				book.Fell(id, health, now, toldDead);
 				const float maximum = values.GetPermanentActorValue(*info);
-				if (maximum <= 0.0f || damageOut.size() >= MAX_INBOX) {
+				if (toldDead || maximum <= 0.0f || damageOut.size() >= MAX_INBOX) {
 					continue;
 				}
 				if (const auto sent = book.TakeOurs(id, now)) {
 					lastDamageSent[id] = now;
 					damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
 					++damageSent;
-					++fallsSent;
 					damageTotal += sent->amount;
-					if (fallLog.Take(now)) {
-						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) fell to a blow of ours ({:.1f} health now): {:.1f} health of damage sent to its game, so it dies there too. "
-						          "Last hit on it: {}",
-							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), health, sent->amount, LastHitOn(id, now));
+					// Only a fall booked as ours is counted and logged as one: what else goes is earlier hits' damage.
+					if (book.FellToUs(id)) {
+						++fallsSent;
+						if (fallLog.Take(now)) {
+							REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) fell to a blow of ours ({:.1f} health now): {:.1f} health of damage sent to its game, so it dies there too. "
+							          "Last hit on it: {}",
+								actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), health, sent->amount, LastHitOn(id, now));
+						}
 					}
 				}
 			}
