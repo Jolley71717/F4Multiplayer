@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T00:38:41+00:00",
+ "updated": "2026-11-02T01:12:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -146,7 +146,7 @@
    "title": "F7 teleport to a far-away friend in the same exterior worldspace lands far off and high in the air; the player falls and goes down",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 252
   },
@@ -723,6 +723,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0 and tested on two real games, in and out of power armor.",
    "desc": "A friend downed in power armor was not shown downed on the host's screen: the empty frame lay crumpled on the road while the friend's character stood elsewhere. 0.9.0 makes a downed friend's character lie where they are, and you can walk over to revive them."
+  },
+  {
+   "id": "jbqf",
+   "title": "After a death and console resurrect, the engine skips the post-teleport autosave (2 of 4 far F7 runs)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "jdnq",
