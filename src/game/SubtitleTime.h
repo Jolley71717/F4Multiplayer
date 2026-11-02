@@ -121,6 +121,13 @@ namespace SubtitleTime
 		return static_cast<std::size_t>(std::ranges::count_if(a_text, [](char a_c) { return (static_cast<unsigned char>(a_c) & 0xC0) != 0x80; }));
 	}
 
+	// A line with nothing to read: empty, or only spaces (some idle lines, Codsworth's 000475BB among them, are a single
+	// space). The game shows no subtitle for one.
+	inline bool Blank(std::string_view a_text)
+	{
+		return std::ranges::all_of(a_text, [](char a_c) { return a_c == ' ' || a_c == '\t' || a_c == '\r' || a_c == '\n'; });
+	}
+
 	// How long to read a line.
 	inline std::chrono::milliseconds Reading(std::string_view a_text)
 	{

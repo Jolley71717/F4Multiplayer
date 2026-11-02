@@ -166,3 +166,13 @@ TEST("SubtitleTime: reading time counts characters, not UTF-8 bytes")
 	CHECK(SubtitleTime::Characters("\xE4\xBD\xA0\xE5\xA5\xBD") == 2);    // 你好
 	CHECK(SubtitleTime::Reading(std::string(20, 'a')) == SubtitleTime::Reading("\xE4\xBD\xA0" + std::string(19, 'a')));
 }
+
+TEST("SubtitleTime: a line of only spaces is blank, with nothing to show")
+{
+	CHECK(SubtitleTime::Blank(""));
+	CHECK(SubtitleTime::Blank(" "));
+	CHECK(SubtitleTime::Blank(" \t\r\n "));
+	CHECK(!SubtitleTime::Blank("."));
+	CHECK(!SubtitleTime::Blank(" Hm "));
+	CHECK(!SubtitleTime::Blank("\xC3\xA9"));  // é
+}

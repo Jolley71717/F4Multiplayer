@@ -659,6 +659,9 @@ namespace Conversations
 		// The text goes where the game shows a nearby NPC's line, its subtitle area, for as long as the
 		// recording lasts (it played in the friend's game for that long, whether we play it or not). With the
 		// player's General Subtitles off, or in a conversation of their own, it is a HUD notice, as it always was.
+		if (SubtitleTime::Blank(a_line.text)) {  // nothing to read: the game would drop the subtitle, and a notice would be just a name
+			return;
+		}
 		auto notice = std::format("{}: {}", name, a_line.text);
 		if (SubtitleAreaOpen()) {
 			const auto seconds = VoiceSecondsOf(file.path);
