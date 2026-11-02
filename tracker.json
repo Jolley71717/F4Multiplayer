@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T01:18:46+00:00",
+ "updated": "2026-11-02T01:38:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -322,7 +322,7 @@
    "title": "Player input dead after a game's first load: keys reach the game, the player never moves",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 5,
    "note": "A game sometimes starts with its player's input dead; a restart mends it, cause being looked into",
    "pr": 254
   },
