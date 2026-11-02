@@ -15,7 +15,6 @@ namespace
 	constexpr std::uint32_t PYLON = 0xFF000A02;      // another copy
 	constexpr std::uint32_t LIGHT = 0xFF000B01;      // our own light
 	constexpr std::uint32_t WIRE = 0xFF000B02;       // our wire, from our light to their generator's copy
-	constexpr std::uint32_t BENCH = 0x000250FE;
 
 	// A settlement's power as the game keeps it, and our copies in it: wiring to a copy puts it on the grid, gives it
 	// power links and links it to the workbench, as the game does.
