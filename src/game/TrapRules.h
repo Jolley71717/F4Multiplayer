@@ -316,15 +316,17 @@ namespace TrapRules
 	// since), or nullopt to leave it be. a_recordTimer: the mine's record's timer; a_delayMin: fMinesDelayMin. Only one a
 	// friend's stand-in started: with nobody else in reach but our player, whose own start would have been the long one
 	// (one our player started is the long one already; never shortened). One an NPC may have started is the NPC's, as in
-	// every game. The time it has run is taken off, as the engine started it at a_delayMin.
+	// every game. The time it has run is taken off, as the engine started it at a_delayMin. One longer than a_delayMin
+	// was not a stand-in's start (one first seen mid-way, as a cell attaches: our player's, say): left be.
 	constexpr std::optional<float> MineCountdown(float a_timer, float a_recordTimer, float a_delayMin, MineReach a_reach)
 	{
-		if (!(a_timer < MINE_IDLE) || a_timer < 0.0f || !a_reach.standIn || a_reach.other || !(a_recordTimer > 0.0f) || a_delayMin < 0.0f) {
+		constexpr float SLACK = 0.05f;  // a frame or so
+		if (!(a_timer < MINE_IDLE) || a_timer < 0.0f || !a_reach.standIn || a_reach.other || !(a_recordTimer > 0.0f) || a_delayMin < 0.0f ||
+			a_timer > a_delayMin + SLACK) {
 			return std::nullopt;
 		}
 		const float ran = a_delayMin > a_timer ? a_delayMin - a_timer : 0.0f;
 		const float full = a_recordTimer + a_delayMin - ran;
-		constexpr float SLACK = 0.05f;  // a frame or so: one already as long is ours
 		if (a_timer + SLACK >= full) {
 			return std::nullopt;
 		}

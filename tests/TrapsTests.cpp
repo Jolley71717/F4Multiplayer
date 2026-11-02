@@ -521,6 +521,9 @@ TEST("traps: a mine a friend's stand-in starts counts down as long as in the fri
 	// One our player started (the stand-in beside them): long already, never shortened.
 	CHECK(!TrapRules::MineCountdown(1.69f, RECORD, MIN, standIn));
 	CHECK(!TrapRules::MineCountdown(3.4f, RECORD, MIN, standIn));  // a sneaking player's, longer still
+	// One first seen part-way through a longer countdown (a cell attaching as it counts): not a stand-in's start.
+	CHECK(!TrapRules::MineCountdown(1.0f, RECORD, MIN, standIn));
+	CHECK(!TrapRules::MineCountdown(0.3f, RECORD, MIN, standIn));
 	// An NPC in reach (a raider, a copy of a friend's NPC, a companion): it may have started it, as in every game.
 	CHECK(!TrapRules::MineCountdown(MIN, RECORD, MIN, { true, true }));
 	CHECK(!TrapRules::MineCountdown(MIN, RECORD, MIN, { false, true }));
