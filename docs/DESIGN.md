@@ -459,6 +459,18 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   (`net status`, `spawns: ... notShared=`); the other side logs a spawn it holds no copy of for a lasting reason (`has no
   copy here`: its base is a unique NPC, placing failed, its owner's stand-in not heard or far) and counts them
   (`unplaced=base/far/owner`).
+- A plugin's NPC our game has no reference of goes the same way (`Spawns::Absent`, `SpawnBook::AbsentBase`): a reference
+  its plugin stores as temporary is in a game only while its cell is loaded there, and a quest can take one far from its
+  cell. The random encounter RETravelKMK04 moves its Mr Gutsy (REMisterGutsy01REF, 0002F61D, a temporary reference in
+  the interior REHoldingCell) onto the road beside its player; that player's game claims and runs it as any plugin NPC,
+  but a friend's game beside them has no such reference (its holding cell is not loaded there), so every state of it
+  came to nothing: no Mr Gutsy and no fight (a Nexus report on 0.9.2). Now a state of a plugin NPC our game lacks books
+  it as a friend's spawn under the reference's own id, placed from the NPC the session's roll of it was put together
+  from (the roll's first whole template, else the NPC it was placed as; one that is not leveled has no roll and gets
+  no copy, said once in the log), placed, mirrored, hurt and killed as a spawn's copy is (NpcSync's ids for it name our
+  copy). Our hits on it ask no takeover (the server would hand us an NPC our game cannot run); they reach it as damage.
+  The copy goes when nobody runs it or another game takes it (that game's states book it afresh), and when our game
+  comes to have the reference (its cell loaded here: ours is mirrored as any). `net status`: `absent=` booked/no base.
 - It is over when it dies, when its owner's game lets it go (unloaded) and when its owner leaves: the server
   forgets it and names nobody as its owner, which ends it in every game. Its death is believed from its owner
   and from a player fighting their copy of it (health reported, or a takeover claim, within 10 s), never kept

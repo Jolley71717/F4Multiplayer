@@ -234,6 +234,17 @@ namespace Spawns
 				SpawnBook::BlockName(a_block), DescribeBase(a_actor));
 		}
 
+		// Friends' plugin NPCs our game has no reference of (Absent): booked (each time, a change of hands books one afresh),
+		// and those nothing names a base for, by id, with their first such state: said once (a few lines in all) once it has
+		// stayed so past the wait for its roll (NpcRoll::IDENTITY_WAIT, the roll follows the claim), as long as it stays so.
+		struct NoBase
+		{
+			Clock::time_point since{};
+			bool              said = false;
+		};
+		std::uint32_t                             absentBooked = 0, absentLogged = 0;
+		std::unordered_map<std::uint32_t, NoBase> absentNoBase;
+
 		// Friends' spawns that have no copy here and are not about to get one, by spawn id, with the reason last said
 		// (SpawnBook::Theirs::Why): a reason is logged once, after the spawn has been known UNPLACED_AFTER, a few lines for
 		// each reason in all (an owner's stand-in walking off from its spawns again and again must not use up the lines a
@@ -659,6 +670,11 @@ namespace Spawns
 		const auto now = Clock::now();
 		for (const auto& owner : a_owners) {
 			if (!Protocol::IsSpawnRef(owner.refId)) {
+				// A friend's NPC our game has no reference of (Absent): over when nobody runs it, or for its owner when another
+				// game takes it (that game's next state books it afresh).
+				if (const auto copy = theirs.Find(owner.refId); copy && owner.playerId != copy->spawn.playerId) {
+					theirs.Gone(owner.refId);
+				}
 				continue;
 			}
 			if (ours.Holds(owner.refId)) {
@@ -680,6 +696,63 @@ namespace Spawns
 		theirs.Moved(a_state.refId, RemoteEdits::SpotOf(a_state), a_state.heading, Clock::now());
 	}
 
+	bool Absent(const Protocol::ActorState& a_state, std::uint32_t a_owner)
+	{
+		const auto id = a_state.refId;
+		if (!Protocol::IsShareableRef(id) || a_owner == 0 || a_owner == LocalPlayer()) {
+			return false;
+		}
+		const auto known = theirs.Find(id);
+		const auto knownOwner = known && !known->gone ? known->spawn.playerId : 0;
+		const auto base = knownOwner == a_owner ? 0 : SpawnBook::AbsentBase(NpcSync::RollOf(id), [](std::uint32_t a_npc) { return BaseOf(RE::TESForm::GetFormByID(a_npc)); });
+		switch (SpawnBook::DecideAbsent(RE::TESForm::GetFormByID(id) != nullptr, knownOwner, a_owner, base)) {
+		case SpawnBook::AbsentStep::kOurs:
+			return false;
+		case SpawnBook::AbsentStep::kKnown:
+			OnState(a_state);
+			return true;
+		case SpawnBook::AbsentStep::kNoBase:
+			if (absentNoBase.size() >= MAX_BLOCKED_NOTED) {
+				absentNoBase.clear();
+			}
+			if (auto& noBase = absentNoBase.try_emplace(id, NoBase{ Clock::now() }).first->second;
+				!noBase.said && Clock::now() - noBase.since >= NpcRoll::IDENTITY_WAIT && absentLogged < LOGGED) {
+				noBase.said = true;
+				++absentLogged;
+				REX::INFO("Spawns: player {} runs {:08X}, which our game has no reference of (its cell is not loaded here), and {}: no copy of it here yet", a_owner, id,
+					NpcSync::RollOf(id) ? "none of the NPCs its roll names is one we place" : "no roll of it has come to name what to place it from");
+			}
+			return false;
+		case SpawnBook::AbsentStep::kAdd:
+			break;
+		}
+		// Booked afresh: a copy of an old booking (another owner's, or one let go of) goes first.
+		if (known) {
+			if (known->local != 0) {
+				Discard(id);
+			}
+			theirs.Forget(id);
+			seenAt.erase(id);
+		}
+		const auto at = RemoteEdits::SpotOf(a_state);
+		if (!theirs.Add(Protocol::Spawn{ a_owner, id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_state.heading }, LocalPlayer())) {
+			return false;
+		}
+		absentNoBase.erase(id);
+		++absentBooked;
+		if (absentLogged < LOGGED) {
+			++absentLogged;
+			REX::INFO("Spawns: player {} runs {:08X}, which our game has no reference of (a temporary reference a quest of theirs took out of a cell we have not loaded): our copy of it is placed from {:08X} (roll {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X}",
+				a_owner, id, base, NpcSync::RollOf(id) ? NpcSync::RollOf(id)->originalBase : 0, at.x, at.y, at.z, at.cell ? at.cell : at.worldspace);
+		}
+		return true;
+	}
+
+	bool IsAbsent(std::uint32_t a_id)
+	{
+		return !Protocol::IsSpawnRef(a_id) && theirs.Knows(a_id);
+	}
+
 	bool GivenBack(const Protocol::FrameReturn& a_return)
 	{
 		if (FrameLoan::ChoosePlace(a_return) != FrameLoan::Place::kMove) {
@@ -698,7 +771,7 @@ namespace Spawns
 
 	void ApplyDeath(const Protocol::ActorDeath& a_death)
 	{
-		if (!Protocol::IsSpawnRef(a_death.refId)) {
+		if (!Protocol::IsSpawnRef(a_death.refId) && !IsAbsent(a_death.refId)) {
 			return;
 		}
 		std::uint32_t local = 0;
@@ -745,6 +818,16 @@ namespace Spawns
 		for (const auto id : theirs.Ids()) {
 			const auto copy = theirs.Find(id);
 			if (!copy) {
+				continue;
+			}
+			// A friend's NPC our game had no reference of (Absent) that it has now (its cell loaded here): ours is mirrored
+			// (NpcSync), and our copy goes.
+			if (!Protocol::IsSpawnRef(id) && RE::TESForm::GetFormByID(id)) {
+				REX::INFO("Spawns: our game has {:08X} now; our copy of player {}'s goes, and ours is mirrored", id, copy->spawn.playerId);
+				if (copy->local != 0) {
+					Discard(id);
+				}
+				theirs.Forget(id);
 				continue;
 			}
 			// A frame its owner's game made: placed as a friend's parked frame is, not as an NPC.
@@ -940,6 +1023,7 @@ namespace Spawns
 		seenAt.clear();
 		unplacedWhy.clear();
 		blockedNoted.clear();
+		absentNoBase.clear();
 		theirs.Clear();
 		ours.Clear();
 		ownFrames.clear();
@@ -951,8 +1035,8 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled) + Unplaced() + " " + FrameLoans::Describe();
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size()) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

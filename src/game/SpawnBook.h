@@ -6,6 +6,7 @@
 
 #include "Protocol.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -71,6 +72,55 @@ namespace SpawnBook
 			return a_original.id;
 		}
 		return a_own.npc && Protocol::IsShareableRef(a_own.id) ? a_own.id : 0;
+	}
+
+	// ---- A friend's NPC our game has no reference of ----------------------------------------------------------------
+	//
+	// A plugin's NPC is the same reference in every game, so NpcSync mirrors a friend's onto ours. But a reference its
+	// plugin stores as temporary is in a game only while its cell is loaded there, and a quest can take one far from its
+	// cell: the random encounter RETravelKMK04 moves its Mr Gutsy (REMisterGutsy01REF, 0002F61D, a temporary reference in
+	// the interior REHoldingCell) onto the road where its player is. Their game runs it and sends its states; in a friend's
+	// beside them the holding cell is not loaded, our game has no such reference, and every state of it came to nothing:
+	// no Mr Gutsy and no fight (a Nexus report on 0.9.2). Such an NPC is placed here as a friend's spawn is (Theirs, under
+	// the reference's own id: Protocol::IsShareableRef, never a spawn id), from the NPC its owner's roll of it was put
+	// together from (the session's roll, NpcSync::RollOf; PickBase over its templates, then the NPC it was placed as).
+	// 0 when there is none: an NPC that is not leveled has no roll, and nothing here names what it is.
+	template <class BaseOf>
+	std::uint32_t AbsentBase(const Protocol::NpcIdentity* a_roll, BaseOf&& a_baseOf)
+	{
+		if (!a_roll || a_roll->mask == 0) {
+			return 0;
+		}
+		std::array<Base, Protocol::IDENTITY_TEMPLATES> templates{};
+		std::size_t                                    count = 0;
+		for (std::size_t i = 0; i < templates.size(); ++i) {
+			if ((a_roll->mask >> i) & 1u && a_roll->templates[i] != 0) {
+				templates[count++] = a_baseOf(a_roll->templates[i]);
+			}
+		}
+		return PickBase({}, std::span{ templates.data(), count }, a_roll->originalBase != 0 ? a_baseOf(a_roll->originalBase) : Base{});
+	}
+
+	// What one of a friend's states of a plugin's NPC asks of our book (Spawns::Absent).
+	enum class AbsentStep : std::uint8_t
+	{
+		kOurs,    // our game has the reference: NpcSync mirrors (or brings in) ours, the book holds no copy of it
+		kKnown,   // the book holds it already, for this owner and not over: the state moves our copy
+		kNoBase,  // nothing names what to place it from (no roll of it has come, or none of its NPCs is one we place)
+		kAdd,     // booked now, from its base: placed as a friend's spawn is (Theirs::Decide), and mirrored under its id
+	};
+
+	// a_here: our game has a reference under the id. a_knownOwner: who the book holds it for, 0 if it holds none (or the
+	// one it holds is over: died or let go of). A change of hands books it afresh for the new owner.
+	constexpr AbsentStep DecideAbsent(bool a_here, std::uint32_t a_knownOwner, std::uint32_t a_owner, std::uint32_t a_base)
+	{
+		if (a_here) {
+			return AbsentStep::kOurs;
+		}
+		if (a_knownOwner != 0 && a_knownOwner == a_owner) {
+			return AbsentStep::kKnown;
+		}
+		return a_base == 0 ? AbsentStep::kNoBase : AbsentStep::kAdd;
 	}
 
 	// Why a runtime NPC of ours, once it is hostile to our player or fighting, is not reported yet: the log says it once
@@ -350,12 +400,13 @@ namespace SpawnBook
 			Clock::time_point givenBackAt{};
 		};
 
-		// A friend's game shares one. False when it is ours (the server never grants one id twice, but a book can lag),
-		// from us, or the book is full. One already known under the id is replaced: the old one is over (Forget it first,
-		// after deleting its copy, if it had one: Find(id)->local).
+		// A friend's game shares one (a spawn id), or runs a plugin's NPC our game has no reference of (its own id: see
+		// AbsentBase). False when it is ours (the server never grants one id twice, but a book can lag), from us, or the
+		// book is full. One already known under the id is replaced: the old one is over (Forget it first, after deleting
+		// its copy, if it had one: Find(id)->local).
 		bool Add(const Protocol::Spawn& a_spawn, std::uint32_t a_localPlayer)
 		{
-			if (!Protocol::IsSpawnRef(a_spawn.refId) || a_spawn.playerId == 0 || a_spawn.playerId == a_localPlayer) {
+			if (!Protocol::IsActorRef(a_spawn.refId) || a_spawn.playerId == 0 || a_spawn.playerId == a_localPlayer) {
 				return false;
 			}
 			if (!copies.contains(a_spawn.refId) && copies.size() >= MAX) {

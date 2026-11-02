@@ -415,7 +415,7 @@ namespace CopyWatch
 		// that can't take it this frame (no 3D, or dead here) is owed it: parked, and given back when it is seen again.
 		++refundsGiven;
 		healthRefunded += give;
-		const auto local = Protocol::IsSpawnRef(a_wire) ? Spawns::LocalOf(a_wire) : a_wire;
+		const auto local = NpcSync::LocalRef(a_wire);  // our copy of a spawn, or of a plugin's NPC our game lacks (Spawns::Absent)
 		const auto actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
 		const auto info = HealthInfo();
 		const bool takes = actor && info && actor->Get3D() && !actor->IsDead(false);
