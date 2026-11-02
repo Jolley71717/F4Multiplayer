@@ -2142,6 +2142,22 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   NPCs we run or talk to, are reported unless the speaker is in combat. Receivers show
   "Name: line" when their copy of the speaker (or the friend's stand-in) is within 20 m, isn't saying
   it already, and the same line wasn't shown in the last 5 s (at most 3 lines per 3 s).
+- Friends' lines as subtitles: a line shown here goes into the game's own subtitle area, the way the game
+  shows a nearby NPC's line, through the engine's `SubtitleManager` (its list of who is saying what, from
+  which it shows the nearest line of the highest priority each frame, within `fMaxSubtitleDistance`, 1500
+  units). Added with `SubtitleManager::AddSubtitle` (Address Library 2249542; the speaker is our copy of the
+  NPC or the friend's stand-in, no INFO, normal priority, so the game names the speaker as it does its own),
+  taken out with `RemoveSubtitle` (2249543, every line of that speaker; skipped while our copy is saying a
+  line of its own, whose end takes them all out). It stays up as long as the recording lasts
+  (src/game/SubtitleTime.h: the .fuz's XWMA packet table, `dpds`, or a .wav's data size and byte rate, read
+  through `BSResource`; plus 0.5 s, at least 2.5 s, at most 30 s), or for a line with no recording as long as
+  it takes to read (1.5 s + 50 ms a character, 2.5 to 12 s); whether we play the recording or not. The game's
+  rules for the subtitle area, read from its code: out of a conversation a line is added and shown only with
+  `bGeneralSubtitles` on; in one, only the conversation's own lines (the player's and their speaker's), with
+  `bDialogueSubtitles`. So with General Subtitles off, or while the player is in a conversation
+  (`MenuTopicManager::menuOpen`), a friend's line is the "Name: line" HUD notice as before. A line the engine
+  no longer lists 200 ms after it was added (its speaker's own line ended and took it out) becomes that
+  notice too.
 - Spoken lines (0.8.7, `bSpokenLines`, on): a line goes with the recording it is (`Line.info`, the
   INFO; `Line.response`, the response number its voice file is named with; `Line.voiceType`, the
   NPC's voice type, or the default object `kPlayerVoiceMale`/`kPlayerVoiceFemale` for a player). The

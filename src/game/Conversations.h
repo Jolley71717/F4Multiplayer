@@ -3,8 +3,9 @@
 #include "Protocol.h"
 
 // Shared conversations: lines spoken by NPCs we run, by the NPC we're talking to, and by the
-// local player are reported, so friends nearby see them ("Name: line") even though dialogue
-// plays in only one game. Main thread only.
+// local player are reported, so friends nearby see them even though dialogue plays in only one game:
+// in the game's subtitle area for as long as the line's recording lasts, or as a "Name: line" HUD
+// notice when the game wouldn't show it there (General Subtitles off, in a conversation). Main thread only.
 namespace Conversations
 {
 	// Watches who is talking and queues new lines (only while a_connected), and ends a conversation
