@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T23:04:49+00:00",
+ "updated": "2026-11-02T23:05:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1301,7 +1301,7 @@
    "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": "A robot killed in one game can stay alive in the other"
   },
   {
