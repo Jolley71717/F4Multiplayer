@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T18:01:45+00:00",
+ "updated": "2026-11-02T18:03:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -470,7 +470,7 @@
    "title": "hits.sh pause step counts a shooter's missed shot as the mod's failure",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 271
   },
