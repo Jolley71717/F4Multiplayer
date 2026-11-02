@@ -625,6 +625,45 @@ TEST("state buffer: a friend who stops while their next state is late is drawn g
 	CHECK(std::abs(xs.back() - stop) < 0.5f);
 }
 
+TEST("state buffer: a friend carried on past their newest state for all of EXTRAPOLATE stands there held, whatever our clock reads")
+{
+	// Frame waits at EXTRAPOLATE past the newest state, and the float delay brings the drawn time back a few nanoseconds
+	// either side of it, which way depending on the clock's value (built against libc++, the stand-in hold test's clock had
+	// it short): standing there, it is held all the same, so its own speed is the one the newest state said.
+	std::uint32_t standing = 0;
+	std::uint32_t standingAhead = 0;
+	for (int k = 0; k < 200; ++k) {
+		const auto            from = Clock::time_point{} + 1h + std::chrono::nanoseconds(k * 7919);
+		StateBuffer::Buffer   buffer;
+		Protocol::PlayerState state;
+		state.worldspace = 0x3C;
+		state.speed = RUN;
+		auto now = from;
+		for (; now < from + 1s; now += 16ms) {
+			if ((now - from) % 33ms < 16ms) {
+				++state.sequence;
+				state.x = RUN * std::chrono::duration<float>(now - from).count();
+				buffer.Push(state, now);
+			}
+			buffer.Frame(now);
+		}
+		// Then nothing for a moment: carried on, then standing.
+		std::optional<float> last;
+		for (const auto end = now + 300ms; now < end; now += 16ms) {
+			buffer.Frame(now);
+			const auto sampled = buffer.Sample(now);
+			REQUIRE(sampled);
+			if (last && sampled->state.x == *last) {
+				++standing;
+				standingAhead += sampled->ahead ? 1 : 0;
+			}
+			last = sampled->state.x;
+		}
+	}
+	CHECK(standing > 0);
+	CHECK(standingAhead == 0);
+}
+
 TEST("state buffer: a late state that came on time changes nothing; one far off (a teleport) is gone to at once")
 {
 	// No state late: nothing carried on, nothing to ease out, and the stand-in is exactly where interpolation puts it.
