@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T15:58:40+00:00",
+ "updated": "2026-11-02T16:22:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1267,8 +1267,9 @@
    "title": "Power armor frame-entry hook updates plain counters and reads game state off the main thread",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 269
   },
   {
    "id": "v4k6",
