@@ -507,7 +507,7 @@ namespace MuzzleFlash
 	std::string Describe()
 	{
 		const char* name = mode == Mode::kOff ? "off" : (mode == Mode::kRefused ? "refused" : "always");
-		return std::format("flash={}:engine={} ours={}/{} flashSkips={}/{}/{}/{}/{} flashing={}", name, animated, shown, extended, tooSoon, tooMany, noFlash, noMuzzle, failed,
-			showing.size());
+		return std::format("flash={}:engine={} ours={}/{} flashSkips={}/{}/{}/{}/{} flashing={} takenDown={}", name, animated, shown, extended, tooSoon, tooMany, noFlash, noMuzzle, failed,
+			showing.size(), takenDown);
 	}
 }
