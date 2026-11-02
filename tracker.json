@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-01T23:42:48+00:00",
+ "updated": "2026-11-02T00:38:41+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -29,6 +29,14 @@
    "note": "Fixed for the next release, but not yet tried with a real alternate-start mod; waiting for the long test.",
    "pr": 176,
    "desc": "New characters normally play Vault 111 alone and then join, and alternate-start mods were untested with that. A character from an alternate start has the wrong identity until it is named, so it could not reliably host or join. The next release treats such a character like a Vault 111 one: it can host or join once it has a name. We have not been able to try it with a real alternate-start mod yet, so reports are welcome."
+  },
+  {
+   "id": "0tnz",
+   "title": "Nexus: Steam invite reaches the friend but clicking it doesn't join; the friend's game shows no co-op keys",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "0vhl",
@@ -256,6 +264,14 @@
    "note": "Fixed for the next release; waiting for the long test before it ships.",
    "pr": 151,
    "desc": "The mod comparison listed DLCUltraHighResolution.esm as missing on a game that has the file. It is a texture pack with no game records, so one player having it and another not makes no difference in a session. The next release leaves it out of the comparison. We tested it on two real games with the pack on only one."
+  },
+  {
+   "id": "6p4v",
+   "title": "Nexus: a friend's NPC conversation lines flash by too fast at the top; show them as subtitles, timed with the speech",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "6qex",
@@ -955,6 +971,14 @@
    "note": "Built and passing automatic checks; not yet tried in a real game.",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
+  },
+  {
+   "id": "q3ay",
+   "title": "Nexus: frequent CTDs on the host at one fixed place in 0.10.1, also with every other mod off (more than 0.10.0 by the reporter's account)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "q89a",
