@@ -40,6 +40,10 @@ hand-declared functions in `src/steam/SteamApi.cpp`.
 
 If you already cloned without submodules: `git submodule update --init --recursive`.
 
+The multiplayer menu's own Flash movies (`ui/`) are built with a pinned ActionScript compiler that needs **Java**
+(8 or later): `tools\flash\build.ps1` (or `tools/flash/build.sh`) fetches it once into your user folder and writes
+`build\ui\*.swf`; `tools/package.ps1` builds them for the release zip. See [docs/UI.md](docs/UI.md).
+
 On a Mac: [docs/misc/MAC.md](docs/misc/MAC.md).
 
 ## Tests

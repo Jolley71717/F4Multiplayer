@@ -23,5 +23,12 @@ if (-not (Test-Path $ini)) {
 $lang = Join-Path $plugins 'F4Multiplayer\lang'
 New-Item -ItemType Directory -Force $lang | Out-Null
 Copy-Item (Join-Path $root 'dist\lang\*.txt') $lang -Force
+# The plugin's own menu movies (tools\flash\build.ps1), if built.
+$movies = Join-Path $root 'build\ui'
+if (Test-Path (Join-Path $movies '*.swf')) {
+	$interface = Join-Path $GamePath 'Data\Interface\F4Multiplayer'
+	New-Item -ItemType Directory -Force $interface | Out-Null
+	Copy-Item (Join-Path $movies '*.swf') $interface -Force
+}
 
 "Deployed to $plugins"

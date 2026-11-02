@@ -36,9 +36,11 @@ The game's menus are Flash movies played by Scaleform GFx 4. Ours are ActionScri
   Stage 1280x720, as the game's menus.
 - `mxmlc` takes several source paths as `-compiler.source-path=a -compiler.source-path+=b`; a second bare path is an
   error ("default arguments may not be interspersed").
-- Deploying: `tools/crossovermac.sh deploy` (and `restart`) copies `build/ui/*.swf` into
-  `Data/Interface/F4Multiplayer/`, a folder of our own so no other mod's movie clashes. `tools/package.ps1` and the
-  Windows deploy don't include the movies yet: to do before this ships.
+- On Windows the same is `tools\flash\fetch.ps1` (into `%USERPROFILE%\.flex`) and `tools\flash\build.ps1 [Name]`;
+  the pins are in both fetch scripts, change them together.
+- Deploying: `tools/crossovermac.sh deploy` (and `restart`) and `tools\deploy.ps1` copy `build/ui/*.swf` into
+  `Data/Interface/F4Multiplayer/`, a folder of our own so no other mod's movie clashes. `tools/package.ps1` builds the
+  movies and puts them in the zip there, and refuses a zip without `MPMenu.swf`.
 
 On a Mac (docs/misc/MAC.md): `xmake build -y F4Multiplayer` with `XMAKE_CONFIGDIR=$PWD/.xmake/win`, then
 `tools/crossovermac.sh restart ''` to deploy and stop at the main menu. xmake sometimes stops at once with "please run
@@ -136,7 +138,6 @@ At run time:
 - Pause menu: check the entry and the panel there (Esc closes the pause menu's own way).
 - What the entries do: Host (choose Continue, Load or New, then host on load), Join (friends hosting, then a save),
   Direct connect (a text field), Options. With them, hosting by the menu for this launch only, instead of `bHost`.
-- Package the movies (`tools/package.ps1`) and the Windows deploy.
 - The PlayStation glyphs; the hint following a device change while the menu is open.
 - Inserting into the main menu instead, with its real panels, list and hint bar: possible (MCM does as much in the
   pause menu), at the cost of sharing its state machine and input. Kept in mind; the current menu is its fallback.
