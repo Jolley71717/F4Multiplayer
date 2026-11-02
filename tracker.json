@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T07:58:14+00:00",
+ "updated": "2026-11-02T08:05:06+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -609,7 +609,7 @@
    "title": "Catching up a friend's story can send you into Kellogg's memories",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 266
   },
