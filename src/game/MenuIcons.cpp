@@ -303,7 +303,6 @@ namespace MenuIcons
 			const auto     frame = movie->GetVisibleFrameRect();
 			const MenuIconPlace::Stage stage{ frame.x1, frame.y1, frame.x2, frame.y2 };
 			std::string    signature;
-			std::uint32_t  count = 0;
 			std::vector<std::pair<Glyph, MenuIconPlace::Spot>> spots;
 			if (!hide) {
 				for (const auto& target : targets) {
@@ -325,7 +324,6 @@ namespace MenuIcons
 					Draw(graphics, "clear", {});
 					for (const auto& [glyph, spot] : spots) {
 						DrawGlyph(graphics, glyph, color, spot.scale, spot.x - originX, spot.y - originY, false);
-						++count;
 					}
 					canvasDrawn = signature;
 				}
