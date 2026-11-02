@@ -142,6 +142,13 @@ New-Item -ItemType Directory -Force $lang | Out-Null
 $langFiles = @(Get-ChildItem (Join-Path $root 'dist\lang') -Filter '*.txt' -File)
 if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lang has no en.txt' }
 Copy-Item $langFiles.FullName $lang
+# The plugin's own menu movies (docs/UI.md), committed in ui\<Name>\ (F4MPTests checks they match their sources), where
+# the game looks for menus: Data\Interface, in a folder of ours.
+$movies = @(Get-ChildItem (Join-Path $root 'ui') -Directory | ForEach-Object { Get-ChildItem $_.FullName -Filter '*.swf' -File })
+if (-not ($movies | Where-Object { $_.Name -eq 'MPMenu.swf' })) { throw 'ui has no MPMenu.swf: the multiplayer menu would be missing' }
+$interface = Join-Path $stage 'Interface\F4Multiplayer'
+New-Item -ItemType Directory -Force $interface | Out-Null
+Copy-Item $movies.FullName $interface
 if (-not $Nexus) { Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer') }
 Copy-Item (Join-Path $root 'dist\INSTALL.md') (Join-Path $stage 'F4Multiplayer')
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'F4Multiplayer')
