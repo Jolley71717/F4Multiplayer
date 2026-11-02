@@ -17,6 +17,7 @@
 #include <set>
 
 using namespace Sim;
+using namespace std::chrono_literals;
 using Reason = Protocol::ClaimReason;
 using CopyHealth::Hitter;
 
@@ -67,6 +68,9 @@ namespace
 		std::set<std::uint32_t>        companions;  // they follow our player here
 		bool                           onlyPlayer = false;  // as before: only our player's blows were ours
 		bool                           claimKills = true;   // a killing blow by another actor of ours claims its NPC
+		bool                           fallsSent = true;    // a killing blow of ours on a copy goes as damage (CopyHealth::Book::Fell)
+		bool                           longFall = false;    // a death here is reported at the end of a long fall (Land), not at once
+		std::map<std::uint32_t, bool>  falling;             // ... the NPCs falling, and whether the kill is our player's
 		CopyHealth::Book               copies;
 		CopyHealth::Clock::time_point  now{};
 		float                          givenBack = 0.0f;
@@ -123,8 +127,21 @@ namespace
 				client.Claim(a_target, Reason::kInteract);
 			}
 			if (npc.dead) {
-				if (deathsSent.insert(a_target).second) {
-					client.Died(a_target, onlyPlayer ? a_by == PLAYER : CopyHealth::Credited(CauseOf(a_by), local));
+				// CopyWatch::Frame: the blow that killed a copy, if ours, goes to the NPC's game as damage (Book::Fell). What
+				// the book took of the earlier blows here was sent with them (below), so it is passed by.
+				const auto owner = client.OwnerOf(a_target);
+				if (fallsSent && hitter != Hitter::kNotOurs && owner != 0 && owner != local) {
+					(void)copies.TakeOurs(a_target, now);
+					copies.Fell(a_target, npc.health, now);
+					if (const auto sent = copies.TakeOurs(a_target, now)) {
+						client.Damage(a_target, std::clamp(sent->amount / 100.0f, 0.0f, 1.0f));
+					}
+				}
+				const bool credited = onlyPlayer ? a_by == PLAYER : CopyHealth::Credited(CauseOf(a_by), local);
+				if (longFall) {
+					falling.try_emplace(a_target, credited);
+				} else if (deathsSent.insert(a_target).second) {
+					client.Died(a_target, credited);
 				}
 			} else if (after.report) {
 				// On a copy what the blow took goes as damage (CopyWatch's book), for the game that runs it to take off; on
@@ -138,6 +155,16 @@ namespace
 				++reportsSent;
 			}
 			Wait(FRAME);
+		}
+
+		// The falls are over: each death event comes, and is reported (WorldSync's DeathWatcher).
+		void Land()
+		{
+			for (const auto& [id, credited] : std::exchange(falling, {})) {
+				if (deathsSent.insert(id).second) {
+					client.Died(id, credited);
+				}
+			}
 		}
 
 		// Frames go by: a living copy of an NPC another game runs gets back what it lost to no hit of ours.
@@ -184,6 +211,14 @@ namespace
 					continue;
 				}
 				it->second.health -= damage.health * 100.0f;
+				// The last of its health: it dies here, its runner's game, of nobody's blow (the damage names no attacker).
+				if (it->second.health <= 0.0f) {
+					it->second.dead = true;
+					if (deathsSent.insert(damage.refId).second) {
+						client.Died(damage.refId, false);
+					}
+					continue;
+				}
 				client.Hurt(damage.refId, it->second.health / 100.0f);
 			}
 		}
@@ -199,7 +234,8 @@ namespace
 		Game    hostGame{ host };
 		Game    bobGame{ bob };
 
-		Fight()
+		explicit Fight(Server::Options a_options = {}) :
+			s(a_options)
 		{
 			REQUIRE(host.Join());
 			REQUIRE(bob.Join());
@@ -287,8 +323,10 @@ TEST("copy hits: a companion's bite that kills a friend's raider at once claims 
 	CHECK(f.host.KilledBy(RAIDER_1) == std::optional{ f.bob.Id() });
 	CHECK(!f.DeathDropped(RAIDER_1));
 
+	// Before the claim, and before a killing blow went as damage too (Book::Fell: the test after next).
 	Fight g;
 	g.bobGame.claimKills = false;
+	g.bobGame.fallsSent = false;
 	g.bobGame.Strike(DOGMEAT, RAIDER_1, 150.0f);
 	g.Pass();
 	CHECK(g.DeathDropped(RAIDER_1));
@@ -667,4 +705,112 @@ TEST("copy hits: a drop a report found is not taken by a hit that comes long aft
 	book.OurHit(RAIDER_1, t0 + milliseconds{ 800 }, 10.0f);
 	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 800 }, 100.0f) == 0.0f);
 	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 800 }) == 0.0f);
+}
+
+TEST("copy hits: our companion's killing blow on a friend's robot reaches the robot's own game, though our copy's death comes at the end of a long fall")
+{
+	// On the rig the host's Codsworth killed the host's copy of a friend's Mr. Gutsy: the killing blow sent nothing (only
+	// living copies were checked), and the copy's death came at the end of a 10 s fall, past the server's deathGrace since
+	// the host's game last told it of the fight. The death was dropped, and the Gutsy stood on at 6 health in its own game.
+	Server::Options options;
+	options.deathGrace = 600s;  // the test moves the server's clock past it (Advance), so a busy PC can't end it early
+	for (const bool fixed : { true, false }) {
+		Fight f{ options };
+		f.bobGame.claimKills = false;  // the blow's claim is refused, or there is none (a spawn, a plugin's NPC our game lacks)
+		f.bobGame.longFall = true;
+		f.bobGame.fallsSent = fixed;
+		f.bobGame.Strike(DOGMEAT, RAIDER_1, 60.0f);
+		f.Pass();
+		REQUIRE(Near(f.hostGame.npcs[RAIDER_1].health, 40.0f));
+		REQUIRE(Near(f.bobGame.npcs[RAIDER_1].health, 40.0f));
+
+		f.bobGame.Strike(DOGMEAT, RAIDER_1, 45.0f);  // dead on Bob's screen, falling
+		CHECK(f.bobGame.npcs[RAIDER_1].dead);
+		f.Pass();
+		f.s.Advance(601s);  // the fall outlasts deathGrace
+		f.bobGame.Land();
+		f.Pass();
+		if (fixed) {
+			CHECK(f.hostGame.npcs[RAIDER_1].dead);  // the blow took the last of its health in its own game
+			CHECK(f.host.WorldNow().dead.contains(RAIDER_1));
+			CHECK(f.bob.WorldNow().dead.contains(RAIDER_1));
+			CHECK(f.hostGame.deathsSent.contains(RAIDER_1));  // its own game's death is the one believed
+			CHECK(!f.DeathDropped(RAIDER_1));               // and Bob's, late, finds it dead already: no second death
+		} else {
+			CHECK(!f.hostGame.npcs[RAIDER_1].dead);  // as on the rig: it fights on in its own game
+			CHECK(Near(f.hostGame.npcs[RAIDER_1].health, 40.0f));
+			CHECK(f.DeathDropped(RAIDER_1));
+			CHECK(!f.host.WorldNow().dead.contains(RAIDER_1));
+		}
+	}
+}
+
+TEST("copy hits: a copy that falls to a blow of ours books all it stood at and more, once; a fall with none of ours around it books nothing")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+
+	// The blow took 30 off a copy at 6: all of the drop is ours, and sent.
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 6.0f);
+	book.OurHit(RAIDER_1, t0, 30.0f);
+	CHECK(!book.Fell(RAIDER_1, -24.0f, t0 + FRAME));
+	CHECK(Near(Took(book, RAIDER_1, t0 + FRAME), 30.0f));
+	CHECK(book.Lethal() == 1);
+	// Once a fall: the corpse's next frames book nothing more.
+	CHECK(!book.Fell(RAIDER_1, -24.0f, t0 + 2 * FRAME));
+	CHECK(Took(book, RAIDER_1, t0 + 2 * FRAME) == 0.0f);
+
+	// A copy that reads 0 dead: never less than where it stood and MIN_LEFT more, so the NPC's game, about where the copy
+	// stood, is not left a sliver by rounding.
+	CopyHealth::Book zero;
+	zero.Set(RAIDER_1, 6.0f);
+	zero.OurHit(RAIDER_1, t0);
+	CHECK(!zero.Fell(RAIDER_1, 0.0f, t0 + FRAME));
+	CHECK(Near(Took(zero, RAIDER_1, t0 + FRAME), 6.0f + CopyHealth::MIN_LEFT));
+
+	// The hit's event a frame behind its damage: the fall waits for it, JUDGE_AFTER at most.
+	CopyHealth::Book late;
+	late.Set(RAIDER_1, 6.0f);
+	CHECK(late.Fell(RAIDER_1, -10.0f, t0));
+	late.OurHit(RAIDER_1, t0 + FRAME, 16.0f);
+	CHECK(!late.Fell(RAIDER_1, -10.0f, t0 + FRAME));
+	CHECK(Near(Took(late, RAIDER_1, t0 + FRAME), 16.0f));
+
+	// Nothing of ours around it (a friend's shot, a hazard): nothing sent, and a hit of ours on the corpse later is no part of it.
+	CopyHealth::Book theirs;
+	theirs.Set(RAIDER_1, 6.0f);
+	theirs.OurHit(RAIDER_1, t0 - std::chrono::seconds{ 5 }, 10.0f);
+	CHECK(theirs.Fell(RAIDER_1, -10.0f, t0));
+	CHECK(!theirs.Fell(RAIDER_1, -10.0f, t0 + CopyHealth::JUDGE_AFTER));
+	theirs.OurHit(RAIDER_1, t0 + milliseconds{ 500 }, 10.0f);
+	CHECK(!theirs.Fell(RAIDER_1, -20.0f, t0 + milliseconds{ 500 }));
+	CHECK(Took(theirs, RAIDER_1, t0 + milliseconds{ 500 }) == 0.0f);
+	CHECK(theirs.Lethal() == 0);
+
+	// A throw of ours (left to the owner's game, which deals it) beside our shot: only the shot's figure is ours.
+	CopyHealth::Book thrown;
+	thrown.Set(RAIDER_1, 50.0f);
+	thrown.OurHit(RAIDER_1, t0, 20.0f);
+	thrown.OwnersBlow(RAIDER_1, t0);
+	CHECK(!thrown.Fell(RAIDER_1, -40.0f, t0 + FRAME));
+	CHECK(Near(Took(thrown, RAIDER_1, t0 + FRAME), 20.0f));
+
+	// Never seen alive: no health to fall from, nothing booked.
+	CopyHealth::Book unseen;
+	unseen.OurHit(RAIDER_1, t0, 20.0f);
+	CHECK(!unseen.Fell(RAIDER_1, -20.0f, t0 + FRAME));
+	CHECK(Took(unseen, RAIDER_1, t0 + FRAME) == 0.0f);
+
+	// Up again (a copy checked alive): its next fall is judged afresh.
+	CopyHealth::Book again;
+	again.Set(RAIDER_1, 6.0f);
+	again.OurHit(RAIDER_1, t0, 10.0f);
+	CHECK(!again.Fell(RAIDER_1, -4.0f, t0 + FRAME));
+	CHECK(Near(Took(again, RAIDER_1, t0 + FRAME), 10.0f));
+	again.Set(RAIDER_1, 50.0f);
+	CHECK(again.Check(RAIDER_1, 50.0f, t0 + std::chrono::seconds{ 10 }) == 0.0f);
+	again.OurHit(RAIDER_1, t0 + std::chrono::seconds{ 11 }, 60.0f);
+	CHECK(!again.Fell(RAIDER_1, -10.0f, t0 + std::chrono::seconds{ 11 } + FRAME));
+	CHECK(Near(Took(again, RAIDER_1, t0 + std::chrono::seconds{ 11 } + FRAME), 60.0f));
 }

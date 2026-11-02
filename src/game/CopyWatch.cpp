@@ -88,6 +88,7 @@ namespace CopyWatch
 		std::uint32_t gainsTaken = 0;  // times a copy's gain of its own (no report behind it) was taken back
 		float         healthTaken = 0.0f;
 		std::uint32_t unseenHits = 0;  // drops on copies taken for our player's shots that no hit event came for (Book::Unseen)
+		std::uint32_t fallsSent = 0;   // damages sent for copies dead or dying here (Book::Fell: the killing blow, or what was booked before it)
 		// Our player's aim as their last shot left (OurShots), for the next Frame to book on the copies it points at.
 		std::optional<std::pair<CopyHealth::Aim, Clock::time_point>> shotAim;
 		// Lines of each kind a RollingLog::WINDOW (they were for the whole run: a long session's log had none of its
@@ -99,6 +100,7 @@ namespace CopyWatch
 		RollingLog::Budget gainLog{ 40 };
 		RollingLog::Budget unseenLog{ 20 };
 		RollingLog::Budget answerLog{ 60 };
+		RollingLog::Budget fallLog{ 40 };
 		RollingLog::Every  summary;
 
 		const RE::ActorValueInfo* HealthInfo()
@@ -513,15 +515,51 @@ namespace CopyWatch
 		const auto lists = RE::ProcessLists::GetSingleton();
 		if (info && lists) {
 			std::vector<std::pair<RE::Actor*, std::uint32_t>> copies;
+			std::vector<std::pair<RE::Actor*, std::uint32_t>> fallen;  // copies of ours a moment ago, dead or dying here now
 			for (const auto& handle : lists->highActorHandles) {
 				const auto ptr = handle.get();
 				const auto actor = ptr.get();
-				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || !Protocol::IsActorRef(actor->GetFormID()) || Puppets::IsPuppet(actor) || actor->IsDead(false) ||
-					!actor->Get3D()) {
+				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || !Protocol::IsActorRef(actor->GetFormID()) || Puppets::IsPuppet(actor) || !actor->Get3D()) {
 					continue;
 				}
-				if (const auto wire = WireOf(actor->GetFormID()); wire != 0 && OtherOwner(wire) != 0) {
+				const auto wire = WireOf(actor->GetFormID());
+				if (wire == 0 || OtherOwner(wire) == 0) {
+					continue;
+				}
+				if (!actor->IsDead(false)) {
 					copies.emplace_back(actor, wire);
+				} else if (const auto seen = copiesSeen.find(wire); seen != copiesSeen.end()) {
+					// Still a copy while it falls: its death event comes at the end of the fall, which for a robot was 10 s
+					// after the killing blow, and COPY_SEEN_KEPT after the blow took its death for a takeover's. Only one
+					// that was a copy alive: an NPC that became a friend's as it died is still none.
+					if (static_cast<RE::ActorState&>(*actor).lifeState == static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kDying)) {
+						seen->second = now;
+					}
+					fallen.emplace_back(actor, wire);
+				}
+			}
+			// The blow that killed a copy, if ours (CopyHealth::Book::Fell): sent now to the NPC's game, so it dies there too.
+			// Check never sees it (it is for living copies), and the copy's own death report, at the end of the fall, can
+			// come too late for the server to believe it. Not held back by SEND_EVERY: it is the last.
+			for (const auto& [actor, id] : fallen) {
+				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
+				const float health = values.GetActorValue(*info);
+				book.Fell(id, health, now);
+				const float maximum = values.GetPermanentActorValue(*info);
+				if (maximum <= 0.0f || damageOut.size() >= MAX_INBOX) {
+					continue;
+				}
+				if (const auto sent = book.TakeOurs(id, now)) {
+					lastDamageSent[id] = now;
+					damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
+					++damageSent;
+					++fallsSent;
+					damageTotal += sent->amount;
+					if (fallLog.Take(now)) {
+						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) fell to a blow of ours ({:.1f} health now): {:.1f} health of damage sent to its game, so it dies there too. "
+						          "Last hit on it: {}",
+							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), health, sent->amount, LastHitOn(id, now));
+					}
 				}
 			}
 			// Our player's last shot is booked on the nearest copy it points at (one: a drop on a neighbour is not its).
@@ -684,9 +722,9 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={}",
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={} copyFalls={}/{}",
 			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, gainsTaken, healthTaken, reportsSet, damageSent, damageTotal, answersTaken, refundsGiven, healthRefunded, owedGiven, lostGiven,
-			healthLost, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied, unseenHits);
+			healthLost, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied, unseenHits, book.Lethal(), fallsSent);
 	}
 
 	std::vector<Damage> TakeDamage()

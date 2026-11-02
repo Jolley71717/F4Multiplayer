@@ -396,6 +396,9 @@ namespace CopyHealth
 				return 0.0f;
 			}
 			auto& entry = it->second;
+			// Alive: a fall judged before (Fell) is over, and the next one is judged again.
+			entry.fellSince.reset();
+			entry.fellJudged = false;
 			// A new maximum (our level set to the owner's: Rolls) moves its health with it, the engine's reading as well as
 			// where it stands: the same share of it.
 			if (a_maximum > 0.0f) {
@@ -518,6 +521,53 @@ namespace CopyHealth
 			entry.dropSince.reset();
 			return *entry.health - a_health;
 		}
+
+		// The copy is dead here (dying or dead), reading a_health now. Check is for living copies only, so the blow that
+		// took the last of its health was never booked, and never reached the NPC's game. On the rig the host's companion
+		// killed the host's copy of a friend's Mr. Gutsy: seventeen hits on it, sixteen damages sent, and the Gutsy stood
+		// on at 6 health in its own game. The copy's death report came at the end of its ten-second fall, too late for the
+		// server to believe it (Options::deathGrace after the blow's claim), so the robot lived on in the game that ran it.
+		// So a fall with a hit of ours around it (as Check judges a drop: OursLately, from OURS_GRACE before it on) books
+		// what it took as ours: down from where the copy stood, and never less than all of that and MIN_LEFT more, so the
+		// NPC's game, which stands about where the copy stood, takes its last health too (rounding on the wire must not
+		// leave it a sliver). With a blow left to the owner around, only what our hits said they took (as in Check): the
+		// owner's game deals its own blow. A hit's event can come a frame behind its damage: true while the fall is to be
+		// asked about again (for JUDGE_AFTER), false once it is judged. Judged once a fall; TakeOurs sends it.
+		bool Fell(std::uint32_t a_id, float a_health, Clock::time_point a_now)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end() || !it->second.health || it->second.fellJudged) {
+				return false;
+			}
+			auto& entry = it->second;
+			if (!entry.fellSince) {
+				entry.fellSince = a_now;
+			}
+			if (!OursLately(entry, *entry.fellSince)) {
+				if (a_now - *entry.fellSince < JUDGE_AFTER) {
+					return true;
+				}
+				entry.fellJudged = true;
+				return false;
+			}
+			const float stood = *entry.health;
+			const float drop = (std::max)(stood - a_health, stood + MIN_LEFT);
+			const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= *entry.fellSince;
+			const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
+			entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+			entry.ours += take;
+			entry.health = a_health;
+			entry.dropSince.reset();
+			entry.raiseSince.reset();
+			entry.fellJudged = true;
+			if (take > 0.0f) {
+				++lethal;
+			}
+			return false;
+		}
+
+		// How many falls of copies were booked as ours (Fell).
+		[[nodiscard]] std::uint32_t Lethal() const { return lethal; }
 
 		// How many drops were taken for our player's shots with no hit event for them (OurShot): a game whose hit events
 		// don't reach the mod.
@@ -752,6 +802,8 @@ namespace CopyHealth
 			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
 			float                            peak = 0.0f;     // ... and the most it has read since then
 			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
+			std::optional<Clock::time_point> fellSince;       // first seen dead here, this fall (Fell)
+			bool                             fellJudged = false;  // ... and the fall's blow judged
 		};
 
 		// A gain smaller than this is not taken back (yet).
@@ -803,6 +855,7 @@ namespace CopyHealth
 
 		std::unordered_map<std::uint32_t, Entry> entries;
 		std::uint32_t                            unseen = 0;
+		std::uint32_t                            lethal = 0;   // falls booked as ours (Fell)
 		std::uint32_t                            lastSeq = 0;  // the number of the last damage sent (TakeOurs), over every copy
 		std::uint32_t                            answered = 0;
 		std::uint32_t                            refused = 0;
