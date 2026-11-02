@@ -1837,6 +1837,93 @@ namespace DevCommands
 				flag("shouldSetDefaultState"));
 		}
 
+		// scriptvars <refHex> <Script> <property...>: a script's state and the named properties' values (an object's form id,
+		// an array's length), read without calling into the VM.
+		std::string ScriptVars(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref || args.size() < 2) {
+				return "error: usage: scriptvars <refHex> <Script> <property...>";
+			}
+			// The bound script of that name, found as `scripts` lists them (FindBoundObject misses some, workshop scripts among them).
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!vm) {
+				return "error: no VM";
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref);
+			const auto  lower = [](std::string_view a_text) {
+				std::string text{ a_text };
+				std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return text;
+			};
+			const auto                 wanted = lower(args[1]);
+			RE::BSScript::Object*      object = nullptr;
+			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+				const auto  type = a_object ? a_object->type.get() : nullptr;
+				const char* name = type ? type->GetName() : nullptr;
+				if (name && lower(name) == wanted) {
+					object = a_object;
+				}
+				return Papyrus::BOUND_NEXT;
+			} };
+			if (handle != handles.EmptyHandle()) {
+				vm->ForEachBoundObject(handle, visit);
+			}
+			if (!object) {
+				return std::format("{:08X} no {} object", ref->GetFormID(), args[1]);
+			}
+			std::string out = std::format("{:08X} {} state='{}'", ref->GetFormID(), args[1], object->currentState.c_str() ? object->currentState.c_str() : "");
+			for (std::size_t i = 2; i < args.size(); ++i) {
+				const RE::BSScript::Variable* var = object->GetProperty(RE::BSFixedString{ args[i] });
+				if (!var) {
+					// A script variable (a property with its own getter keeps its value in "::<name>_var"): the object's variables
+					// hold its parents' first, the oldest parent's at the front.
+					std::vector<const RE::BSScript::ObjectTypeInfo*> chain;
+					for (auto cls = object->type.get(); cls; cls = cls->GetParent()) {
+						chain.insert(chain.begin(), cls);
+					}
+					const auto    mangled = lower(std::format("::{}_var", args[i]));
+					const auto    plain = lower(args[i]);
+					std::uint32_t offset = 0;
+					for (const auto cls : chain) {
+						const auto infos = cls->GetVariableIter();
+						for (std::uint32_t v = 0; infos && v < cls->GetNumVariables() && !var; ++v) {
+							const auto name = lower(infos[v].name.c_str() ? infos[v].name.c_str() : "");
+							if (name == mangled || name == plain) {
+								var = std::addressof(object->variables[offset + v]);
+							}
+						}
+						offset += cls->GetNumVariables();
+					}
+				}
+				std::string value = "?";
+				if (!var) {
+					value = "(none)";
+				} else if (var->is<std::nullptr_t>()) {
+					value = "None";
+				} else if (var->is<bool>()) {
+					value = RE::BSScript::get<bool>(*var) ? "true" : "false";
+				} else if (var->is<std::int32_t>()) {
+					value = std::to_string(RE::BSScript::get<std::int32_t>(*var));
+				} else if (var->is<float>()) {
+					value = std::format("{:.2f}", RE::BSScript::get<float>(*var));
+				} else if (var->is<RE::BSFixedString>()) {
+					value = std::format("'{}'", RE::BSScript::get<RE::BSFixedString>(*var).c_str());
+				} else if (var->is<RE::BSScript::Object>()) {
+					const auto held = RE::BSScript::get<RE::BSScript::Object>(*var);
+					value = held ? std::format("{:08X}", static_cast<std::uint32_t>(held->GetHandle())) : "None";
+				} else if (var->is<RE::BSScript::Array>()) {
+					const auto array = RE::BSScript::get<RE::BSScript::Array>(*var);
+					value = array ? std::format("[{}]", array->size()) : "None";
+				}
+				out += std::format(" {}={}", args[i], value);
+			}
+			return out;
+		}
+
 		// setpos <refHex> <x> <y> <z> [rz degrees]
 		std::string SetPos(std::string_view a_args)
 		{
@@ -4048,6 +4135,7 @@ namespace DevCommands
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "gate", Gate },
+			Entry{ "scriptvars", ScriptVars },
 			Entry{ "scripts", ScriptsCommand },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },

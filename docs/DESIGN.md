@@ -263,7 +263,11 @@
     `WorkshopItemKeyword`; four a round, every 2 s, each at most every 5 s) and claims again the ones they run, which
     are not handed off meanwhile (`commanding=`, `settlerTakeovers=`). Giving a settler a job runs on the settler's
     own AI in the commanding player's game, and a mirrored settler has none. Settlers made at runtime (most
-    recruits) are not shared, so every game runs its own.
+    recruits) are not shared, so every game runs its own. A job is the commanding game's own state (the crop's or
+    post's owner, the settler's worker flags in Papyrus) and is not sent: the friend's game sees the settler move, not
+    its job, and keeps the jobs its own player gave. On the rig (2026-11-01, Sanctuary, Codsworth as the shared settler)
+    the host and the joiner each gave him a crop through workshop mode, the joiner's game taking him over first
+    (`settlerTakeovers=1`).
 - The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
   20 Hz when they're in combat or within 3000 units of any player, else 10 Hz (unreliable). The
   others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with
@@ -2348,8 +2352,13 @@ Dev: `wsgrid [bench]` (each grid's nodes, links and powered pieces, with any cop
 one workbench, the pieces too), `wspower` (counters), `wspower block on|off` (copies pickable again, to try the
 repair), `wspower audit`, `wspower copies` (each copy and whose piece it is), `wspower show <ref> on|off`,
 `wswire <from> <to>` (a wire strung as the game strings one, for the rig), `net leave` / `net stophost` (end the
-session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece=`, `powered=`, and for a copy
-`builder=`, `theirRef=` and `theirPower=`).
+session as a player would), `wsinfo <ref>` (now with `blocked=`, `powerPiece=`, `powered=`, `owner=` (a crop's or
+post's assigned settler shows as its owner, the settler's base NPC), and for a copy `builder=`, `theirRef=` and
+`theirPower=`), and `scriptvars <ref> <Script> <name...>` (a bound script's state and its properties' or variables'
+values, read without calling into the VM: `scriptvars <crop> WorkshopObjectScript workshopID` is -1 until the
+workshop's reset has run, as it does when the player enters the settlement; until then the game says "This resource is
+now assigned" yet assigns nobody, so a test that loads straight into a settlement it then owns by console runs
+`cqf WorkshopParent ResetWorkshop <bench>` first).
 
 ## Status (2026-10-09)
 
