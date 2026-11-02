@@ -41,13 +41,18 @@ namespace OpenMenus
 		kSleepWait,
 		kTerminal,
 		kTerminalHolotape,
+		// Menus a friend's stage can open here by itself (CatchUpMenus): the companion's new home (Workshop_CaravanMenu) and the
+		// vignette over a featured item's inspection (VignetteMenu; the inspection itself is ExamineMenu).
+		kCaravan,
+		kVignette,
 		kCount
 	};
 
 	// The game's names for them (MenuOpenCloseEvent::menuName), in Menu's order.
 	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "FaderMenu", "LooksMenu", "PauseMenu",
 		"PipboyMenu", "PowerArmorModMenu", "VATSMenu", "WorkshopMenu", "BarterMenu", "BookMenu", "ContainerMenu", "CookingMenu", "ExamineMenu", "HolotapeMenu",
-		"LevelUpMenu", "LockpickingMenu", "MessageBoxMenu", "SitWaitMenu", "SleepWaitMenu", "TerminalMenu", "TerminalHolotapeMenu" };
+		"LevelUpMenu", "LockpickingMenu", "MessageBoxMenu", "SitWaitMenu", "SleepWaitMenu", "TerminalMenu", "TerminalHolotapeMenu", "Workshop_CaravanMenu",
+		"VignetteMenu" };
 
 	// Whether two menu names are the same. The game's strings are case-blind (BSFixedString, and the UI's own lookup):
 	// its string pool keeps a name in the case it was first made in, which need not be the menu's own.
