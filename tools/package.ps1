@@ -142,11 +142,10 @@ New-Item -ItemType Directory -Force $lang | Out-Null
 $langFiles = @(Get-ChildItem (Join-Path $root 'dist\lang') -Filter '*.txt' -File)
 if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lang has no en.txt' }
 Copy-Item $langFiles.FullName $lang
-# The plugin's own menu movies (docs/UI.md), built from ui\ with the pinned compiler, where the game looks for
-# menus: Data\Interface, in a folder of ours.
-& (Join-Path $root 'tools\flash\build.ps1')
-$movies = @(Get-ChildItem (Join-Path $root 'build\ui') -Filter '*.swf' -File)
-if (-not ($movies | Where-Object { $_.Name -eq 'MPMenu.swf' })) { throw 'build\ui has no MPMenu.swf: the multiplayer menu would be missing' }
+# The plugin's own menu movies (docs/UI.md), committed in ui\<Name>\ (F4MPTests checks they match their sources), where
+# the game looks for menus: Data\Interface, in a folder of ours.
+$movies = @(Get-ChildItem (Join-Path $root 'ui') -Directory | ForEach-Object { Get-ChildItem $_.FullName -Filter '*.swf' -File })
+if (-not ($movies | Where-Object { $_.Name -eq 'MPMenu.swf' })) { throw 'ui has no MPMenu.swf: the multiplayer menu would be missing' }
 $interface = Join-Path $stage 'Interface\F4Multiplayer'
 New-Item -ItemType Directory -Force $interface | Out-Null
 Copy-Item $movies.FullName $interface

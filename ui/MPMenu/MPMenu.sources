@@ -1,0 +1,6 @@
+# The sources MPMenu.swf was built from (tools/flash/build.sh), each with the SHA-256 of its text with LF line endings.
+3b05c488bb64fd2d34d0ec4f6110fbb2466b258adac2ca25d9c66cf93d426e3e  MPMenu/MPMenu.as
+3b9972a5a9496222ab3b7e43b4fd534098cfa13ca36bdf64c7ff4471244134b3  shared/f4mp/ui/BackHint.as
+e3d4eab411112e6a6875bb7a850133ead3d40bd2f984fb38d4c9588d4320f9a4  shared/f4mp/ui/Brackets.as
+6d6646e01d0289b3cd8d34a50768e7b18150a4a0c3091ee481c313c27520649f  shared/f4mp/ui/EntryList.as
+bde532d751697360780dd643ffcf17d53b82cd7b359a25f03a735443542d8351  shared/f4mp/ui/Style.as

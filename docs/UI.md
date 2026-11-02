@@ -11,11 +11,11 @@ CrossOver); each panel entry still opens the F1 pages; not yet tried in the paus
 |---|---|
 | The MULTIPLAYER entry in the main and pause menus, after LOAD | [src/game/MainMenuEntry.cpp](../src/game/MainMenuEntry.cpp), placement rule in [MainMenuPlace.h](../src/game/MainMenuPlace.h) (unit tested) |
 | Our menu (F4MPMenu in the game's UI), opened by the entry | [src/game/MPMenu.cpp](../src/game/MPMenu.cpp) |
-| Its movie, `Interface/F4Multiplayer/MPMenu.swf` | [ui/MPMenu/MPMenu.as](../ui/MPMenu/MPMenu.as) |
+| Its movie, `Interface/F4Multiplayer/MPMenu.swf` | [ui/MPMenu/MPMenu.as](../ui/MPMenu/MPMenu.as), built and committed beside it with `MPMenu.sources` |
 | Pieces for other movies: look, brackets, back hint, entry list | [ui/shared/f4mp/ui/](../ui/shared/f4mp/ui/) (`Style`, `Brackets`, `BackHint`, `EntryList`) |
 | The compiler, pinned | [tools/flash/fetch.sh](../tools/flash/fetch.sh) |
-| Building the movies | [tools/flash/build.sh](../tools/flash/build.sh) |
-| Reading the game's own movies | [tools/flash/ba2extract.py](../tools/flash/ba2extract.py), [tools/flash/swfinfo.py](../tools/flash/swfinfo.py) |
+| Building the movies | [tools/flash/build.sh](../tools/flash/build.sh), [build.ps1](../tools/flash/build.ps1) |
+| The guard that the committed movies match their sources | [tests/UiMoviesTests.cpp](../tests/UiMoviesTests.cpp) |
 
 Labels are text keys like every player-facing string (`mainmenu.entry`, `mpmenu.*`): every language file needs every
 key, or `text:` tests fail.
@@ -30,17 +30,24 @@ The game's menus are Flash movies played by Scaleform GFx 4. Ours are ActionScri
   `~/.flex/4.16.1`. Nothing of either is committed; `playerglobal.swc` is Adobe's. The Flex tarball's checksum was
   pinned after Apache's MD5 matched and its release signature checked out against Apache Flex's KEYS. Adobe's CDN
   serves only playerglobal 32.0 now (older versions answer 403). Needs Java.
+- **The movies are committed**, so only a change to `ui/` needs Java and the compiler; building the plugin, packaging
+  and playing don't. After changing anything in `ui/`, run `tools/flash/build.sh` (or `build.ps1`) and commit the
+  `.as`, the `.swf` and the `.sources` together. `<Name>.sources` lists every source the movie was built from (its own
+  `.as` and `ui/shared`) with the SHA-256 of its text with LF line endings; the `ui:` test in F4MPTests recomputes it,
+  so a source change without a rebuild fails the tests, in CI too, with no Java there. mxmlc writes its compile time
+  into the movie (8 bytes of its ProductInfo tag): build.sh keeps the committed movie when a rebuild differs only
+  there, build.ps1 clears those bytes, so rebuilding an unchanged menu leaves git clean either way.
 - `tools/flash/build.sh [Name]` builds each `ui/<Name>/<Name>.as` (with `ui/shared` on the source path) into
-  `build/ui/<Name>.swf`, at **SWF 15**, the game's own version (Flash Player 11.2), against playerglobal 32.0 linked
+  `ui/<Name>/<Name>.swf`, uncompressed, at **SWF 15**, the game's own version (Flash Player 11.2), against playerglobal 32.0 linked
   as external, so no Adobe code is in the movie. Use only what Flash Player 11.2 had: Scaleform knows no more.
   Stage 1280x720, as the game's menus.
 - `mxmlc` takes several source paths as `-compiler.source-path=a -compiler.source-path+=b`; a second bare path is an
   error ("default arguments may not be interspersed").
 - On Windows the same is `tools\flash\fetch.ps1` (into `%USERPROFILE%\.flex`) and `tools\flash\build.ps1 [Name]`;
   the pins are in both fetch scripts, change them together.
-- Deploying: `tools/crossovermac.sh deploy` (and `restart`) and `tools\deploy.ps1` copy `build/ui/*.swf` into
-  `Data/Interface/F4Multiplayer/`, a folder of our own so no other mod's movie clashes. `tools/package.ps1` builds the
-  movies and puts them in the zip there, and refuses a zip without `MPMenu.swf`.
+- Deploying: `tools/crossovermac.sh deploy` (and `restart`) and `tools\deploy.ps1` copy `ui/*/*.swf` into
+  `Data/Interface/F4Multiplayer/`, a folder of our own so no other mod's movie clashes. `tools/package.ps1` puts them
+  in the zip there, and refuses a zip without `MPMenu.swf`.
 
 On a Mac (docs/misc/MAC.md): `xmake build -y F4Multiplayer` with `XMAKE_CONFIGDIR=$PWD/.xmake/win`, then
 `tools/crossovermac.sh restart ''` to deploy and stop at the main menu. xmake sometimes stops at once with "please run
@@ -50,17 +57,11 @@ The full unit test run takes about five minutes under Wine; run the tests a chan
 
 ## Reading the game's menus
 
-Without a decompiler (JPEXS FFDec would show the AS3 itself; it was not used: downloading and running it needs the
-maintainer's or contributor's OK):
-
-```bash
-python3 -I tools/flash/ba2extract.py "<game>/Data/Fallout4 - Interface.ba2" <out> 'mainmenu\.swf$'
-python3 -I tools/flash/swfinfo.py <out>/Interface/MainMenu.swf | less
-```
-
-`swfinfo.py` prints the movie's version and stage, its exported classes and its AS3 string pool: class, member, event
-and instance names and text keys, in the order the compiler met them. The pool is deduplicated, so a table of pairs
-reads with gaps (see the controller glyphs below). Keep what you extract out of the repo.
+The game's menus are in `Data/Fallout4 - Interface.ba2`; a BA2 tool (Bethesda Archive Extractor, or a mod manager's)
+gets `Interface/MainMenu.swf` out. JPEXS FFDec (open source) shows a movie's ActionScript, classes and placed
+objects. What is below was read without it, from the movie's AS3 string pool (class, member, event and instance names
+and text keys, in the order the compiler met them; deduplicated, so a table of pairs reads with gaps, see the
+controller glyphs). Keep what you extract out of the repo: the game's files are Bethesda's.
 
 At run time:
 
