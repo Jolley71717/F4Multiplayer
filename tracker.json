@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T16:57:31+00:00",
+ "updated": "2026-11-02T18:01:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -257,6 +257,14 @@
    "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
   },
   {
+   "id": "6frn",
+   "title": "hits.sh: the second phase runs out of fresh raiders the VM runs",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "6o40",
    "title": "Compare mods lists the HD texture pack as missing",
    "kind": "bug",
@@ -458,6 +466,15 @@
    "note": ""
   },
   {
+   "id": "bytx",
+   "title": "hits.sh pause step counts a shooter's missed shot as the mod's failure",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 2,
+   "note": "",
+   "pr": 271
+  },
+  {
    "id": "cb82",
    "title": "Dropping an item that was picked up from the world is never shared",
    "kind": "bug",
@@ -605,6 +622,14 @@
    "stage": 7,
    "note": "",
    "pr": 223
+  },
+  {
+   "id": "ev19",
+   "title": "hits.sh: runner's own shots at the VM-run pause raider miss at every spot",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "f3qg",
