@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T03:15:54+00:00",
+ "updated": "2026-11-02T03:48:46+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -444,6 +444,14 @@
    "title": "Dropping an item that was picked up from the world is never shared",
    "kind": "bug",
    "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "cdu1",
+   "title": "Copies of NPCs only a friend's game holds share the 128-slot spawn book: far ones fill it and a friend's new spawn is dropped",
+   "kind": "bug",
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
@@ -1315,7 +1323,7 @@
    "title": "Nexus report: a Mr Gutsy the joiner met on the road wasn't there for the host, nor the fight",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 5,
    "note": "Found: a quest NPC from a cell only one game loaded; fix rig-tested, waiting for review",
    "pr": 256
   },
