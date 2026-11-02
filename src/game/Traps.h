@@ -58,4 +58,7 @@ namespace Traps
 
 	// For the dev commands: what a loaded reference was taken for, and the scripts bound to it now.
 	std::string Why(std::uint32_t a_ref);
+
+	// Dev channel (traps probe on|off): logs each frame's change in what the engine holds of each watched mine.
+	std::string Probe(bool a_on);
 }

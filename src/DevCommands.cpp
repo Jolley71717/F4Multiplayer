@@ -1326,6 +1326,9 @@ namespace DevCommands
 		// reference, what it was taken for and the scripts bound to it now.
 		std::string TrapsList(std::string_view a_args)
 		{
+			if (a_args == "probe on" || a_args == "probe off") {
+				return Traps::Probe(a_args == "probe on");
+			}
 			if (!a_args.empty()) {
 				const auto id = ParseHex(a_args);
 				return id ? Traps::Why(*id) : "error: usage: traps [refHex]";

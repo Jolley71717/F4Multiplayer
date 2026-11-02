@@ -1,6 +1,7 @@
 #include "game/Traps.h"
 
 #include "game/Papyrus.h"
+#include "game/Puppets.h"
 #include "game/TrapRules.h"
 #include "game/WeaponFire.h"
 #include "MainThread.h"
@@ -35,6 +36,7 @@ namespace Traps
 			std::uint32_t     cell = 0;        // the cell it lies in (whether that is still loaded)
 			std::uint32_t     interior = 0;    // as the session places it: the interior cell, or the worldspace
 			std::uint32_t     worldspace = 0;
+			bool              counting = false;  // a mine: its countdown seen started (MineCountdown looked at it)
 		};
 
 		struct Shield
@@ -64,8 +66,22 @@ namespace Traps
 		Clock::time_point                                    nextPoll{};
 		std::optional<Clock::time_point>                     inWorldSince;
 
-		std::uint32_t reported = 0, setOffLive = 0, spentQuietly = 0, disarmed = 0, taken = 0, received = 0, claimed = 0;
+		std::uint32_t reported = 0, setOffLive = 0, spentQuietly = 0, disarmed = 0, taken = 0, received = 0, claimed = 0, lengthened = 0;
 		std::uint32_t logged = 0;
+
+		// The dev channel's mine probe (traps probe on|off): each frame, what the engine holds of each watched mine (its
+		// countdown, its countdown sound, its flags), logged when it changes and every frame while it counts down, with the
+		// actors near it: how a mine's warning ran in each game (how MineCountdown was measured).
+		struct Probed
+		{
+			bool          gone = false;
+			bool          counting = false;
+			std::uint32_t sound = 0xFFFFFFFF;
+			std::uint64_t flags = 0;
+		};
+		bool                                        probing = false;
+		std::unordered_map<std::uint32_t, Probed>   probed;
+		std::uint32_t                               probeLogged = 0;
 
 		TrapRules::Spot SpotOf(const RE::NiPoint3& a_at) { return { a_at.x, a_at.y, a_at.z }; }
 
@@ -394,6 +410,125 @@ namespace Traps
 		}
 	}
 
+	namespace
+	{
+		float GameSettingFloat(const char* a_name, float a_default)
+		{
+			const auto settings = RE::GameSettingCollection::GetSingleton();
+			const auto setting = settings ? settings->GetSetting(a_name) : nullptr;
+			return setting && setting->GetType() == RE::Setting::SETTING_TYPE::kFloat ? setting->GetFloat() : a_default;
+		}
+
+		// Who is within the mine's reach, as its countdown starts (TrapRules::MineReach).
+		TrapRules::MineReach ReachOf(RE::TESObjectREFR* a_mine, const RE::BGSProjectile& a_record, const RE::PlayerCharacter* a_player)
+		{
+			constexpr float SLACK = 64.0f;  // the engine measured a stand-in at 96 to 101 units of a frag mine (proximity 100)
+			const auto      cell = a_mine->GetParentCell();
+			const float     mult = cell && !cell->IsInterior() ? GameSettingFloat("fMineExteriorRadiusMult", 1.6f) : 1.0f;
+			const float     reach = a_record.data.explosionProximity * mult + SLACK;
+			TrapRules::MineReach found;
+			RE::TES::GetSingleton()->ForEachReferenceInRange(a_mine->data.location, reach, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref && a_ref->Is(RE::ENUM_FORM_ID::kACHR) ? static_cast<RE::Actor*>(a_ref) : nullptr;
+				if (!actor || actor == a_player || actor->IsDisabled() || actor->IsDead(false)) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				(Puppets::IsPuppet(actor) ? found.standIn : found.other) = true;
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return found;
+		}
+
+		// Each frame: a mine whose countdown has just started here, by a friend's stand-in, is given the countdown the
+		// friend's own game runs (TrapRules::MineCountdown). The engine gives the stand-in an NPC's 0.2 s; it has to be
+		// seen within that, so every frame.
+		void Countdowns(const RE::PlayerCharacter* a_player)
+		{
+			for (auto& [id, watch] : watched) {
+				if (watch.kind != Kind::kMine) {
+					continue;
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+				if (!ref || ref->IsDeleted() || ref->IsDisabled() || !ref->Is(RE::ENUM_FORM_ID::kPGRE)) {
+					continue;
+				}
+				const auto projectile = static_cast<RE::Projectile*>(ref);
+				const bool counting = projectile->explosionTimer < TrapRules::MINE_IDLE;
+				if (!counting || std::exchange(watch.counting, true)) {
+					watch.counting = counting;
+					continue;
+				}
+				const auto base = ref->GetObjectReference();
+				const auto record = base ? base->As<RE::BGSProjectile>() : nullptr;
+				if (!record) {
+					continue;
+				}
+				const float started = projectile->explosionTimer;
+				const auto  reach = ReachOf(ref, *record, a_player);
+				const auto  countdown = TrapRules::MineCountdown(started, record->data.explosionTimer, GameSettingFloat("fMinesDelayMin", 0.2f), reach);
+				if (countdown) {
+					projectile->explosionTimer = *countdown;
+					++lengthened;
+				}
+				Log(std::format("{:08X} (mine) counting down here from {:.2f} s{}", id, started,
+					countdown ? std::format(": a friend's stand-in set it off, given their game's {:.2f} s", *countdown) :
+					reach.standIn ? " (a friend's stand-in in reach, and someone else)" : ""));
+			}
+		}
+
+		void ProbeFrame(RE::PlayerCharacter* a_player)
+		{
+			for (const auto& [id, watch] : watched) {
+				if (watch.kind != Kind::kMine) {
+					continue;
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+				Probed     now;
+				float      timer = 0.0f, blink = 0.0f, age = 0.0f;
+				if (!ref || ref->IsDeleted() || ref->IsDisabled() || !ref->Is(RE::ENUM_FORM_ID::kPGRE)) {
+					now.gone = true;
+				} else {
+					const auto projectile = static_cast<RE::Projectile*>(ref);
+					timer = projectile->explosionTimer;
+					blink = projectile->blinkTimer;
+					age = projectile->age;
+					now.counting = timer < TrapRules::MINE_IDLE;
+					now.sound = projectile->sndCountdown.soundID;
+					now.flags = projectile->flags;
+				}
+				auto [it, added] = probed.try_emplace(id, now);
+				const auto& was = it->second;
+				if (!added && !now.counting && was.gone == now.gone && was.counting == now.counting && was.sound == now.sound && was.flags == now.flags) {
+					continue;
+				}
+				it->second = now;
+				if (probeLogged >= 400) {
+					continue;
+				}
+				++probeLogged;
+				std::string near;
+				if (!now.gone) {
+					RE::TES::GetSingleton()->ForEachReferenceInRange(ref->data.location, 1500.0f, [&](RE::TESObjectREFR* a_ref) {
+						if (a_ref && a_ref->Is(RE::ENUM_FORM_ID::kACHR)) {
+							near += std::format(" {:08X}@{:.0f}", a_ref->GetFormID(), a_ref->data.location.GetDistance(ref->data.location));
+						}
+						return RE::BSContainer::ForEachResult::kContinue;
+					});
+				}
+				REX::INFO("Traps: probe {:08X}{} gone={} timer={:.3f} blink={:.3f} age={:.2f} sound={:X} flags={:X} player@{:.0f} actors:{}", id, added ? " (first)" : "", now.gone,
+					timer, blink, age, now.sound, now.flags, a_player->data.location.GetDistance(watch.at), near.empty() ? " none" : near);
+			}
+		}
+	}
+
+	std::string Probe(bool a_on)
+	{
+		probing = a_on;
+		probed.clear();
+		probeLogged = 0;
+		REX::INFO("Traps: probe {}", a_on ? "on" : "off");  // a mark in each game's log, sent to both at once (clock offset)
+		return a_on ? "probing the watched mines each frame" : "probe off";
+	}
+
 	void Frame()
 	{
 		MainThread::Assert("Traps::Frame");
@@ -404,6 +539,10 @@ namespace Traps
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		if (!player || !player->GetParentCell()) {
 			return;
+		}
+		Countdowns(player);
+		if (probing) {
+			ProbeFrame(player);
 		}
 		if (now >= nextDiscover) {
 			nextDiscover = now + DISCOVER_EVERY;
@@ -485,8 +624,8 @@ namespace Traps
 
 	std::string Describe()
 	{
-		return std::format("traps={}/{} sent={} got={} live={} quiet={} disarmed={} taken={} blasts={}", watched.size(), known.size(), reported, received, setOffLive, spentQuietly,
-			disarmed, taken, claimed);
+		return std::format("traps={}/{} sent={} got={} live={} quiet={} disarmed={} taken={} blasts={} countdowns={}", watched.size(), known.size(), reported, received, setOffLive,
+			spentQuietly, disarmed, taken, claimed, lengthened);
 	}
 
 	std::string List()
