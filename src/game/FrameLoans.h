@@ -30,6 +30,10 @@ namespace FrameLoans
 	[[nodiscard]] std::uint32_t LentOutTo(std::uint32_t a_local);
 	[[nodiscard]] bool          LentOut(std::uint32_t a_local);
 
+	// Our own frames lent (or offered), each with the friend it is lent to, as LentOutTo tells them one by one: for the frame
+	// gate's word (FriendFrame::Kept), which the engine's seating thread reads.
+	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint32_t>> LentOutFrames();
+
 	// Where our own frame a_local was given back, and its heading, while it waits to be moved there (until that spot is in
 	// our sight, NpcSync::MoveOwnFrame): it stands there in every other game already (Spawns::GivenBack), and its states
 	// say that spot meanwhile, not where it still stands here, which would move their copies back. None: no move waits.

@@ -1236,6 +1236,17 @@ namespace FrameLoans
 		return LentOutTo(a_local) != 0;
 	}
 
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> LentOutFrames()
+	{
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+		for (const auto& [spawnId, loan] : lent) {
+			if (loan.local != 0) {
+				out.emplace_back(loan.local, loan.borrower);
+			}
+		}
+		return out;
+	}
+
 	std::optional<std::pair<RemoteEdits::Spot, float>> MoveWaiting(std::uint32_t a_local)
 	{
 		if (a_local == 0) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -177,5 +178,56 @@ namespace FriendFrame
 	constexpr bool SameCopy(std::uint32_t a_notedBase, std::uint32_t a_base, bool a_created, bool a_deleted)
 	{
 		return a_notedBase != 0 && a_base == a_notedBase && a_created && !a_deleted;
+	}
+
+	// The frame gate's word for the engine's seating thread. Our player getting into a frame, and the look at one that comes
+	// with it (Equipment's UseHook, through RemotePlayers::KeepOutOfFrame), are asked on the thread the engine seats them on,
+	// beside the main one, which may be changing what the answer comes from: the session's players, Spawns' copies, the
+	// loans. So the main thread puts down each frame what every frame here is kept for, and that thread only finds the frame
+	// in it; what is told, or asked of an owner, it hands to the main thread. A frame not in it lets our player in.
+	struct Kept
+	{
+		std::uint32_t frame = 0;    // its form ID
+		std::uint32_t lentTo = 0;   // our own frame, lent to this friend (FrameLoans): nobody here gets into it
+		std::uint32_t owner = 0;    // a friend's frame, our copy of it (KeptOutFor)
+		const char*   kind = "";    // which copy of ours it is
+		std::uint32_t spawnId = 0;  // the spawn owner's game shares it as (Spawns): our player may borrow it (FrameLoans)
+	};
+
+	inline const Kept* Find(const std::vector<Kept>& a_kept, std::uint32_t a_frame)
+	{
+		if (a_frame == 0) {
+			return nullptr;
+		}
+		const auto it = std::ranges::find(a_kept, a_frame, &Kept::frame);
+		return it != a_kept.end() ? &*it : nullptr;
+	}
+
+	enum class Enter
+	{
+		kIn,       // nothing keeps our player out
+		kLent,     // our own frame, lent out: kept out, and told to whom
+		kBorrow,   // a friend's shared frame: FrameLoans lets them in once it is lent to us, or asks its owner
+		kKeptOut,  // a friend's frame: kept out, and told whose
+	};
+
+	constexpr Enter ChooseEnter(const Kept* a_kept)
+	{
+		if (!a_kept) {
+			return Enter::kIn;
+		}
+		if (a_kept->lentTo != 0) {
+			return Enter::kLent;
+		}
+		if (a_kept->owner == 0) {
+			return Enter::kIn;
+		}
+		return a_kept->spawnId != 0 ? Enter::kBorrow : Enter::kKeptOut;
+	}
+
+	// The look (the log's, paframes'): whether our player would be kept out as a friend's frame, as the main thread says.
+	constexpr bool Looked(const Kept* a_kept)
+	{
+		return a_kept && a_kept->owner != 0;
 	}
 }
