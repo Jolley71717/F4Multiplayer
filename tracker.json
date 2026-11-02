@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T20:17:56+00:00",
+ "updated": "2026-11-02T20:23:07+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -752,8 +752,8 @@
    "title": "GitHub #234: the client heals enemies instead of hurting them; after an NPC changed hands the host's shots stopped landing on it",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "Reported on GitHub after 0.10.1; log to read"
+   "stage": 1,
+   "note": "Log read: the reporter was on 0.10.0; 0.10.1's fixes cover it, one oddity left"
   },
   {
    "id": "ikwn",
