@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T23:35:24+00:00",
+ "updated": "2026-11-02T23:38:35+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -534,7 +534,7 @@
    "title": "Shared rolls: one NPC of 36 built with a different trait slot on simultaneous arrival",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "Counter added; fix after #236 merges",
    "pr": 276
   },
