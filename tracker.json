@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T18:03:45+00:00",
+ "updated": "2026-11-02T20:17:56+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -43,7 +43,7 @@
    "title": "Furniture a host no longer has can keep showing for friends",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
    "pr": 245
   },
@@ -81,7 +81,7 @@
    "title": "Rig loot check: does a VM removeallitems after opening reach the host?",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 243
   },
@@ -146,7 +146,7 @@
    "title": "F7 teleport to a far-away friend in the same exterior worldspace lands far off and high in the air; the player falls and goes down",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 252
   },
@@ -185,7 +185,7 @@
    "title": "Frame gate: RemotePlayers::KeepOutOfFrame reads main-thread maps on the engine's seat thread",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 262
   },
@@ -234,7 +234,7 @@
    "title": "A friend sneaking and moving glides instead of sneak-walking",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 235
   },
@@ -332,7 +332,7 @@
    "title": "Player input dead after a game's first load: keys reach the game, the player never moves",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "A game sometimes starts with its player's input dead; a restart mends it, cause being looked into",
    "pr": 254
   },
@@ -445,7 +445,7 @@
    "title": "Rig: a virtual gamepad per game for scripted tests (no focus, smooth analog movement)",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 253
   },
@@ -545,7 +545,7 @@
    "title": "Rig check: compare power-armor stand-in distance at the same timestamp",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 243
   },
@@ -644,7 +644,7 @@
    "title": "Catching up a friend's story can send you into Kellogg's memories",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 266
   },
@@ -743,16 +743,24 @@
    "title": "A rejoining game's copies of NPCs a friend runs keep their own health until the NPC's health next changes",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed in a PR and passed a two-game test (rejoin and load); awaiting review",
    "pr": 246
+  },
+  {
+   "id": "iapg",
+   "title": "GitHub #234: the client heals enemies instead of hurting them; after an NPC changed hands the host's shots stopped landing on it",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "Reported on GitHub after 0.10.1; log to read"
   },
   {
    "id": "ikwn",
    "title": "Legendary enemies differ between players",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
   },
@@ -835,7 +843,7 @@
    "title": "Some NPCs appear in the wrong place or stacked on each other",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
   },
@@ -880,7 +888,7 @@
    "title": "Shared rolls: a respawned NPC is rebuilt as the same roll, so a legendary spot stays legendary for the whole session",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
   },
@@ -980,7 +988,7 @@
    "title": "Rig hits check: damageAnswered and damageHeld do not move for copy hits; kill step does not kill in 8 shots",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 243
   },
@@ -1007,7 +1015,7 @@
    "title": "Stand-in hold test fails when built natively against libc++ (Mac)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 261
   },
@@ -1098,7 +1106,7 @@
    "title": "Spawns: a friend's spawn copy is withheld or removed for good when any hostile runtime NPC of ours is within 128 units",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
   },
@@ -1246,7 +1254,7 @@
    "title": "Mac support: build and play under CrossOver (contributor PR #233)",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 233
   },
@@ -1273,7 +1281,7 @@
    "title": "Mines go off at once for the client, without the warning beep",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Looked at: we won't change it without testing the mine timing in the game first.",
    "pr": 265,
    "desc": "A player reported that world mines blow up instantly for the client, with no warning beep. A friend's game only hears about the blast at the moment it happens, so it never runs the beep, and delaying it by a guess would make damage differ between games. 0.9.2's trap sharing probably replaced the old behavior behind the report. We want to check in the game what happens when a client walks up to a mine and when a friend sets one off nearby."
@@ -1376,7 +1384,7 @@
    "title": "Dev session file keeps test-built pieces that come back as friends' copies at every join",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 243
   },
@@ -1411,7 +1419,7 @@
    "title": "Nexus report: a Mr Gutsy the joiner met on the road wasn't there for the host, nor the fight",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Found: a quest NPC from a cell only one game loaded; fix rig-tested, waiting for review",
    "pr": 256
   },
@@ -1472,7 +1480,7 @@
    "title": "Settlers can't be given jobs during a session",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Probably fixed in 0.9.2; not yet tried in a real game.",
    "pr": 264,
    "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
