@@ -189,7 +189,8 @@ namespace Equipment
 
 	// Asked as our player gets into a frame or opens its inventory, and as anyone else here is found in one: true keeps
 	// them out (RemotePlayers::KeepOutOfFrame, which says why on the HUD). a_by: who (null for our player). The main thread,
-	// but for our player getting in (kEnter): the engine seats them on another thread (a job of its own), beside the main one.
+	// but for our player getting in (kEnter), and the look at the frame that comes with it (kLook): the engine seats them on
+	// another thread (a job of its own), beside the main one.
 	using FrameGate = bool (*)(RE::TESObjectREFR* a_frame, FrameAsk a_ask, const RE::Actor* a_by);
 	void SetFrameGate(FrameGate a_gate);
 

@@ -130,3 +130,50 @@ TEST("friend frame: the copies a save kept are written into its co-save and read
 	CHECK(Decode(std::vector<std::uint8_t>(12 * (FriendFrame::MAX_KEPT_COPIES + 1))).empty());
 	CHECK(Encode(std::vector<KeptCopy>(FriendFrame::MAX_KEPT_COPIES + 5)).size() == 12 * FriendFrame::MAX_KEPT_COPIES);
 }
+
+TEST("friend frame: the gate's word on the engine's seating thread keeps our player out of our frame lent out, and a friend's, and lets them borrow a shared one")
+{
+	using FriendFrame::ChooseEnter;
+	using FriendFrame::Enter;
+	using FriendFrame::Find;
+	using FriendFrame::Kept;
+	using FriendFrame::Looked;
+	constexpr std::uint32_t OUR_FRAME = 0x0001A2B3;
+	constexpr std::uint32_t PARKED = 0xFF000101;
+	constexpr std::uint32_t SHARED = 0xFF000102;
+	constexpr std::uint32_t SPAWN = 0x00C00011;
+	const std::vector<Kept> kept{
+		{ .frame = OUR_FRAME, .lentTo = FRIEND },
+		{ .frame = PARKED, .owner = FRIEND, .kind = "parked" },
+		{ .frame = SHARED, .owner = OTHER_FRIEND, .kind = "their game's", .spawnId = SPAWN },
+	};
+	CHECK(ChooseEnter(Find(kept, OUR_FRAME)) == Enter::kLent);
+	CHECK(Find(kept, OUR_FRAME)->lentTo == FRIEND);
+	CHECK(ChooseEnter(Find(kept, PARKED)) == Enter::kKeptOut);
+	CHECK(Find(kept, PARKED)->owner == FRIEND);
+	CHECK(ChooseEnter(Find(kept, SHARED)) == Enter::kBorrow);
+	CHECK(Find(kept, SHARED)->spawnId == SPAWN);
+	// Any other frame, or none, lets them in, and so does a word from before anything was put down.
+	CHECK(ChooseEnter(Find(kept, 0xFF000999)) == Enter::kIn);
+	CHECK(Find(kept, 0) == nullptr);
+	CHECK(ChooseEnter(Find({}, PARKED)) == Enter::kIn);
+	// The look says a friend's frame only, as the main thread's own answer: not ours lent out.
+	CHECK(!Looked(Find(kept, OUR_FRAME)));
+	CHECK(Looked(Find(kept, PARKED)));
+	CHECK(Looked(Find(kept, SHARED)));
+	CHECK(!Looked(nullptr));
+}
+
+TEST("friend frame: our frame lent out is asked about first, as the main thread asks it, whatever else the gate's word has of it")
+{
+	using FriendFrame::ChooseEnter;
+	using FriendFrame::Enter;
+	using FriendFrame::Find;
+	using FriendFrame::Kept;
+	constexpr std::uint32_t FRAME = 0xFF000201;
+	const std::vector<Kept> kept{ { .frame = FRAME, .lentTo = FRIEND }, { .frame = FRAME, .owner = OTHER_FRIEND, .spawnId = 7 } };
+	CHECK(ChooseEnter(Find(kept, FRAME)) == Enter::kLent);
+	CHECK(ChooseEnter(&kept[1]) == Enter::kBorrow);
+	constexpr Kept nobodys{ .frame = FRAME };
+	CHECK(ChooseEnter(&nobodys) == Enter::kIn);
+}
