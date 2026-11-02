@@ -32,6 +32,11 @@ deploy() {
 	[ -f "$plugins/F4Multiplayer.ini" ] || cp "$root/dist/F4Multiplayer.ini" "$plugins/"
 	# the texts belong to the build, unlike the ini
 	cp -f "$root/dist/lang/"*.txt "$plugins/F4Multiplayer/lang/"
+	# the plugin's own menu movies (tools/flash/build.sh), where the game looks for every menu's
+	if compgen -G "$root/build/interface/*.swf" > /dev/null; then
+		mkdir -p "$game/Data/Interface"
+		cp -f "$root/build/interface/"*.swf "$game/Data/Interface/"
+	fi
 	echo "Deployed to $plugins"
 }
 
