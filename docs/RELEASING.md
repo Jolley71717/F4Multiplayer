@@ -59,9 +59,16 @@ Library changed, or an ID in `src/` is wrong: look at it before going further.
 
 ## Promotion to the release
 
-The release is the rc that held, not a new build. After a multi-hour soak of the rc's zip (`soak.sh 3`:
-the standing set in a loop with periodic VM restarts) ends with no crash on either machine and no
-report against the rc points at a regression, the soak's verdict goes in `dist/out/soak-verdict.txt`:
+The release is the rc that held, not a new build. The soak of the rc's zip is a churn-heavy run of about 90 minutes
+after the gate passes: `SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --only
+preflight,combat,churn,reconnect,final --churn 75`. Cells are hopped and saves reloaded for 75 minutes, the hopper and
+the watcher swapping halfway, then the VM's game is restarted and rejoins; the end checks read the crash logs, the
+plugin logs' new errors and the privacy scan. The combat step is there for its working-set baseline: the growth from
+combat to the churn's end is printed and warned on, not failed. It replaced the 3-hour `soak.sh 3` loop in 0.11.0:
+that loop asserted only that both games were alive, and the one crash it caught in its last eight rc soaks came during
+the churn. When
+it exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict
+goes in `dist/out/soak-verdict.txt`:
 
 ```
 commit=<the rc's commit, as in its manifest>
@@ -69,7 +76,7 @@ dll_sha256=<the SHA-256 of the DLL that was soaked>
 verdict=PASS
 ```
 
-(other lines, such as the start, end, cycles and crash logs, are kept but not read). Then:
+(other lines, such as the start, the end, the run's output folder and crash logs, are kept but not read). Then:
 
 1. `tools/promote.ps1 -Rc vX.Y.Z-rcN`. It refuses unless the rc's zip matches its manifest, the tag
    `vX.Y.Z-rcN` is the manifest's commit, the rc was not packaged with `-AllowDirty`, and the verdict
