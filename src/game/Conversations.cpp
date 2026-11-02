@@ -524,16 +524,24 @@ namespace Conversations
 		}
 
 		// Takes our line out of the engine's list, unless the speaker is saying a line of its own here: the game
-		// takes all of its lines out when that one ends, and taking them now would cut its own short.
-		void TakeDown(const Subtitle& a_line)
+		// takes all of its lines out when that one ends, and taking them now would cut its own short. At a session's
+		// end (a_always) it comes out whatever the speaker is doing: nothing of ours would take it down later, and it
+		// stayed on screen until the speaker's next line of its own ended, a minute or two (2026-11-02, the rig).
+		void TakeDown(const Subtitle& a_line, bool a_always = false)
 		{
 			const auto ref = a_line.speaker.get();
 			if (!ref) {
+				if (a_always) {
+					REX::INFO("Conversations: a friend's line left up at the session's end: its speaker is gone");
+				}
 				return;  // gone: the engine stops showing a line whose speaker it can't find
 			}
 			const auto actor = ref->As<RE::Actor>();
 			if (actor && actor->IsTalking()) {
-				return;
+				if (!a_always) {
+					return;
+				}
+				REX::INFO("Conversations: a friend's line taken down at the session's end while its speaker talks");
 			}
 			RemoveSubtitle(ref.get());
 		}
@@ -595,7 +603,7 @@ namespace Conversations
 		void TakeDownSubtitles()
 		{
 			for (const auto& line : subtitlesUp) {
-				TakeDown(line);
+				TakeDown(line, true);
 			}
 			subtitlesUp.clear();
 		}
