@@ -122,7 +122,8 @@ namespace RemotePlayers
 	// Our player asks to get into this frame or opens its inventory (Equipment's frame gate), or someone else here (a_by: a
 	// companion ordered into it) is found in it: whether they are kept out of it, a copy the session placed of a friend's
 	// frame (see FriendFrame). The HUD tells our player whose it is. Someone else is sent out of it again (each frame:
-	// Actor.SwitchToPowerArmor with None, FriendFrame::SendsOut).
+	// Actor.SwitchToPowerArmor with None, FriendFrame::SendsOut). Getting in and the look (kEnter, kLook) are answered from what
+	// the main thread put down at its last frame (FriendFrame::Kept): the engine asks them on its seating thread.
 	[[nodiscard]] bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by);
 	// Whether someone here is in this frame who is to be sent out of it, or just got out of it (its 3D being built again,
 	// FriendFrame::Settling): the frame is not theirs, and Spawns' and our own frame copies are left as they are meanwhile

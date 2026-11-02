@@ -31,6 +31,7 @@
 #include "game/FaceWatch.h"
 #include "game/LooksMenu.h"
 #include "Config.h"
+#include "MainThread.h"
 #include "Text.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
@@ -1044,8 +1045,8 @@ namespace RemotePlayers
 		// spots 18 units apart while the host stood still). The copy is kept right under the stand-in, without collision.
 		constexpr float FRAME_FOLLOW_DISTANCE = 1.0f;
 		constexpr float FRAME_FOLLOW_TURN = 0.02f;  // radians
-		std::uint32_t   framesKeptOut = 0; // times our player was kept out of a copy of a friend's frame (KeepOutOfFrame)
-		std::uint32_t   lastKeptOut = 0;   // the frame last kept out of, and when the HUD said so
+		std::atomic<std::uint32_t> framesKeptOut{ 0 };  // times our player was kept out of a copy of a friend's frame (KeepOutOfFrame)
+		std::uint32_t   lastKeptOut = 0;   // the frame last kept out of, and when the HUD said so (main thread)
 		Clock::time_point lastKeptOutAt{};
 		constexpr auto  KEPT_OUT_RETELL = 5s;
 		std::uint32_t   switchesIn = 0;    // stand-ins the engine took into their frame copy
@@ -2741,16 +2742,41 @@ namespace RemotePlayers
 			});
 		}
 
+		// The frame gate's word for the engine's seating thread (FriendFrame::Kept): what each frame here was kept for at the
+		// main thread's last frame. That thread reads only this (KeptOutHere).
+		std::mutex                     keptLock;
+		std::vector<FriendFrame::Kept> keptFrames;
+
+		void PutKept(std::vector<FriendFrame::Kept> a_kept)
+		{
+			std::scoped_lock l{ keptLock };
+			keptFrames = std::move(a_kept);
+		}
+
 		// Which copies our player is kept out of now, for the container menu's hook (Equipment::SetTransfersKeptOut): it
-		// closes Transfer on such a copy as the menu is shown, on the UI's thread, before anything can be moved into it.
+		// closes Transfer on such a copy as the menu is shown, on the UI's thread, before anything can be moved into it. And
+		// what every frame here is kept for, for the frame gate on the engine's seating thread (PutKept): our own frames lent
+		// out first, as KeepOutOfFrame asks.
 		void ShareKeptOut()
 		{
 			std::vector<RE::ObjectRefHandle> kept;
+			std::vector<FriendFrame::Kept>   gate;
+			for (const auto& [local, borrower] : FrameLoans::LentOutFrames()) {
+				gate.push_back({ .frame = local, .lentTo = borrower });
+			}
 			const auto add = [&](const RE::ObjectRefHandle& a_handle) {
 				const auto ref = a_handle.get();
-				if (ref && FriendOf(ref.get()).owner != 0) {
-					kept.push_back(a_handle);
+				if (!ref) {
+					return;
 				}
+				const auto [owner, kind] = FriendOf(ref.get());
+				if (owner == 0) {
+					return;
+				}
+				kept.push_back(a_handle);
+				const auto local = ref->GetFormID();
+				const auto spawn = Spawns::CopyIdOf(local);
+				gate.push_back({ .frame = local, .owner = owner, .kind = kind, .spawnId = spawn != 0 && Spawns::FrameCopyOwnerOf(local) == owner ? spawn : 0 });
 			};
 			for (const auto& [id, player] : players) {
 				add(player.parkedCopy.handle);
@@ -2763,20 +2789,81 @@ namespace RemotePlayers
 				add(handle);
 			}
 			Equipment::SetTransfersKeptOut(std::move(kept));
+			PutKept(std::move(gate));
+		}
+
+		// Someone kept out of a_local, our copy of a_owner's frame: logged and the HUD told, once a while per frame for
+		// anyone but our player (a companion is asked about again while it is still in it). a_by: who, 0 for our player.
+		// Main thread.
+		void TellKeptOut(std::uint32_t a_local, std::uint32_t a_owner, const char* a_kind, Equipment::FrameAsk a_ask, std::uint32_t a_by)
+		{
+			const auto now = Clock::now();
+			if (a_by && a_local == lastKeptOut && now - lastKeptOutAt < KEPT_OUT_RETELL) {
+				return;
+			}
+			lastKeptOut = a_local;
+			lastKeptOutAt = now;
+			const auto who = a_by ? std::format("{:08X}", a_by) : std::string{ "our player" };
+			const auto what = a_ask == Equipment::FrameAsk::kTransfer ? "opened the inventory of" : a_ask == Equipment::FrameAsk::kOther ? "got into" : "tried to get into";
+			REX::INFO("RemotePlayers: {} {} {:08X}, our copy of player {}'s frame ({}); {}", who, what, a_local, a_owner, a_kind, a_ask == Equipment::FrameAsk::kOther ? "sent out" : "kept out");
+			Hud::Notify(Text::Format("party.friends_frame", { { "player", NameOf(a_owner) } }));
+		}
+
+		// Our player getting in (kEnter), or the look at the frame that comes with it (kLook), on the engine's seating thread
+		// (Equipment's UseHook), or the look on the main thread (the log, paframes): answered from the main thread's last
+		// word (keptFrames), with nothing else of the main thread's read; what is told, and the HUD, go to the main thread.
+		bool KeptOutHere(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask)
+		{
+			const auto local = a_frame->GetFormID();
+			FriendFrame::Kept kept;
+			bool              found = false;
+			{
+				std::scoped_lock l{ keptLock };
+				if (const auto at = FriendFrame::Find(keptFrames, local)) {
+					kept = *at;
+					found = true;
+				}
+			}
+			const auto at = found ? &kept : nullptr;
+			if (a_ask == Equipment::FrameAsk::kLook) {
+				return FriendFrame::Looked(at);  // nobody told, nothing counted
+			}
+			switch (FriendFrame::ChooseEnter(at)) {
+			case FriendFrame::Enter::kIn:
+				return false;
+			case FriendFrame::Enter::kLent:
+				// Our own frame, lent to a friend who wears it (FrameLoans): nobody here gets into it or takes its pieces.
+				++framesKeptOut;
+				MainThread::Post([borrower = kept.lentTo] { Hud::Notify(Text::Format("party.frame_is_lent", { { "player", NameOf(borrower) } })); });
+				return true;
+			case FriendFrame::Enter::kBorrow:
+				// Our copy of a frame a friend's game made and shares: borrowed (FrameLoans), which asks its owner for it, or says
+				// why not, and lets them in once it is lent and its pieces are in it.
+				if (!FrameLoans::KeepOut(a_frame, kept.spawnId, kept.owner)) {
+					REX::INFO("RemotePlayers: our player gets into {:08X}, our copy of player {}'s frame, lent to us", local, kept.owner);
+					return false;
+				}
+				++framesKeptOut;
+				return true;
+			case FriendFrame::Enter::kKeptOut:
+				break;
+			}
+			++framesKeptOut;
+			MainThread::Post([local, owner = kept.owner, kind = kept.kind] { TellKeptOut(local, owner, kind, Equipment::FrameAsk::kEnter, 0); });
+			return true;
 		}
 	}
 
 	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by)
 	{
-		if (a_ask == Equipment::FrameAsk::kLook) {
-			// Looked at only (the log, paframes): the answer, with nobody told and nothing counted. Kept first: every
-			// branch below counts, logs or tells the HUD (a_by is null for a look as for our player). Anything added below
-			// that changes the answer (a frame lent out or lent to us) needs its own side-effect-free read here too.
-			return a_frame && Equipment::IsPowerArmorFrame(a_frame->GetObjectReference()) && FriendOf(a_frame).owner != 0;
-		}
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}
+		// Our player getting in, and the look at the frame: the engine asks these on its seating thread, beside the main one.
+		if (a_ask == Equipment::FrameAsk::kEnter || a_ask == Equipment::FrameAsk::kLook) {
+			return KeptOutHere(a_frame, a_ask);
+		}
+		// The rest on the main thread: our player's Transfer, and anyone else here in a frame.
 		// Our own frame, lent to a friend who wears it (FrameLoans): nobody here gets into it or takes its pieces.
 		if (const auto borrower = FrameLoans::LentOutTo(a_frame->GetFormID())) {
 			++framesKeptOut;
@@ -2789,31 +2876,8 @@ namespace RemotePlayers
 		if (owner == 0) {
 			return false;
 		}
-		// Our player getting into our copy of a frame a friend's game made and shares: borrowed (FrameLoans), which asks
-		// its owner for it, or says why not, and lets them in once it is lent and its pieces are in it.
-		if (a_ask == Equipment::FrameAsk::kEnter && !a_by) {
-			if (const auto spawn = Spawns::CopyIdOf(a_frame->GetFormID()); spawn != 0 && Spawns::FrameCopyOwnerOf(a_frame->GetFormID()) == owner) {
-				if (!FrameLoans::KeepOut(a_frame, spawn, owner)) {
-					REX::INFO("RemotePlayers: our player gets into {:08X}, our copy of player {}'s frame, lent to us", a_frame->GetFormID(), owner);
-					return false;
-				}
-				++framesKeptOut;
-				return true;
-			}
-		}
 		++framesKeptOut;
-		// Told once a while per frame: a companion is asked about again while it is still in it.
-		const auto local = a_frame->GetFormID();
-		const auto now = Clock::now();
-		if (a_by && local == lastKeptOut && now - lastKeptOutAt < KEPT_OUT_RETELL) {
-			return true;
-		}
-		lastKeptOut = local;
-		lastKeptOutAt = now;
-		const auto who = a_by ? std::format("{:08X}", a_by->GetFormID()) : std::string{ "our player" };
-		const auto what = a_ask == Equipment::FrameAsk::kTransfer ? "opened the inventory of" : a_ask == Equipment::FrameAsk::kOther ? "got into" : "tried to get into";
-		REX::INFO("RemotePlayers: {} {} {:08X}, our copy of player {}'s frame ({}); {}", who, what, local, owner, kind, a_ask == Equipment::FrameAsk::kOther ? "sent out" : "kept out");
-		Hud::Notify(Text::Format("party.friends_frame", { { "player", NameOf(owner) } }));
+		TellKeptOut(a_frame->GetFormID(), owner, kind, a_ask, a_by ? a_by->GetFormID() : 0);
 		return true;
 	}
 
@@ -3093,6 +3157,8 @@ namespace RemotePlayers
 			SendOutOfFriendsFrames(now);  // a companion ordered into a friend's frame copy
 			BuryWaitedOut();
 			ShareKeptOut();
+		} else {
+			PutKept({});  // the world is going: none of its frames is asked about until it is back, and what the gate had may name another
 		}
 		const auto playedNow = played.Advance(now, loading || GameStop::Now());
 		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).
@@ -3598,7 +3664,7 @@ namespace RemotePlayers
 			out += std::format(" framesUnloaded={} framesBack={}", framesUnloaded, framesBack);
 		}
 		if (framesKeptOut) {
-			out += std::format(" framesKeptOut={}", framesKeptOut);
+			out += std::format(" framesKeptOut={}", framesKeptOut.load());
 		}
 		if (othersSentOut || sendOutsFailed) {
 			out += std::format(" othersSentOut={} sendOutsFailed={}", othersSentOut, sendOutsFailed);
