@@ -32,7 +32,8 @@ namespace Drops
 
 	// Main thread: our player picked a_ref up from where a plugin placed it (WorldSync pairs the pickup with the activation).
 	// The engine puts that item back into the world as the same reference when it is dropped, so a drop is looked for among
-	// those too, not only among references made at runtime.
+	// those too, not only among references made at runtime. Noted only in a session (welcomed), forgotten when it ends and
+	// on a load.
 	void OnPickedUp(std::uint32_t a_ref);
 
 	// The engine's event (any thread): our player equipped something of a_base (using up food or a stim is one too).

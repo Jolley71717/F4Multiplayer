@@ -126,6 +126,7 @@ namespace Drops
 			Clock::time_point   movedAt{};
 			RE::NiPoint3        last{};
 			bool                reported = false;
+			bool                pickedUp = false;  // a plugin's reference our player picked up this session (PlacedPickups): it makes way by OwnGear kOwnDrop
 		};
 		std::vector<Pending> pending;
 
@@ -416,7 +417,7 @@ namespace Drops
 			if (a_left.ref != 0) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_left.ref);
 				const auto base = ref ? ref->GetObjectReference() : nullptr;
-				return ref && base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(ref->IsCreated(), true, false) && Loose(ref) && !Known(a_left.ref) &&
+				return ref && base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(ref->IsCreated(), placedPickups.Has(a_left.ref)) && Loose(ref) && !Known(a_left.ref) &&
 				               !OtherSystems(ref) ?
 				           ref :
 				           nullptr;
@@ -432,7 +433,7 @@ namespace Drops
 			std::vector<std::uint32_t> others;
 			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, FIND_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(a_ref->IsCreated(), false, placedPickups.Has(a_ref->GetFormID())) && Loose(a_ref) &&
+				if (base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(a_ref->IsCreated(), placedPickups.Has(a_ref->GetFormID())) && Loose(a_ref) &&
 					!a_ref->IsDisabled() && !Known(a_ref->GetFormID()) &&
 					!seenLoose.contains(a_ref->GetFormID()) && !OtherSystems(a_ref)) {
 					if (found) {
@@ -735,7 +736,7 @@ namespace Drops
 					continue;
 				}
 				++dropped;
-				const bool placedRef = !ref->IsCreated();  // a plugin's, picked up from the world before
+				const bool placedRef = !ref->IsCreated();  // a plugin's, picked up from the world this session (FindDropped: PlacedPickups)
 				if (placedRef) {
 					placedPickups.Dropped(ref->GetFormID());
 					++droppedPlaced;
@@ -754,7 +755,7 @@ namespace Drops
 				if (pending.size() >= MAX_PENDING) {
 					continue;
 				}
-				pending.push_back({ ref->GetHandle(), ref->GetFormID(), left.base, left.count, NewNonce(), a_now, a_now, ref->data.location, false });
+				pending.push_back({ ref->GetHandle(), ref->GetFormID(), left.base, left.count, NewNonce(), a_now, a_now, ref->data.location, false, placedRef });
 				if (Log()) {
 					REX::INFO("Drops: {:08X} ({:08X} x{}) dropped{}{}; reported once it rests", ref->GetFormID(), left.base, left.count, left.ref ? "" : " (found near the player)",
 						placedRef ? " (a plugin's reference, picked up from the world)" : "");
@@ -1169,6 +1170,9 @@ namespace Drops
 
 	void OnPickedUp(std::uint32_t a_ref)
 	{
+		if (!listening) {
+			return;  // not in a session: no friend's world heard of this pickup (DropBook::MayBeOurs)
+		}
 		placedPickups.PickedUp(a_ref);
 	}
 
@@ -1302,7 +1306,9 @@ namespace Drops
 		// Our drop, offered to us alone: the item we dropped makes way for a copy like everyone's, and only once it has
 		// does the server tell the others (kPlaced), so nobody can take it while it is still in our world.
 		const auto ref = it->ref.get();
-		if (ref && Lies(ref.get()) && Equipment::MayChange(ref.get(), OwnGear::Change::kDropCopy)) {
+		// Our player's own item, not a copy: OwnGear kOwnDrop, which also lets through a plugin's reference they picked up this
+		// session (it->pickedUp), never any other (the copies' kDropCopy stays limited to references this game made).
+		if (ref && Lies(ref.get()) && Equipment::MayMakeWay(ref.get(), it->pickedUp)) {
 			// One made at runtime is deleted; a plugin's (an item picked up from where the plugin placed it) only disabled, as
 			// a friend's pickup does it, so no load puts it back where the plugin placed it (DropBook::HowItMakesWay).
 			if (DropBook::HowItMakesWay(ref->IsCreated()) == DropBook::MakeWay::kDelete) {
@@ -1593,6 +1599,7 @@ namespace Drops
 	void Reset()
 	{
 		listening = false;
+		placedPickups.Clear();  // the session's pickups: one from before the next session is no drop of it (DropBook::MayBeOurs)
 		GiveBackUnconfirmed();  // before our copies go: the session may never have heard those left our world
 		DiscardCopies();
 		OnGameLoaded();

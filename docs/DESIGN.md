@@ -1179,11 +1179,15 @@ So players give each other items by dropping them, and the server decides who ha
   (food eaten or a stim used in the Pip-Boy is one: `DropBook::MayScan`, `notScanned=`), and never a reference
   another system keeps (SaveGuard's, Spawns'). An item the player picked up from where a plugin placed it
   goes back into the world as that same reference (the engine keeps it with the item), not a runtime one:
-  it is the drop when the event names it, and the scan takes such a reference only if the player picked it
-  up (WorldSync's pickup report) and hasn't dropped it since (`DropBook::MayBeOurs`, `DropBook::PlacedPickups`,
-  forgotten on a load; `droppedPlaced=`). Up to 0.11.0 only runtime references were looked at, so such a
-  drop was never given. On the offer it is disabled rather than deleted (`DropBook::HowItMakesWay`): its
-  record is the plugin's, and a load would put a deleted or unsaved one back where the plugin placed it.
+  it is the drop, whether the event names it or the scan finds it, only if the player picked it up in this
+  session (WorldSync's pickup report) and hasn't dropped it since (`DropBook::MayBeOurs`, `DropBook::PlacedPickups`,
+  noted only while welcomed, forgotten on a load and when the session ends; `droppedPlaced=`). One picked up
+  before the session is not given: a friend's world never heard of that pickup and still has the item where
+  the plugin placed it. Up to 0.11.0 only runtime references were looked at, so such a drop was never given.
+  On the offer it makes way by OwnGear `kOwnDrop` (a reference made here, or a plugin's with that note;
+  the copies' `kDropCopy` stays limited to references this game made) and is disabled rather than deleted
+  (`DropBook::HowItMakesWay`): its record is the plugin's, and a load would put a deleted or unsaved one
+  back where the plugin placed it.
   Once it has come to rest
   (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
   with a random number of the giver's game (the nonce), its mods and template combination (read as

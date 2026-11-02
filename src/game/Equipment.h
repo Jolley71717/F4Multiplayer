@@ -18,6 +18,11 @@ namespace Equipment
 	[[nodiscard]] OwnGear::Verdict Judge(RE::TESObjectREFR* a_ref, OwnGear::Change a_change);
 	bool                           Count(RE::TESObjectREFR* a_ref, OwnGear::Change a_change, OwnGear::Verdict a_verdict);
 
+	// MayChange for our player's own drop making way for the session's copy of it (OwnGear::Change::kOwnDrop). a_pickedUp:
+	// the reference is a plugin's that our player picked up this session and dropped (Drops' note), which the engine can't
+	// tell.
+	[[nodiscard]] bool MayMakeWay(RE::TESObjectREFR* a_ref, bool a_pickedUp);
+
 	// A session starts (its welcome): the refusals' counts and log budgets start again.
 	void OnSessionStart();
 

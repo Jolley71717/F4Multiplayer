@@ -296,12 +296,25 @@ TEST("drop book: an item with no reference named is looked for only when it can 
 
 TEST("drop book: an item picked up from where a plugin placed it is a drop when it goes back into the world as that reference")
 {
-	// (created, named by the event, picked up by our player)
-	CHECK(DropBook::MayBeOurs(true, true, false));    // the usual drop: a new reference, named
-	CHECK(DropBook::MayBeOurs(true, false, false));   // a new reference, found by the scan
-	CHECK(DropBook::MayBeOurs(false, true, false));   // a plugin's reference the event names: the stimpak picked up in Sanctuary
-	CHECK(DropBook::MayBeOurs(false, false, true));   // a plugin's reference the scan finds, which our player had picked up
-	CHECK(!DropBook::MayBeOurs(false, false, false));  // a plugin's item that lay near them all along: never theirs
+	// (created, picked up by our player this session), whether the event names the reference or the scan finds it
+	CHECK(DropBook::MayBeOurs(true, false));   // the usual drop: a new reference
+	CHECK(DropBook::MayBeOurs(false, true));   // a plugin's reference our player picked up: the stimpak picked up in Sanctuary
+	// A plugin's item that lay near them all along, or one picked up before the session: a friend's world still has it
+	// where the plugin placed it, so it is never given, even when the event names it.
+	CHECK(!DropBook::MayBeOurs(false, false));
+
+	// The note decides it: picked up in the session, dropped, picked up again.
+	DropBook::PlacedPickups pickups;
+	constexpr std::uint32_t STIMPAK = 0x000ADC8F;
+	CHECK(!DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+	pickups.PickedUp(STIMPAK);
+	CHECK(DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+	pickups.Dropped(STIMPAK);
+	CHECK(!DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));  // dropped once: a second event for it is no new drop
+	pickups.PickedUp(STIMPAK);
+	CHECK(DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+	pickups.Clear();  // the session ended, or a load
+	CHECK(!DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
 }
 
 TEST("drop book: a dropped item made at runtime is deleted for the copy; a plugin's reference is only disabled")

@@ -92,12 +92,14 @@ namespace DropBook
 
 	// An item our player drops mostly becomes a reference made at runtime (0xFF......). One they picked up from where a
 	// plugin placed it goes back into the world as that same reference (the engine keeps it with the item), so a drop is
-	// not only a new reference: a plugin's reference is our player's item too when the engine's event names it
-	// (a_named), or, for the scan, when it is one our player picked up and hasn't dropped since (a_pickedUp,
-	// PlacedPickups). Never another plugin's item that lay near them all along: the swap would take it out of our world.
-	constexpr bool MayBeOurs(bool a_created, bool a_named, bool a_pickedUp)
+	// not only a new reference: a plugin's reference is our player's item too when it is one they picked up this session
+	// and haven't dropped since (a_pickedUp, PlacedPickups), whether the engine's event names it or the scan finds it.
+	// Never another plugin's item that lay near them all along, and not one picked up before the session (or before a
+	// load): a friend's world never heard of that pickup and still has the item where the plugin placed it, so a copy
+	// would be a second one there. The swap (OwnGear::Change::kOwnDrop) takes such a reference only with the same note.
+	constexpr bool MayBeOurs(bool a_created, bool a_pickedUp)
 	{
-		return a_created || a_named || a_pickedUp;
+		return a_created || a_pickedUp;
 	}
 
 	// How the item our player dropped makes way for the session's copy (on the server's offer). A reference made at

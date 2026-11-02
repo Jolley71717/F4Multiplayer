@@ -93,7 +93,8 @@ namespace Equipment
 		constexpr std::uint32_t CAPS = 0x0000000F;     // Caps001
 	}
 
-	OwnGear::Verdict Judge(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
+	// What the engine says of the reference, for OwnGear::Judge.
+	static OwnGear::Target Facts(RE::TESObjectREFR* a_ref)
 	{
 		OwnGear::Target target;
 		target.exists = a_ref && !a_ref->IsDeleted();
@@ -120,7 +121,12 @@ namespace Equipment
 				}
 			}
 		}
-		return OwnGear::Judge(a_change, target);
+		return target;
+	}
+
+	OwnGear::Verdict Judge(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
+	{
+		return OwnGear::Judge(a_change, Facts(a_ref));
 	}
 
 	bool Count(RE::TESObjectREFR* a_ref, OwnGear::Change a_change, OwnGear::Verdict a_verdict)
@@ -145,6 +151,13 @@ namespace Equipment
 	bool MayChange(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
 	{
 		return Count(a_ref, a_change, Judge(a_ref, a_change));
+	}
+
+	bool MayMakeWay(RE::TESObjectREFR* a_ref, bool a_pickedUp)
+	{
+		auto target = Facts(a_ref);
+		target.pickedUp = a_pickedUp;
+		return Count(a_ref, OwnGear::Change::kOwnDrop, OwnGear::Judge(OwnGear::Change::kOwnDrop, target));
 	}
 
 	void OnSessionStart()
