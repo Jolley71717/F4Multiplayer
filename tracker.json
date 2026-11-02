@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T03:48:46+00:00",
+ "updated": "2026-11-02T04:27:38+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -589,6 +589,14 @@
    "note": ""
   },
   {
+   "id": "fewf",
+   "title": "Catching up a friend's story can send you into Kellogg's memories",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "fhkp",
    "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
    "kind": "bug",
@@ -778,6 +786,14 @@
    "stage": 5,
    "note": "Merged for the next release",
    "pr": 236
+  },
+  {
+   "id": "kihp",
+   "title": "Menus that open by themselves while catching up on a friend's quests",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "krne",
