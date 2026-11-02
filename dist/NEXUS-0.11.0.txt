@@ -1,0 +1,11 @@
+New protocol: everyone in a session needs 0.11.0 (it doesn't play with 0.10.1); keep a copy of the session file if you might go back to 0.10.1
+Every game builds the same enemy: one roll per leveled NPC for the session, legendaries included (host settings sNpcLevel, sLegendaryDifficulty)
+A mine a friend walks onto gives both of you the full warning beep instead of going off at once
+Catching up a friend's main quest no longer pulls a joiner into Kellogg's memory
+A leveled NPC that only a friend's game has, like a Mr Gutsy on the road, now shows up in yours
+A teleport to a far-away friend lands next to them, and its autosave waits until you stand on the ground
+Fixed starts where the player had no input at all (no walking, looking or shooting)
+A sneaking friend sneak-walks instead of gliding crouched
+A late joiner or a reload sees how hurt a friend's NPCs are instead of full health
+A piece a player built that their save no longer has is taken out of every friend's game
+Full notes on GitHub
