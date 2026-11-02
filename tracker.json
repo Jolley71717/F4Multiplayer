@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T21:44:31+00:00",
+ "updated": "2026-11-02T23:04:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -131,6 +131,15 @@
    "stage": 7,
    "note": "Shown in the friend's hand since 0.9.0; we are still checking it looks right in real play.",
    "desc": "A cosmetic problem: when a friend wound up a throw, their hand looked empty, though the throw and the explosion were right. 0.9.0 shows the grenade in their hand during the throw, controlled by the setting bGrenadeInHand. It was only tried with a frag grenade, so other throwables still need checking."
+  },
+  {
+   "id": "358u",
+   "title": "PR 270: a friend's line in the subtitle area stays ~1.5 min after the session ends",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 2,
+   "note": "",
+   "pr": 270
   },
   {
    "id": "3a2c",
@@ -862,8 +871,9 @@
    "title": "Menus that open by themselves while catching up on a friend's quests",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 274
   },
   {
    "id": "krne",
