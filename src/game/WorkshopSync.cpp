@@ -2453,6 +2453,10 @@ namespace WorkshopSync
 			out += std::format(" items={}", list->data.size());
 		}
 		out += std::format(" blocked={} powerPiece={}", Blocked(*a_ref), IsPowerPiece(*a_ref));
+		// Its owner: a workshop object's assigned settler is its actor owner (how a settler's job shows).
+		if (const auto owner = a_ref->GetOwner()) {
+			out += std::format(" owner={:08X}", owner->GetFormID());
+		}
 		for (const auto& [key, copy] : copies) {
 			if (copy.ref.get().get() == a_ref) {
 				const auto wanted = mirror.Wanted(key);
