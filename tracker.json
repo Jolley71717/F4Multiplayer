@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T07:54:01+00:00",
+ "updated": "2026-11-02T07:58:14+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -438,6 +438,14 @@
    "priority": 2,
    "stage": 0,
    "note": "Feature request: lower players earn more XP until levels even out"
+  },
+  {
+   "id": "bv79",
+   "title": "Catch-up skips Dangerous Minds stage 300, so a joiner loses the companion's post-surgery talk",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "cb82",
@@ -1013,6 +1021,14 @@
    "note": "Built and passing automatic checks; not yet tried in a real game.",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
+  },
+  {
+   "id": "pttk",
+   "title": "Stage rules check stage 0 as a quest's start-up stage, but MQ205's is 10",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "q3ay",
