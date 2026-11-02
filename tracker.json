@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T16:28:45+00:00",
+ "updated": "2026-11-02T16:57:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -371,6 +371,14 @@
   {
    "id": "9v41",
    "title": "A friend's stand-in often never gets into a seat: left standing (0.10.0, 253 times in a 5-player session, mostly one plugin's furniture)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "adfa",
+   "title": "Rig check: a single empty VM clock read fails the power armor stand-in check",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
