@@ -52,6 +52,7 @@
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
 #include "game/SneakKey.h"
+#include "game/SyncAnimMark.h"
 #include "game/Storage.h"
 #include "game/StateBuffer.h"
 #include "game/Traps.h"
@@ -3507,9 +3508,23 @@ namespace DevCommands
 				held.empty() ? "none" : held, controls->blockPlayerInput, off.empty() ? "none" : off, d.moveInputVec.x, d.moveInputVec.y, d.lookInputVec.x, d.lookInputVec.y);
 		}
 
+		// syncmark [set]: the player's synced-animation mark and its guard (SyncAnimMark.h). set turns the mark on with no
+		// synced animation behind it, as a bad start does, to make a stuck save: the guard clears it at the next game start.
+		std::string SyncMark(std::string_view a_args)
+		{
+			if (a_args == "set") {
+				return SyncAnimMark::SetForTest();
+			}
+			if (!a_args.empty()) {
+				return "error: usage: syncmark [set]";
+			}
+			return SyncAnimMark::Describe();
+		}
+
 		// controls [contextHex]: the control map's stack of input contexts (uppermost last), and with a context,
 		// its user events and their keys (keyboard, mouse, pad), for `input`. 0 is gameplay, 1 menu navigation,
-		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest).
+		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest). Without one, also the player's synced-animation mark (on,
+		// the player gets no input: SyncAnimMark.h).
 		std::string Controls(std::string_view a_args)
 		{
 			const auto map = RE::ControlMap::GetSingleton();
@@ -3533,7 +3548,7 @@ namespace DevCommands
 					}
 					out += std::format(" layers={}{}", enable->layers.size(), held);
 				}
-				return out + " | " + PlayerInputFacts() + " | " + SneakFacts();
+				return out + " | " + PlayerInputFacts() + " | " + SyncAnimMark::Describe() + " | " + SneakFacts();
 			}
 			const auto id = ParseHex(a_args);
 			if (!id || *id >= static_cast<std::uint32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal)) {
@@ -4014,6 +4029,7 @@ namespace DevCommands
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
+			Entry{ "syncmark", SyncMark },
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
 			Entry{ "destruct", DestructCommand },

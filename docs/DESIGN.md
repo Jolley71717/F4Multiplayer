@@ -209,6 +209,12 @@
   cuts load times substantially.
 - `ModActorValue(kDamage, health, -x)` on the player kills them at 0 health (normal death and reload).
 - `TESQuest::SetStage` doesn't start a stopped quest; the console `setstage` does.
+- The `ActorState` constructor (140CEB250) clears only bits 0-7 and 9-19 of its second flags word: bits 21-31 keep
+  whatever the memory held. On some runs the player starts with `inSyncAnim` (bit 21) on, and while it is on,
+  `PlayerControls::PerformInputProcessing` (140DDBE50) hands no input to the player's handlers: no walking,
+  looking or shooting, while menus work. A coc or new game keeps it, and a save made then keeps it too.
+  `SyncAnimMark` (src/game/SyncAnimMark.cpp, StuckSyncAnim.h) clears it once at each game's start, only with
+  no synced animation running at all and the player in no scene, furniture or dialogue, alive and not down.
 
 ## Remote player look
 

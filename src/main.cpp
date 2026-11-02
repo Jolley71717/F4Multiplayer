@@ -36,6 +36,7 @@
 #include "Platform.h"
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
+#include "game/SyncAnimMark.h"
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
 #include "game/HavokGuard.h"
@@ -584,6 +585,7 @@ namespace
 						Session::OnGameLoaded(!loaded);
 						Hud::OnGameLoaded();
 						HavokGuard::OnGameLoaded();
+						SyncAnimMark::OnGameStart();  // a save made with the player stuck in no synced animation loads stuck
 					}
 				} catch (const std::exception& e) {
 					REX::ERROR("Frame: after the load: {}", e.what());
@@ -674,6 +676,7 @@ namespace
 				RunInBackground();
 				if (a_onMain) {
 					GateInput();
+					SyncAnimMark::Frame();  // a game that starts with the player marked as in a synced animation gets no input
 				}
 			}
 			{

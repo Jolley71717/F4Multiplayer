@@ -158,6 +158,9 @@ The commands it uses:
   DirectInput and the control map first. When a key does nothing, `input` with the same user event
   tells a menu that ignores input from input that never got to it. `controls [context]` lists the
   control map's input contexts and their user events and keys.
+- `syncmark [set]`: the player's synced-animation mark (on, the player gets no input) and its guard, which
+  clears a mark with no synced animation behind it at each game's start. `set` turns the mark on, to make a stuck
+  save: loading it must leave the player free.
 - `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
   its option buttons shown, the input context it put up.
 - `key`, `mouse` and `click` send through Windows, which hands input to whatever window is in front. They
