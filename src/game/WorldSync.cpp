@@ -2554,6 +2554,11 @@ namespace WorldSync
 			Spawns::ApplyDeath(a_death);  // a spawn's: its death is the session's for no longer than it lives
 			return;
 		}
+		// A plugin's NPC our game has no reference of: our copy of it dies (Spawns::Absent). Its death is the session's
+		// all the same, below, for our own reference once our game has it.
+		if (Spawns::IsAbsent(a_death.refId)) {
+			Spawns::ApplyDeath(a_death);
+		}
 		// The same death again from the player we heard it from: where the corpse came to rest in their game
 		// (Protocol::CORPSE_REST_WINDOW). A report still held kills it there; one done moves our corpse.
 		if (dead.RestsFrom(a_death.refId, a_death.playerId, Clock::now())) {
@@ -2675,8 +2680,9 @@ namespace WorldSync
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
-		// A spawn's: our own NPC, or our copy of a friend's (none placed: there is nothing to set).
-		if (Protocol::IsSpawnRef(a_refId)) {
+		// A spawn's: our own NPC, or our copy of a friend's (none placed: there is nothing to set). The same for our copy of
+		// a plugin's NPC our game has no reference of (Spawns::Absent).
+		if (Protocol::IsSpawnRef(a_refId) || Spawns::IsAbsent(a_refId)) {
 			if (const auto local = Spawns::LocalOf(a_refId)) {
 				TrySetHealth(local, a_health, CanApply());
 			}

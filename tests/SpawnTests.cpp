@@ -504,6 +504,79 @@ TEST("spawns: a copy is placed near us beside its owner, and goes when we leave 
 	CHECK(theirs.Decide(SPAWN, Near(), T0) == Act::kForget);
 }
 
+TEST("spawns: a friend's plugin NPC our game has no reference of is placed from its roll, under its own id")
+{
+	// The Nexus report on 0.9.2: a random encounter (RETravelKMK04) moved its Mr Gutsy, REMisterGutsy01REF, a temporary
+	// reference in the interior REHoldingCell, onto the road beside the joiner. The host's game had no such reference
+	// (the holding cell is not loaded there), so the joiner's states of it came to nothing: no Mr Gutsy, no fight.
+	using SpawnBook::AbsentStep;
+	using SpawnBook::Base;
+	constexpr std::uint32_t GUTSY_REF = 0x0002F61D;     // REMisterGutsy01REF
+	constexpr std::uint32_t RE_GUTSY = 0x0002F61C;      // REMisterGutsy01: unique, put together from LvlMrGutsy
+	constexpr std::uint32_t LVL_GUTSY = 0x000E9293;     // LvlMrGutsy: a leveled NPC (templates of its own)
+	constexpr std::uint32_t GUTSY_WHOLE = 0x00146CDF;   // encMrGutsy01Template: an NPC of its own
+	constexpr std::uint32_t LIST = 0x00146CE3;          // LCharMrGutsy: a leveled list
+	const auto baseOf = [&](std::uint32_t a_id) {
+		switch (a_id) {
+		case RE_GUTSY:
+		case LVL_GUTSY:
+			return Base{ a_id, true, true };
+		case GUTSY_WHOLE:
+			return Base{ a_id, true, false };
+		case LIST:
+			return Base{ a_id, false, false };
+		default:
+			return Base{};  // not in our game
+		}
+	};
+
+	// From the first of the roll's NPCs that is whole, in its slots' order; else the NPC it was placed as; nothing
+	// without a roll, or with an empty one.
+	Protocol::NpcIdentity roll{ .playerId = 1, .refId = GUTSY_REF, .originalBase = RE_GUTSY, .mask = 0b111 };
+	roll.templates[0] = LVL_GUTSY;
+	roll.templates[1] = LIST;
+	roll.templates[2] = GUTSY_WHOLE;
+	CHECK(SpawnBook::AbsentBase(&roll, baseOf) == GUTSY_WHOLE);
+	roll.mask = 0b011;  // the whole one's slot empty in this roll
+	CHECK(SpawnBook::AbsentBase(&roll, baseOf) == RE_GUTSY);
+	roll.mask = 0b101;
+	roll.templates[2] = 0;  // a plugin we lack: translated to 0 on the way in
+	CHECK(SpawnBook::AbsentBase(&roll, baseOf) == RE_GUTSY);
+	roll.mask = 0;
+	CHECK(SpawnBook::AbsentBase(&roll, baseOf) == 0);
+	CHECK(SpawnBook::AbsentBase(nullptr, baseOf) == 0);
+
+	// Ours there: mirrored, nothing booked. Booked for this owner: the state moves it. Nobody's in the book (or one over),
+	// or another owner's: booked afresh, when something names its base.
+	CHECK(SpawnBook::DecideAbsent(true, 0, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(true, 1, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(false, 1, 1, 0) == AbsentStep::kKnown);
+	CHECK(SpawnBook::DecideAbsent(false, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+	CHECK(SpawnBook::DecideAbsent(false, 3, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+	CHECK(SpawnBook::DecideAbsent(false, 0, 1, 0) == AbsentStep::kNoBase);
+
+	// The book takes it under the reference's own id, as a friend's spawn: placed near us beside its owner, its copy
+	// named both ways, and gone with its owner's word. Never one of our own, nor the player or a stand-in's id.
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2;
+	CHECK(!theirs.Add({ US, GUTSY_REF, GUTSY_WHOLE, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	CHECK(!theirs.Add({ 1, 0x00000014, GUTSY_WHOLE, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	CHECK(!theirs.Add({ 1, 0xFF000000, GUTSY_WHOLE, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	REQUIRE(theirs.Add({ 1, GUTSY_REF, GUTSY_WHOLE, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	CHECK(theirs.Knows(GUTSY_REF));
+	CHECK(theirs.Decide(GUTSY_REF, Near(), T0) == Act::kPlace);
+	constexpr std::uint32_t COPY = 0xFF000778;
+	theirs.Placed(GUTSY_REF, COPY, T0);
+	CHECK(theirs.LocalOf(GUTSY_REF) == COPY);
+	CHECK(theirs.IdOf(COPY) == GUTSY_REF);
+	theirs.Moved(GUTSY_REF, At(1200.0f), 1.0f, T0);
+	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0) == Act::kNone);
+	CHECK(theirs.Died(GUTSY_REF) == COPY);
+	theirs.Gone(GUTSY_REF);
+	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0) == Act::kNone);  // a corpse stays until we leave it
+	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f, 1200.0f + SpawnBook::KEEP_RANGE + 100.0f), T0) == Act::kDiscard);
+}
+
 TEST("spawns: a hostile NPC of ours that cannot be reported, and a friend's spawn that cannot be placed, say why")
 {
 	using SpawnBook::Block;

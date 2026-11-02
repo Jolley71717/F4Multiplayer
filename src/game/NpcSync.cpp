@@ -145,6 +145,8 @@ namespace NpcSync
 		// BringIn and by the bring-over of a far mirror.
 		std::uint32_t                                        keptOffStory = 0, notBroughtOwnerFar = 0, notBroughtOverOwnerFar = 0;
 		std::unordered_set<std::uint32_t>                    keptOff, notBrought, notBroughtOver;
+		// Friends' NPCs our game has no reference of (Spawns::Absent) that our player hit, each logged once: no takeover asked.
+		std::unordered_set<std::uint32_t>                    absentFought;
 		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
@@ -245,14 +247,20 @@ namespace NpcSync
 		std::uint32_t                                ghostsCleared = 0;  // copies an older version's workshop sync left in the save, found standing and buried (FrameShare::Ghost)
 
 
-		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game; under a
-		// spawn id (Spawns) is our own NPC shared so, or our copy of a friend's. 0: none.
+		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game, unless our
+		// game has no reference of it (a temporary one a friend's quest took out of a cell we have not loaded): then it is
+		// our copy of theirs (Spawns::Absent); under a spawn id (Spawns) is our own NPC shared so, or our copy of a
+		// friend's. 0: none.
 		std::uint32_t LocalId(std::uint32_t a_id)
 		{
 			if (Protocol::IsSpawnRef(a_id)) {
 				return Spawns::LocalOf(a_id);
 			}
-			return Protocol::IsShareableRef(a_id) ? a_id : 0;  // the player or a stand-in: never something to mirror
+			if (!Protocol::IsShareableRef(a_id)) {
+				return 0;  // the player or a stand-in: never something to mirror
+			}
+			const auto copy = Spawns::LocalOf(a_id);
+			return copy != 0 ? copy : a_id;
 		}
 
 		RE::Actor* LoadedActor(std::uint32_t a_id)
@@ -1783,10 +1791,14 @@ namespace NpcSync
 				ApplyFrameState(frame, state, owner, now);
 				continue;
 			}
+			// A plugin's NPC our game has no reference of (a temporary one their quest took out of a cell we have not loaded:
+			// a random encounter's Mr Gutsy from its holding cell): our copy of it is placed as a friend's spawn is
+			// (Spawns::Absent), and mirrored under its id; nothing of ours to switch on or bring in.
+			const bool absent = !spawn && Spawns::Absent(state, owner);
 			// Off here: switched on. Not loaded (a friend's companion that came from somewhere we have not loaded), or
 			// loaded but not where the owner's copy is (ours waits in an interior its own quest left it in): brought
 			// over, and mirrored once it is here; the snapshot is kept meanwhile. A few tries each (RetryBudget).
-			const auto fixes = spawn ? RetryBudget::Fixes{} : RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
+			const auto fixes = spawn || absent ? RetryBudget::Fixes{} : RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
 			if (RetryBudget::Go(fixes.switchOn)) {
 				SwitchOn(state, fixes.switchOn);
 			}
@@ -1866,6 +1878,14 @@ namespace NpcSync
 		// placed from its template, and the server hands no spawn over); the claim notes us fighting it, so our kill of
 		// it is believed, and our hits reach it there as damage (CopyWatch, kReportDamage).
 		const auto owner = OwnerOf(a_refId);
+		// Our copy of a plugin's NPC our game has no reference of (Spawns::Absent): the server would hand the NPC to us, and
+		// we have none to run. It stays its owner's, as a spawn does; our hits reach it there as damage (CopyWatch).
+		if (Spawns::IsAbsent(a_refId)) {
+			if (absentFought.size() < 1024 && absentFought.insert(a_refId).second) {
+				REX::INFO("NpcSync: {:08X} is player {}'s, and our game has no reference of it: it stays theirs to run (what we hit is our copy of it); our hits reach it there as damage", a_refId, owner);
+			}
+			return;
+		}
 		const auto claim = claimBook.OnHit(a_refId, owner, localId, now);
 		if (claim.hit == NpcClaims::Hit::kNone) {
 			return;
@@ -2069,6 +2089,7 @@ namespace NpcSync
 		keptOff.clear();
 		notBrought.clear();
 		notBroughtOver.clear();
+		absentFought.clear();
 		localId = 0;
 		sentGear.clear();
 		knownGear.clear();

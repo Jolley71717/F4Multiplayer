@@ -224,8 +224,9 @@ namespace Session
 			if (a_attacker == 0) {
 				return PlayerHits::Attacker::kUnnamed;  // an NPC of a plugin our game (or the session's table) lacks
 			}
-			// A friend's spawn (made in their game at runtime) is here as our copy of it, if we placed one.
-			const auto local = Protocol::IsSpawnRef(a_attacker) ? Spawns::LocalOf(a_attacker) : a_attacker;
+			// A friend's spawn (made in their game at runtime) is here as our copy of it, if we placed one; so is a plugin's
+			// NPC our game has no reference of (Spawns::Absent: a random encounter's Mr Gutsy out of its holding cell).
+			const auto local = NpcSync::LocalRef(a_attacker);
 			const auto actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
 			if (!actor || !actor->Get3D()) {
 				return PlayerHits::Attacker::kNotHere;
@@ -643,7 +644,7 @@ namespace Session
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
 					// Before the kill: the victim's name is still readable either way. A spawn's is our NPC under it.
-					if (!Protocol::IsSpawnRef(msg->refId)) {
+					if (!Protocol::IsSpawnRef(msg->refId) && !Spawns::IsAbsent(msg->refId)) {
 						Party::OnActorDied(*msg);
 					} else if (const auto local = Spawns::LocalOf(msg->refId)) {
 						auto named = *msg;
