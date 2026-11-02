@@ -105,6 +105,35 @@ namespace FrameUse
 		return { .standUp = !Upright(a_facts), .freeSeat = a_facts.used > 0 && a_facts.userIsPlayer && !a_facts.userIn && !a_facts.playerBusy };
 	}
 
+	// Our player as the engine has them for furniture, put down by the main thread each frame (Equipment::ShareSeat): the
+	// use hook runs on the thread the engine seats our player on, beside the main one, and reads our player's state only
+	// from this. What it reads of the frame itself (its angle and markers) is what the engine's own Activate and use read on
+	// that thread in the same call.
+	struct Seat
+	{
+		bool          busy = false;  // in furniture, getting in or out of some, or wearing a frame (Facts::playerBusy)
+		std::uint32_t occupied = 0;  // the furniture they occupy
+		std::uint32_t worn = 0;      // the frame they wear
+	};
+
+	// Whether a_seat has our player in a_frame (Facts::userIn, when the user is our player).
+	constexpr bool SeatedIn(const Seat& a_seat, std::uint32_t a_frame)
+	{
+		return a_frame != 0 && (a_seat.occupied == a_frame || a_seat.worn == a_frame);
+	}
+
+	// A frame's facts, with what is our player's in them taken from a_seat instead of read live: busy, and whether they are
+	// in it when the marker's user is them. Another user's "in it" is left as it was read (the hook never reads it: the
+	// engine's Activate turns our player away from a frame someone else uses before it calls the use).
+	constexpr Facts WithSeat(Facts a_facts, const Seat& a_seat, std::uint32_t a_frame)
+	{
+		a_facts.playerBusy = a_seat.busy;
+		if (a_facts.used > 0 && a_facts.userIsPlayer) {
+			a_facts.userIn = SeatedIn(a_seat, a_frame);
+		}
+		return a_facts;
+	}
+
 	constexpr const char* Name(Verdict a_verdict)
 	{
 		switch (a_verdict) {

@@ -1023,6 +1023,17 @@ namespace Equipment
 			return static_cast<int>(a_player->DoGetSitSleepState()) != 0 || (middle && middle->occupiedFurniture.get()) || InPowerArmor(a_player);
 		}
 
+		// Our player's seat word (FrameUse::Seat) for the use hook on the engine's seating thread, as the main thread put it
+		// down at its last frame (ShareSeat). That thread reads our player's state only from this.
+		std::mutex     seatLock;
+		FrameUse::Seat seatWord;
+
+		FrameUse::Seat SeatWord()
+		{
+			std::scoped_lock l{ seatLock };
+			return seatWord;
+		}
+
 		// The input enable layers in use (a script's DisablePlayerControls, a conversation's, a menu's, the game's own) that
 		// have the Activate user event off, by their debug names: with one, E activates nothing, while the console's activate
 		// still does. The session makes no layer of its own. Empty when Activate is on.
@@ -1064,47 +1075,107 @@ namespace Equipment
 		}
 	}
 
+	void ShareSeat()
+	{
+		FrameUse::Seat seat;
+		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+			const auto worn = PowerArmorFrameOf(player);
+			seat.busy = PlayerBusy(player);
+			seat.occupied = occupied ? occupied->GetFormID() : 0;
+			seat.worn = worn ? worn->GetFormID() : 0;
+		}
+		std::scoped_lock l{ seatLock };
+		seatWord = seat;
+	}
+
+	void ClearSeat()
+	{
+		std::scoped_lock l{ seatLock };
+		seatWord = {};
+	}
+
+	namespace
+	{
+		// FrameUseOf. a_seat: our player's seat word, on the engine's seating thread (UseHook), where nothing of an actor's
+		// is read live: our player's state comes from the word (FrameUse::WithSeat), and another user's is not read (the
+		// engine's Activate turns our player away from a frame someone else uses before it calls the use). Null on the main
+		// thread, which reads it all live.
+		FrameUse::Facts ReadFacts(RE::TESObjectREFR* a_frame, const FrameUse::Seat* a_seat)
+		{
+			FrameUse::Facts facts;
+			const auto      base = a_frame ? a_frame->GetObjectReference() : nullptr;
+			const auto      furniture = base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? base->As<RE::TESFurniture>() : nullptr;
+			const auto      player = RE::PlayerCharacter::GetSingleton();
+			if (!furniture || !player) {
+				return facts;
+			}
+			static REL::Relocation<float*> upMin{ UPRIGHT_ANGLE_COSINE };
+			facts.upMin = *upMin;
+			facts.playerBusy = a_seat ? a_seat->busy : PlayerBusy(player);
+			// TESObjectREFR::GetOrientation builds a non-actor's from its angle (NiMatrix3::FromEulerAnglesXYZ), and the
+			// engine compares the z of its up axis: cos x times cos y.
+			facts.up = std::cos(a_frame->data.angle.x) * std::cos(a_frame->data.angle.y);
+			static REL::Relocation<bool (*)(const RE::TESFurniture*, std::uint32_t)>                          markerEnabled{ GET_MARKER_ENABLED };
+			static REL::Relocation<RE::ActorHandle* (*)(RE::TESObjectREFR*, RE::ActorHandle*, std::uint32_t, bool)> markerUser{ GET_MARKER_USER };
+			for (std::uint32_t i = 0; i < FURNITURE_MARKERS; ++i) {
+				if (!markerEnabled(furniture, i)) {
+					continue;
+				}
+				++facts.markers;
+				RE::ActorHandle handle;
+				const auto      user = markerUser(a_frame, &handle, i, true)->get();
+				if (!user) {
+					continue;
+				}
+				if (facts.used++ == 0) {
+					facts.user = user->GetFormID();
+					facts.userMarker = static_cast<int>(i);
+					facts.userIsPlayer = user.get() == player;
+					if (!a_seat) {
+						const auto middle = user->currentProcess ? user->currentProcess->middleHigh : nullptr;
+						const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+						facts.userIn = (occupied && occupied.get() == a_frame) || PowerArmorFrameOf(user.get()).get() == a_frame;
+					}
+				}
+			}
+			static REL::Relocation<bool (*)(RE::TESObjectREFR*, RE::Actor*, bool)> usersOtherThan{ HAS_USERS_OTHER_THAN };
+			static REL::Relocation<bool (*)(RE::TESObjectREFR*, bool)>             freeMarker{ HAS_FREE_MARKER };
+			facts.othersThanPlayer = usersOtherThan(a_frame, player, false);
+			facts.free = freeMarker(a_frame, true);
+			return a_seat ? FrameUse::WithSeat(facts, *a_seat, a_frame->GetFormID()) : facts;
+		}
+	}
+
 	FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame)
 	{
-		FrameUse::Facts facts;
-		const auto      base = a_frame ? a_frame->GetObjectReference() : nullptr;
-		const auto      furniture = base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? base->As<RE::TESFurniture>() : nullptr;
-		const auto      player = RE::PlayerCharacter::GetSingleton();
-		if (!furniture || !player) {
-			return facts;
+		return ReadFacts(a_frame, nullptr);
+	}
+
+	namespace
+	{
+		// DescribeFrameUse with a_facts as read before (the use hook's, on the engine's seating thread), the rest read now.
+		// Main thread.
+		std::string DescribeFrameUseWith(RE::TESObjectREFR* a_frame, const FrameUse::Facts& a_facts)
+		{
+			const auto& facts = a_facts;
+			const auto  holds = HoldsOf(a_frame);
+			const auto  base = a_frame->GetObjectReference();
+			const auto  root = a_frame->Get3D();
+			const auto  owner = a_frame->GetOwner();
+			return std::format("{:08X} base={:08X} {}: up={:.2f} (min {:.2f}) markers={} used={} user={:08X}{}{} othersThanPlayer={} free={} disabled={} 3d={} culled={} flags={:X} ownedBy={:08X} steal={}; {}",
+				a_frame->GetFormID(), base ? base->GetFormID() : 0, FrameUse::Name(FrameUse::Judge(facts)), facts.up, facts.upMin, facts.markers, facts.used, facts.user, facts.userIsPlayer ? "(player)" : "",
+				facts.used ? (facts.userIn ? "(in it)" : "(not in it)") : "", facts.othersThanPlayer, facts.free, a_frame->IsDisabled(), root != nullptr, root && root->GetAppCulled(), ExtraFlagsOf(a_frame),
+				owner ? owner->GetFormID() : 0, a_frame->IsCrimeToActivate(), FrameUse::Describe(holds));
 		}
-		static REL::Relocation<float*> upMin{ UPRIGHT_ANGLE_COSINE };
-		facts.upMin = *upMin;
-		facts.playerBusy = PlayerBusy(player);
-		// TESObjectREFR::GetOrientation builds a non-actor's from its angle (NiMatrix3::FromEulerAnglesXYZ), and the
-		// engine compares the z of its up axis: cos x times cos y.
-		facts.up = std::cos(a_frame->data.angle.x) * std::cos(a_frame->data.angle.y);
-		static REL::Relocation<bool (*)(const RE::TESFurniture*, std::uint32_t)>                          markerEnabled{ GET_MARKER_ENABLED };
-		static REL::Relocation<RE::ActorHandle* (*)(RE::TESObjectREFR*, RE::ActorHandle*, std::uint32_t, bool)> markerUser{ GET_MARKER_USER };
-		for (std::uint32_t i = 0; i < FURNITURE_MARKERS; ++i) {
-			if (!markerEnabled(furniture, i)) {
-				continue;
-			}
-			++facts.markers;
-			RE::ActorHandle handle;
-			const auto      user = markerUser(a_frame, &handle, i, true)->get();
-			if (!user) {
-				continue;
-			}
-			if (facts.used++ == 0) {
-				const auto middle = user->currentProcess ? user->currentProcess->middleHigh : nullptr;
-				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-				facts.user = user->GetFormID();
-				facts.userMarker = static_cast<int>(i);
-				facts.userIsPlayer = user.get() == player;
-				facts.userIn = (occupied && occupied.get() == a_frame) || PowerArmorFrameOf(user.get()).get() == a_frame;
-			}
+
+		// A frame the use hook handed to the main thread by its form ID: null once it is gone.
+		RE::TESObjectREFR* FrameById(std::uint32_t a_local)
+		{
+			const auto ref = a_local ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local) : nullptr;
+			return ref && !ref->IsDeleted() ? ref : nullptr;
 		}
-		static REL::Relocation<bool (*)(RE::TESObjectREFR*, RE::Actor*, bool)> usersOtherThan{ HAS_USERS_OTHER_THAN };
-		static REL::Relocation<bool (*)(RE::TESObjectREFR*, bool)>             freeMarker{ HAS_FREE_MARKER };
-		facts.othersThanPlayer = usersOtherThan(a_frame, player, false);
-		facts.free = freeMarker(a_frame, true);
-		return facts;
 	}
 
 	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame)
@@ -1112,15 +1183,7 @@ namespace Equipment
 		if (!a_frame) {
 			return "none";
 		}
-		const auto facts = FrameUseOf(a_frame);
-		const auto holds = HoldsOf(a_frame);
-		const auto base = a_frame->GetObjectReference();
-		const auto root = a_frame->Get3D();
-		const auto owner = a_frame->GetOwner();
-		return std::format("{:08X} base={:08X} {}: up={:.2f} (min {:.2f}) markers={} used={} user={:08X}{}{} othersThanPlayer={} free={} disabled={} 3d={} culled={} flags={:X} ownedBy={:08X} steal={}; {}",
-			a_frame->GetFormID(), base ? base->GetFormID() : 0, FrameUse::Name(FrameUse::Judge(facts)), facts.up, facts.upMin, facts.markers, facts.used, facts.user, facts.userIsPlayer ? "(player)" : "",
-			facts.used ? (facts.userIn ? "(in it)" : "(not in it)") : "", facts.othersThanPlayer, facts.free, a_frame->IsDisabled(), root != nullptr, root && root->GetAppCulled(), ExtraFlagsOf(a_frame),
-			owner ? owner->GetFormID() : 0, a_frame->IsCrimeToActivate(), FrameUse::Describe(holds));
+		return DescribeFrameUseWith(a_frame, FrameUseOf(a_frame));
 	}
 
 	std::string DescribePlayerUse()
@@ -1153,17 +1216,21 @@ namespace Equipment
 		using MessageFn = void (*)(const char*, const char*, bool, bool);
 		UseFn                   originalUse = nullptr;
 		MessageFn               originalMessage = nullptr;
-		std::uint32_t           seatsFreed = 0;
-		std::uint32_t           framesStoodUp = 0;
-		std::uint32_t           refusals = 0;
-		std::uint32_t           keptOut = 0;          // our player kept out of a frame by the gate
-		std::uint32_t           transfersKeptOut = 0; // a frame's inventory closed again by the gate
-		std::uint32_t           enterRefusals = 0;
-		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
-		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
+		// The use hook's counts are bumped on the engine's seating thread and read on the main one (DescribeFrameMends).
+		std::atomic<std::uint32_t> seatsFreed{ 0 };
+		std::atomic<std::uint32_t> framesStoodUp{ 0 };
+		std::atomic<std::uint32_t> refusals{ 0 };
+		std::atomic<std::uint32_t> keptOut{ 0 };          // our player kept out of a frame by the gate
+		std::uint32_t              transfersKeptOut = 0;  // a frame's inventory closed again by the gate (main thread)
+		std::atomic<std::uint32_t> enterRefusals{ 0 };
+		std::atomic<std::uint32_t> lastFrame{ 0 };  // the frame our player last asked to get into, for the enter's message
+		constexpr std::uint32_t    MAX_REFUSALS_LOGGED = 20;
 
 		// TESFurniture::Activate let our player at a frame (nobody else uses it) and asks the engine to seat them: what
 		// would turn them away is mended first (FrameUse::ChooseMend), and a refusal is logged with what the engine found.
+		// On the engine's seating thread, beside the main one: of the frame it reads only what the engine's own Activate and
+		// use read there (its angle and markers), our player's state from the main thread's last word (ShareSeat), and the
+		// rest (the logs' descriptions, the frame's 3D moved to its new angle) is the main thread's (MainThread::Post).
 		bool UseHook(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_ref)
 		{
 			const bool frame = a_player && a_ref && IsPowerArmorFrame(a_ref->GetObjectReference());
@@ -1172,44 +1239,63 @@ namespace Equipment
 				++keptOut;
 				return false;
 			}
+			const auto local = a_ref ? a_ref->GetFormID() : 0;
 			if (frame) {
-				lastFrame = a_ref->GetFormID();
-				const auto facts = FrameUseOf(a_ref);
+				lastFrame = local;
+				const auto seat = SeatWord();
+				const auto facts = ReadFacts(a_ref, &seat);
 				const auto mend = FrameUse::ChooseMend(facts);
 				if (mend.Any()) {
-					REX::INFO("Equipment: our player can't get into frame {} as it is; {}{}", DescribeFrameUse(a_ref), mend.standUp ? "standing it up" : "",
-						mend.freeSeat ? (mend.standUp ? " and giving back the seat the engine still has as theirs" : "giving back the seat the engine still has as theirs") : "");
+					// Described as read here, before the mend; the rest of the description is read on the main thread.
+					MainThread::Post([local, facts, mend] {
+						const auto ref = FrameById(local);
+						REX::INFO("Equipment: our player can't get into frame {} as it is; {}{}", ref ? DescribeFrameUseWith(ref, facts) : std::format("{:08X} (gone)", local),
+							mend.standUp ? "standing it up" : "",
+							mend.freeSeat ? (mend.standUp ? " and giving back the seat the engine still has as theirs" : "giving back the seat the engine still has as theirs") : "");
+					});
 				}
 				if (mend.standUp) {
+					// The engine's use asks the angle next, on this thread (GetOrientation); the frame's 3D is moved to it on
+					// the main thread, which owns the scene graph.
 					a_ref->data.angle.x = 0.0f;
 					a_ref->data.angle.y = 0.0f;
-					a_ref->Update3DPosition(true);
+					MainThread::Post([local] {
+						if (const auto ref = FrameById(local)) {
+							ref->Update3DPosition(true);
+						}
+					});
 					++framesStoodUp;
 				}
 				if (mend.freeSeat && facts.userMarker >= 0) {
+					// What the engine's own use does to the frame's markers as it seats our player, on this thread.
 					static REL::Relocation<void (*)(RE::TESObjectREFR*, std::uint32_t, RE::Actor&, bool, bool)> setMarkerUsed{ SET_MARKER_USED };
 					setMarkerUsed(a_ref, static_cast<std::uint32_t>(facts.userMarker), *a_player, false, true);
 					++seatsFreed;
 				}
 			}
 			const bool seated = originalUse(a_player, a_ref);
-			if (frame && !seated && refusals++ < MAX_REFUSALS_LOGGED) {
-				REX::INFO("Equipment: the engine did not let our player into frame {}; {}", DescribeFrameUse(a_ref), DescribePlayerUse());
+			if (frame && !seated && refusals.fetch_add(1) < MAX_REFUSALS_LOGGED) {
+				MainThread::Post([local] {
+					const auto ref = FrameById(local);
+					REX::INFO("Equipment: the engine did not let our player into frame {}; {}", ref ? DescribeFrameUse(ref) : std::format("{:08X} (gone)", local), DescribePlayerUse());
+				});
 			}
 			return seated;
 		}
 
 		// The player's furniture enter found no animation to get them in (FrameUse.h): what it says, and the frame they
-		// last asked for.
+		// last asked for. Not necessarily on the main thread: what it says is copied, and described there.
 		void EnterMessageHook(const char* a_text, const char* a_sound, bool a_throttle, bool a_warning)
 		{
-			if (enterRefusals++ < MAX_REFUSALS_LOGGED) {
-				const auto player = RE::PlayerCharacter::GetSingleton();
-				const auto race = player ? player->race : nullptr;
-				const auto frame = lastFrame ? RE::TESForm::GetFormByID(lastFrame) : nullptr;
-				const auto ref = frame ? frame->As<RE::TESObjectREFR>() : nullptr;
-				REX::INFO("Equipment: no animation gets our player into furniture (\"{}\"); race {:08X}, inPA={}, last frame {}", a_text ? a_text : "", race ? race->GetFormID() : 0,
-					player && InPowerArmor(player), ref ? DescribeFrameUse(ref) : "none");
+			if (enterRefusals.fetch_add(1) < MAX_REFUSALS_LOGGED) {
+				MainThread::Post([text = std::string{ a_text ? a_text : "" }, last = lastFrame.load()] {
+					const auto player = RE::PlayerCharacter::GetSingleton();
+					const auto race = player ? player->race : nullptr;
+					const auto frame = last ? RE::TESForm::GetFormByID(last) : nullptr;
+					const auto ref = frame ? frame->As<RE::TESObjectREFR>() : nullptr;
+					REX::INFO("Equipment: no animation gets our player into furniture (\"{}\"); race {:08X}, inPA={}, last frame {}", text, race ? race->GetFormID() : 0,
+						player && InPowerArmor(player), ref ? DescribeFrameUse(ref) : "none");
+				});
 			}
 			originalMessage(a_text, a_sound, a_throttle, a_warning);
 		}
@@ -1506,7 +1592,7 @@ namespace Equipment
 
 	std::string DescribeFrameMends()
 	{
-		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={} transfersKeptOut={} transfersClosedAtShow={}", seatsFreed, framesStoodUp,
-			refusals, enterRefusals, keptOut, transfersKeptOut, transfersClosedAtShow.load());
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={} transfersKeptOut={} transfersClosedAtShow={}", seatsFreed.load(), framesStoodUp.load(),
+			refusals.load(), enterRefusals.load(), keptOut.load(), transfersKeptOut, transfersClosedAtShow.load());
 	}
 }
