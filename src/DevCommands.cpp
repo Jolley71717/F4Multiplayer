@@ -2838,6 +2838,99 @@ namespace DevCommands
 			return std::format("handle={:X} played={}", handle.soundID, played);
 		}
 
+		// One sound as SnapshotSounds copied it: plain data, read under SEH.
+		struct SoundRow
+		{
+			std::uint32_t                id = 0;
+			bool                         follows = false;
+			char                         node[64]{};
+			std::uint32_t                chain = 0;          // how many of the followed node's parents were read
+			std::array<std::uintptr_t, 8> userData{};        // each one's user data, the followed node first
+			std::array<std::uint32_t, 8>  formId{};          // the form ID that user data's head holds (TESForm::formID)
+		};
+
+		// Copies up to a_max sounds of the audio manager, while its thread runs: a list it changes meanwhile, or a node it
+		// frees, faults here and ends the copy (what was copied stays), instead of the game. Plain data only (SEH): forms
+		// are looked up by the caller, outside it.
+		std::size_t SnapshotSounds(RE::BSAudioManager* a_audio, SoundRow* a_rows, std::size_t a_max, bool* a_more)
+		{
+			std::size_t count = 0;
+			__try {
+				for (const auto& [id, sound] : a_audio->soundMap) {
+					if (count == a_max) {
+						*a_more = true;
+						break;
+					}
+					auto& row = a_rows[count++];
+					row.id = id;
+					const auto follow = a_audio->movingRefrMap.find(id);
+					if (follow == a_audio->movingRefrMap.end() || !follow->second) {
+						continue;
+					}
+					const RE::NiAVObject* node = follow->second.get();
+					row.follows = true;
+					if (const auto name = node->name.c_str()) {
+						strncpy_s(row.node, name, _TRUNCATE);
+					}
+					for (auto at = node; at && row.chain < row.userData.size(); at = at->parent) {
+						const auto data = at->userData;
+						row.userData[row.chain] = data;
+						if (data) {
+							std::uintptr_t head[3];
+							std::memcpy(head, reinterpret_cast<const void*>(data), sizeof(head));
+							row.formId[row.chain] = static_cast<std::uint32_t>(head[2] >> 32);
+						}
+						++row.chain;
+					}
+				}
+			} __except (1) {  // EXCEPTION_EXECUTE_HANDLER
+				*a_more = true;
+			}
+			return count;
+		}
+
+		// sounds: every sound the audio manager holds (its handle ID), the reference whose 3D it follows, if any, and that
+		// reference's distance from the player. One that follows the player is marked PLAYER: it is heard wherever the player
+		// goes. Which sound each one is isn't read (the engine's BSGameSound is not mapped; its first 0x180 bytes hold no
+		// pointer to its descriptor). Copied while the audio thread runs (SnapshotSounds), so a dev probe only: a node
+		// freed meanwhile can print a wrong name.
+		std::string Sounds(std::string_view)
+		{
+			const auto audio = RE::BSAudioManager::GetSingleton();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!audio || !player) {
+				return "error: no audio manager";
+			}
+			std::array<SoundRow, 64> rows{};
+			bool                     more = false;
+			const auto               count = SnapshotSounds(audio, rows.data(), rows.size(), &more);
+			std::string out = std::format("sounds={} following={}", audio->soundMap.size(), audio->movingRefrMap.size());
+			for (std::size_t i = 0; i < count; ++i) {
+				const auto& row = rows[i];
+				out += std::format(" | {:X}", row.id);
+				if (!row.follows) {
+					continue;
+				}
+				// The user data of a reference's 3D root is the reference: taken only if it is a form the game knows by
+				// the ID its head holds.
+				RE::TESObjectREFR* ref = nullptr;
+				for (std::uint32_t at = 0; at < row.chain && !ref; ++at) {
+					const auto form = row.userData[at] ? RE::TESForm::GetFormByID(row.formId[at]) : nullptr;
+					if (form && reinterpret_cast<std::uintptr_t>(form) == row.userData[at]) {
+						ref = form->As<RE::TESObjectREFR>();
+					}
+				}
+				out += std::format(" follows {}", row.node[0] ? row.node : "?");
+				if (ref) {
+					out += std::format(" of {:08X}{} at {:.0f}", ref->GetFormID(), ref == player ? " PLAYER" : "", ref->data.location.GetDistance(player->data.location));
+				}
+			}
+			if (more) {
+				out += " ...";
+			}
+			return out;
+		}
+
 		// gs <text>: game settings whose name contains the text (case-sensitive), with their values.
 		std::string GameSettings(std::string_view a_args)
 		{
@@ -3999,6 +4092,7 @@ namespace DevCommands
 			Entry{ "proj", Proj },
 			Entry{ "muzzle", Muzzle },
 			Entry{ "playsound", PlaySoundCmd },
+			Entry{ "sounds", Sounds },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
 			Entry{ "anim", Anim },
