@@ -450,10 +450,12 @@ namespace WorkshopPower
 		// after the save (SaveDone, or HUSH_LIMIT after if no message says it is over). How many it hushed.
 		//
 		// Only a copy drawn as it was when a frame last showed it (the same 3D and graph). One drawn anew since (its cell
-		// came in with a travel, and the save is that travel's autosave, before any frame has run) starts unpowered and was
-		// never told otherwise: there is nothing to hush. The game may also still be setting that 3D and its graph up as the
-		// save comes, and no frame touches a copy then (Refresh waits for it); the hush, calling on every such copy at once
-		// (a big settlement's hundreds), was the one thing that did.
+		// came in with a travel, and the save is that travel's autosave, before any frame has run) is left as it is: the
+		// game may still be setting that 3D and its graph up as the save comes, no frame touches a copy then (Refresh waits
+		// for it), and the hush, calling on every such copy at once (a big settlement's hundreds), was the one thing that
+		// did. The cost: such a copy may have come back lit (a cell that loads again keeps what its graph showed:
+		// RefusalShows), and that save keeps it lit, a friend's machine running after a load of it, as before 0.10.1. That
+		// is the trade for no call on a 3D the game is still setting up.
 		template <class Engine>
 		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
 		{
