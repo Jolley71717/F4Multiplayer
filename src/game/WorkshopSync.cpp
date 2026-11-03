@@ -2027,7 +2027,9 @@ namespace WorkshopSync
 		// calls and which does nothing for any other form). Every other piece, the activator lights among them (the
 		// construction light, the light box, the high-tech lights, the strobe), shows its power through its animation graph,
 		// told "Powered" or "Unpowered". False while it has no 3D, or when its graph is loaded and doesn't take the event
-		// (Mirror tries again); a piece with no graph and no light has nothing more to show.
+		// (Mirror tries again); a piece with no graph and no light has nothing more to show. A graph never told "Powered"
+		// (every new graph starts unpowered) has no Unpowered to take: refusing it, it is dark already, as asked. One we
+		// told "Powered" that refuses it (still turning on, say) is tried again like any refusal.
 		enum class Took
 		{
 			kNoModel,
@@ -2035,7 +2037,12 @@ namespace WorkshopSync
 			kGraph,     // the graph took the event
 			kRefused,   // the graph is loaded and didn't take it
 			kNothing,   // no light, no graph: nothing to show it on
+			kDark,      // a graph never told Powered refused Unpowered: dark already
 		};
+
+		// Each copy's graph that took "Powered" from us (by the copy's form ID): what tells a lit graph refusing
+		// "Unpowered" from one that was never lit. Emptied with the copies (Reset).
+		std::unordered_map<std::uint32_t, std::uintptr_t> poweredGraphs;
 
 		Took ShowPoweredHow(RE::TESObjectREFR& a_copy, bool a_on)
 		{
@@ -2050,15 +2057,25 @@ namespace WorkshopSync
 			if (light) {
 				switchLight(a_copy, !a_on);
 			}
-			if (LoadedGraph(a_copy) == 0) {
+			const auto graph = LoadedGraph(a_copy);
+			if (graph == 0) {
 				return light ? Took::kLight : Took::kNothing;
 			}
+			const auto id = a_copy.GetFormID();
 			if (a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered)) {
+				if (a_on) {
+					poweredGraphs[id] = graph;
+				} else {
+					poweredGraphs.erase(id);
+				}
 				return Took::kGraph;
 			}
 			if (!a_on) {
-				// A graph has no Unpowered to take while it is unpowered already (as every new graph starts): dark, as asked.
-				return light ? Took::kLight : Took::kGraph;
+				const auto it = poweredGraphs.find(id);
+				if (it == poweredGraphs.end() || it->second != graph) {
+					poweredGraphs.erase(id);
+					return light ? Took::kLight : Took::kDark;
+				}
 			}
 			++graphRefused;
 			return light ? Took::kLight : Took::kRefused;
@@ -2110,7 +2127,8 @@ namespace WorkshopSync
 				const auto took = ShowPoweredHow(*ref, a_on);
 				if (showsLogged < SHOWS_LOGGED && took != Took::kNoModel) {
 					++showsLogged;
-					static constexpr std::array<const char*, 5> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph" };
+					static constexpr std::array<const char*, 6> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph",
+						"graph dark already (never lit)" };
 					REX::INFO("WorkshopSync: friend's piece {:08X} (player {} piece {:08X}) shown {}: {}", ref->GetFormID(), a_key.first, a_key.second, a_on ? "on" : "off",
 						how[static_cast<std::size_t>(took)]);
 				}
@@ -2290,6 +2308,7 @@ namespace WorkshopSync
 		}
 		ClearWalk();
 		showsLogged = 0;  // the next session logs its first shows too
+		poweredGraphs.clear();
 		scrapsDeferred.clear();
 		unbuiltWires.clear();
 		{
