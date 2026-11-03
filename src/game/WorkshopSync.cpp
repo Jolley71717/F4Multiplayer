@@ -2056,6 +2056,10 @@ namespace WorkshopSync
 			if (a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered)) {
 				return Took::kGraph;
 			}
+			if (!a_on) {
+				// A graph has no Unpowered to take while it is unpowered already (as every new graph starts): dark, as asked.
+				return light ? Took::kLight : Took::kGraph;
+			}
 			++graphRefused;
 			return light ? Took::kLight : Took::kRefused;
 		}
@@ -2285,6 +2289,7 @@ namespace WorkshopSync
 			copyIds.clear();
 		}
 		ClearWalk();
+		showsLogged = 0;  // the next session logs its first shows too
 		scrapsDeferred.clear();
 		unbuiltWires.clear();
 		{
