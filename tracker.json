@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T01:56:09+00:00",
+ "updated": "2026-11-03T03:23:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -880,7 +880,7 @@
    "title": "Menus that open by themselves while catching up on a friend's quests",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 274
   },
@@ -1127,6 +1127,14 @@
    "stage": 7,
    "note": "Much closer now; small leftovers tracked separately",
    "pr": 213
+  },
+  {
+   "id": "qmst",
+   "title": "Catch-up menus: follow-ups from the PR 274 review",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "qx9n",
@@ -1397,6 +1405,14 @@
    "stage": 7,
    "note": "Already fixed in the code that shipped in 0.9.2.",
    "desc": "We found that the game stops reading an object's scripts after the first one in one kind of check, so a gate with several scripts could be judged wrongly and traps were missed at random. The mod now handles this when checking gates, workshop objects and traps. Two-game tests of doors and traps passed."
+  },
+  {
+   "id": "wnxl",
+   "title": "A dismissed companion's greeting scene can't be left (Tab/Enter), blocking saves",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "wood",
