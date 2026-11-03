@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T03:26:50+00:00",
+ "updated": "2026-11-03T07:23:36+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -25,8 +25,9 @@
    "title": "Some friendly NPCs stand still in the client's game: they don't roam or talk to the client",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 278
   },
   {
    "id": "0df",
@@ -43,8 +44,9 @@
    "title": "Player-built lights still stay dark for the other player when powered (0.10.1)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 280
   },
   {
    "id": "0tnz",
@@ -749,7 +751,7 @@
    "title": "Settlers' work animations rarely match the other player's game, and some settlers don't move at all",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -1574,8 +1576,9 @@
    "title": "Host's workshop junk doesn't count at crafting stations during a session (only their own inventory's components show)",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 279
   },
   {
    "id": "yx7v",
