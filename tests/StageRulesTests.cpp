@@ -33,7 +33,53 @@ TEST("stage rules: the table is sorted, once per stage")
 	}
 	CHECK(StageRules::FileOf("Fallout4.esm") == File::kFallout4);
 	CHECK(StageRules::FileOf("DLCCOAST.ESM") == File::kCoast);
-	CHECK(!StageRules::FileOf("DLCRobot.esm"));
+	CHECK(StageRules::FileOf("DLCRobot.esm") == File::kRobot);
+	CHECK(StageRules::FileOf("dlcnukaworld.esm") == File::kNukaWorld);
+	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));  // the workshop add-ons have no shared quest stages
+	CHECK(!StageRules::FileOf("Unofficial Fallout 4 Patch.esp"));
+}
+
+TEST("stage rules: Automatron's and Nuka-World's stages that move the player or take from them (tools/questscan.ps1 -Rules)")
+{
+	using namespace StageRules;
+	// DLC04MQ01 1000 sets DLC04MQ01Gauntlet 2500, which walks the player through the Nuka-World station's stairwell door.
+	CHECK(FlagsOf(0x000801, 1000, File::kNukaWorld) == kMoves);
+	// DLC04MS02 500 unequips the space suits and helmets and takes them; the raids' 90 take the settlement's caps.
+	CHECK(FlagsOf(0x000807, 500, File::kNukaWorld) == kPays);
+	CHECK(FlagsOf(0x014352, 90, File::kNukaWorld) == kPays);  // DLC04RaidChaseOff
+	CHECK(FlagsOf(0x019088, 90, File::kNukaWorld) == kPays);  // DLC04RaidCoerce
+	// Automatron's quickstarts (MoveTo Codsworth's marker, Fort Hagen's start).
+	CHECK(FlagsOf(0x002833, 2, File::kRobot) == kMoves);  // DLC01MQ04
+	CHECK(FlagsOf(0x0010F5, 1, File::kRobot) == kMoves);  // DLC01MQ05
+	// Quest items, read from an alias, are left alone: the robot's head (DLC01MQ04 200), Dry Rock Gulch's drink (218).
+	CHECK(!Find(0x002833, 200, File::kRobot));
+	CHECK(!Find(0x0431AB, 218, File::kNukaWorld));
+	// The same form IDs in another file are another quest's.
+	CHECK(!Find(0x000801, 1000, File::kRobot));
+	CHECK(!(FlagsOf(0x000807, 500, File::kFallout4) & kPays));
+
+	// Never set from a friend's game: a payment at all, a move unless live beside the friend who did it.
+	for (const auto& [quest, stage] : { std::pair{ 0x000807u, 500 }, std::pair{ 0x014352u, 90 }, std::pair{ 0x019088u, 90 } }) {
+		CHECK(Judge(Find(quest, static_cast<std::uint16_t>(stage), File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	const auto door = Find(0x000801, 1000, File::kNukaWorld);
+	CHECK(Judge(door, { .live = true, .nearFriend = false }) == Verdict::kSkip);  // a friend far away
+	CHECK(Judge(door, { .live = false }) == Verdict::kSkip);                      // caught up from the session
+	CHECK(Judge(door, { .live = true, .nearFriend = true }) == Verdict::kSet);    // through the door with them
+
+	// Their stage 0s that move the player are the developers' quickstarts, none its quest's start-up stage: left out, so
+	// a friend's stage that starts the quest here isn't judged by one (StageRules::Starting).
+	CHECK(!Find(0x000801, 0, File::kNukaWorld));  // DLC04MQ01
+	CHECK(!Find(0x000807, 0, File::kNukaWorld));  // DLC04MS02
+	CHECK(!Find(0x000806, 0, File::kRobot));      // DLC01MQ01
+	CHECK(!StageRules::Starting(Find(0x000806, 0, File::kRobot), Find(0x000806, 100, File::kRobot)));
+	CHECK(StageRules::Starting(Find(0x000801, 0, File::kNukaWorld), door)->flags == kMoves);
+
+	// Theirs that set another shared quest's stage (-SetsOther): DLC04MQ00's 520 starts DLC04MQ01, DLC01MQ01's 3000 DLC01MQ02.
+	CHECK(StageRules::SetsAnother(File::kNukaWorld, 0x000800, 520));
+	CHECK(StageRules::SetsAnother(File::kNukaWorld, 0x000801, 1000));  // DLC04MQ02 1
+	CHECK(StageRules::SetsAnother(File::kRobot, 0x000806, 3000));
+	CHECK(!StageRules::SetsAnother(File::kRobot, 0x000800, 520));
 }
 
 TEST("stage rules: what the fragments do")

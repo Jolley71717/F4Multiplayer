@@ -1,6 +1,10 @@
 #include "Test.h"
 
 #include "game/QuestFilter.h"
+#include "game/RadiantRules.h"
+
+#include <iterator>
+#include <utility>
 
 namespace
 {
@@ -97,4 +101,41 @@ TEST("quest filter: a dialogue quest with objectives, or one of the game's other
 	CHECK(!QuestFilter::IsDialogueName("MQ101PrewarDialogue"));
 	CHECK(!QuestFilter::IsDialogueName("COMDialogueCait"));
 	CHECK(!QuestFilter::IsDialogueName("DLCDialogue"));  // not an add-on's prefix (no number)
+}
+
+TEST("quest filter: the side quests the story manager starts with targets each game picks itself are each player's own (tools/questscan.ps1 -PerGame)")
+{
+	for (auto it = std::next(std::begin(QuestFilter::PER_GAME)); it != std::end(QuestFilter::PER_GAME); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::pair{ before.file, before.quest } < std::pair{ it->file, it->quest }));
+	}
+	CHECK(std::size(QuestFilter::PER_GAME) == 25);
+	// Fallout4.esm: Saugus Ironworks and Weston Water Treatment, for the settlement that asked.
+	CHECK(QuestFilter::IsPerGame(0, 0x026340));  // DN121
+	CHECK(QuestFilter::IsPerGame(0, 0x0482CD));  // DN151
+	// Far Harbor's settlement requests, Automatron's robot assaults, Nuka-World's raids and the gangs' jobs.
+	CHECK(QuestFilter::IsPerGame(1, 0x00EB4C));  // DLC03WorkshopRadiantOwned01
+	CHECK(QuestFilter::IsPerGame(1, 0x040A86));  // DLC03WorkshopRadiantOwned04
+	CHECK(QuestFilter::IsPerGame(2, 0x003E8A));  // DLC01MQPostQuestRadiantAssault01
+	CHECK(QuestFilter::IsPerGame(2, 0x00D5FC));  // DLC01MQPostQuestRadiantScene02
+	CHECK(QuestFilter::IsPerGame(3, 0x014352));  // DLC04RaidChaseOff
+	CHECK(QuestFilter::IsPerGame(3, 0x019088));  // DLC04RaidCoerce
+	CHECK(QuestFilter::IsPerGame(3, 0x01B170));  // DLC04_RQ_StealCache
+	CHECK(QuestFilter::IsPerGame(3, 0x04BD3C));  // DLC04_RQ_CollarRivalBoss
+	// The add-ons' own stories and side quests are shared by their type as before.
+	CHECK(!QuestFilter::IsPerGame(2, 0x000806));  // DLC01MQ01
+	CHECK(!QuestFilter::IsPerGame(3, 0x000801));  // DLC04MQ01
+	CHECK(!QuestFilter::IsPerGame(3, 0x000807));  // DLC04MS02
+	CHECK(!QuestFilter::IsPerGame(1, 0x001B40));  // DLC03MQ02
+	// A form ID is the quest's only in its own file.
+	CHECK(!QuestFilter::IsPerGame(0, 0x014352));
+	CHECK(!QuestFilter::IsPerGame(3, 0x026340));
+	// Fallout4.esm's radiants are RadiantRules's (shared by their run, or left alone there), not listed here.
+	for (const auto& radiant : RadiantRules::RADIANTS) {
+		CHECK(!QuestFilter::IsPerGame(0, radiant.formId & 0x00FFFFFF));
+	}
+	for (const auto& local : QuestFilter::PER_GAME) {
+		CHECK(local.file <= 3);
+		CHECK(local.quest <= 0x00FFFFFF);
+	}
 }

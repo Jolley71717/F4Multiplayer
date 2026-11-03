@@ -181,6 +181,7 @@ namespace QuestSync
 		std::uint32_t                                    unknown = 0;   // stages the quest doesn't have
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
+		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
 		std::uint32_t                                    released = 0;  // controls given back by the timeout
@@ -268,12 +269,27 @@ namespace QuestSync
 			return IsFinale(a_quest) || IsDialogue(a_quest) || Story::IsStoryType(a_quest->data.questType);
 		}
 
+		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
+		{
+			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
+			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+		}
+
+		// A side quest the story manager starts with targets each game picks itself (QuestFilter::PER_GAME: the add-ons'
+		// radiants, DN121, DN151): a friend's stage of it would start it here with this game's own.
+		bool PerGame(const RE::TESQuest* a_quest)
+		{
+			const auto file = FileOf(a_quest);
+			return file && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*file), a_quest->GetFormID() & 0x00FFFFFF);
+		}
+
 		// Quests a session can share: the shared types, the factions' finales and the dialogue quests of the
 		// game's own files. Quests from other mods are never shared (see Official.h).
-		// The radiants aren't: one is shared by its run, not by its quest (RadiantSync).
+		// The radiants aren't: one is shared by its run, not by its quest (RadiantSync), and nor are the side quests each
+		// game fills its own way (PerGame).
 		bool Shareable(const RE::TESQuest* a_quest)
 		{
-			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID());
+			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID()) && !PerGame(a_quest);
 		}
 
 		// Quests this session shares now: the story's only if the host chose a shared story. A radiant's while its run here
@@ -281,12 +297,6 @@ namespace QuestSync
 		bool Shared(const RE::TESQuest* a_quest)
 		{
 			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest))) || RadiantSync::Shares(a_quest->GetFormID());
-		}
-
-		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
-		{
-			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
-			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 		}
 
 		const StageRules::Rule* RuleFor(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -808,6 +818,9 @@ namespace QuestSync
 			}
 			return RadiantSync::Shares(a_quest->GetFormID()) ? "radiant (this run shared)" : "radiant (by its run)";
 		}
+		if (a_quest && Official::IsOfficialForm(a_quest) && PerGame(a_quest)) {
+			return "radiant (each player's own)";
+		}
 		if (!a_quest || !Shareable(a_quest)) {
 			return "no";
 		}
@@ -844,6 +857,15 @@ namespace QuestSync
 			return;
 		}
 		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
+		// A side quest whose targets each game picks itself (an older game's report, or a session file's from before).
+		if (quest && Official::IsOfficialForm(quest) && PerGame(quest)) {
+			if (perGameDropped.insert(a_stage.quest).second) {
+				const char* name = quest->GetFullName();
+				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: the story manager picks its targets in each game, so it is each player's own (logged once per quest)",
+					a_stage.quest, name ? name : "", a_stage.stage);
+			}
+			return;
+		}
 		if (!quest || !Shared(quest) || StageLog::Finished(quest->data.flags) || IsSettled(a_stage.quest, a_stage.stage)) {
 			return;
 		}
