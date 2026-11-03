@@ -71,6 +71,7 @@ namespace
 			std::pair<std::int32_t, std::int32_t> cell;  // the cell it was made in: the engine keeps it there
 			int                                    held = 0;  // items in its inventory
 			bool                                   kept = false;  // a copy some session kept: it has the keyword Keep gives (WorkshopSync::Blocked)
+			std::uint32_t                          bench = 0;     // the workbench the report it was kept for named (CraftingWorkshop)
 		};
 
 		using Copy = int;  // a piece's ID in `world`: the stand-in's handle
@@ -105,7 +106,12 @@ namespace
 		WorkshopCells::Where WhereScrapped(const Protocol::WorkshopItem& a_item) const { return WhereOf(a_item); }
 		bool                 InReach(const Protocol::WorkshopItem& a_item) const { return std::hypot(a_item.position[0] - BENCH_X, a_item.position[1] - BENCH_Y) <= REACH; }
 		std::set<int>        blocked;  // carrying the keyword WorkshopSync gives its copies (saved with them)
-		void                 Keep(Copy a_copy) { world[a_copy].kept = true; blocked.insert(a_copy); }
+		void                 Keep(Copy a_copy, const Protocol::WorkshopItem& a_item)
+		{
+			world[a_copy].kept = true;
+			world[a_copy].bench = a_item.workshop;
+			blocked.insert(a_copy);
+		}
 		bool                 MadeByUs(Copy a_copy) const { return blocked.contains(a_copy); }
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const
 		{
@@ -382,6 +388,10 @@ TEST("workshop session: a friend who loads a save gets the others' building back
 	CHECK(bob.At(200.0f) == 1);
 	CHECK(bob.At(300.0f) == 1);
 	CHECK(bob.copies.size() == 3);
+	// Each copy, taken over or made again, is kept as the copy of a piece of that workbench (a crafting station's reads it).
+	for (const auto& [key, copy] : bob.copies) {
+		CHECK(bob.world.at(copy).bench == BENCH);
+	}
 	CHECK(!bob.AnySpotDoubled());
 	CHECK(bob.counts.moved == 0);  // sent again unchanged: nothing is moved (each move marks the copy changed in his save)
 	// His own piece is his game's own, not sent back to him as a copy.
@@ -454,7 +464,9 @@ TEST("workshop session: a friend's piece sent while you are towns away from its 
 	CHECK(bob.counts.adopted == 1);
 	CHECK(bob.counts.oursThere == 1);
 	CHECK(bob.world.contains(900));
+	CHECK(bob.world.at(900).bench == BENCH);  // taken over as the copy of Alice's piece: a station reads that workbench
 	CHECK(bob.world.contains(mine));
+	CHECK(bob.world.at(mine).bench == 0);  // his own is no copy
 	CHECK(bob.At(100.0f) == 1);
 	CHECK(bob.At(200.0f) == 1);
 	CHECK(bob.inbox.Pending().Empty());

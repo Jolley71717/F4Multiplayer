@@ -1055,8 +1055,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 206 of 320 bytes used: five 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
-	// Equipment::InstallFrameUse's two, RollHook::Install's one), HavokGuard::Install's two detours (2 x 56), and
+	// 220 of 320 bytes used: six 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's one), HavokGuard::Install's
+	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
 	Log::InstallScrubber();
@@ -1090,6 +1091,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
 	Equipment::InstallFrameGate();  // and its Transfer
 	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
+	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {

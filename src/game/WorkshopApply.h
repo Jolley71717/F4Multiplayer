@@ -23,7 +23,8 @@
 //   bool InReach(item)                                   it stands within its workbench's reach
 //   std::optional<Standing> StandingOf(const Copy&)      none if the copy is gone
 //   void MoveTo(const Copy&, item)                       moves it within its cell
-//   void Keep(const Copy&) / void Discard(const Copy&)   ours from now on / deleted, in time
+//   void Keep(const Copy&, item)                         ours from now on, as the copy of that report (its workbench)
+//   void Discard(const Copy&)                            deleted, in time
 //   Placeable CanPlace(item)
 //   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot (never a piece of ours)
 //   bool MadeByUs(const Copy&)                           a copy of this kind made it (it carries the keyword that keeps
@@ -259,7 +260,7 @@ namespace WorkshopApply
 			const auto now = a_world.StandingOf(*existing);
 			if (now && Follow(a_world, *existing, *now, a_item, a_counts)) {
 				a_copies.emplace(a_key, *existing);
-				a_world.Keep(*existing);
+				a_world.Keep(*existing, a_item);
 				++a_counts.adopted;
 				DiscardLeftovers(a_world, a_item, a_counts);
 				return true;
@@ -273,7 +274,7 @@ namespace WorkshopApply
 				++a_counts.emptied;
 			}
 			a_copies.emplace(a_key, *made);
-			a_world.Keep(*made);
+			a_world.Keep(*made, a_item);
 			++a_counts.placed;
 			DiscardLeftovers(a_world, a_item, a_counts);
 		}
