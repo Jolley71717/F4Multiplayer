@@ -1021,3 +1021,19 @@ TEST("session deaths: our report sent as an NPC began to fall is taken back once
 	deaths.Reset(t0 + 1s);
 	CHECK(!deaths.TakeFell(RAIDER));
 }
+
+TEST("session deaths: a death told by another game or the session's list is one our copy was killed for; one our own game reported is not")
+{
+	// CopyWatch: a copy that falls here for the session's word (the console kill) is no kill of ours, whatever hit of ours
+	// is still in its window.
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	CHECK(!deaths.ToldDead(RAIDER));
+	deaths.Add(RAIDER, t0, 2);  // Bob's report
+	CHECK(deaths.ToldDead(RAIDER));
+	deaths.Add(RAIDER2, t0);  // our own death event, reported
+	deaths.Reported(RAIDER2);
+	CHECK(!deaths.ToldDead(RAIDER2));
+	deaths.Add(0x0001F103, t0);  // the session's dead list: nobody's report of ours
+	CHECK(deaths.ToldDead(0x0001F103));
+}

@@ -2739,6 +2739,11 @@ namespace WorldSync
 		return std::ranges::any_of(aliases->aliasArray, [](const RE::BGSRefAliasInstanceData& a_entry) { return a_entry.alias && a_entry.alias->flags.all(RE::BGSBaseAlias::FLAGS::kEssential); });
 	}
 
+	bool ToldDead(std::uint32_t a_refId)
+	{
+		return dead.ToldDead(a_refId);
+	}
+
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners)
 	{
 		// Another player's game runs these, so they live there. A persistent NPC (or one of a cell we left
