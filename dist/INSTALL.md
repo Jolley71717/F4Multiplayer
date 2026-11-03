@@ -576,6 +576,12 @@ without it they last until it stops.
 - "Version mismatch": everyone needs the same version of this mod.
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.
+- An invite arrives but accepting it (or Join Game) does nothing, and F1 and the hotkeys do nothing
+  in your game: the mod didn't load there. Start the game with F4SE (see [Playing](#playing)), then
+  look in `Documents\My Games\Fallout4\F4SE\f4se.log`: it says whether `F4Multiplayer.dll` loaded and,
+  if not, why (most often a game version other than 1.11.240, or a missing Address Library). If F1
+  works but accepting the invite still does nothing, close any other Bethesda game that is running
+  (Fallout 76, even minimized, can take the join), then restart Steam and try again.
 - "you're hosting": only the host sets `bHost = true`.
 - "The host isn't in the game yet": the host's game is at the main menu, loading, or in Vault 111's
   opening. Your game keeps trying and joins once the host is in.
