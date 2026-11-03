@@ -560,6 +560,7 @@ without it they last until it stops.
   there is no host's game, so they stay dead for that session.
 - Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). A friend's lights and machines light up and run as their game powers them, once they have been to that settlement in the session; wiring or snapping to a friend's pieces doesn't cross games. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
 - If you load a save while in a session, a piece a friend moved or scrapped between that save and now stays where your save had it until the next session (the rest of their building comes back as it is now).
+- Each NPC is run by one player's game. One run by the other player's game walks with it but doesn't play its work, sitting or idle animations or greet you (talking to it works); a friendly NPC passes to your game when you stand next to it and the other player is well away. Settlers you recruit run separately in each game.
 
 ## Problems
 
