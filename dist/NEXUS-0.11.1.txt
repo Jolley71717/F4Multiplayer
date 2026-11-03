@@ -1,0 +1,12 @@
+Patch for 0.11.0: same protocol, plays with 0.11.0 (best if everyone has it)
+A friend's NPC lines show in the game's subtitle area, timed with the speech (General Subtitles on)
+A friendly NPC goes to the game of a friend standing next to it, so town NPCs greet and talk to both players
+Crafting at a station a friend built counts your settlement's workbench junk
+A friend's workshop lights light once powered (construction light, light box, strobe and more), and a friend's bulb casts light
+A friend's built pieces stay tracked when their cell unloads and loads again
+Dropping an item picked up from the world is shared
+A killing blow on a friend's NPC reaches its game, so a Mr Gutsy no longer survives a long fall
+Catch-up closes the settlement list and item inspection a friend's quest stage opens by itself
+Radiant side quests with per-player targets (Automatron, Far Harbor, Nuka-World and more) are no longer shared
+After a down and a revive, a stuck bleed-out camera or input lock is ended
+Full notes on GitHub
