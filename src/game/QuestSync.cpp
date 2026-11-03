@@ -3,9 +3,12 @@
 
 #include "Config.h"
 #include "game/Achievements.h"
+#include "game/CatchUpMenus.h"
 #include "game/FadeWatch.h"
 #include "game/GameStop.h"
 #include "game/Hud.h"
+#include "game/MenuInput.h"
+#include "game/MenuMessages.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/QuestFilter.h"
@@ -162,6 +165,10 @@ namespace QuestSync
 		Clock::time_point                                lastCombat{};
 		SceneHold::Watch                                 sceneHold;  // whether the scene the player is in holds friends' stages back
 		std::uint32_t                                    sessionSceneLogged = 0;  // the session's scene last logged (0: none)
+		CatchUpMenus::Guard                              menuGuard;  // menus a friend's stage opened here, closed again
+		std::uint64_t                                    lastSetStage = 0;  // the friend's stage last set here (quest << 16 | stage), for the log
+		std::atomic<Clock::rep>                          playerActivatedAt{ 0 };  // our player last activated something (any thread)
+		Clock::rep                                       playerActivatedSeen = 0;  // ... as last handed to menuGuard
 		std::optional<Clock::time_point>                 warnedAt;
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
@@ -453,7 +460,89 @@ namespace QuestSync
 			remoteStageAt[id] = Clock::now();
 			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
 			sceneHold.StageSet(id, Clock::now());  // its script may start a scene with the player in it: the session's
+			menuGuard.StageSet(Clock::now());  // ... or open a menu in front of them (CatchUpMenus)
+			lastSetStage = Key(id, a_stage);
 			++applied;
+		}
+
+		// Menus a friend's stage opened here by itself (a dismissed companion's new home, a featured item's inspection) are
+		// closed again, so they don't hold the game and the catch-up paused until the player answers them (CatchUpMenus).
+		// Every frame, paused or not: the menu is what pauses the game.
+		void WatchMenus(Clock::time_point a_now)
+		{
+			using CatchUpMenus::Menu;
+			using OpenMenus::Menu::kBarter;
+			using OpenMenus::Menu::kConsole;
+			using OpenMenus::Menu::kContainer;
+			using OpenMenus::Menu::kCooking;
+			using OpenMenus::Menu::kDialogue;
+			using OpenMenus::Menu::kPause;
+			using OpenMenus::Menu::kPipboy;
+			using OpenMenus::Menu::kPowerArmorMod;
+			using OpenMenus::Menu::kTerminal;
+			using OpenMenus::Menu::kWorkshop;
+			// What our player does that opens such a menu themselves: a conversation (dismissing a companion), workshop
+			// mode (a supply line), the Pip-Boy (its inspect), a workbench or station, and any activation.
+			if (OpenMenus::AnyOpen({ kDialogue, kWorkshop, kPipboy, kContainer, kBarter, kTerminal, kCooking, kPowerArmorMod, kConsole, kPause })) {
+				menuGuard.PlayerActed(a_now);
+			}
+			if (const auto activated = playerActivatedAt.load(); activated != playerActivatedSeen) {
+				playerActivatedSeen = activated;
+				menuGuard.PlayerActed(Clock::time_point{ Clock::duration{ activated } });
+			}
+			// Not while the UI is being torn down and built again (a loading screen, a load): the menus are looked at,
+			// and closed, once it is settled.
+			if (!Hud::IsSettled()) {
+				return;
+			}
+			MenuInput::Frame();  // a cancel's release
+			// Each menu with its own state: the guard holds the vignette back while the inspection under it is up.
+			const std::array<std::pair<Menu, bool>, 3> menus{ { { Menu::kCaravan, OpenMenus::Open(OpenMenus::Menu::kCaravan) },
+				{ Menu::kExamine, OpenMenus::Open(OpenMenus::Menu::kExamine) }, { Menu::kVignette, OpenMenus::Open(OpenMenus::Menu::kVignette) } } };
+			for (const auto& [menu, open] : menus) {
+				const auto name = CatchUpMenus::NAMES[static_cast<std::size_t>(menu)];
+				const auto cancel = CatchUpMenus::HowClosed(menu) == CatchUpMenus::Close::kCancel;
+				switch (menuGuard.Watch(menu, open, a_now)) {
+				case CatchUpMenus::Action::kClose:
+					{
+						// Why the close couldn't go (empty: it went). The settlement list is sent its own cancel, a Tab
+						// handed to it alone: a hide would leave the script waiting on it suspended for good
+						// (CatchUpMenus). Anything else gets a hide message.
+						std::string why;
+						if (cancel) {
+							why = MenuInput::Tap(name, "Cancel", MenuInput::TAB);
+						} else if (const auto refusal = MenuMessages::Refusal(name, true)) {
+							why = refusal;
+						} else if (const auto queue = RE::UIMessageQueue::GetSingleton()) {
+							queue->AddMessage(name, RE::UI_MESSAGE_TYPE::kHide);
+						} else {
+							why = "no UI message queue";
+						}
+						const auto opened = menuGuard.OpenedAt(menu);
+						const auto stage = menuGuard.LastStage();
+						const auto player = menuGuard.LastPlayer();
+						const auto secs = [](Clock::duration a_gap) { return std::chrono::duration<double>(a_gap).count(); };
+						// How long before the menu opened our player last acted (a menu of theirs, an activation): how
+						// near the player's own window (CatchUpMenus::PlayerQuiet) the call was.
+						const auto playerGap = opened && player ? std::format("{:.1f} s before it opened", secs(*opened - *player)) : std::string{ "never" };
+						if (!why.empty()) {
+							menuGuard.NotSent(menu);
+							REX::WARN("QuestSync: {} looks like a friend's stage's, but its {} wasn't sent ({}); left to the player", name, cancel ? "cancel" : "hide", why);
+							break;
+						}
+						REX::INFO("QuestSync: {} {}, opened {:.1f} s after a friend's stage was set here (the last {:08X} stage {}); our player last acted {}",
+							cancel ? "cancelling" : "hiding", name, opened && stage ? secs(*opened - *stage) : 0.0, static_cast<std::uint32_t>(lastSetStage >> 16),
+							static_cast<std::uint16_t>(lastSetStage & 0xFFFF), playerGap);
+						break;
+					}
+				case CatchUpMenus::Action::kGaveUp:
+					REX::WARN("QuestSync: {} is still up {} s after its {}; left to the player", name,
+						std::chrono::duration_cast<std::chrono::seconds>(CatchUpMenus::GIVE_UP).count(), cancel ? "cancel" : "hide");
+					break;
+				case CatchUpMenus::Action::kNone:
+					break;
+				}
+			}
 		}
 
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
@@ -806,6 +895,7 @@ namespace QuestSync
 	void Frame(bool a_inSession, bool a_hosting)
 	{
 		const auto now = Clock::now();
+		WatchMenus(now);
 		if (now < nextPoll) {
 			return;
 		}
@@ -1063,6 +1153,11 @@ namespace QuestSync
 		return lastStageChange;
 	}
 
+	void OnPlayerActivated()
+	{
+		playerActivatedAt = Clock::now().time_since_epoch().count();
+	}
+
 	std::uint32_t SessionScene()
 	{
 		return sceneHold.SessionScene();
@@ -1073,6 +1168,8 @@ namespace QuestSync
 		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released, outgoing.Size(),
 			unstarted.Size(), locked ? " locked" : "") +
+		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
+			           menuGuard.gaveUp, menuGuard.left) +
 		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe();
 	}
 }

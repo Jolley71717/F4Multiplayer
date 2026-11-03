@@ -917,6 +917,9 @@ namespace WorldSync
 			{
 				const auto& target = a_event.objectActivated;
 				const auto& by = a_event.actionRef;
+				if (by && by->IsPlayerRef()) {
+					QuestSync::OnPlayerActivated();  // a menu it opens (a workbench, a bobblehead's inspection) is our player's (CatchUpMenus)
+				}
 				if (target && by && by->IsPlayerRef() && target->IsCreated()) {
 					Drops::OnActivated(target->GetFormID());  // perhaps a copy of an item a friend dropped: Take asks the server
 				}
