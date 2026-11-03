@@ -373,14 +373,15 @@
   that their chain is on, not that ours is off because our game is behind: a plugin only our game has may hide a
   vanilla NPC behind a marker that stays off, or our story may be ahead and a quest of ours switched the marker off
   again. So a parent is switched on only when every link and parent comes from the game's own files (Fallout4.esm
-  and the official add-ons, no other plugin changing them), no script of the game's own ever turns a parent of the
-  chain off, the top is off as its plugin has it, no parent is a dead actor or deleted, and the chain's parents
+  and the official add-ons, no other plugin changing them) the table below was made from, no script of the game's
+  own ever turns a parent of the chain off, the top is off as its plugin has it, no parent is a dead actor or deleted, and the chain's parents
   switch at most 64 references between them (Gun Run's marker: 48). The scripts that turn parents off are read from
   the game's files once and kept in a table (`DisabledParents.h`, written by `tools/questscan.ps1
   -DisabledParents`: quest stage fragments, quest, alias, reference, base object, topic, scene, package, perk and
-  terminal scripts, calls followed a few deep, each judged with the property values it has where it is attached):
-  648 of the 1624 enable parents of Fallout4.esm, Automatron, Far Harbor and Nuka-World, 303 of them off in their
-  plugin. Half the quest scene markers are off in their plugin, turned on at one stage and off at a later one: the
+  terminal scripts, calls followed a few deep, each judged with the property values it has where it is attached;
+  aliases forced to a reference or filled with a forced location's references of a ref type, collection aliases
+  turned off with DisableAll): 677 of the 1624 enable parents of Fallout4.esm, Automatron, Far Harbor and Nuka-World,
+  323 of them off in their plugin. Half the quest scene markers are off in their plugin, turned on at one stage and off at a later one: the
   airport's Brotherhood (BoSAirportGuards, 0019C046: BoSEnable's stage 10 on, its stage 200 and Inst307Fight's
   stage 10 off) would come back for good, 11 soldiers and a scribe, in the game of a joiner past it the first time
   the host's game ran one. Those are left to our own story (`kStoryTurnsOff`). Gun Run's marker is only ever turned
@@ -393,9 +394,12 @@
   it for a reference it only loads (`TESObjectREFR::Load` sets an in-game flag, which records it whether anything
   changed or not), and a fresh game had it on Salem's marker at Gun Run's stage 5, before any script touches it, so
   the first rig run refused every switch-on. What the table can't see is switched on all the same: a marker turned
-  off through a variable set at run time, a struct, a collection or a conditioned alias, or by the console; one our
-  story never needed to touch (our quest took another branch); an NPC a mod only the friend has freed of its
-  parent. The add-ons the table was not made from (the workshop ones, Vault-Tec's among them) are not covered. The
+  off through a variable set at run time, a struct, a collection element reached by index, a conditioned alias or
+  one filled from a location that isn't forced, or by the console; one our story never needed to touch (our quest
+  took another branch); an NPC a mod only the friend has freed of its parent; a base-game marker that a script of an
+  add-on the table wasn't made from turns off. The table names the files it was made from (`COVERED`), and a parent
+  from any other official file (the workshop add-ons, Vault-Tec's among them, weren't installed where it was made) is
+  never switched on (`kNotCovered`). The
   log line says what was switched on or why nothing, with that count, the top's change flags and its state in its
   plugin; `switchedOn=` counts tries/those through a parent. The switch-on before a friend's kill (WorldSync) goes
   the same way, and `switchedOnToKill=` counts only the ones that switched something on.

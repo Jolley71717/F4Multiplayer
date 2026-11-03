@@ -14,12 +14,16 @@
 // stage 10 on, its stage 200 and Inst307Fight's stage 10 off) is off in a game whose story is past it, and stays off
 // there whatever a friend's game runs (EnableChain::Verdict::kStoryTurnsOff). Gun Run's marker (000C3D6F,
 // MirelurkQuestEnabler) is only ever turned on, so it is not here.
-// Scanned: Fallout4.esm, DLCRobot.esm, DLCCoast.esm, DLCNukaWorld.esm (the add-ons not installed where it ran are not).
-// Of their 1624 enable parents, 648 are here, 303 of them off in their plugin.
+// Scanned (COVERED): Fallout4.esm, DLCRobot.esm, DLCCoast.esm, DLCNukaWorld.esm. A parent from an official file it
+// didn't read (an add-on not installed where it ran) is never switched on (EnableChain::Verdict::kNotCovered).
+// Of their 1624 enable parents, 677 are here, 323 of them off in their plugin.
 namespace DisabledParents
 {
 	// The game's own plugins, as Official.h names them, in their usual load order; an entry's file is its index here.
 	inline constexpr std::array<std::string_view, 7> FILES{ "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm", "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm" };
+
+	// The plugins the scan read, with their scripts: the table says nothing of any other's references.
+	inline constexpr std::array<std::string_view, 4> COVERED{ "Fallout4.esm", "DLCRobot.esm", "DLCCoast.esm", "DLCNukaWorld.esm" };
 
 	struct Entry
 	{
@@ -90,7 +94,7 @@ namespace DisabledParents
 		{ 0, 0x056CEF },  // DN033_Past01EnableMarkerREF: off, 26 children (0 actors); REFR 00056CEC: DN033_PlayerMoveScript.myEnableMarker01
 		{ 0, 0x056D11 },  // DN033_Past02EnableMarker02REF: on, 4 children (3 actors); REFR 00056CEC: DN033_PlayerMoveScript.myEnableMarker02
 		{ 0, 0x056D21 },  // DN033_Collision01EnableMarkerREF: off, 1 children (0 actors); REFR 00056CEC: DN033_PlayerMoveScript.myCollisionMarker
-		{ 0, 0x063C47 },  // DN136_SynthCon01EnableMarkerREF: off, 10 children (10 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_Con01EnableMarker
+		{ 0, 0x063C47 },  // DN136_SynthCon01EnableMarkerREF: off, 10 children (10 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_Con01EnableMarker (+1 more)
 		{ 0, 0x063C71 },  // DN136_AdvSysEnableMarker400REF: off, 3 children (3 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_AdvSysEnableMarker400
 		{ 0, 0x0640B8 },  // (no editor id): off, 2 children (0 actors); QUST MS11: ms11script.MS11PoseidonRadarEnableMarker
 		{ 0, 0x065F81 },  // CharGenLightsEnableMarker: on, 73 children (0 actors); QUST MQ101 alias 80: MQ101PlayerScript.CharGenLightsEnableMarker
@@ -101,11 +105,15 @@ namespace DisabledParents
 		{ 0, 0x09B4AF },  // DN050QALightMarker02: off, 7 children (0 actors); QUST DN050 (stage fragments): Fragments:Quests:QF_DN050_00045770.Alias_EnableMarkerTest02
 		{ 0, 0x09B4B0 },  // DN050QALightMarker03: off, 5 children (0 actors); QUST DN050 (stage fragments): Fragments:Quests:QF_DN050_00045770.Alias_EnableMarkerTest03
 		{ 0, 0x09B4B1 },  // DN050QALightMarker01: off, 3 children (0 actors); QUST DN050 (stage fragments): Fragments:Quests:QF_DN050_00045770.Alias_EnableMarkerTest01
+		{ 0, 0x09B9AE },  // FFG07BobbisPlaceEnableMarker02: off, 9 children (2 actors); QUST FFGoodneighbor07 (stage fragments): Fragments:Quests:QF_FFGoodneighbor07_001323AB.Alias_BobbiStuffEnableMarker
+		{ 0, 0x0A50FB },  // (no editor id): on, 1 children (0 actors); QUST DN015Puzzle alias 8: DN015_PuzzleActivator on itself
 		{ 0, 0x0A77B4 },  // Vault111RoachEnableParent: on, 15 children (14 actors); REFR MQ102PipboyTakeFurnitureREF: MQ102PipboyTakeFurnitureScript on its linked ref (+1 more)
 		{ 0, 0x0AB06F },  // DN015CleanRoomSprayers: off, 3 children (0 actors); SCEN DN015_CleanRoomSequence (fragments): Fragments:Scenes:SF_DN015_CleanRoomSequence_0002A0F5.DN015CleanRoomSprayers
 		{ 0, 0x0ABCBB },  // (no editor id): on, 5 children (0 actors); REFR 000ABCBC: DefaultEnableDisableTrigScript on its linked ref
 		{ 0, 0x0AE9F0 },  // (no editor id): on, 2 children (0 actors); REFR 0009A147: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0AF907 },  // MS11PowerFixedEnableMarker: on, 14 children (0 actors); QUST MS11 (stage fragments): Fragments:Quests:QF_MS11_00022A02.pMS11PowerFixedEnableMarker
+		{ 0, 0x0B1808 },  // MS11PostStateEnabler01Ref: on, 77 children (2 actors); QUST MS11: ms11script.PostQuestEnableMarker01
+		{ 0, 0x0B1810 },  // MS11PostStateEnabler02Ref: on, 322 children (0 actors); QUST MS11: ms11script.PostQuestEnableMarker02
 		{ 0, 0x0B2AAC },  // (no editor id): on, 2 children (0 actors); REFR 000B2AAB: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0B2AB5 },  // (no editor id): on, 2 children (0 actors); REFR 000B2AB6: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0B2B8C },  // (no editor id): on, 2 children (0 actors); REFR 000B2B87: FusionGeneratorSCRIPT.linkedLight
@@ -117,6 +125,7 @@ namespace DisabledParents
 		{ 0, 0x0B2BC3 },  // (no editor id): on, 2 children (0 actors); REFR 000B2BBE: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0B2BC9 },  // (no editor id): on, 2 children (0 actors); REFR 000B2BC4: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0B2BCF },  // (no editor id): on, 2 children (0 actors); REFR 000B2BCA: FusionGeneratorSCRIPT.linkedLight
+		{ 0, 0x0BA089 },  // InstM03GuardEnableParent: off, 2 children (2 actors); QUST InstM03Post (stage fragments): Fragments:Quests:QF_InstM03Post_00198B83.Alias_SynthGuardEnableParent
 		{ 0, 0x0BB1D2 },  // (no editor id): on, 2 children (0 actors); REFR 000BB1CE: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0BB1DE },  // (no editor id): on, 2 children (0 actors); REFR 000BB1DA: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0BBF7B },  // MQ101SoldiersEnableMarker: on, 4 children (3 actors); QUST MQ101 (stage fragments): Fragments:Quests:QF_MQ101_0001ED86.pMQ101SoldiersEnableMarker
@@ -129,6 +138,7 @@ namespace DisabledParents
 		{ 0, 0x0C782A },  // (no editor id): on, 2 children (0 actors); REFR 000C7826: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0C783B },  // (no editor id): on, 2 children (0 actors); REFR 000C7837: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0CA2DA },  // (no editor id): off, 10 children (3 actors); REFR 000CA2DA: defaultDisableOnResetIfLocWasCleared on itself
+		{ 0, 0x0CD4A2 },  // DN057_DoorStaticRef: on, 7 children (0 actors); QUST MQ106 (stage fragments): Fragments:Quests:QF_MQ106_000229E7.Alias_DoorBlocker
 		{ 0, 0x0CF596 },  // (no editor id): on, 2 children (0 actors); REFR 000CF59D: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x0D21FD },  // (no editor id): off, 5 children (2 actors); REFR 000D21FD: DefaultDisableRefOnLoadOrReset on itself
 		{ 0, 0x0D34C9 },  // MQ203EnableMarker: off, 48 children (0 actors); QUST MQ101KelloggSequence: mq101kelloggsequencescript.MQ203Vault111LayerMarker
@@ -187,14 +197,19 @@ namespace DisabledParents
 		{ 0, 0x0FCCAC },  // (no editor id): off, 1 children (0 actors); ACTI targetdummy01 (its base): DN143TargetDummyScript on itself
 		{ 0, 0x0FCCAD },  // (no editor id): off, 1 children (0 actors); REFR 000FCCAD: DN143TargetDummyScript on itself
 		{ 0, 0x0FCCAE },  // (no editor id): off, 1 children (0 actors); ACTI targetdummy01 (its base): DN143TargetDummyScript on itself
+		{ 0, 0x100182 },  // (no editor id): on, 2 children (0 actors); QUST DN011 (stage fragments): Fragments:Quests:QF_DN011_000FF3C2.Alias_EnableEnemyTriggerMarker
+		{ 0, 0x100199 },  // (no editor id): on, 4 children (0 actors); QUST DN011 (stage fragments): Fragments:Quests:QF_DN011_000FF3C2.Alias_DisableFromStationMarker
 		{ 0, 0x101E17 },  // DN160_4FStairEntryEnableMarker: off, 1 children (1 actors); REFR DN160_EncounterManager: DN160_EncounterManagerScript.DN160_4FStairEntryEnableMarker
 		{ 0, 0x102169 },  // DN160_Lights_A: off, 9 children (0 actors); REFR DN160_StudioManager: DN160_StudioManagerScript.DN160_Lights_A
 		{ 0, 0x10216A },  // DN160_Lights_B: off, 12 children (0 actors); REFR DN160_StudioManager: DN160_StudioManagerScript.DN160_Lights_B
 		{ 0, 0x10216B },  // DN160_Lights_C: off, 12 children (0 actors); REFR DN160_StudioManager: DN160_StudioManagerScript.DN160_Lights_C
 		{ 0, 0x10216C },  // DN160_Lights_Off: off, 3 children (0 actors); REFR DN160_StudioManager: DN160_StudioManagerScript.DN160_Lights_Off
+		{ 0, 0x106E97 },  // ThicketFloodedMarker: on, 476 children (29 actors); QUST DN138 (stage fragments): Fragments:Quests:QF_DN138_001073CE.Alias_FloodedMarker
 		{ 0, 0x1071D2 },  // (no editor id): off, 5 children (5 actors); REFR 001071D2: DefaultDisableRefOnLoadOrReset on itself
 		{ 0, 0x1071D3 },  // (no editor id): off, 4 children (4 actors); REFR 001071D3: DefaultDisableRefOnLoadOrReset on itself
-		{ 0, 0x107711 },  // (no editor id): off, 1 children (1 actors); ACHR 00107713: DN138BossResetScript on its linked ref
+		{ 0, 0x107414 },  // (no editor id): off, 2 children (2 actors); QUST DN138 (stage fragments): Fragments:Quests:QF_DN138_001073CE.Alias_AmbushActivator
+		{ 0, 0x107711 },  // (no editor id): off, 1 children (1 actors); QUST DN138 (stage fragments): Fragments:Quests:QF_DN138_001073CE.Alias_SollyAsRaider (+2 more)
+		{ 0, 0x107713 },  // (no editor id): off, 1 children (1 actors); QUST DN138 (stage fragments): Fragments:Quests:QF_DN138_001073CE.Alias_RaiderBoss
 		{ 0, 0x107AC8 },  // BoS302BPAMEnabler: on, 1 children (0 actors); QUST BoS302B (stage fragments): Fragments:Quests:QF_BoS304_00107A1C.BoS302BPAMEnabler
 		{ 0, 0x107BD4 },  // DN104_OutsideEnableMarker: off, 4 children (4 actors); REFR DN104_OutsideEnableMarker: DefaultDisableRefOnLoadOrReset on itself
 		{ 0, 0x109046 },  // OldNorthChurchGhoulEnabler: on, 12 children (6 actors); QUST RR303 (stage fragments): Fragments:Quests:QF_RR303_00043275.pOldNorthChurchGhoulEnabler (+1 more)
@@ -370,6 +385,7 @@ namespace DisabledParents
 		{ 0, 0x19C046 },  // BoSAirportGuards: off, 11 children (11 actors); QUST Inst307Fight (stage fragments): Fragments:Quests:QF_Inst307Fight_00174029.BoSAirportGuards (+1 more)
 		{ 0, 0x19D479 },  // (no editor id): on, 2 children (0 actors); REFR 0019D476: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x19E0B7 },  // (no editor id): off, 1 children (1 actors); ACHR 0019E0B7: DefaultDisableRefOnLoadOrReset on itself
+		{ 0, 0x19E514 },  // DN76PreQuestBossRef: on, 2 children (0 actors); QUST Inst301 (stage fragments): Fragments:Quests:QF_Inst301_000E2058.Alias_PreQuestBoss
 		{ 0, 0x19ECDF },  // MQ101SalesmanAmbientEnableMarker: off, 3 children (0 actors); QUST MQ101: mq101questscript.MQ101SalesmanAmbientEnableMarker
 		{ 0, 0x19FC99 },  // FallonsBookshelfEnableMarker: off, 7 children (0 actors); REFR FallonsBookshelfEnableMarker: DefaultDisableRefOnLoadOrReset on itself (+1 more)
 		{ 0, 0x19FE0C },  // BoSAirportGantryScribesEnableMarker: off, 3 children (3 actors); QUST BoSEnable (stage fragments): Fragments:Quests:QF_BoSEnable_001851A0.BoSGantryScribes
@@ -411,7 +427,16 @@ namespace DisabledParents
 		{ 0, 0x1BBCA9 },  // DN165_BoSAirport_PreBoSEncounters_GlowingOneEnableMarker: off, 2 children (2 actors); REFR DN165_BoSAirport_PreBoSEncounters_GlowingOneEnableMarker: DefaultDisableRefOnLoadOrReset on itself
 		{ 0, 0x1BBCAB },  // BoSAirport_ExteriorDoorsMain: off, 2 children (0 actors); QUST Inst307Fight (stage fragments): Fragments:Quests:QF_Inst307Fight_00174029.BoSAirport_ExteriorDoorsMain (+1 more)
 		{ 0, 0x1C26C0 },  // DN136_FathersDoorBlockersMarker: off, 13 children (0 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.FathersDoorMarker
-		{ 0, 0x1C3402 },  // DN136_Stage450EnableMarker: off, 13 children (0 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.FathersTerminalEncounterMarker
+		{ 0, 0x1C3402 },  // DN136_Stage450EnableMarker: off, 13 children (0 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.FathersTerminalEncounterMarker (+1 more)
+		{ 0, 0x1C3404 },  // DN136_Stage450EnableMarkerA: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C3408 },  // DN136_Stage450EnableMarkerB: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C340C },  // DN136_Stage450EnableMarkerC: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C340E },  // DN136_Stage450EnableMarkerD: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C3410 },  // DN136_Stage450EnableMarkerE: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C3427 },  // DN136_Stage450EnableMarkerF: off, 1 children (1 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C342E },  // DN136_Stage450EnableMarkerG: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C3435 },  // DN136_Stage450EnableMarkerH: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1C3441 },  // DN136_Stage450EnableMarkerI: off, 8 children (8 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
 		{ 0, 0x1C351B },  // (no editor id): on, 22 children (0 actors); QUST MS07b (stage fragments): Fragments:Quests:QF_MS07b_000229FD.Alias_GraveEnableMarker
 		{ 0, 0x1C92DB },  // (no editor id): on, 2 children (0 actors); REFR 001C92D7: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x1C92EF },  // (no editor id): on, 2 children (0 actors); REFR 001C92EB: FusionGeneratorSCRIPT.linkedLight
@@ -429,7 +454,12 @@ namespace DisabledParents
 		{ 0, 0x1DE7D6 },  // (no editor id): on, 7 children (0 actors); REFR 001DE7D6: POIDL018_Script on itself
 		{ 0, 0x1E1D8D },  // DN136_ReactorRoomRadiationMarkerREF: off, 1 children (0 actors); TERM DN136_ReactorOverlookTerminalSub01 (fragments): Fragments:Terminals:TERM_DN136_ReactorOverlookTe_001E1D8F.ReactorRoomRadiationMarker
 		{ 0, 0x1E1D94 },  // DN136_ReactorRadiationMarkerREF: off, 2 children (0 actors); TERM DN136_ReactorTerminalSub01 (fragments): Fragments:Terminals:TERM_DN136_ReactorTerminalSu_001E1D93.ReactorRadiationMarker
-		{ 0, 0x1E208B },  // DN136_Stage450RREnableMarker: off, 13 children (0 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.FathersTerminalRREncounterMarker
+		{ 0, 0x1E208B },  // DN136_Stage450RREnableMarker: off, 13 children (0 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.FathersTerminalRREncounterMarker (+1 more)
+		{ 0, 0x1E208C },  // DN136_Stage450RREnableMarkerA: off, 1 children (1 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1E208F },  // DN136_Stage450RREnableMarkerB: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1E2092 },  // DN136_Stage450RREnableMarkerE: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1E2099 },  // DN136_Stage450RREnableMarkerH: off, 2 children (2 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
+		{ 0, 0x1E209C },  // DN136_Stage450RREnableMarkerI: off, 8 children (8 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.Alias_ConcourseEnableMarkerCollection
 		{ 0, 0x1E46A3 },  // Waterfront_LongWharfSupermutantEnableMarker: on, 5 children (5 actors); QUST BoS201 (stage fragments): Fragments:Quests:QF_BoS201_0002BF21.Waterfront_LongWharfSupermutantEnableMarker (+3 more)
 		{ 0, 0x1E88D4 },  // BoSBombsCleanup: on, 31 children (0 actors); QUST BoS202 (stage fragments): Fragments:Quests:QF_BoS202_000537FF.BoSBombsCleanup
 		{ 0, 0x1EB143 },  // DN009_MQ205OutsideTriggersMarker: off, 2 children (0 actors); QUST DN009_MQ205 (stage fragments): Fragments:Quests:QF_DN009_MQ205_00064C66.OutsideTriggersMarker
@@ -491,17 +521,20 @@ namespace DisabledParents
 		{ 0, 0x22FEAE },  // MinDefendCastleExternalEncParent: on, 3 children (2 actors); QUST MinDefendCastle (stage fragments): Fragments:Quests:QF_MinDefendCastle_000BDB04.MinDefendCastleExternalEncParent
 		{ 0, 0x2391D1 },  // BoSAirportScene: off, 2 children (2 actors); QUST BoSPrydwenScene_Airport (stage fragments): Fragments:Quests:QF_BoSPrydwenScene_Airport_00152706.BoSAirportScene (+2 more)
 		{ 0, 0x239B40 },  // MQ101ShaunRoomCollisionEnableMarker002: off, 1 children (0 actors); QUST MQ101 (stage fragments): Fragments:Quests:QF_MQ101_0001ED86.MQ101ShaunRoomCollisionEnableMarker002
+		{ 0, 0x23A406 },  // (no editor id): on, 1 children (0 actors); QUST MS11: ms11script.StartingStaticShip
 		{ 0, 0x23A40C },  // (no editor id): on, 3 children (0 actors); REFR AO_Comment_Fortified_1024_018: AttractionObjectScript on its linked ref (+2 more)
 		{ 0, 0x2456C6 },  // (no editor id): on, 2 children (0 actors); REFR 002456C2: FusionGeneratorSCRIPT.linkedLight
 		{ 0, 0x245F27 },  // MS07aBloodStainEnableMarker: on, 9 children (0 actors); QUST MS07a (stage fragments): Fragments:Quests:QF_MS07a_0001CB51.BloodStainEnableMarker
 		{ 0, 0x2460B4 },  // JustinAyoMarkerRef: on, 1 children (1 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.JustinAyoMarkerRef (+1 more)
 		{ 0, 0x2460B5 },  // LiamBinetMarkerRef: on, 1 children (1 actors); QUST DN136_Attack (stage fragments): Fragments:Quests:QF_DN136_Attack_00121D0C.LiamBinetMarkerRef (+1 more)
+		{ 0, 0x2469BC },  // USSConstitutionAfterCrashLODEnable: off, 120 children (0 actors); QUST MS11: ms11script.PostQuestShip
 		{ 0, 0x2478CF },  // BoSM02Postquest_ClarkeCellEnableMarker: off, 5 children (0 actors); QUST BoSM02Postquest (stage fragments): Fragments:Quests:QF_BoSM02Postquest_000BDC04.BoSM02Postquest_ClarkeCellEnableMarker
 		{ 0, 0x248273 },  // (no editor id): on, 2 children (0 actors); REFR 00248272: DefaultEnableDisableTrigScript on its linked ref
 		{ 0, 0x248653 },  // DN048_EnableExt: off, 5 children (5 actors); QUST DN048 (stage fragments): Fragments:Quests:QF_DN048_000CC19F.DN048_EnableExt
 		{ 0, 0x24870C },  // CharGenMirrorEnableMarker: on, 2 children (0 actors); QUST MQ101 alias 80: MQ101PlayerScript.CharGenMirrorEnableMarker
 		{ 0, 0x2487CD },  // (no editor id): on, 1 children (0 actors); ACTI DN079_CanneryLidActivator (its base): DN079_CanneryLidScript on its linked ref
 		{ 0, 0x2487CE },  // (no editor id): on, 1 children (0 actors); ACTI DN079_CanneryLidActivator (its base): DN079_CanneryLidScript on its linked ref
+		{ 0, 0x2496C7 },  // USSConstitutionAfterCrashLODShipEnable: off, 53 children (0 actors); QUST MS11: ms11script.PostQuestShipForReal
 		{ 0, 0x249CF2 },  // MS11USSConstitutionAttachRefEnableMarker: on, 95 children (0 actors); QUST MS11: ms11script.MS11USSConstitutionAttachRefEnableMarker
 		{ 0, 0x249D42 },  // (no editor id): on, 2 children (0 actors); REFR AO_Comment_Unique_1024_014: AttractionObjectScript on its linked ref (+1 more)
 		{ 1, 0x007357 },  // (no editor id): on, 2 children (0 actors); REFR 01007353: FusionGeneratorSCRIPT.linkedLight
@@ -681,7 +714,7 @@ namespace DisabledParents
 	};
 
 	// How many entries the scan wrote (tests/EnableChainTests.cpp checks PARENTS against it: an entry added or lost by hand shows).
-	inline constexpr std::size_t SCANNED = 648;
+	inline constexpr std::size_t SCANNED = 677;
 
 	// The index in FILES of a plugin's file name (any case), or FILES.size().
 	constexpr std::size_t FileIndex(std::string_view a_file)
@@ -693,6 +726,13 @@ namespace DisabledParents
 			}
 		}
 		return FILES.size();
+	}
+
+	// Whether the scan read the plugin a_file (any case), its scripts with it (COVERED).
+	constexpr bool Covers(std::string_view a_file)
+	{
+		const auto file = FileIndex(a_file);
+		return file < FILES.size() && std::ranges::find(COVERED, FILES[file]) != COVERED.end();
 	}
 
 	// Whether a script of the game's own turns off the reference a_id (its form id; its load order's index is ignored)

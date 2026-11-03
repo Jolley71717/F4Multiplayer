@@ -200,6 +200,38 @@ TEST("enable chain: a parent a script of the game's own turns off again is left 
 	CHECK(EnableChain::Decide(MIRELURK, chain, true).verdict == Verdict::kStoryTurnsOff);
 	const std::array below{ Vanilla(MARKER, true), airport };
 	CHECK(EnableChain::Decide(MIRELURK, below, true).verdict == Verdict::kStoryTurnsOff);
+	// A copy off here for another reason while its parent is on: the log says so, not that a script turns it off.
+	auto on = airport;
+	on.parentOff = false;
+	const std::array parentOn{ on };
+	CHECK(EnableChain::Decide(0x0019C04A, parentOn, true).verdict == Verdict::kParentOn);
+	const std::array topOn{ airport, Vanilla(ENABLER, false) };
+	CHECK(EnableChain::Decide(MIRELURK, topOn, true).verdict == Verdict::kParentOn);
+}
+
+TEST("enable chain: a parent from an official file the table doesn't cover is never switched on")
+{
+	// A workshop add-on's marker (not installed where the table was made): what its scripts turn off isn't known.
+	auto workshop = Vanilla(0x0400A1B2, true);
+	workshop.notCovered = true;
+	const std::array links{ workshop };
+	const auto       plan = EnableChain::Decide(0x0400A1B3, links, true);
+	CHECK(plan.verdict == Verdict::kNotCovered);
+	CHECK(plan.target == 0x0400A1B2u);
+	CHECK(!EnableChain::SwitchesOn(plan));
+	// Anywhere along the chain, the first one the table refuses named.
+	const std::array chain{ Vanilla(MARKER, true), workshop };
+	CHECK(EnableChain::Decide(MIRELURK, chain, true).verdict == Verdict::kNotCovered);
+	auto airport = Vanilla(0x0019C046, true);
+	airport.storyTurnsOff = true;
+	const std::array both{ airport, workshop };
+	const auto       first = EnableChain::Decide(MIRELURK, both, true);
+	CHECK(first.verdict == Verdict::kStoryTurnsOff);
+	CHECK(first.target == 0x0019C046u);
+	// Its top on here: nothing to switch on, and the log says so.
+	workshop.parentOff = false;
+	const std::array on{ workshop };
+	CHECK(EnableChain::Decide(0x0400A1B3, on, true).verdict == Verdict::kParentOn);
 }
 
 TEST("enable chain: where its plugin's state isn't known, only a parent our save records no flag change of is switched on")
@@ -307,7 +339,8 @@ TEST("enable chain: a chain longer than the limit is left alone")
 TEST("enable chain: every verdict has a name for the log")
 {
 	for (const auto verdict : { Verdict::kSelf, Verdict::kParent, Verdict::kParentOn, Verdict::kOpposite, Verdict::kNoParent, Verdict::kTooDeep, Verdict::kOwnStory,
-			 Verdict::kUnofficial, Verdict::kChanged, Verdict::kParentDead, Verdict::kTooMany, Verdict::kStoryTurnsOff }) {
+			 Verdict::kUnofficial, Verdict::kChanged, Verdict::kParentDead, Verdict::kTooMany, Verdict::kStoryTurnsOff,
+			 Verdict::kNotCovered }) {
 		CHECK(EnableChain::VerdictName(verdict) != "?");
 	}
 }
@@ -344,6 +377,20 @@ TEST("enable chain: the markers quests turn on and off again are in the table, G
 		 }) {
 		CHECK(DisabledParents::Contains("Fallout4.esm", id));
 	}
+	// What the review's own scan found missing: aliases filled with a forced location's references of a ref type, and a
+	// collection alias of them turned off with DisableAll.
+	for (const std::uint32_t id : {
+			 0x000BA089u,  // InstM03GuardEnableParent: InstM03Post 10, Alias_SynthGuardEnableParent (InstituteBioScience's)
+			 0x001C3404u,  // DN136_Stage450EnableMarkerA: DN136_Attack 1300, Alias_ConcourseEnableMarkerCollection.DisableAll()
+			 0x001C340Eu,  // DN136_Stage450EnableMarkerD
+			 0x001C342Eu,  // DN136_Stage450EnableMarkerG
+			 0x001E208Fu,  // DN136_Stage450RREnableMarkerB
+			 0x001E209Cu,  // DN136_Stage450RREnableMarkerI
+			 0x0009B9AEu,  // FFG07BobbisPlaceEnableMarker02: FFGoodneighbor07, Alias_BobbiStuffEnableMarker
+			 0x00107713u,  // DN138's Alias_RaiderBoss
+		 }) {
+		CHECK(DisabledParents::Contains("Fallout4.esm", id));
+	}
 	// MirelurkQuestEnabler: only DN083_Barney's stage 30 names it, to turn it on.
 	CHECK(!DisabledParents::Contains("Fallout4.esm", 0x000C3D6F));
 	// DmndSecurityEnableMarker, on in its plugin (the rig's negative case: refused as kChanged, not through the table).
@@ -354,4 +401,22 @@ TEST("enable chain: the markers quests turn on and off again are in the table, G
 	CHECK(!DisabledParents::Contains("DLCCoast.esm", 0x0019C046));
 	CHECK(DisabledParents::FileIndex("dlccoast.esm") == 3u);
 	CHECK(DisabledParents::FileIndex("Fallout4.esp") == DisabledParents::FILES.size());
+}
+
+TEST("enable chain: the table names the files it was made from, and covers only those")
+{
+	CHECK(DisabledParents::Covers("Fallout4.esm"));
+	CHECK(DisabledParents::Covers("FALLOUT4.ESM"));
+	CHECK(!DisabledParents::Covers("SomeMod.esp"));
+	CHECK(!DisabledParents::Covers("DLCUltraHighResolution.esm"));  // official, but not a file the scan reads
+	for (const auto& file : DisabledParents::FILES) {
+		CHECK(DisabledParents::Covers(file) == (std::ranges::find(DisabledParents::COVERED, file) != DisabledParents::COVERED.end()));
+	}
+	for (const auto& file : DisabledParents::COVERED) {
+		CHECK(DisabledParents::FileIndex(file) < DisabledParents::FILES.size());
+	}
+	// Every entry is from a file it read.
+	for (const auto& entry : DisabledParents::PARENTS) {
+		CHECK(DisabledParents::Covers(DisabledParents::FILES[entry.file]));
+	}
 }

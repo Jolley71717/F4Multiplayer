@@ -648,9 +648,11 @@ public static class MoveScan
 // The enable parents (a reference some placed reference names in its XESP) that a script of the game's own turns off
 // somewhere: what src/game/DisabledParents.h holds (tools/questscan.ps1 -DisabledParents writes it). Read from the
 // official plugins found (Fallout4.esm and the add-ons) and their script archives. A script turns a reference off when
-// it calls Disable or DisableNoWait on it (TryToDisable or TryToDisableNoWait on an alias forced to it, DisableLinkChain
-// on what links to it): through a property that names it, an alias property whose alias is forced to it (or to an alias
-// of another quest that is), itself (a script attached to it, to its base or to an alias forced to it), its linked
+// it calls Disable or DisableNoWait on it (TryToDisable or TryToDisableNoWait on an alias forced to it, DisableAll on a
+// collection alias it fills, DisableLinkChain on what links to it): through a property that names it, an alias property
+// whose alias is forced to it (or to an alias of another quest that is) or filled with it as a forced location's
+// reference of a ref type (ALFA and ALRT: the location's LCSR and ACSR entries of that type, a collection alias every
+// one of them), itself (a script attached to it, to its base or to an alias forced to or filled with it), its linked
 // reference (by the keyword it is called with, where that is known), or by passing one of those to a function, a few
 // calls deep, that does. A property is read from every script attached to a record (VMAD): a quest's own, its stage
 // fragments' and its aliases', a reference's (with its base's), a base object's, a topic's, a scene's, a package's, a
@@ -658,7 +660,9 @@ public static class MoveScan
 // number or string property that no script ever sets goes the one way those values send it (DefaultEnableDisableTrigScript
 // with bEnableLinkedRef only enables), any other branch both ways. Over-counted on purpose: any function of a script,
 // whether a game ever calls it or not. What it does not see: a reference reached through a variable set at run time, a
-// struct's member, a collection alias, an alias filled by conditions rather than forced, a console command.
+// struct's member, a collection element reached by index (GetAt), an alias filled by conditions or from a location that
+// isn't forced, a console command. The table's header names the files it read (COVERED): a parent from another official
+// file is never switched on.
 public static class ParentScan
 {
     // the game's own plugins in load order, as Official.h names them, and the archive that holds each one's scripts
@@ -666,7 +670,7 @@ public static class ParentScan
     static string ScriptArchive(string a_esm) { return a_esm == "Fallout4.esm" ? "Fallout4 - Misc.ba2" : Path.GetFileNameWithoutExtension(a_esm) + " - Main.ba2"; }
 
     static readonly HashSet<string> PLACED = new HashSet<string> { "REFR", "ACHR", "PGRE", "PMIS", "PARW", "PBAR", "PBEA", "PCON", "PFLA", "PHZD" };
-    static readonly HashSet<string> SKIP = new HashSet<string> { "LAND", "NAVM", "NAVI", "WRLD", "CELL", "LCTN", "IMAD", "LSCR" };
+    static readonly HashSet<string> SKIP = new HashSet<string> { "LAND", "NAVM", "NAVI", "WRLD", "CELL", "IMAD", "LSCR" };
     static readonly HashSet<string> FRAGMENTS = new HashSet<string> { "QUST", "INFO", "PACK", "SCEN", "PERK", "TERM" };
 
     class Ref { public string Edid = ""; public uint Base; public uint Parent; public uint Flags; public bool Actor; public List<Tuple<uint, uint>> Links = new List<Tuple<uint, uint>>(); }  // links: keyword, reference
@@ -678,6 +682,12 @@ public static class ParentScan
     static readonly Dictionary<uint, Ref> refs = new Dictionary<uint, Ref>();
     static readonly Dictionary<uint, Dictionary<int, uint>> forced = new Dictionary<uint, Dictionary<int, uint>>();      // quest -> alias -> forced reference
     static readonly Dictionary<uint, Dictionary<int, Tuple<uint, int>>> external = new Dictionary<uint, Dictionary<int, Tuple<uint, int>>>();  // quest -> alias -> another quest's alias
+    // quest -> alias -> the location alias (ALFA) whose location's references of these ref types (ALRT) fill it
+    static readonly Dictionary<uint, Dictionary<int, Tuple<int, List<uint>>>> byRefType = new Dictionary<uint, Dictionary<int, Tuple<int, List<uint>>>>();
+    static readonly Dictionary<uint, Dictionary<int, uint>> forcedLocation = new Dictionary<uint, Dictionary<int, uint>>();  // quest -> location alias -> forced location (ALFL)
+    static readonly Dictionary<uint, List<Tuple<uint, uint>>> locationRefs = new Dictionary<uint, List<Tuple<uint, uint>>>();  // location -> its LCSR and ACSR: ref type, reference
+    const int LOCATION_REF = 16;  // the size of an LCSR or ACSR entry
+    static int locationRefOdd;    // LCSR or ACSR subrecords not a whole number of entries
     static readonly List<Attachment> attachments = new List<Attachment>();
     static readonly Dictionary<uint, Tuple<string, List<Attached>>> baseScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
     static readonly Dictionary<uint, Tuple<string, List<Attached>>> refScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
@@ -842,7 +852,7 @@ public static class ParentScan
             else { body = all; bo = pos + 24; bl = (int)size; }
             Ref r = null;
             if (placed) { r = new Ref { Flags = flags, Actor = type == "ACHR" }; refs[key] = r; refScripts.Remove(key); }  // a later file's override replaces it
-            int questAlias = -1;
+            int questAlias = -1, locationAlias = -1;
             string edid = "";
             int vmadAt = -1, vmadSize = 0;
             int big = -1;
@@ -862,8 +872,31 @@ public static class ParentScan
                     uint keyword = BitConverter.ToUInt32(body, d);
                     r.Links.Add(Tuple.Create(keyword == 0 ? 0u : Key(keyword, masters, a_file), Key(BitConverter.ToUInt32(body, d + 4), masters, a_file)));
                 }
-                else if (type == "QUST" && st == "ALST") questAlias = (int)BitConverter.ToUInt32(body, d);
-                else if (type == "QUST" && (st == "ALLS" || st == "ALED")) questAlias = -1;
+                else if (type == "QUST" && st == "ALST") { questAlias = (int)BitConverter.ToUInt32(body, d); locationAlias = -1; }
+                else if (type == "QUST" && st == "ALLS") { questAlias = -1; locationAlias = (int)BitConverter.ToUInt32(body, d); }
+                else if (type == "QUST" && st == "ALED") { questAlias = -1; locationAlias = -1; }
+                else if (type == "QUST" && st == "ALFL" && locationAlias >= 0)
+                {
+                    if (!forcedLocation.ContainsKey(key)) forcedLocation[key] = new Dictionary<int, uint>();
+                    forcedLocation[key][locationAlias] = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                }
+                else if (type == "QUST" && (st == "ALFA" || st == "ALRT") && questAlias >= 0)
+                {
+                    if (!byRefType.ContainsKey(key)) byRefType[key] = new Dictionary<int, Tuple<int, List<uint>>>();
+                    Tuple<int, List<uint>> fill;
+                    if (!byRefType[key].TryGetValue(questAlias, out fill)) byRefType[key][questAlias] = fill = Tuple.Create(-1, new List<uint>());
+                    if (st == "ALFA") byRefType[key][questAlias] = Tuple.Create((int)BitConverter.ToUInt32(body, d), fill.Item2);
+                    else fill.Item2.Add(Key(BitConverter.ToUInt32(body, d), masters, a_file));
+                }
+                else if (type == "LCTN" && (st == "LCSR" || st == "ACSR"))
+                {
+                    // each: ref type, reference, its cell or world, grid y and x (int16 each)
+                    if (ss % LOCATION_REF != 0) locationRefOdd++;
+                    List<Tuple<uint, uint>> list;
+                    if (!locationRefs.TryGetValue(key, out list)) locationRefs[key] = list = new List<Tuple<uint, uint>>();
+                    for (int k = 0; k + LOCATION_REF <= ss; k += LOCATION_REF)
+                        list.Add(Tuple.Create(Key(BitConverter.ToUInt32(body, d + k), masters, a_file), Key(BitConverter.ToUInt32(body, d + k + 4), masters, a_file)));
+                }
                 else if (type == "QUST" && st == "ALFR" && questAlias >= 0)
                 {
                     if (!forced.ContainsKey(key)) forced[key] = new Dictionary<int, uint>();
@@ -894,7 +927,7 @@ public static class ParentScan
     // the properties some script sets (propset, by name, on any script): never read as the constants they start as
     static readonly HashSet<string> setByAnyone = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    static readonly HashSet<string> OFF = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Disable", "DisableNoWait", "TryToDisable", "TryToDisableNoWait" };
+    static readonly HashSet<string> OFF = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Disable", "DisableNoWait", "TryToDisable", "TryToDisableNoWait", "DisableAll" };
     static readonly HashSet<string> GETREF = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "GetReference", "GetRef", "GetActorRef", "GetActorReference" };
 
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -1090,13 +1123,20 @@ public static class ParentScan
         return changed;
     }
 
-    static uint Forced(uint a_quest, int a_alias, int a_depth)
+    // The references an alias is known to hold: the one it is forced to (ALFR, or another quest's alias it is: ALEQ and
+    // ALEA), or a forced location's references of its ref types (ALFA, ALRT; a collection alias holds every one).
+    static List<uint> Fills(uint a_quest, int a_alias, int a_depth)
     {
+        var list = new List<uint>();
         Dictionary<int, uint> f; uint r;
-        if (forced.TryGetValue(a_quest, out f) && f.TryGetValue(a_alias, out r)) return r;
+        if (forced.TryGetValue(a_quest, out f) && f.TryGetValue(a_alias, out r)) { list.Add(r); return list; }
         Dictionary<int, Tuple<uint, int>> e; Tuple<uint, int> t;
-        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Forced(t.Item1, t.Item2, a_depth + 1);
-        return 0;
+        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Fills(t.Item1, t.Item2, a_depth + 1);
+        Dictionary<int, Tuple<int, List<uint>>> b; Tuple<int, List<uint>> fill; Dictionary<int, uint> l; uint location; List<Tuple<uint, uint>> entries;
+        if (byRefType.TryGetValue(a_quest, out b) && b.TryGetValue(a_alias, out fill) && fill.Item1 >= 0 && fill.Item2.Count > 0 &&
+            forcedLocation.TryGetValue(a_quest, out l) && l.TryGetValue(fill.Item1, out location) && locationRefs.TryGetValue(location, out entries))
+            foreach (var x in entries) if (fill.Item2.Contains(x.Item1) && !list.Contains(x.Item2)) list.Add(x.Item2);
+        return list;
     }
 
     // What a script turns off with the property values it has (the bool, number and string ones no script sets), cached.
@@ -1216,7 +1256,7 @@ public static class ParentScan
         foreach (var a in attachments)
         {
             if (!scripts.ContainsKey(a.Entry.Script)) continue;
-            uint self = a.Self != 0 ? a.Self : a.SelfAlias >= 0 ? Forced(a.SelfQuest, a.SelfAlias, 0) : 0;
+            var self = a.Self != 0 ? new List<uint> { a.Self } : a.SelfAlias >= 0 ? Fills(a.SelfQuest, a.SelfAlias, 0) : new List<uint>();
             var sink = Judge(a.Entry.Script, a.Entry.Props);
             judgedCount++;
             if (sink.Off.Count == 0) continue;
@@ -1224,10 +1264,10 @@ public static class ParentScan
             // what an origin ("S", "P<name>") names here
             Func<string, List<uint>> named = o =>
             {
-                if (o == "S") return self != 0 ? new List<uint> { self } : new List<uint>();
+                if (o == "S") return self;
                 var p = o.StartsWith("P") ? entry.Props.FirstOrDefault(x => Is(x.Name, o.Substring(1))) : null;
                 if (p == null) return new List<uint>();
-                return p.Forms.Select((form, k) => p.Aliases[k] >= 0 ? Forced(form, p.Aliases[k], 0) : form).ToList();
+                return p.Forms.SelectMany((form, k) => p.Aliases[k] >= 0 ? Fills(form, p.Aliases[k], 0) : new List<uint> { form }).ToList();
             };
             // what links from a reference by a keyword ("0" none, "P<name>" a keyword property's, "*" any)
             Func<uint, string, List<uint>> links = (id, kw) =>
@@ -1267,6 +1307,7 @@ public static class ParentScan
         var table = why.Keys.Where(id => children.ContainsKey(id)).OrderBy(id => id).ToList();
         int offInPlugin = table.Count(id => refs.ContainsKey(id) && (refs[id].Flags & 0x800) != 0);
         report.AppendLine(string.Format("# {0} references; {1} enable parents; {2} turned off by a script, {3} of them enable parents ({4} off in their plugin)", refs.Count, children.Count, why.Count, table.Count, offInPlugin));
+        report.AppendLine(string.Format("# {0} location references of a ref type read ({1} subrecords not whole entries)", locationRefs.Values.Sum(x => x.Count), locationRefOdd));
         report.AppendLine(string.Format("# {0} script attachments judged ({1} sets of property values); {2} VMADs read, {3} not read to their end", judgedCount, judged.Count, vmadRead, vmadErrors));
         foreach (var e in vmadErrorWhere) report.AppendLine("#   " + e);
 
@@ -1287,12 +1328,16 @@ public static class ParentScan
         h.AppendLine("// stage 10 on, its stage 200 and Inst307Fight's stage 10 off) is off in a game whose story is past it, and stays off");
         h.AppendLine("// there whatever a friend's game runs (EnableChain::Verdict::kStoryTurnsOff). Gun Run's marker (000C3D6F,");
         h.AppendLine("// MirelurkQuestEnabler) is only ever turned on, so it is not here.");
-        h.AppendLine("// Scanned: " + string.Join(", ", scanned.ToArray()) + " (the add-ons not installed where it ran are not).");
+        h.AppendLine("// Scanned (COVERED): " + string.Join(", ", scanned.ToArray()) + ". A parent from an official file it");
+        h.AppendLine("// didn't read (an add-on not installed where it ran) is never switched on (EnableChain::Verdict::kNotCovered).");
         h.AppendLine(string.Format("// Of their {0} enable parents, {1} are here, {2} of them off in their plugin.", children.Count, table.Count, offInPlugin));
         h.AppendLine("namespace DisabledParents");
         h.AppendLine("{");
         h.AppendLine("\t// The game's own plugins, as Official.h names them, in their usual load order; an entry's file is its index here.");
         h.AppendLine("\tinline constexpr std::array<std::string_view, " + FILES.Length + "> FILES{ " + string.Join(", ", FILES.Select(f => "\"" + f + "\"").ToArray()) + " };");
+        h.AppendLine();
+        h.AppendLine("\t// The plugins the scan read, with their scripts: the table says nothing of any other's references.");
+        h.AppendLine("\tinline constexpr std::array<std::string_view, " + scanned.Count + "> COVERED{ " + string.Join(", ", scanned.Select(f => "\"" + f + "\"").ToArray()) + " };");
         h.AppendLine();
         h.AppendLine("\tstruct Entry");
         h.AppendLine("\t{");
@@ -1324,6 +1369,13 @@ public static class ParentScan
         h.AppendLine("\t\t\t}");
         h.AppendLine("\t\t}");
         h.AppendLine("\t\treturn FILES.size();");
+        h.AppendLine("\t}");
+        h.AppendLine();
+        h.AppendLine("\t// Whether the scan read the plugin a_file (any case), its scripts with it (COVERED).");
+        h.AppendLine("\tconstexpr bool Covers(std::string_view a_file)");
+        h.AppendLine("\t{");
+        h.AppendLine("\t\tconst auto file = FileIndex(a_file);");
+        h.AppendLine("\t\treturn file < FILES.size() && std::ranges::find(COVERED, FILES[file]) != COVERED.end();");
         h.AppendLine("\t}");
         h.AppendLine();
         h.AppendLine("\t// Whether a script of the game's own turns off the reference a_id (its form id; its load order's index is ignored)");

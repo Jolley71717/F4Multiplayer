@@ -103,6 +103,24 @@ namespace EnableParents
 		return file && DisabledParents::Contains(file->GetFilename(), a_ref->GetFormID());
 	}
 
+	// Whether a plugin that makes or changes a_ref (official, as Official::IsOfficialThroughout has checked) is one
+	// DisabledParents.h wasn't made from (DisabledParents::COVERED: the workshop add-ons weren't installed where it was):
+	// the table says nothing of what that file's scripts turn off.
+	inline bool NotCovered(const RE::TESObjectREFR* a_ref)
+	{
+		const auto files = a_ref ? a_ref->sourceFiles.array : nullptr;
+		if (!files) {
+			return true;
+		}
+		for (std::uint32_t i = 0; i < files->size(); ++i) {
+			const auto file = (*files)[i];
+			if (!file || !DisabledParents::Covers(file->GetFilename())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// a_ref's enable parent (null if none, none found, or deleted) and whether the link is the opposite way.
 	inline RE::NiPointer<RE::TESObjectREFR> ParentOf(RE::TESObjectREFR* a_ref, bool& a_opposite)
 	{
@@ -170,6 +188,7 @@ namespace EnableParents
 				link.parentOff = parent->IsDisabled();
 				// The child's record names the parent (XESP): the link is the game's own if no plugin changes the child.
 				link.official = Official::IsOfficialThroughout(at) && Official::IsOfficialThroughout(parent.get());
+				link.notCovered = link.official && NotCovered(parent.get());
 				link.storyTurnsOff = link.official && StoryTurnsOff(parent.get());
 				link.plugin = PluginStateOf(link.parent);
 				link.changeFlags = ChangeFlags(parent.get());

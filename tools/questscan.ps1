@@ -9,7 +9,7 @@
 # their own fragment, a script it calls or a stage of any quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's
 # memories), what src/game/StageRules.h's kMoves is checked against. With -DisabledParents: writes
 # src/game/DisabledParents.h (or -Out), the enable parents that a script of the game's own turns off somewhere, read from
-# Fallout4.esm and every official add-on installed and their script archives (ParentScan in tools/questscan.cs says
+# Fallout4.esm and every official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says
 # how), and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows
 # PowerShell 5.1 compiles the reader (tools/questscan.cs) on the fly.
 param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$DisabledParents,

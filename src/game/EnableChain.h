@@ -43,8 +43,9 @@ namespace EnableChain
 	// Ours may be off on purpose: a plugin only our game has hides a vanilla NPC by giving it an enable parent that stays
 	// off (sessions may have different mod lists), or our story is ahead and a quest of ours switched the scene's marker
 	// off again. So a parent is switched on only if the link and the parent are the game's own (official: Fallout4.esm and
-	// its add-ons, no plugin overriding either), no script of the game's own ever turns it off (storyTurnsOff), and the
-	// top is off as its plugin has it (AsItsPluginLeftIt).
+	// its add-ons, no plugin overriding either), from a file the table of parents was made from (notCovered: the workshop
+	// add-ons weren't scanned), no script of the game's own ever turns it off (storyTurnsOff), and the top is off as its
+	// plugin has it (AsItsPluginLeftIt).
 	enum class PluginState : std::uint8_t
 	{
 		kUnknown,  // not loaded with the game's data (a temporary reference, loaded with its cell): its plugin's state isn't known
@@ -59,6 +60,7 @@ namespace EnableChain
 		bool          parentOff = false;               // the parent is switched off here
 		bool          official = false;                // the child's record that names the parent, and the parent's, are the game's own files'
 		bool          storyTurnsOff = false;           // a script of the game's own turns the parent off somewhere (DisabledParents.h)
+		bool          notCovered = false;              // the parent is from an official file DisabledParents.h wasn't made from
 		PluginState   plugin = PluginState::kUnknown;  // the parent's state as its plugin has it
 		std::uint32_t changeFlags = CHANGES_UNKNOWN;   // what our save records as changed on the parent (CHANGE_FORM_FLAGS ...)
 		bool          parentDead = false;              // the parent is an actor, dead here: it would come back as a corpse with its children
@@ -100,6 +102,7 @@ namespace EnableChain
 		kParentDead,   // a parent is a dead actor; nothing done
 		kTooMany,      // the chain's parents switch more than MAX_CHILDREN references; nothing done
 		kStoryTurnsOff,  // a script of the game's own turns a parent off again somewhere (a quest's later stage): left to our own story; nothing done
+		kNotCovered,     // a parent is from an official file the table of the game's scripts (DisabledParents.h) doesn't cover; nothing done
 	};
 
 	struct Plan
@@ -129,6 +132,7 @@ namespace EnableChain
 			return { Verdict::kTooDeep, 0 };
 		}
 		std::uint32_t children = 0;
+		const Link*   story = nullptr;  // the first link the table refuses (kNotCovered, kStoryTurnsOff): told once the top is known off
 		for (const auto& link : a_links) {
 			if (link.parent == 0) {
 				return { Verdict::kNoParent, 0 };
@@ -143,9 +147,10 @@ namespace EnableChain
 				return { Verdict::kUnofficial, link.parent };
 			}
 			// A marker its plugin has off that a quest turns on at one stage and off at a later one (the airport's
-			// Brotherhood, BoSAirportGuards): off here may be our story past it, the friend's game only behind.
-			if (link.storyTurnsOff) {
-				return { Verdict::kStoryTurnsOff, link.parent };
+			// Brotherhood, BoSAirportGuards): off here may be our story past it, the friend's game only behind. One from
+			// an official file the table wasn't made from may be one too.
+			if (!story && (link.notCovered || link.storyTurnsOff)) {
+				story = &link;
 			}
 			children += link.children;
 		}
@@ -154,6 +159,9 @@ namespace EnableChain
 		const auto  at = [&](Verdict a_verdict) { return Plan{ a_verdict, top.parent, children, true, top.changeFlags, top.plugin }; };
 		if (!top.parentOff) {
 			return at(Verdict::kParentOn);
+		}
+		if (story) {
+			return { story->notCovered ? Verdict::kNotCovered : Verdict::kStoryTurnsOff, story->parent };
 		}
 		if (!AsItsPluginLeftIt(top)) {
 			return at(Verdict::kChanged);
@@ -197,7 +205,9 @@ namespace EnableChain
 		case Verdict::kTooMany:
 			return "nothing: its enable parent switches too many references";
 		case Verdict::kStoryTurnsOff:
-			return "nothing: a quest of the game turns its enable parent off again later; left to our own story";
+			return "nothing: the game's scripts turn its enable parent off again later; left to our own story";
+		case Verdict::kNotCovered:
+			return "nothing: its enable parent comes from an official file this build's table doesn't cover";
 		}
 		return "?";
 	}
