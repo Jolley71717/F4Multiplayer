@@ -1597,10 +1597,9 @@ namespace NpcSync
 				++switchedOnParents;
 			}
 			if (a_verdict == RetryBudget::Verdict::kFirst) {
-				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running; switched on: {} {:08X}", a_state.refId,
-					EnableChain::VerdictName(plan.verdict), plan.target);
+				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running; switched on: {}", a_state.refId, EnableParents::Describe(plan));
 			} else if (a_verdict == RetryBudget::Verdict::kLast) {
-				REX::INFO("NpcSync: switching {:08X} on for the last time ({} {:08X}); after {} tries it stays off here", a_state.refId, EnableChain::VerdictName(plan.verdict), plan.target,
+				REX::INFO("NpcSync: switching {:08X} on for the last time (switched on: {}); after {} tries it stays off here", a_state.refId, EnableParents::Describe(plan),
 					RetryBudget::TRIES);
 			}
 			if (EnableChain::SwitchesOn(plan)) {

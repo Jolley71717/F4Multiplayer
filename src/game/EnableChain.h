@@ -23,12 +23,27 @@ namespace EnableChain
 	// How far up a chain is followed (a parent's parent ...). Vanilla chains are one or two links long.
 	constexpr std::size_t MAX_DEPTH = 8;
 
+	// How many references a chain's parents may switch between them (ExtraEnableStateChildren) for the top to be switched
+	// on: Gun Run's marker switches 48 in Fallout4.esm. One that switches a whole scene or settlement is left alone.
+	constexpr std::uint32_t MAX_CHILDREN = 64;
+
 	// One link up a reference's chain, nearest first: its enable parent as the engine finds it here.
+	//
+	// The friend's NPC running proves only that the friend's chain is on, not that ours is off because our game is behind.
+	// Ours may be off on purpose: a plugin only our game has hides a vanilla NPC by giving it an enable parent that stays
+	// off (sessions may have different mod lists), or our story is ahead and a quest of ours switched the scene's marker
+	// off again. So a parent is switched on only if the link and the parent are the game's own (official: Fallout4.esm and
+	// its add-ons, no plugin overriding either), and the top still has the state its plugin gave it: our save never
+	// changed its flags (unchanged).
 	struct Link
 	{
-		std::uint32_t parent = 0;         // the parent's form id; 0: the engine has none it can find here
-		bool          opposite = false;   // OPPOSITE: switching the parent on would switch the child off
-		bool          parentOff = false;  // the parent is switched off here
+		std::uint32_t parent = 0;           // the parent's form id; 0: the engine has none it can find here (or it is deleted)
+		bool          opposite = false;     // OPPOSITE: switching the parent on would switch the child off
+		bool          parentOff = false;    // the parent is switched off here
+		bool          official = false;     // the child's record that names the parent, and the parent's, are the game's own files'
+		bool          unchanged = false;    // our save has no change of the parent's flags (its enable state is its plugin's)
+		bool          parentDead = false;   // the parent is an actor, dead here: it would come back as a corpse with its children
+		std::uint32_t children = 0;         // the references the parent switches here (ExtraEnableStateChildren)
 	};
 
 	enum class Verdict
@@ -40,12 +55,17 @@ namespace EnableChain
 		kNoParent,     // the engine names a parent it cannot find here; nothing done
 		kTooDeep,      // a chain longer than MAX_DEPTH; nothing done
 		kOwnStory,     // everyone on their own story: a parent may switch on characters of ours too; nothing done
+		kUnofficial,   // a link or a parent from a plugin outside the game's own files, or overridden by one; nothing done
+		kChanged,      // our save changed the top's flags: our game switched it off (or on and off again); nothing done
+		kParentDead,   // a parent is a dead actor; nothing done
+		kTooMany,      // the chain's parents switch more than MAX_CHILDREN references; nothing done
 	};
 
 	struct Plan
 	{
 		Verdict       verdict = Verdict::kSelf;
-		std::uint32_t target = 0;  // what is switched on (kSelf, kParent), else the link that stopped it, or 0
+		std::uint32_t target = 0;    // what is switched on (kSelf, kParent), else the link that stopped it, or 0
+		std::uint32_t children = 0;  // the references the chain's parents switch here (when the walk got to the top)
 	};
 
 	// a_self: the reference; a_links: its chain upward, nearest first, ending with a parent that has none of its own (or
@@ -64,6 +84,7 @@ namespace EnableChain
 		if (a_links.size() > MAX_DEPTH) {
 			return { Verdict::kTooDeep, 0 };
 		}
+		std::uint32_t children = 0;
 		for (const auto& link : a_links) {
 			if (link.parent == 0) {
 				return { Verdict::kNoParent, 0 };
@@ -71,9 +92,26 @@ namespace EnableChain
 			if (link.opposite) {
 				return { Verdict::kOpposite, link.parent };
 			}
+			if (link.parentDead) {
+				return { Verdict::kParentDead, link.parent };
+			}
+			if (!link.official) {
+				return { Verdict::kUnofficial, link.parent };
+			}
+			children += link.children;
 		}
+		// Only the top is read for on or off: the links below it are on or off as it is.
 		const auto& top = a_links.back();
-		return { top.parentOff ? Verdict::kParent : Verdict::kParentOn, top.parent };
+		if (!top.parentOff) {
+			return { Verdict::kParentOn, top.parent, children };
+		}
+		if (!top.unchanged) {
+			return { Verdict::kChanged, top.parent, children };
+		}
+		if (children > MAX_CHILDREN) {
+			return { Verdict::kTooMany, top.parent, children };
+		}
+		return { Verdict::kParent, top.parent, children };
 	}
 
 	// Whether the plan switches something on.
@@ -100,6 +138,14 @@ namespace EnableChain
 			return "nothing: its chain of enable parents is too long";
 		case Verdict::kOwnStory:
 			return "nothing: an enable parent switches it, and everyone is on their own story";
+		case Verdict::kUnofficial:
+			return "nothing: its enable parent, or the link to it, is a plugin's, not the game's own";
+		case Verdict::kChanged:
+			return "nothing: our game changed its enable parent's state (our story keeps it off)";
+		case Verdict::kParentDead:
+			return "nothing: its enable parent is dead here";
+		case Verdict::kTooMany:
+			return "nothing: its enable parent switches too many references";
 		}
 		return "?";
 	}

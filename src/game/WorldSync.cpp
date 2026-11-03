@@ -406,9 +406,11 @@ namespace WorldSync
 					if (EnableChain::SwitchesOn(plan)) {
 						NpcSync::CountCommands(1);
 						++switchedOnToKill;
+						REX::INFO("WorldSync: {:08X} is off here and died in player {}'s game: switched on to kill it: {}", a_refId, a_death.reporter, EnableParents::Describe(plan));
+					} else {
+						REX::INFO("WorldSync: {:08X} is off here and died in player {}'s game; left off: {}", a_refId, a_death.reporter,
+							EnableParents::Describe(plan));
 					}
-					REX::INFO("WorldSync: switching {:08X} on to kill it: it is off here, and died in player {}'s game; switched on: {} {:08X}", a_refId, a_death.reporter,
-						EnableChain::VerdictName(plan.verdict), plan.target);
 				}
 				return false;  // killed once it has loaded
 			}
