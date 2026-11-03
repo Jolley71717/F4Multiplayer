@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T00:10:21+00:00",
+ "updated": "2026-11-03T01:17:17+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -498,7 +498,7 @@
    "title": "Dropping an item that was picked up from the world is never shared",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 273
   },
