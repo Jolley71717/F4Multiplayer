@@ -176,3 +176,24 @@ TEST("SubtitleTime: a line of only spaces is blank, with nothing to show")
 	CHECK(!SubtitleTime::Blank(" Hm "));
 	CHECK(!SubtitleTime::Blank("\xC3\xA9"));  // é
 }
+
+TEST("SubtitleTime: a voice file's length is read from its start alone (HeaderBytes)")
+{
+	// A 214 s song: 44.1 kHz mono 16-bit once decoded, its audio several MB. Only the lip sync and the chunks before
+	// the audio are read, and the length is the same as from the whole file.
+	const auto decoded = 44100u * 2u * 214u;
+	const auto audio = Xwma(decoded, 3u << 20);
+	const auto lip = Bytes(5001, 0x22);
+	const auto whole = Fuz(lip, audio);
+	const auto want = SubtitleTime::HeaderBytes(std::span(whole).first(SubtitleTime::HEADER_PROBE));
+	CHECK(want == SubtitleTime::HEADER_PROBE + lip.size() + SubtitleTime::HEADER_AUDIO);
+	CHECK(want < whole.size());
+	CHECK(Near(SubtitleTime::VoiceSeconds(std::span(whole).first(want)), 214.0));
+	CHECK(Near(SubtitleTime::VoiceSeconds(whole), 214.0));
+
+	// A bare .xwm or .wav: its first HEADER_AUDIO bytes; a start too short to tell is read as one.
+	const auto bare = Xwma(decoded, 3u << 20);
+	CHECK(SubtitleTime::HeaderBytes(std::span(bare).first(SubtitleTime::HEADER_PROBE)) == SubtitleTime::HEADER_AUDIO);
+	CHECK(Near(SubtitleTime::VoiceSeconds(std::span(bare).first(SubtitleTime::HEADER_AUDIO)), 214.0));
+	CHECK(SubtitleTime::HeaderBytes({}) == SubtitleTime::HEADER_AUDIO);
+}

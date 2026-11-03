@@ -2242,13 +2242,17 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   audio manager's file source skips a .fuz's `FUZE` header and lip data itself. What the engine has and a
   plain sound does not is an end: it sets the speaker's voice timer from the recording's length
   (`GetDuration`), and the line ends with it. So each friend's line's sound has a hard end
-  (src/game/LineSounds.h): the recording's length read from the file (SubtitleTime) plus 1 s, at least
-  2.5 s and at most 30 s, or 15 s when the length can't be read; at most 4 play at once (a fifth line
+  (src/game/LineSounds.h): the recording's length plus 1 s, at least 2.5 s and at most 240 s (the game's
+  longest recordings are Magnolia's songs, to 214 s; companions have lines of 35-38 s), or 15 s when the
+  length can't be read. The length is read from the start of the file that plays (the .fuz, or the .wav
+  or .xwm the audio manager took instead): its lip sync and the RIFF chunks before the audio
+  (`SubtitleTime::HeaderBytes`), not the recording. At most 4 play at once (a fifth line
   ends the oldest); a speaker's next line ends the one before. Before this, a sound that did not end by
   itself was only ended by that speaker's next line, and one that the audio manager stopped calling
   playing was forgotten with no way to end it: a player heard a loud engine-like noise that grew with
-  every friend's line. A sound still playing at its hard end, or crowded out, is logged once
-  ("Conversations: the sound of a line from player N ... ended") and counted in net status
+  every friend's line. A sound still playing at its hard end, or crowded out, is logged (at most one line
+  in 30 s, with how many went unlogged: "Conversations: the sound of a line from player N ... ended") and
+  counted in net status
   (`sounds=`, `cutLong=`, `cutCrowded=`). Nothing goes through the dialogue system (no Say, topic, scene,
   conversation or lip sync), so nobody can be held in one. Until 0.8.6 an NPC's line was the console's
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in

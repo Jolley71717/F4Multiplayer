@@ -58,6 +58,8 @@ namespace Conversations
 		std::uint32_t                               dropped = 0;    // ... gone from the subtitle list at once, and shown as a notice
 		std::uint32_t                               cutLong = 0;     // friends' lines' sounds still sounding at their hard end, ended then
 		std::uint32_t                               cutCrowded = 0;  // ... still sounding when LineSounds::MAX_PLAYING newer ones came
+		std::uint32_t                               cutUnlogged = 0;  // ... of them, not logged (CUT_LOG_EVERY) since the last cut logged
+		std::optional<Clock::time_point>            cutLoggedAt;      // when a cut was last logged
 
 		// The sounds of friends' lines, keyed like Shown (a speaker says one line at a time), each with a hard end.
 		using Sounds = LineSounds<RE::BSSoundHandle>;
@@ -90,6 +92,11 @@ namespace Conversations
 
 		// The largest part of a voice file read for its length (the audio's header and packet table come first).
 		constexpr std::uint64_t MAX_VOICE_READ = 4u << 20;
+
+		// A line's sound cut while it still played is logged at most this often (net status counts them all).
+		constexpr auto CUT_LOG_EVERY = 30s;
+		// The player ID the voiceline dev command plays its recordings under (PlayLine).
+		constexpr std::uint32_t DEV_PLAYER = 0xFFFFFFFF;
 
 		struct Subtitle
 		{
@@ -370,24 +377,76 @@ namespace Conversations
 			return { info, {} };
 		}
 
-		// A sound for a voice file. The archives hold .fuz files (the recording with its lip sync); should
-		// the audio manager want one of the other names a recording can go by, it is asked for those too.
-		RE::BSSoundHandle SoundFor(const std::string& a_path, std::uint32_t a_flags, std::uint8_t a_priority)
+		// The length of a voice file's recording, read from the file (loose or in an archive): only its start, the
+		// lip sync and the audio's header and packet table (SubtitleTime::HeaderBytes), not the recording itself.
+		std::optional<double> VoiceSecondsOf(const std::string& a_path)
+		{
+			RE::BSTSmartPointer<RE::BSResource::Stream> stream;
+			if (a_path.empty() || RE::BSResource::GetOrCreateStream(a_path.c_str(), stream) != RE::BSResource::ErrorCode::kNone || !stream) {
+				return std::nullopt;
+			}
+			if (stream->DoOpen() != RE::BSResource::ErrorCode::kNone) {
+				return std::nullopt;
+			}
+			const std::uint64_t       size = stream->totalSize;
+			std::vector<std::uint8_t> bytes;
+			std::uint64_t             have = 0;
+			const auto                readTo = [&](std::uint64_t a_want) {
+				   a_want = std::min<std::uint64_t>(a_want, MAX_VOICE_READ);
+				   if (size != 0) {
+					   a_want = std::min(a_want, size);
+				   }
+				   if (a_want <= have) {
+					   return;
+				   }
+				   bytes.resize(static_cast<std::size_t>(a_want));
+				   while (have < a_want) {
+					   std::uint64_t read = 0;
+					   if (stream->DoRead(bytes.data() + have, a_want - have, read) != RE::BSResource::ErrorCode::kNone || read == 0) {
+						   break;
+					   }
+					   have += read;
+				   }
+				   bytes.resize(static_cast<std::size_t>(have));
+			};
+			readTo(SubtitleTime::HEADER_PROBE);
+			readTo(SubtitleTime::HeaderBytes(bytes));
+			stream->DoClose();
+			return SubtitleTime::VoiceSeconds(bytes);
+		}
+
+		struct Sound
 		{
 			RE::BSSoundHandle handle;
-			const auto        audio = RE::BSAudioManager::GetSingleton();
+			std::string       path;  // the file it plays
+		};
+
+		// A sound for a voice file. The archives hold .fuz files (the recording with its lip sync); should
+		// the audio manager want one of the other names a recording can go by, it is asked for those too.
+		Sound SoundFor(const std::string& a_path, std::uint32_t a_flags, std::uint8_t a_priority)
+		{
+			Sound      sound;
+			const auto audio = RE::BSAudioManager::GetSingleton();
 			if (!audio || a_path.size() < 4) {
-				return handle;
+				return sound;
 			}
 			const auto stem = a_path.substr(0, a_path.size() - 3);
 			for (const auto extension : { "fuz"sv, "wav"sv, "xwm"sv }) {
-				handle = {};
-				audio->GetSoundHandleByFile(handle, RE::BSResource::ID((stem + std::string(extension)).c_str()), a_flags, a_priority);
-				if (handle.IsValid()) {
+				sound.handle = {};
+				sound.path = stem + std::string(extension);
+				audio->GetSoundHandleByFile(sound.handle, RE::BSResource::ID(sound.path.c_str()), a_flags, a_priority);
+				if (sound.handle.IsValid()) {
 					break;
 				}
 			}
-			return handle;
+			return sound;
+		}
+
+		// Who said a line, for the log: "player N", or the voiceline dev command.
+		std::string WhoSaid(std::uint64_t a_key)
+		{
+			const auto player = static_cast<std::uint32_t>(a_key >> 32);
+			return player == DEV_PLAYER ? std::string("the voiceline command") : std::format("player {}", player);
 		}
 
 		// Ends a friend's line's sound (LineSounds): faded out and let go, whether the audio manager still says it
@@ -400,31 +459,37 @@ namespace Conversations
 			if (!sounding || a_why == Sounds::Why::kNext) {
 				return;
 			}
-			const auto after = std::chrono::duration<double>(Clock::now() - a_entry.started).count();
-			const auto player = static_cast<std::uint32_t>(a_entry.key >> 32);
+			const bool tooLong = a_why == Sounds::Why::kTooLong;
+			++(tooLong ? cutLong : cutCrowded);
+			const auto now = Clock::now();
+			if (cutLoggedAt && now - *cutLoggedAt < CUT_LOG_EVERY) {
+				++cutUnlogged;
+				return;
+			}
+			const auto after = std::chrono::duration<double>(now - a_entry.started).count();
 			const auto speaker = static_cast<std::uint32_t>(a_entry.key);
 			const auto length = a_entry.seconds ? std::format("{:.1f} s", *a_entry.seconds) : std::string("unknown");
-			if (a_why == Sounds::Why::kTooLong) {
-				++cutLong;
-				REX::INFO("Conversations: the sound of a line from player {} (speaker {:08X}) still played {:.1f} s after it started (its recording: {}): ended ({} so far)",
-					player, speaker, after, length, cutLong);
-			} else {
-				++cutCrowded;
-				REX::INFO("Conversations: the sound of a line from player {} (speaker {:08X}) still played {:.1f} s after it started (its recording: {}) with {} newer ones: ended ({} so far)",
-					player, speaker, after, length, Sounds::MAX_PLAYING, cutCrowded);
-			}
+			const auto why = tooLong ? std::string("at its end") : std::format("with {} newer ones", Sounds::MAX_PLAYING);
+			const auto unlogged = cutUnlogged != 0 ? std::format("; {} more cut since the last such line", cutUnlogged) : std::string();
+			REX::INFO("Conversations: the sound of a line from {} (speaker {:08X}) still played {:.1f} s after it started (its recording: {}) {}: ended ({} at the end, {} crowded out so far{})",
+				WhoSaid(a_entry.key), speaker, after, length, why, cutLong, cutCrowded, unlogged);
+			cutLoggedAt = now;
+			cutUnlogged = 0;
 		}
 
 		// Plays a voice file at the actor and follows them while it lasts: a sound like any other, so
 		// nothing of the dialogue system (no conversation, Say, scene or lip sync) is involved. It is ended
-		// a little after a_seconds (the recording's length, read from the file) at the latest (LineSounds::CapFor).
+		// a little after its recording's length at the latest (LineSounds::CapFor): a_seconds, a_path's length,
+		// or, should another name of the recording be what plays, that file's.
 		bool Play(RE::Actor* a_actor, const std::string& a_path, std::uint64_t a_key, std::optional<double> a_seconds, std::uint32_t a_flags = VOICE_FLAGS,
 			std::uint8_t a_priority = VOICE_PRIORITY)
 		{
-			auto handle = SoundFor(a_path, a_flags, a_priority);
+			auto sound = SoundFor(a_path, a_flags, a_priority);
+			auto& handle = sound.handle;
 			if (!handle.IsValid()) {
 				return false;
 			}
+			const auto seconds = sound.path == a_path ? a_seconds : VoiceSecondsOf(sound.path);
 			const auto defaults = DefaultObjects();
 			if (const auto model = defaults ? defaults->GetDefaultObject<RE::BGSSoundOutput>(RE::DEFAULT_OBJECT::kDialogueOutputModel3D) : nullptr) {
 				handle.SetOutputModel(model);  // how far an NPC's own lines carry, and how they fade
@@ -439,7 +504,7 @@ namespace Conversations
 			}
 			// A speaker says one line at a time: the one before, if still playing, is cut short. Every sound
 			// ends by its hard end at the latest, and only a few play at once (LineSounds).
-			lineSounds.Start(a_key, handle, Clock::now(), a_seconds, EndSound);
+			lineSounds.Start(a_key, handle, Clock::now(), seconds, EndSound);
 			return true;
 		}
 
@@ -464,31 +529,6 @@ namespace Conversations
 			}
 			++voiced;
 			REX::DEBUG("Conversations: {:08X} says '{}'", a_actor->GetFormID(), file.path);
-		}
-
-		// The length of a voice file's recording, read from the file (loose or in an archive).
-		std::optional<double> VoiceSecondsOf(const std::string& a_path)
-		{
-			RE::BSTSmartPointer<RE::BSResource::Stream> stream;
-			if (a_path.empty() || RE::BSResource::GetOrCreateStream(a_path.c_str(), stream) != RE::BSResource::ErrorCode::kNone || !stream) {
-				return std::nullopt;
-			}
-			if (stream->DoOpen() != RE::BSResource::ErrorCode::kNone) {
-				return std::nullopt;
-			}
-			const std::uint64_t       want = stream->totalSize != 0 ? std::min<std::uint64_t>(stream->totalSize, MAX_VOICE_READ) : (256u << 10);
-			std::vector<std::uint8_t> bytes(static_cast<std::size_t>(want));
-			std::uint64_t             have = 0;
-			while (have < want) {
-				std::uint64_t read = 0;
-				if (stream->DoRead(bytes.data() + have, want - have, read) != RE::BSResource::ErrorCode::kNone || read == 0) {
-					break;
-				}
-				have += read;
-			}
-			stream->DoClose();
-			bytes.resize(static_cast<std::size_t>(have));
-			return SubtitleTime::VoiceSeconds(bytes);
 		}
 
 		// The game's bGeneralSubtitles (Interface): whether lines said near the player, not to them, are shown.
@@ -723,6 +763,8 @@ namespace Conversations
 		outgoing.clear();
 		shown.clear();
 		lineSounds.EndAll([](Sounds::Entry& a_entry) { a_entry.handle.FadeOutAndRelease(VOICE_CUT_MS); });
+		cutLoggedAt.reset();
+		cutUnlogged = 0;
 	}
 
 	std::string Describe()
@@ -759,7 +801,7 @@ namespace Conversations
 				Official::IsOfficialForm(RE::TESForm::GetFormByID<RE::TESTopicInfo>(a_info)), a_voiceType,
 				Official::IsOfficialForm(RE::TESForm::GetFormByID<RE::BGSVoiceType>(a_voiceType)));
 		}
-		const bool played = Play(a_actor, file.path, (static_cast<std::uint64_t>(0xFFFFFFFF) << 32) | a_actor->GetFormID(), VoiceSecondsOf(file.path), a_flags, a_priority);
+		const bool played = Play(a_actor, file.path, (static_cast<std::uint64_t>(DEV_PLAYER) << 32) | a_actor->GetFormID(), VoiceSecondsOf(file.path), a_flags, a_priority);
 		return std::format("file='{}' played={}", file.path, played);
 	}
 }

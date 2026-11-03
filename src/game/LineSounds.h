@@ -25,7 +25,8 @@ public:
 
 	static constexpr auto TAIL = std::chrono::milliseconds(1000);      // past the recording's own length
 	static constexpr auto SHORTEST = std::chrono::milliseconds(2500);  // a recording shorter than this still gets it
-	static constexpr auto LONGEST = std::chrono::seconds(30);          // a recording that claims more is not believed
+	static constexpr auto LONGEST = std::chrono::seconds(240);         // a recording that claims more is not believed (the
+	                                                                   // longest the game has: Magnolia's songs, to 214 s)
 	static constexpr auto UNKNOWN = std::chrono::seconds(15);          // a recording whose length we could not read
 	static constexpr std::size_t MAX_PLAYING = 4;                      // more at once, and the oldest is ended
 

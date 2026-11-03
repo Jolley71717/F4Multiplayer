@@ -27,7 +27,8 @@ TEST("line sounds: a sound's hard end is its recording's length and a second, wi
 {
 	CHECK(Sounds::CapFor(4.0) == 5s);
 	CHECK(Sounds::CapFor(0.3) == Sounds::SHORTEST);  // a short bark still gets the floor
-	CHECK(Sounds::CapFor(29.5) == Sounds::LONGEST);  // 30.5 s is more than any line is believed to be
+	CHECK(Sounds::CapFor(29.5) == 30500ms);
+	CHECK(Sounds::CapFor(239.5) == Sounds::LONGEST);  // 240.5 s is more than any recording is believed to be
 	CHECK(Sounds::CapFor(5000.0) == Sounds::LONGEST);
 	CHECK(Sounds::CapFor(std::nullopt) == Sounds::UNKNOWN);  // the file's length could not be read
 	CHECK(Sounds::CapFor(0.0) == Sounds::UNKNOWN);
@@ -35,6 +36,24 @@ TEST("line sounds: a sound's hard end is its recording's length and a second, wi
 	CHECK(Sounds::CapFor(std::numeric_limits<double>::infinity()) == Sounds::UNKNOWN);
 	CHECK(Sounds::CapFor(std::numeric_limits<double>::quiet_NaN()) == Sounds::UNKNOWN);
 	CHECK(Sounds::UNKNOWN <= Sounds::LONGEST);
+}
+
+TEST("line sounds: the game's longest recordings play to their own end")
+{
+	// Measured in the game's voice archives: Preston Garvey 37.9 s and 32.7 s, Cait 35.2 s, and Magnolia's songs at
+	// the Third Rail 130 to 214.2 s. Each is ended a second after its own length, not cut short.
+	for (const double seconds : { 32.7, 35.2, 37.9, 130.0, 214.2 }) {
+		const auto cap = Sounds::CapFor(seconds);
+		CHECK(cap == std::chrono::duration_cast<Sounds::Clock::duration>(std::chrono::milliseconds(static_cast<std::int64_t>(seconds * 1000.0 + 0.5)) + Sounds::TAIL));
+		CHECK(cap < Sounds::LONGEST);
+	}
+	Sounds sounds;
+	Ended  ended;
+	sounds.Start(1, 1, t0, 214.2, ended());
+	CHECK(sounds.EndDue(t0 + 215s, ended()) == 0);  // still singing
+	CHECK(sounds.EndDue(t0 + 215200ms, ended()) == 1);
+	REQUIRE(ended.list.size() == 1);
+	CHECK(ended.list[0] == std::pair(1, Why::kTooLong));
 }
 
 TEST("line sounds: a sound is ended at its hard end, not before, and only once")
