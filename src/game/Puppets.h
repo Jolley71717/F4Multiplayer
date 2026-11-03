@@ -59,7 +59,8 @@ namespace Puppets
 	};
 	[[nodiscard]] std::optional<OwnerAim> AimOf(const RE::Actor* a_actor);
 
-	// Unregisters a mirrored NPC and gives it back to its own AI.
+	// Unregisters a mirrored NPC and gives it back to its own AI: drops the do-nothing package it was given (evp alone keeps
+	// it) and has its own package picked again. Main thread.
 	void ReleaseNpc(RE::Actor* a_actor);
 
 	// The puppet's equipment changed: draw the weapon again once it is in place. (Drawing before

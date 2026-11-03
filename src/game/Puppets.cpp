@@ -8,6 +8,7 @@
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
+#include "game/PackageRelease.h"
 #include "game/Papyrus.h"
 
 #include "Protocol.h"
@@ -549,6 +550,56 @@ namespace Puppets
 		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
 		std::atomic<std::uint64_t> graphsSetUp{ 0 };
 
+		// The do-nothing package a mirror is given (Actor::InitiateDoNothingPackage, +C69BF0) is made on the spot:
+		// TESPackage of procedure DoNothing, flagged must-complete (packFlags bit 2), handed to Actor::PutCreatedPackage
+		// (vtable 0xFA), which puts it in the AI process's current package slot (AIProcess::SetCurrentPackage). No extra
+		// data and no package override: the slot alone holds it. Package evaluation (AIProcess::CheckforNewPackage_Priv,
+		// +CF6620) keeps a must-complete package until its procedure is done, and DoNothing never is, so evp alone left it.
+		// The engine lets go of a made package the way CheckforNewPackage_Priv does when it drops one, and ResetAI's
+		// branch of Actor::EvaluatePackage does too: Actor::EndInterruptPackage(false), then, if it is still the current
+		// package, the process's data for it cleared and its slot cleared. These two are that clear:
+		// AIProcess::ClearCurrentDataforProcess(Actor*) (+D39880; returns at once without a middle-low process) and
+		// AIProcess::ClearCurrentPackage(Actor&) (+CF16D0: ActorPackage::Clear on the slot, under its lock).
+		constexpr REL::ID CLEAR_PACKAGE_DATA{ 2232435 };
+		constexpr REL::ID CLEAR_CURRENT_PACKAGE{ 2231582 };
+
+		// Do-nothing packages let go of on release (ReleaseNpc): for the log and the dev status line.
+		std::atomic<std::uint32_t> doNothingsDropped{ 0 };
+
+		// Lets go of the do-nothing package a mirror was given, as the engine would (above), so the evp after picks the
+		// NPC's own. A package from the game's data, or another the engine made, is the NPC's own and stays. Main thread.
+		void DropDoNothingPackage(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto package = process ? process->currentPackage.package : nullptr;
+			if (!package) {
+				return;
+			}
+			const auto packageId = package->GetFormID();
+			const auto packType = package->data.packType;
+			if (!PackageRelease::IsMirrorsDoNothing(packType, packageId)) {
+				// Not ours: logged for the first few, so a rig run shows what a released NPC had instead.
+				static std::atomic<std::uint32_t> kept{ 0 };
+				if (const auto n = ++kept; MoveSync::Loggable(n)) {
+					REX::INFO("Puppets: {:08X} released running package {:08X} (type {}), not a mirror's do-nothing package: left as it is ({} so far)",
+						a_actor->GetFormID(), packageId, static_cast<int>(packType), n);
+				}
+				return;
+			}
+			static REL::Relocation<void (*)(RE::AIProcess*, RE::Actor*)>  clearData{ CLEAR_PACKAGE_DATA };
+			static REL::Relocation<void (*)(RE::AIProcess*, RE::Actor&)> clearPackage{ CLEAR_CURRENT_PACKAGE };
+			a_actor->EndInterruptPackage(false);
+			if (process->currentPackage.package == package) {
+				clearData(process, a_actor);
+				clearPackage(process, *a_actor);
+			}
+			const auto now = process->currentPackage.package;
+			if (const auto n = ++doNothingsDropped; MoveSync::Loggable(n)) {
+				REX::INFO("Puppets: {:08X} released: dropped the do-nothing package {:08X}, its package now {:08X}; evp picks its own ({} so far)",
+					a_actor->GetFormID(), packageId, now ? now->GetFormID() : 0, n);
+			}
+		}
+
 		// What the tail of the engine's own Actor::Update does and its no-AI update does not: a graph rebuilt before its
 		// subgraphs were loaded (DoUpdate3dModel queued its setup) is set up once they are, through the actor's
 		// ModifyInitialAnimationStateImpl (BGSAnimationSystemUtils::InitializeActorInstant, then its initial pose). Left
@@ -877,11 +928,16 @@ namespace Puppets
 			}
 			originalFlags = entry->originalFlags;
 		}
+		// Unregistered first: Tick gives only registered puppets the do-nothing package again.
 		Unregister(a_actor, a_actor->GetFormID());
 		// Clear only what we set; a script may have blocked the NPC on purpose.
 		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR & ~originalFlags));
 		SetAttackDamage(a_actor, 1.0f);
-		// Drop the do-nothing package and pick the NPC's own again.
+		// Drop the do-nothing package (evp alone keeps it: see DropDoNothingPackage) and pick the NPC's own again. A corpse
+		// runs no package (the engine evaluates none for the dead), so one is left as it is.
+		if (!a_actor->IsDead(false)) {
+			DropDoNothingPackage(a_actor);
+		}
 		RE::Console::ExecuteCommand(std::format("{:08X}.evp", a_actor->GetFormID()).c_str());
 	}
 
@@ -1285,6 +1341,9 @@ namespace Puppets
 		if (const auto restarts = drawRestarts.load(std::memory_order_relaxed); restarts != 0) {
 			out += std::format("{}drawRestarts={}", out.empty() ? "" : " ", restarts);
 		}
+		if (const auto dropped = doNothingsDropped.load(std::memory_order_relaxed); dropped != 0) {
+			out += std::format("{}doNothingsDropped={}", out.empty() ? "" : " ", dropped);
+		}
 		return out;
 	}
 
@@ -1310,7 +1369,9 @@ namespace Puppets
 		// next update; never touch an actor that may already be gone.
 		for (const auto& [actor, formId] : due) {
 			const auto live = RE::TESForm::GetFormByID<RE::Actor>(formId);
-			if (live == actor && !live->IsDead(false)) {
+			// Still ours: one released since the list was made (ReleaseNpc) never gets it back, or it would stand still in
+			// the game that now runs it.
+			if (live == actor && !live->IsDead(false) && IsRegistered(live)) {
 				live->InitiateDoNothingPackage();
 			}
 		}
