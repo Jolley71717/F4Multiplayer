@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T07:23:36+00:00",
+ "updated": "2026-11-03T09:32:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -25,7 +25,7 @@
    "title": "Some friendly NPCs stand still in the client's game: they don't roam or talk to the client",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 278
   },
@@ -44,7 +44,7 @@
    "title": "Player-built lights still stay dark for the other player when powered (0.10.1)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 280
   },
@@ -412,6 +412,15 @@
    "desc": "Players asked for items in shared storage to stay in step across games. Until now each game held its own copy of a container, so copies could drift: a friend's take removed that item type from your stash, or a load quietly rolled one copy back. With the host setting bSharedStorage on, the host's game keeps the one true copy of each home and settlement container, and everyone's takes and puts go through it. Only ammo, aid and junk are shared this way; weapons, armor, keys and notes stay per player."
   },
   {
+   "id": "9ftz",
+   "title": "Friend's light-bulb copy glows but never gets ExtraLight (wsinfo lit=no) while the builder's powered bulb has one",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 3,
+   "note": "",
+   "pr": 282
+  },
+  {
    "id": "9r15",
    "title": "NPCs walk or path oddly in a session",
    "kind": "bug",
@@ -631,6 +640,24 @@
    "note": "Merged for the next release; tested in two games.",
    "pr": 201,
    "desc": "Sometimes a friend put their weapon away but it stayed in their hand on your screen. The game's 'putting away' state was being read as 'already away', so when the friend's figure missed the holster (mid-throw or mid-reload) it was never asked again. Now it waits for the holster to finish and asks again if it stalls."
+  },
+  {
+   "id": "e5yp",
+   "title": "Workshop copies lose their tracking when their cell unloads and loads again: power changes stop reaching them",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 3,
+   "note": "",
+   "pr": 282
+  },
+  {
+   "id": "ehqp",
+   "title": "Friend's copy of a powered workshop graph refuses a repeated Powered: 8 tries, givenUp +1 and the log budget spent",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 3,
+   "note": "",
+   "pr": 282
   },
   {
    "id": "eiir",
@@ -1447,6 +1474,15 @@
    "stage": 7,
    "note": "Already fixed in the code that shipped in 0.9.2.",
    "desc": "We found that the game stops reading an object's scripts after the first one in one kind of check, so a gate with several scripts could be judged wrongly and traps were missed at random. The mod now handles this when checking gates, workshop objects and traps. Two-game tests of doors and traps passed."
+  },
+  {
+   "id": "wdnj",
+   "title": "Claimed NPC keeps the do-nothing package in the new runner's game (evp doesn't clear it)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 5,
+   "note": "",
+   "pr": 281
   },
   {
    "id": "wnxl",
