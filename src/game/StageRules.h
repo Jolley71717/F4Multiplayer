@@ -76,13 +76,12 @@ namespace StageRules
 	// MQ203's and MQ204's (none is its quest's start-up stage): DLC01MQ01, DLC01MQ02, DLC01MQ04, DLC01MQ05, DLC04MQ01,
 	// DLC04MQ02, DLC04MS02. None is a bridge: an add-on's quests start here when the player goes there.
 	// The quests the host's sQuests = safe shares (QuestFilter::SAFE) have their rows from tools/questscan.ps1 -Safe -Rules
-	// -Files 0,1,2,3, the same scans, their payments checked by hand: caps, pre-war money, a fern flower, a Nuka-Cola
-	// Quartz and bloodworm meat are kPays; what a stage takes that is the quest's own (Far Harbor's fog condenser modules
-	// and its mirelurk carapaces for Brooks, FFGoodneighbor03's HalluciGen gas canister) is not, as for the story's quest
-	// items. Most of their moves are quickstarts too (CZ 1, BoSM04Postquest 2, DLC04MQ03 1-5, DLC04MQ05 1-3,
-	// DLC04_KiddieKingdomMain 6); the others (DN070 5 into the treasure's cave, DLC04MS01 550, DLC03PostQuestTreasureDig 200's
-	// fade) move a joiner only along with the friend who did them. Their stage 0s that move the player and are no start-up
-	// stage are left out: DN154, BoSM04Postquest, DLC04MQ03, DLC04MQ05.
+	// -Files 0,1,2,3, the same scans, their payments checked by hand: caps, a fern flower and a Nuka-Cola Quartz are
+	// kPays; what a stage takes that is the quest's own (Far Harbor's fog condenser modules and its mirelurk carapaces for
+	// Brooks, FFGoodneighbor03's HalluciGen gas canister) is not, as for the story's quest items. Most of their moves are
+	// quickstarts too (BoSM04Postquest 2, DLC04MQ03 1-5); the others (DN070 5 into the treasure's cave, DLC04MS01 550,
+	// DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their stage 0s that
+	// move the player and are no start-up stage are left out: DN154, BoSM04Postquest, DLC04MQ03.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
 		{ 0, 0x019955, 210, kPays, 0 },  // DialogueBunkerHill: 10 caps
@@ -101,10 +100,6 @@ namespace StageRules
 		{ 0, 0x01CC2A, 6, 0, 10 },
 		{ 0, 0x01CC2A, 7, kMoves, 3 },
 		{ 0, 0x01ED62, 40, kMoves, 0 },  // DialogueVault111 (the opening's: never shared, see IsOpening): into the cryopod
-		{ 0, 0x02074B, 1, kMoves, 20 },  // CZ: MoveTo CZDebugMarker
-		{ 0, 0x02074B, 200, 0, 10 },
-		{ 0, 0x02074B, 250, 0, 20 },
-		{ 0, 0x02074B, 265, 0, 2 },
 		{ 0, 0x02125F, 30, kPays, 0 },  // FFDiamondCity03: a fern flower
 		{ 0, 0x0229E6, 0, kMoves | kBridge, 20 },  // MQ105
 		{ 0, 0x0229E6, 177, kPays, 0 },
@@ -233,8 +228,6 @@ namespace StageRules
 		{ 0, 0x04402C, 9, kMoves, 80 },
 		{ 0, 0x04402C, 150, 0, 60 },
 		{ 0, 0x04402C, 210, kMoves, 0 },
-		{ 0, 0x04542B, 711, kPays, 0 },  // DN049: 5000 pre-war money
-		{ 0, 0x04542B, 856, 0, 50 },
 		{ 0, 0x0459D2, 0, 0, 1 },  // RR101
 		{ 0, 0x0459D2, 600, kMoves, 40 },
 		{ 0, 0x0459D2, 710, 0, 3 },
@@ -385,7 +378,6 @@ namespace StageRules
 		{ 0, 0x10C64C, 330, 0, 52 },  // MQ302RR
 		{ 0, 0x10C64C, 700, 0, 10 },
 		{ 0, 0x122221, 400, 0, 1 },  // FFBunkerHill02
-		{ 0, 0x1323AB, 10, 0, 5 },  // FFGoodneighbor07
 		{ 0, 0x134297, 0, kMoves | kBridge, 20 },  // MQ106Investigations
 		{ 0, 0x136329, 0, kMoves | kBridge, 40 },  // Min207
 		{ 0, 0x14191C, 10, kPays, 0 },  // FFDiamondCity02: caps
@@ -432,13 +424,10 @@ namespace StageRules
 		{ 1, 0x001B44, 3, 0, 20 },
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
-		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
 		{ 1, 0x01055C, 30, 0, 45 },  // DLC03CoA_FFNucleus01
-		{ 1, 0x013F3A, 250, 0, 6 },  // DLC03Acadia_Institute
-		{ 1, 0x013F3A, 460, 0, 32 },
 		{ 1, 0x01CBFA, 1, kMoves, 50 },  // DLC03MQ04_01: into DiMA's memories (MQ04Script.EnterVR)
 		{ 1, 0x01E3FE, 350, kMoves, 50 },  // DLC03MQ04_05: out of them
 		{ 1, 0x02127F, 1, kMoves | kBridge, 85 },  // DLC03MQ06a
@@ -473,9 +462,6 @@ namespace StageRules
 		{ 3, 0x000804, 3, kMoves, 100 },
 		{ 3, 0x000804, 4, kMoves, 20 },
 		{ 3, 0x000804, 500, 0, 50 },
-		{ 3, 0x000805, 1, kMoves, 20 },  // DLC04MQ05: MoveTo DLC04MQ05Start
-		{ 3, 0x000805, 2, kMoves, 20 },  // MoveTo DLC04MQ05Start
-		{ 3, 0x000805, 3, kMoves, 20 },  // MoveTo DLC04MQ05PPTest
 		{ 3, 0x000806, 75, kPays, 0 },  // DLC04MS01: a Nuka-Cola Quartz
 		{ 3, 0x000806, 400, 0, 50 },
 		{ 3, 0x000806, 450, 0, 20 },
@@ -484,20 +470,9 @@ namespace StageRules
 		{ 3, 0x000806, 550, kMoves, 20 },  // MoveTo DLC04MS01PT3
 		{ 3, 0x000806, 755, 0, 30 },
 		{ 3, 0x000807, 500, kPays, 0 },  // DLC04MS02: the space suits and helmets unequipped and taken (RemoveItem x5 each)
-		{ 3, 0x00CBD0, 30, kPays, 0 },  // DLC04DialogueHubologists: 50 caps
-		{ 3, 0x00CBD0, 31, kPays, 0 },  // 100 caps
-		{ 3, 0x00CBD0, 32, kPays, 0 },  // 250 caps
-		{ 3, 0x00CBD0, 33, kPays, 0 },  // 500 caps
-		{ 3, 0x00CBD0, 34, kPays, 0 },  // 1000 caps
-		{ 3, 0x00CBD0, 35, kPays, 0 },  // 2500 caps
-		{ 3, 0x00CBD0, 36, kPays, 0 },  // 5000 caps
-		{ 3, 0x00CBD0, 37, kPays, 0 },  // 10000 caps
 		{ 3, 0x014352, 90, kPays, 0 },  // DLC04RaidChaseOff: caps
 		{ 3, 0x016E18, 95, 0, 10 },     // DLC04RaidSubdue
 		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
-		{ 3, 0x01AABF, 110, kPays, 0 },  // DLC04DialogueSettlement: 10 bloodworm meat
-		{ 3, 0x03684F, 6, kMoves, 50 },  // DLC04_KiddieKingdomMain: MoveTo temp6
-		{ 3, 0x03684F, 791, 0, 5 },
 	};
 
 	// Stages whose script takes the player's controls away until a later stage gives them back. They
@@ -608,7 +583,6 @@ namespace StageRules
 		{ 0, 0x01D727, 10 }, { 0, 0x01D727, 40 }, { 0, 0x01D727, 500 },  // FFDiamondCity01
 		{ 0, 0x01E64E, 50 }, { 0, 0x01E64E, 200 }, { 0, 0x01E64E, 275 },  // DialogueCodsworthPostWar
 		{ 0, 0x01F25E, 50 }, { 0, 0x01F25E, 205 }, { 0, 0x01F25E, 210 },  // MQ104
-		{ 0, 0x02074B, 300 },  // CZ
 		{ 0, 0x0229E5, 100 },  // MQ103
 		{ 0, 0x0229E6, 0 }, { 0, 0x0229E6, 62 }, { 0, 0x0229E6, 200 }, { 0, 0x0229E6, 600 }, { 0, 0x0229E6, 1000 },  // MQ105
 		{ 0, 0x0229E7, 0 }, { 0, 0x0229E7, 10 }, { 0, 0x0229E7, 500 }, { 0, 0x0229E7, 1000 }, { 0, 0x0229E7, 1150 }, { 0, 0x0229E7, 2000 },  // MQ106
@@ -622,13 +596,13 @@ namespace StageRules
 		{ 0, 0x0229EE, 600 }, { 0, 0x0229EE, 700 }, { 0, 0x0229EE, 710 }, { 0, 0x0229EE, 720 }, { 0, 0x0229EE, 730 }, { 0, 0x0229EE, 740 }, { 0, 0x0229EE, 800 },
 		{ 0, 0x0229EE, 900 }, { 0, 0x0229EE, 1000 },
 		{ 0, 0x0229F7, 1000 },  // MS02
-		{ 0, 0x0229FE, 0 }, { 0, 0x0229FE, 1 }, { 0, 0x0229FE, 190 }, { 0, 0x0229FE, 270 }, { 0, 0x0229FE, 300 }, { 0, 0x0229FE, 305 },  // MS07c
+		{ 0, 0x0229FE, 0 }, { 0, 0x0229FE, 1 }, { 0, 0x0229FE, 190 },  // MS07c
 		{ 0, 0x022A00, 100 }, { 0, 0x022A00, 150 }, { 0, 0x022A00, 340 }, { 0, 0x022A00, 360 }, { 0, 0x022A00, 400 }, { 0, 0x022A00, 410 }, { 0, 0x022A00, 450 },  // MS09
 		{ 0, 0x022A00, 480 }, { 0, 0x022A00, 500 }, { 0, 0x022A00, 555 }, { 0, 0x022A00, 560 }, { 0, 0x022A00, 600 }, { 0, 0x022A00, 640 }, { 0, 0x022A00, 650 },
 		{ 0, 0x022A00, 750 }, { 0, 0x022A00, 800 }, { 0, 0x022A00, 850 },
 		{ 0, 0x022A05, 10 },  // MS14
 		{ 0, 0x022A07, 1 }, { 0, 0x022A07, 20 }, { 0, 0x022A07, 59 }, { 0, 0x022A07, 89 }, { 0, 0x022A07, 199 }, { 0, 0x022A07, 200 }, { 0, 0x022A07, 230 },  // MS16
-		{ 0, 0x022A07, 260 }, { 0, 0x022A07, 270 },
+		{ 0, 0x022A07, 270 },
 		{ 0, 0x022A0A, 4 }, { 0, 0x022A0A, 9 }, { 0, 0x022A0A, 35 }, { 0, 0x022A0A, 60 }, { 0, 0x022A0A, 100 }, { 0, 0x022A0A, 150 }, { 0, 0x022A0A, 400 },  // MS19
 		{ 0, 0x026340, 3 }, { 0, 0x026340, 4 }, { 0, 0x026340, 30 }, { 0, 0x026340, 50 },  // DN121
 		{ 0, 0x02B4E9, 350 },  // Inst303
@@ -714,7 +688,6 @@ namespace StageRules
 		{ 0, 0x10C64C, 10 }, { 0, 0x10C64C, 325 }, { 0, 0x10C64C, 326 }, { 0, 0x10C64C, 950 }, { 0, 0x10C64C, 1000 },  // MQ302RR
 		{ 0, 0x11B36E, 475 },  // MinRecruit00
 		{ 0, 0x122221, 300 },  // FFBunkerHill02
-		{ 0, 0x1323AB, 0 }, { 0, 0x1323AB, 90 }, { 0, 0x1323AB, 200 },  // FFGoodneighbor07
 		{ 0, 0x134297, 0 },  // MQ106Investigations
 		{ 0, 0x136329, 0 },  // Min207
 		{ 0, 0x13C640, 255 },  // BoS204
@@ -747,21 +720,14 @@ namespace StageRules
 		{ 1, 0x001B43, 0 }, { 1, 0x001B43, 1 }, { 1, 0x001B43, 50 }, { 1, 0x001B43, 60 }, { 1, 0x001B43, 105 }, { 1, 0x001B43, 120 }, { 1, 0x001B43, 125 },  // DLC03MQ05
 		{ 1, 0x001B43, 220 }, { 1, 0x001B43, 230 }, { 1, 0x001B43, 240 }, { 1, 0x001B43, 250 }, { 1, 0x001B43, 500 }, { 1, 0x001B43, 8900 },
 		{ 1, 0x001B44, 1 }, { 1, 0x001B44, 2 }, { 1, 0x001B44, 3 }, { 1, 0x001B44, 200 }, { 1, 0x001B44, 250 }, { 1, 0x001B44, 500 },  // DLC03MQ06
-		{ 1, 0x004C8E, 30 }, { 1, 0x004C8E, 52 }, { 1, 0x004C8E, 55 }, { 1, 0x004C8E, 57 }, { 1, 0x004C8E, 60 }, { 1, 0x004C8E, 75 }, { 1, 0x004C8E, 90 },  // DLC03CoA_DialogueNucleus
-		{ 1, 0x004C8E, 92 }, { 1, 0x004C8E, 96 }, { 1, 0x004C8E, 97 }, { 1, 0x004C8E, 98 }, { 1, 0x004C8E, 99 }, { 1, 0x004C8E, 115 }, { 1, 0x004C8E, 117 },
-		{ 1, 0x004C8E, 119 }, { 1, 0x004C8E, 120 }, { 1, 0x004C8E, 124 }, { 1, 0x004C8E, 125 }, { 1, 0x004C8E, 130 },
 		{ 1, 0x004F2C, 145 }, { 1, 0x004F2C, 150 },  // DLC03MQPostQuest
 		{ 1, 0x005BD7, 700 }, { 1, 0x005BD7, 710 }, { 1, 0x005BD7, 720 }, { 1, 0x005BD7, 9000 },  // DLC03DialogueFarHarbor
 		{ 1, 0x00A990, 0 }, { 1, 0x00A990, 100 }, { 1, 0x00A990, 250 }, { 1, 0x00A990, 290 }, { 1, 0x00A990, 300 }, { 1, 0x00A990, 375 },  // DLC03FarHarborFF03a
-		{ 1, 0x00A991, 100 }, { 1, 0x00A991, 200 }, { 1, 0x00A991, 500 }, { 1, 0x00A991, 9000 },  // DLC03FarHarborS01
 		{ 1, 0x00A992, 1 }, { 1, 0x00A992, 50 }, { 1, 0x00A992, 100 }, { 1, 0x00A992, 500 },  // DLC03FarHarborM01
-		{ 1, 0x00AB19, 150 }, { 1, 0x00AB19, 200 }, { 1, 0x00AB19, 350 },  // DLC03FarHarborS01Defend
-		{ 1, 0x00AEC3, 1 }, { 1, 0x00AEC3, 100 }, { 1, 0x00AEC3, 200 }, { 1, 0x00AEC3, 300 }, { 1, 0x00AEC3, 325 }, { 1, 0x00AEC3, 400 },  // DLC03FarHarborS02
 		{ 1, 0x00AEC4, 50 }, { 1, 0x00AEC4, 100 }, { 1, 0x00AEC4, 300 }, { 1, 0x00AEC4, 350 },  // DLC03FarHarborFF03b
 		{ 1, 0x00AFB1, 150 },  // DLC03AtomM01
 		{ 1, 0x01055C, 10 }, { 1, 0x01055C, 200 },  // DLC03CoA_FFNucleus01
 		{ 1, 0x013F39, 40 }, { 1, 0x013F39, 200 }, { 1, 0x013F39, 1000 },  // DLC03Acadia_BoS
-		{ 1, 0x013F3A, 40 }, { 1, 0x013F3A, 200 }, { 1, 0x013F3A, 1000 },  // DLC03Acadia_Institute
 		{ 1, 0x01536F, 600 }, { 1, 0x01536F, 700 }, { 1, 0x01536F, 750 },  // DLC03AcadiaM01
 		{ 1, 0x01B0AF, 100 }, { 1, 0x01B0AF, 700 },  // DLC03AtomM02
 		{ 1, 0x01CBFA, 100 }, { 1, 0x01CBFA, 102 }, { 1, 0x01CBFA, 104 }, { 1, 0x01CBFA, 106 }, { 1, 0x01CBFA, 108 }, { 1, 0x01CBFA, 110 }, { 1, 0x01CBFA, 115 },  // DLC03MQ04_01
@@ -777,7 +743,6 @@ namespace StageRules
 		{ 1, 0x02127F, 1000 },
 		{ 1, 0x02399F, 0 }, { 1, 0x02399F, 1 }, { 1, 0x02399F, 50 }, { 1, 0x02399F, 100 }, { 1, 0x02399F, 500 },  // DLC03FarHarborS03
 		{ 1, 0x023ACA, 100 }, { 1, 0x023ACA, 400 },  // DLC03FarHarborFF02
-		{ 1, 0x023ACB, 100 }, { 1, 0x023ACB, 400 },  // DLC03FarHarborFF01
 		{ 1, 0x02B500, 10 }, { 1, 0x02B500, 30 }, { 1, 0x02B500, 50 },  // DLC03CoA_FFNucleus03
 		{ 1, 0x02BBDB, 10 },  // DLC03DialogueKasumiAcadia
 		{ 1, 0x02C8B3, 10 }, { 1, 0x02C8B3, 200 }, { 1, 0x02C8B3, 300 }, { 1, 0x02C8B3, 310 }, { 1, 0x02C8B3, 320 }, { 1, 0x02C8B3, 500 },  // DLC03CoA_FFNucleus02
@@ -796,25 +761,19 @@ namespace StageRules
 		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 1 }, { 2, 0x0010F5, 2 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 1000 }, { 2, 0x0010F5, 1100 },  // DLC01MQ05
 		{ 2, 0x002833, 0 }, { 2, 0x002833, 1 }, { 2, 0x002833, 2 }, { 2, 0x002833, 3 }, { 2, 0x002833, 50 }, { 2, 0x002833, 110 }, { 2, 0x002833, 160 },  // DLC01MQ04
 		{ 2, 0x002833, 255 },
-		{ 3, 0x000800, 520 }, { 3, 0x000800, 800 }, { 3, 0x000800, 1000 },  // DLC04MQ00
-		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 700 }, { 3, 0x000801, 1000 },  // DLC04MQ01
-		{ 3, 0x000802, 0 }, { 3, 0x000802, 1000 }, { 3, 0x000802, 1500 },  // DLC04MQ02
+		{ 3, 0x000800, 520 }, { 3, 0x000800, 1000 },  // DLC04MQ00
+		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 1000 },  // DLC04MQ01
+		{ 3, 0x000802, 0 }, { 3, 0x000802, 1000 },  // DLC04MQ02
 		{ 3, 0x000803, 655 },  // DLC04MQ03
-		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 }, { 3, 0x000804, 10 }, { 3, 0x000804, 50 }, { 3, 0x000804, 500 },  // DLC04MQ04
-		{ 3, 0x000805, 120 }, { 3, 0x000805, 255 },  // DLC04MQ05
+		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 }, { 3, 0x000804, 50 },  // DLC04MQ04
 		{ 3, 0x000806, 40 }, { 3, 0x000806, 60 }, { 3, 0x000806, 70 }, { 3, 0x000806, 75 }, { 3, 0x000806, 100 },  // DLC04MS01
-		{ 3, 0x000807, 100 }, { 3, 0x000807, 300 }, { 3, 0x000807, 500 },  // DLC04MS02
 		{ 3, 0x00DB37, 15 }, { 3, 0x00DB37, 20 }, { 3, 0x00DB37, 105 },  // DLC04RaidWipeOut
 		{ 3, 0x010D91, 70 },  // DLC04DialogueRaiderBossOperators
 		{ 3, 0x014352, 20 }, { 3, 0x014352, 21 },  // DLC04RaidChaseOff
 		{ 3, 0x016E18, 15 }, { 3, 0x016E18, 20 }, { 3, 0x016E18, 65 }, { 3, 0x016E18, 70 }, { 3, 0x016E18, 95 }, { 3, 0x016E18, 100 },  // DLC04RaidSubdue
 		{ 3, 0x019088, 20 }, { 3, 0x019088, 21 },  // DLC04RaidCoerce
-		{ 3, 0x01AABF, 47 }, { 3, 0x01AABF, 200 },  // DLC04DialogueSettlement
 		{ 3, 0x01E34A, 210 }, { 3, 0x01E34A, 212 }, { 3, 0x01E34A, 300 }, { 3, 0x01E34A, 1000 }, { 3, 0x01E34A, 1500 }, { 3, 0x01E34A, 1600 }, { 3, 0x01E34A, 2000 },  // DLC04GZMainQuest
-		{ 3, 0x0260E2, 117 }, { 3, 0x0260E2, 175 }, { 3, 0x0260E2, 176 }, { 3, 0x0260E2, 200 }, { 3, 0x0260E2, 250 }, { 3, 0x0260E2, 260 }, { 3, 0x0260E2, 300 },  // DLC04SafariAdventureQuest
-		{ 3, 0x0260E2, 1000 }, { 3, 0x0260E2, 1500 }, { 3, 0x0260E2, 1600 }, { 3, 0x0260E2, 2000 },
 		{ 3, 0x03684E, 1000 },  // DLC04_BottlingPlantMAIN
-		{ 3, 0x03684F, 780 }, { 3, 0x03684F, 795 }, { 3, 0x03684F, 800 }, { 3, 0x03684F, 820 }, { 3, 0x03684F, 1000 },  // DLC04_KiddieKingdomMain
 		{ 3, 0x0431AB, 800 }, { 3, 0x0431AB, 900 }, { 3, 0x0431AB, 1000 },  // DLC04DryRockGulch
 	};
 

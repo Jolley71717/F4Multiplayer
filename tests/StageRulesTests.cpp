@@ -339,18 +339,20 @@ TEST("stage rules: the stages that set another quest's are sorted, once each, an
 TEST("stage rules: the stages of the quests sQuests = safe shares that move the player or take from them (tools/questscan.ps1 -Safe -Rules)")
 {
 	using namespace StageRules;
-	// Nuka-World's main line under no type: DLC04MQ03's flag poles and DLC04MQ05's start, MoveTo each.
+	// Nuka-World's main line under no type: DLC04MQ03's flag poles, MoveTo each.
 	for (std::uint16_t stage = 1; stage <= 5; ++stage) {
 		CHECK(FlagsOf(0x000803, stage, File::kNukaWorld) == kMoves);
 	}
-	CHECK(FlagsOf(0x000805, 1, File::kNukaWorld) == kMoves);
-	CHECK(FlagsOf(0x000805, 3, File::kNukaWorld) == kMoves);
+	// DLC04MQ05 is no longer SAFE's (its 8 turns the gangs on the player), so its quickstarts have no rows.
+	CHECK(!Find(0x000805, 1, File::kNukaWorld));
+	CHECK(!Find(0x000805, 3, File::kNukaWorld));
 	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
-	// Fallout4.esm's: the Combat Zone's MoveTo, Diamond City's caps, the Prydwen's gantry.
-	CHECK(FlagsOf(0x02074B, 1) == kMoves);   // CZ
+	// Fallout4.esm's: Diamond City's caps, the Prydwen's gantry, the treasure's cave (the Combat Zone's are gone with it).
+	CHECK(!Find(0x02074B, 1));               // CZ
 	CHECK(FlagsOf(0x14191C, 10) == kPays);   // FFDiamondCity02
+	CHECK(FlagsOf(0x0E9914, 5) == kMoves);   // DN070
 	CHECK(FlagsOf(0x145722, 2) == kMoves);   // BoSM04Postquest
 	// Far Harbor's treasure dig fades the screen out.
 	CHECK(FlagsOf(0x04D2F5, 200, File::kCoast) == kMoves);  // DLC03PostQuestTreasureDig
@@ -363,7 +365,7 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(!Find(0x02039A, 300, File::kCoast));     // DLC03FarHarborFF03c
 	// Their stage 0s that move the player are the developers' quickstarts, none the quest's start-up stage: left out.
 	CHECK(!Find(0x000803, 0, File::kNukaWorld));  // DLC04MQ03
-	CHECK(!Find(0x000805, 0, File::kNukaWorld));  // DLC04MQ05
+	CHECK(!Find(0x000805, 0, File::kNukaWorld));  // DLC04MQ05 (not SAFE's now either)
 	CHECK(!Find(0x0254B7, 0));                    // DN154
 	CHECK(!Find(0x145722, 0));                    // BoSM04Postquest
 
@@ -379,5 +381,5 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(SetsAnother(File::kNukaWorld, 0x000806, 75));
 	CHECK(SetsAnother(File::kNukaWorld, 0x01E34A, 1000));
 	CHECK(SetsAnother(File::kCoast, 0x023ACA, 400));  // DLC03FarHarborFF02
-	CHECK(SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ
+	CHECK(!SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ, no longer SAFE's
 }

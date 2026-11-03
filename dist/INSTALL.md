@@ -117,7 +117,8 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `sQuests` (story): with `sStory = shared`, `safe` shares more quests with the story: the misc quests and Far Harbor's
   and Nuka-World's own quests that play out the same in every game (Diamond City's and Goodneighbor's errands, the
   "talk to" pointers, Nuka-World's park quests). Whoever moves one on moves everyone along, and a joiner is caught up
-  on the host's. Quests whose targets each game picks, companions' quests, survival mode's and your dog's stay each
+  on the host's. Quests whose targets each game picks, companions' quests, quests that turn a faction hostile or change
+  who owns a settlement, survival mode's and your dog's stay each
   player's own, and a quest's reward item is given in each game. `story` (the default) shares the story's quests only.
   The F1 menu's *More quests* switch sets it. The dedicated server takes it as `--safe-quests`.
 - `sIgnoredPlugins` (empty): plugins, comma-separated, that guests may have different. A guest is not told about

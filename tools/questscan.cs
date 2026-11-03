@@ -524,8 +524,6 @@ public static class MoveScan
     static readonly Dictionary<string, Tuple<GearScan.Quest, int>> byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
     // per quest (file, id): its stage fragments, by stage
     static readonly Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>> fragments = new Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>>();
-    static readonly Dictionary<string, string> funcMoves = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    static readonly Dictionary<string, string> stageMoves = new Dictionary<string, string>();
 
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
     static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
@@ -636,73 +634,101 @@ public static class MoveScan
         return null;
     }
 
-    // How a function moves the player, itself or through the functions it calls, or null. a_quest: the quest whose
-    // script or fragment it is (what its SetStage on self sets), when known.
-    static string Moves(GearScan.Func f, string[] a_args, Tuple<GearScan.Quest, int> a_quest, HashSet<string> a_seen)
+    // A walk through what a function or a stage runs: the function's own code (the instructions it can reach, see
+    // Reachable), the script functions it calls (its quest's own script through kmyQuest or self, its parent's, any
+    // script a property or local is typed with, with the literal arguments it passes) and the stages of the quests it
+    // sets or starts (its own by SetStage on self, any other matched by the property's name, with that quest's start-up
+    // stages), each as deep as it goes until a cycle. Direct says what a function's own code does that is looked for
+    // (null: nothing); Target what setting a stage of another quest, or starting it, does in itself (null: nothing, its
+    // stages are followed); Follow whether another quest's stages are followed at all (by its file). -Moves and
+    // SafeScan's rule walk the same way.
+    public class Walk
     {
-        var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")@" + (a_quest == null ? "" : a_quest.Item2 + ":" + a_quest.Item1.Id);
-        string cached;
-        if (funcMoves.TryGetValue(key, out cached)) return cached;
-        if (!a_seen.Add(key)) return null;
-        var code = Reachable(f, a_args);
-        string why = Direct(code);
-        if (why != null) why = f.Obj + "." + f.Name + ": " + why;
-        for (int n = 0; why == null && n < code.Count; n++)
+        public Func<List<GearScan.Instr>, string> Direct;
+        public Func<GearScan.Quest, string> Target = q => null;
+        public Func<GearScan.Quest, int, bool> Follow = (q, file) => true;
+        readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<string, string> stages = new Dictionary<string, string>();
+
+        // What a function does that is looked for, itself or through what it calls and sets, or null: a chain of what it
+        // calls and sets, ending in Direct's or Target's answer. a_quest: the quest whose script or fragment it is (what
+        // its SetStage on self sets), when known.
+        public string Function(GearScan.Func f, string[] a_args, Tuple<GearScan.Quest, int> a_quest, HashSet<string> a_seen)
         {
-            var i = code[n];
-            if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
-            if (i.Op == 23 && (Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start")))
+            var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")@" + (a_quest == null ? "" : a_quest.Item2 + ":" + a_quest.Item1.Id);
+            string cached;
+            if (funcs.TryGetValue(key, out cached)) return cached;
+            if (!a_seen.Add(key)) return null;
+            var code = Reachable(f, a_args);
+            string why = Direct(code);
+            if (why != null) why = f.Obj + "." + f.Name + ": " + why;
+            for (int n = 0; why == null && n < code.Count; n++)
             {
-                var own = Own(i.Args[1]);
-                var target = own ? a_quest : QuestOf(i.Args[1]);
-                if (target == null) continue;
-                var stages = new List<int>();
-                int s;
-                if (Is(i.Args[0], "SetStage") && i.Args.Count > 3 && int.TryParse(i.Args[3], out s)) stages.Add(s);
-                if (!own) stages.AddRange(target.Item1.Startup);  // starts it, if it isn't running
-                foreach (var st in stages)
+                var i = code[n];
+                if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
+                if (i.Op == 23 && (Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start")))
                 {
-                    var w = Stage(target.Item2, target.Item1, st, a_seen);
-                    if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
+                    var own = Own(i.Args[1]);
+                    var target = own ? a_quest : QuestOf(i.Args[1]);
+                    if (target == null) continue;
+                    var itself = own ? null : Target(target.Item1);
+                    if (itself != null) { why = f.Obj + "." + f.Name + ": " + itself; break; }
+                    if (!own && !Follow(target.Item1, target.Item2)) continue;
+                    var list = new List<int>();
+                    int s;
+                    if (Is(i.Args[0], "SetStage") && i.Args.Count > 3 && int.TryParse(i.Args[3], out s)) list.Add(s);
+                    if (!own) list.AddRange(target.Item1.Startup);  // starts it, if it isn't running
+                    foreach (var st in list)
+                    {
+                        var w = Stage(target.Item2, target.Item1, st, a_seen);
+                        if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
+                    }
+                    continue;
                 }
-                continue;
+                string type, name;
+                if (i.Op == 25) { type = i.Args[0]; name = i.Args[1]; }
+                else if (i.Op == 24) { Script sc; type = scripts.TryGetValue(f.Obj, out sc) ? sc.Obj.Parent : null; name = i.Args[0]; }
+                else { type = TypeOf(f, i.Args[1]); name = i.Args[0]; }
+                if (type == null) continue;
+                string owner;
+                var g = Find(type, name, out owner);
+                if (g == null) continue;
+                // a call on the quest's own script keeps the quest (kmyQuest.StartQuest), another script's doesn't
+                var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : null;
+                int first = i.Op == 24 ? 2 : 3;
+                var args = i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray();
+                var w2 = Function(g, args, q, a_seen);
+                if (w2 != null) why = owner + "." + name + " -> " + w2;
             }
-            string type, name;
-            if (i.Op == 25) { type = i.Args[0]; name = i.Args[1]; }
-            else if (i.Op == 24) { Script sc; type = scripts.TryGetValue(f.Obj, out sc) ? sc.Obj.Parent : null; name = i.Args[0]; }
-            else { type = TypeOf(f, i.Args[1]); name = i.Args[0]; }
-            if (type == null) continue;
-            string owner;
-            var g = Find(type, name, out owner);
-            if (g == null) continue;
-            // a call on the quest's own script keeps the quest (kmyQuest.StartQuest), another script's doesn't
-            var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : null;
-            int first = i.Op == 24 ? 2 : 3;
-            var args = i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray();
-            var w2 = Moves(g, args, q, a_seen);
-            if (w2 != null) why = owner + "." + name + " -> " + w2;
+            a_seen.Remove(key);
+            // only finds are kept: a none found while a caller up the chain was still open may have missed a cycle through it
+            if (why != null) funcs[key] = why;
+            return why;
         }
-        a_seen.Remove(key);
-        // only moves are kept: a no found while a caller up the chain was still open may have missed a cycle through it
-        if (why != null) funcMoves[key] = why;
-        return why;
+
+        public string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen)
+        {
+            var key = a_file + ":" + a_quest.Id + ":" + a_stage;
+            string cached;
+            if (stages.TryGetValue(key, out cached)) return cached;
+            if (!a_seen.Add(key)) return null;
+            Dictionary<int, List<GearScan.Func>> all;
+            List<GearScan.Func> list;
+            string why = null;
+            if (fragments.TryGetValue(Tuple.Create(a_file, a_quest.Id & 0xFFFFFF), out all) && all.TryGetValue(a_stage, out list))
+                foreach (var f in list) { why = Function(f, null, Tuple.Create(a_quest, a_file), a_seen); if (why != null) break; }
+            a_seen.Remove(key);
+            if (why != null) stages[key] = why;
+            return why;
+        }
+
+        // What a stage of a quest does that is looked for (the first found), or null.
+        public string Stage(int a_file, GearScan.Quest a_quest, int a_stage) { return Stage(a_file, a_quest, a_stage, new HashSet<string>()); }
     }
 
-    static string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen)
-    {
-        var key = a_file + ":" + a_quest.Id + ":" + a_stage;
-        string cached;
-        if (stageMoves.TryGetValue(key, out cached)) return cached;
-        if (!a_seen.Add(key)) return null;
-        Dictionary<int, List<GearScan.Func>> stages;
-        List<GearScan.Func> funcs;
-        string why = null;
-        if (fragments.TryGetValue(Tuple.Create(a_file, a_quest.Id & 0xFFFFFF), out stages) && stages.TryGetValue(a_stage, out funcs))
-            foreach (var f in funcs) { why = Moves(f, null, Tuple.Create(a_quest, a_file), a_seen); if (why != null) break; }
-        a_seen.Remove(key);
-        if (why != null) stageMoves[key] = why;
-        return why;
-    }
+    // How a function or stage moves the player, itself or through what it calls and sets.
+    static readonly Walk moves = new Walk { Direct = Direct };
+    static string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen) { return moves.Stage(a_file, a_quest, a_stage, a_seen); }
 
     // every master's quests by form ID (load index masked off), by file
     public static readonly List<Dictionary<uint, GearScan.Quest>> perFile = new List<Dictionary<uint, GearScan.Quest>>();
@@ -912,12 +938,15 @@ public static class PerGameScan
 // once or is started with the game (not repeatable); whose every alias is fixed: a forced reference or location, a
 // unique actor, another quest's alias, one its scripts fill, or one made at or found from such an alias, none filled
 // from the story manager's event or by its conditions (directly or through the alias it is made at or found from), so
-// it holds the same in every game; and no stage of whose own fragments touches a companion's affinity (an argument
-// named *Affinity*, CA_*), makes or dismisses a companion (SetCompanion, DismissCompanion, AddToPlayerFaction) or empties
-// the player's inventory (RemoveAllItems, UnequipAll on the player). Less QuestFilter.h's DENIED (read from the file
-// passed): quests the rule passes that are each player's all the same (the opening, Dogmeat's, survival's, Nuka-World's
-// park bookkeeping). The quests the rule passes but for their objectives (a location's quest, DN035) are counted at the
-// end: a quest with no objective counts as started here only once something shows it, which needs a rule of its own.
+// it holds the same in every game; and none of whose stages, walked as -Moves walks them (MoveScan.Walk: its fragment,
+// the script functions it calls, the stages it sets or starts of the quests no session shares by its type; a shared
+// quest's stage reaches a friend's game as the story's anyway), touches what each game keeps for itself (Direct): a
+// companion's affinity, who is or may be a companion (or a stage of a companion's quest), a faction's hostility to
+// another or to the player, a settlement's owner, or the player's whole inventory. Less QuestFilter.h's DENIED (read
+// from the file passed): quests the rule passes that are each player's all the same (survival's, Nuka-World's park
+// bookkeeping and outpost count). The quests the rule passes but for their objectives (a location's quest, DN035) are
+// counted at the end: a quest with no objective counts as started here only once something shows it, which needs a
+// rule of its own. Then, for each quest left out for a stage, the first stage found and its chain.
 public static class SafeScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -948,34 +977,64 @@ public static class SafeScan
         return (alias.Fill == "fromalias" || alias.Fill == "created") && alias.Source >= 0 && PerGame(a_aliases, alias.Source, a_depth + 1);
     }
 
-    // What a stage's own fragment does that makes its quest each player's: "affinity", "companion" or "empties", or null.
-    static string Each(GearScan.Func f)
+    static readonly HashSet<string> COMPANIONS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "SetCompanion", "DismissCompanion", "AddToPlayerFaction", "SetAvailableToBeCompanion", "SetPlayerTeammate", "AllowCompanion",
+        "DisallowCompanion", "ClearCompanion", "ReleaseCompanion", "SetDogmeatCompanion", "DismissDogmeatCompanion", "ClearDogmeatCompanion" };
+    static readonly HashSet<string> FACTIONS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetEnemy", "SetAlly", "SetReaction", "SetPlayerEnemy" };
+    static readonly HashSet<string> SETTLEMENTS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetOwnedByPlayer" };
+
+    // The kinds of what a stage does that make its quest each player's, as Why names them.
+    static readonly Dictionary<string, string> KINDS = new Dictionary<string, string> {
+        { "affinity", "touches affinity" }, { "companion", "changes companions" }, { "empties", "empties the inventory" },
+        { "factions", "changes factions' hostility" }, { "settlement", "changes a settlement's owner" } };
+
+    // What a function's own code does that makes its quest each player's, as "kind what" (a key of KINDS), or null: a
+    // companion's affinity (an argument named *Affinity*, CA_*, or a call named *Affinity* that isn't a Get, Is or Trace);
+    // companions (COMPANIONS: who is or can be one, a teammate, a dismissal); a faction's hostility to another or to the
+    // player (FACTIONS, or adding to or taking out of a PlayerEnemy or PlayerAlly faction); a settlement's owner
+    // (SetOwnedByPlayer); or emptying the player's inventory (RemoveAllItems, UnequipAll on the player).
+    static string Direct(List<GearScan.Instr> a_code)
     {
         var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Func<string, bool> player = v => players.Contains(v) || Bare(v).IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0;
-        foreach (var i in f.Code)
+        foreach (var i in a_code)
         {
             foreach (var a in i.Args)
             {
                 var b = Bare(a);
-                if (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase)) return "affinity";
+                if (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase)) return "affinity " + b;
             }
-            if (i.Op == 25)
-            {
-                if (Is(i.Args[0], "game") && Is(i.Args[1], "GetPlayer")) players.Add(i.Args[2]);
-                else if (Is(i.Args[1], "SetCompanion") || Is(i.Args[1], "DismissCompanion")) return "companion";
-                continue;
-            }
+            if (i.Op != 23 && i.Op != 25 && i.Op != 13 && i.Op != 14) continue;
             if (i.Op == 13 || i.Op == 14) { if (player(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); continue; }
-            if (i.Op != 23) continue;
-            var m = i.Args[0];
+            var m = i.Op == 25 ? i.Args[1] : i.Args[0];
+            if (i.Op == 25 && Is(i.Args[0], "game") && Is(m, "GetPlayer")) { players.Add(i.Args[2]); continue; }
+            if (COMPANIONS.Contains(m)) return "companion " + m;
+            if (FACTIONS.Contains(m)) return "factions " + m;
+            if (SETTLEMENTS.Contains(m)) return "settlement " + m;
+            if (m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
+            if (i.Op == 25) continue;
+            if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0))
+                return "factions " + m + " " + Bare(i.Args[3]);
             if ((Is(m, "GetReference") || Is(m, "GetRef") || Is(m, "GetActorRef") || Is(m, "GetActorReference")) && Bare(i.Args[1]).IndexOf("Player", StringComparison.OrdinalIgnoreCase) >= 0) { players.Add(i.Args[2]); continue; }
-            if ((Is(m, "RemoveAllItems") || Is(m, "UnequipAll")) && player(i.Args[1])) return "empties";
-            if (Is(m, "SetCompanion") || Is(m, "DismissCompanion") || Is(m, "AddToPlayerFaction")) return "companion";
+            if ((Is(m, "RemoveAllItems") || Is(m, "UnequipAll")) && player(i.Args[1])) return "empties " + m;
             players.Remove(i.Args[2]);
         }
         return null;
     }
+
+    // Setting a stage of a companion's quest (its name as the rule's COMPANION), or starting one, is a companion's.
+    static string Target(GearScan.Quest q)
+    {
+        return COMPANION.IsMatch(System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "")) ? "companion SetStage " + q.Edid : null;
+    }
+
+    // What each stage does, followed into the scripts it calls and the stages it sets or starts as -Moves follows them,
+    // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
+    // a dialogue quest, a finale: QuestScan.Shared): what one of those does a friend's game is sent anyway, SAFE or not.
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => QuestScan.Shared(q, file) == "not shared" };
+
+    // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
+    static readonly Dictionary<Tuple<int, uint>, string> found = new Dictionary<Tuple<int, uint>, string>();
 
     // Why a quest is not in SAFE ("" it is), as the rule reads it in order; "no objectives" for one that passes all else.
     static string Why(GearScan.Quest q, int a_file, HashSet<uint> a_radiants, HashSet<Tuple<int, uint>> a_perGame)
@@ -990,12 +1049,14 @@ public static class SafeScan
         var aliases = new Dictionary<int, GearScan.Alias>();
         foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
         if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
-        foreach (var stage in MoveScan.Fragments(a_file, q.Id))
-            foreach (var f in stage.Value)
-            {
-                var each = Each(f);
-                if (each != null) return "a stage that " + (each == "affinity" ? "touches affinity" : each == "companion" ? "changes companions" : "empties the inventory");
-            }
+        foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
+        {
+            var each = walk.Stage(a_file, q, stage);
+            if (each == null) continue;
+            found[Tuple.Create(a_file, local)] = stage + " " + each;
+            var last = each.Substring(each.LastIndexOf(": ", StringComparison.Ordinal) + 2);
+            return "a stage that " + KINDS[last.Substring(0, last.IndexOf(' '))];
+        }
         if (q.Objectives == 0) return "no objectives";
         return "";
     }
@@ -1040,6 +1101,9 @@ public static class SafeScan
             sb.AppendLine(string.Format("# denied: {0} 0x{1:X6} {2}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
         foreach (var g in verdicts.Values.Where(v => v != "" && !v.StartsWith("denied")).GroupBy(v => v).OrderBy(g => g.Key))
             sb.AppendLine(string.Format("# left out, {0}: {1}", g.Key, g.Count()));
+        // what each quest left out for a stage does, and how its stage gets there, but the shared ones'
+        foreach (var kv in found.Where(kv => verdicts[kv.Key].StartsWith("a stage")).OrderBy(kv => kv.Key))
+            sb.AppendLine(string.Format("#   {0} 0x{1:X6} {2} {3}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid, kv.Value));
         return sb.ToString();
     }
 }

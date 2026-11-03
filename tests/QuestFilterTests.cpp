@@ -149,39 +149,50 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 111: Fallout4.esm's 52, Far Harbor's 38, Automatron's 1, Nuka-World's 20.
-	CHECK(std::size(QuestFilter::SAFE) == 111);
+	// 92: Fallout4.esm's 47, Far Harbor's 32, Automatron's 1, Nuka-World's 12.
+	CHECK(std::size(QuestFilter::SAFE) == 92);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 52);
-	CHECK(perFile[1] == 38);
+	CHECK(perFile[0] == 47);
+	CHECK(perFile[1] == 32);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 20);
+	CHECK(perFile[3] == 12);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
-	CHECK(QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05
 	CHECK(QuestFilter::IsSafe(3, 0x000806));  // DLC04MS01
-	CHECK(QuestFilter::IsSafe(1, 0x023ACB));  // DLC03FarHarborFF01
-	CHECK(QuestFilter::IsSafe(1, 0x00A991));  // DLC03FarHarborS01
+	CHECK(QuestFilter::IsSafe(1, 0x023ACA));  // DLC03FarHarborFF02
+	CHECK(QuestFilter::IsSafe(1, 0x04E779));  // DLC03FarHarborM03
 	CHECK(QuestFilter::IsSafe(0, 0x04F623));  // FFDiamondCity01Misc
 	CHECK(QuestFilter::IsSafe(0, 0x10CB94));  // FFGoodneighbor03
-	CHECK(QuestFilter::IsSafe(0, 0x02074B));  // CZ
 	CHECK(QuestFilter::IsSafe(2, 0x00AEDD));  // DLC01DialogueQuest
+	// Mama Murphy's: her death at 700 is already every game's (a kill is shared).
+	CHECK(QuestFilter::IsSafe(0, 0x0EBE71));  // MQ00MamaMurphy
+	// A stage that, itself or through the scripts it calls and the unshared quests' stages it sets, turns a faction on
+	// another or on the player, makes or lets someone be a companion, or changes a settlement's owner: each game's.
+	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ: Cait's and Tommy's ally faction, Cait recruitable
+	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07: SetEnemy, Hancock recruitable
+	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: a stage of Nick's companion quest
+	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
+	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout: DLC04SendKickOut, through its quest's script
+	CHECK(!QuestFilter::IsSafe(1, 0x023ACB));  // DLC03FarHarborFF01: SetOwnedByPlayer
+	CHECK(!QuestFilter::IsSafe(1, 0x00A991));  // DLC03FarHarborS01: a settler added, through the workshop's scripts
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
 	// A place's own quest with no objectives (DN035) is not in this table: one counts as started only by its stages.
 	CHECK(!QuestFilter::IsSafe(0, 0x0EF40C));
-	// The opening, survival mode's, the dog, the Combat Zone's fight and Nuka-World's park bookkeeping: denied.
+	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping, its raiders' kickout
+	// and its outpost count: denied.
 	for (const auto& denied : QuestFilter::DENIED) {
 		CHECK(!QuestFilter::IsSafe(denied.file, denied.quest));
 	}
-	CHECK(std::size(QuestFilter::DENIED) == 7);
+	CHECK(std::size(QuestFilter::DENIED) == 9);
+	CHECK(!QuestFilter::IsSafe(3, 0x032A4A));  // DLC04MQ04_RaiderOutpostTracker: each game's own outposts
 	CHECK(!QuestFilter::IsSafe(0, 0x01ED86));  // MQ101
 	CHECK(!QuestFilter::IsSafe(0, 0x06DFAF));  // DogmeatQuest
 	CHECK(!QuestFilter::IsSafe(0, 0x00080E));  // HC_Manager
