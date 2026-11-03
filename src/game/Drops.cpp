@@ -126,6 +126,7 @@ namespace Drops
 			Clock::time_point   movedAt{};
 			RE::NiPoint3        last{};
 			bool                reported = false;
+			bool                pickedUp = false;  // a plugin's reference our player picked up this session (PlacedPickups): it makes way by OwnGear kOwnDrop
 		};
 		std::vector<Pending> pending;
 
@@ -182,6 +183,9 @@ namespace Drops
 		// References of an item's base seen near our player at a drop the event named none for, that weren't it: not taken
 		// for a later one.
 		std::unordered_set<std::uint32_t> seenLoose;
+		// Plugin references our player picked up and hasn't dropped since: the engine puts such an item back into the world as
+		// that same reference, which the scan may then take for their drop (DropBook::MayBeOurs).
+		DropBook::PlacedPickups placedPickups;
 		// Our player's count of each base they carry, a frame before the events at hand (DropBook::MayScan): kept while the
 		// Pip-Boy or the console is open, where items are dropped.
 		std::optional<std::unordered_map<std::uint32_t, std::uint32_t>> carriedBefore;
@@ -199,6 +203,7 @@ namespace Drops
 		std::uint32_t scrapped = 0, scrapLost = 0;  // copies scrapped in workshop mode: granted to us / someone else had it first
 		std::uint32_t scrapTakenBack = 0, scrapShort = 0;  // lost scraps whose yield was taken out of the workbench / with none seen
 		std::uint32_t scrapRefused = 0;  // items of lost scraps left in the workbench: stored whole, not to be told from our player's own
+		std::uint32_t droppedPlaced = 0;  // drops that put a plugin's reference back into the world (picked up from it before)
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -400,7 +405,9 @@ namespace Drops
 
 		// The reference our player's item became: the one the event names, or else (in the Pip-Boy or the console only,
 		// where items are dropped, and when it can only have been a drop: a_mayScan, DropBook::MayScan) the newest reference
-		// of that item near them that we haven't seen before. Never one another of our systems keeps.
+		// of that item near them that we haven't seen before. Made at runtime, or a plugin's they picked up (an item picked
+		// up from where a plugin placed it goes back into the world as that reference: DropBook::MayBeOurs). Never one
+		// another of our systems keeps.
 		RE::TESObjectREFR* FindDropped(const Left& a_left, bool a_mayScan)
 		{
 			const auto player = Player();
@@ -410,7 +417,10 @@ namespace Drops
 			if (a_left.ref != 0) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_left.ref);
 				const auto base = ref ? ref->GetObjectReference() : nullptr;
-				return ref && base && base->GetFormID() == a_left.base && ref->IsCreated() && Loose(ref) && !Known(a_left.ref) && !OtherSystems(ref) ? ref : nullptr;
+				return ref && base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(ref->IsCreated(), placedPickups.Has(a_left.ref)) && Loose(ref) && !Known(a_left.ref) &&
+				               !OtherSystems(ref) ?
+				           ref :
+				           nullptr;
 			}
 			if (!a_left.inMenu) {
 				return nullptr;  // an item used up (ammo fired, food eaten)
@@ -423,7 +433,8 @@ namespace Drops
 			std::vector<std::uint32_t> others;
 			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, FIND_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (base && base->GetFormID() == a_left.base && a_ref->IsCreated() && Loose(a_ref) && !a_ref->IsDisabled() && !Known(a_ref->GetFormID()) &&
+				if (base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(a_ref->IsCreated(), placedPickups.Has(a_ref->GetFormID())) && Loose(a_ref) &&
+					!a_ref->IsDisabled() && !Known(a_ref->GetFormID()) &&
 					!seenLoose.contains(a_ref->GetFormID()) && !OtherSystems(a_ref)) {
 					if (found) {
 						others.push_back((std::min)(found->GetFormID(), a_ref->GetFormID()));
@@ -725,6 +736,11 @@ namespace Drops
 					continue;
 				}
 				++dropped;
+				const bool placedRef = !ref->IsCreated();  // a plugin's, picked up from the world this session (FindDropped: PlacedPickups)
+				if (placedRef) {
+					placedPickups.Dropped(ref->GetFormID());
+					++droppedPlaced;
+				}
 				const auto verdict = DropBook::Judge(FactsOf(ref, left.count));
 				if (verdict != DropBook::Givable::kGive) {
 					if (verdict != DropBook::Givable::kNotItem) {
@@ -739,9 +755,10 @@ namespace Drops
 				if (pending.size() >= MAX_PENDING) {
 					continue;
 				}
-				pending.push_back({ ref->GetHandle(), ref->GetFormID(), left.base, left.count, NewNonce(), a_now, a_now, ref->data.location, false });
+				pending.push_back({ ref->GetHandle(), ref->GetFormID(), left.base, left.count, NewNonce(), a_now, a_now, ref->data.location, false, placedRef });
 				if (Log()) {
-					REX::INFO("Drops: {:08X} ({:08X} x{}) dropped{}; reported once it rests", ref->GetFormID(), left.base, left.count, left.ref ? "" : " (found near the player)");
+					REX::INFO("Drops: {:08X} ({:08X} x{}) dropped{}{}; reported once it rests", ref->GetFormID(), left.base, left.count, left.ref ? "" : " (found near the player)",
+						placedRef ? " (a plugin's reference, picked up from the world)" : "");
 				}
 			}
 			usedNow.clear();
@@ -1151,6 +1168,14 @@ namespace Drops
 		}
 	}
 
+	void OnPickedUp(std::uint32_t a_ref)
+	{
+		if (!listening) {
+			return;  // not in a session: no friend's world heard of this pickup (DropBook::MayBeOurs)
+		}
+		placedPickups.PickedUp(a_ref);
+	}
+
 	void OnEquipped(std::uint32_t a_base)
 	{
 		if (!listening) {
@@ -1281,8 +1306,16 @@ namespace Drops
 		// Our drop, offered to us alone: the item we dropped makes way for a copy like everyone's, and only once it has
 		// does the server tell the others (kPlaced), so nobody can take it while it is still in our world.
 		const auto ref = it->ref.get();
-		if (ref && Lies(ref.get()) && Equipment::MayChange(ref.get(), OwnGear::Change::kDropCopy)) {
-			RemotePlayers::Discard(it->ref, it->droppedAt);
+		// Our player's own item, not a copy: OwnGear kOwnDrop, which also lets through a plugin's reference they picked up this
+		// session (it->pickedUp), never any other (the copies' kDropCopy stays limited to references this game made).
+		if (ref && Lies(ref.get()) && Equipment::MayMakeWay(ref.get(), it->pickedUp)) {
+			// One made at runtime is deleted; a plugin's (an item picked up from where the plugin placed it) only disabled, as
+			// a friend's pickup does it, so no load puts it back where the plugin placed it (DropBook::HowItMakesWay).
+			if (DropBook::HowItMakesWay(ref->IsCreated()) == DropBook::MakeWay::kDelete) {
+				RemotePlayers::Discard(it->ref, it->droppedAt);
+			} else {
+				ref->Disable();
+			}
 			{
 				std::scoped_lock l{ recordLock };
 				record.Made(a_drop.nonce);
@@ -1558,6 +1591,7 @@ namespace Drops
 
 	void OnWorldStarted(bool a_newGame, std::uint64_t a_character)
 	{
+		placedPickups.Clear();  // what the last world's player picked up: this one's inventory is the save's
 		std::scoped_lock l{ recordLock };
 		world.Started(a_newGame, a_character, WorldRandom());
 	}
@@ -1565,6 +1599,7 @@ namespace Drops
 	void Reset()
 	{
 		listening = false;
+		placedPickups.Clear();  // the session's pickups: one from before the next session is no drop of it (DropBook::MayBeOurs)
 		GiveBackUnconfirmed();  // before our copies go: the session may never have heard those left our world
 		DiscardCopies();
 		OnGameLoaded();
@@ -1634,8 +1669,9 @@ namespace Drops
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
 		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
-		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={}",
+		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={} droppedPlaced={} placedPickups={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused);
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused,
+			droppedPlaced, placedPickups.Size());
 	}
 }

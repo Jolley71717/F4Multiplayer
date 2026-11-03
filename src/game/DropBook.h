@@ -90,6 +90,62 @@ namespace DropBook
 		return !a_used && a_before && a_left > 0 && *a_before >= a_now && std::int64_t{ *a_before - a_now } == a_left;
 	}
 
+	// An item our player drops mostly becomes a reference made at runtime (0xFF......). One they picked up from where a
+	// plugin placed it goes back into the world as that same reference (the engine keeps it with the item), so a drop is
+	// not only a new reference: a plugin's reference is our player's item too when it is one they picked up this session
+	// and haven't dropped since (a_pickedUp, PlacedPickups), whether the engine's event names it or the scan finds it.
+	// Never another plugin's item that lay near them all along, and not one picked up before the session (or before a
+	// load): a friend's world never heard of that pickup and still has the item where the plugin placed it, so a copy
+	// would be a second one there. The swap (OwnGear::Change::kOwnDrop) takes such a reference only with the same note.
+	constexpr bool MayBeOurs(bool a_created, bool a_pickedUp)
+	{
+		return a_created || a_pickedUp;
+	}
+
+	// How the item our player dropped makes way for the session's copy (on the server's offer). A reference made at
+	// runtime is deleted and kept out of saves, as every copy is. A plugin's is only disabled, as a friend's pickup does
+	// it: its record is the plugin's, and deleted or left out of the save, the next load would put it back where the
+	// plugin placed it, a second item.
+	enum class MakeWay : std::uint8_t
+	{
+		kDelete,
+		kDisable,
+	};
+
+	constexpr MakeWay HowItMakesWay(bool a_created)
+	{
+		return a_created ? MakeWay::kDelete : MakeWay::kDisable;
+	}
+
+	// Plugin references our player picked up from the world and hasn't dropped since (as far as we saw): the ones the scan
+	// may take for an item they dropped (MayBeOurs). The oldest is forgotten past MAX.
+	class PlacedPickups
+	{
+	public:
+		static constexpr std::size_t MAX = 256;
+
+		void PickedUp(std::uint32_t a_ref)
+		{
+			if (a_ref == 0 || (a_ref >> 24) == 0xFF) {
+				return;  // a reference made at runtime needs no note
+			}
+			std::erase(order, a_ref);
+			order.push_back(a_ref);
+			if (order.size() > MAX) {
+				order.erase(order.begin());
+			}
+		}
+
+		void Dropped(std::uint32_t a_ref) { std::erase(order, a_ref); }
+
+		[[nodiscard]] bool Has(std::uint32_t a_ref) const { return a_ref != 0 && std::ranges::find(order, a_ref) != order.end(); }
+		[[nodiscard]] std::size_t Size() const { return order.size(); }
+		void Clear() { order.clear(); }
+
+	private:
+		std::vector<std::uint32_t> order;  // oldest first
+	};
+
 	// ---- a take being finished --------------------------------------------------------------------------------
 
 	enum class TakeState : std::uint8_t

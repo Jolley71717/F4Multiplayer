@@ -8,7 +8,7 @@ namespace
 	using OwnGear::Target;
 	using OwnGear::Verdict;
 
-	constexpr Change ALL[] = { Change::kDressStandIn, Change::kDressCopy, Change::kEmptyFrame, Change::kTakeLoose, Change::kContainer, Change::kDropCopy, Change::kGiftCopy };
+	constexpr Change ALL[] = { Change::kDressStandIn, Change::kDressCopy, Change::kEmptyFrame, Change::kTakeLoose, Change::kContainer, Change::kDropCopy, Change::kGiftCopy, Change::kOwnDrop };
 
 	Target Player()
 	{
@@ -44,6 +44,7 @@ TEST("own gear: nothing a friend's game sends changes the local player's invento
 		odd.mirrored = true;
 		odd.madeHere = true;
 		odd.inWorld = true;
+		odd.pickedUp = true;
 		CHECK(OwnGear::Judge(change, odd) == Verdict::kOurPlayer);
 	}
 	// And the tally says so: the one count that must stay 0.
@@ -187,6 +188,49 @@ TEST("own gear: an item given by dropping it: only this game's own copy, lying l
 	CHECK(OwnGear::Judge(Change::kDropCopy, held) == Verdict::kInInventory);
 	CHECK(OwnGear::Judge(Change::kDropCopy, Player()) == Verdict::kOurPlayer);
 	CHECK(OwnGear::Name(Change::kDropCopy) == "dropCopy");
+	// A plugin's reference our player picked up and dropped is still never a copy: placing, removing or taking one never
+	// goes to it.
+	Target placed;
+	placed.pickedUp = true;
+	CHECK(OwnGear::Judge(Change::kDropCopy, placed) == Verdict::kNotCopy);
+}
+
+TEST("own gear: our player's own drop makes way for the session's copy: one made here, or a plugin's they picked up this session")
+{
+	// The usual drop: a reference made at runtime, lying loose.
+	Target made;
+	made.madeHere = true;
+	CHECK(OwnGear::Judge(Change::kOwnDrop, made) == Verdict::kGo);
+	// An item picked up from where a plugin placed it goes back into the world as that reference (the stimpak picked up in
+	// Sanctuary and dropped from the Pip-Boy): it makes way too, so the friend gets their copy.
+	Target placed;
+	placed.pickedUp = true;
+	CHECK(OwnGear::Judge(Change::kOwnDrop, placed) == Verdict::kGo);
+	// Any other plugin item lying in the world (or one picked up before the session): never.
+	CHECK(OwnGear::Judge(Change::kOwnDrop, Target{}) == Verdict::kNotCopy);
+	// Picked up again before the server's answer: the local player's from then on, or another inventory's.
+	auto ours = placed;
+	ours.inWorld = false;
+	ours.heldByPlayer = true;
+	CHECK(OwnGear::Judge(Change::kOwnDrop, ours) == Verdict::kInOurInventory);
+	auto held = placed;
+	held.inWorld = false;
+	held.heldHere = true;
+	CHECK(OwnGear::Judge(Change::kOwnDrop, held) == Verdict::kInInventory);
+	auto between = made;
+	between.inWorld = false;
+	CHECK(OwnGear::Judge(Change::kOwnDrop, between) == Verdict::kNotPlaced);
+	CHECK(OwnGear::Judge(Change::kOwnDrop, Player()) == Verdict::kOurPlayer);
+	Target gone;
+	gone.exists = false;
+	CHECK(OwnGear::Judge(Change::kOwnDrop, gone) == Verdict::kGone);
+	// The note opens only this change: every other one judges a picked-up plugin reference as it did.
+	for (const auto change : ALL) {
+		if (change != Change::kOwnDrop) {
+			CHECK(OwnGear::Judge(change, placed) == OwnGear::Judge(change, Target{}));
+		}
+	}
+	CHECK(OwnGear::Name(Change::kOwnDrop) == "ownDrop");
 }
 
 TEST("own gear: a refused move at a friend's shared storage is put right on our player, and on nothing else")

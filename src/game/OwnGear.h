@@ -30,9 +30,9 @@ namespace OwnGear
 		kEmptyFrame,    // a power armor frame emptied for a stand-in to get into (a copy placed for it, SwitchIntoPowerArmor)
 		kTakeLoose,     // a loose item a friend picked up, taken out of this world too (WorldSync's pickups)
 		kContainer,     // what a friend took from or put into a container or a corpse (the shared loot)
-		// An item lying in the world that a player gave by dropping it (Drops): this game's copy of it placed, taken away when
-		// someone takes it, and the dropper's own item swapped for one. Only ever a reference this game made, loose in the
-		// world: the local player's take of one is their own (they pressed Take), granted by the server first.
+		// An item lying in the world that a player gave by dropping it (Drops): this game's copy of it placed, and taken away
+		// when someone takes it. Only ever a reference this game made, loose in the world: the local player's take of one is
+		// their own (they pressed Take), granted by the server first. (The dropper's own item making way is kOwnDrop.)
 		kDropCopy,
 		// Shared storage (StorageView.h): our player's own move at a friend's storage undone (the server refused it, or the
 		// host's chest held less than a take: a take given back, a put returned). A move our loaded world lacks is put right
@@ -52,6 +52,11 @@ namespace OwnGear
 		// frame, and gathered back out of it and out of our player as they get out (only items named as the lent ones), with a
 		// fusion core of our player's own the frame used up given back to them. Our player, or a frame this game placed.
 		kLoan,
+		// Our player's own drop making way for the session's copy of it, on the server's offer (Drops): the item they dropped,
+		// loose in the world. A reference this game made, or a plugin's that our player picked up this session and dropped
+		// (Target::pickedUp: an item picked up from where a plugin placed it goes back into the world as that reference).
+		// Never any other plugin item: the world's own, which no copy change (kDropCopy) takes either.
+		kOwnDrop,
 		kCount,
 	};
 
@@ -68,6 +73,9 @@ namespace OwnGear
 		bool heldByPlayer = false;   // in no cell, and the engine names the local player as the inventory that holds it
 		bool heldHere = false;       // in no cell, and the engine names another inventory here as its holder (a container's, an NPC's)
 		bool container = false;      // a container's reference (its base is one), not an actor
+		// A plugin's reference our player picked up from the world this session and has dropped again (Drops' note of their
+		// pickups; the engine can't tell). Read by kOwnDrop alone.
+		bool pickedUp = false;
 	};
 
 	enum class Verdict : std::uint8_t
@@ -113,13 +121,14 @@ namespace OwnGear
 		case Change::kContainer:
 			return a_target.standIn ? Verdict::kWrongActor : Verdict::kGo;
 		case Change::kDropCopy:
+		case Change::kOwnDrop:
 			if (!a_target.inWorld) {
 				if (a_target.heldByPlayer) {
 					return Verdict::kInOurInventory;
 				}
 				return a_target.heldHere ? Verdict::kInInventory : Verdict::kNotPlaced;
 			}
-			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
+			return a_target.madeHere || (a_change == Change::kOwnDrop && a_target.pickedUp) ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kStorageUndo:
 			return Verdict::kWrongActor;  // only ever our player
 		case Change::kGiftCopy:
@@ -160,6 +169,8 @@ namespace OwnGear
 			return "giftTake";
 		case Change::kLoan:
 			return "loan";
+		case Change::kOwnDrop:
+			return "ownDrop";
 		case Change::kCount:
 			break;
 		}
