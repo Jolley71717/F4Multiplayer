@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T09:32:50+00:00",
+ "updated": "2026-11-03T17:39:56+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -320,6 +320,15 @@
    "desc": "The mod comparison listed DLCUltraHighResolution.esm as missing on a game that has the file. It is a texture pack with no game records, so one player having it and another not makes no difference in a session. The next release leaves it out of the comparison. We tested it on two real games with the pack on only one."
   },
   {
+   "id": "6oa1",
+   "title": "Share more quests: a host setting adding every quest an automatic safety rule passes",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 3,
+   "note": "",
+   "pr": 287
+  },
+  {
    "id": "6p4v",
    "title": "Nexus: a friend's NPC conversation lines flash by too fast at the top; show them as subtitles, timed with the speech",
    "kind": "feature",
@@ -416,7 +425,7 @@
    "title": "Friend's light-bulb copy glows but never gets ExtraLight (wsinfo lit=no) while the builder's powered bulb has one",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 282
   },
@@ -454,6 +463,15 @@
    "stage": 7,
    "note": "Fixed in 0.9.0 and tested on two real games.",
    "desc": "A friend in power armor appeared to slide along without a walk cycle, or showed up without their armor at all. The armor's walking animation was not being set up for the friend's character. 0.9.0 sets it up, and in testing both players walked in power armor correctly."
+  },
+  {
+   "id": "atg2",
+   "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": "",
+   "pr": 288
   },
   {
    "id": "b3l8",
@@ -646,7 +664,7 @@
    "title": "Workshop copies lose their tracking when their cell unloads and loads again: power changes stop reaching them",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 282
   },
@@ -655,7 +673,7 @@
    "title": "Friend's copy of a powered workshop graph refuses a repeated Powered: 8 tries, givenUp +1 and the log budget spent",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 282
   },
@@ -833,8 +851,9 @@
    "title": "A mirelurk sometimes exists only in the host's game: the client can't see it (world, compass, VATS); the host can hurt it and both get XP",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 283
   },
   {
    "id": "iapg",
@@ -917,6 +936,14 @@
    "note": "Fixed for the next release; not yet tried with real shots.",
    "pr": 170,
    "desc": "A player reported that enemies' death animations played late on the client's screen. The next release reports an enemy as dead as soon as it starts to fall, so friends see the death without a three second wait. On two real games a kill was counted once and the corpses ended up in the same place."
+  },
+  {
+   "id": "jyqm",
+   "title": "Workshop: a friend's generator copy deleted by us comes back when its cell reloads",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "k3vb",
@@ -1004,6 +1031,14 @@
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
   },
   {
+   "id": "lstf",
+   "title": "Share all quests in co-op (the end goal), step by step after the safe ones",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "lzyx",
    "title": "Explosions from enemies you can't see hit you (DLC you don't own)",
    "kind": "bug",
@@ -1052,6 +1087,15 @@
    "pr": 194,
    "partial": "0.9.1 and 0.9.2",
    "desc": "One player's game showed an enemy as a hostile scavenger while the host's showed a friendly settler, and the host's shots healed it. 0.9.2 makes such an enemy the same in every game, and 0.9.1 fixed a heal-back after a takeover. The fixes have not been tried in a real game, and an enemy already in the world whose side differs between games is not covered."
+  },
+  {
+   "id": "ncrz",
+   "title": "No stage rules for Automatron and Nuka-World: shared quests' teleport and pay stages are unguarded",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "",
+   "pr": 286
   },
   {
    "id": "ngtk",
@@ -1113,8 +1157,17 @@
    "title": "Misc quest encounters 'Gun Run' (Salem) and the Robot Race (Easy City Downs) aren't shared: their spawned enemies don't sync and stand still or react slowly",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
+  },
+  {
+   "id": "ont9",
+   "title": "DLC radiant side quests are shared by type though each game fills them differently",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "",
+   "pr": 286
   },
   {
    "id": "otu0",
@@ -1510,6 +1563,15 @@
    "stage": 7,
    "note": "Merged for the next release; in testing the takes were already in before the chest was opened.",
    "pr": 208
+  },
+  {
+   "id": "x9d3",
+   "title": "Workshop: a friend's light bulb copy loses its light after a save (every other save on the VM)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "",
+   "pr": 282
   },
   {
    "id": "xegs",
