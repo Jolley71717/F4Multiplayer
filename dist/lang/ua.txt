@@ -1,0 +1,281 @@
+# F4Multiplayer texts: Ukrainian, community translation. A key a language file lacks shows this
+# English text, so a missing or half-done file never blanks a message.
+#
+# One "key = text" per line, in UTF-8 without a byte order mark. A line starting with # is a comment. \n is a
+# line break. Keep the {placeholders} ({player}, {n}, {address}...) exactly as written: the mod fills them in, and
+# one it does not know shows up as typed. To translate or correct a language, edit the text after the = sign.
+#
+# The game's own language picks the file (sLanguage in Fallout4.ini); sLanguage in F4Multiplayer.ini overrides it.
+
+# by juqwtf (: 
+
+# --- Joining, hosting and the session ---
+session.connected_shared = Мультиплеєр: підключено (спільний сюжет)
+session.connected_own = Мультиплеєр: підключено (у кожного свій сюжет)
+session.connected_shared_fire = Мультиплеєр: підключено (спільний сюжет, вогонь по своїх увімкнено)
+session.connected_own_fire = Мультиплеєр: підключено (у кожного свій сюжет, вогонь по своїх увімкнено)
+session.notice = Мультиплеєр: {text}
+session.player_joined = {player} приєднався
+session.player_left = {player} вийшов
+session.player_renamed = {player} тепер {name}
+session.someone_left = Гравець покинув гру
+session.kicked = Мультиплеєр: хост вигнав вас із сесії
+session.banned = Мультиплеєр: хост заблокував (забанив) вас у цій сесії
+session.disconnected = Мультиплеєр: з'єднання розірвано
+session.hosting_cant_join = Мультиплеєр: ви є хостом. Встановіть bHost = false, щоб приєднуватися до друзів.
+session.host_waits_for_world = Мультиплеєр: сервер запуститься, щойно ви опинитеся у світі гри (bHost). Зупиніть хостинг у меню, щоб приєднатися до друзів.
+session.joining_friend = Мультиплеєр: приєднання до гри друга
+session.no_steam = Мультиплеєр: Steam недоступний
+session.host_other_session = Мультиплеєр: зараз хост перебуває в іншій сесії (інший персонаж або нова гра); приєднайтеся знову через меню
+session.character_changed_host = Мультиплеєр: ви завантажили іншого персонажа; хостинг перезапускається для сесії цього персонажа
+session.hosting_resumes = Мультиплеєр: хостинг відновиться, щойно ваш новий персонаж отримає ім'я та вийде зі Сховища 111
+session.character_changed_left = Мультиплеєр: ви завантажили іншого персонажа і покинули сесію; приєднайтеся знову через меню
+session.unnamed_waits = Мультиплеєр: сесія очікує, поки ваш новий персонаж отримає ім'я; збереження, зроблене до цього, матиме ID вашого попереднього персонажа і гратиметься в його сесії
+host.err_opening = ви зможете створити сервер, щойно вийдете зі Сховища 111
+host.err_opening_unnamed = ви зможете створити сервер, щойно ваш новий персонаж отримає ім'я
+host.err_port = не вдалося створити сервер на порту {port}
+world.history_full = Мультиплеєр: спільна історія сесії заповнена на {percent}%; обмін лутом та вбивствами зупиниться при 100%. Хост може розпочати чисту сесію, видаливши файл сесії (див. документацію)
+
+# --- What the server says when it refuses a player (the server sends English; these are shown in the player's language) ---
+reject.not_client = Це не клієнт F4Multiplayer
+reject.version = Незбіг версій: сервер використовує протокол {server}, а у вас {you}. Встановіть однакову версію мода.
+reject.password = Неправильний пароль
+reject.host_not_ready = Хост ще не зайшов у гру
+reject.full = Сервер заповнений
+reject.banned = Хост заблокував вам доступ до цієї сесії
+reject.locked = Сесія закрита: хост заборонив приєднання нових гравців
+reject.order = Порядок завантаження ваших модів відрізняється від інших гравців.
+reject.order_all = У всіх гравців мають бути однакові моди в однаковому порядку.
+reject.texture = Плагіни текстур можуть відрізнятися лише в тому випадку, якщо вони завантажуються останніми.
+
+# --- The connection ---
+party.unstable = Мультиплеєр: нестабільне з'єднання з хостом
+party.restored = Мультиплеєр: з'єднання відновлено
+party.high_ping = Мультиплеєр: високий пінг до хоста ({ms} мс)
+party.ping_info = пінг {ms} мс
+party.not_in_session = Мультиплеєр: ви не в сесії
+
+# --- Friends: who they are, where, how they are ---
+party.a_friend = Друг
+party.alone = Мультиплеєр: крім вас тут поки нікого немає
+party.count_one = Група: 1 інший гравець{ping}
+party.count_many = Група: {n} інших гравців{ping}
+player.down = поранений
+player.dead = мертвий
+player.status = {hp}% ХЗ, рівень {level}
+player.loading = завантаження
+player.unreachable = там, де вашої гри немає
+player.right_here = прямо тут
+player.distance = {m} м {dir}
+compass.n = Пн
+compass.ne = Пн-С
+compass.e = С
+compass.se = Пд-С
+compass.s = Пд
+compass.sw = Пд-З
+compass.w = З
+compass.nw = Пн-З
+party.somewhere_else = десь інде
+party.at_place = у {place}
+party.friend_down_far = {player} поранений! Утримуйте {key}, щоб телепортуватися і допомогти йому піднятися
+party.friend_down_near = {player} поранений! Підійдіть до нього, щоб допомогти піднятися ({where})
+party.friend_died = {player} помер
+party.friend_back_up = {player} знову в строю
+party.ping = {player}: {what} ({where})
+party.called = Мітка: {what} ({where})
+party.ping_here = сюди!
+party.ping_you = ви
+party.ping_something = щось
+party.where = {player}: {where}
+party.no_emote_armor = У силовій броні емоції недоступні
+party.friends_frame = Це силова броня гравця {player}. Щойно він з неї вийде, ви зможете її позичити, але її деталі залишаться його власністю.
+party.frame_asking = Просимо {player} позичити його силову броню...
+party.frame_lent = {player} позичив вам свою силову броню. Натисніть ще раз, щоб залізти всередину.
+party.frame_not_lending = {player} не позичає свою силову броню.
+party.frame_refused = {player} зараз не може позичити цю силову броню.
+party.frame_busy = Ви вже використовуєте позичену в друга силову броню.
+party.frame_borrowed = {player} позичив вашу силову броню
+party.frame_given_back = {player} повернув вашу силову броню
+party.frame_owner_left = {player} вийшов: його силова броня зникне, щойно ви з неї вилізете
+party.frame_loan_over = Позичена вами силова броня повернулася до власника
+party.lent_item = {item} (власник: {player})
+party.frame_is_lent = Ваша силова броня позичена гравцю {player}
+party.tag_pipboy = {name} [В Піп-Бої]
+party.tag_menu = {name} [В меню]
+party.killed = {killer} вбив {victim}
+party.xp = +{xp} ДОСВ від вбивств вашої групи
+
+# --- Teleporting to a friend ---
+party.no_teleport_target = Мультиплеєр: немає до кого телепортуватися
+party.teleport_prompt = Телепортуватися до {player}? Утримуйте {key} для підтвердження
+party.teleport_choose = Натисніть {key}, щоб обрати до кого телепортуватися
+party.cant_teleport_opening = Неможливо телепортуватися, поки ви не покинете Сховище 111
+party.cant_teleport_unnamed = Неможливо телепортуватися, поки ваш новий персонаж не отримає ім'я
+party.cant_teleport_talking = Неможливо телепортуватися під час розмови
+party.cant_teleport_scene = Неможливо телепортуватися під час сюжетної сцени
+party.cant_teleport_busy = Неможливо телепортуватися, коли ви сидите або чимось користуєтеся
+party.cant_teleport_survival = Неможливо телепортуватися в режимі Виживання (швидке переміщення вимкнено)
+party.cant_find = Зараз неможливо знайти гравця {player}
+party.cant_teleport_unreachable = {player} знаходиться в локації, якої немає у вашій грі (відсутнє DLC або мод)
+party.still_in_vault = {player} ще не покинув Сховище 111
+party.teleported = Телепортовано до {player}
+party.cant_teleport_into = Неможливо телепортуватися в локацію гравця {player}
+party.cant_teleport_to = Неможливо телепортуватися до {player}
+party.teleporting = Телепортація до {player}
+
+# --- Being down and helping up ---
+down.went_down = Вас тяжко поранено! Друг може допомогти вам. Утримуйте {key}, щоб здатися
+down.went_down_crawl = Вас тяжко поранено! Друг може допомогти вам, а ви можете повзти. Утримуйте {key}, щоб здатися
+down.seconds_left = {n} секунд залишилося, щоб вам допомогли
+down.friends_gone = Зараз ніхто не може вам допомогти; ви стечете кров'ю через {n} сек, якщо друг не повернеться
+down.helping = Допомагаємо гравцю {player} піднятися...
+down.helped = Ви допомогли гравцю {player} піднятися
+down.helped_you = {player} допоміг вам піднятися
+down.revives_left = Залишилося підняттів: {n}
+down.last_revive = Це було ваше останнє підняття: наступний смертельний удар вб'є вас
+down.revives_back = Ваші підняття відновлено: тепер друзі знову можуть допомогти вам піднятися
+down.cooldown = Щойно підняли: протягом {n} секунд будь-який смертельний удар вб'є вас
+down.cant_help_fighting = Неможливо підняти {player} під час бою
+down.bleed_out_loads_save = Якщо ніхто не допоможе вам протягом {n} секунд, ви помрете, і гра завантажить останнє збереження
+down.death_loads_save = Якщо ви помрете, гра завантажить ваше останнє збереження
+
+# --- The host's rules for being down, as a joiner is told them ---
+rules.host = Правила хоста: {rules}
+rules.revive_off = підняття вимкнено, смертельний удар вбиває одразу
+rules.revives_fight = ліміт підняттів: {n} за бій
+rules.revives_window = ліміт підняттів: {n} за {minutes} хв
+rules.bleed_out = {n} сек на стікання кров'ю
+rules.help_time = {n} сек на допомогу другу
+rules.revive_health = підняття з {n}% здоров'я
+rules.cooldown = смертельний удар протягом {n} сек після підняття вбиває
+rules.out_of_combat = не можна піднімати під час бою
+rules.save_on_down = автозбереження при тяжкому пораненні
+
+# --- The shared map, quests and workshop ---
+map.discovered = {player} відкрив локацію {place}
+quest.caught_up = Ви наздогнали своїх друзів: {names}
+quest.and_more = та ще {n}
+quest.catching_up = Синхронізація із сюжетом друзів через {n} сек: {quest} (вас може перемістити)
+quest.a_quest = квест
+quest.controls_back = Етап сюжету ваших друзів не завершився; управління повернуто
+quest.stuck_in = Ваш основний сюжет застряг; він продовжиться квестом {quest} через {n} сек (вас може перемістити)
+quest.stuck = Ваш основний сюжет застряг; він продовжиться квестом {quest}
+quest.next = наступний квест
+quest.completed = {player} виконав {quest}
+workshop.rescued = Речі, які ви зберігали в контейнері друга, переміщено до вашого інвентарю
+drops.container_hint = Зброя та броня, яку ви кладете в контейнер, залишається лише у вашій грі. Щоб передати річ другу, просто викиньте її на землю поруч
+drops.not_given = Друзі не зможуть підібрати цей предмет: він лежить на землі лише у вашій грі
+drops.taken_first = Друг забрав це першим
+storage.closed = Копія цього контейнера у хоста зараз закрита (він далеко, або його гра завантажується): спробуйте пізніше, коли він підійде ближче
+storage.take_refused = Цей предмет зник із контейнера хоста (можливо, друг забрав його першим?): його повернуто на місце
+storage.put_refused = Це неможливо покласти в контейнер хоста (у його грі немає відповідного мода?): предмет повернуто вам
+storage.short = У контейнері було менше, ніж показано: те, чого не вистачило, повернуто на місце
+storage.settle_cut = Ваші дії з контейнерами хоста не вдалося повністю відновити після вашого завантаження (журнал сесії переповнений або ваша частка вичерпана): вони залишаться закритими для вас до наступного завантаження
+gifts.given = Тепер друзі можуть забрати це зі своєї копії контейнера (перший, хто візьме, отримає річ); доки хтось цього не зробить, ви можете забрати її назад
+gifts.not_given = Друзі не отримають цю річ: вона залишається лише у вашій копії контейнера (квестовий предмет, мод, що є лише у вас, або сесія переповнена)
+gifts.taken_first = Друг забрав це першим
+save.old_leftover = Мультиплеєр: це збереження містить залишки від старої версії мода. Збережіться зараз, потім перезапустіть гру і грайте з нового збереження
+
+# --- The F1 menu ---
+menu.unavailable = Мультиплеєр: меню недоступне
+menu.more = Далі ({page}/{pages})
+menu.on = Увімк
+menu.off = Вимк
+menu.close = Закрити
+menu.back = Назад
+menu.settings = Налаштування
+menu.invite = Запросити друзів
+menu.stop_hosting = Зупинити сервер (хостинг)
+menu.leave = Покинути гру
+menu.join_other = Приєднатися до іншого
+menu.host = Створити сесію (хост)
+menu.join = Приєднатися до друга
+menu.look_again = Оновити пошук
+menu.join_address = Приєднатися до {address}
+menu.address_steam_named = Гра {player} (Steam)
+menu.address_steam_unnamed = Користувач Steam {id} (Steam)
+menu.hosting_udp = Сервер створено на UDP-порту {port} (друзі приєднуються за IP-адресою).
+menu.hosting_udp_nosteam = Сервер створено на UDP-порту {port} (Steam недоступний: друзі приєднуються за IP-адресою).
+menu.hosting_steam = Сервер створено через Steam. Друзі приєднуються через список друзів ("Приєднатися до гри") або за вашим запрошенням.
+menu.hosting_steam_opening = Сервер створюється через Steam; відкриття лобі...
+menu.own_game_connecting = Ваша власна гра ще підключається.
+menu.host_waiting = Хостинг розпочнеться, щойно ви опинитеся у світі гри та вийдете зі Сховища 111.
+menu.not_in_session = Ви не в сесії. Створіть свою, або приєднайтеся до друга.
+menu.connecting = Підключення до {address}...
+menu.refused_soon = Відмовлено: {reason} (повторна спроба за кілька секунд)
+menu.refused_later = Відмовлено: {reason} (повторна спроба за хвилину)
+menu.connected = Підключено до {address}, заходимо в гру...
+menu.in_session = У сесії {address}
+menu.nobody_else = Крім вас тут поки нікого немає.
+menu.with_you = З вами ({n}):
+menu.host_failed = Не вдалося створити сервер: {error}.
+menu.friends_hosting = Друзі в Steam, які зараз хостять кооп Fallout 4:
+menu.joining_host = Мультиплеєр: приєднання до гри {player}
+menu.steam_missing = Steam недоступний у цій грі, тому список друзів показати неможливо.
+menu.none_hosting = Ніхто з ваших друзів у Steam зараз не хостить гру ({friends} друзів, {online} онлайн, {ingame} у Fallout 4).\nХост з'явиться тут лише тоді, коли Steam бачить, що він грає у Fallout 4 (це має відображатися в його профілі): запускайте гру через Steam за допомогою F4SE і встановіть у налаштуваннях приватності профілю "Деталі гри" на "Лише для друзів" або "Відкритий".\nТакож хост може запросити вас через оверлей Steam (Shift+Tab), або ви можете натиснути "Приєднатися до гри" в списку друзів.
+menu.ini_address = Адреса з ini-файлу: {address}
+menu.connecting_hud = Мультиплеєр: підключення до {address}
+menu.setting_button = {name}: {state}
+menu.setting_line = {name}: {state} ({what})
+menu.settings_saved = Зміни збережено у файл F4Multiplayer.ini.
+menu.friendly_fire = Вогонь по своїх
+menu.friendly_fire_what = гравці можуть завдавати шкоди один одному (налаштування хоста, діє з наступної сесії)
+menu.shared_story = Спільний сюжет
+menu.shared_story_what = будь-який прогрес в основному сюжеті та фракціях зараховується всім, включно з досягненнями, і записується в кожне збереження (налаштування хоста, діє з наступної сесії)
+menu.voice_chat = Голосовий чат
+menu.voice_chat_what = утримуйте кнопку голосу, щоб розмовляти з друзями
+menu.spoken_lines = Діалоги NPC
+menu.spoken_lines_what = чути поруч фрази з розмов друзів з NPC, голосом того, хто говорить
+menu.compass_markers = Мітки на компасі
+menu.compass_markers_what = друзі відображаються на компасі
+menu.fast_loading = Швидке завантаження
+menu.fast_loading_what = вимкнення вертикальної синхронізації (vsync) під час екранів завантаження
+menu.lend_power_armor = Позичати силову броню
+menu.lend_power_armor_what = друзі можуть використовувати вашу припарковану силову броню
+
+menu.mods = Порівняти моди ({n})
+menu.mods_ask = Запитати хоста ще раз
+menu.host_controls = Управління хостом
+menu.hc_waiting = Очікування відповіді від вашого сервера. Спробуйте ще раз за мить.
+menu.hc_open = Сесія відкрита: друзі можуть приєднуватися.
+menu.hc_locked = Сесія закрита: нові гравці не можуть приєднатися. Гравці, які вже є в ній, можуть повернутися у разі вильоту або розриву з'єднання; вигнані та заблоковані гравці не можуть.
+menu.hc_no_password = Без пароля: будь-хто, хто бачить сесію, може приєднатися.
+menu.hc_password = Пароль: {password} (друзям потрібно вписати sPassword = {password} у їхній F4Multiplayer.ini)
+menu.hc_banned = Заблоковано (забанено) гравців: {n}
+menu.hc_players = Вигнати (Kick) або Забанити (Ban) ({n})
+menu.hc_lock = Закрити сесію
+menu.hc_unlock = Відкрити сесію
+menu.hc_password_button = Пароль
+menu.hc_bans = Забанені ({n})
+menu.hc_pick_player = Оберіть гравця, щоб вигнати або забанити:
+menu.hc_nobody = У сесії більше нікого немає.
+menu.hc_player = {player}\nВигнати (Kick): гравця буде відключено від сесії з повідомленням про видалення; він зможе приєднатися знову.\nЗабанити (Ban): гравця буде відключено, і всі його майбутні спроби зайти будуть відхилятися. Блокування зберігається на цьому ПК за їхнім Steam-акаунтом; розблокувати їх можна в меню "Забанені".
+menu.hc_kick = Вигнати {player}
+menu.hc_ban = Забанити {player}
+menu.hc_password_page = В меню не можна друкувати, тому новий пароль генерується автоматично. Гравці, які вже перебувають у сесії, залишаються.
+menu.hc_new_password = Новий пароль
+menu.hc_remove_password = Видалити пароль
+menu.hc_bans_page = Забанені гравці ({n}). Оберіть кого розблокувати:
+menu.hc_no_bans = Нікого не забанено.
+menu.hc_unban = Розблокувати {who}
+menu.hc_ban_named = {player} ({alias})
+menu.hc_ban_unnamed = {alias}, забанений {date}
+menu.hc_unban_all = Розблокувати всіх
+menu.hc_kicked = Мультиплеєр: {player} був вигнаний (kicked)
+menu.hc_banned_hud = Мультиплеєр: {player} був забанений
+menu.hc_unbanned = Мультиплеєр: {who} був розблокований (unbanned)
+menu.hc_not_saved = Мультиплеєр: список банів не вдалося зберегти; він діятиме, поки ви не зупините хостинг
+menu.hc_no_identity = Мультиплеєр: гравця {player} неможливо забанити (акаунт невідомий), тому його було просто вигнано
+menu.hc_gone = Мультиплеєр: цей гравець вже покинув сесію
+
+# --- Your mods compared with the host's ---
+mods.differ = Мультиплеєр: ваші моди відрізняються від хоста ({n}): натисніть {key}
+mods.match = Мультиплеєр: ваші моди збігаються з модами хоста
+mods.ask_wait = Мультиплеєр: ви щойно запитали хоста; спробуйте знову за кілька секунд
+mods.same = Ваші моди збігаються з модами хоста.
+mods.page_intro = Ваші моди у порівнянні з хостом: {n} є лише в одного з вас. Ви все ще можете грати разом: все, що додають ці моди (NPC, предмети, квести), просто не з'явиться в іншій грі. Щоб бачити все спільно, встановіть такі ж моди, як у хоста, і перезапустіть гру: вона завантажує моди лише під час запуску.
+mods.missing = Відсутні у вашій грі (встановіть та увімкніть їх):
+mods.extra = Є лише у вашій грі (вимкніть їх):
+mods.order = В іншому місці вашого порядку завантаження (їх не потрібно змінювати):
+mods.light_here = {name} (формат light у вас, повноцінний у хоста)
+mods.full_here = {name} (повноцінний у вас, формат light у хоста)
