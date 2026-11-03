@@ -61,6 +61,18 @@ namespace WorkshopApply
 
 	inline constexpr int MAX_LEFTOVERS = 8;  // removed at one spot in one go: a guard, should one not go at once
 
+	// A copy is a reference made at runtime in its cell, not a persistent one: when the cell unloads, the game writes it to
+	// the cell's record of changes and frees it, and makes it again from that record when the cell loads again, under the same
+	// form ID but as a new reference. The handle kept for it then names nothing, for good (the rig, after a trip to another
+	// settlement and back: every copy's handle 00000000, the references standing under their IDs). So a copy is kept with its
+	// form ID and base too, and the reference under that ID is taken for it again when: an ID made at runtime (FF), the same
+	// object, and not deleted. A created ID is given out again only after its reference is deleted and let go, and a copy
+	// is deleted only by us, as it leaves our list.
+	constexpr bool SameCopy(std::uint32_t a_id, std::uint32_t a_baseNow, std::uint32_t a_base, bool a_deleted)
+	{
+		return (a_id >> 24) == 0xFF && a_base != 0 && a_baseNow == a_base && !a_deleted;
+	}
+
 	// A save may hold copies that doubled what stood at the spot: an older version placed a piece once its workbench was
 	// in our worldspace, its own cell loaded or not, and so over what stood there unseen (the save's copy,
 	// after a load away from the settlement, or a piece of ours). Two at one spot flicker. All but the one kept go.

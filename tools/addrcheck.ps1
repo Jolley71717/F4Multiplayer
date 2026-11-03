@@ -286,7 +286,10 @@ if ($null -ne $usesPreprocessed) {
 
 # The two calls Equipment::InstallFrameUse patches (src/game/FrameUse.h): TESFurniture::Activate's call into the
 # player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.
-foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'))) {
+# And WorkshopSync's: the crafting menus' gather asking Workshop::GetWorkshop (CraftingWorkshop.h), and the light maker
+# asking Workshop::IsPowered (InstallLights).
+foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
+		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {

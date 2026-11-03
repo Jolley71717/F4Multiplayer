@@ -321,6 +321,69 @@ namespace WorkshopPower
 		return mixed != 0 ? mixed : 1;
 	}
 
+	// What we last told a copy's loaded graph, as far as it took it: nothing (a graph new to us: made anew, or brought back,
+	// with what it showed, by a load or by its cell loading again), "Powered" or "Unpowered".
+	enum class Told : std::uint8_t
+	{
+		kNothing,
+		kPowered,
+		kUnpowered,
+	};
+
+	// A loaded graph refused "Powered" or "Unpowered" (a_on): it has no such move from where it stands. Whether that means
+	// it shows what was asked already (shown: no try spent), or not yet (tried again, a try spent):
+	//
+	// - "Unpowered" refused: dark already (a new graph starts unpowered, and one told "Unpowered" took it), but not one we
+	//   told "Powered": it may still be turning on, and a lit copy left lit is a friend's generator running in our game.
+	// - "Powered" refused: lit already (we told it so, or it came back lit: a save keeps what a graph showed, and so does a
+	//   cell that unloads and loads again), but not one we told "Unpowered": it may still be turning off. A graph new to us
+	//   that refuses "Powered" is taken as lit: a graph made anew takes "Powered" at once (every first show on the rig took
+	//   it), so a refusal is one that came back lit. Should it be one not ready yet after all, the copy is only left dark
+	//   where its builder's is lit (and is shown once more when it settles, SETTLE), never lit where it should be dark; and
+	//   giving up after MAX_TRIES left it as it was, too.
+	[[nodiscard]] constexpr bool RefusalShows(bool a_on, Told a_told)
+	{
+		return a_on ? a_told != Told::kUnpowered : a_told != Told::kPowered;
+	}
+
+	// What we last told each copy's graph (by the copy's form ID, with the graph's address: a graph made anew is told nothing
+	// yet), for RefusalShows.
+	class GraphsTold
+	{
+	public:
+		// The graph took the event.
+		void Took(std::uint32_t a_copy, std::uintptr_t a_graph, bool a_on) { told[a_copy] = { a_graph, a_on ? Told::kPowered : Told::kUnpowered }; }
+
+		// The graph refused the event: true if it shows what was asked already (RefusalShows), and it counts as told so from
+		// now on (a lit graph that refused "Powered" is one a later "Unpowered" must turn off: tried again if refused).
+		bool Refused(std::uint32_t a_copy, std::uintptr_t a_graph, bool a_on)
+		{
+			if (!RefusalShows(a_on, Of(a_copy, a_graph))) {
+				return false;
+			}
+			Took(a_copy, a_graph, a_on);
+			return true;
+		}
+
+		[[nodiscard]] Told Of(std::uint32_t a_copy, std::uintptr_t a_graph) const
+		{
+			const auto it = told.find(a_copy);
+			return it != told.end() && it->second.graph == a_graph ? it->second.what : Told::kNothing;
+		}
+
+		void Forget(std::uint32_t a_copy) { told.erase(a_copy); }
+		void Clear() { told.clear(); }
+		[[nodiscard]] std::size_t Size() const { return told.size(); }
+
+	private:
+		struct Entry
+		{
+			std::uintptr_t graph = 0;
+			Told           what = Told::kNothing;
+		};
+		std::map<std::uint32_t, Entry> told;
+	};
+
 	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once it is drawn
 	// (its 3D there and the graph it names loaded: Drawing) and the game took it, once more when that drawing has settled
 	// (SETTLE), and again whenever it is drawn anew (it came back into a loaded cell, was made again, or got a new graph):
@@ -429,6 +492,11 @@ namespace WorkshopPower
 		//                                               its graph isn't loaded yet (waited for, no try spent)
 		//   bool           Show(const Key&, bool on)    false if the game didn't take it (try again): a light's light
 		//                                               switched, or the graph took the event
+		//
+		// and, if it has it:
+		//
+		//   bool           Holds(const Key&, bool on)   false if a copy shown so doesn't show it now, though drawn the same
+		//                                               (a light's light gone while shown on): shown again (Lapses)
 		template <class Engine>
 		std::size_t Refresh(Engine& a_engine, Clock::time_point a_now)
 		{
@@ -462,6 +530,15 @@ namespace WorkshopPower
 					continue;
 				}
 				if (want.shown && want.drawn == drawn) {
+					if (!Holds(a_engine, key, want.powered)) {
+						// Shown so, and drawn the same, but not showing it now (a light whose light the game's queued switch
+						// took away after it was shown on): shown again, as often as a copy drawn anew is.
+						++lapses;
+						if (Redrawn(want, a_now) && a_engine.Show(key, want.powered)) {
+							++shown;
+						}
+						continue;
+					}
 					if (!want.settle || a_now < want.settleAt) {
 						continue;
 					}
@@ -506,6 +583,7 @@ namespace WorkshopPower
 		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
 		[[nodiscard]] std::size_t RedrawsCapped() const { return redrawsCapped; }
 		[[nodiscard]] std::size_t Hushed() const { return hushedTotal; }
+		[[nodiscard]] std::size_t Lapses() const { return lapses; }
 
 		// How many copies show what their builder's game says (or were given up on).
 		[[nodiscard]] std::size_t Shown() const
@@ -544,7 +622,18 @@ namespace WorkshopPower
 			return true;
 		}
 
+		template <class Engine>
+		static bool Holds(Engine& a_engine, const Key& a_key, bool a_on)
+		{
+			if constexpr (requires { a_engine.Holds(a_key, a_on); }) {
+				return a_engine.Holds(a_key, a_on);
+			} else {
+				return true;
+			}
+		}
+
 		std::map<Key, Want> wants;
+		std::size_t         lapses = 0;  // copies found not showing what they were shown (Holds), shown again
 		std::size_t         dropped = 0;
 		std::size_t         givenUp = 0;
 		std::size_t         redrawsCapped = 0;

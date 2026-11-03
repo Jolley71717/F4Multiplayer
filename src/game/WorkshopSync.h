@@ -20,6 +20,11 @@ namespace WorkshopSync
 	// load (it takes a trampoline call stub); no-op after.
 	void InstallCrafting();
 
+	// Patches the game's light maker's power check, so a copy of a friend's light that waits for power (the light bulb) makes
+	// its light while it is shown powered, as a powered light of ours does. At plugin load (it takes a trampoline call stub);
+	// no-op after.
+	void InstallLights();
+
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.
@@ -51,8 +56,16 @@ namespace WorkshopSync
 	// Dev: reports an existing reference as if the player had just placed (or scrapped) it.
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op);
 
-	// Removes every copy (leaving the session).
+	// Removes every copy (leaving the session). One whose cell isn't loaded then is deleted when it is (Sweep).
 	void Reset();
+
+	// Out of a session, every frame: the copies left to delete (their cell wasn't loaded, or their 3D was still loading) go
+	// once they may.
+	void Sweep();
+
+	// A save is about to load: the lights of the copies we showed powered are forgotten before the load's threads make the
+	// loaded world's lights (an old copy's ID may name a light of ours there).
+	void BeforeLoad();
 
 	// A save was loaded: the copies made before it are let go (the session sends its building again),
 	// and its cells are walked again for scrapped junk.
