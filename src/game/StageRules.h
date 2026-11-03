@@ -21,11 +21,14 @@ namespace StageRules
 	inline constexpr std::uint8_t kPays = 1 << 2;    // takes caps or ordinary items (not quest items) from the player: a bribe, a payment
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 
-	// The game files the rules are for (where a quest's form comes from).
+	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
+	// (GearScan.MASTERS), not the game's load order.
 	enum class File : std::uint8_t
 	{
 		kFallout4,
-		kCoast,
+		kCoast,      // DLCCoast.esm, Far Harbor
+		kRobot,      // DLCRobot.esm, Automatron
+		kNukaWorld,  // DLCNukaWorld.esm
 	};
 
 	struct Rule
@@ -63,6 +66,15 @@ namespace StageRules
 	// and MQ204's 0, debug stages (no start-up flag: never set in a game played through) that set MQ202 300 and MQ203
 	// 1000; Starting() judges every stage that starts their quest by its 0, so with them no stage of MQ204 (The Glowing
 	// Sea) would ever be caught up.
+	// Automatron's and Nuka-World's rows (files 2 and 3) are tools/questscan.ps1 -Rules's output (the same scans, and a
+	// wait of each fragment's literal Utility.Wait plus 2 s for each MoveTo of the player), its payments checked by hand:
+	// Nuka-World's raids' 90 (DLC04RaidChaseOff, DLC04RaidCoerce: the settlement's caps) and DLC04MS02 500 (the space
+	// suits and helmets unequipped and taken); the robot's head DLC01MQ04 200 and the drink DLC04DryRockGulch 218 take
+	// are quest items, read from an alias. Most of their moves are the developers' quickstarts (stages 1-4, MoveTo a
+	// debug marker), never set in a game played through; DLC04MQ01 1000 sets DLC04MQ01Gauntlet 2500, which walks the
+	// player through the Nuka-World station's stairwell door. Their stage 0s that move the player are left out, as
+	// MQ203's and MQ204's (none is its quest's start-up stage): DLC01MQ01, DLC01MQ02, DLC01MQ04, DLC01MQ05, DLC04MQ01,
+	// DLC04MQ02, DLC04MS02. None is a bridge: an add-on's quests start here when the player goes there.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
 		{ 0, 0x019955, 210, kPays, 0 },  // DialogueBunkerHill: 10 caps
@@ -404,6 +416,25 @@ namespace StageRules
 		{ 1, 0x02127F, 255, 0, 15 },
 		{ 1, 0x02127F, 760, 0, 40 },
 		{ 1, 0x036763, 548, kMoves, 82 },  // DLC03_V118_Quest: the date (faded out, moved to it)
+		{ 2, 0x0010F5, 1, kMoves, 20 },  // DLC01MQ05: MoveTo CodsworthTalkMarker (quickstarts)
+		{ 2, 0x0010F5, 2, kMoves, 20 },
+		{ 2, 0x002833, 1, kMoves, 20 },  // DLC01MQ04: MoveTo CodsworthTalkMarker, DLC01MQ04HagenStart (quickstarts)
+		{ 2, 0x002833, 2, kMoves, 20 },
+		{ 2, 0x002833, 3, kMoves, 20 },
+		{ 3, 0x000801, 1, kMoves, 0 },  // DLC04MQ01: DLC04MQ01Gauntlet 5, 6, 9 MoveTo its quickstart markers
+		{ 3, 0x000801, 2, kMoves, 0 },
+		{ 3, 0x000801, 3, kMoves, 0 },
+		{ 3, 0x000801, 217, 0, 20 },
+		{ 3, 0x000801, 1000, kMoves, 0 },  // DLC04MQ01Gauntlet 2500: the player through DLC04NukaStationStairwellDoorChain
+		{ 3, 0x000804, 1, kMoves, 20 },  // DLC04MQ04: MoveTo PlayerDebugMarker (quickstarts)
+		{ 3, 0x000804, 2, kMoves, 20 },
+		{ 3, 0x000804, 3, kMoves, 100 },
+		{ 3, 0x000804, 4, kMoves, 20 },
+		{ 3, 0x000804, 500, 0, 50 },
+		{ 3, 0x000807, 500, kPays, 0 },  // DLC04MS02: the space suits and helmets unequipped and taken (RemoveItem x5 each)
+		{ 3, 0x014352, 90, kPays, 0 },  // DLC04RaidChaseOff: caps
+		{ 3, 0x016E18, 95, 0, 10 },     // DLC04RaidSubdue
+		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
 	};
 
 	// Stages whose script takes the player's controls away until a later stage gives them back. They
@@ -439,6 +470,12 @@ namespace StageRules
 		}
 		if (is("DLCCoast.esm")) {
 			return File::kCoast;
+		}
+		if (is("DLCRobot.esm")) {
+			return File::kRobot;
+		}
+		if (is("DLCNukaWorld.esm")) {
+			return File::kNukaWorld;
 		}
 		return std::nullopt;
 	}
@@ -485,9 +522,9 @@ namespace StageRules
 	// as already behind it (StageLog::Queue: a quest's stages only move forward): their scripts never run here, and the
 	// objectives they show and complete are left as they were. So one is only set once its quest's stages are the
 	// oldest still waiting (StageLog::Queue::Poll). Generated with tools/questscan.ps1 -SetsOther from the quest fragment
-	// scripts of Fallout4.esm and DLCCoast.esm: a fragment's SetStage on a quest property other than its own quest,
-	// kept if that property names a shared quest or a quest it can't be matched to (its name isn't the quest's).
-	// Sorted by file, quest and stage.
+	// scripts of Fallout4.esm, DLCCoast.esm, DLCRobot.esm and DLCNukaWorld.esm: a fragment's SetStage on a quest property
+	// other than its own quest, kept if that property names a shared quest or a quest it can't be matched to (its name
+	// isn't the quest's). Sorted by file, quest and stage.
 	struct Setter
 	{
 		std::uint8_t  file;
@@ -652,6 +689,19 @@ namespace StageRules
 		{ 1, 0x0316F2, 807 }, { 1, 0x0316F2, 810 }, { 1, 0x0316F2, 820 }, { 1, 0x0316F2, 830 }, { 1, 0x0316F2, 900 }, { 1, 0x0316F2, 960 }, { 1, 0x0316F2, 1500 },
 		{ 1, 0x036763, 880 },  // DLC03_V118_Quest
 		{ 1, 0x04B1F6, 400 }, { 1, 0x04B1F6, 500 },  // DLC03AcadiaM03
+		{ 2, 0x000801, 0 }, { 2, 0x000801, 3000 },  // DLC01MQ02
+		{ 2, 0x000806, 3000 },  // DLC01MQ01
+		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 1 }, { 2, 0x0010F5, 2 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 1000 }, { 2, 0x0010F5, 1100 },  // DLC01MQ05
+		{ 2, 0x002833, 0 }, { 2, 0x002833, 1 }, { 2, 0x002833, 2 }, { 2, 0x002833, 3 }, { 2, 0x002833, 50 }, { 2, 0x002833, 110 }, { 2, 0x002833, 160 },  // DLC01MQ04
+		{ 2, 0x002833, 255 },
+		{ 3, 0x000800, 520 }, { 3, 0x000800, 1000 },  // DLC04MQ00
+		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 1000 },  // DLC04MQ01
+		{ 3, 0x000802, 0 },  // DLC04MQ02
+		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 },  // DLC04MQ04
+		{ 3, 0x00DB37, 20 }, { 3, 0x00DB37, 105 },  // DLC04RaidWipeOut
+		{ 3, 0x014352, 20 },  // DLC04RaidChaseOff
+		{ 3, 0x016E18, 20 }, { 3, 0x016E18, 65 }, { 3, 0x016E18, 70 }, { 3, 0x016E18, 95 }, { 3, 0x016E18, 100 },  // DLC04RaidSubdue
+		{ 3, 0x019088, 20 },  // DLC04RaidCoerce
 	};
 
 	inline bool SetsAnother(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
