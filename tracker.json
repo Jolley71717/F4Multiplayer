@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-02T23:58:39+00:00",
+ "updated": "2026-11-03T00:07:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -137,7 +137,7 @@
    "title": "PR 270: a friend's line in the subtitle area stays ~1.5 min after the session ends",
    "kind": "bug",
    "priority": 1,
-   "stage": 4,
+   "stage": 5,
    "note": "",
    "pr": 270
   },
@@ -232,7 +232,7 @@
    "title": "PR 270: a friend's blank (whitespace-only) NPC line counts as dropped and shows an empty notice",
    "kind": "bug",
    "priority": 2,
-   "stage": 4,
+   "stage": 5,
    "note": "",
    "pr": 270
   },
@@ -297,7 +297,7 @@
    "title": "Nexus: a friend's NPC conversation lines flash by too fast at the top; show them as subtitles, timed with the speech",
    "kind": "feature",
    "priority": 2,
-   "stage": 4,
+   "stage": 5,
    "note": "",
    "pr": 270
   },
@@ -1301,7 +1301,7 @@
    "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "A robot killed in one game can stay alive in the other",
    "pr": 275
   },
