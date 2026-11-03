@@ -115,6 +115,21 @@ namespace SubtitleTime
 		return seconds;
 	}
 
+	// How much of a voice file VoiceSeconds needs past its lip sync: the RIFF chunks before the audio (fmt, the
+	// packet table 'dpds', the 'data' chunk's header). A packet table is 4 bytes a packet, a few KB for a song.
+	inline constexpr std::size_t HEADER_AUDIO = 64u << 10;
+	inline constexpr std::size_t HEADER_PROBE = 12;  // a .fuz's magic, version and lip sync size
+
+	// How many bytes from its start a voice file is read for its length, from its first HEADER_PROBE bytes: a .fuz's
+	// lip sync and HEADER_AUDIO, or HEADER_AUDIO for a bare .xwm or .wav.
+	inline std::size_t HeaderBytes(std::span<const std::uint8_t> a_start)
+	{
+		if (a_start.size() >= HEADER_PROBE && detail::Tag(a_start, 0, "FUZE")) {
+			return HEADER_PROBE + static_cast<std::size_t>(detail::U32(a_start, 8)) + HEADER_AUDIO;
+		}
+		return HEADER_AUDIO;
+	}
+
 	// The characters of a UTF-8 text (continuation bytes not counted).
 	inline std::size_t Characters(std::string_view a_text)
 	{
