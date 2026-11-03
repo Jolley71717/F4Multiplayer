@@ -380,6 +380,62 @@ TEST("shared rolls: a list's level is the session's through the encounter zone, 
 	CHECK(SharedRoll::NpcLevel(0, 1000, 0, 0) == 1);
 }
 
+TEST("shared rolls: the zone is the reference's own, else its cell's own data, else the engine's; the stand-in is none")
+{
+	using SharedRoll::ZoneFrom;
+	struct Z
+	{
+		int id;
+	};
+	const Z own{ 1 }, cell{ 2 }, world{ 3 }, none{ 0 };
+
+	// A cell whose loaded copy of its zone is made: the engine reads the cell's too.
+	auto choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), &cell, &cell, &none);
+	CHECK(choice.zone == &cell);
+	CHECK(choice.from == ZoneFrom::kCell);
+	CHECK(!choice.late);
+
+	// The rig's case: the slower game resolves the NPC before its cell's copy is made, so the engine reads no zone (or the
+	// worldspace's at its position); the cell's own data gives the zone the faster game read.
+	choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), &cell, static_cast<const Z*>(nullptr), &none);
+	CHECK(choice.zone == &cell);
+	CHECK(choice.late);
+	choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), &cell, &none, &none);
+	CHECK(choice.zone == &cell);
+	CHECK(choice.late);
+	choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), &cell, &world, &none);
+	CHECK(choice.zone == &cell);
+	CHECK(choice.from == ZoneFrom::kCell);
+	CHECK(choice.late);
+
+	// The reference's own zone comes first, as the engine takes it.
+	choice = SharedRoll::ChooseZone(&own, &cell, &own, &none);
+	CHECK(choice.zone == &own);
+	CHECK(choice.from == ZoneFrom::kReference);
+	CHECK(!choice.late);
+
+	// No zone in the cell's data: the engine's (the worldspace's at its position, or the worldspace's own).
+	choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), static_cast<const Z*>(nullptr), &world, &none);
+	CHECK(choice.zone == &world);
+	CHECK(choice.from == ZoneFrom::kEngine);
+	CHECK(!choice.late);
+
+	// The engine's stand-in for none, wherever it comes from, is no zone (no bounds).
+	choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), &none, &none, &none);
+	CHECK(choice.zone == nullptr);
+	CHECK(choice.from == ZoneFrom::kNone);
+	CHECK(!choice.late);
+	choice = SharedRoll::ChooseZone(static_cast<const Z*>(nullptr), static_cast<const Z*>(nullptr), static_cast<const Z*>(nullptr), &none);
+	CHECK(choice.zone == nullptr);
+	CHECK(!choice.late);
+
+	// Why it matters: in a zone of 40-99 an easy placement (x0.7) of a level-10 session reads its lists at 28; with no
+	// zone, at 7, another pick.
+	const SharedRoll::Zone quincy{ .min = 40, .max = 99 };
+	CHECK(SharedRoll::ListLevel(10, 0.7f, quincy) == 28);
+	CHECK(SharedRoll::ListLevel(10, 0.7f, std::nullopt) == 7);
+}
+
 TEST("shared rolls: five players at five levels build the same raiders with the host's rule highest or host; own leaves each its own")
 {
 	using Protocol::NpcLevelRule;

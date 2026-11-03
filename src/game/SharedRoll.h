@@ -349,6 +349,50 @@ namespace SharedRoll
 		float        scale = 1.0f;
 	};
 
+	// Where a reference's encounter zone is read from for its pick.
+	enum class ZoneFrom : std::uint8_t
+	{
+		kNone,       // no zone, or the engine's stand-in for none (no bounds)
+		kReference,  // the reference's own (ExtraEncounterZone)
+		kCell,       // its cell's, from the cell's own data
+		kEngine,     // what the engine reads past those: the worldspace's at its position, or the worldspace's own
+	};
+
+	template <class T>
+	struct ZoneChoice
+	{
+		const T* zone = nullptr;
+		ZoneFrom from = ZoneFrom::kNone;
+		bool     late = false;  // the engine's own read gives another zone now: its cell's copy not made yet
+	};
+
+	// The zone a reference's pick reads, as the engine's TESObjectREFR::GetEncounterZone finds it (1.11.240 +562950: the
+	// reference's own, then its cell's, then the worldspace's at its position, then the worldspace's own), except that its
+	// cell's is read from the cell's own data (+4C9480: the cell's zone, its location's, its worldspace's) and not from
+	// the copy a loaded cell keeps (LOADED_CELL_DATA +0x1F0). The engine makes that copy last when it sets up a cell's
+	// loaded data (+4DC060), after the cell's references: a reference resolved before then reads no zone (or the
+	// worldspace's), so a slower game, whose cells take longer, would read another level than a faster one. The copy, once
+	// made, is the cell's own zone, so reading the cell's own gives what the engine reads after, whenever it is read.
+	// a_none is the engine's stand-in for none (+31ED400), read as no zone, as the engine's zone level does.
+	template <class T>
+	[[nodiscard]] constexpr ZoneChoice<T> ChooseZone(const T* a_reference, const T* a_cell, const T* a_engine, const T* a_none)
+	{
+		ZoneChoice<T> out;
+		if (a_reference) {
+			out = { a_reference, ZoneFrom::kReference };
+		} else if (a_cell) {
+			out = { a_cell, ZoneFrom::kCell };
+		} else if (a_engine) {
+			out = { a_engine, ZoneFrom::kEngine };
+		}
+		if (out.zone == a_none) {
+			out = {};
+		}
+		const T* engine = a_engine == a_none ? nullptr : a_engine;
+		out.late = out.zone != engine;
+		return out;
+	}
+
 	// The level a list is read at for a reference: the session's, through its encounter zone as the engine takes the
 	// player's (1.11.240 +494EC0: below the minimum, the minimum unless the zone matches the player; above it, the minimum
 	// plus the rest times the scale; at most the maximum), then times the reference's level modifier (an "easy" or a
