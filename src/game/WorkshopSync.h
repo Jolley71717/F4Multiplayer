@@ -15,6 +15,11 @@ namespace WorkshopSync
 	// Hooks the workshop's placed/moved/scrapped events. Call once the game is up; no-op after.
 	void Install();
 
+	// Patches the crafting menus' gather so a crafting station that is our copy of a friend's reads our settlement's workbench
+	// (its junk and supply lines), as a station of ours does, not our player's things alone (CraftingWorkshop.h). At plugin
+	// load (it takes a trampoline call stub); no-op after.
+	void InstallCrafting();
+
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.

@@ -2287,6 +2287,16 @@ still gets such a piece twice.
 Friends' copies stay out of workshop mode's reach by design (above), so a friend's crop or post can't be a job for
 our settlers; each player assigns jobs at their own pieces.
 
+**A friend's crafting station reads our settlement's junk** (`CraftingWorkshop.h`). A workbench menu (chemistry,
+cooking, armor, weapons) gathers what its recipes may use from the settlement the station is linked to as a workshop
+item (`Workshop::GetWorkshop`: the workbench's own inventory and those its supply lines reach); with no link, only the
+station's and the player's own things count. A copy is never linked (above), so crafting at a station a friend built read
+only our player's inventory (a 0.10.1 report: at the host's stations only the host's own components counted). The
+gather's one call to `Workshop::GetWorkshop` is patched (`WorkshopSync::InstallCrafting`, its bytes checked first): the
+engine's answer stands, and a station with none that is our copy of a friend's piece reads the workbench its report
+named, when that is a workbench here (each copy is noted with it as it is kept). Nothing is linked or saved. `wsstatus`
+counts `craftingAtCopies=` and `craftingUnbenched=`, and the first 20 of each are logged.
+
 **A piece its builder's world lost goes for everyone, and comes back if it has it again** (`WorkshopAudit.h`,
 `WorkshopStore::BuiltBy`, `Gone` and `Tag`). The server keeps each built piece under its builder and their reference ID,
 and only that builder's scrap takes it out; a game reports no scrap of a piece it lacks, and none of a copy of a

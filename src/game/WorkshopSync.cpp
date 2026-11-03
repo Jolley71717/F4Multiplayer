@@ -1,6 +1,7 @@
 #include "game/WorkshopSync.h"
 
 #include "game/BuiltWalk.h"
+#include "game/CraftingWorkshop.h"
 #include "game/Drops.h"
 #include "game/EngineRefs.h"
 #include "game/HostRules.h"
@@ -23,6 +24,8 @@
 #include "game/MenuWatch.h"
 #include "game/Papyrus.h"
 #include "game/Story.h"
+#include "game/TextureFlush.h"
+#include "MainThread.h"
 #include "Text.h"
 
 // A grid's links are kept in sets (BSTSet<PowerUtils::GridConnection>), which CommonLibF4 gives no equality: the same
@@ -110,12 +113,16 @@ namespace WorkshopSync
 		// the game thread changes `copies`): kept in step with `copies` under its own lock.
 		std::mutex                        copyIdsLock;
 		std::unordered_set<std::uint32_t> copyIds;
+		// The workbench each copy's report named, for the crafting menus' gather (CraftingWorkshop.h), which runs on the
+		// menu's thread. Under copyIdsLock, in step with copyIds.
+		CraftingWorkshop::Benches copyBenches;
 
-		void NoteCopy(const RE::ObjectRefHandle& a_handle)
+		void NoteCopy(const RE::ObjectRefHandle& a_handle, std::uint32_t a_bench)
 		{
 			if (const auto ref = a_handle.get()) {
 				std::scoped_lock l{ copyIdsLock };
 				copyIds.insert(ref->GetFormID());
+				copyBenches.Note(ref->GetFormID(), a_bench);
 			}
 		}
 
@@ -124,7 +131,15 @@ namespace WorkshopSync
 			if (const auto ref = a_handle.get()) {
 				std::scoped_lock l{ copyIdsLock };
 				copyIds.erase(ref->GetFormID());
+				copyBenches.Forget(ref->GetFormID());
 			}
+		}
+
+		void ForgetAllCopies()
+		{
+			std::scoped_lock l{ copyIdsLock };
+			copyIds.clear();
+			copyBenches.Clear();
 		}
 
 		bool IsCopy(const RE::TESObjectREFR* a_ref)
@@ -1248,10 +1263,11 @@ namespace WorkshopSync
 			}
 			auto                     StandingOf(const Copy& a_copy) { return WorkshopSync::StandingOf(a_copy); }
 			void                     MoveTo(const Copy& a_copy, const Protocol::WorkshopItem& a_item) { WorkshopSync::MoveTo(a_copy, a_item); }
-			// A copy made, or found standing from an earlier session: ours to remove, and out of workshop mode's reach.
-			void Keep(const Copy& a_copy)
+			// A copy made, or found standing from an earlier session: ours to remove, and out of workshop mode's reach. Noted with
+			// the workbench its report names, which a crafting station's copy reads as its settlement (CraftingWorkshop.h).
+			void Keep(const Copy& a_copy, const Protocol::WorkshopItem& a_item)
 			{
-				NoteCopy(a_copy.ref);
+				NoteCopy(a_copy.ref, a_item.workshop);
 				if (const auto ref = a_copy.ref.get()) {
 					BlockInteraction(*ref);
 				}
@@ -2090,6 +2106,81 @@ namespace WorkshopSync
 		return keywords && keywords->HasKeywordID(WORKSHOP_KEYWORD);
 	}
 
+	namespace
+	{
+		// The crafting menus' gather of what their recipes may use, and the settlement lookup it calls (CraftingWorkshop.h).
+		constexpr REL::ID     WORKBENCH_GATHER{ 2224943 };  // (+B28540)
+		constexpr REL::ID     GET_WORKSHOP{ 2194973 };      // Workshop::GetWorkshop(TESObjectREFR&) (+385A80)
+		constexpr std::size_t CALL_STUB = 14;               // what a write_call<5> takes of the trampoline
+
+		using GetWorkshopFn = RE::TESObjectREFR* (*)(RE::TESObjectREFR&);
+		GetWorkshopFn              originalGetWorkshop = nullptr;
+		std::atomic<std::uint32_t> craftingAtCopies{ 0 };   // gathers at a copy of a friend's station, read from our workbench
+		std::atomic<std::uint32_t> craftingUnbenched{ 0 };  // ... at one whose workbench is no workbench here: the player's alone
+		constexpr std::uint32_t    MAX_CRAFTING_LOGGED = 20;
+
+		// The gather asks which settlement the menu's workbench reads. The engine's answer (the station's link) stands; a
+		// station with none that is our copy of a friend's piece reads the workbench their report named, as theirs does in
+		// their game. On the menu's thread: the copies' workbenches are read under their lock, and the log is the main
+		// thread's.
+		RE::TESObjectREFR* CraftingWorkshopHook(RE::TESObjectREFR& a_workbench)
+		{
+			const auto linked = originalGetWorkshop(a_workbench);
+			if (linked) {
+				return linked;
+			}
+			const auto    station = a_workbench.GetFormID();
+			std::uint32_t named = 0;
+			{
+				std::scoped_lock l{ copyIdsLock };
+				named = copyBenches.Of(station);
+			}
+			if (named == 0) {
+				return nullptr;  // a station of the world's or ours with no settlement: vanilla reads the player's things alone
+			}
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(named);
+			if (CraftingWorkshop::Pick(0, named, IsWorkbenchAnchor(bench)) == 0) {
+				if (craftingUnbenched.fetch_add(1) < MAX_CRAFTING_LOGGED) {
+					MainThread::Post([station, named] {
+						REX::WARN("WorkshopSync: crafting at {:08X}, our copy of a friend's station, reads only our player's things: its workbench {:08X} is no workbench here",
+							station, named);
+					});
+				}
+				return nullptr;
+			}
+			if (craftingAtCopies.fetch_add(1) < MAX_CRAFTING_LOGGED) {
+				MainThread::Post([station, named] {
+					REX::INFO("WorkshopSync: crafting at {:08X}, our copy of a friend's station, reads workbench {:08X}'s junk and supply lines, as a station of ours would",
+						station, named);
+				});
+			}
+			return bench;
+		}
+	}
+
+	void InstallCrafting()
+	{
+		if (originalGetWorkshop) {
+			return;
+		}
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < CALL_STUB) {
+			REX::WARN("WorkshopSync: no room for the crafting menus' hook ({} bytes free); a friend's crafting station reads only our player's things", trampoline.free_size());
+			return;
+		}
+		const auto                  site = WORKBENCH_GATHER.address() + CraftingWorkshop::GET_WORKSHOP_CALL;
+		std::array<std::uint8_t, 5> bytes{};
+		std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
+		if (TextureFlush::CallTarget(bytes, site) != GET_WORKSHOP.address()) {
+			REX::WARN("WorkshopSync: the crafting menus' gather doesn't ask Workshop::GetWorkshop where 1.11.240 does (another plugin's patch?); a friend's crafting station reads only "
+					  "our player's things");
+			return;
+		}
+		originalGetWorkshop = reinterpret_cast<GetWorkshopFn>(trampoline.write_call<5>(site, &CraftingWorkshopHook));
+		REX::INFO("WorkshopSync: crafting menus hooked (gather {:X}+{:X}): a friend's station copied here reads our workbench", WORKBENCH_GATHER.address(),
+			CraftingWorkshop::GET_WORKSHOP_CALL);
+	}
+
 	void Install()
 	{
 		if (installed) {
@@ -2206,10 +2297,7 @@ namespace WorkshopSync
 	{
 		EngineWorld world;
 		WorkshopApply::RemoveAll(world, copies, twins, inbox);
-		{
-			std::scoped_lock l{ copyIdsLock };
-			copyIds.clear();
-		}
+		ForgetAllCopies();
 		ClearWalk();
 		scrapsDeferred.clear();
 		unbuiltWires.clear();
@@ -2243,10 +2331,7 @@ namespace WorkshopSync
 		twins.clear();  // the session's building sent again twins them again with the copies found
 		graveyard.clear();
 		unbuiltWires.clear();
-		{
-			std::scoped_lock l{ copyIdsLock };
-			copyIds.clear();
-		}
+		ForgetAllCopies();
 		ClearWalk();
 		ClearAudit();  // the server sends what it keeps as ours again after the load, to be looked for in this world
 		// Our pieces are sent again (the load may have set them otherwise), and friends' are shown again on the copies
@@ -2268,8 +2353,7 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		powerBenches.clear();
 		benchWorld = 0;
-		std::scoped_lock l{ copyIdsLock };
-		copyIds.clear();
+		ForgetAllCopies();
 	}
 
 	void ApplyPower(const Protocol::PowerStates& a_power)
@@ -2434,7 +2518,7 @@ namespace WorkshopSync
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
-		       std::format(" framesCleared={}", counts.framesCleared) + [] {
+		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };
 			       return std::format(" ownLooking={} ownFound={} ownGone={} ownLostLooking={} ownBack={} auditCells={}", audit.Waiting(), audit.Found(), audit.Lost(), audit.LostWaiting(), audit.Restored(), cellAges.Size());
 		       }();
