@@ -4,6 +4,7 @@
 #include "game/CommandMeter.h"
 #include "game/CreatureGait.h"
 #include "game/Dialogue.h"
+#include "game/EnableParents.h"
 #include "game/Equipment.h"
 #include "game/FrameClock.h"
 #include "game/FrameLoans.h"
@@ -144,6 +145,7 @@ namespace NpcSync
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
 		std::uint32_t                                        broughtIn = 0;       // copies moved to where their owner's stands: from an unloaded cell, or from another space ours was left in
 		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
+		std::uint32_t                                        switchedOnParents = 0;  // of those tries, the ones that switched on an enable parent
 		// Left alone, each counted once: characters of our own story off here (not switched on: MaySwitchOn), and
 		// copies not moved to their owner's because the owner's stand-in is not beside it (OwnerNear), by
 		// BringIn and by the bring-over of a far mirror.
@@ -1580,19 +1582,30 @@ namespace NpcSync
 		// The owner's game switched the NPC on (a script enabled it: the mole rats that burrow up at Red
 		// Rocket, an ambush), ours is still off: it is switched on here too, through the console's enable
 		// like the kills, else the friend fights something we never see. It is mirrored once it loads.
+		// One an enable parent switches (Salem's mirelurks, which Gun Run's stage 30 turns on) is switched on through
+		// the parent at the top of its chain: the engine ignores an enable of the NPC itself (EnableChain.h).
 		// RetryBudget::Plan said to (never the player, the dead or a deleted one).
 		void SwitchOn(const Protocol::ActorState& a_state, RetryBudget::Verdict a_verdict)
 		{
-			++switchedOn;
-			if (a_verdict == RetryBudget::Verdict::kFirst) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
-				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running{}", a_state.refId,
-					actor && actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent) ? " (an enable parent switches it here)" : "");
-			} else if (a_verdict == RetryBudget::Verdict::kLast) {
-				REX::INFO("NpcSync: switching {:08X} on for the last time; after {} tries it stays off here", a_state.refId, RetryBudget::TRIES);
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
+			if (!actor) {
+				return;
 			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
-			meter.Count(1);
+			++switchedOn;
+			const auto plan = EnableParents::SwitchOn(actor, Story::Shared());
+			if (plan.verdict == EnableChain::Verdict::kParent) {
+				++switchedOnParents;
+			}
+			if (a_verdict == RetryBudget::Verdict::kFirst) {
+				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running; switched on: {} {:08X}", a_state.refId,
+					EnableChain::VerdictName(plan.verdict), plan.target);
+			} else if (a_verdict == RetryBudget::Verdict::kLast) {
+				REX::INFO("NpcSync: switching {:08X} on for the last time ({} {:08X}); after {} tries it stays off here", a_state.refId, EnableChain::VerdictName(plan.verdict), plan.target,
+					RetryBudget::TRIES);
+			}
+			if (EnableChain::SwitchesOn(plan)) {
+				meter.Count(1);
+			}
 		}
 
 		// Whether the owner's status names a menu that stops their game (PauseHandOff::Stopped): their world stands still.
@@ -2354,10 +2367,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} friendlyHandOffs={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={} friendlyHandOffs={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
-			broughtOver, broughtIn, switchedOn, handOffs, friendlyHandOffs, friendlyCameBack, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
+			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, friendlyHandOffs, friendlyCameBack, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
 			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights());
 	}
 }

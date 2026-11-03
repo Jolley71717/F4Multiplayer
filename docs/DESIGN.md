@@ -362,6 +362,15 @@
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
   then left as it is. The tries start over once the copy is on, or here (`net status`: `gaveUp=`).
+  One an enable parent switches is switched on through the parent at the top of its chain (`EnableChain.h`,
+  game-free and tested; `EnableParents.h`): the engine's own `enable` returns at once for a reference with an
+  enable parent ("... has enable state parent ... will be ignored"), so up to 0.10.1 such a copy stayed off for
+  good. Gun Run (DN083_Barney, a misc quest, so each game runs its own) enables Salem's mirelurks, their ambush
+  spots and eggs through one marker (MirelurkQuestEnabler, 000C3D6F) at its stage 30, in the game of the player
+  who got there; a friend fought a mirelurk the other player could not see anywhere (a Nexus report on 0.10.1).
+  Never a parent with everyone on their own story (one marker often switches a whole scene, characters of our own
+  story among them), nor one the opposite way (that parent would have to go off); the log line says which, and
+  `switchedOn=` counts tries/those through a parent. The switch-on before a friend's kill (WorldSync) goes the same way.
 - Console commands: each one is compiled and run on the spot, so the copies taken over from their own AI are
   spread out, 8 a frame at most (the rest keep their snapshots and wait a frame), and the commands run for NPCs
   are counted (`CommandMeter`; `net status`: `cmds=` last frame/most, `busy=` frames over 32, `rereg=`,

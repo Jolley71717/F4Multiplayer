@@ -5,6 +5,7 @@
 #include "game/DamageHold.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
+#include "game/EnableParents.h"
 #include "game/Drops.h"
 #include "game/Gifts.h"
 #include "game/Equipment.h"
@@ -400,10 +401,14 @@ namespace WorldSync
 			if (actor && actor->IsDisabled() && !actor->IsDeleted()) {
 				const auto cell = actor->GetParentCell();
 				if (RemoteEdits::SwitchOnToKill(true, false, cell && cell->IsAttached(), Story::Shared(), DescribeStory(actor)) && switchOnTried.insert(a_refId).second) {
-					RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_refId).c_str());
-					NpcSync::CountCommands(1);
-					++switchedOnToKill;
-					REX::INFO("WorldSync: switching {:08X} on to kill it: it is off here, and died in player {}'s game", a_refId, a_death.reporter);
+					// One an enable parent switches through that parent: the engine ignores an enable of it (EnableChain.h).
+					const auto plan = EnableParents::SwitchOn(actor, Story::Shared());
+					if (EnableChain::SwitchesOn(plan)) {
+						NpcSync::CountCommands(1);
+						++switchedOnToKill;
+					}
+					REX::INFO("WorldSync: switching {:08X} on to kill it: it is off here, and died in player {}'s game; switched on: {} {:08X}", a_refId, a_death.reporter,
+						EnableChain::VerdictName(plan.verdict), plan.target);
 				}
 				return false;  // killed once it has loaded
 			}
