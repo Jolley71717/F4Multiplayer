@@ -377,7 +377,9 @@
   2000 units off (or in another space), a friend whose game runs within 800 units and at most a third as far. The
   facts must hold for 3 s, and the owner must have run it for 20 s, so a friend walking past or a just-taken NPC
   moves nothing; it comes back only when the owner is within 800 and the friend beyond 2000. Through the same
-  release as above. `net status`: `friendlyHandOffs=`; the log: "handing ... to a player standing next to it".
+  release as above. One that comes back to us unclaimed (the friend's game could not take it) is not offered to them
+  again for 5 min. `net status`: `friendlyHandOffs=` handed/came back; the log: "handing ... to a player standing
+  next to it".
 - A game stopped by a menu (`GameStop::Now`: `UI::menuMode` above 0, the one place the plugin asks it) for 5 s
   (`PauseHandOff.h`, game-free and tested) offers to run nothing new, NPCs or frames, and releases the NPCs it runs
   that a friend can take on: a friend in the same space within 6000 units of it, whose own status names no menu

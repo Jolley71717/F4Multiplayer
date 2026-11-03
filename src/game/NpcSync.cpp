@@ -162,6 +162,13 @@ namespace NpcSync
 		std::uint32_t                                        handOffs = 0;
 		FriendlyHandOff::Book                                friendly;  // ours that a friend stands next to (FriendlyHandOff)
 		std::uint32_t                                        friendlyHandOffs = 0;
+		// Handed to a friend standing next to them and not yet run by anyone else. One that comes back to us so (the
+		// friend's game could not claim it: switched off in their story, refused, or stopped by a menu we don't count) is
+		// not offered to them again for FRIENDLY_BACKOFF, or it would go and come back every HANDOFF_RETRY while they stand there.
+		std::unordered_map<std::uint32_t, Clock::time_point> friendlyPending;
+		std::unordered_map<std::uint32_t, Clock::time_point> friendlyRefused;
+		constexpr auto                                       FRIENDLY_BACKOFF = 5min;
+		std::uint32_t                                        friendlyCameBack = 0;
 		// Our game stopped by a menu (GameStop), and for how long as of this frame: past PauseHandOff::AFTER, Scan offers
 		// to run nothing new and hands ours to friends near them.
 		GameStop::Clock                                      stop;
@@ -450,7 +457,7 @@ namespace NpcSync
 				.ours = IsOurCompanion(a_actor) || a_id == talkingTo || Dialogue::Holds(a_actor) ||
 				        std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
 				.fought = hold.FoughtLately(a_id, a_now),
-				.handedOffLately = last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY,
+				.handedOffLately = (last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY) || friendlyRefused.contains(a_id),
 				.ranFor = it != owned.end() && it->second.ranSince != Clock::time_point{} ? a_now - it->second.ranSince : Clock::duration{},
 			};
 			return friendly.Decide(a_id, npc, us, friends, a_now) == FriendlyHandOff::Why::kRelease;
@@ -617,6 +624,8 @@ namespace NpcSync
 			hands.Expire(a_now);
 			friendly.Expire(a_now);
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
+			std::erase_if(friendlyPending, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
+			std::erase_if(friendlyRefused, [&](const auto& a_entry) { return a_now - a_entry.second >= FRIENDLY_BACKOFF; });
 			std::erase_if(letGoAt, [&](const auto& a_entry) { return a_now - a_entry.second >= LET_GO_KEPT; });
 
 			// NPCs we run that are no longer loaded go back to the pool, and so do the ones a friend is
@@ -644,6 +653,7 @@ namespace NpcSync
 			for (const auto id : friendlyOff) {
 				handOver(id);
 				++friendlyHandOffs;
+				friendlyPending[id] = a_now;
 				REX::INFO("NpcSync: handing {:08X} to a player standing next to it (friendly, we are over {:.0f} units off; {} such so far)", id,
 					FriendlyHandOff::RUNNER_FROM, friendlyHandOffs);
 			}
@@ -1828,10 +1838,17 @@ namespace NpcSync
 			if (entry.playerId == localId) {
 				if (const auto [it, fresh] = owned.try_emplace(entry.refId); fresh) {
 					it->second.ranSince = now;
+					if (friendlyPending.erase(entry.refId) > 0) {
+						friendlyRefused[entry.refId] = now;
+						++friendlyCameBack;
+						REX::INFO("NpcSync: {:08X}, handed to a player standing next to it, came back to us unclaimed: not offered to them again for {} min",
+							entry.refId, std::chrono::duration_cast<std::chrono::minutes>(FRIENDLY_BACKOFF).count());
+					}
 				}
 				rolls.Forget(entry.refId);  // ours runs now: what it is here is what we report (the session's, if it took)
 				StopMirroring(entry.refId);
 			} else {
+				friendlyPending.erase(entry.refId);  // the friend's game runs it: the hand-off took
 				owned.erase(entry.refId);
 				ownedBlocked.erase(entry.refId);
 				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
@@ -2174,6 +2191,8 @@ namespace NpcSync
 		fightingStandIns = 0;
 		handedOffAt.clear();
 		friendly.Clear();
+		friendlyPending.clear();
+		friendlyRefused.clear();
 		letGoAt.clear();
 		stop.Reset();
 		stoppedFor = {};
@@ -2335,10 +2354,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} friendlyHandOffs={} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={} handOffs={} friendlyHandOffs={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
-			broughtOver, broughtIn, switchedOn, handOffs, friendlyHandOffs, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
+			broughtOver, broughtIn, switchedOn, handOffs, friendlyHandOffs, friendlyCameBack, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
 			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights());
 	}
 }
