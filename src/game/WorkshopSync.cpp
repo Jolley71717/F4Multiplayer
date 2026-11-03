@@ -762,6 +762,10 @@ namespace WorkshopSync
 		constexpr REL::ID ITEM_GENERATES_POWER{ 2195079 };
 		// TESObjectLIGH::SwitchLight(TESObjectREFR&, bool off): the lights of a reference's 3D on or off (a LIGH's own, or one in a
 		// model), as the game's own powering does for every piece (the power handler, 2195089, passes the "off" it fires PowerOffEvent for).
+		// What it does is decided by whether the reference has its light (ExtraLight) when it is called, and done later, by a
+		// task (0x7A) the game runs in a frame after ours: with "off" and a light, the light is removed (+5003E0); otherwise, with
+		// 3D and no light, one is made (+500260, through the light maker), "off" or not. In the game's own powering that make
+		// is harmless, as the light maker asks Workshop::IsPowered first; for our copies it asks litCopies (LightPoweredHook).
 		constexpr REL::ID SWITCH_LIGHT{ 2198253 };
 
 		bool                     blockCopies = true;  // dev (wspower block off): copies can be picked, to try the repair
@@ -2164,7 +2168,15 @@ namespace WorkshopSync
 		//
 		// A light's base may make its light only while Workshop::IsPowered says the reference is powered (the light bulb's
 		// does): no copy is ever, so its light is made only because it is in litCopies (LightPoweredHook), which it is put in
-		// before its light is switched on, and taken out of before it is switched off.
+		// before its light is switched on, and taken out of before it is switched off. The switch is asked for only when the
+		// light isn't as wanted (SwitchLight with "off" makes a light where there is none) and is done a frame later (a task):
+		// a light shown on while the removal asked for a moment before is still to come goes dark after all, which the
+		// Mirror sees (Holds) and shows again.
+		//
+		// For a save (a_forSave), a light's light is let be and only its graph is shown unpowered: the light (ExtraLight) is
+		// the game's at runtime and no save keeps it, and a load makes it again only for one in litCopies, which the load
+		// empties (BeforeLoad). Switching it off and on around the save is what left the rig's bulb dark at every other save:
+		// the off's removal ran after the on, which found the light still there.
 		enum class Took
 		{
 			kNoModel,
@@ -2192,7 +2204,12 @@ namespace WorkshopSync
 			}
 		}
 
-		Took ShowPoweredHow(RE::TESObjectREFR& a_copy, bool a_on)
+		bool HasLight(const RE::TESObjectREFR& a_ref)
+		{
+			return a_ref.extraList && a_ref.extraList->HasType(RE::EXTRA_DATA_TYPE::kLight);
+		}
+
+		Took ShowPoweredHow(RE::TESObjectREFR& a_copy, bool a_on, bool a_forSave = false)
 		{
 			static const RE::BSFixedString        powered{ "Powered" };
 			static const RE::BSFixedString        unpowered{ "Unpowered" };
@@ -2203,11 +2220,13 @@ namespace WorkshopSync
 			}
 			const auto id = a_copy.GetFormID();
 			const bool light = IsLightBase(a_copy);
-			if (light) {
+			if (light && !a_forSave) {
 				if (IsCopy(&a_copy)) {
-					SetLit(id, a_on);  // first: switching it on may make its light at once, and asks LightPoweredHook
+					SetLit(id, a_on);  // first: switching it on makes its light, which asks LightPoweredHook
 				}
-				switchLight(a_copy, !a_on);
+				if (HasLight(a_copy) != a_on) {
+					switchLight(a_copy, !a_on);
+				}
 			}
 			const auto graph = LoadedGraph(a_copy);
 			if (graph == 0) {
@@ -2236,6 +2255,8 @@ namespace WorkshopSync
 
 		struct MirrorEngine
 		{
+			bool forSave = false;  // shows for a save's hush (ShowPoweredHow: a light's light is let be)
+
 			RE::NiPointer<RE::TESObjectREFR> CopyOf(const WorkshopPower::Key& a_key)
 			{
 				const auto it = copies.find(a_key);
@@ -2265,13 +2286,24 @@ namespace WorkshopSync
 				return WorkshopPower::Drawing(reinterpret_cast<std::uintptr_t>(model), model->parent != nullptr, namesGraph, graph);
 			}
 
+			// A light's light there while it is shown on, and gone while shown off; anything else holds what it was shown
+			// (its graph keeps it; one drawn anew is Drawn's).
+			bool Holds(const WorkshopPower::Key& a_key, bool a_on)
+			{
+				const auto ref = CopyOf(a_key);
+				if (!ref || !ref->Get3D() || !IsLightBase(*ref)) {
+					return true;
+				}
+				return HasLight(*ref) == a_on;
+			}
+
 			bool Show(const WorkshopPower::Key& a_key, bool a_on)
 			{
 				const auto ref = CopyOf(a_key);
 				if (!ref) {
 					return false;
 				}
-				const auto took = ShowPoweredHow(*ref, a_on);
+				const auto took = ShowPoweredHow(*ref, a_on, forSave);
 				if (showsLogged < SHOWS_LOGGED && took != Took::kNoModel) {
 					++showsLogged;
 					static constexpr std::array<const char*, 7> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph",
@@ -2683,8 +2715,10 @@ namespace WorkshopSync
 	{
 		AuditPower("save");
 		// A copy shown powered is saved running (its graph keeps the state), and a load brings it back running with no
-		// session to stop it: shown unpowered for the save, powered again after (AfterSave).
+		// session to stop it: shown unpowered for the save, powered again after (AfterSave). A light's light is let be (no
+		// save keeps it: ShowPoweredHow).
 		MirrorEngine engine;
+		engine.forSave = true;
 		const auto   hushed = mirror.Hush(engine, Clock::now());
 		if (hushed > 0) {
 			REX::INFO("WorkshopSync: {} friends' pieces shown unpowered for the save", hushed);
@@ -2758,9 +2792,9 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeGrids(RE::TESObjectREFR* a_bench)

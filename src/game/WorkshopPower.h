@@ -492,6 +492,11 @@ namespace WorkshopPower
 		//                                               its graph isn't loaded yet (waited for, no try spent)
 		//   bool           Show(const Key&, bool on)    false if the game didn't take it (try again): a light's light
 		//                                               switched, or the graph took the event
+		//
+		// and, if it has it:
+		//
+		//   bool           Holds(const Key&, bool on)   false if a copy shown so doesn't show it now, though drawn the same
+		//                                               (a light's light gone while shown on): shown again (Lapses)
 		template <class Engine>
 		std::size_t Refresh(Engine& a_engine, Clock::time_point a_now)
 		{
@@ -525,6 +530,15 @@ namespace WorkshopPower
 					continue;
 				}
 				if (want.shown && want.drawn == drawn) {
+					if (!Holds(a_engine, key, want.powered)) {
+						// Shown so, and drawn the same, but not showing it now (a light whose light the game's queued switch
+						// took away after it was shown on): shown again, as often as a copy drawn anew is.
+						++lapses;
+						if (Redrawn(want, a_now) && a_engine.Show(key, want.powered)) {
+							++shown;
+						}
+						continue;
+					}
 					if (!want.settle || a_now < want.settleAt) {
 						continue;
 					}
@@ -569,6 +583,7 @@ namespace WorkshopPower
 		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
 		[[nodiscard]] std::size_t RedrawsCapped() const { return redrawsCapped; }
 		[[nodiscard]] std::size_t Hushed() const { return hushedTotal; }
+		[[nodiscard]] std::size_t Lapses() const { return lapses; }
 
 		// How many copies show what their builder's game says (or were given up on).
 		[[nodiscard]] std::size_t Shown() const
@@ -607,7 +622,18 @@ namespace WorkshopPower
 			return true;
 		}
 
+		template <class Engine>
+		static bool Holds(Engine& a_engine, const Key& a_key, bool a_on)
+		{
+			if constexpr (requires { a_engine.Holds(a_key, a_on); }) {
+				return a_engine.Holds(a_key, a_on);
+			} else {
+				return true;
+			}
+		}
+
 		std::map<Key, Want> wants;
+		std::size_t         lapses = 0;  // copies found not showing what they were shown (Holds), shown again
 		std::size_t         dropped = 0;
 		std::size_t         givenUp = 0;
 		std::size_t         redrawsCapped = 0;

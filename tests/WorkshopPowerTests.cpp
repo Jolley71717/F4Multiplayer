@@ -677,6 +677,110 @@ TEST("workshop power: a copy gone between a save's hush and the show after is sh
 	CHECK(!game.shown.contains(scrapped));
 }
 
+namespace
+{
+	// A friend's light bulb here: its light is switched by a task the game runs after the show (SwitchLight), so a light
+	// can go out after it was shown on (a removal asked a moment before ran after the show).
+	struct BulbGame
+	{
+		std::map<Key, std::uintptr_t> drawn;
+		std::map<Key, bool>           lit;  // whether its light is there
+		std::uint32_t                 shows = 0;
+
+		std::uintptr_t Drawn(const Key& a_key)
+		{
+			const auto it = drawn.find(a_key);
+			return it == drawn.end() ? 0 : it->second;
+		}
+
+		bool Show(const Key& a_key, bool a_on)
+		{
+			++shows;
+			lit[a_key] = a_on;
+			return true;
+		}
+
+		bool Holds(const Key& a_key, bool a_on)
+		{
+			const auto it = lit.find(a_key);
+			return (it != lit.end() && it->second) == a_on;
+		}
+	};
+}
+
+TEST("workshop power: a light shown on whose light goes out (the game's switch ran late) is shown again, as often as the redraw cap allows")
+{
+	Mirror     mirror;
+	BulbGame   game;
+	const Key  bulb{ BUILDER, GENERATOR };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[bulb] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.lit.at(bulb));
+	t += SETTLE * 2;
+	CHECK(mirror.Refresh(game, t) == 1);  // settled: once more
+	const auto shows = game.shows;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // lit: nothing to do
+	CHECK(game.shows == shows);
+	game.lit[bulb] = false;  // the light went out, drawn the same
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.lit.at(bulb));
+	CHECK(mirror.Lapses() == 1);
+	// A copy shown off whose light is still there is shown off again too.
+	mirror.Set(BUILDER, { GENERATOR, false });
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.lit.at(bulb));
+	game.lit[bulb] = true;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.lit.at(bulb));
+	CHECK(mirror.Lapses() == 2);
+	// A light the game keeps putting out is shown again no more often than MAX_REDRAWS in REDRAW_WINDOW.
+	std::size_t again = 0;
+	for (int i = 0; i < 4 * MAX_REDRAWS; ++i) {
+		game.lit[bulb] = true;
+		t += REFRESH;
+		again += mirror.Refresh(game, t);
+	}
+	CHECK(again <= MAX_REDRAWS);
+	CHECK(again > 0);
+	t += REDRAW_WINDOW;
+	game.lit[bulb] = true;
+	CHECK(mirror.Refresh(game, t) == 1);  // a new window
+	CHECK(!game.lit.at(bulb));
+}
+
+TEST("workshop power: a light hushed for a save and shown on after it is shown on again if its light went out meanwhile")
+{
+	Mirror     mirror;
+	BulbGame   game;
+	const Key  bulb{ BUILDER, GENERATOR };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[bulb] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	t += SETTLE * 2;
+	CHECK(mirror.Refresh(game, t) == 1);
+	for (int save = 0; save < 3; ++save) {
+		CHECK(mirror.Hush(game, t) == 1);
+		CHECK(!game.lit.at(bulb));
+		mirror.SaveDone();
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 1);  // shown on after the save
+		CHECK(game.lit.at(bulb));
+		game.lit[bulb] = false;  // the save's off ran after the on (the rig's bulb, every other save)
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 1);
+		CHECK(game.lit.at(bulb));
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 0);  // and then let be
+	}
+}
+
 TEST("workshop power: no more than MAX_MIRRORED pieces are kept")
 {
 	Mirror mirror;
