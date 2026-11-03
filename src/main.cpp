@@ -5,6 +5,7 @@
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/EnableParents.h"
 #include "game/LooksMenu.h"
 #include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
@@ -474,6 +475,7 @@ namespace
 				}
 			});
 			RollHook::OnDataReady();  // before any session: the plugins' names key every roll
+			EnableParents::OnDataReady();  // before any save: which references are off as their plugins have them
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");

@@ -19,7 +19,7 @@ public static class GearScan
         new Master { Esm = "DLCNukaWorld.esm", Ba2 = "DLCNukaWorld - Main.ba2" },
     };
 
-    static byte[] Inflate(byte[] data, int offset, int length, int size)
+    public static byte[] Inflate(byte[] data, int offset, int length, int size)
     {
         using (var ms = new MemoryStream(data, offset + 2, length - 2))
         using (var ds = new DeflateStream(ms, CompressionMode.Decompress))
@@ -209,7 +209,7 @@ public static class GearScan
         public List<string> Params = new List<string>();  // in order
     }
     // a script object: its parent, and its properties' and variables' types by name
-    public class Obj { public string Name; public string Parent = ""; public Dictionary<string, string> Types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); }
+    public class Obj { public string Name; public string Parent = ""; public Dictionary<string, string> Types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); public Dictionary<string, string> Defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); }
 
     class R
     {
@@ -287,7 +287,7 @@ public static class GearScan
             r.U16(); r.U8(); r.U32(); r.U16();
             int structs = r.U16();
             for (int s = 0; s < structs; s++) { r.U16(); int m = r.U16(); for (int k = 0; k < m; k++) { r.U16(); r.U16(); r.U32(); r.Var(); r.U8(); r.U16(); } }
-            int vc = r.U16(); for (int v = 0; v < vc; v++) { var vn = r.Str(); obj.Types[vn] = r.Str(); r.U32(); r.Var(); r.U8(); }
+            int vc = r.U16(); for (int v = 0; v < vc; v++) { var vn = r.Str(); obj.Types[vn] = r.Str(); r.U32(); obj.Defaults[vn] = r.Var(); r.U8(); }
             int pcnt = r.U16();
             for (int p = 0; p < pcnt; p++)
             {
@@ -748,6 +748,756 @@ public static class MoveScan
         }
         foreach (var l in lines) sb.AppendLine(l);
         return sb.ToString();
+    }
+}
+
+// The enable parents (a reference some placed reference names in its XESP) that a script of the game's own turns off
+// somewhere: what src/game/DisabledParents.h holds (tools/questscan.ps1 -DisabledParents writes it). Read from the
+// official plugins found (Fallout4.esm and the add-ons) and their script archives. A script turns a reference off when
+// it calls Disable or DisableNoWait on it (TryToDisable or TryToDisableNoWait on an alias forced to it, DisableAll on a
+// collection alias it fills, DisableLinkChain on what links to it): through a property that names it, an alias property
+// whose alias is forced to it (or to an alias of another quest that is) or filled with it as a forced location's
+// reference of a ref type (ALFA and ALRT: the location's LCSR and ACSR entries of that type, a collection alias every
+// one of them), itself (a script attached to it, to its base or to an alias forced to or filled with it), its linked
+// reference (by the keyword it is called with, where that is known), or by passing one of those to a function, a few
+// calls deep, that does. A property is read from every script attached to a record (VMAD): a quest's own, its stage
+// fragments' and its aliases', a reference's (with its base's), a base object's, a topic's, a scene's, a package's, a
+// perk's and a terminal's. Each attachment is judged with the values its properties have there: a branch on a bool,
+// number or string property that no script ever sets goes the one way those values send it (DefaultEnableDisableTrigScript
+// with bEnableLinkedRef only enables), any other branch both ways. Over-counted on purpose: any function of a script,
+// whether a game ever calls it or not. What it does not see: a reference reached through a variable set at run time, a
+// struct's member, a collection element reached by index (GetAt), an alias filled by conditions or from a location that
+// isn't forced, a console command. The table's header names the files it read (COVERED): a parent from another official
+// file is never switched on.
+public static class ParentScan
+{
+    // the game's own plugins in load order, as Official.h names them, and the archive that holds each one's scripts
+    public static readonly string[] FILES = { "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm", "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm" };
+    static string ScriptArchive(string a_esm) { return a_esm == "Fallout4.esm" ? "Fallout4 - Misc.ba2" : Path.GetFileNameWithoutExtension(a_esm) + " - Main.ba2"; }
+
+    static readonly HashSet<string> PLACED = new HashSet<string> { "REFR", "ACHR", "PGRE", "PMIS", "PARW", "PBAR", "PBEA", "PCON", "PFLA", "PHZD" };
+    static readonly HashSet<string> SKIP = new HashSet<string> { "LAND", "NAVM", "NAVI", "WRLD", "CELL", "IMAD", "LSCR" };
+    static readonly HashSet<string> FRAGMENTS = new HashSet<string> { "QUST", "INFO", "PACK", "SCEN", "PERK", "TERM" };
+
+    class Ref { public string Edid = ""; public uint Base; public uint Parent; public uint Flags; public bool Actor; public List<Tuple<uint, uint>> Links = new List<Tuple<uint, uint>>(); }  // links: keyword, reference
+    class Prop { public string Name; public string Literal; public List<uint> Forms = new List<uint>(); public List<int> Aliases = new List<int>(); }
+    class Attached { public string Script; public List<Prop> Props = new List<Prop>(); }
+    // a script attached somewhere: what self is there, and where, for the table's comments
+    class Attachment { public Attached Entry; public string Where; public uint Self; public uint SelfQuest; public int SelfAlias = -1; }
+
+    static readonly Dictionary<uint, Ref> refs = new Dictionary<uint, Ref>();
+    static readonly Dictionary<uint, Dictionary<int, uint>> forced = new Dictionary<uint, Dictionary<int, uint>>();      // quest -> alias -> forced reference
+    static readonly Dictionary<uint, Dictionary<int, Tuple<uint, int>>> external = new Dictionary<uint, Dictionary<int, Tuple<uint, int>>>();  // quest -> alias -> another quest's alias
+    // quest -> alias -> the location alias (ALFA) whose location's references of these ref types (ALRT) fill it
+    static readonly Dictionary<uint, Dictionary<int, Tuple<int, List<uint>>>> byRefType = new Dictionary<uint, Dictionary<int, Tuple<int, List<uint>>>>();
+    static readonly Dictionary<uint, Dictionary<int, uint>> forcedLocation = new Dictionary<uint, Dictionary<int, uint>>();  // quest -> location alias -> forced location (ALFL)
+    static readonly Dictionary<uint, List<Tuple<uint, uint>>> locationRefs = new Dictionary<uint, List<Tuple<uint, uint>>>();  // location -> its LCSR and ACSR: ref type, reference
+    const int LOCATION_REF = 16;  // the size of an LCSR or ACSR entry
+    static int locationRefOdd;    // LCSR or ACSR subrecords not a whole number of entries
+    static readonly List<Attachment> attachments = new List<Attachment>();
+    static readonly Dictionary<uint, Tuple<string, List<Attached>>> baseScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
+    static readonly Dictionary<uint, Tuple<string, List<Attached>>> refScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
+    static int vmadRead, vmadErrors;
+    static readonly List<string> vmadErrorWhere = new List<string>();
+
+    static uint Key(uint a_id, List<string> a_masters, string a_self)
+    {
+        int high = (int)(a_id >> 24);
+        string file = high < a_masters.Count ? a_masters[high] : a_self;
+        int index = Array.FindIndex(FILES, f => f.Equals(file, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return 0xFFFFFFFF;
+        return (uint)index << 24 | (a_id & 0xFFFFFF);
+    }
+
+    // ---------------- VMAD ----------------
+    class V
+    {
+        public byte[] B; public int P; public int End; public int Format = 2;
+        public byte U8() { return B[P++]; }
+        public short S16() { var v = BitConverter.ToInt16(B, P); P += 2; return v; }
+        public ushort U16() { var v = BitConverter.ToUInt16(B, P); P += 2; return v; }
+        public uint U32() { var v = BitConverter.ToUInt32(B, P); P += 4; return v; }
+        public string W() { int n = U16(); var s = Encoding.ASCII.GetString(B, P, n); P += n; return s; }
+        public void Obj(out uint a_form, out int a_alias)
+        {
+            if (Format == 1) { a_form = U32(); a_alias = S16(); U16(); }
+            else { U16(); a_alias = S16(); a_form = U32(); }
+        }
+    }
+
+    // A property's value; a single bool, number or string also as the script reader writes a literal (True, 3, "text").
+    static void Value(V v, int a_type, Prop a_prop, bool a_single)
+    {
+        uint form; int alias;
+        switch (a_type)
+        {
+            case 0: break;
+            case 1: v.Obj(out form, out alias); a_prop.Forms.Add(form); a_prop.Aliases.Add(alias); break;
+            case 2: { var s = v.W(); if (a_single) a_prop.Literal = "\"" + s + "\""; break; }
+            case 3: { var n = (int)v.U32(); if (a_single) a_prop.Literal = n.ToString(); break; }
+            case 4: { var x = BitConverter.ToSingle(v.B, v.P); v.P += 4; if (a_single) a_prop.Literal = x.ToString(System.Globalization.CultureInfo.InvariantCulture); break; }
+            case 5: { var b = v.U8(); if (a_single) a_prop.Literal = b != 0 ? "True" : "False"; break; }
+            case 6: { int t = v.U8(); Value(v, t, a_prop, false); break; }  // a Var: its own type, then its value
+            case 7: { uint n = v.U32(); for (uint k = 0; k < n; k++) Property(v); break; }  // a struct's members: not followed
+            case 11: case 12: case 13: case 14: case 15: case 16:
+                { uint n = v.U32(); for (uint k = 0; k < n; k++) Value(v, a_type - 10, a_prop, false); break; }
+            case 17: { uint n = v.U32(); for (uint k = 0; k < n; k++) { uint m = v.U32(); for (uint j = 0; j < m; j++) Property(v); } break; }
+            default: throw new Exception("property type " + a_type);
+        }
+    }
+
+    static Prop Property(V v)
+    {
+        var p = new Prop { Name = v.W() };
+        int type = v.U8(); v.U8();
+        Value(v, type, p, true);
+        return p;
+    }
+
+    // a script and its properties; null for a fragment script entry without a script (its empty name only)
+    static Attached ReadScript(V v)
+    {
+        var s = new Attached { Script = v.W() };
+        if (s.Script.Length == 0) return null;
+        v.U8();
+        int n = v.U16();
+        for (int k = 0; k < n; k++) s.Props.Add(Property(v));
+        return s;
+    }
+
+    static List<Attached> Scripts(V v)
+    {
+        var list = new List<Attached>();
+        int n = v.U16();
+        for (int k = 0; k < n; k++) list.Add(ReadScript(v));
+        return list;
+    }
+
+    // A record's VMAD: its scripts, and a quest's, a topic's, a scene's, a package's, a perk's or a terminal's fragment
+    // script, and a quest's aliases' scripts. Every one is read to its end, but for the fragments' names.
+    static void Vmad(string a_type, uint a_key, byte[] a_body, int a_at, int a_size, List<string> a_masters, string a_file, string a_where)
+    {
+        var v = new V { B = a_body, P = a_at, End = a_at + a_size };
+        var own = new List<Attached>();
+        var found = new List<Attachment>();
+        try
+        {
+            v.S16(); v.Format = v.S16();
+            own = Scripts(v);
+            if (v.P < v.End && FRAGMENTS.Contains(a_type))
+            {
+                v.U8();
+                if (a_type == "QUST")
+                {
+                    int frags = v.U16();
+                    var e = ReadScript(v);
+                    if (e != null) found.Add(new Attachment { Entry = e, Where = a_where + " (stage fragments)" });
+                    for (int k = 0; k < frags; k++) { v.U16(); v.S16(); v.U32(); v.U8(); v.W(); v.W(); }
+                    int aliases = v.U16();
+                    for (int k = 0; k < aliases; k++)
+                    {
+                        uint form; int alias; v.Obj(out form, out alias);
+                        v.S16(); v.Format = v.S16();
+                        foreach (var s in Scripts(v)) found.Add(new Attachment { Entry = s, Where = a_where + " alias " + alias, SelfQuest = a_key, SelfAlias = alias });
+                    }
+                }
+                else
+                {
+                    if (a_type == "INFO" || a_type == "PACK" || a_type == "SCEN") v.U8();  // which fragments there are
+                    var e = ReadScript(v);
+                    if (e != null) found.Add(new Attachment { Entry = e, Where = a_where + " (fragments)" });
+                    v.P = v.End;  // the fragments' names follow: nothing more is attached
+                }
+            }
+            if (v.P != v.End) throw new Exception("ended at " + (v.P - a_at) + " of " + a_size);
+            vmadRead++;
+        }
+        catch (Exception ex)
+        {
+            vmadErrors++;
+            if (vmadErrorWhere.Count < 20) vmadErrorWhere.Add(a_where + ": " + ex.Message);
+        }
+        Action<Attached> keys = s => { foreach (var p in s.Props) for (int k = 0; k < p.Forms.Count; k++) p.Forms[k] = Key(p.Forms[k], a_masters, a_file); };
+        foreach (var s in own) keys(s);
+        foreach (var a in found) { keys(a.Entry); attachments.Add(a); }
+        if (PLACED.Contains(a_type)) refScripts[a_key] = Tuple.Create(a_where, own);  // judged with its base's, below
+        else if (FRAGMENTS.Contains(a_type)) foreach (var s in own) attachments.Add(new Attachment { Entry = s, Where = a_where });
+        else baseScripts[a_key] = Tuple.Create(a_where, own);
+    }
+
+    static void Esm(string a_path, string a_file)
+    {
+        var all = File.ReadAllBytes(a_path);
+        var masters = new List<string>();
+        uint hsize = BitConverter.ToUInt32(all, 4);
+        for (int s = 24; s < 24 + hsize;)
+        {
+            string st = Encoding.ASCII.GetString(all, s, 4); int ss = BitConverter.ToUInt16(all, s + 4);
+            if (st == "MAST") masters.Add(Encoding.ASCII.GetString(all, s + 6, ss - 1));
+            s += 6 + ss;
+        }
+        int pos = 24 + (int)hsize;
+        while (pos < all.Length)
+        {
+            string type = Encoding.ASCII.GetString(all, pos, 4);
+            uint size = BitConverter.ToUInt32(all, pos + 4);
+            if (type == "GRUP") { pos += 24; continue; }  // its records follow
+            uint flags = BitConverter.ToUInt32(all, pos + 8);
+            uint id = BitConverter.ToUInt32(all, pos + 12);
+            int next = pos + 24 + (int)size;
+            uint key = Key(id, masters, a_file);
+            bool placed = PLACED.Contains(type);
+            if ((flags & 0x20) != 0) { if (placed) { refs.Remove(key); refScripts.Remove(key); } pos = next; continue; }  // 0x20: deleted
+            if (SKIP.Contains(type)) { pos = next; continue; }
+            byte[] body; int bo; int bl;
+            if ((flags & 0x40000) != 0)
+            {
+                int dsize = (int)BitConverter.ToUInt32(all, pos + 24);
+                body = GearScan.Inflate(all, pos + 28, (int)size - 4, dsize); bo = 0; bl = dsize;
+            }
+            else { body = all; bo = pos + 24; bl = (int)size; }
+            Ref r = null;
+            if (placed) { r = new Ref { Flags = flags, Actor = type == "ACHR" }; refs[key] = r; refScripts.Remove(key); }  // a later file's override replaces it
+            int questAlias = -1, locationAlias = -1;
+            string edid = "";
+            int vmadAt = -1, vmadSize = 0;
+            int big = -1;
+            for (int s = bo; s < bo + bl;)
+            {
+                string st = Encoding.ASCII.GetString(body, s, 4);
+                int ss = BitConverter.ToUInt16(body, s + 4);
+                if (big >= 0) { ss = big; big = -1; }
+                if (st == "XXXX") { big = (int)BitConverter.ToUInt32(body, s + 6); s += 10; continue; }
+                int d = s + 6;
+                if (st == "EDID") edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
+                else if (st == "VMAD") { vmadAt = d; vmadSize = ss; }
+                else if (placed && st == "NAME") r.Base = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                else if (placed && st == "XESP") r.Parent = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                else if (placed && st == "XLKR" && ss >= 8)
+                {
+                    uint keyword = BitConverter.ToUInt32(body, d);
+                    r.Links.Add(Tuple.Create(keyword == 0 ? 0u : Key(keyword, masters, a_file), Key(BitConverter.ToUInt32(body, d + 4), masters, a_file)));
+                }
+                else if (type == "QUST" && st == "ALST") { questAlias = (int)BitConverter.ToUInt32(body, d); locationAlias = -1; }
+                else if (type == "QUST" && st == "ALLS") { questAlias = -1; locationAlias = (int)BitConverter.ToUInt32(body, d); }
+                else if (type == "QUST" && st == "ALED") { questAlias = -1; locationAlias = -1; }
+                else if (type == "QUST" && st == "ALFL" && locationAlias >= 0)
+                {
+                    if (!forcedLocation.ContainsKey(key)) forcedLocation[key] = new Dictionary<int, uint>();
+                    forcedLocation[key][locationAlias] = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                }
+                else if (type == "QUST" && (st == "ALFA" || st == "ALRT") && questAlias >= 0)
+                {
+                    if (!byRefType.ContainsKey(key)) byRefType[key] = new Dictionary<int, Tuple<int, List<uint>>>();
+                    Tuple<int, List<uint>> fill;
+                    if (!byRefType[key].TryGetValue(questAlias, out fill)) byRefType[key][questAlias] = fill = Tuple.Create(-1, new List<uint>());
+                    if (st == "ALFA") byRefType[key][questAlias] = Tuple.Create((int)BitConverter.ToUInt32(body, d), fill.Item2);
+                    else fill.Item2.Add(Key(BitConverter.ToUInt32(body, d), masters, a_file));
+                }
+                else if (type == "LCTN" && (st == "LCSR" || st == "ACSR"))
+                {
+                    // each: ref type, reference, its cell or world, grid y and x (int16 each)
+                    if (ss % LOCATION_REF != 0) locationRefOdd++;
+                    List<Tuple<uint, uint>> list;
+                    if (!locationRefs.TryGetValue(key, out list)) locationRefs[key] = list = new List<Tuple<uint, uint>>();
+                    for (int k = 0; k + LOCATION_REF <= ss; k += LOCATION_REF)
+                        list.Add(Tuple.Create(Key(BitConverter.ToUInt32(body, d + k), masters, a_file), Key(BitConverter.ToUInt32(body, d + k + 4), masters, a_file)));
+                }
+                else if (type == "QUST" && st == "ALFR" && questAlias >= 0)
+                {
+                    if (!forced.ContainsKey(key)) forced[key] = new Dictionary<int, uint>();
+                    forced[key][questAlias] = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                }
+                else if (type == "QUST" && st == "ALEQ" && questAlias >= 0)
+                {
+                    if (!external.ContainsKey(key)) external[key] = new Dictionary<int, Tuple<uint, int>>();
+                    external[key][questAlias] = Tuple.Create(Key(BitConverter.ToUInt32(body, d), masters, a_file), -1);
+                }
+                else if (type == "QUST" && st == "ALEA" && questAlias >= 0 && external.ContainsKey(key) && external[key].ContainsKey(questAlias))
+                    external[key][questAlias] = Tuple.Create(external[key][questAlias].Item1, (int)BitConverter.ToUInt32(body, d));
+                s = d + ss;
+            }
+            if (placed) r.Edid = edid;
+            if (vmadAt >= 0) Vmad(type, key, body, vmadAt, vmadSize, masters, a_file, type + " " + (edid.Length > 0 ? edid : key.ToString("X8")));
+            pos = next;
+        }
+    }
+
+    // ---------------- scripts ----------------
+    class Script { public GearScan.Obj Obj; public List<GearScan.Func> Funcs = new List<GearScan.Func>(); public Dictionary<string, GearScan.Func> ByName = new Dictionary<string, GearScan.Func>(StringComparer.OrdinalIgnoreCase); }
+    static readonly Dictionary<string, Script> scripts = new Dictionary<string, Script>(StringComparer.OrdinalIgnoreCase);
+    // what each function turns off, by where it came from: -1 itself (self), k its k-th parameter
+    static readonly Dictionary<GearScan.Func, HashSet<int>> summaries = new Dictionary<GearScan.Func, HashSet<int>>();
+    // another script's properties a function turns off (kmyQuest.Marker.Disable()), by that script
+    static readonly Dictionary<string, HashSet<string>> foreign = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    // the properties some script sets (propset, by name, on any script): never read as the constants they start as
+    static readonly HashSet<string> setByAnyone = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    static readonly HashSet<string> OFF = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Disable", "DisableNoWait", "TryToDisable", "TryToDisableNoWait", "DisableAll" };
+    static readonly HashSet<string> GETREF = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "GetReference", "GetRef", "GetActorRef", "GetActorReference" };
+
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+    static bool Number(string a, out double a_value) { return double.TryParse(a, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out a_value); }
+    static bool Literal(string a) { double n; return a == "True" || a == "False" || a == "None" || a.StartsWith("\"") || Number(a, out n); }
+
+    static GearScan.Func Find(string a_type, string a_func)
+    {
+        foreach (var s in Chain(a_type)) { GearScan.Func f; if (s.ByName.TryGetValue(a_func, out f)) return f; }
+        return null;
+    }
+
+    static List<Script> Chain(string a_type)
+    {
+        var list = new List<Script>();
+        Script s;
+        for (int depth = 0; !string.IsNullOrEmpty(a_type) && depth < 16 && scripts.TryGetValue(a_type, out s); depth++) { list.Add(s); a_type = s.Obj.Parent; }
+        return list;
+    }
+
+    static string TypeOf(GearScan.Func f, string a_var)
+    {
+        if (Is(a_var, "self")) return f.Obj;
+        string t;
+        if (f.Types.TryGetValue(a_var, out t)) return t;
+        foreach (var s in Chain(f.Obj)) if (s.Obj.Types.TryGetValue(a_var, out t) || s.Obj.Types.TryGetValue(Bare(a_var), out t)) return t;
+        return null;
+    }
+
+    // Where a variable's value can come from, in one function (all its writes, wherever they are): "S" self, "A<k>" its
+    // k-th parameter, "P<name>" a property or variable of its script, "F<script>.<name>" another script's property,
+    // "L<keyword>:" + one of those, what links from it by that keyword ("0" none, "P<name>" a property's, "*" any).
+    static Dictionary<string, HashSet<string>> Sources(GearScan.Func f)
+    {
+        var src = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        for (int pass = 0; pass < 3; pass++)
+            foreach (var i in f.Code)
+            {
+                if ((i.Op == 13 || i.Op == 14 || i.Op == 32) && i.Args.Count >= 2) Into(src, i.Args[0], Of(f, src, i.Args[1]));  // 32: an array's element
+                else if (i.Op == 28 && i.Args.Count >= 3)  // propget name, object, dest
+                {
+                    if (Is(i.Args[1], "self")) Into(src, i.Args[2], new[] { "P" + i.Args[0] });
+                    else { var t = TypeOf(f, i.Args[1]); if (t != null) Into(src, i.Args[2], new[] { "F" + t + "." + i.Args[0] }); }
+                }
+                else if (i.Op == 23 && i.Args.Count >= 3)
+                {
+                    if (GETREF.Contains(i.Args[0])) Into(src, i.Args[2], Of(f, src, i.Args[1]));
+                    else if (Is(i.Args[0], "GetLinkedRef")) Into(src, i.Args[2], Linked(f, src, i));
+                }
+            }
+        return src;
+    }
+
+    static void Into(Dictionary<string, HashSet<string>> a_src, string a_dst, IEnumerable<string> a_from)
+    {
+        HashSet<string> set;
+        if (!a_src.TryGetValue(a_dst, out set)) a_src[a_dst] = set = new HashSet<string>();
+        set.UnionWith(a_from);
+    }
+
+    static HashSet<string> Of(GearScan.Func f, Dictionary<string, HashSet<string>> a_src, string a)
+    {
+        var set = new HashSet<string>();
+        if (Is(a, "self")) { set.Add("S"); return set; }
+        int k = f.Params.FindIndex(p => Is(p, a));
+        if (k >= 0) set.Add("A" + k);
+        if (a.StartsWith("::")) set.Add("P" + Bare(a));
+        HashSet<string> known;
+        if (a_src.TryGetValue(a, out known)) set.UnionWith(known);
+        return set;
+    }
+
+    // what a GetLinkedRef or DisableLinkChain call's object links to, by the keyword it is called with
+    static List<string> Linked(GearScan.Func f, Dictionary<string, HashSet<string>> a_src, GearScan.Instr i)
+    {
+        var kw = i.Args.Count <= 3 || Is(i.Args[3], "None") ? "0" : i.Args[3].StartsWith("::") ? "P" + Bare(i.Args[3]) : "*";
+        return Of(f, a_src, i.Args[1]).Where(s => !s.StartsWith("L")).Select(s => "L" + kw + ":" + s).ToList();
+    }
+
+    // What a script's functions turn off, by where it came from (Sources' names; "C" + a link: the chain of links from it).
+    class Sink { public HashSet<string> Off = new HashSet<string>(); }
+
+    // The instructions a function can run, with the values a_known gives some of its variables (the properties no
+    // script sets, as the attachment has them): a branch on a known value goes one way, any other both. Path by path
+    // (a value set on one way is known on it); null when there are too many paths: all of them can run.
+    static HashSet<int> Reach(GearScan.Func f, Dictionary<string, string> a_known)
+    {
+        if (a_known.Count == 0) return null;
+        var reached = new HashSet<int>();
+        var seen = new HashSet<string>();
+        var todo = new Stack<Tuple<int, Dictionary<string, string>>>();
+        todo.Push(Tuple.Create(0, new Dictionary<string, string>(a_known, StringComparer.OrdinalIgnoreCase)));
+        int steps = 0;
+        while (todo.Count > 0)
+        {
+            var t = todo.Pop(); int pc = t.Item1; var st = t.Item2;
+            while (pc >= 0 && pc < f.Code.Count)
+            {
+                if (++steps > 200000) return null;
+                if (!seen.Add(pc + "|" + string.Join(",", st.Where(kv => !a_known.ContainsKey(kv.Key)).OrderBy(kv => kv.Key).Select(kv => kv.Key + "=" + kv.Value).ToArray()))) break;
+                reached.Add(pc);
+                var i = f.Code[pc];
+                Func<string, string> val = a => Literal(a) ? a : st.ContainsKey(a) ? st[a] : null;
+                Action<string, string> set = (dst, v) => { if (a_known.ContainsKey(dst)) return; if (v == null) st.Remove(dst); else st[dst] = v; };
+                int off;
+                if (i.Op == 26) break;
+                if (i.Op == 20 && int.TryParse(i.Args[0], out off)) { pc += off; continue; }
+                if ((i.Op == 21 || i.Op == 22) && int.TryParse(i.Args[1], out off))
+                {
+                    var c = val(i.Args[0]);
+                    if (c == "True" || c == "False") { pc += (c == "True") == (i.Op == 21) ? off : 1; continue; }
+                    // on each way the condition is known (a && b's false: the jump past b, with the condition false)
+                    var jumped = new Dictionary<string, string>(st, StringComparer.OrdinalIgnoreCase);
+                    if (!Literal(i.Args[0]) && !a_known.ContainsKey(i.Args[0])) { jumped[i.Args[0]] = i.Op == 21 ? "True" : "False"; st[i.Args[0]] = i.Op == 21 ? "False" : "True"; }
+                    todo.Push(Tuple.Create(pc + off, jumped));
+                    pc++;
+                    continue;
+                }
+                if (i.Op == 13 || i.Op == 14)
+                {
+                    var v = val(i.Args[1]);
+                    if (i.Op == 14 && v != null && v != "True" && v != "False")
+                    {
+                        string type; double n;
+                        v = f.Types.TryGetValue(i.Args[0], out type) && Is(type, "Bool") && Number(v, out n) ? (n != 0 ? "True" : "False") : null;
+                    }
+                    set(i.Args[0], v);
+                }
+                else if (i.Op == 10) { var v = val(i.Args[1]); set(i.Args[0], v == "True" ? "False" : v == "False" ? "True" : null); }
+                else if (i.Op >= 15 && i.Op <= 19)
+                {
+                    var a = val(i.Args[1]); var b = val(i.Args[2]); string r = null; double x, y;
+                    if (a != null && b != null)
+                    {
+                        if (i.Op == 15) r = (Number(a, out x) && Number(b, out y) ? x == y : a.Equals(b, StringComparison.OrdinalIgnoreCase)) ? "True" : "False";
+                        else if (Number(a, out x) && Number(b, out y)) r = (i.Op == 16 ? x < y : i.Op == 17 ? x <= y : i.Op == 18 ? x > y : x >= y) ? "True" : "False";
+                    }
+                    set(i.Args[0], r);
+                }
+                else foreach (var a in i.Args) if (!Literal(a)) set(a, null);  // what else it writes isn't known
+                pc++;
+            }
+        }
+        return reached;
+    }
+
+    // One function, over the instructions a_reach says can run (null: all): what it turns off into a_sink, and, with
+    // a_summary, what of its own (self, a parameter) it turns off. True if a_summary grew.
+    static bool Analyze(GearScan.Func f, HashSet<int> a_reach, Sink a_sink, HashSet<int> a_summary)
+    {
+        var src = Sources(f);
+        bool changed = false;
+        Action<IEnumerable<string>> mark = from =>
+        {
+            foreach (var s in from)
+            {
+                if (s == "S" && a_summary != null) changed |= a_summary.Add(-1);
+                else if (s.StartsWith("A")) { if (a_summary != null) changed |= a_summary.Add(int.Parse(s.Substring(1))); continue; }
+                else if (s.StartsWith("F"))
+                {
+                    int dot = s.IndexOf('.');
+                    HashSet<string> h;
+                    if (!foreign.TryGetValue(s.Substring(1, dot - 1), out h)) foreign[s.Substring(1, dot - 1)] = h = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    h.Add(s.Substring(dot + 1));
+                    continue;
+                }
+                a_sink.Off.Add(s);
+            }
+        };
+        for (int n = 0; n < f.Code.Count; n++)
+        {
+            if (a_reach != null && !a_reach.Contains(n)) continue;
+            var i = f.Code[n];
+            if (i.Op == 23 && i.Args.Count >= 3 && OFF.Contains(i.Args[0])) { mark(Of(f, src, i.Args[1])); continue; }
+            if (i.Op == 23 && i.Args.Count >= 3 && Is(i.Args[0], "DisableLinkChain")) { mark(Linked(f, src, i).Select(s => "C" + s)); continue; }
+            if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
+            string type, name, self = null;
+            int first;
+            if (i.Op == 25) { type = i.Args[0]; name = i.Args[1]; first = 3; }
+            else if (i.Op == 24) { Script sc; type = scripts.TryGetValue(f.Obj, out sc) ? sc.Obj.Parent : null; name = i.Args[0]; first = 2; self = "self"; }
+            else { type = TypeOf(f, i.Args[1]); name = i.Args[0]; first = 3; self = i.Args[1]; }
+            if (type == null) continue;
+            var g = Find(type, name);
+            HashSet<int> callee;
+            if (g == null || !summaries.TryGetValue(g, out callee)) continue;
+            foreach (var k in callee.ToList())
+            {
+                if (k == -1) { if (self != null) mark(Of(f, src, self)); }
+                else if (first + k < i.Args.Count) mark(Of(f, src, i.Args[first + k]));
+            }
+        }
+        return changed;
+    }
+
+    // The references an alias is known to hold: the one it is forced to (ALFR, or another quest's alias it is: ALEQ and
+    // ALEA), or a forced location's references of its ref types (ALFA, ALRT; a collection alias holds every one).
+    static List<uint> Fills(uint a_quest, int a_alias, int a_depth)
+    {
+        var list = new List<uint>();
+        Dictionary<int, uint> f; uint r;
+        if (forced.TryGetValue(a_quest, out f) && f.TryGetValue(a_alias, out r)) { list.Add(r); return list; }
+        Dictionary<int, Tuple<uint, int>> e; Tuple<uint, int> t;
+        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Fills(t.Item1, t.Item2, a_depth + 1);
+        Dictionary<int, Tuple<int, List<uint>>> b; Tuple<int, List<uint>> fill; Dictionary<int, uint> l; uint location; List<Tuple<uint, uint>> entries;
+        if (byRefType.TryGetValue(a_quest, out b) && b.TryGetValue(a_alias, out fill) && fill.Item1 >= 0 && fill.Item2.Count > 0 &&
+            forcedLocation.TryGetValue(a_quest, out l) && l.TryGetValue(fill.Item1, out location) && locationRefs.TryGetValue(location, out entries))
+            foreach (var x in entries) if (fill.Item2.Contains(x.Item1) && !list.Contains(x.Item2)) list.Add(x.Item2);
+        return list;
+    }
+
+    // What a script turns off with the property values it has (the bool, number and string ones no script sets), cached.
+    static readonly Dictionary<string, Sink> judged = new Dictionary<string, Sink>(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, HashSet<string>> writtenIn = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+    static Sink Judge(string a_script, List<Prop> a_props)
+    {
+        var chain = Chain(a_script);
+        var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in chain)
+        {
+            HashSet<string> written;
+            if (!writtenIn.TryGetValue(s.Obj.Name, out written))
+            {
+                // every variable an instruction of the script writes (or may: a call's arguments are passed by value)
+                written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var f in s.Funcs)
+                    foreach (var i in f.Code)
+                        if (i.Op == 20 || i.Op == 21 || i.Op == 22 || i.Op == 26 || i.Op == 29 || i.Op == 33 || i.Op == 39) continue;
+                        else if (i.Op == 23 || i.Op == 25) { if (i.Args.Count > 2) written.Add(i.Args[2]); }
+                        else if (i.Op == 24 || i.Op == 28) { if (i.Args.Count > 2) written.Add(i.Args[i.Op == 24 ? 1 : 2]); }
+                        else if (i.Op == 34 || i.Op == 35 || i.Op == 40 || i.Op == 41) { if (i.Args.Count > 1) written.Add(i.Args[1]); }
+                        else if (i.Args.Count > 0) written.Add(i.Args[0]);
+                writtenIn[s.Obj.Name] = written;
+            }
+            foreach (var d in s.Obj.Defaults)
+            {
+                if (!d.Key.StartsWith("::") || written.Contains(d.Key) || setByAnyone.Contains(Bare(d.Key))) continue;
+                string type;
+                if (!s.Obj.Types.TryGetValue(d.Key, out type) || !(Is(type, "Bool") || Is(type, "Int") || Is(type, "Float") || Is(type, "String"))) continue;
+                var p = a_props.FirstOrDefault(x => Is(x.Name, Bare(d.Key)));
+                var v = p != null ? p.Literal : d.Value;
+                if (v != null && v != "None") known[d.Key] = v;
+            }
+        }
+        var cacheKey = a_script + "|" + string.Join(",", known.OrderBy(kv => kv.Key).Select(kv => kv.Key + "=" + kv.Value).ToArray());
+        Sink sink;
+        if (judged.TryGetValue(cacheKey, out sink)) return sink;
+        sink = new Sink();
+        foreach (var s in chain)
+        {
+            foreach (var f in s.Funcs) Analyze(f, Reach(f, known), sink, null);
+            HashSet<string> h;
+            if (foreign.TryGetValue(s.Obj.Name, out h)) foreach (var n in h) sink.Off.Add("P" + n);
+        }
+        judged[cacheKey] = sink;
+        return sink;
+    }
+
+    public class Result { public string Header; public string Report; public int Count; }
+
+    public static Result Run(string a_data)
+    {
+        var report = new StringBuilder();
+        var scanned = new List<string>();
+        foreach (var file in FILES)
+        {
+            var esm = Path.Combine(a_data, file);
+            if (!File.Exists(esm)) { report.AppendLine("# not found, not scanned: " + file); continue; }
+            Esm(esm, file);
+            scanned.Add(file);
+            var ba2 = Path.Combine(a_data, ScriptArchive(file));
+            if (!File.Exists(ba2)) { report.AppendLine("# no script archive for " + file); continue; }
+            int n = 0;
+            foreach (var kv in GearScan.Ba2(ba2, x => x.EndsWith(".pex", StringComparison.OrdinalIgnoreCase)))
+            {
+                List<GearScan.Obj> objs; List<GearScan.Func> funcs;
+                try { funcs = GearScan.Pex(kv.Value, out objs); } catch { continue; }
+                foreach (var o in objs) scripts[o.Name] = new Script { Obj = o };  // a later archive's replaces it
+                foreach (var f in funcs)
+                {
+                    Script s;
+                    if (!scripts.TryGetValue(f.Obj, out s)) continue;
+                    s.Funcs.Add(f);
+                    if (!s.ByName.ContainsKey(f.Name)) s.ByName[f.Name] = f;
+                }
+                n++;
+            }
+            report.AppendLine(string.Format("# {0}: {1} scripts", file, n));
+        }
+        foreach (var s in scripts.Values) foreach (var f in s.Funcs) { summaries[f] = new HashSet<int>(); foreach (var i in f.Code) if (i.Op == 29 && i.Args.Count > 0) setByAnyone.Add(i.Args[0]); }
+        for (int pass = 0; pass < 12; pass++)
+        {
+            bool changed = false;
+            var scratch = new Sink();
+            foreach (var s in scripts.Values) foreach (var f in s.Funcs) changed |= Analyze(f, null, scratch, summaries[f]);
+            if (!changed) { report.AppendLine("# calls followed in " + (pass + 1) + " passes"); break; }
+        }
+
+        // a reference's scripts: its base's, with the properties the reference sets over them, and its own
+        foreach (var kv in refs)
+        {
+            Tuple<string, List<Attached>> b, own;
+            baseScripts.TryGetValue(kv.Value.Base, out b);
+            refScripts.TryGetValue(kv.Key, out own);
+            if (b == null && own == null) continue;
+            var byName = new Dictionary<string, Attached>(StringComparer.OrdinalIgnoreCase);
+            var where = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (b != null) foreach (var s in b.Item2) { byName[s.Script] = new Attached { Script = s.Script, Props = new List<Prop>(s.Props) }; where[s.Script] = b.Item1 + " (its base)"; }
+            if (own != null)
+                foreach (var s in own.Item2)
+                {
+                    Attached merged;
+                    if (!byName.TryGetValue(s.Script, out merged)) { byName[s.Script] = s; where[s.Script] = own.Item1; continue; }
+                    foreach (var p in s.Props) { merged.Props.RemoveAll(x => Is(x.Name, p.Name)); merged.Props.Add(p); }
+                    where[s.Script] = own.Item1;
+                }
+            foreach (var s in byName.Values) attachments.Add(new Attachment { Entry = s, Where = where[s.Script], Self = kv.Key });
+        }
+
+        var children = new Dictionary<uint, int>();
+        var actors = new Dictionary<uint, int>();
+        foreach (var r in refs.Values) if (r.Parent != 0 && r.Parent != 0xFFFFFFFF) { children[r.Parent] = (children.ContainsKey(r.Parent) ? children[r.Parent] : 0) + 1; if (r.Actor) actors[r.Parent] = (actors.ContainsKey(r.Parent) ? actors[r.Parent] : 0) + 1; }
+        var why = new Dictionary<uint, List<string>>();
+        Action<uint, string> off = (id, w) => { if (id == 0 || id == 0xFFFFFFFF) return; List<string> l; if (!why.TryGetValue(id, out l)) why[id] = l = new List<string>(); if (!l.Contains(w)) l.Add(w); };
+        int judgedCount = 0;
+        foreach (var a in attachments)
+        {
+            if (!scripts.ContainsKey(a.Entry.Script)) continue;
+            var self = a.Self != 0 ? new List<uint> { a.Self } : a.SelfAlias >= 0 ? Fills(a.SelfQuest, a.SelfAlias, 0) : new List<uint>();
+            var sink = Judge(a.Entry.Script, a.Entry.Props);
+            judgedCount++;
+            if (sink.Off.Count == 0) continue;
+            var entry = a.Entry;
+            // what an origin ("S", "P<name>") names here
+            Func<string, List<uint>> named = o =>
+            {
+                if (o == "S") return self;
+                var p = o.StartsWith("P") ? entry.Props.FirstOrDefault(x => Is(x.Name, o.Substring(1))) : null;
+                if (p == null) return new List<uint>();
+                return p.Forms.SelectMany((form, k) => p.Aliases[k] >= 0 ? Fills(form, p.Aliases[k], 0) : new List<uint> { form }).ToList();
+            };
+            // what links from a reference by a keyword ("0" none, "P<name>" a keyword property's, "*" any)
+            Func<uint, string, List<uint>> links = (id, kw) =>
+            {
+                Ref r;
+                if (!refs.TryGetValue(id, out r)) return new List<uint>();
+                if (kw == "*") return r.Links.Select(l => l.Item2).ToList();
+                uint keyword = 0;
+                if (kw.StartsWith("P"))
+                {
+                    var p = entry.Props.FirstOrDefault(x => Is(x.Name, kw.Substring(1)));
+                    if (p != null && p.Forms.Count > 0) keyword = p.Forms[0];
+                }
+                return r.Links.Where(l => l.Item1 == keyword).Select(l => l.Item2).ToList();
+            };
+            foreach (var o in sink.Off)
+            {
+                var w = a.Where + ": " + entry.Script;
+                if (o == "S" || o.StartsWith("P")) { foreach (var id in named(o)) off(id, w + (o == "S" ? " on itself" : "." + o.Substring(1))); continue; }
+                if (!o.StartsWith("L") && !o.StartsWith("C")) continue;
+                bool chainOf = o.StartsWith("C");
+                var rest = chainOf ? o.Substring(1) : o;  // L<keyword>:<origin>
+                int colon = rest.IndexOf(':');
+                var kw = rest.Substring(1, colon - 1);
+                var origin = rest.Substring(colon + 1);
+                var from = named(origin);
+                for (int depth = 0; depth < (chainOf ? 32 : 1) && from.Count > 0; depth++)
+                {
+                    var next = new List<uint>();
+                    foreach (var id in from)
+                        foreach (var l in links(id, kw)) { off(l, w + (origin == "S" ? " on its linked ref" : " on " + origin.Substring(1) + "'s linked ref") + (chainOf ? " chain" : "")); next.Add(l); }
+                    from = next;
+                }
+            }
+        }
+
+        var table = why.Keys.Where(id => children.ContainsKey(id)).OrderBy(id => id).ToList();
+        int offInPlugin = table.Count(id => refs.ContainsKey(id) && (refs[id].Flags & 0x800) != 0);
+        report.AppendLine(string.Format("# {0} references; {1} enable parents; {2} turned off by a script, {3} of them enable parents ({4} off in their plugin)", refs.Count, children.Count, why.Count, table.Count, offInPlugin));
+        report.AppendLine(string.Format("# {0} location references of a ref type read ({1} subrecords not whole entries)", locationRefs.Values.Sum(x => x.Count), locationRefOdd));
+        report.AppendLine(string.Format("# {0} script attachments judged ({1} sets of property values); {2} VMADs read, {3} not read to their end", judgedCount, judged.Count, vmadRead, vmadErrors));
+        foreach (var e in vmadErrorWhere) report.AppendLine("#   " + e);
+
+        var h = new StringBuilder();
+        h.AppendLine("#pragma once");
+        h.AppendLine();
+        h.AppendLine("#include <algorithm>");
+        h.AppendLine("#include <array>");
+        h.AppendLine("#include <cstddef>");
+        h.AppendLine("#include <cstdint>");
+        h.AppendLine("#include <string_view>");
+        h.AppendLine();
+        h.AppendLine("// Generated by tools/questscan.ps1 -DisabledParents from the game's own files: do not edit by hand. The enable parents");
+        h.AppendLine("// (references another reference names as its enable parent, XESP) that a script of the game's own turns off");
+        h.AppendLine("// somewhere: a quest stage's fragment, a quest's, an alias's, a reference's, a base object's, a topic's, a scene's,");
+        h.AppendLine("// a package's, a perk's or a terminal's script (tools/questscan.cs, ParentScan, says how it reads them). A marker its");
+        h.AppendLine("// plugin has off that a quest turns on at one stage and off at a later one (BoSAirportGuards, 0019C046: BoSEnable's");
+        h.AppendLine("// stage 10 on, its stage 200 and Inst307Fight's stage 10 off) is off in a game whose story is past it, and stays off");
+        h.AppendLine("// there whatever a friend's game runs (EnableChain::Verdict::kStoryTurnsOff). Gun Run's marker (000C3D6F,");
+        h.AppendLine("// MirelurkQuestEnabler) is only ever turned on, so it is not here.");
+        h.AppendLine("// Scanned (COVERED): " + string.Join(", ", scanned.ToArray()) + ". A parent from an official file it");
+        h.AppendLine("// didn't read (an add-on not installed where it ran) is never switched on (EnableChain::Verdict::kNotCovered).");
+        h.AppendLine(string.Format("// Of their {0} enable parents, {1} are here, {2} of them off in their plugin.", children.Count, table.Count, offInPlugin));
+        h.AppendLine("namespace DisabledParents");
+        h.AppendLine("{");
+        h.AppendLine("\t// The game's own plugins, as Official.h names them, in their usual load order; an entry's file is its index here.");
+        h.AppendLine("\tinline constexpr std::array<std::string_view, " + FILES.Length + "> FILES{ " + string.Join(", ", FILES.Select(f => "\"" + f + "\"").ToArray()) + " };");
+        h.AppendLine();
+        h.AppendLine("\t// The plugins the scan read, with their scripts: the table says nothing of any other's references.");
+        h.AppendLine("\tinline constexpr std::array<std::string_view, " + scanned.Count + "> COVERED{ " + string.Join(", ", scanned.Select(f => "\"" + f + "\"").ToArray()) + " };");
+        h.AppendLine();
+        h.AppendLine("\tstruct Entry");
+        h.AppendLine("\t{");
+        h.AppendLine("\t\tstd::uint8_t  file;  // FILES");
+        h.AppendLine("\t\tstd::uint32_t id;    // the form id in its file, without a load order's index");
+        h.AppendLine("\t};");
+        h.AppendLine();
+        h.AppendLine("\t// Sorted by file and id. Each: its editor id, whether its plugin has it off, how many references name it as their");
+        h.AppendLine("\t// parent, and the first script found that turns it off.");
+        h.AppendLine("\tinline constexpr Entry PARENTS[] = {");
+        foreach (var id in table)
+        {
+            Ref r; refs.TryGetValue(id, out r);
+            var edid = r != null && r.Edid.Length > 0 ? r.Edid : "(no editor id)";
+            h.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}: {3}, {4} children ({7} actors); {5}{6}", id >> 24, id & 0xFFFFFF, edid, r != null && (r.Flags & 0x800) != 0 ? "off" : "on", children[id], why[id][0], why[id].Count > 1 ? " (+" + (why[id].Count - 1) + " more)" : "", actors.ContainsKey(id) ? actors[id] : 0));
+        }
+        h.AppendLine("\t};");
+        h.AppendLine();
+        h.AppendLine("\t// How many entries the scan wrote (tests/EnableChainTests.cpp checks PARENTS against it: an entry added or lost by hand shows).");
+        h.AppendLine("\tinline constexpr std::size_t SCANNED = " + table.Count + ";");
+        h.AppendLine();
+        h.AppendLine("\t// The index in FILES of a plugin's file name (any case), or FILES.size().");
+        h.AppendLine("\tconstexpr std::size_t FileIndex(std::string_view a_file)");
+        h.AppendLine("\t{");
+        h.AppendLine("\t\tconst auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };");
+        h.AppendLine("\t\tfor (std::size_t i = 0; i < FILES.size(); ++i) {");
+        h.AppendLine("\t\t\tif (std::ranges::equal(FILES[i], a_file, [&](char a, char b) { return lower(a) == lower(b); })) {");
+        h.AppendLine("\t\t\t\treturn i;");
+        h.AppendLine("\t\t\t}");
+        h.AppendLine("\t\t}");
+        h.AppendLine("\t\treturn FILES.size();");
+        h.AppendLine("\t}");
+        h.AppendLine();
+        h.AppendLine("\t// Whether the scan read the plugin a_file (any case), its scripts with it (COVERED).");
+        h.AppendLine("\tconstexpr bool Covers(std::string_view a_file)");
+        h.AppendLine("\t{");
+        h.AppendLine("\t\tconst auto file = FileIndex(a_file);");
+        h.AppendLine("\t\treturn file < FILES.size() && std::ranges::find(COVERED, FILES[file]) != COVERED.end();");
+        h.AppendLine("\t}");
+        h.AppendLine();
+        h.AppendLine("\t// Whether a script of the game's own turns off the reference a_id (its form id; its load order's index is ignored)");
+        h.AppendLine("\t// that the plugin a_file made.");
+        h.AppendLine("\tconstexpr bool Contains(std::string_view a_file, std::uint32_t a_id)");
+        h.AppendLine("\t{");
+        h.AppendLine("\t\tconst auto file = FileIndex(a_file);");
+        h.AppendLine("\t\tif (file == FILES.size()) {");
+        h.AppendLine("\t\t\treturn false;");
+        h.AppendLine("\t\t}");
+        h.AppendLine("\t\tconst Entry key{ static_cast<std::uint8_t>(file), a_id & 0x00FFFFFF };");
+        h.AppendLine("\t\tconst auto  less = [](const Entry& a, const Entry& b) { return a.file != b.file ? a.file < b.file : a.id < b.id; };");
+        h.AppendLine("\t\treturn std::ranges::binary_search(PARENTS, key, less);");
+        h.AppendLine("\t}");
+        h.AppendLine("}");
+        return new Result { Header = h.ToString().Replace("\r\n", "\n").Replace("\n", "\r\n"), Report = report.ToString(), Count = table.Count };
     }
 }
 
