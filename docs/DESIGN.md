@@ -2236,7 +2236,20 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   info has none), checks the game has it (`BSResource::GetOrCreateStream`) and plays it with
   `BSAudioManager::GetSoundHandleByFile` as a 3D sound (flag 0x10, the `kDialogueOutputModel3D`
   output model) that follows the speaker's 3D: the same range and same-space test as the text, in a
-  conversation or a scene or not. Nothing goes through the dialogue system (no Say, topic, scene,
+  conversation or a scene or not. The flag and the extension are the engine's own: its actor voice
+  calls (Address Library 2229972 and 2229973, 1.11.240) play `sound\` + the response's file through the
+  same `GetSoundHandleByFile` with usage flags 0x10 (0x80 with priority 128, 0x4000 in one case), and the
+  audio manager's file source skips a .fuz's `FUZE` header and lip data itself. What the engine has and a
+  plain sound does not is an end: it sets the speaker's voice timer from the recording's length
+  (`GetDuration`), and the line ends with it. So each friend's line's sound has a hard end
+  (src/game/LineSounds.h): the recording's length read from the file (SubtitleTime) plus 1 s, at least
+  2.5 s and at most 30 s, or 15 s when the length can't be read; at most 4 play at once (a fifth line
+  ends the oldest); a speaker's next line ends the one before. Before this, a sound that did not end by
+  itself was only ended by that speaker's next line, and one that the audio manager stopped calling
+  playing was forgotten with no way to end it: a player heard a loud engine-like noise that grew with
+  every friend's line. A sound still playing at its hard end, or crowded out, is logged once
+  ("Conversations: the sound of a line from player N ... ended") and counted in net status
+  (`sounds=`, `cutLong=`, `cutCrowded=`). Nothing goes through the dialogue system (no Say, topic, scene,
   conversation or lip sync), so nobody can be held in one. Until 0.8.6 an NPC's line was the console's
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
   dialogue); the player's own lines were never voiced.
