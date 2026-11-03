@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T00:07:44+00:00",
+ "updated": "2026-11-03T00:09:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -35,8 +35,9 @@
    "title": "Nexus: Steam invite reaches the friend but clicking it doesn't join; the friend's game shows no co-op keys",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 277
   },
   {
    "id": "0vhl",
