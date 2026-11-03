@@ -209,6 +209,11 @@
   cuts load times substantially.
 - `ModActorValue(kDamage, health, -x)` on the player kills them at 0 health (normal death and reload).
 - `TESQuest::SetStage` doesn't start a stopped quest; the console `setstage` does.
+- A hit queues the victim's reaction to its attacker (2231180, +CD6F70), run later by the task queue (2229323, at
+  +0x2DAA) from two handles; a disabled reference's handle still resolves. The reaction checks the attacker's AI process but
+  hands the victim's to `AIProcess::EnterCombat` unchecked, and `TESObjectREFR::Disable` deletes an actor's process at once:
+  a stand-in replaced in a fight crashed the game there. `CombatReactions` (src/game/CombatReaction.h) hooks the task's call
+  and skips a victim that is disabled, deleted or has no process (`reactionsSkipped=` in `net status`).
 - The `ActorState` constructor (140CEB250) clears only bits 0-7 and 9-19 of its second flags word: bits 21-31 keep
   whatever the memory held. On some runs the player starts with `inSyncAnim` (bit 21) on, and while it is on,
   `PlayerControls::PerformInputProcessing` (140DDBE50) hands no input to the player's handlers: no walking,
