@@ -2034,8 +2034,13 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   controller's bleed-out collision bit, in that order), asked again every second while it doesn't take
   and only once a knock-down's ragdoll is over (3 s at most); full health from it is cut back to 30%.
   However a down ends with the player up (helped, a save loaded while down, stood up by the game, the
-  last friend leaving), the get-up clears any bleed-out flag left on and, if they went down sneaking and
-  are still sneaking (the stance survives a down), stands them as they get up, and again 2 s later only
+  last friend leaving), the get-up clears any bleed-out flag left on; with the bleed-out camera (current, or
+  waiting in the camera's return stack) or the down's input layer (`Player bleedout`) still on once they are
+  out of any knock-down, it ends those the way the life state's end of a down does (the camera's bleed-out
+  end, ID 2248381, and the layer's release, ID 2200873), as soon as it can and once more 2 s later if that
+  did not take (`DownRules::Self` finishDown, tested): stood up by a knock-down's get-up first, a player
+  was left with the camera on the ground and no Pip-Boy until a load. If they went down sneaking and
+  are still sneaking (the stance survives a down), it stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
   One who went down sneaking and gets up standing was stood by the game's stance alone
