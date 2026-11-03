@@ -12,7 +12,9 @@
 // RequestExitWorkshop, which end the mode before the menu goes). That menu's destructor is the one that froze a host
 // scrapping in Sanctuary, waiting on the renderer's lock when the engine destroyed it mid-draw: nothing of the
 // plugin's opens or closes it but the workshop's own enter and exit, so the plugin never decides when it is
-// destroyed. Pure, so it is unit tested.
+// destroyed. The settlement list (Workshop_CaravanMenu) is a script's question (OpenWorkshopSettlementMenuEx, a
+// latent call): only its own answer, a pick or its cancel, ends the script's wait, and a hide doesn't give one.
+// Pure, so it is unit tested.
 namespace MenuMessages
 {
 	struct Rule
@@ -22,9 +24,10 @@ namespace MenuMessages
 		const char*      reason;   // what to do instead
 	};
 
-	constexpr std::array<Rule, 2> REFUSED{ {
+	constexpr std::array<Rule, 3> REFUSED{ {
 		{ "DialogueMenu", false, "a dialogue is closed by the conversation ending, not by hiding its menu (that crashed the game in the menu's destructor)" },
 		{ "WorkshopMenu", true, "workshop mode is entered and left by the workshop itself (workshop enter, workshop exit), never by its menu's message (the menu torn down outside them is the one that froze a host)" },
+		{ "Workshop_CaravanMenu", false, "the settlement list is closed by its own cancel (Tab, or `menu Workshop_CaravanMenu cancel`), not by hiding it: the script that opened it waits for its answer, and a hidden list left that script suspended for good, in the save too" },
 	} };
 
 	// Why the message may not go to the menu, or null when it may. a_hiding: a hide (or force hide) message, else a

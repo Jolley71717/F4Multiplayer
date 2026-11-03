@@ -28,6 +28,7 @@
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
+#include "game/MenuInput.h"
 #include "game/MenuWatch.h"
 #include "game/MouseCapture.h"
 #include "game/Destructibles.h"
@@ -3338,9 +3339,11 @@ namespace DevCommands
 			return std::format("god={}", player && player->IsGodMode());
 		}
 
-		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy). Not
-		// the dialogue or the workshop menu (MenuMessages): the conversation and workshop mode are left through the
-		// game's own ways (`workshop enter` and `workshop exit` for the workshop).
+		// menu <name> [hide|force|cancel]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
+		// Not the dialogue or the workshop menu (MenuMessages): the conversation and workshop mode are left through the
+		// game's own ways (`workshop enter` and `workshop exit` for the workshop). cancel: a tap of the menu's Cancel (Tab)
+		// handed to that menu alone (MenuInput), as QuestSync closes a settlement list a friend's stage opened; the list
+		// is never hidden.
 		std::string Menu(std::string_view a_args)
 		{
 			const auto space = a_args.find(' ');
@@ -3348,7 +3351,14 @@ namespace DevCommands
 			const auto how = space != std::string_view::npos ? a_args.substr(space + 1) : std::string_view{};
 			const auto queue = RE::UIMessageQueue::GetSingleton();
 			if (name.empty() || !queue) {
-				return "error: usage: menu <name> [hide|force]";
+				return "error: usage: menu <name> [hide|force|cancel]";
+			}
+			if (how == "cancel") {
+				if (!Hud::IsSettled()) {
+					return std::format("error: the UI is held ({})", UiHold::Name(Hud::Holding()));
+				}
+				const auto why = ::MenuInput::Tap(name, "Cancel", ::MenuInput::TAB);
+				return why.empty() ? "cancel pressed (released in a moment)" : std::format("error: {}", why);
 			}
 			if (const auto reason = MenuMessages::Refusal(name, !how.empty())) {
 				return std::format("error: {}", reason);
@@ -3426,25 +3436,6 @@ namespace DevCommands
 		// from `key` goes through: see game/InjectInput.h. Without an id the button is the one the control map
 		// gives the event in the uppermost input context that has it (`controls` lists them).
 
-		// A ButtonEvent laid out as the game's. RE::ButtonEvent can't be made here: its base class's virtual
-		// functions exist only in the game. The vtable is the game's own.
-		struct GameButtonEvent
-		{
-			std::uintptr_t    vtable = 0;               // 00
-			std::int32_t      device = 0;               // 08
-			std::int32_t      deviceID = 0;             // 0C
-			std::int32_t      eventType = 0;            // 10
-			const void*       next = nullptr;           // 18
-			std::uint32_t     timeCode = 0xFFFFFFFF;    // 20
-			std::int32_t      handled = 0;              // 24
-			RE::BSFixedString strUserEvent;             // 28
-			std::int32_t      idCode = -1;              // 30
-			bool              disabled = false;         // 34
-			float             value = 0.0f;             // 38
-			float             heldDownSecs = 0.0f;      // 3C
-		};
-		static_assert(sizeof(GameButtonEvent) == sizeof(RE::ButtonEvent));
-
 		InjectInput::Releases inputReleases;
 
 		// Whether the object is the game's of that class: its vtable is one of the class's.
@@ -3511,23 +3502,8 @@ namespace DevCommands
 		// first, the player's controls unless a menu stopped it. Returns what each did with it.
 		std::string DeliverButton(const InjectInput::Press& a_press, bool a_down)
 		{
-			// The events stay readable after the call (a receiver might keep the pointer for later in the
-			// frame): a few slots used in turn, never freed.
-			static auto       slots = new std::array<GameButtonEvent, 8>{};
-			static std::size_t next = 0;
-			auto&             event = (*slots)[next++ % slots->size()];
-			event.vtable = RE::VTABLE::ButtonEvent[0].address();
-			event.device = static_cast<std::int32_t>(a_press.device);
-			event.deviceID = 0;
-			event.eventType = static_cast<std::int32_t>(RE::INPUT_EVENT_TYPE::kButton);
-			event.next = nullptr;
-			event.timeCode = 0xFFFFFFFF;
-			event.handled = 0;
-			event.strUserEvent = a_press.userEvent.c_str();
-			event.idCode = a_press.id ? static_cast<std::int32_t>(*a_press.id) : -1;
-			event.disabled = false;
-			event.value = a_down ? 1.0f : 0.0f;
-			event.heldDownSecs = a_down ? 0.0f : InjectInput::ReleaseHeldSecs(a_press);
+			auto& event = ::MenuInput::NewEvent(static_cast<std::int32_t>(a_press.device), a_press.userEvent, a_press.id ? static_cast<std::int32_t>(*a_press.id) : -1, a_down,
+				InjectInput::ReleaseHeldSecs(a_press));
 			const auto input = reinterpret_cast<const RE::InputEvent*>(&event);
 			std::string out;
 			const auto  menus = RE::MenuControls::GetSingleton();
