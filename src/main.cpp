@@ -509,6 +509,7 @@ namespace
 						step("the inert shots", [] { InertShots::BeforeLoad(); });  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
 						step("the strays", [] { SaveGuard::BeforeLoad(); });  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
 						step("the frame copies", [] { RemotePlayers::BeforeLoad(); });  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
+						step("the lit copies", [] { WorkshopSync::BeforeLoad(); });  // before the load's threads make its lights (LightPoweredHook)
 					},
 					"load");
 			} catch (const std::exception& e) {
@@ -1057,8 +1058,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 220 of 320 bytes used: six 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
-	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's one), HavokGuard::Install's
+	// 234 of 320 bytes used: seven 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
@@ -1094,6 +1095,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Equipment::InstallFrameGate();  // and its Transfer
 	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
 	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
+	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {

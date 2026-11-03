@@ -1590,6 +1590,8 @@ namespace Session
 		if (welcomed) {
 			MapShare::Frame();
 			WorkshopSync::Frame(hostedServer && hostedServer->Running());
+		} else {
+			WorkshopSync::Sweep();  // copies left to delete when the session ended go once their cell is loaded
 		}
 		for (auto& packet : WorkshopSync::TakeOutgoing(welcomed)) {
 			SendOut(std::move(packet), true);

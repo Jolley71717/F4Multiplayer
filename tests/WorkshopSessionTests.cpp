@@ -1553,3 +1553,14 @@ TEST("workshop move: a copy changes cells only by being made again, below zero t
 	to.position[0] = 90000.0f;
 	CHECK(WorkshopMove::HowToMove(at, to, std::nullopt) == WorkshopMove::How::kInPlace);
 }
+
+TEST("workshop apply: a copy whose handle names nothing is found again under its ID only as the same object, made at runtime, not deleted")
+{
+	constexpr std::uint32_t COPY = 0xFF001098;
+	CHECK(WorkshopApply::SameCopy(COPY, WALL, WALL, false));
+	CHECK(!WorkshopApply::SameCopy(COPY, CRATE, WALL, false));  // the ID is another object's now
+	CHECK(!WorkshopApply::SameCopy(COPY, WALL, WALL, true));    // deleted: going, not our copy any more
+	CHECK(!WorkshopApply::SameCopy(COPY, 0, WALL, false));      // no reference (or base) under it
+	CHECK(!WorkshopApply::SameCopy(0x0001F2A1, WALL, WALL, false));  // not made at runtime: none of ours
+	CHECK(!WorkshopApply::SameCopy(COPY, 0, 0, false));         // kept without a base: never taken for anything
+}

@@ -9,6 +9,7 @@
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
 #include "game/RemotePlayers.h"
+#include "game/SneakKey.h"
 #include "game/WorldSync.h"
 #include "Text.h"
 
@@ -127,6 +128,62 @@ namespace Downed
 			EssentialDown(a_player, true);
 		}
 
+		// The two steps of the engine's end of a down that are the player's alone, as the life state's end runs them
+		// (Actor::SetLifeState, 1.11.240: +C83990, out of essential-down or bleed-out for the player). The player camera's
+		// end of its bleed-out state (+1028600; a_instant false, as there): from the bleed-out camera back to the view it
+		// came from, by a transition; with the bleed-out camera waiting under another (a start made while the camera
+		// tweened pushes it there), taken out of that stack. A knock-down's end (+D36149) runs it too, at once.
+		void EndBleedOutCamera(RE::PlayerCamera* a_camera)
+		{
+			using end_t = void (*)(RE::PlayerCamera*, bool);
+			static REL::Relocation<end_t> end{ REL::ID{ 2248381 } };
+			end(a_camera, false);
+		}
+
+		// Then the input layer the start put on the reference (+4FE860): taken off it and let go.
+		void ReleaseLayer(RE::PlayerCharacter* a_player)
+		{
+			using release_t = void (*)(RE::TESObjectREFR*);
+			static REL::Relocation<release_t> release{ REL::ID{ 2200873 } };
+			release(a_player);
+		}
+
+		// The player camera in its bleed-out state, or with it waiting to go back to (its return stack). The engine's start
+		// of a down puts it on, as a knock-down's ragdoll does (+D4B4A0); their ends take it off.
+		bool BleedOutCamera()
+		{
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const auto bleedOut = camera ? camera->cameraStates[RE::CameraStates::kBleedout].get() : nullptr;
+			if (!bleedOut) {
+				return false;
+			}
+			return camera->currentState.get() == bleedOut ||
+			       std::ranges::any_of(camera->tempReturnStates, [&](const auto& a_state) { return a_state.get() == bleedOut; });
+		}
+
+		// The debug name of the input layer the engine's start of a down puts on the player (activate, jump and the view
+		// switch off).
+		constexpr std::string_view BLEEDOUT_LAYER{ "Player bleedout" };
+
+		// That layer in use (SneakKey::LayerCounts: something besides the manager holds it).
+		bool BleedOutLayer()
+		{
+			const auto enable = RE::BSInputEnableManager::GetSingleton();
+			if (!enable) {
+				return false;
+			}
+			// Under the lock the engine grows the layers with (see Equipment.cpp's LayersWithActivateOff).
+			RE::BSAutoLock l{ enable->layerLock };
+			for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
+				const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
+				const auto holder = i < enable->layerWrappers.size() ? enable->layerWrappers[i].get() : nullptr;
+				if (name && BLEEDOUT_LAYER == name && holder && SneakKey::LayerCounts(holder->refCount)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// The character controller's flag the engine's essential-down start sets and its end clears: a character controller
 		// with it lets other characters through (its collision filter reads it).
 		constexpr std::uint32_t CONTROLLER_BLEEDOUT = 1u << 27;
@@ -148,10 +205,10 @@ namespace Downed
 			const auto  controller = Controller(a_player);
 			const auto  camera = RE::PlayerCamera::GetSingleton();
 			const int   view = camera && camera->currentState ? static_cast<int>(camera->currentState->id.underlying()) : -1;
-			return std::format("life state {}, knock state {}, sneaking {} (stance {}), z {:.1f}, 3D z {}, first-person 3D z {}, camera state {}, in bleed-out animation {}, controller bleed-out flag {}",
+			return std::format("life state {}, knock state {}, sneaking {} (stance {}), z {:.1f}, 3D z {}, first-person 3D z {}, camera state {}, bleed-out camera {}, bleed-out layer {}, in bleed-out animation {}, controller bleed-out flag {}",
 				static_cast<std::uint32_t>(state.lifeState), static_cast<std::uint32_t>(state.knockState), a_player->IsSneaking(), static_cast<std::uint32_t>(state.stance), z,
 				third ? std::format("{:.1f}", third->world.translate.z) : std::string{ "none" }, first ? std::format("{:.1f}", first->world.translate.z) : std::string{ "none" }, view,
-				a_player->boolFlags.all(BoolFlag::kInBleedoutAnimation), controller ? (controller->flags & CONTROLLER_BLEEDOUT) != 0 : false);
+				BleedOutCamera(), BleedOutLayer(), a_player->boolFlags.all(BoolFlag::kInBleedoutAnimation), controller ? (controller->flags & CONTROLLER_BLEEDOUT) != 0 : false);
 		}
 
 		// Helped up: the health the rules give and the engine's own end of the down, at once. Left to the game, its recovery
@@ -193,6 +250,24 @@ namespace Downed
 				REX::WARN("Downed: up again, but the down left on:{} taken off", left);
 			}
 			REX::INFO("Downed: up again ({})", PoseFacts(a_player));
+		}
+
+		// Up again, out of a knock-down, and the bleed-out camera or the down's input layer still on (DownRules::Self's
+		// finishDown): a path of the game's stood the player up without the life state's end of the down, which alone takes
+		// them off. Left so, the camera stayed on the ground and the Pip-Boy would not open until a load. That end's own
+		// steps for them, here.
+		void FinishDown(RE::PlayerCharacter* a_player)
+		{
+			const bool camera = BleedOutCamera();
+			const bool layer = BleedOutLayer();
+			REX::WARN("Downed: up again, but the down left on:{}{} ending them ({})", camera ? " the bleed-out camera;" : "", layer ? " its input layer;" : "", PoseFacts(a_player));
+			if (const auto playerCamera = RE::PlayerCamera::GetSingleton(); camera && playerCamera) {
+				EndBleedOutCamera(playerCamera);
+			}
+			if (layer) {
+				ReleaseLayer(a_player);
+			}
+			REX::INFO("Downed: the down's camera and input layer ended ({})", PoseFacts(a_player));
 		}
 
 		// Up and still in the sneak they went down in: stood, as the graph's own sneak-exit event does it (PlayerCharacter::SetSneaking: the
@@ -318,6 +393,9 @@ namespace Downed
 			}
 			if (a_step.graphSneakStop) {
 				GraphSneakStop(a_player, a_step.settled);
+			}
+			if (a_step.finishDown) {
+				FinishDown(a_player);
 			}
 			if (a_step.settled) {
 				REX::INFO("Downed: the get-up has played out ({})", PoseFacts(a_player));
@@ -509,6 +587,8 @@ namespace Downed
 			consoleSeenAt = now;
 		}
 		const bool console = consoleSeenAt && now - *consoleSeenAt < CONSOLE_GRACE;
+		// What the down left on, looked for only while it may be read: on the ground, and up until the get-up has played out.
+		const bool afterDown = self.Now() != DownRules::Self::Phase::kUp || self.Settling();
 
 		const DownRules::Facts facts{ .enabled = enabled,
 			.essential = essential,
@@ -518,7 +598,9 @@ namespace Downed
 			.inCombat = fighting,
 			.console = console,
 			.knockedOver = static_cast<RE::ActorState&>(*player).knockState != 0,
-			.sneaking = player->IsSneaking() };
+			.sneaking = player->IsSneaking(),
+			.bleedOutCamera = afterDown && BleedOutCamera(),
+			.bleedOutLayer = afterDown && BleedOutLayer() };
 		const auto step = self.Frame(facts, now);
 		Apply(player, step);
 
@@ -662,8 +744,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, helper.helped,
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
+			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, self.downFinishes, helper.helped,
 			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
 			crawl.distance, InputFacts());
 	}

@@ -677,6 +677,110 @@ TEST("workshop power: a copy gone between a save's hush and the show after is sh
 	CHECK(!game.shown.contains(scrapped));
 }
 
+namespace
+{
+	// A friend's light bulb here: its light is switched by a task the game runs after the show (SwitchLight), so a light
+	// can go out after it was shown on (a removal asked a moment before ran after the show).
+	struct BulbGame
+	{
+		std::map<Key, std::uintptr_t> drawn;
+		std::map<Key, bool>           lit;  // whether its light is there
+		std::uint32_t                 shows = 0;
+
+		std::uintptr_t Drawn(const Key& a_key)
+		{
+			const auto it = drawn.find(a_key);
+			return it == drawn.end() ? 0 : it->second;
+		}
+
+		bool Show(const Key& a_key, bool a_on)
+		{
+			++shows;
+			lit[a_key] = a_on;
+			return true;
+		}
+
+		bool Holds(const Key& a_key, bool a_on)
+		{
+			const auto it = lit.find(a_key);
+			return (it != lit.end() && it->second) == a_on;
+		}
+	};
+}
+
+TEST("workshop power: a light shown on whose light goes out (the game's switch ran late) is shown again, as often as the redraw cap allows")
+{
+	Mirror     mirror;
+	BulbGame   game;
+	const Key  bulb{ BUILDER, GENERATOR };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[bulb] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.lit.at(bulb));
+	t += SETTLE * 2;
+	CHECK(mirror.Refresh(game, t) == 1);  // settled: once more
+	const auto shows = game.shows;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // lit: nothing to do
+	CHECK(game.shows == shows);
+	game.lit[bulb] = false;  // the light went out, drawn the same
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.lit.at(bulb));
+	CHECK(mirror.Lapses() == 1);
+	// A copy shown off whose light is still there is shown off again too.
+	mirror.Set(BUILDER, { GENERATOR, false });
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.lit.at(bulb));
+	game.lit[bulb] = true;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.lit.at(bulb));
+	CHECK(mirror.Lapses() == 2);
+	// A light the game keeps putting out is shown again no more often than MAX_REDRAWS in REDRAW_WINDOW.
+	std::size_t again = 0;
+	for (int i = 0; i < 4 * MAX_REDRAWS; ++i) {
+		game.lit[bulb] = true;
+		t += REFRESH;
+		again += mirror.Refresh(game, t);
+	}
+	CHECK(again <= MAX_REDRAWS);
+	CHECK(again > 0);
+	t += REDRAW_WINDOW;
+	game.lit[bulb] = true;
+	CHECK(mirror.Refresh(game, t) == 1);  // a new window
+	CHECK(!game.lit.at(bulb));
+}
+
+TEST("workshop power: a light hushed for a save and shown on after it is shown on again if its light went out meanwhile")
+{
+	Mirror     mirror;
+	BulbGame   game;
+	const Key  bulb{ BUILDER, GENERATOR };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[bulb] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	t += SETTLE * 2;
+	CHECK(mirror.Refresh(game, t) == 1);
+	for (int save = 0; save < 3; ++save) {
+		CHECK(mirror.Hush(game, t) == 1);
+		CHECK(!game.lit.at(bulb));
+		mirror.SaveDone();
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 1);  // shown on after the save
+		CHECK(game.lit.at(bulb));
+		game.lit[bulb] = false;  // the save's off ran after the on (the rig's bulb, every other save)
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 1);
+		CHECK(game.lit.at(bulb));
+		t += REFRESH;
+		CHECK(mirror.Refresh(game, t) == 0);  // and then let be
+	}
+}
+
 TEST("workshop power: no more than MAX_MIRRORED pieces are kept")
 {
 	Mirror mirror;
@@ -803,5 +907,106 @@ TEST("workshop power: a light whose graph refuses the event is tried again, up t
 	game.graphReady = true;
 	CHECK(step() == 1);
 	CHECK(game.shown.at({ BUILDER, LIGHT }));
+	CHECK(mirror.GivenUp() == 0);
+}
+
+TEST("workshop power: a graph that refuses what it shows already counts as shown, unless we told it the other way")
+{
+	// "Unpowered" refused: dark already, unless we told it "Powered" (still turning on: tried again).
+	CHECK(RefusalShows(false, Told::kNothing));
+	CHECK(RefusalShows(false, Told::kUnpowered));
+	CHECK(!RefusalShows(false, Told::kPowered));
+	// "Powered" refused: lit already, unless we told it "Unpowered" (still turning off: tried again).
+	CHECK(RefusalShows(true, Told::kNothing));
+	CHECK(RefusalShows(true, Told::kPowered));
+	CHECK(!RefusalShows(true, Told::kUnpowered));
+}
+
+TEST("workshop power: what a copy's graph was told is kept per graph, and a graph made anew was told nothing")
+{
+	GraphsTold told;
+	constexpr std::uintptr_t GRAPH = 0x5000;
+	constexpr std::uintptr_t ANEW = 0x6000;
+	CHECK(told.Of(GENERATOR, GRAPH) == Told::kNothing);
+	told.Took(GENERATOR, GRAPH, true);
+	CHECK(told.Of(GENERATOR, GRAPH) == Told::kPowered);
+	CHECK(told.Of(GENERATOR, ANEW) == Told::kNothing);  // its cell loaded again, or a load: another graph
+	CHECK(told.Of(PYLON, GRAPH) == Told::kNothing);
+	// The settle's second "Powered" to a graph that took the first: lit already, no try spent.
+	CHECK(told.Refused(GENERATOR, GRAPH, true));
+	// Told "Powered", it refuses "Unpowered": still turning on, maybe; tried again.
+	CHECK(!told.Refused(GENERATOR, GRAPH, false));
+	told.Took(GENERATOR, GRAPH, false);
+	CHECK(told.Of(GENERATOR, GRAPH) == Told::kUnpowered);
+	// Told "Unpowered", it refuses "Powered": still turning off, maybe; tried again.
+	CHECK(!told.Refused(GENERATOR, GRAPH, true));
+	CHECK(told.Refused(GENERATOR, GRAPH, false));  // and a second "Unpowered": dark already
+	told.Forget(GENERATOR);
+	CHECK(told.Of(GENERATOR, GRAPH) == Told::kNothing);
+	CHECK(told.Size() == 0);
+}
+
+TEST("workshop power: a graph that came back lit and refuses Powered counts as lit, and a later Unpowered it refuses is tried again")
+{
+	GraphsTold               told;
+	constexpr std::uintptr_t GRAPH = 0x5000;
+	// A copy saved lit (or whose cell unloaded and loaded again lit): its graph is new to us, and has no move to "Powered".
+	CHECK(told.Refused(GENERATOR, GRAPH, true));
+	CHECK(told.Of(GENERATOR, GRAPH) == Told::kPowered);
+	// So it is lit as far as what comes next goes: its builder turns it off, and a refusal of that is no "dark already".
+	CHECK(!told.Refused(GENERATOR, GRAPH, false));
+	told.Clear();
+	CHECK(told.Size() == 0);
+}
+
+namespace
+{
+	// A copy's graph as the game keeps it: lit or not, taking only an event that changes that.
+	struct GraphGame
+	{
+		std::map<Key, std::uintptr_t> drawn;
+		std::map<Key, bool>           lit;
+		GraphsTold                    told;
+		std::uint32_t                 refusals = 0;
+
+		std::uintptr_t Drawn(const Key& a_key)
+		{
+			const auto it = drawn.find(a_key);
+			return it == drawn.end() ? 0 : it->second;
+		}
+
+		bool Show(const Key& a_key, bool a_on)
+		{
+			const auto graph = drawn.at(a_key);
+			if (lit[a_key] != a_on) {
+				lit[a_key] = a_on;
+				told.Took(a_key.second, graph, a_on);
+				return true;
+			}
+			++refusals;
+			return told.Refused(a_key.second, graph, a_on);
+		}
+	};
+}
+
+TEST("workshop power: a copy that comes back lit spends no tries on Powered, and still goes dark when its builder's does")
+{
+	Mirror     mirror;
+	GraphGame  game;
+	auto       t = Clock::now();
+	const auto step = [&] { t += REFRESH; return mirror.Refresh(game, t); };
+	const Key  key{ BUILDER, GENERATOR };
+	mirror.Set(BUILDER, { GENERATOR, true });
+	game.drawn[key] = Drawing(0x1000, true, true, 0x2000);
+	game.lit[key] = true;  // saved lit, or its cell loaded again lit
+	CHECK(step() == 1);
+	CHECK(mirror.GivenUp() == 0);
+	t += SETTLE;
+	CHECK(step() == 1);  // the settle's show again: refused, lit already
+	CHECK(game.refusals == 2);
+	CHECK(mirror.GivenUp() == 0);
+	mirror.Set(BUILDER, { GENERATOR, false });
+	CHECK(step() == 1);
+	CHECK(!game.lit.at(key));
 	CHECK(mirror.GivenUp() == 0);
 }

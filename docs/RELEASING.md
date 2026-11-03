@@ -89,7 +89,8 @@ verdict=PASS
    its log still names `rcN`). Both zips go on the release. Commit those notes to the branch afterwards,
    and fast-forward `main`.
 3. Nexus, only when the maintainer decides: write the changelog in `dist/NEXUS-X.Y.Z.txt` (one line per
-   entry) and commit it before tagging, or leave it out for no changelog. Then
+   entry) and merge it to `main`, or leave it out for no changelog. The workflow reads it from `main` first and
+   from the tag only when `main` doesn't have it, so a changelog corrected after the rc still counts. Then
    `gh workflow run nexus-upload.yml -f tag=vX.Y.Z` (or Actions > Upload to Nexus > Run workflow).
    The workflow takes `F4Multiplayer-X.Y.Z-nexus.zip` from the GitHub release, refuses one holding
    `F4MPServer.exe`, and uploads it as the new version of the main file through Nexus's own

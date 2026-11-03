@@ -51,11 +51,29 @@ namespace
 		bool stanceOnlyGetUp = false; // the game's end of the down stands them by the stance alone (SetSneaking), the graph left in sneak
 		bool graphStopIgnored = false;  // the graph is still in the get-up and does not take a sneak stop
 		int  graphStops = 0;
+		bool bleedOutCamera = false;    // the player camera's bleed-out state, on or waiting to come back
+		bool bleedOutLayer = false;     // the input layer the engine's start of a down puts on
+		bool upLeavesBleedOut = false;  // the game's stand-ups other than the engine's end of the down leave both on (a knock-down's get-up)
+		bool finishIgnored = false;     // our end of those (Downed.cpp FinishDown) does not take
+		int  finishes = 0;
 
-		// Up from a down, however it ends.
-		void Up()
+		// The engine's start of a down: the camera and the input layer with it.
+		void GoDown()
+		{
+			down = true;
+			bleedOutCamera = true;
+			bleedOutLayer = true;
+		}
+
+		// Up from a down, however it ends. a_engineEnd: the life state's own end of the down (the engine's recovery, or
+		// Downed.cpp StandUp), which takes the camera and the layer off; another path of the game's may not.
+		void Up(bool a_engineEnd = false)
 		{
 			down = false;
+			if (a_engineEnd || !upLeavesBleedOut) {
+				bleedOutCamera = false;
+				bleedOutLayer = false;
+			}
 			if (stanceOnlyGetUp) {
 				sneaking = false;
 			}
@@ -86,7 +104,7 @@ namespace
 				return;
 			}
 			if (essential) {
-				down = true;
+				GoDown();
 			} else {
 				dead = true;
 			}
@@ -132,7 +150,7 @@ namespace
 			if (body.standUpIn > 0 && --body.standUpIn == 0) {
 				body.standUpIn = -1;
 				if (body.down && !body.dead && !body.stayDown) {
-					body.Up();
+					body.Up(true);
 					body.fullHealth = true;
 				}
 			}
@@ -148,7 +166,8 @@ namespace
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
 			const DownRules::Facts facts{ .enabled = withFriends && self.GetRules().revive, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console,
-				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down) };
+				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down), .bleedOutCamera = body.bleedOutCamera,
+				.bleedOutLayer = body.bleedOutLayer };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -162,7 +181,7 @@ namespace
 			if (step.putDown) {
 				++body.putDowns;
 				if (!body.putDownIgnored && !body.dead) {
-					body.down = true;
+					body.GoDown();
 				}
 			}
 			if (step.standUp) {
@@ -170,8 +189,16 @@ namespace
 				++body.getUpsAsked;
 				body.stayDown = false;
 				if (!body.getUpIgnored && body.down && !body.dead) {
-					body.Up();
+					body.Up(true);
 					body.fullHealth = true;
+				}
+			}
+			if (step.finishDown) {
+				// Downed.cpp FinishDown: the engine's end of the camera's bleed-out state, and of the layer.
+				++body.finishes;
+				if (!body.finishIgnored) {
+					body.bleedOutCamera = false;
+					body.bleedOutLayer = false;
 				}
 			}
 			if (step.unsneak) {
@@ -2225,4 +2252,149 @@ TEST("downed get-up: however the down ends with the player up, they get up the s
 		CHECK(game.gotUp == 0);
 		CHECK(game.unsneaks == 0);
 	}
+}
+
+TEST("downed get-up: helped up the engine's way, the bleed-out camera and layer go with the down and nothing more is ended")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.body.bleedOutCamera);
+	REQUIRE(game.body.bleedOutLayer);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	CHECK(game.gotUp == 1);
+	CHECK(!game.body.bleedOutCamera);
+	CHECK(!game.body.bleedOutLayer);
+	// A knock-down of its own while the get-up plays out: the ragdoll has the bleed-out camera, and its own end takes it off.
+	game.body.knockedOver = true;
+	game.body.bleedOutCamera = true;
+	game.Run(now, 2s);
+	game.body.knockedOver = false;
+	game.body.bleedOutCamera = false;
+	game.Run(now, DownRules::GET_UP_SETTLE + 1s);
+	CHECK(game.settled == 1);
+	// And one once settled is nothing of the down's.
+	game.body.knockedOver = true;
+	game.body.bleedOutCamera = true;
+	game.Run(now, 3s);
+	CHECK(game.body.finishes == 0);
+	CHECK(game.self.downFinishes == 0);
+}
+
+TEST("downed get-up: helped up knocked over, and the knock-down's get-up stands them first: the camera and layer it left on are ended once it is over")
+{
+	// Downed by a grenade that knocked them over, a player was stood up by the ragdoll's get-up before the engine's end of
+	// the down could be asked, which then did nothing: the camera stayed on the ground and the Pip-Boy would not open.
+	Game game;
+	auto now = Start();
+	game.body.upLeavesBleedOut = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.body.knockedOver = true;
+	game.Run(now, 2s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	REQUIRE(game.body.getUpsAsked == 0);  // waiting for the knock-down (KNOCK_WAIT)
+	game.body.StoodUpByGame();          // its get-up, still playing
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.gotUp == 1);
+	CHECK(game.body.getUpsAsked == 0);
+	CHECK(game.body.finishes == 0);  // not while knocked over: that camera may be the knock-down's
+	CHECK(game.body.bleedOutCamera);
+	game.body.knockedOver = false;
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.body.finishes == 1);  // at once, not when the get-up has played out
+	CHECK(!game.body.bleedOutCamera);
+	CHECK(!game.body.bleedOutLayer);
+	game.Run(now, DownRules::GET_UP_SETTLE + 5s);
+	CHECK(game.settled == 1);
+	CHECK(game.body.finishes == 1);
+	CHECK(game.self.downFinishes == 1);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed get-up: up some other way with the camera or the layer left on, they are ended as the player gets up")
+{
+	// Stood up with the console open: up it is, and the rest of the down is ended.
+	{
+		Game game;
+		auto now = Start();
+		game.body.upLeavesBleedOut = true;
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 2s);
+		game.console = true;
+		game.body.StoodUpByGame();
+		game.Frame(now);
+		now += FRAME;
+		CHECK(game.upByCommand == 1);
+		CHECK(game.gotUp == 1);
+		CHECK(game.body.finishes == 1);
+		CHECK(!game.body.bleedOutCamera);
+		CHECK(!game.body.bleedOutLayer);
+	}
+	// The layer alone left on.
+	{
+		Game game;
+		auto now = Start();
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 2s);
+		REQUIRE(game.Revived(now));
+		game.Frame(now);
+		now += FRAME;
+		game.body.bleedOutLayer = true;  // as if the end had let go of the camera only
+		game.Frame(now);
+		now += FRAME;
+		CHECK(game.gotUp == 1);
+		CHECK(game.body.finishes == 1);
+		CHECK(!game.body.bleedOutLayer);
+	}
+	// Up in the pause menu (the last friend gone as it opened): the end waits for the game to run.
+	{
+		Game game;
+		auto now = Start();
+		game.body.upLeavesBleedOut = true;
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 2s);
+		game.withFriends = false;
+		game.paused = true;
+		game.body.StoodUpByGame();
+		game.Run(now, 2s);
+		CHECK(game.gotUp == 1);
+		CHECK(game.body.finishes == 0);
+		game.paused = false;
+		game.Frame(now);
+		now += FRAME;
+		CHECK(game.body.finishes == 1);
+		CHECK(!game.body.bleedOutCamera);
+	}
+}
+
+TEST("downed get-up: an end of the camera and layer that does not take is asked once more when the get-up has played out, then left")
+{
+	Game game;
+	auto now = Start();
+	game.body.upLeavesBleedOut = true;
+	game.body.finishIgnored = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.console = true;
+	game.body.StoodUpByGame();
+	game.Run(now, 1s);
+	CHECK(game.body.finishes == 1);
+	game.Run(now, DownRules::GET_UP_SETTLE);
+	CHECK(game.settled == 1);
+	CHECK(game.body.finishes == 2);
+	game.Run(now, 10s);
+	CHECK(game.body.finishes == 2);  // never every frame
+	CHECK(game.self.downFinishes == 2);
+	CHECK(game.body.bleedOutCamera);
 }

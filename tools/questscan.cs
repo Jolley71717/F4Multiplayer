@@ -9,6 +9,16 @@ using System.Text;
 // fragment functions call inventory/equipment functions (pex in a GNRL BA2).
 public static class GearScan
 {
+    // The game's masters the scans read, each with the archive of its scripts. A master's index here is its
+    // src/game/StageRules.h File (the order the tables were first made in, not the game's load order).
+    public class Master { public string Esm; public string Ba2; }
+    public static readonly Master[] MASTERS = {
+        new Master { Esm = "Fallout4.esm", Ba2 = "Fallout4 - Misc.ba2" },
+        new Master { Esm = "DLCCoast.esm", Ba2 = "DLCCoast - Main.ba2" },
+        new Master { Esm = "DLCRobot.esm", Ba2 = "DLCRobot - Main.ba2" },
+        new Master { Esm = "DLCNukaWorld.esm", Ba2 = "DLCNukaWorld - Main.ba2" },
+    };
+
     public static byte[] Inflate(byte[] data, int offset, int length, int size)
     {
         using (var ms = new MemoryStream(data, offset + 2, length - 2))
@@ -27,15 +37,71 @@ public static class GearScan
     }
 
     // ---------------- ESM ----------------
-    public class Quest { public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>(); }
+    public class Quest
+    {
+        public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>();
+        public string Event = "";  // the story manager event that starts it (ENAM), if any
+        public List<string> Fills = new List<string>();  // each alias's fill, name=forced, unique, external, created, event, fromalias, matching or empty
+    }
+
+    // How an alias is filled, by the subrecords it has up to its ALED: forced to a reference or location, a unique
+    // actor, another quest's alias, created at runtime, from the event that starts the quest, from another alias, or
+    // found by its conditions ("matching": near another alias, or only conditions).
+    static string Fill(HashSet<string> a_marks)
+    {
+        return a_marks.Contains("ALFR") || a_marks.Contains("ALFL") ? "forced" : a_marks.Contains("ALUA") ? "unique" :
+            a_marks.Contains("ALEQ") ? "external" : a_marks.Contains("ALCO") ? "created" : a_marks.Contains("ALFE") ? "event" :
+            a_marks.Contains("ALFA") || a_marks.Contains("ALRT") ? "fromalias" : a_marks.Contains("ALNA") || a_marks.Contains("CTDA") ? "matching" : "empty";
+    }
+
+    public static int Masters(string path) { return Masters(File.ReadAllBytes(path)); }
+
+    static int Masters(byte[] a_all)
+    {
+        uint hsize = BitConverter.ToUInt32(a_all, 4);
+        int masters = 0;
+        for (int s = 24, se = 24 + (int)hsize; s < se; s += 6 + BitConverter.ToUInt16(a_all, s + 4))
+            if (Encoding.ASCII.GetString(a_all, s, 4) == "MAST") masters++;
+        return masters;
+    }
+
+    // The quests the file's story manager quest nodes start (SMQN NNAM), as the file's form IDs (a quest of the file's
+    // own has its count of masters as its load index, one of Fallout4.esm's 00).
+    public static HashSet<uint> StoryManagerQuests(string path)
+    {
+        var all = File.ReadAllBytes(path);
+        var result = new HashSet<uint>();
+        int p = 24 + (int)BitConverter.ToUInt32(all, 4);
+        while (p < all.Length)
+        {
+            string rt = Encoding.ASCII.GetString(all, p, 4);
+            uint rsize = BitConverter.ToUInt32(all, p + 4);
+            if (rt == "GRUP") { p += 24; continue; }
+            if (rt == "SMQN")
+            {
+                uint flags = BitConverter.ToUInt32(all, p + 8);
+                byte[] body; int bo, bl;
+                if ((flags & 0x40000) != 0) { int dsize = (int)BitConverter.ToUInt32(all, p + 24); body = Inflate(all, p + 28, (int)rsize - 4, dsize); bo = 0; bl = dsize; }
+                else { body = all; bo = p + 24; bl = (int)rsize; }
+                for (int s = bo, se = bo + bl; s < se; s += 6 + BitConverter.ToUInt16(body, s + 4))
+                {
+                    if (Encoding.ASCII.GetString(body, s, 4) == "NNAM" && BitConverter.ToUInt16(body, s + 4) >= 4) result.Add(BitConverter.ToUInt32(body, s + 6));
+                }
+            }
+            p += 24 + (int)rsize;
+        }
+        return result;
+    }
 
     public static List<Quest> Quests(string path, int fileIndex)
     {
         var all = File.ReadAllBytes(path);
         var list = new List<Quest>();
-        // TES4 header record
+        // TES4 header record. A file's own records have its count of masters as their load index; the others are its
+        // changes to its masters' quests, left to the master's own scan.
         int pos = 0;
         uint hsize = BitConverter.ToUInt32(all, 4);
+        int masters = Masters(all);
         pos = 24 + (int)hsize;
         while (pos < all.Length)
         {
@@ -60,11 +126,12 @@ public static class GearScan
                         body = Inflate(all, p + 28, (int)rsize - 4, dsize); bo = 0; bl = dsize;
                     }
                     else { body = all; bo = p + 24; bl = (int)rsize; }
-                    if (rt == "QUST")
+                    if (rt == "QUST" && (id >> 24) == masters)
                     {
                         var q = new Quest();
                         q.Id = (id & 0x00FFFFFF) | ((uint)fileIndex << 24);
                         int s = bo; int se = bo + bl; int big = -1;
+                        HashSet<string> alias = null; string aliasName = "";
                         while (s < se)
                         {
                             string st = Encoding.ASCII.GetString(body, s, 4);
@@ -72,10 +139,22 @@ public static class GearScan
                             if (big >= 0) { ss = big; big = -1; }
                             if (st == "XXXX") { big = (int)BitConverter.ToUInt32(body, s + 6); s += 6 + 4; continue; }
                             int d = s + 6;
-                            if (st == "EDID") q.Edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
-                            if (st == "DNAM" && ss >= 12) { q.Flags = BitConverter.ToUInt16(body, d); q.Type = body[d + 8]; }
-                            if (st == "INDX") { q.Stages++; if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
-                            if (st == "QOBJ") q.Objectives++;
+                            if (alias == null)
+                            {
+                                if (st == "EDID") q.Edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
+                                if (st == "DNAM" && ss >= 12) { q.Flags = BitConverter.ToUInt16(body, d); q.Type = body[d + 8]; }
+                                if (st == "ENAM" && ss >= 4) q.Event = Encoding.ASCII.GetString(body, d, 4);
+                                if (st == "INDX") { q.Stages++; if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
+                                if (st == "QOBJ") q.Objectives++;
+                            }
+                            // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
+                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; }
+                            else if (alias != null)
+                            {
+                                if (st == "ALID") aliasName = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
+                                alias.Add(st);
+                                if (st == "ALED") { q.Fills.Add(aliasName + "=" + Fill(alias)); alias = null; }
+                            }
                             s = d + ss;
                         }
                         list.Add(q);
@@ -258,10 +337,50 @@ public static class QuestScan
         return "not shared";
     }
 
+    // What a fragment takes from the player: each call, the item (the property it was read from, or the temp an alias's
+    // reference or another call put it in: a quest item) and " xN" for RemoveItem's count.
+    public static List<Tuple<string, string, string>> Takes(GearScan.Func f)
+    {
+        var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hits = new List<Tuple<string, string, string>>();
+        for (int n = 0; n < f.Code.Count; n++)
+        {
+            var i = f.Code[n];
+            // Which variables hold the player now: a temp written with anything else no longer does.
+            if (i.Op == 25)
+            {
+                if (i.Args[0].Equals("game", StringComparison.OrdinalIgnoreCase) && i.Args[1].Equals("GetPlayer", StringComparison.OrdinalIgnoreCase)) players.Add(i.Args[2]);
+                else players.Remove(i.Args[2]);
+            }
+            if (i.Op == 13 || i.Op == 14)
+            {
+                if (players.Contains(i.Args[1]) || i.Args[1].IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0) players.Add(i.Args[0]);
+                else players.Remove(i.Args[0]);
+            }
+            if (i.Op != 23 || !TAKES.Contains(i.Args[0]))
+            {
+                if (i.Op == 23) players.Remove(i.Args[2]);
+                continue;
+            }
+            var self = i.Args[1];
+            if (!players.Contains(self) && self.IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) < 0) continue;
+            var item = i.Args.Count > 3 ? i.Args[3] : "";
+            string source = item;
+            for (int k = n - 1; k >= 0; k--)
+            {
+                var x = f.Code[k];
+                if ((x.Op == 13 || x.Op == 14) && x.Args[0] == item) { source = x.Args[1]; break; }
+            }
+            hits.Add(Tuple.Create(i.Args[0], i.Args[0].Equals("RemoveAllItems", StringComparison.OrdinalIgnoreCase) || i.Args[0].Equals("UnequipAll", StringComparison.OrdinalIgnoreCase) ? "" : source.Replace("::", "").Replace("_var", ""),
+                i.Args.Count > 4 && i.Args[0].Equals("RemoveItem", StringComparison.OrdinalIgnoreCase) ? " x" + i.Args[4] : ""));
+        }
+        return hits;
+    }
+
     public static string Run(string a_data)
     {
         var sb = new StringBuilder();
-        var files = new[] { new { Esm = "Fallout4.esm", Ba2 = "Fallout4 - Misc.ba2" }, new { Esm = "DLCCoast.esm", Ba2 = "DLCCoast - Main.ba2" } };
+        var files = GearScan.MASTERS;
         for (int file = 0; file < files.Length; file++)
         {
             var quests = new Dictionary<uint, GearScan.Quest>();
@@ -282,39 +401,7 @@ public static class QuestScan
                 foreach (var f in funcs)
                 {
                     if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase)) continue;
-                    var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var hits = new List<string>();
-                    for (int n = 0; n < f.Code.Count; n++)
-                    {
-                        var i = f.Code[n];
-                        // Which variables hold the player now: a temp written with anything else no longer does.
-                        if (i.Op == 25)
-                        {
-                            if (i.Args[0].Equals("game", StringComparison.OrdinalIgnoreCase) && i.Args[1].Equals("GetPlayer", StringComparison.OrdinalIgnoreCase)) players.Add(i.Args[2]);
-                            else players.Remove(i.Args[2]);
-                        }
-                        if (i.Op == 13 || i.Op == 14)
-                        {
-                            if (players.Contains(i.Args[1]) || i.Args[1].IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0) players.Add(i.Args[0]);
-                            else players.Remove(i.Args[0]);
-                        }
-                        if (i.Op != 23 || !TAKES.Contains(i.Args[0]))
-                        {
-                            if (i.Op == 23) players.Remove(i.Args[2]);
-                            continue;
-                        }
-                        var self = i.Args[1];
-                        if (!players.Contains(self) && self.IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                        var item = i.Args.Count > 3 ? i.Args[3] : "";
-                        string source = item;
-                        for (int k = n - 1; k >= 0; k--)
-                        {
-                            var x = f.Code[k];
-                            if ((x.Op == 13 || x.Op == 14) && x.Args[0] == item) { source = x.Args[1]; break; }
-                        }
-                        hits.Add(i.Args[0] + "(" + (i.Args[0].Equals("RemoveAllItems", StringComparison.OrdinalIgnoreCase) || i.Args[0].Equals("UnequipAll", StringComparison.OrdinalIgnoreCase) ? "" : source.Replace("::", "").Replace("_var", "")) +
-                            (i.Args.Count > 4 && i.Args[0].Equals("RemoveItem", StringComparison.OrdinalIgnoreCase) ? " x" + i.Args[4] : "") + ")");
-                    }
+                    var hits = Takes(f).Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").ToList();
                     if (hits.Count == 0) continue;
                     int stage;
                     int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage);
@@ -338,7 +425,7 @@ public static class CrossScan
     public static string Run(string data)
     {
         var sb = new StringBuilder();
-        var files = new[] { new { Esm = "Fallout4.esm", Ba2 = "Fallout4 - Misc.ba2" }, new { Esm = "DLCCoast.esm", Ba2 = "DLCCoast - Main.ba2" } };
+        var files = GearScan.MASTERS;
         // every quest by editor ID, of both files (a DLC stage can set a base game quest's)
         var byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
         var perFile = new List<Dictionary<uint, GearScan.Quest>>();
@@ -598,11 +685,24 @@ public static class MoveScan
         return why;
     }
 
-    public static string Run(string data)
+    // every master's quests by form ID (load index masked off), by file
+    public static readonly List<Dictionary<uint, GearScan.Quest>> perFile = new List<Dictionary<uint, GearScan.Quest>>();
+
+    // How a stage of a quest moves the player (the first way found), or null.
+    public static string StageMoves(int a_file, GearScan.Quest a_quest, int a_stage) { return Stage(a_file, a_quest, a_stage, new HashSet<string>()); }
+
+    // A quest's stage fragments, by stage (none: an empty one).
+    public static Dictionary<int, List<GearScan.Func>> Fragments(int a_file, uint a_quest)
     {
-        var sb = new StringBuilder();
-        var files = new[] { new { Esm = "Fallout4.esm", Ba2 = "Fallout4 - Misc.ba2" }, new { Esm = "DLCCoast.esm", Ba2 = "DLCCoast - Main.ba2" } };
-        var perFile = new List<Dictionary<uint, GearScan.Quest>>();
+        Dictionary<int, List<GearScan.Func>> stages;
+        return fragments.TryGetValue(Tuple.Create(a_file, a_quest & 0xFFFFFF), out stages) ? stages : new Dictionary<int, List<GearScan.Func>>();
+    }
+
+    // Reads every master's quests and scripts (once).
+    public static void Load(string data)
+    {
+        if (perFile.Count > 0) return;
+        var files = GearScan.MASTERS;
         for (int file = 0; file < files.Length; file++)
         {
             var d = new Dictionary<uint, GearScan.Quest>();
@@ -629,6 +729,12 @@ public static class MoveScan
                 }
             }
         }
+    }
+
+    public static string Run(string data)
+    {
+        var sb = new StringBuilder();
+        Load(data);
         var lines = new SortedSet<string>();
         foreach (var kv in fragments)
         {
@@ -1392,5 +1498,135 @@ public static class ParentScan
         h.AppendLine("\t}");
         h.AppendLine("}");
         return new Result { Header = h.ToString().Replace("\r\n", "\n").Replace("\n", "\r\n"), Report = report.ToString(), Count = table.Count };
+    }
+}
+
+// The rows of src/game/StageRules.h's RULES for the shared quests of the masters asked for (their File index): each
+// stage whose fragment moves the player (MoveScan, the same as -Moves), takes items from them (QuestScan: an item read
+// from a property; one put in a temp by an alias's GetRef or another call is the quest's own item, left out) or waits,
+// with the tenths of a second its fragment waits: its literal Utility.Wait arguments and 2 s for each MoveTo of the
+// player in it. A take is flagged kPays, but whether its item is an ordinary one (caps, armor) or the quest's own (MS11's
+// cables, read from a property too) is checked by hand: a quest item stays unflagged. A stage 0 that isn't its quest's
+// start-up stage is left out (listed at the end): a developer's shortcut, never set in a game played through, by which
+// StageRules::Starting judges every stage that starts the quest (as MQ203's and MQ204's 0). Bridges (kBridge) and the
+// story (kStory) are not decided here. The Automatron and Nuka-World rows were made with it; the older rows of
+// Fallout4.esm and DLCCoast.esm were made before it, their payments traced by hand, and differ from its output in their
+// waits.
+public static class RuleScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    static double Waits(GearScan.Func f)
+    {
+        double seconds = 0;
+        var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in f.Code)
+        {
+            if (i.Op == 25 && Is(i.Args[0], "game") && Is(i.Args[1], "GetPlayer")) { players.Add(i.Args[2]); continue; }
+            double x;
+            if (i.Op == 25 && Is(i.Args[0], "utility") && Is(i.Args[1], "Wait") && i.Args.Count > 3 && double.TryParse(i.Args[3], out x)) seconds += x;
+            if (i.Op == 13 || i.Op == 14) { if (players.Contains(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); }
+            if (i.Op == 23 && (Is(i.Args[0], "MoveTo") || Is(i.Args[0], "MoveToNode")) && (players.Contains(i.Args[1]) || i.Args[1].IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0)) seconds += 2;
+            // a call's result written over a variable that held the player
+            if (i.Op == 23 || i.Op == 25) players.Remove(i.Args[2]);
+            if (i.Op == 24) players.Remove(i.Args[1]);
+        }
+        return seconds;
+    }
+
+    public static string Run(string data, int[] a_files)
+    {
+        MoveScan.Load(data);
+        var sb = new StringBuilder();
+        var left = new List<string>();
+        foreach (var file in a_files)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                if (QuestScan.Shared(quest, file) == "not shared") continue;
+                bool first = true;
+                var stages = MoveScan.Fragments(file, quest.Id);
+                foreach (var stage in stages.Keys.OrderBy(k => k))
+                {
+                    var moves = MoveScan.StageMoves(file, quest, stage);
+                    var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
+                    if (moves == null && takes.Count == 0 && wait == 0) continue;
+                    if (stage == 0 && !quest.Startup.Contains(0))
+                    {
+                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
+                        continue;
+                    }
+                    var flags = new List<string>();
+                    if (moves != null) flags.Add("kMoves");
+                    if (takes.Count > 0) flags.Add("kPays");
+                    var what = new List<string>();
+                    if (moves != null)
+                    {
+                        var hops = moves.Split(new[] { " -> " }, StringSplitOptions.None);
+                        var effect = hops[hops.Length - 1];
+                        effect = effect.Substring(effect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
+                        what.Add(hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect);
+                    }
+                    if (takes.Count > 0) what.Add(string.Join(" ", takes.Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").Distinct().ToArray()));
+                    var comment = (first ? quest.Edid + (what.Count > 0 ? ": " : "") : "") + string.Join("; ", what.ToArray());
+                    sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},{5}", file, quest.Id & 0xFFFFFF, stage, flags.Count > 0 ? string.Join(" | ", flags.ToArray()) : "0", wait,
+                        comment.Length > 0 ? "  // " + comment : ""));
+                    first = false;
+                }
+            }
+        }
+        if (left.Count > 0)
+        {
+            sb.AppendLine("# left out, a stage 0 that is not its quest's start-up stage:");
+            foreach (var l in left) sb.AppendLine(l);
+        }
+        return sb.ToString();
+    }
+}
+
+// The quests shared by their type (QuestFilter: side quests, the add-ons') that each game fills its own way, what
+// src/game/QuestFilter.h's PER_GAME holds: the story manager starts them (an event of the quest's own, ENAM, or a
+// story manager quest node, SMQN NNAM) and at least one of their aliases is filled by its conditions or from the
+// event, so each game's run has its own targets, as a radiant's (src/game/RadiantRules.h). A friend's stage started
+// one here with this game's own targets. Only those with objectives (the others are never reported), and not those
+// RadiantRules.h names (its editor IDs, read from the file passed): those are decided there.
+public static class PerGameScan
+{
+    public static string Run(string data, string a_radiantRules)
+    {
+        var names = System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "\"(\\w+)\"");
+        var listed = new HashSet<string>(names.Cast<System.Text.RegularExpressions.Match>().Select(m => m.Groups[1].Value), StringComparer.OrdinalIgnoreCase);
+        var files = GearScan.MASTERS;
+        var nodes = new List<HashSet<uint>>();
+        var masters = new List<int>();
+        for (int f = 0; f < files.Length; f++)
+        {
+            nodes.Add(GearScan.StoryManagerQuests(Path.Combine(data, files[f].Esm)));
+            masters.Add(GearScan.Masters(Path.Combine(data, files[f].Esm)));
+        }
+        var sb = new StringBuilder();
+        int radiants = 0;
+        for (int file = 0; file < files.Length; file++)
+        {
+            foreach (var q in GearScan.Quests(Path.Combine(data, files[file].Esm), file).OrderBy(x => x.Id & 0xFFFFFF))
+            {
+                if (QuestScan.Shared(q, file) != "shared" || q.Objectives == 0) continue;
+                uint local = q.Id & 0xFFFFFF;
+                // a node of the quest's own file, or for one of Fallout4.esm's, of any file
+                bool node = nodes[file].Contains(((uint)masters[file] << 24) | local) || (file == 0 && nodes.Any(n => n.Contains(local)));
+                if (q.Event.Length == 0 && !node) continue;
+                Func<string, int> count = kind => q.Fills.Count(x => x.EndsWith("=" + kind));
+                if (count("matching") + count("event") == 0) continue;
+                if (listed.Contains(q.Edid)) { radiants++; continue; }
+                var how = new List<string>();
+                if (count("matching") > 0) how.Add(count("matching") + " by conditions");
+                if (count("event") > 0) how.Add(count("event") + " from the event");
+                if (count("created") > 0) how.Add(count("created") + " made at runtime");
+                sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}: {3}; aliases {4}", file, local, q.Edid, q.Event.Length > 0 ? "event " + q.Event : "a quest node", string.Join(", ", how.ToArray())));
+            }
+        }
+        sb.AppendLine("# and " + radiants + " radiants src/game/RadiantRules.h names");
+        return sb.ToString();
     }
 }
