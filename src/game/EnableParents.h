@@ -3,8 +3,10 @@
 #include "game/EnableChain.h"
 #include "game/Official.h"
 
+#include <algorithm>
 #include <array>
 #include <format>
+#include <vector>
 
 // Switching on a reference a friend's game has on (EnableChain.h says why a parent, and which, and when none). Main thread
 // only.
@@ -24,9 +26,49 @@ namespace EnableParents
 	inline constexpr std::uint32_t MAX_CHILDREN_COUNTED = 4096;  // a count past the cap is enough; a broken list ends here
 	// g_BGSSaveLoadGame (+32A85A8; see SaveGuard.cpp) and BGSSaveLoadGame::GetChangeFlags(std::uint32_t* out, TESForm*)
 	// (+BECA80): the change flags our save keeps for the form (0 if it has no record), into out; returns out. TESForm's
-	// AddChange (+311840) sets them through +BEC970; Enable and Disable set CHANGE_FORM_FLAGS (bit 0) on the reference.
+	// AddChange (+311840) sets them through +BEC970; Enable and Disable set CHANGE_FORM_FLAGS (bit 0) on the reference, and
+	// so does much else (EnableChain::CHANGE_FORM_FLAGS): only for the log, and for a parent whose plugin state isn't known.
 	inline constexpr REL::ID SAVE_LOAD_GAME{ 2697789 };
 	inline constexpr REL::ID GET_CHANGE_FLAGS{ 2227900 };
+
+	// The references that were off when the game's data was loaded (kGameDataReady, before any save is loaded): off as their
+	// plugins have them (the record's Initially Disabled flag). Sorted. Only references loaded with the data, the
+	// persistent ones: every enable parent in Fallout4.esm is (616 off, 394 on); a temporary one is loaded with its cell.
+	inline std::vector<std::uint32_t>& OffInPlugins()
+	{
+		static std::vector<std::uint32_t> ids;
+		return ids;
+	}
+
+	// Takes the list above, once: a later message would find the states a save gave them. Main thread, at kGameDataReady.
+	inline void OnDataReady()
+	{
+		static bool taken = false;
+		if (taken) {
+			return;
+		}
+		taken = true;
+		auto& ids = OffInPlugins();
+		const auto& [map, lock] = RE::TESForm::GetAllForms();
+		RE::BSAutoReadLock l{ lock };
+		if (!map) {
+			REX::WARN("EnableParents: no forms to read which references are off in their plugins");
+			return;
+		}
+		for (const auto& [id, form] : *map) {
+			const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+			if (ref && ref->IsDisabled()) {
+				ids.push_back(id);
+			}
+		}
+		std::ranges::sort(ids);
+		REX::INFO("EnableParents: {} references loaded with the game's data are off in their plugins", ids.size());
+	}
+
+	inline bool OffInPlugin(std::uint32_t a_id)
+	{
+		return std::ranges::binary_search(OffInPlugins(), a_id);
+	}
 
 	// a_ref's enable parent (null if none, none found, or deleted) and whether the link is the opposite way.
 	inline RE::NiPointer<RE::TESObjectREFR> ParentOf(RE::TESObjectREFR* a_ref, bool& a_opposite)
@@ -63,18 +105,18 @@ namespace EnableParents
 		return count;
 	}
 
-	// Whether our save has no change of a_ref's flags (Enable, Disable): its enable state is the one its plugin gave it.
-	// False when the game's save bookkeeping isn't there (nothing is known, so nothing is switched on).
-	inline bool Unchanged(RE::TESObjectREFR* a_ref)
+	// What our save records as changed on a_ref (all of them, CHANGE_FORM_FLAGS among them); EnableChain::CHANGES_UNKNOWN
+	// when the game's save bookkeeping isn't there.
+	inline std::uint32_t ChangeFlags(RE::TESObjectREFR* a_ref)
 	{
 		static REL::Relocation<void**>                                                 game{ SAVE_LOAD_GAME };
 		static REL::Relocation<std::uint32_t* (*)(void*, std::uint32_t*, RE::TESForm*)> getChangeFlags{ GET_CHANGE_FLAGS };
 		if (!*game) {
-			return false;
+			return EnableChain::CHANGES_UNKNOWN;
 		}
 		std::uint32_t flags = 0;
 		getChangeFlags(*game, &flags, a_ref);
-		return (flags & RE::CHANGE_TYPE::kFormFlags) == 0;
+		return flags;
 	}
 
 	// What switching a_ref on takes here (EnableChain::Decide over its chain of enable parents).
@@ -95,7 +137,8 @@ namespace EnableParents
 				link.parentOff = parent->IsDisabled();
 				// The child's record names the parent (XESP): the link is the game's own if no plugin changes the child.
 				link.official = Official::IsOfficialThroughout(at) && Official::IsOfficialThroughout(parent.get());
-				link.unchanged = Unchanged(parent.get());
+				link.offInPlugin = OffInPlugin(link.parent);
+				link.changeFlags = ChangeFlags(parent.get());
 				link.parentDead = actor && actor->IsDead(false);
 				link.children = ChildrenOf(parent.get());
 			}
@@ -108,12 +151,15 @@ namespace EnableParents
 		return EnableChain::Decide(a_ref->GetFormID(), std::span{ links.data(), count }, a_sharedStory);
 	}
 
-	// The plan for the log: what was switched on, or why nothing, and how many references the chain's parents switch here.
+	// The plan for the log: what was switched on, or why nothing, how many references the chain's parents switch here, and
+	// the top's change flags in our save and whether its plugin has it off (what AsItsPluginLeftIt went by).
 	inline std::string Describe(const EnableChain::Plan& a_plan)
 	{
 		auto text = std::format("{} {:08X}", EnableChain::VerdictName(a_plan.verdict), a_plan.target);
-		if (a_plan.children > 0) {
-			text += std::format(" ({} references under its enable parents here, at most {})", a_plan.children, EnableChain::MAX_CHILDREN);
+		if (a_plan.atTop) {
+			const auto flags = a_plan.changeFlags == EnableChain::CHANGES_UNKNOWN ? std::string{ "not known" } : std::format("{:08X}", a_plan.changeFlags);
+			text += std::format(" ({} references under its enable parents here, at most {}; its change flags in our save {}, off in its plugin: {})",
+				a_plan.children, EnableChain::MAX_CHILDREN, flags, a_plan.offInPlugin ? "yes" : "no");
 		}
 		return text;
 	}

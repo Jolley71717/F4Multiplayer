@@ -373,11 +373,19 @@
   only that their chain is on, not that ours is off because our game is behind: a plugin only our game has may hide
   a vanilla NPC behind a marker that stays off, or our story may be ahead and a quest of ours switched the marker
   off again. So a parent is switched on only when every link and parent comes from the game's own files
-  (Fallout4.esm and the official add-ons, no other plugin changing them), the top is as its plugin left it (our
-  save has no change of its flags: `BGSSaveLoadGame::GetChangeFlags`, CHANGE_FORM_FLAGS), no parent is a dead
-  actor or deleted, and the chain's parents switch at most 64 references between them (Gun Run's marker: 48). The
-  log line says what was switched on or why nothing, with that count; `switchedOn=` counts tries/those through a
-  parent. The switch-on before a friend's kill (WorldSync) goes the same way, and `switchedOnToKill=` counts only
+  (Fallout4.esm and the official add-ons, no other plugin changing them), the top is off as its plugin has it (it
+  was off when the game's data was loaded, before any save: the references off then are listed once at
+  kGameDataReady; one not loaded with the data, a temporary one, only if our save records no change of its flags),
+  no parent is a dead actor or deleted, and the chain's parents switch at most 64 references between them (Gun Run's
+  marker: 48). A save's change of a reference's flags (`BGSSaveLoadGame::GetChangeFlags`, CHANGE_FORM_FLAGS) can't
+  say whether our game switched it: the engine records it for a reference it only loads (`TESObjectREFR::Load` sets
+  an in-game flag, which records it whether anything changed or not), and a fresh game had it on Salem's marker at
+  Gun Run's stage 5, before any script touches it, so the first rig run refused every switch-on. A marker its plugin
+  has on that our game switched off is refused; one its plugin has off that our story switched on and off again is
+  not told apart, as nothing in the game records which way a reference was switched before. Nor is a marker our
+  story never needed to touch (our quest took another branch), or an NPC a mod only the friend has freed of its
+  parent. The log line says what was switched on or why nothing, with that count, the top's change flags and
+  whether its plugin has it off; `switchedOn=` counts tries/those through a parent. The switch-on before a friend's kill (WorldSync) goes the same way, and `switchedOnToKill=` counts only
   the ones that switched something on.
 - Console commands: each one is compiled and run on the spot, so the copies taken over from their own AI are
   spread out, 8 a frame at most (the rest keep their snapshots and wait a frame), and the commands run for NPCs

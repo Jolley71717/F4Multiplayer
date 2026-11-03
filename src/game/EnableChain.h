@@ -27,24 +27,46 @@ namespace EnableChain
 	// on: Gun Run's marker switches 48 in Fallout4.esm. One that switches a whole scene or settlement is left alone.
 	constexpr std::uint32_t MAX_CHILDREN = 64;
 
+	// BGSSaveLoadGame's change flags for a form (what our save records as changed on it): bit 0, CHANGE_FORM_FLAGS. It
+	// says only that some flag of the form was set since the game started, not that its enable state changed: the
+	// engine records it for a reference it merely loads (TESObjectREFR::Load, +4F2760, sets an in-game form flag
+	// through +313560, which records CHANGE_FORM_FLAGS whether or not anything changed), and for a change of any of seven
+	// form flags. Saves bear it out: untouched persistent references whose only change is this bit, their flags as their
+	// plugin has them. Salem's marker had it in a fresh game at Gun Run's stage 5, before any script touches it (stage 30
+	// enables it), so every switch-on through it was refused.
+	constexpr std::uint32_t CHANGE_FORM_FLAGS = 0x1;
+	constexpr std::uint32_t CHANGES_UNKNOWN = 0xFFFFFFFF;  // the game's save bookkeeping wasn't there to ask
+
 	// One link up a reference's chain, nearest first: its enable parent as the engine finds it here.
 	//
 	// The friend's NPC running proves only that the friend's chain is on, not that ours is off because our game is behind.
 	// Ours may be off on purpose: a plugin only our game has hides a vanilla NPC by giving it an enable parent that stays
 	// off (sessions may have different mod lists), or our story is ahead and a quest of ours switched the scene's marker
 	// off again. So a parent is switched on only if the link and the parent are the game's own (official: Fallout4.esm and
-	// its add-ons, no plugin overriding either), and the top still has the state its plugin gave it: our save never
-	// changed its flags (unchanged).
+	// its add-ons, no plugin overriding either), and the top is off as its plugin has it (AsItsPluginLeftIt).
 	struct Link
 	{
-		std::uint32_t parent = 0;           // the parent's form id; 0: the engine has none it can find here (or it is deleted)
-		bool          opposite = false;     // OPPOSITE: switching the parent on would switch the child off
-		bool          parentOff = false;    // the parent is switched off here
-		bool          official = false;     // the child's record that names the parent, and the parent's, are the game's own files'
-		bool          unchanged = false;    // our save has no change of the parent's flags (its enable state is its plugin's)
-		bool          parentDead = false;   // the parent is an actor, dead here: it would come back as a corpse with its children
-		std::uint32_t children = 0;         // the references the parent switches here (ExtraEnableStateChildren)
+		std::uint32_t parent = 0;                      // the parent's form id; 0: the engine has none it can find here (or it is deleted)
+		bool          opposite = false;                // OPPOSITE: switching the parent on would switch the child off
+		bool          parentOff = false;               // the parent is switched off here
+		bool          official = false;                // the child's record that names the parent, and the parent's, are the game's own files'
+		bool          offInPlugin = false;             // the parent was off when the game's data was loaded, before any save: its plugin has it off
+		std::uint32_t changeFlags = CHANGES_UNKNOWN;   // what our save records as changed on the parent (CHANGE_FORM_FLAGS ...)
+		bool          parentDead = false;              // the parent is an actor, dead here: it would come back as a corpse with its children
+		std::uint32_t children = 0;                    // the references the parent switches here (ExtraEnableStateChildren)
 	};
+
+	// Whether a parent that is off here is off as its plugin left it, not because our game switched it off: its plugin
+	// has it off (the state it had when the game's data was loaded), or, where that isn't known (a reference not loaded
+	// with the game's data: a temporary one, loaded with its cell), our save records no change of its flags at all.
+	// The change flags alone can't tell (CHANGE_FORM_FLAGS): references the engine only loaded carry them. One a quest
+	// of ours or a script switched off that its plugin has on is refused: off here, on in its plugin. One its plugin has
+	// off that our story switched on and off again is not told apart: nothing in the game records which way a
+	// reference was switched before.
+	constexpr bool AsItsPluginLeftIt(const Link& a_link)
+	{
+		return a_link.offInPlugin || (a_link.changeFlags & CHANGE_FORM_FLAGS) == 0;
+	}
 
 	enum class Verdict
 	{
@@ -56,7 +78,7 @@ namespace EnableChain
 		kTooDeep,      // a chain longer than MAX_DEPTH; nothing done
 		kOwnStory,     // everyone on their own story: a parent may switch on characters of ours too; nothing done
 		kUnofficial,   // a link or a parent from a plugin outside the game's own files, or overridden by one; nothing done
-		kChanged,      // our save changed the top's flags: our game switched it off (or on and off again); nothing done
+		kChanged,      // the top is off here but on in its plugin (or that isn't known and our save changed its flags): our game switched it off; nothing done
 		kParentDead,   // a parent is a dead actor; nothing done
 		kTooMany,      // the chain's parents switch more than MAX_CHILDREN references; nothing done
 	};
@@ -66,6 +88,9 @@ namespace EnableChain
 		Verdict       verdict = Verdict::kSelf;
 		std::uint32_t target = 0;    // what is switched on (kSelf, kParent), else the link that stopped it, or 0
 		std::uint32_t children = 0;  // the references the chain's parents switch here (when the walk got to the top)
+		bool          atTop = false;                   // the walk got to the top: the two below are its, for the log
+		std::uint32_t changeFlags = CHANGES_UNKNOWN;   // the top's change flags in our save
+		bool          offInPlugin = false;             // the top is off in its plugin
 	};
 
 	// a_self: the reference; a_links: its chain upward, nearest first, ending with a parent that has none of its own (or
@@ -102,16 +127,17 @@ namespace EnableChain
 		}
 		// Only the top is read for on or off: the links below it are on or off as it is.
 		const auto& top = a_links.back();
+		const auto  at = [&](Verdict a_verdict) { return Plan{ a_verdict, top.parent, children, true, top.changeFlags, top.offInPlugin }; };
 		if (!top.parentOff) {
-			return { Verdict::kParentOn, top.parent, children };
+			return at(Verdict::kParentOn);
 		}
-		if (!top.unchanged) {
-			return { Verdict::kChanged, top.parent, children };
+		if (!AsItsPluginLeftIt(top)) {
+			return at(Verdict::kChanged);
 		}
 		if (children > MAX_CHILDREN) {
-			return { Verdict::kTooMany, top.parent, children };
+			return at(Verdict::kTooMany);
 		}
-		return { Verdict::kParent, top.parent, children };
+		return at(Verdict::kParent);
 	}
 
 	// Whether the plan switches something on.
@@ -141,7 +167,7 @@ namespace EnableChain
 		case Verdict::kUnofficial:
 			return "nothing: its enable parent, or the link to it, is a plugin's, not the game's own";
 		case Verdict::kChanged:
-			return "nothing: our game changed its enable parent's state (our story keeps it off)";
+			return "nothing: our game switched its enable parent off (its plugin has it on, or that isn't known and our save changed it)";
 		case Verdict::kParentDead:
 			return "nothing: its enable parent is dead here";
 		case Verdict::kTooMany:

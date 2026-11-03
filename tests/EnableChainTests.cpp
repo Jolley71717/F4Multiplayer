@@ -16,14 +16,16 @@ namespace
 	constexpr std::uint32_t ENABLER = 0x000C3D6F;   // MirelurkQuestEnabler, off until DN083_Barney's stage 30
 	constexpr std::uint32_t MARKER = 0x000E4610;
 
-	// A link to a parent of the game's own files, as its plugin left it, switching a_children references.
+	// A link to a parent of the game's own files, as its plugin left it (off here only if off there), switching
+	// a_children references.
 	constexpr Link Vanilla(std::uint32_t a_parent, bool a_off, std::uint32_t a_children = 1)
 	{
 		Link link;
 		link.parent = a_parent;
 		link.parentOff = a_off;
 		link.official = true;
-		link.unchanged = true;
+		link.offInPlugin = a_off;
+		link.changeFlags = 0;
 		link.children = a_children;
 		return link;
 	}
@@ -39,7 +41,7 @@ namespace
 	{
 		auto link = Vanilla(0, false, 0);
 		link.official = false;
-		link.unchanged = false;
+		link.changeFlags = EnableChain::CHANGES_UNKNOWN;
 		return link;
 	}
 }
@@ -122,10 +124,28 @@ TEST("enable chain: with everyone on their own story no parent is switched on")
 	CHECK(!EnableChain::SwitchesOn(plan));
 }
 
-TEST("enable chain: a parent our save changed is left off: our game switched it off, or our story is ahead")
+TEST("enable chain: Salem's marker as a fresh game has it, its flags recorded as changed by the engine, is switched on")
+{
+	// The rig's game: Gun Run at stage 5, nobody had touched the marker, and our save recorded CHANGE_FORM_FLAGS on it
+	// all the same (the engine records it for a reference it only loads). Off here and off in its plugin: as it was left.
+	auto marker = Vanilla(ENABLER, true, 48);
+	marker.changeFlags = EnableChain::CHANGE_FORM_FLAGS;
+	const std::array links{ marker };
+	const auto       plan = EnableChain::Decide(MIRELURK, links, true);
+	CHECK(plan.verdict == Verdict::kParent);
+	CHECK(plan.target == ENABLER);
+	CHECK(EnableChain::SwitchesOn(plan));
+	// Other change flags beside it change nothing either.
+	marker.changeFlags = 0x80000001;
+	const std::array more{ marker };
+	CHECK(EnableChain::Decide(MIRELURK, more, true).verdict == Verdict::kParent);
+}
+
+TEST("enable chain: a parent off here that its plugin has on is left off: our game switched it off, or our story is ahead")
 {
 	auto changed = Vanilla(ENABLER, true);
-	changed.unchanged = false;
+	changed.offInPlugin = false;
+	changed.changeFlags = EnableChain::CHANGE_FORM_FLAGS;
 	const std::array links{ changed };
 	const auto       plan = EnableChain::Decide(MIRELURK, links, true);
 	CHECK(plan.verdict == Verdict::kChanged);
@@ -133,9 +153,54 @@ TEST("enable chain: a parent our save changed is left off: our game switched it 
 	CHECK(!EnableChain::SwitchesOn(plan));
 	// Only the top's own state counts: the links below it follow it.
 	auto middle = Vanilla(MARKER, true);
-	middle.unchanged = false;
+	middle.offInPlugin = false;
+	middle.changeFlags = EnableChain::CHANGE_FORM_FLAGS;
 	const std::array chain{ middle, Vanilla(ENABLER, true) };
 	CHECK(EnableChain::Decide(MIRELURK, chain, true).verdict == Verdict::kParent);
+}
+
+TEST("enable chain: where its plugin's state isn't known, only a parent our save records no flag change of is switched on")
+{
+	// A reference not loaded with the game's data (a temporary one) is not in the list of those off in their plugins.
+	auto unknown = Vanilla(ENABLER, true);
+	unknown.offInPlugin = false;
+	unknown.changeFlags = 0;
+	const std::array untouched{ unknown };
+	CHECK(EnableChain::Decide(MIRELURK, untouched, true).verdict == Verdict::kParent);
+	unknown.changeFlags = EnableChain::CHANGE_FORM_FLAGS;
+	const std::array changed{ unknown };
+	CHECK(EnableChain::Decide(MIRELURK, changed, true).verdict == Verdict::kChanged);
+	// Other change flags (a move, its inventory) say nothing of its enable state.
+	unknown.changeFlags = 0x2;
+	const std::array moved{ unknown };
+	CHECK(EnableChain::Decide(MIRELURK, moved, true).verdict == Verdict::kParent);
+	// No save bookkeeping to ask: nothing is known, so nothing is switched on.
+	unknown.changeFlags = EnableChain::CHANGES_UNKNOWN;
+	const std::array noSave{ unknown };
+	CHECK(EnableChain::Decide(MIRELURK, noSave, true).verdict == Verdict::kChanged);
+}
+
+TEST("enable chain: the plan carries the top's change flags and plugin state for the log, once the walk got to the top")
+{
+	auto marker = Vanilla(ENABLER, true, 48);
+	marker.changeFlags = 0x1;
+	const std::array links{ marker };
+	const auto       plan = EnableChain::Decide(MIRELURK, links, true);
+	CHECK(plan.atTop);
+	CHECK(plan.changeFlags == 0x1u);
+	CHECK(plan.offInPlugin);
+	auto onHere = Vanilla(ENABLER, false);
+	onHere.changeFlags = 0x5;
+	const std::array on{ onHere };
+	const auto       onPlan = EnableChain::Decide(MIRELURK, on, true);
+	CHECK(onPlan.verdict == Verdict::kParentOn);
+	CHECK(onPlan.atTop);
+	CHECK(onPlan.changeFlags == 0x5u);
+	CHECK(!onPlan.offInPlugin);
+	// Stopped below the top: nothing of the top to say.
+	const std::array opposite{ Opposite(ENABLER, false) };
+	CHECK(!EnableChain::Decide(MIRELURK, opposite, true).atTop);
+	CHECK(!EnableChain::Decide(MIRELURK, {}, true).atTop);
 }
 
 TEST("enable chain: a link or a parent of a plugin outside the game's own files is left alone")
