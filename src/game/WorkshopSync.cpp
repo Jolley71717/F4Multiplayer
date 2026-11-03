@@ -46,11 +46,59 @@ namespace WorkshopSync
 		using Clock = std::chrono::steady_clock;
 		using Key = std::pair<std::uint32_t, std::uint32_t>;  // (player, their reference ID)
 
+		// A copy as we keep it: its handle, and its form ID and base, which find it again when the handle names nothing (its
+		// cell unloaded and loaded again: see WorkshopApply::SameCopy). Read through Live, never through the handle alone.
 		struct Copy
 		{
-			RE::ObjectRefHandle ref;
-			Clock::time_point   placedAt;
+			mutable RE::ObjectRefHandle ref;  // taken anew by Live
+			Clock::time_point           placedAt;
+			std::uint32_t               id = 0;
+			std::uint32_t               base = 0;
+			mutable Clock::time_point   missedAt{};  // Live's last look under its ID that found nothing (its cell unloaded)
 		};
+
+		constexpr auto LOOK_AGAIN_AFTER = std::chrono::seconds(1);  // how often Live looks for a copy whose cell isn't loaded
+
+		Copy MakeCopy(const RE::ObjectRefHandle& a_handle, Clock::time_point a_at)
+		{
+			Copy copy{ a_handle, a_at };
+			if (const auto ref = a_handle.get()) {
+				const auto base = ref->GetObjectReference();
+				copy.id = ref->GetFormID();
+				copy.base = base ? base->GetFormID() : 0;
+			}
+			return copy;
+		}
+
+		std::uint32_t refound = 0;        // copies found again under their ID, their handle naming nothing (Live)
+		std::uint32_t refoundLogged = 0;  // ... said in the log (the first few of a session)
+
+		// The copy's reference: through its handle, or, once that names nothing (its cell unloaded), the reference under its
+		// ID while that is the copy (WorkshopApply::SameCopy), whose handle is kept from then on. None while its cell isn't
+		// loaded.
+		RE::NiPointer<RE::TESObjectREFR> Live(const Copy& a_copy)
+		{
+			if (auto ref = a_copy.ref.get()) {
+				return ref;
+			}
+			const auto now = Clock::now();
+			if (a_copy.id == 0 || now - a_copy.missedAt < LOOK_AGAIN_AFTER) {
+				return {};  // (the Mirror asks four times a second for each copy)
+			}
+			RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_copy.id) };
+			const auto                       base = ref ? ref->GetObjectReference() : nullptr;
+			if (!ref || !WorkshopApply::SameCopy(a_copy.id, base ? base->GetFormID() : 0, a_copy.base, ref->IsDeleted())) {
+				a_copy.missedAt = now;
+				return {};
+			}
+			a_copy.ref = ref->GetHandle();
+			++refound;
+			if (refoundLogged < 16) {
+				++refoundLogged;
+				REX::INFO("WorkshopSync: copy {:08X} (base {:08X}) found again under its ID: its cell was unloaded and loaded again", a_copy.id, a_copy.base);
+			}
+			return ref;
+		}
 
 		// A report waiting to be sent, and the piece of the world it reports scrapped, if it does.
 		struct Outgoing
@@ -117,29 +165,43 @@ namespace WorkshopSync
 		// menu's thread. Under copyIdsLock, in step with copyIds.
 		CraftingWorkshop::Benches copyBenches;
 
-		void NoteCopy(const RE::ObjectRefHandle& a_handle, std::uint32_t a_bench)
+		// Our copies of friends' lights (LIGH) shown powered, by form ID: their light is made as the game makes a powered
+		// workshop light's (LightPoweredHook). Under its own lock: the game makes lights on its loading threads too.
+		std::mutex                        litLock;
+		std::unordered_set<std::uint32_t> litCopies;
+
+		void NoteCopy(const Copy& a_copy, std::uint32_t a_bench)
 		{
-			if (const auto ref = a_handle.get()) {
+			if (a_copy.id != 0) {
 				std::scoped_lock l{ copyIdsLock };
-				copyIds.insert(ref->GetFormID());
-				copyBenches.Note(ref->GetFormID(), a_bench);
+				copyIds.insert(a_copy.id);
+				copyBenches.Note(a_copy.id, a_bench);
 			}
 		}
 
-		void ForgetCopy(const RE::ObjectRefHandle& a_handle)
+		// By its ID: one whose cell is unloaded (its handle naming nothing) is forgotten too.
+		void ForgetCopy(const Copy& a_copy)
 		{
-			if (const auto ref = a_handle.get()) {
-				std::scoped_lock l{ copyIdsLock };
-				copyIds.erase(ref->GetFormID());
-				copyBenches.Forget(ref->GetFormID());
+			if (a_copy.id != 0) {
+				{
+					std::scoped_lock l{ copyIdsLock };
+					copyIds.erase(a_copy.id);
+					copyBenches.Forget(a_copy.id);
+				}
+				std::scoped_lock l{ litLock };
+				litCopies.erase(a_copy.id);
 			}
 		}
 
 		void ForgetAllCopies()
 		{
-			std::scoped_lock l{ copyIdsLock };
-			copyIds.clear();
-			copyBenches.Clear();
+			{
+				std::scoped_lock l{ copyIdsLock };
+				copyIds.clear();
+				copyBenches.Clear();
+			}
+			std::scoped_lock l{ litLock };
+			litCopies.clear();
 		}
 
 		bool IsCopy(const RE::TESObjectREFR* a_ref)
@@ -569,7 +631,7 @@ namespace WorkshopSync
 		// no cell.
 		std::optional<WorkshopApply::Standing> StandingOf(const Copy& a_copy)
 		{
-			const auto ref = a_copy.ref.get();
+			const auto ref = Live(a_copy);
 			const auto cell = ref ? ref->GetParentCell() : nullptr;
 			if (!cell) {
 				return std::nullopt;
@@ -634,7 +696,7 @@ namespace WorkshopSync
 		// through its character controller. A wire takes its new shape (one of its ends moved).
 		void MoveTo(const Copy& a_copy, const Protocol::WorkshopItem& a_item)
 		{
-			const auto ref = a_copy.ref.get();
+			const auto ref = Live(a_copy);
 			if (!ref) {
 				return;
 			}
@@ -657,7 +719,8 @@ namespace WorkshopSync
 
 		bool InGraveyard(const RE::TESObjectREFR* a_ref)
 		{
-			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.ref.get().get() == a_ref; });
+			const auto id = a_ref->GetFormID();
+			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.id == id; });
 		}
 
 		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
@@ -916,8 +979,8 @@ namespace WorkshopSync
 					ids.assign(copyIds.begin(), copyIds.end());
 				}
 				for (const auto& copy : graveyard) {
-					if (const auto ref = copy.ref.get()) {
-						ids.push_back(ref->GetFormID());
+					if (copy.id != 0) {
+						ids.push_back(copy.id);
 					}
 				}
 				return ids;
@@ -984,15 +1047,60 @@ namespace WorkshopSync
 			WorkshopPower::Remove(engine, a_ref->GetFormID(), untied);
 		}
 
+		// Deletes the copy now, or once it is safe to; one whose cell isn't loaded (no reference under its ID now) waits in the
+		// graveyard until it is, and goes then (Frame in a session, Sweep out of one): leaving the session, or a friend's
+		// scrap, deletes it even if we were elsewhere.
 		void Remove(Copy& a_copy)
 		{
-			if (const auto ref = a_copy.ref.get()) {
-				if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
-					Delete(ref.get());
-				} else {
+			const bool known = static_cast<bool>(a_copy.ref.get());
+			const auto ref = Live(a_copy);
+			if (!ref) {
+				if (a_copy.id != 0) {
 					graveyard.push_back(a_copy);
 				}
+				return;
 			}
+			if (!known) {
+				a_copy.placedAt = Clock::now();  // made again with its cell just now: its 3D may still be loading (DeferredDelete)
+			}
+			if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
+				Delete(ref.get());
+			} else {
+				graveyard.push_back(a_copy);
+			}
+		}
+
+		// Deletes what waits in the graveyard once it may be: its 3D in, or long enough after it was placed, or made again
+		// with its cell. One whose cell isn't loaded waits for it (until a load, which lets the graveyard go).
+		Clock::time_point nextGraveyardLook{};
+
+		void SweepGraveyard(Clock::time_point a_now)
+		{
+			if (graveyard.empty() || a_now < nextGraveyardLook) {
+				return;
+			}
+			nextGraveyardLook = a_now + std::chrono::milliseconds(250);  // those whose cell isn't loaded are looked up by ID
+			std::erase_if(graveyard, [&](Copy& a_copy) {
+				if (a_copy.id == 0) {
+					return true;
+				}
+				const bool known = static_cast<bool>(a_copy.ref.get());
+				const auto ref = Live(a_copy);
+				if (!ref) {
+					return false;
+				}
+				if (!known) {
+					a_copy.placedAt = a_now;  // its cell just loaded again: waited for like a copy just placed
+				}
+				if (IsCopy(ref.get())) {
+					return true;  // its ID is a copy we keep now (given out again after all): not this one any more
+				}
+				if (!DeferredDelete::Safe(ref->Get3D() != nullptr, a_now - a_copy.placedAt)) {
+					return false;
+				}
+				Delete(ref.get());
+				return true;
+			});
 		}
 
 		// A real workshop object of this game: a piece built here, linked to its workbench as one of its workshop items (a
@@ -1166,7 +1274,7 @@ namespace WorkshopSync
 			if (ref->As<RE::Actor>()) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 0", ref->GetFormID(), SaveStrays::STAND_IN_FACTION).c_str());
 			}
-			return Copy{ handle, Clock::now() };
+			return MakeCopy(handle, Clock::now());
 		}
 
 		// Defined with the walk below.
@@ -1267,8 +1375,8 @@ namespace WorkshopSync
 			// the workbench its report names, which a crafting station's copy reads as its settlement (CraftingWorkshop.h).
 			void Keep(const Copy& a_copy, const Protocol::WorkshopItem& a_item)
 			{
-				NoteCopy(a_copy.ref, a_item.workshop);
-				if (const auto ref = a_copy.ref.get()) {
+				NoteCopy(a_copy, a_item.workshop);
+				if (const auto ref = Live(a_copy)) {
 					BlockInteraction(*ref);
 				}
 			}
@@ -1277,7 +1385,7 @@ namespace WorkshopSync
 			// Destroys what the copy holds (its base's things: it was just made), as the workshop's own build does.
 			void Empty(const Copy& a_copy)
 			{
-				if (const auto ref = a_copy.ref.get()) {
+				if (const auto ref = Live(a_copy)) {
 					RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", ref->GetFormID()).c_str());
 				}
 			}
@@ -1285,7 +1393,7 @@ namespace WorkshopSync
 
 			void Discard(const Copy& a_copy)
 			{
-				ForgetCopy(a_copy.ref);
+				ForgetCopy(a_copy);
 				auto copy = a_copy;
 				Remove(copy);
 			}
@@ -1304,13 +1412,13 @@ namespace WorkshopSync
 					!IsWorkbenchAnchor(bench)) {
 					return std::nullopt;
 				}
-				return Copy{ ref->GetHandle(), Clock::now() };
+				return MakeCopy(ref->GetHandle(), Clock::now());
 			}
 
 			std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item)
 			{
 				const auto existing = WorkshopSync::FindExisting(a_item);
-				return existing ? std::optional<Copy>{ Copy{ existing->GetHandle(), Clock::now() } } : std::nullopt;
+				return existing ? std::optional<Copy>{ MakeCopy(existing->GetHandle(), Clock::now()) } : std::nullopt;
 			}
 
 			// Keep gave it the keyword (since 0.9.0); nothing else of ours, nor the game, gives a frame that one. Not a
@@ -1318,7 +1426,7 @@ namespace WorkshopSync
 			// (or it is their own suit an earlier session took over), so it stays, pieces and all.
 			bool MadeByUs(const Copy& a_copy)
 			{
-				const auto ref = a_copy.ref.get();
+				const auto ref = Live(a_copy);
 				return ref && Blocked(*ref) && !HoldsItems(ref.get());
 			}
 
@@ -1329,7 +1437,7 @@ namespace WorkshopSync
 			std::optional<Copy> LeftoverAt(const Protocol::WorkshopItem& a_item)
 			{
 				const auto leftover = AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return !IsWorkshopObject(a_ref) && Blocked(*a_ref); });
-				return leftover ? std::optional<Copy>{ Copy{ leftover->GetHandle(), Clock::now() } } : std::nullopt;
+				return leftover ? std::optional<Copy>{ MakeCopy(leftover->GetHandle(), Clock::now()) } : std::nullopt;
 			}
 		};
 
@@ -2006,7 +2114,8 @@ namespace WorkshopSync
 			}
 		}
 
-		std::uint32_t graphRefused = 0;  // shows a copy's loaded graph didn't take (a try spent)
+		std::uint32_t graphRefused = 0;  // shows a copy's loaded graph didn't take and wasn't showing already (a try spent)
+		std::uint32_t graphAlready = 0;  // shows a copy's loaded graph refused because it showed that already (WorkshopPower::RefusalShows)
 		std::uint32_t graphWaits = 0;    // looks at a copy whose graph wasn't loaded yet (waited for, no try spent)
 		std::uint32_t showsLogged = 0;   // shows written to the log (the first SHOWS_LOGGED of a session)
 		constexpr std::uint32_t SHOWS_LOGGED = 32;
@@ -2043,9 +2152,14 @@ namespace WorkshopSync
 		// calls and which does nothing for any other form). Every other piece, the activator lights among them (the
 		// construction light, the light box, the high-tech lights, the strobe), shows its power through its animation graph,
 		// told "Powered" or "Unpowered". False while it has no 3D, or when its graph is loaded and doesn't take the event
-		// (Mirror tries again); a piece with no graph and no light has nothing more to show. A graph never told "Powered"
-		// (every new graph starts unpowered) has no Unpowered to take: refusing it, it is dark already, as asked. One we
-		// told "Powered" that refuses it (still turning on, say) is tried again like any refusal.
+		// and isn't showing it already (Mirror tries again); a piece with no graph and no light has nothing more to show. A
+		// graph refuses an event it has no move for from where it stands: one that refuses "Unpowered" is dark already, and
+		// one that refuses "Powered" lit already, unless we told it the other way (it may still be turning): see
+		// WorkshopPower::RefusalShows.
+		//
+		// A light's base may make its light only while Workshop::IsPowered says the reference is powered (the light bulb's
+		// does): no copy is ever, so its light is made only because it is in litCopies (LightPoweredHook), which it is put in
+		// before its light is switched on, and taken out of before it is switched off.
 		enum class Took
 		{
 			kNoModel,
@@ -2053,12 +2167,23 @@ namespace WorkshopSync
 			kGraph,     // the graph took the event
 			kRefused,   // the graph is loaded and didn't take it
 			kNothing,   // no light, no graph: nothing to show it on
-			kDark,      // a graph never told Powered refused Unpowered: dark already
+			kDark,      // a graph not told Powered by us refused Unpowered: dark already
+			kLit,       // a graph not told Unpowered by us refused Powered: lit already
 		};
 
-		// Each copy's graph that took "Powered" from us (by the copy's form ID): what tells a lit graph refusing
-		// "Unpowered" from one that was never lit. Emptied with the copies (Reset).
-		std::unordered_map<std::uint32_t, std::uintptr_t> poweredGraphs;
+		// What we last told each copy's graph. Emptied with the copies (Reset, a load, the world gone); a copy's entry goes
+		// with it.
+		WorkshopPower::GraphsTold graphsTold;
+
+		void SetLit(std::uint32_t a_copy, bool a_lit)
+		{
+			std::scoped_lock l{ litLock };
+			if (a_lit) {
+				litCopies.insert(a_copy);
+			} else {
+				litCopies.erase(a_copy);
+			}
+		}
 
 		Took ShowPoweredHow(RE::TESObjectREFR& a_copy, bool a_on)
 		{
@@ -2069,32 +2194,31 @@ namespace WorkshopSync
 			if (!a_copy.Get3D()) {
 				return Took::kNoModel;
 			}
+			const auto id = a_copy.GetFormID();
 			const bool light = IsLightBase(a_copy);
 			if (light) {
+				if (IsCopy(&a_copy)) {
+					SetLit(id, a_on);  // first: switching it on may make its light at once, and asks LightPoweredHook
+				}
 				switchLight(a_copy, !a_on);
 			}
 			const auto graph = LoadedGraph(a_copy);
 			if (graph == 0) {
 				return light ? Took::kLight : Took::kNothing;
 			}
-			const auto id = a_copy.GetFormID();
 			if (a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered)) {
-				if (a_on) {
-					poweredGraphs[id] = graph;
-				} else {
-					poweredGraphs.erase(id);
-				}
+				graphsTold.Took(id, graph, a_on);
 				return Took::kGraph;
 			}
-			if (!a_on) {
-				const auto it = poweredGraphs.find(id);
-				if (it == poweredGraphs.end() || it->second != graph) {
-					poweredGraphs.erase(id);
-					return light ? Took::kLight : Took::kDark;
-				}
+			if (graphsTold.Refused(id, graph, a_on)) {
+				++graphAlready;
+				return light ? Took::kLight : (a_on ? Took::kLit : Took::kDark);
+			}
+			if (light) {
+				return Took::kLight;  // its light is what was switched: no try spent
 			}
 			++graphRefused;
-			return light ? Took::kLight : Took::kRefused;
+			return Took::kRefused;
 		}
 
 		bool ShowPowered(RE::TESObjectREFR& a_copy, bool a_on)
@@ -2108,7 +2232,7 @@ namespace WorkshopSync
 			RE::NiPointer<RE::TESObjectREFR> CopyOf(const WorkshopPower::Key& a_key)
 			{
 				const auto it = copies.find(a_key);
-				auto       ref = it != copies.end() ? it->second.ref.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				auto       ref = it != copies.end() ? Live(it->second) : RE::NiPointer<RE::TESObjectREFR>{};
 				if (!ref || !IsCopy(ref.get()) || ref->As<RE::Actor>() || ref->IsDisabled()) {
 					return {};
 				}
@@ -2143,8 +2267,8 @@ namespace WorkshopSync
 				const auto took = ShowPoweredHow(*ref, a_on);
 				if (showsLogged < SHOWS_LOGGED && took != Took::kNoModel) {
 					++showsLogged;
-					static constexpr std::array<const char*, 6> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph",
-						"graph dark already (never lit)" };
+					static constexpr std::array<const char*, 7> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph",
+						"graph dark already (never lit)", "graph lit already" };
 					REX::INFO("WorkshopSync: friend's piece {:08X} (player {} piece {:08X}) shown {}: {}", ref->GetFormID(), a_key.first, a_key.second, a_on ? "on" : "off",
 						how[static_cast<std::size_t>(took)]);
 				}
@@ -2172,6 +2296,9 @@ namespace WorkshopSync
 		{
 			if (a_item.op == Protocol::WorkshopOp::kScrapped) {
 				mirror.Forget(a_key);
+				if (const auto it = copies.find(a_key); it != copies.end()) {
+					graphsTold.Forget(it->second.id);
+				}
 			}
 			EngineWorld world;
 			WorkshopApply::Apply(world, copies, twins, inbox, counts, a_key, a_item);
@@ -2252,6 +2379,57 @@ namespace WorkshopSync
 			}
 			return bench;
 		}
+
+		// TESObjectLIGH's light maker (+454880 in 1.11.240): makes a light reference's light (its ExtraLight), called by the
+		// light's 3D load and by SwitchLight's task (+500260) when a light is switched on. For a base flagged to wait for power
+		// (OBJ_LIGH flag 0x20: the light bulb 000560DF has 0x21) or a reference flagged so, it first asks Workshop::IsPowered
+		// (2194916) and makes no light if that says no: a workshop item off our power grids (a bench link, a powered grid)
+		// isn't powered, and our copy of a friend's bulb is on none. So the bulb's graph took "Powered" and its mesh glowed,
+		// but it never had a light (the rig: no ExtraLight on the copy, which the builder's powered bulb has).
+		constexpr REL::ID     GENERATE_LIGHT{ 2198256 };
+		constexpr std::size_t GENERATE_LIGHT_IS_POWERED_CALL = 0x1A9;  // E8 to Workshop::IsPowered (+382530)
+
+		using IsPoweredFn = bool (*)(RE::TESObjectREFR&);
+		IsPoweredFn                originalLightPowered = nullptr;
+		std::atomic<std::uint32_t> copyLightsMade{ 0 };  // lights made for copies shown powered
+
+		// The light maker's power check: the game's answer, or, for one of our copies shown powered (litCopies), yes. On the
+		// thread that makes the light (the main thread or a loader's): the copies are read under their lock.
+		bool LightPoweredHook(RE::TESObjectREFR& a_ref)
+		{
+			if (originalLightPowered(a_ref)) {
+				return true;
+			}
+			{
+				std::scoped_lock l{ litLock };
+				if (!litCopies.contains(a_ref.GetFormID())) {
+					return false;
+				}
+			}
+			copyLightsMade.fetch_add(1);
+			return true;
+		}
+	}
+
+	void InstallLights()
+	{
+		if (originalLightPowered) {
+			return;
+		}
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < CALL_STUB) {
+			REX::WARN("WorkshopSync: no room for the light maker's hook ({} bytes free); a friend's light bulb glows but casts no light here", trampoline.free_size());
+			return;
+		}
+		const auto                  site = GENERATE_LIGHT.address() + GENERATE_LIGHT_IS_POWERED_CALL;
+		std::array<std::uint8_t, 5> bytes{};
+		std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
+		if (TextureFlush::CallTarget(bytes, site) != IS_POWERED.address()) {
+			REX::WARN("WorkshopSync: the light maker doesn't ask Workshop::IsPowered where 1.11.240 does (another plugin's patch?); a friend's light bulb glows but casts no light here");
+			return;
+		}
+		originalLightPowered = reinterpret_cast<IsPoweredFn>(trampoline.write_call<5>(site, &LightPoweredHook));
+		REX::INFO("WorkshopSync: light maker hooked ({:X}+{:X}): a friend's light shown powered here casts its light", GENERATE_LIGHT.address(), GENERATE_LIGHT_IS_POWERED_CALL);
 	}
 
 	void InstallCrafting()
@@ -2294,17 +2472,7 @@ namespace WorkshopSync
 		const auto now = Clock::now();
 		const bool shares = BuiltWalk::Shares(a_host, HostRules::Get());
 		++frameNumber;  // what the grids name is read again (GridNamed)
-		std::erase_if(graveyard, [&](Copy& a_copy) {
-			const auto ref = a_copy.ref.get();
-			if (!ref) {
-				return true;
-			}
-			if (!DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_copy.placedAt)) {
-				return false;
-			}
-			Delete(ref.get());
-			return true;
-		});
+		SweepGraveyard(now);
 		if (now >= nextCellLook) {
 			nextCellLook = now + CELL_LOOK_INTERVAL;
 			std::vector<WorkshopCells::Where> attachedNow;
@@ -2392,11 +2560,18 @@ namespace WorkshopSync
 	void Reset()
 	{
 		EngineWorld world;
+		const auto  had = copies.size();
+		const auto  waitedBefore = graveyard.size();
 		WorkshopApply::RemoveAll(world, copies, twins, inbox);
+		if (had > 0 || !graveyard.empty()) {
+			const auto unloaded = std::ranges::count_if(graveyard, [](const Copy& a_copy) { return !a_copy.ref.get(); });
+			REX::INFO("WorkshopSync: leaving: {} copies removed; {} wait to be deleted ({} already waited), {} of them until their cell loads", had, graveyard.size(),
+				waitedBefore, unloaded);
+		}
 		ForgetAllCopies();
 		ClearWalk();
 		showsLogged = 0;  // the next session logs its first shows too
-		poweredGraphs.clear();
+		graphsTold.Clear();
 		scrapsDeferred.clear();
 		unbuiltWires.clear();
 		{
@@ -2418,6 +2593,18 @@ namespace WorkshopSync
 		outgoing.Clear();
 	}
 
+	void Sweep()
+	{
+		if (graveyard.empty()) {
+			return;
+		}
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player || !player->GetParentCell() || Hud::LoadingScreenUp()) {
+			return;  // in the world, not between worlds (a load lets the graveyard go)
+		}
+		SweepGraveyard(Clock::now());
+	}
+
 	void OnGameLoaded()
 	{
 		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
@@ -2436,7 +2623,7 @@ namespace WorkshopSync
 		// found or made after the load. The workbenches are looked for again.
 		reporter.SendAll();
 		mirror.Invalidate();
-		poweredGraphs.clear();  // the copies' graphs are made anew, and an address may come back for another
+		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
 	}
@@ -2450,7 +2637,7 @@ namespace WorkshopSync
 		unbuiltWires.clear();
 		reporter.Clear();
 		mirror.Invalidate();
-		poweredGraphs.clear();  // the copies' graphs are made anew, and an address may come back for another
+		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
 		ForgetAllCopies();
@@ -2543,19 +2730,24 @@ namespace WorkshopSync
 
 	std::string DescribeCopies()
 	{
-		std::string out = std::format("{} copies", copies.size());
+		std::size_t loaded = 0;
+		std::string list;
 		for (const auto& [key, copy] : copies) {
-			const auto ref = copy.ref.get();
-			out += std::format("; {:08X}={}:{:08X}", ref ? ref->GetFormID() : 0, key.first, key.second);
+			const auto ref = Live(copy);
+			loaded += ref != nullptr;
+			list += std::format("; {:08X}{}={}:{:08X}", copy.id, ref ? "" : " (not loaded)", key.first, key.second);
 		}
-		return out;
+		const auto unloaded = std::ranges::count_if(graveyard, [](const Copy& a_copy) { return !a_copy.ref.get(); });
+		return std::format("{} copies ({} loaded), found again={}, graveyard={} ({} not loaded), lightsMade={}", copies.size(), loaded, refound, graveyard.size(), unloaded,
+			       copyLightsMade.load()) +
+		       list;
 	}
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} graphRefused={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), graphRefused, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeGrids(RE::TESObjectREFR* a_bench)
@@ -2642,16 +2834,25 @@ namespace WorkshopSync
 			out += std::format(" owner={:08X}", owner->GetFormID());
 		}
 		for (const auto& [key, copy] : copies) {
-			if (copy.ref.get().get() == a_ref) {
+			if (copy.id == a_ref->GetFormID() && Live(copy).get() == a_ref) {
 				const auto wanted = mirror.Wanted(key);
 				out += std::format(" builder={} theirRef={:08X} theirPower={}", key.first, key.second, wanted ? (*wanted ? "on" : "off") : "unknown");
-				// What shows its power here: its graph (loaded, still loading, or none named) and, for a light, whether
-				// its light is lit (the game gives a lit light an ExtraLight).
+				// What shows its power here: its graph (loaded, still loading, or none named, and what we last told it) and,
+				// for a light, whether its light is made (the game gives a lit light an ExtraLight) and whether we show it
+				// powered (LightPoweredHook lets its light be made).
 				const auto model = a_ref->Get3D();
 				const bool namesGraph = model && NamesGraph(*model);
-				out += std::format(" graph={}", LoadedGraph(*a_ref) != 0 ? "loaded" : namesGraph ? "loading" : "none");
+				const auto graph = LoadedGraph(*a_ref);
+				static constexpr std::array<const char*, 3> told{ "nothing", "Powered", "Unpowered" };
+				out += std::format(" graph={} told={}", graph != 0 ? "loaded" : namesGraph ? "loading" : "none",
+					told[static_cast<std::size_t>(graphsTold.Of(copy.id, graph))]);
 				if (IsLightBase(*a_ref)) {
-					out += std::format(" lit={}", a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kLight) ? "yes" : "no");
+					bool shownLit = false;
+					{
+						std::scoped_lock l{ litLock };
+						shownLit = litCopies.contains(copy.id);
+					}
+					out += std::format(" lit={} shownLit={}", a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kLight) ? "yes" : "no", shownLit ? "yes" : "no");
 				}
 				break;
 			}
