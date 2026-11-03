@@ -1,6 +1,6 @@
 ## 0.11.1
 
-A patch for 0.11.0: friendly NPCs that stood silent in a friend's game, a friend's lights that stayed dark, crafting that
+A patch for 0.11.0: friendly NPCs that stood silent in a friend's game when the other player was off elsewhere, a friend's lights that stayed dark, crafting that
 ignored the settlement's junk, and a batch of smaller fixes. Install it over 0.11.0. (This is the same file as the
 0.11.1-rc1 test build, so seeing "rc1" in your log is normal.) It uses the same protocol (57), so it plays with 0.11.0
 and a session saved by 0.11.0 loads as it is. It is best if everyone in a session has it, since several of the
@@ -14,11 +14,11 @@ New:
 
 Fixed:
 
-- Friendly NPCs no longer stand there in silence in a friend's game. An NPC runs its own AI in one game only, and
-  until now it went to the nearer player only once the other was very far away, so one player often found town
-  NPCs that never greeted or turned to them. A friendly NPC now goes to the game of a friend standing next to it when
-  you are well off. An NPC your game takes over also drops the do-nothing behaviour its copy had and goes about its
-  own business.
+- Fewer friendly NPCs standing in silence in a friend's game. An NPC runs its own AI in one game only, and until
+  now it went to the nearer player only once the other was very far away, so one player often found town NPCs that
+  never greeted or turned to them. A friendly NPC now goes to the game of a friend standing next to it when you are
+  well off (about 2000 units away). An NPC your game takes over also drops the do-nothing behaviour its copy had and
+  goes about its own business.
 - Crafting at a station a friend built now counts the junk stored in your settlement's workbench, not only what you
   carry.
 - A friend's lights now light in your game once they are powered. Many of the workshop's lights (the construction
@@ -32,21 +32,25 @@ Fixed:
 - A killing blow of yours on a friend's NPC now reaches the game that runs it, so a Mr Gutsy no longer stays alive
   on a sliver of health in its own game after a long fall.
 - Two games loading the same new outdoor area at once could build a raider from different templates. Both now read
-  the area's level zone the way the game does.
+  the area's level zone itself, not the game's copy of it, which isn't set yet while the area loads.
 - Catching up a friend's quests no longer leaves a menu open in a joiner's game: the settlement list a stage opens by
   itself (Getting a Clue, when Nick becomes the new companion) and the item inspection some stages open are closed
   for you.
 - Side quests that the game starts with targets it picks for each player (robot assaults, Far Harbor and Nuka-World
   settlement and gang jobs, Saugus Ironworks, Weston Water Treatment) are no longer shared, so a friend's
-  stage doesn't start your copy with your own targets. The Automatron and Nuka-World story quests also got stage
-  rules.
-- Getting into a power armor frame is safer: the frame hook no longer reads or counts game data from the wrong
-  thread.
-- After being downed and helped up, a camera stuck underground or an input lock that kept the Pip-Boy from opening is
-  now ended. It showed after a grenade both knocked a player over and downed them.
+  stage doesn't start your copy with your own targets. In the Automatron and Nuka-World story quests, a friend's
+  stage no longer moves you when you aren't with them, or takes caps or items from you.
+- Getting into a power armor frame is safer: a rare chance of reading the game's data at the wrong moment is gone.
+- After being downed and helped up, the downed camera and the input lock are now ended if the game left them on.
+  A player saw this as a camera stuck underground and a Pip-Boy that wouldn't open, after a grenade both knocked them
+  over and downed them. We couldn't make it happen on our test machines, so tell us if you still see it.
 - The install guide says what to check when a Steam invite arrives but joining does nothing.
 
 Known issues:
+
+- When both players are near a friendly NPC, the NPC still runs in one game only, and in the other it may not greet,
+  idle or work.
+- A friend's lights light in your game once that friend has been to the settlement in this session.
 
 - A joiner caught up past Dangerous Minds misses the companion's talk after the surgery: that stage is skipped
   because it would move the joiner into Kellogg's memory.
