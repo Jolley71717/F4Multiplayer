@@ -2351,6 +2351,7 @@ namespace WorkshopSync
 		// found or made after the load. The workbenches are looked for again.
 		reporter.SendAll();
 		mirror.Invalidate();
+		poweredGraphs.clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
 	}
@@ -2364,6 +2365,7 @@ namespace WorkshopSync
 		unbuiltWires.clear();
 		reporter.Clear();
 		mirror.Invalidate();
+		poweredGraphs.clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
 		std::scoped_lock l{ copyIdsLock };
