@@ -448,6 +448,12 @@ namespace WorkshopPower
 		// game with no session to say it had stopped (or one whose friend has no such piece any more), and its copy can't
 		// be scrapped (it carries the block keyword). So each copy shown powered is shown unpowered now, and powered again
 		// after the save (SaveDone, or HUSH_LIMIT after if no message says it is over). How many it hushed.
+		//
+		// Only a copy drawn as it was when a frame last showed it (the same 3D and graph). One drawn anew since (its cell
+		// came in with a travel, and the save is that travel's autosave, before any frame has run) starts unpowered and was
+		// never told otherwise: there is nothing to hush. The game may also still be setting that 3D and its graph up as the
+		// save comes, and no frame touches a copy then (Refresh waits for it); the hush, calling on every such copy at once
+		// (a big settlement's hundreds), was the one thing that did.
 		template <class Engine>
 		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
 		{
@@ -458,8 +464,11 @@ namespace WorkshopPower
 					want.hushedAt = a_now;  // still hushed from a save just before: this one's too
 					continue;
 				}
-				if (!want.powered || !want.shown || a_engine.Drawn(key) == 0) {
+				if (!want.powered || !want.shown) {
 					continue;
+				}
+				if (const auto drawn = a_engine.Drawn(key); drawn == 0 || drawn != want.drawn) {
+					continue;  // not drawn, or drawn anew since its show: unpowered as its model has it
 				}
 				if (a_engine.Show(key, false)) {
 					want.hushed = true;

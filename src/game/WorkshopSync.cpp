@@ -2717,6 +2717,17 @@ namespace WorkshopSync
 		// A copy shown powered is saved running (its graph keeps the state), and a load brings it back running with no
 		// session to stop it: shown unpowered for the save, powered again after (AfterSave). A light's light is let be (no
 		// save keeps it: ShowPoweredHow).
+		//
+		// Not behind a loading screen (a travel's autosave): the cells are coming and going, their 3D and graphs set up or
+		// torn down by the game as the save comes, and no frame of ours touches a copy then. A copy just come in is drawn
+		// unpowered anyway (Mirror::Hush). What this gives up: a copy still shown powered in a cell the travel leaves may be
+		// saved so, as before 0.10.1, which is a friend's machine running after a load, not a crash.
+		if (Hud::LoadingScreenUp()) {
+			if (mirror.Size() > 0) {
+				REX::INFO("WorkshopSync: save behind a loading screen: friends' pieces not shown unpowered for it ({} mirrored)", mirror.Size());
+			}
+			return;
+		}
 		MirrorEngine engine;
 		engine.forSave = true;
 		const auto   hushed = mirror.Hush(engine, Clock::now());
