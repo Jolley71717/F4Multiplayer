@@ -1,15 +1,17 @@
 #pragma once
 
+#include "game/DisabledParents.h"
 #include "game/EnableChain.h"
 #include "game/Official.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <format>
 #include <vector>
 
 // Switching on a reference a friend's game has on (EnableChain.h says why a parent, and which, and when none). Main thread
-// only.
+// only, but for OnDataReady.
 namespace EnableParents
 {
 	// The reference's enable parent as the engine finds it (+565490: from ExtraEnableStateParent's handle, or, while that
@@ -31,16 +33,27 @@ namespace EnableParents
 	inline constexpr REL::ID SAVE_LOAD_GAME{ 2697789 };
 	inline constexpr REL::ID GET_CHANGE_FLAGS{ 2227900 };
 
-	// The references that were off when the game's data was loaded (kGameDataReady, before any save is loaded): off as their
-	// plugins have them (the record's Initially Disabled flag). Sorted. Only references loaded with the data, the
-	// persistent ones: every enable parent in Fallout4.esm is (616 off, 394 on); a temporary one is loaded with its cell.
-	inline std::vector<std::uint32_t>& OffInPlugins()
+	// The references loaded with the game's data (kGameDataReady, before any save is loaded), and of them those that were
+	// off then: off as their plugins have them (the record's Initially Disabled flag), the others on. Sorted. Only the
+	// persistent references are loaded with the data: every enable parent in Fallout4.esm is (616 off, 394 on); a
+	// temporary one is loaded with its cell, and its plugin's state isn't known (EnableChain::PluginState::kUnknown).
+	struct LoadedWithData
 	{
-		static std::vector<std::uint32_t> ids;
-		return ids;
+		std::vector<std::uint32_t> all;
+		std::vector<std::uint32_t> off;
+	};
+
+	inline LoadedWithData& Loaded()
+	{
+		static LoadedWithData lists;
+		return lists;
 	}
 
-	// Takes the list above, once: a later message would find the states a save gave them. Main thread, at kGameDataReady.
+	// Takes the lists above, once: a later message would find the states a save gave them. At kGameDataReady, on the
+	// game's loading thread (not the main one): written once, before any session, and only read later, on the main thread.
+	// Another F4SE plugin's kGameDataReady handler that runs before ours and switches references off would make them read
+	// as off in their plugins; only one of the game's own files' references (Official::IsOfficialThroughout) is ever
+	// switched on through it.
 	inline void OnDataReady()
 	{
 		static bool taken = false;
@@ -48,7 +61,8 @@ namespace EnableParents
 			return;
 		}
 		taken = true;
-		auto& ids = OffInPlugins();
+		const auto start = std::chrono::steady_clock::now();
+		auto&      lists = Loaded();
 		const auto& [map, lock] = RE::TESForm::GetAllForms();
 		RE::BSAutoReadLock l{ lock };
 		if (!map) {
@@ -57,17 +71,36 @@ namespace EnableParents
 		}
 		for (const auto& [id, form] : *map) {
 			const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
-			if (ref && ref->IsDisabled()) {
-				ids.push_back(id);
+			if (!ref) {
+				continue;
+			}
+			lists.all.push_back(id);
+			if (ref->IsDisabled()) {
+				lists.off.push_back(id);
 			}
 		}
-		std::ranges::sort(ids);
-		REX::INFO("EnableParents: {} references loaded with the game's data are off in their plugins", ids.size());
+		std::ranges::sort(lists.all);
+		std::ranges::sort(lists.off);
+		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+		REX::INFO("EnableParents: {} references loaded with the game's data, {} of them off in their plugins (read in {:.1f} ms)", lists.all.size(),
+			lists.off.size(), ms);
 	}
 
-	inline bool OffInPlugin(std::uint32_t a_id)
+	inline EnableChain::PluginState PluginStateOf(std::uint32_t a_id)
 	{
-		return std::ranges::binary_search(OffInPlugins(), a_id);
+		const auto& lists = Loaded();
+		if (!std::ranges::binary_search(lists.all, a_id)) {
+			return EnableChain::PluginState::kUnknown;
+		}
+		return std::ranges::binary_search(lists.off, a_id) ? EnableChain::PluginState::kOff : EnableChain::PluginState::kOn;
+	}
+
+	// Whether a script of the game's own turns a_ref off somewhere (DisabledParents.h): by the plugin that made it and its
+	// form id there, whatever the load order.
+	inline bool StoryTurnsOff(const RE::TESObjectREFR* a_ref)
+	{
+		const auto file = a_ref ? a_ref->GetFile(0) : nullptr;
+		return file && DisabledParents::Contains(file->GetFilename(), a_ref->GetFormID());
 	}
 
 	// a_ref's enable parent (null if none, none found, or deleted) and whether the link is the opposite way.
@@ -137,7 +170,8 @@ namespace EnableParents
 				link.parentOff = parent->IsDisabled();
 				// The child's record names the parent (XESP): the link is the game's own if no plugin changes the child.
 				link.official = Official::IsOfficialThroughout(at) && Official::IsOfficialThroughout(parent.get());
-				link.offInPlugin = OffInPlugin(link.parent);
+				link.storyTurnsOff = link.official && StoryTurnsOff(parent.get());
+				link.plugin = PluginStateOf(link.parent);
 				link.changeFlags = ChangeFlags(parent.get());
 				link.parentDead = actor && actor->IsDead(false);
 				link.children = ChildrenOf(parent.get());
@@ -152,14 +186,15 @@ namespace EnableParents
 	}
 
 	// The plan for the log: what was switched on, or why nothing, how many references the chain's parents switch here, and
-	// the top's change flags in our save and whether its plugin has it off (what AsItsPluginLeftIt went by).
+	// the top's change flags in our save and its state in its plugin (what AsItsPluginLeftIt went by).
 	inline std::string Describe(const EnableChain::Plan& a_plan)
 	{
 		auto text = std::format("{} {:08X}", EnableChain::VerdictName(a_plan.verdict), a_plan.target);
 		if (a_plan.atTop) {
 			const auto flags = a_plan.changeFlags == EnableChain::CHANGES_UNKNOWN ? std::string{ "not known" } : std::format("{:08X}", a_plan.changeFlags);
+			const auto plugin = a_plan.plugin == EnableChain::PluginState::kOff ? "yes" : a_plan.plugin == EnableChain::PluginState::kOn ? "no" : "not known";
 			text += std::format(" ({} references under its enable parents here, at most {}; its change flags in our save {}, off in its plugin: {})",
-				a_plan.children, EnableChain::MAX_CHILDREN, flags, a_plan.offInPlugin ? "yes" : "no");
+				a_plan.children, EnableChain::MAX_CHILDREN, flags, plugin);
 		}
 		return text;
 	}

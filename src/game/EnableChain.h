@@ -43,14 +43,23 @@ namespace EnableChain
 	// Ours may be off on purpose: a plugin only our game has hides a vanilla NPC by giving it an enable parent that stays
 	// off (sessions may have different mod lists), or our story is ahead and a quest of ours switched the scene's marker
 	// off again. So a parent is switched on only if the link and the parent are the game's own (official: Fallout4.esm and
-	// its add-ons, no plugin overriding either), and the top is off as its plugin has it (AsItsPluginLeftIt).
+	// its add-ons, no plugin overriding either), no script of the game's own ever turns it off (storyTurnsOff), and the
+	// top is off as its plugin has it (AsItsPluginLeftIt).
+	enum class PluginState : std::uint8_t
+	{
+		kUnknown,  // not loaded with the game's data (a temporary reference, loaded with its cell): its plugin's state isn't known
+		kOff,      // off when the game's data was loaded, before any save: its plugin has it off
+		kOn,       // on then: its plugin has it on
+	};
+
 	struct Link
 	{
 		std::uint32_t parent = 0;                      // the parent's form id; 0: the engine has none it can find here (or it is deleted)
 		bool          opposite = false;                // OPPOSITE: switching the parent on would switch the child off
 		bool          parentOff = false;               // the parent is switched off here
 		bool          official = false;                // the child's record that names the parent, and the parent's, are the game's own files'
-		bool          offInPlugin = false;             // the parent was off when the game's data was loaded, before any save: its plugin has it off
+		bool          storyTurnsOff = false;           // a script of the game's own turns the parent off somewhere (DisabledParents.h)
+		PluginState   plugin = PluginState::kUnknown;  // the parent's state as its plugin has it
 		std::uint32_t changeFlags = CHANGES_UNKNOWN;   // what our save records as changed on the parent (CHANGE_FORM_FLAGS ...)
 		bool          parentDead = false;              // the parent is an actor, dead here: it would come back as a corpse with its children
 		std::uint32_t children = 0;                    // the references the parent switches here (ExtraEnableStateChildren)
@@ -59,13 +68,22 @@ namespace EnableChain
 	// Whether a parent that is off here is off as its plugin left it, not because our game switched it off: its plugin
 	// has it off (the state it had when the game's data was loaded), or, where that isn't known (a reference not loaded
 	// with the game's data: a temporary one, loaded with its cell), our save records no change of its flags at all.
-	// The change flags alone can't tell (CHANGE_FORM_FLAGS): references the engine only loaded carry them. One a quest
-	// of ours or a script switched off that its plugin has on is refused: off here, on in its plugin. One its plugin has
-	// off that our story switched on and off again is not told apart: nothing in the game records which way a
-	// reference was switched before.
+	// The change flags alone can't tell (CHANGE_FORM_FLAGS): references the engine only loaded carry them. One its plugin
+	// has on is refused whatever its change flags say (a disable made while the engine records no changes is one too):
+	// off here and on in its plugin, a quest of ours or a script switched it off. One its plugin has off that our story
+	// switched on and off again is not told apart here (nothing in the game records which way a reference was switched
+	// before): the game's own scripts that ever turn a parent off are listed instead (storyTurnsOff).
 	constexpr bool AsItsPluginLeftIt(const Link& a_link)
 	{
-		return a_link.offInPlugin || (a_link.changeFlags & CHANGE_FORM_FLAGS) == 0;
+		switch (a_link.plugin) {
+		case PluginState::kOff:
+			return true;
+		case PluginState::kOn:
+			return false;
+		case PluginState::kUnknown:
+			break;
+		}
+		return (a_link.changeFlags & CHANGE_FORM_FLAGS) == 0;
 	}
 
 	enum class Verdict
@@ -78,9 +96,10 @@ namespace EnableChain
 		kTooDeep,      // a chain longer than MAX_DEPTH; nothing done
 		kOwnStory,     // everyone on their own story: a parent may switch on characters of ours too; nothing done
 		kUnofficial,   // a link or a parent from a plugin outside the game's own files, or overridden by one; nothing done
-		kChanged,      // the top is off here but on in its plugin (or that isn't known and our save changed its flags): our game switched it off; nothing done
+		kChanged,      // the top is off here but on in its plugin (or that isn't known and our save changed its flags): taken as our game having switched it off; nothing done
 		kParentDead,   // a parent is a dead actor; nothing done
 		kTooMany,      // the chain's parents switch more than MAX_CHILDREN references; nothing done
+		kStoryTurnsOff,  // a script of the game's own turns a parent off again somewhere (a quest's later stage): left to our own story; nothing done
 	};
 
 	struct Plan
@@ -90,7 +109,7 @@ namespace EnableChain
 		std::uint32_t children = 0;  // the references the chain's parents switch here (when the walk got to the top)
 		bool          atTop = false;                   // the walk got to the top: the two below are its, for the log
 		std::uint32_t changeFlags = CHANGES_UNKNOWN;   // the top's change flags in our save
-		bool          offInPlugin = false;             // the top is off in its plugin
+		PluginState   plugin = PluginState::kUnknown;  // the top's state as its plugin has it
 	};
 
 	// a_self: the reference; a_links: its chain upward, nearest first, ending with a parent that has none of its own (or
@@ -123,11 +142,16 @@ namespace EnableChain
 			if (!link.official) {
 				return { Verdict::kUnofficial, link.parent };
 			}
+			// A marker its plugin has off that a quest turns on at one stage and off at a later one (the airport's
+			// Brotherhood, BoSAirportGuards): off here may be our story past it, the friend's game only behind.
+			if (link.storyTurnsOff) {
+				return { Verdict::kStoryTurnsOff, link.parent };
+			}
 			children += link.children;
 		}
 		// Only the top is read for on or off: the links below it are on or off as it is.
 		const auto& top = a_links.back();
-		const auto  at = [&](Verdict a_verdict) { return Plan{ a_verdict, top.parent, children, true, top.changeFlags, top.offInPlugin }; };
+		const auto  at = [&](Verdict a_verdict) { return Plan{ a_verdict, top.parent, children, true, top.changeFlags, top.plugin }; };
 		if (!top.parentOff) {
 			return at(Verdict::kParentOn);
 		}
@@ -167,11 +191,13 @@ namespace EnableChain
 		case Verdict::kUnofficial:
 			return "nothing: its enable parent, or the link to it, is a plugin's, not the game's own";
 		case Verdict::kChanged:
-			return "nothing: our game switched its enable parent off (its plugin has it on, or that isn't known and our save changed it)";
+			return "nothing: our game seems to have switched its enable parent off (on in its plugin, or its plugin's state not known and our save changed its flags)";
 		case Verdict::kParentDead:
 			return "nothing: its enable parent is dead here";
 		case Verdict::kTooMany:
 			return "nothing: its enable parent switches too many references";
+		case Verdict::kStoryTurnsOff:
+			return "nothing: a quest of the game turns its enable parent off again later; left to our own story";
 		}
 		return "?";
 	}

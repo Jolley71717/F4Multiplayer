@@ -366,27 +366,39 @@
   game-free and tested; `EnableParents.h`): the engine's own `enable` returns at once for a reference with an
   enable parent ("... has enable state parent ... will be ignored"), so up to 0.10.1 such a copy stayed off for
   good. Gun Run (DN083_Barney, a misc quest, so each game runs its own) enables Salem's mirelurks, their ambush
-  spots and eggs through one marker (MirelurkQuestEnabler, 000C3D6F) at its stage 30, in the game of the player
-  who got there; a friend fought a mirelurk the other player could not see anywhere (a Nexus report on 0.10.1).
-  Never a parent with everyone on their own story (one marker often switches a whole scene, characters of our own
-  story among them), nor one the opposite way (that parent would have to go off). The friend's NPC running proves
-  only that their chain is on, not that ours is off because our game is behind: a plugin only our game has may hide
-  a vanilla NPC behind a marker that stays off, or our story may be ahead and a quest of ours switched the marker
-  off again. So a parent is switched on only when every link and parent comes from the game's own files
-  (Fallout4.esm and the official add-ons, no other plugin changing them), the top is off as its plugin has it (it
-  was off when the game's data was loaded, before any save: the references off then are listed once at
-  kGameDataReady; one not loaded with the data, a temporary one, only if our save records no change of its flags),
-  no parent is a dead actor or deleted, and the chain's parents switch at most 64 references between them (Gun Run's
-  marker: 48). A save's change of a reference's flags (`BGSSaveLoadGame::GetChangeFlags`, CHANGE_FORM_FLAGS) can't
-  say whether our game switched it: the engine records it for a reference it only loads (`TESObjectREFR::Load` sets
-  an in-game flag, which records it whether anything changed or not), and a fresh game had it on Salem's marker at
-  Gun Run's stage 5, before any script touches it, so the first rig run refused every switch-on. A marker its plugin
-  has on that our game switched off is refused; one its plugin has off that our story switched on and off again is
-  not told apart, as nothing in the game records which way a reference was switched before. Nor is a marker our
-  story never needed to touch (our quest took another branch), or an NPC a mod only the friend has freed of its
-  parent. The log line says what was switched on or why nothing, with that count, the top's change flags and
-  whether its plugin has it off; `switchedOn=` counts tries/those through a parent. The switch-on before a friend's kill (WorldSync) goes the same way, and `switchedOnToKill=` counts only
-  the ones that switched something on.
+  spots and eggs through one marker (MirelurkQuestEnabler, 000C3D6F) at its stage 30, in the game of the player who
+  got there; a friend fought a mirelurk the other player could not see anywhere (a Nexus report on 0.10.1). Never a
+  parent with everyone on their own story (one marker often switches a whole scene, characters of our own story
+  among them), nor one the opposite way (that parent would have to go off). The friend's NPC running proves only
+  that their chain is on, not that ours is off because our game is behind: a plugin only our game has may hide a
+  vanilla NPC behind a marker that stays off, or our story may be ahead and a quest of ours switched the marker off
+  again. So a parent is switched on only when every link and parent comes from the game's own files (Fallout4.esm
+  and the official add-ons, no other plugin changing them), no script of the game's own ever turns a parent of the
+  chain off, the top is off as its plugin has it, no parent is a dead actor or deleted, and the chain's parents
+  switch at most 64 references between them (Gun Run's marker: 48). The scripts that turn parents off are read from
+  the game's files once and kept in a table (`DisabledParents.h`, written by `tools/questscan.ps1
+  -DisabledParents`: quest stage fragments, quest, alias, reference, base object, topic, scene, package, perk and
+  terminal scripts, calls followed a few deep, each judged with the property values it has where it is attached):
+  648 of the 1624 enable parents of Fallout4.esm, Automatron, Far Harbor and Nuka-World, 303 of them off in their
+  plugin. Half the quest scene markers are off in their plugin, turned on at one stage and off at a later one: the
+  airport's Brotherhood (BoSAirportGuards, 0019C046: BoSEnable's stage 10 on, its stage 200 and Inst307Fight's
+  stage 10 off) would come back for good, 11 soldiers and a scribe, in the game of a joiner past it the first time
+  the host's game ran one. Those are left to our own story (`kStoryTurnsOff`). Gun Run's marker is only ever turned
+  on. Whether the top is off as its plugin has it: the references loaded with the game's data are listed once at
+  kGameDataReady, before any save, with which of them were off. One that was off then is as its plugin has it; one
+  that was on then (every enable parent in Fallout4.esm is persistent, so loaded with the data) is refused whatever
+  its change flags say, as our game switched it off. One not loaded with the data, a temporary one, is switched on
+  only if our save records no change of its flags. A save's change of a reference's flags
+  (`BGSSaveLoadGame::GetChangeFlags`, CHANGE_FORM_FLAGS) can't say whether our game switched it: the engine records
+  it for a reference it only loads (`TESObjectREFR::Load` sets an in-game flag, which records it whether anything
+  changed or not), and a fresh game had it on Salem's marker at Gun Run's stage 5, before any script touches it, so
+  the first rig run refused every switch-on. What the table can't see is switched on all the same: a marker turned
+  off through a variable set at run time, a struct, a collection or a conditioned alias, or by the console; one our
+  story never needed to touch (our quest took another branch); an NPC a mod only the friend has freed of its
+  parent. The add-ons the table was not made from (the workshop ones, Vault-Tec's among them) are not covered. The
+  log line says what was switched on or why nothing, with that count, the top's change flags and its state in its
+  plugin; `switchedOn=` counts tries/those through a parent. The switch-on before a friend's kill (WorldSync) goes
+  the same way, and `switchedOnToKill=` counts only the ones that switched something on.
 - Console commands: each one is compiled and run on the spot, so the copies taken over from their own AI are
   spread out, 8 a frame at most (the rest keep their snapshots and wait a frame), and the commands run for NPCs
   are counted (`CommandMeter`; `net status`: `cmds=` last frame/most, `busy=` frames over 32, `rereg=`,
