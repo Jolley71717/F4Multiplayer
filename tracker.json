@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T01:17:17+00:00",
+ "updated": "2026-11-03T01:56:09+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -132,6 +132,14 @@
    "stage": 7,
    "note": "Shown in the friend's hand since 0.9.0; we are still checking it looks right in real play.",
    "desc": "A cosmetic problem: when a friend wound up a throw, their hand looked empty, though the throw and the explosion were right. 0.9.0 shows the grenade in their hand during the throw, controlled by the setting bGrenadeInHand. It was only tried with a frag grenade, so other throwables still need checking."
+  },
+  {
+   "id": "2u71",
+   "title": "Kill feed: a copy's long-fall kill sent as damage reaches the owner's game with no killer",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "358u",
@@ -535,7 +543,7 @@
    "title": "Shared rolls: one NPC of 36 built with a different trait slot on simultaneous arrival",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "Counter added; fix after #236 merges",
    "pr": 276
   },
@@ -1302,7 +1310,7 @@
    "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "A robot killed in one game can stay alive in the other",
    "pr": 275
   },
