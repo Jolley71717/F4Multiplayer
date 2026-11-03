@@ -11,13 +11,20 @@
 # -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm, 1 DLCCoast.esm,
 # 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so). With -PerGame: the quests shared
 # by their type that the story manager starts with targets each game picks itself, src/game/QuestFilter.h's PER_GAME.
+# With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe shares, by the rule there), and what
+# was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for those quests alone (-Files 0,1,2,3);
+# with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
 # The index of each master is src/game/StageRules.h's File. Windows PowerShell 5.1 compiles the reader
 # (tools/questscan.cs) on the fly.
-param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules, [int[]]$Files = @(2, 3), [switch]$PerGame)
+param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules, [int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe)
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
+$filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
+$radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants); return }
+if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
-elseif ($Rules) { [RuleScan]::Run($Data, $Files) }
-elseif ($PerGame) { [PerGameScan]::Run($Data, (Join-Path $PSScriptRoot '..\src\game\RadiantRules.h')) }
+elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
+elseif ($PerGame) { [PerGameScan]::Run($Data, $radiants) }
 else { [QuestScan]::Run($Data) }

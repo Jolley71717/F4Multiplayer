@@ -2081,3 +2081,27 @@ TEST("protocol: the save on down rule is the welcome's flag bit 128, apart from 
 	REQUIRE(both);
 	CHECK(both->rules == on.rules);
 }
+
+TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule this build doesn't know shares the story's quests only")
+{
+	CHECK(VERSION == 58);
+	for (const auto quests : { QuestRule::kStory, QuestRule::kSafe }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = quests } }));
+		REQUIRE(out);
+		CHECK(out->rules.quests == quests);
+		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
+		CHECK(out->rules.legendary == SessionRules{}.legendary);
+	}
+	// The byte after legendary's, the welcome's last.
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
+	CHECK(bytes.back() == static_cast<std::uint8_t>(QuestRule::kSafe));
+	bytes.back() = QUEST_RULES;
+	const auto odd = DecodeWelcome(bytes);
+	REQUIRE(odd);
+	CHECK(odd->rules.quests == QuestRule::kStory);
+	CHECK(odd->rules.legendary == LegendaryRule::kHost);
+	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
+	// A welcome of 57's, without it, is short.
+	bytes.pop_back();
+	CHECK(!DecodeWelcome(bytes));
+}

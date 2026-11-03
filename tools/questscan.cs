@@ -42,7 +42,12 @@ public static class GearScan
         public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>();
         public string Event = "";  // the story manager event that starts it (ENAM), if any
         public List<string> Fills = new List<string>();  // each alias's fill, name=forced, unique, external, created, event, fromalias, matching or empty
+        public List<Alias> Aliases = new List<Alias>();  // the same, with each alias's ID and the alias it is filled from
     }
+
+    // An alias: its ID (references and locations share one numbering), name, fill (Fill) and the alias it is made at or
+    // found from (ALFA, ALNA, ALCA; -1 none).
+    public class Alias { public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; }
 
     // How an alias is filled, by the subrecords it has up to its ALED: forced to a reference or location, a unique
     // actor, another quest's alias, created at runtime, from the event that starts the quest, from another alias, or
@@ -131,7 +136,7 @@ public static class GearScan
                         var q = new Quest();
                         q.Id = (id & 0x00FFFFFF) | ((uint)fileIndex << 24);
                         int s = bo; int se = bo + bl; int big = -1;
-                        HashSet<string> alias = null; string aliasName = "";
+                        HashSet<string> alias = null; string aliasName = ""; int aliasId = -1, aliasSource = -1;
                         while (s < se)
                         {
                             string st = Encoding.ASCII.GetString(body, s, 4);
@@ -148,12 +153,20 @@ public static class GearScan
                                 if (st == "QOBJ") q.Objectives++;
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
-                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; }
+                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; }
                             else if (alias != null)
                             {
                                 if (st == "ALID") aliasName = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
+                                if ((st == "ALFA" || st == "ALNA") && ss >= 4) aliasSource = BitConverter.ToInt32(body, d);
+                                if (st == "ALCA" && ss >= 2) aliasSource = BitConverter.ToInt16(body, d);
                                 alias.Add(st);
-                                if (st == "ALED") { q.Fills.Add(aliasName + "=" + Fill(alias)); alias = null; }
+                                if (st == "ALED")
+                                {
+                                    var fill = Fill(alias);
+                                    q.Fills.Add(aliasName + "=" + fill);
+                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource });
+                                    alias = null;
+                                }
                             }
                             s = d + ss;
                         }
@@ -329,8 +342,14 @@ public static class QuestScan
         return rest.StartsWith("Dialogue");
     }
 
+    // The quests src/game/QuestFilter.h's SAFE holds, by (file, form ID in it), once SafeScan.Load has made them: shared
+    // with the host's sQuests = safe, so the other scans take them for shared too. Null: not made (the scans see only
+    // what every session shares).
+    public static HashSet<Tuple<int, uint>> Safe;
+
     public static string Shared(GearScan.Quest q, int a_file)
     {
+        if (Safe != null && Safe.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF))) return "shared (safe)";
         if (q.Type > 0 && q.Type != 6) return "shared";
         if (q.Type == 0 && a_file == 0 && FINALES.Contains(q.Id & 0xFFFFFF)) return "shared (finale)";
         if (q.Type == 0 && q.Objectives == 0 && IsDialogueName(q.Edid)) return "shared (dialogue)";
@@ -784,7 +803,10 @@ public static class RuleScan
         return seconds;
     }
 
-    public static string Run(string data, int[] a_files)
+    public static string Run(string data, int[] a_files) { return Run(data, a_files, false); }
+
+    // a_safeOnly: the rows of src/game/QuestFilter.h's SAFE quests alone (SafeScan.Load first).
+    public static string Run(string data, int[] a_files, bool a_safeOnly)
     {
         MoveScan.Load(data);
         var sb = new StringBuilder();
@@ -793,7 +815,8 @@ public static class RuleScan
         {
             foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
             {
-                if (QuestScan.Shared(quest, file) == "not shared") continue;
+                var shared = QuestScan.Shared(quest, file);
+                if (shared == "not shared" || (a_safeOnly && shared != "shared (safe)")) continue;
                 bool first = true;
                 var stages = MoveScan.Fragments(file, quest.Id);
                 foreach (var stage in stages.Keys.OrderBy(k => k))
@@ -877,6 +900,146 @@ public static class PerGameScan
             }
         }
         sb.AppendLine("# and " + radiants + " radiants src/game/RadiantRules.h names");
+        return sb.ToString();
+    }
+}
+
+// The quests src/game/QuestFilter.h's SAFE holds: those no session shares by their type (QuestFilter: a misc quest, or
+// one under no type that is no dialogue quest or finale) that a friend's stage can be set on in another game as it is,
+// by a rule read off the game's files. A quest of the game's own masters with objectives that is no radiant
+// (src/game/RadiantRules.h) and no side quest each game fills its own way (QuestFilter's PER_GAME); no companion's
+// (COM*, Followers, *Affinity*, *Companion*, CA_, CIS_: a companion's talks and affinity are each player's); that runs
+// once or is started with the game (not repeatable); whose every alias is fixed: a forced reference or location, a
+// unique actor, another quest's alias, one its scripts fill, or one made at or found from such an alias, none filled
+// from the story manager's event or by its conditions (directly or through the alias it is made at or found from), so
+// it holds the same in every game; and no stage of whose own fragments touches a companion's affinity (an argument
+// named *Affinity*, CA_*), makes or dismisses a companion (SetCompanion, DismissCompanion, AddToPlayerFaction) or empties
+// the player's inventory (RemoveAllItems, UnequipAll on the player). Less QuestFilter.h's DENIED (read from the file
+// passed): quests the rule passes that are each player's all the same (the opening, Dogmeat's, survival's, Nuka-World's
+// park bookkeeping). The quests the rule passes but for their objectives (a location's quest, DN035) are counted at the
+// end: a quest with no objective counts as started here only once something shows it, which needs a rule of its own.
+public static class SafeScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+
+    static readonly System.Text.RegularExpressions.Regex COMPANION = new System.Text.RegularExpressions.Regex("^(COM|Followers|CA_|CIS_|.*Affinity|.*Companion)");
+
+    // The (file, form ID) rows of a table in a header: from "a_name[] = {" to its "};".
+    static HashSet<Tuple<int, uint>> Table(string a_header, string a_name)
+    {
+        var text = File.ReadAllText(a_header);
+        int at = text.IndexOf(a_name + "[] = {", StringComparison.Ordinal);
+        if (at < 0) throw new Exception(a_name + " not found in " + a_header);
+        var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+        var rows = new HashSet<Tuple<int, uint>>();
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+)\s*\}"))
+            rows.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16)));
+        return rows;
+    }
+
+    // Whether an alias holds what each game picks itself: filled from the event or by its conditions, or made at or found
+    // from an alias that is.
+    static bool PerGame(Dictionary<int, GearScan.Alias> a_aliases, int a_id, int a_depth)
+    {
+        GearScan.Alias alias;
+        if (a_depth > 20 || !a_aliases.TryGetValue(a_id, out alias)) return false;
+        if (alias.Fill == "event" || alias.Fill == "matching") return true;
+        return (alias.Fill == "fromalias" || alias.Fill == "created") && alias.Source >= 0 && PerGame(a_aliases, alias.Source, a_depth + 1);
+    }
+
+    // What a stage's own fragment does that makes its quest each player's: "affinity", "companion" or "empties", or null.
+    static string Each(GearScan.Func f)
+    {
+        var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Func<string, bool> player = v => players.Contains(v) || Bare(v).IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0;
+        foreach (var i in f.Code)
+        {
+            foreach (var a in i.Args)
+            {
+                var b = Bare(a);
+                if (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase)) return "affinity";
+            }
+            if (i.Op == 25)
+            {
+                if (Is(i.Args[0], "game") && Is(i.Args[1], "GetPlayer")) players.Add(i.Args[2]);
+                else if (Is(i.Args[1], "SetCompanion") || Is(i.Args[1], "DismissCompanion")) return "companion";
+                continue;
+            }
+            if (i.Op == 13 || i.Op == 14) { if (player(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); continue; }
+            if (i.Op != 23) continue;
+            var m = i.Args[0];
+            if ((Is(m, "GetReference") || Is(m, "GetRef") || Is(m, "GetActorRef") || Is(m, "GetActorReference")) && Bare(i.Args[1]).IndexOf("Player", StringComparison.OrdinalIgnoreCase) >= 0) { players.Add(i.Args[2]); continue; }
+            if ((Is(m, "RemoveAllItems") || Is(m, "UnequipAll")) && player(i.Args[1])) return "empties";
+            if (Is(m, "SetCompanion") || Is(m, "DismissCompanion") || Is(m, "AddToPlayerFaction")) return "companion";
+            players.Remove(i.Args[2]);
+        }
+        return null;
+    }
+
+    // Why a quest is not in SAFE ("" it is), as the rule reads it in order; "no objectives" for one that passes all else.
+    static string Why(GearScan.Quest q, int a_file, HashSet<uint> a_radiants, HashSet<Tuple<int, uint>> a_perGame)
+    {
+        uint local = q.Id & 0xFFFFFF;
+        if (QuestScan.Shared(q, a_file) != "not shared") return "shared by its type";
+        if (a_file == 0 && a_radiants.Contains(local)) return "a radiant (RadiantRules.h)";
+        if (a_perGame.Contains(Tuple.Create(a_file, local))) return "each game's (PER_GAME)";
+        var bare = System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "");
+        if (COMPANION.IsMatch(bare)) return "a companion's";
+        if ((q.Flags & 0x101) == 0) return "repeatable";
+        var aliases = new Dictionary<int, GearScan.Alias>();
+        foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
+        if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        foreach (var stage in MoveScan.Fragments(a_file, q.Id))
+            foreach (var f in stage.Value)
+            {
+                var each = Each(f);
+                if (each != null) return "a stage that " + (each == "affinity" ? "touches affinity" : each == "companion" ? "changes companions" : "empties the inventory");
+            }
+        if (q.Objectives == 0) return "no objectives";
+        return "";
+    }
+
+    // Makes the SAFE set (QuestScan.Safe), less DENIED, and returns each quest's verdict, by file and form ID.
+    public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules)
+    {
+        MoveScan.Load(data);
+        QuestScan.Safe = null;
+        var radiants = new HashSet<uint>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*0x([0-9A-Fa-f]+),\\s*\"")
+            .Cast<System.Text.RegularExpressions.Match>().Select(m => Convert.ToUInt32(m.Groups[1].Value, 16) & 0xFFFFFF));
+        var perGame = Table(a_questFilter, "PER_GAME");
+        var denied = Table(a_questFilter, "DENIED");
+        var verdicts = new SortedDictionary<Tuple<int, uint>, string>();
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values)
+            {
+                var key = Tuple.Create(file, q.Id & 0xFFFFFF);
+                var why = Why(q, file, radiants, perGame);
+                verdicts[key] = why == "" && denied.Contains(key) ? "denied (DENIED)" : why;
+            }
+        QuestScan.Safe = new HashSet<Tuple<int, uint>>(verdicts.Where(kv => kv.Value == "").Select(kv => kv.Key));
+        return verdicts;
+    }
+
+    // SAFE's rows, then what was left out and why.
+    public static string Run(string data, string a_questFilter, string a_radiantRules)
+    {
+        var verdicts = Load(data, a_questFilter, a_radiantRules);
+        var sb = new StringBuilder();
+        var byFile = new int[GearScan.MASTERS.Length];
+        int stages = 0;
+        foreach (var kv in verdicts.Where(kv => kv.Value == ""))
+        {
+            var q = MoveScan.perFile[kv.Key.Item1][kv.Key.Item2];
+            byFile[kv.Key.Item1]++;
+            stages += q.Stages;
+            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}", kv.Key.Item1, kv.Key.Item2, q.Edid));
+        }
+        sb.AppendLine(string.Format("# {0} quests ({1}), {2} stages", QuestScan.Safe.Count, string.Join(", ", GearScan.MASTERS.Select((m, i) => m.Esm + " " + byFile[i]).ToArray()), stages));
+        foreach (var kv in verdicts.Where(kv => kv.Value == "denied (DENIED)"))
+            sb.AppendLine(string.Format("# denied: {0} 0x{1:X6} {2}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
+        foreach (var g in verdicts.Values.Where(v => v != "" && !v.StartsWith("denied")).GroupBy(v => v).OrderBy(g => g.Key))
+            sb.AppendLine(string.Format("# left out, {0}: {1}", g.Key, g.Count()));
         return sb.ToString();
     }
 }

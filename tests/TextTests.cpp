@@ -403,6 +403,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.friendly_fire_what", {}, "players can hurt each other (host's setting, from the next session hosted)" },
 		{ "menu.shared_story", {}, "Shared story" },
 		{ "menu.shared_story_what", {}, "anyone's main story and faction progress moves everyone along, achievements included, and goes into each save (host's setting, from the next session hosted)" },
+		{ "menu.safe_quests", {}, "More quests" },
+		{ "menu.safe_quests_what", {}, "with the story shared, the misc quests and Far Harbor's and Nuka-World's own quests that play out the same in every game are shared too (host's setting, from the next session hosted)" },
 		{ "menu.voice_chat", {}, "Voice chat" },
 		{ "menu.voice_chat_what", {}, "hold the voice key to talk to friends" },
 		{ "menu.spoken_lines", {}, "Spoken lines" },

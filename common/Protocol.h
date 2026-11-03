@@ -45,7 +45,9 @@ namespace Protocol
 	// multiplier (kSessionWorld: SessionWorld), and the server keeps every NPC's roll for the session's life and tells a
 	// joiner all of them (kNpcIdentities), and how many times each plugin's NPC died (kRollLives: RollLife), so one a cell
 	// reset brings back is rolled anew. 0.10.1 (56) is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 57;
+	// 58: the host's sQuests in the welcome (SessionRules::quests, a byte after legendary): with "safe" more quests are
+	// shared with the story (src/game/QuestFilter.h SAFE). 0.11.0 (57) is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 58;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -393,6 +395,15 @@ namespace Protocol
 	};
 	inline constexpr std::uint8_t LEGENDARY_RULES = 3;
 
+	// Which quests a session shares besides the side quests (sQuests; src/game/QuestFilter.h): only with the story shared
+	// (sStory = shared), which decides the main story's, the factions' and the dialogue quests'.
+	enum class QuestRule : std::uint8_t
+	{
+		kStory = 0,  // the story's only (the default, what every session shared before)
+		kSafe = 1,   // and QuestFilter::SAFE's: misc quests and quests under no type with objectives that are the same in every game
+	};
+	inline constexpr std::uint8_t QUEST_RULES = 2;
+
 	struct SessionRules
 	{
 		// Downed and revive (src/game/DownRules.h).
@@ -439,6 +450,10 @@ namespace Protocol
 		// Their legendary chance (sLegendaryDifficulty; protocol 57, the byte after npcLevel): whose difficulty's multiplier.
 		LegendaryRule legendary = LegendaryRule::kAverage;
 
+		// Quests (src/game/QuestSync.cpp): with kSafe, QuestFilter::SAFE's too (sQuests; protocol 58, the byte after
+		// legendary).
+		QuestRule quests = QuestRule::kStory;
+
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
 		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
@@ -459,6 +474,9 @@ namespace Protocol
 			}
 			if (static_cast<std::uint8_t>(legendary) >= LEGENDARY_RULES) {
 				out.legendary = LegendaryRule::kAverage;
+			}
+			if (static_cast<std::uint8_t>(quests) >= QUEST_RULES) {
+				out.quests = QuestRule::kStory;
 			}
 			return out;
 		}
@@ -2458,6 +2476,7 @@ namespace Protocol
 		w.U16(rules.downCooldownSeconds);
 		w.U8(static_cast<std::uint8_t>(rules.npcLevel));  // protocol 57
 		w.U8(static_cast<std::uint8_t>(rules.legendary));
+		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
 		return w.Data();
 	}
 
@@ -2491,11 +2510,13 @@ namespace Protocol
 			rules.downCooldownSeconds = r.U16();
 			const auto npcLevel = r.U8();  // protocol 57
 			const auto legendary = r.U8();
+			const auto quests = r.U8();  // protocol 58
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
 			rules.npcLevel = npcLevel < NPC_LEVEL_RULES ? static_cast<NpcLevelRule>(npcLevel) : NpcLevelRule::kAverage;
 			rules.legendary = legendary < LEGENDARY_RULES ? static_cast<LegendaryRule>(legendary) : LegendaryRule::kAverage;
+			rules.quests = quests < QUEST_RULES ? static_cast<QuestRule>(quests) : QuestRule::kStory;
 			msg.rules = rules.Clamped();
 		}
 		return msg;

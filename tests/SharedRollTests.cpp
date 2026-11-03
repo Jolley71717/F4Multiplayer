@@ -582,8 +582,8 @@ TEST("shared rolls: the welcome carries the host's NPC level rule, and the sessi
 	}
 	// Rules this build doesn't know are the defaults.
 	auto odd = Protocol::Encode(Protocol::Welcome{ 3, SESSION, false, true, Protocol::SessionRules{ .npcLevel = Protocol::NpcLevelRule::kOwn, .legendary = Protocol::LegendaryRule::kOwn } });
+	odd[odd.size() - 3] = 9;  // npcLevel, legendary, then quests (protocol 58)
 	odd[odd.size() - 2] = 9;
-	odd.back() = 9;
 	const auto read = Protocol::DecodeWelcome(odd);
 	REQUIRE(read);
 	CHECK(read->rules.npcLevel == Protocol::NpcLevelRule::kAverage);
@@ -615,7 +615,7 @@ TEST("shared rolls: the welcome carries the host's NPC level rule, and the sessi
 	auto shortened = Protocol::Encode(Protocol::SessionWorld{ 23 });
 	shortened.pop_back();
 	CHECK(!Protocol::DecodeSessionWorld(shortened));
-	static_assert(Protocol::VERSION == 57);
+	static_assert(Protocol::VERSION >= 57);  // shared rolls came in 57
 }
 
 TEST("shared rolls: the session file keeps every plugin NPC's roll and the session's level (layout 41), and one without them keeps its older layout")

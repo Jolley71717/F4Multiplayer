@@ -139,3 +139,65 @@ TEST("quest filter: the side quests the story manager starts with targets each g
 		CHECK(local.quest <= 0x00FFFFFF);
 	}
 }
+
+TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of the game's masters, none shared another way (tools/questscan.ps1 -Safe)")
+{
+	const auto key = [](const QuestFilter::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; };
+	for (auto it = std::next(std::begin(QuestFilter::SAFE)); it != std::end(QuestFilter::SAFE); ++it) {
+		CHECK(key(*std::prev(it)) < key(*it));
+	}
+	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
+		CHECK(key(*std::prev(it)) < key(*it));
+	}
+	// 111: Fallout4.esm's 52, Far Harbor's 38, Automatron's 1, Nuka-World's 20.
+	CHECK(std::size(QuestFilter::SAFE) == 111);
+	std::size_t perFile[4]{};
+	for (const auto& safe : QuestFilter::SAFE) {
+		REQUIRE(safe.file <= 3);
+		CHECK(safe.quest <= 0x00FFFFFF);
+		++perFile[safe.file];
+	}
+	CHECK(perFile[0] == 52);
+	CHECK(perFile[1] == 38);
+	CHECK(perFile[2] == 1);
+	CHECK(perFile[3] == 20);
+
+	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
+	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
+	CHECK(QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05
+	CHECK(QuestFilter::IsSafe(3, 0x000806));  // DLC04MS01
+	CHECK(QuestFilter::IsSafe(1, 0x023ACB));  // DLC03FarHarborFF01
+	CHECK(QuestFilter::IsSafe(1, 0x00A991));  // DLC03FarHarborS01
+	CHECK(QuestFilter::IsSafe(0, 0x04F623));  // FFDiamondCity01Misc
+	CHECK(QuestFilter::IsSafe(0, 0x10CB94));  // FFGoodneighbor03
+	CHECK(QuestFilter::IsSafe(0, 0x02074B));  // CZ
+	CHECK(QuestFilter::IsSafe(2, 0x00AEDD));  // DLC01DialogueQuest
+	// A form ID is the quest's only in its own file.
+	CHECK(!QuestFilter::IsSafe(0, 0x000803));
+	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
+	// A place's own quest with no objectives (DN035) is not in this table: one counts as started only by its stages.
+	CHECK(!QuestFilter::IsSafe(0, 0x0EF40C));
+	// The opening, survival mode's, the dog, the Combat Zone's fight and Nuka-World's park bookkeeping: denied.
+	for (const auto& denied : QuestFilter::DENIED) {
+		CHECK(!QuestFilter::IsSafe(denied.file, denied.quest));
+	}
+	CHECK(std::size(QuestFilter::DENIED) == 7);
+	CHECK(!QuestFilter::IsSafe(0, 0x01ED86));  // MQ101
+	CHECK(!QuestFilter::IsSafe(0, 0x06DFAF));  // DogmeatQuest
+	CHECK(!QuestFilter::IsSafe(0, 0x00080E));  // HC_Manager
+	CHECK(!QuestFilter::IsSafe(3, 0x03C5A7));  // DLC04PowerTracker
+	// None that the game's targets make each player's own, no radiant, no finale (those are shared their own way).
+	for (const auto& local : QuestFilter::PER_GAME) {
+		CHECK(!QuestFilter::IsSafe(local.file, local.quest));
+	}
+	for (const auto& radiant : RadiantRules::RADIANTS) {
+		CHECK(!QuestFilter::IsSafe(0, radiant.formId & 0x00FFFFFF));
+	}
+	for (const auto finale : QuestFilter::STORY_FINALES) {
+		CHECK(!QuestFilter::IsSafe(0, finale));
+	}
+	// The story's own quests are shared by their type, not by this table.
+	CHECK(!QuestFilter::IsSafe(0, MQ104));
+	CHECK(!QuestFilter::IsSafe(0, MS17));
+	CHECK(!QuestFilter::IsSafe(3, 0x000801));  // DLC04MQ01
+}

@@ -44,6 +44,11 @@ namespace Config
 		// player plays their own ("own"; side quests are shared either way).
 		bool sharedStory = true;
 
+		// When hosting, with the story shared: the story's quests only ("story", the default), or also every quest a rule
+		// finds the same in every game ("safe": misc quests, Far Harbor's and Nuka-World's quests under no type;
+		// src/game/QuestFilter.h SAFE). Sent to everyone in the welcome (Protocol::SessionRules::quests).
+		bool safeQuests = false;
+
 		// When hosting: plugins that may differ between players (comma-separated file names).
 		std::vector<std::string> ignoredPlugins;
 

@@ -335,3 +335,49 @@ TEST("stage rules: the stages that set another quest's are sorted, once each, an
 	CHECK(!StageRules::SetsAnother(File::kFallout4, 0x01E64E, 100));  // stops his search scene, sets nothing
 	CHECK(!StageRules::SetsAnother(File::kCoast, 0x01E64E, 50));
 }
+
+TEST("stage rules: the stages of the quests sQuests = safe shares that move the player or take from them (tools/questscan.ps1 -Safe -Rules)")
+{
+	using namespace StageRules;
+	// Nuka-World's main line under no type: DLC04MQ03's flag poles and DLC04MQ05's start, MoveTo each.
+	for (std::uint16_t stage = 1; stage <= 5; ++stage) {
+		CHECK(FlagsOf(0x000803, stage, File::kNukaWorld) == kMoves);
+	}
+	CHECK(FlagsOf(0x000805, 1, File::kNukaWorld) == kMoves);
+	CHECK(FlagsOf(0x000805, 3, File::kNukaWorld) == kMoves);
+	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
+	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
+	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
+	// Fallout4.esm's: the Combat Zone's MoveTo, Diamond City's caps, the Prydwen's gantry.
+	CHECK(FlagsOf(0x02074B, 1) == kMoves);   // CZ
+	CHECK(FlagsOf(0x14191C, 10) == kPays);   // FFDiamondCity02
+	CHECK(FlagsOf(0x145722, 2) == kMoves);   // BoSM04Postquest
+	// Far Harbor's treasure dig fades the screen out.
+	CHECK(FlagsOf(0x04D2F5, 200, File::kCoast) == kMoves);  // DLC03PostQuestTreasureDig
+	// A quest's own item taken is left alone (only its script's wait kept): the fog condenser module.
+	const auto module = Find(0x023ACA, 210, File::kCoast);  // DLC03FarHarborFF02
+	REQUIRE(module);
+	CHECK(module->flags == 0);
+	CHECK(module->wait == 50);
+	CHECK(!Find(0x10CB94, 100));                   // FFGoodneighbor03: its own item, no wait
+	CHECK(!Find(0x02039A, 300, File::kCoast));     // DLC03FarHarborFF03c
+	// Their stage 0s that move the player are the developers' quickstarts, none the quest's start-up stage: left out.
+	CHECK(!Find(0x000803, 0, File::kNukaWorld));  // DLC04MQ03
+	CHECK(!Find(0x000805, 0, File::kNukaWorld));  // DLC04MQ05
+	CHECK(!Find(0x0254B7, 0));                    // DN154
+	CHECK(!Find(0x145722, 0));                    // BoSM04Postquest
+
+	// A far friend's move is skipped; a payment is never made from a friend's game.
+	const auto pole = Find(0x000803, 1, File::kNukaWorld);
+	CHECK(Judge(pole, { .sharedStory = true, .live = true, .nearFriend = false }) == Verdict::kSkip);
+	CHECK(Judge(pole, { .sharedStory = true, .live = false }) == Verdict::kSkip);
+	CHECK(Judge(pole, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);
+	CHECK(Judge(Find(0x000806, 75, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+
+	// The ones that set another shared quest's stage (-Safe -SetsOther): DLC04MQ03 655, DLC04MS01's, DLC04GZMainQuest 1000.
+	CHECK(SetsAnother(File::kNukaWorld, 0x000803, 655));
+	CHECK(SetsAnother(File::kNukaWorld, 0x000806, 75));
+	CHECK(SetsAnother(File::kNukaWorld, 0x01E34A, 1000));
+	CHECK(SetsAnother(File::kCoast, 0x023ACA, 400));  // DLC03FarHarborFF02
+	CHECK(SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ
+}
