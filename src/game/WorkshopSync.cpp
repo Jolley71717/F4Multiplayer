@@ -2006,26 +2006,101 @@ namespace WorkshopSync
 			}
 		}
 
-		// A friend's piece shown powered or not, as the game's own powering shows one (Workshop's power handler, 2195089):
-		// the lights in its 3D switched (SwitchLight, which the handler calls for every piece, not only a LIGH: a
-		// construction light is an activator with a light in its model) and its graph told ("Powered", "Unpowered": a
-		// machine's running). Not through the handler itself: that fires the power events, and the scripts on a copy (a
-		// workshop object's, a radio beacon's) would act on them as if it were ours. False while it has no 3D.
-		bool ShowPowered(RE::TESObjectREFR& a_copy, bool a_on)
+		std::uint32_t graphRefused = 0;  // shows a copy's loaded graph didn't take (a try spent)
+		std::uint32_t graphWaits = 0;    // looks at a copy whose graph wasn't loaded yet (waited for, no try spent)
+		std::uint32_t showsLogged = 0;   // shows written to the log (the first SHOWS_LOGGED of a session)
+		constexpr std::uint32_t SHOWS_LOGGED = 32;
+
+		bool IsLightBase(const RE::TESObjectREFR& a_ref)
+		{
+			const auto base = a_ref.GetObjectReference();
+			return base && base->GetFormType() == RE::ENUM_FORM_ID::kLIGH;
+		}
+
+		// Whether the copy's model names an animation graph (a NIF's BSBehaviorGraphExtraData, "BGED"): the game loads
+		// that graph after the 3D, on its own.
+		bool NamesGraph(const RE::NiAVObject& a_model)
+		{
+			static const RE::BSFixedString bged{ "BGED" };
+			return a_model.HasExtraData(bged);
+		}
+
+		// The copy's loaded graph (its manager's first), or 0 while there is none.
+		std::uintptr_t LoadedGraph(const RE::TESObjectREFR& a_ref)
+		{
+			RE::BSTSmartPointer<RE::BSAnimationGraphManager> manager;
+			if (!a_ref.GetAnimationGraphManagerImpl(manager) || !manager || manager->graph.size() == 0) {
+				return 0;
+			}
+			return reinterpret_cast<std::uintptr_t>(manager->graph[0].get());
+		}
+
+		// A friend's piece shown powered or not, as the game's own powering shows one (Workshop's power handler, 2195089),
+		// without the handler itself: that fires the power events, and the scripts on a copy (a workshop object's, a radio
+		// beacon's) would act on them as if it were ours.
+		//
+		// A light (LIGH: the light bulb, the industrial light) is lit by switching its light (SwitchLight, which the handler
+		// calls and which does nothing for any other form). Every other piece, the activator lights among them (the
+		// construction light, the light box, the high-tech lights, the strobe), shows its power through its animation graph,
+		// told "Powered" or "Unpowered". False while it has no 3D, or when its graph is loaded and doesn't take the event
+		// (Mirror tries again); a piece with no graph and no light has nothing more to show. A graph never told "Powered"
+		// (every new graph starts unpowered) has no Unpowered to take: refusing it, it is dark already, as asked. One we
+		// told "Powered" that refuses it (still turning on, say) is tried again like any refusal.
+		enum class Took
+		{
+			kNoModel,
+			kLight,     // a light's light switched
+			kGraph,     // the graph took the event
+			kRefused,   // the graph is loaded and didn't take it
+			kNothing,   // no light, no graph: nothing to show it on
+			kDark,      // a graph never told Powered refused Unpowered: dark already
+		};
+
+		// Each copy's graph that took "Powered" from us (by the copy's form ID): what tells a lit graph refusing
+		// "Unpowered" from one that was never lit. Emptied with the copies (Reset).
+		std::unordered_map<std::uint32_t, std::uintptr_t> poweredGraphs;
+
+		Took ShowPoweredHow(RE::TESObjectREFR& a_copy, bool a_on)
 		{
 			static const RE::BSFixedString        powered{ "Powered" };
 			static const RE::BSFixedString        unpowered{ "Unpowered" };
 			using switch_t = void (*)(RE::TESObjectREFR&, bool);
 			static REL::Relocation<switch_t>      switchLight{ SWITCH_LIGHT };
 			if (!a_copy.Get3D()) {
-				return false;
+				return Took::kNoModel;
 			}
-			switchLight(a_copy, !a_on);
-			RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
-			if (a_copy.GetAnimationGraphManagerImpl(graph) && graph) {
-				a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered);
+			const bool light = IsLightBase(a_copy);
+			if (light) {
+				switchLight(a_copy, !a_on);
 			}
-			return true;
+			const auto graph = LoadedGraph(a_copy);
+			if (graph == 0) {
+				return light ? Took::kLight : Took::kNothing;
+			}
+			const auto id = a_copy.GetFormID();
+			if (a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered)) {
+				if (a_on) {
+					poweredGraphs[id] = graph;
+				} else {
+					poweredGraphs.erase(id);
+				}
+				return Took::kGraph;
+			}
+			if (!a_on) {
+				const auto it = poweredGraphs.find(id);
+				if (it == poweredGraphs.end() || it->second != graph) {
+					poweredGraphs.erase(id);
+					return light ? Took::kLight : Took::kDark;
+				}
+			}
+			++graphRefused;
+			return light ? Took::kLight : Took::kRefused;
+		}
+
+		bool ShowPowered(RE::TESObjectREFR& a_copy, bool a_on)
+		{
+			const auto took = ShowPoweredHow(a_copy, a_on);
+			return took != Took::kNoModel && took != Took::kRefused;
 		}
 
 		struct MirrorEngine
@@ -2040,19 +2115,40 @@ namespace WorkshopSync
 				return ref;
 			}
 
-			// Not drawn while its 3D isn't in the scene yet (no parent node): nothing of it is seen, and Mirror waits for it
-			// without spending a try, however long its cell takes to come in.
+			// Not drawn while its 3D isn't in the scene yet (no parent node), nor while the graph its model names isn't
+			// loaded yet (a light's isn't waited for: its light is what's switched): nothing it is shown would hold, and
+			// Mirror waits for it without spending a try, however long its cell or its graph takes to come in. Drawn anew
+			// when its graph is made anew, too: a new graph starts unpowered (WorkshopPower::Drawing).
 			std::uintptr_t Drawn(const WorkshopPower::Key& a_key)
 			{
 				const auto ref = CopyOf(a_key);
 				const auto model = ref ? ref->Get3D() : nullptr;
-				return model && model->parent ? reinterpret_cast<std::uintptr_t>(model) : 0;
+				if (!model) {
+					return 0;
+				}
+				const bool namesGraph = !IsLightBase(*ref) && NamesGraph(*model);
+				const auto graph = LoadedGraph(*ref);
+				if (model->parent && namesGraph && graph == 0) {
+					++graphWaits;
+				}
+				return WorkshopPower::Drawing(reinterpret_cast<std::uintptr_t>(model), model->parent != nullptr, namesGraph, graph);
 			}
 
 			bool Show(const WorkshopPower::Key& a_key, bool a_on)
 			{
 				const auto ref = CopyOf(a_key);
-				if (!ref || !ShowPowered(*ref, a_on)) {
+				if (!ref) {
+					return false;
+				}
+				const auto took = ShowPoweredHow(*ref, a_on);
+				if (showsLogged < SHOWS_LOGGED && took != Took::kNoModel) {
+					++showsLogged;
+					static constexpr std::array<const char*, 6> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph",
+						"graph dark already (never lit)" };
+					REX::INFO("WorkshopSync: friend's piece {:08X} (player {} piece {:08X}) shown {}: {}", ref->GetFormID(), a_key.first, a_key.second, a_on ? "on" : "off",
+						how[static_cast<std::size_t>(took)]);
+				}
+				if (took == Took::kNoModel || took == Took::kRefused) {
 					return false;
 				}
 				++powerShown;
@@ -2299,6 +2395,8 @@ namespace WorkshopSync
 		WorkshopApply::RemoveAll(world, copies, twins, inbox);
 		ForgetAllCopies();
 		ClearWalk();
+		showsLogged = 0;  // the next session logs its first shows too
+		poweredGraphs.clear();
 		scrapsDeferred.clear();
 		unbuiltWires.clear();
 		{
@@ -2338,6 +2436,7 @@ namespace WorkshopSync
 		// found or made after the load. The workbenches are looked for again.
 		reporter.SendAll();
 		mirror.Invalidate();
+		poweredGraphs.clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
 	}
@@ -2351,6 +2450,7 @@ namespace WorkshopSync
 		unbuiltWires.clear();
 		reporter.Clear();
 		mirror.Invalidate();
+		poweredGraphs.clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
 		ForgetAllCopies();
@@ -2453,9 +2553,9 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} graphRefused={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), graphRefused, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeGrids(RE::TESObjectREFR* a_bench)
@@ -2545,6 +2645,14 @@ namespace WorkshopSync
 			if (copy.ref.get().get() == a_ref) {
 				const auto wanted = mirror.Wanted(key);
 				out += std::format(" builder={} theirRef={:08X} theirPower={}", key.first, key.second, wanted ? (*wanted ? "on" : "off") : "unknown");
+				// What shows its power here: its graph (loaded, still loading, or none named) and, for a light, whether
+				// its light is lit (the game gives a lit light an ExtraLight).
+				const auto model = a_ref->Get3D();
+				const bool namesGraph = model && NamesGraph(*model);
+				out += std::format(" graph={}", LoadedGraph(*a_ref) != 0 ? "loaded" : namesGraph ? "loading" : "none");
+				if (IsLightBase(*a_ref)) {
+					out += std::format(" lit={}", a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kLight) ? "yes" : "no");
+				}
 				break;
 			}
 		}

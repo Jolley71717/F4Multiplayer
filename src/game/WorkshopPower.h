@@ -288,19 +288,43 @@ namespace WorkshopPower
 	// with no end.
 	inline constexpr std::uint8_t MAX_REDRAWS = 6;
 	inline constexpr auto         REDRAW_WINDOW = 60s;
-	// A new 3D is shown once more when it has been there this long. Suspected, not yet seen on the rig: the game's own
-	// setup of a 3D just made (its cell attaching, its graph loading) runs after the first show and leaves a piece on no
-	// grid dark, so a friend who came to a camp already lit saw their copies stay dark. A 3D made anew sooner than this
-	// is never shown twice.
+	// A new drawing is shown once more when it has been there this long: the game's own setup of a 3D just made (its
+	// cell attaching) may still run after the first show. A graph loading after the 3D is waited for (Drawing), not left
+	// to this one try. A 3D made anew sooner than this is never shown twice.
 	inline constexpr auto SETTLE = 2s;
 	// A copy shown powered is shown unpowered while a save is written (Mirror::Hush) and powered again once it is over
 	// (SaveDone), or this long after, should no message say the save is over.
 	inline constexpr auto HUSH_LIMIT = 5s;
 
-	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once its 3D is
-	// there and the game took it (a graph not loaded yet doesn't), once more when that 3D has settled (SETTLE), and again
-	// whenever it is drawn anew (it came back into a loaded cell, or was made again): a new 3D starts as the model has it,
-	// unpowered.
+	// What a copy is drawn as, for Mirror (the Engine's Drawn): a value that changes whenever the game makes anew what
+	// shows its power, and 0 while there is nothing to show it on yet.
+	//
+	// Only a light (LIGH) is lit by switching its light (TESObjectLIGH::SwitchLight does nothing for any other form:
+	// 1.11.240 returns at once unless the base is a LIGH). Every other workshop light is an activator whose light, glow and
+	// motion are its animation graph's (the game's generic workshop graphs, "Powered" / "Unpowered"): the construction
+	// light, the light box, the high-tech lights, the strobe, the fan light, the mirror ball. The game loads that graph
+	// after the 3D, on its own, and drops an event sent before it is there. When a graph is loaded the game shows a powered
+	// workshop item of its own as powered (a graph load's init, 1.11.240 +529120), but does nothing for a reference that
+	// isn't a workshop item, such as our copy: a graph made anew starts unpowered whatever the copy was shown before.
+	//
+	// So a copy whose model names a graph (a_namesGraph) is drawn only once the graph is loaded (a_graph), and is drawn
+	// anew whenever the graph is (a_graph changes) as well as the model (a_model).
+	[[nodiscard]] inline std::uintptr_t Drawing(std::uintptr_t a_model, bool a_inScene, bool a_namesGraph, std::uintptr_t a_graph)
+	{
+		if (a_model == 0 || !a_inScene || (a_namesGraph && a_graph == 0)) {
+			return 0;
+		}
+		if (a_graph == 0) {
+			return a_model;
+		}
+		const std::uintptr_t mixed = a_model ^ (a_graph * static_cast<std::uintptr_t>(0x9E3779B97F4A7C15ull) + (a_graph >> 7));
+		return mixed != 0 ? mixed : 1;
+	}
+
+	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once it is drawn
+	// (its 3D there and the graph it names loaded: Drawing) and the game took it, once more when that drawing has settled
+	// (SETTLE), and again whenever it is drawn anew (it came back into a loaded cell, was made again, or got a new graph):
+	// a new 3D or graph starts as the model has it, unpowered.
 	class Mirror
 	{
 	public:
@@ -400,9 +424,11 @@ namespace WorkshopPower
 
 		// Shows the copies that don't show what their builder's game says yet; how many it showed. The Engine gives:
 		//
-		//   std::uintptr_t Drawn(const Key&)            the copy's 3D (any value that changes when it is drawn anew); 0
-		//                                               if there's no copy here, or it isn't drawn
-		//   bool           Show(const Key&, bool on)    false if the game didn't take it (try again)
+		//   std::uintptr_t Drawn(const Key&)            what the copy is drawn as (Drawing: changes when its 3D or its
+		//                                               graph is made anew); 0 if there's no copy here, it isn't drawn, or
+		//                                               its graph isn't loaded yet (waited for, no try spent)
+		//   bool           Show(const Key&, bool on)    false if the game didn't take it (try again): a light's light
+		//                                               switched, or the graph took the event
 		template <class Engine>
 		std::size_t Refresh(Engine& a_engine, Clock::time_point a_now)
 		{

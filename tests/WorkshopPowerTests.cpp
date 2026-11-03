@@ -706,3 +706,102 @@ TEST("workshop power: a power message names only pieces a game made, and each st
 	REQUIRE(capped.has_value());
 	CHECK(capped->entries.size() == MAX_POWER_ENTRIES);
 }
+
+TEST("workshop power: what a copy is drawn as waits for the graph its model names, and changes when the graph is made anew")
+{
+	CHECK(Drawing(0, true, false, 0) == 0);           // no 3D
+	CHECK(Drawing(0x1000, false, false, 0) == 0);     // not in the scene yet
+	CHECK(Drawing(0x1000, true, false, 0) == 0x1000);  // no graph named: its 3D
+	CHECK(Drawing(0x1000, true, true, 0) == 0);       // a graph named, not loaded yet
+	CHECK(Drawing(0x1000, false, true, 0x2000) == 0);
+	const auto first = Drawing(0x1000, true, true, 0x2000);
+	CHECK(first != 0);
+	CHECK(first != 0x1000);                           // the graph counts
+	CHECK(Drawing(0x1000, true, true, 0x2000) == first);  // the same 3D and graph: the same drawing
+	CHECK(Drawing(0x1000, true, true, 0x3000) != first);  // a graph made anew under the same 3D
+	CHECK(Drawing(0x5000, true, true, 0x2000) != first);  // a 3D made anew with the same graph
+	CHECK(Drawing(0x1000, true, false, 0x2000) == first);  // a loaded graph counts whether named or not
+	for (std::uintptr_t model = 0x10; model < 0x4000; model += 0x10) {
+		CHECK(Drawing(model, true, true, model) != 0);  // never 0 once drawn
+	}
+}
+
+namespace
+{
+	// A friend's activator light as the game has it: the 3D comes first, its graph some time later, and the graph is
+	// what's lit. An event sent while there is no graph is dropped; a graph made anew starts unpowered.
+	struct ActivatorLight
+	{
+		std::uintptr_t model = 0;
+		std::uintptr_t graph = 0;
+		bool           lit = false;  // what its graph shows
+		std::size_t    looksWaiting = 0;
+
+		void LoadGraph(std::uintptr_t a_graph)
+		{
+			graph = a_graph;
+			lit = false;
+		}
+
+		std::uintptr_t Drawn(const Key&)
+		{
+			if (model != 0 && graph == 0) {
+				++looksWaiting;
+			}
+			return Drawing(model, model != 0, true, graph);
+		}
+
+		bool Show(const Key&, bool a_on)
+		{
+			if (graph == 0) {
+				return false;
+			}
+			lit = a_on;
+			return true;
+		}
+	};
+}
+
+TEST("workshop power: an activator light is lit once its graph is loaded, however long that takes, and again when its graph is made anew")
+{
+	Mirror         mirror;
+	ActivatorLight game;
+	auto           t = Clock::now();
+	const auto     step = [&] { t += REFRESH; return mirror.Refresh(game, t); };
+	mirror.Set(BUILDER, { LIGHT, true });  // powered as its copy appears (built in a lit camp, or a friend comes to one)
+	game.model = 0x1000;
+	for (int i = 0; i < 4 * MAX_TRIES; ++i) {  // a camp loading many pieces: the graph takes far longer than SETTLE
+		CHECK(step() == 0);
+	}
+	CHECK(game.looksWaiting == 4u * MAX_TRIES);
+	CHECK(mirror.GivenUp() == 0);  // waiting spends no try
+	CHECK(!game.lit);
+	game.LoadGraph(0x2000);
+	CHECK(step() == 1);
+	CHECK(game.lit);
+	CHECK(mirror.Shown() == 1);
+	game.LoadGraph(0x3000);  // the game makes its graph anew under the same 3D: it starts unpowered
+	CHECK(!game.lit);
+	CHECK(step() == 1);
+	CHECK(game.lit);
+	mirror.Set(BUILDER, { LIGHT, false });
+	CHECK(step() == 1);
+	CHECK(!game.lit);
+}
+
+TEST("workshop power: a light whose graph refuses the event is tried again, up to MAX_TRIES")
+{
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::now();
+	const auto step = [&] { t += REFRESH; return mirror.Refresh(game, t); };
+	mirror.Set(BUILDER, { LIGHT, true });
+	game.drawn[{ BUILDER, LIGHT }] = Drawing(0x1000, true, true, 0x2000);
+	game.graphReady = false;  // loaded, but not taking events yet
+	CHECK(step() == 0);
+	CHECK(step() == 0);
+	game.graphReady = true;
+	CHECK(step() == 1);
+	CHECK(game.shown.at({ BUILDER, LIGHT }));
+	CHECK(mirror.GivenUp() == 0);
+}

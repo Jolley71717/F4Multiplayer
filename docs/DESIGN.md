@@ -2363,16 +2363,24 @@ pieces, and both games show the result.
   copies), polls `Workshop::IsPowered` every 500 ms and sends what changed (`kReportWorkshopPower`, 255 entries a
   packet). It sends all of them when someone joins, after a load, and every 30 s (a late or lost packet heals).
 - The server relays it as the sender's (`kWorkshopPower`, the event budget, sender stamped) and keeps nothing.
-- A friend's game keeps what each builder says per (builder, piece) and shows it on the copy: the graph event the
-  game's own powering sends (`Powered` / `Unpowered`: a lamp's glow, a fan turning), and the lights in its 3D
-  switched (`TESObjectLIGH::SwitchLight`, which the game calls for every piece: a construction light is an activator
-  with a light in its model). Shown again whenever the copy is drawn anew (its cell loaded
-  again, the copy made again), tried 8 times if the game doesn't take it (a 3D not in the scene yet is waited for),
-  and shown once more when that 3D has lasted 2 s, counted with the redraws (6 a minute). Suspected, not yet seen on
-  the rig: the game's own setup of a new 3D runs after the first show and leaves a copy dark, which is why a friend's
-  lights stayed dark for whoever came to a camp already lit. Not through the game's own power
-  handler: that fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio
-  beacon's) would act on them as if the piece were ours.
+- A friend's game keeps what each builder says per (builder, piece) and shows it on the copy, as the game's own
+  powering does: the graph event (`Powered` / `Unpowered`: a lamp's glow, a fan turning, a machine running) and, for
+  a light (LIGH), its light switched (`TESObjectLIGH::SwitchLight`, which returns at once for any other form in
+  1.11.240). Only two of the base game's light recipes are LIGH (the light bulb, the industrial light); the others
+  (the construction light, the light box, the high-tech lights, the strobe, the fan light, the mirror ball) are
+  activators lit by their graph alone (the generic workshop graphs). The game loads a copy's graph after its 3D, on
+  its own, drops an event sent before then, and, once loaded, shows only its own powered workshop items as powered
+  (a graph load's init, +529120): a copy's new graph starts unpowered. So a copy whose model names a graph (the
+  NIF's `BGED`) isn't drawn until the graph is loaded (`WorkshopPower::Drawing`; waited for, no try spent), and a
+  graph made anew counts as the copy drawn anew. Shown again whenever the copy is drawn anew (its cell loaded again,
+  the copy made again, its graph made again), tried 8 times if the game doesn't take it (a loaded graph that refuses
+  the event), and shown once more when that drawing has lasted 2 s, counted with the redraws (6 a minute). Through
+  0.11.0 the show counted as done whenever the copy had a 3D, so a light already powered as its copy appeared (built
+  in a lit camp, wired at once, a friend coming to a camp already lit) was shown before its graph was there and
+  stayed dark. `graphWaits=` and `graphRefused=` in `wspower`; the first 32 shows of a session are logged
+  ("friend's piece ... shown on: graph took" / "light switched"). Not through the game's own power handler: that
+  fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio beacon's) would act
+  on them as if the piece were ours.
 
 **A save never keeps a copy running.** A copy's graph keeps what it was told, and a save writes it: a friend's generator
 shown "Powered" came back from the save running, with no session to tell it otherwise, and a copy can't be scrapped (the block
@@ -2402,7 +2410,7 @@ one workbench, the pieces too), `wspower` (counters), `wspower block on|off` (co
 repair), `wspower audit`, `wspower copies` (each copy and whose piece it is), `wspower show <ref> on|off`,
 `wswire <from> <to>` (a wire strung as the game strings one, for the rig), `net leave` / `net stophost` (end the
 session as a player would), `wsinfo <ref>` (now with `blocked=`, `powerPiece=`, `powered=`, `owner=` (a crop's or
-post's assigned settler shows as its owner, the settler's base NPC), and for a copy `builder=`, `theirRef=` and
+post's assigned settler shows as its owner, the settler's base NPC), and for a copy `builder=`, `theirRef=`, `graph=` (loaded, loading or none), `lit=` (a light's) and
 `theirPower=`), and `scriptvars <ref> <Script> <name...>` (a bound script's state and its properties' or variables'
 values, read without calling into the VM: `scriptvars <crop> WorkshopObjectScript workshopID` is -1 until the
 workshop's reset has run, as it does when the player enters the settlement; until then the game says "This resource is
