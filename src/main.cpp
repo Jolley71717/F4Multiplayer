@@ -506,7 +506,8 @@ namespace
 						step("the faces", [] { Face::ForgetCopies(); });  // the load sets runtime form IDs back: a mark could name another NPC
 						step("the inert shots", [] { InertShots::BeforeLoad(); });  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
 						step("the strays", [] { SaveGuard::BeforeLoad(); });  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
-						step("the frame copies", [] { RemotePlayers::BeforeLoad(); });  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
+						step("the frame copies", [] { RemotePlayers::BeforeLoad(); });
+						step("the lit copies", [] { WorkshopSync::BeforeLoad(); });  // before the load's threads make its lights (LightPoweredHook)  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
 					},
 					"load");
 			} catch (const std::exception& e) {

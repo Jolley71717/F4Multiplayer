@@ -63,6 +63,10 @@ namespace WorkshopSync
 	// once they may.
 	void Sweep();
 
+	// A save is about to load: the lights of the copies we showed powered are forgotten before the load's threads make the
+	// loaded world's lights (an old copy's ID may name a light of ours there).
+	void BeforeLoad();
+
 	// A save was loaded: the copies made before it are let go (the session sends its building again),
 	// and its cells are walked again for scrapped junk.
 	void OnGameLoaded();

@@ -73,9 +73,13 @@ namespace WorkshopSync
 		std::uint32_t refound = 0;        // copies found again under their ID, their handle naming nothing (Live)
 		std::uint32_t refoundLogged = 0;  // ... said in the log (the first few of a session)
 
+		bool IsWorkshopObject(const RE::TESObjectREFR* a_ref);
+		void ForgetGraphTold(std::uint32_t a_copy);
+
 		// The copy's reference: through its handle, or, once that names nothing (its cell unloaded), the reference under its
-		// ID while that is the copy (WorkshopApply::SameCopy), whose handle is kept from then on. None while its cell isn't
-		// loaded.
+		// ID while that is the copy (WorkshopApply::SameCopy) and no workshop object of ours (an ID something else freed
+		// and our own build took since), whose handle is kept from then on. None while its cell isn't loaded. Its graph is
+		// made anew with its 3D: what we told the old one is forgotten.
 		RE::NiPointer<RE::TESObjectREFR> Live(const Copy& a_copy)
 		{
 			if (auto ref = a_copy.ref.get()) {
@@ -87,11 +91,12 @@ namespace WorkshopSync
 			}
 			RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_copy.id) };
 			const auto                       base = ref ? ref->GetObjectReference() : nullptr;
-			if (!ref || !WorkshopApply::SameCopy(a_copy.id, base ? base->GetFormID() : 0, a_copy.base, ref->IsDeleted())) {
+			if (!ref || !WorkshopApply::SameCopy(a_copy.id, base ? base->GetFormID() : 0, a_copy.base, ref->IsDeleted()) || IsWorkshopObject(ref.get())) {
 				a_copy.missedAt = now;
 				return {};
 			}
 			a_copy.ref = ref->GetHandle();
+			ForgetGraphTold(a_copy.id);
 			++refound;
 			if (refoundLogged < 16) {
 				++refoundLogged;
@@ -2175,6 +2180,8 @@ namespace WorkshopSync
 		// with it.
 		WorkshopPower::GraphsTold graphsTold;
 
+		void ForgetGraphTold(std::uint32_t a_copy) { graphsTold.Forget(a_copy); }
+
 		void SetLit(std::uint32_t a_copy, bool a_lit)
 		{
 			std::scoped_lock l{ litLock };
@@ -2603,6 +2610,12 @@ namespace WorkshopSync
 			return;  // in the world, not between worlds (a load lets the graveyard go)
 		}
 		SweepGraveyard(Clock::now());
+	}
+
+	void BeforeLoad()
+	{
+		std::scoped_lock l{ litLock };
+		litCopies.clear();
 	}
 
 	void OnGameLoaded()
