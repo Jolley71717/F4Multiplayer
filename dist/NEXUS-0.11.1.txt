@@ -1,6 +1,6 @@
 Patch for 0.11.0: same protocol, plays with 0.11.0 (best if everyone has it)
 A friend's NPC lines show in the game's subtitle area, timed with the speech (General Subtitles on)
-A friendly NPC goes to the game of a friend standing next to it when the other player is well off
+A friendly NPC goes to the game of a friend standing next to it when the other player is well away
 Crafting at a station a friend built counts your settlement's workbench junk
 A friend's workshop lights light once powered (construction light, light box, strobe and more), and a friend's bulb casts light
 A friend's built pieces stay tracked when their cell unloads and loads again
