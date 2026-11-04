@@ -829,7 +829,7 @@ namespace Party
 			for (const auto action : Hotkeys::Poll()) {
 				// The menu is how you get into a session, so it doesn't need one.
 				if (action == Hotkeys::Action::kMenu) {
-					Menu::Open();
+					Menu::OpenFromKey();
 					continue;
 				}
 				if (localId == 0) {

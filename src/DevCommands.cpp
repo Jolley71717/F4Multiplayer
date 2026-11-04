@@ -24,6 +24,7 @@
 #include "game/FrameClock.h"
 #include "game/GameStop.h"
 #include "game/MapMarkerLayout.h"
+#include "game/MainMenuEntry.h"
 #include "game/Menu.h"
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
@@ -3343,7 +3344,8 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | friends | refresh | selftest send|recv]";
 		}
 
-		// mpmenu [open | press <buttonIndex>]: the multiplayer menu (F1), driven without the keyboard.
+		// mpmenu [open | panel | scrolltest | press <buttonIndex>]: the multiplayer menu (F1, or panel: the Flash one), driven without the
+		// keyboard. In the panel, button 0 is the page's way back and the rows are 1 and up.
 		std::string MpMenu(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -3351,13 +3353,30 @@ namespace DevCommands
 				::Menu::Open();
 				return "opened";
 			}
+			if (!args.empty() && args[0] == "scrolltest") {
+				MainMenuEntry::OpenPanel();
+				::Menu::ScrollTest();
+				return "opened";
+			}
+			if (!args.empty() && args[0] == "panel") {
+				MainMenuEntry::OpenPanel();
+				return "opened";
+			}
+			if (args.size() >= 3 && args[0] == "mouse") {
+				float x = 0.0f;
+				float y = 0.0f;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), x);
+				std::from_chars(args[2].data(), args[2].data() + args[2].size(), y);
+				MainMenuEntry::PanelMouse(x, y, args.size() > 3 && args[3] == "click");
+				return "passed";
+			}
 			if (args.size() == 2 && args[0] == "press") {
 				int index = -1;
 				std::from_chars(args[1].data(), args[1].data() + args[1].size(), index);
-				if (index < 0 || index > 3) {
-					return "error: usage: mpmenu press <0-3>";
+				if (index < 0 || index > 255) {
+					return "error: usage: mpmenu press <0-255>";
 				}
-				::Menu::Press(static_cast<std::uint8_t>(index));
+				::Menu::Press(static_cast<std::uint32_t>(index));
 				return "pressed";
 			}
 			return ::Menu::Describe();
