@@ -660,6 +660,17 @@ namespace FormTranslate
 				return true;
 			}, plain);
 			break;
+		case MessageType::kReportBenchLinks:
+		case MessageType::kBenchLinks:
+			// The workbench, or not at all; a linked one the other side lacks is left out (its game can't view it).
+			Apply<BenchLinks>(a_packet, ctx, DecodeBenchLinks, [&](BenchLinks& m) {
+				if (!ctx.Key(m.bench)) {
+					return false;
+				}
+				ctx.Ids(m.links);
+				return true;
+			}, typed);
+			break;
 		case MessageType::kStorageRefused:
 			// Our own move, so both are ours; the item 0 of a closed view stays 0.
 			Apply<StorageRefusal>(a_packet, ctx, DecodeStorageRefusal, [&](StorageRefusal& m) { return ctx.Key(m.container) && ctx.Key(m.item); }, plain);

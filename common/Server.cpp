@@ -543,6 +543,9 @@ void Server::Run()
 	std::size_t                                           storageRefused = 0;  // friends' moves at storage refused this run (for the log)
 	std::size_t                                           storageUnanswered = 0;  // of those, past the refusals' budget: not answered (their game undoes them in time)
 	std::size_t                                           storageUndone = 0;  // friends' moves the true copy undid or did again for their loaded worlds (for the log)
+	// The workbenches each kept workbench's supply lines link to in its keeper's world (Protocol::BenchLinks), the latest its
+	// keeper sent. Not saved: the host's game sends them again as it lists its workbenches.
+	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> benchLinks;
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -779,6 +782,7 @@ void Server::Run()
 		workshop.Clear();
 		drops.Clear();
 		storage.Clear();
+		benchLinks.clear();
 		questStages.clear();
 		questStageKeys.clear();
 		worldTime.reset();
@@ -1246,6 +1250,19 @@ void Server::Run()
 		}
 	};
 
+	// The supply lines of the workbenches a player's game keeps are forgotten as its world is (it loaded, said hello again
+	// or left: StorageBook::Stale), and everyone is told; its game tells them again from its world (Storage's ReportSupply).
+	const auto forgetLinks = [&](const Player& a_player) {
+		for (auto it = benchLinks.begin(); it != benchLinks.end();) {
+			if (storage.KeeperOf(it->first) != a_player.id) {
+				++it;
+				continue;
+			}
+			broadcast(Protocol::Encode(Protocol::BenchLinks{ it->first, {} }, Protocol::MessageType::kBenchLinks), true, a_player.key);
+			it = benchLinks.erase(it);
+		}
+	};
+
 	// A player's own views of storage others keep close (their world loaded: it settles before they view again).
 	const auto closeOwnViews = [&](const Player& a_player) {
 		for (const auto container : storage.CloseViews(a_player.id)) {
@@ -1396,6 +1413,7 @@ void Server::Run()
 		}
 		objectMovers.Leave(a_player.id);
 		// They view no storage now, and what their game keeps closes to friends until it lists it again.
+		forgetLinks(a_player);
 		tellViewsClosed(storage.Left(a_player.id));
 	};
 
@@ -1570,6 +1588,7 @@ void Server::Run()
 		a_player.worldAskedAt = Clock::now();
 		// Their game's world is its save's now: what it keeps is closed to friends until it lists it again, and what it does
 		// at storage others keep waits for its settle (handleStorageSettle).
+		forgetLinks(a_player);
 		tellViewsClosed(storage.Stale(a_player.id));
 		closeOwnViews(a_player);
 		a_player.worldAsked = 1;
@@ -1586,6 +1605,9 @@ void Server::Run()
 		// Whose game keeps each storage container, ahead of the world state: their game judges its changes there by it.
 		if (options.rules.sharedStorage) {
 			sendStorageOwners(storage.Owners(), a_player.key);
+			for (const auto& [bench, links] : benchLinks) {
+				send(a_player.key, Protocol::Encode(Protocol::BenchLinks{ bench, links }, Protocol::MessageType::kBenchLinks), true);
+			}
 		}
 		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
@@ -2381,6 +2403,32 @@ void Server::Run()
 				}
 			}
 		}
+	};
+
+	// The keeper's game named the workbenches its supply lines link to one it keeps: kept, and told the others when it changed.
+	// From the workbench's keeper alone (a game can't speak for a workbench it doesn't keep), at most one entry per container
+	// the book keeps.
+	const auto handleBenchLinks = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchLinks(a_data);
+		if (!report || storage.KeeperOf(report->bench) != a_player.id) {
+			return;
+		}
+		const auto it = benchLinks.find(report->bench);
+		if (it != benchLinks.end() ? it->second == report->links : report->links.empty()) {
+			return;
+		}
+		if (it == benchLinks.end() && benchLinks.size() >= StorageBook::Book::MAX_CONTAINERS) {
+			return;
+		}
+		if (report->links.empty()) {
+			benchLinks.erase(report->bench);
+		} else {
+			benchLinks[report->bench] = report->links;
+		}
+		broadcast(Protocol::Encode(*report, Protocol::MessageType::kBenchLinks), true, a_player.key);
 	};
 
 	// A friend opened (or closed) their copy of storage another game keeps: what it holds, to show, or that it is closed.
@@ -3922,6 +3970,7 @@ void Server::Run()
 		if (!gap) {
 			// What its game keeps in storage closes to friends until its loaded world lists it again (StorageBook::Stale), and
 			// what it does at storage others keep waits for its settle after this world state (handleStorageSettle).
+			forgetLinks(a_player);
 			tellViewsClosed(storage.Stale(a_player.id));
 			closeOwnViews(a_player);
 		}
@@ -4255,6 +4304,9 @@ void Server::Run()
 			break;
 		case MessageType::kViewStorage:
 			handleViewStorage(a_player, a_data);
+			break;
+		case MessageType::kReportBenchLinks:
+			handleBenchLinks(a_player, a_data);
 			break;
 		case MessageType::kReportStorageShort:
 			handleStorageShort(a_player, a_data);

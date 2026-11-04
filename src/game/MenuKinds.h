@@ -42,7 +42,7 @@ namespace MenuKinds
 		if (any({ kContainer, kBarter })) {
 			return Protocol::MenuKind::kLooting;
 		}
-		if (any({ kExamine, kCooking, kPowerArmorMod, kWorkshop })) {
+		if (any({ kExamine, kCooking, kPowerArmorMod, kRobotMod, kWorkshop })) {
 			return Protocol::MenuKind::kCrafting;
 		}
 		if (any({ kDialogue })) {

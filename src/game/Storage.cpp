@@ -7,9 +7,12 @@
 #include "game/LootScope.h"
 #include "game/LootSync.h"
 #include "game/OpenMenus.h"
+#include "game/SupplyLines.h"
+#include "game/TextureFlush.h"
 #include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -63,9 +66,11 @@ namespace Storage
 			kCrafting,
 		};
 
-		// The crafting menus: each a WorkbenchMenuBase, whose gather reads a settlement's workbench (the robot workbench's,
-		// Automatron's, isn't one OpenMenus knows: it reads only our own copy, as with the rule off).
-		constexpr std::array<OpenMenus::Menu, 3> CRAFTING_MENUS{ OpenMenus::Menu::kExamine, OpenMenus::Menu::kCooking, OpenMenus::Menu::kPowerArmorMod };
+		// The crafting menus: each a WorkbenchMenuBase, whose gather reads a settlement's workbench. The robot workbench's,
+		// Automatron's RobotModMenu, is an ExamineMenu (RTTI: RobotModMenu : ExamineMenu : WorkbenchMenuBase) with the same
+		// gather.
+		constexpr std::array<OpenMenus::Menu, 4> CRAFTING_MENUS{ OpenMenus::Menu::kExamine, OpenMenus::Menu::kCooking, OpenMenus::Menu::kPowerArmorMod,
+			OpenMenus::Menu::kRobotMod };
 		// A crafting menu's workbench is looked for this long after it opens (its gather may not have run yet).
 		constexpr auto CRAFTING_LOOK_FOR = std::chrono::seconds{ 2 };
 		// A view of the host's workbench that couldn't open (our moves not settled yet, the host's copy stale) is tried again
@@ -77,6 +82,10 @@ namespace Storage
 		{
 			BenchMenu         menu = BenchMenu::kNone;
 			std::uint32_t     id = 0;  // the workbench it reads (0: none found, or none)
+			// The workbenches the host's supply lines link to it that our game views with it (SupplyLines.h), and when each
+			// may be tried again after its view couldn't open.
+			std::vector<std::uint32_t>                           supply;
+			std::unordered_map<std::uint32_t, Clock::time_point> supplyRetryAt;
 			Clock::time_point openedAt{};
 			Clock::time_point retryAt{};
 			Clock::duration   backoff = BENCH_RETRY;
@@ -89,6 +98,54 @@ namespace Storage
 		std::uint32_t                     listingNow = 0;  // the container our game is listing (SharedBench), main thread
 
 		thread_local int scripted = 0;  // inside a script's AddItem or RemoveItem
+
+		// ---- the host's supply lines (SupplyLines.h) ----
+
+		// The host's game tells the session which workbenches its supply lines link to each it keeps, this often at most.
+		constexpr auto        LINKS_INTERVAL = std::chrono::seconds{ 10 };
+		// 1.11.240: the calls to Workshop::AddOtherContainers (2195029, +38A140) the engine's gathers make: in
+		// Workshop::CollectLinkedWorkshopContainers (workshop mode's list, a build's takes, the settlement's resource counts)
+		// and in the crafting menus' gather (2224943, +B28540; CraftingWorkshop.h), each `E8` to it.
+		constexpr REL::ID     ADD_OTHER_CONTAINERS{ 2195029 };
+		constexpr REL::ID     COLLECT_LINKED{ 2195116 };  // Workshop::CollectLinkedWorkshopContainers (+392130)
+		constexpr std::size_t COLLECT_LINKED_CALL = 0x178;
+		constexpr REL::ID     CRAFTING_GATHER{ 2224943 };
+		constexpr std::size_t CRAFTING_GATHER_CALL = 0x426;
+		constexpr REL::ID     FIND_LOCATION_WITH_KEYWORD{ 2199627 };  // BGSLocation::FindLocationWithKeyword(BGSKeyword*) (+49D730)
+		constexpr REL::ID     SETTLEMENT_KEYWORD{ 4797293 };          // the keyword the engine finds a workshop's settlement location by (Workshop::FindLocation)
+		constexpr std::size_t CALL_STUB = 14;                         // what a write_call<5> takes of the trampoline (both calls share it)
+
+		using ContainerList = RE::BSScrapArray<RE::NiPointer<RE::TESObjectREFR>>;
+		using AddOthersFn = void (*)(ContainerList&, RE::BGSLocation*, bool);
+		AddOthersFn originalAddOthers = nullptr;  // set once the calls are hooked
+
+		SupplyLines::Reporter reporter;   // the host's game: main thread
+		SupplyLines::Heard    heard;      // a friend's game: main thread
+		Clock::time_point     linksAt{};  // the host's game's last look at its supply lines
+
+		// What the engine's gather is to find for the settlement our viewed workbench is in: the workbenches the host's supply
+		// lines link to it. Set on the main thread, read by the gather on whichever thread runs it.
+		std::mutex                 gatherLock;
+		RE::BGSLocation*           gatherAt = nullptr;
+		std::vector<std::uint32_t> gatherSupply;
+		std::atomic<std::uint32_t> gathered{ 0 };  // gathers that found the host's supply lines
+
+		// The settlement location a workbench is in, as the engine finds a workshop's (Workshop::FindLocation: its current
+		// location's ancestor with the settlement keyword).
+		RE::BGSLocation* SettlementOf(const RE::TESObjectREFR* a_ref)
+		{
+			static REL::Relocation<RE::BGSKeyword**>                                    keyword{ SETTLEMENT_KEYWORD };
+			static REL::Relocation<RE::BGSLocation* (*)(RE::BGSLocation*, RE::BGSKeyword*)> find{ FIND_LOCATION_WITH_KEYWORD };
+			const auto                                                                  location = a_ref ? a_ref->GetCurrentLocation() : nullptr;
+			return location && *keyword ? find(location, *keyword) : nullptr;
+		}
+
+		void SetGather(RE::BGSLocation* a_at, std::vector<std::uint32_t> a_supply)
+		{
+			std::scoped_lock l{ gatherLock };
+			gatherAt = a_supply.empty() ? nullptr : a_at;
+			gatherSupply = std::move(a_supply);
+		}
 
 		struct LocalMove
 		{
@@ -161,6 +218,13 @@ namespace Storage
 			return -n;
 		}
 
+		// Whether workshop mode or the crafting menu open reads a_container: the workbench, or one the host's supply lines link
+		// to it that we view with it.
+		bool ReadByBench(std::uint32_t a_container)
+		{
+			return bench.menu != BenchMenu::kNone && a_container != 0 && (a_container == bench.id || std::ranges::contains(bench.supply, a_container));
+		}
+
 		// Our copy of a container (never our player: OwnGear refuses).
 		std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count)
 		{
@@ -170,7 +234,7 @@ namespace Storage
 				return 0;
 			}
 			const auto done = Move(ref, a_item, a_count);
-			if (done != 0 && a_container == bench.id) {
+			if (done != 0 && ReadByBench(a_container)) {
 				bench.refresh = true;
 			}
 			return done;
@@ -219,7 +283,7 @@ namespace Storage
 
 			bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) override { return WorldSync::Shares(a_container, a_item); }
 
-			bool PaysFromStash(std::uint32_t a_container) override { return a_container == bench.id && bench.menu != BenchMenu::kNone; }
+			bool PaysFromStash(std::uint32_t a_container) override { return ReadByBench(a_container); }
 
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
@@ -283,6 +347,98 @@ namespace Storage
 		} loaded;
 
 		// ---- the host's workbench ----
+
+		// The workbenches our own world's supply lines reach from a_ref's settlement, as the engine's gather finds them: its
+		// own AddOtherContainers, called past our hook, the player left out.
+		std::vector<std::uint32_t> SupplyOf(RE::TESObjectREFR* a_ref)
+		{
+			static REL::Relocation<AddOthersFn> addOthers{ ADD_OTHER_CONTAINERS };
+			std::vector<std::uint32_t>          out;
+			const auto                          at = SettlementOf(a_ref);
+			if (!at) {
+				return out;
+			}
+			ContainerList found;
+			addOthers(found, at, true);
+			for (const auto& container : found) {
+				if (container && container.get() != a_ref) {
+					out.push_back(container->GetFormID());
+				}
+			}
+			return out;
+		}
+
+		// Workshop::AddOtherContainers, as the engine's gathers call it: for the settlement of the host's workbench we view, the
+		// workbenches the host's supply lines link to it come first, in the host's order, then our own world's others, then
+		// (unless the caller left it out) our player, as the engine's last (SupplyLines::Gathered). Anywhere else, the
+		// engine's own.
+		void GatherHook(ContainerList& a_list, RE::BGSLocation* a_location, bool a_noPlayer)
+		{
+			std::vector<std::uint32_t> keepers;
+			{
+				std::scoped_lock l{ gatherLock };
+				if (a_location && a_location == gatherAt) {
+					keepers = gatherSupply;
+				}
+			}
+			if (keepers.empty()) {
+				originalAddOthers(a_list, a_location, a_noPlayer);
+				return;
+			}
+			std::vector<std::uint32_t> have;
+			for (const auto& container : a_list) {
+				have.push_back(container ? container->GetFormID() : 0);
+			}
+			const auto before = a_list.size();
+			originalAddOthers(a_list, a_location, true);
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> added;
+			std::vector<std::uint32_t>                    own;
+			for (auto i = before; i < a_list.size(); ++i) {
+				added.push_back(a_list[i]);
+				own.push_back(a_list[i] ? a_list[i]->GetFormID() : 0);
+			}
+			a_list.erase(a_list.begin() + before, a_list.end());
+			for (const auto id : SupplyLines::Gathered(have, own, keepers)) {
+				const auto it = std::ranges::find_if(added, [&](const RE::NiPointer<RE::TESObjectREFR>& a_ref) { return a_ref && a_ref->GetFormID() == id; });
+				RE::NiPointer<RE::TESObjectREFR> ref{ it != added.end() ? it->get() : Ref(id) };
+				if (ref) {
+					a_list.push_back(ref);
+				}
+			}
+			if (!a_noPlayer) {
+				if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+					a_list.push_back(RE::NiPointer<RE::TESObjectREFR>{ player });
+				}
+			}
+			++gathered;
+		}
+
+		// Both of the engine's calls to Workshop::AddOtherContainers go through GatherHook: workshop mode's list and a
+		// build's takes (Workshop::CollectLinkedWorkshopContainers), and the crafting menus' gather. One 14-byte stub serves
+		// both (the trampoline keeps one per destination).
+		void InstallGather()
+		{
+			auto& trampoline = REL::GetTrampoline();
+			if (trampoline.free_size() < CALL_STUB) {
+				REX::WARN("Storage: no room for the supply lines' hook ({} bytes free); a friend's builds at the host's settlements use our own world's supply lines", trampoline.free_size());
+				return;
+			}
+			const std::array<std::pair<std::uintptr_t, const char*>, 2> sites{ { { COLLECT_LINKED.address() + COLLECT_LINKED_CALL, "workshop mode" },
+				{ CRAFTING_GATHER.address() + CRAFTING_GATHER_CALL, "the crafting menus" } } };
+			originalAddOthers = reinterpret_cast<AddOthersFn>(ADD_OTHER_CONTAINERS.address());
+			for (const auto& [site, what] : sites) {
+				std::array<std::uint8_t, 5> bytes{};
+				std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
+				if (TextureFlush::CallTarget(bytes, site) != ADD_OTHER_CONTAINERS.address()) {
+					REX::WARN("Storage: {}' gather doesn't call Workshop::AddOtherContainers where 1.11.240 does (another plugin's patch?); a friend's builds there use our own "
+							  "world's supply lines",
+						what);
+					continue;
+				}
+				trampoline.write_call<5>(site, &GatherHook);
+				REX::INFO("Storage: {}' gather hooked ({:X}): at the host's workbench it finds the workbenches the host's supply lines link", what, site);
+			}
+		}
 
 		void DrainLocal()
 		{
@@ -349,10 +505,57 @@ namespace Storage
 			}
 		}
 
+		// The views of the workbenches the host's supply lines link to the one we view (SupplyLines.h), once its own view is
+		// open: those no longer linked end, the new ones open (one that couldn't is tried again after BENCH_RETRY). And what
+		// the engine's gather is to find for its settlement.
+		void OpenSupply()
+		{
+			if (bench.id == 0 || !side.Shows(bench.id)) {
+				return;
+			}
+			const auto now = Clock::now();
+			auto       supply = heard.With(bench.id, [](std::uint32_t a_id) { return Ref(a_id) && KeeperOf(a_id) == Keeper::kFriend; });
+			bool       changed = false;
+			for (const auto viewed : side.Viewed()) {
+				if (viewed != bench.id && !std::ranges::contains(supply, viewed)) {
+					client.CloseOne(viewed);
+					changed = true;
+				}
+			}
+			for (const auto link : supply) {
+				if (side.Views(link)) {
+					continue;
+				}
+				auto& retryAt = bench.supplyRetryAt[link];
+				if (now < retryAt) {
+					continue;
+				}
+				retryAt = now + BENCH_RETRY;
+				if (client.OpenAlso(link)) {
+					changed = true;
+				}
+			}
+			if (supply != bench.supply) {
+				if (!supply.empty()) {
+					REX::INFO("Storage: the host's supply lines link {} workbench{} to {:08X}: our builds there use them too", supply.size(), supply.size() == 1 ? "" : "es", bench.id);
+				}
+				bench.supply = supply;
+				SetGather(SettlementOf(Ref(bench.id)), supply);
+				changed = true;
+			}
+			if (changed) {
+				bench.refresh = true;
+			}
+		}
+
 		// A view of the workbench our menu reads, when a friend's game keeps it and our moves are settled.
 		void OpenBench()
 		{
 			const auto now = Clock::now();
+			if (side.Views(bench.id)) {
+				OpenSupply();
+				return;
+			}
 			if (!ruleOn || bench.id == 0 || side.Viewing() || now < bench.retryAt || KeeperOf(bench.id) != Keeper::kFriend) {
 				return;
 			}
@@ -362,7 +565,7 @@ namespace Storage
 				return;  // the server refuses the view until our moves are settled: tried again then
 			}
 			client.Open(bench.id, true);
-			if (side.Viewing() == bench.id) {
+			if (side.Views(bench.id)) {
 				REX::INFO("Storage: viewing the host's workbench {:08X} ({}): its junk, ammo and aid are the one pile", bench.id,
 					bench.menu == BenchMenu::kWorkshop ? "workshop mode" : "a crafting menu");
 			}
@@ -370,19 +573,31 @@ namespace Storage
 
 		void CloseBench()
 		{
-			if (bench.id != 0 && side.Viewing() == bench.id) {
-				client.MenuClosed();
+			if (bench.id != 0 && side.Views(bench.id)) {
+				client.MenuClosed();  // its supply lines' workbenches' views too
 			}
 			bench = {};
+			SetGather(nullptr, {});
 		}
 
 		// The server closed our view of the host's workbench (its keeper away, or their world reloaded): the view ends at once,
-		// so workshop mode and the menu read our copy's own things again; it opens again later (OpenBench).
+		// so workshop mode and the menu read our copy's own things again; it opens again later (OpenBench). One of a workbench
+		// its supply lines link to ends alone, and is tried again later (OpenSupply).
 		void EndClosedBenchView()
 		{
-			if (bench.id != 0 && side.Viewing() == bench.id && !side.Shows(bench.id)) {
+			if (bench.id != 0 && side.Views(bench.id) && !side.Shows(bench.id)) {
 				client.MenuClosed();
+				bench.supply.clear();
+				SetGather(nullptr, {});
 				bench.refresh = true;
+				return;
+			}
+			for (const auto link : bench.supply) {
+				if (side.Views(link) && !side.Shows(link)) {
+					client.CloseOne(link);
+					bench.supplyRetryAt[link] = Clock::now() + BENCH_RETRY;
+					bench.refresh = true;
+				}
 			}
 		}
 
@@ -434,6 +649,57 @@ namespace Storage
 		{
 			side.MarkListed(a_id);
 			NoteBench(a_id);
+		}
+
+		// The host's game: which of its kept workbenches its supply lines link to each it keeps, told to the session when that
+		// changes (SupplyLines::Reporter). A linked workbench of a settlement it owns that isn't listed yet is listed first
+		// (from afar: a workbench is a persistent reference); one of a settlement it doesn't own isn't linked (its own
+		// stash, the host's game builds with it, but it isn't the session's).
+		void ReportSupply()
+		{
+			const auto now = Clock::now();
+			if (!hosting || !side.Rule() || now - linksAt < LINKS_INTERVAL || !WorldSync::InWorld()) {
+				return;
+			}
+			linksAt = now;
+			std::vector<std::uint32_t> kept;
+			{
+				std::scoped_lock l{ benchesLock };
+				kept.assign(benches.begin(), benches.end());
+			}
+			std::ranges::sort(kept);
+			int listed = 0;
+			for (const auto id : kept) {
+				const auto ref = Ref(id);
+				if (!ref || KeeperOf(id) != Keeper::kUs) {
+					continue;
+				}
+				std::vector<std::uint32_t> links;
+				for (const auto link : SupplyOf(ref)) {
+					const auto linkRef = Ref(link);
+					if (!Protocol::IsShareableRef(link) || !linkRef || !WorkshopSync::IsWorkbenchAnchor(linkRef) || !OwnBench(linkRef)) {
+						continue;
+					}
+					if (!side.Listed(link)) {
+						if (listed >= LIST_PER_SCAN) {
+							continue;  // the next look
+						}
+						const auto listing = Listable(link, WorldSync::HolderFactsOf(link)) ? Listing(link) : std::nullopt;
+						if (!listing) {
+							continue;
+						}
+						WorldSync::QueueEvent(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
+						MarkListed(link);
+						++listed;
+					}
+					links.push_back(link);
+				}
+				if (auto report = reporter.Update(id, std::move(links))) {
+					REX::INFO("Storage: our supply lines link {} workbench{} to {:08X}: a friend building there uses them too", report->links.size(),
+						report->links.size() == 1 ? "" : "es", id);
+					WorldSync::QueueEvent(Protocol::Encode(*report, Protocol::MessageType::kReportBenchLinks));
+				}
+			}
 		}
 
 		void Scan()
@@ -553,6 +819,12 @@ namespace Storage
 		ruleOn = a_rule;
 		hostingOn = a_rule && a_hosting;
 		ForgetBenches();  // the owner table comes again
+		heard.Clear();    // so do the supply lines
+		reporter.Forget();
+		linksAt = {};
+		bench.supply.clear();
+		bench.supplyRetryAt.clear();
+		SetGather(nullptr, {});
 		bench.retryAt = {};
 		bench.backoff = BENCH_RETRY;
 		notStorage.clear();
@@ -573,6 +845,10 @@ namespace Storage
 		ruleOn = false;
 		hostingOn = false;
 		ForgetBenches();
+		heard.Clear();
+		bench.supply.clear();
+		bench.supplyRetryAt.clear();
+		SetGather(nullptr, {});
 		live = 0;
 		if (unanswered != 0) {
 			REX::INFO("Storage: {} of our moves at a friend's storage had no answer as the connection went: kept, and settled when we rejoin (sent late if the session never numbered them)", unanswered);
@@ -586,6 +862,12 @@ namespace Storage
 			NoteBench(owner.container);  // a workbench kept: its changes are watched (WatchesBench)
 		}
 		bench.retryAt = {};  // a workbench our menu reads may be kept now: its view opens (BenchFrame)
+		bench.supplyRetryAt.clear();
+	}
+
+	void OnBenchLinks(const Protocol::BenchLinks& a_links)
+	{
+		heard.Take(a_links);  // views open or end with the next frame (OpenSupply)
 	}
 
 	void OnContents(const Protocol::StorageListing& a_contents)
@@ -635,6 +917,9 @@ namespace Storage
 		}
 		client.OnLoad(session, record.unanswered, record.lacks, record.lacksFrom);
 		bench = {};  // a load ends workshop mode and the menus
+		SetGather(nullptr, {});
+		reporter.Forget();  // our world's supply lines may differ
+		linksAt = {};
 		{
 			std::scoped_lock l{ localLock };
 			localInbox.clear();
@@ -656,6 +941,7 @@ namespace Storage
 			REX::INFO("Storage: settled our moves at a friend's storage once the changes we waited for were given up on ({} our world lacks)", side.Lacks());
 		}
 		Scan();
+		ReportSupply();
 		BenchFrame();
 	}
 
@@ -816,6 +1102,7 @@ namespace Storage
 		const bool add = HookRun(RE::VTABLE::GameScript____AddItemFunctor[0].address(), REL::ID(2253314), &AddRun, originalAddRun, "AddItem");
 		const bool remove = HookRun(RE::VTABLE::GameScript____RemoveItemFunctor[0].address(), REL::ID(2253317), &RemoveRun, originalRemoveRun, "RemoveItem");
 		REX::INFO("Storage: watching workshop mode; the scripts' AddItem {} and RemoveItem {}", add ? "watched" : "not watched", remove ? "watched" : "not watched");
+		InstallGather();
 	}
 
 	void OnWorkshopMode(std::uint32_t a_workshop, bool a_start)
@@ -897,7 +1184,7 @@ namespace Storage
 			return false;
 		}
 		const auto done = Move(Ref(a_change.container), a_change.item, a_change.count);
-		if (a_change.container == bench.id && bench.menu != BenchMenu::kNone) {
+		if (ReadByBench(a_change.container)) {
 			bench.refresh = true;
 		}
 		if (tracing) {
@@ -962,7 +1249,8 @@ namespace Storage
 		const auto& c = client.Stats();
 		return std::format("storage={}{} owners={} viewing={} inFlight={} settling={} lacks={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} "
 						   "unanswered={} unsent={} overflow={} lacking={} lacksDropped={} settles={} late={} settlingClosed={} corrected={} takenBack={} usedUp={} "
-						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={} stashPaid={}",
+						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={} stashPaid={} "
+						   "supply={} linkedHeard={} linkedSent={} linkReports={} supplyGathers={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
 			side.Settling() ? 1 : 0, side.Lacks(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.unsent, s.overflow, s.lacking,
 			s.lacksDropped, s.settles, s.late, s.settlingClosed, s.corrected, c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
@@ -971,7 +1259,7 @@ namespace Storage
 				std::scoped_lock l{ benchesLock };
 				return benches.size();
 			}(),
-			c.localKept, c.localUnpaid, c.stashPaid);
+			c.localKept, c.localUnpaid, c.stashPaid, bench.supply.size(), heard.Benches(), reporter.Benches(), reporter.Reports(), gathered.load());
 	}
 
 	std::string Command(std::string_view a_args)
@@ -1004,6 +1292,14 @@ namespace Storage
 		if (args[0] == "bench") {
 			std::string out = std::format("bench={} {:08X} viewing={} shows={} keeper={}", bench.menu == BenchMenu::kWorkshop ? "workshop" : bench.menu == BenchMenu::kCrafting ? "crafting" : "none",
 				bench.id, side.Viewing() == bench.id && bench.id != 0, bench.id != 0 && side.Shows(bench.id), Name(KeeperOf(bench.id)));
+			for (const auto link : bench.supply) {
+				out += std::format(" supply={:08X}:{}", link, side.Shows(link) ? "shown" : "closed");
+			}
+			if (hosting && bench.id != 0) {
+				for (const auto link : SupplyOf(Ref(bench.id))) {
+					out += std::format(" ourLine={:08X}", link);
+				}
+			}
 			const auto object = args.size() > 1 ? Object(ParseHex(args[1])) : nullptr;
 			if (!object) {
 				return out;
@@ -1014,8 +1310,12 @@ namespace Storage
 			const auto workshopList = handle ? handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
 			std::int64_t craftingList = -1;
 			WithCraftingMenu([&](RE::WorkbenchMenuBase& a_menu) { craftingList = CountIn(a_menu.sharedContainerRef.get(), object); });
-			return out + std::format(" item={:08X} copy={} workshopList={} craftingList={} player={}", object->GetFormID(), CountIn(Ref(bench.id), object),
-							 workshopList ? CountIn(workshopList.get(), object) : -1, craftingList, CountIn(Player(), object));
+			out += std::format(" item={:08X} copy={} workshopList={} craftingList={} player={}", object->GetFormID(), CountIn(Ref(bench.id), object),
+				workshopList ? CountIn(workshopList.get(), object) : -1, craftingList, CountIn(Player(), object));
+			for (const auto link : bench.supply) {
+				out += std::format(" at{:08X}={}", link, CountIn(Ref(link), object));
+			}
+			return out;
 		}
 		// What a build does with each of its components, in workshop mode: Workshop::RemoveItemFromWorkshopContainers (the
 		// workbench, then the supply lines' benches, then the player), then the build list is filled again, as

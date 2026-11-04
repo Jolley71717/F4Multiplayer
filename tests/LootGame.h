@@ -13,6 +13,7 @@
 
 #include "game/LootSync.h"
 #include "game/StorageView.h"
+#include "game/SupplyLines.h"
 
 #include <array>
 #include <map>
@@ -65,6 +66,11 @@ namespace LootTest
 		bool                                  connected = false;
 		std::optional<std::uint32_t>          menu;        // the container our menu is open on
 		std::optional<std::uint32_t>          benchView;   // the workbench our workshop mode or crafting menu reads (Storage's bench)
+		// The host's supply lines (SupplyLines.h): what the host's game told (its Reporter), what ours heard, and the
+		// workbenches viewed with benchView (Storage's bench.supply, OpenSupply).
+		SupplyLines::Reporter                 reporter;
+		SupplyLines::Heard                    heard;
+		std::vector<std::uint32_t>            supply;
 		std::uint32_t                         listingNow = 0;  // the container being listed (Storage::SharedBench)
 		// Our scripts' changes at a workbench another game keeps (Storage::LocalChange), handled before the view's next change.
 		std::vector<LootSync::Move>           local;
@@ -104,6 +110,9 @@ namespace LootTest
 			connected = true;
 			loot.OnWelcome(sessionId, localId);
 			storage.OnWelcome(welcome->rules.sharedStorage, host, sessionId);
+			heard.Clear();  // Storage::OnWelcome
+			reporter.Forget();
+			supply.clear();
 			return localId;
 		}
 
@@ -112,6 +121,8 @@ namespace LootTest
 		void Disconnect(Fixture& a_f)
 		{
 			storage.OnDisconnected();
+			heard.Clear();
+			supply.clear();
 			loot.OnDisconnected();
 			outbox.clear();
 			connected = false;
@@ -186,6 +197,10 @@ namespace LootTest
 					if (const auto msg = Protocol::DecodeStorageListing(packet)) {
 						storage.OnContents(*msg);
 					}
+				} else if (IsType(packet, MT::kBenchLinks)) {
+					if (const auto msg = Protocol::DecodeBenchLinks(packet)) {
+						heard.Take(*msg);  // Storage::OnBenchLinks
+					}
 				} else if (IsType(packet, MT::kStorageRefused)) {
 					if (const auto msg = Protocol::DecodeStorageRefusal(packet)) {
 						storage.OnRefused(*msg);
@@ -203,9 +218,16 @@ namespace LootTest
 				menu.reset();
 				storage.MenuClosed();
 			}
-			// A view of the host's workbench the server closed ends at once; workshop mode stays (Storage's EndClosedBenchView).
-			if (benchView && storage.State().Viewing() == *benchView && !storage.State().Shows(*benchView)) {
+			// A view of the host's workbench the server closed ends at once, its supply lines' too; workshop mode stays (Storage's
+			// EndClosedBenchView). One of a supply line's workbench ends alone.
+			if (benchView && storage.State().Views(*benchView) && !storage.State().Shows(*benchView)) {
 				storage.MenuClosed();
+				supply.clear();
+			}
+			for (const auto link : std::vector{ supply }) {
+				if (storage.State().Views(link) && !storage.State().Shows(link)) {
+					storage.CloseOne(link);
+				}
 			}
 			if (a_f) {
 				Frame(*a_f);
@@ -229,6 +251,7 @@ namespace LootTest
 			if (connected) {
 				storage.Frame();
 				storage.RetryCaughtUp(loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0);
+				OpenSupply();
 			}
 			ListStorage();
 			SendOut(a_f);
@@ -279,6 +302,62 @@ namespace LootTest
 
 		// ---- the host's workbench (Storage.h) -------------------------------------------------------------------
 
+		// Storage's OpenSupply, each frame: once the workbench's own view shows the true copy, the workbenches the host's supply
+		// lines link to it (another game keeps them) are viewed with it, and those no longer linked end.
+		void OpenSupply()
+		{
+			if (!benchView || !storage.State().Shows(*benchView)) {
+				return;
+			}
+			auto linked = heard.With(*benchView, [&](std::uint32_t a_id) { return Keeper(a_id) == StorageView::Keeper::kFriend; });
+			for (const auto viewed : storage.State().Viewed()) {
+				if (viewed != *benchView && std::ranges::find(linked, viewed) == linked.end()) {
+					storage.CloseOne(viewed);
+				}
+			}
+			for (const auto link : linked) {
+				storage.OpenAlso(link);
+			}
+			supply = std::move(linked);
+		}
+
+		// The host's game tells the session the workbenches its supply lines link to a_bench (Storage's ReportSupply).
+		void ReportLinks(Fixture& a_f, std::uint32_t a_bench, std::vector<std::uint32_t> a_links)
+		{
+			if (auto report = reporter.Update(a_bench, std::move(a_links))) {
+				outbox.push_back(Protocol::Encode(*report, MT::kReportBenchLinks));
+			}
+			SendOut(a_f);
+		}
+
+		// The engine's gather at benchView's settlement, as our hook makes it (SupplyLines::Gathered): the workbench, the
+		// host's supply lines' workbenches, then a_own (our own world's).
+		std::vector<std::uint32_t> Gather(std::vector<std::uint32_t> a_own = {}) const
+		{
+			std::vector<std::uint32_t> order{ *benchView };
+			const auto                 rest = SupplyLines::Gathered(order, a_own, supply);
+			order.insert(order.end(), rest.begin(), rest.end());
+			return order;
+		}
+
+		// A build with a_count of a_item: Workshop::RemoveItemFromWorkshopContainers takes from each container of the gather
+		// in its order, as much as each holds, then from our player.
+		void BuildFrom(Fixture& a_f, const std::vector<std::uint32_t>& a_order, std::uint32_t a_item, std::int64_t a_count)
+		{
+			auto rest = a_count;
+			for (const auto holder : a_order) {
+				auto&      have = holders[holder][a_item];
+				const auto n = (std::min)(have, rest);
+				have -= n;
+				rest -= n;
+				if (n != 0 && Watches(holder)) {
+					moves.push_back({ holder, a_item, -static_cast<std::int32_t>(n) });
+				}
+			}
+			carried[a_item] -= (std::min)(Carried(a_item), rest);
+			Frame(a_f);
+		}
+
 		// Workshop mode starts at a workbench, or a crafting menu that reads one opens (Storage::OnWorkshopMode, OpenBench).
 		void OpenBench(Fixture& a_f, std::uint32_t a_bench)
 		{
@@ -290,6 +369,7 @@ namespace LootTest
 		void CloseBench(Fixture& a_f)
 		{
 			benchView.reset();
+			supply.clear();
 			storage.MenuClosed();
 			SendOut(a_f);
 		}
@@ -334,7 +414,10 @@ namespace LootTest
 
 		std::set<std::uint32_t> Aliased(std::uint32_t a_holder) override { return LootSync::Aliased(*this, a_holder); }
 
-		bool PaysFromStash(std::uint32_t a_holder) override { return benchView && *benchView == a_holder; }
+		bool PaysFromStash(std::uint32_t a_holder) override
+		{
+			return benchView && (*benchView == a_holder || std::ranges::find(supply, a_holder) != supply.end());
+		}
 
 		bool SharedItem(std::uint32_t a_holder, std::uint32_t a_item) override
 		{
@@ -578,6 +661,7 @@ namespace LootTest
 			FlushLoot();                // WorldSync::FlushLoot
 			storage.BeforeSaveOrLoad();  // Storage::BeforeSaveOrLoad: no save holds the session's things in a friend's copy
 			menu.reset();
+			supply.clear();
 			SendOut(a_f);
 		}
 

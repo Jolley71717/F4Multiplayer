@@ -111,7 +111,7 @@ namespace WorldSync
 		// The crafting menus: each reads a settlement's workbench through its gather (Storage.h).
 		bool IsCraftingMenu(std::string_view a_name)
 		{
-			return a_name == "ExamineMenu"sv || a_name == "CookingMenu"sv || a_name == "PowerArmorModMenu"sv;
+			return a_name == "ExamineMenu"sv || a_name == "CookingMenu"sv || a_name == "PowerArmorModMenu"sv || a_name == "RobotModMenu"sv;
 		}
 		// Trading moves everything through ordinary transfers against the vendor's chest or the vendor
 		// (BarterMenu::CompleteTrade), so moves while the barter menu is open (and just after) are trades:

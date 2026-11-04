@@ -120,7 +120,7 @@ TEST("storage view: reconcile gives the changes that make the copy show what it 
 	CHECK((StorageView::Reconcile({ { WATER, 1'000'000'000'000 } }, {}) == std::vector<Adjust>{ { WATER, Protocol::MAX_ITEM_COUNT } }));
 }
 
-TEST("storage view: one view at a time; its changes wait for the contents, then count from where they left off")
+TEST("storage view: a view's changes wait for the contents, then count from where they left off")
 {
 	Side side = Friend();
 	CHECK(!side.ViewFrom(CHEST));
@@ -140,11 +140,11 @@ TEST("storage view: one view at a time; its changes wait for the contents, then 
 	CHECK(!side.Refresh(CHEST));  // asked already: the answer to come covers it
 	CHECK(!side.Refresh(BOX));
 
-	const auto ended = side.Close();
+	const auto ended = side.Close(CHEST);
 	REQUIRE(ended);
 	CHECK(ended->container == CHEST);
 	CHECK(!ended->closed);
-	CHECK(!side.Close());
+	CHECK(!side.Close(CHEST));
 	CHECK(!side.Viewing());
 	CHECK(!side.Contents({ CHEST, 41, { { STIMPAK, 5 } } }));  // the answer to a view since closed
 }
@@ -226,7 +226,7 @@ TEST("storage view: a refused put goes back to our player; after the menu closed
 	Side side = Friend();
 	side.Open(CHEST);
 	side.Reported({ CHEST, WATER, 3 }, T0);
-	side.Close();
+	side.Close(CHEST);
 	const auto undo = side.Refused(Refusal(CHEST, WATER, 3, Protocol::StorageReason::kCantHold));
 	CHECK(undo.matched);
 	CHECK(undo.player == 3);
@@ -248,7 +248,7 @@ TEST("storage view: the server closing our view leaves it closed until the menu 
 	CHECK(!side.Shows(CHEST));
 	CHECK(!side.ViewFrom(CHEST));  // nothing goes into it, and our moves there stay ours
 	CHECK(!side.Refused({ CHEST, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }).closeView);
-	const auto ended = side.Close();
+	const auto ended = side.Close(CHEST);
 	REQUIRE(ended);
 	CHECK(ended->closed);
 }
@@ -653,4 +653,27 @@ TEST("storage client: notices come at most every NOTICE_EVERY, however many move
 	client.Reporting({ CHEST, STIMPAK, -1 });
 	client.OnRefused(Refusal(CHEST, STIMPAK, -1));
 	CHECK(engine.notices.size() == 2);
+}
+
+TEST("storage view: a workbench and its supply lines' workbenches are viewed together; each ends on its own")
+{
+	Side side = Friend();
+	side.Owners(Owned(BOX, FRIEND));
+	CHECK(side.Open(CHEST));
+	CHECK(side.Open(BOX));
+	CHECK(!side.Open(BOX));
+	CHECK(side.Viewing() == CHEST);  // the menu's own: the first
+	CHECK((side.Viewed() == std::vector<std::uint32_t>{ CHEST, BOX }));
+	CHECK(side.Views(BOX));
+	CHECK(side.Contents({ BOX, 7, {} }));
+	CHECK(side.ViewFrom(BOX) == 7u);
+	CHECK(side.ViewFrom(CHEST) == StorageView::NOT_YET);
+	const auto ended = side.Close(BOX);
+	REQUIRE(ended);
+	CHECK(ended->container == BOX);
+	CHECK(!side.Views(BOX));
+	CHECK(side.Viewing() == CHEST);
+	CHECK(!side.Close(BOX));
+	CHECK(side.Close(CHEST));
+	CHECK(side.Viewed().empty());
 }
