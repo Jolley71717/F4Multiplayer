@@ -10,7 +10,10 @@ starting the work, so the order and the risks are agreed first.
   same transform, keyed by (builder, builder's reference ID), kept by the server for joiners and
   in the host's session file.
 - Copies are only of bases the workshop can build (statics, furniture, containers, doors, lights,
-  terminals, misc, flora, non-unique NPCs for turrets). They are not workshop items in the
+  terminals, misc, flora, non-unique NPCs for turrets), never a power armor frame (moved in
+  workshop mode, it is neither reported nor placed: `WorkshopApply::Shared`; the frame is shared as
+  parked by RemotePlayers; a copy of one an older version left at the spot is removed). They are
+  not workshop items in the
   receiving game: not counted, not scrappable, not wired, not assigned.
 - A moved piece's copy is moved with its 3D (an actor through its controller), or made again when it
   changes cells. A load lets the copies' handles go and the server sends the building again; the

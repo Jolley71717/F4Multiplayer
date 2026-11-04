@@ -4,6 +4,7 @@
 #include "game/OpenMenus.h"
 
 #include "game/Puppets.h"
+#include "game/QuestSync.h"
 
 namespace Dialogue
 {
@@ -117,8 +118,11 @@ namespace Dialogue
 		if (const auto topics = TopicManager(); topics && topics->menuOpen && topics->speaker.get().get() == a_ref) {
 			return true;
 		}
+		// Not a scene a friend's stage started here (Codsworth's search, from his talk's stage): the friend is
+		// playing it, and its people are theirs to run; claimed for it, Codsworth would be taken from the friend
+		// mid-search. The friend's later stages end it here.
 		const auto scene = PlayerScene();
-		return scene && a_ref->GetCurrentScene() == scene;
+		return scene && scene->GetFormID() != QuestSync::SessionScene() && a_ref->GetCurrentScene() == scene;
 	}
 
 	void Removed(std::uint32_t a_id, RE::TESObjectREFR* a_ref)

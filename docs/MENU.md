@@ -28,7 +28,9 @@ free layout aren't possible with it; the address to join still comes from the in
 
 **Main.** The first line is the session: not in one, connecting to (or refused by) a host, in a
 host's game with the ping, or hosting (through Steam with the lobby open, or on a UDP port). Then
-who is with you, one line each as the F6 player list shows them. Buttons depend on the state:
+who is with you, one line each as the F6 player list shows them, and, when the host changed the rules
+for going down, a line saying them ("Host's rules: revive limit 3 per fight, 30 s to bleed out"). Buttons
+depend on the state:
 
 | State | Buttons |
 |---|---|
@@ -129,7 +131,7 @@ case, and the page says so. A lobby search
 (`RequestLobbyList`) is not an alternative: the lobby is friends-only, and Steam leaves
 friends-only lobbies out of searches.
 
-**Settings.** Six switches, each shown with its current value and written to the ini when
+**Settings.** Seven switches, each shown with its current value and written to the ini when
 toggled (only that line changes; comments and the rest of the file stay):
 
 | Setting | Ini key | Takes effect |
@@ -140,6 +142,7 @@ toggled (only that line changes; comments and the rest of the file stay):
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |
 | Fast loading | `bFastLoading` | the next loading screen |
+| Lend power armor | `bLendPowerArmor` | the next time a friend asks |
 
 Spoken lines plays a friend's lines as a plain sound at your copy of the speaker; it never starts a
 conversation, a Say or a scene, so it can't leave you held in dialogue the way the old

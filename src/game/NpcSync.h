@@ -49,12 +49,18 @@ namespace NpcSync
 
 	// The roll its owner's game reported for an NPC another game runs (nothing: none came).
 	[[nodiscard]] const Protocol::NpcIdentity* RollOf(std::uint32_t a_refId);
+	// A plugin's NPC died in the session (kRollLives): its roll is forgotten, and what its runner's game makes of its next
+	// life (a cell reset) is reported again.
+	void ForgetRoll(std::uint32_t a_refId);
 
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);
 
 	// Whether the local player hit or talked to this NPC lately (NpcHold::FOUGHT).
 	[[nodiscard]] bool FoughtLately(std::uint32_t a_refId);
+	// Whether our game ran the NPC and let it go in the last moments (a hand-off, an unload): a friend's damage the server
+	// sent us for it crossed our release (WorldSync's DamageHold facts).
+	[[nodiscard]] bool LetGoLately(std::uint32_t a_refId);
 
 	// The local player activated this reference (talking to an NPC starts this way).
 	void OnActivated(std::uint32_t a_refId);
@@ -99,6 +105,16 @@ namespace NpcSync
 
 	// Whether an actor of ours (not our player) is in this power armor frame.
 	[[nodiscard]] bool InFrame(const RE::TESObjectREFR* a_frame);
+
+	// Our own frame (one our game made, given back from a loan: FrameLoans) moved to a_at, turned to a_heading, as a frame
+	// another game runs is moved here: in place when it is loaded near, else through the console. Only once that spot is in
+	// our sight (false: not yet, asked again later); true once it is moved, or is no frame of ours to move.
+	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading);
+
+	// Whether a frame our own game made (no copy of ours, nor one on its way out or lent to a friend), of base a_base,
+	// stands within a_radius of a_spot, as the last frame walk found it standing loaded: it stands for a friend's frame
+	// their game has there (FrameShare::SAME_SPOT, FrameShare::StandsFor, Spawns' copies).
+	[[nodiscard]] bool OwnMadeFrameAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot, float a_radius);
 
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted); for a power
 	// armor frame, who runs it and where ours stands.

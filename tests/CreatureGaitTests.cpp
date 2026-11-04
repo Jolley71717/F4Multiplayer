@@ -88,7 +88,7 @@ namespace
 		const auto plan = CreatureGait::Choose((a_state.flags & Protocol::kOwnGait) != 0, a_state.gait, a_state.gaitRate, a_state.speed);
 		a_graph.sync = plan.range->id;
 		const auto step = MoveSync::Drive(a_copy.moving, a_copy.nextResync, a_state.speed, a_now, [&](MoveSync::Event a_event) {
-			return a_graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
+			return a_graph.Notify(MoveSync::NamesOf(a_event, false).first);
 		});
 		for (const auto& write : CreatureGait::Rates(plan, a_state.speed)) {
 			a_graph.rates[write.variable] = write.rate;
@@ -182,7 +182,7 @@ TEST("creature gait: before, the joiner's copy of a running dog walked: nothing 
 	auto       now = t0;
 	for (const auto& state : got) {
 		const auto step = MoveSync::Drive(moving, resync, state.speed, now += FRAME, [&](MoveSync::Event a_event) {
-			return graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
+			return graph.Notify(MoveSync::NamesOf(a_event, false).first);
 		});
 		moving = step.moving;
 		resync = step.nextResync;

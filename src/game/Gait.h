@@ -56,6 +56,16 @@ namespace Gait
 		return a_previous * keep + a_speed * (1.0f - keep);
 	}
 
+	// Smooth, but from the speed itself when the smoothed speed says the friend was standing (below STANDING): it
+	// decays toward 0 there, and a run that set off from it played its clips at the slowest rate (MIN_PLAYBACK)
+	// for most of a second while the body already moved at full pace. Judged by the speed, not by whether the
+	// graph took a moveStart, which it may refuse for a while with the friend running.
+	inline constexpr float STANDING = 25.0f;  // MoveSync::START
+	inline float Smoothed(float a_previous, float a_speed, float a_seconds)
+	{
+		return Smooth(a_previous < STANDING ? a_speed : a_previous, a_speed, a_seconds);
+	}
+
 	constexpr Kind Pick(float a_speed, Kind a_current)
 	{
 		return a_speed > (a_current == Kind::kRun ? RUN_DOWN : RUN_UP) ? Kind::kRun : Kind::kWalk;
@@ -111,6 +121,14 @@ namespace Gait
 	constexpr std::int32_t WeaponState(Kind a_gait)
 	{
 		return a_gait == Kind::kWalk ? 0 : 1;
+	}
+
+	// The weapon-drawn graph's sneak (SneakWPNLocomotion_SM), walk or run: its start state by the sync variable
+	// iSyncSneakWalkRun (0 walk, 1 run, as WeaponState), and while moving these events. The weapon-away sneak has
+	// one locomotion, a blend by Speed, and needs neither.
+	constexpr const char* SneakEvent(Kind a_gait)
+	{
+		return a_gait == Kind::kWalk ? "sneakWalkStart" : "sneakRunStart";
 	}
 
 	// Whether the gait's events go this frame: while moving, when the gait changed, when the graph has just

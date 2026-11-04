@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 // Whether our player (or a companion of theirs) is kept out of a power armor frame: one that stands in our game only
 // because the session placed a copy of a friend's frame here. Getting into such a copy made it ours ("it is theirs now")
@@ -82,9 +85,26 @@ namespace FriendFrame
 	// copy placed anew), and what is done with it then. Nothing buries a copy with anyone in it: an NPC all the way in
 	// wears it (the engine disabled it and cleared the seat), and burying it left them in a frame that was gone, or wrote
 	// a save whose companion wears a frame the save does not have, which the engine fails on as it loads that save.
+	// How our player holds a frame, as the engine tells it.
+	struct OurHold
+	{
+		bool seated = false;    // the furniture they sit in: getting in
+		bool wearing = false;   // the engine's worn frame (ExtraPowerArmor's): all the way in
+		bool lastUsed = false;  // the frame they got out of last
+	};
+
+	// Whether a frame is our player's (Facts::ours, Holders::ours). All the way in, the engine has cleared the seat and has
+	// no last frame for them yet: only its worn frame names it. Read from the seat and the last frame alone, a copy our
+	// player wore on loan was taken for nobody's and buried from under them (its owner's game sharing it again after a
+	// load, or the session ending), and the engine's exit from it never finished: E did nothing, its input layer left on.
+	constexpr bool Ours(const OurHold& a_hold)
+	{
+		return a_hold.seated || a_hold.wearing || a_hold.lastUsed;
+	}
+
 	struct Holders
 	{
-		bool ours = false;        // our player is in it, getting in, or got out of it last
+		bool ours = false;        // our player is in it (getting in, or wearing it), or got out of it last (Ours)
 		bool sendingOut = false;  // someone our game sends out of it (SendsOut) is in it, getting in, or on their way out
 		bool inUse = false;       // anyone else here is in it or getting in (a friend's NPC, say)
 	};
@@ -105,5 +125,109 @@ namespace FriendFrame
 			return Leave::kWait;
 		}
 		return a_holders.inUse ? Leave::kRelease : Leave::kBury;
+	}
+
+	// A copy kept through a save (a companion being sent out of it), noted in that save's co-save: read back only with that
+	// save, so no other load (an older save, a new game) can name a frame of its own world by the same runtime id.
+	struct KeptCopy
+	{
+		std::uint32_t id = 0;     // its form ID
+		std::uint32_t base = 0;   // the frame's base
+		std::uint32_t owner = 0;  // the friend whose copy it was
+		bool operator==(const KeptCopy&) const = default;
+	};
+
+	constexpr std::size_t MAX_KEPT_COPIES = 64;
+
+	inline std::vector<std::uint8_t> Encode(const std::vector<KeptCopy>& a_copies)
+	{
+		std::vector<std::uint8_t> out;
+		for (std::size_t i = 0; i < a_copies.size() && i < MAX_KEPT_COPIES; ++i) {
+			for (const auto value : { a_copies[i].id, a_copies[i].base, a_copies[i].owner }) {
+				for (int shift = 0; shift < 32; shift += 8) {
+					out.push_back(static_cast<std::uint8_t>(value >> shift));
+				}
+			}
+		}
+		return out;
+	}
+
+	// Nothing at all for bytes that are not whole entries.
+	inline std::vector<KeptCopy> Decode(const std::vector<std::uint8_t>& a_bytes)
+	{
+		constexpr std::size_t SIZE = 12;
+		std::vector<KeptCopy> out;
+		if (a_bytes.size() % SIZE != 0 || a_bytes.size() / SIZE > MAX_KEPT_COPIES) {
+			return out;
+		}
+		const auto word = [&](std::size_t a_at) {
+			std::uint32_t value = 0;
+			for (std::size_t i = 0; i < 4; ++i) {
+				value |= static_cast<std::uint32_t>(a_bytes[a_at + i]) << (8 * i);
+			}
+			return value;
+		};
+		for (std::size_t at = 0; at < a_bytes.size(); at += SIZE) {
+			out.push_back({ word(at), word(at + 4), word(at + 8) });
+		}
+		return out;
+	}
+
+	// A copy kept through a save is waited on again once that save is loaded, when the form under its id is still the same
+	// frame: made at runtime, not deleted, and of the base noted at the save.
+	constexpr bool SameCopy(std::uint32_t a_notedBase, std::uint32_t a_base, bool a_created, bool a_deleted)
+	{
+		return a_notedBase != 0 && a_base == a_notedBase && a_created && !a_deleted;
+	}
+
+	// The frame gate's word for the engine's seating thread. Our player getting into a frame, and the look at one that comes
+	// with it (Equipment's UseHook, through RemotePlayers::KeepOutOfFrame), are asked on the thread the engine seats them on,
+	// beside the main one, which may be changing what the answer comes from: the session's players, Spawns' copies, the
+	// loans. So the main thread puts down each frame what every frame here is kept for, and that thread only finds the frame
+	// in it; what is told, or asked of an owner, it hands to the main thread. A frame not in it lets our player in.
+	struct Kept
+	{
+		std::uint32_t frame = 0;    // its form ID
+		std::uint32_t lentTo = 0;   // our own frame, lent to this friend (FrameLoans): nobody here gets into it
+		std::uint32_t owner = 0;    // a friend's frame, our copy of it (KeptOutFor)
+		const char*   kind = "";    // which copy of ours it is
+		std::uint32_t spawnId = 0;  // the spawn owner's game shares it as (Spawns): our player may borrow it (FrameLoans)
+	};
+
+	inline const Kept* Find(const std::vector<Kept>& a_kept, std::uint32_t a_frame)
+	{
+		if (a_frame == 0) {
+			return nullptr;
+		}
+		const auto it = std::ranges::find(a_kept, a_frame, &Kept::frame);
+		return it != a_kept.end() ? &*it : nullptr;
+	}
+
+	enum class Enter
+	{
+		kIn,       // nothing keeps our player out
+		kLent,     // our own frame, lent out: kept out, and told to whom
+		kBorrow,   // a friend's shared frame: FrameLoans lets them in once it is lent to us, or asks its owner
+		kKeptOut,  // a friend's frame: kept out, and told whose
+	};
+
+	constexpr Enter ChooseEnter(const Kept* a_kept)
+	{
+		if (!a_kept) {
+			return Enter::kIn;
+		}
+		if (a_kept->lentTo != 0) {
+			return Enter::kLent;
+		}
+		if (a_kept->owner == 0) {
+			return Enter::kIn;
+		}
+		return a_kept->spawnId != 0 ? Enter::kBorrow : Enter::kKeptOut;
+	}
+
+	// The look (the log's, paframes'): whether our player would be kept out as a friend's frame, as the main thread says.
+	constexpr bool Looked(const Kept* a_kept)
+	{
+		return a_kept && a_kept->owner != 0;
 	}
 }

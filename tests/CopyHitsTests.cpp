@@ -17,6 +17,7 @@
 #include <set>
 
 using namespace Sim;
+using namespace std::chrono_literals;
 using Reason = Protocol::ClaimReason;
 using CopyHealth::Hitter;
 
@@ -32,6 +33,13 @@ namespace
 	constexpr std::uint32_t PLAYER = Protocol::PLAYER_REF_ID;
 
 	constexpr auto FRAME = std::chrono::milliseconds{ 50 };
+
+	// What our hits took off the copy, sent now (CopyHealth::Book::TakeOurs): the amount, 0 for nothing.
+	float Took(CopyHealth::Book& a_book, std::uint32_t a_id, CopyHealth::Clock::time_point a_now)
+	{
+		const auto sent = a_book.TakeOurs(a_id, a_now);
+		return sent ? sent->amount : 0.0f;
+	}
 
 	// Health that went through a report: a fraction of the maximum on the wire.
 	bool Near(float a_health, float a_expected)
@@ -60,6 +68,9 @@ namespace
 		std::set<std::uint32_t>        companions;  // they follow our player here
 		bool                           onlyPlayer = false;  // as before: only our player's blows were ours
 		bool                           claimKills = true;   // a killing blow by another actor of ours claims its NPC
+		bool                           fallsSent = true;    // a killing blow of ours on a copy goes as damage (CopyHealth::Book::Fell)
+		bool                           longFall = false;    // a death here is reported at the end of a long fall (Land), not at once
+		std::map<std::uint32_t, bool>  falling;             // ... the NPCs falling, and whether the kill is our player's
 		CopyHealth::Book               copies;
 		CopyHealth::Clock::time_point  now{};
 		float                          givenBack = 0.0f;
@@ -116,8 +127,21 @@ namespace
 				client.Claim(a_target, Reason::kInteract);
 			}
 			if (npc.dead) {
-				if (deathsSent.insert(a_target).second) {
-					client.Died(a_target, onlyPlayer ? a_by == PLAYER : CopyHealth::Credited(CauseOf(a_by), local));
+				// CopyWatch::Frame: the blow that killed a copy, if ours, goes to the NPC's game as damage (Book::Fell). What
+				// the book took of the earlier blows here was sent with them (below), so it is passed by.
+				const auto owner = client.OwnerOf(a_target);
+				if (fallsSent && hitter != Hitter::kNotOurs && owner != 0 && owner != local) {
+					(void)copies.TakeOurs(a_target, now);
+					copies.Fell(a_target, npc.health, now);
+					if (const auto sent = copies.TakeOurs(a_target, now)) {
+						client.Damage(a_target, std::clamp(sent->amount / 100.0f, 0.0f, 1.0f));
+					}
+				}
+				const bool credited = onlyPlayer ? a_by == PLAYER : CopyHealth::Credited(CauseOf(a_by), local);
+				if (longFall) {
+					falling.try_emplace(a_target, credited);
+				} else if (deathsSent.insert(a_target).second) {
+					client.Died(a_target, credited);
 				}
 			} else if (after.report) {
 				// On a copy what the blow took goes as damage (CopyWatch's book), for the game that runs it to take off; on
@@ -131,6 +155,16 @@ namespace
 				++reportsSent;
 			}
 			Wait(FRAME);
+		}
+
+		// The falls are over: each death event comes, and is reported (WorldSync's DeathWatcher).
+		void Land()
+		{
+			for (const auto& [id, credited] : std::exchange(falling, {})) {
+				if (deathsSent.insert(id).second) {
+					client.Died(id, credited);
+				}
+			}
 		}
 
 		// Frames go by: a living copy of an NPC another game runs gets back what it lost to no hit of ours.
@@ -177,6 +211,17 @@ namespace
 					continue;
 				}
 				it->second.health -= damage.health * 100.0f;
+				// The last of its health: it dies here, its runner's game, of nobody's blow (the damage names no attacker). A
+				// robot falls for 10 s here too before its death event comes (Land).
+				if (it->second.health <= 0.0f) {
+					it->second.dead = true;
+					if (longFall) {
+						falling.try_emplace(damage.refId, false);
+					} else if (deathsSent.insert(damage.refId).second) {
+						client.Died(damage.refId, false);
+					}
+					continue;
+				}
 				client.Hurt(damage.refId, it->second.health / 100.0f);
 			}
 		}
@@ -192,7 +237,8 @@ namespace
 		Game    hostGame{ host };
 		Game    bobGame{ bob };
 
-		Fight()
+		explicit Fight(Server::Options a_options = {}) :
+			s(a_options)
 		{
 			REQUIRE(host.Join());
 			REQUIRE(bob.Join());
@@ -280,8 +326,10 @@ TEST("copy hits: a companion's bite that kills a friend's raider at once claims 
 	CHECK(f.host.KilledBy(RAIDER_1) == std::optional{ f.bob.Id() });
 	CHECK(!f.DeathDropped(RAIDER_1));
 
+	// Before the claim, and before a killing blow went as damage too (Book::Fell: the test after next).
 	Fight g;
 	g.bobGame.claimKills = false;
+	g.bobGame.fallsSent = false;
 	g.bobGame.Strike(DOGMEAT, RAIDER_1, 150.0f);
 	g.Pass();
 	CHECK(g.DeathDropped(RAIDER_1));
@@ -459,4 +507,425 @@ TEST("copy hits: a drop with a hit of our companion's around it is kept, one wit
 	CHECK(book.Health(RAIDER_1) == std::optional{ 70.0f });
 	CHECK(book.Check(RAIDER_2, 70.0f, t0 + FRAME) == 0.0f);
 	CHECK(book.Check(RAIDER_2, 70.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 30.0f);
+}
+
+TEST("copy hits: a legendary weapon's bleed or burn put on a copy by our hit stays ours for its ticks, which fire no hit event, and goes to the NPC's game")
+{
+	// Before, each tick after the first second was "a drop with no hit of ours" and was given back: a Wounding or
+	// Incendiary weapon healed its own damage back as the player watched, and the NPC's game never took it.
+	using std::chrono::milliseconds;
+	using std::chrono::seconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+
+	// The shot (its event's figure 20) and its enchantment's hit (no figure, a spell's with no weapon): the effect is on.
+	book.OurHit(RAIDER_1, t0, 20.0f);
+	book.OurHit(RAIDER_1, t0);
+	book.OurEffect(RAIDER_1, t0);
+	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + FRAME) == 20.0f);
+
+	// A tick a second and a half later, long after the hit's grace: ours, nothing given back.
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 75.0f });
+
+	// And so on to the end of the effect's window; a drop after it is something else's again.
+	float health = 75.0f;
+	for (auto at = t0 + milliseconds{ 2500 }; at <= t0 + CopyHealth::EFFECT_WINDOW; at += seconds{ 1 }) {
+		health -= 5.0f;
+		CHECK(book.Check(RAIDER_1, health, at) == 0.0f);
+		CHECK(book.Check(RAIDER_1, health, at + CopyHealth::JUDGE_AFTER) == 0.0f);
+		CHECK(Took(book, RAIDER_1, at + CopyHealth::JUDGE_AFTER) == 5.0f);
+	}
+	CHECK(book.Check(RAIDER_1, health - 5.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, health - 5.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	CHECK(Took(book, RAIDER_1, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+}
+
+TEST("copy hits: a bleed of ours on a copy stops being ours once something else hits the copy, and what a friend's grenade took beyond our hits is given back")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 20.0f);
+	book.OurEffect(RAIDER_1, t0);
+	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + FRAME) == 20.0f);
+
+	// A fire in our world (a hazard's hit, no cause) reaches the copy: from then on a drop with no hit behind it may be
+	// the fire's as well as the bleed's, so it is given back as before.
+	book.OtherHit(RAIDER_1, t0 + milliseconds{ 2000 });
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 2500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 75.0f, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+
+	// A friend's grenade set off here (its blow the owner's: OwnersBlow) beside our own shot: our shot's figure is ours,
+	// the rest the grenade's, given back; the NPC's own game deals the grenade's blow.
+	CopyHealth::Book other;
+	other.Set(RAIDER_2, 100.0f);
+	other.OurHit(RAIDER_2, t0, 20.0f);
+	other.OurEffect(RAIDER_2, t0);
+	other.OtherHit(RAIDER_2, t0 + milliseconds{ 20 });
+	other.OwnersBlow(RAIDER_2, t0 + milliseconds{ 20 });
+	CHECK(other.Check(RAIDER_2, 30.0f, t0 + FRAME) == 0.0f);
+	CHECK(Took(other, RAIDER_2, t0 + FRAME) == 20.0f);
+	CHECK(other.Check(RAIDER_2, 30.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 50.0f);
+	CHECK(Took(other, RAIDER_2, t0 + FRAME + CopyHealth::JUDGE_AFTER) == 0.0f);
+}
+
+TEST("copy hits: a report from the NPC's game during our bleed stands, and a tick given back never raises the copy above it")
+{
+	// The owner's game shares the NPC's health as it takes our damage (and whatever else it took there): a report that
+	// lowers the copy is set at once, and nothing we give back undoes damage the owner really took.
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 20.0f);
+	book.OurEffect(RAIDER_1, t0);
+	CHECK(book.Check(RAIDER_1, 80.0f, t0 + FRAME) == 0.0f);
+	const auto shot = book.TakeOurs(RAIDER_1, t0 + FRAME);
+	REQUIRE(shot);
+	CHECK(shot->amount == 20.0f);
+
+	// The owner took a friend's shot there too, and ours: 80 -> 60 by its report, set as it comes once our shot is
+	// answered (with it still on its way, the report less the shot: 40).
+	CHECK(book.Answered(RAIDER_1, shot->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(book.Heard(RAIDER_1, 80.0f, 60.0f, t0 + milliseconds{ 1200 }) == 60.0f);
+	book.Set(RAIDER_1, 60.0f);
+	// Our next tick is from there, ours.
+	CHECK(book.Check(RAIDER_1, 55.0f, t0 + milliseconds{ 1500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 55.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+
+	// A fire's hit ends the effect's claim: the next drop is given back, to where the copy stood, no higher.
+	book.OtherHit(RAIDER_1, t0 + milliseconds{ 2000 });
+	CHECK(book.Check(RAIDER_1, 50.0f, t0 + milliseconds{ 2500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 50.0f, t0 + milliseconds{ 2500 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+	book.Set(RAIDER_1, 55.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 55.0f });
+
+	// A report that would raise the copy is set only to what it says less our ticks still on their way (sent and
+	// unanswered, or not sent yet); once they are answered, a report is set as it comes.
+	CopyHealth::Book late;
+	late.Set(RAIDER_2, 100.0f);
+	late.OurHit(RAIDER_2, t0, 20.0f);
+	late.OurEffect(RAIDER_2, t0);
+	CHECK(late.Check(RAIDER_2, 80.0f, t0 + FRAME) == 0.0f);
+	const auto lateShot = late.TakeOurs(RAIDER_2, t0 + FRAME);
+	REQUIRE(lateShot);
+	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 }) == 0.0f);
+	CHECK(late.Check(RAIDER_2, 75.0f, t0 + milliseconds{ 1500 } + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + milliseconds{ 1700 }) == 55.0f);  // the owner's report from before the shot (on its way) and the tick (not sent yet): 80 less both
+	const auto tick = late.TakeOurs(RAIDER_2, t0 + milliseconds{ 1700 });
+	REQUIRE(tick);
+	CHECK(late.Answered(RAIDER_2, lateShot->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(late.Answered(RAIDER_2, tick->seq, CopyHealth::Answer::kApplied) == 0.0f);
+	CHECK(late.Heard(RAIDER_2, 75.0f, 80.0f, t0 + CopyHealth::EFFECT_WINDOW + milliseconds{ 100 }) == 80.0f);
+}
+
+TEST("copy hits: a report that lands before the hit's event is heard does not heal the hit back")
+{
+	// The engine takes the shot's health and sends its event a frame later; the runner's report came in between. Set to
+	// the report's health, the shot was healed back and never reached the NPC's game ("my hit did nothing").
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	CHECK(Took(book, RAIDER_1, t0) == 0.0f);
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 16 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
+	CHECK(Near(Took(book, RAIDER_1, t0 + milliseconds{ 16 }), 10.0f));
+	CHECK(Near(*book.Health(RAIDER_1), 95.0f));
+}
+
+TEST("copy hits: a drop a report found with no hit of ours after it is someone else's")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 150 }, 100.0f) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 150 }) == 0.0f);
+	// Nor does a hit that comes long after take it.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 3000 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 3000 }, 100.0f) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 3000 }) == 0.0f);
+}
+
+TEST("copy hits: a drop a report found with a hit of ours booked already is counted once")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	CHECK(book.Check(RAIDER_1, 90.0f, t0, 100.0f) == 0.0f);
+	book.Heard(RAIDER_1, 90.0f, 95.0f, t0 + milliseconds{ 5 }, true);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 20 }, 100.0f) == 0.0f);
+	CHECK(Near(Took(book, RAIDER_1, t0 + milliseconds{ 20 }), 10.0f));  // in all, not 20
+}
+
+TEST("copy hits: a book pruned with a grace keeps what a hit booked in a frame the copy was out of sight")
+{
+	// CopyWatch prunes by when each copy was last seen (5 s), not by this frame's loop: a frame without the copy's 3D
+	// lost the hit booked in it, and the shot never reached the NPC's game.
+	using std::chrono::milliseconds;
+	using std::chrono::seconds;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          seenAt = [&](std::uint32_t a_id, CopyHealth::Clock::time_point a_seen) { return [=](std::uint32_t a_other) { return a_other == a_id && t0 + milliseconds{ 16 } - a_seen <= seconds{ 5 }; }; };
+
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 100.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	book.Prune(seenAt(RAIDER_1, t0 - seconds{ 1 }));
+	CHECK(book.Size() == 1);
+	CHECK(book.Check(RAIDER_1, 90.0f, t0 + milliseconds{ 16 }, 100.0f) == 0.0f);
+	CHECK(Near(Took(book, RAIDER_1, t0 + milliseconds{ 16 }), 10.0f));
+
+	// Seen last 6 s ago: forgotten.
+	CopyHealth::Book gone;
+	gone.Set(RAIDER_1, 100.0f);
+	gone.OurHit(RAIDER_1, t0, 10.0f);
+	gone.Prune(seenAt(RAIDER_1, t0 - seconds{ 6 }));
+	CHECK(gone.Size() == 0);
+}
+
+TEST("copy hits: a drop a report found is not taken by a hit that comes long after, even if the copy was not checked meanwhile")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 100.0f);
+	CHECK(Near(book.Heard(RAIDER_1, 90.0f, 95.0f, t0, true), 95.0f));
+	// The copy had no 3D for a while: no Check between. A hit of ours 800 ms on is its own; the report's heal stands.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 800 }, 10.0f);
+	CHECK(book.Check(RAIDER_1, 95.0f, t0 + milliseconds{ 800 }, 100.0f) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + milliseconds{ 800 }) == 0.0f);
+}
+
+TEST("copy hits: our companion's killing blow on a friend's robot reaches the robot's own game, though our copy's death comes at the end of a long fall")
+{
+	// On the rig the host's Codsworth killed the host's copy of a friend's Mr. Gutsy: the killing blow sent nothing (only
+	// living copies were checked), and the copy's death came at the end of a 10 s fall, past the server's deathGrace since
+	// the host's game last told it of the fight. The death was dropped, and the Gutsy stood on at 6 health in its own game.
+	Server::Options options;
+	options.deathGrace = 600s;  // the test moves the server's clock past it (Advance), so a busy PC can't end it early
+	for (const bool fixed : { true, false }) {
+		Fight f{ options };
+		f.bobGame.claimKills = false;  // the blow's claim is refused, or there is none (a spawn, a plugin's NPC our game lacks)
+		f.bobGame.longFall = true;
+		f.bobGame.fallsSent = fixed;
+		f.bobGame.Strike(DOGMEAT, RAIDER_1, 60.0f);
+		f.Pass();
+		REQUIRE(Near(f.hostGame.npcs[RAIDER_1].health, 40.0f));
+		REQUIRE(Near(f.bobGame.npcs[RAIDER_1].health, 40.0f));
+
+		f.bobGame.Strike(DOGMEAT, RAIDER_1, 45.0f);  // dead on Bob's screen, falling
+		CHECK(f.bobGame.npcs[RAIDER_1].dead);
+		f.Pass();
+		f.s.Advance(601s);  // the fall outlasts deathGrace
+		f.bobGame.Land();
+		f.Pass();
+		if (fixed) {
+			CHECK(f.hostGame.npcs[RAIDER_1].dead);  // the blow took the last of its health in its own game
+			CHECK(f.host.WorldNow().dead.contains(RAIDER_1));
+			CHECK(f.bob.WorldNow().dead.contains(RAIDER_1));
+			CHECK(f.hostGame.deathsSent.contains(RAIDER_1));  // its own game's death is the one believed
+			CHECK(!f.DeathDropped(RAIDER_1));               // and Bob's, late, finds it dead already: no second death
+		} else {
+			CHECK(!f.hostGame.npcs[RAIDER_1].dead);  // as on the rig: it fights on in its own game
+			CHECK(Near(f.hostGame.npcs[RAIDER_1].health, 40.0f));
+			CHECK(f.DeathDropped(RAIDER_1));
+			CHECK(!f.host.WorldNow().dead.contains(RAIDER_1));
+		}
+	}
+}
+
+TEST("copy hits: a copy that falls to a blow of ours books all it stood at and more, once; a fall with none of ours around it books nothing")
+{
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+
+	// The blow took 30 off a copy at 6: all of the drop is ours, and sent.
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 6.0f);
+	book.OurHit(RAIDER_1, t0, 30.0f);
+	CHECK(!book.Fell(RAIDER_1, -24.0f, t0 + FRAME));
+	CHECK(Near(Took(book, RAIDER_1, t0 + FRAME), 30.0f));
+	CHECK(book.Lethal() == 1);
+	// Once a fall: the corpse's next frames book nothing more.
+	CHECK(!book.Fell(RAIDER_1, -24.0f, t0 + 2 * FRAME));
+	CHECK(Took(book, RAIDER_1, t0 + 2 * FRAME) == 0.0f);
+
+	// A copy that reads 0 dead: never less than where it stood and MIN_LEFT more, so the NPC's game, about where the copy
+	// stood, is not left a sliver by rounding.
+	CopyHealth::Book zero;
+	zero.Set(RAIDER_1, 6.0f);
+	zero.OurHit(RAIDER_1, t0);
+	CHECK(!zero.Fell(RAIDER_1, 0.0f, t0 + FRAME));
+	CHECK(Near(Took(zero, RAIDER_1, t0 + FRAME), 6.0f + CopyHealth::MIN_LEFT));
+
+	// The hit's event a frame behind its damage: the fall waits for it, JUDGE_AFTER at most.
+	CopyHealth::Book late;
+	late.Set(RAIDER_1, 6.0f);
+	CHECK(late.Fell(RAIDER_1, -10.0f, t0));
+	late.OurHit(RAIDER_1, t0 + FRAME, 16.0f);
+	CHECK(!late.Fell(RAIDER_1, -10.0f, t0 + FRAME));
+	CHECK(Near(Took(late, RAIDER_1, t0 + FRAME), 16.0f));
+
+	// Nothing of ours around it (a friend's shot, a hazard): nothing sent, and a hit of ours on the corpse later is no part of it.
+	CopyHealth::Book theirs;
+	theirs.Set(RAIDER_1, 6.0f);
+	theirs.OurHit(RAIDER_1, t0 - std::chrono::seconds{ 5 }, 10.0f);
+	CHECK(theirs.Fell(RAIDER_1, -10.0f, t0));
+	CHECK(!theirs.Fell(RAIDER_1, -10.0f, t0 + CopyHealth::JUDGE_AFTER));
+	theirs.OurHit(RAIDER_1, t0 + milliseconds{ 500 }, 10.0f);
+	CHECK(!theirs.Fell(RAIDER_1, -20.0f, t0 + milliseconds{ 500 }));
+	CHECK(Took(theirs, RAIDER_1, t0 + milliseconds{ 500 }) == 0.0f);
+	CHECK(theirs.Lethal() == 0);
+
+	// A throw of ours (left to the owner's game, which deals it) beside our shot: only the shot's figure is ours.
+	CopyHealth::Book thrown;
+	thrown.Set(RAIDER_1, 50.0f);
+	thrown.OurHit(RAIDER_1, t0, 20.0f);
+	thrown.OwnersBlow(RAIDER_1, t0);
+	CHECK(!thrown.Fell(RAIDER_1, -40.0f, t0 + FRAME));
+	CHECK(Near(Took(thrown, RAIDER_1, t0 + FRAME), 20.0f));
+
+	// Never seen alive: no health to fall from, nothing booked.
+	CopyHealth::Book unseen;
+	unseen.OurHit(RAIDER_1, t0, 20.0f);
+	CHECK(!unseen.Fell(RAIDER_1, -20.0f, t0 + FRAME));
+	CHECK(Took(unseen, RAIDER_1, t0 + FRAME) == 0.0f);
+
+	// Up again (a copy checked alive): its next fall is judged afresh.
+	CopyHealth::Book again;
+	again.Set(RAIDER_1, 6.0f);
+	again.OurHit(RAIDER_1, t0, 10.0f);
+	CHECK(!again.Fell(RAIDER_1, -4.0f, t0 + FRAME));
+	CHECK(Near(Took(again, RAIDER_1, t0 + FRAME), 10.0f));
+	again.Set(RAIDER_1, 50.0f);
+	CHECK(again.Check(RAIDER_1, 50.0f, t0 + std::chrono::seconds{ 10 }) == 0.0f);
+	again.OurHit(RAIDER_1, t0 + std::chrono::seconds{ 11 }, 60.0f);
+	CHECK(!again.Fell(RAIDER_1, -10.0f, t0 + std::chrono::seconds{ 11 } + FRAME));
+	CHECK(Near(Took(again, RAIDER_1, t0 + std::chrono::seconds{ 11 } + FRAME), 60.0f));
+}
+
+TEST("copy hits: when the friend's robot falls for 10 s in its own game too, our late death report may be dropped, but the robot ends dead in both games")
+{
+	// As on the rig: the fall's damage kills the robot in its own game, where it falls as long as our copy did. Our copy's
+	// death report reaches the server first, still past deathGrace, and is dropped; the runner's, after it, is believed.
+	Server::Options options;
+	options.deathGrace = 600s;  // the test moves the server's clock past it (Advance)
+	Fight f{ options };
+	f.bobGame.claimKills = false;
+	f.bobGame.longFall = true;
+	f.hostGame.longFall = true;
+	f.bobGame.Strike(DOGMEAT, RAIDER_1, 60.0f);
+	f.Pass();
+	f.bobGame.Strike(DOGMEAT, RAIDER_1, 45.0f);
+	f.Pass();
+	CHECK(f.hostGame.npcs[RAIDER_1].dead);  // falling in its own game too
+	CHECK(!f.host.WorldNow().dead.contains(RAIDER_1));
+	f.s.Advance(601s);
+	f.bobGame.Land();
+	f.Pass();
+	CHECK(f.DeathDropped(RAIDER_1));  // ours, late: dropped, harmlessly
+	f.hostGame.Land();
+	f.Pass();
+	CHECK(f.hostGame.deathsSent.contains(RAIDER_1));
+	CHECK(f.host.WorldNow().dead.contains(RAIDER_1));  // the kill is not lost
+	CHECK(f.bob.WorldNow().dead.contains(RAIDER_1));
+	CHECK(f.bobGame.npcs[RAIDER_1].dead);
+}
+
+TEST("copy hits: a fall with only an effect of ours on the copy is ours, unless something else hit it since; an owner's blow during the wait leaves only our hit's figure")
+{
+	using std::chrono::seconds;
+	const CopyHealth::Clock::time_point t0{};
+
+	// A legendary's bleed of ours ticks the copy to death with no hit event: the fall is ours.
+	CopyHealth::Book bleed;
+	bleed.Set(RAIDER_1, 30.0f);
+	bleed.OurEffect(RAIDER_1, t0);
+	CHECK(!bleed.Fell(RAIDER_1, -5.0f, t0 + seconds{ 3 }));
+	CHECK(bleed.FellToUs(RAIDER_1));
+	CHECK(Near(Took(bleed, RAIDER_1, t0 + seconds{ 3 }), 35.0f));
+	CHECK(bleed.Lethal() == 1);
+
+	// A fire hit it after our effect: its ticks are no longer ours alone, nor is the fall.
+	CopyHealth::Book burnt;
+	burnt.Set(RAIDER_1, 30.0f);
+	burnt.OurEffect(RAIDER_1, t0);
+	burnt.OtherHit(RAIDER_1, t0 + seconds{ 1 });
+	CHECK(burnt.Fell(RAIDER_1, -5.0f, t0 + seconds{ 3 }));
+	CHECK(!burnt.Fell(RAIDER_1, -5.0f, t0 + seconds{ 3 } + CopyHealth::JUDGE_AFTER));
+	CHECK(!burnt.FellToUs(RAIDER_1));
+	CHECK(Took(burnt, RAIDER_1, t0 + seconds{ 4 }) == 0.0f);
+	CHECK(burnt.Lethal() == 0);
+
+	// The fall waits for a hit's event; our throw's blast lands in that wait beside our shot: only the shot's figure is
+	// ours, the owner's game deals the blast.
+	CopyHealth::Book thrown;
+	thrown.Set(RAIDER_1, 50.0f);
+	CHECK(thrown.Fell(RAIDER_1, -30.0f, t0));
+	thrown.OwnersBlow(RAIDER_1, t0 + FRAME);
+	thrown.OurHit(RAIDER_1, t0 + FRAME, 20.0f);
+	CHECK(!thrown.Fell(RAIDER_1, -30.0f, t0 + FRAME));
+	CHECK(Near(Took(thrown, RAIDER_1, t0 + FRAME), 20.0f));
+	CHECK(thrown.FellToUs(RAIDER_1));
+}
+
+TEST("copy hits: a fall while a report's drop waits for its hit's event books all the copy stood at, once")
+{
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 40.0f);
+	// Our hit took the copy to 25, its event not here yet, and the runner's report of 40 came: the drop waits (Heard).
+	CHECK(Near(book.Heard(RAIDER_1, 25.0f, 40.0f, t0), 40.0f));
+	// Our next blow kills it, and both hits' events come a frame later.
+	CHECK(book.Fell(RAIDER_1, -10.0f, t0 + FRAME));
+	book.OurHit(RAIDER_1, t0 + 2 * FRAME);
+	CHECK(!book.Fell(RAIDER_1, -10.0f, t0 + 2 * FRAME));
+	const float sent = Took(book, RAIDER_1, t0 + 2 * FRAME);
+	CHECK(Near(sent, 50.0f));
+	CHECK(sent >= 40.0f + CopyHealth::MIN_LEFT);  // the runner, at its report, takes its last health
+	// Seen alive again later (its cell reset: a report sets it), the waiting drop is not booked a second time.
+	book.Set(RAIDER_1, 40.0f);
+	CHECK(book.Check(RAIDER_1, 40.0f, t0 + 3 * FRAME) == 0.0f);
+	CHECK(Took(book, RAIDER_1, t0 + 3 * FRAME) == 0.0f);
+	CHECK(!book.FellToUs(RAIDER_1));
+}
+
+TEST("copy hits: a copy killed here for another game's word is no fall of ours, though our hit is still in its window")
+{
+	// The session's console kill (WorldSync's for a death another game reported, Spawns' for a spawn): the NPC is dead there
+	// already. It was counted as our kill, and its damage sent only to be refused.
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book book;
+	book.Set(RAIDER_1, 40.0f);
+	book.OurHit(RAIDER_1, t0, 10.0f);
+	CHECK(!book.Fell(RAIDER_1, 0.0f, t0 + FRAME, true));
+	CHECK(!book.FellToUs(RAIDER_1));
+	CHECK(Took(book, RAIDER_1, t0 + FRAME) == 0.0f);
+	CHECK(book.Lethal() == 0);
+	// Judged: the corpse's next frames book nothing either.
+	CHECK(!book.Fell(RAIDER_1, 0.0f, t0 + 2 * FRAME));
+	CHECK(Took(book, RAIDER_1, t0 + 2 * FRAME) == 0.0f);
+
+	// A fall of ours already booked stays booked when the word comes after it.
+	CopyHealth::Book ours;
+	ours.Set(RAIDER_1, 6.0f);
+	ours.OurHit(RAIDER_1, t0, 30.0f);
+	CHECK(!ours.Fell(RAIDER_1, -24.0f, t0 + FRAME));
+	CHECK(!ours.Fell(RAIDER_1, -24.0f, t0 + 2 * FRAME, true));
+	CHECK(ours.FellToUs(RAIDER_1));
+	CHECK(Near(Took(ours, RAIDER_1, t0 + 2 * FRAME), 30.0f));
 }

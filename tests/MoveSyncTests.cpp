@@ -23,7 +23,7 @@ namespace
 
 		bool operator()(MoveSync::Event a_event)
 		{
-			const bool start = a_event == MoveSync::Event::kStart;
+			const bool start = MoveSync::Starts(a_event);
 			++(start ? starts : stops);
 			if (jumping || walking == start) {
 				return false;
@@ -157,4 +157,30 @@ TEST("move sync: something that keeps happening is logged the first few times, t
 	CHECK(MoveSync::Loggable(50));
 	CHECK(!MoveSync::Loggable(51));
 	CHECK(MoveSync::Loggable(100));
+}
+
+TEST("move sync: a moving graph is told again that it moves, never asked to set off again")
+{
+	// A set-off may play a clip (a sneak's) that a moving graph would start over: the resync asks kStillMoving.
+	int  starts = 0;
+	int  still = 0;
+	bool walking = false;
+	bool moving = false;
+	auto next = MoveSync::Clock::time_point{};
+	for (auto t = t0; t < t0 + 2s; t += FRAME) {
+		const auto step = MoveSync::Drive(moving, next, 300.0f, t, [&](MoveSync::Event a_event) {
+			starts += a_event == MoveSync::Event::kStart;
+			still += a_event == MoveSync::Event::kStillMoving;
+			if (MoveSync::Starts(a_event) == walking) {
+				return false;
+			}
+			walking = MoveSync::Starts(a_event);
+			return true;
+		});
+		moving = step.moving;
+		next = step.nextResync;
+	}
+	CHECK(walking && moving);
+	CHECK(starts == 1);
+	CHECK(still >= 3 && still <= 4);  // every 500 ms after the start
 }

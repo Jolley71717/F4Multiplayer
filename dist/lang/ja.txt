@@ -24,9 +24,11 @@ session.joining_friend = マルチプレイ：フレンドのゲームに参加�
 session.no_steam = マルチプレイ：Steamを利用できません
 session.host_other_session = マルチプレイ：ホストは別のセッションに移りました（別のキャラクターかニューゲーム）。メニューから参加し直してください
 session.character_changed_host = マルチプレイ：別のキャラクターをロードしました。そのキャラクターのセッションでホストを再開します
-session.hosting_resumes = マルチプレイ：Vault111を出るとホストを再開します
+session.hosting_resumes = マルチプレイ：新しいキャラクターに名前を付けてVault111を出るとホストを再開します
 session.character_changed_left = マルチプレイ：別のキャラクターをロードしたためセッションを退出しました。メニューから参加し直してください
+session.unnamed_waits = マルチプレイ：新しいキャラクターに名前が付くまでセッションは待機します。それ以前のセーブは前のキャラクターのIDを持ち、そのキャラクターのセッションで遊ぶことになります
 host.err_opening = Vault111を出てからホストできます
+host.err_opening_unnamed = 新しいキャラクターに名前を付けてからホストできます
 host.err_port = ポート{port}でホストできませんでした
 world.history_full = マルチプレイ：セッションの共有履歴が{percent}%に達しました。100%でアイテムとキルの共有が止まります。ホストがセッションファイルを削除すれば新しいセッションを始められます（ドキュメント参照）
 
@@ -82,7 +84,18 @@ party.ping_you = あなた
 party.ping_something = 何か
 party.where = {player}：{where}
 party.no_emote_armor = パワーアーマー着用中はエモートできません
-party.friends_frame = これは{player}のパワーアーマーです。フレンドとのパワーアーマーの共有は今後のバージョンで対応予定です。
+party.friends_frame = これは{player}のパワーアーマーです。置いてあるときは乗り込んで借りられますが、パーツは持ち主のものです。
+party.frame_asking = {player}にパワーアーマーの貸し出しを依頼中…
+party.frame_lent = {player}がパワーアーマーを貸してくれました。もう一度押すと乗り込みます。
+party.frame_not_lending = {player}はパワーアーマーを貸し出していません。
+party.frame_refused = {player}は今このパワーアーマーを貸し出せません。
+party.frame_busy = すでにフレンドのパワーアーマーを借りています。
+party.frame_borrowed = {player}がパワーアーマーを借りました
+party.frame_given_back = {player}がパワーアーマーを返却しました
+party.frame_owner_left = {player}が退出：降りるとパワーアーマーは消えます
+party.frame_loan_over = 借りたパワーアーマーは持ち主に返却されました
+party.lent_item = {player}の{item}
+party.frame_is_lent = パワーアーマーを{player}に貸し出し中
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [メニュー中]
 party.killed = {killer}が{victim}を倒しました
@@ -93,6 +106,7 @@ party.no_teleport_target = マルチプレイ：テレポート先がいませ�
 party.teleport_prompt = {player}へテレポート？{key}長押しで移動
 party.teleport_choose = {key}を押してテレポート先を選択
 party.cant_teleport_opening = Vault111を出るまでテレポートできません
+party.cant_teleport_unnamed = 新しいキャラクターに名前が付くまでテレポートできません
 party.cant_teleport_talking = 会話中はテレポートできません
 party.cant_teleport_scene = イベント中はテレポートできません
 party.cant_teleport_busy = 座っている間や使用中はテレポートできません
@@ -107,7 +121,9 @@ party.teleporting = {player}へテレポート中
 
 # --- Being down and helping up ---
 down.went_down = ダウンしました！フレンドが助け起こせます。{key}長押しでギブアップ
+down.went_down_crawl = ダウンしました！フレンドが助け起こせます。這って移動できます。{key}長押しでギブアップ
 down.seconds_left = 助けを待てるのはあと{n}秒
+down.friends_gone = 今は誰も助け起こせません。友達が戻らなければ{n}秒で出血死します
 down.helping = {player}を助け起こし中…
 down.helped = {player}を助け起こしました
 down.helped_you = {player}に助け起こされました
@@ -116,6 +132,19 @@ down.last_revive = しばらくはこれが最後の助け起こしです。次�
 down.revives_back = また仲間に助け起こしてもらえるようになりました
 down.cooldown = 助け起こされた直後です。{n}秒間は致命傷を受けると死亡します
 down.cant_help_fighting = 戦闘中は{player}を助け起こせません
+down.bleed_out_loads_save = {n}秒以内に助け起こされないと死亡し、最後のセーブデータがロードされます
+down.death_loads_save = 死亡すると最後のセーブデータがロードされます
+
+rules.host = ホストのルール：{rules}
+rules.revive_off = 助け起こしなし、致命傷で死亡
+rules.revives_fight = 助け起こしは戦闘ごとに{n}回まで
+rules.revives_window = 助け起こしは{minutes}分ごとに{n}回まで
+rules.bleed_out = {n}秒で失血死
+rules.help_time = 仲間を助け起こすのに{n}秒
+rules.revive_health = 体力{n}%で起き上がる
+rules.cooldown = 助け起こされてから{n}秒以内の致命傷で死亡
+rules.out_of_combat = 戦闘中は助け起こし不可
+rules.save_on_down = ダウン時にオートセーブ
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player}が{place}を発見
@@ -132,6 +161,14 @@ workshop.rescued = フレンドのコンテナに入れていたアイテムは�
 drops.container_hint = コンテナに入れた武器と防具はあなたのゲームにだけ残ります。フレンドに渡すには、そのそばで捨ててください
 drops.not_given = このアイテムはフレンドには拾えません。あなたのゲームの地面にだけ残ります
 drops.taken_first = フレンドが先に拾いました
+storage.closed = このコンテナのホスト側のコピーは今開いていません（ホストが離れているか、ロードしました）。閉じました。ホストが近くに来たらもう一度試してください
+storage.take_refused = それはもうホストのコンテナにありませんでした（フレンドが先に取った？）。元に戻しました
+storage.put_refused = それはホストのコンテナに入れられませんでした（ホストのゲームにそのModがない？）。あなたに戻しました
+storage.short = コンテナの中身は表示より少なかったため、なかった分は取り消されました
+storage.settle_cut = ロード後、ホストのコンテナでの操作をすべては整合させられませんでした(セッションの記録がいっぱいか、あなたの割り当てを使い切りました)。次にロードするまで、それらのコンテナは開けません
+gifts.given = フレンドは自分の側のこのコンテナからこれを取れるようになりました（最初に取った人のものになります）。それまではあなたが取り戻せます
+gifts.not_given = これはフレンドには渡りません。あなたの側のコンテナにだけ残ります（クエストアイテム、あなたのゲームにしかないMod、またはセッションが満杯です）
+gifts.taken_first = フレンドが先に取りました
 save.old_leftover = マルチプレイ：このセーブデータには旧バージョンのMODの残りが含まれています。今すぐセーブしてからゲームを再起動し、新しいセーブデータで遊んでください
 
 # --- The F1 menu ---
@@ -188,6 +225,8 @@ menu.compass_markers = コンパスマーカー
 menu.compass_markers_what = コンパスにフレンドを表示
 menu.fast_loading = 高速ロード
 menu.fast_loading_what = ロード画面中は垂直同期をオフにします
+menu.lend_power_armor = パワーアーマーの貸し出し
+menu.lend_power_armor_what = 置いてあるパワーアーマーをフレンドが借りられます
 
 menu.mods = MODを比較（{n}）
 menu.mods_ask = ホストにもう一度確認

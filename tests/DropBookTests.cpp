@@ -294,6 +294,74 @@ TEST("drop book: an item with no reference named is looked for only when it can 
 	CHECK(!DropBook::MayScan(5u, 5u, 0, false));
 }
 
+TEST("drop book: an item picked up from where a plugin placed it is a drop when it goes back into the world as that reference")
+{
+	// (created, picked up by our player this session), whether the event names the reference or the scan finds it
+	CHECK(DropBook::MayBeOurs(true, false));   // the usual drop: a new reference
+	CHECK(DropBook::MayBeOurs(false, true));   // a plugin's reference our player picked up: the stimpak picked up in Sanctuary
+	// A plugin's item that lay near them all along, or one picked up before the session: a friend's world still has it
+	// where the plugin placed it, so it is never given, even when the event names it.
+	CHECK(!DropBook::MayBeOurs(false, false));
+
+	// The note decides it: picked up in the session, dropped, picked up again.
+	DropBook::PlacedPickups pickups;
+	constexpr std::uint32_t STIMPAK = 0x000ADC8F;
+	CHECK(!DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+	pickups.PickedUp(STIMPAK);
+	CHECK(DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+	pickups.Dropped(STIMPAK);
+	CHECK(!DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));  // dropped once: a second event for it is no new drop
+	pickups.PickedUp(STIMPAK);
+	CHECK(DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+	pickups.Clear();  // the session ended, or a load
+	CHECK(!DropBook::MayBeOurs(false, pickups.Has(STIMPAK)));
+}
+
+TEST("drop book: a dropped item made at runtime is deleted for the copy; a plugin's reference is only disabled")
+{
+	using DropBook::MakeWay;
+	CHECK(DropBook::HowItMakesWay(true) == MakeWay::kDelete);
+	CHECK(DropBook::HowItMakesWay(false) == MakeWay::kDisable);  // deleted or left out of the save, a load would put it back
+}
+
+TEST("drop book: the plugin references our player picked up are noted until dropped, the oldest forgotten past the cap")
+{
+	DropBook::PlacedPickups pickups;
+	pickups.PickedUp(0x000ADC8F);
+	pickups.PickedUp(0x000ADC90);
+	CHECK(pickups.Has(0x000ADC8F));
+	CHECK(pickups.Has(0x000ADC90));
+	CHECK(pickups.Size() == 2);
+	pickups.PickedUp(0x000ADC8F);  // picked up again (dropped unseen): one note
+	CHECK(pickups.Size() == 2);
+	pickups.Dropped(0x000ADC8F);
+	CHECK(!pickups.Has(0x000ADC8F));
+	CHECK(pickups.Has(0x000ADC90));
+	pickups.Dropped(0x000ADC8F);  // dropped twice: nothing
+	CHECK(pickups.Size() == 1);
+
+	pickups.PickedUp(0);
+	pickups.PickedUp(0xFF001234);  // made at runtime: the scan takes those anyway
+	CHECK(!pickups.Has(0));
+	CHECK(!pickups.Has(0xFF001234));
+	CHECK(pickups.Size() == 1);
+
+	pickups.Clear();
+	for (std::uint32_t i = 1; i <= DropBook::PlacedPickups::MAX + 1; ++i) {
+		pickups.PickedUp(0x00100000 + i);
+	}
+	CHECK(pickups.Size() == DropBook::PlacedPickups::MAX);
+	CHECK(!pickups.Has(0x00100001));  // the oldest went
+	CHECK(pickups.Has(0x00100002));
+	CHECK(pickups.Has(0x00100000 + DropBook::PlacedPickups::MAX + 1));
+
+	// Picked up again, an old note is the newest: not the next to go.
+	pickups.PickedUp(0x00100002);
+	pickups.PickedUp(0x00200000);
+	CHECK(pickups.Has(0x00100002));
+	CHECK(!pickups.Has(0x00100003));
+}
+
 TEST("drop book: our copy is scrapped only when the workshop's event names it; gone otherwise it is lost or still standing")
 {
 	using DropBook::CopyGone;

@@ -280,4 +280,30 @@ namespace HandThrowable
 	private:
 		std::unordered_map<std::uint32_t, Hold> holds;  // actor -> what hangs in its hand
 	};
+
+	// Between throws (bead krne: a friend's grenade or Molotov stayed in their stand-in's hand). The stand-in carries its
+	// friend's grenade equipped between throws (Equipment::HoldThrowable), and the engine keeps that grenade's model hung
+	// in a WeaponLeft under its LArm_Hand, culled: the rig found it there before a replayed throw as well as during it,
+	// where the player's own hand has one only through a throw. The engine never hears a replayed throw's release
+	// (ThrowReplays keeps it from it), so none of its own end of a throw runs on the stand-in, and the Book above covers
+	// only the half second we draw that node ourselves. A WeaponLeft found drawn at any other time is a grenade stuck in
+	// the hand, whatever drew it: it is culled again, as the engine keeps it. Stand-ins only: an NPC throws its own.
+	constexpr Clock::duration SWEEP_EVERY = std::chrono::milliseconds{ 250 };  // how often a stand-in's hand is looked at
+	constexpr Clock::duration WIND_UP = MAX_HOLD;  // a replayed throw not let go of yet is let show its grenade this long
+
+	// What the game shows of a stand-in's left hand, looked at every SWEEP_EVERY.
+	struct Between
+	{
+		bool loaded = false;     // the stand-in exists, lives, and its 3D has an LArm_Hand
+		bool drawn = false;      // ... with a child named WeaponLeft that is drawn
+		bool holds = false;      // ... and has something in it
+		bool ours = false;       // we hold a model in that hand now (Book::Holds): it comes off by the Book's own rules
+		bool windingUp = false;  // a friend's throw replayed on it less than WIND_UP ago is not let go of yet (the engine's own may show)
+	};
+
+	// Whether the stand-in's WeaponLeft is culled again now: drawn with something in it, and no throw of its going on.
+	constexpr bool ShouldCull(const Between& a_seen)
+	{
+		return a_seen.loaded && a_seen.drawn && a_seen.holds && !a_seen.ours && !a_seen.windingUp;
+	}
 }

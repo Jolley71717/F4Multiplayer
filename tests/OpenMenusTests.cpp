@@ -167,15 +167,17 @@ TEST("open menus: the guard finds a menu looked up through the UI, and not one n
 	CHECK(CodeOnly("a // b\nc /* d\ne */ f \"g\\\"h\" i") == "a \nc \n f   i");
 }
 
-TEST("open menus: the plugin looks no menu up through the UI, but for the HUD once, to hook it, and the developer's menu commands")
+TEST("open menus: the plugin looks no menu up through the UI, but for the HUD once, to hook it, the developer's menu commands and a key handed to one menu")
 {
 	const auto root = SourceTree::Root();
 	REQUIRE(root);  // run the tests from the repository or its build folder
 	// Compass's lookup is on the main thread, between frames, of the HUD (which the UI keeps for the whole game),
 	// and only until its update is hooked. The gfx commands (dev channel) look up what a developer names, and
 	// "dialogue menu" the dialogue menu and the menu stack: on the main thread, between frames, when a developer
-	// asks, and the reference is let go before the command returns.
-	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 } };
+	// asks, and the reference is let go before the command returns. MenuInput hands one menu a key (the settlement
+	// list's cancel, which a friend's stage opened here): on the main thread, between frames, with the UI settled, a
+	// menu OpenMenus says is up, and the reference let go before it returns, as the game's own input code holds it.
+	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 }, { "src/game/MenuInput.cpp", 1 } };
 	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
 		const auto lookups = MenuLookups(code);
 		const auto it = allowed.find(file);

@@ -4,8 +4,14 @@
 #include "Test.h"
 
 #include "Background.h"
+#include "RulesSummary.h"
+#include "Text.h"
+#include "game/DownRules.h"
 #include "game/HostRules.h"
 #include "game/RealTimeVats.h"
+
+#include <algorithm>
+#include <vector>
 
 TEST("session rules: an ini with none of the keys hosts with the defaults, which are the mod's behaviour before rules")
 {
@@ -20,7 +26,41 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(rules.reviveWindowMinutes == 0);
 	CHECK(rules.downCooldownSeconds == 0);
 	CHECK(!rules.reviveOutsideCombat);
+	CHECK(!rules.downedCrawl);
 	CHECK(rules.realTimeVats);
+	CHECK(!rules.shareGuestBuilds);  // a guest's earlier building stays in their own game
+	CHECK(!rules.sharedStorage);     // each game keeps its own copy of storage, as in 0.9.2
+	CHECK(!rules.containerGifts);    // a weapon put in a chest stays its player's own, as in 0.9.2
+	CHECK(!rules.saveOnDown);        // no autosave on going down, as in 0.9.2
+}
+
+TEST("session rules: the host's bSaveOnDown makes an autosave on going down part of the downed rules, and the summary says so")
+{
+	Text::Use("en", {});
+	Config::Settings settings;
+	CHECK(!DownRules::Rules::From(HostRules::FromSettings(settings)).saveOnDown);
+	settings.saveOnDown = true;
+	const auto rules = HostRules::FromSettings(settings);
+	CHECK(rules.saveOnDown);
+	CHECK(DownRules::Rules::From(rules).saveOnDown);
+	CHECK(HostRules::Describe(rules).find("saveOnDown=true") != std::string::npos);
+	CHECK(HostRules::Summary(rules) == "Host's rules: an autosave when you go down");
+	// With revives off nobody goes down: said alone, as before.
+	auto off = rules;
+	off.revive = false;
+	CHECK(HostRules::Summary(off) == "Host's rules: no revives, a lethal hit kills");
+}
+
+TEST("session rules: crawling while down is off by default, and the host's bDownedCrawl turns it on for the downed rules")
+{
+	Config::Settings settings;
+	CHECK(!HostRules::FromSettings(settings).downedCrawl);
+	CHECK(!DownRules::Rules::From(HostRules::FromSettings(settings)).crawl);
+	settings.downedCrawl = true;
+	const auto rules = HostRules::FromSettings(settings);
+	CHECK(rules.downedCrawl);
+	CHECK(DownRules::Rules::From(rules).crawl);
+	CHECK(HostRules::Describe(rules).find("crawl=true") != std::string::npos);
 }
 
 TEST("session rules: the host's keys each set their rule, within the limits")
@@ -35,6 +75,9 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	settings.reviveCooldownSeconds = 90;
 	settings.reviveOutOfCombat = true;
 	settings.realTimeVats = false;
+	settings.shareGuestBuilds = true;
+	settings.sharedStorage = true;
+	settings.containerGifts = true;
 	const auto rules = HostRules::FromSettings(settings);
 	CHECK(!rules.revive);
 	CHECK(rules.bleedOutSeconds == 120);
@@ -45,6 +88,11 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	CHECK(rules.downCooldownSeconds == 90);
 	CHECK(rules.reviveOutsideCombat);
 	CHECK(!rules.realTimeVats);
+	CHECK(rules.shareGuestBuilds);
+	CHECK(rules.sharedStorage);
+	CHECK(rules.containerGifts);
+	CHECK(HostRules::Describe(rules).find("sharedStorage=true") != std::string::npos);
+	CHECK(HostRules::Describe(rules).find("containerGifts=true") != std::string::npos);
 
 	settings.bleedOutSeconds = 1;
 	settings.reviveHealth = 400;
@@ -58,6 +106,67 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	CHECK(wild.reviveWindowMinutes == Protocol::SessionRules::MAX_REVIVE_WINDOW);
 	CHECK(wild.downCooldownSeconds == Protocol::SessionRules::MAX_DOWN_COOLDOWN);
 	CHECK(!HostRules::Describe(wild).empty());
+}
+
+TEST("session rules: default rules have no summary")
+{
+	Text::Use("en", {});
+	CHECK(RulesSummary::Of(Protocol::SessionRules{}).empty());
+	CHECK(HostRules::Summary(Protocol::SessionRules{}).empty());
+	// VATS is not a rule for being down; a window with no limit limits nothing.
+	Protocol::SessionRules quiet;
+	quiet.realTimeVats = false;
+	quiet.reviveWindowMinutes = 10;
+	CHECK(RulesSummary::Of(quiet).empty());
+}
+
+TEST("session rules: a revive limit per fight is summarised as revives per fight")
+{
+	Text::Use("en", {});
+	Protocol::SessionRules rules;
+	rules.maxRevives = 3;
+	const std::vector<RulesSummary::Part> fight{ { "rules.revives_fight", { { "n", "3" } } } };
+	CHECK(RulesSummary::Of(rules) == fight);
+	CHECK(HostRules::Summary(rules) == "Host's rules: revive limit 3 per fight");
+	rules.reviveWindowMinutes = 10;
+	const std::vector<RulesSummary::Part> window{ { "rules.revives_window", { { "n", "3" }, { "minutes", "10" } } } };
+	CHECK(RulesSummary::Of(rules) == window);
+}
+
+TEST("session rules: revive off is summarised alone")
+{
+	Text::Use("en", {});
+	Protocol::SessionRules rules;
+	rules.revive = false;
+	rules.maxRevives = 3;
+	rules.bleedOutSeconds = 20;
+	rules.reviveOutsideCombat = true;
+	const std::vector<RulesSummary::Part> off{ { "rules.revive_off", {} } };
+	CHECK(RulesSummary::Of(rules) == off);
+	CHECK(HostRules::Summary(rules) == "Host's rules: no revives, a lethal hit kills");
+}
+
+TEST("session rules: every rule that differs is in the summary, in order, within the limits, each in the English table")
+{
+	Text::Use("en", {});
+	Protocol::SessionRules rules;
+	rules.maxRevives = 1;
+	rules.reviveWindowMinutes = 10;
+	rules.bleedOutSeconds = 20;
+	rules.helpTenths = 25;
+	rules.reviveHealth = 10;
+	rules.downCooldownSeconds = 5;
+	rules.reviveOutsideCombat = true;
+	CHECK(HostRules::Summary(rules) == "Host's rules: revive limit 1 per 10 min, 20 s to bleed out, 2.5 s to help a friend up, up with 10% health, "
+	                                   "a lethal hit within 5 s of a revive kills, no helping up during a fight");
+	for (const auto& part : RulesSummary::Of(rules)) {
+		CHECK(std::ranges::any_of(Text::English(), [&](const auto& a_entry) { return a_entry.key == part.key; }));
+	}
+	// Whole seconds show no tenths; what the wire could carry beyond the limits is told as it applies.
+	Protocol::SessionRules wild;
+	wild.helpTenths = 50;
+	wild.bleedOutSeconds = 1;
+	CHECK(HostRules::Summary(wild) == "Host's rules: 5 s to bleed out, 5 s to help a friend up");
 }
 
 TEST("session rules: VATS runs at full speed in a session with the rule on, but Jet's slow motion stays")

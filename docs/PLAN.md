@@ -1,7 +1,7 @@
 # Bug plan and validation plan (October 2026)
 
 How reported bugs are ranked and worked, and how every change is proven in two real games over
-Steam before it ships. Work items live in beads (`bd list` in this repository); confirmed bugs also get a
+Steam before it ships. Work items live on the issue tracker; confirmed bugs also get a
 GitHub issue once reproduced or fixed. Issues never name a machine, a user account or a path under a
 user profile.
 
@@ -14,7 +14,7 @@ user profile.
 | S2 wrong but playable | Visible glitch with no effect on what each player can do (sound, animation detail) | Batch into a release |
 | S3 cosmetic or request | Looks off only when you stare; feature asks | Backlog |
 
-## Open bugs by severity (beads id)
+## Open bugs by severity (tracker id)
 
 | Sev | Issue | State | Plan |
 |---|---|---|---|
@@ -28,7 +28,7 @@ user profile.
 Fixed and verified this month, both directions, two games over Steam: buttons and switches
 (GitHub #5), ghost grenades (GitHub #6), terminal-linked locks lost after a minute (GitHub #7). Lifetime audit
 (docs/AUDIT-LIFETIME.md): ten code-confirmed lifetime and validity bugs fixed (GitHub #10 to #19); the
-trust-hardening backlog is beads epic lkt. Trust items fixed so far: deaths only from the
+trust-hardening backlog is an epic on the issue tracker. Trust items fixed so far: deaths only from the
 NPC's runner, hit caps, face throttle, explosions only after a real throw and near the thrower, owner and
 companion caps, activation and lock changes only from a player near the thing, NPC gear given once,
 settlement pieces wait for their workbench, HUD text sanitised (0.7.6 to 0.8.0).
@@ -78,7 +78,7 @@ counters and files below as evidence:
 ### Evidence kept
 
 Trace files and plots in `stage/trace/`, recordings of each side in `stage/`, and the counters pasted
-into the beads issue when it is closed. GitHub issues get the commit and a one-line summary of the
+into the tracker issue when it is closed. GitHub issues get the commit and a one-line summary of the
 verification, never paths or machine names.
 
 ## Releases

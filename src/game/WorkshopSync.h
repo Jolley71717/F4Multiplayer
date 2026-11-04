@@ -15,6 +15,16 @@ namespace WorkshopSync
 	// Hooks the workshop's placed/moved/scrapped events. Call once the game is up; no-op after.
 	void Install();
 
+	// Patches the crafting menus' gather so a crafting station that is our copy of a friend's reads our settlement's workbench
+	// (its junk and supply lines), as a station of ours does, not our player's things alone (CraftingWorkshop.h). At plugin
+	// load (it takes a trampoline call stub); no-op after.
+	void InstallCrafting();
+
+	// Patches the game's light maker's power check, so a copy of a friend's light that waits for power (the light bulb) makes
+	// its light while it is shown powered, as a powered light of ours does. At plugin load (it takes a trampoline call stub);
+	// no-op after.
+	void InstallLights();
+
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.
@@ -29,6 +39,10 @@ namespace WorkshopSync
 	// few a frame (Frame).
 	void Apply(const Protocol::WorkshopItem& a_item);
 
+	// One packet of what the session keeps as built by us (after the welcome and each load): each piece is looked for in
+	// our world, and what it lacks is reported gone, for the server to take out for everyone (WorkshopAudit).
+	void AuditOwn(const std::vector<Protocol::WorkshopItem>& a_items);
+
 	// Whether the reference is a settlement's workbench (whatever its state): what a friend's build or scrap
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
@@ -42,8 +56,16 @@ namespace WorkshopSync
 	// Dev: reports an existing reference as if the player had just placed (or scrapped) it.
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op);
 
-	// Removes every copy (leaving the session).
+	// Removes every copy (leaving the session). One whose cell isn't loaded then is deleted when it is (Sweep).
 	void Reset();
+
+	// Out of a session, every frame: the copies left to delete (their cell wasn't loaded, or their 3D was still loading) go
+	// once they may.
+	void Sweep();
+
+	// A save is about to load: the lights of the copies we showed powered are forgotten before the load's threads make the
+	// loaded world's lights (an old copy's ID may name a light of ours there).
+	void BeforeLoad();
 
 	// A save was loaded: the copies made before it are let go (the session sends its building again),
 	// and its cells are walked again for scrapped junk.
@@ -78,8 +100,24 @@ namespace WorkshopSync
 	// Someone left: their copies keep what they show, and are not shown again until their game says so (main thread).
 	void OnPlayerLeft(std::uint32_t a_playerId);
 
-	// A save is about to be written: no grid of ours may name a copy (main thread).
+	// A save is about to be written (main thread): no grid of ours may name a copy, and each friend's piece shown powered is shown
+	// unpowered for it (Mirror::Hush: a save keeps what a copy's graph was told, and a load would bring a friend's generator back
+	// running, with no session to stop it); AfterSave shows them as their builders' games say again.
 	void BeforeSave();
+
+	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again.
+	void AfterSave();
+
+	// Dev: a friend's game said this piece of theirs is powered or not, as the server's relay would say (wspower want).
+	bool SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered);
+
+	// Whether the reference carries the keyword every workshop copy is given (the game's WorkshopBlockInteractionKeyword,
+	// since 0.9.0, saved with the copy): a power armor frame made at runtime that has it is a copy an older version's
+	// workshop sync made of a frame (FrameShare::Ghost), never a suit of the player's own.
+	[[nodiscard]] bool IsCopyMarked(const RE::TESObjectREFR& a_ref);
+
+	// Whether the reference holds anything in our game.
+	[[nodiscard]] bool HoldsAnything(RE::TESObjectREFR* a_ref);
 
 	// Dev: whether copies are kept out of workshop mode's reach (off: to try the repair), and the audit run now.
 	void                      SetBlockCopies(bool a_block);

@@ -118,6 +118,14 @@ TEST("remote edits: a friend's explosion goes off near us whoever stands beside 
 	CHECK(SetOff(us, us, INF) == Blast::kNotThrown);
 }
 
+TEST("remote edits: a friend's explosion set off by an NPC we have no copy of is no blast of ours; a player's or a mirrored NPC's is")
+{
+	CHECK(SourceHere(0, 0));                    // the friend's own throw
+	CHECK(SourceHere(0x0001F00D, 0x0001F00D));  // a plugin's NPC, mirrored here
+	CHECK(SourceHere(0xFF000123, 0xFF004567));  // a spawn, and our copy of it
+	CHECK(!SourceHere(0xFF000123, 0));          // a spawn never placed here (a DLC's NPC we lack): a fight we can't see
+}
+
 TEST("remote edits: an explosion's blow on a copy is the owner's exactly when that explosion goes off in the owner's game")
 {
 	using namespace std::chrono_literals;
@@ -389,6 +397,25 @@ TEST("death reports: a report is held against the player the server named, where
 	CHECK(replay.reporter == 0);
 	CHECK(book.Judge(false, replay, jared, t0) == Verdict::kKeepAlive);
 	CHECK(book.Judge(false, book.Received({ .refId = 0x1F0B5, .playerId = 0, .x = 5.0f }, t0), jared, t0) == Verdict::kKeepAlive);  // a placed replay
+}
+
+TEST("death reports: where a corpse came to rest, said after its death, moves a report still held for our copy, and nothing else")
+{
+	using namespace std::chrono_literals;
+	DeathReports::Book                    book{ [](std::uint32_t) -> std::optional<Spot> { return std::nullopt; } };
+	const DeathReports::Clock::time_point t0{ 1h };
+	CHECK(!book.Rests(0x1F0B5, 900.0f, 10.0f, -40.0f));  // nothing held
+	CHECK(book.Empty());
+	book.Hold(0x1F0B5, book.Received({ .refId = 0x1F0B5, .playerId = 2, .killed = true, .x = 5.0f }, t0));
+	CHECK(book.Rests(0x1F0B5, 900.0f, 10.0f, -40.0f));
+	book.Retry([](std::uint32_t, const DeathReports::Report& a_report) {
+		CHECK(a_report.x == 900.0f);
+		CHECK(a_report.y == 10.0f);
+		CHECK(a_report.z == -40.0f);
+		CHECK(a_report.killer == 2);  // still the kill it was
+		return true;
+	});
+	CHECK(book.Empty());
 }
 
 TEST("token bucket: a burst, then one per refill, never more than the burst after a long quiet")

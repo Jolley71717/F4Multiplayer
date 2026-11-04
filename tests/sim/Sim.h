@@ -9,8 +9,10 @@
 // client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement, SendPacer
 // for how fast a player's settlement reports go, FoundDead::Shared for the host's save,
 // ArmorFrames::ChooseOriginal for a friend's power armor,
-// MoveSync::Drive every frame for a friend's stand-in, and StandInGear for what it wears (dressed every
-// frame as RemotePlayers::Update does, out of power armor). For the quests a test gives a game
+// MoveSync::Drive every frame for a friend's stand-in, StandInGear for what it wears (dressed every
+// frame as RemotePlayers::Update does, out of power armor), and ObjectShare::KnockWatch, scanned four
+// times a second of the game's frames, for which rests of the loose objects a test knocks about
+// (Knock) this game reports. For the quests a test gives a game
 // (GiveQuest), QuestSync's StageLog and StageRules set friends' stages and decide what is reported
 // (tests/sim/QuestGame.h). The rest is the model's own, written after the plugin and only as good as
 // that copy: applying doors, the stages of quests no test gave (only recorded) and pickups, dropping older
@@ -30,8 +32,10 @@
 #include "game/ArmorFrames.h"
 #include "game/FoundDead.h"
 #include "game/MoveSync.h"
+#include "game/ObjectShare.h"
 #include "game/SendPacer.h"
 #include "game/StandInGear.h"
+#include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 
 #include <cmath>
@@ -120,6 +124,10 @@ namespace Sim
 		std::set<std::pair<std::uint32_t, std::uint16_t>>              questStages;
 		std::map<std::uint32_t, Protocol::WorkshopItem>                built;     // by this player, by their reference ID
 		std::set<std::uint32_t>                                        scrapped;  // pieces of the world itself, gone
+		std::map<std::uint32_t, std::array<float, 3>>                  objects;   // where each loose object knocked about lies (its physics', or a friend's rest)
+		// Whose world it is (CharacterBinding::World's key: kept in each of its saves, a fresh one for a new character), said in
+		// the game's record after each welcome and load (Protocol::DropRecord::character).
+		std::uint64_t                                                  character = 0;
 
 		// Container contents with the untouched entries left out, for comparing.
 		[[nodiscard]] std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> Contents() const
@@ -224,7 +232,9 @@ namespace Sim
 	public:
 		Client(Session& a_session, std::string a_name, std::uint64_t a_identity, bool a_host) :
 			session(a_session), name(std::move(a_name)), identity(a_identity), host(a_host)
-		{}
+		{
+			world.character = NextCharacter();
+		}
 
 		Client(const Client&) = delete;
 		Client& operator=(const Client&) = delete;
@@ -261,8 +271,13 @@ namespace Sim
 		// companion's: CopyHealth::Credited), not when something else of ours or nothing killed it.
 		void Died(std::uint32_t a_ref, bool a_killed);
 		void Hurt(std::uint32_t a_ref, float a_health);
-		// What our player took off our copy of an NPC another game runs (a fraction of its maximum), as WorldSync sends it.
-		void Damage(std::uint32_t a_ref, float a_damage) { Send(Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage }, MT::kReportDamage), true); }
+		// What our player took off our copy of an NPC another game runs (a fraction of its maximum), as WorldSync sends it,
+		// numbered a_seq (0: unnumbered, answered to nobody).
+		void Damage(std::uint32_t a_ref, float a_damage, std::uint32_t a_seq = 0) { Send(Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage, a_seq }, MT::kReportDamage), true); }
+		// Our answer to a friend's numbered damage on an NPC we run (a_answer.playerId: whose hit), as WorldSync sends it.
+		void Answer(const Protocol::DamageAnswer& a_answer) { Send(Protocol::Encode(a_answer, MT::kReportDamageAnswer), true); }
+		// The answers to our damage the session passed on since the last call (kDamageAnswer).
+		std::vector<Protocol::DamageAnswer> TakeAnswers() { return std::exchange(answersHeard, {}); }
 		void Loot(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
 		void PickUp(std::uint32_t a_ref);
 		void Door(std::uint32_t a_ref, std::uint8_t a_open, std::uint8_t a_locked);
@@ -281,6 +296,9 @@ namespace Sim
 		void Scrap(std::uint32_t a_bench, std::uint32_t a_ref);
 		void Claim(std::uint32_t a_ref, Protocol::ClaimReason a_reason = Protocol::ClaimReason::kUnowned);
 		void Release(std::uint32_t a_ref);
+		// This game made an NPC at runtime (a random encounter's raider) and shares it under spawn id a_ref, placed from
+		// a_base, as Spawns reports it (kReportSpawn): the server grants it to this game for good, and the others place a copy.
+		void Spawn(std::uint32_t a_ref, std::uint32_t a_base, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_worldspace = COMMONWEALTH);
 		// Moves an NPC this player's game runs (the others copy it).
 		void RunNpc(std::uint32_t a_ref, float a_x, float a_y, float a_z = 0.0f);
 		void NpcGear(std::uint32_t a_ref, std::vector<std::uint32_t> a_items);
@@ -311,6 +329,43 @@ namespace Sim
 			}
 		}
 
+		// ---- loose objects knocked about ----
+
+		// What moved a loose object in this game, as MovedObjects' scan would see it for the next few seconds: our
+		// player stood by it (or hit it), a blast of ours (our grenade) threw it, a friend's blast (set off here for
+		// their throw) reached it. Nothing of it: something the game cannot name.
+		struct Knocked
+		{
+			bool byUs = false;
+			bool blast = false;
+			bool theirs = false;
+		};
+
+		// A loose object lies at a_at in this game (loaded with the cell, still). The scan sees it on the next frames.
+		void Loose(std::uint32_t a_ref, std::array<float, 3> a_at) { world.objects[a_ref] = a_at; }
+		// An explosion at a_at (radius a_radius) in this game, as MovedObjects' scan notes it: our grenade's, or (a_theirs)
+		// one set off here for a friend's throw. What it throws about is reached by it (ObjectShare::BlastBook), and
+		// Knock moves the objects.
+		void Blast(std::array<float, 3> a_at, float a_radius, bool a_theirs)
+		{
+			blasts.Note(++blastKey, a_at, a_radius, a_theirs ? ObjectShare::BlastRole::kTheirs : ObjectShare::BlastRole::kOurs, frameClock);
+		}
+		// The object is thrown or knocked to a_to in this game and lies there from now on (its physics' doing: nothing is
+		// in anyone's hands). Frames (a second or so) let the scan see it come to rest; the rest goes to the server if
+		// the plugin's rule (ObjectShare::KnockWatch) makes it this game's to report, and a friend's rest of it that comes
+		// back puts it where they say.
+		void Knock(std::uint32_t a_ref, std::array<float, 3> a_to, Knocked a_how);
+		// Clang fix for the Mac build: clang refuses "= {}" for a nested struct with default member initializers while
+		// its enclosing class is still being defined, where MSVC accepts it.
+		void Knock(std::uint32_t a_ref, std::array<float, 3> a_to) { Knock(a_ref, a_to, Knocked{}); }
+		[[nodiscard]] std::optional<std::array<float, 3>> ObjectAt(std::uint32_t a_ref) const
+		{
+			const auto it = world.objects.find(a_ref);
+			return it != world.objects.end() ? std::optional{ it->second } : std::nullopt;
+		}
+		// Rests this game reported (KnockWatch's count).
+		[[nodiscard]] std::uint64_t KnocksSaid() const { return knocks.Reported(); }
+
 		// The host's game: the NPCs others run that are dead in its own world (its save had them dead) are
 		// reported found dead, as WorldSync's CheckFoundDead does, story characters as FoundDead::Shared says.
 		void CheckFoundDead();
@@ -323,6 +378,17 @@ namespace Sim
 		// Loads a save: the world goes back to it, and a game in a session asks for what changed since
 		// (Session::OnGameLoaded).
 		void LoadGame(const Save& a_save);
+		// Starts a new character (a new game, with nothing built), while out of the session: a guest whose character changes
+		// leaves (Session::OnGameLoaded), and joins again as the new one. Same PC, so same identity and player ID.
+		void NewCharacter()
+		{
+			world = World{};
+			world.character = NextCharacter();
+			copies = {};
+			copyKeys.clear();
+			audit.Clear();
+		}
+		[[nodiscard]] std::uint64_t Character() const { return world.character; }
 
 		// ---- what the player's game shows ----
 
@@ -358,6 +424,12 @@ namespace Sim
 			const auto it = killedBy.find(a_ref);
 			return it != killedBy.end() ? std::optional{ it->second } : std::nullopt;
 		}
+		// A friend's spawn this game placed a copy of (kSpawned), as the session sent it, if it did.
+		[[nodiscard]] std::optional<Protocol::Spawn> CopyOf(std::uint32_t a_ref) const
+		{
+			const auto it = spawnCopies.find(a_ref);
+			return it != spawnCopies.end() ? std::optional{ it->second } : std::nullopt;
+		}
 		[[nodiscard]] const std::map<std::uint32_t, Protocol::ActorState>&        NpcStates() const { return npcStates; }
 		[[nodiscard]] const std::map<std::uint32_t, std::vector<std::uint32_t>>& NpcGearSeen() const { return npcGear; }
 		[[nodiscard]] std::int64_t       Count(std::uint32_t a_container, std::uint32_t a_item) const
@@ -382,6 +454,14 @@ namespace Sim
 		// Friends' explosions the server passed on, in order (a test sets them off in its own model of this game).
 		[[nodiscard]] const std::vector<Protocol::Explosion>& Explosions() const { return explosions; }
 		[[nodiscard]] const std::optional<Protocol::WorldTime>& Time() const { return time; }
+		// The session's NPC level as the server last said (kSessionWorld), and every NPC roll it told this player of
+		// (kNpcIdentity), by reference: what this game would build each leveled NPC as (docs/SHARED-ROLLS.md).
+		[[nodiscard]] std::optional<std::uint16_t> NpcLevel() const { return npcLevel; }
+		[[nodiscard]] std::optional<std::uint16_t> LegendaryMult() const { return legendaryMult; }
+		[[nodiscard]] const std::map<std::uint32_t, Protocol::NpcIdentity>& Rolls() const { return rolls; }
+		[[nodiscard]] const std::map<std::uint32_t, std::uint16_t>& RollLives() const { return rollLives; }
+		// Reports the roll of an NPC this player's game runs (kReportNpcIdentity).
+		void ReportRoll(const Protocol::NpcIdentity& a_identity) { Send(Protocol::Encode(a_identity, MT::kReportNpcIdentity), true); }
 		// How many packets of a kind arrived since joining (any connection), and how many didn't decode.
 		[[nodiscard]] std::size_t        Heard(MT a_type) const
 		{
@@ -416,6 +496,8 @@ namespace Sim
 		void JudgeWear(std::uint32_t a_friend);
 		// One QuestSync poll (half a second of play), and what it reports.
 		void PollQuests();
+		// One look at the loose objects (MovedObjects::ScanKnocks, four times a second), and what it reports.
+		void ScanKnocks();
 		Packet Hello();
 
 		Session&      session;
@@ -442,15 +524,21 @@ namespace Sim
 		std::map<std::uint32_t, Friend>               friends;
 		std::map<std::uint32_t, std::uint32_t>        owners;
 		std::map<std::uint32_t, Protocol::ActorState> npcStates;
+		std::map<std::uint32_t, Protocol::Spawn>      spawnCopies;  // friends' spawns, copies of which this game placed
 		std::map<std::uint32_t, std::vector<std::uint32_t>> npcGear;
 		std::map<std::uint32_t, float>                npcHealth;
 		std::vector<Protocol::ActorHealth>            damageHeard;
+		std::vector<Protocol::DamageAnswer>           answersHeard;
 		std::map<std::uint32_t, std::uint32_t>        killedBy;  // deaths the session told us of: whose kill (0: nobody's)
 		WorkshopCells::Waiting<WorkshopKey, Protocol::WorkshopItem> copies;  // the others' builds, waiting for their settlement's cell
 		std::set<WorkshopKey>                         copyKeys;
 		std::map<std::uint32_t, std::uint32_t>        hiddenFrames;  // our copy of a placed frame -> the friend wearing theirs
 		std::map<std::uint32_t, std::uint8_t>         markers;
 		std::optional<Protocol::WorldTime>            time;
+		std::optional<std::uint16_t>                  npcLevel;
+		std::optional<std::uint16_t>                  legendaryMult;
+		std::map<std::uint32_t, Protocol::NpcIdentity> rolls;
+		std::map<std::uint32_t, std::uint16_t>          rollLives;  // kRollLives: each plugin NPC's deaths this session
 		std::vector<std::string>                      rejections;
 		std::vector<Protocol::PlayerHit>              damage;
 		std::vector<std::uint32_t>                    revivedBy;
@@ -466,6 +554,28 @@ namespace Sim
 		SendPacer::Queue<Packet>    workshopOut{ SendPacer::WORKSHOP_PER_SECOND, SendPacer::WORKSHOP_QUEUED };  // WorkshopSync's outgoing line
 		bool                        pacedWorkshop = true;
 		Clock::time_point           frameClock{};  // this game's frames, 30 a second
+		// What the session keeps as ours, looked for in our world each frame (WorkshopSync's AuditFrame; the stand-in's world is
+		// all in memory and always settled).
+		WorkshopAudit::Audit        audit;
+		std::uint64_t               charactersMade = 0;  // made so far (NextCharacter)
+		std::uint64_t NextCharacter() { return (identity << 8) ^ 0xC4A0000000000000ull ^ ++charactersMade; }
+		void          Audit();
+
+		// Loose objects: what moved each lately (Knock's a_how, for KNOCKED_FOR of this game's frames), and the scan.
+		struct LooseHow
+		{
+			Knocked           how;
+			std::uint32_t     blast = 0;  // the blast's serial (BlastBook's), while ours threw it
+			Clock::time_point until{};
+		};
+		static constexpr auto                  KNOCKED_FOR = std::chrono::seconds(4);  // a hit's memory, a blast's reach
+		static constexpr auto                  KNOCK_SCAN = std::chrono::milliseconds(250);
+		std::map<std::uint32_t, LooseHow>      looseHow;
+		ObjectShare::KnockWatch                knocks;
+		std::uint32_t                          blastSerial = 0;
+		ObjectShare::BlastBook                 blasts;
+		std::uint32_t                          blastKey = 0;
+		Clock::time_point                      nextKnockScan{};
 	};
 
 	class Session
@@ -648,12 +758,43 @@ namespace Sim
 			}
 		}
 
+		// The server's clock moves on by a_by at once (a cooldown ends) without waiting for it: a busy PC can't make the
+		// wait too short, and nothing sleeps.
+		void Advance(std::chrono::milliseconds a_by)
+		{
+			if (fixture) {
+				fixture->Advance(a_by);
+			}
+		}
+
+		// The server's clock stops where it is and moves only by Advance (Server::HoldClock): a test of what happens
+		// inside a window of the server's (a rest's SETTLED) can't be made late by a busy PC.
+		void HoldClock()
+		{
+			if (fixture) {
+				fixture->HoldClock();
+			}
+		}
+
 		// Time goes by on the server (a budget refills), and then the session is settled.
 		void SettleAfter(std::chrono::milliseconds a_wait)
 		{
 			Deliver();
 			std::this_thread::sleep_for(a_wait);
 			Settle();
+		}
+
+		// a_time goes by in every game (its frames: what looks again later, as WorkshopAudit does, gets its looks) and on the
+		// server, a second at a time, the session settled after each.
+		void Play(std::chrono::seconds a_time)
+		{
+			for (auto s = a_time.count(); s > 0; --s) {
+				for (auto& client : clients) {
+					client->Frames(30);
+				}
+				Advance(std::chrono::seconds(1));  // and on the server
+				Settle();
+			}
 		}
 
 		[[nodiscard]] const Server::Options& ServerOptions() const { return options; }
@@ -837,6 +978,7 @@ namespace Sim
 		npcGear.clear();
 		npcHealth.clear();
 		damageHeard.clear();
+		answersHeard.clear();
 		killedBy.clear();
 		copies.Clear();
 		copyKeys.clear();
@@ -1005,6 +1147,11 @@ namespace Sim
 		Send(Protocol::EncodeRelease({ a_ref }), true);
 	}
 
+	inline void Client::Spawn(std::uint32_t a_ref, std::uint32_t a_base, float a_x, float a_y, float a_z, std::uint32_t a_worldspace)
+	{
+		Send(Protocol::Encode(Protocol::Spawn{ 0, a_ref, a_base, 0, a_worldspace, a_x, a_y, a_z, 0.0f }, MT::kReportSpawn), true);
+	}
+
 	inline void Client::RunNpc(std::uint32_t a_ref, float a_x, float a_y, float a_z)
 	{
 		Protocol::ActorState state;
@@ -1080,8 +1227,10 @@ namespace Sim
 		// WorldSync's record of the save, then (Session) the world is bound to the session we're in and asks
 		// for what came since.
 		loot.LoadRecord(a_save.resync.sessionId, a_save.resync.containerFrom, {});  // session 0: the save has no record
+		audit.Clear();  // WorkshopSync::OnGameLoaded: the server sends what it keeps as ours again
 		if (const auto request = welcomed ? loot.AfterLoad(LootSync::Clock::now()) : std::nullopt) {
 			Send(Protocol::Encode(*request), true);
+			Send(Protocol::Encode(Protocol::DropRecord{ .character = world.character }), true);  // Drops::SendRecord
 		}
 	}
 
@@ -1117,6 +1266,11 @@ namespace Sim
 	{
 		for (int i = 0; i < a_count; ++i) {
 			frameClock += std::chrono::milliseconds(33);
+			Audit();
+			if (frameClock >= nextKnockScan) {
+				nextKnockScan = frameClock + KNOCK_SCAN;
+				ScanKnocks();
+			}
 			for (auto& [id, f] : friends) {
 				if (!f.state) {
 					continue;  // no stand-in yet
@@ -1132,7 +1286,7 @@ namespace Sim
 					graph.walking = graph.landsWalking;
 				}
 				f.graph = MoveSync::Drive(f.graph.moving, f.graph.nextResync, f.state->speed, frameClock, [&](MoveSync::Event a_event) {
-					const bool start = a_event == MoveSync::Event::kStart;
+					const bool start = MoveSync::Starts(a_event);
 					if (graph.busy > 0 || graph.walking == start) {
 						return false;  // refused
 					}
@@ -1140,6 +1294,57 @@ namespace Sim
 					return true;
 				});
 			}
+		}
+	}
+
+	inline void Client::Audit()
+	{
+		struct Engine
+		{
+			const World& world;
+			WorkshopAudit::Seen Look(const Protocol::WorkshopItem& a_item) const
+			{
+				const auto it = world.built.find(a_item.refId);
+				return it != world.built.end() && it->second.base == a_item.base ? WorkshopAudit::Seen::kStands : WorkshopAudit::Seen::kGone;
+			}
+		} engine{ world };
+		if (!connected || !welcomed) {
+			return;
+		}
+		const auto round = audit.Look(engine, frameClock.time_since_epoch());
+		if (!round.gone.empty()) {
+			SendWorkshop(Protocol::Encode(round.gone, MT::kReportWorkshopGone));
+		}
+		for (const auto& item : round.found) {
+			if (const auto it = world.built.find(item.refId); it != world.built.end()) {
+				auto report = it->second;
+				report.playerId = playerId;
+				SendWorkshop(Protocol::Encode(report, MT::kReportWorkshopItem));  // back for everyone
+			}
+		}
+	}
+
+	inline void Client::Knock(std::uint32_t a_ref, std::array<float, 3> a_to, Knocked a_how)
+	{
+		world.objects[a_ref] = a_to;
+		looseHow[a_ref] = { .how = a_how, .blast = a_how.blast ? ++blastSerial : 0, .until = frameClock + KNOCKED_FOR };
+	}
+
+	inline void Client::ScanKnocks()
+	{
+		std::vector<ObjectShare::KnockWatch::Seen> seen;
+		seen.reserve(world.objects.size());
+		for (const auto& [ref, at] : world.objects) {
+			ObjectShare::KnockWatch::Seen s{ .refId = ref, .pose = { .worldspace = COMMONWEALTH, .position = at } };
+			if (const auto it = looseHow.find(ref); it != looseHow.end() && frameClock < it->second.until) {
+				s.byUs = it->second.how.byUs;
+				s.blast = it->second.blast;
+				s.theirs = it->second.how.theirs;
+			}
+			seen.push_back(s);
+		}
+		for (const auto& rest : knocks.Scan(seen, frameClock, &blasts)) {
+			Send(Protocol::Encode(rest, MT::kReportObjectRest), true);
 		}
 	}
 
@@ -1278,6 +1483,8 @@ namespace Sim
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;
 				}
+				// Drops::OnWelcome: our record, which says whose world it is.
+				Send(Protocol::Encode(Protocol::DropRecord{ .character = world.character }), true);
 				// Session forgets what gear it sent on a welcome, so its next check sends it again.
 				if (myGear) {
 					Send(Protocol::Encode(Protocol::Equipment{ 0, *myGear }, MT::kEquipment), true);
@@ -1393,6 +1600,15 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kDamageAnswer:
+			if (const auto msg = Protocol::DecodeDamageAnswer(a_data)) {
+				if (answersHeard.size() < 4096) {
+					answersHeard.push_back(*msg);
+				}
+			} else {
+				unless(false);
+			}
+			break;
 		case MT::kContainerChanged:
 			if (const auto msg = Protocol::DecodeIndexedContainerChange(a_data)) {
 				ApplyContainer(msg->index, msg->playerId, msg->change);
@@ -1432,12 +1648,20 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kSpawned:
+			if (const auto msg = Protocol::DecodeSpawn(a_data)) {
+				spawnCopies[msg->refId] = *msg;  // placed at once: every copy is in sight here
+			} else {
+				unless(false);
+			}
+			break;
 		case MT::kActorOwners:
 			if (const auto msg = Protocol::DecodeOwners(a_data)) {
 				for (const auto& owner : *msg) {
 					if (owner.playerId == 0) {
 						owners.erase(owner.refId);
 						npcStates.erase(owner.refId);
+						spawnCopies.erase(owner.refId);  // a spawn over: the copy goes (Spawns::OnOwners)
 						continue;
 					}
 					owners[owner.refId] = owner.playerId;
@@ -1480,6 +1704,18 @@ namespace Sim
 			} else {
 				unless(false);
 			}
+			break;
+		case MT::kOwnWorkshopItems:
+			// What the session keeps as ours, looked for in our world (WorkshopSync::AuditOwn). The stand-in's world is all
+			// in memory: a piece is ours there, or gone (WorkshopAudit's kStands or kGone, never left to wait for a cell).
+			if (const auto msg = Protocol::DecodeWorkshopItems(a_data)) {
+				audit.Add(*msg);
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kDropList:
+			unless(Protocol::DecodeDropList(a_data).has_value());  // the answer to our record: our stand-in drops nothing
 			break;
 		case MT::kWorldTime:
 			if (const auto msg = Protocol::DecodeWorldTime(a_data)) {
@@ -1539,6 +1775,19 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kObjectRested:
+			// A friend's move of a loose object, or the session's place for it: our copy goes where they say (every loose
+			// object is loaded and near here), and our physics settling it there is not ours to report (KnockWatch::Placed).
+			if (const auto msg = Protocol::DecodeObjectRest(a_data)) {
+				world.objects[msg->refId] = msg->position;
+				knocks.Placed(msg->refId, { .cell = msg->cell, .worldspace = msg->worldspace, .position = msg->position, .angles = msg->rotation }, frameClock);
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kObjectHeld:
+			unless(Protocol::DecodeObjectHold(a_data).has_value());
+			break;
 		case MT::kPlayerFace:
 			unless(Protocol::DecodeFace(a_data).has_value());
 			break;
@@ -1550,6 +1799,40 @@ namespace Sim
 			break;
 		case MT::kRemoved:
 			unless(Protocol::DecodeRemoved(a_data).has_value());
+			break;
+		case MT::kSessionWorld:
+			if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
+				npcLevel = msg->level;
+				legendaryMult = msg->legendaryMult;
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kNpcIdentity:
+			if (const auto msg = Protocol::DecodeNpcIdentity(a_data)) {
+				rolls[msg->refId] = *msg;
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kNpcIdentities:  // a joiner's catch-up, packed
+			if (const auto msg = Protocol::DecodeNpcIdentities(a_data)) {
+				for (const auto& roll : *msg) {
+					rolls[roll.refId] = roll;
+				}
+			} else {
+				unless(false);
+			}
+			break;
+		case MT::kRollLives:  // a plugin NPC died: its next life is another roll
+			if (const auto msg = Protocol::DecodeRollLives(a_data)) {
+				for (const auto& life : *msg) {
+					rollLives[life.refId] = life.lives;
+					rolls.erase(life.refId);
+				}
+			} else {
+				unless(false);
+			}
 			break;
 		default:
 			unless(false);  // nothing a player's game knows
@@ -1579,6 +1862,7 @@ namespace Sim
 		{
 			return std::format("op {} base {} at bench {} ({}, {}, {})", a_v.op, Hex(a_v.base), Hex(a_v.workshop), a_v.position[0], a_v.position[1], a_v.position[2]);
 		}
+		inline std::string Show(const std::array<float, 3>& a_v) { return std::format("({}, {}, {})", a_v[0], a_v[1], a_v[2]); }
 
 		template <class T>
 		void DiffSets(std::string& a_out, const char* a_what, const Client& a_a, const std::set<T>& a_sa, const Client& a_b, const std::set<T>& a_sb)
@@ -1633,6 +1917,9 @@ namespace Sim
 				return x.op == y.op && x.base == y.base && x.workshop == y.workshop && std::ranges::equal(x.position, y.position);
 			};
 			DiffMaps(out, "built", a, a.Settlements(), b, b.Settlements(), same);
+			// Where loose objects lie: within what MovedObjects leaves alone (SNAP_DISTANCE, a unit).
+			const auto near = [](const std::array<float, 3>& x, const std::array<float, 3>& y) { return ObjectShare::Distance(x, y) <= 1.0f; };
+			DiffMaps(out, "object", a, wa.objects, b, wb.objects, near);
 		}
 		return out;
 	}

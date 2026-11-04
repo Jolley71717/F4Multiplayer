@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 
 // What became of the input the dev channel's key, mouse and click commands send through Windows. Windows
 // hands a key to whichever window is in front, so a press sent while something else is (a scheduled task's
@@ -32,6 +33,29 @@ namespace WindowFocus
 	[[nodiscard]] constexpr Outcome Decide(bool a_frontBefore, bool a_frontAfter)
 	{
 		return a_frontBefore ? Outcome::kSent : a_frontAfter ? Outcome::kSentAfterFront : Outcome::kDropped;
+	}
+
+	// The game's window can be in front and still off every screen: a game minimised during its first load into the world keeps
+	// the spot Windows parks minimised windows at, (-32000, -32000), once restored (2026-11-01, the rig's host). Keys still go to
+	// it, but a real click lands on whatever window is under the cursor, which then takes the front: a click "fires nothing". So
+	// the window is put back on the primary screen, and a click first puts the cursor over the window if it isn't.
+	struct Rect
+	{
+		long left = 0;
+		long top = 0;
+		long right = 0;
+		long bottom = 0;
+	};
+
+	[[nodiscard]] constexpr bool Contains(const Rect& a_rect, long a_x, long a_y)
+	{
+		return a_x >= a_rect.left && a_x < a_rect.right && a_y >= a_rect.top && a_y < a_rect.bottom;
+	}
+
+	// Where the cursor goes for a click that would land outside the window: its middle.
+	[[nodiscard]] constexpr std::pair<long, long> Middle(const Rect& a_rect)
+	{
+		return { a_rect.left + (a_rect.right - a_rect.left) / 2, a_rect.top + (a_rect.bottom - a_rect.top) / 2 };
 	}
 
 	// A window title as the dev channel's one-line answers can carry it: printable ASCII, no quotes, at most

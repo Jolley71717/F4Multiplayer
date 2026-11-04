@@ -22,9 +22,11 @@ namespace
 {
 	using Packets = std::vector<std::vector<std::uint8_t>>;
 
-	// Gives the server a moment to act on what was delivered, then takes everything sent to a_peer.
+	// Waits until the server has acted on what was delivered, gives it a moment more for what it does on its ticks (relaying
+	// states and the like), then takes everything sent to a_peer.
 	Packets Settle(Fixture& a_f, PeerId a_peer, std::chrono::milliseconds a_wait = 200ms)
 	{
+		REQUIRE(a_f.fake->Settle());
 		std::this_thread::sleep_for(a_wait);
 		return a_f.fake->Take(a_peer);
 	}
@@ -342,6 +344,11 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules.revive);
 		CHECK(welcome->rules.bleedOutSeconds == 45);
 		CHECK(welcome->rules.realTimeVats);
+		CHECK(!welcome->rules.downedCrawl);
+		CHECK(!welcome->rules.shareGuestBuilds);
+		CHECK(!welcome->rules.sharedStorage);
+		CHECK(!welcome->rules.containerGifts);
+		CHECK(!welcome->rules.saveOnDown);
 	}
 	{
 		Server::Options options;
@@ -349,7 +356,12 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		options.rules.reviveWindowMinutes = 10;
 		options.rules.downCooldownSeconds = 60;
 		options.rules.reviveOutsideCombat = true;
+		options.rules.downedCrawl = true;  // --downed-crawl
 		options.rules.realTimeVats = false;
+		options.rules.shareGuestBuilds = true;
+		options.rules.sharedStorage = true;
+		options.rules.containerGifts = true;  // --container-gifts
+		options.rules.saveOnDown = true;  // --save-on-down
 		options.rules.bleedOutSeconds = 9999;  // past the limit: brought within it
 		Fixture    f{ options };
 		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
@@ -358,7 +370,12 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules.reviveWindowMinutes == 10);
 		CHECK(welcome->rules.downCooldownSeconds == 60);
 		CHECK(welcome->rules.reviveOutsideCombat);
+		CHECK(welcome->rules.downedCrawl);
 		CHECK(!welcome->rules.realTimeVats);
+		CHECK(welcome->rules.shareGuestBuilds);
+		CHECK(welcome->rules.sharedStorage);
+		CHECK(welcome->rules.containerGifts);
+		CHECK(welcome->rules.saveOnDown);
 		CHECK(welcome->rules.bleedOutSeconds == Protocol::SessionRules::MAX_BLEED_OUT);
 	}
 }
@@ -375,7 +392,9 @@ TEST("server session: a connection that never says hello is dropped")
 {
 	Fixture f;
 	f.fake->Connect(1);
-	const auto deadline = std::chrono::steady_clock::now() + 8s;
+	REQUIRE(f.fake->Settle());  // the server has the connection: its five seconds count from then
+	f.Advance(6s);  // past the server's five seconds for a hello
+	const auto deadline = std::chrono::steady_clock::now() + 30s;
 	while (!f.fake->Disconnected(1) && std::chrono::steady_clock::now() < deadline) {
 		std::this_thread::sleep_for(50ms);
 	}
@@ -732,8 +751,17 @@ TEST("server session: a name changes twice a second at most, the last one sent s
 	for (int i = 0; i < 50; ++i) {
 		f.fake->Deliver(1, RenameTo(std::format("Flood {}", i)));
 	}
-	std::this_thread::sleep_for(1200ms);
-	toBob = Renames(Received(f, 2));
+	REQUIRE(f.fake->Settle());
+	f.Advance(1200ms);
+	toBob.clear();
+	for (const auto until = std::chrono::steady_clock::now() + 30s; std::chrono::steady_clock::now() < until;) {
+		const auto got = Renames(Received(f, 2));
+		toBob.insert(toBob.end(), got.begin(), got.end());
+		if (!toBob.empty() && toBob.back().name == "Flood 49") {
+			break;  // the last one follows when the interval is up
+		}
+		std::this_thread::sleep_for(120ms);  // Received sends a heartbeat each time: the server answers ten a second
+	}
 	CHECK(toBob.size() >= 1);
 	CHECK(toBob.size() <= 3);
 	REQUIRE(!toBob.empty());
@@ -952,7 +980,7 @@ TEST("server session: a newcomer sees players who are standing still")
 	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
 	REQUIRE(alice);
 	f.fake->Deliver(1, Protocol::Encode(State(9, 99.0f)));
-	std::this_thread::sleep_for(100ms);
+	REQUIRE(f.fake->Settle());
 
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	const auto packet = f.fake->WaitFor(2, Type(MT::kPlayerStates));
@@ -1013,7 +1041,7 @@ TEST("server session: a late joiner gets each player's latest status")
 	f.fake->Deliver(1, Protocol::Encode(Status(1), MT::kReportStatus));
 	f.fake->Deliver(1, Protocol::Encode(Status(2), MT::kReportStatus));
 	f.fake->Deliver(1, Protocol::Encode(Status(3, 50), MT::kReportStatus));
-	std::this_thread::sleep_for(100ms);
+	REQUIRE(f.fake->Settle());
 
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	const auto statuses = OfType(Settle(f, 2), MT::kPlayerStatus);
@@ -1171,7 +1199,7 @@ TEST("server session: a newcomer gets the session's time on joining")
 	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
 	REQUIRE(alice);
 	f.fake->Deliver(1, TimeReport(17.25f));
-	std::this_thread::sleep_for(50ms);
+	REQUIRE(f.fake->Settle());
 
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	const auto packet = f.fake->WaitFor(2, Type(MT::kWorldTime));
@@ -1188,7 +1216,7 @@ TEST("server session: the session's time is forgotten when everyone has left")
 	Fixture f;
 	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
 	f.fake->Deliver(1, TimeReport(17.25f));
-	std::this_thread::sleep_for(50ms);
+	REQUIRE(f.fake->Settle());
 	f.fake->Drop(1);
 
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
@@ -1308,6 +1336,7 @@ TEST("server session: XP from a connection without a hello is not shared")
 TEST("server session: pings are passed on at most once a second")
 {
 	Fixture f;
+	f.HoldClock();  // the second is the server clock's: a busy PC can't make the pings later than the test means
 	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
 	REQUIRE(alice);
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
@@ -1330,7 +1359,7 @@ TEST("server session: pings are passed on at most once a second")
 	CHECK(relayed->worldspace == 0x3C);
 	CHECK(OfType(f.fake->Take(1), MT::kPinged).empty());
 
-	std::this_thread::sleep_for(900ms);
+	f.Advance(900ms);
 	f.fake->Deliver(1, Protocol::Encode(ping, MT::kPing));
 	CHECK(OfType(Settle(f, 2), MT::kPinged).size() == 1);
 }
@@ -1339,18 +1368,18 @@ TEST("server session: a ping pressed a second after the last that arrives a litt
 {
 	// The game spaces pings a second apart by key press (PingRules::MIN_GAP); the network brings one sooner or later.
 	Fixture f;
+	f.HoldClock();  // the gaps are the server clock's: a busy PC can't stretch them
 	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	f.fake->Take(1);
 
 	Protocol::Ping ping;
 	ping.worldspace = 0x3C;
-	const auto first = std::chrono::steady_clock::now();
 	f.fake->Deliver(1, Protocol::Encode(ping, MT::kPing));
 	REQUIRE(OfType(Settle(f, 2), MT::kPinged).size() == 1);
 
 	// The next, its press a second later, comes 150 ms early (the first was slow on the way).
-	std::this_thread::sleep_until(first + 1s - 150ms);
+	f.Advance(850ms);
 	f.fake->Deliver(1, Protocol::Encode(ping, MT::kPing));
 	CHECK(OfType(Settle(f, 2), MT::kPinged).size() == 1);
 
@@ -1746,7 +1775,7 @@ namespace
 	}
 }
 
-TEST("server session: with a story mod, a friend without the host's HD texture pack gets in, told it is missing, and the mod's NPC is translated")
+TEST("server session: with a story mod, a friend without the host's HD texture pack gets in, told of no difference, and the mod's NPC is translated")
 {
 	// The report: a story mod and its companion mod after the game's own files. With the texture pack the mod's NPC
 	// is 09000004, without it 08000004.
@@ -1762,8 +1791,9 @@ TEST("server session: with a story mod, a friend without the host's HD texture p
 	REQUIRE(f.Join(2, HelloWith("Friend", withoutPack)));
 	const auto told = ModsTold(f, 2, HelloWith("Friend", withoutPack).plugins);
 	REQUIRE(told);
-	CHECK(told->missing == std::vector<std::string>{ "DLCUltraHighResolution.esm" });
-	CHECK(told->Count() == 1u);
+	// The pack holds no records, so the friend's notice doesn't name it (src/net/ModDiff.h).
+	CHECK(told->missing.empty());
+	CHECK(told->Count() == 0u);
 	// The NPC their game numbers 08000004 is the session's (the host's) 09000004, and back.
 	const FormIds::Mapper friendForms(HelloWith("Friend", withoutPack).plugins, HelloWith("Host", host).plugins);
 	CHECK(friendForms.ToSession(0x08000004) == 0x09000004u);

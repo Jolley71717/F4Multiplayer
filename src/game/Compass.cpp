@@ -2,6 +2,7 @@
 
 #include "game/RemotePlayers.h"
 #include "Config.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/MenuIcons.h"
 #include "game/OpenMenus.h"
@@ -114,8 +115,7 @@ namespace Compass
 		bool OtherMenuOpen()
 		{
 			using enum OpenMenus::Menu;
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0 || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
+			return GameStop::Now() || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
 		}
 
 		std::atomic<std::uint32_t> made{ 0 };

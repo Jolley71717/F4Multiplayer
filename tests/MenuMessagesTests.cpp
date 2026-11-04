@@ -44,3 +44,12 @@ TEST("menu messages: the refused menus are ones the open-menu book knows, by the
 		CHECK(known);
 	}
 }
+
+TEST("menu messages: the settlement list is not hidden by message (the script waiting on it would never get its answer), but may be shown")
+{
+	for (const std::string_view name : { "Workshop_CaravanMenu", "workshop_caravanmenu" }) {
+		REQUIRE(Refusal(name, true) != nullptr);
+		CHECK(std::string_view{ Refusal(name, true) }.find("cancel") != std::string_view::npos);
+		CHECK(Refusal(name, false) == nullptr);
+	}
+}

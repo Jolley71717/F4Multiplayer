@@ -125,6 +125,43 @@ TEST("form translate: a message about a form the other side lacks is dropped, an
 	CHECK(runtime.kind == Result::Kind::kSame);
 }
 
+TEST("form translate: a hit on a stand-in by an NPC of a plugin the other side lacks is kept, naming no attacker")
+{
+	// The victim's game can't show the NPC, but it hurt their stand-in in the sender's game all the same: dropped, that
+	// NPC could never hurt them (PlayerHits takes an unnamed attacker's hit when the sender is near).
+	for (const auto type : { MT::kPlayerHit, MT::kPlayerDamaged }) {
+		Result     out;
+		const auto ours = After(Encode(PlayerHit{ 2, 12.5f, false, MINE }, type), MISSING, Way::kToSession, &out);
+		REQUIRE(ours);
+		CHECK(out.fields == 1);
+		CHECK(out.unmapped == std::vector<std::uint32_t>{ MINE });
+		const auto hit = DecodePlayerHit(*ours);
+		REQUIRE(hit);
+		CHECK(hit->attacker == 0u);
+		CHECK(hit->damage == 12.5f);
+		CHECK(!hit->byPlayer);
+		const auto theirs = After(Encode(PlayerHit{ 2, 3.0f, false, THEIRS }, type), MISSING, Way::kToLocal);
+		REQUIRE(theirs);
+		CHECK(DecodePlayerHit(*theirs)->attacker == 0u);
+		// One we both have is named as each side knows it.
+		const auto shared = After(Encode(PlayerHit{ 2, 3.0f, false, SESSION_SHARED }, type), MISSING, Way::kToLocal);
+		REQUIRE(shared);
+		CHECK(DecodePlayerHit(*shared)->attacker == SHARED);
+	}
+}
+
+TEST("form translate: an explosion set off by an NPC of a plugin we lack is dropped; a player's or a spawn's is kept")
+{
+	Result out;
+	CHECK(!After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, THEIRS }, MT::kExplosion), MISSING, Way::kToLocal, &out));
+	CHECK(out.unmapped == std::vector<std::uint32_t>{ THEIRS });
+	CHECK(After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, 0 }, MT::kExplosion), MISSING, Way::kToLocal));
+	CHECK(After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, RUNTIME_REF }, MT::kExplosion), MISSING, Way::kToLocal));
+	const auto shared = After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, SESSION_SHARED }, MT::kExplosion), MISSING, Way::kToLocal);
+	REQUIRE(shared);
+	CHECK(DecodeExplosion(*shared)->source == SHARED);
+}
+
 TEST("form translate: an entry of a list the other side can't name is left out, the rest kept")
 {
 	ActorState a, b, c;
@@ -246,4 +283,98 @@ TEST("form translate: a spawn keeps the session's own id, and a broken packet is
 	broken.pop_back();
 	CHECK(Translate(broken, MISSING, Way::kToSession).kind == Result::Kind::kSame);
 	CHECK(Translate(Bytes{}, MISSING, Way::kToSession).kind == Result::Kind::kSame);
+}
+
+TEST("form translate: a friend in a frame lent to them names it by spawn id, which no translation changes")
+{
+	PlayerStatus status{ 2, 0, 0, 100, 5, false, false, false, true, SHARED, RUNTIME_REF };
+	Result     out;
+	const auto there = After(Encode(status, MT::kReportStatus), MISSING, Way::kToSession, &out);
+	REQUIRE(there);
+	const auto told = DecodePlayerStatus(*there);
+	REQUIRE(told);
+	CHECK(told->powerArmorFrame == SESSION_SHARED);
+	CHECK(told->powerArmorFrameRef == RUNTIME_REF);
+	CHECK(out.fields == 0);
+}
+
+TEST("form translate: a lent frame's piece whose base or mod the other side lacks is left out, the rest keep their slots")
+{
+	FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+	lent.kit.push_back(LentItem{ .slot = 0, .base = SHARED, .health = 0.5f });
+	lent.kit.push_back(LentItem{ .slot = 1, .base = MINE, .health = 0.5f });                                // a piece of a plugin they lack
+	lent.kit.push_back(LentItem{ .slot = 2, .base = SHARED, .mods = { { MINE, 0, 0 } }, .health = 0.5f });  // with a mod they lack
+	lent.kit.push_back(LentItem{ .slot = 5, .base = SHARED, .mods = { { SHARED, 1, 0 } }, .core = true });
+	Result     out;
+	const auto there = After(Encode(lent, MT::kLendFrame), MISSING, Way::kToSession, &out);
+	REQUIRE(there);
+	const auto sent = DecodeFrameLending(*there);
+	REQUIRE(sent);
+	REQUIRE(sent->kit.size() == 2);
+	CHECK(sent->kit[0].slot == 0);
+	CHECK(sent->kit[0].base == SESSION_SHARED);
+	CHECK(sent->kit[1].slot == 5);
+	CHECK(sent->kit[1].mods[0].mod == SESSION_SHARED);
+	CHECK(sent->kit[1].core);
+	CHECK(out.entries == 2);
+
+	// Coming in, a piece of the session's plugin we lack is left out the same way.
+	FrameLending theirs{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, { LentItem{ .slot = 0, .base = THEIRS }, LentItem{ .slot = 1, .base = SESSION_SHARED } } };
+	const auto here = After(Encode(theirs, MT::kFrameLent), MISSING, Way::kToLocal);
+	REQUIRE(here);
+	const auto heard = DecodeFrameLending(*here);
+	REQUIRE(heard);
+	REQUIRE(heard->kit.size() == 1);
+	CHECK(heard->kit[0].slot == 1);
+	CHECK(heard->kit[0].base == SHARED);
+}
+
+TEST("form translate: a return to a place the other side lacks comes with no place, and is kept")
+{
+	const FrameReturn back{ 2, 3, RUNTIME_REF, false, THEIRS, 0, 10.0f, 20.0f, 30.0f, 0.5f, { { 0, true, 0.5f } } };
+	Result     out;
+	const auto here = After(Encode(back, MT::kFrameReturned), MISSING, Way::kToLocal, &out);
+	REQUIRE(here);
+	const auto heard = DecodeFrameReturn(*here);
+	REQUIRE(heard);
+	CHECK(heard->cell == 0u);
+	CHECK(heard->worldspace == 0u);
+	CHECK(heard->items == back.items);
+	CHECK(out.fields == 1);
+	// One it has keeps its place, in its own numbering.
+	const FrameReturn shared{ 2, 3, RUNTIME_REF, false, SESSION_SHARED, 0, 10.0f, 20.0f, 30.0f, 0.5f, {} };
+	const auto        kept = After(Encode(shared, MT::kFrameReturned), MISSING, Way::kToLocal);
+	REQUIRE(kept);
+	CHECK(DecodeFrameReturn(*kept)->cell == SHARED);
+}
+
+// A gift's container is a key: a game whose load order lacks the chest's plugin never hears of the gift (it would have no
+// chest to show it in), and one that has it gets the chest in its own numbering. A loose drop has no holder to map.
+TEST("form translate: a gift in a container the other game lacks is not passed to it, and one it has names the container in its load order")
+{
+	DroppedItem gift{ .nonce = 7, .base = 0x0004F46A, .count = 1, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .holder = THEIRS };
+	CHECK(!After(Encode(gift, MT::kDropPlaced), MISSING, Way::kToLocal));
+	gift.holder = SESSION_SHARED;
+	const auto out = After(Encode(gift, MT::kDropPlaced), MISSING, Way::kToLocal);
+	REQUIRE(out);
+	const auto read = DecodeDroppedItem(*out);
+	REQUIRE(read);
+	CHECK(read->holder == SHARED);
+	CHECK(read->base == gift.base);
+
+	// Ours to the session, and in a list: the one in a container they lack is left out, the rest stay.
+	DroppedItem mine = gift;
+	mine.holder = MINE;
+	CHECK(!After(Encode(mine, MT::kReportDrop), MISSING, Way::kToSession));
+	DroppedItem loose = gift;
+	loose.holder = 0;
+	const auto list = After(Encode(DropList{ true, { gift, Protocol::DroppedItem{ gift.dropId, 0, 8, gift.base, 1, 0xFFFF, {}, -1.0f, "", gift.cell, 0, 0, 0, 0, 0, THEIRS }, loose } }), MISSING,
+		Way::kToLocal);
+	REQUIRE(list);
+	const auto listed = DecodeDropList(*list);
+	REQUIRE(listed);
+	REQUIRE(listed->drops.size() == 2);
+	CHECK(listed->drops[0].holder == SHARED);
+	CHECK(listed->drops[1].holder == 0);
+	CHECK(listed->last);
 }

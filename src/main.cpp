@@ -1,18 +1,25 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/AutoSave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/EnableParents.h"
+#include "game/LooksMenu.h"
 #include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
+#include "game/FrameLoan.h"
+#include "game/FrameLoans.h"
 #include "game/FrameWatch.h"
+#include "game/GhostLedger.h"
 #include "game/GpuWatch.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/InputGate.h"
+#include "game/VirtualPad.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -22,6 +29,7 @@
 #include "game/OpenMenus.h"
 #include "game/RealTime.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -29,7 +37,10 @@
 #include "Platform.h"
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
+#include "game/SyncAnimMark.h"
 #include "game/SaveLoadHold.h"
+#include "game/Storage.h"
+#include "game/CombatReactions.h"
 #include "game/HavokGuard.h"
 #include "game/InertShots.h"
 #include "game/TextureWait.h"
@@ -216,21 +227,69 @@ namespace
 	constexpr std::uint32_t DROP_RECORD = 'DROP';
 	constexpr std::uint32_t DROP_VERSION = 1;
 	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
+	// Whose world the drop record speaks for (CharacterBinding::World): its key alone, so a build that knows no key reads
+	// the save's 'DROP' record as it always did.
+	constexpr std::uint32_t WORLD_RECORD = 'CHAR';
+	constexpr std::uint32_t WORLD_VERSION = 1;
+	constexpr std::uint32_t WORLD_LENGTH = 8;
 
 	constexpr std::uint32_t RADIANT_RECORD = 'RADI';
 	constexpr std::uint32_t RADIANT_VERSION = 1;
 	constexpr std::uint32_t RADIANT_MAX_LENGTH = 1u << 18;  // RadiantRules::Encode writes at most about 80 KB
 
+	constexpr std::uint32_t KEPT_RECORD = 'KEPT';
+	constexpr std::uint32_t KEPT_VERSION = 1;
+	constexpr std::uint32_t KEPT_MAX_LENGTH = 1u << 10;  // FriendFrame::Encode writes at most 768 bytes
+	constexpr std::uint32_t LOAN_RECORD = 'LOAN';
+	constexpr std::uint32_t LOAN_VERSION = FrameLoan::RECORD_VERSION;  // 2: the forfeited lent items after the loan; 1 (read too): the loan alone
+	// FrameLoan::Encode: 17 bytes, at most 16 tags of 262, a byte and at most 64 forfeited of 262.
+	constexpr std::uint32_t LOAN_MAX_LENGTH = 1u << 15;
+	static_assert(17 + 16 * 262 + 1 + FrameLoan::MAX_FORFEITS * 262 <= LOAN_MAX_LENGTH);
+	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
+	constexpr std::uint32_t LOOKS_VERSION = 1;
+	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
+	constexpr std::uint32_t GHOST_RECORD = 'GHST';
+	constexpr std::uint32_t GHOST_VERSION = 1;
+	constexpr std::uint32_t GHOST_MAX_LENGTH = 4 + 4 * static_cast<std::uint32_t>(GhostLedger::MAX);  // GhostLedger::Encode: a version, a count, the ids
+	constexpr std::uint32_t STORAGE_RECORD = 'STOR';
+	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
+	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
+	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT) + 8 + 4 * static_cast<std::uint32_t>(Protocol::MAX_STORAGE_LACKING);
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
+		// The frame copies this save keeps with the companions in them (RemotePlayers::BeforeSave): waited on again after loading it.
+		if (const auto kept = RemotePlayers::SaveRecord(); !kept.empty() && a_intfc->OpenRecord(KEPT_RECORD, KEPT_VERSION)) {
+			a_intfc->WriteRecordData(kept.data(), static_cast<std::uint32_t>(kept.size()));
+		}
 		WorldSync::SaveResyncPoint(a_intfc);
 		// What our world holds of the items given between players (Drops): read back with the save.
 		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
 			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
 		}
+		if (const auto world = Drops::SaveWorld(); a_intfc->OpenRecord(WORLD_RECORD, WORLD_VERSION)) {
+			a_intfc->WriteRecordData(world.data(), static_cast<std::uint32_t>(world.size()));
+		}
 		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
 		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
 			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
+		}
+		// Our moves at a friend's shared storage still unanswered, and those numbered our world lacks (Storage): settled after a load.
+		if (const auto storage = Storage::SaveRecord(); !storage.empty() && a_intfc->OpenRecord(STORAGE_RECORD, STORAGE_VERSION)) {
+			a_intfc->WriteRecordData(storage.data(), static_cast<std::uint32_t>(storage.size()));
+		}
+		// The frame our player wears on loan from a friend (FrameLoans): sent out of it, and it goes, after this save's load.
+		if (const auto loan = FrameLoans::SaveRecord(); !loan.empty() && a_intfc->OpenRecord(LOAN_RECORD, LOAN_VERSION)) {
+			a_intfc->WriteRecordData(loan.data(), static_cast<std::uint32_t>(loan.size()));
+		}
+		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
+		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
+			a_intfc->WriteRecordData(looks.data(), static_cast<std::uint32_t>(looks.size()));
+		}
+		// The ghosts we set against friends' explosions and have yet to see off (WeaponFire, GhostLedger): taken off as
+		// each copy loads after a load of this save.
+		if (const auto ghosts = WeaponFire::SaveGhostRecord(); !ghosts.empty() && a_intfc->OpenRecord(GHOST_RECORD, GHOST_VERSION)) {
+			a_intfc->WriteRecordData(ghosts.data(), static_cast<std::uint32_t>(ghosts.size()));
 		}
 	}
 
@@ -247,10 +306,40 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Drops::LoadRecord(bytes);
 				}
+			} else if (type == WORLD_RECORD && version == WORLD_VERSION && length == WORLD_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Drops::LoadWorld(bytes);
+				}
+			} else if (type == KEPT_RECORD && version == KEPT_VERSION && length <= KEPT_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					RemotePlayers::LoadRecord(bytes);
+				}
 			} else if (type == RADIANT_RECORD && version == RADIANT_VERSION && length <= RADIANT_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					RadiantSync::LoadRecord(bytes);
+				}
+			} else if (type == STORAGE_RECORD && version == STORAGE_VERSION && length <= STORAGE_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Storage::LoadRecord(bytes);
+				}
+			} else if (type == LOAN_RECORD && version >= 1 && version <= LOAN_VERSION && length <= LOAN_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					FrameLoans::LoadRecord(bytes, version);
+				}
+			} else if (type == LOOKS_RECORD && version == LOOKS_VERSION && length <= LOOKS_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					LooksMenu::LoadRecord(bytes);
+				}
+			} else if (type == GHOST_RECORD && version == GHOST_VERSION && length <= GHOST_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					WeaponFire::LoadGhostRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
 				}
 			}
 		}
@@ -261,6 +350,11 @@ namespace
 		WorldSync::RevertResyncPoint();
 		Drops::RevertRecord();
 		RadiantSync::RevertRecord();
+		RemotePlayers::RevertRecord();
+		LooksMenu::RevertRecord();
+		Storage::RevertRecord();
+		FrameLoans::RevertRecord();
+		WeaponFire::RevertGhostRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -329,8 +423,9 @@ namespace
 			return;
 		}
 		const bool enabled = setting->GetBinary();
-		// Off, the window matters only while the gate is closed (see InputGate::Gate::Frame).
-		const bool front = (enabled || inputGate.Now() != InputGate::Gate::State::kOpen) ? Hotkeys::GameInFront() : true;
+		// Off, the window matters only while the gate is closed (see InputGate::Gate::Frame), or to the dev channel's pad.
+		const bool pad = VirtualPad::Plugged();
+		const bool front = (enabled || pad || inputGate.Now() != InputGate::Gate::State::kOpen) ? Hotkeys::GameInFront() : true;
 		const auto step = inputGate.Frame(enabled, front, front && enabled && MouseButtonDown());
 		if (step.polling) {
 			input->pollingEnabled = *step.polling;
@@ -342,11 +437,22 @@ namespace
 				}
 			}
 		}
+		VirtualPad::GateFrame(*input, front);  // the dev channel's pad goes on being read in the background, alone
 		if ((step.closed || step.opened) && inputGateLogged < INPUT_GATE_LOGGED * 2) {
 			++inputGateLogged;
 			REX::INFO("Input: {}", step.closed ? "the game's window is not in front: no input reaches the game until it is (it runs on)" :
 			                                     std::format("the game's window is in front: input goes to the game again ({})", inputGate.Describe()));
 		}
+	}
+
+	// The text an F4SE message carries: a save's name, or the file path of the save a load reads; empty with none.
+	std::string_view MessageText(const F4SE::MessagingInterface::Message* a_msg)
+	{
+		constexpr std::uint32_t LONGEST = 4096;  // more is no name
+		if (!a_msg->data || a_msg->dataLen == 0 || a_msg->dataLen > LONGEST) {
+			return {};
+		}
+		return { static_cast<const char*>(a_msg->data), a_msg->dataLen };
 	}
 
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
@@ -369,6 +475,8 @@ namespace
 					REX::ERROR("Session: shutting down: {}", e.what());
 				}
 			});
+			RollHook::OnDataReady();  // before any session: the plugins' names key every roll
+			EnableParents::OnDataReady();  // before any save: which references are off as their plugins have them
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");
@@ -376,40 +484,91 @@ namespace
 			StartFrameWatch();
 			break;
 		case F4SE::MessagingInterface::kPreLoadGame:
+			// Which save is loaded (a death loads the newest one): the line a report of "an old save" is read by.
+			AutoSave::OnPreLoad(MessageText(a_msg));
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
-			RunBeforeSaveOrLoad(
-				[] {
-					Session::OnBeforeSaveOrLoad();
-					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
-					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
-					InertShots::BeforeLoad();  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
-					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
-					RemotePlayers::BeforeLoad();  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
-				},
-				"load");
+			// Guarded like the save's below: an exception must not leave the message handler and crash the game in the middle
+			// of the load; each step is caught on its own, so one that fails does not stop the others.
+			try {
+				RunBeforeSaveOrLoad(
+					[] {
+						const auto step = [](std::string_view a_what, auto&& a_work) {
+							try {
+								a_work();
+							} catch (const std::exception& e) {
+								REX::ERROR("Frame: before the load, {}: {}", a_what, e.what());
+							} catch (...) {
+								REX::ERROR("Frame: before the load, {}: an unknown exception", a_what);
+							}
+						};
+						step("the shields", [] { WeaponFire::BeforeLoad(); });  // first: the shields Session ends below would send setghost 0 into the load
+						step("the binding", [] { Session::OnBeforeLoad(); });
+						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("the lent frames", [] { FrameLoans::BeforeLoad(); });  // the extra data of the pieces we lent is let go while the old world is still there
+						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reset under way is ended (enabled) before the load
+						step("the faces", [] { Face::ForgetCopies(); });  // the load sets runtime form IDs back: a mark could name another NPC
+						step("the inert shots", [] { InertShots::BeforeLoad(); });  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
+						step("the strays", [] { SaveGuard::BeforeLoad(); });  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
+						step("the frame copies", [] { RemotePlayers::BeforeLoad(); });  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
+						step("the lit copies", [] { WorkshopSync::BeforeLoad(); });  // before the load's threads make its lights (LightPoweredHook)
+					},
+					"load");
+			} catch (const std::exception& e) {
+				// The work an earlier message handed over, run first (SaveLoadHold::Hold::RunNow), threw.
+				REX::ERROR("Frame: before the load: {}", e.what());
+			} catch (...) {
+				REX::ERROR("Frame: before the load: an unknown exception");
+			}
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
+			AutoSave::OnPreSave(MessageText(a_msg));  // which save, and whether it is one the mod asked for
 			BeginSaveOrLoad(HangWatch::Phase::kSave);
 			// Remote players' actors must never be written into a save. A save made before the first frame
 			// after a load runs that load's own work first (RunAfterLoad), or the stand-ins it took out
 			// would be the ones from before the load.
-			RunBeforeSaveOrLoad(
-				[] {
-					Session::OnBeforeSaveOrLoad();
-					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
-					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
-					InertShots::BeforeSave();  // no inert shot, whose base exists at runtime only, is written into the save
-					SaveGuard::BeforeSave();
-					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
-				},
-				"save");
+			// An exception must not go on into the engine's save, which would crash the game and lose the save; each
+			// step is caught on its own (and each of the session's, Session::OnBeforeSaveOrLoad), so one that fails does not
+			// leave the others' objects in the save.
+			try {
+				RunBeforeSaveOrLoad(
+					[] {
+						const auto step = [](std::string_view a_what, auto&& a_work) {
+							try {
+								a_work();
+							} catch (const std::exception& e) {
+								REX::ERROR("Frame: before the save, {}: {}", a_what, e.what());
+							} catch (...) {
+								REX::ERROR("Frame: before the save, {}: an unknown exception", a_what);
+							}
+						};
+						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // first: an unworn loan's copy and kit go with it, before Spawns discards copies
+						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
+						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved
+						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reference reset a moment ago is saved on, as it was
+						step("the inert shots", [] { InertShots::BeforeSave(); });  // no inert shot, whose base exists at runtime only, is written into the save
+						step("the strays", [] { SaveGuard::BeforeSave(); });
+						step("the frame copies", [] { RemotePlayers::BeforeSave(); });  // after DespawnAll: the copies kept with their wearers are what a load of this save waits on
+						step("the workshops", [] { WorkshopSync::BeforeSave(); });  // no power grid saved names a friend's piece
+					},
+					"save");
+			} catch (const std::exception& e) {
+				// The work an earlier message handed over, run first (SaveLoadHold::Hold::RunNow), threw.
+				REX::ERROR("Frame: before the save: {}", e.what());
+			} catch (...) {
+				REX::ERROR("Frame: before the save: an unknown exception");
+			}
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
+			AutoSave::OnPostSave(MessageText(a_msg));
+			// The copies of friends' powered pieces, shown unpowered for the save, run again (whatever the game's state: the
+			// pre-save step hushed them, and no later message may come).
+			MainThread::Post([] { WorkshopSync::AfterSave(); });
 			if (gameDataReady) {
 				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
+				// (WeaponFire::AfterSave waits for the next frame: no console command is sent from the save's own message.)
 				if (OnMainThread()) {
 					Downed::OnAfterSave();
-					WeaponFire::AfterSave();
 				} else {
 					MainThread::Post([] { Downed::OnAfterSave(); });
 				}
@@ -430,6 +589,7 @@ namespace
 						Session::OnGameLoaded(!loaded);
 						Hud::OnGameLoaded();
 						HavokGuard::OnGameLoaded();
+						SyncAnimMark::OnGameStart();  // a save made with the player stuck in no synced animation loads stuck
 					}
 				} catch (const std::exception& e) {
 					REX::ERROR("Frame: after the load: {}", e.what());
@@ -520,6 +680,7 @@ namespace
 				RunInBackground();
 				if (a_onMain) {
 					GateInput();
+					SyncAnimMark::Frame();  // a game that starts with the player marked as in a synced animation gets no input
 				}
 			}
 			{
@@ -898,9 +1059,11 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 192 of 320 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
-	// Equipment::InstallFrameUse's two), HavokGuard::Install's two detours (2 x 56), and InertShots::Install's jump (a
-	// 14-byte branch stub and a 10-byte continuation).
+	// 248 of 320 bytes used: eight 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
+	// CombatReactions::Install's one), HavokGuard::Install's
+	// two detours (2 x 56), and
+	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
@@ -927,11 +1090,16 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
+	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
 	Equipment::InstallFrameGate();  // and its Transfer
+	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
+	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
+	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
+	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

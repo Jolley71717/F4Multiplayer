@@ -282,15 +282,112 @@ namespace WorkshopPower
 	inline constexpr std::size_t MAX_MIRRORED = 8192;
 	inline constexpr auto        REFRESH = 250ms;  // how often the copies are looked at (a copy just drawn, a graph not ready)
 	inline constexpr std::uint8_t MAX_TRIES = 8;   // a copy whose game won't take it is let be (until it is drawn anew)
-	// A copy drawn anew more often than this in REDRAW_WINDOW is let be until the window is over: each show switches its
-	// lights and sends its graph "Powered" or "Unpowered", which a switch, a lamp or a machine answers with its sound, and
-	// a copy whose 3D the game kept making anew was shown again four times a second with no end.
+	// A copy shown again (drawn anew, or settled: SETTLE) more often than this in REDRAW_WINDOW is let be until the window
+	// is over: each show switches its lights and sends its graph "Powered" or "Unpowered", which a switch, a lamp or a
+	// machine answers with its sound, and a copy whose 3D the game kept making anew was shown again four times a second
+	// with no end.
 	inline constexpr std::uint8_t MAX_REDRAWS = 6;
 	inline constexpr auto         REDRAW_WINDOW = 60s;
+	// A new drawing is shown once more when it has been there this long: the game's own setup of a 3D just made (its
+	// cell attaching) may still run after the first show. A graph loading after the 3D is waited for (Drawing), not left
+	// to this one try. A 3D made anew sooner than this is never shown twice.
+	inline constexpr auto SETTLE = 2s;
+	// A copy shown powered is shown unpowered while a save is written (Mirror::Hush) and powered again once it is over
+	// (SaveDone), or this long after, should no message say the save is over.
+	inline constexpr auto HUSH_LIMIT = 5s;
 
-	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once its 3D is
-	// there and the game took it (a graph not loaded yet doesn't), and again whenever it is drawn anew (it came back into
-	// a loaded cell, or was made again): a new 3D starts as the model has it, unpowered.
+	// What a copy is drawn as, for Mirror (the Engine's Drawn): a value that changes whenever the game makes anew what
+	// shows its power, and 0 while there is nothing to show it on yet.
+	//
+	// Only a light (LIGH) is lit by switching its light (TESObjectLIGH::SwitchLight does nothing for any other form:
+	// 1.11.240 returns at once unless the base is a LIGH). Every other workshop light is an activator whose light, glow and
+	// motion are its animation graph's (the game's generic workshop graphs, "Powered" / "Unpowered"): the construction
+	// light, the light box, the high-tech lights, the strobe, the fan light, the mirror ball. The game loads that graph
+	// after the 3D, on its own, and drops an event sent before it is there. When a graph is loaded the game shows a powered
+	// workshop item of its own as powered (a graph load's init, 1.11.240 +529120), but does nothing for a reference that
+	// isn't a workshop item, such as our copy: a graph made anew starts unpowered whatever the copy was shown before.
+	//
+	// So a copy whose model names a graph (a_namesGraph) is drawn only once the graph is loaded (a_graph), and is drawn
+	// anew whenever the graph is (a_graph changes) as well as the model (a_model).
+	[[nodiscard]] inline std::uintptr_t Drawing(std::uintptr_t a_model, bool a_inScene, bool a_namesGraph, std::uintptr_t a_graph)
+	{
+		if (a_model == 0 || !a_inScene || (a_namesGraph && a_graph == 0)) {
+			return 0;
+		}
+		if (a_graph == 0) {
+			return a_model;
+		}
+		const std::uintptr_t mixed = a_model ^ (a_graph * static_cast<std::uintptr_t>(0x9E3779B97F4A7C15ull) + (a_graph >> 7));
+		return mixed != 0 ? mixed : 1;
+	}
+
+	// What we last told a copy's loaded graph, as far as it took it: nothing (a graph new to us: made anew, or brought back,
+	// with what it showed, by a load or by its cell loading again), "Powered" or "Unpowered".
+	enum class Told : std::uint8_t
+	{
+		kNothing,
+		kPowered,
+		kUnpowered,
+	};
+
+	// A loaded graph refused "Powered" or "Unpowered" (a_on): it has no such move from where it stands. Whether that means
+	// it shows what was asked already (shown: no try spent), or not yet (tried again, a try spent):
+	//
+	// - "Unpowered" refused: dark already (a new graph starts unpowered, and one told "Unpowered" took it), but not one we
+	//   told "Powered": it may still be turning on, and a lit copy left lit is a friend's generator running in our game.
+	// - "Powered" refused: lit already (we told it so, or it came back lit: a save keeps what a graph showed, and so does a
+	//   cell that unloads and loads again), but not one we told "Unpowered": it may still be turning off. A graph new to us
+	//   that refuses "Powered" is taken as lit: a graph made anew takes "Powered" at once (every first show on the rig took
+	//   it), so a refusal is one that came back lit. Should it be one not ready yet after all, the copy is only left dark
+	//   where its builder's is lit (and is shown once more when it settles, SETTLE), never lit where it should be dark; and
+	//   giving up after MAX_TRIES left it as it was, too.
+	[[nodiscard]] constexpr bool RefusalShows(bool a_on, Told a_told)
+	{
+		return a_on ? a_told != Told::kUnpowered : a_told != Told::kPowered;
+	}
+
+	// What we last told each copy's graph (by the copy's form ID, with the graph's address: a graph made anew is told nothing
+	// yet), for RefusalShows.
+	class GraphsTold
+	{
+	public:
+		// The graph took the event.
+		void Took(std::uint32_t a_copy, std::uintptr_t a_graph, bool a_on) { told[a_copy] = { a_graph, a_on ? Told::kPowered : Told::kUnpowered }; }
+
+		// The graph refused the event: true if it shows what was asked already (RefusalShows), and it counts as told so from
+		// now on (a lit graph that refused "Powered" is one a later "Unpowered" must turn off: tried again if refused).
+		bool Refused(std::uint32_t a_copy, std::uintptr_t a_graph, bool a_on)
+		{
+			if (!RefusalShows(a_on, Of(a_copy, a_graph))) {
+				return false;
+			}
+			Took(a_copy, a_graph, a_on);
+			return true;
+		}
+
+		[[nodiscard]] Told Of(std::uint32_t a_copy, std::uintptr_t a_graph) const
+		{
+			const auto it = told.find(a_copy);
+			return it != told.end() && it->second.graph == a_graph ? it->second.what : Told::kNothing;
+		}
+
+		void Forget(std::uint32_t a_copy) { told.erase(a_copy); }
+		void Clear() { told.clear(); }
+		[[nodiscard]] std::size_t Size() const { return told.size(); }
+
+	private:
+		struct Entry
+		{
+			std::uintptr_t graph = 0;
+			Told           what = Told::kNothing;
+		};
+		std::map<std::uint32_t, Entry> told;
+	};
+
+	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once it is drawn
+	// (its 3D there and the graph it names loaded: Drawing) and the game took it, once more when that drawing has settled
+	// (SETTLE), and again whenever it is drawn anew (it came back into a loaded cell, was made again, or got a new graph):
+	// a new 3D or graph starts as the model has it, unpowered.
 	class Mirror
 	{
 	public:
@@ -308,9 +405,14 @@ namespace WorkshopPower
 				return true;
 			}
 			if (it->second.powered != a_entry.powered) {
-				it->second = Want{ a_entry.powered };
+				it->second.powered = a_entry.powered;  // shown again; a 3D already there and settled isn't shown twice
+				it->second.hushed = false;
+				it->second.shown = false;
+				it->second.tries = 0;
+				it->second.frozen = false;
 			} else if (it->second.frozen) {
 				it->second.frozen = false;  // their game is back: shown afresh
+				it->second.hushed = false;
 				it->second.shown = false;
 				it->second.tries = 0;
 			}
@@ -330,26 +432,71 @@ namespace WorkshopPower
 			}
 		}
 
-		// Every copy is shown again (a save was loaded: the copies are new references).
+		// Every copy is shown again, and once more when settled (a save was loaded: the copies are new references).
 		void Invalidate()
 		{
 			for (auto& [key, want] : wants) {
 				want.shown = false;
 				want.tries = 0;
+				want.settle = true;
+				want.hushed = false;
 			}
+		}
+
+		// A save is about to be written. A copy's 3D keeps what it was shown: a graph told "Powered" is saved so, and the
+		// game puts it back at the load with the copy, which the save holds. A friend's generator then ran its engine in a
+		// game with no session to say it had stopped (or one whose friend has no such piece any more), and its copy can't
+		// be scrapped (it carries the block keyword). So each copy shown powered is shown unpowered now, and powered again
+		// after the save (SaveDone, or HUSH_LIMIT after if no message says it is over). How many it hushed.
+		template <class Engine>
+		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
+		{
+			std::size_t hushed = 0;
+			saveDone = false;
+			for (auto& [key, want] : wants) {
+				if (want.hushed) {
+					want.hushedAt = a_now;  // still hushed from a save just before: this one's too
+					continue;
+				}
+				if (!want.powered || !want.shown || a_engine.Drawn(key) == 0) {
+					continue;
+				}
+				if (a_engine.Show(key, false)) {
+					want.hushed = true;
+					want.hushedAt = a_now;
+					++hushed;
+				}
+			}
+			hushedTotal += hushed;
+			return hushed;
+		}
+
+		// The save is over: what it hushed is shown powered again at the next look.
+		void SaveDone()
+		{
+			saveDone = true;
+			nextRefresh = {};
 		}
 
 		void Clear()
 		{
 			wants.clear();
 			nextRefresh = {};
+			saveDone = false;
 		}
 
 		// Shows the copies that don't show what their builder's game says yet; how many it showed. The Engine gives:
 		//
-		//   std::uintptr_t Drawn(const Key&)            the copy's 3D (any value that changes when it is drawn anew); 0
-		//                                               if there's no copy here, or it isn't drawn
-		//   bool           Show(const Key&, bool on)    false if the game didn't take it (try again)
+		//   std::uintptr_t Drawn(const Key&)            what the copy is drawn as (Drawing: changes when its 3D or its
+		//                                               graph is made anew); 0 if there's no copy here, it isn't drawn, or
+		//                                               its graph isn't loaded yet (waited for, no try spent)
+		//   bool           Show(const Key&, bool on)    false if the game didn't take it (try again): a light's light
+		//                                               switched, or the graph took the event
+		//
+		// and, if it has it:
+		//
+		//   bool           Holds(const Key&, bool on)   false if a copy shown so doesn't show it now, though drawn the same
+		//                                               (a light's light gone while shown on): shown again (Lapses)
 		template <class Engine>
 		std::size_t Refresh(Engine& a_engine, Clock::time_point a_now)
 		{
@@ -359,34 +506,66 @@ namespace WorkshopPower
 			nextRefresh = a_now + REFRESH;
 			std::size_t shown = 0;
 			for (auto& [key, want] : wants) {
+				if (want.hushed) {
+					// Back to what its builder's game says (a frozen copy's too: it keeps what it showed), once the save is over.
+					if (!saveDone && a_now - want.hushedAt < HUSH_LIMIT) {
+						continue;
+					}
+					want.hushed = false;
+					const auto now3D = a_engine.Drawn(key);
+					if (now3D != 0 && a_engine.Show(key, want.powered)) {
+						want.drawn = now3D;  // drawn anew meanwhile: this is the show for it
+						++shown;
+					} else {
+						want.shown = false;  // not drawn, or the game won't take it yet: shown as any copy is, with the usual tries
+						want.tries = 0;
+					}
+					continue;
+				}
 				if (want.frozen) {
 					continue;
 				}
 				const auto drawn = a_engine.Drawn(key);
-				if (drawn == 0 || (want.shown && want.drawn == drawn)) {
+				if (drawn == 0) {
+					continue;
+				}
+				if (want.shown && want.drawn == drawn) {
+					if (!Holds(a_engine, key, want.powered)) {
+						// Shown so, and drawn the same, but not showing it now (a light whose light the game's queued switch
+						// took away after it was shown on): shown again, as often as a copy drawn anew is.
+						++lapses;
+						if (Redrawn(want, a_now) && a_engine.Show(key, want.powered)) {
+							++shown;
+						}
+						continue;
+					}
+					if (!want.settle || a_now < want.settleAt) {
+						continue;
+					}
+					want.settle = false;  // once, however the game takes it
+					if (Redrawn(want, a_now) && a_engine.Show(key, want.powered)) {
+						++shown;
+					}
 					continue;
 				}
 				if (want.drawn != drawn) {
 					const bool anew = want.drawn != 0;
 					want.drawn = drawn;
 					want.tries = 0;
-					if (anew) {
-						if (a_now - want.redrawsSince >= REDRAW_WINDOW) {
-							want.redrawsSince = a_now;
-							want.redraws = 0;
-						}
-						if (++want.redraws > MAX_REDRAWS) {
-							want.shown = true;  // let be until the window is over and it is drawn anew again
-							++redrawsCapped;
-							continue;
-						}
+					want.settle = true;
+					if (anew && !Redrawn(want, a_now)) {
+						want.shown = true;  // let be until the window is over and it is drawn anew again
+						want.settle = false;
+						continue;
 					}
 				}
 				if (a_engine.Show(key, want.powered)) {
 					want.shown = true;
+					want.settleAt = a_now + SETTLE;
 					++shown;
 				} else if (++want.tries >= MAX_TRIES) {
 					want.shown = true;  // the game won't take it (no graph, or already so): not asked again until drawn anew
+					want.settle = false;
 					++givenUp;
 				}
 			}
@@ -403,6 +582,8 @@ namespace WorkshopPower
 		[[nodiscard]] std::size_t Dropped() const { return dropped; }
 		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
 		[[nodiscard]] std::size_t RedrawsCapped() const { return redrawsCapped; }
+		[[nodiscard]] std::size_t Hushed() const { return hushedTotal; }
+		[[nodiscard]] std::size_t Lapses() const { return lapses; }
 
 		// How many copies show what their builder's game says (or were given up on).
 		[[nodiscard]] std::size_t Shown() const
@@ -420,12 +601,44 @@ namespace WorkshopPower
 			bool           frozen = false;          // its builder left (Freeze)
 			std::uint8_t   redraws = 0;             // drawn anew since redrawsSince
 			Clock::time_point redrawsSince{};
+			bool           settle = false;          // its 3D is to be shown once more, at settleAt (SETTLE after its first show)
+			Clock::time_point settleAt{};
+			bool           hushed = false;          // shown unpowered for a save (Hush), to be shown powered again
+			Clock::time_point hushedAt{};
 		};
 
+		// A show again of a copy already shown (drawn anew, or settled) counted in its window: false if that is one too
+		// many (MAX_REDRAWS), and it is let be.
+		bool Redrawn(Want& a_want, Clock::time_point a_now)
+		{
+			if (a_now - a_want.redrawsSince >= REDRAW_WINDOW) {
+				a_want.redrawsSince = a_now;
+				a_want.redraws = 0;
+			}
+			if (++a_want.redraws > MAX_REDRAWS) {
+				++redrawsCapped;
+				return false;
+			}
+			return true;
+		}
+
+		template <class Engine>
+		static bool Holds(Engine& a_engine, const Key& a_key, bool a_on)
+		{
+			if constexpr (requires { a_engine.Holds(a_key, a_on); }) {
+				return a_engine.Holds(a_key, a_on);
+			} else {
+				return true;
+			}
+		}
+
 		std::map<Key, Want> wants;
+		std::size_t         lapses = 0;  // copies found not showing what they were shown (Holds), shown again
 		std::size_t         dropped = 0;
 		std::size_t         givenUp = 0;
 		std::size_t         redrawsCapped = 0;
+		std::size_t         hushedTotal = 0;
+		bool                saveDone = false;  // the save a hush was for is over (SaveDone)
 		Clock::time_point   nextRefresh{};
 	};
 }

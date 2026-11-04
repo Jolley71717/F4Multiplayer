@@ -26,7 +26,7 @@ plus a manual pass over the puppet registry and the fixes. Line numbers are as o
 
 ## Findings
 
-Status: F = fixed (commit), O = open issue (beads id), N = checked, no change needed.
+Status: F = fixed (commit), O = open issue (tracker id), N = checked, no change needed.
 
 ### Dangling pointers and address reuse
 

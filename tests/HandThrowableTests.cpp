@@ -1,8 +1,10 @@
 #include "Test.h"
 
 #include "game/HandThrowable.h"
+#include "game/ThrowReplays.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 using namespace std::chrono_literals;
@@ -286,4 +288,124 @@ TEST("hand throwable: every reason has a name for the log")
 	for (auto drop = std::to_underlying(Drop::kKeep); drop <= std::to_underlying(Drop::kDeleted); ++drop) {
 		CHECK(HandThrowable::Name(static_cast<Drop>(drop)) != "?");
 	}
+}
+
+namespace
+{
+	// A stand-in's left hand between throws as the rig found it: the engine's WeaponLeft, holding the grenade, culled.
+	HandThrowable::Between Idle()
+	{
+		HandThrowable::Between seen;
+		seen.loaded = true;
+		seen.holds = true;
+		return seen;
+	}
+
+	struct Swept
+	{
+		int                              culls = 0;
+		std::optional<Clock::time_point> first;           // when the first look culled it
+		bool                             culledInWindUp = false;
+	};
+
+	// A stand-in through a friend's frag throw, its hand looked at every SWEEP_EVERY as SweepHand does: the throw replayed
+	// at START, its weaponAttach(2) at +300 ms (the engine's culled WeaponLeft drawn by us), the release at +800 ms (culled
+	// again by us). With a_drawnAgain, something draws that WeaponLeft once more at +2 s, with nothing of the engine's to
+	// undo it (it never heard the release).
+	Swept ThroughAThrow(bool a_drawnAgain)
+	{
+		Book               book;
+		ThrowReplays::Book replays;
+		Swept              out;
+		bool               drawn = false;
+		replays.Arm(STAND_IN, START);
+		for (auto now = START; now < START + 6s; now += HandThrowable::SWEEP_EVERY) {
+			if (now >= START + 300ms && now < START + 300ms + HandThrowable::SWEEP_EVERY) {
+				REQUIRE(book.ShouldHang(STAND_IN, AttachingAsShipped()) == Skip::kNone);
+				book.Hung(STAND_IN, FRAG, now, false);
+				drawn = true;
+			}
+			if (now >= START + 800ms && book.Holds(STAND_IN)) {
+				(void)replays.Release(STAND_IN, now);
+				book.Released(STAND_IN);
+				REQUIRE(book.Check(STAND_IN, Holding(), now) == Drop::kReleased);
+				book.Forget(STAND_IN);
+				drawn = false;
+			}
+			if (a_drawnAgain && now >= START + 2s && now < START + 2s + HandThrowable::SWEEP_EVERY) {
+				drawn = true;
+			}
+			auto seen = Idle();
+			seen.drawn = drawn;
+			seen.ours = book.Holds(STAND_IN);
+			seen.windingUp = replays.WindingUp(STAND_IN, now, HandThrowable::WIND_UP);
+			if (HandThrowable::ShouldCull(seen)) {
+				++out.culls;
+				out.culledInWindUp = out.culledInWindUp || now < START + 800ms;
+				if (!out.first) {
+					out.first = now;
+				}
+				drawn = false;
+			}
+		}
+		return out;
+	}
+}
+
+TEST("hand throwable: a grenade found drawn in a stand-in's hand between throws is culled again, once")
+{
+	const auto swept = ThroughAThrow(true);
+	CHECK(swept.culls == 1);
+	REQUIRE(swept.first.has_value());
+	CHECK(*swept.first >= START + 2s);
+	CHECK(*swept.first < START + 2s + HandThrowable::SWEEP_EVERY);
+	CHECK(!swept.culledInWindUp);
+}
+
+TEST("hand throwable: a throw that leaves the hand as it should gives the sweep nothing to do")
+{
+	CHECK(ThroughAThrow(false).culls == 0);
+}
+
+TEST("hand throwable: the sweep leaves a hand alone while a replayed throw winds up, or while we hold its model")
+{
+	auto seen = Idle();
+	seen.drawn = true;
+	CHECK(HandThrowable::ShouldCull(seen));
+	// The engine's own, drawn by itself in the wind-up (Skip::kEngineShows): let show until the release, or WIND_UP.
+	auto windingUp = seen;
+	windingUp.windingUp = true;
+	CHECK(!HandThrowable::ShouldCull(windingUp));
+	// Ours: it comes off by the Book's rules (the release, the time limit and the rest).
+	auto ours = seen;
+	ours.ours = true;
+	CHECK(!HandThrowable::ShouldCull(ours));
+	// Culled already, empty, or no hand to look in: nothing to do.
+	CHECK(!HandThrowable::ShouldCull(Idle()));
+	auto empty = seen;
+	empty.holds = false;
+	CHECK(!HandThrowable::ShouldCull(empty));
+	auto gone = seen;
+	gone.loaded = false;
+	CHECK(!HandThrowable::ShouldCull(gone));
+}
+
+TEST("hand throwable: a replayed throw winds up from its replay until its release, or WIND_UP at most")
+{
+	ThrowReplays::Book replays;
+	CHECK(!replays.WindingUp(STAND_IN, START, HandThrowable::WIND_UP));
+	replays.Arm(STAND_IN, START);
+	CHECK(replays.WindingUp(STAND_IN, START + 500ms, HandThrowable::WIND_UP));
+	CHECK(!replays.WindingUp(OTHER, START + 500ms, HandThrowable::WIND_UP));
+	// Never let go of: no longer winding up past WIND_UP, though its release is still waited for.
+	CHECK(!replays.WindingUp(STAND_IN, START + HandThrowable::WIND_UP, HandThrowable::WIND_UP));
+	CHECK(replays.Unreleased(STAND_IN));
+	// Let go of: over at once.
+	CHECK(replays.Release(STAND_IN, START + 800ms).has_value());
+	CHECK(!replays.WindingUp(STAND_IN, START + 900ms, HandThrowable::WIND_UP));
+	// A second throw replayed before the first one's release keeps it winding up.
+	replays.Arm(STAND_IN, START + 1s);
+	replays.Arm(STAND_IN, START + 1500ms);
+	CHECK(replays.Release(STAND_IN, START + 1800ms).has_value());
+	CHECK(replays.WindingUp(STAND_IN, START + 2s, HandThrowable::WIND_UP));
 }

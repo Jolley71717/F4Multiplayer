@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -28,6 +29,9 @@ namespace DownRules
 	inline constexpr auto  FIGHT_OVER = 30s;    // out of a fight this long, it is over (revives "per fight")
 	inline constexpr auto  PUT_DOWN_RETRY = 500ms;  // stood up by the game while waiting for help: put down again this often
 	inline constexpr auto  PUT_DOWN_GIVE_UP = 5s;   // still up after this long of that: up it is
+	inline constexpr auto  STAND_RETRY = 1s;        // helped up and still down: the engine's get-up is asked again this often
+	inline constexpr auto  KNOCK_WAIT = 3s;         // helped up while knocked over: the get-up waits this long at most for the knock-down's to end
+	inline constexpr auto  GET_UP_SETTLE = 2s;      // up this long, not knocked over, out of the menus: the get-up has played out
 
 	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
 	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
@@ -41,6 +45,8 @@ namespace DownRules
 		Clock::duration window{};               // 0 = per fight
 		Clock::duration cooldown{};             // helped up, a lethal hit within this long kills
 		bool            outsideCombat = false;  // a helper in a fight cannot help
+		bool            crawl = false;          // down, the player crawls with their movement keys (Crawl)
+		bool            saveOnDown = false;     // going down makes an autosave (AutoSaveRules::DownSave)
 
 		static Rules From(const Protocol::SessionRules& a_session)
 		{
@@ -54,6 +60,8 @@ namespace DownRules
 			rules.window = std::chrono::minutes{ session.reviveWindowMinutes };
 			rules.cooldown = std::chrono::seconds{ session.downCooldownSeconds };
 			rules.outsideCombat = session.reviveOutsideCombat;
+			rules.crawl = session.downedCrawl;
+			rules.saveOnDown = session.saveOnDown;
 			return rules;
 		}
 	};
@@ -135,6 +143,10 @@ namespace DownRules
 		bool paused = false;     // a menu has the game stopped (the pause menu, the Pip-Boy)
 		bool inCombat = false;   // the player is in a fight (revives per fight)
 		bool console = false;    // the console is open, or was a moment ago (Downed.cpp): a stand-up then is the player's command
+		bool knockedOver = false;  // the knock state is not normal: a ragdoll, or the get-up after it
+		bool sneaking = false;     // the game has the player sneaking (Actor::IsSneaking)
+		bool bleedOutCamera = false;  // the player camera is in its bleed-out state, or has it to go back to (Downed.cpp BleedOutCamera)
+		bool bleedOutLayer = false;   // the input layer the engine's start of a down puts on the player is in use (Downed.cpp BleedOutLayer)
 	};
 
 	// What to do about it this frame.
@@ -154,6 +166,13 @@ namespace DownRules
 		bool                backDown = false;      // down again after that
 		bool                stayedUp = false;      // the game kept them up through PUT_DOWN_GIVE_UP of that: up it is
 		bool                upByCommand = false;   // stood up while the console was open (player.resurrect and the like): up it is
+		bool                standUp = false;       // helped up: stand them up now, the engine's own end of the down (Downed.cpp StandUp)
+		bool                gotUp = false;         // up again after a down, however it ended: what the down left on is taken off
+		bool                unsneak = false;       // up again, and still in the sneak they went down in: they stand (as they got up, and once more if that did not take)
+		bool                sneakKept = false;     // up again sneaking, though they went down standing: the sneak key pressed while down, theirs
+		bool                graphSneakStop = false;  // up again standing, though they went down sneaking: the graph told its sneak stop (as they got up, and settled)
+		bool                settled = false;       // GET_UP_SETTLE after getting up: the get-up has played out
+		bool                finishDown = false;    // up again, and the down's bleed-out camera or input layer still on: the engine's end of those (Downed.cpp FinishDown)
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -163,6 +182,31 @@ namespace DownRules
 	//
 	// The session's rules can limit it: out of revives for the window (or the fight), or within the cooldown after
 	// being helped up, the player is not made essential, and a lethal hit kills as it would alone.
+	//
+	// Helped up (or a save loaded with them down), the player is stood up the engine's own way at once (standUp), not left
+	// to its recovery a few seconds on, when other paths of the game could stand them up first and leave part of the down
+	// on: once a knock-down's ragdoll and its get-up are over (KNOCK_WAIT at most), never in a stopped game, and again every
+	// STAND_RETRY while it has not taken. However a down ends with the player up (helped, stood up by the game, a bleed-out
+	// the kill did not take, a load), what the down left on is taken off (gotUp). The down's start and end leave the sneak
+	// stance alone, so a player downed sneaking got up crouched and stayed so until they pressed the key again: one who went
+	// down sneaking (as last seen up; a save loaded down counts so) and is sneaking as they get up is stood (unsneak), and
+	// once more when the get-up has played out (settled, GET_UP_SETTLE on) only if that did not take, the stance never
+	// having left sneak since. A sneak the player chose is theirs: one they went down standing and are sneaking as they get
+	// up pressed the key while down (sneakKept), and a change of the stance after they are up is their key too.
+	//
+	// One who went down sneaking and is standing as they get up was stood by the game, and the game's ways of doing it set
+	// the stance alone (Actor::SetSneaking: the stance and iIsInSneak, no graph event): the behaviour graph stayed in its
+	// sneak. The sneak key reads the stance, asks a graph already in sneak to start one, is refused, and does nothing until
+	// a load builds the graph again. The graph is told its own sneak stop (graphSneakStop) as they get up, and once more
+	// when the get-up has played out (a graph still in the get-up may not take it then), unless the stance changed since.
+	//
+	// The engine's start of a down puts the player camera in its bleed-out state and an input layer on the player; only
+	// the life state's own end of the down takes them off again. A player stood up some other way kept both: downed while
+	// knocked over by a grenade and helped up, the camera stayed on the ground and the Pip-Boy would not open until a load
+	// (a player's report, 2026-11-03). Up again with either still on, the rest of the down is ended the engine's way
+	// (finishDown): not while knocked over (a knock-down's ragdoll has the bleed-out camera too, and its own end takes it
+	// off) nor in a stopped game; once as soon as it can be, and once more when the get-up has played out if that did not
+	// take.
 	class Self
 	{
 	public:
@@ -174,10 +218,11 @@ namespace DownRules
 			kBledOut,
 		};
 
-		// The session's rules, and a new count.
+		// The session's rules, and a new count. Rules that come while the player is on the ground wait until they are
+		// up: a down finishes under the rules it began with (a shorter bleed-out would kill at once, revive off too).
 		void SetRules(const Rules& a_rules)
 		{
-			rules = a_rules;
+			Take(a_rules);
 			countedFor = 0;
 			helpedUpAt.clear();
 			fightRevives = 0;
@@ -192,18 +237,25 @@ namespace DownRules
 		void SetRules(const Rules& a_rules, std::uint64_t a_session)
 		{
 			if (a_session == 0 || a_session == countedFor) {
-				rules = a_rules;
+				Take(a_rules);
 				return;
 			}
 			SetRules(a_rules);
 			countedFor = a_session;
 		}
 
+		// The rules in force now (not ones waiting for the player to be up).
 		[[nodiscard]] const Rules& GetRules() const { return rules; }
+		[[nodiscard]] bool RulesWaiting() const { return pending.has_value(); }
 
 		Step Frame(const Facts& a_facts, Clock::time_point a_now)
 		{
-			Step step;
+			Step        step;
+			const Phase before = phase;
+			if (pending && !IsDown()) {
+				rules = *pending;
+				pending.reset();
+			}
 			// A fight goes on while the player is on the ground: enemies may well leave a downed player alone.
 			if (a_facts.inCombat || IsDown()) {
 				lastFight = a_now;
@@ -246,7 +298,9 @@ namespace DownRules
 					standingSince.reset();
 					lastPutDown.reset();
 				}
-				if (giveUp || !a_facts.enabled || a_now - downSince >= rules.bleedOut) {
+				// A down ends by its own clock, a give-up, or help; never by the friend count: a dropped connection or
+				// a friend who crashed and comes back within the bleed-out can still help.
+				if (giveUp || a_now - downSince >= rules.bleedOut) {
 					// Bleeding out counts real time, paused or not: friends' games go on while ours is stopped.
 					BleedOut(step, a_now);
 				} else {
@@ -272,11 +326,19 @@ namespace DownRules
 					step.trimHealth = true;
 					upAt = a_now;
 				} else if (a_now - revivedAt - pausedGettingUp >= GET_UP_TIME) {
-					// Helped up: the game stands the player up on its own. If it somehow doesn't, they die.
+					// Helped up, and neither our stand-up nor the game's own took. They die.
 					BleedOut(step, a_now);
 				} else {
 					// Essential until they stand, even across a save.
 					step.essential = true;
+					// The knock-down's get-up first (the bleed-out's played into a ragdoll does not take), then ours.
+					const bool knockWait = a_facts.knockedOver && a_now - revivedAt - pausedGettingUp < KNOCK_WAIT;
+					if (!a_facts.paused && !knockWait && (!standAskedAt || a_now - *standAskedAt >= STAND_RETRY)) {
+						step.standUp = true;
+						standAskedAt = a_now;
+						++standUpAsks;
+						++standUpAsksNow;
+					}
 				}
 				break;
 			case Phase::kBledOut:
@@ -293,6 +355,7 @@ namespace DownRules
 				}
 				break;
 			}
+			GettingUp(before, a_facts, step, a_now);
 			lastFrame = a_now;
 			return step;
 		}
@@ -309,6 +372,8 @@ namespace DownRules
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
 			pausedGettingUp = {};
+			standAskedAt.reset();
+			standUpAsksNow = 0;
 			++revives;
 			helpedUpAt.push_back(a_now);
 			++fightRevives;
@@ -345,6 +410,14 @@ namespace DownRules
 			return rules.cooldown.count() > 0 && upAt && a_now - *upAt < rules.cooldown;
 		}
 
+		// Whether going down at a_now asks for the autosave (the host's bSaveOnDown): not for a player out of revives or
+		// in the cooldown, whose deaths the rules mean to be real. Loaded from, such a save stands the player up on the
+		// spot as if helped, which would make the bleed-out a free respawn the revive limits were made to prevent.
+		[[nodiscard]] bool AsksForDownSave(Clock::time_point a_now) const
+		{
+			return rules.saveOnDown && RevivesLeft(a_now) != 0 && !InCooldown(a_now);
+		}
+
 		void GiveUp() { giveUp = phase == Phase::kDown; }
 
 		// A save was loaded: whatever state we were in belongs to the old game. True when the player is down in
@@ -355,21 +428,37 @@ namespace DownRules
 			giveUp = false;
 			standingSince.reset();
 			lastPutDown.reset();
+			standAskedAt.reset();
+			upSince.reset();  // a get-up of the old game's is nothing to this one
 			if (!a_down) {
 				return false;
 			}
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
 			pausedGettingUp = {};
+			standUpAsksNow = 0;
+			downSneaking = true;  // the down began in the saved game: a sneak it has is from before it
 			return true;
 		}
 
 		[[nodiscard]] Phase Now() const { return phase; }
-		// On the ground: down, or helped and getting up (the stand-in crouches).
+		// On the ground: down, or helped and getting up (friends are told the real health, DownRules::StatusHealth).
 		[[nodiscard]] bool IsDown() const { return phase == Phase::kDown || phase == Phase::kGettingUp; }
 		// What friends are told: down and still waiting for help. Once helped, friends stop helping; they kept
 		// helping while the game stood the player up, and the helper read "You helped Host up" three times for one down.
 		[[nodiscard]] bool WaitsForHelp() const { return phase == Phase::kDown; }
+		// Whole seconds until a player waiting for help bleeds out (0 when the time is up).
+		[[nodiscard]] std::int64_t BleedOutSecondsLeft(Clock::time_point a_now) const
+		{
+			const auto left = std::chrono::duration_cast<std::chrono::seconds>(rules.bleedOut - (a_now - downSince)).count();
+			return (std::max)(left, std::int64_t{ 0 });
+		}
+		// The session's rule lets the player crawl, and they are down waiting for help (not helped and getting up, not
+		// bled out, not giving up), and really lying there: not while the game has them up and they are being put down
+		// again (StoodUp), when the engine walks them itself and a step of ours could keep the put-down from taking.
+		[[nodiscard]] bool MayCrawl() const { return rules.crawl && phase == Phase::kDown && !giveUp && !standingSince; }
+		// Up again after a down, and the get-up not yet played out (settled): what the down left on is still looked for.
+		[[nodiscard]] bool Settling() const { return phase == Phase::kUp && upSince.has_value(); }
 
 		std::uint32_t downs = 0;
 		std::uint32_t revives = 0;
@@ -377,8 +466,88 @@ namespace DownRules
 		std::uint32_t killRetries = 0;
 		std::uint32_t standUps = 0;  // times the game stood the player up while they waited for help
 		std::uint32_t putDowns = 0;  // times they were put down again for it
+		std::uint32_t standUpAsks = 0;  // times the engine's get-up was asked for (standUp)
+		std::uint32_t standUpAsksNow = 0;  // of those, this get-up's (from the help-up or the load)
+		std::uint32_t getUps = 0;       // times up again after a down (gotUp)
+		std::uint32_t unsneaks = 0;     // stands asked for after those (unsneak)
+		std::uint32_t graphSneakStops = 0;  // sneak stops the graph was told after those (graphSneakStop)
+		std::uint32_t downFinishes = 0;     // ends of the down's camera and input layer asked for after those (finishDown)
 
 	private:
+		// Up again after a down, however it ended (a_before: the phase as the frame began): told once (gotUp), and once the
+		// get-up has played out (settled). Dead, or down again, before that: nothing to finish. The sneak: see the class.
+		void GettingUp(Phase a_before, const Facts& a_facts, Step& a_step, Clock::time_point a_now)
+		{
+			if (phase != Phase::kUp) {
+				if (a_before == Phase::kUp) {
+					// The stance they went down in, as last seen up: while down the game's answer may not be the stance.
+					downSneaking = sneakingUp;
+				}
+				upSince.reset();
+				return;
+			}
+			if (!a_facts.down && !a_facts.dead) {
+				sneakingUp = a_facts.sneaking;
+			}
+			if (a_before != Phase::kUp) {
+				if (a_facts.dead) {
+					return;
+				}
+				upSince = a_now;
+				a_step.gotUp = true;
+				a_step.unsneak = a_facts.sneaking && downSneaking;
+				a_step.sneakKept = a_facts.sneaking && !downSneaking;
+				a_step.graphSneakStop = !a_facts.sneaking && downSneaking;
+				unsneaks += a_step.unsneak ? 1u : 0u;
+				graphSneakStops += a_step.graphSneakStop ? 1u : 0u;
+				++getUps;
+				sneakAsked = a_step.unsneak;
+				sneakSeen = a_facts.sneaking;
+				sneakPressed = false;
+				finishAsked = false;
+				FinishDown(a_facts, a_step);
+				return;
+			}
+			if (!upSince) {
+				return;
+			}
+			if (a_facts.dead || a_facts.down) {
+				upSince.reset();
+				return;
+			}
+			FinishDown(a_facts, a_step);
+			// A change of the stance since they got up is the player's key, but for the stand we asked for taking.
+			if (a_facts.sneaking != sneakSeen) {
+				sneakPressed = sneakPressed || a_facts.sneaking || !sneakAsked;
+				sneakSeen = a_facts.sneaking;
+			}
+			if (!a_facts.knockedOver && !a_facts.paused && a_now - *upSince >= GET_UP_SETTLE) {
+				upSince.reset();
+				a_step.settled = true;
+				a_step.unsneak = a_facts.sneaking && sneakAsked && !sneakPressed;
+				a_step.graphSneakStop = !a_facts.sneaking && downSneaking && !sneakPressed;
+				unsneaks += a_step.unsneak ? 1u : 0u;
+				graphSneakStops += a_step.graphSneakStop ? 1u : 0u;
+				// Once more, should the end asked for as they got up not have taken.
+				if (!a_step.finishDown) {
+					finishAsked = false;
+					FinishDown(a_facts, a_step);
+				}
+			}
+		}
+
+		// Up again, and the down's bleed-out camera or input layer still on: their end asked for, once until settled (the
+		// class). Not while knocked over or in a stopped game.
+		void FinishDown(const Facts& a_facts, Step& a_step)
+		{
+			if (finishAsked || a_facts.knockedOver || a_facts.paused || !(a_facts.bleedOutCamera || a_facts.bleedOutLayer)) {
+				return;
+			}
+			a_step.finishDown = true;
+			finishAsked = true;
+			++downFinishes;
+		}
+
 		// Down and waiting for help, neither helped up nor bled out, and the game has the player up again. The game
 		// stands an essential character up by itself on several paths the stay-down flag does not hold back (seen
 		// 2026-10-19: downed in a pile of clutter, the host was stood up and their revive state lost). They are put
@@ -438,6 +607,16 @@ namespace DownRules
 			}
 		}
 
+		void Take(const Rules& a_rules)
+		{
+			if (IsDown()) {
+				pending = a_rules;
+			} else {
+				rules = a_rules;
+				pending.reset();
+			}
+		}
+
 		void BleedOut(Step& a_step, Clock::time_point a_now)
 		{
 			phase = Phase::kBledOut;
@@ -449,6 +628,7 @@ namespace DownRules
 		}
 
 		Rules                            rules;
+		std::optional<Rules>             pending;     // came while on the ground: in force once up (Take)
 		std::deque<Clock::time_point>    helpedUpAt;  // help-ups within the window (revives per window)
 		std::uint32_t                    fightRevives = 0;
 		Clock::time_point                lastFight{};
@@ -467,6 +647,14 @@ namespace DownRules
 		std::optional<Clock::time_point> standingSince;  // down and waiting, but the game has them up (StoodUp)
 		std::optional<Clock::time_point> lastPutDown;
 		bool                             standUpTold = false;  // this time up has been told (stoodUp)
+		std::optional<Clock::time_point> standAskedAt;  // getting up: when the engine's get-up was last asked for (standUp)
+		std::optional<Clock::time_point> upSince;       // up again after a down, and the get-up not yet played out (GettingUp)
+		bool                             sneakingUp = false;    // sneaking as last seen up (GettingUp): what a down that begins began in
+		bool                             downSneaking = false;  // this down began sneaking (or came in a loaded save)
+		bool                             sneakAsked = false;    // up again: we stood them as they got up
+		bool                             sneakSeen = false;     // up again: the stance as last seen since
+		bool                             sneakPressed = false;  // up again: the stance changed since by the player's key
+		bool                             finishAsked = false;   // up again: the end of the down's camera and layer was asked for (finishDown)
 	};
 
 	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,
@@ -556,6 +744,196 @@ namespace DownRules
 		Clock::time_point       helpSince{};
 		Clock::time_point       helpAgain{};
 	};
+
+	// Crawling while down (the session's rule, bDownedCrawl): the player's own movement input, read from the game's
+	// controls, moves their character slowly in their own game; friends see it through the position they already get,
+	// their stand-in lying where the player is (StandInDown). Forward and back crawl along the heading and sideways turns
+	// the body, since the bleed-out camera gives no direction to go by. Each step is checked against the world first
+	// (Accept): Downed.cpp casts the rays through the cell's physics and does what this answers.
+	inline constexpr float CRAWL_SPEED = 40.0f;           // game units a second forward (half that backward): 25 m in a 45 s bleed-out
+	inline constexpr float CRAWL_TURN = 1.5707964f;       // radians a second (90 degrees)
+	inline constexpr float CRAWL_LONGEST_FRAME = 0.1f;    // seconds: a hitch moves no farther than this much crawl
+	inline constexpr float CRAWL_DEAD_ZONE = 0.15f;       // input under this is none (a pad's stick at rest drifts)
+	inline constexpr float CRAWL_BODY = 20.0f;            // something solid closer than this past the step is a wall
+	inline constexpr float CRAWL_AHEAD = 20.0f;           // the ground is judged this far ahead too, so a slope reads as one
+	inline constexpr float CRAWL_CLIMB = 30.0f;           // the most the ground may rise there (a stair's step, a 55 degree slope)
+	inline constexpr float CRAWL_DROP = 45.0f;            // the most it may fall there: more is a ledge
+	inline constexpr float CRAWL_PROBE_LOW = 35.0f;       // the low wall ray and the ground rays start this high above the feet
+	inline constexpr float CRAWL_PROBE_HIGH = 60.0f;      // the high wall ray (under a table is still a way)
+	inline constexpr float CRAWL_GROUND_REACH = 120.0f;   // the ground rays reach this far below the feet
+
+	// What stops a crawl, by the collision layer (the engine's COL_LAYER) of what a ray hit: the world's own solid
+	// things. Characters (our own body first: the rays start inside it), loose clutter, water, triggers and the like are
+	// passed through.
+	constexpr bool CrawlStops(std::uint32_t a_layer)
+	{
+		switch (a_layer) {
+		case 0:   // unidentified: a hit that can't be told is taken as solid
+		case 1:   // static
+		case 2:   // animated static
+		case 3:   // transparent (glass, a fence)
+		case 9:   // trees
+		case 10:  // props
+		case 13:  // terrain
+		case 17:  // ground
+		case 20:  // large debris
+		case 26:  // small transparent (a railing, a grate, a small fence)
+		case 27:  // invisible wall
+		case 28:  // small transparent, animated
+		case 29:  // large clutter
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	class Crawl
+	{
+	public:
+		// What the game shows this frame.
+		struct Facts
+		{
+			bool  may = false;          // the session's rule, down and waiting for help (Self::MayCrawl)
+			float x = 0.0f;             // the movement input, -1 (left) to 1 (right)
+			float y = 0.0f;             // -1 (back) to 1 (forward)
+			float seconds = 0.0f;       // since the last frame
+			bool  paused = false;       // a menu has the game stopped
+			bool  inAir = false;
+			bool  swimming = false;
+			bool  inFurniture = false;
+			bool  knockedOver = false;  // the knock state is not normal: a ragdoll, or the get-up after it
+			bool  inScene = false;
+			bool  friendNear = false;   // a friend's stand-in within HELP_RANGE: kept still, so their help isn't broken
+		};
+
+		struct Move
+		{
+			float turn = 0.0f;     // radians, to the right
+			float forward = 0.0f;  // game units along the heading after the turn; backward is negative
+
+			[[nodiscard]] bool Any() const { return turn != 0.0f || forward != 0.0f; }
+		};
+
+		// The input is held at all (worth a look for friends near).
+		static bool Pushed(float a_x, float a_y)
+		{
+			return std::fabs(a_x) >= CRAWL_DEAD_ZONE || std::fabs(a_y) >= CRAWL_DEAD_ZONE;
+		}
+
+		static Move Wanted(const Facts& a_facts)
+		{
+			if (!a_facts.may || a_facts.paused || a_facts.inAir || a_facts.swimming || a_facts.inFurniture || a_facts.knockedOver ||
+				a_facts.inScene || a_facts.friendNear) {
+				return {};
+			}
+			const float seconds = std::isfinite(a_facts.seconds) ? std::clamp(a_facts.seconds, 0.0f, CRAWL_LONGEST_FRAME) : 0.0f;
+			const auto  axis = [](float a_value) {
+				return std::isfinite(a_value) && std::fabs(a_value) >= CRAWL_DEAD_ZONE ? std::clamp(a_value, -1.0f, 1.0f) : 0.0f;
+			};
+			const float x = axis(a_facts.x);
+			const float y = axis(a_facts.y);
+			Move move;
+			move.turn = x * CRAWL_TURN * seconds;
+			move.forward = y * CRAWL_SPEED * seconds * (y < 0.0f ? 0.5f : 1.0f);
+			return move;
+		}
+
+		// The heading turned by a_turn, within 0 to 2 pi.
+		static float Turned(float a_heading, float a_turn)
+		{
+			constexpr float FULL = 6.2831853f;
+			const float     heading = std::fmod(a_heading + a_turn, FULL);
+			return heading < 0.0f ? heading + FULL : heading;
+		}
+
+		// How far east (x) and north (y) a_distance along a_heading is: the engine's heading counts from north toward east.
+		static std::array<float, 2> Along(float a_heading, float a_distance)
+		{
+			return { std::sin(a_heading) * a_distance, std::cos(a_heading) * a_distance };
+		}
+
+		// What the rays found for a step, each nothing when they hit nothing that stops a crawl (CrawlStops).
+		struct Probe
+		{
+			std::optional<float> wall;         // how far along the step's way something solid is, from the feet, at either height
+			std::optional<float> groundThere;  // the height of the ground where the step ends
+			std::optional<float> groundAhead;  // and CRAWL_AHEAD along the way from the feet
+		};
+
+		enum class Refused
+		{
+			kNone,
+			kWall,
+			kNoGround,
+			kLedge,
+			kClimb,
+		};
+
+		struct Verdict
+		{
+			Refused refused = Refused::kNone;
+			float   z = 0.0f;  // taken: the height to put the feet at, on the ground
+		};
+
+		// A step of a_step units (negative: backward) from feet at a_fromZ.
+		static Verdict Accept(float a_fromZ, float a_step, const Probe& a_probe)
+		{
+			if (a_probe.wall && *a_probe.wall < std::fabs(a_step) + CRAWL_BODY) {
+				return { Refused::kWall };
+			}
+			if (!a_probe.groundThere || !a_probe.groundAhead || !std::isfinite(*a_probe.groundThere) || !std::isfinite(*a_probe.groundAhead)) {
+				return { Refused::kNoGround };
+			}
+			for (const float ground : { *a_probe.groundThere, *a_probe.groundAhead }) {
+				if (ground - a_fromZ > CRAWL_CLIMB) {
+					return { Refused::kClimb };
+				}
+				if (a_fromZ - ground > CRAWL_DROP) {
+					return { Refused::kLedge };
+				}
+			}
+			return { Refused::kNone, *a_probe.groundThere };
+		}
+
+		// Counts a step's verdict. True for a refusal that is news (not the same as the step before it was), for the log.
+		bool Count(const Verdict& a_verdict, float a_step)
+		{
+			const bool news = a_verdict.refused != Refused::kNone && a_verdict.refused != last;
+			last = a_verdict.refused;
+			if (a_verdict.refused == Refused::kNone) {
+				++steps;
+				distance += std::fabs(a_step);
+			} else {
+				++refused;
+			}
+			return news;
+		}
+
+		[[nodiscard]] Refused Last() const { return last; }
+
+		std::uint32_t steps = 0;
+		std::uint32_t refused = 0;
+		float         distance = 0.0f;  // game units crawled in all
+
+	private:
+		Refused last = Refused::kNone;
+	};
+
+	constexpr const char* RefusedName(Crawl::Refused a_refused)
+	{
+		switch (a_refused) {
+		case Crawl::Refused::kWall:
+			return "wall";
+		case Crawl::Refused::kNoGround:
+			return "no ground";
+		case Crawl::Refused::kLedge:
+			return "ledge";
+		case Crawl::Refused::kClimb:
+			return "too steep";
+		default:
+			return "none";
+		}
+	}
 
 	// A friend who is down is shown down: their stand-in lies where they are, in the engine's own downed pose (its life
 	// state put to essential-down, which plays its graph's bleedout, in a power armor frame too), held there until they

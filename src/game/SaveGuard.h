@@ -29,6 +29,11 @@ namespace SaveGuard
 	// BeforeSave).
 	void Track(RE::TESObjectREFR* a_ref);
 
+	// The same for one of ours let go of (Release) that is ours again, by its id and base, while no reference of it
+	// resolves (the engine unloaded it with its cell): back on the books, for Forget to drop its record as for any copy
+	// lost (a frame our player wore on loan, FrameLoans).
+	void Track(std::uint32_t a_id, std::uint32_t a_base);
+
 	// Whether the reference is one of those Track was told of this run (a stand-in, a frame copy, a light, a copy of a
 	// friend's runtime NPC or frame): the session's, not the game's own.
 	[[nodiscard]] bool Placed(const RE::TESObjectREFR* a_ref);

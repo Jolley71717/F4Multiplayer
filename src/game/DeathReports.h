@@ -96,6 +96,20 @@ namespace DeathReports
 		// Held until our copy can be judged (it isn't loaded yet, or the judge said wait).
 		void Hold(std::uint32_t a_ref, const Report& a_report) { held[a_ref] = a_report; }
 		void Forget(std::uint32_t a_ref) { held.erase(a_ref); }
+
+		// Where the corpse came to rest in the reporter's game, said after the death (Protocol::CORPSE_REST_WINDOW): a
+		// report still held kills our copy there. True if one was held.
+		bool Rests(std::uint32_t a_ref, float a_x, float a_y, float a_z)
+		{
+			const auto it = held.find(a_ref);
+			if (it == held.end()) {
+				return false;
+			}
+			it->second.x = a_x;
+			it->second.y = a_y;
+			it->second.z = a_z;
+			return true;
+		}
 		[[nodiscard]] bool Holds(std::uint32_t a_ref) const { return held.contains(a_ref); }
 		void Clear() { held.clear(); }
 		[[nodiscard]] bool        Empty() const { return held.empty(); }

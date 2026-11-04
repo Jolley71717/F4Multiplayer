@@ -42,6 +42,32 @@ TEST("face heads: a copy gets the whole look only with bFriendFaces on and the e
 	CHECK(!FaceHeads::OwnHead(FaceHeads::BODY_ONLY));
 }
 
+TEST("face heads: a face over the sculpt limit keeps the same lowest ids whatever order they come in, and says how many went")
+{
+	struct Entry
+	{
+		std::uint32_t id;
+		float         value;
+	};
+	std::vector<Entry> forward, backward;
+	for (std::uint32_t i = 0; i < 300; ++i) {
+		forward.push_back({ i, 1.0f });
+		backward.push_back({ 299 - i, 1.0f });
+	}
+	CHECK(FaceHeads::SortAndCap(forward, 256, &Entry::id) == 44);
+	CHECK(FaceHeads::SortAndCap(backward, 256, &Entry::id) == 44);
+	CHECK(forward.size() == 256);
+	CHECK(backward.size() == 256);
+	CHECK(forward.front().id == 0);
+	CHECK(forward.back().id == 255);
+	CHECK(backward.back().id == 255);
+
+	std::vector<Entry> few{ { 9, 0.5f }, { 3, 0.5f } };
+	CHECK(FaceHeads::SortAndCap(few, 256, &Entry::id) == 0);
+	CHECK(few.size() == 2);
+	CHECK(few.front().id == 3);
+}
+
 TEST("face heads: the dev's facemask wins whatever the ini and the patch, within the known pieces")
 {
 	CHECK(FaceHeads::Parts(false, 0x7F, false) == 0x7F);

@@ -30,6 +30,12 @@ namespace Drops
 	void OnLeftInventory(std::uint32_t a_base, std::int32_t a_count, std::uint32_t a_ref);
 	void OnActivated(std::uint32_t a_ref);
 
+	// Main thread: our player picked a_ref up from where a plugin placed it (WorldSync pairs the pickup with the activation).
+	// The engine puts that item back into the world as the same reference when it is dropped, so a drop is looked for among
+	// those too, not only among references made at runtime. Noted only in a session (welcomed), forgotten when it ends and
+	// on a load.
+	void OnPickedUp(std::uint32_t a_ref);
+
 	// The engine's event (any thread): our player equipped something of a_base (using up food or a stim is one too).
 	void OnEquipped(std::uint32_t a_base);
 
@@ -57,7 +63,17 @@ namespace Drops
 	// workbench): said once a session, with how to give it instead.
 	void OnKeptInContainer();
 
-	// Messages from the server.
+	// Gifts' share (src/game/GiftBook.h: a weapon or armor given through a container is a drop too, its holder set). Our
+	// record of the session's transfers (any thread); whether our game can make the item as it is; and one of it (count 1)
+	// put in a_ref's inventory, made as our copies are (its mods, condition and name; main thread).
+	void               RecordMade(std::uint64_t a_nonce);
+	[[nodiscard]] bool HasMade(std::uint64_t a_nonce);
+	void               RecordTook(std::uint32_t a_dropId);
+	[[nodiscard]] bool HasTaken(std::uint32_t a_dropId);
+	[[nodiscard]] bool CanPlace(const Protocol::DroppedItem& a_item);
+	bool               AddOneTo(RE::TESObjectREFR* a_ref, const Protocol::DroppedItem& a_item);
+
+	// Messages from the server (a gift's are Gifts', and never come here: Session).
 	void OnPlaced(const Protocol::DroppedItem& a_drop);
 	void OnGone(const Protocol::DropGone& a_gone);
 	void OnList(const Protocol::DropList& a_list);
@@ -82,7 +98,13 @@ namespace Drops
 	// The co-save (on the save's or load's thread): our record, written with the save and read back with it.
 	std::vector<std::uint8_t> SaveRecord();
 	void                      LoadRecord(std::span<const std::uint8_t> a_bytes);
-	void                      RevertRecord();
+	void                      RevertRecord();  // the world's key too
+
+	// Whose world our record speaks for (CharacterBinding::World): its key, in the co-save beside the record (on the save's
+	// or load's thread), and after the load or new game is done (main thread; a_character: the loaded character's ID).
+	std::vector<std::uint8_t> SaveWorld();
+	void                      LoadWorld(std::span<const std::uint8_t> a_bytes);
+	void                      OnWorldStarted(bool a_newGame, std::uint64_t a_character);
 
 	// The session ended: copies deleted, everything but the record forgotten (it describes our world).
 	void Reset();

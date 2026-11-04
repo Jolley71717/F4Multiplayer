@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "game/Equipment.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/MenuIconPlace.h"
 #include "game/OpenMenus.h"
@@ -70,8 +71,7 @@ namespace MenuIcons
 		bool OurMenuOpen()
 		{
 			using enum OpenMenus::Menu;
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0 || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
+			return GameStop::Now() || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
 		}
 
 		std::uint32_t HudColor()
@@ -303,7 +303,6 @@ namespace MenuIcons
 			const auto     frame = movie->GetVisibleFrameRect();
 			const MenuIconPlace::Stage stage{ frame.x1, frame.y1, frame.x2, frame.y2 };
 			std::string    signature;
-			std::uint32_t  count = 0;
 			std::vector<std::pair<Glyph, MenuIconPlace::Spot>> spots;
 			if (!hide) {
 				for (const auto& target : targets) {
@@ -325,7 +324,6 @@ namespace MenuIcons
 					Draw(graphics, "clear", {});
 					for (const auto& [glyph, spot] : spots) {
 						DrawGlyph(graphics, glyph, color, spot.scale, spot.x - originX, spot.y - originY, false);
-						++count;
 					}
 					canvasDrawn = signature;
 				}

@@ -444,10 +444,10 @@ namespace ArmorFrames
 	}
 
 	// A wear whose frame is not known: ours when what we sat in as the armor went on is no frame (friends hear we are
-	// in power armor with no frame, and their stand-in of us wears the pieces with no frame copy), a friend's when the
-	// frame their stand-in would go into is no frame here (they named none, or one from a plugin this game lacks).
-	// Told in the log once a wear, once it has stayed unknown this long: the armor goes on a moment before the
-	// furniture is known, so the first status of every wear names no frame and the next one names it.
+	// in power armor with no frame, and their stand-in of us goes into a copy of STAND_IN_FRAME: see ChooseWornBase), a
+	// friend's when the frame their stand-in would go into is no frame here (they named none, or one from a plugin this
+	// game lacks). Told in the log once a wear, once it has stayed unknown this long: the armor goes on a moment before
+	// the furniture is known, so the first status of every wear names no frame and the next one names it.
 	constexpr auto UNKNOWN_FRAME_AFTER = std::chrono::seconds(1);
 
 	class UnknownFrame
@@ -476,10 +476,51 @@ namespace ArmorFrames
 			return true;
 		}
 
+		// In power armor with the frame unknown for UNKNOWN_FRAME_AFTER or longer, as of the last Update.
+		[[nodiscard]] bool Overdue(std::chrono::steady_clock::time_point a_now) const { return since && a_now - *since >= UNKNOWN_FRAME_AFTER; }
+
 	private:
 		std::optional<std::chrono::steady_clock::time_point> since;  // unknown since
 		bool                                                 told = false;
 	};
+
+	// The frame a friend's stand-in goes into while their status says they are in power armor (RemotePlayers' WornFrame).
+	// What the stand-in wears goes by what the engine has it in (ChooseDress): out of a frame, never a piece. So a friend
+	// in power armor whose stand-in had no frame copy to get into was shown in the clothes under their suit, out of it to
+	// every friend, until they got out and in again and their status named a frame. It came to that whenever the frame
+	// they told was none (a game loaded with them already in the armor, before 0.9.2 read the worn frame: see WornSeat)
+	// or one from a plugin this game lacks. The stand-in goes into a copy of a frame every game has instead: at once for a
+	// frame they named that is none here (no wait makes it one), and for none once that has lasted UNKNOWN_FRAME_AFTER
+	// (the first status of every wear names none, and the next one names it). Waiting a second on a named one too, a
+	// friend who got out of a frame here and into one this game lacks was shown out of their armor for that second,
+	// beside the copy of the frame kept from the last wear (Hear), drawn as an empty suit at their stand-in. Worn, a
+	// frame's own base shows nothing (the engine disables it; the suit seen is the frame item and the pieces on the
+	// actor), and a copy is emptied as it is placed. A frame they name later takes over as any change of frame does
+	// (ChooseCopy).
+	// The base of the museum's T-45 in Concord (Fallout4.esm), a frame in every game. Should a mod have made it no frame,
+	// there is none to fall back on, as before.
+	constexpr std::uint32_t STAND_IN_FRAME = 0x0019DED9;
+
+	enum class WornBase
+	{
+		kNone,     // out of power armor, or in it with no frame known yet: no copy
+		kTold,     // the frame they told, a frame here
+		kStandIn,  // STAND_IN_FRAME: theirs named but none here, or none named for UNKNOWN_FRAME_AFTER
+	};
+
+	// a_on: their status says they are in power armor; a_named: they told a frame (kept, see Hear), not none;
+	// a_toldHere: it is a frame here; a_overdue: theirs has not been one here for UNKNOWN_FRAME_AFTER in this wear
+	// (UnknownFrame::Overdue); a_standInHere: STAND_IN_FRAME is a frame here.
+	constexpr WornBase ChooseWornBase(bool a_on, bool a_named, bool a_toldHere, bool a_overdue, bool a_standInHere)
+	{
+		if (!a_on) {
+			return WornBase::kNone;
+		}
+		if (a_toldHere) {
+			return WornBase::kTold;
+		}
+		return (a_named || a_overdue) && a_standInHere ? WornBase::kStandIn : WornBase::kNone;
+	}
 
 	// What our player sits in now (Party): the reference and its base (0 when none), and whether the base is a frame.
 	struct Seat
@@ -527,6 +568,15 @@ namespace ArmorFrames
 		template <class F>
 		Told Update(bool a_on, F&& a_seat, std::chrono::steady_clock::time_point a_now)
 		{
+			return Update(a_on, std::forward<F>(a_seat), [](std::uint32_t) { return 0u; }, a_now);
+		}
+
+		// a_spawnOf(ref) names a frame made at runtime that is a copy of a friend's spawn (Spawns::CopyIdOf): the
+		// spawn's id, which every game resolves to its own copy, or the owner's game to its own frame (a frame lent to
+		// us, FrameLoans). 0 for any other: a frame of our own making is none in another game.
+		template <class F, class G>
+		Told Update(bool a_on, F&& a_seat, G&& a_spawnOf, std::chrono::steady_clock::time_point a_now)
+		{
 			std::uint32_t seat = 0;
 			if (!a_on) {
 				frame = 0;
@@ -535,7 +585,7 @@ namespace ArmorFrames
 				const Seat s = a_seat();
 				if (s.frame && s.base != 0) {
 					frame = s.base;
-					frameRef = Protocol::IsShareableRef(s.ref) ? s.ref : 0;
+					frameRef = Protocol::IsShareableRef(s.ref) ? s.ref : static_cast<std::uint32_t>(a_spawnOf(s.ref));
 				} else {
 					seat = s.base;
 				}
@@ -650,7 +700,11 @@ namespace ArmorFrames
 		}
 		// A frame another game runs stands here where that game has it (synced): it is theirs wherever our player last
 		// left it, and the move that brought it here is no use of it by our player. Where they get in is where their
-		// game has it, so it is looked at afresh each time rather than left alone for the wear (moved).
+		// game has it, so it is looked at afresh each time rather than left alone for the wear (moved), and it is hidden
+		// wherever it stands, as the suit they wear: ours is moved to where their game has it as they got in, or is on
+		// its way there (NpcSync brings it once that is in view), which is not where their stand-in was as their status
+		// came for one who joined mid-wear (where they got in, in their own world, against their stand-in's first spot).
+		// Compared with that, ours stood there shown for the whole wear, a second suit for one they wear.
 		if (!a_facts.synced && a_facts.ours) {
 			return Original::kOurs;
 		}
@@ -674,10 +728,30 @@ namespace ArmorFrames
 		if (!a_facts.loaded) {
 			return Original::kNotLoaded;
 		}
-		if (!a_facts.fromSpot || !(*a_facts.fromSpot <= ORIGINAL_RADIUS)) {
+		if (!a_facts.synced && (!a_facts.fromSpot || !(*a_facts.fromSpot <= ORIGINAL_RADIUS))) {
 			return Original::kElsewhere;
 		}
 		return Original::kHide;
+	}
+
+	// A friend wears a frame one game made and lent them (FrameLoans): their status names it by its spawn id, which our
+	// game resolves to its own reference of it (Spawns::LocalOf): the owner's game to its real frame, every other game
+	// to its copy of the spawn. That is hidden while they wear it, wherever it stands: it is the very suit they wear, and
+	// the stand-in's copy shows it on them. None of the rules for a pre-placed one hold: it is no reference of our world
+	// a player of ours could have found, moved or be sent for by a quest, and the owner's player, whose suit it is, is
+	// the one who lent it. Only someone here in it (it was lent while nobody was) keeps it shown.
+	constexpr Original ChooseLentOriginal(std::uint32_t a_frameBase, const OriginalFacts& a_facts)
+	{
+		if (!a_facts.found || a_frameBase == 0 || a_facts.base != a_frameBase) {
+			return Original::kMissing;
+		}
+		if (!a_facts.frame) {
+			return Original::kNotFrame;
+		}
+		if (a_facts.inUse) {
+			return Original::kInUse;
+		}
+		return a_facts.loaded ? Original::kHide : Original::kNotLoaded;
 	}
 
 	// A frame a friend left standing: the one they got out of last, where their game has it now (Protocol::ParkedFrame).
@@ -752,6 +826,8 @@ namespace ArmorFrames
 		float               turn = 0.0f;        // from the way theirs faces, radians
 		Duration            sincePlaced{};
 		bool                leftCopy = false;   // the copy their stand-in left as they got out stands, of that base, nobody in it
+		bool                keptClear = false;  // a copy there would stand in our player's way out of the frame a loaded save had
+		                                        // them in, while they are sent out of it (FrameLoans::KeepsClear): none until out
 	};
 
 	enum class Park
@@ -762,7 +838,7 @@ namespace ArmorFrames
 		kShow,     // drawn where they parked theirs, solid once nobody stands in it
 		kMove,     // moved onto where they parked theirs (they parked it a little way off, or it was the left copy)
 		kReplace,  // in another place, far off, of another base or never loaded: deleted, placed again next update
-		kDelete,   // no longer wanted (they got in, parked none, it is out of our sight, or ours stands there): deleted
+		kDelete,   // no longer wanted (they got in, parked none, it is out of our sight, ours stands there, or kept clear): deleted
 		kAbandon,  // somebody here is in it: theirs now, neither moved nor deleted
 		kDropLeft, // ours stands where they parked theirs: the copy their stand-in left as they got out goes at once
 	};
@@ -773,7 +849,7 @@ namespace ArmorFrames
 			if (a_facts.occupied) {
 				return Park::kAbandon;
 			}
-			if (!a_facts.told || !a_facts.inView || a_facts.oursThere) {
+			if (!a_facts.told || !a_facts.inView || a_facts.oursThere || a_facts.keptClear) {
 				return Park::kDelete;
 			}
 			if (!a_facts.sameBase || (a_facts.samePlace && !*a_facts.samePlace) || a_facts.distance > MOVE_LIMIT) {
@@ -784,7 +860,7 @@ namespace ArmorFrames
 			}
 			return a_facts.distance > PARK_FOLLOW || a_facts.turn > PARK_TURN ? Park::kMove : Park::kShow;
 		}
-		if (!a_facts.told || !a_facts.inView || a_facts.taken) {
+		if (!a_facts.told || !a_facts.inView || a_facts.taken || a_facts.keptClear) {
 			return Park::kNone;
 		}
 		// Ours stands for theirs (got in and out on the spot, as on the museum roof): the copy left where the stand-in

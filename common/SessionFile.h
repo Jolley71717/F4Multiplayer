@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -38,7 +39,37 @@ namespace SessionFile
 	// 34 adds to 33 the session's spent world traps (Snapshot::traps, as kTraps packets) and the destructible objects
 	// damaged in it (Snapshot::destructions, as kDestructions packets). The traps' own test builds wrote 34 with the traps
 	// alone, which reads as one without destructions; the destructibles' own test builds wrote 35, which no build reads.
-	inline constexpr std::uint16_t FORMAT = 34;
+	// 36 adds to 34 where the loose objects players moved came to rest (Snapshot::objectPlaces, as kObjectRested packets).
+	// 38 adds to 36 whose game keeps each shared storage container (Snapshot::storageOwners, as kStorageOwners packets, each
+	// with the change it was claimed at) and the friends' moves the true copy undid for their loaded worlds
+	// (Snapshot::storageReversals, as kStorageReversals packets). A session with neither is written as 36. 37 was shared
+	// storage's own test builds' (owners alone, without the change each was claimed at), which no build reads.
+	// 39 adds to 38 the container each drop was put in (Protocol::DroppedItem::holder: a gift, src/game/GiftBook.h), and
+	// keeps a gift's offer (takerId Protocol::DROP_OFFERED). A session with no gift is written as 38 or 36, its drops without
+	// a holder, so an older build still reads it; a drop in a file before 39 lies loose.
+	// 40 adds to 39 the characters whose worlds each drop left and went into (DroppedItem::ownerCharacter and
+	// takerCharacter), and takes 39's place: a session with a gift, or with any drop whose characters are known (every
+	// drop made since keys: a loose one's taker, forgotten with a restart, would have a new character of theirs lay it
+	// down again, a copy of the one in the old character's saves), is written as 40. One with neither stays 38 or 36, so
+	// an older build still reads it. A 39 file (0.10.0's test builds) reads as one with no characters.
+	// 41 adds to 40 every leveled NPC's roll the session keeps (Snapshot::npcIdentities, as kNpcIdentity packets) and the
+	// session's NPC level (Snapshot::npcLevel, a kSessionWorld packet; docs/SHARED-ROLLS.md) and how many times each
+	// plugin's NPC died (Snapshot::rollLives, kRollLives packets), so a restarted server's session builds the same NPCs it
+	// did. A session with none of them is written as before (40, 38 or 36).
+	// 42 adds to 41 whose world built each piece players built (Protocol::WorkshopItem::character, after each item), and the
+	// pieces their builder's world said it lacked (WorkshopOp::kLost: WorkshopStore's lost pieces), its workshop items as
+	// EncodeKeptWorkshopItems has them. A session with neither is written as before (41, 40, 38 or 36); a 41 file (the rolls'
+	// test builds, the rig's) reads as one with no character known: its pieces are never asked about (WorkshopAudit).
+	inline constexpr std::uint16_t FORMAT = 42;
+	inline constexpr std::uint16_t WORKSHOP_CHARACTERS = 42;
+	inline constexpr std::uint16_t ROLLS = 41;
+	inline constexpr std::uint16_t CHARACTERS = 40;
+	inline constexpr std::uint16_t GIFTS = 39;
+	inline constexpr std::uint16_t STORAGE = 38;
+	inline constexpr std::uint16_t STORAGE_TEST = 37;
+	inline constexpr std::uint16_t OBJECT_PLACES = 36;
+	inline constexpr std::uint16_t TRAPS_AND_DESTRUCTIONS = 34;
+	inline constexpr std::uint16_t DESTRUCTIBLES_TEST = 35;
 	inline constexpr std::uint16_t ALL_THREE = 33;
 	inline constexpr std::uint16_t BEFORE_WIRES = 29;         // the releases' layout: before drops, wires and the plugin table
 	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
@@ -48,7 +79,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 36 (35 was the destructibles' test builds').
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 43(35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -57,12 +88,26 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasDrops(std::uint16_t a_format) { return a_format == DROPS_ONLY || a_format >= ALL_THREE; }
 	[[nodiscard]] constexpr bool HasWires(std::uint16_t a_format) { return a_format == WIRES_ONLY || a_format >= ALL_THREE; }
 	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format >= ALL_THREE; }
-	[[nodiscard]] constexpr bool HasTraps(std::uint16_t a_format) { return a_format >= FORMAT; }
-	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format >= FORMAT; }
+	[[nodiscard]] constexpr bool HasTraps(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
+	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
+	[[nodiscard]] constexpr bool HasObjectPlaces(std::uint16_t a_format) { return a_format >= OBJECT_PLACES; }
+	[[nodiscard]] constexpr bool HasStorageOwners(std::uint16_t a_format) { return a_format >= STORAGE; }
+	[[nodiscard]] constexpr bool HasHolders(std::uint16_t a_format) { return a_format >= GIFTS; }
+	[[nodiscard]] constexpr bool HasCharacters(std::uint16_t a_format) { return a_format >= CHARACTERS; }
+	[[nodiscard]] constexpr bool HasRolls(std::uint16_t a_format) { return a_format >= ROLLS; }
+	[[nodiscard]] constexpr bool HasWorkshopCharacters(std::uint16_t a_format) { return a_format >= WORKSHOP_CHARACTERS; }
+
+	// The layout a snapshot is written in: the oldest that holds it, so a session without workshop characters or lost pieces
+	// (a_workshop), NPC rolls (a_rolls), gifts or drops with known characters (a_characters) or shared storage is still one
+	// an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false)
+	{
+		return a_workshop ? WORKSHOP_CHARACTERS : a_rolls ? ROLLS : a_characters ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
+	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT);
+		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT && a_format != DESTRUCTIBLES_TEST && a_format != STORAGE_TEST);
 	}
 
 	struct Snapshot
@@ -97,11 +142,26 @@ namespace SessionFile
 		// Destructible objects damaged in the session (a shot car, a blown barrel): each one's lowest health, and whether it
 		// is destroyed. playerId 0 and explode false: a game takes these as the wreck alone.
 		std::vector<Protocol::Destruction>                  destructions;
+		// Where the loose objects players moved came to rest (common/ObjectMovers.h's Places), moved longest ago first:
+		// kRest, playerId 0, as a catch-up has them.
+		std::vector<Protocol::ObjectRest>                   objectPlaces;
+		// Whose game keeps each shared storage container (common/StorageBook.h): closed to friends after a restart until that
+		// game lists it again, never taken by another.
+		std::vector<Protocol::StorageOwner>                 storageOwners;
+		// Friends' numbered moves the true copy undid for their loaded worlds (StorageBook::Settle): none is undone twice.
+		std::vector<Protocol::StorageReversal>              storageReversals;
+		// Each leveled NPC's roll the session keeps (the first runner's report, Server's npcIdentities), plugin references
+		// only (a spawn ends with the run), and the session's NPC level (common/SessionLevel.h; 0 none). Layout 41.
+		std::vector<Protocol::NpcIdentity>                  npcIdentities;
+		std::uint16_t                                       npcLevel = 0;
+		std::uint16_t                                       legendaryMult = 0;  // the session's legendary chance multiplier, thousandths (SessionWorld)
+		std::vector<Protocol::RollLife>                     rollLives;          // how many times each plugin's NPC died (a roll's seed takes it)
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty();
+			       destructions.empty() && objectPlaces.empty() && storageOwners.empty() && storageReversals.empty() && npcIdentities.empty() && npcLevel == 0 && legendaryMult == 0 &&
+			       rollLives.empty();
 		}
 	};
 
@@ -117,7 +177,17 @@ namespace SessionFile
 			out.insert(out.end(), a_packet.begin(), a_packet.end());
 		};
 		put(MAGIC);
-		put(FORMAT);
+		// The layout that holds it: a session with no gifts, no drop whose characters are known and no shared storage is
+		// still one an older build reads.
+		const bool characters = std::ranges::any_of(a_snapshot.drops, [](const Protocol::DroppedItem& a_drop) {
+			return a_drop.holder != 0 || a_drop.ownerCharacter != 0 || a_drop.takerCharacter != 0;
+		});
+		const bool workshop = std::ranges::any_of(a_snapshot.workshopItems, [](const Protocol::WorkshopItem& a_item) {
+			return a_item.character != 0 || a_item.op == Protocol::WorkshopOp::kLost;
+		});
+		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
+			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop);
+		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
 		put(a_snapshot.nextId);
@@ -164,11 +234,13 @@ namespace SessionFile
 		}
 		for (std::size_t i = 0; i < a_snapshot.workshopItems.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.workshopItems.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			packet(Protocol::Encode(std::vector<Protocol::WorkshopItem>(a_snapshot.workshopItems.begin() + i, a_snapshot.workshopItems.begin() + end)));
+			const std::vector<Protocol::WorkshopItem> items(a_snapshot.workshopItems.begin() + i, a_snapshot.workshopItems.begin() + end);
+			packet(HasWorkshopCharacters(layout) ? Protocol::EncodeKeptWorkshopItems(items) : Protocol::Encode(items));
 		}
 		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::DropList{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } }));
+			const Protocol::DropList list{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } };
+			packet(HasCharacters(layout) ? Protocol::EncodeWithCharacters(list) : HasHolders(layout) ? Protocol::Encode(list) : Protocol::EncodeBeforeHolders(list));
 		}
 		for (std::size_t i = 0; i < a_snapshot.traps.size(); i += Protocol::MAX_TRAPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.traps.size(), i + Protocol::MAX_TRAPS_PER_PACKET);
@@ -177,6 +249,29 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.destructions.size(); i += Protocol::MAX_DESTRUCTION_ENTRIES) {
 			const auto end = (std::min)(a_snapshot.destructions.size(), i + Protocol::MAX_DESTRUCTION_ENTRIES);
 			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_snapshot.destructions.begin() + i, a_snapshot.destructions.begin() + end } }, Protocol::MessageType::kDestructions));
+		}
+		for (const auto& place : a_snapshot.objectPlaces) {
+			packet(Protocol::Encode(place, Protocol::MessageType::kObjectRested));
+		}
+		for (std::size_t i = 0; i < a_snapshot.storageOwners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
+			const auto end = (std::min)(a_snapshot.storageOwners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
+			packet(Protocol::Encode(Protocol::StorageOwners{ { a_snapshot.storageOwners.begin() + i, a_snapshot.storageOwners.begin() + end } }));
+		}
+		for (std::size_t i = 0; i < a_snapshot.storageReversals.size(); i += Protocol::MAX_STORAGE_REVERSALS_PER_PACKET) {
+			const auto end = (std::min)(a_snapshot.storageReversals.size(), i + Protocol::MAX_STORAGE_REVERSALS_PER_PACKET);
+			packet(Protocol::Encode(Protocol::StorageReversals{ { a_snapshot.storageReversals.begin() + i, a_snapshot.storageReversals.begin() + end } }));
+		}
+		if (HasRolls(layout)) {
+			for (const auto& identity : a_snapshot.npcIdentities) {
+				packet(Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity));
+			}
+			if (a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0) {
+				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel, a_snapshot.legendaryMult }));
+			}
+			for (std::size_t i = 0; i < a_snapshot.rollLives.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+				const auto end = (std::min)(a_snapshot.rollLives.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+				packet(Protocol::Encode(std::vector<Protocol::RollLife>{ a_snapshot.rollLives.begin() + i, a_snapshot.rollLives.begin() + end }));
+			}
 		}
 		return out;
 	}
@@ -270,7 +365,9 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kWorkshopItems: {
-				const auto items = HasWires(version) ? Protocol::DecodeWorkshopItems(packet) : Protocol::DecodeWorkshopItemsBeforeWires(packet);
+				const auto items = HasWorkshopCharacters(version) ? Protocol::DecodeKeptWorkshopItems(packet) :
+				                   HasWires(version)              ? Protocol::DecodeWorkshopItems(packet) :
+				                                                    Protocol::DecodeWorkshopItemsBeforeWires(packet);
 				if (!items) {
 					return std::nullopt;
 				}
@@ -278,7 +375,10 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kDropList: {
-				const auto list = HasDrops(version) ? Protocol::DecodeDropList(packet) : std::nullopt;
+				const auto list = !HasDrops(version)    ? std::nullopt :
+				                  HasCharacters(version) ? Protocol::DecodeDropListWithCharacters(packet) :
+				                  HasHolders(version)    ? Protocol::DecodeDropList(packet) :
+				                                           Protocol::DecodeDropListBeforeHolders(packet);
 				if (!list) {
 					return std::nullopt;
 				}
@@ -302,6 +402,55 @@ namespace SessionFile
 					entry.explode = false;  // a wreck from the file never goes off again
 					snapshot.destructions.push_back(entry);
 				}
+				break;
+			}
+			case Protocol::MessageType::kObjectRested: {
+				const auto place = HasObjectPlaces(version) ? Protocol::DecodeObjectRest(packet) : std::nullopt;
+				if (!place || place->playerId != 0 || place->kind != Protocol::ObjectRestKind::kRest) {
+					return std::nullopt;
+				}
+				snapshot.objectPlaces.push_back(*place);
+				break;
+			}
+			case Protocol::MessageType::kStorageOwners: {
+				const auto owners = HasStorageOwners(version) ? Protocol::DecodeStorageOwners(packet) : std::nullopt;
+				if (!owners) {
+					return std::nullopt;
+				}
+				snapshot.storageOwners.insert(snapshot.storageOwners.end(), owners->entries.begin(), owners->entries.end());
+				break;
+			}
+			case Protocol::MessageType::kStorageReversals: {
+				const auto reversals = HasStorageOwners(version) ? Protocol::DecodeStorageReversals(packet) : std::nullopt;
+				if (!reversals) {
+					return std::nullopt;
+				}
+				snapshot.storageReversals.insert(snapshot.storageReversals.end(), reversals->entries.begin(), reversals->entries.end());
+				break;
+			}
+			case Protocol::MessageType::kNpcIdentity: {
+				auto identity = HasRolls(version) ? Protocol::DecodeNpcIdentity(packet) : std::nullopt;
+				if (!identity || Protocol::IsSpawnRef(identity->refId) || snapshot.npcIdentities.size() >= Protocol::MAX_SESSION_ROLLS) {
+					return std::nullopt;
+				}
+				snapshot.npcIdentities.push_back(std::move(*identity));
+				break;
+			}
+			case Protocol::MessageType::kSessionWorld: {
+				const auto world = HasRolls(version) ? Protocol::DecodeSessionWorld(packet) : std::nullopt;
+				if (!world) {
+					return std::nullopt;
+				}
+				snapshot.npcLevel = world->level;
+				snapshot.legendaryMult = world->legendaryMult;
+				break;
+			}
+			case Protocol::MessageType::kRollLives: {
+				const auto lives = HasRolls(version) ? Protocol::DecodeRollLives(packet) : std::nullopt;
+				if (!lives || snapshot.rollLives.size() + lives->size() > Protocol::MAX_SESSION_ROLLS) {
+					return std::nullopt;
+				}
+				snapshot.rollLives.insert(snapshot.rollLives.end(), lives->begin(), lives->end());
 				break;
 			}
 			default:
@@ -351,7 +500,9 @@ namespace SessionFile
 		{
 			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
 			if (!out) {
-				return discard();
+				// Not opened, so not touched: a whole temporary file an earlier try left (the new save, when the rename
+				// onto the session file failed) is still what Recover reads, and a program holding it is no reason to delete it.
+				return false;
 			}
 			out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 			out.close();  // the last bytes are written here: a full disk shows now

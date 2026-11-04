@@ -27,6 +27,28 @@ namespace DeferredDelete
 		return a_sinceDisabled && *a_sinceDisabled >= DELETE_AFTER_DISABLE;
 	}
 
+	// What a save finds of a reference of ours marked for deletion at an earlier save, to be said once. The engine frees
+	// one only when its cell unloads or a load lets go of it: until then its handle still resolves (kHeld), which is no
+	// fault of ours, and the list of ours drops it only once the handle fails (kGone).
+	enum class Outcome
+	{
+		kGone,       // the handle no longer resolves: the engine let go of it
+		kNotMarked,  // it resolves and is not marked deleted: the mark did not take
+		kHeld,       // marked and held by the engine, first found so
+		kQuiet,      // as at an earlier save, already said
+	};
+
+	constexpr Outcome OutcomeOf(bool a_resolves, bool a_deleted, bool a_told)
+	{
+		if (!a_resolves) {
+			return Outcome::kGone;
+		}
+		if (a_told) {
+			return Outcome::kQuiet;
+		}
+		return a_deleted ? Outcome::kHeld : Outcome::kNotMarked;
+	}
+
 	// A stand-in in the player's conversation (the one speaking to them, or in the scene they are in)
 	// is kept until the conversation ends: with its speaker deleted the engine never ends it (see
 	// StrandedDialogue). Not for ever, though: a stand-in may not outlive its player for long.

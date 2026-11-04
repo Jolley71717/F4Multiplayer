@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -75,6 +76,14 @@ namespace ThrowReplays
 
 		// Whether a replayed throw on the actor has not been let go of yet (within the window or not).
 		[[nodiscard]] bool Unreleased(std::uint32_t a_id) const { return entries.contains(a_id); }
+
+		// Whether a replayed throw on the actor, not let go of yet, was replayed less than a_within ago: its wind-up may
+		// still be playing.
+		[[nodiscard]] bool WindingUp(std::uint32_t a_id, Clock::time_point a_now, Clock::duration a_within) const
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() && std::ranges::any_of(it->second, [&](Clock::time_point a_at) { return a_now - a_at < a_within; });
+		}
 
 		void Forget(std::uint32_t a_id) { entries.erase(a_id); }
 

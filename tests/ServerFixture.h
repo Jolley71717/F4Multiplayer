@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <iterator>
+#include <map>
 #include <random>
 #include <string_view>
 #include <system_error>
@@ -89,6 +90,24 @@ namespace TestServer
 			fake->Deliver(a_peer, Protocol::Encode(a_hello));
 			const auto packet = fake->WaitFor(a_peer, Type(MT::kWelcome));
 			return packet ? Protocol::DecodeWelcome(*packet) : std::nullopt;
+		}
+
+		// The server's clock moves on by a_by at once: a cooldown or a grace period is over without a sleep that a busy PC
+		// could make too short for it. (A window a test must act inside is set long, so the test is not late for it.)
+		void Advance(std::chrono::milliseconds a_by) { server.AdvanceClock(a_by); }
+
+		// Stops the server's clock (Server::HoldClock) for a test of what happens inside a window and after it: it moves
+		// only by Advance. Few heartbeats then (Sync, Received): the server answers ten in each second of its clock.
+		void HoldClock() { server.HoldClock(); }
+
+		// Waits (up to a_timeout) for the server to log a line holding a_text. Its thread logs on its own time.
+		bool LoggedSoon(std::string_view a_text, std::chrono::milliseconds a_timeout = std::chrono::seconds(30))
+		{
+			const auto until = std::chrono::steady_clock::now() + a_timeout;
+			while (!Logged(a_text) && std::chrono::steady_clock::now() < until) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			}
+			return Logged(a_text);
 		}
 
 		bool Logged(std::string_view a_text)
@@ -196,9 +215,21 @@ namespace TestServer
 		return Decoded(a_packets, MT::kWorldState, [](auto a_data) { return Protocol::DecodeWorldState(a_data); });
 	}
 
+	// The session's NPC rolls a_peer was told so far in packed lists (kNpcIdentities: a joiner's catch-up), by reference.
+	inline std::map<std::uint32_t, Protocol::NpcIdentity> WelcomeRolls(Fixture& a_f, PeerId a_peer)
+	{
+		std::map<std::uint32_t, Protocol::NpcIdentity> out;
+		for (const auto& list : Decoded(Received(a_f, a_peer), MT::kNpcIdentities, [](auto a_data) { return Protocol::DecodeNpcIdentities(a_data); })) {
+			for (const auto& roll : list) {
+				out[roll.refId] = roll;
+			}
+		}
+		return out;
+	}
+
 	// Waits up to a_timeout for a_peer to be sent a packet of a_type, keeping everything that came in a_got.
 	inline bool Await(Fixture& a_f, PeerId a_peer, MT a_type, std::vector<std::vector<std::uint8_t>>& a_got,
-		std::chrono::milliseconds a_timeout = std::chrono::milliseconds(3000))
+		std::chrono::milliseconds a_timeout = std::chrono::seconds(30))
 	{
 		const auto deadline = std::chrono::steady_clock::now() + a_timeout;
 		while (std::chrono::steady_clock::now() < deadline) {
@@ -214,6 +245,7 @@ namespace TestServer
 	// Everything a_peer is sent for a_wait.
 	inline std::vector<std::vector<std::uint8_t>> During(Fixture& a_f, PeerId a_peer, std::chrono::milliseconds a_wait)
 	{
+		a_f.fake->Settle();  // the server has acted on all delivered: a_wait is then only for what it does on its ticks
 		std::this_thread::sleep_for(a_wait);
 		return a_f.fake->Take(a_peer);
 	}

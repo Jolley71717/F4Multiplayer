@@ -206,6 +206,14 @@ namespace RemoteEdits
 		return Blast::kSetOff;
 	}
 
+	// Whether the one that set off a friend's explosion is in our game: their player (a_source 0), or an NPC their game
+	// runs that we have a copy of (a_local: NpcSync::LocalRef of a_source). Not, it is a fight our game doesn't have (a
+	// spawn of a DLC's NPC we lack, never placed here) and its blast is set off nowhere near us, nor beside our NPCs.
+	constexpr bool SourceHere(std::uint32_t a_source, std::uint32_t a_local)
+	{
+		return a_source == 0 || a_local != 0;
+	}
+
 	// Whether our game sends an explosion our player (or an NPC we run) set off: only when the server is sure to pass it
 	// on, so that the blows it leaves to the NPCs' own games are dealt there. The server's numbers (Protocol's
 	// REPORTED_EXPLOSION_*) less a margin: our position as the server has it is a state or two old, and a burst of

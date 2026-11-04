@@ -369,7 +369,7 @@ TEST("server drops: records sent over and over are settled at most four times a 
 	CHECK(Count(first, MT::kDropList) == 1);
 	// The last one is settled at the tick (the second drop goes back to her)...
 	Packets bob;
-	REQUIRE(Await(f, 2, MT::kDropGone, bob, 2000ms));
+	REQUIRE(Await(f, 2, MT::kDropGone, bob, 30s));
 	const auto gone = Gone(bob);
 	REQUIRE(gone.size() == 1);
 	CHECK(gone[0].dropId == undone.dropId);

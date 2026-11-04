@@ -294,6 +294,45 @@ namespace TrapRules
 		return false;
 	}
 
+	// A mine's countdown. The engine starts it when an actor comes within the mine's reach (its record's proximity, times
+	// fMineExteriorRadiusMult outdoors) and holds FLT_MAX in it until then. Measured on the rig (frag mines, 1.11.240):
+	// stepped on by our player, the countdown starts at the record's timer plus fMinesDelayMin (1.5 + 0.2 s), beeping
+	// all along; stepped on by any other actor, at fMinesDelayMin alone (0.2 s). A friend's stand-in is another actor to
+	// the engine, so the friend's walking onto a mine set our copy off 0.2 s after their stand-in reached it, 1.3 s
+	// before the mine went off in their own game, and our report then set theirs off at once: each player heard a
+	// blip, not the warning, and the blast came at once in both games (a Nexus report). A countdown a stand-in started
+	// is given the one the friend's own game runs (MineCountdown), so the mine goes off here when it does there (the
+	// first of ours and their report sets it off), and each player hears the whole warning.
+	inline constexpr float MINE_IDLE = 1.0e30f;  // a countdown at or above this has not started (FLT_MAX)
+
+	// Who is within a mine's reach (with some slack) as its countdown starts here.
+	struct MineReach
+	{
+		bool standIn = false;  // a friend's stand-in
+		bool other = false;    // any other actor but our player (an NPC, a copy of a friend's NPC, a companion)
+	};
+
+	// The countdown to give a mine whose countdown we see for the first time (a_timer, as the engine set it and ran it
+	// since), or nullopt to leave it be. a_recordTimer: the mine's record's timer; a_delayMin: fMinesDelayMin. Only one a
+	// friend's stand-in started: with nobody else in reach but our player, whose own start would have been the long one
+	// (one our player started is the long one already; never shortened). One an NPC may have started is the NPC's, as in
+	// every game. The time it has run is taken off, as the engine started it at a_delayMin. One longer than a_delayMin
+	// was not a stand-in's start (one first seen mid-way, as a cell attaches: our player's, say): left be.
+	constexpr std::optional<float> MineCountdown(float a_timer, float a_recordTimer, float a_delayMin, MineReach a_reach)
+	{
+		constexpr float SLACK = 0.05f;  // a frame or so
+		if (!(a_timer < MINE_IDLE) || a_timer < 0.0f || !a_reach.standIn || a_reach.other || !(a_recordTimer > 0.0f) || a_delayMin < 0.0f ||
+			a_timer > a_delayMin + SLACK) {
+			return std::nullopt;
+		}
+		const float ran = a_delayMin > a_timer ? a_delayMin - a_timer : 0.0f;
+		const float full = a_recordTimer + a_delayMin - ran;
+		if (a_timer + SLACK >= full) {
+			return std::nullopt;
+		}
+		return full;
+	}
+
 	// The session's state of the traps, as this game knows it: first come first kept, a take replacing a
 	// disarm (Protocol::TrapSupersedes), as the server keeps it.
 	struct Known

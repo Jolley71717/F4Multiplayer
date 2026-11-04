@@ -38,6 +38,15 @@ while ($true) {
 
 if ($Cell) {
 	Start-Sleep -Seconds 3
+	# The first load runs with the game's window in front: a game minimised during its first load (started from a shell while
+	# another app has the front) keeps its window parked off every screen, where clicks miss it (tools/rig/assert.sh).
+	$front = $false
+	for ($i = 0; $i -lt 5 -and -not $front; $i++) {
+		& (Join-Path $PSScriptRoot 'devctl.ps1') focus | Out-Null
+		Start-Sleep -Seconds 1
+		$front = (& (Join-Path $PSScriptRoot 'devctl.ps1') focus | Select-Object -Last 1) -like 'front=yes*'
+	}
+	if (-not $front) { throw "The game's window would not come to the front: its first load must run in front, or its window is left off every screen" }
 	$loadTimer = [Diagnostics.Stopwatch]::StartNew()
 	& (Join-Path $PSScriptRoot 'devctl.ps1') "console coc $Cell"
 	while ($true) {

@@ -42,6 +42,15 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
    in `Documents\My Games\Fallout4\F4SE` finds nothing from this rc's sessions, and neither do
    `-Pattern '7656\d{13}'` nor an IP address other than 127.0.0.1.
 
+`tools/rig/smoke.sh` is steps 2 to 4 with a verdict: the standing set above, each number checked against a threshold
+(movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe, reconnect, `perf`), the
+plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash logs; its exit code is
+the number of failed checks. `tools/rig/hits.sh` is the health check: both players shoot the same NPCs, and the two
+games' health must agree, never rise, and survive a pause menu. Both need the rig held (`tools/rig/guard.sh`) and leave
+no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`). `tools/rig/backup.sh` saves and restores the ini and
+session files on both machines. Nothing about a person or a machine is in the repository: the rig's own folder holds
+`rig.conf` (see `tools/rig/env.sh`).
+
 Before the rig run, `tools/addrcheck.ps1` (Windows PowerShell, read-only, the game is not started) resolves every
 Address Library ID the plugin names against the installed `version-1-11-240-0.bin` and checks the game code the
 plugin relies on by hand (the call from Main::Run into the message loop, the engine's message pump the frame
@@ -50,9 +59,16 @@ Library changed, or an ID in `src/` is wrong: look at it before going further.
 
 ## Promotion to the release
 
-The release is the rc that held, not a new build. After a multi-hour soak of the rc's zip (`soak.sh 3`:
-the standing set in a loop with periodic VM restarts) ends with no crash on either machine and no
-report against the rc points at a regression, the soak's verdict goes in `dist/out/soak-verdict.txt`:
+The release is the rc that held, not a new build. The soak of the rc's zip is a churn-heavy run of about 90 minutes
+after the gate passes: `SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --only
+preflight,combat,churn,reconnect,final --churn 75`. Cells are hopped and saves reloaded for 75 minutes, the hopper and
+the watcher swapping halfway, then the VM's game is restarted and rejoins; the end checks read the crash logs, the
+plugin logs' new errors and the privacy scan. The combat step is there for its working-set baseline: the growth from
+combat to the churn's end is printed and warned on, not failed. It replaced the 3-hour `soak.sh 3` loop in 0.11.0:
+that loop asserted only that both games were alive, and the one crash it caught in its last eight rc soaks came during
+the churn. When
+it exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict
+goes in `dist/out/soak-verdict.txt`:
 
 ```
 commit=<the rc's commit, as in its manifest>
@@ -60,7 +76,7 @@ dll_sha256=<the SHA-256 of the DLL that was soaked>
 verdict=PASS
 ```
 
-(other lines, such as the start, end, cycles and crash logs, are kept but not read). Then:
+(other lines, such as the start, the end, the run's output folder and crash logs, are kept but not read). Then:
 
 1. `tools/promote.ps1 -Rc vX.Y.Z-rcN`. It refuses unless the rc's zip matches its manifest, the tag
    `vX.Y.Z-rcN` is the manifest's commit, the rc was not packaged with `-AllowDirty`, and the verdict
@@ -73,7 +89,8 @@ verdict=PASS
    its log still names `rcN`). Both zips go on the release. Commit those notes to the branch afterwards,
    and fast-forward `main`.
 3. Nexus, only when the maintainer decides: write the changelog in `dist/NEXUS-X.Y.Z.txt` (one line per
-   entry) and commit it before tagging, or leave it out for no changelog. Then
+   entry) and merge it to `main`, or leave it out for no changelog. The workflow reads it from `main` first and
+   from the tag only when `main` doesn't have it, so a changelog corrected after the rc still counts. Then
    `gh workflow run nexus-upload.yml -f tag=vX.Y.Z` (or Actions > Upload to Nexus > Run workflow).
    The workflow takes `F4Multiplayer-X.Y.Z-nexus.zip` from the GitHub release, refuses one holding
    `F4MPServer.exe`, and uploads it as the new version of the main file through Nexus's own

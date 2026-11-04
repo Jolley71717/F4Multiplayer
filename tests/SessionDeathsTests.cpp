@@ -30,7 +30,8 @@ namespace
 	constexpr std::uint32_t RAIDER = 0x0001F101;
 	constexpr std::uint32_t RAIDER2 = 0x0001F102;
 	constexpr std::uint64_t HOST_IDENTITY = 0x1111;
-	constexpr auto          GRACE = 300ms;  // Options::aliveAgainGrace in these tests
+	constexpr auto          GRACE = 300s;   // Options::aliveAgainGrace in these tests (also the wait before a first reminder): long, so a busy PC can't end it early; a test ends it with Fixture::Advance
+	constexpr auto          REMIND = 150s;  // Options::remindDeadEvery in these tests, crossed with Fixture::Advance too
 	// What a cell reset takes: days of game time. Only the games' ledgers are told it passed.
 	constexpr auto DAYS_LATER = std::chrono::hours(1);
 
@@ -39,6 +40,7 @@ namespace
 		Server::Options options;
 		options.hostIdentity = HOST_IDENTITY;
 		options.aliveAgainGrace = GRACE;
+		options.remindDeadEvery = REMIND;
 		return options;
 	}
 
@@ -77,6 +79,16 @@ namespace
 	std::vector<std::uint8_t> Claim(std::uint32_t a_ref, Reason a_reason = Reason::kUnowned, bool a_essential = false)
 	{
 		return Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, a_reason, a_essential } });
+	}
+
+	// A player standing outdoors in the Commonwealth, a_x units east of the origin.
+	std::vector<std::uint8_t> StandAt(std::uint32_t a_sequence, float a_x = 0.0f)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.worldspace = 0x0000003C;
+		state.x = a_x;
+		return Protocol::Encode(state);
 	}
 
 	std::vector<std::uint8_t> Kill(std::uint32_t a_ref, float a_x = 0.0f)
@@ -151,8 +163,8 @@ namespace
 		}
 
 		// What the server sent this game, applied as WorldSync and NpcSync do: a world state's dead (then it is
-		// settled), each death as it is relayed, and the owners.
-		Packets Pump()
+		// settled), each death as it is relayed, and the owners (at a_now on the game's clock: days later, for a reset).
+		Packets Pump(Clock::time_point a_now = Clock::now())
 		{
 			auto packets = Received(f, peer);
 			for (const auto& packet : packets) {
@@ -180,9 +192,10 @@ namespace
 						} else {
 							owners[entry.refId] = entry.playerId;
 						}
-						// WorldSync::OnActorOwners: the server gives nobody a dead NPC, so a death held here was undone.
-						if (entry.playerId != 0 && pending.erase(entry.refId)) {
-							deaths.Forget(entry.refId);
+						// WorldSync::OnActorOwners: the server gives nobody a dead NPC, so one we have dead is alive for the
+						// session: a death held here was undone, and a corpse here lies until its cell resets.
+						if (entry.playerId != 0 && deaths.OnOwned(entry.refId, a_now)) {
+							pending.erase(entry.refId);
 						}
 					}
 				}
@@ -232,6 +245,7 @@ namespace
 			world[a_ref].alive = false;
 			deaths.Add(a_ref, Clock::now());
 			deaths.SawDead(a_ref);
+			deaths.Reported(a_ref);
 			f.fake->Deliver(peer, Kill(a_ref, a_x));
 		}
 
@@ -269,13 +283,13 @@ TEST("alive again: a camp cleared together comes back after a cell reset in the 
 	bob.Pump();
 
 	// Days later the camp's cell resets in the host's game: the raider loads alive.
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	CHECK(host.Loads(RAIDER, true, later));
 	REQUIRE(host.Scan(RAIDER, later));
-	CHECK(HasOwner(Owners(bob.Pump()), RAIDER, host.id));
-	CHECK(HasOwner(Owners(host.Pump()), RAIDER, host.id));
+	CHECK(HasOwner(Owners(bob.Pump(later)), RAIDER, host.id));
+	CHECK(HasOwner(Owners(host.Pump(later)), RAIDER, host.id));
 	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", RAIDER)));
 
 	// It fights again: its hits on Bob's stand-in reach Bob.
@@ -287,10 +301,14 @@ TEST("alive again: a camp cleared together comes back after a cell reset in the 
 	CHECK(!carol.deaths.Contains(RAIDER));
 	CHECK(carol.deaths.Settled(Clock::now()));
 
-	// And it can die again: Bob's cell reset too, he fights it (his takeover is refused, the host's game just took
-	// it) and kills it.
+	// Bob's game no longer has it dead either: the host's game runs it (SessionDeaths::OnOwned). Before, his copy's
+	// corpse kept it dead for him, and the raider could neither hurt him nor be hurt by him.
+	CHECK(!bob.deaths.Contains(RAIDER));
+	CHECK(bob.deaths.Corrected() == 1);
+	// And it can die again: Bob's cell reset too (nothing to revive in his ledger), he fights it (his takeover is
+	// refused, the host's game just took it) and kills it.
 	bob.Unloads(RAIDER);
-	CHECK(bob.Loads(RAIDER, true, later));
+	CHECK(!bob.Loads(RAIDER, true, later));
 	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
 	bob.Kills(RAIDER);
 	const auto toHost = host.Pump();
@@ -302,6 +320,42 @@ TEST("alive again: a camp cleared together comes back after a cell reset in the 
 	CHECK(carol.deaths.Contains(RAIDER));
 }
 
+TEST("alive again: on a dedicated server the player here longest brings a raider back after a cell reset; a newer player's offer does not")
+{
+	Server::Options options;  // no host's identity: no game is the host's
+	options.aliveAgainGrace = GRACE;
+	options.remindDeadEvery = REMIND;
+	Fixture    f{ options };
+	Game       alice{ f, 1, "Alice" };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+	alice.Loads(RAIDER, true, t0);
+	bob.Loads(RAIDER, true, t0);
+	REQUIRE(bob.Scan(RAIDER, t0));
+	bob.Kills(RAIDER, 40.0f);
+	alice.Pump();
+	bob.Pump();
+	CHECK(alice.deaths.Contains(RAIDER));
+
+	// Days later the camp has reset in both games. Bob's game offers the raider: refused, the session has it dead.
+	f.Advance(GRACE + 50ms);
+	const auto later = Clock::now() + DAYS_LATER;
+	f.fake->Deliver(2, Claim(RAIDER));
+	CHECK(Owners(bob.Pump(later)).empty());
+	CHECK(Owners(alice.Pump(later)).empty());
+	CHECK(!f.Logged(std::format("{:08X} is alive again", RAIDER)));
+
+	// Alice's game offers it: hers is the world that stands for the host's, and the raider is alive again for everyone.
+	alice.Unloads(RAIDER);
+	CHECK(alice.Loads(RAIDER, true, later));
+	REQUIRE(alice.Scan(RAIDER, later));
+	CHECK(HasOwner(Owners(bob.Pump(later)), RAIDER, alice.id));
+	CHECK(HasOwner(Owners(alice.Pump(later)), RAIDER, alice.id));
+	CHECK(f.Logged(std::format("{:08X} is alive again", RAIDER)));
+	Game carol{ f, 3, "Carol" };
+	CHECK(!carol.deaths.Contains(RAIDER));
+}
+
 TEST("alive again: a newcomer is told who runs a raider that came back instead of finding it dead")
 {
 	Fixture f{ HostedOptions() };
@@ -309,7 +363,7 @@ TEST("alive again: a newcomer is told who runs a raider that came back instead o
 	host.Loads(RAIDER, true, Clock::now());
 	host.Kills(RAIDER, 10.0f);  // the host kills it alone
 	host.Pump();
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	REQUIRE(host.Loads(RAIDER, true, later));
@@ -335,24 +389,160 @@ TEST("alive again: a joiner's game can't bring the dead back, whatever it claims
 	bob.Pump();
 	CHECK(!bob.Alive(RAIDER));
 	host.Pump();
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
+	// Both players stand at the camp: a reminder waits on a host's game being in reach of the NPC (Server::remindDead).
+	f.fake->Deliver(1, StandAt(1));
+	f.fake->Deliver(2, StandAt(1));
 
-	// Bob's camp reset first. His own game knows its raider is back and offers it; the server says nothing.
+	// Bob's camp reset first. His own game knows its raider is back and offers it; the server grants nothing, and says
+	// nothing yet (the host's game may be about to offer it too, which brings it back for everyone).
 	const auto later = Clock::now() + DAYS_LATER;
 	bob.Unloads(RAIDER);
 	CHECK(bob.Loads(RAIDER, true, later));
 	REQUIRE(bob.Scan(RAIDER, later));
 	f.fake->Deliver(2, Claim(RAIDER, Reason::kCompanion));
 	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
-	CHECK(Owners(bob.Pump()).empty());
+	auto toBob = bob.Pump();
+	CHECK(Owners(toBob).empty());
+	CHECK(Count(toBob, MT::kActorDied) == 0);
+	CHECK(bob.Alive(RAIDER));
 	CHECK(Owners(host.Pump()).empty());
-	// Nor do the host's game's takeover or companion claims (a hit or a press can be on a corpse).
+	// His hits on it (as its health, since nobody runs it) are dropped and logged. Once his game has gone on about it
+	// for aliveAgainGrace with the raider still dead, it is told the death again, so it kills the raider instead of
+	// fighting it alone for good.
+	// (The server answers at most 10 heartbeats a second, and each Pump sends one: the claims below go without one.)
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ RAIDER, 0.5f }, MT::kReportHealth));
+	CHECK(Count(host.Pump(), MT::kActorHealth) == 0);
+	CHECK(f.Logged(std::format("health of {:08X} from player {} dropped: the session has it dead", RAIDER, bob.id)));
+	f.Advance(200s);
+	f.fake->Deliver(2, Claim(RAIDER));  // 200 s in: still nothing
+	f.fake->Settle();
+	f.Advance(200s);
+	f.fake->Deliver(2, Claim(RAIDER));  // 400 s in: told
+	toBob = bob.Pump();
+	CHECK(Count(toBob, MT::kActorDied) == 1);
+	CHECK(bob.deaths.Contains(RAIDER));
+	CHECK(!bob.Alive(RAIDER));
+	// No second reminder so soon, then one per remindDeadEvery while his game keeps reporting about it.
+	f.fake->Deliver(2, Claim(RAIDER));
+	f.fake->Settle();
+	f.Advance(REMIND + 50ms);
+	f.fake->Deliver(2, Claim(RAIDER));
+	CHECK(Count(bob.Pump(), MT::kActorDied) == 1);
+	// Nor do the host's game's takeover or companion claims (a hit or a press can be on a corpse), and the host's game is
+	// never told again: its own offer is what brings one back.
 	f.fake->Deliver(1, Claim(RAIDER, Reason::kInteract));
 	f.fake->Deliver(1, Claim(RAIDER, Reason::kCompanion));
-	CHECK(Owners(host.Pump()).empty());
+	const auto toHost = host.Pump();
+	CHECK(Owners(toHost).empty());
+	CHECK(Count(toHost, MT::kActorDied) == 0);
 
 	Game carol{ f, 3, "Carol" };
 	CHECK(carol.deaths.Contains(RAIDER));
+}
+
+TEST("alive again: both camps reset together, the joiner's offer first: the host's offer brings the raider back, and the joiner's copy isn't killed")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Loads(RAIDER, true, Clock::now());
+	bob.Loads(RAIDER, true, Clock::now());
+	host.Kills(RAIDER);
+	bob.Pump();
+	host.Pump();
+	CHECK(!bob.Alive(RAIDER));
+	f.Advance(GRACE + 50ms);
+
+	// The players walk back into the camp together, days later: both games find the raider alive again and offer it in
+	// the same moment, Bob's a packet ahead. The host's offer brings it back for everyone; Bob's game is not told the
+	// death again meanwhile (that would have killed his copy just before it came back: a corpse for him, hitting him
+	// unseen, for the rest of the session).
+	const auto later = Clock::now() + DAYS_LATER;
+	host.Unloads(RAIDER);
+	bob.Unloads(RAIDER);
+	CHECK(bob.Loads(RAIDER, true, later));
+	CHECK(host.Loads(RAIDER, true, later));
+	REQUIRE(bob.Scan(RAIDER, later));
+	REQUIRE(host.Scan(RAIDER, later));
+	const auto toBob = bob.Pump(later);
+	CHECK(Count(toBob, MT::kActorDied) == 0);
+	CHECK(HasOwner(Owners(toBob), RAIDER, host.id));
+	CHECK(HasOwner(Owners(host.Pump(later)), RAIDER, host.id));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", RAIDER)));
+	CHECK(bob.Alive(RAIDER));
+	CHECK(!bob.deaths.Contains(RAIDER));
+	// Nor later: the raider lives for the session, and its reports go through: Bob's damage reaches the host's game, which
+	// runs it, and his hit's takeover is granted without a word of the death.
+	f.Advance(GRACE + 50ms);
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ RAIDER, 0.5f }, MT::kReportDamage));
+	CHECK(Count(host.Pump(later), MT::kActorDamaged) == 1);
+	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));
+	const auto afterHit = bob.Pump(later);
+	CHECK(Count(afterHit, MT::kActorDied) == 0);
+	CHECK(HasOwner(Owners(afterHit), RAIDER, bob.id));
+}
+
+TEST("alive again: a joiner whose copy lies dead no longer has the raider dead once the host's game runs it, and takes its hits")
+{
+	Fixture    f{ HostedOptions() };
+	Game       host{ f, 1, "Host", true };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+	host.Loads(RAIDER, true, t0);
+	bob.Loads(RAIDER, true, t0);
+	host.Kills(RAIDER, 40.0f);
+	bob.Pump();
+	CHECK(!bob.Alive(RAIDER));
+	CHECK(bob.deaths.Contains(RAIDER));
+
+	// The host's camp resets; Bob's hasn't: his copy is a corpse. Once the host's game runs the raider, Bob's game has it
+	// alive for the session: the corpse lies until his own cell resets, but the raider's hits on his stand-in in the
+	// host's game reach him (PlayerHits judges those by the host's distance, not the corpse), and a death of it is news.
+	f.Advance(GRACE + 50ms);
+	const auto later = Clock::now() + DAYS_LATER;
+	host.Unloads(RAIDER);
+	REQUIRE(host.Loads(RAIDER, true, later));
+	REQUIRE(host.Scan(RAIDER, later));
+	CHECK(HasOwner(Owners(bob.Pump(later)), RAIDER, host.id));
+	CHECK(!bob.deaths.Contains(RAIDER));
+	CHECK(!bob.Alive(RAIDER));  // the corpse stays
+	CHECK(bob.deaths.Corrected() == 1);
+	f.fake->Deliver(1, Protocol::Encode(Protocol::PlayerHit{ bob.id, 12.0f, false, RAIDER }, MT::kPlayerHit));
+	CHECK(Count(bob.Pump(), MT::kPlayerDamaged) == 1);
+	host.Kills(RAIDER);
+	bob.Pump();
+	CHECK(bob.deaths.Contains(RAIDER));  // news again
+}
+
+TEST("session deaths: a game that runs the NPC means it lives, unless our own report of its death just went out")
+{
+	SessionDeaths::Ledger ledger;
+	const auto            t0 = Clock::now();
+	CHECK(!ledger.OnOwned(RAIDER, t0));  // nothing known
+
+	// Learned from a friend's report: forgotten as soon as anyone runs it.
+	ledger.Add(RAIDER, t0, 2);
+	ledger.SawDead(RAIDER);
+	CHECK(ledger.OnOwned(RAIDER, t0 + 100ms));
+	CHECK(!ledger.Contains(RAIDER));
+	CHECK(ledger.Corrected() == 1);
+
+	// Our own death event, reported: a grant to another game within OWNED_CROSSING crossed our report on the wire (the
+	// server ends the ownership on it), later than that it is a revival.
+	ledger.Add(RAIDER2, t0);
+	ledger.Reported(RAIDER2);
+	CHECK(!ledger.OnOwned(RAIDER2, t0 + SessionDeaths::OWNED_CROSSING - 1ms));
+	CHECK(ledger.Contains(RAIDER2));
+	CHECK(ledger.OnOwned(RAIDER2, t0 + SessionDeaths::OWNED_CROSSING));
+	CHECK(!ledger.Contains(RAIDER2));
+	CHECK(ledger.Corrected() == 2);
+
+	// How long a death has been known (a kill told again is retried only after KILL_RETRY_AFTER).
+	ledger.Add(RAIDER, t0);
+	CHECK(!ledger.KnownFor(RAIDER, SessionDeaths::KILL_RETRY_AFTER, t0 + 1s));
+	CHECK(ledger.KnownFor(RAIDER, SessionDeaths::KILL_RETRY_AFTER, t0 + SessionDeaths::KILL_RETRY_AFTER));
+	CHECK(!ledger.KnownFor(RAIDER2, 0s, t0));
 }
 
 TEST("alive again: the host loading a save from before the kill doesn't bring the raider back")
@@ -364,7 +554,7 @@ TEST("alive again: the host loading a save from before the kill doesn't bring th
 	bob.Kills(RAIDER);
 	host.Pump();
 	bob.Pump();
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// The host loads an older save: its raider is alive there. Its game knows nothing until the session's world
 	// state is in, so it offers nothing...
@@ -374,6 +564,7 @@ TEST("alive again: the host loading a save from before the kill doesn't bring th
 	f.fake->Deliver(1, Claim(RAIDER));
 	const auto toHost = host.Pump();  // the world state, which settles it: the raider is dead after all
 	CHECK(Owners(toHost).empty());
+	CHECK(Count(toHost, MT::kActorDied) == 0);  // the host's game is never told a death again: its offer is the revival
 	CHECK(std::ranges::contains(WorldDead(toHost), RAIDER));
 	CHECK(host.deaths.Contains(RAIDER));
 	CHECK(!host.Alive(RAIDER));  // its game kills it
@@ -387,7 +578,7 @@ TEST("alive again: the host loading a save from before the kill doesn't bring th
 TEST("alive again: the host quickloading so often that the server refuses its world request doesn't undo a friend's kills")
 {
 	auto options = HostedOptions();
-	options.worldStateRefill = 2500ms;
+	options.worldStateRefill = 3600s;  // owed until the test moves the clock past it
 	Fixture f{ options };
 	Game    host{ f, 1, "Host", true };
 	Game    bob{ f, 2, "Bob" };
@@ -396,7 +587,7 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	host.Pump();
 	bob.Pump();
 	CHECK(!host.Alive(RAIDER));
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// The host is in a hard fight and quickloads a save from before the kill, again and again. Its budget has three
 	// world states and its hello took one: the server answers two requests in a row and owes the third until the
@@ -413,7 +604,7 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	CHECK(host.Alive(RAIDER));
 
 	// Its game gives up waiting and offers the raider it has alive, well after the request (on the server's clock).
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto afterFallback = Clock::now() + SessionDeaths::SETTLE_FALLBACK;
 	REQUIRE(host.Scan(RAIDER, afterFallback));
 	CHECK(Owners(host.Pump()).empty());
@@ -425,8 +616,9 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	CHECK(carol.deaths.Contains(RAIDER));
 
 	// And once the host's budget refills, the world state it was owed comes: its game kills the raider too.
+	f.Advance(3600s);
 	bool owedCame = false;
-	for (const auto deadline = std::chrono::steady_clock::now() + 6s; !owedCame && std::chrono::steady_clock::now() < deadline;) {
+	for (const auto deadline = std::chrono::steady_clock::now() + 30s; !owedCame && std::chrono::steady_clock::now() < deadline;) {
 		owedCame = Count(host.Pump(), MT::kWorldState) >= 1;
 		if (!owedCame) {
 			std::this_thread::sleep_for(200ms);  // one heartbeat each time, fewer than the server answers (ten a second)
@@ -452,7 +644,7 @@ TEST("alive again: a raider essential only in the host's game doesn't undo Bob's
 
 	// The host walks off and comes back: it loads alive, as it has been all along. Its game offers to run it, marked
 	// essential; a death seen this session is no mistake, so nobody gets it and it stays dead.
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	CHECK(!host.Loads(RAIDER, true, later));
@@ -479,7 +671,7 @@ TEST("alive again: a raider the host's game heard of while its cell was unloaded
 	bob.Kills(RAIDER);
 	host.Pump();
 	CHECK(host.pending.contains(RAIDER));
-	std::this_thread::sleep_for(GRACE + 50ms);
+	f.Advance(GRACE + 50ms);
 
 	// Days later the host walks into the camp: the raider loads alive, its death still waiting.
 	const auto later = Clock::now() + DAYS_LATER;
@@ -502,7 +694,7 @@ TEST("alive again: a kill the host's game has not heard of yet is not undone by 
 	Game    host{ f, 1, "Host", true };
 	Game    bob{ f, 2, "Bob" };
 	host.Loads(RAIDER2, true, Clock::now());
-	std::this_thread::sleep_for(GRACE + 50ms);  // long past the host's hello
+	f.Advance(GRACE + 50ms);  // long past the host's hello
 
 	// Bob kills a raider nobody runs; the host's game, which has it alive and unowned, offers to run it before the
 	// news arrives (its claim crossed the death on the wire).
@@ -519,7 +711,7 @@ TEST("alive again: a kill the host's game has not heard of yet is not undone by 
 
 TEST("alive again: a raider back in the host's world stays alive after the server restarts, and the rest stay dead")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-alive-again-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-alive-again", ".session").string();
 	std::filesystem::remove(path);
 	auto options = HostedOptions();
 	options.sessionFile = path;
@@ -531,7 +723,7 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 		host.Kills(RAIDER);
 		host.Kills(RAIDER2);
 		host.Pump();
-		std::this_thread::sleep_for(GRACE + 50ms);
+		f.Advance(GRACE + 50ms);
 		const auto later = Clock::now() + DAYS_LATER;
 		host.Unloads(RAIDER);
 		REQUIRE(host.Loads(RAIDER, true, later));
@@ -552,7 +744,7 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 		host.Loads(RAIDER2, false, Clock::now());
 		f.fake->Deliver(1, Claim(RAIDER2));
 		CHECK(Owners(host.Pump()).empty());
-		std::this_thread::sleep_for(GRACE + 50ms);
+		f.Advance(GRACE + 50ms);
 		const auto later = Clock::now() + DAYS_LATER;
 		host.Unloads(RAIDER2);
 		REQUIRE(host.Loads(RAIDER2, true, later));
@@ -672,7 +864,7 @@ TEST("essential: a real death of an NPC the host's game still keeps essential st
 		CHECK(host.pending.contains(PIPER));  // held, not undone
 
 		// Its game offers to run her, marked essential, long after the death and the host's hello: nobody gets her.
-		std::this_thread::sleep_for(GRACE + 50ms);
+		f.Advance(GRACE + 50ms);
 		REQUIRE(host.Scan(PIPER, Clock::now()));
 		CHECK(Owners(host.Pump()).empty());
 		CHECK(Owners(bob.Pump()).empty());
@@ -793,4 +985,55 @@ TEST("session deaths: one the session has dead may be offered only by a game tha
 	CHECK(!deaths.MayClaim(RAIDER, t0));
 	CHECK(deaths.MayClaim(RAIDER, t0, true));
 	CHECK(deaths.MayClaim(RAIDER2, t0, true));
+}
+
+TEST("session deaths: a death heard from a friend's report takes where its corpse came to rest from that friend alone, soon after")
+{
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	deaths.Add(RAIDER, t0, 2);  // Bob's report
+	deaths.Add(RAIDER2, t0);    // our own death event, or the session's list
+	CHECK(deaths.RestsFrom(RAIDER, 2, t0 + 3s));
+	CHECK(!deaths.RestsFrom(RAIDER, 3, t0 + 3s));  // Carol's report of it, later: not where Bob's corpse lies
+	CHECK(!deaths.RestsFrom(RAIDER, 2, t0 + Protocol::CORPSE_REST_WINDOW));
+	CHECK(!deaths.RestsFrom(RAIDER2, 2, t0 + 3s));
+	CHECK(!deaths.RestsFrom(RAIDER2, 0, t0 + 3s));
+	CHECK(!deaths.RestsFrom(0x00ABCDEF, 2, t0 + 3s));  // news: a death, not a rest
+	CHECK(!deaths.Add(RAIDER, t0 + 3s, 3));  // a second report changes nothing
+	CHECK(deaths.RestsFrom(RAIDER, 2, t0 + 3s));
+}
+
+TEST("session deaths: our report sent as an NPC began to fall is taken back once by its death event, to say where it came to rest")
+{
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	deaths.FellReported(RAIDER, { 1.0f, 2.0f, 3.0f });  // not known dead: nothing kept
+	CHECK(!deaths.TakeFell(RAIDER));
+	deaths.Add(RAIDER, t0);
+	CHECK(!deaths.TakeFell(RAIDER));  // reported at its death event, not as it fell
+	deaths.FellReported(RAIDER, { 1.0f, 2.0f, 3.0f });
+	const auto fell = deaths.TakeFell(RAIDER);
+	REQUIRE(fell);
+	CHECK((*fell)[0] == 1.0f);
+	CHECK((*fell)[2] == 3.0f);
+	CHECK(!deaths.TakeFell(RAIDER));  // once
+	deaths.FellReported(RAIDER, { 1.0f, 2.0f, 3.0f });
+	deaths.Reset(t0 + 1s);
+	CHECK(!deaths.TakeFell(RAIDER));
+}
+
+TEST("session deaths: a death told by another game or the session's list is one our copy was killed for; one our own game reported is not")
+{
+	// CopyWatch: a copy that falls here for the session's word (the console kill) is no kill of ours, whatever hit of ours
+	// is still in its window.
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	CHECK(!deaths.ToldDead(RAIDER));
+	deaths.Add(RAIDER, t0, 2);  // Bob's report
+	CHECK(deaths.ToldDead(RAIDER));
+	deaths.Add(RAIDER2, t0);  // our own death event, reported
+	deaths.Reported(RAIDER2);
+	CHECK(!deaths.ToldDead(RAIDER2));
+	deaths.Add(0x0001F103, t0);  // the session's dead list: nobody's report of ours
+	CHECK(deaths.ToldDead(0x0001F103));
 }

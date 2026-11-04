@@ -4,21 +4,27 @@
 #include "game/WeaponFire.h"
 
 #include "Config.h"
+#include "game/AutoSave.h"
+#include "game/AutoSaveRules.h"
 #include "game/Compass.h"
 #include "game/DownRules.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/FadeWatch.h"
+#include "game/FrameLoan.h"
+#include "game/FrameLoans.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
 #include "game/Menu.h"
 #include "game/MenuKinds.h"
+#include "game/TeleportRules.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/PingRules.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "game/StandInSeat.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
@@ -95,6 +101,9 @@ namespace Party
 
 		std::uint32_t                  teleportTarget = 0;
 		std::optional<PendingTeleport> pendingTeleport;
+		// The landing after a teleport's last move: its autosave waits for the player on the ground (TeleportRules.h).
+		TeleportRules::Landing landing;
+		bool                   fallLogged = false;  // the held fall's start logged once a landing
 
 		Clock::time_point killFeedWindow{};
 		int               killFeedShown = 0;
@@ -518,6 +527,10 @@ namespace Party
 			status.cell = SpaceOf(player).first;
 			status.health = DownRules::StatusHealth(player->IsDead(false), Downed::IsDown(), current, maximum);
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
+			// What the session's legendary chance is made of (sLegendaryDifficulty, docs/SHARED-ROLLS.md).
+			const auto difficulty = RollHook::OwnDifficulty();
+			status.difficulty = difficulty.level;
+			status.legendaryMult = difficulty.legendaryMult;
 			status.downed = Downed::WaitsForHelp();
 			status.opening = Story::InOpening();
 			status.light = player->IsPipboyLightOn();
@@ -542,12 +555,32 @@ namespace Party
 					const auto held = Equipment::PowerArmorFrameOf(player);
 					return ArmorFrames::WornSeat(seatOf(seat.get()), seatOf(held && !held->IsDeleted() ? held.get() : nullptr));
 				},
+				// A frame lent to us is our copy of a friend's: named by its spawn id, which their game and every other
+				// resolve to their own (FrameLoans).
+				[](std::uint32_t a_ref) { return FrameLoans::WornSpawnOf(a_ref); },
 				Clock::now());
 			status.powerArmorFrame = wear.frame;
 			status.powerArmorFrameRef = wear.frameRef;
 			// Out of it: the frame we got out of last, where it stands (see ArmorFrames::TellParked). Friends show a copy
 			// there, in the station we parked it in or wherever we left it.
-			status.parked = ArmorFrames::TellParked(status.powerArmor, LastFrameOf(player));
+			// Not while it is lent (FrameLoans): it stands hidden here, and the borrower wears it. Nor the copy lent to us, which
+			// we only just got out of: it is the owner's spawn, and every other game already stands it there.
+			auto last = LastFrameOf(player);
+			// One of ours given back far from where it was lent, waiting to be moved there (FrameLoans::MoveWaiting): told
+			// where it waits to go, as its states tell (NpcSync's FrameState), where every friend's game has its copy. Told
+			// where it still stands here, it matched no copy of theirs (Spawns::FrameCopyAt), and each placed a parked copy of
+			// it there: a second suit at the spot it was lent from, for as long as the move waits.
+			if (const auto waiting = FrameLoans::MoveWaiting(last.ref)) {
+				last.cell = waiting->first.cell;
+				last.worldspace = waiting->first.worldspace;
+				last.x = waiting->first.x;
+				last.y = waiting->first.y;
+				last.z = waiting->first.z;
+				last.heading = waiting->second;
+			}
+			status.parked =FrameLoan::TellsParked(FrameLoans::LentOut(last.ref), FrameLoans::BorrowedCopy(last.ref)) ? ArmorFrames::TellParked(status.powerArmor, last) : std::nullopt;
+			// Whether we lend our own frames to friends who ask (bLendPowerArmor).
+			status.lends = Config::Get().lendPowerArmor;
 			// The chair, bed, workbench or terminal we use: friends put our stand-in in the same one (not a frame: above).
 			status.seat = StandInSeat::Tell(OwnSeatOf(player, status.powerArmor));
 			if (wear.unknown) {
@@ -666,20 +699,94 @@ namespace Party
 			}
 		}
 
+		RE::bhkCharacterController* Controller(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			return process && process->middleHigh ? process->middleHigh->charController.get() : nullptr;
+		}
+
+		std::string Where(const RE::NiPoint3& a_at)
+		{
+			return std::format("({:.0f},{:.0f},{:.0f})", a_at.x, a_at.y, a_at.z);
+		}
+
+		// Until the player has landed after a teleport: no fall damage, and then the travel autosave. Saved in the air,
+		// a bleed-out loaded the fall again (TeleportRules.h).
+		void Land(RE::PlayerCharacter* a_player, Clock::time_point a_now)
+		{
+			if (!landing.Active()) {
+				return;
+			}
+			using CharacterState = RE::IMovementState::CHARACTER_STATE;
+			const auto state = static_cast<const RE::IMovementState&>(*a_player).DoGetCharacterState();
+			const bool inAir = state == CharacterState::kJumping || state == CharacterState::kInAir;
+			if (inAir && landing.HoldsFall(a_now)) {
+				// The fall counts from here, so landing from it does the damage of no fall. Never raised: a start the
+				// engine already put lower stays.
+				if (const auto controller = Controller(a_player)) {
+					if (!fallLogged) {
+						fallLogged = true;  // the field's units, once: the player's z beside it
+						REX::INFO("Party: holding the fall after the teleport: fall start {:.0f}, player z {:.0f}", controller->fallStartHeight, a_player->data.location.z);
+					}
+					controller->fallStartHeight = (std::min)(controller->fallStartHeight, a_player->data.location.z);
+					controller->fallTime = 0.0f;
+				}
+			}
+			const TeleportRules::Footing footing{ .loaded = a_player->Get3D() != nullptr,
+				.onGround = !inAir,
+				.alive = !a_player->IsDead(false) && !Downed::IsDown(),
+				.loading = Hud::LoadingScreenUp() };
+			switch (landing.Update(a_now, footing)) {
+			case TeleportRules::Step::kSave:
+				REX::INFO("Party: landed after the teleport at {}", Where(a_player->data.location));
+				// The engine does not count a coc, cow or SetPosition as travel, so it made none of the autosaves a load
+				// door or fast travel makes, and the save a death loads was often many minutes old (AutoSaveRules.h).
+				AutoSave::AfterTeleport();
+				break;
+			case TeleportRules::Step::kLanded:
+				REX::INFO("Party: landed after the teleport at {}", Where(a_player->data.location));
+				break;
+			case TeleportRules::Step::kNoSave:
+				REX::INFO("Party: no autosave after the teleport: the player {}", footing.alive ? "did not stand on the ground in 30 s" : "is down or dead");
+				break;
+			default:
+				break;
+			}
+		}
+
 		void FinishTeleport(Clock::time_point a_now)
 		{
 			const auto player = Player();
+			if (player) {
+				Land(player, a_now);
+			}
 			if (!pendingTeleport || !player) {
 				return;
 			}
 			if (a_now > pendingTeleport->deadline) {
+				REX::INFO("Party: the teleport did not arrive in {} s; the player stays where they are", std::chrono::duration_cast<std::chrono::seconds>(TELEPORT_TIMEOUT).count());
 				pendingTeleport.reset();
 				return;
 			}
-			if (SpaceOf(player) == std::pair{ pendingTeleport->cell, pendingTeleport->worldspace } && player->Get3D()) {
-				player->SetPosition(pendingTeleport->position, true);
-				pendingTeleport.reset();
+			if (SpaceOf(player) != std::pair{ pendingTeleport->cell, pendingTeleport->worldspace } || !player->Get3D() || Hud::LoadingScreenUp()) {
+				return;
 			}
+			// A cow within the worldspace we are in already: the space matches before the load does. Not until the player
+			// stands in the cell it loaded, beside the friend's spot (else this SetPosition is the far one again).
+			const auto to = pendingTeleport->position;
+			if (pendingTeleport->worldspace != 0 && TeleportRules::NeedsLoad(player->data.location.x, player->data.location.y, to.x, to.y)) {
+				return;
+			}
+			// Down or dead since the friend's spot came: moved now, the bleed-out or death would play out there.
+			if (player->IsDead(false) || Downed::IsDown()) {
+				REX::INFO("Party: the teleport is called off: the player is down or dead");
+				pendingTeleport.reset();
+				return;
+			}
+			player->SetPosition(to, true);
+			pendingTeleport.reset();
+			landing.Begin(a_now, true);
+			fallLogged = false;
 		}
 
 		// Why the player can't teleport right now (the key of the text saying so; "" = they can). Teleporting out of a
@@ -688,12 +795,13 @@ namespace Party
 		std::string TeleportBlocked(RE::PlayerCharacter* a_player)
 		{
 			if (Story::InOpening()) {
-				return "party.cant_teleport_opening";
+				return Story::Why() == Story::Opening::kUnnamed ? "party.cant_teleport_unnamed" : "party.cant_teleport_opening";
 			}
 			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
 				return "party.cant_teleport_talking";
 			}
-			if (a_player->GetCurrentScene()) {
+			// Not a scene a friend's stage started here: the friend is playing it, and their later stages end it.
+			if (const auto scene = a_player->GetCurrentScene(); scene && scene->GetFormID() != QuestSync::SessionScene()) {
 				return "party.cant_teleport_scene";
 			}
 			if (static_cast<int>(a_player->DoGetSitSleepState()) != 0) {
@@ -790,6 +898,7 @@ namespace Party
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
+		AutoSave::Frame();
 		pings.Expire(now);
 		FollowPings();
 		// Not in the opening: no friend could get there to help.
@@ -813,6 +922,7 @@ namespace Party
 
 	void ApplyStatus(const Protocol::PlayerStatus& a_status)
 	{
+		FrameLoans::OnStatus(a_status.playerId, a_status.lends);  // whether a press on their frame asks them for it
 		auto&      entry = known[a_status.playerId];
 		const auto name = RemotePlayers::NameOf(a_status.playerId);
 		if (entry.hasStatus) {
@@ -1025,16 +1135,25 @@ namespace Party
 		}
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
+		landing.Cancel();  // an earlier teleport's: this one lands on its own
+		pendingTeleport.reset();
 
-		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins are taken out first
+		// Same place, a cell away at most: go straight there. Elsewhere, or farther across the worldspace we are in (a
+		// SetPosition beyond the loaded cells put the player far from the friend, in the air: TeleportRules.h): load their
+		// cell or worldspace first, then SetPosition once there (FinishTeleport). The stand-ins are taken out first
 		// (RemotePlayers::DespawnAll, as before a save): disabled in this frame, before the engine clears the cells for the
 		// coc or cow later in it, and deleted a second later, their records kept out of every save meanwhile (a stand-in
 		// left with no cell crashed the next save). Not deleted at once: a physics job of the frames after still handles a
 		// collision with one just beside the player (the crash a save's flush had). They are placed again where we arrive.
-		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
+		const auto from = player->data.location;
+		const bool sameSpace = SpaceOf(player) == std::pair{ state.cell, state.worldspace };
+		if (sameSpace && (state.cell != 0 || !TeleportRules::NeedsLoad(from.x, from.y, position.x, position.y))) {
+			const bool travel = AutoSaveRules::TeleportIsTravel(true, state.cell != 0, from.GetDistance(position));
 			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
-			REX::INFO("Party: teleported to player {}", target->id);
+			landing.Begin(Clock::now(), travel);
+			fallLogged = false;
+			REX::INFO("Party: teleported to player {}, from {} to {}", target->id, Where(from), Where(position));
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
 			return;
 		}
@@ -1055,10 +1174,12 @@ namespace Party
 				Hud::Notify(Text::Format("party.cant_teleport_into", { { "player", target->name } }));
 				return;
 			}
-			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
+			if (sameSpace) {
+				REX::INFO("Party: player {} is beyond the cells loaded here (from {} to {}): their cell loads first", target->id, Where(from), Where(position));
+			}
 			FadeWatch::Arm("teleported the player to a friend");
 			RemotePlayers::DespawnAll();
-			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
+			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, TeleportRules::GridOf(state.x), TeleportRules::GridOf(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);
 			Hud::Notify(Text::Format("party.cant_teleport_to", { { "player", target->name } }));
@@ -1118,6 +1239,8 @@ namespace Party
 		heldXp = 0.0f;
 		killWindowEnd = {};
 		ownWear.Forget();
+		landing.Cancel();  // the teleport was in the game left behind: no autosave of the one just loaded
+		pendingTeleport.reset();  // and no move into the one just loaded
 	}
 
 	void Reset()
@@ -1135,6 +1258,7 @@ namespace Party
 		xpCredit = 0.0f;
 		teleportTarget = 0;
 		pendingTeleport.reset();
+		landing.Cancel();
 		Downed::Reset();
 		pings.Clear();
 		pingLimit.Reset();

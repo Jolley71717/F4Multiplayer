@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -63,6 +64,21 @@ namespace FaceHeads
 			values.resize(BODY_REGIONS, 0.0f);
 		}
 		return values;
+	}
+
+	// A face's sculpting entries (morphs, bone regions), in one order and no more than a_max: sorted by a_key first and
+	// cut after, so what a full face leaves out is always its highest keys, not whichever the game's map listed last.
+	// Returns how many were left out.
+	template <class T, class Key>
+	std::size_t SortAndCap(std::vector<T>& a_entries, std::size_t a_max, Key a_key)
+	{
+		std::ranges::sort(a_entries, {}, a_key);
+		if (a_entries.size() <= a_max) {
+			return 0;
+		}
+		const auto left = a_entries.size() - a_max;
+		a_entries.resize(a_max);
+		return left;
 	}
 
 	// The class of a race's tint template entry, by its vtable (BGSCharacterTint::Template::Mask, Palette, TextureSet).

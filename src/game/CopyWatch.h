@@ -2,6 +2,8 @@
 
 #include "game/CopyHealth.h"
 
+#include "Protocol.h"
+
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -39,16 +41,44 @@ namespace CopyWatch
 	// A death in our world, and what killed it (0: nothing).
 	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
 
-	// Another player's report set the copy's health (WorldSync::TrySetHealth, a_refId our game's form id, a spawn copy's
-	// too): where it stands from now on.
-	void HealthSet(std::uint32_t a_refId, float a_before, float a_health);
+	// Another player's report would set the actor's health from a_before to a_health (WorldSync::TrySetHealth, a_refId our
+	// game's form id, a spawn copy's too): the health to set. On a copy, a raise that may be from before our latest hits is
+	// held (CopyHealth::Book::Heard); otherwise a_health.
+	[[nodiscard]] float HealthToSet(std::uint32_t a_refId, float a_before, float a_health);
 
-	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
+	// ... and it reads a_health once set (what the engine let it come to): where it stands from now on.
+	void HealthSet(std::uint32_t a_refId, float a_health);
+
+	// Gives copies back what something other than our hits took, takes back what they gained with no report from their
+	// game (a legendary's mutation of a copy legendary only here), and logs the hits and deaths (so many a
+	// RollingLog::WINDOW) and the damage counters every WINDOW. Every frame.
 	void Frame();
 
-	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
-	// fraction of the copy's maximum: WorldSync sends it to the game that runs the NPC (kReportDamage).
-	[[nodiscard]] std::vector<std::pair<std::uint32_t, float>> TakeDamage();
+	// Books the hits the engine has told us of (queued by NoteHit) in the book and the hit log. Every frame, before any
+	// packet is dispatched: a runner's health report heard first would heal back a shot whose event was not booked yet.
+	void TakeHits();
+
+	// Our player fired (or swung) just now (WeaponFire::TakeShots): where they aim is kept, and the next Frame books the
+	// shot on each copy it points at (CopyHealth::Book::OurShot), so that a drop that follows with no hit event is the
+	// shot's, not something to give back (CopyHealth::SHOT_REACH). Main thread.
+	void OurShots();
+
+	// A damage of ours to send: the copy's session id, what our hits took as a fraction of its maximum, and its number
+	// (CopyHealth::Book::TakeOurs), which the game that runs the NPC answers.
+	struct Damage
+	{
+		std::uint32_t id = 0;
+		float         fraction = 0.0f;
+		std::uint32_t seq = 0;
+	};
+
+	// What our hits took off our copies since the last call: WorldSync sends each to the game that runs the NPC
+	// (kReportDamage), and it stays in flight on the copy until Answered.
+	[[nodiscard]] std::vector<Damage> TakeDamage();
+
+	// The answer to a damage of ours on the copy a_wire (its session id), numbered a_seq, from a_from (0: the server):
+	// applied, ours to run now, or refused, in which case the copy gets the health back at once (CopyHealth::Answer).
+	void Answered(std::uint32_t a_wire, std::uint32_t a_seq, std::uint32_t a_from, Protocol::DamageAnswer::Why a_why);
 
 	void Reset();
 

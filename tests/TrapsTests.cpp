@@ -504,3 +504,32 @@ TEST("traps: an explosion an actor set off is never a trap's, beside a mine or a
 	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, false));
 	CHECK(TrapRules::Claims(fired, mines, { -5000.0f, 300.0f, 10.0f }, now, false));
 }
+
+TEST("traps: a mine a friend's stand-in starts counts down as long as in the friend's game, one anyone else starts is left be")
+{
+	// Measured on the rig with a frag mine (record timer 1.5 s, fMinesDelayMin 0.2): our player starts 1.7 s, any other
+	// actor 0.2 s, a friend's stand-in among them.
+	constexpr float RECORD = 1.5f, MIN = 0.2f;
+	const TrapRules::MineReach standIn{ true, false };
+	// The stand-in's start, seen the frame it began or a frame later: the friend's 1.7 s, less what it ran.
+	const auto fresh = TrapRules::MineCountdown(MIN, RECORD, MIN, standIn);
+	REQUIRE(fresh);
+	CHECK(*fresh > 1.69f && *fresh < 1.71f);
+	const auto later = TrapRules::MineCountdown(0.17f, RECORD, MIN, standIn);
+	REQUIRE(later);
+	CHECK(*later > 1.66f && *later < 1.68f);
+	// One our player started (the stand-in beside them): long already, never shortened.
+	CHECK(!TrapRules::MineCountdown(1.69f, RECORD, MIN, standIn));
+	CHECK(!TrapRules::MineCountdown(3.4f, RECORD, MIN, standIn));  // a sneaking player's, longer still
+	// One first seen part-way through a longer countdown (a cell attaching as it counts): not a stand-in's start.
+	CHECK(!TrapRules::MineCountdown(1.0f, RECORD, MIN, standIn));
+	CHECK(!TrapRules::MineCountdown(0.3f, RECORD, MIN, standIn));
+	// An NPC in reach (a raider, a copy of a friend's NPC, a companion): it may have started it, as in every game.
+	CHECK(!TrapRules::MineCountdown(MIN, RECORD, MIN, { true, true }));
+	CHECK(!TrapRules::MineCountdown(MIN, RECORD, MIN, { false, true }));
+	// No stand-in in reach (a friend's blast nearby, our own player): the engine's.
+	CHECK(!TrapRules::MineCountdown(MIN, RECORD, MIN, { false, false }));
+	// Not counting yet (FLT_MAX), or a mine whose record has no timer: nothing to give.
+	CHECK(!TrapRules::MineCountdown(3.4e38f, RECORD, MIN, standIn));
+	CHECK(!TrapRules::MineCountdown(MIN, 0.0f, MIN, standIn));
+}

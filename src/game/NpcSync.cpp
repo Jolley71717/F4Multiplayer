@@ -4,20 +4,30 @@
 #include "game/CommandMeter.h"
 #include "game/CreatureGait.h"
 #include "game/Dialogue.h"
+#include "game/EnableParents.h"
 #include "game/Equipment.h"
+#include "game/FrameClock.h"
+#include "game/FrameLoans.h"
 #include "game/FrameShare.h"
+#include "game/FriendlyHandOff.h"
 #include "game/Gait.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
+#include "game/MirrorClock.h"
 #include "game/MirrorGait.h"
+#include "game/MoveSync.h"
 #include "game/NpcClaims.h"
+#include "game/NpcHands.h"
 #include "game/NpcHold.h"
 #include "game/NpcPlace.h"
 #include "game/OpenMenus.h"
+#include "game/PauseHandOff.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
+#include "game/RollHook.h"
 #include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SettlerCommand.h"
@@ -25,6 +35,7 @@
 #include "game/StandInRange.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
+#include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
 namespace NpcSync
@@ -37,9 +48,8 @@ namespace NpcSync
 		// NPCs fighting or near a player send 20 states a second, the rest 10 (every other tick).
 		constexpr auto  STATE_INTERVAL = 50ms;
 		constexpr float FAST_RANGE = 3000.0f;  // game units from any player
-		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeover requests for the same NPC
 		// While we talk to an NPC we run, we claim it again this often so nobody takes it over
-		// mid-conversation (the server refuses takeovers within 5 s of a claim).
+		// mid-conversation (the server refuses takeovers within 5 s of a claim). What our hits ask for: NpcClaims.
 		constexpr auto TALK_CLAIM_INTERVAL = 2s;
 		// Render far enough in the past to have two states to blend: less for NPCs sending 20 a
 		// second than for those sending 10. Changes are eased in so the NPC doesn't jump.
@@ -62,6 +72,8 @@ namespace NpcSync
 		constexpr float HANDOFF_TO = 4000.0f;  // the friend must be this close (and at most half as far)
 		constexpr auto  HANDOFF_HOLD = 10s;    // we don't claim it back meanwhile
 		constexpr auto  HANDOFF_RETRY = 30s;   // between hand-offs of the same NPC
+		// A friendly NPC is handed to a friend standing next to it much sooner (FriendlyHandOff.h): a copy runs no AI, so
+		// it never greets them, turns to them or plays its idles for them.
 		constexpr std::size_t MAX_SNAPSHOTS = 16;
 
 		constexpr std::uint32_t CURRENT_COMPANION_FACTION = 0x00023C01;
@@ -76,10 +88,16 @@ namespace NpcSync
 		struct Mirror
 		{
 			std::deque<Snapshot> snapshots;
-			Prediction::ArrivalClock arrivals{ .gap = 0.05f };  // even stamps for states read in bursts
+			MirrorClock::Stamps  stamps;                // when each state is drawn: the owner's clock, or the arrivals evened out
 			RE::Actor*           registered = nullptr;  // as registered with Puppets
 			std::uint32_t        registeredId = 0;      // its form ID then (a copy of a friend's spawn has its own, not the spawn's)
 			float                delayMs = std::chrono::duration<float, std::milli>(SLOW_DELAY).count();
+			// Let go to its own AI (UpdateMirrors: the owner's copy silent, far or elsewhere) since then: when it is mirrored
+			// again, how far it walked off meanwhile is the jump its owner's next state puts it through (snapBacks).
+			std::optional<Clock::time_point> fellBackAt;
+			// Held still at its owner's last state since then (UpdateMirrors: the owner's game silent, stopped by a menu;
+			// NpcPlace::WhileSilent), until their states come back or the hold runs out.
+			std::optional<Clock::time_point> heldAt;
 		};
 
 		// An NPC we run.
@@ -88,14 +106,14 @@ namespace NpcSync
 			RE::NiPoint3       lastPosition;
 			Clock::time_point  lastTime{};
 			Puppets::GaitGraph graph;  // which locomotion graph it has (Puppets::GaitGraphOf), asked again while it had none
+			Clock::time_point  ranSince{};  // when the server gave it to us (FriendlyHandOff::SETTLED)
 		};
 
 		std::uint32_t localId = 0;
 
 		std::unordered_map<std::uint32_t, std::uint32_t>     owners;     // NPC -> player (absent = nobody)
-		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, and companion claims refused
+		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, companion claims refused, and what our hits asked for
 		NpcHold::Book                                        hold;       // NPCs our player fights, and ours that are dying
-		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
@@ -105,19 +123,59 @@ namespace NpcSync
 		std::uint32_t                                        settlerTakeovers = 0;
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
+		// Why (NpcPlace::Lost, by number), how many while the owner's status named a menu that stops their game (their
+		// world stood still: the copy's own walk is for nothing), and the jumps the copies went through when mirrored again:
+		// how many were a body's length (SNAP_BACK) or more, and the longest.
+		std::uint32_t                                        fallbackWhy[4] = {};
+		std::uint32_t                                        fallbacksPaused = 0;
+		std::uint32_t                                        snapBacks = 0;
+		float                                                snapBackMax = 0.0f;
+		constexpr float                                      SNAP_BACK = 64.0f;
+		// Copies held still while their owner's game was stopped by a menu instead of let go (NpcPlace::WhileSilent):
+		// how many holds, how many ran out (HELD_FOR passed, or a fight began: let go after all), and the longest.
+		std::uint32_t                                        holds = 0;
+		std::uint32_t                                        holdsRanOut = 0;
+		float                                                holdMax = 0.0f;
+		// Who runs each NPC and how often that changes (NpcHands.h): each change restarts its AI somewhere.
+		NpcHands::Book                                       hands;
+		// NPCs we run found with their movement blocked (a script's doing, or a puppet's flag left on one: Puppets.cpp's
+		// SUPPRESSED_BEHAVIOR), each logged once, and how many of ours fight a friend's stand-in as of the last scan.
+		std::unordered_set<std::uint32_t>                    ownedBlocked;
+		std::uint32_t                                        fightingStandIns = 0;
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
 		std::uint32_t                                        broughtIn = 0;       // copies moved to where their owner's stands: from an unloaded cell, or from another space ours was left in
 		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
+		std::uint32_t                                        switchedOnParents = 0;  // of those tries, the ones that switched on an enable parent
 		// Left alone, each counted once: characters of our own story off here (not switched on: MaySwitchOn), and
 		// copies not moved to their owner's because the owner's stand-in is not beside it (OwnerNear), by
 		// BringIn and by the bring-over of a far mirror.
 		std::uint32_t                                        keptOffStory = 0, notBroughtOwnerFar = 0, notBroughtOverOwnerFar = 0;
 		std::unordered_set<std::uint32_t>                    keptOff, notBrought, notBroughtOver;
+		// Friends' NPCs our game has no reference of (Spawns::Absent) that our player hit, each logged once: no takeover asked.
+		std::unordered_set<std::uint32_t>                    absentFought;
 		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
+		// NPCs we ran and let go (a hand-off, an unload), and when: a friend's damage the server sent us for one, crossing
+		// our release on the wire, is refused as not ours rather than held for the server's word (LetGoLately).
+		std::unordered_map<std::uint32_t, Clock::time_point> letGoAt;
+		constexpr auto                                       LET_GO_KEPT = 30s;
 		std::uint32_t                                        handOffs = 0;
+		FriendlyHandOff::Book                                friendly;  // ours that a friend stands next to (FriendlyHandOff)
+		std::uint32_t                                        friendlyHandOffs = 0;
+		// Handed to a friend standing next to them and not yet run by anyone else. One that comes back to us so (the
+		// friend's game could not claim it: switched off in their story, refused, or stopped by a menu we don't count) is
+		// not offered to them again for FRIENDLY_BACKOFF, or it would go and come back every HANDOFF_RETRY while they stand there.
+		std::unordered_map<std::uint32_t, Clock::time_point> friendlyPending;
+		std::unordered_map<std::uint32_t, Clock::time_point> friendlyRefused;
+		constexpr auto                                       FRIENDLY_BACKOFF = 5min;
+		std::uint32_t                                        friendlyCameBack = 0;
+		// Our game stopped by a menu (GameStop), and for how long as of this frame: past PauseHandOff::AFTER, Scan offers
+		// to run nothing new and hands ours to friends near them.
+		GameStop::Clock                                      stop;
+		Clock::duration                                      stoppedFor{};
+		std::uint32_t                                        pauseHandOffs = 0;
 		std::uint32_t                                        stateTick = 0;
 		std::uint32_t                                        fastNpcs = 0;  // owned NPCs sent at 20 Hz on the last tick
 		// Gear: each game rolls NPC gear on its own, so owners report what their NPCs wear and the
@@ -133,6 +191,7 @@ namespace NpcSync
 		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
 		NpcRoll::Book                                                 rolls;      // mirrored NPCs: their owners' reports
 		std::uint32_t                                                 rollsSent = 0, rollsWritten = 0, rollsKept = 0, factionsSet = 0;
+		std::unordered_set<std::uint32_t>                             rollsDiffered;  // NPCs whose runner's report differed from ours (counted once)
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -200,16 +259,23 @@ namespace NpcSync
 		std::uint32_t                                framesNudged = 0;   // moved in place to where their owner's game has them
 		std::uint32_t                                framesBrought = 0;  // moved there through the console (from an unloaded cell, or far)
 		std::uint32_t                                frameStates = 0;    // states sent for frames we run
+		std::uint32_t                                ghostsCleared = 0;  // copies an older version's workshop sync left in the save, found standing and buried (FrameShare::Ghost)
 
 
-		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game; under a
-		// spawn id (Spawns) is our own NPC shared so, or our copy of a friend's. 0: none.
+		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game, unless our
+		// game has no reference of it (a temporary one a friend's quest took out of a cell we have not loaded): then it is
+		// our copy of theirs (Spawns::Absent); under a spawn id (Spawns) is our own NPC shared so, or our copy of a
+		// friend's. 0: none.
 		std::uint32_t LocalId(std::uint32_t a_id)
 		{
 			if (Protocol::IsSpawnRef(a_id)) {
 				return Spawns::LocalOf(a_id);
 			}
-			return Protocol::IsShareableRef(a_id) ? a_id : 0;  // the player or a stand-in: never something to mirror
+			if (!Protocol::IsShareableRef(a_id)) {
+				return 0;  // the player or a stand-in: never something to mirror
+			}
+			const auto copy = Spawns::LocalOf(a_id);
+			return copy != 0 ? copy : a_id;
 		}
 
 		RE::Actor* LoadedActor(std::uint32_t a_id)
@@ -261,6 +327,7 @@ namespace NpcSync
 		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror)
 		{
 			WeaponFire::EndShield(a_id);  // a ghost made against a friend's explosion, if it is one now
+			a_mirror.heldAt.reset();      // a hold ends with the mirror (UpdateMirrors counts the ones it ends itself)
 			if (!a_mirror.registered) {
 				return;
 			}
@@ -332,9 +399,131 @@ namespace NpcSync
 			return false;
 		}
 
+		// An NPC we run as PauseHandOff::Decide takes it.
+		PauseHandOff::Npc PauseFactsOf(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto [cell, worldspace] = SpaceOf(a_actor);
+			const auto& pos = a_actor->data.location;
+			const auto  last = handedOffAt.find(a_id);
+			return {
+				.id = a_id,
+				.at = { cell, worldspace, pos.x, pos.y, pos.z },
+				.companion = IsOurCompanion(a_actor),
+				.talkingToUs = a_id == talkingTo,
+				.holdsUs = Dialogue::Holds(a_actor),
+				.commanded = std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
+				.fought = hold.FoughtLately(a_id, a_now),
+				.handedOffLately = last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY,
+			};
+		}
+
+		// A friend, as FriendlyHandOff weighs them for an NPC: their stand-in here, to ask whether the NPC is hostile to it.
+		struct FriendNear
+		{
+			FriendlyHandOff::Friend facts;
+			RE::Actor*              standIn = nullptr;
+		};
+
+		// Whether an NPC we run (not one ShouldHandOff gives away) goes to a friend standing next to it, after
+		// FriendlyHandOff::DWELL. The cheap facts first: an NPC near us, or with no friend near it, is let be without asking
+		// the engine about hostility.
+		bool ShouldHandToFriend(RE::Actor* a_actor, std::uint32_t a_id, const std::vector<FriendNear>& a_friends, Clock::time_point a_now)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto [cell, worldspace] = SpaceOf(a_actor);
+			const auto& pos = a_actor->data.location;
+			const RemoteEdits::Spot at{ cell, worldspace, pos.x, pos.y, pos.z };
+			const auto [ourCell, ourWorldspace] = SpaceOf(player);
+			const auto& ourPos = player->data.location;
+			const RemoteEdits::Spot us{ ourCell, ourWorldspace, ourPos.x, ourPos.y, ourPos.z };
+			const bool anyNear = std::ranges::any_of(a_friends, [&](const FriendNear& a_friend) {
+				return RemoteEdits::Within(RemoteEdits::Distance(at, a_friend.facts.at), FriendlyHandOff::FRIEND_WITHIN);
+			});
+			if (!anyNear || RemoteEdits::Within(RemoteEdits::Distance(at, us), FriendlyHandOff::RUNNER_FROM)) {
+				friendly.Forget(a_id);
+				return false;
+			}
+			std::vector<FriendlyHandOff::Friend> friends;
+			friends.reserve(a_friends.size());
+			for (const auto& f : a_friends) {
+				auto facts = f.facts;
+				facts.hostile = f.standIn && a_actor->GetHostileToActor(f.standIn);
+				friends.push_back(facts);
+			}
+			const auto it = owned.find(a_id);
+			const auto last = handedOffAt.find(a_id);
+			const FriendlyHandOff::Npc npc{
+				.at = at,
+				.hostileToUs = a_actor->GetHostileToActor(player),
+				.inCombat = a_actor->IsInCombat() || a_actor->currentCombatTarget.get().get() != nullptr,
+				.ours = IsOurCompanion(a_actor) || a_id == talkingTo || Dialogue::Holds(a_actor) ||
+				        std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
+				.fought = hold.FoughtLately(a_id, a_now),
+				.handedOffLately = (last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY) || friendlyRefused.contains(a_id),
+				.ranFor = it != owned.end() && it->second.ranSince != Clock::time_point{} ? a_now - it->second.ranSince : Clock::duration{},
+			};
+			return friendly.Decide(a_id, npc, us, friends, a_now) == FriendlyHandOff::Why::kRelease;
+		}
+
+		// Whether the actor's movement is blocked, the flag Puppets sets on every copy (kMovementBlocked, Puppets.cpp's
+		// SUPPRESSED_BEHAVIOR) and a script sets to hold an NPC still.
+		bool MovementBlocked(const RE::Actor* a_actor)
+		{
+			return a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kMovementBlocked);
+		}
+
+		// What the engine runs an NPC of ours on: its AI process level (0 high: full AI and pathing each frame; higher is
+		// less), its current package's type and form, its combat target, and whether its movement is blocked. For the
+		// `mirror <ref>` readout, so a copy's walk can be read against the AI its owner's game gives it.
+		std::string DescribeAi(const RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			if (!process) {
+				return "ai: no process";
+			}
+			const auto package = process->currentPackage.package;
+			const auto target = a_actor->currentCombatTarget.get();
+			return std::format("ai: level={} package={:08X} packType={} target={:08X}{} combat={} blocked={} sitState={}", process->processLevel, package ? package->GetFormID() : 0,
+				package ? static_cast<int>(package->data.packType) : -1, target ? target->GetFormID() : 0, target && Puppets::IsPuppet(target.get()) ? " (a stand-in)" : "",
+				a_actor->IsInCombat(), MovementBlocked(a_actor), static_cast<int>(a_actor->DoGetSitSleepState()));
+		}
+
+		// An NPC we run, as Scan sees it: one with its movement blocked is logged once (its AI can't walk it anywhere
+		// whatever we send of it), and one whose combat target is a friend's stand-in is counted (the stand-in can't be hurt
+		// or pushed aside, so that fight paths around something that never moves or dies: `net status`, fightStandIns=).
+		void NoteOwnedAi(const RE::Actor* a_actor, std::uint32_t a_id, std::uint32_t& a_fightingStandIns)
+		{
+			if (MovementBlocked(a_actor)) {
+				if (ownedBlocked.insert(a_id).second) {
+					REX::INFO("NpcSync: {:08X}, which we run, has its movement blocked; its AI walks it nowhere ({})", a_id, DescribeAi(a_actor));
+				}
+			} else {
+				ownedBlocked.erase(a_id);
+			}
+			const auto target = a_actor->currentCombatTarget.get();
+			if (target && Puppets::IsPuppet(target.get())) {
+				++a_fightingStandIns;
+			}
+		}
+
 		void Scan(Clock::time_point a_now)
 		{
 			std::vector<std::uint32_t> handOff;
+			std::vector<std::uint32_t> friendlyOff;  // ours, handed to a friend standing next to them (FriendlyHandOff)
+			std::vector<std::uint32_t> pausedOff;  // ours, handed to friends while our game is stopped (PauseHandOff)
+			fightingStandIns = 0;
+			const bool                 offers = PauseHandOff::Offers(stoppedFor);
+			std::vector<PauseHandOff::Friend> friends;
+			std::vector<FriendNear>           friendsNear;
+			for (const auto& info : RemotePlayers::List()) {
+				if (!info.state) {
+					continue;
+				}
+				if (!offers) {
+					friends.push_back({ RemoteEdits::SpotOf(*info.state), info.menu });
+				}
+				friendsNear.push_back({ { RemoteEdits::SpotOf(*info.state), info.menu }, info.actor });
+			}
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
 			holding.clear();
@@ -395,18 +584,28 @@ namespace NpcSync
 					if (commandBench != 0) {
 						// One taken over lately, or refused, waits out its cooldown so the others get their turn.
 						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId);
-						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !lastTakeover.contains(id))) {
+						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !claimBook.TakeoverPending(id))) {
 							commanding.push_back({ id, step });
 						}
 					}
 					if (owner == localId) {
+						NoteOwnedAi(actor, id, fightingStandIns);
 						if (ShouldHandOff(actor, id, a_now)) {
+							friendly.Forget(id);
 							handOff.push_back(id);
+						} else if (ShouldHandToFriend(actor, id, friendsNear, a_now)) {
+							friendlyOff.push_back(id);
+						} else if (!offers && PauseHandOff::Decide(stoppedFor, PauseFactsOf(actor, id, a_now), friends) == PauseHandOff::Why::kRelease) {
+							pausedOff.push_back(id);
 						}
 						continue;
 					}
 					// Just handed to a nearer friend: give their game time to claim it.
 					if (const auto handed = handedOffAt.find(id); owner == 0 && handed != handedOffAt.end() && a_now - handed->second < HANDOFF_HOLD) {
+						continue;
+					}
+					// Our game stopped a while: nothing new to run, it would only stand still (PauseHandOff::Offers).
+					if (!offers) {
 						continue;
 					}
 					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
@@ -424,25 +623,49 @@ namespace NpcSync
 			ScanFrames(a_now, loaded, claims);
 			claimBook.Expire(a_now);
 			hold.Expire(a_now);
-			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
+			hands.Expire(a_now);
+			friendly.Expire(a_now);
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
+			std::erase_if(friendlyPending, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
+			std::erase_if(friendlyRefused, [&](const auto& a_entry) { return a_now - a_entry.second >= FRIENDLY_BACKOFF; });
+			std::erase_if(letGoAt, [&](const auto& a_entry) { return a_now - a_entry.second >= LET_GO_KEPT; });
 
 			// NPCs we run that are no longer loaded go back to the pool, and so do the ones a friend is
 			// much nearer to (their game claims them). One that died here is kept until our report of its
 			// death ends it (NpcHold): released as it fell, a friend's game where it still lived took it
 			// over, and our kill was not believed. What we said they wear is forgotten with them, as the
 			// server forgets it: when we run one again we report it afresh.
+			// Ours that a friend's game takes on while ours is stopped go the same way (PauseHandOff).
 			std::vector<std::uint32_t> released;
+			const auto                 handOver = [&](std::uint32_t a_id) {
+				owners.erase(a_id);
+				owned.erase(a_id);
+				sentGear.erase(a_id);
+				sentRolls.Forget(a_id);
+				hold.Forget(a_id);
+				handedOffAt[a_id] = a_now;
+				letGoAt[a_id] = a_now;
+				released.push_back(a_id);
+			};
 			for (const auto id : handOff) {
-				owners.erase(id);
-				owned.erase(id);
-				sentGear.erase(id);
-				sentRolls.Forget(id);
-				hold.Forget(id);
-				handedOffAt[id] = a_now;
-				released.push_back(id);
+				handOver(id);
 				++handOffs;
 				REX::INFO("NpcSync: handing {:08X} to a nearer player", id);
+			}
+			for (const auto id : friendlyOff) {
+				handOver(id);
+				++friendlyHandOffs;
+				friendlyPending[id] = a_now;
+				REX::INFO("NpcSync: handing {:08X} to a player standing next to it (friendly, we are over {:.0f} units off; {} such so far)", id,
+					FriendlyHandOff::RUNNER_FROM, friendlyHandOffs);
+			}
+			for (const auto id : pausedOff) {
+				handOver(id);
+				++pauseHandOffs;
+			}
+			if (!pausedOff.empty()) {
+				REX::INFO("NpcSync: our game stopped for {} s; handing {} NPCs to friends near them (the first {:08X})",
+					std::chrono::duration_cast<std::chrono::seconds>(stoppedFor).count(), pausedOff.size(), pausedOff.front());
 			}
 			for (auto it = owned.begin(); it != owned.end();) {
 				if (!loaded.contains(it->first)) {
@@ -453,6 +676,7 @@ namespace NpcSync
 					}
 					hold.Forget(it->first);
 					released.push_back(it->first);
+					letGoAt[it->first] = a_now;
 					owners.erase(it->first);
 					sentGear.erase(it->first);
 					sentRolls.Forget(it->first);
@@ -470,8 +694,7 @@ namespace NpcSync
 		// too, and the others' copies run their own AI rather than freezing with ours.
 		bool GamePaused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return ui && ui->menuMode > 0;
+			return GameStop::Now();
 		}
 
 		// Fighting, or near enough to a player to be watched closely.
@@ -617,6 +840,9 @@ namespace NpcSync
 
 				Protocol::ActorState state;
 				state.refId = id;
+				// When it was sampled, on our clock: the place read is the one the frame before left it in, as a player's
+				// (FrameClock::StampAt), and the copies draw the states as far apart as these say (MirrorClock.h).
+				state.sentMs = Protocol::SentMs(FrameClock::StampAt(a_now));
 				std::tie(state.cell, state.worldspace) = SpaceOf(actor);
 				state.x = pos.x;
 				state.y = pos.y;
@@ -697,6 +923,7 @@ namespace NpcSync
 					continue;
 				}
 				outgoing.push_back({ Protocol::Encode(*identity, Protocol::MessageType::kReportNpcIdentity), true });
+				RollHook::Learn(*identity, false);  // ours, until the session's says otherwise: a load of an older save builds it so again
 				++rollsSent;
 			}
 		}
@@ -719,6 +946,12 @@ namespace NpcSync
 				const bool copy = Spawns::CopyIdOf(actor->GetFormID()) != 0;
 				const auto ours = Rolls::ReadOurs(actor, copy);
 				const auto plan = NpcRoll::Decide(ours, *theirs, [&](std::uint32_t a_npc) { return Rolls::ReachOf(ours.originalBase).Has(a_npc); });
+				// The check the runner's report became (protocol 57): with one roll per session every game built the same NPC,
+				// so a report that differs from ours is counted (net status: rolls ... differ=) and logged, once per NPC.
+				if ((plan.templates || plan.level) && rollsDiffered.size() < NpcRoll::Book::MAX && rollsDiffered.insert(id).second) {
+					RollHook::NoteDiffer();
+					REX::INFO("NpcSync: {:08X} differs from player {}'s roll of it ({}): {}", id, theirs->playerId, Rolls::Name(plan.roll), Rolls::Describe(actor));
+				}
 				if (!plan.Any()) {
 					rolls.Settled(id);
 					if (plan.roll != NpcRoll::Roll::kSame) {
@@ -909,12 +1142,37 @@ namespace NpcSync
 			return false;
 		}
 
-		FrameShare::Ours FrameOursOf(RE::TESObjectREFR* a_frame)
+		// The grid of an outdoor cell of the land (FrameShare::Ours::grid). None indoors, and none for a worldspace's
+		// persistent or sky cell: those hold references from all over it, and keep no spot of their own.
+		std::optional<std::pair<std::int32_t, std::int32_t>> GridOf(const RE::TESObjectCELL* a_cell)
+		{
+			const auto world = a_cell && a_cell->IsExterior() ? a_cell->worldSpace : nullptr;
+			const auto coords = world && a_cell != world->persistentCell && a_cell != world->skyCell ? a_cell->GetCoordinates() : nullptr;
+			if (!coords) {
+				return std::nullopt;
+			}
+			return std::pair{ coords->cellX, coords->cellY };
+		}
+
+		// What says a frame here is a copy of a friend's (FrameShare::Copy): the session placed it (SaveGuard's books, or
+		// Spawns' copy of a frame a friend's game made), or it is the one lent to us, which the loan knows for a copy after a
+		// load of a save made in it, when those books do not (FrameLoans::BorrowedCopy).
+		FrameShare::Ours CopyFactsOf(const RE::TESObjectREFR* a_frame)
 		{
 			FrameShare::Ours ours;
-			if (!a_frame) {
-				return ours;
+			if (a_frame) {
+				ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
+				ours.borrowed = FrameLoans::BorrowedCopy(a_frame->GetFormID());
 			}
+			return ours;
+		}
+
+		FrameShare::Ours FrameOursOf(RE::TESObjectREFR* a_frame)
+		{
+			if (!a_frame) {
+				return {};
+			}
+			auto       ours = CopyFactsOf(a_frame);
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			ours.found = true;
 			ours.created = a_frame->IsCreated();
@@ -924,10 +1182,28 @@ namespace NpcSync
 			ours.quest = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 			ours.inUse = FrameInUse(a_frame);
 			ours.wornHere = player && Equipment::PowerArmorFrameOf(player).get() == a_frame;
-			ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
+			ours.marked = WorkshopSync::IsCopyMarked(*a_frame);
+			ours.holdsItems = WorkshopSync::HoldsAnything(a_frame);
+			ours.lastUsed = player && player->lastUsedPowerArmor.get().get() == a_frame;
+			ours.owned = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
 			ours.at = SpotOf(a_frame);
+			ours.grid = GridOf(a_frame->GetParentCell());
 			ours.heading = a_frame->data.angle.z;
+			ours.upright = FrameShare::Upright(a_frame->data.angle.x, a_frame->data.angle.y);
 			return ours;
+		}
+
+		// A copy an older version's workshop sync left in the save (FrameShare::Ghost), found standing by the walk: buried as
+		// every frame copy of ours is (disabled, then deleted, kept out of every save meanwhile, and handed to a load that
+		// comes first), so the save loses it. Tracked first, as a copy placed this run is, so SaveGuard knows it as ours.
+		void ClearGhost(RE::TESObjectREFR* a_frame, const FrameShare::Ours& a_ours)
+		{
+			const auto base = a_frame->GetObjectReference();
+			REX::INFO("NpcSync: frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} is a copy an older version's workshop sync made, empty and nobody's; it goes ({} so far)", a_frame->GetFormID(),
+				base ? base->GetFormID() : 0, a_ours.at.x, a_ours.at.y, a_ours.at.z, a_ours.at.cell ? a_ours.at.cell : a_ours.at.worldspace, ghostsCleared + 1);
+			SaveGuard::Track(a_frame);
+			RemotePlayers::Discard(a_frame->GetHandle(), Clock::now());
+			++ghostsCleared;
 		}
 
 		// The frames standing in the loaded cells, found by a walk of their references now and then: furniture is in no
@@ -963,7 +1239,8 @@ namespace NpcSync
 		// Scan's part for frames our game made: each one ours to share (FrameShare::SharesMade) goes to the server under a
 		// spawn id, and counts as loaded once granted (kept); one that no longer is (worn, gone, or a stranger's left in a
 		// cell since unloaded) is not, and is let go of, which ends the copies in the other games. Our player's own first,
-		// then the ones we share already, then the ones standing about (FrameShare::MAX_MADE).
+		// then the ones we share already, then the ones standing about (FrameShare::MAX_MADE). One that is a copy an older
+		// version's workshop sync left in the save (FrameShare::Ghost) is cleared instead of shared.
 		void ShareMade(std::unordered_set<std::uint32_t>& a_loaded)
 		{
 			std::erase_if(usedMade, [](std::uint32_t a_local) { return !MadeFrameRef(a_local); });
@@ -980,7 +1257,13 @@ namespace NpcSync
 					continue;
 				}
 				const auto frame = MadeFrameRef(local);
-				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), hosting, usedMade.contains(local));
+				const auto ours = frame ? FrameOursOf(frame) : FrameShare::Ours{};
+				const bool lent = FrameLoans::LentOut(local);
+				if (frame && FrameShare::Ghost(ours, lent) && !RemotePlayers::OnItsWayOut(frame)) {
+					ClearGhost(frame, ours);
+					continue;
+				}
+				const bool share = frame && FrameShare::SharesMade(ours, hosting, usedMade.contains(local), lent);
 				if (const auto spawn = Spawns::ShareFrame(frame, share)) {
 					a_loaded.insert(spawn);
 				}
@@ -1004,8 +1287,10 @@ namespace NpcSync
 					REX::INFO("NpcSync: our player {} frame {:08X}; it is ours to run (owner {})", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used, OwnerOf(used));
 					OnLocalInteraction(used);  // taken over when another game runs it; offered below when nobody does
 				}
-			} else if (const auto made = MadeFrameRef(used); made && !SaveGuard::Placed(made) && usedMade.size() < MAX_MADE_SEEN) {
-				// One our game made: ours, shared as a spawn wherever our world keeps it (ShareMade).
+			} else if (const auto made = MadeFrameRef(used); made && !FrameShare::Copy(CopyFactsOf(made)) && usedMade.size() < MAX_MADE_SEEN) {
+				// One our game made: ours, shared as a spawn wherever our world keeps it (ShareMade). Never a copy of a friend's
+				// frame, the one lent to us among them: after a load of a save made in it, our player is in it, and gets out of
+				// it, before the clean-up removes it.
 				if (usedMade.insert(used).second || wornId != wornFrame) {
 					REX::INFO("NpcSync: our player {} frame {:08X}, made in our game; it is shared as a spawn while it stands", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used);
 				}
@@ -1027,7 +1312,7 @@ namespace NpcSync
 				}
 				a_loaded.insert(id);
 				const auto owner = OwnerOf(id);
-				if (owner == localId || !FrameShare::Offers(share, hosting, usedFrames.contains(id))) {
+				if (owner == localId || !FrameShare::Offers(share, hosting, usedFrames.contains(id)) || !PauseHandOff::Offers(stoppedFor)) {
 					continue;
 				}
 				if (const auto reason = claimBook.Offer(id, owner, localId, false, WorldSync::MayClaim(id), a_now)) {
@@ -1047,23 +1332,29 @@ namespace NpcSync
 				return std::nullopt;
 			}
 			const auto ours = FrameOursOf(frame);
-			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
+			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID()), FrameLoans::LentOut(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
 				return std::nullopt;
 			}
+			// One of ours given back, waiting to be moved to where its borrower got out of it (until that spot is in our
+			// sight): that spot, where every other game has it already. Where it still stands here would move their copies
+			// back there, the stale second suit of the 0.10.0 rc soak.
+			const auto waiting = made ? FrameLoans::MoveWaiting(made->GetFormID()) : std::nullopt;
+			const auto at = waiting ? waiting->first : ours.at;
+			const auto heading = waiting ? waiting->second : ours.heading;
 			const auto sent = sentFrames.find(a_id);
-			const bool moved = FrameShare::Moved(sent != sentFrames.end(), sent != sentFrames.end() ? sent->second.at : RemoteEdits::Spot{}, sent != sentFrames.end() ? sent->second.heading : 0.0f, ours.at, ours.heading);
+			const bool moved = FrameShare::Moved(sent != sentFrames.end(), sent != sentFrames.end() ? sent->second.at : RemoteEdits::Spot{}, sent != sentFrames.end() ? sent->second.heading : 0.0f, at, heading);
 			if (!FrameShare::Due(moved, sent != sentFrames.end() ? a_now - sent->second.sentAt : Clock::duration{})) {
 				return std::nullopt;
 			}
 			Protocol::ActorState state;
 			state.refId = a_id;
-			state.cell = ours.at.cell;
-			state.worldspace = ours.at.worldspace;
-			state.x = ours.at.x;
-			state.y = ours.at.y;
-			state.z = ours.at.z;
-			state.heading = ours.heading;
-			sentFrames[a_id] = { ours.at, ours.heading, a_now };
+			state.cell = at.cell;
+			state.worldspace = at.worldspace;
+			state.x = at.x;
+			state.y = at.y;
+			state.z = at.z;
+			state.heading = heading;
+			sentFrames[a_id] = { at, heading, a_now };
 			++frameStates;
 			return state;
 		}
@@ -1081,6 +1372,67 @@ namespace NpcSync
 			}
 			return a_spot.cell == 0 && cell->worldSpace && a_spot.worldspace == cell->worldSpace->GetFormID() &&
 			       StandInRange::Visible(a_spot.x, a_spot.y, a_player->data.location.x, a_player->data.location.y, RemotePlayers::GridsToLoad());
+		}
+
+		// A reference of a plugin's standing loaded in the cell outdoors that a_at is in (FrameShare::CellIndex, a_at's
+		// worldspace), to move a frame onto first as it is brought there: the console's moveto puts what it moves in the cell
+		// of the reference it moves it to, and setpos then moves it within that cell. Moved onto our player as it always was,
+		// a frame brought to a spot in another cell than theirs stayed in our player's cell (the 0.10.0 rc soak), drawn
+		// there but unloaded, and shared no more, once that cell was. 0: our player is in that cell (or the spot is indoors,
+		// in our player's interior: InView), or no such reference is loaded; our player is moved onto then.
+		std::uint32_t AnchorFor(const RemoteEdits::Spot& a_at, std::uint32_t a_moved)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto tes = RE::TES::GetSingleton();
+			if (!player || !tes || a_at.cell != 0) {
+				return 0;
+			}
+			const auto x = FrameShare::CellIndex(a_at.x);
+			const auto y = FrameShare::CellIndex(a_at.y);
+			const auto spotsCell = [&](const RE::TESObjectCELL* a_cell) {
+				const auto grid = GridOf(a_cell);
+				return grid && grid->first == x && grid->second == y && a_cell->worldSpace->GetFormID() == a_at.worldspace;
+			};
+			if (spotsCell(player->GetParentCell())) {
+				return 0;
+			}
+			std::uint32_t anchor = 0;
+			tes->ForEachReferenceInRange(RE::NiPoint3{ a_at.x, a_at.y, a_at.z }, FrameShare::CELL_SIZE, [&](RE::TESObjectREFR* a_ref) {
+				const auto id = a_ref ? a_ref->GetFormID() : 0;
+				if (anchor != 0) {
+					return RE::BSContainer::ForEachResult::kStop;  // the walk goes on through the other cells after a stop
+				}
+				if (id != 0 && id != a_moved && Protocol::IsShareableRef(id) && !a_ref->IsDeleted() && !a_ref->IsDisabled() && !a_ref->As<RE::Actor>() && spotsCell(a_ref->GetParentCell())) {
+					anchor = id;
+					return RE::BSContainer::ForEachResult::kStop;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return anchor;
+		}
+
+		// A frame (a_id) moved through the console to a_at, facing a_heading, upright: onto a reference in the cell that spot
+		// is in (AnchorFor), else onto our player, then put on the spot. The reference it was moved onto (0: our player).
+		std::uint32_t BringFrame(std::uint32_t a_id, const RemoteEdits::Spot& a_at, float a_heading)
+		{
+			const auto anchor = AnchorFor(a_at, a_id);
+			RE::Console::ExecuteCommand((anchor ? std::format("{:08X}.moveto {:08X}", a_id, anchor) : std::format("{:08X}.moveto player", a_id)).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_id, a_at.x).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_id, a_at.y).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", a_id, a_at.z).c_str());
+			// moveto turns it as what it is moved onto is (our player's look up or down too): stood up again, as the owner's is.
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", a_id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", a_id).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", a_id, a_heading * 180.0f / std::numbers::pi_v<float>).c_str());
+			meter.Count(7);
+			return anchor;
+		}
+
+		// The cell a reference is kept in (0: none), for the log.
+		std::uint32_t CellIdOf(const RE::TESObjectREFR* a_ref)
+		{
+			const auto cell = a_ref ? a_ref->GetParentCell() : nullptr;
+			return cell ? cell->GetFormID() : 0;
 		}
 
 		const char* MoveText(FrameShare::Move a_move)
@@ -1133,6 +1485,9 @@ namespace NpcSync
 					if (distance > 10.0f) {
 						REX::INFO("NpcSync: frame {:08X} is moved {:.0f} units to ({:.0f},{:.0f},{:.0f}), where player {}'s game has it", id, distance, theirs.x, theirs.y, theirs.z, a_owner);
 					}
+					if (!ours.upright) {
+						REX::INFO("NpcSync: frame {:08X} leans here (angle x {:.2f} y {:.2f}); stood up, as player {}'s game has it", id, a_frame->data.angle.x, a_frame->data.angle.y, a_owner);
+					}
 					a_frame->data.location = { theirs.x, theirs.y, theirs.z };
 					a_frame->data.angle = { 0.0f, 0.0f, a_state.heading };
 					a_frame->Update3DPosition(true);
@@ -1152,12 +1507,7 @@ namespace NpcSync
 					} else if (verdict == RetryBudget::Verdict::kLast) {
 						REX::INFO("NpcSync: bringing frame {:08X} for the last time; after {} tries it stays where it is here", id, RetryBudget::TRIES);
 					}
-					RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", id).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, theirs.x).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, theirs.y).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, theirs.z).c_str());
-					RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_state.heading * 180.0f / std::numbers::pi_v<float>).c_str());
-					meter.Count(5);
+					BringFrame(id, theirs, a_state.heading);
 					++framesBrought;
 					frameChoices[id] = static_cast<int>(move);
 				}
@@ -1232,23 +1582,127 @@ namespace NpcSync
 		// The owner's game switched the NPC on (a script enabled it: the mole rats that burrow up at Red
 		// Rocket, an ambush), ours is still off: it is switched on here too, through the console's enable
 		// like the kills, else the friend fights something we never see. It is mirrored once it loads.
+		// One an enable parent switches (Salem's mirelurks, which Gun Run's stage 30 turns on) is switched on through
+		// the parent at the top of its chain: the engine ignores an enable of the NPC itself (EnableChain.h).
 		// RetryBudget::Plan said to (never the player, the dead or a deleted one).
 		void SwitchOn(const Protocol::ActorState& a_state, RetryBudget::Verdict a_verdict)
 		{
-			++switchedOn;
-			if (a_verdict == RetryBudget::Verdict::kFirst) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
-				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running{}", a_state.refId,
-					actor && actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent) ? " (an enable parent switches it here)" : "");
-			} else if (a_verdict == RetryBudget::Verdict::kLast) {
-				REX::INFO("NpcSync: switching {:08X} on for the last time; after {} tries it stays off here", a_state.refId, RetryBudget::TRIES);
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
+			if (!actor) {
+				return;
 			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
-			meter.Count(1);
+			++switchedOn;
+			const auto plan = EnableParents::SwitchOn(actor, Story::Shared());
+			if (plan.verdict == EnableChain::Verdict::kParent) {
+				++switchedOnParents;
+			}
+			if (a_verdict == RetryBudget::Verdict::kFirst) {
+				REX::INFO("NpcSync: {:08X} is off here but its owner's copy is running; result: {}", a_state.refId, EnableParents::Describe(plan));
+			} else if (a_verdict == RetryBudget::Verdict::kLast) {
+				REX::INFO("NpcSync: {:08X} is off here, last try to switch it on (result: {}); after {} tries it stays off here", a_state.refId, EnableParents::Describe(plan),
+					RetryBudget::TRIES);
+			}
+			if (EnableChain::SwitchesOn(plan)) {
+				meter.Count(1);
+			}
+		}
+
+		// Whether the owner's status names a menu that stops their game (PauseHandOff::Stopped): their world stands still.
+		bool OwnerStopped(std::uint32_t a_owner)
+		{
+			for (const auto& info : RemotePlayers::List()) {
+				if (info.id == a_owner) {
+					return PauseHandOff::Stopped(info.menu);
+				}
+			}
+			return false;
+		}
+
+		// The friends whose status names such a menu, read once a frame for every copy gone silent (RemotePlayers::List
+		// copies the list).
+		std::vector<std::uint32_t> StoppedOwners()
+		{
+			std::vector<std::uint32_t> stopped;
+			for (const auto& info : RemotePlayers::List()) {
+				if (PauseHandOff::Stopped(info.menu)) {
+					stopped.push_back(info.id);
+				}
+			}
+			return stopped;
+		}
+
+		// Whether a copy is in a fight here (NpcPlace::WhileSilent's a_inFight): our player hit it lately (NpcHold), it
+		// fights our player, or the engine has it in combat (a puppet's AI is off, but the combat it was in stands).
+		bool InFight(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return hold.FoughtLately(a_id, a_now) || (player && a_actor->currentCombatTarget.get().get() == player) || a_actor->IsInCombat();
+		}
+
+		// The copy is held still (NpcPlace::Silent::kHold) this frame: since when, counted and logged the first few times.
+		void NoteHold(std::uint32_t a_id, std::uint32_t a_owner, Mirror& a_mirror, Clock::time_point a_now)
+		{
+			if (a_mirror.heldAt) {
+				return;
+			}
+			a_mirror.heldAt = a_now;
+			++holds;
+			if (MoveSync::Loggable(holds)) {
+				REX::INFO("NpcSync: {:08X} is held still: player {}'s copy is silent and their game stopped by a menu ({} holds so far)", a_id, a_owner, holds);
+			}
+		}
+
+		// The hold ended: their states came back (a_ranOut false), or it ran out, HELD_FOR passed or a fight began here,
+		// and the copy is let go to its own AI after all.
+		void EndHold(std::uint32_t a_id, std::uint32_t a_owner, Mirror& a_mirror, Clock::time_point a_now, bool a_ranOut)
+		{
+			const float held = std::chrono::duration<float>(a_now - *a_mirror.heldAt).count();
+			a_mirror.heldAt.reset();
+			holdMax = (std::max)(holdMax, held);
+			holdsRanOut += a_ranOut;
+			if (MoveSync::Loggable(holds)) {
+				REX::INFO("NpcSync: {:08X} was held still {:.1f} s while player {}'s game was stopped by a menu; {} (the longest hold {:.1f} s, {} ran out)",
+					a_id, held, a_owner, a_ranOut ? "let go to its own AI after all" : "mirrored again", holdMax, holdsRanOut);
+			}
+		}
+
+		// A mirrored copy let go to its own AI (UpdateMirrors): why, counted and logged the first few times and every 50th.
+		// Which reason keeps coming back, and whether the owner's game was stopped by a menu meanwhile, says what the
+		// copies' own walks and the jumps after them (NoteSnapBack) are from: `net status`, fallbackWhy=, fallbacksPaused=.
+		void NoteFallback(std::uint32_t a_id, std::uint32_t a_owner, const RE::Actor* a_actor, const Snapshot* a_latest, NpcPlace::Lost a_lost, Clock::time_point a_now)
+		{
+			++localFallbacks;
+			++fallbackWhy[std::to_underlying(a_lost)];
+			const bool stopped = OwnerStopped(a_owner);
+			fallbacksPaused += stopped;
+			if (!MoveSync::Loggable(localFallbacks)) {
+				return;
+			}
+			const float age = a_latest ? std::chrono::duration<float>(a_now - a_latest->received).count() : 0.0f;
+			const float distance = a_latest ? a_actor->data.location.GetDistance({ a_latest->state.x, a_latest->state.y, a_latest->state.z }) : 0.0f;
+			REX::INFO("NpcSync: {:08X} runs its own AI here for now: player {}'s copy is {} (last state {:.1f} s ago, {:.0f} units from ours{}; {} fallbacks so far)", a_id, a_owner,
+				NpcPlace::LostName(a_lost), age, distance, stopped ? ", their game stopped by a menu" : "", localFallbacks);
+		}
+
+		// The copy is mirrored again after a spell on its own AI: how far its owner's state now puts it from where its own
+		// walk left it (the jump a player sees), counted when a body's length or more, and the longest kept.
+		void NoteSnapBack(std::uint32_t a_id, std::uint32_t a_owner, const RE::Actor* a_actor, const Protocol::ActorState& a_state, Clock::duration a_fallenBackFor)
+		{
+			const float distance = a_actor->data.location.GetDistance({ a_state.x, a_state.y, a_state.z });
+			if (!(distance >= SNAP_BACK)) {
+				return;
+			}
+			++snapBacks;
+			snapBackMax = (std::max)(snapBackMax, distance);
+			if (MoveSync::Loggable(snapBacks)) {
+				REX::INFO("NpcSync: {:08X} is mirrored again after {:.1f} s on its own AI; player {}'s state puts it {:.0f} units from where its own walk left it ({} jumps so far, the longest {:.0f})",
+					a_id, std::chrono::duration<float>(a_fallenBackFor).count(), a_owner, distance, snapBacks, snapBackMax);
+			}
 		}
 
 		void UpdateMirrors(Clock::time_point a_now)
 		{
+			std::optional<std::vector<std::uint32_t>> stoppedOwners;  // read once, for the first copy gone silent
 			for (auto it = mirrors.begin(); it != mirrors.end();) {
 				const auto id = it->first;
 				auto&      mirror = it->second;
@@ -1287,13 +1741,38 @@ namespace NpcSync
 						REX::INFO("NpcSync: not bringing {:08X} over: player {}'s stand-in is not beside where their game has it", id, owner);
 					}
 				}
-				if (!latest || !NpcPlace::Follows(SpotOf(actor), RemoteEdits::SpotOf(latest->state), a_now - latest->received)) {
+				const auto lost = !latest ? NpcPlace::Lost::kSilent : NpcPlace::LostWhy(SpotOf(actor), RemoteEdits::SpotOf(latest->state), a_now - latest->received);
+				if (lost != NpcPlace::Lost::kNo) {
+					// Silent because their game is stopped by a menu: a mirrored copy is held still at their last state (Sample
+					// gives it with no speed past STALE_AFTER) rather than let go, out of a fight and for a while
+					// (NpcPlace::WhileSilent). Those a friend's game can take on are handed over by theirs meanwhile
+					// (PauseHandOff), which ends the mirror (ApplyOwners).
+					if (lost == NpcPlace::Lost::kSilent && latest && mirror.registered == actor) {
+						if (!stoppedOwners) {
+							stoppedOwners = StoppedOwners();
+						}
+						if (NpcPlace::WhileSilent(std::ranges::contains(*stoppedOwners, owner), InFight(actor, id, a_now), a_now - latest->received) == NpcPlace::Silent::kHold) {
+							NoteHold(id, owner, mirror, a_now);
+							if (const auto motion = Sample(mirror, a_now)) {
+								Puppets::SetTarget(actor, *motion);
+							}
+							++it;
+							continue;
+						}
+					}
+					if (mirror.heldAt) {
+						EndHold(id, owner, mirror, a_now, true);
+					}
 					if (mirror.registered) {
-						++localFallbacks;
+						NoteFallback(id, owner, actor, latest, lost, a_now);
+						mirror.fellBackAt = a_now;
 					}
 					StopMirroring(id, mirror);
 					++it;
 					continue;
+				}
+				if (mirror.heldAt) {
+					EndHold(id, owner, mirror, a_now, false);  // their states are back: it walks on from where it stood
 				}
 				if (mirror.registered != actor) {
 					// A few a frame (after a pause menu, every copy at a busy settlement is taken over at once): the rest
@@ -1303,6 +1782,10 @@ namespace NpcSync
 						continue;
 					}
 					StopMirroring(id, mirror);
+					if (mirror.fellBackAt) {
+						NoteSnapBack(id, owner, actor, latest->state, a_now - *mirror.fellBackAt);
+						mirror.fellBackAt.reset();
+					}
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
 					mirror.registeredId = actor->GetFormID();
@@ -1339,22 +1822,47 @@ namespace NpcSync
 			if (entry.playerId != localId) {
 				hold.Forget(entry.refId);  // no longer ours to keep while it dies
 			}
+			// A change of hands (NpcHands.h): its states are on the new runner's clock now, and one that keeps changing
+			// hands stops and sets off again each time, in both games.
+			const auto turn = hands.Note(entry.refId, entry.playerId, now);
+			if (turn.change == NpcHands::Change::kChanged || turn.change == NpcHands::Change::kQuick) {
+				if (const auto it = mirrors.find(entry.refId); it != mirrors.end()) {
+					it->second.stamps.NewOwner();
+				}
+				if (turn.change == NpcHands::Change::kQuick && MoveSync::Loggable(hands.Quick())) {
+					REX::INFO("NpcSync: {:08X} changed hands again {:.1f} s after the last time (player {} -> {}); its AI starts over in player {}'s game ({} quick changes so far)",
+						entry.refId, std::chrono::duration<float>(turn.since).count(), turn.from, entry.playerId, entry.playerId, hands.Quick());
+				}
+			}
 			if (entry.playerId == 0) {
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
+				ownedBlocked.erase(entry.refId);  // not ours to find blocked any more; logged again if it is when we run it next
 				sentGear.erase(entry.refId);  // the server forgot its gear with its runner: report it afresh when we run it
 				sentRolls.Forget(entry.refId);  // and its roll
-				rolls.Forget(entry.refId);
+				if (Protocol::IsSpawnRef(entry.refId)) {
+					rolls.Forget(entry.refId);  // a spawn's goes with it; a plugin's NPC's is the session's for good (protocol 57)
+				}
 				StopMirroring(entry.refId);
 				continue;
 			}
 			owners[entry.refId] = entry.playerId;
 			if (entry.playerId == localId) {
-				owned.try_emplace(entry.refId);
+				if (const auto [it, fresh] = owned.try_emplace(entry.refId); fresh) {
+					it->second.ranSince = now;
+					if (friendlyPending.erase(entry.refId) > 0) {
+						friendlyRefused[entry.refId] = now;
+						++friendlyCameBack;
+						REX::INFO("NpcSync: {:08X}, handed to a player standing next to it, came back to us unclaimed: not offered to them again for {} min",
+							entry.refId, std::chrono::duration_cast<std::chrono::minutes>(FRIENDLY_BACKOFF).count());
+					}
+				}
 				rolls.Forget(entry.refId);  // ours runs now: what it is here is what we report (the session's, if it took)
 				StopMirroring(entry.refId);
 			} else {
+				friendlyPending.erase(entry.refId);  // the friend's game runs it: the hand-off took
 				owned.erase(entry.refId);
+				ownedBlocked.erase(entry.refId);
 				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
 				sentRolls.Forget(entry.refId);
 			}
@@ -1382,10 +1890,14 @@ namespace NpcSync
 				ApplyFrameState(frame, state, owner, now);
 				continue;
 			}
+			// A plugin's NPC our game has no reference of (a temporary one their quest took out of a cell we have not loaded:
+			// a random encounter's Mr Gutsy from its holding cell): our copy of it is placed as a friend's spawn is
+			// (Spawns::Absent), and mirrored under its id; nothing of ours to switch on or bring in.
+			const bool absent = !spawn && Spawns::Absent(state, owner);
 			// Off here: switched on. Not loaded (a friend's companion that came from somewhere we have not loaded), or
 			// loaded but not where the owner's copy is (ours waits in an interior its own quest left it in): brought
 			// over, and mirrored once it is here; the snapshot is kept meanwhile. A few tries each (RetryBudget).
-			const auto fixes = spawn ? RetryBudget::Fixes{} : RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
+			const auto fixes = spawn || absent ? RetryBudget::Fixes{} : RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
 			if (RetryBudget::Go(fixes.switchOn)) {
 				SwitchOn(state, fixes.switchOn);
 			}
@@ -1398,7 +1910,15 @@ namespace NpcSync
 			}
 			auto& mirror = mirrors[state.refId];
 			auto& snaps = mirror.snapshots;
-			snaps.push_back({ mirror.arrivals.Next(now), state });
+			const auto stamp = mirror.stamps.Next(now, state.sentMs);
+			// The owner's first state came late, so the ones kept were stamped too late as well: they move back with it
+			// (as StateBuffer does for a friend's).
+			if (const auto back = mirror.stamps.SteppedBack(); back > Clock::duration::zero()) {
+				for (auto& snapshot : snaps) {
+					snapshot.received -= back;
+				}
+			}
+			snaps.push_back({ stamp, state });
 			while (snaps.size() > MAX_SNAPSHOTS) {
 				snaps.pop_front();
 			}
@@ -1445,24 +1965,46 @@ namespace NpcSync
 
 	void OnLocalInteraction(std::uint32_t a_refId)
 	{
-		hold.Fought(a_refId, Clock::now());  // ours or not: one we run is not handed away mid-fight
-		const auto owner = OwnerOf(a_refId);
-		if (localId == 0 || owner == 0 || owner == localId || Story::InOpening()) {
-			return;
-		}
 		const auto now = Clock::now();
-		const auto last = lastTakeover.find(a_refId);
-		if (last != lastTakeover.end() && now - last->second < TAKEOVER_COOLDOWN) {
+		hold.Fought(a_refId, now);  // ours or not: one we run is not handed away mid-fight
+		if (Story::InOpening()) {
 			return;
 		}
-		lastTakeover[a_refId] = now;
-		claimBook.Claimed(a_refId, Protocol::ClaimReason::kInteract, now);
+		// What the hit asks for (NpcClaims::Book::OnHit). Our hit on one we run: claimed again, so the server refuses a
+		// friend's hit the takeover for its cooldown after, as it does while we talk to one (TALK_CLAIM_INTERVAL); the
+		// friend's hits reach it as damage meanwhile, and it changes hands once we stop hitting it. Our hit on a plugin's
+		// NPC a friend's game runs: ours from this hit. On a spawn their game made: theirs for good (what we hit is a copy
+		// placed from its template, and the server hands no spawn over); the claim notes us fighting it, so our kill of
+		// it is believed, and our hits reach it there as damage (CopyWatch, kReportDamage).
+		const auto owner = OwnerOf(a_refId);
+		// Our copy of a plugin's NPC our game has no reference of (Spawns::Absent): the server would hand the NPC to us, and
+		// we have none to run. It stays its owner's, as a spawn does; our hits reach it there as damage (CopyWatch).
+		if (Spawns::IsAbsent(a_refId)) {
+			if (absentFought.size() < 1024 && absentFought.insert(a_refId).second) {
+				REX::INFO("NpcSync: {:08X} is player {}'s, and our game has no reference of it: it stays theirs to run (what we hit is our copy of it); our hits reach it there as damage", a_refId, owner);
+			}
+			return;
+		}
+		const auto claim = claimBook.OnHit(a_refId, owner, localId, now);
+		if (claim.hit == NpcClaims::Hit::kNone) {
+			return;
+		}
+		if (claim.hit == NpcClaims::Hit::kFight && claim.first) {
+			REX::INFO("NpcSync: {:08X} is a spawn player {}'s game made: it stays theirs to run (our copy of it is placed from its template, no NPC of theirs to hand over, and it is in no save but theirs); our hits reach it there as damage, and our kill of it counts ({} such spawns fought)",
+				a_refId, owner, claimBook.SpawnFights());
+		}
 		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
 	}
 
 	bool FoughtLately(std::uint32_t a_refId)
 	{
 		return hold.FoughtLately(a_refId, Clock::now());
+	}
+
+	bool LetGoLately(std::uint32_t a_refId)
+	{
+		const auto it = letGoAt.find(a_refId);
+		return it != letGoAt.end() && Clock::now() - it->second < LET_GO_KEPT;
 	}
 
 	void OnActivated(std::uint32_t a_refId)
@@ -1483,9 +2025,18 @@ namespace NpcSync
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		if (!player || !player->GetParentCell()) {
+			stop.Reset();
+			stoppedFor = {};
 			return;
 		}
 		const auto now = Clock::now();
+		// A loading screen is no stop of ours: a load starts afresh.
+		if (Hud::LoadingScreenUp()) {
+			stop.Reset();
+			stoppedFor = {};
+		} else {
+			stoppedFor = stop.Advance(now, GameStop::Now());
+		}
 		if (lastFrame != Clock::time_point{} && now - lastFrame < 500ms) {  // a load or a pause is not the frame rate
 			frameMs = frameMs * 0.95f + std::chrono::duration<float, std::milli>(now - lastFrame).count() * 0.05f;
 		}
@@ -1608,16 +2159,27 @@ namespace NpcSync
 
 	void ApplyIdentity(const Protocol::NpcIdentity& a_identity)
 	{
+		// The session's roll: any game that builds the NPC from here on builds it so (RollHook), whoever runs it.
+		RollHook::Learn(a_identity, true);
 		// Not for one we run: what our game has is what we report.
 		if (OwnerOf(a_identity.refId) == localId && localId != 0) {
 			return;
 		}
-		rolls.Learn(a_identity, localId);
+		// A welcome tells every NPC the session rolled: one we don't mirror now is checked once we do (rolls.Check).
+		if (rolls.Learn(a_identity, localId) && !mirrors.contains(a_identity.refId)) {
+			rolls.Settled(a_identity.refId);
+		}
 	}
 
 	const Protocol::NpcIdentity* RollOf(std::uint32_t a_refId)
 	{
 		return rolls.Find(a_refId);
+	}
+
+	void ForgetRoll(std::uint32_t a_refId)
+	{
+		rolls.Forget(a_refId);
+		sentRolls.Forget(a_refId);
 	}
 
 	void Reset()
@@ -1626,16 +2188,26 @@ namespace NpcSync
 		keptOff.clear();
 		notBrought.clear();
 		notBroughtOver.clear();
+		absentFought.clear();
 		localId = 0;
 		sentGear.clear();
 		knownGear.clear();
 		sentRolls.Clear();
 		rolls.Clear();
+		rollsDiffered.clear();
 		owners.clear();
 		claimBook.Clear();
 		hold.Clear();
-		lastTakeover.clear();
+		hands.Clear();
+		ownedBlocked.clear();
+		fightingStandIns = 0;
 		handedOffAt.clear();
+		friendly.Clear();
+		friendlyPending.clear();
+		friendlyRefused.clear();
+		letGoAt.clear();
+		stop.Reset();
+		stoppedFor = {};
 		talkingTo = 0;
 		holding.clear();
 		commanding.clear();
@@ -1660,9 +2232,59 @@ namespace NpcSync
 		return InView(a_spot, RE::PlayerCharacter::GetSingleton());
 	}
 
+	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading)
+	{
+		if (!a_frame || a_frame->IsDeleted()) {
+			return true;
+		}
+		if (!InView(a_at, RE::PlayerCharacter::GetSingleton())) {
+			return false;
+		}
+		const auto ours = FrameOursOf(a_frame);
+		if (!ours.found || !ours.frame || ours.off || ours.inUse) {
+			REX::INFO("NpcSync: our frame {:08X}, given back, is left where it stands (found={} frame={} off={} inUse={})", a_frame->GetFormID(), ours.found, ours.frame, ours.off, ours.inUse);
+			return true;
+		}
+		const auto id = a_frame->GetFormID();
+		const float distance = RemoteEdits::Distance(ours.at, a_at);  // NaN in another place
+		// Nudged only within the cell it is kept in: one nudged over a cell's edge stays kept in the cell it left (and is
+		// unloaded, and shared no more, with it). Brought otherwise, into the cell of the spot (BringFrame).
+		const bool nudge = ours.loaded && RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT) && FrameShare::KeepsCell(ours, a_at);
+		std::uint32_t anchor = 0;
+		if (nudge) {
+			a_frame->data.location = { a_at.x, a_at.y, a_at.z };
+			a_frame->data.angle = { 0.0f, 0.0f, a_heading };
+			a_frame->Update3DPosition(true);
+			++framesNudged;
+		} else {
+			anchor = BringFrame(id, a_at, a_heading);
+			++framesBrought;
+		}
+		REX::INFO("NpcSync: our frame {:08X}, given back, is {} to ({:.0f},{:.0f},{:.0f}) in {:08X} (onto {:08X}), {:.0f} units from where it stood; it is kept in cell {:08X} now", id, nudge ? "moved" : "brought", a_at.x,
+			a_at.y, a_at.z, a_at.cell ? a_at.cell : a_at.worldspace, anchor, distance, CellIdOf(a_frame));
+		return true;
+	}
+
 	bool InFrame(const RE::TESObjectREFR* a_frame)
 	{
 		return FrameInUse(a_frame);
+	}
+
+	bool OwnMadeFrameAt(std::uint32_t a_base, const RemoteEdits::Spot& a_spot, float a_radius)
+	{
+		// The frames the last walk found standing loaded (within FRAME_WALK_INTERVAL): a copy is placed only in view. Asked
+		// every frame for each frame copy: the spot first, and the rest (FrameOursOf walks the actors) only of one near it.
+		for (const auto local : standingMade) {
+			const auto frame = MadeFrameRef(local);
+			const auto base = frame ? frame->GetObjectReference() : nullptr;
+			if (!base || base->GetFormID() != a_base || !RemoteEdits::Within(RemoteEdits::Distance(SpotOf(frame), a_spot), a_radius) || RemotePlayers::OnItsWayOut(frame)) {
+				continue;
+			}
+			if (FrameShare::StandsFor(FrameOursOf(frame), FrameLoans::LentOut(local))) {
+				return true;  // a copy of ours, one on its way out, or one lent to a friend never stands for theirs
+			}
+		}
+		return false;
 	}
 
 	std::string DescribeMirror(std::uint32_t a_refId)
@@ -1690,10 +2312,13 @@ namespace NpcSync
 			out += std::format(" factions={} due={}", theirs->factions.size(), rolls.IsDue(a_refId));
 		}
 		if (it == mirrors.end()) {
+			if (actor) {
+				out += " " + DescribeAi(actor);
+			}
 			return out;
 		}
 		const auto& m = it->second;
-		out += std::format(" registered={} snapshots={} delayMs={:.0f}", m.registered != nullptr, m.snapshots.size(), m.delayMs);
+		out += std::format(" registered={} snapshots={} delayMs={:.0f} fellBack={} held={}", m.registered != nullptr, m.snapshots.size(), m.delayMs, m.fellBackAt.has_value(), m.heldAt.has_value());
 		if (!m.snapshots.empty()) {
 			const auto& s = m.snapshots.back();
 			const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - s.received).count();
@@ -1705,6 +2330,9 @@ namespace NpcSync
 		}
 		if (actor && m.registered == actor) {
 			out += " " + Puppets::Describe(actor);
+		}
+		if (actor) {
+			out += " " + DescribeAi(actor);
 		}
 		return out;
 	}
@@ -1735,8 +2363,13 @@ namespace NpcSync
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
 		const auto ownedFrames = std::ranges::count_if(owned, [](const auto& a_entry) { return FrameRef(a_entry.first) != nullptr; });
 		const auto sharedMade = std::ranges::count_if(owned, [](const auto& a_entry) { return Protocol::IsSpawnRef(a_entry.first) && MadeFrameRef(Spawns::LocalOf(a_entry.first)) != nullptr; });
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), commandBench, commanding.size(), settlerTakeovers);
+		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
+		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
+		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={} friendlyHandOffs={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
+			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
+			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, friendlyHandOffs, friendlyCameBack, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights());
 	}
 }

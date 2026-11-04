@@ -15,9 +15,9 @@ game's own code can:
   loads a cell.
 - **Run any console command:** `console tgm` (god mode), `console save f4mptest`,
   `console 000AE12F.removeallitems player` (loot a container), `console startquest 0001F25E`.
-- **Read state:** `status`, `pos`, `refinfo <ref>` (position, health, cell), `count <container> <item>`,
+- **Read state:** `status`, `pos`, `refinfo <ref>` (position, health, cell, its form flags and its ExtraFlags word, `extraFlags=`, which holds Papyrus's BlockActivation as bit 0, value 1, on 1.11.240), `count <container> <item>`,
   `aim <actor>` (its pitch, the point its weapon aim turns toward, the pitch a mirrored NPC's
-  owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paframes [radius]` (each power armor frame near the player, and whether the game would let the player into it, and why not: tilted, or its seat still taken), `paused`, `timescale` (the game's time multiplier and timer, VATS, and the menus' pause count), `rules` (the session's rules from the welcome, and the down state) and `net status`, which prints every
+  owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paframes [radius]` (each power armor frame near the player, and whether the game would let the player into it, and why not: tilted, or its seat still taken; then what else holds the player off it without a word: kept out by the session as a friend's copy, its activation blocked, disabled, no 3D, the Activate input off in a named layer, input blocked, the player busy in furniture; with its flags word, its owner and whether getting in is a theft; and last the player's own state: sit state, the furniture they occupy, the frame worn or left last, the Activate input), `paused`, `timescale` (the game's time multiplier and timer, VATS, the menus' pause count, the UI's timer and the game hour), `menuclock on [seconds] | off` (logs those clocks, Main's flags and how far the nearest NPC moved, each frame for 2 s or the given seconds after any menu opens or closes: what stops the world under a menu, F4Multiplayer-tnl5), `rules` (the session's rules from the welcome, and the down state) and `net status`, which prints every
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
   sounds played, and so on. `mods` says what is known of the host's mods (`mods ask` asks again), and
   `mods forms [formHex]` shows our load order against the session's plugin table, what was skipped
@@ -39,6 +39,8 @@ game's own code can:
   as one is (`made=true` in `enemies`). Indoors a wide ring can put them inside a wall: use a small radius.
 - **Moved objects:** `objects` prints what is shared of loose objects moved by hand (the `objects:` part of `net status`), `objects grab` what the player holds (its reference, the grab type, its distance, and whether it is shared), and `objects probe <ref>` a reference's place and angles beside its 3D transform (translation, rotation matrix and XYZ Euler angles) and its physics bodies, to compare two games' copies.
 - **Destructible objects:** `destruct` prints what is shared of cars, barrels and the like (the `destruct:` part of `net status`), `destruct near [radius]` the destructible objects around the player (3000 units unless given: each one's health and maximum, stages passed, destroyed, and its stages as percent with `x` an explosion, `m` a replacement model, `d` gone), and `destruct probe <ref>` one, with whether it is watched or waits to load.
+- **Shared storage:** `storage` prints the `storage=` part of `net status` (owners known, the container viewed, moves on their way, whether the game is still settling after a load or a rejoin (`settling=`: no storage menu opens meanwhile, `settlingClosed=` counts those closed), the own moves its world lacks (`lacks=` kept, `lacking=` found, `lacksDropped=` past 4096), settles sent and the moves they sent late (`settles=`, `late=`), what is set aside, views, refusals, unanswered, unsent and overflowed moves, takes corrected to a shortfall, shortfalls, listings; `ownRefused=` must stay 0). The server logs "storage undid N and did again M of player P's moves" for each settle that put the true copy right. `storage keeper <ref>` says who keeps a container (ours, a friend's, or not shared storage: nobody's yet is ordinary loot) and whether this game calls it storage. `storage view <ref>` and `storage close` do what the container menu's show and close do, without the menu. `storage take <ref> <item> [count]` and `storage put <ref> <item> [count]` move items between the player and the container the way the menu does, so the move is reported as a player's; `storage count <ref> <item>` reads both counts.
+- **Gifts through a container:** `gifts` prints the `gifts=` part of `net status` (the host's `bContainerGifts` on or off, the container viewed, our copies shown in it, takes waiting for their answer, puts waiting for their offer, the gifts lying in the session, and the counters: `given=`, `kept=`, `lateOffers=`, `refused=`, `notGiven=`, `taken=`, `received=`, `takenFirst=`, `givenBack=`, `giveFailed=`, `copyMissing=`, `unplaceable=`, `notGear=`, `addUndone=`, `unsignaled=`, `unheld=`, `dupRisk=`, `inboxDropped=`, and `redraws=`: the times the open container menu drew its lists again after a gift's change, with each step of it: `redrawRequests=` asked, `redrawsOnFrame=` and `redrawsOnMessage=` drawn from the menu's frame or from the update message posted to it, `redrawsHeld=` frames or messages that left a request waiting for the quantity box (up when its clip is visible with an alpha above 0; it must not rise with no box up), `redrawsCleared=` requests dropped at a menu's show or hide, `requestsClosed=` requests made while no container menu was open, `menuFrames=` and `updateMessages=` what the two hooks saw; `ownRefused=` must stay 0). `gifts list` names each gift lying in the session (its base, mods, condition, name, container and giver, and whether our copy shows and our take waits). `gifts view <ref>` and `gifts close` do what the container menu's show and close do, without the menu (a view so opened stays until `gifts close`). `gifts take <ref> <item> [count]` and `gifts put <ref> <item> [count]` move items between the player and the container the way the menu does, so the move is the player's; `gifts count <ref> <item>` reads both counts.
 - **Open and close menus:** `menu PipboyMenu force`.
 - **Change the log:** `log level debug` adds the DEBUG lines (friend scans by alias, the lines
   characters say; HUD messages name players and are never logged) until the game restarts, `log
@@ -63,7 +65,7 @@ game's own code can:
   and refused by the engine (`hangs takeOffs rehangs lost failures`), and each friend's menu, glyph and distance. The log has `MenuBadges:` lines for each hang and take-off
   (the first 40).
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
-  sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
+  sound. `sounds` lists the sounds playing and what each follows (PLAYER: heard wherever you go). `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.
 
 The full list is the `COMMANDS` table at the bottom of `src/DevCommands.cpp`. DESIGN.md also
@@ -98,8 +100,8 @@ describes each one.
 | Step | Tool |
 |---|---|
 | Build | `xmake build` |
-| Deploy, restart Fallout 4 through F4SE, wait for the main menu, load a cell, turn on god mode | `tools/restart-game.ps1` |
-| Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` |
+| Deploy, restart Fallout 4 through F4SE, wait for the main menu, load a cell, turn on god mode | `tools/restart-game.ps1` (CrossOver on a Mac: `tools/crossovermac.sh restart`) |
+| Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` (Mac: `tools/crossovermac.sh dev`) |
 | Add other players | `F4MPBot.exe`: a fake player that joins the session and can stand somewhere, shoot, loot, talk, hit you, report quest stages or take over an NPC |
 | Press a key or fire | `tools/input.ps1 -Click` / `-Key <code>`: real mouse and keyboard input sent to the game window (brings it to the front) |
 | Go through workshop mode, the Pip-Boy and a conversation for an hour | `tools/menustress.sh`, or `tools/stress.ps1` from PowerShell (see below) |
@@ -162,6 +164,9 @@ The commands it uses:
   DirectInput and the control map first. When a key does nothing, `input` with the same user event
   tells a menu that ignores input from input that never got to it. `controls [context]` lists the
   control map's input contexts and their user events and keys.
+- `syncmark [set]`: the player's synced-animation mark (on, the player gets no input) and its guard, which
+  clears a mark with no synced animation behind it at each game's start. `set` turns the mark on, to make a stuck
+  save: loading it must leave the player free.
 - `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
   its option buttons shown, the input context it put up.
 - `key`, `mouse` and `click` send through Windows, which hands input to whatever window is in front. They
@@ -173,6 +178,37 @@ The commands it uses:
   the game is logged as such, not as an option the menu ignored. On the VM a scheduled task (a screenshot,
   `input.ps1`) takes the front for a moment; a press sent then went nowhere, and on 2026-10-11 that was
   read as a dialogue that no longer took input.
+- `pad`: a virtual gamepad of the game's own, for scripted movement that needs neither the window in front nor
+  Windows' input (src/game/VirtualPad.h). The plugin hooks the game's XInput imports (Fallout4.exe takes
+  `XInputGetState`, `XInputGetCapabilities` and `XInputSetState` from XINPUT1_3.dll, by ordinal); once a pad
+  command plugs it in, pad 0 is ours and the game's own gamepad code reads it as a real pad (the game asks
+  `XInputGetCapabilities` until a pad is there, then reads `XInputGetState` every frame). Each game process has its
+  own, so the host's and the VM's are driven apart, and the keyboard and mouse of whoever sits at the PC are not
+  touched. `pad stick l|r <x> <y> [ms]` (-1..1, y forward; held until set again, or for the time given),
+  `pad button <a|b|x|y|lb|rb|back|start|ls|rs|up|down|left|right>[+...] [ms]` (a 100 ms tap by default),
+  `pad trigger l|r <0-1> [ms]`, `pad off` (everything let go, still plugged in), `pad unplug`, and `pad` for its
+  state: the reads per pad index, `gameSeesPad=`, `front=`, `polling=`, `muted=`. Stick values are mapped past
+  XInput's dead zone along the stick's direction, so a small push still moves. With the window not in front the
+  input gate (src/game/InputGate.h) turns the game's polling off; while the pad is plugged in, polling stays on for it
+  and the game's keyboard and mouse skip their polls instead (`muted=true`), so keys typed into another window never
+  reach the game. `pad unplug` gives the gate back its own way.
+- `walkto <refHex> [speed] [radius] [timeoutS]` or `walkto <x> <y> [speed] [radius] [timeoutS]`: walks the player to
+  a reference (followed as it moves) or a point with the pad's sticks, re-aimed every frame: the left stick pushes
+  toward the target as the player faces, the right stick turns the player to face it, easing off near it. It ends
+  arrived (within the radius, 80 by default), stuck (no 30 units gained in 4 s, after an 8 s start; a wall, or a game
+  dropping the player's input) or timed out (120 s by default); `walkto` gives the walk's state or the last one's
+  end, `walkto stop` stops it. Progress is logged once a second (`Pad: walkto`). A reference is a form id given as
+  `0x...`, eight hex digits, or with a hex letter in it. `tools/rig/walkto.sh <host|vm> <target...>` runs one and
+  waits for its end. Speed 1 runs; the stick never sets a position or a velocity, the game's own movement does.
+- `mousedev [fix]`: the game's mouse as Windows feeds it. The game reads the mouse through Raw Input
+  (WM_INPUT to its window), and a game that came up behind another window was seen taking keys and never a
+  click. The answer gives the raw input registrations (`raw=1:2 flags=0x0 to=game` is the mouse registered
+  for the game's window), whether the window is in front and has the keyboard focus, and how many WM_INPUT
+  messages the game has taken (`wmInput mouse= leftDown= keys=`): a click that raises none never reached
+  the game. With the dev channel on, the plugin registers the mouse for the game's window when it isn't, or is
+  registered for a window that is gone (every 2 s with the window in front, before each `focus`, `click` and `mouse`, and
+  on `mousedev fix`; a live window of the game is never taken from, nor an unreadable list read as none),
+  logs it, and counts it in `fixed=`.
 
 `tools/hangcatch.ps1` can also run beside it on its own, as on the VM (which needs WinDbg too). When the game's window hasn't
 answered Windows for 10 s, it attaches the console debugger without taking the game over (`cdb -pv`),

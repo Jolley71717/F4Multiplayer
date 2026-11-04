@@ -61,6 +61,13 @@ public:
 		// game has no limit. Generous: a player picks up and kills a few hundred things an hour.
 		std::size_t maxWorldEntriesPerPlayer = 15000;
 		std::size_t maxWorkshopItemsPerPlayer = 10000;
+		// Objects one player's game may give a kept place to (ObjectMovers::Places) in one server run. Well under its
+		// 2048 (MAX_PLACES): a full Places forgets the place kept longest, so a joiner's made-up objects can't push out
+		// the host's places. Held to at most a quarter of maxObjectPlaces (512) whatever is set (--max-share sets it with
+		// the other shares).
+		std::size_t maxObjectPlacesPerPlayer = 512;
+		// How many objects' places the session keeps; at most, and by default, ObjectMovers::MAX_PLACES. Tests lower it.
+		std::size_t maxObjectPlaces = 2048;
 
 		// A player asking for the world state again (a reload, a rejoin) has a bucket of three, refilled
 		// one per this. Past it, theirs is sent when the bucket refills. Tests shorten it.
@@ -79,11 +86,23 @@ public:
 		// be lost). Tests shorten it.
 		std::chrono::milliseconds deathGrace{ 10000 };
 
+		// A player who hits or talks to an NPC another player's game runs takes it over, unless it changed hands, or
+		// its runner claimed it again (their game does with each hit of theirs on it, and every 2 s while they talk to
+		// it), within this long: two players shooting one raider leave it with whoever hit it first, as long as they
+		// keep hitting it, instead of trading it every few seconds and restarting its AI each time. Tests shorten it.
+		std::chrono::milliseconds takeoverCooldown{ 5000 };
+
 		// The host's game offering to run an NPC the session has dead brings it back for everyone (its cell reset:
 		// the raiders of a camp cleared days ago). Believed only once this long has passed since the host's game
 		// last asked for the session's world, and since the death: before that, its game may still have it alive
 		// from a save older than the kill, or not have heard of the kill yet. Tests shorten it.
 		std::chrono::milliseconds aliveAgainGrace{ 10000 };
+
+		// A joiner's game that has an NPC alive which the session has dead (it offered to run it, hit it, or the NPC hit a
+		// stand-in there: its cell reset in that game alone) is told the death again, so it kills its copy: first once
+		// it has reported about the NPC for aliveAgainGrace (the host's game, walking in beside it, is given that long to
+		// bring the NPC back for everyone instead), then at most this often for each NPC. Tests shorten it.
+		std::chrono::milliseconds remindDeadEvery{ 5000 };
 
 		// Plugins that may differ between players (texture, sound or UI mods): left out of what a joiner is
 		// told differs. (Since protocol 36 any load order is let in and translated; a hello without a plugin
@@ -131,6 +150,30 @@ public:
 		}
 	}
 
+	// The server's clock, which a test can move on (AdvanceClock) or stop (HoldClock). Nanoseconds.
+	struct ClockControl
+	{
+		std::atomic<std::int64_t> skew{ 0 };  // added to the machine's steady clock
+		std::atomic<std::int64_t> held{ 0 };  // the steady clock's reading the clock was stopped at; 0 while it runs
+	};
+
+	// For tests: moves the server's clock on by a_by, as if that long had passed (a cooldown, a refill, a grace period),
+	// without waiting. Unless it is held, time still passes on its own as well. Any thread.
+	void AdvanceClock(std::chrono::milliseconds a_by)
+	{
+		testClock.skew += std::chrono::duration_cast<std::chrono::nanoseconds>(a_by).count();
+	}
+
+	// For tests: stops the server's clock where it is, so it moves only by AdvanceClock. A test of what happens inside a
+	// window (a rate limit's second) then can't be made late by a busy PC, and lets the window out by advancing, not by
+	// sleeping. What the server does by time alone (dropping a connection that never said hello, rolling a second's
+	// budgets) waits for the advance, so a test that holds the clock sends few heartbeats (ten a second are answered).
+	void HoldClock()
+	{
+		const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		testClock.held = now != 0 ? now : 1;
+	}
+
 	[[nodiscard]] bool Running() const { return running; }
 
 private:
@@ -149,6 +192,7 @@ private:
 	std::atomic<bool>                             running{ false };
 	std::atomic<bool>                             stopRequested{ false };
 	std::atomic<bool>                             saveRequested{ false };
+	ClockControl                                  testClock;
 	std::mutex                                    consoleMutex;
 	std::vector<std::string>                      consoleLines;
 };

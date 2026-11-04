@@ -601,6 +601,23 @@ TEST("parked frames: the parked copy is moved when the frame is, placed again wh
 	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .leftCopy = true }) == Park::kAdopt);
 }
 
+TEST("parked frames: no parked copy stands in our player's way out of the frame a loaded save had them in, and one comes back once they are out")
+{
+	// The frame lent to us, its loan over with the load, is its owner's parked one again, made in their game: Spawns
+	// withholds its copy there (FrameLoans::KeepsClear), so oursThere is false, and the parked copy must not stand in for it.
+	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .keptClear = true }) == Park::kNone);
+	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .leftCopy = true, .keptClear = true }) == Park::kNone);
+	const ParkFacts shown{ .told = true, .inView = true, .exists = true, .sameBase = true, .loaded = true, .samePlace = true, .distance = 0.0f, .sincePlaced = 30s };
+	auto            facts = shown;
+	facts.keptClear = true;
+	CHECK(ArmorFrames::ChoosePark(facts) == Park::kDelete);
+	facts.occupied = true;  // never from under someone in it
+	CHECK(ArmorFrames::ChoosePark(facts) == Park::kAbandon);
+	// Out of it: placed again.
+	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true }) == Park::kPlace);
+	CHECK(ArmorFrames::ChoosePark(shown) == Park::kShow);
+}
+
 TEST("parked frames: our copy of a parked suit is hidden only when it is that suit, untouched in our world, and nobody here needs it")
 {
 	const ArmorFrames::OriginalFacts here{ .found = true, .base = VANILLA_FRAME, .frame = true, .loaded = true, .fromSpot = std::nullopt };

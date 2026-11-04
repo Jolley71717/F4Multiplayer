@@ -10,7 +10,7 @@ Four players by default; the host can allow more (`iMaxPlayers`, see [Settings](
 - Ideally **the same mods** as everyone else, in any order: what comes from a mod only one of you has (its NPCs, items, quests) is left out in the other game
 
 **Everyone must use the same version of this mod.** Back up your saves (or start a fresh one)
-before playing; this is an early alpha.
+before playing; this is an alpha.
 
 Always start the game with F4SE (`f4se_loader.exe`, or your mod manager's F4SE launcher).
 
@@ -57,9 +57,11 @@ same folder.
 ## Settings
 
 Edit `Data\F4SE\Plugins\F4Multiplayer.ini` (in Vortex: the mod's staging folder, or use
-"Open in File Manager").
+"Open in File Manager"). The file is read when the game starts: change it, then restart the game. The one
+exception is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file
+(for the host's rules, see below).
 
-One player hosts. Only the host changes a setting:
+One player hosts:
 
 ```ini
 bHost = true
@@ -69,11 +71,8 @@ The host's game starts hosting once it is in the world (not at the main menu, an
 character not until it is out of Vault 111). Friends who try to join earlier are told the host isn't
 in the game yet, and their game tries again by itself.
 
-The host also sets how many players can be in the session at once, themselves included (`iMaxPlayers = 4` by
-default). More is allowed, but each extra player adds traffic and NPC work for the host, and sessions of more than
-two players have been tested less.
-
-Everyone else keeps the defaults. Players are named after the character they play (`sPlayerName = character`;
+Everyone else keeps the defaults, apart from the settings of their own (see [Your own settings](#your-own-settings)).
+Players are named after the character they play (`sPlayerName = character`;
 your Steam name stands in until a new character has a name). Set `sPlayerName` to a name of your own, or leave it
 empty to use your Steam name. The name is sent when your game connects.
 
@@ -96,6 +95,132 @@ NPC, an item, a quest, a settlement piece) is left out in the other game, and th
 mods differ (F1, *Compare mods*). To share a mod's content, everyone needs that mod. Two versions of one
 mod count as the same mod, so keep those the same. The host can list cosmetic plugins (textures, sounds,
 UI) in `sIgnoredPlugins` (comma-separated) so the joiner is not told about them.
+
+### Host settings
+
+These count only in the host's `F4Multiplayer.ini`. A guest's own value of them is not used: the game takes the
+host's when it joins, so there is nothing for a guest to set. The two exceptions are `sPassword` (a guest sends their
+own as the password to join) and `iPort` (a guest joining without Steam connects on their own `iPort`, unless
+`sServerAddress` names a port). The ini is read once, when the game starts: after editing it by hand, restart the
+game before you host. A switch in the F1 menu (friendly fire, story) is saved at once but counts from the
+next time you host: choose *Stop hosting*, then *Host a session* again.
+
+- `iMaxPlayers` (4): how many players can be in the session at once, the host included. More is allowed, but each
+  extra player adds traffic and NPC work for the host, and sessions of more than two players have been tested
+  less. A guest who comes when it is full is turned away.
+- `sPassword` (empty): if set, a guest must have the same password in their own `sPassword` to join. The host's
+  F1 menu can also make up or remove it while hosting.
+- `iPort` (7779): the UDP port the host's game listens on. Guests only need it when they join without Steam.
+- `bFriendlyFire` (false): on, players can hurt each other with weapons. Off, only enemies hurt a player.
+- `sStory` (shared): `shared`, the main story and the faction quests move along for everyone. `own`, each guest plays
+  them in their own game. Side quests are shared either way. See [What is shared](#what-is-shared).
+- `sIgnoredPlugins` (empty): plugins, comma-separated, that guests may have different. A guest is not told about
+  them when their mods differ from the host's.
+- `bSaveSession` (true): the host's game keeps the shared world on disk and carries on with it next time that
+  character hosts. Guests see no difference, but a guest who joins later catches up on what is kept.
+- `bShareGuestBuilds` (false): off, what a guest built in their own save before joining does not come into the host's
+  world: only building done during the session is shared. On, a guest's earlier settlement building comes into the
+  host's world too. Two saves with different building at the same settlement then show both.
+- `bSharedStorage` (false, experimental): on, a container in a home or a settlement (one a player owns, or one in a
+  settlement they own) has one copy for everyone, the host's. A guest who opens theirs sees what is in the host's, and
+  what one player takes is gone for everyone. Only ammo, aid and junk are shared this way; weapons, armor, keys and
+  notes stay in each player's own copy. Off, each player keeps their own copy, and loot taken from one is taken from
+  the others' copies too.
+  - A container becomes shared once the host has been near it in the session. Until then it works as with this off.
+  - A guest's own stash: the ammo, aid and junk a guest had in their own copy of a container before it was shared
+    stay in their copy, but out of reach. While the host keeps that container the guest sees the host's things in it,
+    not their own. Their own things come back when the host turns this setting off, or when the guest plays that save
+    alone.
+  - Turning it on in a session you played with 0.9.x: what a guest put into one of the host's containers back then is
+    still in the guest's own copy (their stash, out of reach as above), so it leaves the host's copy the first time the
+    host comes near that container. Chests at a shared base can look emptier than before. Nothing is lost: what
+    guests put in waits in their own copy, and what the host put in stays.
+  - Loading a save: a guest who loads an earlier save has nothing taken from them or given to them. The host's copy
+    is put right instead, to match what the guest's loaded game did. A move a guest made as their connection dropped
+    is sent again when they rejoin.
+  - After the host loads a save, a guest's menu on a shared container closes with a notice until the host comes near
+    it again. A take that loses a race to another player's take is undone: the guest gets nothing, and the item stays
+    in the container.
+  - Turning it off again: each player has their own copy again. The session remembers which containers were shared,
+    so turning it back on carries on where it left off. A session that has used this setting can't be opened by an
+    older version of the mod.
+  A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
+- `bContainerGifts` (false, experimental): on, a weapon or a piece of armor a player puts in a container gives it to
+  the others. Any container works except a workbench, a vendor's and a companion's, and a container built in a
+  settlement. The item then shows in that container for every player who opens it, and the first who takes it has it.
+  Off, what a player puts in a container stays in their own copy of it, as in 0.9.x: drop an item to give it instead.
+  - Taking a gift: it goes into your inventory a moment after you press Take, once the session says you were first.
+    If a friend was first, you get nothing and a notice says so. Until someone takes it, its giver can take it back
+    the same way.
+  - Each item is given on its own: putting in three guns gives three gifts. Mods, a legendary effect, a name and a
+    power armor piece's condition go with it. An item with a mod from a plugin a friend lacks doesn't show for them.
+    Quest items and items made by a mod at runtime are not given (a notice says so once).
+  - With `bSharedStorage` on or off it works the same: shared storage never shares weapons and armor, so they are
+    given this way in any container.
+  - Loading a save: a friend who loads a save from before taking a gift has it back in the container for everyone.
+    A giver who loads a save from before putting the item in has it back in their own copy, and it is gone for the
+    others. The one case not put right: a giver who loads a save from before putting it in, after a friend took it,
+    has it too (both have it; the host's log counts it). A mod that moves items out of containers by itself (an
+    auto-sorter, say) can make one more of a gift the same way; the gift then stops showing for that player until
+    they load a save or rejoin, and each time it shows again such a mod can do it again.
+  - A connection that drops while a take is on its way loses nothing: the item is in the container again after you
+    rejoin, or in your inventory if the session says you took it. A giver whose connection drops just as
+    the item is given finds it given once they rejoin (until then nobody can take it), or still in the container if
+    it never reached the session. The dedicated server takes it as `--container-gifts`. Once a gift has been
+    given in a session, an older version of the mod can't open that session any more, even after the gift is taken.
+- The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
+  `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
+  `bReviveOutOfCombat` (false), `bDownedCrawl` (false) and `bSaveOnDown` (false). Guests play by the host's. See
+  [Going down](#going-down).
+- `sNpcLevel` (average): the level every game builds leveled enemies at (raiders, ghouls, bloatflies, legendaries),
+  so you all meet the same ones. `average` is the average level of the players in the session now (it changes as
+  players join, leave and level up), `highest` is the highest level anyone in the session has reached, `host` is the
+  host's, and `own` lets each game use its own player's level, as before (you may then see different enemies). An
+  enemy keeps the level it was built at, in your save too. The dedicated server takes it as `--npc-level`.
+- `sLegendaryDifficulty` (average): whose difficulty sets the chance of a legendary enemy. `average` uses the average
+  of the players in the session now, `host` the host's, and `own` each game's own (one of you may then see a
+  legendary where another sees a plain one). Your own difficulty still sets the damage you deal and take. The
+  dedicated server takes it as `--legendary-difficulty`.
+- `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
+  everyone. See [VATS in real time](#vats-in-real-time).
+
+Also host controls, not settings: the host can lock the session, kick and ban from the F1 menu (see
+[Host controls](#host-controls)).
+
+### Your own settings
+
+These change only your own game. Set them as you like; friends don't need the same.
+
+- `sPlayerName` (character): the name others see. See above.
+- `sLanguage` (empty, the game's language): the language of the mod's messages and menu.
+- `iKeyMenu`, `iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`,
+  `iKeyEmoteClap` and `iKeyVoice`: your hotkeys. See [Hotkeys](#hotkeys).
+- `bVoiceChat` (true), `bVoiceOpenMic` (false) and `fVoiceRange` (60): your voice chat. See [Voice chat](#voice-chat).
+  `fVoiceRange` is how far away you can still hear a friend (0: you hear everyone, wherever they are). It changes
+  only what you hear, not how far your voice carries to friends.
+- `bSpokenLines` (true): hear what's said near you in a friend's game.
+- `bCompassMarkers` (true): friends' markers on your compass.
+- `bFriendFaces` (true): friends' stand-ins wear their own face. Off, they all have the settler's face.
+- `bGrenadeInHand` (true): a friend's grenade is seen in their stand-in's hand as they throw.
+- `iMyAppearance` (0) and `iPuppetBaseForm` (the female settler): which character friends see for you, and which one
+  you see for friends who haven't picked one. Friends see only the two settlers.
+- `bShareMap` (true): locations friends discover show on your map, and yours show on theirs.
+- `bLendPowerArmor` (true): friends may borrow a power armor frame your game made (one you found or looted) once it
+  stands parked. They press E on it to ask and again to get in, wear your pieces and fusion core, and it comes back
+  to you where they get out, worn as they left it. The pieces stay yours. Off, nobody borrows your frames.
+- `bSyncTime` (true): you follow the host's time of day and weather. If the host turns it off, nobody follows.
+- `fXpShare` (0.5): the share of a friend's kill XP you get.
+- `bSyncQuests` (true): turn it off and your game leaves the shared quests: nothing comes to you, nothing goes out.
+- `bSharedRadiants` (true): needs `bSyncQuests` and the shared story. Everyone in the session needs it on for the
+  repeatable jobs to match.
+- `bHideTutorials` (true): the game's tutorial hints stay hidden in a session.
+- `bRunInBackground` (true): your game keeps running when you alt-tab, while you are in a session.
+- `bFastLoading` (true) and `iFastLoadingSeconds` (20): faster loading screens.
+- `sTransport` (auto), `sServerAddress` (empty) and `bHost`: how you join or host. See
+  [Without Steam](#without-steam-lan-or-vpn).
+
+The rest (`bMenuIcons`, `iHangSeconds`, `bHangDump`, `sLogLevel`, `bDevChannel`, `iDevChannelPort`) is for the
+mod's developers and bug reports: leave them alone unless you are asked to change one.
 
 ## Playing
 
@@ -139,7 +264,7 @@ Each player keeps their own save, character and inventory.
 
 | Key | What it does |
 |---|---|
-| F1 | Multiplayer menu: host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
+| F1 | Multiplayer menu: host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, spoken lines, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
 | F6 | Player list: where everyone is, how far and which way, their health and level |
 | F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
 | F8 | Ping what you are looking at: an enemy, an item lying there, a friend, or the spot under your crosshair ("over here!" when you aim at the sky). You and your friends see it on the compass as a ring in your marker's color for 15 seconds, with a line naming it and how far away it is ("Raider (23 m NE)"). An enemy you ping is the same one in every game. A new ping replaces your last; one a second at most |
@@ -152,24 +277,37 @@ work while a menu or the console is open.
 ### Voice chat
 
 Hold the mouse's back side button to talk (`iKeyVoice`; set `bVoiceOpenMic = true` to talk without
-a key). Friends hear you at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
-0 = everyone hears everyone). It uses the microphone chosen in Steam > Settings > Voice.
+a key). You hear a friend at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
+0 = you hear everyone, wherever they are). It uses the microphone chosen in Steam > Settings > Voice.
 
 ### Going down
 
 With friends in the session, a hit that would kill you knocks you down instead. A friend who stands
 next to you for 2 seconds helps you up (with 30% health). When a friend goes down, holding F7 takes
-you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
-`bRevive = false`.
+you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. The host can turn this off
+with `bRevive = false`.
 
 The host can make it harder (their ini sets it for everyone; a joiner's own settings aren't used):
 the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the health you get up with
 (`iReviveHealth`), how many times each player can be helped up per fight or per so many minutes
 (`iMaxRevives`, `iReviveWindowMinutes`), a time after getting up when a lethal hit kills
-(`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). The HUD tells you
-how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
+(`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). When the host has
+changed any of these, joiners are told the rules as they join, and the F1 menu shows them. The HUD
+tells you how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
-`--revive-out-of-combat`, `--no-revive`).
+`--revive-out-of-combat`, `--no-revive`, `--downed-crawl`, `--save-on-down`).
+
+The host can also let downed players crawl (`bDownedCrawl = true`; experimental, off by default):
+while down, forward and back crawl slowly and left and right turn you, so you can reach a friend or
+cover before you bleed out. Walls, ledges and steep ground stop you, and so does a friend right next
+to you, so their help isn't broken. Your friends see you drag yourself along the ground.
+
+Dying, in a session or alone, makes the game load your last save, so you lose what you did since it; the HUD
+says so as you go down. Teleporting to a friend with F7 makes an autosave when you land, as a door or fast
+travel would, if the game's own "Save on travel" setting is on (Settings > Gameplay). The host can also have
+everyone's game make an autosave as they go down (`bSaveOnDown = true`, off by default; server:
+`--save-on-down`), so bleeding out takes you back only to that moment. Neither saves in Survival, and neither
+saves within a minute of another save.
 
 ### VATS in real time
 
@@ -199,7 +337,7 @@ character your game places where your friend is, and moves as they move.
   Pip-Boy light. Their name is over their head when you look at them, with their health when they're hurt.
 - **What they can do in your world:** enemies see them and fight them, and a hit on their stand-in reaches the real
   friend. Their kills, loot, doors and quest steps reach your game as described below. Pressing E on them does
-  nothing: you can't talk to, trade with or give things to a stand-in (giving items is coming in a later version).
+  nothing: you can't talk to, trade with or give things to a stand-in (drop an item near them instead: see Giving items below).
 - **Their companion:** it walks with them in your game too, but it stays their companion: its affinity, its romance
   and what it carries are kept in each game apart. If you both travel with Dogmeat, each game keeps its own.
 
@@ -227,12 +365,16 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
+  With the host's `bSharedStorage` on, a home's and a settlement's containers (not the workbench) have one
+  copy for everyone, the host's (see [Host settings](#host-settings)).
 - **Cars, barrels and other things that blow up:** a car, an explosive barrel, a fuel tank or a gas pump one of you
   shoots goes off in every game, once, and stays wrecked in every game: a friend who arrives later, or a reload, finds
   the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
 - **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
   your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
-  Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,
+  Weapons and armor put in a container stay in your game only, so drop them instead, unless the host turns on
+  `bContainerGifts` (see [Host settings](#host-settings)): then one put in a container is given to whoever takes it
+  first. Keys, notes,
   holotapes, bobbleheads, magazines and quest items can't be given (each player collects their own).
   Items left lying about are kept with the host's session.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
@@ -407,7 +549,8 @@ without it they last until it stops.
 ## Known limitations (early version)
 
 - Friends' faces haven't been tried with LooksMenu or with a heavily sculpted character yet; reports welcome.
-- You can't give a friend an item yet: what you drop stays in your game. Giving items is coming in a later version.
+- Keys, notes, holotapes, bobbleheads, magazines and quest items can't be given to a friend, and a weapon or armor put
+  in a container is given only with the host's experimental `bContainerGifts` on: otherwise drop it near them.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
 - Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters) and radiant quests other than those listed under
   "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.
@@ -415,8 +558,9 @@ without it they last until it stops.
   a quest script opens may still open only for the player who opened them.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.
-- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
+- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). A friend's lights and machines light up and run as their game powers them, once they have been to that settlement in the session; wiring or snapping to a friend's pieces doesn't cross games. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
 - If you load a save while in a session, a piece a friend moved or scrapped between that save and now stays where your save had it until the next session (the rest of their building comes back as it is now).
+- Each NPC is run by one player's game. One run by the other player's game walks with it but doesn't play its work, sitting or idle animations or greet you (talking to it works); a friendly NPC passes to your game when you stand next to it and the other player is well away. Settlers you recruit run separately in each game.
 
 ## Problems
 
@@ -433,6 +577,12 @@ without it they last until it stops.
 - "Version mismatch": everyone needs the same version of this mod.
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.
+- An invite arrives but accepting it (or Join Game) does nothing, and F1 and the hotkeys do nothing
+  in your game: the mod didn't load there. Start the game with F4SE (see [Playing](#playing)), then
+  look in `Documents\My Games\Fallout4\F4SE\f4se.log`: it says whether `F4Multiplayer.dll` loaded and,
+  if not, why (most often a game version other than 1.11.240, or a missing Address Library). If F1
+  works but accepting the invite still does nothing, close any other Bethesda game that is running
+  (Fallout 76, even minimized, can take the join), then restart Steam and try again.
 - "you're hosting": only the host sets `bHost = true`.
 - "The host isn't in the game yet": the host's game is at the main menu, loading, or in Vault 111's
   opening. Your game keeps trying and joins once the host is in.

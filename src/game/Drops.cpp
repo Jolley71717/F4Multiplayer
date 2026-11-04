@@ -1,11 +1,15 @@
 #include "game/Drops.h"
 
+#include "game/CharacterBinding.h"
 #include "game/DropBook.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoans.h"
 #include "game/Hud.h"
+#include "game/ItemCopies.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
+#include "game/RefTag.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
@@ -13,6 +17,7 @@
 #include "Text.h"
 
 #include <algorithm>
+#include <iterator>
 #include <atomic>
 #include <cmath>
 #include <format>
@@ -94,8 +99,16 @@ namespace Drops
 
 		// ---- the record (the co-save's thread too) ----
 
-		std::mutex       recordLock;
-		DropBook::Record record;
+		std::mutex                recordLock;
+		DropBook::Record          record;
+		CharacterBinding::World   world;  // whose world it is: said with the record, kept in the co-save ('CHAR')
+
+		// A random number for a fresh world key (under recordLock).
+		std::uint64_t WorldRandom()
+		{
+			static std::mt19937_64 random{ (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}() };
+			return random();
+		}
 
 		// ---- main thread ----
 
@@ -113,6 +126,7 @@ namespace Drops
 			Clock::time_point   movedAt{};
 			RE::NiPoint3        last{};
 			bool                reported = false;
+			bool                pickedUp = false;  // a plugin's reference our player picked up this session (PlacedPickups): it makes way by OwnGear kOwnDrop
 		};
 		std::vector<Pending> pending;
 
@@ -169,6 +183,9 @@ namespace Drops
 		// References of an item's base seen near our player at a drop the event named none for, that weren't it: not taken
 		// for a later one.
 		std::unordered_set<std::uint32_t> seenLoose;
+		// Plugin references our player picked up and hasn't dropped since: the engine puts such an item back into the world as
+		// that same reference, which the scan may then take for their drop (DropBook::MayBeOurs).
+		DropBook::PlacedPickups placedPickups;
 		// Our player's count of each base they carry, a frame before the events at hand (DropBook::MayScan): kept while the
 		// Pip-Boy or the console is open, where items are dropped.
 		std::optional<std::unordered_map<std::uint32_t, std::uint32_t>> carriedBefore;
@@ -186,6 +203,7 @@ namespace Drops
 		std::uint32_t scrapped = 0, scrapLost = 0;  // copies scrapped in workshop mode: granted to us / someone else had it first
 		std::uint32_t scrapTakenBack = 0, scrapShort = 0;  // lost scraps whose yield was taken out of the workbench / with none seen
 		std::uint32_t scrapRefused = 0;  // items of lost scraps left in the workbench: stored whole, not to be told from our player's own
+		std::uint32_t droppedPlaced = 0;  // drops that put a plugin's reference back into the world (picked up from it before)
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -387,7 +405,9 @@ namespace Drops
 
 		// The reference our player's item became: the one the event names, or else (in the Pip-Boy or the console only,
 		// where items are dropped, and when it can only have been a drop: a_mayScan, DropBook::MayScan) the newest reference
-		// of that item near them that we haven't seen before. Never one another of our systems keeps.
+		// of that item near them that we haven't seen before. Made at runtime, or a plugin's they picked up (an item picked
+		// up from where a plugin placed it goes back into the world as that reference: DropBook::MayBeOurs). Never one
+		// another of our systems keeps.
 		RE::TESObjectREFR* FindDropped(const Left& a_left, bool a_mayScan)
 		{
 			const auto player = Player();
@@ -397,7 +417,10 @@ namespace Drops
 			if (a_left.ref != 0) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_left.ref);
 				const auto base = ref ? ref->GetObjectReference() : nullptr;
-				return ref && base && base->GetFormID() == a_left.base && ref->IsCreated() && Loose(ref) && !Known(a_left.ref) && !OtherSystems(ref) ? ref : nullptr;
+				return ref && base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(ref->IsCreated(), placedPickups.Has(a_left.ref)) && Loose(ref) && !Known(a_left.ref) &&
+				               !OtherSystems(ref) ?
+				           ref :
+				           nullptr;
 			}
 			if (!a_left.inMenu) {
 				return nullptr;  // an item used up (ammo fired, food eaten)
@@ -410,7 +433,8 @@ namespace Drops
 			std::vector<std::uint32_t> others;
 			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, FIND_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (base && base->GetFormID() == a_left.base && a_ref->IsCreated() && Loose(a_ref) && !a_ref->IsDisabled() && !Known(a_ref->GetFormID()) &&
+				if (base && base->GetFormID() == a_left.base && DropBook::MayBeOurs(a_ref->IsCreated(), placedPickups.Has(a_ref->GetFormID())) && Loose(a_ref) &&
+					!a_ref->IsDisabled() && !Known(a_ref->GetFormID()) &&
 					!seenLoose.contains(a_ref->GetFormID()) && !OtherSystems(a_ref)) {
 					if (found) {
 						others.push_back((std::min)(found->GetFormID(), a_ref->GetFormID()));
@@ -440,57 +464,9 @@ namespace Drops
 
 		// ---- copies ----
 
-		bool ModHere(std::uint32_t a_mod)
-		{
-			return RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_mod) != nullptr;
-		}
-
-		// Whether our game can place that very item: its base and every mod on it are here.
-		bool Placeable(const Protocol::DroppedItem& a_drop)
-		{
-			const auto form = RE::TESForm::GetFormByID(a_drop.base);
-			return form && form->As<RE::TESBoundObject>() && std::ranges::all_of(a_drop.mods, [](const Protocol::ItemMod& a_mod) { return ModHere(a_mod.mod); });
-		}
-
-		// The extra data our copy is made with: the item's instance (its mods, as Equipment::Give builds a stand-in's), its
-		// count, condition and name.
-		RE::BSTSmartPointer<RE::ExtraDataList> ExtraFor(const Protocol::DroppedItem& a_drop, RE::TESBoundObject* a_object)
-		{
-			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
-			const auto type = a_object->GetFormType();
-			const bool gear = type == RE::ENUM_FORM_ID::kWEAP || type == RE::ENUM_FORM_ID::kARMO;
-			if (gear && a_drop.mods.empty() && !a_object->objectTemplate.items.empty()) {
-				// A plain one (its dropper's had no mods): its base's default combination, as Equipment::Give does, so the
-				// engine doesn't roll one for our level.
-				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*a_object, *extra, nullptr, true);
-			} else if (gear && a_drop.templateIndex != StandInGear::NO_TEMPLATE) {
-				std::unique_ptr<RE::BGSObjectInstanceExtra> instance{ new RE::BGSObjectInstanceExtra() };
-				instance->itemIndex = a_drop.templateIndex;
-				for (const auto& entry : a_drop.mods) {
-					if (const auto mod = RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(entry.mod)) {
-						instance->AddMod(*mod, entry.index, entry.rank, false);
-					}
-				}
-				if (instance->values) {
-					RE::BSTSmartPointer<RE::TBO_InstanceData> data;
-					instance->CreateBaseInstanceData(*a_object, data);
-					extra->AddExtra(instance.release());  // the list owns it from here
-					if (data) {
-						extra->AddExtra(new RE::ExtraInstanceData(a_object, data));
-					}
-				}
-			}
-			if (a_drop.count > 1) {
-				extra->SetCount(static_cast<std::int16_t>(a_drop.count));
-			}
-			if (a_drop.health >= 0.0f) {
-				extra->SetHealthPerc(a_drop.health);
-			}
-			if (!a_drop.name.empty()) {
-				extra->SetOverrideName(a_drop.name.c_str());
-			}
-			return extra;
-		}
+		// Made as a lent frame's pieces are (ItemCopies).
+		using ItemCopies::ExtraFor;
+		using ItemCopies::Placeable;
 
 		// Told when the VM has run a copy's BlockActivation (on one of its threads): from then on Take only asks the server.
 		// A cancelled call says nothing; the copy goes after BLOCK_WAIT.
@@ -539,6 +515,7 @@ namespace Drops
 				return {};
 			}
 			SaveGuard::Track(ref.get());
+			REX::INFO("Drops: placed copy {}", RefTag::Of(ref.get()));
 			// Take only asks the server (OnActivated); the engine's own pickup runs once the server grants it (StartTake).
 			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> blocked{ new Blocked(ref->GetFormID()) };
 			if (!Papyrus::CallMethodThen(blocked, ref.get(), "ObjectReference", "BlockActivation", true, true, false)) {
@@ -759,6 +736,11 @@ namespace Drops
 					continue;
 				}
 				++dropped;
+				const bool placedRef = !ref->IsCreated();  // a plugin's, picked up from the world this session (FindDropped: PlacedPickups)
+				if (placedRef) {
+					placedPickups.Dropped(ref->GetFormID());
+					++droppedPlaced;
+				}
 				const auto verdict = DropBook::Judge(FactsOf(ref, left.count));
 				if (verdict != DropBook::Givable::kGive) {
 					if (verdict != DropBook::Givable::kNotItem) {
@@ -773,9 +755,10 @@ namespace Drops
 				if (pending.size() >= MAX_PENDING) {
 					continue;
 				}
-				pending.push_back({ ref->GetHandle(), ref->GetFormID(), left.base, left.count, NewNonce(), a_now, a_now, ref->data.location, false });
+				pending.push_back({ ref->GetHandle(), ref->GetFormID(), left.base, left.count, NewNonce(), a_now, a_now, ref->data.location, false, placedRef });
 				if (Log()) {
-					REX::INFO("Drops: {:08X} ({:08X} x{}) dropped{}; reported once it rests", ref->GetFormID(), left.base, left.count, left.ref ? "" : " (found near the player)");
+					REX::INFO("Drops: {:08X} ({:08X} x{}) dropped{}{}; reported once it rests", ref->GetFormID(), left.base, left.count, left.ref ? "" : " (found near the player)",
+						placedRef ? " (a plugin's reference, picked up from the world)" : "");
 				}
 			}
 			usedNow.clear();
@@ -812,6 +795,15 @@ namespace Drops
 				const auto item = ItemOf(ref.get(), a_pending.count, a_pending.nonce);
 				if (!item) {
 					++notGiven;
+					return true;
+				}
+				// A copy of a friend's lent piece (FrameLoans): never given, as it is not ours. Left lying in our world, and
+				// its owner takes theirs out at the return, as for one sold or stored.
+				if (FrameLoans::IsLentItem(item->base, item->name)) {
+					++notGiven;
+					if (Log()) {
+						REX::INFO("Drops: {:08X} ({:08X}) dropped is a copy of a friend's lent piece; not given", ref->GetFormID(), item->base);
+					}
 					return true;
 				}
 				Send(Protocol::Encode(*item, Protocol::MessageType::kReportDrop));
@@ -1036,7 +1028,7 @@ namespace Drops
 		void TakeBackYield(const DropBook::ScrapYields::Yield& a_yield)
 		{
 			const auto lostIt = lostItems.find(a_yield.dropId);
-			const auto lost = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
+			const auto lostItem = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
 			if (lostIt != lostItems.end()) {
 				lostItems.erase(lostIt);
 			}
@@ -1066,7 +1058,7 @@ namespace Drops
 			}
 			bool tookWhole = false;
 			for (const auto& item : plan.whole) {
-				if (lost && lost->base == item.base && RemoveDrop(bench, *lost, item.count, [] {})) {
+				if (lostItem && lostItem->base == item.base && RemoveDrop(bench, *lostItem, item.count, [] {})) {
 					tookWhole = true;
 					REX::INFO("Drops: {:08X} x{} stored whole taken back out of workbench {:08X}, as that item: drop {} went to someone else", item.base, item.count,
 						a_yield.bench, a_yield.dropId);
@@ -1144,7 +1136,9 @@ namespace Drops
 		Protocol::DropRecord RecordForServer()
 		{
 			std::scoped_lock l{ recordLock };
-			return record.ForServer();
+			auto             out = record.ForServer();
+			out.character = world.Key(WorldRandom());
+			return out;
 		}
 	}
 
@@ -1172,6 +1166,14 @@ namespace Drops
 		if (activatedInbox.size() < MAX_INBOX) {
 			activatedInbox.push_back(a_ref);
 		}
+	}
+
+	void OnPickedUp(std::uint32_t a_ref)
+	{
+		if (!listening) {
+			return;  // not in a session: no friend's world heard of this pickup (DropBook::MayBeOurs)
+		}
+		placedPickups.PickedUp(a_ref);
 	}
 
 	void OnEquipped(std::uint32_t a_base)
@@ -1219,6 +1221,48 @@ namespace Drops
 		}
 	}
 
+	void RecordMade(std::uint64_t a_nonce)
+	{
+		std::scoped_lock l{ recordLock };
+		record.Made(a_nonce);
+	}
+
+	bool HasMade(std::uint64_t a_nonce)
+	{
+		std::scoped_lock l{ recordLock };
+		return record.HasMade(a_nonce);
+	}
+
+	void RecordTook(std::uint32_t a_dropId)
+	{
+		std::scoped_lock l{ recordLock };
+		record.Took(a_dropId);
+	}
+
+	bool HasTaken(std::uint32_t a_dropId)
+	{
+		std::scoped_lock l{ recordLock };
+		return record.HasTaken(a_dropId);
+	}
+
+	bool CanPlace(const Protocol::DroppedItem& a_item)
+	{
+		return Placeable(a_item);
+	}
+
+	bool AddOneTo(RE::TESObjectREFR* a_ref, const Protocol::DroppedItem& a_item)
+	{
+		const auto form = RE::TESForm::GetFormByID(a_item.base);
+		const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+		if (!a_ref || !object || !Placeable(a_item)) {
+			return false;
+		}
+		auto one = a_item;
+		one.count = 1;  // the stack's count is the container's, not its extra data's
+		a_ref->AddObjectToContainer(object, ExtraFor(one, object), 1, nullptr, RE::ITEM_REMOVE_REASON::kNone);
+		return true;
+	}
+
 	void DevDropNext()
 	{
 		devDrop = true;
@@ -1238,6 +1282,9 @@ namespace Drops
 
 	void OnPlaced(const Protocol::DroppedItem& a_drop)
 	{
+		if (a_drop.holder != 0) {
+			return;  // a gift's (Gifts')
+		}
 		++received;
 		const auto mine = a_drop.ownerId == localId && localId != 0;
 		const auto it = mine ? std::ranges::find(pending, a_drop.nonce, &Pending::nonce) : pending.end();
@@ -1259,8 +1306,16 @@ namespace Drops
 		// Our drop, offered to us alone: the item we dropped makes way for a copy like everyone's, and only once it has
 		// does the server tell the others (kPlaced), so nobody can take it while it is still in our world.
 		const auto ref = it->ref.get();
-		if (ref && Lies(ref.get()) && Equipment::MayChange(ref.get(), OwnGear::Change::kDropCopy)) {
-			RemotePlayers::Discard(it->ref, it->droppedAt);
+		// Our player's own item, not a copy: OwnGear kOwnDrop, which also lets through a plugin's reference they picked up this
+		// session (it->pickedUp), never any other (the copies' kDropCopy stays limited to references this game made).
+		if (ref && Lies(ref.get()) && Equipment::MayMakeWay(ref.get(), it->pickedUp)) {
+			// One made at runtime is deleted; a plugin's (an item picked up from where the plugin placed it) only disabled, as
+			// a friend's pickup does it, so no load puts it back where the plugin placed it (DropBook::HowItMakesWay).
+			if (DropBook::HowItMakesWay(ref->IsCreated()) == DropBook::MakeWay::kDelete) {
+				RemotePlayers::Discard(it->ref, it->droppedAt);
+			} else {
+				ref->Disable();
+			}
 			{
 				std::scoped_lock l{ recordLock };
 				record.Made(a_drop.nonce);
@@ -1374,7 +1429,7 @@ namespace Drops
 
 	void OnList(const Protocol::DropList& a_list)
 	{
-		listing.insert(listing.end(), a_list.drops.begin(), a_list.drops.end());
+		std::ranges::copy_if(a_list.drops, std::back_inserter(listing), [](const Protocol::DroppedItem& a_drop) { return a_drop.holder == 0; });  // the gifts are Gifts'
 		if (!a_list.last) {
 			return;
 		}
@@ -1519,11 +1574,32 @@ namespace Drops
 	{
 		std::scoped_lock l{ recordLock };
 		record.Replace(DropBook::Record{});
+		world.Revert();
+	}
+
+	std::vector<std::uint8_t> SaveWorld()
+	{
+		std::scoped_lock l{ recordLock };
+		return world.Save(WorldRandom());
+	}
+
+	void LoadWorld(std::span<const std::uint8_t> a_bytes)
+	{
+		std::scoped_lock l{ recordLock };
+		world.Loaded(a_bytes);
+	}
+
+	void OnWorldStarted(bool a_newGame, std::uint64_t a_character)
+	{
+		placedPickups.Clear();  // what the last world's player picked up: this one's inventory is the save's
+		std::scoped_lock l{ recordLock };
+		world.Started(a_newGame, a_character, WorldRandom());
 	}
 
 	void Reset()
 	{
 		listening = false;
+		placedPickups.Clear();  // the session's pickups: one from before the next session is no drop of it (DropBook::MayBeOurs)
 		GiveBackUnconfirmed();  // before our copies go: the session may never have heard those left our world
 		DiscardCopies();
 		OnGameLoaded();
@@ -1547,7 +1623,7 @@ namespace Drops
 			out += std::format("; pending {:08X} base={:08X} x{} {}", entry.refId, entry.base, entry.count, entry.reported ? "reported" : "settling");
 		}
 		const auto ours = RecordForServer();
-		out += std::format("; record: session={:016X} made={} taken={}", ours.sessionId, ours.made.size(), ours.taken.size());
+		out += std::format("; record: session={:016X} made={} taken={} character={:016X}", ours.sessionId, ours.made.size(), ours.taken.size(), ours.character);
 		return out;
 	}
 
@@ -1593,8 +1669,9 @@ namespace Drops
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
 		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
-		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={}",
+		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={} droppedPlaced={} placedPickups={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused);
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused,
+			droppedPlaced, placedPickups.Size());
 	}
 }

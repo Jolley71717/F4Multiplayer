@@ -26,9 +26,11 @@ session.joining_friend = Multiplayer: joining your friend's game
 session.no_steam = Multiplayer: Steam isn't available
 session.host_other_session = Multiplayer: the host is in another session now (another character, or a fresh start); join again from the menu to play in it
 session.character_changed_host = Multiplayer: you loaded another character; hosting restarts with that character's session
-session.hosting_resumes = Multiplayer: hosting starts again once you're out of Vault 111
+session.hosting_resumes = Multiplayer: hosting starts again once your new character has a name and is out of Vault 111
 session.character_changed_left = Multiplayer: you loaded another character and left the session; join again from the menu
+session.unnamed_waits = Multiplayer: the session waits until your new character has a name; a save made before then has your last character's ID and would play in that character's session
 host.err_opening = you can host once you're out of Vault 111
+host.err_opening_unnamed = you can host once your new character has a name
 host.err_port = could not host on port {port}
 world.history_full = Multiplayer: the session's shared history is {percent}% full; loot and kill sharing stop at 100%. The host can start a fresh session by removing the session file (see the docs)
 
@@ -84,7 +86,18 @@ party.ping_you = you
 party.ping_something = something
 party.where = {player}: {where}
 party.no_emote_armor = No emotes in power armor
-party.friends_frame = This is {player}'s power armor. Sharing power armor with friends is coming in a later version.
+party.friends_frame = This is {player}'s power armor. Once it is parked you can get in to borrow it, but its pieces stay theirs.
+party.frame_asking = Asking {player} to lend you their power armor...
+party.frame_lent = {player} lent you their power armor. Press again to get in.
+party.frame_not_lending = {player} doesn't lend their power armor.
+party.frame_refused = {player} can't lend this power armor right now.
+party.frame_busy = You already have a friend's power armor on loan.
+party.frame_borrowed = {player} borrowed your power armor
+party.frame_given_back = {player} gave your power armor back
+party.frame_owner_left = {player} left: their power armor goes when you get out
+party.frame_loan_over = The power armor you borrowed went back to its owner
+party.lent_item = {player}'s {item}
+party.frame_is_lent = Your power armor is lent to {player}
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [in a menu]
 party.killed = {killer} killed {victim}
@@ -95,6 +108,7 @@ party.no_teleport_target = Multiplayer: nobody to teleport to
 party.teleport_prompt = Teleport to {player}? Hold {key} to go
 party.teleport_choose = Tap {key} to choose who to teleport to
 party.cant_teleport_opening = Can't teleport until you've left Vault 111
+party.cant_teleport_unnamed = Can't teleport until your new character has a name
 party.cant_teleport_talking = Can't teleport while talking
 party.cant_teleport_scene = Can't teleport during a scene
 party.cant_teleport_busy = Can't teleport while sitting or using something
@@ -109,7 +123,9 @@ party.teleporting = Teleporting to {player}
 
 # --- Being down and helping up ---
 down.went_down = You're down! A friend can help you up. Hold {key} to give up
+down.went_down_crawl = You're down! A friend can help you up, and you can crawl. Hold {key} to give up
 down.seconds_left = {n} seconds left to be helped up
+down.friends_gone = Nobody can help you up now; you bleed out in {n} s unless a friend comes back
 down.helping = Helping {player} up...
 down.helped = You helped {player} up
 down.helped_you = {player} helped you up
@@ -118,6 +134,20 @@ down.last_revive = That was your last revive for now: the next lethal hit kills 
 down.revives_back = Your revives are back: a friend can help you up again
 down.cooldown = Just helped up: for {n} seconds a lethal hit kills you
 down.cant_help_fighting = Can't help {player} up during a fight
+down.bleed_out_loads_save = If nobody helps you up in {n} seconds, you die and the game loads your last save
+down.death_loads_save = If you die, the game loads your last save
+
+# --- The host's rules for being down, as a joiner is told them ---
+rules.host = Host's rules: {rules}
+rules.revive_off = no revives, a lethal hit kills
+rules.revives_fight = revive limit {n} per fight
+rules.revives_window = revive limit {n} per {minutes} min
+rules.bleed_out = {n} s to bleed out
+rules.help_time = {n} s to help a friend up
+rules.revive_health = up with {n}% health
+rules.cooldown = a lethal hit within {n} s of a revive kills
+rules.out_of_combat = no helping up during a fight
+rules.save_on_down = an autosave when you go down
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player} discovered {place}
@@ -134,6 +164,14 @@ workshop.rescued = What you kept in a friend's container is in your inventory
 drops.container_hint = Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them
 drops.not_given = Friends can't pick this item up: it stays on the ground in your game only
 drops.taken_first = A friend picked it up first
+storage.closed = The host's copy of this container isn't open now (they are away from it, or their game loaded): it closed, try again once they are near it
+storage.take_refused = That was gone from the host's container (a friend took it first?): it went back
+storage.put_refused = That couldn't go into the host's container (their game lacks its mod?): it came back to you
+storage.short = The container held less than it showed: what wasn't there was taken back
+storage.settle_cut = Your moves at the host's containers could not all be put right after your load (the session's log is full, or your share of it is spent): they stay closed to you until you load again
+gifts.given = Friends can take this from their copy of the container now (the first to take it has it); until one does, you can take it back
+gifts.not_given = Friends won't get this one: it stays in your copy of the container only (a quest item, a mod only your game has, or the session is full)
+gifts.taken_first = A friend took it first
 save.old_leftover = Multiplayer: this save holds a leftover from an older version of the mod. Save now, then restart the game and play from the new save
 
 # --- The F1 menu ---
@@ -190,6 +228,8 @@ menu.compass_markers = Compass markers
 menu.compass_markers_what = friends on the compass
 menu.fast_loading = Fast loading
 menu.fast_loading_what = vsync off during loading screens
+menu.lend_power_armor = Lend power armor
+menu.lend_power_armor_what = friends may borrow your parked power armor
 
 menu.mods = Compare mods ({n})
 menu.mods_ask = Ask the host again

@@ -40,6 +40,8 @@ hand-declared functions in `src/steam/SteamApi.cpp`.
 
 If you already cloned without submodules: `git submodule update --init --recursive`.
 
+On a Mac: [docs/misc/MAC.md](docs/misc/MAC.md).
+
 ## Tests
 
 ```bat
@@ -90,9 +92,13 @@ the wire. Protocol tests live in `tests/ProtocolTests.cpp`.
 
 Work for a version lands on a `release-X.Y.Z` branch and is first published as a GitHub
 pre-release tagged `vX.Y.Z-rcN` once the unit tests and a two-game test pass. The same commit and
-the rc's own zip (`tools/promote.ps1`) become `vX.Y.Z`, fast-forwarded to `main`, after a multi-hour
+the rc's own zip (`tools/promote.ps1`) become `vX.Y.Z`, fast-forwarded to `main`, after a 90-minute
 soak with no crash and no regression report; Nexus gets settled versions in batches, rarely. Details
 in [docs/RELEASING.md](docs/RELEASING.md).
+
+A pull request is merged only with the `reviewed` label, which says its code was read at its current head; the review
+itself is a comment naming that commit. New commits remove the label (`.github/workflows/review-label.yml`) until they
+are reviewed too.
 
 ## No personal data
 

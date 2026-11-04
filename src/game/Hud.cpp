@@ -1,6 +1,7 @@
 #include "game/Hud.h"
 
 #include "HangWatch.h"
+#include "game/ClickWatch.h"
 #include "game/SaveLoadHold.h"
 
 namespace Hud
@@ -35,6 +36,7 @@ namespace Hud
 
 		void Show(const std::string& a_clean)
 		{
+			ClickWatch::Note(ClickRates::Source::kHud);
 			RE::SendHUDMessage::ShowHUDMessage(a_clean.c_str(), "", false, false);
 		}
 	}

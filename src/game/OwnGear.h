@@ -11,7 +11,14 @@
 // takes off, gives or takes away. Every change the session makes to an inventory or what an actor wears is judged here
 // at the point it is made, whatever the code that asked for it already checked (a Nexus report had a host lose their
 // Pip-Boy and weapons as a friend joined; that was a story mod's quest stage replayed, see Official.h, and nothing of
-// the session may ever do the same).
+// the session may ever do the same). The exception is the player's own act put right: a take or put of theirs at a
+// friend's shared storage that the server refused, or a take the host's chest held less of, is undone (Change::kStorageUndo,
+// never on anything but our player, and only for a StorageView::PlayerChange, which only StorageView::Client makes).
+// Another is the player's take of a gift from a container (Change::kGiftTake, GiftBook.h): what they took is held back from
+// their inventory until the server grants it, then given, or taken out again if a friend's take came first.
+// A third is a power armor frame a friend lent: copies of its pieces go into our copy of it, and are gathered back out of
+// it and out of our player as they get out (Change::kLoan; only items named as the lent ones, FrameLoans).
+// A move our loaded world lacks is put right in the true copy by the server, never on our player.
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
 {
@@ -23,10 +30,33 @@ namespace OwnGear
 		kEmptyFrame,    // a power armor frame emptied for a stand-in to get into (a copy placed for it, SwitchIntoPowerArmor)
 		kTakeLoose,     // a loose item a friend picked up, taken out of this world too (WorldSync's pickups)
 		kContainer,     // what a friend took from or put into a container or a corpse (the shared loot)
-		// An item lying in the world that a player gave by dropping it (Drops): this game's copy of it placed, taken away when
-		// someone takes it, and the dropper's own item swapped for one. Only ever a reference this game made, loose in the
-		// world: the local player's take of one is their own (they pressed Take), granted by the server first.
+		// An item lying in the world that a player gave by dropping it (Drops): this game's copy of it placed, and taken away
+		// when someone takes it. Only ever a reference this game made, loose in the world: the local player's take of one is
+		// their own (they pressed Take), granted by the server first. (The dropper's own item making way is kOwnDrop.)
 		kDropCopy,
+		// Shared storage (StorageView.h): our player's own move at a friend's storage undone (the server refused it, or the
+		// host's chest held less than a take: a take given back, a put returned). A move our loaded world lacks is put right
+		// in the true copy by the server, never here. The one change made to the local player, and only ever to them: what they
+		// did themselves, put right. Nothing else goes to them (a friend's copy's own things are set aside in the copy while it
+		// shows the true one, never moved to the player).
+		kStorageUndo,
+		// Gifts (GiftBook.h, the host's bContainerGifts): a copy of a weapon or armor given through a container, put in or taken out
+		// of this game's own copy of that container, and the giver's own item taken out of it as it is given. A container's
+		// inventory only: never an actor's, never our player's.
+		kGiftCopy,
+		// Our player's own take of a gift: the item they took held back from their inventory until the server's answer, given
+		// them when it is theirs, or taken out again when a friend's take came first. Only ever our player, and only ever what
+		// they took themselves (GiftBook::Client makes it).
+		kGiftTake,
+		// A power armor frame lent to our player (FrameLoans): copies of its owner's pieces and core put into our copy of the
+		// frame, and gathered back out of it and out of our player as they get out (only items named as the lent ones), with a
+		// fusion core of our player's own the frame used up given back to them. Our player, or a frame this game placed.
+		kLoan,
+		// Our player's own drop making way for the session's copy of it, on the server's offer (Drops): the item they dropped,
+		// loose in the world. A reference this game made, or a plugin's that our player picked up this session and dropped
+		// (Target::pickedUp: an item picked up from where a plugin placed it goes back into the world as that reference).
+		// Never any other plugin item: the world's own, which no copy change (kDropCopy) takes either.
+		kOwnDrop,
 		kCount,
 	};
 
@@ -42,6 +72,10 @@ namespace OwnGear
 		bool inWorld = true;         // in a cell: a reference an inventory holds (a persistent one, picked up) has none
 		bool heldByPlayer = false;   // in no cell, and the engine names the local player as the inventory that holds it
 		bool heldHere = false;       // in no cell, and the engine names another inventory here as its holder (a container's, an NPC's)
+		bool container = false;      // a container's reference (its base is one), not an actor
+		// A plugin's reference our player picked up from the world this session and has dropped again (Drops' note of their
+		// pickups; the engine can't tell). Read by kOwnDrop alone.
+		bool pickedUp = false;
 	};
 
 	enum class Verdict : std::uint8_t
@@ -64,7 +98,7 @@ namespace OwnGear
 			return Verdict::kGone;
 		}
 		if (a_target.player) {
-			return Verdict::kOurPlayer;
+			return a_change == Change::kStorageUndo || a_change == Change::kGiftTake || a_change == Change::kLoan ? Verdict::kGo : Verdict::kOurPlayer;
 		}
 		switch (a_change) {
 		case Change::kDressStandIn:
@@ -87,13 +121,25 @@ namespace OwnGear
 		case Change::kContainer:
 			return a_target.standIn ? Verdict::kWrongActor : Verdict::kGo;
 		case Change::kDropCopy:
+		case Change::kOwnDrop:
 			if (!a_target.inWorld) {
 				if (a_target.heldByPlayer) {
 					return Verdict::kInOurInventory;
 				}
 				return a_target.heldHere ? Verdict::kInInventory : Verdict::kNotPlaced;
 			}
-			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
+			return a_target.madeHere || (a_change == Change::kOwnDrop && a_target.pickedUp) ? Verdict::kGo : Verdict::kNotCopy;
+		case Change::kStorageUndo:
+			return Verdict::kWrongActor;  // only ever our player
+		case Change::kGiftCopy:
+			return a_target.container && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kWrongActor;
+		case Change::kGiftTake:
+			return Verdict::kWrongActor;  // only ever our player
+		case Change::kLoan:
+			if (a_target.playersFrame) {
+				return Verdict::kOurFrame;  // never while our player is in it
+			}
+			return a_target.madeHere && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kCount:
 			break;
 		}
@@ -115,6 +161,16 @@ namespace OwnGear
 			return "container";
 		case Change::kDropCopy:
 			return "dropCopy";
+		case Change::kStorageUndo:
+			return "storageUndo";
+		case Change::kGiftCopy:
+			return "giftCopy";
+		case Change::kGiftTake:
+			return "giftTake";
+		case Change::kLoan:
+			return "loan";
+		case Change::kOwnDrop:
+			return "ownDrop";
 		case Change::kCount:
 			break;
 		}

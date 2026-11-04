@@ -95,6 +95,7 @@ namespace ProtocolSamples
 		a.gait = static_cast<std::uint8_t>(3 + a_seed);
 		a.gaitRate = static_cast<std::uint8_t>(200 - a_seed);
 		a.aimPitch = static_cast<std::int8_t>(-41 + static_cast<int>(a_seed));
+		a.sentMs = 0x7A3B0000u + a_seed * 50;
 		return a;
 	}
 
@@ -164,6 +165,10 @@ namespace ProtocolSamples
 		s.push_back({ "WorldRequest", Encode(WorldRequest{ 0xABCDEF0123456789ull, 5 }), D(DecodeWorldRequest) });
 		s.push_back({ "PlayerState", Encode(MakeState(3)), D(DecodePlayerState) });
 		s.push_back({ "Welcome", Encode(Welcome{ 9, 0x1122334455667788ull, true, true, SessionRules{ .revive = true, .bleedOutSeconds = 60, .maxRevives = 2, .realTimeVats = false } }), D(DecodeWelcome), false });
+		s.push_back({ "WelcomeNpcLevelHost", Encode(Welcome{ 9, 0x1122334455667788ull, false, true, SessionRules{ .npcLevel = NpcLevelRule::kHost } }), D(DecodeWelcome), false });
+		s.push_back({ "WelcomeNpcLevelOwn", Encode(Welcome{ 9, 0x1122334455667788ull, false, true, SessionRules{ .npcLevel = NpcLevelRule::kOwn } }), D(DecodeWelcome), false });
+		s.push_back({ "SessionWorld", Encode(SessionWorld{ 23 }), D(DecodeSessionWorld) });
+		s.push_back({ "SessionWorldNone", Encode(SessionWorld{ 0 }), D(DecodeSessionWorld) });
 		s.push_back({ "Reject", Encode(Reject{ "Server is full" }), D(DecodeReject), false });
 		s.push_back({ "PlayerJoined", Encode(PlayerJoined{ 4, "Bob", 0x0001ABCD }), D(DecodePlayerJoined), false });
 		s.push_back({ "PlayerLeft", Encode(PlayerLeft{ 4 }), D(DecodePlayerLeft), false });
@@ -173,8 +178,14 @@ namespace ProtocolSamples
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
 			s.push_back({ "ActorDeath found dead", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .foundDead = true }, type), D(DecodeActorDeath) });
 		}
-		for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
+		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
 			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });
+		}
+		for (const auto type : { MT::kReportDamage, MT::kActorDamaged }) {
+			s.push_back({ "ActorHealth damage", Encode(ActorHealth{ REF_A, 0.25f, 7, 3 }, type), D(DecodeActorHealth) });
+		}
+		for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {
+			s.push_back({ "DamageAnswer", Encode(DamageAnswer{ REF_A, 7, 3, DamageAnswer::Why::kHeldTooLong, 0.25f }, type), D(DecodeDamageAnswer) });
 		}
 		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
 		s.push_back({ "IndexedContainerChange", Encode(IndexedContainerChange{ 17, 2, { REF_A, 0x0000000F, 5 } }), D(DecodeIndexedContainerChange) });
@@ -257,6 +268,12 @@ namespace ProtocolSamples
 			s.push_back({ "NpcIdentity", Encode(roll, type), D(DecodeNpcIdentity) });
 			s.push_back({ "NpcIdentityFactions", Encode(NpcIdentity{ .playerId = 2, .refId = RUNTIME_REF, .level = 8, .flags = NpcIdentity::kFactions, .factions = { { 0x0001BCC0, 0 }, { 0x00058302, 1 } } }, type), D(DecodeNpcIdentity) });
 		}
+		{
+			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .mask = 0b0000'0000'0001 };
+			roll.templates[0] = 0x0002A1B5;
+			s.push_back({ "NpcIdentities", Encode(std::vector<NpcIdentity>{ roll, NpcIdentity{ .playerId = 3, .refId = REF_B, .level = 4 } }), D(DecodeNpcIdentities) });
+			s.push_back({ "RollLives", Encode(std::vector<RollLife>{ { REF_A, 1 }, { REF_B, 3 } }), D(DecodeRollLives) });
+		}
 		for (const auto type : { MT::kReportFace, MT::kPlayerFace }) {
 			s.push_back({ "Face", Encode(MakeFace(), type), D(DecodeFace) });
 		}
@@ -267,6 +284,12 @@ namespace ProtocolSamples
 		wire.wire = WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
 		s.push_back({ "WorkshopItem (wire)", Encode(wire, MT::kWorkshopItem), D(DecodeWorkshopItem) });
 		s.push_back({ "WorkshopItems", Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), wire }), D(DecodeWorkshopItems) });
+		s.push_back({ "OwnWorkshopItems", Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), wire }, MT::kOwnWorkshopItems), D(DecodeWorkshopItems) });
+		{
+			auto gone = MakeWorkshopItem();
+			gone.op = WorkshopOp::kScrapped;
+			s.push_back({ "WorkshopGone", Encode(std::vector<WorkshopItem>{ gone }, MT::kReportWorkshopGone), D(DecodeWorkshopItems) });
+		}
 		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
 		}
@@ -275,7 +298,7 @@ namespace ProtocolSamples
 			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true, 0x0001A2B6, 0x0000003C, 1300.0f, -900.0f, 42.0f }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
 		}
 		for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {
-			s.push_back({ "Explosion", Encode(Explosion{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C }, type), D(DecodeExplosion) });
+			s.push_back({ "Explosion", Encode(Explosion{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C, REF_B }, type), D(DecodeExplosion) });
 		}
 		for (const auto type : { MT::kReportActivation, MT::kActivation }) {
 			s.push_back({ "Activation", Encode(Activation{ 2, 0x000A1B2C }, type), D(DecodeActivation) });
@@ -314,6 +337,9 @@ namespace ProtocolSamples
 			s.push_back({ "Drop", Encode(MakeDrop(), type), D(DecodeDroppedItem) });
 			DroppedItem plain{ .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3 };
 			s.push_back({ "Drop(plain)", Encode(plain, type), D(DecodeDroppedItem) });
+			auto gift = MakeDrop();
+			gift.holder = 0x0001D9F6;  // a chest: a gift (bContainerGifts)
+			s.push_back({ "Drop(gift)", Encode(gift, type), D(DecodeDroppedItem) });
 		}
 		s.push_back({ "ClaimDrop", Encode(ClaimDrop{ 4, DropClaim::kGiveBack }), D(DecodeClaimDrop) });
 		// The dropper's game swapped its item for a copy: drop 1, the first a fresh server numbers (the Drop above, from a
@@ -326,6 +352,34 @@ namespace ProtocolSamples
 		s.push_back({ "DropList(empty)", Encode(DropList{}), D(DecodeDropList) });
 		s.push_back({ "PluginTable", Encode(PluginTable{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" } }), D(DecodePluginTable) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
+		for (const auto type : { MT::kReportStorage, MT::kStorageContents }) {
+			s.push_back({ "StorageListing", Encode(StorageListing{ REF_A, 41, { { 0x0001F276, 120 }, { 0x0004835D, 3 } } }, type), D(DecodeStorageListing) });
+			s.push_back({ "StorageListing(empty)", Encode(StorageListing{ REF_B, 0, {} }, type), D(DecodeStorageListing) });
+		}
+		s.push_back({ "StorageView", Encode(StorageView{ REF_A, true }), D(DecodeStorageView) });
+		s.push_back({ "StorageView(closed)", Encode(StorageView{ REF_A, false }), D(DecodeStorageView) });
+		s.push_back({ "StorageOwners", Encode(StorageOwners{ { { REF_A, 1, 0 }, { REF_B, 1, 17 } } }), D(DecodeStorageOwners) });
+		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
+		s.push_back({ "StorageSettle", Encode(StorageSettle{ 3, 120, 40, { 41, 57 }, { { REF_A, 0x0000000F, -3 }, { REF_B, 0x0004835D, 2 } } }), D(DecodeStorageSettle) });
+		s.push_back({ "StorageSettle(nothing)", Encode(StorageSettle{ 1, 0, 0, {}, {} }), D(DecodeStorageSettle) });
+		s.push_back({ "StorageCaughtUp", Encode(StorageCaughtUp{ 2 }), D(DecodeStorageCaughtUp) });
+		s.push_back({ "StorageReversals", Encode(StorageReversals{ { { 41, 2, -3 }, { 57, 2, 5 } } }), D(DecodeStorageReversals) });
+		s.push_back({ "StorageRefusal", Encode(StorageRefusal{ REF_A, 0x0001F276, -5, STORAGE_NOT_NUMBERED, StorageReason::kNotHeld }), D(DecodeStorageRefusal) });
+		s.push_back({ "StorageRefusal(short)", Encode(StorageRefusal{ REF_A, 0x0001F276, -2, 17, StorageReason::kShort }), D(DecodeStorageRefusal) });
+		s.push_back({ "StorageRefusal(closed)", Encode(StorageRefusal{ REF_A, 0, 0, STORAGE_NOT_NUMBERED, StorageReason::kClosed }), D(DecodeStorageRefusal) });
+		for (const auto type : { MT::kBorrowFrame, MT::kLoanAsked }) {
+			s.push_back({ "FrameBorrow", Encode(FrameBorrow{ 2, RUNTIME_REF }, type), D(DecodeFrameBorrow) });
+		}
+		for (const auto type : { MT::kLendFrame, MT::kFrameLent }) {
+			FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+			lent.kit.push_back(LentItem{ .slot = 0, .base = 0x00154ABC, .templateIndex = 1, .mods = { { 0x0018ADA6, 0, 1 }, { REF_B, 1, 0 } }, .health = 0.5f });
+			lent.kit.push_back(LentItem{ .slot = 3, .base = 0x00154AC5, .health = 1.0f, .name = "Old Faithful" });
+			lent.kit.push_back(LentItem{ .slot = 7, .base = 0x00075FE4, .health = 0.25f, .core = true });
+			s.push_back({ "FrameLending", Encode(lent, type), D(DecodeFrameLending) });
+		}
+		for (const auto type : { MT::kReturnFrame, MT::kFrameReturned }) {
+			s.push_back({ "FrameReturn", Encode(FrameReturn{ 2, 3, RUNTIME_REF, false, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, { { 0, true, 0.25f }, { 3, false, -1.0f }, { 7, true, 0.0f } } }, type), D(DecodeFrameReturn) });
+		}
 		return s;
 	}
 
@@ -348,6 +402,7 @@ namespace ProtocolSamples
 		case MT::kReportDeath:
 		case MT::kReportHealth:
 		case MT::kReportDamage:
+		case MT::kReportDamageAnswer:
 		case MT::kReportContainer:
 		case MT::kReportPickup:
 		case MT::kReportRefState:
@@ -373,6 +428,7 @@ namespace ProtocolSamples
 		case MT::kReportNpcIdentity:
 		case MT::kReportFace:
 		case MT::kReportWorkshopItem:
+		case MT::kReportWorkshopGone:
 		case MT::kReportExplosion:
 		case MT::kReportActivation:
 		case MT::kReportSpawn:
@@ -390,7 +446,13 @@ namespace ProtocolSamples
 		case MT::kReportRadiantStart:
 		case MT::kReportRadiantStage:
 		case MT::kReportTrap:
+		case MT::kBorrowFrame:
+		case MT::kLendFrame:
+		case MT::kReturnFrame:
 		case MT::kWelcome:
+		case MT::kSessionWorld:
+		case MT::kRollLives:
+		case MT::kNpcIdentities:
 		case MT::kReject:
 		case MT::kPlayerJoined:
 		case MT::kPlayerLeft:
@@ -400,6 +462,7 @@ namespace ProtocolSamples
 		case MT::kWorldState:
 		case MT::kActorHealth:
 		case MT::kActorDamaged:
+		case MT::kDamageAnswer:
 		case MT::kContainerChanged:
 		case MT::kRefPickedUp:
 		case MT::kRefStateChanged:
@@ -424,6 +487,7 @@ namespace ProtocolSamples
 		case MT::kPlayerFace:
 		case MT::kWorkshopItem:
 		case MT::kWorkshopItems:
+		case MT::kOwnWorkshopItems:
 		case MT::kExplosion:
 		case MT::kActivation:
 		case MT::kSpawned:
@@ -442,6 +506,18 @@ namespace ProtocolSamples
 		case MT::kObjectRested:
 		case MT::kPluginTable:
 		case MT::kTraps:
+		case MT::kReportStorage:
+		case MT::kViewStorage:
+		case MT::kReportStorageShort:
+		case MT::kStorageSettle:
+		case MT::kStorageCaughtUp:
+		case MT::kStorageReversals:
+		case MT::kStorageContents:
+		case MT::kStorageOwners:
+		case MT::kStorageRefused:
+		case MT::kLoanAsked:
+		case MT::kFrameLent:
+		case MT::kFrameReturned:
 			return true;
 		}
 		return false;

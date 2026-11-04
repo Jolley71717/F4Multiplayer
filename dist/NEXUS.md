@@ -10,7 +10,7 @@ docs/RELEASING.md.
 - **Category:** Gameplay
 - **Short description** (350 characters max):
 
-Co-op for 4 or more players through Steam: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save; the main story moves together by default (the host can keep it separate). F4SE plugin, early alpha.
+Co-op through Steam for 4 players, or more if the host allows it: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save; the main story moves together by default. F4SE plugin, alpha.
 
 ## Description (BBCode)
 
@@ -57,14 +57,14 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [size=4][b]Install[/b][/size]
 Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. The full guide is in the zip: F4Multiplayer\INSTALL.md.
 
-[size=4][b]Early alpha[/b][/size]
+[size=4][b]Alpha[/b][/size]
 Back up your saves first, or keep a separate save for co-op.
 
 [b]Known gaps[/b]
 [list]
-[*]Radiant quests (Preston's "a settlement needs our help" and the like) aren't shared.
+[*]Radiant quests other than the Minutemen's settlement requests, and settlement attacks, aren't shared.
 [*]You can't scrap or power a friend's settlement pieces.
-[*]You can't hand a friend an item yet.
+[*]To give a friend an item, drop it near them: keys, notes, holotapes, bobbleheads, magazines and quest items can't be given.
 [*]Vault 114's gear door and security gates opened from a terminal or card reader open for everyone; other doors a quest script opens may still open only for the player who opened them.
 [/list]
 

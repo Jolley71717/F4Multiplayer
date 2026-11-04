@@ -54,6 +54,17 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 999, a_killed }, MT::kReportDeath);
 	}
 
+	// Where the player says they are (outdoors in the Commonwealth unless a_cell names an interior).
+	std::vector<std::uint8_t> StateAt(std::uint32_t a_sequence, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_cell = 0)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.cell = a_cell;
+		state.worldspace = a_cell ? 0 : 0x0000003C;
+		state.x = a_x, state.y = a_y, state.z = a_z;
+		return Protocol::Encode(state);
+	}
+
 	// A death seen happening: the corpse lies at (a_x, 0, 0) in the reporter's game.
 	auto DeathAt(std::uint32_t a_ref, bool a_killed, float a_x)
 	{
@@ -70,6 +81,12 @@ namespace
 	auto Health(std::uint32_t a_ref, float a_health)
 	{
 		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health }, MT::kReportHealth);
+	}
+
+	// What the sender's hit took off its copy of an NPC another game runs, for that game to deal (kReportDamage).
+	auto Damage(std::uint32_t a_ref, float a_damage)
+	{
+		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage }, MT::kReportDamage);
 	}
 
 	auto Container(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count)
@@ -139,7 +156,7 @@ namespace
 			a_f.fake->Deliver(peer, packet);
 		}
 		Packets watched;
-		const auto deadline = std::chrono::steady_clock::now() + 15s;
+		const auto deadline = std::chrono::steady_clock::now() + 60s;
 		while (Count(watched, a_type) < a_count && std::chrono::steady_clock::now() < deadline) {
 			std::this_thread::sleep_for(50ms);
 			for (const auto peer : a_peers) {
@@ -257,27 +274,381 @@ TEST("server world: health is relayed to the others, but not for the dead")
 	CHECK(Count(Received(f, 2), MT::kActorHealth) == 0);
 }
 
-TEST("server world: damage a player took off their copy of an NPC is relayed to the others as damage, never none, more than all of it, or for the dead")
+TEST("server world: a report about a dead NPC is dropped with a log line, and the sender's game is told the death again")
 {
-	Fixture f;
-	JoinAs(f, 1, "Alice");
-	JoinAs(f, 2, "Bob");
+	Server::Options options;
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };  // the wait before the first reminder: long, crossed with Fixture::Advance
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
+	Fixture    f{ options };
+	const auto bob = JoinAs(f, 1, "Bob");
+	const auto alice = JoinAs(f, 2, "Alice");
+	f.fake->Deliver(1, DeathAt(NPC, true, 1.0f));  // Bob's kill: the corpse lies at (1, 0, 0) for him
+	// Bob has been here longest, so on this dedicated server his game stands in for the host's (Server::hostPlayer):
+	// Alice's game is told the death only once his is in reach of the NPC for the grace.
+	f.fake->Deliver(1, StateAt(1, 50.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.Advance(std::chrono::seconds{ 310 });  // past Bob's own grace since he asked for the world
 	Clear(f, { 1, 2 });
 
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.25f }, MT::kReportDamage));
-	const auto damage = Decoded(Received(f, 2), MT::kActorDamaged, Protocol::DecodeActorHealth);
+	// Alice's game has it alive (her cell reset, or her save is older): her hit on it goes nowhere, nor do her damage
+	// report and her claims. Her game isn't told the death again at once: a host's game walking in beside hers would
+	// offer the NPC in the same moment, and bring it back for everyone.
+	// (The server answers at most 10 heartbeats a second, and each Received sends one: sparingly below.)
+	f.fake->Deliver(2, Health(NPC, 0.5f));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	CHECK(f.Logged(std::format("health of {:08X} from player {} dropped: the session has it dead", NPC, alice)));
+	const auto toBob = Received(f, 1);
+	CHECK(Count(toBob, MT::kActorHealth) == 0);
+	CHECK(Count(toBob, MT::kActorDamaged) == 0);
+	// Once her game has reported about it for aliveAgainGrace with the NPC still dead, it is told, with where the NPC
+	// fell, as the world state would say.
+	f.Advance(std::chrono::seconds{ 200 });
+	Clear(f, { 1 });  // Bob's game is still there (a silent one is dropped)
+	f.fake->Deliver(2, Health(NPC, 0.4f));  // 200 s in: still nothing
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	Clear(f, { 1 });
+	f.fake->Deliver(2, Hit(bob, 10.0f, false, NPC));  // 400 s in; its copy there still fights Bob's stand-in
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].playerId == 0);
+	CHECK(!deaths[0].killed);
+	CHECK(deaths[0].x == 1.0f);
+	CHECK(f.Logged(std::format("a hit by {:08X} from player {} dropped: the session has it dead", NPC, alice)));
+	CHECK(Count(Received(f, 1), MT::kPlayerDamaged) == 0);
+	// Not again so soon, then once per remindDeadEvery while her game keeps reporting about it.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	Clear(f, { 1 });
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 1);
+}
+
+TEST("server world: a hit by an NPC the reporter's game can't name reaches its victim with no attacker")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// An NPC of a plugin the session's table lacks hit Bob's stand-in in Alice's game: her game can't name it on the
+	// wire (FormTranslate), and Bob's game judges the hit by her distance (PlayerHits).
+	f.fake->Deliver(1, Hit(bob, 9.0f, false, 0));
+	const auto damage = Decoded(Received(f, 2), MT::kPlayerDamaged, Protocol::DecodePlayerHit);
+	REQUIRE(damage.size() == 1);
+	CHECK(damage[0].playerId == alice);
+	CHECK(damage[0].damage == 9.0f);
+	CHECK(!damage[0].byPlayer);
+	CHECK(damage[0].attacker == 0u);
+}
+
+namespace
+{
+	auto CopyDamage(std::uint32_t a_ref, float a_fraction, std::uint32_t a_seq = 0)
+	{
+		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_fraction, a_seq }, MT::kReportDamage);
+	}
+
+	auto Answer(std::uint32_t a_ref, std::uint32_t a_seq, std::uint32_t a_hitter, Protocol::DamageAnswer::Why a_why, float a_fraction)
+	{
+		return Protocol::Encode(Protocol::DamageAnswer{ a_ref, a_seq, a_hitter, a_why, a_fraction }, MT::kReportDamageAnswer);
+	}
+
+	std::vector<Protocol::DamageAnswer> Answers(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kDamageAnswer, [](auto a_data) { return Protocol::DecodeDamageAnswer(a_data); });
+	}
+
+	std::vector<Protocol::ActorHealth> Damaged(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kActorDamaged, Protocol::DecodeActorHealth);
+	}
+}
+
+TEST("server world: damage a player took off their copy of an NPC goes to the game that runs it alone, named as theirs, and never none, more than all of it, or on a runtime reference")
+{
+	using Why = Protocol::DamageAnswer::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
+	// Up to 0.10.0 it went to everyone but the sender, each game judging by its own table: with two tables a round trip
+	// behind, every game dropped it, and the hitter's copy was healed by the runner's next report.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.25f, 7));
+	const auto damage = Damaged(Received(f, 1));
 	REQUIRE(damage.size() == 1);
 	CHECK(damage[0].refId == NPC);
 	CHECK(damage[0].health == 0.25f);
+	CHECK(damage[0].seq == 7);
+	CHECK(damage[0].playerId == bob);
+	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
+	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
+	CHECK(Answers(Received(f, 2)).empty());  // nothing to answer yet: the runner will
+
+	// None of these is sent on; each numbered one is still answered, so the hitter's copy doesn't wait 30 s on it.
+	for (const float bad : { 0.0f, -0.5f, 1.5f }) {
+		f.fake->Deliver(2, CopyDamage(NPC, bad, 8));
+	}
+	f.fake->Deliver(2, CopyDamage(RUNTIME, 0.2f, 9));  // a spawn the session no longer has
+	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+	const auto refusals = Answers(Received(f, 2));
+	REQUIRE(refusals.size() == 4);
+	for (std::size_t i = 0; i < 3; ++i) {
+		CHECK(refusals[i].seq == 8);
+		CHECK(refusals[i].why == Why::kNoHealthThere);
+	}
+	CHECK(refusals[3].seq == 9);
+	CHECK(refusals[3].why == Why::kNobodyRuns);
+
+	// The runner's answer goes to the player whose hit it was, as that runner's; one it addresses to itself, or to
+	// nobody, goes nowhere.
+	f.fake->Deliver(1, Answer(NPC, 7, bob, Why::kApplied, 0.25f));
+	f.fake->Deliver(1, Answer(NPC, 7, alice, Why::kApplied, 0.25f));
+	f.fake->Deliver(1, Answer(NPC, 7, 0, Why::kApplied, 0.25f));
+	const auto answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].refId == NPC);
+	CHECK(answers[0].seq == 7);
+	CHECK(answers[0].playerId == alice);
+	CHECK(answers[0].why == Why::kApplied);
+	CHECK(answers[0].health == 0.25f);
+	CHECK(Answers(Received(f, 1)).empty());
+	CHECK(Answers(Received(f, 3)).empty());
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 10));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(1, Answer(NPC, 10, bob, Why::kDeadThere, 0.1f));
+	const auto refused = Answers(Received(f, 2));
+	REQUIRE(refused.size() == 1);
+	CHECK(refused[0].why == Why::kDeadThere);
+	CHECK(refused[0].playerId == alice);
+	// Carol neither runs the NPC nor ran it lately: her answer to Bob's hit goes nowhere (it would refund his copy a hit
+	// Alice took off).
+	f.fake->Deliver(3, Answer(NPC, 11, bob, Why::kDeadThere, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+	// Alice, on record, says "not mine": passed through as it is, whatever she echoed of the damage.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.2f, 12));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(1, Answer(NPC, 12, bob, Why::kNotTheRunner, 0.0f));
+	const auto unsent = Answers(Received(f, 2));
+	REQUIRE(unsent.size() == 1);
+	CHECK(unsent[0].why == Why::kNotTheRunner);
+	CHECK(unsent[0].seq == 12);
+}
+
+TEST("server world: numbered damage nobody can take is refused to its sender with the reason: nobody runs it, the sender runs it, the session has it dead, over budget")
+{
+	using Why = Protocol::DamageAnswer::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2 });
+
+	// Nobody runs NPC2 (the hit's claim, ahead of the damage, was not granted): the sender is told, and gives its copy the
+	// health back. Unnumbered damage (an older sim, the bot) is dropped without a word, as before.
+	f.fake->Deliver(2, CopyDamage(NPC2, 0.3f, 1));
+	auto answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].refId == NPC2);
+	CHECK(answers[0].seq == 1);
+	CHECK(answers[0].playerId == 0);  // the server's own answer
+	CHECK(answers[0].why == Why::kNobodyRuns);
+	CHECK(answers[0].health == 0.3f);
+	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+	f.fake->Deliver(2, CopyDamage(NPC2, 0.3f, 0));
+	CHECK(Answers(Received(f, 2)).empty());
+	CHECK(f.Logged(std::format("damage on {:08X} from player {} refused: nobody runs it", NPC2, 2)));
+
+	// The sender runs it (its hit's claim took it over): the drop on what was its copy is the truth now, nothing to send on.
+	f.fake->Deliver(1, CopyDamage(NPC, 0.2f, 2));
+	answers = Answers(Received(f, 1));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kYouRunIt);
+	CHECK(answers[0].seq == 2);
+	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
+
+	// Dead for the session: refused, and the sender's game is told the death again as before.
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, CopyDamage(NPC, 0.2f, 3));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kDeadInSession);
+	CHECK(answers[0].seq == 3);
+	CHECK(f.Logged(std::format("damage of {:08X} from player {} dropped: the session has it dead", NPC, 2)));
+
+	// Over the sender's event budget: still answered (a small packet to the sender alone), so the hit is not lost without
+	// a word. Alice runs NPC3; Bob's first hundreds reach her, the one past the budget comes back refused.
+	f.fake->Deliver(1, Claim(NPC3));
+	Clear(f, { 1, 2 });
+	f.HoldClock();
+	std::size_t reached = 0;
+	std::size_t refused = 0;
+	for (std::uint32_t i = 0; i < 520; ++i) {
+		f.fake->Deliver(2, CopyDamage(NPC3, 0.001f, 100 + i));
+	}
+	Sync(f, 2);
+	reached = Damaged(f.fake->Take(1)).size();
+	for (const auto& answer : Answers(f.fake->Take(2))) {
+		refused += answer.why == Why::kOverBudget;
+	}
+	CHECK(reached > 400);
+	CHECK(refused > 0);
+	CHECK(reached + refused == 520);
+	CHECK(f.Logged(std::format("player {} sends too many events", 2)));
+	(void)alice;
+}
+
+TEST("server world: a game that says it doesn't run the NPC it was sent damage for has it sent on to the runner on record, once; with nobody on record the hitter is told")
+{
+	using Why = Protocol::DamageAnswer::Why;
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
+	// Bob's damage goes to Alice. Before she applies it, Carol's hit takes the NPC over: Alice's game, told so, answers
+	// that she doesn't run it. The server sends the damage on to Carol, as Bob's, and Bob hears nothing of the detour.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.25f, 5));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
+	f.fake->Deliver(3, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, carol));
+	Clear(f, { 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 5, bob, Why::kNotTheRunner, 0.25f));
+	const auto rerouted = Damaged(Received(f, 3));
+	REQUIRE(rerouted.size() == 1);
+	CHECK(rerouted[0].seq == 5);
+	CHECK(rerouted[0].playerId == bob);
+	CHECK(rerouted[0].health == 0.25f);
+	CHECK(Answers(Received(f, 2)).empty());
+	// Carol applies it and says so: Bob's copy learns the hit landed, as Carol's answer.
+	f.fake->Deliver(3, Answer(NPC, 5, bob, Why::kApplied, 0.25f));
+	auto answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kApplied);
+	CHECK(answers[0].playerId == carol);
+
+	// Carol lets the NPC go (unloaded) as Bob's next hit is on its way to her: nobody runs it now, and Bob is told so, as
+	// Carol's answer, so his copy gets the hit back and his game offers the NPC as any other.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 6));
+	REQUIRE(Damaged(Received(f, 3)).size() == 1);
+	f.fake->Deliver(3, Protocol::EncodeRelease({ NPC }));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(3, Answer(NPC, 6, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kNobodyRuns);
+	CHECK(answers[0].seq == 6);
+	CHECK(answers[0].playerId == carol);
 	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
 
-	for (const float bad : { 0.0f, -0.5f, 1.5f }) {
-		f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, bad }, MT::kReportDamage));
-	}
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ RUNTIME, 0.2f }, MT::kReportDamage));
+	// Bob's own hit's claim took it over meanwhile, and the game it went to says "not mine": Bob runs it himself now.
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 7));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.Advance(5100ms);
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 7, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kYouRunIt);
+	CHECK(answers[0].playerId == alice);
+	CHECK(f.Logged(std::format("damage on {:08X} from player {} sent on to player {}, who runs it now", NPC, bob, carol)));
+
+	// The runner on record itself says "not mine" (its release is still on its way): the refusal goes through as it is,
+	// so the hitter's log says what happened rather than "nobody runs it" while the table still names a runner.
+	f.fake->Deliver(2, Protocol::EncodeRelease({ NPC }));
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 8));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(1, Answer(NPC, 8, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kNotTheRunner);
+	CHECK(answers[0].playerId == alice);
+	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
+
+	// Only the game the damage was sent to may answer it, however the table moved since: Carol, who never had hit 9, is
+	// not heard; Alice, who had it, is, long after any grace.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 9));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(3, Answer(NPC, 9, bob, Why::kDeadThere, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+	f.Advance(60s);
+	f.fake->Deliver(1, Answer(NPC, 9, bob, Why::kApplied, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kApplied);
+	// The same hit answered twice: the second is nothing.
+	f.fake->Deliver(1, Answer(NPC, 9, bob, Why::kDeadThere, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+
+	// The game a hit went to leaves: the hit is answered for it, "nobody runs it", as that game's, so the hitter's copy
+	// gets it back now rather than after its lost timer.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 15));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Disconnect(1);
+	REQUIRE(f.LoggedSoon(std::format("player {} left", alice)));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].refId == NPC);  // the copy finds the hit by it
+	CHECK(answers[0].seq == 15);
+	CHECK(answers[0].why == Why::kNobodyRuns);
+	CHECK(answers[0].playerId == alice);
+	JoinAs(f, 1, "Alice");  // back, with whatever id
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
+	// A late refusal of any kind from a game that no longer runs the NPC is judged by who does now, as "not mine" is:
+	// Alice's hold ran out after Bob's own claim took the NPC over, so Bob is told he runs it (his copy keeps the drop).
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 17));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.Advance(5100ms);
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(1, Answer(NPC, 17, bob, Why::kHeldTooLong, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kYouRunIt);
+	CHECK(answers[0].seq == 17);
+	f.fake->Deliver(2, Protocol::EncodeRelease({ NPC }));
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2, 3 });
+
+	// An answer that names another NPC than the hit was on goes nowhere: it would send the hit on under that NPC's id.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 16));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
+	f.fake->Deliver(1, Answer(NPC2, 16, bob, Why::kApplied, 0.1f));
+	CHECK(Answers(Received(f, 2)).empty());
+	f.fake->Deliver(1, Answer(NPC, 16, bob, Why::kApplied, 0.1f));
+	CHECK(Answers(Received(f, 2)).size() == 1);
+
+	// Dead for the session since it was sent on: a "not mine" answer isn't sent on to anyone; the hitter is told the
+	// session has it dead, and (a joiner) reminded of the death as for any report about the dead.
+	f.fake->Deliver(2, CopyDamage(NPC, 0.1f, 10));
+	REQUIRE(Damaged(Received(f, 1)).size() == 1);
 	f.fake->Deliver(1, Death(NPC));
-	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
-	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(3, Claim(NPC));  // Carol has it alive from an older save: refused, the dead can't be claimed
+	f.fake->Deliver(1, Answer(NPC, 10, bob, Why::kNotTheRunner, 0.1f));
+	answers = Answers(Received(f, 2));
+	REQUIRE(answers.size() == 1);
+	CHECK(answers[0].why == Why::kDeadInSession);
+	CHECK(answers[0].seq == 10);
+	CHECK(Count(Received(f, 3), MT::kActorDamaged) == 0);
 }
 
 // ---- containers -------------------------------------------------------------------------
@@ -674,7 +1045,7 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 	f.fake->Deliver(1, Claim(NPC));
 	Clear(f, { 1, 2 });
 
-	std::this_thread::sleep_for(5100ms);  // TAKEOVER_COOLDOWN
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
 	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
 	CHECK(HasOwner(Owners(Received(f, 2)), NPC, bob));
@@ -683,6 +1054,58 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
 	CHECK(Owners(Received(f, 2)).empty());
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+}
+
+TEST("server world: two players shooting one raider leave it with whoever hit it first while they keep hitting it; it changes hands once the first stops")
+{
+	Server::Options options;
+	options.takeoverCooldown = 1000s;  // long, crossed with Fixture::Advance: a busy PC can't make a gap below too long for it
+	Fixture    f{ options };
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));  // Alice's game runs the raider
+	Clear(f, { 1, 2 });
+
+	// Bob's shot: his game says what it took off its copy, and asks to take the raider over. It changed hands moments
+	// ago, so it stays Alice's, and his damage reaches her game to deal.
+	const auto bobShoots = [&] {
+		f.fake->Deliver(2, Damage(NPC, 0.1f));
+		f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	};
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	const auto toAlice = Received(f, 1);
+	CHECK(Owners(toAlice).empty());
+	CHECK(Count(toAlice, MT::kActorDamaged) == 1);
+
+	// Alice shoots it too: her game claims it again with her hit (NpcSync::OnLocalInteraction), as it does while she
+	// talks to one, and reports its health. Nobody is told anything.
+	f.Advance(600s);
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	f.fake->Deliver(1, Health(NPC, 0.7f));
+	CHECK(Owners(Received(f, 1)).empty());
+	CHECK(Owners(Received(f, 2)).empty());
+
+	// Bob's next shot, past the cooldown since the raider became hers but within it of her hit: still hers, and his
+	// damage still lands in her game. No change of hands restarts its AI.
+	f.fake->Settle();
+	f.Advance(500s);
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	const auto toAliceAgain = Received(f, 1);
+	CHECK(Owners(toAliceAgain).empty());
+	CHECK(Count(toAliceAgain, MT::kActorDamaged) == 1);
+
+	// Alice stops shooting: the cooldown after her last hit over, Bob's next shot takes it over, as before.
+	f.fake->Settle();
+	f.Advance(1100s);
+	bobShoots();
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, bob));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	// And her shot now doesn't take it straight back.
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	CHECK(Owners(Received(f, 2)).empty());
 }
 
 TEST("server world: an NPC's health is said by the game that runs it; the last word of the game that ran it before a takeover never sets it back")
@@ -699,7 +1122,7 @@ TEST("server world: an NPC's health is said by the game that runs it; the last w
 
 	// Bob's shot takes it over. Alice's game had a report on its way, sent before it heard: in Bob's game, now the one
 	// that runs it, it set the NPC back to 0.9, undoing the shot (and his game then shared that as where it stood).
-	std::this_thread::sleep_for(5100ms);  // TAKEOVER_COOLDOWN
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
 	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
 	Clear(f, { 2 });
@@ -723,6 +1146,111 @@ TEST("server world: an NPC's health is said by the game that runs it; the last w
 	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].playerId == alice);
+}
+
+// ---- health for whoever comes later (NpcHealths) ----------------------------------------------
+
+namespace
+{
+	// The health the server sent a_peer, by NPC (the last of each).
+	std::map<std::uint32_t, float> HealthsSent(Fixture& a_f, PeerId a_peer)
+	{
+		std::map<std::uint32_t, float> out;
+		for (const auto& health : Decoded(Received(a_f, a_peer), MT::kActorHealth, Protocol::DecodeActorHealth)) {
+			out[health.refId] = health.health;
+		}
+		return out;
+	}
+}
+
+TEST("server world: a late joiner is told the health of the hurt NPCs others run; not one at full health, nor the dead, nor one nobody runs")
+{
+	// A player who joins mid-fight: before, nothing told their game how hurt the raiders were, and their copies stood at
+	// full health until each one was hit again.
+	constexpr std::uint32_t NPC4 = 0x0001F004;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned }, { NPC3, Reason::kUnowned } }));
+	f.fake->Deliver(1, Health(NPC, 0.4f));   // hurt
+	f.fake->Deliver(1, Health(NPC2, 1.0f));  // her game's first reading of one it came to run: never hurt
+	f.fake->Deliver(1, Health(NPC3, 0.5f));
+	f.fake->Deliver(1, Death(NPC3));         // a death is shared as one
+	f.fake->Deliver(1, Health(NPC4, 0.3f));  // nobody runs it: each game that has it runs its own
+	Clear(f, { 1 });
+
+	JoinAs(f, 2, "Bob");
+	const auto sent = HealthsSent(f, 2);
+	CHECK((sent == std::map<std::uint32_t, float>{ { NPC, 0.4f } }));
+	CHECK(f.Logged("told the health of 1 hurt NPCs others run"));
+	// Alice heard nothing more of her own NPC.
+	CHECK(Count(Received(f, 1), MT::kActorHealth) == 0);
+}
+
+TEST("server world: a game that rejoins after a crash, or loads a save, is told where the NPCs others run stand; the one that runs them is not")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice", 0xA11CE);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, Claim(NPC));
+	f.fake->Deliver(1, Health(NPC, 0.8f));
+	f.fake->Deliver(1, Health(NPC, 0.25f));  // the last word is what counts
+	Clear(f, { 1, 2 });
+
+	// Bob's game crashed and he joins again, before the old connection timed out.
+	JoinAs(f, 3, "Bob", 0xB0B);
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.25f } }));
+
+	// He loads a save: his copies go back to the save's health, so he is told again.
+	f.fake->Deliver(3, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.25f } }));
+
+	// Alice's game runs it: her own load goes by her own reading (HealthShare reports it), not the session's.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK(HealthsSent(f, 1).empty());
+}
+
+TEST("server world: health kept for joiners follows the NPC's runner: two runners, a takeover, a healed NPC, a release and a runner who leaves")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	f.fake->Deliver(2, Claim(NPC2));
+	f.fake->Deliver(1, Health(NPC, 0.4f));
+	f.fake->Deliver(2, Health(NPC2, 0.7f));
+	Clear(f, { 1, 2 });
+
+	// Two runners: a joiner hears both; each runner, after a load, only the other's.
+	JoinAs(f, 3, "Carol");
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.4f }, { NPC2, 0.7f } }));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 2) == std::map<std::uint32_t, float>{ { NPC, 0.4f } }));
+
+	// Bob takes Alice's NPC over with a hit; her game's report on its way is not the session's word (nor kept), his is.
+	f.Advance(5100ms);  // TAKEOVER_COOLDOWN
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	REQUIRE(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	f.fake->Deliver(1, Health(NPC, 0.9f));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 1) == std::map<std::uint32_t, float>{ { NPC, 0.4f }, { NPC2, 0.7f } }));
+	f.fake->Deliver(2, Health(NPC, 0.3f));
+	// It heals back to full in Bob's game: a joiner whose save has it hurt is told it is whole.
+	f.fake->Deliver(2, Health(NPC2, 1.0f));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 1) == std::map<std::uint32_t, float>{ { NPC, 0.3f }, { NPC2, 1.0f } }));
+
+	// Bob's game lets NPC2 go (its cell unloaded): whoever runs it next reports its own reading. (Carol loads: Alice has
+	// asked for the world as often as the server allows.)
+	f.fake->Deliver(2, Release(NPC2));
+	Clear(f, { 3 });
+	f.fake->Deliver(3, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK((HealthsSent(f, 3) == std::map<std::uint32_t, float>{ { NPC, 0.3f } }));
+
+	// Bob leaves: his NPCs are nobody's, and nothing of theirs is kept.
+	f.fake->Drop(2);
+	JoinAs(f, 4, "Dave");
+	CHECK(HealthsSent(f, 4).empty());
+	(void)alice;
 }
 
 TEST("server world: a companion goes to its player, but not away from another's companion")
@@ -1443,7 +1971,7 @@ TEST("server workshop: a piece of the world moved and then scrapped reaches a la
 TEST("server workshop: a world request after a load sends everything the others built, but only a few times in a row")
 {
 	Server::Options options;
-	options.worldStateRefill = std::chrono::milliseconds{ 500 };
+	options.worldStateRefill = std::chrono::seconds{ 600 };  // owed until the test moves the server clock past it (Advance), so a busy PC can't refill it early
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
@@ -1472,6 +2000,7 @@ TEST("server workshop: a world request after a load sends everything the others 
 	CHECK(batchesFor(2).empty());
 	CHECK(batchesFor(2).empty());
 	std::vector<std::vector<std::uint8_t>> later;
+	f.Advance(601s);  // his budget refills
 	REQUIRE(Await(f, 2, MT::kWorkshopItems, later));
 	std::ranges::move(Received(f, 2), std::back_inserter(later));
 	const auto owed = Decoded(later, MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
@@ -1507,7 +2036,7 @@ TEST("server workshop: a friend who loads a save from another session, or from b
 TEST("server: a friend who loads a save has the others told, once in a while, so their games send their radiant runs again")
 {
 	Server::Options options;
-	options.reloadToldEvery = std::chrono::milliseconds{ 400 };
+	options.reloadToldEvery = std::chrono::seconds{ 600 };  // owed until the test moves the server clock past it (Advance)
 	Fixture    f{ options };
 	JoinAs(f, 1, "Alice");
 	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
@@ -1528,6 +2057,7 @@ TEST("server: a friend who loads a save has the others told, once in a while, so
 	CHECK(Count(Received(f, 1), MT::kPlayerReloaded) == 0);
 	// Owed, it goes once the time is up: once for both (what the first load's told games resent went with the world).
 	std::vector<std::vector<std::uint8_t>> later;
+	f.Advance(601s);  // the time is up
 	REQUIRE(Await(f, 1, MT::kPlayerReloaded, later));
 	std::ranges::move(During(f, 1, std::chrono::milliseconds{ 600 }), std::back_inserter(later));
 	CHECK(Count(later, MT::kPlayerReloaded) == 1);
@@ -1755,7 +2285,7 @@ TEST("server trust: in a three-player fight, only those who fought the raider ca
 TEST("server trust: a fight long over is no licence to kill the NPC")
 {
 	Server::Options options;
-	options.deathGrace = 200ms;
+	options.deathGrace = 600s;  // the test moves the server clock past it (Advance)
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
@@ -1764,7 +2294,7 @@ TEST("server trust: a fight long over is no licence to kill the NPC")
 	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
 	Clear(f, { 1, 2 });
 
-	std::this_thread::sleep_for(300ms);
+	f.Advance(601s);  // past deathGrace
 	f.fake->Deliver(2, Death(NPC, true));
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
 	CHECK(f.Logged("dropped"));
@@ -1939,6 +2469,7 @@ TEST("server trust: a hit is capped per hit and per second")
 		total += d.damage;
 	}
 	CHECK(total <= 1000.0f);  // 1500 a second, 500 already spent
+	CHECK(f.Logged("a hit from player 1 dropped: more damage a second than a fight deals"));
 }
 
 TEST("server trust: a second face within five seconds isn't passed on straight away")
@@ -1977,21 +2508,83 @@ TEST("server trust: an explosion is relayed near its reporter, reliably, with no
 
 namespace
 {
-	// Where the player says they are (outdoors in the Commonwealth unless a_cell names an interior).
-	std::vector<std::uint8_t> StateAt(std::uint32_t a_sequence, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_cell = 0)
-	{
-		Protocol::PlayerState state;
-		state.sequence = a_sequence;
-		state.cell = a_cell;
-		state.worldspace = a_cell ? 0 : 0x0000003C;
-		state.x = a_x, state.y = a_y, state.z = a_z;
-		return Protocol::Encode(state);
-	}
-
 	std::vector<std::uint8_t> ExplosionAt(float a_x, float a_y, float a_z, std::uint32_t a_base = 0x0001D2EE)
 	{
 		return Protocol::Encode(Protocol::Explosion{ 0, a_base, a_x, a_y, a_z, 0, 0x0000003C }, MT::kReportExplosion);
 	}
+}
+
+TEST("server world: on a hosted server a joiner's game isn't told an NPC is dead until the host's game has had the NPC in reach for the grace")
+{
+	Server::Options options = HostedOptions();
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
+	Fixture f{ options };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Alice");
+	JoinAs(f, 3, "Bob");
+	f.fake->Deliver(1, StateAt(1, 20000.0f, 0.0f));  // the host is far from the camp
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(3, DeathAt(NPC, true, 1.0f));  // Bob's kill: the corpse lies at (1, 0, 0)
+	Clear(f, { 1, 2, 3 });
+
+	// Alice walked into the reset camp ahead of the host: her game fights its copy, as it always did.
+	f.fake->Deliver(2, Claim(NPC));
+	f.Advance(std::chrono::seconds{ 400 });
+	f.fake->Deliver(2, Health(NPC, 0.5f));
+	f.Advance(std::chrono::seconds{ 400 });
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+
+	// The host arrives: its game has a grace of its own to offer the NPC alive before hers is told it is dead.
+	f.fake->Deliver(1, StateAt(2, 100.0f, 0.0f));
+	f.Advance(std::chrono::seconds{ 400 });
+	f.fake->Deliver(2, Claim(NPC));  // her grace starts here: the host is near now
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(2, Claim(NPC));
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 200 });
+	f.fake->Deliver(2, Claim(NPC));
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].playerId == 0);
+	CHECK(deaths[0].x == 1.0f);
+}
+
+TEST("server world: a joiner who reports now and then is not told an NPC is dead just as the host's game arrives, but a grace after")
+{
+	Server::Options options = HostedOptions();
+	options.aliveAgainGrace = std::chrono::seconds{ 300 };
+	options.remindDeadEvery = std::chrono::seconds{ 150 };
+	Fixture f{ options };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Alice");
+	JoinAs(f, 3, "Bob");
+	f.fake->Deliver(1, StateAt(1, 20000.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(3, DeathAt(NPC, true, 1.0f));
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 310 });  // past the host's own grace since it asked for the world
+	Clear(f, { 1, 2, 3 });
+
+	f.fake->Deliver(2, Claim(NPC));  // the host is away
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 280 });
+	f.fake->Deliver(1, StateAt(2, 100.0f, 0.0f));  // the host arrives
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 10 });
+	f.fake->Deliver(2, Claim(NPC));  // her first report that finds it there
+	f.fake->Settle();
+	f.Advance(std::chrono::seconds{ 11 });
+	f.fake->Deliver(2, Claim(NPC));  // 301 s after her first: the host's game has had 21 s, not a grace
+	f.fake->Settle();
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	f.Advance(std::chrono::seconds{ 290 });
+	f.fake->Deliver(2, Claim(NPC));  // a grace after the host came
+	f.fake->Settle();
+	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 1);
 }
 
 TEST("server trust: an explosion from a player who hasn't said where they are is dropped")
@@ -2124,6 +2717,7 @@ namespace
 TEST("server trust: a joiner's deaths stop at their budget and come back with time")
 {
 	Fixture f;
+	f.HoldClock();  // a busy PC can't let more than the 1.1 s through: the clock moves by Advance
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
@@ -2131,7 +2725,7 @@ TEST("server trust: a joiner's deaths stop at their budget and come back with ti
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 60);
 	CHECK(f.Logged("reports deaths faster than any fight"));
 
-	std::this_thread::sleep_for(1100ms);  // two a second come back
+	f.Advance(1100ms);  // two a second come back
 	DeliverAll(f, 1, Deaths(0x00100100, 2));
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 2);
 
@@ -2147,12 +2741,13 @@ TEST("server trust: a flood that goes on says once per 10 seconds that the budge
 {
 	// The budget refills two a second and a flooder spends them at once: the log used to say so each time.
 	Fixture f;
+	f.HoldClock();  // the budget refills when the test says
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
 	DeliverAll(f, 1, Deaths(0x00200000, 62));  // 60 pass, 2 dropped
 	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 60);
-	std::this_thread::sleep_for(1100ms);
+	f.Advance(1100ms);
 	DeliverAll(f, 1, Deaths(0x00200100, 5));  // 2 pass, 3 dropped
 	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 2);
 	CHECK(f.LoggedTimes("reports deaths faster than any fight") == 1);
@@ -2250,7 +2845,7 @@ TEST("server trust: a death refused, or known already, costs nothing from the bu
 
 TEST("server trust: a joiner's deaths over the budget are not in the session the host restarts from")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-server", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
@@ -2377,7 +2972,7 @@ namespace
 
 TEST("host authority: a friend's builds come back after a host restart at their own size, but none bigger than ten times or smaller than a tenth")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-server", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
@@ -2557,11 +3152,11 @@ namespace
 		return Protocol::Encode(state);
 	}
 
-	// Hands what the server sends a_peer to a_handle, in order, until a_done() or three seconds pass.
+	// Hands what the server sends a_peer to a_handle, in order, until a_done() or half a minute passes.
 	template <class Handle, class Done>
 	void Pump(Fixture& a_f, PeerId a_peer, Handle&& a_handle, Done&& a_done)
 	{
-		const auto deadline = std::chrono::steady_clock::now() + 3s;
+		const auto deadline = std::chrono::steady_clock::now() + 30s;
 		while (!a_done() && std::chrono::steady_clock::now() < deadline) {
 			a_handle(a_f.fake->Take(a_peer));
 			std::this_thread::sleep_for(10ms);

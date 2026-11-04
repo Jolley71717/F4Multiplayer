@@ -97,7 +97,7 @@ TEST("server: hello again on the same connection welcomes them again")
 TEST("server: asking for the world state over and over gets only a few answers, and the rest one when the budget refills")
 {
 	Server::Options options;
-	options.worldStateRefill = std::chrono::milliseconds(1000);
+	options.worldStateRefill = std::chrono::seconds(600);  // owed until the test moves the server clock past it (Advance), so a busy PC can't refill it early
 	Fixture f{ options };
 	const auto alice = f.Join(1, Fixture::MakeHello("Alice", 0xA11CE));
 	REQUIRE(alice);
@@ -115,7 +115,8 @@ TEST("server: asking for the world state over and over gets only a few answers, 
 	CHECK(f.Logged(std::format("player {} has asked for the world too often", alice->playerId)));
 	// The rest: one, owed.
 	std::vector<std::vector<std::uint8_t>> later;
-	CHECK(Await(f, 1, MT::kWorldState, later, std::chrono::milliseconds(3000)));
+	f.Advance(std::chrono::seconds(601));  // the budget refills
+	CHECK(Await(f, 1, MT::kWorldState, later));
 	CHECK(WorldStates(later).size() == 1);
 	CHECK(WorldStates(During(f, 1, std::chrono::milliseconds(300))).empty());
 
@@ -123,7 +124,9 @@ TEST("server: asking for the world state over and over gets only a few answers, 
 		f.fake->Deliver(1, Protocol::Encode(Fixture::MakeHello("Alice", 0xA11CE)));
 	}
 	std::vector<std::vector<std::uint8_t>> rejoined;
-	CHECK(Await(f, 1, MT::kWelcome, rejoined, std::chrono::milliseconds(3000)));
+	REQUIRE(f.fake->Settle());  // every hello handled: the first is owed too, its budget is spent
+	f.Advance(std::chrono::seconds(601));  // the budget refills: the latest hello is answered then, once
+	CHECK(Await(f, 1, MT::kWelcome, rejoined));
 	std::ranges::move(During(f, 1, std::chrono::milliseconds(300)), std::back_inserter(rejoined));
 	CHECK(Count(rejoined, MT::kWelcome) >= 1);
 	CHECK(Count(rejoined, MT::kWelcome) <= 2);  // not one per hello

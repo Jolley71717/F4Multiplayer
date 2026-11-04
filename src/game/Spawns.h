@@ -54,8 +54,27 @@ namespace Spawns
 	// Its owner's state (NpcSync): where our copy is placed.
 	void OnState(const Protocol::ActorState& a_state);
 
+	// A state of a plugin's NPC a_owner's game runs that our game has no reference of (NpcSync found none under its id):
+	// a temporary reference a quest of theirs took out of a cell we have not loaded (SpawnBook::AbsentBase). It is booked
+	// as a friend's spawn is, under its own id, and our copy of it placed and mirrored as theirs is; the state moves it.
+	// False when nothing names what to place it from.
+	bool Absent(const Protocol::ActorState& a_state, std::uint32_t a_owner);
+
+	// Whether a_id, a plugin's reference, is a friend's NPC our game has no reference of, booked by Absent: our copy of it
+	// stands in for it (Spawns::LocalOf names it). Never ours to run: what our player hits is a copy, no NPC of ours.
+	[[nodiscard]] bool IsAbsent(std::uint32_t a_id);
+
+	// A friend's frame was given back from a loan (kFrameReturned with a place: FrameLoan::ChoosePlace), or our player
+	// gives one back (FrameLoans, as the return goes): it stands where its borrower got out of it from now on, in every
+	// game, and our copy is placed there, not where the owner's frame stood as it was lent (SpawnBook::RETURN_HOLD).
+	// False when it says no place, or we know no such spawn.
+	bool GivenBack(const Protocol::FrameReturn& a_return);
+
 	// A spawn died in another game (kActorDied): our copy, or our own NPC (a friend's believed kill), is killed here.
 	void ApplyDeath(const Protocol::ActorDeath& a_death);
+
+	// Whether our runtime NPC a_local was killed here for another game's report (ApplyDeath), its death event not yet come.
+	[[nodiscard]] bool KilledHere(std::uint32_t a_local);
 
 	// One of our runtime NPCs died here: the spawn id to report its death under (0: none, or one we were told of).
 	std::uint32_t OnLocalDeath(std::uint32_t a_local);
@@ -68,6 +87,10 @@ namespace Spawns
 	// Before a save or a load: our copies are deleted (never saved), and placed again afterwards while we stand near. A
 	// frame copy someone is being sent out of is kept as it is, saved with the frame they wear (RemotePlayers::SomeoneSentOutOf).
 	void DiscardCopies();
+
+	// A loan of the frame a_id to our player is over (FrameLoans): our copy goes as any does, and is placed again where its
+	// owner's game has the frame. False when we have no copy of it placed (the session ended, say).
+	bool DropLentCopy(std::uint32_t a_id);
 
 	// Our copies of friends' frames now (RemotePlayers tells the container menu's hook which our player is kept out of).
 	[[nodiscard]] std::vector<RE::ObjectRefHandle> FrameCopies();

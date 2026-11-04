@@ -1,5 +1,6 @@
 ﻿#include "DevCommands.h"
 
+#include "Config.h"
 #include "DevChannel.h"
 #include "Log.h"
 #include "net/Session.h"
@@ -11,6 +12,7 @@
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/Drops.h"
+#include "game/Gifts.h"
 #include "game/EnemyList.h"
 #include "game/EnemySpawn.h"
 #include "game/Downed.h"
@@ -20,12 +22,16 @@
 #include "game/Face.h"
 #include "game/FadeWatch.h"
 #include "game/FrameClock.h"
+#include "game/GameStop.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
+#include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuBadges.h"
 #include "game/MenuIcons.h"
+#include "game/MenuInput.h"
 #include "game/MenuWatch.h"
+#include "game/MouseCapture.h"
 #include "game/Destructibles.h"
 #include "game/MovedObjects.h"
 #include "game/FrameStats.h"
@@ -36,14 +42,20 @@
 #include "game/Hud.h"
 #include "game/InjectInput.h"
 #include "game/InertShots.h"
+#include "game/LooksMenu.h"
 #include "game/MuzzleFlash.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
+#include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
+#include "game/SneakKey.h"
+#include "game/SyncAnimMark.h"
+#include "game/Storage.h"
 #include "game/StateBuffer.h"
 #include "game/Traps.h"
 #include "game/QuestStageLayout.h"
@@ -52,6 +64,7 @@
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
+#include "game/VirtualPad.h"
 #include "game/WindowFocus.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
@@ -76,6 +89,21 @@ __declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
 __declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
 __declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
 __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
+// the game's window back on a screen, and the cursor over it for a click (WindowFocus::Rect is a RECT)
+__declspec(dllimport) int __stdcall IsIconic(void* a_window);
+__declspec(dllimport) void* __stdcall MonitorFromWindow(void* a_window, unsigned long a_flags);
+__declspec(dllimport) int __stdcall GetWindowRect(void* a_window, void* a_rect);
+__declspec(dllimport) int __stdcall SetWindowPos(void* a_window, void* a_after, int a_x, int a_y, int a_cx, int a_cy, unsigned int a_flags);
+__declspec(dllimport) int __stdcall GetCursorPos(void* a_point);
+__declspec(dllimport) int __stdcall SetCursorPos(int a_x, int a_y);
+// for MouseCapture: the raw input registrations, and a count of the WM_INPUT messages the game takes
+__declspec(dllimport) unsigned int __stdcall GetRegisteredRawInputDevices(void* a_list, unsigned int* a_count, unsigned int a_size);
+__declspec(dllimport) int __stdcall RegisterRawInputDevices(const void* a_list, unsigned int a_count, unsigned int a_size);
+__declspec(dllimport) unsigned int __stdcall GetRawInputData(void* a_input, unsigned int a_command, void* a_data, unsigned int* a_size, unsigned int a_headerSize);
+__declspec(dllimport) void* __stdcall SetWindowsHookExA(int a_id, long long(__stdcall* a_proc)(int, unsigned long long, long long), void* a_module, unsigned long a_thread);
+__declspec(dllimport) long long __stdcall CallNextHookEx(void* a_hook, int a_code, unsigned long long a_wParam, long long a_lParam);
+__declspec(dllimport) int __stdcall GetGUIThreadInfo(unsigned long a_thread, void* a_info);
+__declspec(dllimport) int __stdcall IsWindow(void* a_window);
 }
 
 namespace DevCommands
@@ -298,13 +326,21 @@ namespace DevCommands
 			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u | (extended ? 1u : 0u), 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY)
 		}
 
-		// Whether a window of this process (the game's) is the one in front. Sends no window a message, so it
-		// is safe on the game thread.
+		// Whether a window can be seen: not minimised, and on a screen (MONITOR_DEFAULTTONULL: none for one off them all).
+		// Sends it no message.
+		bool OnScreen(void* a_window)
+		{
+			return !IsIconic(a_window) && MonitorFromWindow(a_window, 0) != nullptr;
+		}
+
+		// Whether a window of this process (the game's) is the one in front, where it can be seen: one in front but
+		// parked off every screen takes keys, while a click lands on the window under the cursor (WindowFocus::Rect).
+		// Sends no window a message, so it is safe on the game thread.
 		bool GameInFront()
 		{
 			unsigned long pid = 0;
 			const auto    front = GetForegroundWindow();
-			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId();
+			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId() && OnScreen(front);
 		}
 
 		// The window in front, for a report: its process and title when it is another process's (reading the
@@ -318,7 +354,7 @@ namespace DevCommands
 			unsigned long pid = 0;
 			GetWindowThreadProcessId(front, &pid);
 			if (pid == GetCurrentProcessId()) {
-				return "the game";
+				return OnScreen(front) ? "the game" : "the game, its window minimised or off every screen";
 			}
 			std::array<char, 128> title{};
 			GetWindowTextA(front, title.data(), static_cast<int>(title.size()));
@@ -365,6 +401,12 @@ namespace DevCommands
 				KeyEvent(0x12, true);
 				KeyEvent(0x12, false);
 				ShowWindow(window, 9);  // SW_RESTORE
+				if (MonitorFromWindow(window, 0) == nullptr) {
+					WindowFocus::Rect was{};
+					GetWindowRect(window, &was);
+					SetWindowPos(window, nullptr, 0, 0, 0, 0, 0x0001u | 0x0004u | 0x0010u);  // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+					REX::INFO("DevCommands: the game's window was off every screen (at {}, {}); moved to the primary screen's corner", was.left, was.top);
+				}
 				BringWindowToTop(window);
 				SetForegroundWindow(window);
 				std::this_thread::sleep_for(std::chrono::milliseconds(WindowFocus::FRONT_STEP_MS));
@@ -420,6 +462,172 @@ namespace DevCommands
 			return std::format("pressing {:02X} for {} ms {}", *vk, args[1], FrontNow());
 		}
 
+		// ---- the mouse's raw input registration (game/MouseCapture.h) ----
+		struct RawDevice  // RAWINPUTDEVICE
+		{
+			std::uint16_t page;
+			std::uint16_t usage;
+			std::uint32_t flags;
+			void*         target;
+		};
+		static_assert(sizeof(RawDevice) == 16);
+
+		// The process's registrations, or nothing when they can't be read (more than the list holds, or an error): an
+		// unread list is never taken for "no mouse registered", which would register one over the game's own.
+		std::optional<std::vector<MouseCapture::Registration>> RawRegistrations()
+		{
+			std::array<RawDevice, 32> list{};
+			unsigned int              count = static_cast<unsigned int>(list.size());
+			const auto                n = GetRegisteredRawInputDevices(list.data(), &count, sizeof(RawDevice));
+			if (n == static_cast<unsigned int>(-1) || n > list.size()) {
+				return std::nullopt;
+			}
+			std::vector<MouseCapture::Registration> out;
+			for (unsigned int i = 0; i < n; ++i) {
+				out.push_back({ list[i].page, list[i].usage, list[i].flags, reinterpret_cast<std::uintptr_t>(list[i].target) });
+			}
+			return out;
+		}
+
+		// A raw input target that is still a window of this process (one gone, or another process's, is stale).
+		bool LiveWindowOfOurs(std::uintptr_t a_window)
+		{
+			unsigned long pid = 0;
+			const auto    window = reinterpret_cast<void*>(a_window);
+			return IsWindow(window) != 0 && GetWindowThreadProcessId(window, &pid) != 0 && pid == GetCurrentProcessId();
+		}
+
+		// WM_INPUT messages the game's window thread took off its queue (a WH_GETMESSAGE hook on that thread only; it reads
+		// each message's data and leaves the message to the game).
+		std::atomic<std::uint32_t> rawMouse{ 0 };
+		std::atomic<std::uint32_t> rawMouseDown{ 0 };  // left button downs
+		std::atomic<std::uint32_t> rawKeys{ 0 };
+		void*                      rawHook = nullptr;
+
+		long long __stdcall RawCount(int a_code, unsigned long long a_wParam, long long a_lParam)
+		{
+			struct Msg
+			{
+				void*              window;
+				unsigned int       message;
+				unsigned long long wParam;
+				long long          lParam;
+			};
+			if (a_code >= 0 && a_wParam == 1) {  // HC_ACTION, PM_REMOVE
+				const auto msg = reinterpret_cast<const Msg*>(a_lParam);
+				if (msg && msg->message == 0x00FF) {  // WM_INPUT
+					std::array<std::uint8_t, 64> input{};  // RAWINPUTHEADER (24) + RAWMOUSE (24) or RAWKEYBOARD (16)
+					unsigned int                 size = static_cast<unsigned int>(input.size());
+					if (GetRawInputData(reinterpret_cast<void*>(msg->lParam), 0x10000003, input.data(), &size, 24) != static_cast<unsigned int>(-1)) {  // RID_INPUT
+						const auto type = *reinterpret_cast<const std::uint32_t*>(input.data());
+						if (type == 0) {  // RIM_TYPEMOUSE
+							++rawMouse;
+							if ((*reinterpret_cast<const std::uint16_t*>(input.data() + 28) & 0x0001) != 0) {  // usButtonFlags: RI_MOUSE_LEFT_BUTTON_DOWN
+								++rawMouseDown;
+							}
+						} else if (type == 1) {  // RIM_TYPEKEYBOARD
+							++rawKeys;
+						}
+					}
+				}
+			}
+			return CallNextHookEx(nullptr, a_code, a_wParam, a_lParam);
+		}
+
+		std::atomic<bool> mouseFixWanted{ false };
+		std::uint32_t     mouseFixed = 0;  // times the mouse was registered for the game's window (for `mousedev`)
+
+		// With the window in front: the mouse registered for the game's window if it isn't (MouseCapture::Fix). Returns
+		// what was done, for a report.
+		std::string FixMouseIfLost()
+		{
+			if (!GameInFront()) {
+				return "not in front";
+			}
+			const auto window = GameWindow();
+			const auto read = RawRegistrations();
+			if (!read) {
+				return "registrations unreadable";
+			}
+			const auto& list = *read;
+			const auto  fix = MouseCapture::Fix(list, reinterpret_cast<std::uintptr_t>(window), LiveWindowOfOurs);
+			if (!fix) {
+				return "ok";
+			}
+			const RawDevice device{ fix->page, fix->usage, fix->flags, reinterpret_cast<void*>(fix->target) };
+			const bool      done = RegisterRawInputDevices(&device, 1, sizeof(RawDevice)) != 0;
+			if (done) {
+				++mouseFixed;
+			}
+			REX::INFO("DevCommands: the mouse wasn't registered for the game's window ({}); registering it (flags 0x{:X}) {}, {} time(s) so far",
+				MouseCapture::Describe(list, reinterpret_cast<std::uintptr_t>(window)), fix->flags, done ? "worked" : "failed", mouseFixed);
+			return done ? "registered" : "register failed";
+		}
+
+		// Off the game thread (the input threads): asks the next frame to check the mouse, and waits for it.
+		void WantMouseCapture()
+		{
+			mouseFixWanted = true;
+			for (int i = 0; i < 20 && mouseFixWanted.load(); ++i) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+		}
+
+		// Each frame (dev channel only): the WM_INPUT count hooked once the window exists, and the mouse checked when an
+		// input command asks and every 2 s while the window is in front, so a mouse lost to a focus change comes back before
+		// the next click.
+		void MouseFrame()
+		{
+			static const bool dev = Config::Get().devChannel;
+			if (!dev) {
+				return;
+			}
+			if (!rawHook) {
+				if (const auto window = GameWindow()) {
+					rawHook = SetWindowsHookExA(3, RawCount, nullptr, GetWindowThreadProcessId(window, nullptr));  // WH_GETMESSAGE
+				}
+			}
+			static auto next = std::chrono::steady_clock::now();
+			const auto  now = std::chrono::steady_clock::now();
+			if (mouseFixWanted.exchange(false) || now >= next) {
+				next = now + std::chrono::seconds(2);
+				FixMouseIfLost();
+			}
+		}
+
+		// mousedev [fix]: the game's raw input: its registrations, which window has the keyboard focus, the WM_INPUT
+		// messages it took so far (mouse, left button downs, keyboard), and (fix) the mouse registered now if it wasn't.
+		std::string MouseDev(std::string_view a_args)
+		{
+			struct GuiThreadInfo  // GUITHREADINFO
+			{
+				unsigned long cbSize;
+				unsigned long flags;
+				void*         active;
+				void*         focus;
+				void*         capture;
+				void*         menuOwner;
+				void*         moveSize;
+				void*         caret;
+				long          rect[4];
+			};
+			static_assert(sizeof(GuiThreadInfo) == 72);
+			const auto    window = GameWindow();
+			GuiThreadInfo info{};
+			info.cbSize = sizeof(info);
+			const auto thread = window ? GetWindowThreadProcessId(window, nullptr) : 0;
+			const bool gui = thread != 0 && GetGUIThreadInfo(thread, &info) != 0;
+			const auto whose = [&](void* a_window) { return !a_window ? "none" : (a_window == window ? "game" : "other"); };
+			const auto  read = RawRegistrations();
+			std::string out = std::format("raw={} front={} focus={} active={} hook={} wmInput mouse={} leftDown={} keys={} fixed={}",
+				read ? MouseCapture::Describe(*read, reinterpret_cast<std::uintptr_t>(window)) : std::string{ "unreadable" }, GameInFront() ? "yes" : "no",
+				gui ? whose(info.focus) : "?", gui ? whose(info.active) : "?", rawHook ? "on" : "off", rawMouse.load(), rawMouseDown.load(), rawKeys.load(), mouseFixed);
+			if (a_args.find("fix") != std::string_view::npos) {
+				out += " fix: " + FixMouseIfLost();
+			}
+			return out;
+		}
+
 		// mouse <dx> <dy>: moves the mouse by that much (relative units), to turn the camera; with the
 		// free camera (tfc) this is the only way to aim it from a script.
 		std::string Mouse(std::string_view a_args)
@@ -432,10 +640,31 @@ namespace DevCommands
 			const auto dy = std::stoi(std::string{ args[1] });
 			std::thread([dx, dy] {
 				if (SendToGame("mouse")) {
+					WantMouseCapture();
 					mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
 				}
 			}).detach();
 			return std::format("moving {}", FrontNow());
+		}
+
+		// Off the game thread: the cursor over the game's window if it isn't, so a click lands on the game and not on the window
+		// under the cursor (another screen's, or one beside a smaller game window). SetCursorPos makes no raw mouse movement:
+		// the camera doesn't turn.
+		void PutCursorOverGame()
+		{
+			const auto window = GameWindow();
+			WindowFocus::Rect rect{};
+			struct
+			{
+				long x;
+				long y;
+			} cursor{};
+			if (!window || !GetWindowRect(window, &rect) || !GetCursorPos(&cursor) || WindowFocus::Contains(rect, cursor.x, cursor.y)) {
+				return;
+			}
+			const auto [x, y] = WindowFocus::Middle(rect);
+			SetCursorPos(static_cast<int>(x), static_cast<int>(y));
+			REX::INFO("DevCommands: the cursor was outside the game's window ({}, {}); moved to its middle for a click", cursor.x, cursor.y);
 		}
 
 		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
@@ -447,6 +676,8 @@ namespace DevCommands
 				if (!SendToGame("click")) {
 					return;
 				}
+				WantMouseCapture();
+				PutCursorOverGame();
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
 				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
@@ -462,7 +693,10 @@ namespace DevCommands
 			// running this command (waiting here deadlocked the game on 2026-10-09).
 			const auto now = FrontNow();
 			if (!GameInFront()) {
-				std::thread([] { BringGameToFront(); }).detach();
+				std::thread([] {
+					BringGameToFront();
+					WantMouseCapture();
+				}).detach();
 			}
 			return std::format("{} input: {}", now, inputTally.Describe());
 		}
@@ -482,7 +716,9 @@ namespace DevCommands
 		}
 
 		// paframes [radius]: the power armor frames near the local player, each with whether the engine would let our player
-		// into it and why not (Equipment::DescribeFrameUse), its distance and which game's it is (NpcSync::Owner).
+		// into it and why not (Equipment::DescribeFrameUse), its distance, which game's it is (NpcSync::Owner), whether it
+		// carries the keyword the workshop copies get (marked: a copy an older version left, FrameShare::Ghost) and whether
+		// anything is in it.
 		std::string PowerArmorFrames(std::string_view a_args)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -497,11 +733,11 @@ namespace DevCommands
 				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
 					return RE::BSContainer::ForEachResult::kContinue;
 				}
-				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
-					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership));
+				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={} marked={} holds={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
+					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership), WorkshopSync::IsCopyMarked(*a_ref), WorkshopSync::HoldsAnything(a_ref));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
-			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
+			return std::format("{} ({}; {})", count ? out : "none", Equipment::DescribeFrameMends(), Equipment::DescribePlayerUse());
 		}
 
 		std::string Console(std::string_view a_args)
@@ -1022,7 +1258,8 @@ namespace DevCommands
 			if (!actor) {
 				return "error: no such actor";
 			}
-			std::string out = std::format("drawn={}", actor->GetWeaponMagicDrawn());
+			// The weapon state's own value too (RE::WEAPON_STATE: 4 wants to sheathe, 5 sheathing), which drawn= reads as away.
+			std::string out = std::format("drawn={} weaponState={}", actor->GetWeaponMagicDrawn(), std::to_underlying(static_cast<const RE::ActorState&>(*actor).weaponState) & 0x7);
 			for (const auto id : Equipment::Read(actor)) {
 				const auto form = RE::TESForm::GetFormByID(id);
 				out += std::format(" {:08X} '{}'", id, form ? RE::TESFullName::GetFullName(*form) : ""sv);
@@ -1091,6 +1328,9 @@ namespace DevCommands
 		// reference, what it was taken for and the scripts bound to it now.
 		std::string TrapsList(std::string_view a_args)
 		{
+			if (a_args == "probe on" || a_args == "probe off") {
+				return Traps::Probe(a_args == "probe on");
+			}
 			if (!a_args.empty()) {
 				const auto id = ParseHex(a_args);
 				return id ? Traps::Why(*id) : "error: usage: traps [refHex]";
@@ -1542,7 +1782,7 @@ namespace DevCommands
 					owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, info), owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, info),
 					NpcSync::Owner(actor->GetFormID()), actor->IsDead(false));
 			}
-			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
+			return DescribeRef(ref) + std::format(" formFlags={:08X} extraFlags={:X}", ref->formFlags, Equipment::ExtraFlagsOf(ref)) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
 		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked
@@ -1600,6 +1840,93 @@ namespace DevCommands
 			return std::format("{:08X} 3d={} script={} state={} isOpen={} isAnimating={} doOnce={} setDefault={}", ref->GetFormID(), ref->Get3D() != nullptr,
 				type ? type->GetName() : "?", object->currentState.c_str() ? object->currentState.c_str() : "", flag("isOpen"), flag("isAnimating"), flag("doOnce"),
 				flag("shouldSetDefaultState"));
+		}
+
+		// scriptvars <refHex> <Script> <property...>: a script's state and the named properties' values (an object's form id,
+		// an array's length), read without calling into the VM.
+		std::string ScriptVars(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref || args.size() < 2) {
+				return "error: usage: scriptvars <refHex> <Script> <property...>";
+			}
+			// The bound script of that name, found as `scripts` lists them (FindBoundObject misses some, workshop scripts among them).
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!vm) {
+				return "error: no VM";
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref);
+			const auto  lower = [](std::string_view a_text) {
+				std::string text{ a_text };
+				std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return text;
+			};
+			const auto                 wanted = lower(args[1]);
+			RE::BSScript::Object*      object = nullptr;
+			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+				const auto  type = a_object ? a_object->type.get() : nullptr;
+				const char* name = type ? type->GetName() : nullptr;
+				if (name && lower(name) == wanted) {
+					object = a_object;
+				}
+				return Papyrus::BOUND_NEXT;
+			} };
+			if (handle != handles.EmptyHandle()) {
+				vm->ForEachBoundObject(handle, visit);
+			}
+			if (!object) {
+				return std::format("{:08X} no {} object", ref->GetFormID(), args[1]);
+			}
+			std::string out = std::format("{:08X} {} state='{}'", ref->GetFormID(), args[1], object->currentState.c_str() ? object->currentState.c_str() : "");
+			for (std::size_t i = 2; i < args.size(); ++i) {
+				const RE::BSScript::Variable* var = object->GetProperty(RE::BSFixedString{ args[i] });
+				if (!var) {
+					// A script variable (a property with its own getter keeps its value in "::<name>_var"): the object's variables
+					// hold its parents' first, the oldest parent's at the front.
+					std::vector<const RE::BSScript::ObjectTypeInfo*> chain;
+					for (auto cls = object->type.get(); cls; cls = cls->GetParent()) {
+						chain.insert(chain.begin(), cls);
+					}
+					const auto    mangled = lower(std::format("::{}_var", args[i]));
+					const auto    plain = lower(args[i]);
+					std::uint32_t offset = 0;
+					for (const auto cls : chain) {
+						const auto infos = cls->GetVariableIter();
+						for (std::uint32_t v = 0; infos && v < cls->GetNumVariables() && !var; ++v) {
+							const auto name = lower(infos[v].name.c_str() ? infos[v].name.c_str() : "");
+							if (name == mangled || name == plain) {
+								var = std::addressof(object->variables[offset + v]);
+							}
+						}
+						offset += cls->GetNumVariables();
+					}
+				}
+				std::string value = "?";
+				if (!var) {
+					value = "(none)";
+				} else if (var->is<std::nullptr_t>()) {
+					value = "None";
+				} else if (var->is<bool>()) {
+					value = RE::BSScript::get<bool>(*var) ? "true" : "false";
+				} else if (var->is<std::int32_t>()) {
+					value = std::to_string(RE::BSScript::get<std::int32_t>(*var));
+				} else if (var->is<float>()) {
+					value = std::format("{:.2f}", RE::BSScript::get<float>(*var));
+				} else if (var->is<RE::BSFixedString>()) {
+					value = std::format("'{}'", RE::BSScript::get<RE::BSFixedString>(*var).c_str());
+				} else if (var->is<RE::BSScript::Object>()) {
+					const auto held = RE::BSScript::get<RE::BSScript::Object>(*var);
+					value = held ? std::format("{:08X}", static_cast<std::uint32_t>(held->GetHandle())) : "None";
+				} else if (var->is<RE::BSScript::Array>()) {
+					const auto array = RE::BSScript::get<RE::BSScript::Array>(*var);
+					value = array ? std::format("[{}]", array->size()) : "None";
+				}
+				out += std::format(" {}={}", args[i], value);
+			}
+			return out;
 		}
 
 		// setpos <refHex> <x> <y> <z> [rz degrees]
@@ -1767,6 +2094,19 @@ namespace DevCommands
 			return std::format("faces rebuilt with mask {:X}", *mask);
 		}
 
+		// looks <playerId>: what LooksMenu sliders and overlays were set on a friend's stand-in (and refused, their overlay
+		// mod missing here) and the skin it wears; what LooksMenu holds for it is asked for and goes to the log.
+		std::string Looks(std::string_view a_args)
+		{
+			std::uint32_t player = 0;
+			const auto    end = a_args.data() + a_args.size();
+			if (a_args.empty() || std::from_chars(a_args.data(), end, player).ptr != end) {
+				return "error: usage: looks <playerId>";
+			}
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(RemotePlayers::ActorIdOf(player));
+			return actor ? LooksMenu::Look(actor) : std::format("error: player {} has no stand-in here now", player);
+		}
+
 		// friendlight <hex>: the light form placed at a friend's stand-in while their Pip-Boy light is on.
 		std::string FriendLight(std::string_view a_args)
 		{
@@ -1910,7 +2250,8 @@ namespace DevCommands
 
 		// wspower: settlement power across games. wspower block on|off: whether friends' copies are kept out of workshop
 		// mode's reach (off: to try the repair); wspower audit: look for copies on our grids now; wspower copies: each copy and whose piece it is; wspower show <refHex>
-		// on|off: show the reference powered or not, as a friend's copy is shown.
+		// on|off: show the reference powered or not, as a friend's copy is shown; wspower want <builderId> <theirRef> on|off: what their game said
+		// of the piece, as the relay says it (the copy is then shown so, and unpowered for a save).
 		std::string WsPower(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -1934,7 +2275,34 @@ namespace DevCommands
 				}
 				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
 			}
-			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
+			if (args[0] == "want" && args.size() == 4 && (args[3] == "on" || args[3] == "off")) {
+				const auto player = ParseHex(args[1]);
+				const auto theirRef = ParseHex(args[2]);
+				if (!player || !theirRef) {
+					return "error: usage: wspower want <builderIdHex> <theirRefHex> on|off";
+				}
+				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
+			}
+			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
+		}
+
+		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
+		// open; ghosts <refHex>: that actor's ghost as the engine and its extra data read it.
+		std::string Ghosts(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return WeaponFire::DescribeGhosts();
+			}
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: ghosts [<refHex>]";
+			}
+			const auto npc = actor->GetNPC();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("{:08X} ghost={} baseGhost={} questAlias={} hostile={} shareable={} dead={} loaded={} owner={}", actor->GetFormID(), CopyWatch::GhostState(actor),
+				npc && npc->IsGhost(), actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray), player && actor->GetHostileToActor(player),
+				Protocol::IsShareableRef(actor->GetFormID()), actor->IsDead(false), actor->Get3D() != nullptr, NpcSync::Owner(NpcSync::SessionId(actor->GetFormID())));
 		}
 
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
@@ -1942,6 +2310,31 @@ namespace DevCommands
 		{
 			const auto id = ParseHex(a_args);
 			return id ? NpcSync::DescribeMirror(*id) : "error: usage: mirror <refHex>";
+		}
+
+		// rolls [show|pick <refHex>]: the session's rolls of leveled NPCs (docs/SHARED-ROLLS.md). Alone, the counters;
+		// show, an NPC's roll as our game built it and whether the session has one of it (the line two games compare);
+		// pick, what the session's deterministic pick of it is now (made nowhere).
+		std::string RollsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return RollHook::Describe();
+			}
+			const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!ref || (args[0] != "show" && args[0] != "pick")) {
+				return "error: usage: rolls [show|pick <refHex>]";
+			}
+			if (args[0] == "pick") {
+				return RollHook::DescribePick(ref);
+			}
+			const auto actor = ref->As<RE::Actor>();
+			if (!actor) {
+				return "error: not an actor";
+			}
+			const auto session = NpcSync::RollOf(actor->GetFormID());
+			return std::format("{:08X} {} session={}{}", actor->GetFormID(), Rolls::Describe(actor), RollHook::Knows(actor->GetFormID()) ? "kept" : "none",
+				session ? std::format(" runner={} legendary={}", session->playerId, (session->flags & Protocol::NpcIdentity::kLegendary) != 0) : std::string{});
 		}
 
 		// motion <refHex>: the engine's movement numbers for an actor (what its locomotion graph is fed).
@@ -2537,6 +2930,99 @@ namespace DevCommands
 			return std::format("handle={:X} played={}", handle.soundID, played);
 		}
 
+		// One sound as SnapshotSounds copied it: plain data, read under SEH.
+		struct SoundRow
+		{
+			std::uint32_t                id = 0;
+			bool                         follows = false;
+			char                         node[64]{};
+			std::uint32_t                chain = 0;          // how many of the followed node's parents were read
+			std::array<std::uintptr_t, 8> userData{};        // each one's user data, the followed node first
+			std::array<std::uint32_t, 8>  formId{};          // the form ID that user data's head holds (TESForm::formID)
+		};
+
+		// Copies up to a_max sounds of the audio manager, while its thread runs: a list it changes meanwhile, or a node it
+		// frees, faults here and ends the copy (what was copied stays), instead of the game. Plain data only (SEH): forms
+		// are looked up by the caller, outside it.
+		std::size_t SnapshotSounds(RE::BSAudioManager* a_audio, SoundRow* a_rows, std::size_t a_max, bool* a_more)
+		{
+			std::size_t count = 0;
+			__try {
+				for (const auto& [id, sound] : a_audio->soundMap) {
+					if (count == a_max) {
+						*a_more = true;
+						break;
+					}
+					auto& row = a_rows[count++];
+					row.id = id;
+					const auto follow = a_audio->movingRefrMap.find(id);
+					if (follow == a_audio->movingRefrMap.end() || !follow->second) {
+						continue;
+					}
+					const RE::NiAVObject* node = follow->second.get();
+					row.follows = true;
+					if (const auto name = node->name.c_str()) {
+						strncpy_s(row.node, name, _TRUNCATE);
+					}
+					for (auto at = node; at && row.chain < row.userData.size(); at = at->parent) {
+						const auto data = at->userData;
+						row.userData[row.chain] = data;
+						if (data) {
+							std::uintptr_t head[3];
+							std::memcpy(head, reinterpret_cast<const void*>(data), sizeof(head));
+							row.formId[row.chain] = static_cast<std::uint32_t>(head[2] >> 32);
+						}
+						++row.chain;
+					}
+				}
+			} __except (1) {  // EXCEPTION_EXECUTE_HANDLER
+				*a_more = true;
+			}
+			return count;
+		}
+
+		// sounds: every sound the audio manager holds (its handle ID), the reference whose 3D it follows, if any, and that
+		// reference's distance from the player. One that follows the player is marked PLAYER: it is heard wherever the player
+		// goes. Which sound each one is isn't read (the engine's BSGameSound is not mapped; its first 0x180 bytes hold no
+		// pointer to its descriptor). Copied while the audio thread runs (SnapshotSounds), so a dev probe only: a node
+		// freed meanwhile can print a wrong name.
+		std::string Sounds(std::string_view)
+		{
+			const auto audio = RE::BSAudioManager::GetSingleton();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!audio || !player) {
+				return "error: no audio manager";
+			}
+			std::array<SoundRow, 64> rows{};
+			bool                     more = false;
+			const auto               count = SnapshotSounds(audio, rows.data(), rows.size(), &more);
+			std::string out = std::format("sounds={} following={}", audio->soundMap.size(), audio->movingRefrMap.size());
+			for (std::size_t i = 0; i < count; ++i) {
+				const auto& row = rows[i];
+				out += std::format(" | {:X}", row.id);
+				if (!row.follows) {
+					continue;
+				}
+				// The user data of a reference's 3D root is the reference: taken only if it is a form the game knows by
+				// the ID its head holds.
+				RE::TESObjectREFR* ref = nullptr;
+				for (std::uint32_t at = 0; at < row.chain && !ref; ++at) {
+					const auto form = row.userData[at] ? RE::TESForm::GetFormByID(row.formId[at]) : nullptr;
+					if (form && reinterpret_cast<std::uintptr_t>(form) == row.userData[at]) {
+						ref = form->As<RE::TESObjectREFR>();
+					}
+				}
+				out += std::format(" follows {}", row.node[0] ? row.node : "?");
+				if (ref) {
+					out += std::format(" of {:08X}{} at {:.0f}", ref->GetFormID(), ref == player ? " PLAYER" : "", ref->data.location.GetDistance(player->data.location));
+				}
+			}
+			if (more) {
+				out += " ...";
+			}
+			return out;
+		}
+
 		// gs <text>: game settings whose name contains the text (case-sensitive), with their values.
 		std::string GameSettings(std::string_view a_args)
 		{
@@ -2854,9 +3340,11 @@ namespace DevCommands
 			return std::format("god={}", player && player->IsGodMode());
 		}
 
-		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy). Not
-		// the dialogue or the workshop menu (MenuMessages): the conversation and workshop mode are left through the
-		// game's own ways (`workshop enter` and `workshop exit` for the workshop).
+		// menu <name> [hide|force|cancel]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
+		// Not the dialogue or the workshop menu (MenuMessages): the conversation and workshop mode are left through the
+		// game's own ways (`workshop enter` and `workshop exit` for the workshop). cancel: a tap of the menu's Cancel (Tab)
+		// handed to that menu alone (MenuInput), as QuestSync closes a settlement list a friend's stage opened; the list
+		// is never hidden.
 		std::string Menu(std::string_view a_args)
 		{
 			const auto space = a_args.find(' ');
@@ -2864,7 +3352,14 @@ namespace DevCommands
 			const auto how = space != std::string_view::npos ? a_args.substr(space + 1) : std::string_view{};
 			const auto queue = RE::UIMessageQueue::GetSingleton();
 			if (name.empty() || !queue) {
-				return "error: usage: menu <name> [hide|force]";
+				return "error: usage: menu <name> [hide|force|cancel]";
+			}
+			if (how == "cancel") {
+				if (!Hud::IsSettled()) {
+					return std::format("error: the UI is held ({})", UiHold::Name(Hud::Holding()));
+				}
+				const auto why = ::MenuInput::Tap(name, "Cancel", ::MenuInput::TAB);
+				return why.empty() ? "cancel pressed (released in a moment)" : std::format("error: {}", why);
 			}
 			if (const auto reason = MenuMessages::Refusal(name, !how.empty())) {
 				return std::format("error: {}", reason);
@@ -2881,6 +3376,14 @@ namespace DevCommands
 			return RealTime::Describe();
 		}
 
+		// menuclock on [seconds] | off: logs the clocks a menu could stop, each frame for a while after any menu opens
+		// or closes (game/MenuClock.h), to find what stops the world under a menu (F4Multiplayer-tnl5). Nothing: the
+		// state and the clocks now.
+		std::string MenuClockCommand(std::string_view a_args)
+		{
+			return MenuClock::Command(a_args);
+		}
+
 		// rules: the session's rules this game plays by (the host's, from the welcome), and the down state they limit.
 		std::string Rules(std::string_view)
 		{
@@ -2893,7 +3396,7 @@ namespace DevCommands
 			const auto ui = RE::UI::GetSingleton();
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={} difficulty={} sit={} scene={}", main ? main->freezeTime : false, main ? main->gameActive : false,
-				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, OpenMenus::Open(OpenMenus::Menu::kPause), OpenMenus::Open(OpenMenus::Menu::kPipboy), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
+				GameStop::MenuMode().value_or(0), ui ? ui->freezeFramePause : 0, OpenMenus::Open(OpenMenus::Menu::kPause), OpenMenus::Open(OpenMenus::Menu::kPipboy), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
 				player ? static_cast<int>(player->DoGetSitSleepState()) : -1, player && player->GetCurrentScene());
 		}
 
@@ -2940,25 +3443,6 @@ namespace DevCommands
 		// its release once the hold is over (Frame). Past Windows, DirectInput and the control map, which a key
 		// from `key` goes through: see game/InjectInput.h. Without an id the button is the one the control map
 		// gives the event in the uppermost input context that has it (`controls` lists them).
-
-		// A ButtonEvent laid out as the game's. RE::ButtonEvent can't be made here: its base class's virtual
-		// functions exist only in the game. The vtable is the game's own.
-		struct GameButtonEvent
-		{
-			std::uintptr_t    vtable = 0;               // 00
-			std::int32_t      device = 0;               // 08
-			std::int32_t      deviceID = 0;             // 0C
-			std::int32_t      eventType = 0;            // 10
-			const void*       next = nullptr;           // 18
-			std::uint32_t     timeCode = 0xFFFFFFFF;    // 20
-			std::int32_t      handled = 0;              // 24
-			RE::BSFixedString strUserEvent;             // 28
-			std::int32_t      idCode = -1;              // 30
-			bool              disabled = false;         // 34
-			float             value = 0.0f;             // 38
-			float             heldDownSecs = 0.0f;      // 3C
-		};
-		static_assert(sizeof(GameButtonEvent) == sizeof(RE::ButtonEvent));
 
 		InjectInput::Releases inputReleases;
 
@@ -3026,23 +3510,8 @@ namespace DevCommands
 		// first, the player's controls unless a menu stopped it. Returns what each did with it.
 		std::string DeliverButton(const InjectInput::Press& a_press, bool a_down)
 		{
-			// The events stay readable after the call (a receiver might keep the pointer for later in the
-			// frame): a few slots used in turn, never freed.
-			static auto       slots = new std::array<GameButtonEvent, 8>{};
-			static std::size_t next = 0;
-			auto&             event = (*slots)[next++ % slots->size()];
-			event.vtable = RE::VTABLE::ButtonEvent[0].address();
-			event.device = static_cast<std::int32_t>(a_press.device);
-			event.deviceID = 0;
-			event.eventType = static_cast<std::int32_t>(RE::INPUT_EVENT_TYPE::kButton);
-			event.next = nullptr;
-			event.timeCode = 0xFFFFFFFF;
-			event.handled = 0;
-			event.strUserEvent = a_press.userEvent.c_str();
-			event.idCode = a_press.id ? static_cast<std::int32_t>(*a_press.id) : -1;
-			event.disabled = false;
-			event.value = a_down ? 1.0f : 0.0f;
-			event.heldDownSecs = a_down ? 0.0f : InjectInput::ReleaseHeldSecs(a_press);
+			auto& event = ::MenuInput::NewEvent(static_cast<std::int32_t>(a_press.device), a_press.userEvent, a_press.id ? static_cast<std::int32_t>(*a_press.id) : -1, a_down,
+				InjectInput::ReleaseHeldSecs(a_press));
 			const auto input = reinterpret_cast<const RE::InputEvent*>(&event);
 			std::string out;
 			const auto  menus = RE::MenuControls::GetSingleton();
@@ -3113,9 +3582,116 @@ namespace DevCommands
 			return out.empty() ? "none" : out;
 		}
 
+		// The sneak key's way through the game, for `controls`: what holds it back by name (SneakKey.h), then what that is
+		// read from. A key that does nothing with "blocked=none" is the graph's: the stance and the graph disagree.
+		std::string SneakFacts()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto controls = RE::PlayerControls::GetSingleton();
+			if (!player || !controls) {
+				return "sneak: none";
+			}
+			const auto&     state = static_cast<RE::ActorState&>(*player);
+			SneakKey::Facts facts{ .lifeState = state.lifeState, .knockState = state.knockState, .meleeAttackState = state.meleeAttackState,
+				.swimming = state.IsSwimming() };
+			std::string   off;  // the layers in use with the sneaking event off, by debug name
+			std::uint32_t forced = 0;
+			if (const auto enable = RE::BSInputEnableManager::GetSingleton()) {
+				constexpr auto sneaking = RE::UserEvents::USER_EVENT_FLAG::kSneaking;
+				// The game's own check: the forced mask wins, else the cache of the layers in use (SneakKey::EventEnabled).
+				forced = enable->forceEnableInputUserEventsFlags.underlying();
+				facts.layersLetSneak = SneakKey::EventEnabled(enable->cachedInputUserEventsFlags.underlying(), forced, static_cast<std::uint32_t>(sneaking));
+				// Under the lock the engine grows the layers with (see Equipment.cpp's LayersWithActivateOff).
+				RE::BSAutoLock l{ enable->layerLock };
+				for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
+					const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
+					// A slot nothing but the manager holds is let go: the cache leaves it out, though its name may linger.
+					const auto holder = i < enable->layerWrappers.size() ? enable->layerWrappers[i].get() : nullptr;
+					if (name && *name && holder && SneakKey::LayerCounts(holder->refCount) && enable->layers[i].inputUserEvents.none(sneaking)) {
+						off += std::format("{}'{}'", off.empty() ? "" : ",", name);
+					}
+				}
+			}
+			const auto handler = reinterpret_cast<const RE::BSInputEventUser*>(controls->sneakHandler);
+			facts.handlerOn = handler && handler->inputEventHandlingEnabled;
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const int  view = camera && camera->currentState ? static_cast<int>(camera->currentState->id.underlying()) : -1;
+			facts.dialogueCamera = view == RE::CameraStates::kDialogue;
+			facts.firstPerson = view == RE::CameraStates::kFirstPerson;
+			if (const auto values = RE::ActorValue::GetSingleton()) {
+				auto& owner = static_cast<RE::ActorValueOwner&>(*player);
+				if (values->leftMobiltyCondition) {
+					facts.leftLeg = owner.GetActorValue(*values->leftMobiltyCondition);
+				}
+				if (values->rightMobilityCondition) {
+					facts.rightLeg = owner.GetActorValue(*values->rightMobilityCondition);
+				}
+			}
+			static const RE::BSFixedString inSneak{ "iIsInSneak" };
+			int                            graphSneak = -1;
+			static_cast<RE::IAnimationGraphManagerHolder*>(player)->GetGraphVariableImplInt(inSneak, graphSneak);
+			return std::format("sneak: blocked={} sneaking={} stance={} forceSneak={} iIsInSneak={} handler={} layersOff={} forced={:X} life={} knock={} melee={} legs={:.0f}/{:.0f} camera={}",
+				SneakKey::Blocking(facts), player->IsSneaking(), static_cast<std::uint32_t>(state.stance), static_cast<std::uint32_t>(state.forceSneak), graphSneak,
+				facts.handlerOn, off.empty() ? "none" : off, forced, facts.lifeState, facts.knockState, facts.meleeAttackState, facts.leftLeg, facts.rightLeg, view);
+		}
+
+		// Where a key that reaches the game can still stop short of its player: the input manager's polling, the keys and buttons
+		// the devices hold down now (device:code=seconds), the player controls' block, which of its handlers take no events, and
+		// the move and look the handlers made of the input this frame. For a game whose Pip-Boy opens on Tab while its player
+		// neither moves, turns nor fires (2026-11-01: a fresh game, about one in three, holds W down and moves (0,0)).
+		std::string PlayerInputFacts()
+		{
+			const auto input = RE::BSInputDeviceManager::GetSingleton();
+			const auto controls = RE::PlayerControls::GetSingleton();
+			if (!controls) {
+				return "player: no controls";
+			}
+			std::string held;
+			if (input) {
+				for (std::size_t i = 0; i < 3; ++i) {  // keyboard, mouse, gamepad
+					if (const auto device = input->devices[i]) {
+						for (const auto& [code, button] : device->deviceButtons) {
+							if (button && button->heldDownSecs > 0.0f) {
+								held += std::format("{}{}:{:X}={:.1f}", held.empty() ? "" : ",", i, button->keyCode, button->heldDownSecs);
+							}
+						}
+					}
+				}
+			}
+			// each a PlayerInputHandler, whose BSInputEventUser is at its start (the classes are only declared here)
+			const std::array<std::pair<const char*, const void*>, 14> handlers{ { { "movement", controls->movementHandler }, { "look", controls->lookHandler },
+				{ "sprint", controls->sprintHandler }, { "readyWeapon", controls->readyWeaponHandler }, { "autoMove", controls->autoMoveHandler },
+				{ "toggleRun", controls->toggleRunHandler }, { "activate", controls->activateHandler }, { "jump", controls->jumpHandler },
+				{ "attack", controls->attackHandler }, { "run", controls->runHandler }, { "sneak", controls->sneakHandler },
+				{ "togglePOV", controls->togglePOVHandler }, { "meleeThrow", controls->meleeThrowHandler }, { "grabRotation", controls->grabRotationHandler } } };
+			std::string off;
+			for (const auto& [name, handler] : handlers) {
+				if (handler && !static_cast<const RE::BSInputEventUser*>(handler)->inputEventHandlingEnabled) {
+					off += std::format("{}{}", off.empty() ? "" : ",", name);
+				}
+			}
+			const auto& d = controls->data;
+			return std::format("player: polling={} held={} block={} handlersOff={} move=({:.2f},{:.2f}) look=({:.2f},{:.2f})", input ? (input->pollingEnabled ? "on" : "off") : "?",
+				held.empty() ? "none" : held, controls->blockPlayerInput, off.empty() ? "none" : off, d.moveInputVec.x, d.moveInputVec.y, d.lookInputVec.x, d.lookInputVec.y);
+		}
+
+		// syncmark [set]: the player's synced-animation mark and its guard (SyncAnimMark.h). set turns the mark on with no
+		// synced animation behind it, as a bad start does, to make a stuck save: the guard clears it at the next game start.
+		std::string SyncMark(std::string_view a_args)
+		{
+			if (a_args == "set") {
+				return SyncAnimMark::SetForTest();
+			}
+			if (!a_args.empty()) {
+				return "error: usage: syncmark [set]";
+			}
+			return SyncAnimMark::Describe();
+		}
+
 		// controls [contextHex]: the control map's stack of input contexts (uppermost last), and with a context,
 		// its user events and their keys (keyboard, mouse, pad), for `input`. 0 is gameplay, 1 menu navigation,
-		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest).
+		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest). Without one, also the player's synced-animation mark (on,
+		// the player gets no input: SyncAnimMark.h).
 		std::string Controls(std::string_view a_args)
 		{
 			const auto map = RE::ControlMap::GetSingleton();
@@ -3128,6 +3704,7 @@ namespace DevCommands
 				// in use, by debug name, with each one's user event and other event flags.
 				if (const auto enable = RE::BSInputEnableManager::GetSingleton()) {
 					std::string held;
+					RE::BSAutoLock l{ enable->layerLock };  // the engine grows the layers under it (as SneakFacts reads them)
 					for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
 						const auto& layer = enable->layers[i];
 						const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
@@ -3138,7 +3715,7 @@ namespace DevCommands
 					}
 					out += std::format(" layers={}{}", enable->layers.size(), held);
 				}
-				return out;
+				return out + " | " + PlayerInputFacts() + " | " + SyncAnimMark::Describe() + " | " + SneakFacts();
 			}
 			const auto id = ParseHex(a_args);
 			if (!id || *id >= static_cast<std::uint32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal)) {
@@ -3414,6 +3991,30 @@ namespace DevCommands
 			return Destructibles::Command(joined);
 		}
 
+		// gifts: weapons and armor given through a container (Gifts.h): status; list; view <ref> / close (what the container menu's
+		// show and close do); count <ref> <item>; take / put <ref> <item> [count] (a transfer as the menu makes one).
+		std::string GiftsCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Gifts::Command(joined);
+		}
+
+		// storage: shared storage (Storage.h): status; owners; keeper <ref>; view <ref> / close (what the container menu's show and close do);
+		// count <ref> <item>; take / put <ref> <item> [count] (a transfer between our player and the container, as the menu makes one).
+		std::string StorageCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Storage::Command(joined);
+		}
+
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -3483,8 +4084,11 @@ namespace DevCommands
 			Entry{ "turnto", TurnTo },
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
+			Entry{ "pad", VirtualPad::Command },
+			Entry{ "walkto", VirtualPad::WalkTo },
 			Entry{ "mouse", Mouse },
 			Entry{ "click", Click },
+			Entry{ "mousedev", MouseDev },
 			Entry{ "pa", PowerArmorInfo },
 			Entry{ "paframes", PowerArmorFrames },
 			Entry{ "findnpc", FindNpc },
@@ -3518,6 +4122,7 @@ namespace DevCommands
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "gate", Gate },
+			Entry{ "scriptvars", ScriptVars },
 			Entry{ "scripts", ScriptsCommand },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
@@ -3542,6 +4147,7 @@ namespace DevCommands
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
 			Entry{ "timescale", TimeScale },
+			Entry{ "menuclock", MenuClockCommand },
 			Entry{ "rules", Rules },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
@@ -3561,6 +4167,7 @@ namespace DevCommands
 			Entry{ "proj", Proj },
 			Entry{ "muzzle", Muzzle },
 			Entry{ "playsound", PlaySoundCmd },
+			Entry{ "sounds", Sounds },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
 			Entry{ "anim", Anim },
@@ -3570,11 +4177,14 @@ namespace DevCommands
 			Entry{ "projoff", ProjOff },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
+			Entry{ "looks", Looks },
 			Entry{ "friendlight", FriendLight },
 			Entry{ "piplight", PipLight },
 			Entry{ "sneak", Sneak },
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
+			Entry{ "rolls", RollsCommand },
+			Entry{ "ghosts", Ghosts },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "fade", FadeCommand },
@@ -3589,9 +4199,12 @@ namespace DevCommands
 			Entry{ "menubadges", MenuBadgesCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
+			Entry{ "syncmark", SyncMark },
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
 			Entry{ "destruct", DestructCommand },
+			Entry{ "gifts", GiftsCommand },
+			Entry{ "storage", StorageCommand },
 		};
 	}
 
@@ -3599,6 +4212,9 @@ namespace DevCommands
 	{
 		TraceFrame();
 		InputFrame();
+		MenuClock::Frame();
+		MouseFrame();
+		VirtualPad::Frame();
 		if (!turn.active) {
 			return;
 		}

@@ -172,10 +172,12 @@ TEST("protocol: Hello round trips, including identity")
 
 TEST("protocol: WorldRequest round trips")
 {
-	const auto out = DecodeWorldRequest(Encode(WorldRequest{ 0xABCDEF0123456789ull, 4321 }));
+	const auto out = DecodeWorldRequest(Encode(WorldRequest{ 0xABCDEF0123456789ull, 4321, WorldRequest::kGap }));
 	REQUIRE(out);
 	CHECK(out->sessionId == 0xABCDEF0123456789ull);
 	CHECK(out->containerFrom == 4321);
+	CHECK(out->reason == WorldRequest::kGap);
+	CHECK(DecodeWorldRequest(Encode(WorldRequest{ 1, 2 }))->reason == WorldRequest::kHello);
 }
 
 namespace
@@ -191,7 +193,7 @@ namespace
 	{
 		return a.refId == b.refId && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
 		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.direction == b.direction &&
-		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch;
+		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch && a.sentMs == b.sentMs;
 	}
 }
 
@@ -228,18 +230,28 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	rules.reviveWindowMinutes = 15;
 	rules.downCooldownSeconds = 120;
 	rules.reviveOutsideCombat = true;
+	rules.downedCrawl = true;
 	rules.realTimeVats = false;
+	rules.shareGuestBuilds = true;
+	rules.sharedStorage = true;
+	rules.containerGifts = true;
+	rules.saveOnDown = true;
 	const auto out = DecodeWelcome(Encode(Welcome{ 7, 8, false, true, rules }));
 	REQUIRE(out);
 	CHECK(out->rules == rules);
 	CHECK(out->sharedStory);
 
 	// Each flag alone, so none is read from another's bit.
-	for (int bit = 0; bit < 3; ++bit) {
+	for (int bit = 0; bit < 8; ++bit) {
 		SessionRules one;
 		one.revive = bit == 0;
 		one.reviveOutsideCombat = bit == 1;
 		one.realTimeVats = bit == 2;
+		one.downedCrawl = bit == 3;
+		one.shareGuestBuilds = bit == 4;
+		one.sharedStorage = bit == 5;
+		one.containerGifts = bit == 6;
+		one.saveOnDown = bit == 7;
 		const auto decoded = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, one }));
 		REQUIRE(decoded);
 		CHECK(decoded->rules == one);
@@ -319,13 +331,40 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 			CHECK(out->killed == killed);
 		}
 	}
-	for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
-		const auto packet = Encode(ActorHealth{ REF_A, 0.625f }, type);
+	// A damage report carries its number and whose it is; a health report, the most frequent NPC message, carries neither.
+	for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
+		const bool numbered = DamageNumbered(type);
+		const auto packet = Encode(ActorHealth{ REF_A, 0.625f, 41, 2 }, type);
 		CHECK(PeekType(packet) == type);
+		CHECK(packet.size() == (numbered ? 17u : 9u));
 		const auto out = DecodeActorHealth(packet);
 		REQUIRE(out);
 		CHECK(out->refId == REF_A);
 		CHECK(out->health == 0.625f);
+		CHECK(out->seq == (numbered ? 41u : 0u));
+		CHECK(out->playerId == (numbered ? 2u : 0u));
+	}
+	// A damage answer: the hit's number and whose it was, applied or why not, and the damage as it was sent.
+	for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {
+		for (const auto why : { DamageAnswer::Why::kApplied, DamageAnswer::Why::kNotTheRunner, DamageAnswer::LAST_WHY }) {
+			const auto packet = Encode(DamageAnswer{ REF_A, 41, 2, why, 0.125f }, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeDamageAnswer(packet);
+			REQUIRE(out);
+			CHECK(out->refId == REF_A);
+			CHECK(out->seq == 41);
+			CHECK(out->playerId == 2);
+			CHECK(out->why == why);
+			CHECK(out->health == 0.125f);
+		}
+	}
+	{
+		// An unknown reason, or damage outside 0..1, is refused.
+		auto packet = Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, 0.5f }, MT::kDamageAnswer);
+		packet[1 + 4 + 4 + 4] = std::to_underlying(DamageAnswer::LAST_WHY) + 1;
+		CHECK(!DecodeDamageAnswer(packet));
+		CHECK(!DecodeDamageAnswer(Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, 1.5f }, MT::kDamageAnswer)));
+		CHECK(!DecodeDamageAnswer(Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, -0.5f }, MT::kDamageAnswer)));
 	}
 	for (const auto type : { MT::kReportPickup, MT::kRefPickedUp }) {
 		const auto packet = Encode(RefPickedUp{ REF_B }, type);
@@ -500,10 +539,11 @@ TEST("protocol: an NPC state carries its owner's graph's gait and clip rate, a p
 		REQUIRE(out->size() == 1);
 		CHECK(SameActorState(out->front(), in));
 	}
-	// The layout is unchanged by what the gait means: one state is still 39 bytes after the type and count.
+	// The layout is unchanged by what the gait means: one state is 43 bytes after the type and count (39 before the
+	// owner's clock, sentMs, came).
 	const auto one = Encode(std::vector<ActorState>{ MakeActorState(0) }, MT::kActorStates);
 	const auto two = Encode(std::vector<ActorState>{ MakeActorState(0), MakeActorState(1) }, MT::kActorStates);
-	CHECK(two.size() - one.size() == 39);
+	CHECK(two.size() - one.size() == 43);
 }
 
 TEST("protocol: ActorStates round trip with both message types")
@@ -513,10 +553,13 @@ TEST("protocol: ActorStates round trip with both message types")
 		for (std::uint32_t i = 0; i < MAX_ACTORS_PER_PACKET; ++i) {
 			in.push_back(MakeActorState(i));
 		}
-		// One whose owner's copy aims at nothing, and ones aiming straight up and down.
+		// One whose owner's copy aims at nothing, and ones aiming straight up and down; one from an older build that
+		// does not say when it was sampled, and one sampled as the owner's clock wraps.
 		in[1].aimPitch = NO_AIM;
 		in[2].aimPitch = 90;
 		in[3].aimPitch = -90;
+		in[4].sentMs = 0;
+		in[5].sentMs = 0xFFFFFFFFu;
 		const auto packet = Encode(in, type);
 		CHECK(PeekType(packet) == type);
 		const auto out = DecodeActorStates(packet);
@@ -589,8 +632,8 @@ TEST("protocol: PlayerStatus round trips the downed, opening, light and power ar
 				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening, light, armor, armor ? 0x0017F6E4u : 0u, armor ? REF_B : 0u };
 				const auto         packet = Encode(in, type);
 				// downed is bit 0, opening bit 1, the Pip-Boy light bit 2 and power armor bit 3 of the flags byte, then the
-				// frame base, the frame reference and the menu (protocol 48).
-				CHECK(packet[packet.size() - 10] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
+				// frame base, the frame reference, the menu (protocol 48), and the difficulty and its multiplier (protocol 57).
+				CHECK(packet[packet.size() - 13] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
 				const auto out = DecodePlayerStatus(packet);
 				REQUIRE(out);
 				CHECK(*out == in);
@@ -611,6 +654,8 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U32(0);  // no frame
 	w.U32(0);  // no frame reference
 	w.U8(MenuKind::kNone);
+	w.U8(NO_DIFFICULTY);  // protocol 57: the game's difficulty and its legendary chance multiplier
+	w.U16(0);
 	const auto out = DecodePlayerStatus(w.Data());
 	REQUIRE(out);
 	CHECK(!out->downed);
@@ -626,7 +671,7 @@ TEST("protocol: PlayerStatus carries the kind of menu the player is in, and refu
 			in.light = true;
 			in.menu = menu;
 			const auto packet = Encode(in, type);
-			CHECK(packet.back() == menu);  // the last byte, after the seat
+			CHECK(packet[packet.size() - 4] == menu);  // after the seat, before the difficulty and its multiplier (protocol 57)
 			const auto out = DecodePlayerStatus(packet);
 			REQUIRE(out);
 			CHECK(*out == in);
@@ -931,16 +976,114 @@ TEST("protocol: PlayerStatus health over 100 is rejected")
 	CHECK(!DecodePlayerStatus(Encode(PlayerStatus{ 1, 0, 0, 255, 1 }, MT::kPlayerStatus)));
 }
 
-TEST("protocol: PlayerStatus frame reference is one every game shares, or none")
+TEST("protocol: PlayerStatus frame reference is one every game shares, a spawn id, or none")
 {
 	PlayerStatus status{ 1, 0, 0, 100, 1, false, false, false, true, 0x0017F6E4, REF_A };
 	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus)));
 	status.powerArmorFrameRef = 0;  // a frame made in their game
 	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus)));
-	status.powerArmorFrameRef = RUNTIME_REF;  // another reference, or none, in every other game
+	status.powerArmorFrameRef = RUNTIME_REF;  // a spawn id: a friend's frame lent to them (FrameLending)
+	const auto lent = DecodePlayerStatus(Encode(status, MT::kReportStatus));
+	REQUIRE(lent);
+	CHECK(lent->powerArmorFrameRef == RUNTIME_REF);
+	status.powerArmorFrameRef = 0xFF000000;  // the runtime range's first id: no spawn's
 	CHECK(!DecodePlayerStatus(Encode(status, MT::kReportStatus)));
 	status.powerArmorFrameRef = PLAYER_REF_ID;
 	CHECK(!DecodePlayerStatus(Encode(status, MT::kPlayerStatus)));
+}
+
+TEST("protocol: PlayerStatus says whether they lend their power armor, beside its other flags")
+{
+	PlayerStatus status{ 1, 0x0001D5E0, 0x0001A2B3, 87, 42, true, false, true, false, 0 };
+	status.seat = Seat{ .ref = REF_B, .base = 0x0004A0F5, .x = 1.0f, .y = 2.0f, .z = 3.0f };
+	status.lends = true;
+	const auto back = DecodePlayerStatus(Encode(status, MT::kReportStatus));
+	REQUIRE(back);
+	CHECK(*back == status);
+	status.lends = false;
+	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus))->lends == false);
+}
+
+TEST("protocol: a lent frame's kit, ask and return read back as they were sent")
+{
+	FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+	lent.kit.push_back(LentItem{ .slot = 1, .base = 0x00154ABC, .templateIndex = 2, .mods = { { 0x0018ADA6, 0, 1 } }, .health = 0.5f, .name = "Sam's T-60 Left Arm" });
+	lent.kit.push_back(LentItem{ .slot = 6, .base = 0x00075FE4, .health = 0.8f, .core = true });
+	const auto lending = DecodeFrameLending(Encode(lent, MT::kFrameLent));
+	REQUIRE(lending);
+	CHECK(*lending == lent);
+
+	const FrameLending refused{ 3, 2, RUNTIME_REF, LoanRefusal::kLent, {} };
+	CHECK(DecodeFrameLending(Encode(refused, MT::kFrameLent)) == refused);
+	// A refusal carries no kit: one written with a kit is sent without it.
+	FrameLending refusedWithKit = refused;
+	refusedWithKit.kit = lent.kit;
+	CHECK(DecodeFrameLending(Encode(refusedWithKit, MT::kFrameLent)) == refused);
+
+	const FrameBorrow ask{ 2, RUNTIME_REF };
+	CHECK(DecodeFrameBorrow(Encode(ask, MT::kBorrowFrame)) == ask);
+
+	const FrameReturn back{ 2, 3, RUNTIME_REF, false, 0x0001A2B3, 0, 120.0f, -40.5f, 6.0f, 3.0f, { { 1, true, 0.25f }, { 6, false, -1.0f } } };
+	CHECK(DecodeFrameReturn(Encode(back, MT::kFrameReturned)) == back);
+	const FrameReturn nowhere{ 2, 3, RUNTIME_REF, false, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, {} };
+	CHECK(DecodeFrameReturn(Encode(nowhere, MT::kReturnFrame)) == nowhere);
+	// Ended: nothing else goes, whatever the message held.
+	FrameReturn ended = back;
+	ended.ended = true;
+	const auto endedBack = DecodeFrameReturn(Encode(ended, MT::kFrameReturned));
+	REQUIRE(endedBack);
+	CHECK(endedBack->ended);
+	CHECK(endedBack->items.empty());
+	CHECK(endedBack->cell == 0u);
+}
+
+TEST("protocol: a loan names a spawn, a borrower, a kit of plugin forms with each slot once, and a place the world holds")
+{
+	CHECK(!DecodeFrameBorrow(Encode(FrameBorrow{ 2, REF_A }, MT::kBorrowFrame)));        // not a spawn: a plugin's frame is everyone's own
+	CHECK(!DecodeFrameBorrow(Encode(FrameBorrow{ 2, 0xFF000000 }, MT::kBorrowFrame)));
+
+	const auto lends = [](auto a_change) {
+		FrameLending lent{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, { LentItem{ .slot = 0, .base = 0x00154ABC, .health = 0.5f } } };
+		a_change(lent);
+		return DecodeFrameLending(Encode(lent, MT::kLendFrame)).has_value();
+	};
+	CHECK(lends([](FrameLending&) {}));
+	CHECK(!lends([](FrameLending& a_l) { a_l.borrowerId = 0; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.spawnId = REF_A; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].slot = static_cast<std::uint8_t>(MAX_LENT_ITEMS); }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit.push_back(a_l.kit[0]); }));  // a slot twice
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].base = RUNTIME_REF; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].mods = { { RUNTIME_REF, 0, 0 } }; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].health = 1.5f; }));
+	CHECK(!lends([](FrameLending& a_l) { a_l.kit[0].health = std::numeric_limits<float>::quiet_NaN(); }));
+	CHECK(lends([](FrameLending& a_l) { a_l.kit[0].health = -1.0f; }));
+	CHECK(lends([](FrameLending& a_l) {
+		a_l.kit.clear();
+		for (std::uint8_t i = 0; i < MAX_LENT_ITEMS; ++i) {
+			a_l.kit.push_back(LentItem{ .slot = i, .base = 0x00154ABC });
+		}
+	}));
+	// More than a kit holds is cut to MAX_LENT_ITEMS as it is written (the rest never goes).
+	FrameLending big{ 3, 2, RUNTIME_REF, LoanRefusal::kNone, {} };
+	for (std::uint8_t i = 0; i < MAX_LENT_ITEMS; ++i) {
+		big.kit.push_back(LentItem{ .slot = i, .base = 0x00154ABC });
+	}
+	big.kit.push_back(LentItem{ .slot = 0, .base = 0x00154ABC });
+	CHECK(DecodeFrameLending(Encode(big, MT::kLendFrame))->kit.size() == MAX_LENT_ITEMS);
+
+	const auto returns = [](auto a_change) {
+		FrameReturn back{ 2, 3, RUNTIME_REF, false, 0, 0x0000003C, 10.0f, 20.0f, 30.0f, 0.5f, { { 0, true, 0.5f } } };
+		a_change(back);
+		return DecodeFrameReturn(Encode(back, MT::kReturnFrame)).has_value();
+	};
+	CHECK(returns([](FrameReturn&) {}));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.cell = 0x0001A2B3; }));  // inside and outside at once
+	CHECK(!returns([](FrameReturn& a_r) { a_r.x = std::numeric_limits<float>::infinity(); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.heading = std::numeric_limits<float>::quiet_NaN(); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.items.push_back(a_r.items[0]); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.items[0] = { 0, false, 0.5f }; }));  // not found, yet a condition
+	CHECK(!returns([](FrameReturn& a_r) { a_r.items[0].slot = static_cast<std::uint8_t>(MAX_LENT_ITEMS); }));
+	CHECK(!returns([](FrameReturn& a_r) { a_r.spawnId = REF_A; }));
 }
 
 TEST("protocol: WorldTime rejects bad hours and day counts")
@@ -1022,8 +1165,9 @@ TEST("protocol: PlayerHit checks the attacker against byPlayer")
 	// Hit by a player: there is no NPC attacker.
 	CHECK(!ok(10.0f, true, REF_A));
 	CHECK(!ok(10.0f, true, PLAYER_REF_ID));
-	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id).
-	CHECK(!ok(10.0f, false, 0));
+	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id), or none at
+	// all: one the sender's game can't name on the wire (of a plugin the other side lacks: FormTranslate).
+	CHECK(ok(10.0f, false, 0));
 	CHECK(!ok(10.0f, false, PLAYER_REF_ID));
 	CHECK(ok(10.0f, false, RUNTIME_REF));
 	CHECK(!ok(10.0f, false, 0xFF000000));
@@ -1635,6 +1779,18 @@ TEST("protocol: Explosion round trips and needs a base")
 	}
 }
 
+TEST("protocol: an Explosion carries the NPC that set it off, a plugin's or a spawn, and never the player")
+{
+	for (const auto source : { REF_A, RUNTIME_REF }) {
+		const Explosion in{ 3, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x0000003C, source };
+		const auto      out = DecodeExplosion(Encode(in, MT::kExplosion));
+		REQUIRE(out);
+		CHECK(out->source == source);
+	}
+	CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, PLAYER_REF_ID }, MT::kReportExplosion)));
+	CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, 0xFF000000 }, MT::kReportExplosion)));
+}
+
 TEST("protocol: Explosion refuses a position that is not a number")
 {
 	for (const float bad : { NaN, Inf, -Inf }) {
@@ -1787,4 +1943,141 @@ TEST("protocol: a string cut to its length on the wire never ends inside a UTF-8
 	CHECK(Protocol::Utf8Prefix("abc", 2) == "ab");
 	CHECK(Protocol::Utf8Prefix("\xC3\xA9", 1).empty());
 	CHECK(Protocol::Utf8Prefix("", 0).empty());
+}
+
+// A gift (src/game/GiftBook.h) is a drop with the container it was put in: the holder travels with it, a plugin's
+// reference every game has, and a gift is one item. A drop with no holder lies loose, as before.
+TEST("protocol: a gift round trips with its holder; one whose holder isn't a plugin's reference, or of more than one item, is refused")
+{
+	Protocol::DroppedItem gift{ .nonce = 7, .base = 0x0004F46A, .count = 1, .templateIndex = 2, .mods = { { 0x0004F46B, 0, 0 } }, .worldspace = 0x3C, .holder = 0x0001D9F6 };
+	for (const auto type : { Protocol::MessageType::kReportDrop, Protocol::MessageType::kDropPlaced }) {
+		const auto read = Protocol::DecodeDroppedItem(Protocol::Encode(gift, type));
+		REQUIRE(read);
+		CHECK(*read == gift);
+	}
+	auto loose = gift;
+	loose.holder = 0;
+	loose.count = 30;
+	CHECK(Protocol::DecodeDroppedItem(Protocol::Encode(loose, Protocol::MessageType::kReportDrop)) == loose);
+
+	auto runtime = gift;
+	runtime.holder = 0xFF001234;  // a container built in a settlement: no other game has it
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(runtime, Protocol::MessageType::kReportDrop)));
+	auto player = gift;
+	player.holder = Protocol::PLAYER_REF_ID;
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(player, Protocol::MessageType::kReportDrop)));
+	auto stack = gift;
+	stack.count = 2;  // each item put in is a gift of its own
+	CHECK(!Protocol::DecodeDroppedItem(Protocol::Encode(stack, Protocol::MessageType::kReportDrop)));
+
+	// In a list too, after the loose ones.
+	const Protocol::DropList list{ true, { loose, gift } };
+	const auto               listed = Protocol::DecodeDropList(Protocol::Encode(list));
+	REQUIRE(listed);
+	CHECK(*listed == list);
+}
+
+// The session files from before gifts held their drops without a holder (SessionFile::GIFTS): their codec stays, and
+// every drop it reads lies loose. The two never read as each other.
+TEST("protocol: a drop list of the layout before holders reads as loose drops, and neither layout reads as the other")
+{
+	Protocol::DroppedItem drop{ .dropId = 3, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .takerId = 5 };
+	const Protocol::DropList list{ true, { drop, drop } };
+	const auto               old = Protocol::DecodeDropListBeforeHolders(Protocol::EncodeBeforeHolders(list));
+	REQUIRE(old);
+	CHECK(*old == list);
+	CHECK(!Protocol::DecodeDropList(Protocol::EncodeBeforeHolders(list)));
+	CHECK(!Protocol::DecodeDropListBeforeHolders(Protocol::Encode(list)));
+	CHECK(Protocol::EncodeBeforeHolders(Protocol::DropList{}) == Protocol::Encode(Protocol::DropList{}));  // nothing to hold
+}
+
+// A drop's owner's and taker's characters are the server's own (its book and session file since SessionFile::CHARACTERS):
+// never on the wire, and the file's list reads only as the file's.
+TEST("protocol: a drop's characters go only into the session file's list, which no other layout reads")
+{
+	Protocol::DroppedItem drop{ .dropId = 3, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 1, .templateIndex = 0xFFFF, .cell = 0x0001A2B3, .takerId = 5,
+		.holder = 0x0001D9F6, .ownerCharacter = 0x1111222233334444ull, .takerCharacter = 0x8000000000ABCDEFull };
+	const Protocol::DropList list{ true, { drop } };
+	const auto               file = Protocol::DecodeDropListWithCharacters(Protocol::EncodeWithCharacters(list));
+	REQUIRE(file);
+	CHECK(*file == list);
+	const auto wire = Protocol::DecodeDropList(Protocol::Encode(list));
+	REQUIRE(wire);
+	CHECK(wire->drops[0].ownerCharacter == 0);
+	CHECK(wire->drops[0].takerCharacter == 0);
+	const auto placed = Protocol::DecodeDroppedItem(Protocol::Encode(drop, Protocol::MessageType::kDropPlaced));
+	REQUIRE(placed);
+	CHECK(placed->ownerCharacter == 0);
+	CHECK(placed->takerCharacter == 0);
+	CHECK(!Protocol::DecodeDropList(Protocol::EncodeWithCharacters(list)));
+	CHECK(!Protocol::DecodeDropListWithCharacters(Protocol::Encode(list)));
+}
+
+// A drop record says whose world it is, last, and a record without it is refused like any other cut one.
+TEST("protocol: a drop record carries its world's character")
+{
+	const Protocol::DropRecord record{ 0x1122334455667788ull, { 7, 8 }, { 3 }, 0x0123456789ABCDEFull };
+	const auto                 bytes = Protocol::Encode(record);
+	const auto                 read = Protocol::DecodeDropRecord(bytes);
+	REQUIRE(read);
+	CHECK(*read == record);
+	for (std::size_t cut = 1; cut <= 8; ++cut) {
+		CHECK(!Protocol::DecodeDropRecord(std::vector<std::uint8_t>(bytes.begin(), bytes.end() - static_cast<std::ptrdiff_t>(cut))));
+	}
+	auto longer = bytes;
+	longer.push_back(0);
+	CHECK(!Protocol::DecodeDropRecord(longer));
+}
+
+// The host's bContainerGifts is welcome flag bit 64, alone: no other rule moves with it, and a welcome without it is off.
+TEST("protocol: the container gifts rule is the welcome's flag bit 64")
+{
+	Protocol::Welcome welcome{ 9, 0x1122334455667788ull, false, true, {} };
+	CHECK(!Protocol::DecodeWelcome(Protocol::Encode(welcome))->rules.containerGifts);
+	welcome.rules.containerGifts = true;
+	const auto bytes = Protocol::Encode(welcome);
+	const auto read = Protocol::DecodeWelcome(bytes);
+	REQUIRE(read);
+	CHECK(read->rules == welcome.rules);
+	auto off = welcome;
+	off.rules.containerGifts = false;
+	const auto plain = Protocol::Encode(off);
+	REQUIRE(plain.size() == bytes.size());
+	std::size_t differ = 0;
+	for (std::size_t i = 0; i < bytes.size(); ++i) {
+		if (bytes[i] != plain[i]) {
+			++differ;
+			CHECK((bytes[i] ^ plain[i]) == 64);
+		}
+	}
+	CHECK(differ == 1);
+}
+
+// The host's bSaveOnDown is welcome flag bit 128, alone: bit 64 is bContainerGifts, and the two never share a bit.
+TEST("protocol: the save on down rule is the welcome's flag bit 128, apart from container gifts")
+{
+	Protocol::Welcome welcome{ 9, 0x1122334455667788ull, false, true, {} };
+	CHECK(!Protocol::DecodeWelcome(Protocol::Encode(welcome))->rules.saveOnDown);
+	auto on = welcome;
+	on.rules.saveOnDown = true;
+	const auto bytes = Protocol::Encode(on);
+	const auto plain = Protocol::Encode(welcome);
+	REQUIRE(bytes.size() == plain.size());
+	std::size_t differ = 0;
+	for (std::size_t i = 0; i < bytes.size(); ++i) {
+		if (bytes[i] != plain[i]) {
+			++differ;
+			CHECK((bytes[i] ^ plain[i]) == 128);
+		}
+	}
+	CHECK(differ == 1);
+	const auto read = Protocol::DecodeWelcome(bytes);
+	REQUIRE(read);
+	CHECK(read->rules.saveOnDown);
+	CHECK(!read->rules.containerGifts);
+	// Both on: each reads back as its own.
+	on.rules.containerGifts = true;
+	const auto both = Protocol::DecodeWelcome(Protocol::Encode(on));
+	REQUIRE(both);
+	CHECK(both->rules == on.rules);
 }

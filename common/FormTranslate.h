@@ -225,13 +225,45 @@ namespace FormTranslate
 
 		// An item given by dropping it: its base, every mod and its place, or not at all. A copy without one of its mods
 		// would be another item (the giver's legendary, say, as a plain gun), and the receiving game makes a copy only of
-		// an item whose base and every mod it has anyway (Drops).
+		// an item whose base and every mod it has anyway (Drops). A gift's container too: a game that lacks it never hears
+		// of the gift (GiftBook).
 		inline bool MapDrop(Context& a_ctx, Protocol::DroppedItem& a_item)
 		{
 			if (!a_ctx.Key(a_item.base) || !a_ctx.Place(a_item.cell, a_item.worldspace)) {
 				return false;
 			}
+			if (a_item.holder != 0 && !a_ctx.Key(a_item.holder)) {
+				return false;
+			}
 			return std::ranges::all_of(a_item.mods, [&](Protocol::ItemMod& a_mod) { return a_ctx.Key(a_mod.mod); });
+		}
+
+		// A lent frame's kit: an item whose base or any mod the other side lacks is left out, as a drop of it would be (the
+		// borrower wears fewer pieces; the return says those were not found, and the owner's stay as they are). The slots
+		// of the rest stay, so the return still answers for each by the owner's number.
+		inline bool MapLending(Context& a_ctx, Protocol::FrameLending& a_msg)
+		{
+			a_ctx.Entries(a_msg.kit, [&](Protocol::LentItem& a_item) {
+				return a_ctx.Key(a_item.base) && std::ranges::all_of(a_item.mods, [&](Protocol::ItemMod& a_mod) { return a_ctx.Key(a_mod.mod); });
+			});
+			return true;
+		}
+
+		// A return's place, or none (both 0): the owner's game then puts its frame back where it was lent from.
+		inline bool MapReturn(Context& a_ctx, Protocol::FrameReturn& a_msg)
+		{
+			auto cell = a_msg.cell;
+			auto worldspace = a_msg.worldspace;
+			if (a_ctx.Place(cell, worldspace)) {
+				a_msg.cell = cell;
+				a_msg.worldspace = worldspace;
+			} else {
+				a_msg.cell = 0;
+				a_msg.worldspace = 0;
+				++a_ctx.out.fields;
+				a_ctx.changed = true;
+			}
+			return true;
 		}
 
 		// A ping: its place, or not at all. For an NPC or an item, the target and its base are details (a ping of one the
@@ -273,6 +305,24 @@ namespace FormTranslate
 		inline bool MapWorkshopItem(Context& a_ctx, Protocol::WorkshopItem& a_item)
 		{
 			return a_ctx.Key(a_item.refId) && a_ctx.Key(a_item.base) && a_ctx.Key(a_item.workshop);
+		}
+
+		// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the NPC it
+		// was placed as there is no roll to make: the slots go. A faction it lacks is left out.
+		inline bool MapIdentity(Context& a_ctx, Protocol::NpcIdentity& a_msg)
+		{
+			if (!a_ctx.Key(a_msg.refId)) {
+				return false;
+			}
+			if (a_msg.originalBase != 0 && !a_ctx.Detail(a_msg.originalBase)) {
+				a_msg.mask = 0;
+				a_msg.templates = {};
+			}
+			for (auto& slot : a_msg.templates) {
+				a_ctx.Detail(slot);
+			}
+			a_ctx.Entries(a_msg.factions, [&](Protocol::FactionRank& a_entry) { return a_ctx.Key(a_entry.faction); });
+			return true;
 		}
 
 		inline bool MapWorldState(Context& a_ctx, Protocol::WorldState& a_msg)
@@ -331,6 +381,7 @@ namespace FormTranslate
 		case MessageType::kPlayerReloaded:
 		case MessageType::kPartyXp:
 		case MessageType::kHeartbeatAck:
+		case MessageType::kSessionWorld:
 		case MessageType::kRevived:
 		case MessageType::kVoiceRelay:
 		case MessageType::kRenamed:
@@ -374,6 +425,10 @@ namespace FormTranslate
 		case MessageType::kActorDamaged:
 			Apply<ActorHealth>(a_packet, ctx, DecodeActorHealth, [&](ActorHealth& m) { return ctx.Key(m.refId); }, typed);
 			break;
+		case MessageType::kReportDamageAnswer:
+		case MessageType::kDamageAnswer:
+			Apply<DamageAnswer>(a_packet, ctx, DecodeDamageAnswer, [&](DamageAnswer& m) { return ctx.Key(m.refId); }, typed);
+			break;
 		case MessageType::kReportContainer:
 			Apply<ContainerChange>(a_packet, ctx, DecodeContainerChange, [&](ContainerChange& m) { return ctx.Change(m); }, typed);
 			break;
@@ -416,7 +471,9 @@ namespace FormTranslate
 			break;
 		case MessageType::kPlayerHit:
 		case MessageType::kPlayerDamaged:
-			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { return ctx.Key(m.attacker); }, typed);
+			// The NPC that hit the stand-in is a detail: a hit by one the other side can't name still hurts the victim
+			// (attacker 0: PlayerHits), where dropping it left that NPC unable to hurt them at all.
+			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { ctx.Detail(m.attacker); return true; }, typed);
 			break;
 		case MessageType::kReportQuestStage:
 		case MessageType::kQuestStage:
@@ -475,22 +532,19 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportNpcIdentity:
 		case MessageType::kNpcIdentity:
-			// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the
-			// NPC it was placed as there is no roll to make: the slots go. A faction it lacks is left out.
-			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) {
-				if (!ctx.Key(m.refId)) {
-					return false;
-				}
-				if (m.originalBase != 0 && !ctx.Detail(m.originalBase)) {
-					m.mask = 0;
-					m.templates = {};
-				}
-				for (auto& slot : m.templates) {
-					ctx.Detail(slot);
-				}
-				ctx.Entries(m.factions, [&](FactionRank& a_entry) { return ctx.Key(a_entry.faction); });
+			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) { return detail::MapIdentity(ctx, m); }, typed);
+			break;
+		case MessageType::kNpcIdentities:
+			Apply<std::vector<NpcIdentity>>(a_packet, ctx, DecodeNpcIdentities, [&](std::vector<NpcIdentity>& m) {
+				ctx.Entries(m, [&](NpcIdentity& a_entry) { return detail::MapIdentity(ctx, a_entry); });
 				return true;
-			}, typed);
+			}, plain);
+			break;
+		case MessageType::kRollLives:
+			Apply<std::vector<RollLife>>(a_packet, ctx, DecodeRollLives, [&](std::vector<RollLife>& m) {
+				ctx.Entries(m, [&](RollLife& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, plain);
 			break;
 		case MessageType::kReportFace:
 		case MessageType::kPlayerFace:
@@ -501,14 +555,19 @@ namespace FormTranslate
 			Apply<WorkshopItem>(a_packet, ctx, DecodeWorkshopItem, [&](WorkshopItem& m) { return detail::MapWorkshopItem(ctx, m); }, typed);
 			break;
 		case MessageType::kWorkshopItems:
+		case MessageType::kOwnWorkshopItems:
+		case MessageType::kReportWorkshopGone:
+			// A piece of ours whose object or workbench this game lacks is left out of kOwnWorkshopItems: never looked for, so
+			// never called gone (WorkshopAudit).
 			Apply<std::vector<WorkshopItem>>(a_packet, ctx, DecodeWorkshopItems, [&](std::vector<WorkshopItem>& m) {
 				ctx.Entries(m, [&](WorkshopItem& a_item) { return detail::MapWorkshopItem(ctx, a_item); });
 				return true;
-			}, plain);
+			}, typed);
 			break;
 		case MessageType::kReportExplosion:
 		case MessageType::kExplosion:
-			Apply<Explosion>(a_packet, ctx, DecodeExplosion, [&](Explosion& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace); }, typed);
+			// An NPC's of a plugin we lack: a fight our game can't see, its blast none of ours (Protocol::Explosion).
+			Apply<Explosion>(a_packet, ctx, DecodeExplosion, [&](Explosion& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace) && ctx.Key(m.source); }, typed);
 			break;
 		case MessageType::kReportActivation:
 		case MessageType::kActivation:
@@ -572,6 +631,55 @@ namespace FormTranslate
 			break;
 		case MessageType::kWorldState:
 			Apply<WorldState>(a_packet, ctx, DecodeWorldState, [&](WorldState& m) { return detail::MapWorldState(ctx, m); }, plain);
+			break;
+		case MessageType::kReportStorage:
+		case MessageType::kStorageContents:
+			// The container, or not at all; an item the other side lacks is left out of the listing (the viewer can't hold it,
+			// so can't take it).
+			Apply<StorageListing>(a_packet, ctx, DecodeStorageListing, [&](StorageListing& m) {
+				if (!ctx.Key(m.container)) {
+					return false;
+				}
+				ctx.Entries(m.stacks, [&](StorageStack& a_stack) { return ctx.Key(a_stack.item); });
+				return true;
+			}, typed);
+			break;
+		case MessageType::kViewStorage:
+			Apply<StorageView>(a_packet, ctx, DecodeStorageView, [&](StorageView& m) { return ctx.Key(m.container); }, plain);
+			break;
+		case MessageType::kStorageOwners:
+			Apply<StorageOwners>(a_packet, ctx, DecodeStorageOwners, [&](StorageOwners& m) {
+				ctx.Entries(m.entries, [&](StorageOwner& a_entry) { return ctx.Key(a_entry.container); });
+				return true;
+			}, plain);
+			break;
+		case MessageType::kStorageRefused:
+			// Our own move, so both are ours; the item 0 of a closed view stays 0.
+			Apply<StorageRefusal>(a_packet, ctx, DecodeStorageRefusal, [&](StorageRefusal& m) { return ctx.Key(m.container) && ctx.Key(m.item); }, plain);
+			break;
+		case MessageType::kReportStorageShort:
+			break;  // a change's number and a count
+		case MessageType::kStorageSettle:
+			// Our numbered moves (numbers), and the moves of ours the session never numbered: one whose item the session can't
+			// name is left out (it never went out in the first place: Storage::Unsent undid it).
+			Apply<StorageSettle>(a_packet, ctx, DecodeStorageSettle, [&](StorageSettle& m) {
+				ctx.Entries(m.late, [&](ContainerChange& a_change) { return ctx.Change(a_change); });
+				return true;
+			}, plain);
+			break;
+		case MessageType::kStorageCaughtUp:
+		case MessageType::kStorageReversals:
+			break;  // counts and numbers
+		case MessageType::kBorrowFrame:
+		case MessageType::kLoanAsked:
+			break;  // a spawn id (the session's own) and a player id
+		case MessageType::kLendFrame:
+		case MessageType::kFrameLent:
+			Apply<FrameLending>(a_packet, ctx, DecodeFrameLending, [&](FrameLending& m) { return detail::MapLending(ctx, m); }, typed);
+			break;
+		case MessageType::kReturnFrame:
+		case MessageType::kFrameReturned:
+			Apply<FrameReturn>(a_packet, ctx, DecodeFrameReturn, [&](FrameReturn& m) { return detail::MapReturn(ctx, m); }, typed);
 			break;
 		}
 		return out;

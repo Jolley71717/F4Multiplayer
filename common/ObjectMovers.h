@@ -2,8 +2,10 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -14,7 +16,9 @@
 // holds it, so that game lets go of its own copy. After a let-go the object's rest is still theirs to report while it
 // flies and settles (FLIGHT), and for SETTLED after it came to rest: each game's physics moves it a little differently,
 // and what the others' games then see of it is their own physics settling the copy just placed, not a move of theirs.
-// A friend may grab it meanwhile (a broom handed over): from then on it is theirs.
+// A friend may grab it meanwhile (a broom handed over): from then on it is theirs. A rest refused for the mover's own is
+// answered with theirs (Book::LastRest), so the refused game puts its copy where the session has the object, however
+// its own physics moved it on after the mover's rest placed it.
 namespace ObjectMovers
 {
 	using Clock = std::chrono::steady_clock;
@@ -41,6 +45,7 @@ namespace ObjectMovers
 		std::uint32_t                       sequence = 0;  // their newest hold of it, or the let-go's
 		Clock::time_point                   until{};       // theirs until then
 		std::optional<Protocol::ObjectHold> lastHold;      // what a refused grab is told
+		std::optional<Protocol::ObjectRest> lastRest;      // where they said it rests (none while held or flying): what a refused rest is told
 	};
 
 	class Book
@@ -69,6 +74,7 @@ namespace ObjectMovers
 			mover.until = a_now + HOLD_TIMEOUT;
 			mover.lastHold = a_hold;
 			mover.lastHold->playerId = a_player;
+			mover.lastRest.reset();
 			return Verdict::kRelay;
 		}
 
@@ -97,8 +103,11 @@ namespace ObjectMovers
 			if (a_rest.kind == Protocol::ObjectRestKind::kLetGo) {
 				mover.sequence = a_rest.sequence;
 				mover.until = a_now + FLIGHT;
+				mover.lastRest.reset();
 			} else {
 				mover.until = a_now + SETTLED;
+				mover.lastRest = a_rest;
+				mover.lastRest->playerId = a_player;
 			}
 			return Verdict::kRelay;
 		}
@@ -111,6 +120,17 @@ namespace ObjectMovers
 				return std::nullopt;
 			}
 			return it->second.lastHold;
+		}
+
+		// Where the object's mover said it rests, while that rest is still theirs (for a refused rest), or none: not while
+		// it is held or flies from a let-go (its rest is still to come).
+		[[nodiscard]] std::optional<Protocol::ObjectRest> LastRest(std::uint32_t a_ref, Clock::time_point a_now) const
+		{
+			const auto it = movers.find(a_ref);
+			if (it == movers.end() || a_now >= it->second.until) {
+				return std::nullopt;
+			}
+			return it->second.lastRest;
 		}
 
 		// Who moves the object now (0: nobody).
@@ -149,5 +169,91 @@ namespace ObjectMovers
 		}
 
 		std::unordered_map<std::uint32_t, Mover> movers;
+	};
+
+	inline constexpr std::size_t MAX_PLACES = 2048;  // objects whose rest the session keeps
+	inline constexpr std::size_t MAX_PLACES_SHARE = MAX_PLACES / 4;
+
+	// The objects one player's game may give a kept place to in a run, a_setting (Server::Options::maxObjectPlacesPerPlayer,
+	// the server's --max-share) at most a quarter of what the session keeps (a_kept; MAX_PLACES_SHARE for MAX_PLACES): a
+	// full Places forgets the place kept longest, so a share near a_kept would let one joiner's made-up objects push out
+	// the host's.
+	inline constexpr std::size_t PlacesShare(std::size_t a_setting, std::size_t a_kept = MAX_PLACES)
+	{
+		return std::min(a_setting, a_kept / 4);
+	}
+
+	// Where each object a player moved came to rest last (a rest the Book let through), kept with the session and saved
+	// with it: a game that loads the object later (a friend arriving, a save loaded) is told it with the world state, so
+	// every game has the object where the last mover left it. A let-go is not kept: its rest follows. A player who picks
+	// the object up ends it (Forget). At most MAX_PLACES: past that the one moved longest ago is forgotten.
+	class Places
+	{
+	public:
+		explicit Places(std::size_t a_max = MAX_PLACES) :
+			max(a_max)
+		{}
+
+		void Rested(const Protocol::ObjectRest& a_rest)
+		{
+			if (a_rest.kind != Protocol::ObjectRestKind::kRest || max == 0) {
+				return;
+			}
+			Forget(a_rest.refId);
+			if (places.size() >= max) {
+				places.erase(byAge.begin()->second);
+				byAge.erase(byAge.begin());
+			}
+			auto kept = a_rest;
+			kept.playerId = 0;  // the session's, as a catch-up names nobody
+			kept.sequence = 0;
+			places.emplace(a_rest.refId, Place{ next, kept });
+			byAge.emplace(next++, a_rest.refId);
+		}
+
+		void Forget(std::uint32_t a_ref)
+		{
+			if (const auto it = places.find(a_ref); it != places.end()) {
+				byAge.erase(it->second.age);
+				places.erase(it);
+			}
+		}
+
+		// Moved longest ago first.
+		[[nodiscard]] std::vector<Protocol::ObjectRest> All() const
+		{
+			std::vector<Protocol::ObjectRest> out;
+			out.reserve(byAge.size());
+			for (const auto& [age, ref] : byAge) {
+				out.push_back(places.at(ref).rest);
+			}
+			return out;
+		}
+
+		[[nodiscard]] const Protocol::ObjectRest* Find(std::uint32_t a_ref) const
+		{
+			const auto it = places.find(a_ref);
+			return it == places.end() ? nullptr : &it->second.rest;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return places.size(); }
+
+		void Clear()
+		{
+			places.clear();
+			byAge.clear();
+		}
+
+	private:
+		struct Place
+		{
+			std::uint64_t        age = 0;
+			Protocol::ObjectRest rest;
+		};
+
+		std::size_t                              max;
+		std::uint64_t                            next = 0;
+		std::unordered_map<std::uint32_t, Place> places;
+		std::map<std::uint64_t, std::uint32_t>   byAge;  // age -> object
 	};
 }

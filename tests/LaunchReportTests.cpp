@@ -63,6 +63,19 @@ TEST("launch report: Proton started by a mod manager, not Steam, warns that the 
 	CHECK(Warnings(lines) == 1);
 }
 
+TEST("launch report: a Windows Steam in the same Wine prefix (CrossOver) put its overlay in the game, and nothing is warned of")
+{
+	LaunchReport::Facts facts;
+	facts.wineVersion = "11.17";
+	facts.hostSystem = "Darwin";
+	facts.steamAppId = "377160";
+	facts.steamGameId = "377160";
+	facts.overlayModule = true;
+	const auto lines = LaunchReport::Lines(facts);
+	CHECK(Has(lines, "Steam's overlay is in the game", false));
+	CHECK(Warnings(lines) == 0);
+}
+
 TEST("launch report: Wine with no app id at all, and another working folder, warns of both")
 {
 	LaunchReport::Facts facts;

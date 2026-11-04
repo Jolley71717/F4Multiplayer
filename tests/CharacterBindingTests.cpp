@@ -3,6 +3,7 @@
 #include "Test.h"
 
 #include "game/CharacterBinding.h"
+#include "game/Story.h"
 
 #include <chrono>
 #include <filesystem>
@@ -60,6 +61,144 @@ TEST("character binding: a friend who joined and then reconnects stays the chara
 	CHECK(tracker.OnLoad(joining, false, NEW) == Step::kNone);  // no hello yet: nobody has joined
 	tracker.OnHello(SOLO);
 	CHECK(tracker.OnLoad(joining, false, COOP) == Step::kLeave);
+}
+
+TEST("character binding: unnamed only after a New Game, until the ID changes or any save loads")
+{
+	CharacterBinding::Tracker   tracker;
+	const CharacterBinding::Link alone{ false, false, false };
+	CHECK(!tracker.Unnamed(COOP));
+	CHECK(!tracker.UnnamedId());
+
+	// New Game: the ID is still the last character's until the name is confirmed.
+	CHECK(tracker.OnLoad(alone, true, COOP) == Step::kNone);
+	CHECK(tracker.Unnamed(COOP));
+	CHECK(!tracker.Unnamed(NEW));
+	CHECK(tracker.Check(alone, { COOP, true, false }) == Step::kNone);
+	CHECK(tracker.Unnamed(COOP));
+	// At the main menu nothing is named: an ID seen there is not taken.
+	CHECK(tracker.Check(alone, { NEW, false, false }) == Step::kNone);
+	CHECK(tracker.UnnamedId() == COOP);
+	// Named, wherever the player is.
+	CHECK(tracker.Check(alone, InWorld(NEW)) == Step::kNone);
+	CHECK(!tracker.Unnamed(NEW));
+	CHECK(!tracker.Unnamed(COOP));
+	CHECK(!tracker.UnnamedId());
+
+	// Any load ends it: the save's ID is its character's, even the same ID.
+	tracker.OnLoad(alone, true, NEW);
+	CHECK(tracker.Unnamed(NEW));
+	tracker.OnLoad(alone, false, NEW);
+	CHECK(!tracker.Unnamed(NEW));
+	CHECK(!tracker.UnnamedId());
+}
+
+TEST("character binding: a new character named outside the opening is the one that joined, whether it joined before the New Game or after")
+{
+	const CharacterBinding::Link joining{ false, false, true };
+	// Joined with the co-op character, then a New Game with an alternate start.
+	CharacterBinding::Tracker before;
+	before.OnHello(COOP);
+	CHECK(before.OnLoad(joining, true, COOP) == Step::kNone);
+	CHECK(before.Check(joining, InWorld(COOP)) == Step::kNone);
+	CHECK(before.Check(joining, InWorld(NEW)) == Step::kNone);  // named in the mod's room
+	CHECK(before.OnLoad(joining, false, NEW) == Step::kNone);   // its own save
+	CHECK(before.OnLoad(joining, false, COOP) == Step::kLeave);
+
+	// Joined after the New Game, before naming: the hello said the last character's ID.
+	CharacterBinding::Tracker after;
+	CHECK(after.OnLoad({ false, false, false }, true, COOP) == Step::kNone);
+	after.OnHello(COOP);
+	CHECK(after.Check(joining, InWorld(NEW)) == Step::kNone);
+	CHECK(after.OnLoad(joining, false, NEW) == Step::kNone);
+	CHECK(after.OnLoad(joining, false, SOLO) == Step::kLeave);
+}
+
+TEST("character binding: a load's ID change is never taken for naming")
+{
+	const CharacterBinding::Link joining{ false, false, true };
+	CharacterBinding::Tracker   tracker;
+	tracker.OnHello(COOP);
+	CHECK(tracker.OnLoad(joining, true, COOP) == Step::kNone);  // New Game
+	CHECK(tracker.OnLoad(joining, false, SOLO) == Step::kLeave);  // then the solo save, before naming
+	CHECK(tracker.Check(joining, InWorld(SOLO)) == Step::kNone);
+	CHECK(!tracker.UnnamedId());
+	CHECK(tracker.OnLoad(joining, false, SOLO) == Step::kLeave);  // still the co-op character that joined
+	CHECK(tracker.OnLoad(joining, false, COOP) == Step::kNone);
+	// Outside the opening, with no New Game, a changed ID rebinds nothing either.
+	CHECK(tracker.Check(joining, InWorld(NEW)) == Step::kNone);
+	CHECK(tracker.OnLoad(joining, false, NEW) == Step::kLeave);
+}
+
+TEST("character binding: a New Game that reaches Vault 111's opening is held only as it always was, whenever the game gives the ID")
+{
+	CharacterBinding::Tracker   tracker;
+	const CharacterBinding::Link waiting{ true, false, false };
+	// Were the new ID given before the new game's message, naming would change nothing: the vault ends the hold.
+	tracker.OnLoad(waiting, true, NEW);
+	CHECK(tracker.Unnamed(NEW));
+	tracker.OnVaultOpening();
+	CHECK(!tracker.Unnamed(NEW));
+	CHECK(tracker.Check(waiting, InOpening(NEW)) == Step::kNone);
+	CHECK(tracker.Check(waiting, InWorld(NEW)) == Step::kStartHosting);  // out of the vault: as before
+
+	// The next new game is its own.
+	tracker.OnLoad(waiting, true, NEW);
+	CHECK(tracker.Unnamed(NEW));
+}
+
+TEST("character binding: only the game's own Vault 111 start is a vault start; an unnamed alternate start in the vault is held for its name")
+{
+	using Story::Opening;
+	// The game's own start (Out of Time running; the pre-war world alone is not, as an alternate start may make the
+	// character at its mirror and move on unnamed): the vault holds it, named or not, and it ends
+	// the unnamed hold.
+	CHECK(Story::Decide(true, true, true).opening == Opening::kVault);
+	CHECK(Story::Decide(true, true, true).vaultStart);
+	CHECK(Story::Decide(true, true, false).opening == Opening::kVault);
+	CHECK(Story::Decide(true, true, false).vaultStart);
+	// An alternate start's walk into the vault's places: never a vault start (its unnamed hold would end for good).
+	CHECK(!Story::Decide(true, false, true).vaultStart);
+	CHECK(Story::Decide(true, false, true).opening == Opening::kUnnamed);
+	CHECK(!Story::Decide(true, false, false).vaultStart);
+	CHECK(Story::Decide(true, false, false).opening == Opening::kVault);  // named: paused there, as before
+	// Elsewhere.
+	CHECK(Story::Decide(false, false, true).opening == Opening::kUnnamed);
+	CHECK(Story::Decide(false, false, false).opening == Opening::kNone);
+	CHECK(!Story::Decide(false, true, true).vaultStart);  // the start's quest with the player out of its places
+}
+
+TEST("character binding: an unnamed alternate start that walks through Vault 111 is still unnamed once out, as Story decides it")
+{
+	CharacterBinding::Tracker    tracker;
+	const CharacterBinding::Link waiting{ true, false, false };
+	tracker.OnLoad(waiting, true, COOP);  // New Game with an alternate start: the last character's ID
+	// Session's frame: Story's hold, then the vault start passed on.
+	const auto frame = [&](bool a_vaultPlaces, bool a_ownStart) {
+		const auto hold = Story::Decide(a_vaultPlaces, a_ownStart, tracker.Unnamed(COOP));
+		if (hold.vaultStart) {
+			tracker.OnVaultOpening();
+		}
+		return tracker.Check(waiting, { COOP, true, hold.opening != Story::Opening::kNone });
+	};
+	CHECK(frame(false, false) == Step::kNone);
+	CHECK(frame(true, false) == Step::kNone);  // in the vault
+	CHECK(tracker.Unnamed(COOP));
+	CHECK(frame(false, false) == Step::kNone);  // out: still held, no hosting under the last character's ID
+	CHECK(tracker.Unnamed(COOP));
+	CHECK(frame(false, false) == Step::kNone);
+}
+
+TEST("character binding: a load whose end never comes is never taken for naming")
+{
+	const CharacterBinding::Link joining{ false, false, true };
+	CharacterBinding::Tracker   tracker;
+	tracker.OnHello(COOP);
+	CHECK(tracker.OnLoad(joining, true, COOP) == Step::kNone);  // New Game
+	tracker.OnLoadStarting();  // the solo save, before naming; frames go on after the hold's limit with no OnLoad
+	CHECK(!tracker.Unnamed(COOP));
+	CHECK(tracker.Check(joining, InWorld(SOLO)) == Step::kNone);
+	CHECK(tracker.OnLoad(joining, false, SOLO) == Step::kLeave);  // still the co-op character that joined
 }
 
 TEST("character binding: a welcome back into the session we joined is taken; into another one it isn't, unless we chose that server again")
@@ -232,4 +371,90 @@ TEST("character binding: of two files under whole IDs, the one of the session th
 
 	std::error_code error;
 	std::filesystem::remove_all(folder, error);
+}
+
+// ---- whose world it is (CharacterBinding::World: the key a drop record says, common/DropStore.h) ----------------
+
+namespace
+{
+	// A world's key as the co-save keeps it ('CHAR').
+	std::vector<std::uint8_t> SavedKey(CharacterBinding::World& a_world) { return a_world.Save(0x5151); }
+
+	// a_world after loading a save whose co-save holds a_saved (empty: a save from before keys), of character a_character.
+	std::uint64_t AfterLoad(CharacterBinding::World& a_world, const std::vector<std::uint8_t>& a_saved, std::uint64_t a_character, std::uint64_t a_random)
+	{
+		a_world.Revert();
+		a_world.Loaded(a_saved);
+		a_world.Started(false, a_character, a_random);
+		return a_world.Key(0x7777);
+	}
+}
+
+TEST("world key: two characters with the engine's same ID (coc from the main menu: 0) are two worlds; each keeps its key in its saves")
+{
+	CharacterBinding::World first;
+	const auto              a = first.Key(0x1234);  // no load and no new game: given the first time it is asked
+	CHECK(a != 0);
+	CHECK(first.Key(0x9999) == a);  // and kept
+	const auto saveOfFirst = SavedKey(first);
+
+	// The game restarted, a fresh coc character: the same ID, nothing loaded.
+	CharacterBinding::World second;
+	const auto              b = second.Key(0x4321);
+	CHECK(b != 0);
+	CHECK(b != a);
+
+	// The first character's save, loaded in either game, is the first character's world again.
+	CHECK(AfterLoad(second, saveOfFirst, 0, 0x5555) == a);
+	CHECK(AfterLoad(first, saveOfFirst, 0, 0x6666) == a);
+}
+
+TEST("world key: a new game is a world of its own, even with the last character's ID; its saves load back as it")
+{
+	CharacterBinding::World world;
+	world.Started(false, COOP, 0x1111);  // a save of COOP from before keys
+	const auto coop = world.Key(0);
+	world.Revert();
+	world.Started(true, COOP, 0x2222);  // a new game: the ID is still COOP's until the name is confirmed
+	const auto fresh = world.Key(0);
+	CHECK(fresh != coop);
+	CHECK(fresh != 0);
+	const auto save = SavedKey(world);
+	CHECK(AfterLoad(world, save, NEW, 0x3333) == fresh);  // its saves have the ID it was named with by then
+}
+
+TEST("world key: saves from before keys are their character's world, the same for all of them, and never a fresh key")
+{
+	CharacterBinding::World world;
+	const auto              coop = AfterLoad(world, {}, COOP, 0x1);
+	CHECK(coop == CharacterBinding::World::FromCharacter(COOP));
+	CHECK(AfterLoad(world, {}, COOP | 0x0000000100000000ull, 0x2) == coop);  // another high half: the same character
+	CHECK(AfterLoad(world, {}, SOLO, 0x3) != coop);
+	// A save made since keeps that key, so the character's older and newer saves agree.
+	const auto save = SavedKey(world);  // SOLO's
+	CHECK(AfterLoad(world, save, SOLO, 0x4) == CharacterBinding::World::FromCharacter(SOLO));
+	// No random number makes a key one of those (nor 0).
+	for (const std::uint64_t random : { 0ull, 1ull << 63, CharacterBinding::World::FromCharacter(COOP), ~0ull }) {
+		const auto key = CharacterBinding::World::Fresh(random);
+		CHECK(key != 0);
+		CHECK((key >> 63) == 0);
+	}
+	// A record that isn't a key is none.
+	CHECK(AfterLoad(world, { 1, 2, 3 }, COOP, 0x5) == coop);
+}
+
+TEST("world key: a load whose co-save has no key, after one that had: the save's character, never the world before's")
+{
+	CharacterBinding::World world;
+	const auto              first = world.Key(0xAAAA);
+	const auto              save = SavedKey(world);
+	CHECK(AfterLoad(world, save, 0, 0xB) == first);
+	// F4SE's revert, then a save with no 'CHAR' record: no key carries over from the world before.
+	CHECK(AfterLoad(world, {}, SOLO, 0xC) == CharacterBinding::World::FromCharacter(SOLO));
+	// Started without a revert (should one ever be missed) still forgets the save before's key.
+	world.Loaded(save);
+	world.Started(false, SOLO, 0xD);
+	CHECK(world.Key(0) == first);
+	world.Started(false, SOLO, 0xE);
+	CHECK(world.Key(0) == CharacterBinding::World::FromCharacter(SOLO));
 }

@@ -1,9 +1,14 @@
 #pragma once
 
+#include "Protocol.h"
+
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 
 // What our game knows of the session's deaths (WorldSync), and what NpcSync asks of it before offering to run
 // an NPC. A raider the session has dead can be alive in our game in two ways: our game has not caught up yet
@@ -40,13 +45,43 @@ namespace SessionDeaths
 	// A cell resets days of game time after it was left; an actor alive this soon after we learned of its death
 	// is our kill still landing (or one we never managed to kill), not a respawn.
 	constexpr auto RESPAWN_AFTER = std::chrono::seconds(10);
+	// Our report of a death we saw and the server's grant of the NPC to another game can cross on the wire: an owner
+	// named this soon after our own report is no sign the NPC lives (the server has our death by now, and ends the
+	// ownership).
+	constexpr auto OWNED_CROSSING = std::chrono::seconds(3);
+	// A death told again for one we know dead (the session's reminder: our game had it alive) kills a copy alive here
+	// only this long after we learned of it: a kill issued just now hasn't landed yet.
+	constexpr auto KILL_RETRY_AFTER = std::chrono::seconds(2);
 
 	class Ledger
 	{
 	public:
-		// Learned dead: our own death event, another game's report, the session's list or found dead when we host.
-		// True if it is news.
-		bool Add(std::uint32_t a_id, Clock::time_point a_now) { return dead.try_emplace(a_id, Entry{ a_now }).second; }
+		// Learned dead: our own death event, another game's report (a_from: that player), the session's list or found
+		// dead when we host. True if it is news.
+		bool Add(std::uint32_t a_id, Clock::time_point a_now, std::uint32_t a_from = 0) { return dead.try_emplace(a_id, Entry{ .learned = a_now, .from = a_from }).second; }
+
+		// Whether a repeat of a death from a_player says where the corpse came to rest (Protocol::CORPSE_REST_WINDOW):
+		// the death was news to us from that player's report, a moment ago.
+		[[nodiscard]] bool RestsFrom(std::uint32_t a_id, std::uint32_t a_player, Clock::time_point a_now) const
+		{
+			const auto it = dead.find(a_id);
+			return it != dead.end() && a_player != 0 && it->second.from == a_player && a_now - it->second.learned < Protocol::CORPSE_REST_WINDOW;
+		}
+
+		// Our report of it went out as it began to fall (WorldSync::ReportFalling), with the corpse at a_at; its death
+		// event, at the end of the fall, takes that back (TakeFell) to tell whether it came to rest elsewhere.
+		void FellReported(std::uint32_t a_id, const std::array<float, 3>& a_at)
+		{
+			if (const auto it = dead.find(a_id); it != dead.end()) {
+				it->second.fellAt = a_at;
+			}
+		}
+
+		[[nodiscard]] std::optional<std::array<float, 3>> TakeFell(std::uint32_t a_id)
+		{
+			const auto it = dead.find(a_id);
+			return it == dead.end() ? std::nullopt : std::exchange(it->second.fellAt, std::nullopt);
+		}
 
 		// Our game has it dead: its death event, or its corpse loaded or found. A console kill that left it standing (an
 		// NPC essential in our game only: it goes down and gets up) is not this, so a later load of it alive is not
@@ -58,11 +93,51 @@ namespace SessionDeaths
 			}
 		}
 
+		// Our game reported this death itself (WorldSync::ReportDeaths): its own death event, or found dead while hosting.
+		void Reported(std::uint32_t a_id)
+		{
+			if (const auto it = dead.find(a_id); it != dead.end()) {
+				it->second.reported = true;
+			}
+		}
+
+		// The server named a game that runs the NPC (WorldSync::OnActorOwners): it is alive there, so alive for the
+		// session (the host's game brought it back with a cell reset, or what we knew was from another world), and the
+		// server gives nobody a dead NPC. No longer dead for us, whether our copy is alive (a reset here too, or its
+		// death held) or a corpse (its own cell's reset brings it back; meanwhile the NPC's hits on our stand-in count
+		// all the same: PlayerHits). Not when the death is one our own game reported within OWNED_CROSSING: our report
+		// and the grant crossed, and the server ends the ownership on our report. True when forgotten.
+		bool OnOwned(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto it = dead.find(a_id);
+			if (it == dead.end() || (it->second.reported && a_now - it->second.learned < OWNED_CROSSING)) {
+				return false;
+			}
+			dead.erase(it);
+			++corrected;
+			return true;
+		}
+
+		// Whether the death has been known for a_for or longer.
+		[[nodiscard]] bool KnownFor(std::uint32_t a_id, Clock::duration a_for, Clock::time_point a_now) const
+		{
+			const auto it = dead.find(a_id);
+			return it != dead.end() && a_now - it->second.learned >= a_for;
+		}
+
 		// No longer dead for us: a story character a friend's game killed away from them lives on in ours
 		// (WorldSync::TryKill), so a kill of it here later is news again.
 		void Forget(std::uint32_t a_id) { dead.erase(a_id); }
 
 		[[nodiscard]] bool Contains(std::uint32_t a_id) const { return dead.contains(a_id); }
+
+		// Known dead from another game's word (its report, or the session's dead list), not from our own game's report:
+		// a copy of it that falls here was killed for that word (WorldSync's console kill), by no blow of ours.
+		[[nodiscard]] bool ToldDead(std::uint32_t a_id) const
+		{
+			const auto it = dead.find(a_id);
+			return it != dead.end() && !it->second.reported;
+		}
 		[[nodiscard]] std::size_t Size() const { return dead.size(); }
 
 		// A load or a lost connection: what we knew described another world. Nothing is known until the session's
@@ -111,17 +186,22 @@ namespace SessionDeaths
 		}
 
 		[[nodiscard]] std::uint32_t Revived() const { return revived; }
+		[[nodiscard]] std::uint32_t Corrected() const { return corrected; }  // deaths forgotten because a game runs the NPC (OnOwned)
 
 	private:
 		struct Entry
 		{
-			Clock::time_point learned{};
-			bool              seenDead = false;
+			Clock::time_point                   learned{};
+			bool                                seenDead = false;
+			bool                                reported = false;  // our own game's report (Reported)
+			std::uint32_t                       from = 0;          // the player whose report told us, or 0
+			std::optional<std::array<float, 3>> fellAt;            // FellReported
 		};
 
 		std::unordered_map<std::uint32_t, Entry>             dead;
 		Clock::time_point                                    expectedAt{};
 		bool                                                 settled = false;
 		std::uint32_t                                        revived = 0;
+		std::uint32_t                                        corrected = 0;
 	};
 }

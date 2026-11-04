@@ -2,11 +2,17 @@
 //                                              [--max-world-entries N] [--max-share N] [--loopback-only]
 // --max-world-entries: how much each of the session's tables may hold (at most the default, 60000).
 // --max-share: how much one player other than the host may add to each table this run (kills, pickups,
-// doors, quest stages, loot and building alike). Both are for trying the limits (tools\soak.ps1 -Abuse).
+// doors, quest stages, loot and building alike; moved objects' places at most 512 whatever is given). Both are for trying
+// the limits (tools\soak.ps1 -Abuse).
 // The session's rules, as the game's ini sets them when it hosts (dist/F4Multiplayer.ini): --no-revive (bRevive = false),
 // --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
 // (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat
-// (bReviveOutOfCombat), --slow-vats (bRealTimeVats = false).
+// (bReviveOutOfCombat), --downed-crawl (bDownedCrawl), --slow-vats (bRealTimeVats = false), --share-guest-builds
+// (bShareGuestBuilds; with no host game, every player is a guest), --container-gifts
+// (bContainerGifts: a weapon or armor put in a container is given to whoever takes it first), --save-on-down (bSaveOnDown),
+// --npc-level average|highest|host|own (sNpcLevel: the level every game rolls leveled NPCs at, docs/SHARED-ROLLS.md),
+// --legendary-difficulty average|host|own (sLegendaryDifficulty: whose difficulty's legendary chance they roll with;
+// with no host game, host is the average).
 // --ban-file: where the bans are kept, so they outlive the server; without it they last until it stops.
 // While it runs, the console takes the host controls (Server::Console): help, players, kick <n>, ban <n>, bans,
 // unban <n | ~alias | all>, password <text> (password - removes it), lock and unlock. The answers go to the output,
@@ -14,6 +20,7 @@
 
 #include "Protocol.h"
 #include "Server.h"
+#include "SessionLevel.h"
 
 #ifdef _WIN32
 #	include <Windows.h>
@@ -103,8 +110,22 @@ int main(int argc, char* argv[])
 			++i;
 		} else if (arg == "--revive-out-of-combat") {
 			options.rules.reviveOutsideCombat = true;
+		} else if (arg == "--downed-crawl") {
+			options.rules.downedCrawl = true;
 		} else if (arg == "--slow-vats") {
 			options.rules.realTimeVats = false;
+		} else if (arg == "--share-guest-builds") {
+			options.rules.shareGuestBuilds = true;
+		} else if (arg == "--container-gifts") {
+			options.rules.containerGifts = true;
+		} else if (arg == "--save-on-down") {
+			options.rules.saveOnDown = true;
+		} else if (const auto rule = hasValue ? SessionLevel::Parse(argv[i + 1]) : std::nullopt; arg == "--npc-level" && rule) {
+			options.rules.npcLevel = *rule;
+			++i;
+		} else if (const auto legendary = hasValue ? SessionLevel::ParseLegendary(argv[i + 1]) : std::nullopt; arg == "--legendary-difficulty" && legendary) {
+			options.rules.legendary = *legendary;
+			++i;
 		} else if (arg == "--ban-file" && hasValue) {
 			options.banFile = argv[++i];
 		} else if (arg == "--session-file" && hasValue) {
@@ -115,12 +136,13 @@ int main(int argc, char* argv[])
 		} else if (arg == "--max-world-entries" && hasValue && ParseNumber(argv[i + 1], options.maxWorldEntries)) {
 			++i;
 		} else if (std::size_t share = 0; arg == "--max-share" && hasValue && ParseNumber(argv[i + 1], share)) {
-			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = share;
+			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = options.maxObjectPlacesPerPlayer = share;
 			++i;
 		} else {
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
 						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
-						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--slow-vats]\n";
+						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--downed-crawl] [--slow-vats]\n"
+						 "                  [--share-guest-builds] [--container-gifts] [--save-on-down]\n";
 			return 2;
 		}
 	}

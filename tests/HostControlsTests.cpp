@@ -67,7 +67,7 @@ namespace
 	{
 		a_f.fake->Take(a_peer);
 		a_f.fake->Deliver(a_peer, Protocol::Encode(a_command));
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 		for (auto now = std::chrono::steady_clock::now(); now < deadline; now = std::chrono::steady_clock::now()) {
 			const auto packet = a_f.fake->WaitFor(a_peer, Type(MT::kHostInfo), std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now));
 			if (!packet) {
@@ -564,7 +564,7 @@ TEST("host controls: the dedicated server's console kicks, bans, unbans, locks a
 	Clear(f, { 1, 2 });
 
 	const auto wait = [&](std::string_view a_text) {
-		for (int i = 0; i < 100 && !f.Logged(a_text); ++i) {
+		for (int i = 0; i < 1500 && !f.Logged(a_text); ++i) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(20));
 		}
 		return f.Logged(a_text);

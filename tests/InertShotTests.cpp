@@ -1,7 +1,11 @@
 #include "Test.h"
+#include "Protocol.h"
+#include "game/AimPoint.h"
 #include "game/InertShot.h"
 
 #include <array>
+#include <cmath>
+#include <limits>
 
 TEST("InertShot: the copy of a projectile record keeps its motion and loses its blast, its pinning, its pickup and its switch")
 {
@@ -37,7 +41,7 @@ TEST("InertShot: the hook goes in only where Projectile::Launch begins as 1.11.2
 	CHECK(!EntryMatches(other));
 	std::array<std::uint8_t, 5> jumped{ 0xE9, 0x00, 0x00, 0x00, 0x00 };  // another plugin's jump already there
 	CHECK(!EntryMatches(jumped));
-	CHECK(LAUNCH_ID == 2236958);
+	static_assert(LAUNCH_ID == 2236958);
 }
 
 TEST("InertShot: the continuation does what the jump overwrote, then jumps to the engine's code after it")
@@ -57,7 +61,7 @@ TEST("InertShot: the continuation does what the jump overwrote, then jumps to th
 	CHECK(stub + CONTINUATION_SIZE + rel == function + JUMP_SIZE);  // to the push rbp after the five bytes
 	// A trampoline out of a jump's reach: none, so the hook is not installed.
 	CHECK(!Continuation(0x7FF000000000, function).has_value());
-	CHECK(TRAMPOLINE_NEEDED == 24);
+	static_assert(TRAMPOLINE_NEEDED == 24);
 }
 
 TEST("InertShot: an inert shot is ended when it is stale, or settled in a cell that is no longer attached")
@@ -95,4 +99,43 @@ TEST("InertShot: a swapped launch is aimed by the puppet's heading and its owner
 	const auto down = LaunchAngles(3.0f, -45.0f);
 	CHECK(down.z == 3.0f);
 	CHECK(down.x > 0.78f && down.x < 0.79f);
+}
+
+TEST("InertShot: every launch of a stand-in's is given its friend's aim, a copy's only when it is swapped")
+{
+	using namespace InertShot;
+	CHECK(Aims(true, false));   // a flamer's stream, a harpoon: the engine's own record, sent where the friend aimed
+	CHECK(Aims(true, true));    // a stand-in's missile, launched inert
+	CHECK(Aims(false, true));   // a copy's missile, launched inert
+	CHECK(!Aims(false, false));  // a copy's own plain shot, our player's, our NPCs': the engine's as before
+}
+
+TEST("InertShot: a friend's look comes back as the same launch angle x, through the pitch sent and the stand-in's aim")
+{
+	using namespace InertShot;
+	// The sender packs its angle x as whole degrees up (Session, AimPoint::PitchFromLooking); the launch hook turns that
+	// pitch back into the angle x the shot leaves with. Within half a degree of the look, the sign kept: a friend looking
+	// down shoots down, not up at a player standing above them.
+	for (const float look : { -1.2f, -0.5f, -0.01f, 0.0f, 0.2f, 0.9f, 1.4f }) {
+		const auto pitch = static_cast<float>(Protocol::PackPitch(AimPoint::PitchFromLooking(look)));
+		const auto angles = LaunchAngles(2.0f, pitch);
+		CHECK(std::abs(angles.x - look) <= 0.5f / AimPoint::TO_DEGREES + 1e-5f);
+		CHECK(angles.z == 2.0f);
+	}
+}
+
+TEST("InertShot: how far the engine's aim of a launch was from the friend's, in degrees")
+{
+	using namespace InertShot;
+	constexpr float PI = 3.14159265358979f;
+	CHECK(DegreesBetween({ .z = 1.0f, .x = 0.2f }, { .z = 1.0f, .x = 0.2f }) < 0.1f);
+	CHECK(std::abs(DegreesBetween({ .z = 0.0f, .x = 0.0f }, { .z = PI / 2.0f, .x = 0.0f }) - 90.0f) < 0.1f);  // a quarter turn
+	CHECK(std::abs(DegreesBetween({ .z = 0.0f, .x = 0.0f }, { .z = PI, .x = 0.0f }) - 180.0f) < 0.1f);        // straight behind
+	CHECK(std::abs(DegreesBetween({ .z = 0.0f, .x = 0.0f }, { .z = 0.0f, .x = -PI / 6.0f }) - 30.0f) < 0.1f); // 30 degrees up
+	// A heading a whole turn round is the same direction; straight down is the same whatever the heading.
+	CHECK(DegreesBetween({ .z = 0.5f, .x = 0.0f }, { .z = 0.5f + 2.0f * PI, .x = 0.0f }) < 0.1f);
+	CHECK(DegreesBetween({ .z = 0.0f, .x = PI / 2.0f }, { .z = 2.0f, .x = PI / 2.0f }) < 0.1f);
+	const float NaN = std::numeric_limits<float>::quiet_NaN();
+	CHECK(DegreesBetween({ .z = NaN, .x = 0.0f }, { .z = 0.0f, .x = 0.0f }) == 180.0f);
+	CHECK(DegreesBetween({ .z = 0.0f, .x = 0.0f }, { .z = 0.0f, .x = std::numeric_limits<float>::infinity() }) == 180.0f);
 }

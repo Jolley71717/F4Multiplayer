@@ -99,6 +99,16 @@ read for doors and gates too; their quest stages were not surveyed.
   shared like a player's. The friend's copy of that NPC opens nothing, so nothing in their game fights it; their own
   NPCs at the same door report it the same way, the latest word standing. Load doors and automatic doors are not.
 
+Since then, third round (2026-10-26, src/game/DoorShare.h): every loaded plain door (one whose open state is a
+player's: no script of its own but the quiet ones, not automatic, not the story's) is read every half second
+(WorldSync's `PollDoor`, a few doors a frame), so what a script does to it reaches a friend without the player touching it: a stage that
+unlocks the way (DN048's doors, DN011's load doors, DN019JoinCult's amphitheater door, the "Plain doors a stage only
+unlocks" note below), a trigger that unlocks a door as the player walks in, a script that shuts a door behind them. The
+first read of a door is where it stands and is not reported; a change is, once the player is within 1200 of the door
+(a friend refuses a report from further), else kept until they are, and at most once every 2 s after a burst of 8. Vault 114's second reference in the first report,
+00145DA2, was read off Fallout4.esm: the furniture (NPCVaultConsoleActivate) the console 00145DA1 links to, the lever
+the player pulls, not a door; the stage covers the door.
+
 ## Gates with a script of their own
 
 Activators that run `Default2StateActivator` together with, or in place of, another script (Fallout4.esm,

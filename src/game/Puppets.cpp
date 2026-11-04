@@ -1,12 +1,14 @@
 ﻿#include "game/Puppets.h"
 
 #include "game/AimPoint.h"
+#include "game/ClickWatch.h"
 #include "game/CreatureGait.h"
 #include "game/DrawMatch.h"
 #include "game/FrameClock.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
+#include "game/PackageRelease.h"
 #include "game/Papyrus.h"
 
 #include "Protocol.h"
@@ -54,6 +56,7 @@ namespace Puppets
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
 			bool                                  down = false;      // lying down for its downed friend: placed, not driven (see SetDown)
+			std::chrono::steady_clock::time_point sneakRetell{};     // up from that: its sneak is told again then, whatever was sent (SetDown)
 			bool                                  forceSetUp = false;  // its graph set up on its next update whatever the engine says (ForceGraphSetUp)
 			std::uint32_t                         setUps = 0;        // its graph set up by us (SetUpRebuiltGraph): dev
 			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
@@ -291,15 +294,31 @@ namespace Puppets
 
 		std::atomic<std::uint32_t> drawAsks{ 0 };     // draws and holsters asked of puppets (dev status line)
 		std::atomic<std::uint32_t> drawGiveUps{ 0 };  // states a puppet never took in DrawMatch::MAX_TRIES asks
+		std::atomic<std::uint32_t> drawRestarts{ 0 };  // draws and holsters that stalled half-way, set back and asked again
+
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kSheathed) == std::to_underlying(DrawMatch::State::kSheathed));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kWantToDraw) == std::to_underlying(DrawMatch::State::kWantToDraw));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kDrawing) == std::to_underlying(DrawMatch::State::kDrawing));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kDrawn) == std::to_underlying(DrawMatch::State::kDrawn));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kWantToSheathe) == std::to_underlying(DrawMatch::State::kWantToSheathe));
+		static_assert(std::to_underlying(RE::WEAPON_STATE::kSheathing) == std::to_underlying(DrawMatch::State::kSheathing));
+
+		// The actor's weapon state as the engine keeps it, not as GetWeaponMagicDrawn reads it (DrawMatch::StateOf: a weapon
+		// on its way to the holster read as away).
+		DrawMatch::State WeaponStateOf(const RE::Actor* a_actor)
+		{
+			return DrawMatch::StateOf(std::to_underlying(static_cast<const RE::ActorState&>(*a_actor).weaponState));
+		}
 
 		// Draws or holsters the weapon to match the remote player: each ask plays the weapon's sound, so a few
-		// asks a second apart, then it is let be (DrawMatch).
+		// asks a second apart, then it is let be (DrawMatch). One that stalled half-way is set back and asked again.
 		void MatchWeaponDrawn(RE::Actor* a_actor, const Puppet& a_puppet)
 		{
 			const bool wantDrawn = (a_puppet.target.flags & Protocol::kWeaponDrawn) != 0;
-			const bool drawn = a_actor->GetWeaponMagicDrawn();
+			const auto state = WeaponStateOf(a_actor);
 			const auto now = std::chrono::steady_clock::now();
 			DrawMatch::Do what = DrawMatch::Do::kNothing;
+			std::chrono::steady_clock::duration stalledFor{};
 			{
 				std::scoped_lock l{ lock };
 				const auto entry = Find(a_actor);
@@ -307,7 +326,8 @@ namespace Puppets
 					return;
 				}
 				const auto giveUps = entry->draw.giveUps;
-				what = DrawMatch::Next(entry->draw, wantDrawn, drawn, entry->redraw, entry->nextDrawAttempt, now);
+				stalledFor = now - entry->draw.seenSince;
+				what = DrawMatch::Next(entry->draw, wantDrawn, state, entry->redraw, entry->nextDrawAttempt, now);
 				if (entry->draw.giveUps != giveUps) {
 					drawGiveUps.fetch_add(1, std::memory_order_relaxed);
 					if (MoveSync::Loggable(drawGiveUps.load(std::memory_order_relaxed))) {
@@ -319,10 +339,27 @@ namespace Puppets
 					entry->redraw = false;
 				}
 			}
-			if (what != DrawMatch::Do::kNothing) {
-				drawAsks.fetch_add(1, std::memory_order_relaxed);
-				a_actor->DrawWeaponMagicHands(what == DrawMatch::Do::kDraw);
+			if (what == DrawMatch::Do::kNothing) {
+				return;
 			}
+			drawAsks.fetch_add(1, std::memory_order_relaxed);
+			ClickWatch::Note(ClickRates::Source::kDrawAsk);
+			if (what == DrawMatch::Do::kRestart) {
+				// Back where its weapon still is (the animation that would have moved it never played), and asked as the first time.
+				const auto from = DrawMatch::From(state);
+				static_cast<RE::ActorState&>(*a_actor).SetWeaponState(static_cast<RE::WEAPON_STATE>(std::to_underlying(from)));
+				const auto restarts = drawRestarts.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (MoveSync::Loggable(restarts)) {
+					REX::INFO("Puppets: {:08X} stalled {} ms in weapon state {} (its friend's weapon {}); set back to {}{} ({} so far)", a_actor->GetFormID(),
+						std::chrono::duration_cast<std::chrono::milliseconds>(stalledFor).count(), std::to_underlying(state), wantDrawn ? "out" : "away", std::to_underlying(from),
+						DrawMatch::Drawn(from) != wantDrawn ? " and asked again" : "", restarts);
+				}
+				if (DrawMatch::Drawn(from) != wantDrawn) {
+					a_actor->DrawWeaponMagicHands(wantDrawn);
+				}
+				return;
+			}
+			a_actor->DrawWeaponMagicHands(what == DrawMatch::Do::kDraw);
 		}
 
 		// Player stand-ins whose graph was found moving while they should stand, or the other way round, and
@@ -338,8 +375,6 @@ namespace Puppets
 			static const RE::BSFixedString directionVar{ "Direction" };
 			static const RE::BSFixedString pitchVar{ "Pitch" };
 			static const RE::BSFixedString idleLocomotionVar{ "iSyncIdleLocomotion" };
-			static const RE::BSFixedString moveStart{ "moveStart" };
-			static const RE::BSFixedString moveStop{ "moveStop" };
 			static const RE::BSFixedString jumpStart{ "jumpStart" };
 			static const RE::BSFixedString jumpFall{ "jumpFall" };
 			static const RE::BSFixedString jumpLand{ "jumpLand" };
@@ -352,6 +387,8 @@ namespace Puppets
 			static const RE::BSFixedString weaponRunMultVar{ MirrorGait::WEAPON_RUN_RATE };
 			static const RE::BSFixedString gaitSyncVar{ MirrorGait::GAIT_VARIABLE };
 			static const RE::BSFixedString weaponGaitVar{ MirrorGait::WEAPON_GAIT_VARIABLE };
+			static const RE::BSFixedString sneakGaitVar{ MirrorGait::SNEAK_GAIT_VARIABLE };
+			static const RE::BSFixedString inSneakVar{ "iIsInSneak" };
 			static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
 
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
@@ -367,12 +404,20 @@ namespace Puppets
 			// variables go first, so a moveStart below enters the right gait.
 			const bool  humanoid = kind.family == MirrorGait::Family::kPerson;
 			const float seconds = a_puppet.gaitAt == std::chrono::steady_clock::time_point{} ? 0.0f : std::chrono::duration<float>(now - a_puppet.gaitAt).count();
-			const float gaitSpeed = Gait::Smooth(a_puppet.gaitSpeed, motion.speed, seconds);
+			const float gaitSpeed = Gait::Smoothed(a_puppet.gaitSpeed, motion.speed, seconds);
 			const auto  person = MirrorGait::Person(own, motion.gait, motion.gaitRate, (motion.flags & Protocol::kWeaponDrawn) != 0, gaitSpeed, a_puppet.gait, motion.moveMode);
 			const auto  gait = humanoid ? person.gait : a_puppet.gait;
+			// Crouching (sent below as "sneakStart"/"sneakStop": an NPC has no sneak key).
+			const bool  sneaking = (motion.flags & Protocol::kSneaking) != 0;
 			if (humanoid) {
 				graph->SetGraphVariableInt(gaitSyncVar, Gait::SyncValue(gait));
 				graph->SetGraphVariableInt(weaponGaitVar, Gait::WeaponState(gait));
+				graph->SetGraphVariableInt(sneakGaitVar, Gait::WeaponState(gait));
+				// What the engine's Actor::SetSneaking keeps for an actor and our bare events do not: every state machine
+				// with a standing and a sneaking version (the weapon-away graph's, its weapon-drawn one's, a draw, a jump, a
+				// reload) enters the one it names. Without it a graph that came back from a jump or a weapon change, or was
+				// built again, stood up while its friend sneaked. (bIsSneaking and IsSneaking are the graph's own outputs.)
+				graph->SetGraphVariableInt(inSneakVar, sneaking ? 1 : 0);
 			}
 			// A dog's (CreatureGait.h): the gait and rate its owner's graph plays, its state set first for the same reason.
 			const bool dog = kind.family == MirrorGait::Family::kDog;
@@ -392,8 +437,14 @@ namespace Puppets
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
 			// A refused start is tested with a stop; a mirrored NPC's that the stop does not explain (an idle
 			// holds it) is ReleaseIdle's, right after.
+			// Sneaking, a humanoid's set-off is "moveStartAnimated" or "moveStart", whichever its graph has (MoveSync::NamesOf).
 			const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, motion.speed, now, [&](MoveSync::Event a_event) {
-				return graph->NotifyAnimationGraphImpl(a_event == MoveSync::Event::kStart ? moveStart : moveStop);
+				const auto names = MoveSync::NamesOf(a_event, sneaking && humanoid);
+				bool       taken = graph->NotifyAnimationGraphImpl(VariableName(names.first));
+				if (names.second) {
+					taken = graph->NotifyAnimationGraphImpl(VariableName(names.second)) || taken;
+				}
+				return taken;
 			});
 			const bool moving = step.moving;
 			if (humanoid) {
@@ -408,6 +459,9 @@ namespace Puppets
 						graph->NotifyAnimationGraphImpl(VariableName(event));
 					}
 					graph->NotifyAnimationGraphImpl(VariableName(Gait::WeaponEvent(gait)));
+					if (sneaking) {
+						graph->NotifyAnimationGraphImpl(VariableName(Gait::SneakEvent(gait)));
+					}
 				}
 			}
 			if (dog) {
@@ -425,10 +479,13 @@ namespace Puppets
 			// moving version by it. Set before the sneak and jump events below.
 			graph->SetGraphVariableInt(idleLocomotionVar, moving ? 1 : 0);
 
-			// Crouching: the graph takes "sneakStart"/"sneakStop" (an NPC has no sneak key).
-			const bool sneaking = (motion.flags & Protocol::kSneaking) != 0;
+			// Crouching: the graph takes "sneakStart"/"sneakStop".
 			const bool wasSneaking = (a_puppet.appliedFlags & Protocol::kSneaking) != 0;
-			if (sneaking != wasSneaking) {
+			// Up from lying for its downed friend (SetDown), told once more when the get-up has played out, whatever was sent:
+			// the engine's downed pose gets up into whatever sneak its graph had before, and an event sent during the get-up
+			// may be refused. A graph that agrees refuses it.
+			const bool retellSneak = a_puppet.sneakRetell != std::chrono::steady_clock::time_point{} && now >= a_puppet.sneakRetell;
+			if (sneaking != wasSneaking || retellSneak) {
 				graph->NotifyAnimationGraphImpl(sneaking ? sneakStart : sneakStop);
 			}
 
@@ -463,6 +520,9 @@ namespace Puppets
 						entry->graph = kind;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
+						if (retellSneak) {
+							entry->sneakRetell = {};
+						}
 					}
 				}
 				if (step.resent) {
@@ -489,6 +549,56 @@ namespace Puppets
 
 		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
 		std::atomic<std::uint64_t> graphsSetUp{ 0 };
+
+		// The do-nothing package a mirror is given (Actor::InitiateDoNothingPackage, +C69BF0) is made on the spot:
+		// TESPackage of procedure DoNothing, flagged must-complete (packFlags bit 2), handed to Actor::PutCreatedPackage
+		// (vtable 0xFA), which puts it in the AI process's current package slot (AIProcess::SetCurrentPackage). No extra
+		// data and no package override: the slot alone holds it. Package evaluation (AIProcess::CheckforNewPackage_Priv,
+		// +CF6620) keeps a must-complete package until its procedure is done, and DoNothing never is, so evp alone left it.
+		// The engine lets go of a made package the way CheckforNewPackage_Priv does when it drops one, and ResetAI's
+		// branch of Actor::EvaluatePackage does too: Actor::EndInterruptPackage(false), then, if it is still the current
+		// package, the process's data for it cleared and its slot cleared. These two are that clear:
+		// AIProcess::ClearCurrentDataforProcess(Actor*) (+D39880; returns at once without a middle-low process) and
+		// AIProcess::ClearCurrentPackage(Actor&) (+CF16D0: ActorPackage::Clear on the slot, under its lock).
+		constexpr REL::ID CLEAR_PACKAGE_DATA{ 2232435 };
+		constexpr REL::ID CLEAR_CURRENT_PACKAGE{ 2231582 };
+
+		// Do-nothing packages let go of on release (ReleaseNpc): for the log and the dev status line.
+		std::atomic<std::uint32_t> doNothingsDropped{ 0 };
+
+		// Lets go of the do-nothing package a mirror was given, as the engine would (above), so the evp after picks the
+		// NPC's own. A package from the game's data, or another the engine made, is the NPC's own and stays. Main thread.
+		void DropDoNothingPackage(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto package = process ? process->currentPackage.package : nullptr;
+			if (!package) {
+				return;
+			}
+			const auto packageId = package->GetFormID();
+			const auto packType = package->data.packType;
+			if (!PackageRelease::IsMirrorsDoNothing(packType, packageId)) {
+				// Not ours: logged for the first few, so a rig run shows what a released NPC had instead.
+				static std::atomic<std::uint32_t> kept{ 0 };
+				if (const auto n = ++kept; MoveSync::Loggable(n)) {
+					REX::INFO("Puppets: {:08X} released running package {:08X} (type {}), not a mirror's do-nothing package: left as it is ({} so far)",
+						a_actor->GetFormID(), packageId, static_cast<int>(packType), n);
+				}
+				return;
+			}
+			static REL::Relocation<void (*)(RE::AIProcess*, RE::Actor*)>  clearData{ CLEAR_PACKAGE_DATA };
+			static REL::Relocation<void (*)(RE::AIProcess*, RE::Actor&)> clearPackage{ CLEAR_CURRENT_PACKAGE };
+			a_actor->EndInterruptPackage(false);
+			if (process->currentPackage.package == package) {
+				clearData(process, a_actor);
+				clearPackage(process, *a_actor);
+			}
+			const auto now = process->currentPackage.package;
+			if (const auto n = ++doNothingsDropped; MoveSync::Loggable(n)) {
+				REX::INFO("Puppets: {:08X} released: dropped the do-nothing package {:08X}, its package now {:08X}; evp picks its own ({} so far)",
+					a_actor->GetFormID(), packageId, now ? now->GetFormID() : 0, n);
+			}
+		}
 
 		// What the tail of the engine's own Actor::Update does and its no-AI update does not: a graph rebuilt before its
 		// subgraphs were loaded (DoUpdate3dModel queued its setup) is set up once they are, through the actor's
@@ -818,11 +928,16 @@ namespace Puppets
 			}
 			originalFlags = entry->originalFlags;
 		}
+		// Unregistered first: Tick gives only registered puppets the do-nothing package again.
 		Unregister(a_actor, a_actor->GetFormID());
 		// Clear only what we set; a script may have blocked the NPC on purpose.
 		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR & ~originalFlags));
 		SetAttackDamage(a_actor, 1.0f);
-		// Drop the do-nothing package and pick the NPC's own again.
+		// Drop the do-nothing package (evp alone keeps it: see DropDoNothingPackage) and pick the NPC's own again. A corpse
+		// runs no package (the engine evaluates none for the dead), so one is left as it is.
+		if (!a_actor->IsDead(false)) {
+			DropDoNothingPackage(a_actor);
+		}
 		RE::Console::ExecuteCommand(std::format("{:08X}.evp", a_actor->GetFormID()).c_str());
 	}
 
@@ -831,7 +946,15 @@ namespace Puppets
 		std::scoped_lock l{ lock };
 		if (const auto entry = Find(a_actor)) {
 			entry->redraw = true;
-			entry->nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // let the equipping finish
+			entry->nextDrawAttempt = std::max(entry->nextDrawAttempt, std::chrono::steady_clock::now() + 1s);  // let the equipping finish
+		}
+	}
+
+	void HoldDraw(RE::Actor* a_actor, std::chrono::steady_clock::duration a_for)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto entry = Find(a_actor)) {
+			entry->nextDrawAttempt = std::max(entry->nextDrawAttempt, std::chrono::steady_clock::now() + a_for);
 		}
 	}
 
@@ -899,6 +1022,10 @@ namespace Puppets
 				entry->idleRelease = {};
 				entry->redraw = true;
 				entry->nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // the get-up plays first
+				entry->sneakRetell = std::chrono::steady_clock::now() + 2s;      // and is over by then
+			}
+			if (a_down) {
+				entry->sneakRetell = {};
 			}
 			entry->down = a_down;
 		}
@@ -1023,6 +1150,7 @@ namespace Puppets
 			std::vector<const char*> list{
 				Gait::Event(Gait::Kind::kWalk), Gait::Event(Gait::Kind::kRun),
 				Gait::WeaponEvent(Gait::Kind::kWalk), Gait::WeaponEvent(Gait::Kind::kRun),
+				Gait::SneakEvent(Gait::Kind::kWalk), Gait::SneakEvent(Gait::Kind::kRun),
 				CreatureGait::RANGE_VARIABLE, CreatureGait::MARKER_VARIABLE,
 				MirrorGait::PERSON_MARKER, MirrorGait::GAIT_VARIABLE, MirrorGait::WEAPON_GAIT_VARIABLE,
 				MirrorGait::WALK_RATE, MirrorGait::RUN_RATE, MirrorGait::WEAPON_WALK_RATE, MirrorGait::WEAPON_RUN_RATE,
@@ -1034,6 +1162,13 @@ namespace Puppets
 			}
 			for (const auto variable : MirrorGait::CREATURE_VARIABLES) {
 				list.push_back(variable);
+			}
+			for (const auto event : { MoveSync::Event::kStart, MoveSync::Event::kStop, MoveSync::Event::kStillMoving }) {
+				for (const bool sneaking : { false, true }) {
+					const auto sent = MoveSync::NamesOf(event, sneaking);
+					list.push_back(sent.first);
+					list.push_back(sent.second);
+				}
 			}
 			std::vector<Entry> table;
 			for (const auto name : list) {
@@ -1108,9 +1243,9 @@ namespace Puppets
 		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate
 		// each clip plays at (played= is the gait a dog's copy was last told, -1 standing: not ownerGait's when the speed
 		// rules that one out, CreatureGait::Fits); a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and
-		// iSyncIdleLocomotion is 1 while a graph moves.
+		// iSyncIdleLocomotion is 1 while a graph moves; iIsInSneak and iSyncSneakWalkRun are what a sneaking one was told.
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
-		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fTrotClipMult", "fTrotFastClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "iIsInSneak", "iSyncSneakWalkRun", "fWalkClipMult", "fTrotClipMult", "fTrotFastClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
 			const RE::BSFixedString var{ name };
 			float                   f = 0.0f;
 			std::int32_t            n = 0;
@@ -1203,6 +1338,12 @@ namespace Puppets
 		if (const auto asks = drawAsks.load(std::memory_order_relaxed); asks != 0) {
 			out += std::format("{}draws={}/{}", out.empty() ? "" : " ", asks, drawGiveUps.load(std::memory_order_relaxed));
 		}
+		if (const auto restarts = drawRestarts.load(std::memory_order_relaxed); restarts != 0) {
+			out += std::format("{}drawRestarts={}", out.empty() ? "" : " ", restarts);
+		}
+		if (const auto dropped = doNothingsDropped.load(std::memory_order_relaxed); dropped != 0) {
+			out += std::format("{}doNothingsDropped={}", out.empty() ? "" : " ", dropped);
+		}
 		return out;
 	}
 
@@ -1228,7 +1369,9 @@ namespace Puppets
 		// next update; never touch an actor that may already be gone.
 		for (const auto& [actor, formId] : due) {
 			const auto live = RE::TESForm::GetFormByID<RE::Actor>(formId);
-			if (live == actor && !live->IsDead(false)) {
+			// Still ours: one released since the list was made (ReleaseNpc) never gets it back, or it would stand still in
+			// the game that now runs it.
+			if (live == actor && !live->IsDead(false) && IsRegistered(live)) {
 				live->InitiateDoNothingPackage();
 			}
 		}

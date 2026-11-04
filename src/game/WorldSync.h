@@ -3,6 +3,11 @@
 #include "Protocol.h"
 
 #include "game/FoundDead.h"
+#include "game/LootScope.h"
+
+#include <map>
+#include <optional>
+#include <set>
 
 namespace LootSync
 {
@@ -28,6 +33,15 @@ namespace WorldSync
 	// it (kept in the save). Session moves it through loads, hellos and welcomes with SessionSteps.
 	[[nodiscard]] LootSync::Loot& Loot();
 
+	// For shared storage (Storage): what LootScope reads of a holder; what a container holds of the session's things (the
+	// shared stacks); the host's listing of a container (none while the ledger is still asking); and a packet sent in
+	// order with the loot's.
+	[[nodiscard]] LootScope::HolderFacts                  HolderFactsOf(std::uint32_t a_ref);
+	[[nodiscard]] std::map<std::uint32_t, std::int64_t>   SharedIn(std::uint32_t a_container);
+	[[nodiscard]] std::set<std::uint32_t>                 AliasedIn(std::uint32_t a_container);
+	[[nodiscard]] std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container);
+	void                                                  QueueEvent(std::vector<std::uint8_t> a_packet);
+
 	// Another player's game reported a death, or the server replays one it knows (no player named): killed
 	// here once loaded, the corpse put where it fell for them and pushed by their stand-in if theirs was the
 	// kill. With everyone on their own story, a unique or essential character dies here only if the reporter
@@ -42,9 +56,12 @@ namespace WorldSync
 	// caught up: set here once the door is loaded. False for any other stage, which is QuestSync's.
 	[[nodiscard]] bool ApplyScriptDoor(const Protocol::QuestStage& a_stage);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
-	// Another player took a_damage (a fraction of the maximum) off their copy of an NPC: taken off here if our game runs it
-	// (its health then goes to everyone, HealthShare); nothing otherwise.
-	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage);
+	// Player a_from took a_damage (a fraction of the maximum) off their copy of an NPC, their hit numbered a_seq: taken off
+	// here if our game runs it (its health then goes to everyone, HealthShare), held until it can be, or refused; each
+	// numbered one is answered (Protocol::DamageAnswer, DamageHold).
+	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage, std::uint32_t a_seq = 0, std::uint32_t a_from = 0);
+	// The answer to a damage of ours on a copy (CopyWatch): applied, or refused and given back.
+	void OnDamageAnswer(const Protocol::DamageAnswer& a_answer);
 	// Who runs these NPCs (as NpcSync is told). When we host, one another player's game runs that is dead
 	// in ours is reported dead: our world is the session's (with everyone on their own story, not a story
 	// character: FoundDead::Shared). The server gives nobody a dead NPC, so a death we hold for one that now has
@@ -60,7 +77,14 @@ namespace WorldSync
 	// end of its health it goes down and gets up, so going down is never reported as a death, and a death heard
 	// of for it waits until it can die here.
 	[[nodiscard]] bool IsEssential(RE::Actor* a_actor);
+	// Whether we know a_refId dead from another game's word (its report, or the session's dead list), not from our own
+	// game's report: our copy of it was killed here for that word (SessionDeaths::Ledger::ToldDead).
+	[[nodiscard]] bool ToldDead(std::uint32_t a_refId);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
+	// Any thread (the container menu's show, on the UI's): our player opened a_container's menu. The other players' changes
+	// waiting for it go in on the main thread's next frame, as when it loads (LootSync::Loot::Opened), not at the slow
+	// sweep's turn: a chest our game held without its inventory makes its roll as it is opened.
+	void OnMenuShown(RE::ObjectRefHandle a_container);
 	void ApplyRemotePickup(std::uint32_t a_refId);
 	void ApplyRemoteRefState(const Protocol::RefState& a_state);
 

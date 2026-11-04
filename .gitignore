@@ -16,10 +16,10 @@ compile_commands.json
 # packaged releases
 dist/out/
 
-# Beads / Dolt files (added by bd init)
+# local tool data (not part of the project)
+.beads/
 .dolt/
 *.db
 .beads-credential-key
-.beads/proxieddb/
 *.gate.lock*
 dumps/

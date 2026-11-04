@@ -6,11 +6,13 @@
 
 #include "Protocol.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -70,6 +72,81 @@ namespace SpawnBook
 			return a_original.id;
 		}
 		return a_own.npc && Protocol::IsShareableRef(a_own.id) ? a_own.id : 0;
+	}
+
+	// ---- A friend's NPC our game has no reference of ----------------------------------------------------------------
+	//
+	// A plugin's NPC is the same reference in every game, so NpcSync mirrors a friend's onto ours. But a reference its
+	// plugin stores as temporary is in a game only while its cell is loaded there, and a quest can take one far from its
+	// cell: the random encounter RETravelKMK04 moves its Mr Gutsy (REMisterGutsy01REF, 0002F61D, a temporary reference in
+	// the interior REHoldingCell) onto the road where its player is. Their game runs it and sends its states; in a friend's
+	// beside them the holding cell is not loaded, our game has no such reference, and every state of it came to nothing:
+	// no Mr Gutsy and no fight (a Nexus report on 0.9.2). Such an NPC is placed here as a friend's spawn is (Theirs, under
+	// the reference's own id: Protocol::IsShareableRef, never a spawn id), from the NPC its owner's roll of it was put
+	// together from (the session's roll, NpcSync::RollOf; PickBase over its templates, then the NPC it was placed as).
+	// 0 when there is none: an NPC that is not leveled has no roll, and nothing here names what it is.
+	template <class BaseOf>
+	std::uint32_t AbsentBase(const Protocol::NpcIdentity* a_roll, BaseOf&& a_baseOf)
+	{
+		if (!a_roll || a_roll->mask == 0) {
+			return 0;
+		}
+		std::array<Base, Protocol::IDENTITY_TEMPLATES> templates{};
+		std::size_t                                    count = 0;
+		for (std::size_t i = 0; i < templates.size(); ++i) {
+			if ((a_roll->mask >> i) & 1u && a_roll->templates[i] != 0) {
+				templates[count++] = a_baseOf(a_roll->templates[i]);
+			}
+		}
+		return PickBase({}, std::span{ templates.data(), count }, a_roll->originalBase != 0 ? a_baseOf(a_roll->originalBase) : Base{});
+	}
+
+	// What one of a friend's states of a plugin's NPC asks of our book (Spawns::Absent).
+	enum class AbsentStep : std::uint8_t
+	{
+		kOurs,    // our game has the reference: NpcSync mirrors (or brings in) ours, the book holds no copy of it
+		kKnown,   // the book holds it already, for this owner and not over: the state moves our copy
+		kNoBase,  // nothing names what to place it from (no roll of it has come, or none of its NPCs is one we place)
+		kAdd,     // booked now, from its base: placed as a friend's spawn is (Theirs::Decide), and mirrored under its id
+	};
+
+	// a_here: our game has a reference under the id. a_knownOwner: who the book holds it for, 0 if it holds none (or the
+	// one it holds is over: died or let go of). A change of hands books it afresh for the new owner.
+	constexpr AbsentStep DecideAbsent(bool a_here, std::uint32_t a_knownOwner, std::uint32_t a_owner, std::uint32_t a_base)
+	{
+		if (a_here) {
+			return AbsentStep::kOurs;
+		}
+		if (a_knownOwner != 0 && a_knownOwner == a_owner) {
+			return AbsentStep::kKnown;
+		}
+		return a_base == 0 ? AbsentStep::kNoBase : AbsentStep::kAdd;
+	}
+
+	// Why a runtime NPC of ours, once it is hostile to our player or fighting, is not reported yet: the log says it once
+	// per NPC, so that "the friend never saw it" can be told from "our game never shared it". Nothing is none.
+	enum class Block : std::uint8_t
+	{
+		kNone,
+		kNoBase,   // no NPC every game can place it from (PickBase): all its templates have templates of their own, and its own base is the game's copy
+		kNoPlace,  // not in one cell or one worldspace (the report has to name one)
+	};
+
+	constexpr Block ShareBlock(std::uint32_t a_base, bool a_placeKnown)
+	{
+		return a_base == 0 ? Block::kNoBase : (!a_placeKnown ? Block::kNoPlace : Block::kNone);
+	}
+
+	constexpr std::string_view BlockName(Block a_block)
+	{
+		switch (a_block) {
+		case Block::kNoBase:
+			return "no base the friend's game can place it from";
+		case Block::kNoPlace:
+			return "not in a cell or a worldspace";
+		default:
+			return "none";
+		}
 	}
 
 	// ---- Ours: NPCs our game made, shared under spawn ids --------------------------------------------------------
@@ -222,6 +299,36 @@ namespace SpawnBook
 	// its 3D is still missing this long after it was placed, or has gone.
 	constexpr auto  LOAD_WAIT = std::chrono::seconds(10);
 
+	// A friend's frame given back from a loan (kFrameReturned) stands where its borrower got out of it, in every game, from
+	// that moment: our copy is placed there (Theirs::GivenBack), not where the owner's frame stood as it was lent, which
+	// is all our book had of it (a lent frame never moves in its owner's game). The owner's states sent before their game
+	// heard of the return still say the old spot, and come in after it: for this long, one farther than
+	// FrameShare::NUDGE_LIMIT from where it was given back is not taken (Theirs::Moved), so our copy is not sent back to
+	// the old spot and placed again a moment later. Past it, the owner's word stands, wherever their game has the frame.
+	constexpr auto RETURN_HOLD = std::chrono::seconds(5);
+
+	inline bool HoldsReturn(const std::optional<Spot>& a_givenBack, Clock::duration a_since, const Spot& a_state)
+	{
+		return a_givenBack && a_since >= Clock::duration::zero() && a_since < RETURN_HOLD && !RemoteEdits::Within(RemoteEdits::Distance(*a_givenBack, a_state), FrameShare::NUDGE_LIMIT);
+	}
+
+	// A runtime NPC of our own standing this close to where a friend's game has a spawn of theirs stands for it
+	// (Facts::oursThere). Two players crossing one random encounter's trigger each roll the encounter in their own game,
+	// at the same markers, and each game shared its NPCs: every raider stood twice in each game, our own and the copy of
+	// the friend's, on top of each other (a Nexus report on 0.10.0). A group spawns at its markers together, so one of
+	// ours within this of a copy's spot is the same encounter's, whichever of the group's NPCs it is.
+	constexpr float NPC_SAME_SPOT = 128.0f;
+
+	// Whether a runtime NPC of our own there is the same encounter's NPC as a friend's spawn, so it stands for it: placed
+	// from the same NPC (PickBase's choice, a_ourBase against the spawn's base), or rolled from the same leveled NPC (its
+	// original, against the friend's roll of the spawn; 0 where either isn't known). Hostility alone is no match: in a
+	// mixed fight a raider of ours beside a friend's spawn of another encounter (their gunner) is not it, and the friend's
+	// spawn, still fighting them, must not vanish from our game.
+	[[nodiscard]] constexpr bool StandsFor(std::uint32_t a_ourBase, std::uint32_t a_ourOriginal, std::uint32_t a_spawnBase, std::uint32_t a_spawnOriginal)
+	{
+		return (a_ourBase != 0 && a_ourBase == a_spawnBase) || (a_ourOriginal != 0 && a_ourOriginal == a_spawnOriginal);
+	}
+
 	// What the game sees of one spawn, for Theirs::Decide.
 	struct Facts
 	{
@@ -232,6 +339,11 @@ namespace SpawnBook
 		bool                copyLoaded = true;  // its 3D is in
 		bool                baseOk = true;      // its base is an NPC we place copies of (not unique, not the player's)
 		bool                waiting = false;    // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT): not placed yet
+		// A runtime NPC of our own (no copy, no stand-in; alive), the same encounter's (StandsFor), stands within
+		// NPC_SAME_SPOT of where their game has it: ours stands for it, and no copy is placed while it does (each game
+		// fights its own instead of its own and a copy of the friend's on the same spot). Only for a copy about to be
+		// placed: one placed already stays, whatever comes to stand beside it.
+		bool                oursThere = false;
 	};
 
 	enum class Act
@@ -256,6 +368,15 @@ namespace SpawnBook
 		bool                occupied = false;   // somebody here is in our copy, or it is the frame our player left last
 		bool                leaving = false;    // who is in it is being sent out of it, or just was (RemotePlayers::BeingSentOut)
 		bool                baseOk = true;      // its base is a power armor frame here
+		// Lent to our player (FrameLoans): the kit is in our copy, or they wear it. Neither moved, nor deleted, nor given up
+		// to whoever is in it, until the loan is over (then it goes, and is placed again where the owner's game has it).
+		bool                lent = false;
+		// A frame our own game made, of that base and no copy of ours, stands where their game has theirs (within
+		// FrameShare::SAME_SPOT): ours stands for it (two saves with a shared past hold the same frames). No copy beside it.
+		bool                oursThere = false;
+		// Where their game has it, a copy would stand in our player's way out of the frame a loaded save had them in, while
+		// they are sent out of it (FrameLoans::KeepsClear): no copy there until they are out.
+		bool                keptClear = false;
 	};
 
 	class Theirs
@@ -275,14 +396,17 @@ namespace SpawnBook
 			Clock::time_point triedAt{};
 			Clock::time_point placedAt{};       // when our copy was placed
 			bool              taken = false;     // a frame: somebody here got into our copy, and it is theirs now
+			std::optional<Spot> givenBack;       // a frame: where it was last given back from a loan (RETURN_HOLD)
+			Clock::time_point givenBackAt{};
 		};
 
-		// A friend's game shares one. False when it is ours (the server never grants one id twice, but a book can lag),
-		// from us, or the book is full. One already known under the id is replaced: the old one is over (Forget it first,
-		// after deleting its copy, if it had one: Find(id)->local).
+		// A friend's game shares one (a spawn id), or runs a plugin's NPC our game has no reference of (its own id: see
+		// AbsentBase). False when it is ours (the server never grants one id twice, but a book can lag), from us, or the
+		// book is full. One already known under the id is replaced: the old one is over (Forget it first, after deleting
+		// its copy, if it had one: Find(id)->local).
 		bool Add(const Protocol::Spawn& a_spawn, std::uint32_t a_localPlayer)
 		{
-			if (!Protocol::IsSpawnRef(a_spawn.refId) || a_spawn.playerId == 0 || a_spawn.playerId == a_localPlayer) {
+			if (!Protocol::IsActorRef(a_spawn.refId) || a_spawn.playerId == 0 || a_spawn.playerId == a_localPlayer) {
 				return false;
 			}
 			if (!copies.contains(a_spawn.refId) && copies.size() >= MAX) {
@@ -296,13 +420,31 @@ namespace SpawnBook
 			return true;
 		}
 
-		// Its owner's game says where it is now (a state).
-		void Moved(std::uint32_t a_id, const Spot& a_at, float a_heading)
+		// Its owner's game says where it is now (a state). Not taken while it holds a return (HoldsReturn): sent before their
+		// game heard of it.
+		void Moved(std::uint32_t a_id, const Spot& a_at, float a_heading, Clock::time_point a_now)
 		{
-			if (const auto it = copies.find(a_id); it != copies.end()) {
-				it->second.at = a_at;
-				it->second.heading = a_heading;
+			const auto it = copies.find(a_id);
+			if (it == copies.end() || HoldsReturn(it->second.givenBack, a_now - it->second.givenBackAt, a_at)) {
+				return;
 			}
+			it->second.at = a_at;
+			it->second.heading = a_heading;
+		}
+
+		// A frame of a friend's was given back from a loan at a_at (kFrameReturned with a place, or our own return as we
+		// send it): it stands there now, and our copy is placed there. False when we know no such spawn.
+		bool GivenBack(std::uint32_t a_id, const Spot& a_at, float a_heading, Clock::time_point a_now)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return false;
+			}
+			it->second.at = a_at;
+			it->second.heading = a_heading;
+			it->second.givenBack = a_at;
+			it->second.givenBackAt = a_now;
+			return true;
 		}
 
 		// It died. Our copy to kill (0: none placed, or it was known dead already).
@@ -347,16 +489,92 @@ namespace SpawnBook
 			if (copy.gone || copy.dead) {
 				return Act::kForget;
 			}
-			if (!a_facts.baseOk || copy.tries >= PLACE_TRIES || (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY)) {
-				return Act::kNone;
+			return WhyNotPlaced(a_id, a_facts, a_now) == Why::kPlace ? Act::kPlace : Act::kNone;
+		}
+
+		// Why a spawn that has no copy here is not placed now (kPlace: nothing stops it). The log says the lasting ones, so a
+		// friend's enemy that never showed can be told from one placed beside us (Spawns::Frame).
+		enum class Why : std::uint8_t
+		{
+			kPlace,         // nothing: Decide places it
+			kHasCopy,       // a copy is placed already
+			kOver,          // it died or its owner's game let it go
+			kBaseNotOk,     // its base is not an NPC we place copies of (a unique one, or a stand-in's)
+			kGaveUp,        // placing it failed PLACE_TRIES times
+			kRetryWait,     // placing it failed lately: tried again in PLACE_RETRY
+			kFarFromUs,     // where its owner's game has it is past PLACE_RANGE of our player, or in another place
+			kOwnerUnheard,  // its owner's stand-in has not said where it is
+			kOwnerFar,      // its owner's stand-in is past OWNER_RANGE of it, or in another place
+			kRollWait,      // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT)
+			kOursThere,     // a runtime NPC of our own stands where their game has it: ours stands for it (Facts::oursThere)
+			kUnknown,       // no such spawn
+		};
+
+		[[nodiscard]] Why WhyNotPlaced(std::uint32_t a_id, const Facts& a_facts, Clock::time_point a_now) const
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return Why::kUnknown;
+			}
+			const auto& copy = it->second;
+			if (copy.local != 0) {
+				return Why::kHasCopy;
+			}
+			if (copy.gone || copy.dead) {
+				return Why::kOver;
+			}
+			if (!a_facts.baseOk) {
+				return Why::kBaseNotOk;
+			}
+			if (a_facts.oursThere) {
+				return Why::kOursThere;
+			}
+			if (copy.tries >= PLACE_TRIES) {
+				return Why::kGaveUp;
+			}
+			if (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY) {
+				return Why::kRetryWait;
 			}
 			if (!RemoteEdits::Within(RemoteEdits::Distance(copy.at, a_facts.player), PLACE_RANGE)) {
-				return Act::kNone;
+				return Why::kFarFromUs;
 			}
-			if (!a_facts.owner || !RemoteEdits::Within(RemoteEdits::Distance(*a_facts.owner, copy.at), OWNER_RANGE)) {
-				return Act::kNone;
+			if (!a_facts.owner) {
+				return Why::kOwnerUnheard;
 			}
-			return a_facts.waiting ? Act::kNone : Act::kPlace;
+			if (!RemoteEdits::Within(RemoteEdits::Distance(*a_facts.owner, copy.at), OWNER_RANGE)) {
+				return Why::kOwnerFar;
+			}
+			return a_facts.waiting ? Why::kRollWait : Why::kPlace;
+		}
+
+		static constexpr std::string_view WhyName(Why a_why)
+		{
+			switch (a_why) {
+			case Why::kPlace:
+				return "nothing stops it";
+			case Why::kHasCopy:
+				return "placed";
+			case Why::kOver:
+				return "over";
+			case Why::kBaseNotOk:
+				return "its base is no NPC we place copies of (unique, or a stand-in's)";
+			case Why::kGaveUp:
+				return "placing it failed every time";
+			case Why::kRetryWait:
+				return "placing it failed lately";
+			case Why::kFarFromUs:
+				return "it is far from our player or in another place";
+			case Why::kOwnerUnheard:
+				return "its owner's stand-in has not said where it is";
+			case Why::kOwnerFar:
+				return "its owner's stand-in is far from it";
+			case Why::kRollWait:
+				return "waiting for its owner's roll of it";
+			case Why::kOursThere:
+				return "an NPC our own game made stands there and stands for it";
+			default:
+				return "unknown";
+			}
 		}
 
 		// A friend's frame, placed as a friend's parked one is (ArmorFrames::ChoosePark) rather than as an NPC: wherever its
@@ -365,7 +583,8 @@ namespace SpawnBook
 		// place, gone once out of our sight or over. A frame never dies: one its owner's game let go of (worn, gone, left in
 		// a cell since unloaded) is over, and shared afresh when it stands again. A copy somebody here got into (but one being
 		// sent out of it again, RemotePlayers::BeingSentOut) is theirs from then on: neither moved nor deleted, and none placed
-		// again while this spawn lasts.
+		// again while this spawn lasts. None while a frame of our own stands where their game has theirs (oursThere): ours
+		// stands for it, and a copy placed before ours stood there goes.
 		[[nodiscard]] Act DecideFrame(std::uint32_t a_id, const FrameFacts& a_facts, Clock::time_point a_now) const
 		{
 			const auto it = copies.find(a_id);
@@ -374,6 +593,12 @@ namespace SpawnBook
 			}
 			const auto& copy = it->second;
 			if (copy.local != 0) {
+				// Lent to our player: held as it is, even while its handle does not resolve (a cell changing under them), since
+				// a copy lost here would be placed again where its owner's game has the frame, beside the one worn. The loan
+				// gives it back once it is gone for good, and its end drops it (Spawns::DropLentCopy).
+				if (a_facts.lent) {
+					return Act::kNone;
+				}
 				if (!a_facts.copyThere) {
 					return Act::kLost;
 				}
@@ -383,7 +608,7 @@ namespace SpawnBook
 				if (a_facts.occupied) {
 					return Act::kAbandon;
 				}
-				if (copy.gone || !a_facts.inView || !a_facts.copyAt) {
+				if (copy.gone || !a_facts.inView || !a_facts.copyAt || a_facts.oursThere || a_facts.keptClear) {
 					return Act::kDiscard;
 				}
 				const float distance = RemoteEdits::Distance(*a_facts.copyAt, copy.at);  // NaN in another place
@@ -404,7 +629,7 @@ namespace SpawnBook
 			if (copy.taken || !a_facts.baseOk || copy.tries >= PLACE_TRIES || (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY)) {
 				return Act::kNone;
 			}
-			return a_facts.inView ? Act::kPlace : Act::kNone;
+			return a_facts.inView && !a_facts.oursThere && !a_facts.keptClear ? Act::kPlace : Act::kNone;
 		}
 
 		// Somebody here got into our copy of a frame (DecideFrame's kAbandon): it is theirs, no copy of ours any more, and

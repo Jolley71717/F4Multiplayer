@@ -2,11 +2,15 @@
 
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
+#include "game/FrameLoan.h"
+#include "game/FrameLoans.h"
 #include "game/FrameShare.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SpawnBook.h"
@@ -81,7 +85,26 @@ namespace Spawns
 		std::uint32_t reported = 0, granted = 0, refused = 0, received = 0;
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
-		std::uint32_t copiesUnloaded = 0, copiesBack = 0;  // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
+		std::uint32_t copiesUnloaded = 0, copiesBack = 0;      // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
+		std::uint32_t copiesRolled = 0, copiesNotRolled = 0;  // copies of leveled spawns built from their owner's roll as placed (RollHook), or not
+		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does: no copy.
+		std::unordered_set<std::uint32_t> oursThere;
+		std::uint32_t                     frameCopiesWithheld = 0;
+		// Friends' NPC spawns not placed yet: when we last looked for one of our own of the same encounter where their game
+		// has it (OwnMadeNpcAt, at most every OURS_THERE_LOOK while the copy would be placed), and what we found (0: none).
+		// Not kept past that: ours gone (dead, or off fighting elsewhere), the copy is placed. How many times one was found.
+		struct OursLook
+		{
+			Clock::time_point at{};
+			std::uint32_t     own = 0;
+		};
+		std::unordered_map<std::uint32_t, OursLook> oursThereLooked;
+		std::uint32_t                               npcCopiesWithheld = 0;
+		constexpr auto                              OURS_THERE_LOOK = std::chrono::seconds(1);
+		// Friends' frames whose copy would stand in our player's way out of the frame a loaded save had them in
+		// (SpawnBook::FrameFacts::keptClear), by spawn id while it would: no copy.
+		std::unordered_set<std::uint32_t> keptClear;
+		std::uint32_t                     frameCopiesKeptClear = 0;
 		std::uint32_t logged = 0;
 
 		std::uint32_t LocalPlayer()
@@ -165,6 +188,113 @@ namespace Spawns
 			return !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) && (a_actor->IsInCombat() || a_actor->GetHostileToActor(a_player));
 		}
 
+		// Our runtime NPCs that are hostile or fighting but cannot be reported (SpawnBook::ShareBlock), by their ids here:
+		// each is said once, for a few lines in all, and counted (`net status`: spawns notShared=). A friend does not see
+		// these, which is how "the host could not see the Mr Gutsy" would show.
+		constexpr std::size_t           MAX_BLOCKED_NOTED = 256;
+		std::unordered_set<std::uint32_t> blockedNoted;
+		std::uint32_t                   blocked = 0, blockedLogged = 0;
+
+		// What the actor's base is put together from, for the log: its own base, the NPC it was placed as, and its templates.
+		std::string DescribeBase(RE::Actor* a_actor)
+		{
+			const auto npc = a_actor->GetNPC();
+			std::string out = std::format("own {:08X}{}", npc ? npc->GetFormID() : 0, npc && npc->UsesTemplate() ? " (uses a template)" : "");
+			if (a_actor->extraList) {
+				if (const auto leveled = a_actor->extraList->GetByType<RE::ExtraLeveledCreature>()) {
+					out += std::format(", placed as {:08X}", leveled->originalBase ? leveled->originalBase->GetFormID() : 0);
+					for (const auto base : leveled->templates) {
+						if (base) {
+							const auto templated = base->As<RE::TESNPC>();
+							out += std::format(", template {:08X}{}", base->GetFormID(), templated ? (templated->UsesTemplate() ? " (has one of its own)" : "") : " (not an NPC)");
+						}
+					}
+				} else {
+					out += ", no leveled data";
+				}
+			}
+			return out;
+		}
+
+		void NoteBlocked(RE::Actor* a_actor, std::uint32_t a_local, SpawnBook::Block a_block)
+		{
+			if (blockedNoted.size() >= MAX_BLOCKED_NOTED) {
+				blockedNoted.clear();
+			}
+			if (!blockedNoted.insert(a_local).second) {
+				return;
+			}
+			++blocked;
+			if (blockedLogged >= LOGGED) {
+				return;
+			}
+			++blockedLogged;
+			const auto name = a_actor->GetDisplayFullName();
+			REX::INFO("Spawns: {:08X} '{}' (race {:08X}) is hostile to our player or fighting, but not shared (so far): {}; friends' games do not see it ({})", a_local, name ? name : "", a_actor->race ? a_actor->race->GetFormID() : 0,
+				SpawnBook::BlockName(a_block), DescribeBase(a_actor));
+		}
+
+		// Friends' plugin NPCs our game has no reference of (Absent): booked (each time, a change of hands books one afresh),
+		// and those nothing names a base for, by id, with their first such state: said once (a few lines in all) once it has
+		// stayed so past the wait for its roll (NpcRoll::IDENTITY_WAIT, the roll follows the claim), as long as it stays so.
+		struct NoBase
+		{
+			Clock::time_point since{};
+			bool              said = false;
+		};
+		std::uint32_t                             absentBooked = 0, absentLogged = 0;
+		std::unordered_map<std::uint32_t, NoBase> absentNoBase;
+
+		// Friends' spawns that have no copy here and are not about to get one, by spawn id, with the reason last said
+		// (SpawnBook::Theirs::Why): a reason is logged once, after the spawn has been known UNPLACED_AFTER, a few lines for
+		// each reason in all (an owner's stand-in walking off from its spawns again and again must not use up the lines a
+		// unique base or a failed placing needs), and counted in `net status` (unplaced=). A spawn merely far from our
+		// player is the usual case and only counted.
+		constexpr auto                                                    UNPLACED_AFTER = std::chrono::seconds(3);
+		std::unordered_map<std::uint32_t, SpawnBook::Theirs::Why>        unplacedWhy;
+		std::array<std::uint32_t, static_cast<std::size_t>(SpawnBook::Theirs::Why::kUnknown) + 1> unplacedLogged{};  // lines said, for each reason
+
+		void NoteUnplaced(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, SpawnBook::Theirs::Why a_why, const SpawnBook::Facts& a_facts, Clock::time_point a_now)
+		{
+			using Why = SpawnBook::Theirs::Why;
+			if (a_why == Why::kRollWait || a_why == Why::kRetryWait || a_why == Why::kPlace || a_why == Why::kHasCopy) {
+				unplacedWhy.erase(a_id);
+				return;
+			}
+			const auto seen = seenAt.find(a_id);
+			if (seen == seenAt.end() || a_now - seen->second < UNPLACED_AFTER) {
+				return;
+			}
+			auto& last = unplacedWhy.try_emplace(a_id, Why::kPlace).first->second;  // kPlace: none said yet
+			if (last == a_why) {
+				return;
+			}
+			last = a_why;
+			auto& said = unplacedLogged[static_cast<std::size_t>(a_why)];
+			if (a_why == Why::kFarFromUs || said >= LOGGED) {
+				return;
+			}
+			++said;
+			const float fromUs = RemoteEdits::Distance(a_copy.at, a_facts.player);
+			const float fromOwner = a_facts.owner ? RemoteEdits::Distance(*a_facts.owner, a_copy.at) : -1.0f;
+			REX::INFO("Spawns: player {}'s {:08X} (base {:08X}) has no copy here: {} ({:.0f} units from our player, {:.0f} from its owner's stand-in, -1 if not heard)", a_copy.spawn.playerId, a_id, a_copy.spawn.base,
+				SpawnBook::Theirs::WhyName(a_why), fromUs, fromOwner);
+		}
+
+		// For `net status`: our runtime NPCs that are hostile but cannot be shared, and the spawns of friends with no copy here
+		// for a lasting reason: their base is no NPC we place / it is far from our player / its owner's stand-in is unheard or far.
+		std::string Unplaced()
+		{
+			using Why = SpawnBook::Theirs::Why;
+			int base = 0, far = 0, owner = 0;
+			for (const auto& [id, why] : unplacedWhy) {
+				base += why == Why::kBaseNotOk || why == Why::kGaveUp;
+				far += why == Why::kFarFromUs;
+				owner += why == Why::kOwnerUnheard || why == Why::kOwnerFar;
+			}
+			return std::format(" notShared={} unplaced={}/{}/{}", blocked, base, far, owner);
+		}
+
 		void Kill(std::uint32_t a_local)
 		{
 			if (killedHere.size() >= MAX_KILLED_HERE) {
@@ -175,8 +305,10 @@ namespace Spawns
 			NpcSync::CountCommands(1);
 		}
 
-		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space).
-		RE::ObjectRefHandle PlaceCopy(const SpawnBook::Theirs::Copy& a_copy, std::uint32_t a_base, RE::TESObjectCELL* a_cell)
+		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space). The
+		// engine rolls a leveled one as it places it (synchronously, in CreateReferenceAtLocation): it is built as its
+		// owner's roll (RollHook::Placement), not rolled again at our player's level.
+		RE::ObjectRefHandle PlaceCopy(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, std::uint32_t a_base, RE::TESObjectCELL* a_cell)
 		{
 			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
 			if (!npc) {
@@ -189,8 +321,16 @@ namespace Spawns
 			data.interior = a_cell->IsInterior() ? a_cell : nullptr;
 			data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
 			data.clearStillLoadingFlag = true;
-			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
-			const auto ref = handle.get();
+			const auto           roll = NpcSync::RollOf(a_id);
+			RollHook::Placement  placement{ roll && roll->originalBase == a_base ? roll : nullptr };
+			const auto           handle = EngineRefs::CreateReferenceAtLocation(data);
+			const auto           ref = handle.get();
+			if (placement.Armed()) {
+				++(placement.Consumed() ? copiesRolled : copiesNotRolled);
+				if (!placement.Consumed()) {
+					REX::INFO("Spawns: our copy of {:08X} (base {:08X}) was not built from its owner's roll as it was placed; the report's check makes it so (NpcSync)", a_id, a_base);
+				}
+			}
 			if (!ref || !ref->As<RE::Actor>()) {
 				return {};
 			}
@@ -217,6 +357,47 @@ namespace Spawns
 				++copiesDiscarded;
 			}
 			theirs.Unplaced(a_id);
+		}
+
+		// The leveled NPC an NPC was placed as (its ExtraLeveledCreature's original), 0 for one that isn't leveled.
+		std::uint32_t LeveledOriginal(RE::Actor* a_actor)
+		{
+			const auto leveled = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
+			return leveled && leveled->originalBase ? leveled->originalBase->GetFormID() : 0;
+		}
+
+		// A runtime NPC of our own standing within SpawnBook::NPC_SAME_SPOT of a_spot: alive, loaded, no copy of a friend's
+		// spawn, no stand-in, not our companion, and the same encounter's NPC as the friend's spawn (SpawnBook::StandsFor: of
+		// a_base as BaseToPlace picks it, or placed as the same leveled NPC, a_original). The id of the first found, 0 for
+		// none. Asked only as a copy is about to be placed: a walk of the references within 128 units is cheap, and
+		// ForEachReferenceInRange finds the persistent ones too.
+		std::uint32_t OwnMadeNpcAt(std::uint32_t a_base, std::uint32_t a_original, const RemoteEdits::Spot& a_spot)
+		{
+			const auto tes = RE::TES::GetSingleton();
+			if (!tes) {
+				return 0;
+			}
+			std::uint32_t found = 0;
+			tes->ForEachReferenceInRange(RE::NiPoint3{ a_spot.x, a_spot.y, a_spot.z }, SpawnBook::NPC_SAME_SPOT, [&](RE::TESObjectREFR* a_ref) {
+				if (found != 0) {
+					return RE::BSContainer::ForEachResult::kStop;
+				}
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				const auto id = actor ? actor->GetFormID() : 0;
+				if (!actor || !Protocol::IsSpawnRef(id) || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || !actor->Get3D() || !actor->GetParentCell() ||
+					actor->IsPlayerRef() || Puppets::IsPuppet(actor) || theirs.IdOf(id) != 0 || SaveGuard::Placed(actor) || NpcSync::IsOurCompanion(actor)) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				if (!RemoteEdits::Within(RemoteEdits::Distance(SpotOf(actor), a_spot), SpawnBook::NPC_SAME_SPOT)) {
+					return RE::BSContainer::ForEachResult::kContinue;  // the walk's range is a box
+				}
+				if (SpawnBook::StandsFor(BaseToPlace(actor), LeveledOriginal(actor), a_base, a_original)) {
+					found = id;
+					return RE::BSContainer::ForEachResult::kStop;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return found;
 		}
 
 		// A base we place copies from: an NPC, and not a unique one (a second of a named character) or a stand-in's.
@@ -250,6 +431,33 @@ namespace Spawns
 				return;
 			}
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
+			facts.lent = FrameLoans::LentToUs(a_id);  // held as it is for the loan (FrameLoans)
+			// A frame of our own, of that base, standing where their game has theirs (two saves with a shared past hold the
+			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT). Never one lent to us: our
+			// copy is the frame our player borrowed, held for the loan whatever of ours stands at that spot.
+			facts.oursThere = !facts.lent && facts.inView && NpcSync::OwnMadeFrameAt(copy->spawn.base, copy->at, FrameShare::SAME_SPOT);
+			if (facts.oursThere) {
+				if (oursThere.insert(a_id).second) {
+					++frameCopiesWithheld;
+					REX::INFO("Spawns: a frame of our own stands where player {}'s game has their frame {:08X} (base {:08X}), at ({:.0f},{:.0f},{:.0f}); it stands for theirs, no copy beside it", copy->spawn.playerId, a_id,
+						copy->spawn.base, copy->at.x, copy->at.y, copy->at.z);
+				}
+			} else {
+				oursThere.erase(a_id);
+			}
+			// Our player being sent out of the frame a loaded save had them in, near where their game has this one (the loan of
+			// it over with the load, it stands again where our player got in): no copy of it there until they are out, as the
+			// engine gets nobody out of power armor with a frame where they step back to (FrameLoans::KeepsClear).
+			facts.keptClear = !facts.lent && FrameLoans::KeepsClear(copy->at);
+			if (facts.keptClear) {
+				if (keptClear.insert(a_id).second) {
+					++frameCopiesKeptClear;
+					REX::INFO("Spawns: player {}'s frame {:08X} stands near our player, who is being sent out of the frame a loaded save had them in; no copy of it there until they are out",
+						copy->spawn.playerId, a_id);
+				}
+			} else if (keptClear.erase(a_id) > 0) {
+				REX::INFO("Spawns: player {}'s frame {:08X} is clear of our player again; its copy may stand", copy->spawn.playerId, a_id);
+			}
 			RE::NiPointer<RE::TESObjectREFR> ref;
 			if (copy->local != 0) {
 				ref = CopyOf(a_id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
@@ -293,7 +501,7 @@ namespace Spawns
 					placed[a_id] = { handle, a_now, SaveGuard::IdsOf(placedRef.get()) };
 					theirs.Placed(a_id, placedRef->GetFormID(), a_now);
 					++frameCopiesPlaced;
-					REX::INFO("Spawns: {} {:08X} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", placedRef->GetFormID(), at.x, at.y, at.z,
+					REX::INFO("Spawns: {} {} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", RefTag::Of(placedRef.get()), at.x, at.y, at.z,
 						playerId, a_id, base);
 					break;
 				}
@@ -306,8 +514,8 @@ namespace Spawns
 			case SpawnBook::Act::kDiscard:
 				if (ref) {
 					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
-					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} {:.0f} units off)", ref->GetFormID(),
-						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, off);
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} oursThere={} keptClear={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, facts.oursThere, facts.keptClear, off);
 				}
 				Discard(a_id);
 				break;
@@ -351,7 +559,8 @@ namespace Spawns
 		}
 		const auto base = BaseToPlace(a_actor);
 		const auto at = SpotOf(a_actor);
-		if (base == 0 || (at.cell == 0) == (at.worldspace == 0)) {
+		if (const auto block = SpawnBook::ShareBlock(base, (at.cell == 0) != (at.worldspace == 0)); block != SpawnBook::Block::kNone) {
+			NoteBlocked(a_actor, local, block);
 			return 0;
 		}
 		const auto id = ours.Offer(local, Clock::now(), [](std::uint32_t a_id) { return theirs.Knows(a_id); });
@@ -461,6 +670,11 @@ namespace Spawns
 		const auto now = Clock::now();
 		for (const auto& owner : a_owners) {
 			if (!Protocol::IsSpawnRef(owner.refId)) {
+				// A friend's NPC our game has no reference of (Absent): over when nobody runs it, or for its owner when another
+				// game takes it (that game's next state books it afresh).
+				if (const auto copy = theirs.Find(owner.refId); copy && owner.playerId != copy->spawn.playerId) {
+					theirs.Gone(owner.refId);
+				}
 				continue;
 			}
 			if (ours.Holds(owner.refId)) {
@@ -479,12 +693,85 @@ namespace Spawns
 
 	void OnState(const Protocol::ActorState& a_state)
 	{
-		theirs.Moved(a_state.refId, RemoteEdits::SpotOf(a_state), a_state.heading);
+		theirs.Moved(a_state.refId, RemoteEdits::SpotOf(a_state), a_state.heading, Clock::now());
+	}
+
+	bool Absent(const Protocol::ActorState& a_state, std::uint32_t a_owner)
+	{
+		const auto id = a_state.refId;
+		if (!Protocol::IsShareableRef(id) || a_owner == 0 || a_owner == LocalPlayer()) {
+			return false;
+		}
+		const auto known = theirs.Find(id);
+		const auto knownOwner = known && !known->gone ? known->spawn.playerId : 0;
+		const auto base = knownOwner == a_owner ? 0 : SpawnBook::AbsentBase(NpcSync::RollOf(id), [](std::uint32_t a_npc) { return BaseOf(RE::TESForm::GetFormByID(a_npc)); });
+		switch (SpawnBook::DecideAbsent(RE::TESForm::GetFormByID(id) != nullptr, knownOwner, a_owner, base)) {
+		case SpawnBook::AbsentStep::kOurs:
+			return false;
+		case SpawnBook::AbsentStep::kKnown:
+			OnState(a_state);
+			return true;
+		case SpawnBook::AbsentStep::kNoBase:
+			if (absentNoBase.size() >= MAX_BLOCKED_NOTED) {
+				absentNoBase.clear();
+			}
+			if (auto& noBase = absentNoBase.try_emplace(id, NoBase{ Clock::now() }).first->second;
+				!noBase.said && Clock::now() - noBase.since >= NpcRoll::IDENTITY_WAIT && absentLogged < LOGGED) {
+				noBase.said = true;
+				++absentLogged;
+				REX::INFO("Spawns: player {} runs {:08X}, which our game has no reference of (its cell is not loaded here), and {}: no copy of it here yet", a_owner, id,
+					NpcSync::RollOf(id) ? "none of the NPCs its roll names is one we place" : "no roll of it has come to name what to place it from");
+			}
+			return false;
+		case SpawnBook::AbsentStep::kAdd:
+			break;
+		}
+		// Booked afresh: a copy of an old booking (another owner's, or one let go of) goes first.
+		if (known) {
+			if (known->local != 0) {
+				Discard(id);
+			}
+			theirs.Forget(id);
+			seenAt.erase(id);
+		}
+		const auto at = RemoteEdits::SpotOf(a_state);
+		if (!theirs.Add(Protocol::Spawn{ a_owner, id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_state.heading }, LocalPlayer())) {
+			return false;
+		}
+		absentNoBase.erase(id);
+		++absentBooked;
+		if (absentLogged < LOGGED) {
+			++absentLogged;
+			REX::INFO("Spawns: player {} runs {:08X}, which our game has no reference of (a temporary reference a quest of theirs took out of a cell we have not loaded): our copy of it is placed from {:08X} (roll {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X}",
+				a_owner, id, base, NpcSync::RollOf(id) ? NpcSync::RollOf(id)->originalBase : 0, at.x, at.y, at.z, at.cell ? at.cell : at.worldspace);
+		}
+		return true;
+	}
+
+	bool IsAbsent(std::uint32_t a_id)
+	{
+		return !Protocol::IsSpawnRef(a_id) && theirs.Knows(a_id);
+	}
+
+	bool GivenBack(const Protocol::FrameReturn& a_return)
+	{
+		if (FrameLoan::ChoosePlace(a_return) != FrameLoan::Place::kMove) {
+			return false;
+		}
+		const RemoteEdits::Spot at{ a_return.cell, a_return.worldspace, a_return.x, a_return.y, a_return.z };
+		const auto              copy = theirs.Find(a_return.spawnId);
+		const float             from = copy ? RemoteEdits::Distance(copy->at, at) : -1.0f;
+		if (!theirs.GivenBack(a_return.spawnId, at, a_return.heading, Clock::now())) {
+			return false;
+		}
+		REX::INFO("Spawns: player {}'s frame {:08X} was given back at ({:.0f},{:.0f},{:.0f}) in {:08X}, {:.0f} units from where our book had it; our copy stands there now", copy->spawn.playerId,
+			a_return.spawnId, at.x, at.y, at.z, at.cell ? at.cell : at.worldspace, from);
+		return true;
 	}
 
 	void ApplyDeath(const Protocol::ActorDeath& a_death)
 	{
-		if (!Protocol::IsSpawnRef(a_death.refId)) {
+		if (!Protocol::IsSpawnRef(a_death.refId) && !IsAbsent(a_death.refId)) {
 			return;
 		}
 		std::uint32_t local = 0;
@@ -502,6 +789,11 @@ namespace Spawns
 		REX::INFO("Spawns: killed {:08X}: spawn {:08X} died in player {}'s game", local, a_death.refId, a_death.playerId);
 	}
 
+	bool KilledHere(std::uint32_t a_local)
+	{
+		return killedHere.contains(a_local);
+	}
+
 	std::uint32_t OnLocalDeath(std::uint32_t a_local)
 	{
 		if (killedHere.erase(a_local)) {
@@ -517,6 +809,7 @@ namespace Spawns
 	void Frame()
 	{
 		if (theirs.Size() == 0) {
+			unplacedWhy.clear();  // none left to have no copy (`net status` counts these)
 			return;
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
@@ -530,6 +823,16 @@ namespace Spawns
 		for (const auto id : theirs.Ids()) {
 			const auto copy = theirs.Find(id);
 			if (!copy) {
+				continue;
+			}
+			// A friend's NPC our game had no reference of (Absent) that it has now (its cell loaded here): ours is mirrored
+			// (NpcSync), and our copy goes.
+			if (!Protocol::IsSpawnRef(id) && RE::TESForm::GetFormByID(id)) {
+				REX::INFO("Spawns: our game has {:08X} now; our copy of player {}'s goes, and ours is mirrored", id, copy->spawn.playerId);
+				if (copy->local != 0) {
+					Discard(id);
+				}
+				theirs.Forget(id);
 				continue;
 			}
 			// A frame its owner's game made: placed as a friend's parked frame is, not as an NPC.
@@ -555,7 +858,28 @@ namespace Spawns
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
-			switch (theirs.Decide(id, facts, now)) {
+			// A runtime NPC of our own of the same encounter standing where their game has it stands for it
+			// (SpawnBook::Facts::oursThere): looked for only as the copy is about to be placed, never around one placed
+			// already, and not kept: ours gone, the copy is placed.
+			if (copy->local == 0 && theirs.WhyNotPlaced(id, facts, now) == SpawnBook::Theirs::Why::kPlace) {
+				auto& look = oursThereLooked[id];
+				if (look.at == Clock::time_point{} || now - look.at >= OURS_THERE_LOOK) {
+					look.at = now;
+					const auto roll = NpcSync::RollOf(id);
+					const auto own = OwnMadeNpcAt(copy->spawn.base, roll ? roll->originalBase : 0, copy->at);
+					if (own != 0 && own != look.own) {
+						++npcCopiesWithheld;
+						REX::INFO("Spawns: {:08X} of our own, the same encounter's, stands where player {}'s spawn {:08X} (base {:08X}) is: ours stands for it, no copy is placed while it does",
+							own, copy->spawn.playerId, id, copy->spawn.base);
+					}
+					look.own = own;
+				}
+				facts.oursThere = look.own != 0;
+			} else if (copy->local != 0) {
+				oursThereLooked.erase(id);
+			}
+			const auto act = theirs.Decide(id, facts, now);
+			switch (act) {
 			case SpawnBook::Act::kPlace:
 				{
 					if (placedNow >= PLACE_PER_FRAME) {
@@ -564,7 +888,7 @@ namespace Spawns
 					++placedNow;
 					const auto playerId = copy->spawn.playerId;
 					const auto base = copy->spawn.base;
-					const auto handle = PlaceCopy(*copy, from, cell);
+					const auto handle = PlaceCopy(id, *copy, from, cell);
 					const auto ref = handle.get();
 					if (!ref) {
 						theirs.Placed(id, 0, now);
@@ -577,7 +901,7 @@ namespace Spawns
 					++copiesPlaced;
 					if (logged < LOGGED) {
 						++logged;
-						REX::INFO("Spawns: placed {:08X} as our copy of player {}'s {:08X}", ref->GetFormID(), playerId, id);
+						REX::INFO("Spawns: placed {} as our copy of player {}'s {:08X}", RefTag::Of(ref.get()), playerId, id);
 					}
 					break;
 				}
@@ -599,9 +923,18 @@ namespace Spawns
 			case SpawnBook::Act::kNone:
 				break;
 			}
+			if (act == SpawnBook::Act::kNone && copy->local == 0) {
+				NoteUnplaced(id, *copy, theirs.WhyNotPlaced(id, facts, now), facts, now);
+			} else if (act != SpawnBook::Act::kNone) {
+				unplacedWhy.erase(id);
+			}
 		}
 		// A spawn forgotten some other way (its player gone, the server's word) takes its first sighting with it.
+		std::erase_if(unplacedWhy, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(oursThere, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
+		std::erase_if(oursThereLooked, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(keptClear, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -619,13 +952,28 @@ namespace Spawns
 			// A frame copy someone is being sent out of is kept as it is, saved with the frame they wear (a load takes it with
 			// the old world): buried, the save would have them wear a frame it does not have (RemotePlayers::SomeoneSentOutOf).
 			if (const auto it = placed.find(id); it != placed.end()) {
+				// One our player wears on loan is saved with them, as it is (FrameLoans: the LOAN record cleans it up after a load).
+				if (const auto ref = it->second.handle.get(); ref && FrameLoans::KeepsThroughSave(ref.get())) {
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; our player wears it on loan", ref->GetFormID(), copy->spawn.playerId);
+					continue;
+				}
 				if (const auto ref = it->second.handle.get(); ref && RemotePlayers::SomeoneSentOutOf(ref.get())) {
 					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; someone is being sent out of it", ref->GetFormID(), copy->spawn.playerId);
+					RemotePlayers::NoteKeptThroughSave(ref.get());
 					continue;
 				}
 			}
 			Discard(id);
 		}
+	}
+
+	bool DropLentCopy(std::uint32_t a_id)
+	{
+		if (!placed.contains(a_id)) {
+			return false;
+		}
+		Discard(a_id);
+		return true;
 	}
 
 	std::vector<RE::ObjectRefHandle> FrameCopies()
@@ -649,6 +997,10 @@ namespace Spawns
 		placed.clear();
 		killedHere.clear();
 		leaving.clear();
+		blockedNoted.clear();  // the loaded world's ids name other NPCs
+		unplacedWhy.clear();
+		oursThere.clear();  // the loaded world's frames are looked at afresh
+		keptClear.clear();
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
 		const auto released = ours.Ids();
@@ -674,17 +1026,22 @@ namespace Spawns
 		}
 		placed.clear();
 		seenAt.clear();
+		unplacedWhy.clear();
+		blockedNoted.clear();
+		absentNoBase.clear();
 		theirs.Clear();
 		ours.Clear();
 		ownFrames.clear();
+		oursThere.clear();
+		keptClear.clear();
 		killedHere.clear();
 		outgoing.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack);
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size()) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

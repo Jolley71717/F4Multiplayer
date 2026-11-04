@@ -3,6 +3,7 @@
 #include "IniFile.h"
 #include "Log.h"
 #include "Platform.h"
+#include "SessionLevel.h"
 #include "StorySetting.h"
 
 namespace Config
@@ -136,12 +137,38 @@ namespace Config
 				ParseInt(value, settings.reviveCooldownSeconds);
 			} else if (key == "bReviveOutOfCombat") {
 				settings.reviveOutOfCombat = ParseBool(value);
+			} else if (key == "bDownedCrawl") {
+				settings.downedCrawl = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
+			} else if (key == "bShareGuestBuilds") {
+				settings.shareGuestBuilds = ParseBool(value);
+			} else if (key == "bSharedStorage") {
+				settings.sharedStorage = ParseBool(value);
+			} else if (key == "bContainerGifts") {
+				settings.containerGifts = ParseBool(value);
+			} else if (key == "bSaveOnDown") {
+				settings.saveOnDown = ParseBool(value);
+			} else if (key == "sNpcLevel") {
+				if (const auto rule = SessionLevel::Parse(value)) {
+					settings.npcLevel = static_cast<std::uint8_t>(*rule);
+				} else {
+					REX::WARN("Config: sNpcLevel = '{}' is none of average, highest, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(settings.npcLevel)));
+				}
+			} else if (key == "sLegendaryDifficulty") {
+				if (const auto rule = SessionLevel::ParseLegendary(value)) {
+					settings.legendary = static_cast<std::uint8_t>(*rule);
+				} else {
+					REX::WARN("Config: sLegendaryDifficulty = '{}' is none of average, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::LegendaryRule>(settings.legendary)));
+				}
+			} else if (key == "bSharedRolls") {
+				settings.sharedRolls = ParseBool(value);
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {
 				settings.shareMap = ParseBool(value);
+			} else if (key == "bLendPowerArmor") {
+				settings.lendPowerArmor = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "iFastLoadingSeconds") {

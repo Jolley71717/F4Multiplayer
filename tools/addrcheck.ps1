@@ -286,7 +286,10 @@ if ($null -ne $usesPreprocessed) {
 
 # The two calls Equipment::InstallFrameUse patches (src/game/FrameUse.h): TESFurniture::Activate's call into the
 # player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.
-foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'))) {
+# And WorkshopSync's: the crafting menus' gather asking Workshop::GetWorkshop (CraftingWorkshop.h), and the light maker
+# asking Workshop::IsPowered (InstallLights).
+foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
+		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {
@@ -308,6 +311,35 @@ if ($null -ne $launch) {
 	Report (HexMatches (BytesAt $launch 15) '48 89 4C 24 08 55 53 56 57 41 54 41 55 41 57') 'Projectile::Launch begins by spilling rcx, then pushes its registers, as read'
 	# mov rax,[rdx+18] (the record); test rax,rax; je; mov ecx,[rax+C0] (its flags); mov eax,ecx; and eax,7F0000 (the motion type).
 	Report (HexMatches (BytesAt ($launch + 0x4F) 26) '48 8B 42 18 48 85 C0 0F 84 ?? ?? ?? ?? 8B 88 C0 00 00 00 8B C1 25 00 00 7F 00') 'Projectile::Launch reads the record''s flags and its motion type at +0x4F'
+}
+
+# The victim's reaction to an attacker, whose queued call CombatReactions::Install hooks (src/game/CombatReaction.h): the
+# task queue's unpack calls it at +0x2DAA (the plugin checks this call itself at load). The reaction reads the victim's
+# AI process (mov rax,[rbx+300]) at +0xDA, and hands it unchecked as its this (mov rcx,[rsp+68]) to AIProcess::EnterCombat
+# at +0x5D7; its other caller returns at its entry when the victim has none (cmp [rcx+300],r12; je), and calls it at +0x2298.
+$react = Resolve 2231180
+$enterCombat = Resolve 2231840
+Report ($react -eq 0xCD6F70) ('the victim''s reaction to an attacker ID 2231180 is +{0:X}' -f $react)
+Report ($enterCombat -eq 0xD00F80) ('AIProcess::EnterCombat ID 2231840 is +{0:X}' -f $enterCombat)
+if ($null -ne $react -and $null -ne $enterCombat) {
+	Report (HexMatches (BytesAt $react 12) '4C 89 4C 24 20 53 56 57 48 81 EC 90') 'the victim''s reaction begins as read'
+	Report (HexMatches (BytesAt ($react + 0xDA) 7) '48 8B 83 00 03 00 00') 'the victim''s reaction reads the victim''s AI process at +0xDA'
+	$call = BytesAt ($react + 0x5D7) 5
+	Report ((HexMatches (BytesAt ($react + 0x5C9) 5) '48 8B 4C 24 68') -and $call[0] -eq 0xE8 -and ($react + 0x5DC + [BitConverter]::ToInt32($call, 1)) -eq $enterCombat) 'the victim''s reaction hands that process to AIProcess::EnterCombat at +0x5D7'
+	foreach ($site in @(@(2229323, 0x2DAA, 'the task queue''s unpack calls the victim''s reaction'), @(2231148, 0x2298, 'the hit''s handling calls the victim''s reaction'))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('reaction caller {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $react) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[2])
+	}
+	$handling = Resolve 2231148
+	if ($null -ne $handling) {
+		Report ((HexMatches (BytesAt ($handling + 0x22) 3) '4C 8B F9') -and (HexMatches (BytesAt ($handling + 0x2C) 9) '4C 39 A1 00 03 00 00 0F 84')) 'the hit''s handling keeps the victim in r15 and returns at its entry when it has no AI process (+0x2C)'
+	}
 }
 
 if ($failed) {

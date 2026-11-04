@@ -5,8 +5,10 @@
 
 #include "game/Dialogue.h"
 #include "game/Hud.h"
+#include "game/LineSounds.h"
 #include "game/NpcSync.h"
 #include "game/RemotePlayers.h"
+#include "game/SubtitleTime.h"
 #include "game/VoicePath.h"
 
 #include <bit>
@@ -50,9 +52,63 @@ namespace Conversations
 		std::uint32_t                               unplaced = 0;  // friends' lines that came without a recording (text only)
 		std::uint32_t                               missing = 0;   // ... with one we have no file for (an unvoiced line, or a mod's)
 		std::uint32_t                               unplayed = 0;  // ... with a file the audio manager gave no sound for
+		std::uint32_t                               subtitled = 0;  // friends' lines shown in the game's subtitle area
+		std::uint32_t                               timed = 0;      // ... timed by their recording's length
+		std::uint32_t                               noticed = 0;    // ... shown as a HUD notice instead (subtitles off, in a conversation)
+		std::uint32_t                               dropped = 0;    // ... gone from the subtitle list at once, and shown as a notice
+		std::uint32_t                               cutLong = 0;     // friends' lines' sounds still sounding at their hard end, ended then
+		std::uint32_t                               cutCrowded = 0;  // ... still sounding when LineSounds::MAX_PLAYING newer ones came
+		std::uint32_t                               cutUnlogged = 0;  // ... of them, not logged (CUT_LOG_EVERY) since the last cut logged
+		std::optional<Clock::time_point>            cutLoggedAt;      // when a cut was last logged
 
-		// The sound each friend's speaker is saying now, keyed like Shown (a speaker says one line at a time).
-		std::unordered_map<std::uint64_t, RE::BSSoundHandle> voices;
+		// The sounds of friends' lines, keyed like Shown (a speaker says one line at a time), each with a hard end.
+		using Sounds = LineSounds<RE::BSSoundHandle>;
+		Sounds lineSounds;
+
+		// A friend's line in the game's own subtitle area, the way the game shows a nearby NPC's line: the
+		// SubtitleManager's list of who is saying what (speaker, text, priority, distance), from which the engine
+		// shows the nearest line of the highest priority each frame, within fMaxSubtitleDistance (1500 units) and
+		// only as the player's subtitle settings allow (bGeneralSubtitles out of a conversation, bDialogueSubtitles
+		// in one, for the lines of the player's own conversation alone). An NPC's own line leaves the list when its
+		// recording ends; ours has no recording playing through the dialogue system, so we take it out ourselves
+		// after as long as its recording lasts (SubtitleTime::ShowFor).
+		//
+		// The engine's own two calls, by Address Library ID (1.11.240), read from the game's code:
+		// - SubtitleManager::AddSubtitle (ID 2249542, +107DE80): (manager, speaker, const BSFixedStringCS& text,
+		//   TESTopicInfo* info, bool high). Nothing for a blank text. Out of a conversation it adds a line only with
+		//   bGeneralSubtitles on (or the line of the conversation's speaker); in one, with bDialogueSubtitles on, only
+		//   the lines of the player and of who they are talking to. Priority: normal, high with a_high, or the
+		//   info's own when that is low or forced (none here: the speaker's own name is shown, and the line's
+		//   priority is normal). It takes the manager's lock itself.
+		// - SubtitleManager::RemoveSubtitle (ID 2249543, +107E1B0): (manager, speaker): takes every line of the
+		//   speaker out of the list, and off the screen if it is the one shown. The engine calls it when an
+		//   actor's line ends (the voice state update, ID 2229974).
+		// The list itself is read only, under the manager's lock, to check a line we added is in it.
+		constexpr REL::ID ADD_SUBTITLE{ 2249542 };
+		constexpr REL::ID REMOVE_SUBTITLE{ 2249543 };
+
+		// How soon after adding a line we check the engine kept it.
+		constexpr auto SUBTITLE_CHECK = 200ms;
+
+		// The largest part of a voice file read for its length (the audio's header and packet table come first).
+		constexpr std::uint64_t MAX_VOICE_READ = 4u << 20;
+
+		// A line's sound cut while it still played is logged at most this often (net status counts them all).
+		constexpr auto CUT_LOG_EVERY = 30s;
+		// The player ID the voiceline dev command plays its recordings under (PlayLine).
+		constexpr std::uint32_t DEV_PLAYER = 0xFFFFFFFF;
+
+		struct Subtitle
+		{
+			std::uint64_t       key = 0;  // as Shown: player id and speaker
+			RE::ObjectRefHandle speaker;
+			std::string         text;
+			std::string         notice;  // the HUD notice to show instead, should the engine drop it
+			Clock::time_point   at{};
+			Clock::time_point   until{};
+			bool                checked = false;
+		};
+		std::vector<Subtitle> subtitlesUp;
 
 		// How a friend's line is played: a positioned (3D) sound, heard from where the speaker is and
 		// fading with distance through the game's own 3D dialogue output model.
@@ -321,34 +377,119 @@ namespace Conversations
 			return { info, {} };
 		}
 
-		// A sound for a voice file. The archives hold .fuz files (the recording with its lip sync); should
-		// the audio manager want one of the other names a recording can go by, it is asked for those too.
-		RE::BSSoundHandle SoundFor(const std::string& a_path, std::uint32_t a_flags, std::uint8_t a_priority)
+		// The length of a voice file's recording, read from the file (loose or in an archive): only its start, the
+		// lip sync and the audio's header and packet table (SubtitleTime::HeaderBytes), not the recording itself.
+		std::optional<double> VoiceSecondsOf(const std::string& a_path)
+		{
+			RE::BSTSmartPointer<RE::BSResource::Stream> stream;
+			if (a_path.empty() || RE::BSResource::GetOrCreateStream(a_path.c_str(), stream) != RE::BSResource::ErrorCode::kNone || !stream) {
+				return std::nullopt;
+			}
+			if (stream->DoOpen() != RE::BSResource::ErrorCode::kNone) {
+				return std::nullopt;
+			}
+			const std::uint64_t       size = stream->totalSize;
+			std::vector<std::uint8_t> bytes;
+			std::uint64_t             have = 0;
+			const auto                readTo = [&](std::uint64_t a_want) {
+				   a_want = std::min<std::uint64_t>(a_want, MAX_VOICE_READ);
+				   if (size != 0) {
+					   a_want = std::min(a_want, size);
+				   }
+				   if (a_want <= have) {
+					   return;
+				   }
+				   bytes.resize(static_cast<std::size_t>(a_want));
+				   while (have < a_want) {
+					   std::uint64_t read = 0;
+					   if (stream->DoRead(bytes.data() + have, a_want - have, read) != RE::BSResource::ErrorCode::kNone || read == 0) {
+						   break;
+					   }
+					   have += read;
+				   }
+				   bytes.resize(static_cast<std::size_t>(have));
+			};
+			readTo(SubtitleTime::HEADER_PROBE);
+			readTo(SubtitleTime::HeaderBytes(bytes));
+			stream->DoClose();
+			return SubtitleTime::VoiceSeconds(bytes);
+		}
+
+		struct Sound
 		{
 			RE::BSSoundHandle handle;
-			const auto        audio = RE::BSAudioManager::GetSingleton();
+			std::string       path;  // the file it plays
+		};
+
+		// A sound for a voice file. The archives hold .fuz files (the recording with its lip sync); should
+		// the audio manager want one of the other names a recording can go by, it is asked for those too.
+		Sound SoundFor(const std::string& a_path, std::uint32_t a_flags, std::uint8_t a_priority)
+		{
+			Sound      sound;
+			const auto audio = RE::BSAudioManager::GetSingleton();
 			if (!audio || a_path.size() < 4) {
-				return handle;
+				return sound;
 			}
 			const auto stem = a_path.substr(0, a_path.size() - 3);
 			for (const auto extension : { "fuz"sv, "wav"sv, "xwm"sv }) {
-				handle = {};
-				audio->GetSoundHandleByFile(handle, RE::BSResource::ID((stem + std::string(extension)).c_str()), a_flags, a_priority);
-				if (handle.IsValid()) {
+				sound.handle = {};
+				sound.path = stem + std::string(extension);
+				audio->GetSoundHandleByFile(sound.handle, RE::BSResource::ID(sound.path.c_str()), a_flags, a_priority);
+				if (sound.handle.IsValid()) {
 					break;
 				}
 			}
-			return handle;
+			return sound;
+		}
+
+		// Who said a line, for the log: "player N", or the voiceline dev command.
+		std::string WhoSaid(std::uint64_t a_key)
+		{
+			const auto player = static_cast<std::uint32_t>(a_key >> 32);
+			return player == DEV_PLAYER ? std::string("the voiceline command") : std::format("player {}", player);
+		}
+
+		// Ends a friend's line's sound (LineSounds): faded out and let go, whether the audio manager still says it
+		// plays or not (on a sound that is over it does nothing). One still sounding at its hard end, or crowded out,
+		// is logged: its recording ended before that, so the sound would have run on by itself.
+		void EndSound(Sounds::Entry& a_entry, Sounds::Why a_why)
+		{
+			const bool sounding = a_entry.handle.IsPlaying();
+			a_entry.handle.FadeOutAndRelease(VOICE_CUT_MS);
+			if (!sounding || a_why == Sounds::Why::kNext) {
+				return;
+			}
+			const bool tooLong = a_why == Sounds::Why::kTooLong;
+			++(tooLong ? cutLong : cutCrowded);
+			const auto now = Clock::now();
+			if (cutLoggedAt && now - *cutLoggedAt < CUT_LOG_EVERY) {
+				++cutUnlogged;
+				return;
+			}
+			const auto after = std::chrono::duration<double>(now - a_entry.started).count();
+			const auto speaker = static_cast<std::uint32_t>(a_entry.key);
+			const auto length = a_entry.seconds ? std::format("{:.1f} s", *a_entry.seconds) : std::string("unknown");
+			const auto why = tooLong ? std::string("at its end") : std::format("with {} newer ones", Sounds::MAX_PLAYING);
+			const auto unlogged = cutUnlogged != 0 ? std::format("; {} more cut since the last such line", cutUnlogged) : std::string();
+			REX::INFO("Conversations: the sound of a line from {} (speaker {:08X}) still played {:.1f} s after it started (its recording: {}) {}: ended ({} at the end, {} crowded out so far{})",
+				WhoSaid(a_entry.key), speaker, after, length, why, cutLong, cutCrowded, unlogged);
+			cutLoggedAt = now;
+			cutUnlogged = 0;
 		}
 
 		// Plays a voice file at the actor and follows them while it lasts: a sound like any other, so
-		// nothing of the dialogue system (no conversation, Say, scene or lip sync) is involved.
-		bool Play(RE::Actor* a_actor, const std::string& a_path, std::uint64_t a_key, std::uint32_t a_flags = VOICE_FLAGS, std::uint8_t a_priority = VOICE_PRIORITY)
+		// nothing of the dialogue system (no conversation, Say, scene or lip sync) is involved. It is ended
+		// a little after its recording's length at the latest (LineSounds::CapFor): a_seconds, a_path's length,
+		// or, should another name of the recording be what plays, that file's.
+		bool Play(RE::Actor* a_actor, const std::string& a_path, std::uint64_t a_key, std::optional<double> a_seconds, std::uint32_t a_flags = VOICE_FLAGS,
+			std::uint8_t a_priority = VOICE_PRIORITY)
 		{
-			auto handle = SoundFor(a_path, a_flags, a_priority);
+			auto sound = SoundFor(a_path, a_flags, a_priority);
+			auto& handle = sound.handle;
 			if (!handle.IsValid()) {
 				return false;
 			}
+			const auto seconds = sound.path == a_path ? a_seconds : VoiceSecondsOf(sound.path);
 			const auto defaults = DefaultObjects();
 			if (const auto model = defaults ? defaults->GetDefaultObject<RE::BGSSoundOutput>(RE::DEFAULT_OBJECT::kDialogueOutputModel3D) : nullptr) {
 				handle.SetOutputModel(model);  // how far an NPC's own lines carry, and how they fade
@@ -357,33 +498,31 @@ namespace Conversations
 			if (const auto root = a_actor->Get3D()) {
 				handle.SetObjectToFollow(root);
 			}
-			// A speaker says one line at a time: the one before, if still playing, is cut short. Lines
-			// that have ended are let go.
-			if (const auto before = voices.find(a_key); before != voices.end() && before->second.IsPlaying()) {
-				before->second.FadeOutAndRelease(VOICE_CUT_MS);
-			}
-			std::erase_if(voices, [](auto& a_entry) { return !a_entry.second.IsPlaying(); });
 			if (!handle.Play()) {
+				handle.Stop();  // made and never played: let go
 				return false;
 			}
-			voices[a_key] = handle;
+			// A speaker says one line at a time: the one before, if still playing, is cut short. Every sound
+			// ends by its hard end at the latest, and only a few play at once (LineSounds).
+			lineSounds.Start(a_key, handle, Clock::now(), seconds, EndSound);
 			return true;
 		}
 
-		// Says a friend's line at our copy of its speaker, if it names a recording we have.
-		void Speak(RE::Actor* a_actor, const Protocol::Line& a_line, std::uint64_t a_key)
+		// Says a friend's line at our copy of its speaker, if it names a recording we have (a_file: Resolve's;
+		// a_seconds: its recording's length).
+		void Speak(RE::Actor* a_actor, const Protocol::Line& a_line, std::uint64_t a_key, const Resolved& a_file, std::optional<double> a_seconds)
 		{
 			if (a_line.info == 0) {
 				++unplaced;
 				return;
 			}
-			const auto file = Resolve(a_line);
+			const auto& file = a_file;
 			if (file.path.empty()) {
 				++missing;
 				REX::DEBUG("Conversations: no voice file for {:08X} response {} voice {:08X}", a_line.info, a_line.response, a_line.voiceType);
 				return;
 			}
-			if (!Play(a_actor, file.path, a_key)) {
+			if (!Play(a_actor, file.path, a_key, a_seconds)) {
 				++unplayed;
 				REX::DEBUG("Conversations: no sound for '{}'", file.path);
 				return;
@@ -391,11 +530,159 @@ namespace Conversations
 			++voiced;
 			REX::DEBUG("Conversations: {:08X} says '{}'", a_actor->GetFormID(), file.path);
 		}
+
+		// The game's bGeneralSubtitles (Interface): whether lines said near the player, not to them, are shown.
+		RE::Setting* GeneralSubtitles()
+		{
+			static RE::Setting* const found = [] {
+				const auto prefs = RE::INIPrefSettingCollection::GetSingleton();
+				const auto inPrefs = prefs ? prefs->GetSetting("bGeneralSubtitles:Interface") : nullptr;
+				const auto setting = inPrefs ? inPrefs : RE::GetINISetting("bGeneralSubtitles:Interface");
+				if (!setting || setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
+					REX::WARN("Conversations: the game's bGeneralSubtitles setting was not found; friends' lines show as HUD notices");
+					return static_cast<RE::Setting*>(nullptr);
+				}
+				return setting;
+			}();
+			return found;
+		}
+
+		// Whether the game would show a friend's line in its subtitle area now: the player's General Subtitles
+		// are on and they are not in a conversation of their own (the game then shows only that conversation's
+		// lines, and only with Dialogue Subtitles on).
+		bool SubtitleAreaOpen()
+		{
+			const auto setting = GeneralSubtitles();
+			const auto topics = Dialogue::TopicManager();
+			return RE::SubtitleManager::GetSingleton() && setting && setting->GetBinary() && topics && !topics->menuOpen;
+		}
+
+		void AddSubtitle(RE::TESObjectREFR* a_speaker, const RE::BSFixedStringCS& a_text)
+		{
+			using Fn = void (*)(RE::SubtitleManager*, RE::TESObjectREFR*, const RE::BSFixedStringCS&, RE::TESTopicInfo*, bool);
+			static REL::Relocation<Fn> fn{ ADD_SUBTITLE };
+			if (const auto manager = RE::SubtitleManager::GetSingleton()) {
+				fn(manager, a_speaker, a_text, nullptr, false);
+			}
+		}
+
+		void RemoveSubtitle(RE::TESObjectREFR* a_speaker)
+		{
+			using Fn = void (*)(RE::SubtitleManager*, RE::TESObjectREFR*);
+			static REL::Relocation<Fn> fn{ REMOVE_SUBTITLE };
+			if (const auto manager = RE::SubtitleManager::GetSingleton(); manager && a_speaker) {
+				fn(manager, a_speaker);
+			}
+		}
+
+		// Whether the engine's list holds this line of this speaker.
+		bool Listed(const Subtitle& a_line)
+		{
+			const auto manager = RE::SubtitleManager::GetSingleton();
+			if (!manager) {
+				return false;
+			}
+			RE::BSAutoReadLock lock{ RE::SubtitleManager::GetRWLock() };
+			for (const auto& entry : manager->subtitlePriorityArray) {
+				const char* text = entry.subtitleText.c_str();
+				if (entry.speaker == a_line.speaker && text && a_line.text == text) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Takes our line out of the engine's list, unless the speaker is saying a line of its own here: the game
+		// takes all of its lines out when that one ends, and taking them now would cut its own short. At a session's
+		// end (a_always) it comes out whatever the speaker is doing: nothing of ours would take it down later, and it
+		// stayed on screen until the speaker's next line of its own ended, a minute or two (2026-11-02, the rig).
+		void TakeDown(const Subtitle& a_line, bool a_always = false)
+		{
+			const auto ref = a_line.speaker.get();
+			if (!ref) {
+				if (a_always) {
+					REX::INFO("Conversations: a friend's line left up at the session's end: its speaker is gone");
+				}
+				return;  // gone: the engine stops showing a line whose speaker it can't find
+			}
+			const auto actor = ref->As<RE::Actor>();
+			if (actor && actor->IsTalking()) {
+				if (!a_always) {
+					return;
+				}
+				REX::INFO("Conversations: a friend's line taken down at the session's end while its speaker talks");
+			}
+			RemoveSubtitle(ref.get());
+		}
+
+		// Shows a friend's line in the game's subtitle area for a_for, in place of the speaker's line before it.
+		// False when the game wouldn't show it now (the caller shows a HUD notice instead).
+		bool ShowSubtitle(RE::Actor* a_actor, const std::string& a_text, std::uint64_t a_key, std::string a_notice, std::chrono::milliseconds a_for)
+		{
+			if (a_text.empty() || !SubtitleAreaOpen()) {
+				return false;
+			}
+			const auto handle = a_actor->GetHandle();
+			if (!handle) {
+				return false;
+			}
+			for (auto it = subtitlesUp.begin(); it != subtitlesUp.end();) {  // a speaker says one line at a time
+				if (it->key == a_key || it->speaker == handle) {
+					TakeDown(*it);
+					it = subtitlesUp.erase(it);
+				} else {
+					++it;
+				}
+			}
+			const RE::BSFixedStringCS text{ a_text.c_str() };
+			AddSubtitle(a_actor, text);
+			const auto now = Clock::now();
+			subtitlesUp.push_back({ a_key, handle, a_text, std::move(a_notice), now, now + a_for, false });
+			return true;
+		}
+
+		// Each frame: a line we added and the engine didn't keep becomes a HUD notice (once), and a line whose
+		// time is up comes down.
+		void SubtitlesFrame()
+		{
+			if (subtitlesUp.empty()) {
+				return;
+			}
+			const auto now = Clock::now();
+			for (auto it = subtitlesUp.begin(); it != subtitlesUp.end();) {
+				if (!it->checked && now - it->at >= SUBTITLE_CHECK) {
+					it->checked = true;
+					if (!Listed(*it)) {
+						++dropped;
+						REX::DEBUG("Conversations: the game dropped a friend's line from its subtitles; shown as a notice");
+						Hud::Notify(it->notice);
+						it = subtitlesUp.erase(it);
+						continue;
+					}
+				}
+				if (now >= it->until) {
+					TakeDown(*it);
+					it = subtitlesUp.erase(it);
+					continue;
+				}
+				++it;
+			}
+		}
+
+		void TakeDownSubtitles()
+		{
+			for (const auto& line : subtitlesUp) {
+				TakeDown(line, true);
+			}
+			subtitlesUp.clear();
+		}
 	}
 
 	void Frame(bool a_connected)
 	{
 		Dialogue::Frame();  // a conversation left without its speaker is ended
+		SubtitlesFrame();   // friends' lines in the subtitle area: checked once, taken down when their time is up
+		lineSounds.EndDue(Clock::now(), EndSound);  // friends' lines' sounds at their hard end
 
 		std::unordered_map<std::uint32_t, Speaking> now;
 		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
@@ -443,28 +730,48 @@ namespace Conversations
 		// conversation or scene could leave it unfinished, and the game then held the player as if
 		// still talking (no weapon, Pip-Boy or workshop). A sound can't, and nothing here touches the
 		// dialogue system: no conversation, Say, scene, topic or script.
-		if (Config::Get().spokenLines) {
-			Speak(actor, a_line, key);
+		const auto file = a_line.info != 0 ? Resolve(a_line) : Resolved{};
+		const bool spoken = Config::Get().spokenLines;
+		const bool blank = SubtitleTime::Blank(a_line.text);
+		const bool subtitleArea = !blank && SubtitleAreaOpen();
+		// The recording's length: how long its sound may play at most, and its subtitle stays up.
+		const auto seconds = (spoken || subtitleArea) && !file.path.empty() ? VoiceSecondsOf(file.path) : std::nullopt;
+		if (spoken) {
+			Speak(actor, a_line, key, file, seconds);
 		}
-		Hud::Notify(std::format("{}: {}", name, a_line.text));
+		// The text goes where the game shows a nearby NPC's line, its subtitle area, for as long as the
+		// recording lasts (it played in the friend's game for that long, whether we play it or not). With the
+		// player's General Subtitles off, or in a conversation of their own, it is a HUD notice, as it always was.
+		if (blank) {  // nothing to read: the game would drop the subtitle, and a notice would be just a name
+			return;
+		}
+		auto notice = std::format("{}: {}", name, a_line.text);
+		if (subtitleArea) {
+			if (ShowSubtitle(actor, a_line.text, key, notice, SubtitleTime::ShowFor(seconds, a_line.text))) {
+				++subtitled;
+				timed += seconds.has_value();
+				return;
+			}
+		}
+		++noticed;
+		Hud::Notify(notice);
 	}
 
 	void Reset()
 	{
+		TakeDownSubtitles();
 		outgoing.clear();
 		shown.clear();
-		for (auto& [key, handle] : voices) {
-			if (handle.IsPlaying()) {
-				handle.FadeOutAndRelease(VOICE_CUT_MS);
-			}
-		}
-		voices.clear();
+		lineSounds.EndAll([](Sounds::Entry& a_entry) { a_entry.handle.FadeOutAndRelease(VOICE_CUT_MS); });
+		cutLoggedAt.reset();
+		cutUnlogged = 0;
 	}
 
 	std::string Describe()
 	{
-		return std::format("conversations: heard={} reported={} placed={} received={} shown={} voiced={} unplaced={} missing={} unplayed={} {}", heard, reported, placed,
-			received, displayed, voiced, unplaced, missing, unplayed, Dialogue::Describe());
+		return std::format("conversations: heard={} reported={} placed={} received={} shown={} voiced={} unplaced={} missing={} unplayed={} subtitled={} timed={} noticed={} dropped={} up={} sounds={} cutLong={} cutCrowded={} {}",
+			heard, reported, placed, received, displayed, voiced, unplaced, missing, unplayed, subtitled, timed, noticed, dropped, subtitlesUp.size(), lineSounds.Kept(), cutLong,
+			cutCrowded, Dialogue::Describe());
 	}
 
 	std::string DescribeLine(RE::Actor* a_actor)
@@ -494,7 +801,7 @@ namespace Conversations
 				Official::IsOfficialForm(RE::TESForm::GetFormByID<RE::TESTopicInfo>(a_info)), a_voiceType,
 				Official::IsOfficialForm(RE::TESForm::GetFormByID<RE::BGSVoiceType>(a_voiceType)));
 		}
-		const bool played = Play(a_actor, file.path, (static_cast<std::uint64_t>(0xFFFFFFFF) << 32) | a_actor->GetFormID(), a_flags, a_priority);
+		const bool played = Play(a_actor, file.path, (static_cast<std::uint64_t>(DEV_PLAYER) << 32) | a_actor->GetFormID(), VoiceSecondsOf(file.path), a_flags, a_priority);
 		return std::format("file='{}' played={}", file.path, played);
 	}
 }

@@ -63,7 +63,7 @@ public:
 
 	// Waits up to a_timeout for the server to send a_peer a packet whose first byte is a_type,
 	// and returns it (packets before it stay queued for Take).
-	std::optional<std::vector<std::uint8_t>> WaitFor(PeerId a_peer, std::uint8_t a_type, std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	std::optional<std::vector<std::uint8_t>> WaitFor(PeerId a_peer, std::uint8_t a_type, std::chrono::milliseconds a_timeout = std::chrono::seconds(30))
 	{
 		std::unique_lock lock{ mutex };
 		std::optional<std::vector<std::uint8_t>> found;
@@ -84,7 +84,7 @@ public:
 	// Waits until the server has acted on everything delivered so far: it took it all (Poll) and came back
 	// for more, which it does only once it has handled what it took. What the server queued for itself
 	// meanwhile (a disconnect it asked for) is waited for too. False if it didn't in time (it stopped).
-	bool Settle(std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	bool Settle(std::chrono::milliseconds a_timeout = std::chrono::seconds(30))
 	{
 		std::unique_lock lock{ mutex };
 		do {
@@ -101,7 +101,7 @@ public:
 
 	// Waits up to a_timeout for the server to send a_peer a packet whose first byte is a_type, and returns everything it
 	// sent a_peer up to and including that one, in the order sent (empty when none came; the rest stay queued).
-	std::vector<std::vector<std::uint8_t>> TakeThrough(PeerId a_peer, std::uint8_t a_type, std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	std::vector<std::vector<std::uint8_t>> TakeThrough(PeerId a_peer, std::uint8_t a_type, std::chrono::milliseconds a_timeout = std::chrono::seconds(30))
 	{
 		std::unique_lock                       lock{ mutex };
 		std::vector<std::vector<std::uint8_t>> out;
@@ -130,7 +130,7 @@ public:
 
 	// Waits up to a_timeout for the server to drop a_peer: it sends a refusal before it disconnects, from its own
 	// thread, so a test that saw the refusal can get there first (on a slow machine such as a CI runner).
-	bool WaitDisconnected(PeerId a_peer, std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	bool WaitDisconnected(PeerId a_peer, std::chrono::milliseconds a_timeout = std::chrono::seconds(30))
 	{
 		std::unique_lock lock{ mutex };
 		return changed.wait_for(lock, a_timeout, [&] { return disconnected.contains(a_peer); });

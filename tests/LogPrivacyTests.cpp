@@ -90,13 +90,13 @@ TEST("log privacy: a whole evening (wrong password, joins over UDP and Steam, a 
 		status.level = static_cast<std::uint16_t>(i);
 		f.fake->Deliver(1, Protocol::Encode(status, MT::kReportStatus));
 	}
-	std::this_thread::sleep_for(300ms);
+	REQUIRE(f.fake->Settle());  // the server has acted on all of it
 
 	// Alice quits.
 	f.fake->Take(3);
 	f.fake->Drop(1);
 	REQUIRE(f.fake->WaitFor(3, Type(MT::kPlayerLeft)));
-	std::this_thread::sleep_for(100ms);
+	REQUIRE(f.fake->Settle());  // the server has acted on all of it
 
 	const auto bobAlias = Redact::Alias(STEAM_ID);
 	CHECK(f.Logged("wrong password from udp 203.0.113.x:1111"));
@@ -124,7 +124,7 @@ TEST("log privacy: a joiner whose name is a forged log line or a Steam id gets i
 	const auto squatter = f.Join(3, Fixture::MakeHello("76561198087654321"));
 	REQUIRE(forger);
 	REQUIRE(squatter);
-	std::this_thread::sleep_for(100ms);
+	REQUIRE(f.fake->Settle());  // the server has acted on all of it
 
 	// The host hears them (their names lose the control characters, that is all).
 	const auto heard = NamesHeard(f, 1);
@@ -153,7 +153,7 @@ TEST("log privacy: a second joiner hears the first by name while the log keeps t
 	f.fake->SetAddress(2, "udp 127.0.0.1:50001");
 	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
 	REQUIRE(bob);
-	std::this_thread::sleep_for(100ms);
+	REQUIRE(f.fake->Settle());  // the server has acted on all of it
 
 	const auto bobHeard = NamesHeard(f, 2);
 	REQUIRE(bobHeard.contains(alice->playerId));
@@ -195,7 +195,7 @@ TEST("log privacy: joiners whose load order differs only in an ignored texture p
 	const auto squatter = f.Join(3, squatterHello);
 	REQUIRE(forger);
 	REQUIRE(squatter);
-	std::this_thread::sleep_for(100ms);
+	REQUIRE(f.fake->Settle());  // the server has acted on all of it
 
 	// The host still hears them by name.
 	const auto heard = NamesHeard(f, 1);
@@ -304,7 +304,7 @@ namespace
 		UdpPlayer& operator=(const UdpPlayer&) = delete;
 
 		// Services the connection until a packet of a_type arrives (or a_timeout passes).
-		std::optional<std::vector<std::uint8_t>> WaitFor(std::uint8_t a_type, std::chrono::milliseconds a_timeout = 3000ms)
+		std::optional<std::vector<std::uint8_t>> WaitFor(std::uint8_t a_type, std::chrono::milliseconds a_timeout = 30s)
 		{
 			const auto until = std::chrono::steady_clock::now() + a_timeout;
 			while (host && std::chrono::steady_clock::now() < until) {
@@ -329,7 +329,7 @@ namespace
 
 		bool Connect()
 		{
-			const auto until = std::chrono::steady_clock::now() + 3s;
+			const auto until = std::chrono::steady_clock::now() + 30s;
 			while (peer && !connected && std::chrono::steady_clock::now() < until) {
 				WaitFor(0xFF, 20ms);
 			}
@@ -351,7 +351,7 @@ namespace
 				return;
 			}
 			enet_peer_disconnect(peer, 0);
-			const auto until = std::chrono::steady_clock::now() + 3s;
+			const auto until = std::chrono::steady_clock::now() + 30s;
 			while (peer && std::chrono::steady_clock::now() < until) {
 				WaitFor(0xFF, 20ms);
 			}
@@ -367,7 +367,7 @@ namespace
 	// Waits for the server's log to have a line holding a_text.
 	bool LoggedSoon(Fixture& a_f, std::string_view a_text)
 	{
-		const auto until = std::chrono::steady_clock::now() + 2s;
+		const auto until = std::chrono::steady_clock::now() + 30s;
 		while (!a_f.Logged(a_text) && std::chrono::steady_clock::now() < until) {
 			std::this_thread::sleep_for(10ms);
 		}

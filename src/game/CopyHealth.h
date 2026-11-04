@@ -1,11 +1,15 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // Our copy of an NPC another game runs has its health there: the owner's game deals what the NPC takes, our player's
 // hits are reported (WorldSync's health reports, then the server's belief in our kill), and another player's hits come
@@ -17,13 +21,31 @@
 // So a copy that loses health with no hit of ours on it (from OURS_GRACE before the drop on) is given it back
 // (CopyWatch, each frame). A drop is judged only once it has stood for JUDGE_AFTER, so that our hit, whose event can
 // come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed) is
-// given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
-// passed by: BlastShield). Health a report sets, or a copy gains, is where it stands from then on.
+// given back before it adds up, unless it is an effect of ours (a legendary's bleed or burn put on the copy by our hit:
+// OurEffect, ours for EFFECT_WINDOW while nothing else hits it). A lethal blow in one go is not given back (the
+// explosions of friends' throws are passed by: BlastShield). Health a report sets is where it stands from then on.
+//
+// Health a copy gains with no report behind it is taken back the same way (Check returns it as less than nothing): a
+// copy's health is its own game's, never ours. Each game rolls a leveled NPC on its own as it first loads, and the
+// owner's roll is written onto our copy for its next load only (Rolls::Apply: an NPC the engine has made is not made
+// again in place), so a copy can be legendary here and plain in the game that runs it. Its legendary mutation healed
+// it to full at half health; that was taken as where it stood and never sent, so the player who hit it saw their hit
+// heal it, while the NPC itself stayed at half. A copy whose maximum changes (our level set to the owner's, Rolls) keeps
+// the share of it that it stood at: the owner's reports are shares of the maximum too (WorldSync's kActorHealth).
 //
 // What our hits take off a copy is booked (TakeOurs) and sent as damage (kReportDamage), which the game that runs the NPC
 // takes off its own health; that game then shares where its health stands (HealthShare). A report of the copy's health
 // instead, as before protocol 40, healed off the NPC whatever its own game had taken from it since the copy last heard (a
 // fire's burn, a friend's shot on its way).
+//
+// Each damage sent is numbered and stays in flight (Entry::inFlight) until the game that runs the NPC answers it
+// (Answered: applied, or refused and why; protocol 56, docs/HEALTH-SYNC.md). A report of the NPC's health raises the
+// copy only to the report less what is still in flight: the runner's word, minus our hits it can't have taken off yet.
+// Up to 0.10.0 a hit was written off a second after it was sent, as if it had arrived: whenever it had in fact been
+// dropped on the way (a table behind, a dead ledger out of step, a runner that couldn't apply it yet), the runner's
+// next report healed it back, and the player saw their shot undone. Now a refused hit is given back at once (the
+// player sees the bounce, the log says why), and one never answered is given back after LOST_AFTER, logged as lost:
+// the one timer left, and it errs on the side of showing the truth.
 //
 // Our hits are our player's and those of the actors our game is answerable for (Judge): each hit is to count in one
 // game only, the game that runs whoever struck it. Pure, so it can be tested without the game.
@@ -33,8 +55,102 @@ namespace CopyHealth
 
 	constexpr Clock::duration OURS_GRACE = std::chrono::milliseconds{ 1000 };
 	constexpr Clock::duration JUDGE_AFTER = std::chrono::milliseconds{ 100 };
+	// A damage sent and never answered (the runner crashed, the server restarted, an answer lost) is given back after
+	// this long, as lost: the copy must not stand below the NPC for good. Longer than the runner's game can hold a hit
+	// (DamageHold::HOLD of time in its world, which a loading screen of a minute doesn't count towards), so a held hit
+	// is never written off before it is answered; the server answers for a runner that leaves (Server.cpp,
+	// answerRoutedTo), so this is for what nothing answers.
+	constexpr Clock::duration LOST_AFTER = std::chrono::minutes{ 2 };
+	// What our hits took off a copy goes out at most this often for one copy (CopyWatch::Frame asks TakeOurs no more
+	// often): under automatic fire one damage a frame would put hundreds in flight through a runner's loading screen
+	// (DamageHold::HOLD), each to be answered.
+	constexpr Clock::duration SEND_EVERY = std::chrono::milliseconds{ 100 };
+	// Hits in flight on one copy (a guard: past it the oldest is given back as lost). Above what LOST_AFTER at
+	// SEND_EVERY can put there (1200), so the timer, not the cap, is what gives a hit up.
+	constexpr std::size_t MAX_IN_FLIGHT = 2048;
+	// How long after a hit of ours that put an effect on the copy (a weapon's enchantment: a legendary's bleed, burn or
+	// poison; a mod's spell) the copy's drops with no hit behind them are still ours: the effect's ticks fire no hit
+	// event, and the NPC's own game never deals them (the effect is on our copy alone). Before, every tick after the
+	// first second was "a drop with no hit of ours" and was given back: a Wounding or Incendiary weapon healed its own
+	// damage back as the player watched. The longest of the game's own last ten seconds (Poisoner's).
+	constexpr Clock::duration EFFECT_WINDOW = std::chrono::seconds{ 10 };
 	constexpr float           SLACK = 0.05f;      // smaller drops are rounding
+	constexpr float           RAISE_SHARE = 0.01f;  // of the maximum: a smaller gain is left until it adds up to one
+	constexpr float           MIN_LEFT = 1.0f;    // a gain taken back never leaves the copy with less (it would die here)
 	constexpr std::size_t     MAX_COPIES = 1024;  // copies watched at once (a guard)
+
+	// Our player's shot (or swing) aimed at the copy (OurShot), when no hit event of the game's came for it: a drop that
+	// begins within SHOT_REACH of the shot is the shot's (the bullet's flight; a frame either side for the order things
+	// are seen in). On the rig, a host's shot took 24.6 off a friend's raider in the host's game and no hit event for it
+	// ever reached the mod: CopyWatch gave it back as "no hit of ours", so the shot healed what it hit, the raider never
+	// lost a point in the game that ran it, and the host could not kill it while the friend could. A game whose hit events
+	// stop (another mod's sink can stop them before ours; the cause on the rig is not known) turned every shot at an NPC
+	// a friend runs into that. Only a drop with nothing else around it: no other hit on the copy within EFFECT_WINDOW
+	// before it (its burn may still tick), no blow of ours left to the owner, no hit of ours seen.
+	constexpr Clock::duration SHOT_REACH = std::chrono::milliseconds{ 1000 };
+
+	// Where our player aims as a shot leaves: the eyes, and the view's angles as the game keeps them (radians: yaw from
+	// +y toward +x, pitch down positive).
+	struct Aim
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float z = 0.0f;
+		float yaw = 0.0f;
+		float pitch = 0.0f;
+	};
+
+	constexpr float AIM_REACH = 8192.0f;    // farther than this, a shot is nobody's in particular
+	constexpr float AIM_RADIUS = 48.0f;     // half an actor's width, about
+	constexpr float AIM_BOTTOM = -16.0f;    // an actor's reach below where it stands ...
+	constexpr float AIM_TOP = 160.0f;       // ... and above: a standing human is about 128 tall
+	constexpr float AIM_SLACK = 0.07f;      // radians (4 degrees): the third-person camera, the gun's spread
+
+	// Whether a shot aimed so could be the one that hit an actor standing at (a_x, a_y, a_z): the view points at its body,
+	// give or take AIM_SLACK.
+	inline bool AimedAt(const Aim& a_aim, float a_x, float a_y, float a_z)
+	{
+		constexpr float PI = 3.14159265f;
+		const float     dx = a_x - a_aim.x;
+		const float     dy = a_y - a_aim.y;
+		const float     flat = (std::max)(std::hypot(dx, dy), 1.0f);
+		if (std::hypot(flat, a_z - a_aim.z) > AIM_REACH) {
+			return false;
+		}
+		float off = std::atan2(dx, dy) - a_aim.yaw;
+		while (off > PI) {
+			off -= 2.0f * PI;
+		}
+		while (off < -PI) {
+			off += 2.0f * PI;
+		}
+		if (std::abs(off) > std::atan2(AIM_RADIUS, flat) + AIM_SLACK) {
+			return false;
+		}
+		const float top = -std::atan2(a_z + AIM_TOP - a_aim.z, flat);        // the pitch that looks at its head
+		const float bottom = -std::atan2(a_z + AIM_BOTTOM - a_aim.z, flat);  // ... and at its feet
+		return a_aim.pitch >= top - AIM_SLACK && a_aim.pitch <= bottom + AIM_SLACK;
+	}
+
+	// Of actors standing at a_at (x, y, z each), the one a shot aimed so would hit: the nearest the view points at
+	// (AimedAt), or none. A shot hits one actor, and a drop on a neighbour in the same cone is not its.
+	inline std::optional<std::size_t> NearestAimed(const Aim& a_aim, const std::vector<std::array<float, 3>>& a_at)
+	{
+		std::optional<std::size_t> best;
+		float                      bestDistance = 0.0f;
+		for (std::size_t i = 0; i < a_at.size(); ++i) {
+			const auto& [x, y, z] = a_at[i];
+			if (!AimedAt(a_aim, x, y, z)) {
+				continue;
+			}
+			const float distance = std::hypot(x - a_aim.x, y - a_aim.y, z - a_aim.z);
+			if (!best || distance < bestDistance) {
+				best = i;
+				bestDistance = distance;
+			}
+		}
+		return best;
+	}
 
 	// What struck a hit (or a killing blow), as our game knows it on the main thread a frame later.
 	struct Cause
@@ -98,6 +214,8 @@ namespace CopyHealth
 		bool explosion = false;     // an explosion's (HitData's kExplosion flag)
 		bool throwable = false;     // its weapon, or the source, is a grenade, a Molotov or a mine
 		bool spellAlone = false;    // a spell or an enchantment with no weapon: what a Molotov's fire leaves burning
+		bool enchantment = false;   // ... and the source is a weapon's enchantment (an ENCH record: a legendary effect's,
+		                            // a mod's), never what a throw leaves burning (a hazard's spell, a SPEL record)
 		bool inHand = false;        // its weapon, or the source, is a weapon that is no throwable: a gun, a bat, a baton
 		bool explosionsShared = false;  // our game reports the explosions around our player now (a throw's watch is on)
 		bool threwLately = false;       // ... or did a little while ago: the fire a Molotov left may burn there still
@@ -119,14 +237,17 @@ namespace CopyHealth
 	// RemoteEdits::ReportGate; the NPC's game sets it off beside its NPC wherever its player is), a destructible object's
 	// own or a world trap's (every game sets its own off). Any other, one kept ours (too far, too big, past the budget),
 	// or a gun's hit read as an explosion's with none there, is dealt nowhere else and is ours to report. Any other blow with
-	// a weapon in hand that is no throwable is ours whatever else the event reads, and the burn a Molotov's fire leaves
-	// is the owner's for WeaponFire::THREW_LATELY after the watch.
+	// a weapon in hand that is no throwable is ours whatever else the event reads, and so is a weapon's enchantment's
+	// (a legendary's burn or bleed riding along with the shot, read as a spell with no weapon: its record is an ENCH,
+	// which no throw's fire ever is), and the burn a Molotov's fire leaves (a hazard's SPEL) is the owner's for
+	// WeaponFire::THREW_LATELY after the watch. Before, a Wounding or Incendiary hit within twenty seconds of the
+	// player's own Molotov was left to the owner's game, which never dealt it.
 	constexpr bool OwnersToDeal(const Blow& a_blow)
 	{
 		if (a_blow.explosion) {
 			return a_blow.blastThere;
 		}
-		if (a_blow.inHand) {
+		if (a_blow.inHand || a_blow.enchantment) {
 			return false;
 		}
 		return (a_blow.throwable && a_blow.explosionsShared) || (a_blow.spellAlone && (a_blow.explosionsShared || a_blow.threwLately));
@@ -158,16 +279,95 @@ namespace CopyHealth
 		return hitter == Hitter::kOurPlayer || (hitter == Hitter::kOurs && a_cause.ourCompanion);
 	}
 
+	// A damage of ours sent to the NPC's game, until it is answered.
+	struct Sent
+	{
+		std::uint32_t seq = 0;
+		float         amount = 0.0f;  // health, as the copy reads it
+	};
+
+	// What became of a hit of ours, as its answer says (Protocol::DamageAnswer::Why, kept apart so this stays pure).
+	enum class Answer : std::uint8_t
+	{
+		kApplied,   // the NPC's game took it off: its reports have it from now on
+		kOurs,      // we run the NPC now (our hit's claim took it over): the drop on what was our copy is the truth
+		kRefused,   // not taken off anywhere: the copy gets the health back
+	};
+
+	// A drop with a hit of ours around it is ours. But the thrower's own copy is no ghost for their throw (BlastShield
+	// shields copies from friends' explosions only), so their shot in the same second as their Molotov's blast, or while its
+	// fire burns, took the whole drop for theirs: blast and burn were sent as their damage to the NPC's game, which had dealt
+	// them itself, and the NPC took them twice. So with a blow left to the owner (OwnersBlow) around the drop, only what our
+	// hits said they took (their HitData figure) is ours; the rest is the owner's, given back. Without one, or with hits of
+	// ours none of whose events had a figure, the whole drop is ours as before (a figure short of what a hit took must not lose it).
 	class Book
 	{
 	public:
-		// A hit of ours (Judge) on the copy now.
-		void OurHit(std::uint32_t a_id, Clock::time_point a_now)
+		// A hit of ours (Judge) on the copy now, that took a_damage as its event says (none: the event had no figure).
+		void OurHit(std::uint32_t a_id, Clock::time_point a_now, std::optional<float> a_damage = std::nullopt)
+		{
+			auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				if (entries.size() >= MAX_COPIES) {
+					return;
+				}
+				it = entries.emplace(a_id, Entry{}).first;
+			}
+			auto& entry = it->second;
+			if (!entry.ourHit || *entry.ourHit + OURS_GRACE < a_now) {
+				entry.dealt = 0.0f;
+				entry.unknown = false;
+				entry.figured = false;
+			}
+			entry.ourHit = a_now;
+			if (a_damage) {
+				entry.dealt += *a_damage;
+				entry.figured = true;
+			} else {
+				entry.unknown = true;
+			}
+		}
+
+		// A blow of ours on the copy now that the NPC's own game deals itself (OwnersToDeal): a throw's blast, its fire.
+		// Or a friend's explosion's that goes off there too (set off here for them: the hit names no actor).
+		void OwnersBlow(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			if (auto it = entries.find(a_id); it != entries.end()) {
-				it->second.ourHit = a_now;
+				it->second.ownersBlow = a_now;
 			} else if (entries.size() < MAX_COPIES) {
-				entries[a_id] = Entry{ .health = std::nullopt, .ourHit = a_now };
+				entries[a_id] = Entry{ .ownersBlow = a_now };
+			}
+		}
+
+		// A hit of ours on the copy now that put an effect on it (an enchantment's, a spell's: its ticks follow with no
+		// hit event, ours for EFFECT_WINDOW). Called beside OurHit for the same hit.
+		void OurEffect(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				it->second.effect = a_now;
+			} else if (entries.size() < MAX_COPIES) {
+				entries[a_id] = Entry{ .effect = a_now };
+			}
+		}
+
+		// Our player's shot (or swing) left aimed at the copy now (AimedAt). Whether it hit is the hit event's to say; with
+		// none, a drop that follows alone is the shot's all the same (SHOT_REACH).
+		void OurShot(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				it->second.ourShot = a_now;
+			} else if (entries.size() < MAX_COPIES) {
+				entries[a_id] = Entry{ .ourShot = a_now };
+			}
+		}
+
+		// A hit on the copy now that is nobody's of ours: a hazard's (a fire, gas), a friend's explosion's, another
+		// game's actor's. From then on a drop with no hit behind it is no longer our effect's alone (the fire's ticks
+		// fire no event either), so the effect's window closes.
+		void OtherHit(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				it->second.otherHit = a_now;
 			}
 		}
 
@@ -177,61 +377,401 @@ namespace CopyHealth
 			if (auto it = entries.find(a_id); it != entries.end()) {
 				it->second.health = a_health;
 				it->second.dropSince.reset();
+				it->second.raiseSince.reset();
 			} else if (entries.size() < MAX_COPIES) {
 				entries[a_id] = Entry{ .health = a_health };
 			}
 		}
 
-		// The copy reads a_health now: how much to give back (0: none, or not yet). After giving it back, Set what it reads.
-		float Check(std::uint32_t a_id, float a_health, Clock::time_point a_now)
+		// The copy reads a_health now, of a_maximum at most (0: not known): how much to give back (0: none, or not yet),
+		// or, below 0, how much of a gain no report gave it to take back. After either, Set what it reads.
+		float Check(std::uint32_t a_id, float a_health, Clock::time_point a_now, float a_maximum = 0.0f)
 		{
 			auto it = entries.find(a_id);
 			if (it == entries.end() || !it->second.health) {
 				Set(a_id, a_health);
+				if (const auto found = entries.find(a_id); found != entries.end() && a_maximum > 0.0f) {
+					found->second.maximum = a_maximum;
+				}
 				return 0.0f;
 			}
 			auto& entry = it->second;
+			// Alive: a fall judged before (Fell) is over, and the next one is judged again.
+			entry.fellSince.reset();
+			entry.fellJudged = false;
+			entry.fellOurs = false;
+			// A new maximum (our level set to the owner's: Rolls) moves its health with it, the engine's reading as well as
+			// where it stands: the same share of it.
+			if (a_maximum > 0.0f) {
+				if (entry.maximum > 0.0f && std::abs(a_maximum - entry.maximum) > SLACK) {
+					const float scale = a_maximum / entry.maximum;
+					*entry.health *= scale;
+					for (auto& flight : entry.inFlight) {
+						flight.amount *= scale;  // what is on its way is a share of the maximum too, and so is what is owed
+					}
+					entry.ours *= scale;
+					entry.lost *= scale;
+					entry.parked *= scale;
+					if (entry.lastReport) {
+						*entry.lastReport *= scale;
+					}
+				}
+				entry.maximum = a_maximum;
+			}
+			// A drop a report healed back before any hit of ours was booked (Heard): a hit of ours that comes after all (its
+			// event a frame behind the damage) means what the report healed back was ours; none within JUDGE_AFTER, and the
+			// report's heal stands.
+			if (entry.reportedDrop) {
+				const auto [drop, at] = *entry.reportedDrop;
+				// Only a hit whose event came within JUDGE_AFTER of the report: Check may not have run since (the copy had no
+				// 3D), and a hit long after is nothing of the drop the report healed back.
+				if (entry.ourHit && *entry.ourHit >= at - OURS_GRACE && *entry.ourHit <= at + JUDGE_AFTER) {
+					const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+					entry.ours += take;
+					entry.reportedDrop.reset();
+				} else if (a_now - at >= JUDGE_AFTER) {
+					entry.reportedDrop.reset();
+				}
+			}
+			// A gain no report gave it (a report Sets where it stands first): the copy's own, of something in our world
+			// alone: a legendary mutation of a copy that is legendary only here (the owner's roll is ours from its next
+			// load on), a heal no other game saw. Taken back once it has stood JUDGE_AFTER (as a drop is judged; and a new
+			// maximum, which moves the health with it above, can come a frame after the health), all of it but MIN_LEFT;
+			// what follows comes from the owner's reports. A small gain is not followed: one that creeps up a little at a
+			// time is taken back once it adds up to RAISE_SHARE of the maximum.
+			if (a_health > *entry.health + RaiseSlack(entry)) {
+				entry.dropSince.reset();
+				if (!entry.raiseSince) {
+					entry.raiseSince = a_now;
+					entry.peak = a_health;
+				}
+				entry.peak = (std::max)(entry.peak, a_health);
+				if (a_now - *entry.raiseSince < JUDGE_AFTER) {
+					return 0.0f;
+				}
+				entry.raiseSince.reset();
+				// What it fell from the most it read, with a hit of ours around (or an effect of ours still on it: OursLately),
+				// is ours as any drop is (TakeOurs): the hit landed on the gained health. Else a shot in the tenth of a second
+				// after the mutation was taken back with the heal, and never reached the NPC's game.
+				if (const float fell = entry.peak - a_health; fell > SLACK && OursLately(entry, a_now)) {
+					const float take = Unknown(entry) ? fell : (std::min)(fell, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
+					entry.ours += take;
+					*entry.health -= take;
+				}
+				const float to = (std::max)(*entry.health, MIN_LEFT);
+				if (to >= a_health - SLACK) {
+					entry.health = a_health;
+					return 0.0f;
+				}
+				return to - a_health;
+			}
+			entry.raiseSince.reset();
 			if (a_health >= *entry.health - SLACK) {
-				entry.health = a_health;
+				entry.health = (std::min)(*entry.health, a_health);
 				entry.dropSince.reset();
 				return 0.0f;
 			}
 			if (!entry.dropSince) {
 				entry.dropSince = a_now;
 			}
-			// A hit of ours around the drop: the copy is ours to hurt, and what it took goes to the NPC's game (TakeOurs).
-			if (entry.ourHit && *entry.ourHit + OURS_GRACE >= *entry.dropSince) {
-				entry.ours += *entry.health - a_health;
-				entry.health = a_health;
-				entry.dropSince.reset();
-				return 0.0f;
+			// A hit of ours around the drop, or an effect of ours still on it: the copy is ours to hurt, and what it took goes
+			// to the NPC's game (TakeOurs).
+			if (OursLately(entry, *entry.dropSince)) {
+				const float drop = *entry.health - a_health;
+				const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
+				entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
+				entry.ours += take;
+				*entry.health -= take;
+				if (drop - take <= SLACK) {
+					entry.health = a_health;
+					entry.dropSince.reset();
+					return 0.0f;
+				}
+				// More went than our hits said they took. The owner's blow's event can come a frame after its damage, as ours
+				// can: judged once it has stood, given back if one landed around it, else ours all the same.
+				if (a_now - *entry.dropSince < JUDGE_AFTER) {
+					return 0.0f;
+				}
+				if (!OwnersAround(entry)) {
+					entry.ours += *entry.health - a_health;
+					entry.health = a_health;
+					entry.dropSince.reset();
+					return 0.0f;
+				}
 			}
 			if (a_now - *entry.dropSince < JUDGE_AFTER) {
+				return 0.0f;
+			}
+			// No hit event of ours came, but our player's shot left aimed at it just before: the shot's (SHOT_REACH), as
+			// though its event had come with no figure, so the owner's report that may follow is held as after any hit.
+			if (ShotUnseen(entry, *entry.dropSince)) {
+				const float drop = *entry.health - a_health;
+				entry.ours += drop;
+				entry.ourHit = *entry.dropSince;
+				entry.dealt = 0.0f;
+				entry.unknown = true;
+				entry.figured = false;
+				entry.ourShot.reset();  // one drop a shot
+				entry.health = a_health;
+				entry.dropSince.reset();
+				++unseen;
 				return 0.0f;
 			}
 			entry.dropSince.reset();
 			return *entry.health - a_health;
 		}
 
-		// Another game's report sets the copy from a_before to a_health now. What a hit of ours took off it since it was last
-		// checked (the report came between the blow and the next frame) is ours all the same, not overwritten.
-		void Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now)
-		{
-			if (auto it = entries.find(a_id); it != entries.end()) {
-				auto& entry = it->second;
-				if (entry.health && entry.ourHit && a_before < *entry.health - SLACK && *entry.ourHit + OURS_GRACE >= a_now) {
-					entry.ours += *entry.health - a_before;
-				}
-			}
-			Set(a_id, a_health);
-		}
-
-		// What hits of ours took off the copy since this was last asked (0: nothing): for the game that runs it to take off.
-		float TakeOurs(std::uint32_t a_id)
+		// The copy is dead here (dying or dead), reading a_health now. Check is for living copies only, so the blow that
+		// took the last of its health was never booked, and never reached the NPC's game. On the rig the host's companion
+		// killed the host's copy of a friend's Mr. Gutsy: seventeen hits on it, sixteen damages sent, and the Gutsy stood
+		// on at 6 health in its own game. The copy's death report came at the end of its ten-second fall, too late for the
+		// server to believe it (Options::deathGrace after the blow's claim), so the robot lived on in the game that ran it.
+		// So a fall with a hit of ours around it (as Check judges a drop: OursLately, from OURS_GRACE before it on) books
+		// what it took as ours: down from where the copy stood, and never less than all of that and MIN_LEFT more, so the
+		// NPC's game, which stands about where the copy stood, takes its last health too (rounding on the wire must not
+		// leave it a sliver). With a blow left to the owner around, only what our hits said they took (as in Check): the
+		// owner's game deals its own blow. A hit's event can come a frame behind its damage: true while the fall is to be
+		// asked about again (for JUDGE_AFTER), false once it is judged. Judged once a fall; TakeOurs sends it.
+		//
+		// a_toldDead: our game killed the copy for the session's word (another game's report of its death, or the
+		// session's dead list: the console kill), so the fall is no blow of ours, whatever hit of ours is still in its
+		// window. It was counted as our kill, and its damage sent only to be refused. A report's drop still waiting for its
+		// hit's event (Heard) is part of a fall of ours: all the copy stood at is booked, so it is not judged again.
+		bool Fell(std::uint32_t a_id, float a_health, Clock::time_point a_now, bool a_toldDead = false)
 		{
 			const auto it = entries.find(a_id);
-			return it != entries.end() ? std::exchange(it->second.ours, 0.0f) : 0.0f;
+			if (it == entries.end() || !it->second.health || it->second.fellJudged) {
+				return false;
+			}
+			auto& entry = it->second;
+			if (!entry.fellSince) {
+				entry.fellSince = a_now;
+			}
+			if (a_toldDead) {
+				entry.fellJudged = true;
+				return false;
+			}
+			if (!OursLately(entry, *entry.fellSince)) {
+				if (a_now - *entry.fellSince < JUDGE_AFTER) {
+					return true;
+				}
+				entry.fellJudged = true;
+				return false;
+			}
+			const float stood = *entry.health;
+			const float drop = (std::max)(stood - a_health, stood + MIN_LEFT);
+			const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= *entry.fellSince;
+			const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
+			entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+			entry.ours += take;
+			entry.health = a_health;
+			entry.dropSince.reset();
+			entry.raiseSince.reset();
+			entry.reportedDrop.reset();
+			entry.fellJudged = true;
+			if (take > 0.0f) {
+				entry.fellOurs = true;
+				++lethal;
+			}
+			return false;
 		}
+
+		// How many falls of copies were booked as ours (Fell).
+		[[nodiscard]] std::uint32_t Lethal() const { return lethal; }
+
+		// Whether the copy's fall (this one: until it is checked alive again) was booked as ours (Fell). For a fall that
+		// was not, what TakeOurs sends is only what earlier hits of ours booked.
+		[[nodiscard]] bool FellToUs(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() && it->second.fellOurs;
+		}
+
+		// How many drops were taken for our player's shots with no hit event for them (OurShot): a game whose hit events
+		// don't reach the mod.
+		[[nodiscard]] std::uint32_t Unseen() const { return unseen; }
+
+		// Another game's report would set the copy from a_before to a_health now: the health to set it to. What a hit of ours
+		// took off it since it was last checked (the report came between the blow and the next frame) is ours all the same.
+		//
+		// On a copy (a_copy) the report is the runner's word, which can't have our damage still in flight (InFlight) taken
+		// off yet: the copy is set to the report less what is in flight, whichever way that moves it, however long the
+		// hits take (never below MIN_LEFT: the NPC's death comes as its own report). Once the runner answers (Answered),
+		// its next report has the hit in it; a refusal gives the hit back, and the copy is at the report again. Up to
+		// 0.10.0 the hits of the last second were taken for on their way and any older one for arrived, so a dropped hit
+		// was healed back by the next report a second later.
+		float Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now, bool a_copy = true)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				Set(a_id, a_health);
+				return a_health;
+			}
+			auto&      entry = it->second;
+			const bool lately = OursLately(entry, a_now);
+			if (entry.health && a_before < *entry.health - SLACK) {
+				const float drop = *entry.health - a_before;
+				if (lately) {
+					// With a blow left to the owner around, only what our hits said they took is ours (as in Check).
+					const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= a_now;
+					const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+					entry.ours += take;
+				} else if (a_copy) {
+					// No hit of ours is booked yet, but its event can come a frame behind its damage: judged in Check once
+					// the event has had JUDGE_AFTER to come.
+					entry.reportedDrop = { drop, a_now };
+				}
+			}
+			float health = a_health;
+			if (!a_copy) {
+				// Ours to run: its health here is the truth, whatever was on its way, booked and not sent, or owed to it.
+				entry.inFlight.clear();
+				entry.ours = 0.0f;
+				entry.parked = 0.0f;
+				entry.lost = 0.0f;
+				entry.lastReport.reset();
+			} else {
+				entry.lastReport = a_health;
+				if (const float onWay = OnWay(a_id); onWay > 0.0f && a_health > MIN_LEFT) {
+					// What our hits took that is still on its way (sent and unanswered, or booked this frame and not yet sent)
+					// comes off the report: the runner's game hasn't taken it off yet. A refusal gives it back, up to the
+					// report's figure (Refundable), so the copy never ends up above the runner's word by a refunded hit. Never
+					// below MIN_LEFT: the NPC's death comes as its own report (a report at or under MIN_LEFT itself is set as
+					// it comes).
+					health = (std::max)(MIN_LEFT, a_health - onWay);
+				}
+			}
+			entry.health = health;
+			entry.dropSince.reset();
+			entry.raiseSince.reset();  // a report is where it stands: no gain of its own is pending
+			return health;
+		}
+
+		// What hits of ours took off the copy since this was last asked (nothing: none): for the game that runs it to take
+		// off, numbered, and in flight until Answered. CopyWatch asks at most every SEND_EVERY for one copy.
+		std::optional<Sent> TakeOurs(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end() || it->second.ours <= 0.0f) {
+				return std::nullopt;
+			}
+			auto&      entry = it->second;
+			const Sent sent{ ++lastSeq, std::exchange(entry.ours, 0.0f) };
+			if (entry.inFlight.size() >= MAX_IN_FLIGHT) {
+				entry.lost += entry.inFlight.front().amount;  // the oldest is given up on (TakeLost)
+				entry.inFlight.erase(entry.inFlight.begin());
+			}
+			entry.inFlight.push_back({ sent.seq, sent.amount, a_now });
+			return sent;
+		}
+
+		// What our hits took that can't be sent (the copy's maximum reads 0): forgotten, with nothing in flight for it.
+		void Discard(std::uint32_t a_id)
+		{
+			if (const auto it = entries.find(a_id); it != entries.end()) {
+				it->second.ours = 0.0f;
+			}
+		}
+
+		// The answer to a damage of ours (its seq) came: what to give the copy back (0: nothing, it was taken off, or it is
+		// ours to run now). An answer to nothing we sent (answered already, or lost) gives nothing back. Never more than
+		// takes the copy to the runner's last word (Refundable).
+		float Answered(std::uint32_t a_id, std::uint32_t a_seq, Answer a_answer)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				return 0.0f;
+			}
+			auto&      flights = it->second.inFlight;
+			const auto flight = std::ranges::find(flights, a_seq, &Flight::seq);
+			if (flight == flights.end()) {
+				return 0.0f;
+			}
+			const float amount = flight->amount;
+			flights.erase(flight);
+			++answered;
+			if (a_answer != Answer::kRefused) {
+				return 0.0f;
+			}
+			++refused;
+			// What the runner's last word doesn't cover now (the copy reads above it: a gain of its own being judged) is
+			// owed, and comes once the copy is back at the word (TakeParked).
+			const float now = Refundable(it->second, amount);
+			it->second.parked += amount - now;
+			return now;
+		}
+
+		// What is on its way for the copy: sent and not answered yet.
+		[[nodiscard]] float InFlight(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				return 0.0f;
+			}
+			float sum = 0.0f;
+			for (const auto& flight : it->second.inFlight) {
+				sum += flight.amount;
+			}
+			return sum;
+		}
+
+		// ... and what our hits took that is booked but not sent yet, with it: everything a report can't have yet.
+		[[nodiscard]] float OnWay(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it == entries.end() ? 0.0f : InFlight(a_id) + it->second.ours;
+		}
+
+		// Health the copy is owed from a refusal it couldn't take when the answer came (no 3D that frame): given back with
+		// TakeParked once it is seen again.
+		void Park(std::uint32_t a_id, float a_amount)
+		{
+			if (const auto it = entries.find(a_id); it != entries.end() && a_amount > 0.0f) {
+				it->second.parked += a_amount;
+			}
+		}
+
+		// What was parked for the copy (Park), to be given back now (0: nothing): no more than takes the copy to the
+		// runner's last word, which may have come since.
+		float TakeParked(std::uint32_t a_id)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end() || it->second.parked <= 0.0f) {
+				return 0.0f;
+			}
+			const float now = Refundable(it->second, it->second.parked);
+			it->second.parked -= now;  // the rest stays owed
+			return now;
+		}
+
+		// What was sent for the copy and never answered in LOST_AFTER (or pushed out by MAX_IN_FLIGHT): given up on, and
+		// to be given back to the copy now (0: nothing).
+		float TakeLost(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				return 0.0f;
+			}
+			auto& entry = it->second;
+			std::erase_if(entry.inFlight, [&](const Flight& a_flight) {
+				if (a_now - a_flight.since < LOST_AFTER) {
+					return false;
+				}
+				entry.lost += a_flight.amount;
+				return true;
+			});
+			const float lost = Refundable(entry, entry.lost);
+			entry.lost -= lost;  // the rest once the copy is back at the runner's word
+			lostTotal += lost;
+			return lost;
+		}
+
+		[[nodiscard]] std::uint32_t AnsweredCount() const { return answered; }
+		[[nodiscard]] std::uint32_t Refused() const { return refused; }
+		[[nodiscard]] float         Lost() const { return lostTotal; }
 
 		// The health the copy stands at (none before it is first seen).
 		[[nodiscard]] std::optional<float> Health(std::uint32_t a_id) const
@@ -254,14 +794,92 @@ namespace CopyHealth
 		[[nodiscard]] std::size_t Size() const { return entries.size(); }
 
 	private:
+		struct Flight
+		{
+			std::uint32_t     seq = 0;
+			float             amount = 0.0f;
+			Clock::time_point since{};
+		};
+
 		struct Entry
 		{
 			std::optional<float>             health;
 			std::optional<Clock::time_point> ourHit;
 			std::optional<Clock::time_point> dropSince;
 			float                            ours = 0.0f;  // taken by hits of ours, not yet sent (TakeOurs)
+			std::optional<Clock::time_point> ownersBlow;   // the last blow of ours left to the NPC's own game
+			float                            dealt = 0.0f;     // what our hits since ourHit's grace began said they took, not yet booked
+			bool                             unknown = false;  // ... and one of them said nothing
+			bool                             figured = false;  // ... and one of them said what it took
+			std::vector<Flight>              inFlight;         // sent (TakeOurs) and not answered yet (Answered)
+			float                            lost = 0.0f;      // given up on, not yet given back (TakeLost)
+			float                            parked = 0.0f;    // refused and owed to the copy, not yet given back (Park, TakeParked)
+			std::optional<float>             lastReport;       // the runner's last word (Heard, on a copy): no refund takes the copy past it
+			std::optional<std::pair<float, Clock::time_point>> reportedDrop;  // a drop a report found with no hit of ours booked yet (Heard): ours if a hit's event follows within JUDGE_AFTER
+			std::optional<Clock::time_point> effect;      // the last hit of ours that put an effect on the copy (OurEffect)
+			std::optional<Clock::time_point> otherHit;    // the last hit on the copy that was nobody's of ours (OtherHit)
+			std::optional<Clock::time_point> ourShot;     // our player's last shot aimed at it whose drop is not judged yet (OurShot)
+			std::optional<Clock::time_point> raiseSince;  // it has read more than it stands at since (a gain of its own)
+			float                            peak = 0.0f;     // ... and the most it has read since then
+			float                            maximum = 0.0f;  // its maximum as last read (0: not known)
+			std::optional<Clock::time_point> fellSince;       // first seen dead here, this fall (Fell)
+			bool                             fellJudged = false;  // ... and the fall's blow judged
+			bool                             fellOurs = false;    // ... and booked as ours
 		};
 
+		// A gain smaller than this is not taken back (yet).
+		static float RaiseSlack(const Entry& a_entry) { return (std::max)(SLACK, RAISE_SHARE * a_entry.maximum); }
+
+		// How much of a_amount a refund may give the copy: not past the runner's last word, where it stands (a report
+		// under MIN_LEFT, or more on its way than it had, left the copy above the word less its hits).
+		static float Refundable(const Entry& a_entry, float a_amount)
+		{
+			if (!a_entry.lastReport || !a_entry.health) {
+				return a_amount;
+			}
+			return std::clamp(a_amount, 0.0f, (std::max)(0.0f, *a_entry.lastReport - *a_entry.health));
+		}
+
+		// Our hits around the drop said nothing of what they took: all of it is ours. Not when one of them did: a hit event
+		// with no figure beside one with (a legendary's effect riding along with the shot, a blocked blow) adds nothing, so
+		// one of those in a burst no longer takes every burn tick near the player's shots for theirs.
+		static bool Unknown(const Entry& a_entry) { return a_entry.unknown && !a_entry.figured; }
+
+		// Whether the copy is ours to hurt at a_at: a hit of ours within OURS_GRACE before it, or an effect of ours put on
+		// it within EFFECT_WINDOW before it with no other's hit on it since (a fire's ticks fire no event either, so once
+		// something else hit the copy its drops are no longer the effect's alone: given back, as before).
+		static bool OursLately(const Entry& a_entry, Clock::time_point a_at)
+		{
+			if (a_entry.ourHit && *a_entry.ourHit + OURS_GRACE >= a_at) {
+				return true;
+			}
+			return a_entry.effect && *a_entry.effect + EFFECT_WINDOW >= a_at && a_at >= *a_entry.effect && !(a_entry.otherHit && *a_entry.otherHit > *a_entry.effect);
+		}
+
+		// A blow left to the owner landed around the drop being judged (from OURS_GRACE before it on).
+		static bool OwnersAround(const Entry& a_entry) { return a_entry.ownersBlow && a_entry.dropSince && *a_entry.ownersBlow + OURS_GRACE >= *a_entry.dropSince; }
+
+		// A drop from a_since on that our player's shot explains with no hit event (SHOT_REACH): the shot left at most
+		// SHOT_REACH before it (or a frame's JUDGE_AFTER after: the shot is seen by its animation, a frame apart from the
+		// health), and nothing else around it: no other hit within EFFECT_WINDOW (its effect may still tick), no blow of
+		// ours left to the owner. (A hit of ours whose event came is OursLately: Check goes by its figure before this.)
+		static bool ShotUnseen(const Entry& a_entry, Clock::time_point a_since)
+		{
+			if (!a_entry.ourShot || a_since + JUDGE_AFTER < *a_entry.ourShot || a_since > *a_entry.ourShot + SHOT_REACH) {
+				return false;
+			}
+			if (a_entry.otherHit && *a_entry.otherHit + EFFECT_WINDOW >= a_since) {
+				return false;
+			}
+			return !(a_entry.ownersBlow && *a_entry.ownersBlow + OURS_GRACE >= a_since);
+		}
+
 		std::unordered_map<std::uint32_t, Entry> entries;
+		std::uint32_t                            unseen = 0;
+		std::uint32_t                            lethal = 0;   // falls booked as ours (Fell)
+		std::uint32_t                            lastSeq = 0;  // the number of the last damage sent (TakeOurs), over every copy
+		std::uint32_t                            answered = 0;
+		std::uint32_t                            refused = 0;
+		float                                    lostTotal = 0.0f;
 	};
 }

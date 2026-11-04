@@ -118,8 +118,8 @@ namespace Config
 		std::uint32_t keyEmoteClap = 0x73;   // F4: clap
 
 		// Proximity voice chat through Steam: hold keyVoice to talk (or always, with an open mic).
-		// Friends hear you at full volume within 8 m, fading out at voiceRange meters (0 = everyone
-		// always hears everyone).
+		// You hear a friend at full volume within 8 m, fading out at voiceRange meters (0 = you hear
+		// everyone, wherever they are). Only incoming voices use it.
 		bool          voiceChat = true;
 		bool          voiceOpenMic = false;
 		std::uint32_t keyVoice = 0x05;  // mouse side button (back)
@@ -145,14 +145,39 @@ namespace Config
 		std::uint32_t reviveWindowMinutes = 0;     // that window; 0 = per fight
 		std::uint32_t reviveCooldownSeconds = 0;   // helped up, a lethal hit within this long kills instead of downing
 		bool          reviveOutOfCombat = false;   // friends can help only while they are not in a fight
+		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
+		// What a guest built in their own save before joining is shared too, not only the host's (BuiltWalk.h).
+		bool shareGuestBuilds = false;
+		// A home's or a settlement's storage has one true copy, the host's game's, that friends take from and put into (StorageView.h).
+		bool sharedStorage = false;
+		// A weapon or armor put in a container is given: any friend can take it from their copy of it, once (GiftBook.h).
+		bool containerGifts = false;
+		// A player's game makes an autosave as they go down, so a bleed-out loads that moment, not an older save (AutoSaveRules.h).
+		bool saveOnDown = false;
+		// Which level every game rolls a leveled NPC at (sNpcLevel, Protocol::NpcLevelRule): 3 average (of the players
+		// there now), 1 highest (the highest any player has had in the session), 2 host (the host's), 0 own (each game its
+		// own player's, as before 0.10.2).
+		std::uint8_t npcLevel = 3;
+		// Whose difficulty's legendary chance every game rolls them with (sLegendaryDifficulty, Protocol::LegendaryRule):
+		// 1 average (of the games there now), 2 host, 0 own.
+		std::uint8_t legendary = 1;
+
+		// Not a host's rule: leveled NPCs are made with the session's roll (docs/SHARED-ROLLS.md). Off only to rule the
+		// hooks out when something goes wrong (bSharedRolls).
+		bool sharedRolls = true;
 
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;
 
 		// Locations a friend discovers show up on your map, ready for fast travel.
 		bool shareMap = true;
+
+		// Not a host's rule: a friend may borrow a power armor frame of yours your game made (one you found or looted), parked
+		// where they can reach it: they wear your pieces and core, and it comes back to you where they get out, with the
+		// wear they put on it (FrameLoans). Off: your frames are yours alone.
+		bool lendPowerArmor = true;
 
 		// A freeze this long (seconds without the game reading its window messages; a save, a load or a
 		// loading screen gets four times as long) is logged with a short report of where the game was

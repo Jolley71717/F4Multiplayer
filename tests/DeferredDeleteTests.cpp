@@ -42,3 +42,19 @@ TEST("deferred delete: not even before a save: one disabled in the save's flush 
 	// disabled and deleted in one frame (a physics job crashed on the freed stand-in after a save).
 	CHECK(!DeferredDelete::MayDelete(0ms));
 }
+
+TEST("a reference marked for deletion is said once: first held, then quiet, and gone when its handle fails")
+{
+	using DeferredDelete::Outcome;
+	CHECK(DeferredDelete::OutcomeOf(true, true, false) == Outcome::kHeld);
+	CHECK(DeferredDelete::OutcomeOf(true, true, true) == Outcome::kQuiet);
+	CHECK(DeferredDelete::OutcomeOf(false, false, true) == Outcome::kGone);
+	CHECK(DeferredDelete::OutcomeOf(false, true, false) == Outcome::kGone);
+}
+
+TEST("a reference that resolves and is not marked deleted is told, once")
+{
+	using DeferredDelete::Outcome;
+	CHECK(DeferredDelete::OutcomeOf(true, false, false) == Outcome::kNotMarked);
+	CHECK(DeferredDelete::OutcomeOf(true, false, true) == Outcome::kQuiet);
+}

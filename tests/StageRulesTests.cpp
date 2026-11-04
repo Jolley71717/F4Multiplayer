@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iterator>
 #include <tuple>
+#include <utility>
 
 namespace
 {
@@ -32,7 +33,53 @@ TEST("stage rules: the table is sorted, once per stage")
 	}
 	CHECK(StageRules::FileOf("Fallout4.esm") == File::kFallout4);
 	CHECK(StageRules::FileOf("DLCCOAST.ESM") == File::kCoast);
-	CHECK(!StageRules::FileOf("DLCRobot.esm"));
+	CHECK(StageRules::FileOf("DLCRobot.esm") == File::kRobot);
+	CHECK(StageRules::FileOf("dlcnukaworld.esm") == File::kNukaWorld);
+	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));  // the workshop add-ons have no shared quest stages
+	CHECK(!StageRules::FileOf("Unofficial Fallout 4 Patch.esp"));
+}
+
+TEST("stage rules: Automatron's and Nuka-World's stages that move the player or take from them (tools/questscan.ps1 -Rules)")
+{
+	using namespace StageRules;
+	// DLC04MQ01 1000 sets DLC04MQ01Gauntlet 2500, which walks the player through the Nuka-World station's stairwell door.
+	CHECK(FlagsOf(0x000801, 1000, File::kNukaWorld) == kMoves);
+	// DLC04MS02 500 unequips the space suits and helmets and takes them; the raids' 90 take the settlement's caps.
+	CHECK(FlagsOf(0x000807, 500, File::kNukaWorld) == kPays);
+	CHECK(FlagsOf(0x014352, 90, File::kNukaWorld) == kPays);  // DLC04RaidChaseOff
+	CHECK(FlagsOf(0x019088, 90, File::kNukaWorld) == kPays);  // DLC04RaidCoerce
+	// Automatron's quickstarts (MoveTo Codsworth's marker, Fort Hagen's start).
+	CHECK(FlagsOf(0x002833, 2, File::kRobot) == kMoves);  // DLC01MQ04
+	CHECK(FlagsOf(0x0010F5, 1, File::kRobot) == kMoves);  // DLC01MQ05
+	// Quest items, read from an alias, are left alone: the robot's head (DLC01MQ04 200), Dry Rock Gulch's drink (218).
+	CHECK(!Find(0x002833, 200, File::kRobot));
+	CHECK(!Find(0x0431AB, 218, File::kNukaWorld));
+	// The same form IDs in another file are another quest's.
+	CHECK(!Find(0x000801, 1000, File::kRobot));
+	CHECK(!(FlagsOf(0x000807, 500, File::kFallout4) & kPays));
+
+	// Never set from a friend's game: a payment at all, a move unless live beside the friend who did it.
+	for (const auto& [quest, stage] : { std::pair{ 0x000807u, 500 }, std::pair{ 0x014352u, 90 }, std::pair{ 0x019088u, 90 } }) {
+		CHECK(Judge(Find(quest, static_cast<std::uint16_t>(stage), File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	const auto door = Find(0x000801, 1000, File::kNukaWorld);
+	CHECK(Judge(door, { .live = true, .nearFriend = false }) == Verdict::kSkip);  // a friend far away
+	CHECK(Judge(door, { .live = false }) == Verdict::kSkip);                      // caught up from the session
+	CHECK(Judge(door, { .live = true, .nearFriend = true }) == Verdict::kSet);    // through the door with them
+
+	// Their stage 0s that move the player are the developers' quickstarts, none its quest's start-up stage: left out, so
+	// a friend's stage that starts the quest here isn't judged by one (StageRules::Starting).
+	CHECK(!Find(0x000801, 0, File::kNukaWorld));  // DLC04MQ01
+	CHECK(!Find(0x000807, 0, File::kNukaWorld));  // DLC04MS02
+	CHECK(!Find(0x000806, 0, File::kRobot));      // DLC01MQ01
+	CHECK(!StageRules::Starting(Find(0x000806, 0, File::kRobot), Find(0x000806, 100, File::kRobot)));
+	CHECK(StageRules::Starting(Find(0x000801, 0, File::kNukaWorld), door)->flags == kMoves);
+
+	// Theirs that set another shared quest's stage (-SetsOther): DLC04MQ00's 520 starts DLC04MQ01, DLC01MQ01's 3000 DLC01MQ02.
+	CHECK(StageRules::SetsAnother(File::kNukaWorld, 0x000800, 520));
+	CHECK(StageRules::SetsAnother(File::kNukaWorld, 0x000801, 1000));  // DLC04MQ02 1
+	CHECK(StageRules::SetsAnother(File::kRobot, 0x000806, 3000));
+	CHECK(!StageRules::SetsAnother(File::kRobot, 0x000800, 520));
 }
 
 TEST("stage rules: what the fragments do")
@@ -164,6 +211,48 @@ TEST("stage rules: a friend's stage that starts its quest here is judged and hel
 	REQUIRE(vault);
 	CHECK(StageRules::Judge(&*vault, { .live = true }) == Verdict::kSkip);  // Vault 81's 400 takes the player's fusion cores
 	CHECK((FlagsOf(0x0B8464, 400) & StageRules::kPays) != 0);
+}
+
+TEST("stage rules: a stage that moves the player through another quest it sets (Dangerous Minds' lounger into Kellogg's memory) is not caught up")
+{
+	using namespace StageRules;
+	// tools/questscan.ps1 -Moves: MQ202 300 sets MQ203 10, whose MQ203Script.StartQuest fades out and moves the player
+	// into the memory; MQ203 1000's FinishQuest moves them back to the lounger. A joiner catching up a friend's story
+	// from the session was sent into the memory (rig, 2026-11-01).
+	CHECK(FlagsOf(0x0229E9, 160) == kMoves);  // MQ202: the surgery, controls taken (was already so)
+	CHECK(FlagsOf(0x0229E9, 300) == kMoves);
+	CHECK(FlagsOf(0x0229EA, 10) == kMoves);
+	CHECK(FlagsOf(0x0229EA, 1000) == kMoves);
+	for (const auto& [quest, stage] : { std::pair{ 0x0229E9u, 300 }, std::pair{ 0x0229EAu, 10 }, std::pair{ 0x0229EAu, 1000 } }) {
+		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
+		REQUIRE(rule);
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);                                  // caught up from the session
+		CHECK(Judge(rule, { .sharedStory = true, .live = true }) == Verdict::kSkip);                    // live, the friend far away
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);  // with the friend at the lounger
+		CHECK(Judge(rule, { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
+	}
+	// The rest of the memory quest and the story after it are set: MQ203 20 (which starts MQ203 here once 10 was
+	// skipped) is judged by MQ203's 0, and MQ204's first stage by MQ204's 0; both are debug stages left out of the
+	// table, so The Glowing Sea is caught up.
+	CHECK(!Find(0x0229EA, 0));
+	CHECK(!Find(0x06B500, 0));
+	CHECK(!Starting(Find(0x0229EA, 0), Find(0x0229EA, 20)));
+	CHECK(!Starting(Find(0x06B500, 0), Find(0x06B500, 10)));
+	CHECK(Judge(nullptr, { .sharedStory = true }) == Verdict::kSet);
+	// The lounger's script waits 10 s (MQ203Script.StartQuest): set beside the friend, what comes after waits it out.
+	CHECK(Hold(Find(0x0229E9, 300)) == 11s);
+
+	// The other memory and teleport sequences the scan found behind a script or another quest's stage.
+	CHECK(FlagsOf(0x108EC0, 40) == kMoves);               // FFGoodneighbor01: the Memory Den's memory (FFGoodneighbor01MemorySequence 10)
+	CHECK(FlagsOf(0x01CBFA, 1, File::kCoast) == kMoves);   // DLC03MQ04_01: into DiMA's memories
+	CHECK(FlagsOf(0x01E3FE, 350, File::kCoast) == kMoves); // DLC03MQ04_05: out of them
+	CHECK(FlagsOf(0x036763, 548, File::kCoast) == kMoves); // DLC03_V118_Quest: the date
+	CHECK(FlagsOf(0x0229F7, 17) == kMoves);                // MS02: controls frozen
+	CHECK(FlagsOf(0x022A0A, 60) == kMoves);                // MS19: controls frozen
+	CHECK(FlagsOf(0x0BA4F2, 150) == kMoves);               // MQ101TVStation: would start MQ101, the pre-war opening, again
+	CHECK(FlagsOf(0x0C3309, 500) == kMoves);               // MQ101SanctuaryHills: the same
+	// A branch on the argument is followed one way: MQ302 800 calls ControlToggle(1), which gives the controls back.
+	CHECK(FlagsOf(0x0229EE, 800) == 0);
 }
 
 TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")

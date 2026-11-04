@@ -3,8 +3,12 @@
 
 #include "Config.h"
 #include "game/Achievements.h"
+#include "game/CatchUpMenus.h"
 #include "game/FadeWatch.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
+#include "game/MenuInput.h"
+#include "game/MenuMessages.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/QuestFilter.h"
@@ -12,6 +16,7 @@
 #include "game/RadiantRules.h"
 #include "game/RadiantSync.h"
 #include "game/RemotePlayers.h"
+#include "game/SceneHold.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 #include "game/Story.h"
@@ -91,10 +96,6 @@ namespace QuestSync
 		// something out of reach can keep the player in combat.
 		constexpr auto AFTER_COMBAT = 5s;
 		constexpr auto MAX_COMBAT_HOLD = 60s;
-		// A scene of a quest with stages waiting here holds them back only so long: a stage set from far
-		// away can start a scene with the player in it that only a later stage of its quest ends (MQ104's
-		// 18 starts one, its 30 ends it), while the scene's other actors are nowhere near.
-		constexpr auto MAX_SCENE_HOLD = 30s;
 		// The quests caught up with are named in one notice, once none came for a moment (or every so often).
 		constexpr auto NOTICE_QUIET = 3s;
 		constexpr auto NOTICE_EVERY = 15s;
@@ -152,6 +153,9 @@ namespace QuestSync
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
+		// Stages logged as never done in time, once each while the game runs: some never read as done here at all (a
+		// dialogue quest's stage 0 a friend's game set, 000190BC each load in the 0.10.0 rc soak); gaveUp counts the rest.
+		std::unordered_set<std::uint64_t>                gaveUpLogged;
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -159,7 +163,12 @@ namespace QuestSync
 		bool                                             combatHold = false;  // this poll: caught-up stages wait
 		std::optional<Clock::time_point>                 combatSince;
 		Clock::time_point                                lastCombat{};
-		std::optional<Clock::time_point>                 sceneSince;
+		SceneHold::Watch                                 sceneHold;  // whether the scene the player is in holds friends' stages back
+		std::uint32_t                                    sessionSceneLogged = 0;  // the session's scene last logged (0: none)
+		CatchUpMenus::Guard                              menuGuard;  // menus a friend's stage opened here, closed again
+		std::uint64_t                                    lastSetStage = 0;  // the friend's stage last set here (quest << 16 | stage), for the log
+		std::atomic<Clock::rep>                          playerActivatedAt{ 0 };  // our player last activated something (any thread)
+		Clock::rep                                       playerActivatedSeen = 0;  // ... as last handed to menuGuard
 		std::optional<Clock::time_point>                 warnedAt;
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
@@ -172,6 +181,7 @@ namespace QuestSync
 		std::uint32_t                                    unknown = 0;   // stages the quest doesn't have
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
+		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
 		std::uint32_t                                    released = 0;  // controls given back by the timeout
@@ -193,23 +203,27 @@ namespace QuestSync
 			return { quests.data(), quests.size() };
 		}
 
-		// A stage set in the middle of a conversation or scene can break it; wait until it's over. A scene
-		// of a quest with stages waiting here only holds them for MAX_SCENE_HOLD.
+		// A stage set in the middle of a conversation or scene can break it; wait until it's over. Not a scene
+		// a friend's stage started here (Codsworth's search, started by his talk's stage): it is the session's,
+		// the friend's later stages end it, and held back by it they would never come (SceneHold). The player's
+		// own scene of a quest with stages waiting here only holds them for SceneHold::MAX_HOLD.
 		bool PlayerBusy(Clock::time_point a_now)
 		{
-			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
-				return true;
-			}
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto scene = player ? player->GetCurrentScene() : nullptr;
-			if (!scene || !scene->parentQuest || !waiting.Contains(scene->parentQuest->GetFormID())) {
-				sceneSince.reset();
-				return scene != nullptr;
+			const auto quest = scene && scene->parentQuest ? scene->parentQuest->GetFormID() : 0u;
+			const bool held = sceneHold.Holds({ .talking = OpenMenus::Open(OpenMenus::Menu::kDialogue),
+												  .scene = scene ? scene->GetFormID() : 0u,
+												  .sceneQuest = quest,
+												  .sceneQuestWaiting = quest != 0 && waiting.Contains(quest) },
+				a_now);
+			if (const auto sessions = sceneHold.SessionScene(); sessions != sessionSceneLogged) {
+				sessionSceneLogged = sessions;
+				if (sessions) {
+					REX::INFO("QuestSync: the player is in scene {:08X} of {:08X}, started by a friend's stage; it holds no stages back, and its people are theirs", sessions, quest);
+				}
 			}
-			if (!sceneSince) {
-				sceneSince = a_now;
-			}
-			return a_now - *sceneSince < MAX_SCENE_HOLD;
+			return held;
 		}
 
 		// Whether caught-up stages wait now (see AFTER_COMBAT).
@@ -230,8 +244,7 @@ namespace QuestSync
 		// The game is paused (the Pip-Boy, the pause menu, a container, a terminal): scripts don't run.
 		bool Paused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0;
+			return GameStop::Now();
 		}
 
 		// Whether this friend (the one who did a stage) is close by. Not any friend: with three players,
@@ -256,12 +269,27 @@ namespace QuestSync
 			return IsFinale(a_quest) || IsDialogue(a_quest) || Story::IsStoryType(a_quest->data.questType);
 		}
 
+		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
+		{
+			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
+			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+		}
+
+		// A side quest the story manager starts with targets each game picks itself (QuestFilter::PER_GAME: the add-ons'
+		// radiants, DN121, DN151): a friend's stage of it would start it here with this game's own.
+		bool PerGame(const RE::TESQuest* a_quest)
+		{
+			const auto file = FileOf(a_quest);
+			return file && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*file), a_quest->GetFormID() & 0x00FFFFFF);
+		}
+
 		// Quests a session can share: the shared types, the factions' finales and the dialogue quests of the
 		// game's own files. Quests from other mods are never shared (see Official.h).
-		// The radiants aren't: one is shared by its run, not by its quest (RadiantSync).
+		// The radiants aren't: one is shared by its run, not by its quest (RadiantSync), and nor are the side quests each
+		// game fills its own way (PerGame).
 		bool Shareable(const RE::TESQuest* a_quest)
 		{
-			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID());
+			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID()) && !PerGame(a_quest);
 		}
 
 		// Quests this session shares now: the story's only if the host chose a shared story. A radiant's while its run here
@@ -269,12 +297,6 @@ namespace QuestSync
 		bool Shared(const RE::TESQuest* a_quest)
 		{
 			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest))) || RadiantSync::Shares(a_quest->GetFormID());
-		}
-
-		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
-		{
-			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
-			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 		}
 
 		const StageRules::Rule* RuleFor(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -447,7 +469,90 @@ namespace QuestSync
 			}
 			remoteStageAt[id] = Clock::now();
 			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
+			sceneHold.StageSet(id, Clock::now());  // its script may start a scene with the player in it: the session's
+			menuGuard.StageSet(Clock::now());  // ... or open a menu in front of them (CatchUpMenus)
+			lastSetStage = Key(id, a_stage);
 			++applied;
+		}
+
+		// Menus a friend's stage opened here by itself (a dismissed companion's new home, a featured item's inspection) are
+		// closed again, so they don't hold the game and the catch-up paused until the player answers them (CatchUpMenus).
+		// Every frame, paused or not: the menu is what pauses the game.
+		void WatchMenus(Clock::time_point a_now)
+		{
+			using CatchUpMenus::Menu;
+			using OpenMenus::Menu::kBarter;
+			using OpenMenus::Menu::kConsole;
+			using OpenMenus::Menu::kContainer;
+			using OpenMenus::Menu::kCooking;
+			using OpenMenus::Menu::kDialogue;
+			using OpenMenus::Menu::kPause;
+			using OpenMenus::Menu::kPipboy;
+			using OpenMenus::Menu::kPowerArmorMod;
+			using OpenMenus::Menu::kTerminal;
+			using OpenMenus::Menu::kWorkshop;
+			// What our player does that opens such a menu themselves: a conversation (dismissing a companion), workshop
+			// mode (a supply line), the Pip-Boy (its inspect), a workbench or station, and any activation.
+			if (OpenMenus::AnyOpen({ kDialogue, kWorkshop, kPipboy, kContainer, kBarter, kTerminal, kCooking, kPowerArmorMod, kConsole, kPause })) {
+				menuGuard.PlayerActed(a_now);
+			}
+			if (const auto activated = playerActivatedAt.load(); activated != playerActivatedSeen) {
+				playerActivatedSeen = activated;
+				menuGuard.PlayerActed(Clock::time_point{ Clock::duration{ activated } });
+			}
+			// Not while the UI is being torn down and built again (a loading screen, a load): the menus are looked at,
+			// and closed, once it is settled.
+			if (!Hud::IsSettled()) {
+				return;
+			}
+			MenuInput::Frame();  // a cancel's release
+			// Each menu with its own state: the guard holds the vignette back while the inspection under it is up.
+			const std::array<std::pair<Menu, bool>, 3> menus{ { { Menu::kCaravan, OpenMenus::Open(OpenMenus::Menu::kCaravan) },
+				{ Menu::kExamine, OpenMenus::Open(OpenMenus::Menu::kExamine) }, { Menu::kVignette, OpenMenus::Open(OpenMenus::Menu::kVignette) } } };
+			for (const auto& [menu, open] : menus) {
+				const auto name = CatchUpMenus::NAMES[static_cast<std::size_t>(menu)];
+				const auto cancel = CatchUpMenus::HowClosed(menu) == CatchUpMenus::Close::kCancel;
+				switch (menuGuard.Watch(menu, open, a_now)) {
+				case CatchUpMenus::Action::kClose:
+					{
+						// Why the close couldn't go (empty: it went). The settlement list is sent its own cancel, a Tab
+						// handed to it alone: a hide would leave the script waiting on it suspended for good
+						// (CatchUpMenus). Anything else gets a hide message.
+						std::string why;
+						if (cancel) {
+							why = MenuInput::Tap(name, "Cancel", MenuInput::TAB);
+						} else if (const auto refusal = MenuMessages::Refusal(name, true)) {
+							why = refusal;
+						} else if (const auto queue = RE::UIMessageQueue::GetSingleton()) {
+							queue->AddMessage(name, RE::UI_MESSAGE_TYPE::kHide);
+						} else {
+							why = "no UI message queue";
+						}
+						const auto opened = menuGuard.OpenedAt(menu);
+						const auto stage = menuGuard.LastStage();
+						const auto player = menuGuard.LastPlayer();
+						const auto secs = [](Clock::duration a_gap) { return std::chrono::duration<double>(a_gap).count(); };
+						// How long before the menu opened our player last acted (a menu of theirs, an activation): how
+						// near the player's own window (CatchUpMenus::PlayerQuiet) the call was.
+						const auto playerGap = opened && player ? std::format("{:.1f} s before it opened", secs(*opened - *player)) : std::string{ "never" };
+						if (!why.empty()) {
+							menuGuard.NotSent(menu);
+							REX::WARN("QuestSync: {} looks like a friend's stage's, but its {} wasn't sent ({}); left to the player", name, cancel ? "cancel" : "hide", why);
+							break;
+						}
+						REX::INFO("QuestSync: {} {}, opened {:.1f} s after a friend's stage was set here (the last {:08X} stage {}); our player last acted {}",
+							cancel ? "cancelling" : "hiding", name, opened && stage ? secs(*opened - *stage) : 0.0, static_cast<std::uint32_t>(lastSetStage >> 16),
+							static_cast<std::uint16_t>(lastSetStage & 0xFFFF), playerGap);
+						break;
+					}
+				case CatchUpMenus::Action::kGaveUp:
+					REX::WARN("QuestSync: {} is still up {} s after its {}; left to the player", name,
+						std::chrono::duration_cast<std::chrono::seconds>(CatchUpMenus::GIVE_UP).count(), cancel ? "cancel" : "hide");
+					break;
+				case CatchUpMenus::Action::kNone:
+					break;
+				}
+			}
 		}
 
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
@@ -654,6 +759,7 @@ namespace QuestSync
 			REX::WARN("QuestSync: MQ104 is at {} without its stage {}, and MQ105 never started; starting it", mq104->currentStage, MQ104_STARTS_MQ105);
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
 			FadeWatch::Arm(std::format("set {:08X} stage {}", MQ105, MQ105_FIRST));
+			sceneHold.StageSet(MQ105, a_now);
 			++repaired;
 			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
 		}
@@ -712,6 +818,9 @@ namespace QuestSync
 			}
 			return RadiantSync::Shares(a_quest->GetFormID()) ? "radiant (this run shared)" : "radiant (by its run)";
 		}
+		if (a_quest && Official::IsOfficialForm(a_quest) && PerGame(a_quest)) {
+			return "radiant (each player's own)";
+		}
 		if (!a_quest || !Shareable(a_quest)) {
 			return "no";
 		}
@@ -748,6 +857,15 @@ namespace QuestSync
 			return;
 		}
 		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
+		// A side quest whose targets each game picks itself (an older game's report, or a session file's from before).
+		if (quest && Official::IsOfficialForm(quest) && PerGame(quest)) {
+			if (perGameDropped.insert(a_stage.quest).second) {
+				const char* name = quest->GetFullName();
+				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: the story manager picks its targets in each game, so it is each player's own (logged once per quest)",
+					a_stage.quest, name ? name : "", a_stage.stage);
+			}
+			return;
+		}
 		if (!quest || !Shared(quest) || StageLog::Finished(quest->data.flags) || IsSettled(a_stage.quest, a_stage.stage)) {
 			return;
 		}
@@ -799,6 +917,7 @@ namespace QuestSync
 	void Frame(bool a_inSession, bool a_hosting)
 	{
 		const auto now = Clock::now();
+		WatchMenus(now);
 		if (now < nextPoll) {
 			return;
 		}
@@ -845,8 +964,10 @@ namespace QuestSync
 			CheckReleased(a_inSession);
 			for (const auto& stage : waiting.Poll(now, game, paused)) {
 				++gaveUp;
-				REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next", stage.quest, stage.stage,
-					std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
+				if (gaveUpLogged.insert(Key(stage.quest, stage.stage)).second) {
+					REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next (logged once; gaveUp counts each)", stage.quest, stage.stage,
+						std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
+				}
 			}
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 			std::erase_if(catchingUp, [](std::uint32_t a_quest) {
@@ -1003,7 +1124,8 @@ namespace QuestSync
 		liveAt.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
-		sceneSince.reset();
+		sceneHold.Clear();  // what was set is forgotten; a scene of the session's the player is still in stays the session's (a reconnect)
+		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		waitLogged.clear();
@@ -1032,7 +1154,8 @@ namespace QuestSync
 		liveAt.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
-		sceneSince.reset();
+		sceneHold.Clear();
+		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		waitLogged.clear();
@@ -1052,10 +1175,23 @@ namespace QuestSync
 		return lastStageChange;
 	}
 
+	void OnPlayerActivated()
+	{
+		playerActivatedAt = Clock::now().time_since_epoch().count();
+	}
+
+	std::uint32_t SessionScene()
+	{
+		return sceneHold.SessionScene();
+	}
+
 	std::string Describe()
 	{
 		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released, outgoing.Size(),
-			unstarted.Size(), locked ? " locked" : "") + " " + RadiantSync::Describe();
+			unstarted.Size(), locked ? " locked" : "") +
+		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
+			           menuGuard.gaveUp, menuGuard.left) +
+		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe();
 	}
 }

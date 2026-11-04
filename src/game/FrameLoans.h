@@ -1,0 +1,106 @@
+#pragma once
+
+#include "Protocol.h"
+#include "game/RemoteEdits.h"
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+// Power armor lent between players (the rules: FrameLoan.h). A friend presses E on our copy of a frame their game made
+// and parked: our game asks them for it, their game sends its pieces and core, ours puts copies of them into our copy,
+// and our player gets in through the engine's own activation. While they wear it our status names it by its spawn id,
+// which every game hides its own reference of (RemotePlayers' frame hide), and our copy is held as it is (the spawn
+// book's lent fact). As they get out the copies are gathered and removed, and their game is told where the frame
+// stands and what wear came back: it moves its own there and wears its pieces down to that. A save made in the frame
+// keeps our copy with our player in it, and notes it (the LOAN record): loaded again, our player is sent out of it and
+// it goes, with the copies. Main thread only, but for the record (SaveRecord, LoadRecord, RevertRecord), which the save
+// and the load call on their own thread, and the press (KeepOut), which the engine asks as it seats our player, on
+// a thread of its own.
+namespace FrameLoans
+{
+	// The spawn id of the frame our copy a_local is of, while it is lent to us (our wear names it by that); 0 otherwise,
+	// and 0 once its owner is gone (their spawn went with them).
+	[[nodiscard]] std::uint32_t WornSpawnOf(std::uint32_t a_local);
+
+	// The friend our own frame a_local is lent to (or offered to, the server's word on it not in yet); 0 if none.
+	[[nodiscard]] std::uint32_t LentOutTo(std::uint32_t a_local);
+	[[nodiscard]] bool          LentOut(std::uint32_t a_local);
+
+	// Our own frames lent (or offered), each with the friend it is lent to, as LentOutTo tells them one by one: for the frame
+	// gate's word (FriendFrame::Kept), which the engine's seating thread reads.
+	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint32_t>> LentOutFrames();
+
+	// Where our own frame a_local was given back, and its heading, while it waits to be moved there (until that spot is in
+	// our sight, NpcSync::MoveOwnFrame): it stands there in every other game already (Spawns::GivenBack), and its states
+	// say that spot meanwhile, not where it still stands here, which would move their copies back. None: no move waits.
+	[[nodiscard]] std::optional<std::pair<RemoteEdits::Spot, float>> MoveWaiting(std::uint32_t a_local);
+
+	// Our copy of the spawn a_id is lent to us: held as it is for the loan (SpawnBook::FrameFacts::lent).
+	[[nodiscard]] bool LentToUs(std::uint32_t a_id);
+
+	// a_local is our copy of the frame lent to us, while the loan lasts (not while it is only asked for): the frame our
+	// player gets out of last is it for the settle after they are out, and it is not their parked frame to tell. So is the
+	// copy a loaded save was made in, from the load until the clean-up after it buries it. Either is a copy, never a frame
+	// of ours to share or to lend (FrameShare::Ours::borrowed).
+	[[nodiscard]] bool BorrowedCopy(std::uint32_t a_local);
+
+	// Our player pressed E on a_frame, our copy of a_owner's frame shared as a_spawnId (RemotePlayers' frame gate): false
+	// lets them in (lent to us, the kit in it); true keeps them out, and the HUD says why or that we asked.
+	bool KeepOut(RE::TESObjectREFR* a_frame, std::uint32_t a_spawnId, std::uint32_t a_owner);
+
+	// An item of a_base named a_name is one of the copies of a friend's lent pieces our player holds now (Drops never gives
+	// one away: it goes back at the return), or one forfeited as its loan ended with its owner keeping theirs
+	// (FrameLoan::MAX_FORFEITS; taken from our player when they have it again).
+	[[nodiscard]] bool IsLentItem(std::uint32_t a_base, std::string_view a_name);
+
+	// A copy of a friend's frame placed at a_at would stand in our player's way out of the frame a loaded save had them in,
+	// while the clean-up after that load sends them out of it (FrameLoan::KeepsClear): none is placed there, and one placed
+	// there goes (Spawns), until they are out.
+	[[nodiscard]] bool KeepsClear(const RemoteEdits::Spot& a_at);
+
+	// A save or a load is coming (Spawns::DiscardCopies): the copy our player wears on loan is kept as it is.
+	[[nodiscard]] bool KeepsThroughSave(const RE::TESObjectREFR* a_copy);
+
+	// Just before a save: what its LOAN record holds (SaveRecord). A clean-up after a load not done yet is noted again.
+	void BeforeSave();
+
+	// A save is coming, before the session's copies go (Session::OnBeforeSaveOrLoad): a frame lent to us that our player
+	// has not got into yet is given back, unworn, so that none of it is in the save.
+	void EndUnwornBeforeSave();
+
+	// A friend's status: whether they lend their frames.
+	void OnStatus(std::uint32_t a_playerId, bool a_lends);
+	void OnPlayerLeft(std::uint32_t a_playerId);
+
+	void OnLoanAsked(const Protocol::FrameBorrow& a_ask);
+	void OnFrameLent(const Protocol::FrameLending& a_lending);
+	void OnFrameReturned(const Protocol::FrameReturn& a_return);
+
+	// Every frame, in a session or not (a loan worn as the session ended, and the clean-up after a load, go on).
+	void Frame();
+
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
+
+	// The co-save's LOAN record (src/main.cpp), in FrameLoan::RECORD_VERSION's layout. Empty: none to write. Read in
+	// a_version's (an older save's too); one not read whole is none.
+	std::vector<std::uint8_t> SaveRecord();
+	void                      LoadRecord(const std::vector<std::uint8_t>& a_bytes, std::uint32_t a_version);
+	void                      RevertRecord();
+
+	// A load is about to begin (kPreLoadGame, after Session::OnBeforeSaveOrLoad): the loans of our frames, the gives back
+	// waiting and the moves waiting are let go now, while the engine's data they hold on to (the extra data of the lent
+	// pieces) is still whole. Nothing changes in what the game does: they end with the load anyway.
+	void BeforeLoad();
+
+	// A save was loaded (or a new game begun): the loans of the old world are over, and a loaded LOAN record is cleaned up.
+	void OnGameLoaded();
+
+	// The session ended. A frame our player wears on loan is theirs to finish wearing: it goes as they get out.
+	void Reset();
+
+	std::string Describe();
+}
