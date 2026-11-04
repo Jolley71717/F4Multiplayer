@@ -2341,6 +2341,7 @@ namespace WorkshopSync
 		Clock::time_point        nextResourceTrack{};
 		Clock::time_point        nextResourceApply{};
 		std::uint32_t            mainMenusSeen = 0;      // OpenMenus::MainMenus at the last frame
+		std::uint32_t            benchMenusSeen = 0;     // OpenMenus::MainMenus at the last look for our workbenches (SeeMainMenu)
 		std::uint32_t            resourcesSent = 0;      // entries sent
 		std::uint32_t            resourcesReceived = 0;  // entries received
 		std::uint32_t            resourceChanges = 0;    // values changed on our workbenches
@@ -2450,9 +2451,27 @@ namespace WorkshopSync
 			std::optional<float> Temporary(std::uint32_t a_bench, ResourceMirror::Kind a_kind) { return WorkshopResources::TemporaryOf(a_bench, a_kind); }
 		};
 
+		// The main menu, for what of friends' is on our workbenches (Applier::MainMenu): looked at before anything is put on,
+		// taken off for a save or a load, or taken off as the session ends, so none of those works on the world before's
+		// workbenches as if they were this world's. One opened and closed since the last look is seen by its count.
+		void SeeMainMenu()
+		{
+			const bool  open = OpenMenus::MainMenuOpen();
+			const auto  menus = OpenMenus::MainMenus();
+			const bool  since = std::exchange(benchMenusSeen, menus) != menus;
+			const auto  benchesBefore = onBenches.On().size();
+			BenchEngine benches;
+			const auto  off = onBenches.MainMenu(benches, open, since);
+			if (benchesBefore > 0 && onBenches.On().empty()) {
+				REX::INFO("WorkshopSync: the main menu: friends' pieces' worth on {} workbenches of the world before forgotten; {} values still on them taken off", benchesBefore, off);
+				NoteResourcesOn();
+			}
+		}
+
 		void PutResourcesOn(Clock::time_point a_now)
 		{
 			nextResourceApply = a_now + ResourceMirror::APPLY_EVERY;
+			SeeMainMenu();
 			TallyEngine tally;
 			BenchEngine benches;
 			if (const auto changed = onBenches.Apply(benches, theirResources.Totals(tally), a_now); changed > 0) {
@@ -2490,9 +2509,36 @@ namespace WorkshopSync
 			}
 		}
 
+		// The new world's clear of what we put on the old one's workbenches (Applier::ForgetWorld), and what a loaded save's
+		// record says it held taken off (OnGameLoaded says which, and why).
+		void ClearResourcesForNewWorld(bool a_newGame)
+		{
+			BenchEngine benches;
+			const auto  unreached = onBenches.On().size();
+			if (const auto off = onBenches.ForgetWorld(benches, a_newGame); off > 0) {
+				REX::WARN("WorkshopSync: the new game's workbenches still held {} values of friends' pieces; taken off", off);
+			} else if (!a_newGame && unreached > 0) {
+				REX::WARN("WorkshopSync: {} workbenches of the world before couldn't be reached before the load; forgotten", unreached);
+			}
+			BenchValues leftover;
+			{
+				std::scoped_lock l{ resourceRecordLock };
+				leftover.swap(resourcesLoaded);
+			}
+			if (a_newGame) {
+				leftover.clear();  // a new game has no save: a record read for an earlier load is no record of its
+			}
+			if (const auto off = ResourceMirror::TakeOffRecord(benches, leftover); !leftover.empty()) {
+				resourcesLeftover += static_cast<std::uint32_t>(off);
+				REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; {} values taken off (only what each still holds)", leftover.size(), off);
+			}
+			NoteResourcesOn();
+		}
+
 		// Friends' pieces off our workbenches (the session ended).
 		void TakeResourcesOff(std::string_view a_why)
 		{
+			SeeMainMenu();  // a session ended at the main menu: only what the workbenches still hold comes off
 			BenchEngine benches;
 			if (const auto off = onBenches.TakeAllOff(benches); off > 0) {
 				REX::INFO("WorkshopSync: {}: {} values of friends' pieces taken off our workbenches", a_why, off);
@@ -2823,6 +2869,7 @@ namespace WorkshopSync
 		// (or should the load fail), nothing of ours is left on them. None go on again until the new world's clear
 		// (Applier::BeforeLoad, OnGameLoaded): a load longer than the save/load hold's limit lets frames run before it.
 		{
+			SeeMainMenu();  // a load from the main menu: what the world before's workbenches no longer hold isn't taken off
 			BenchEngine benches;
 			if (const auto off = onBenches.BeforeLoad(benches); off > 0) {
 				REX::INFO("WorkshopSync: loading: {} values of friends' pieces taken off our workbenches", off);
@@ -2863,29 +2910,21 @@ namespace WorkshopSync
 		//   off for it, only what the save's record says it held (a hush that failed);
 		// - a new game from the main menu has no such word, so what is still on a workbench of the same ID is taken off
 		//   (Applier::ForgetWorld), and no save's record is read.
-		BenchEngine benches;
-		const auto  unreached = onBenches.On().size();
-		if (const auto off = onBenches.ForgetWorld(benches, a_newGame); off > 0) {
-			REX::WARN("WorkshopSync: the new game's workbenches still held {} values of friends' pieces; taken off", off);
-		} else if (!a_newGame && unreached > 0) {
-			REX::WARN("WorkshopSync: {} workbenches of the world before couldn't be reached before the load; forgotten", unreached);
-		}
+		ClearResourcesForNewWorld(a_newGame);
 		// Our own pieces tracked were the world before's: a friend's game is told they count for nothing, and those this world
 		// has are found and sent again (a load in session, a death's reload, a new game; BeforeLoad did it for a load).
 		ForgetOwnPieces(a_newGame ? "a new game" : "a load");
-		BenchValues leftover;
-		{
-			std::scoped_lock l{ resourceRecordLock };
-			leftover.swap(resourcesLoaded);
+	}
+
+	void AfterLoadWork(bool a_newGame)
+	{
+		if (!onBenches.Loading()) {
+			return;  // OnGameLoaded did the clear (or no load set the block)
 		}
-		if (a_newGame) {
-			leftover.clear();  // a new game has no save: a record read for an earlier load is no record of its
-		}
-		if (const auto off = ResourceMirror::TakeOffRecord(benches, leftover); !leftover.empty()) {
-			resourcesLeftover += static_cast<std::uint32_t>(off);
-			REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; {} values taken off (only what each still holds)", leftover.size(), off);
-		}
-		NoteResourcesOn();
+		// The load is over (this runs from its end's message), and nothing went on since its start (the block): the clear
+		// OnGameLoaded would have done, done now. Without it the block would last until the next load or new game.
+		REX::WARN("WorkshopSync: the load's work didn't run; the new world's clear of friends' pieces' worth done now, and their block lifted");
+		ClearResourcesForNewWorld(a_newGame);
 	}
 
 	void OnWorldGone()
@@ -2969,6 +3008,7 @@ namespace WorkshopSync
 		BenchEngine benches;
 		std::size_t off = 0;
 		try {
+			SeeMainMenu();  // a coc world's first save: the world before's values aren't taken off it as if they were on
 			off = onBenches.Hush(benches, Clock::now());
 		} catch (...) {
 			said();
@@ -3083,9 +3123,9 @@ namespace WorkshopSync
 
 	std::string DescribeResources()
 	{
-		std::string out = std::format("resources: tracked={} counting={} owed={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} loading={} leftover={} pollMsMax={:.2f}",
+		std::string out = std::format("resources: tracked={} counting={} owed={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} loading={} mainMenu={} leftover={} pollMsMax={:.2f}",
 			resources.Size(), resources.Counting(), resources.Owed(), resourcesSent, resourcesReceived, theirResources.Size(), theirResources.Dropped(), onBenches.On().size(), resourceChanges,
-			resourcesHushed, onBenches.Hushed(), onBenches.Loading(), resourcesLeftover, static_cast<double>(resourcePollUsMax) / 1000.0);
+			resourcesHushed, onBenches.Hushed(), onBenches.Loading(), onBenches.AtMainMenu(), resourcesLeftover, static_cast<double>(resourcePollUsMax) / 1000.0);
 		for (const auto& [bench, values] : onBenches.On()) {
 			out += std::format("; {:08X}", bench);
 			for (std::size_t k = 0; k < ResourceMirror::KINDS; ++k) {

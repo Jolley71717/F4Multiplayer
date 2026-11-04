@@ -75,6 +75,11 @@ namespace WorkshopSync
 	// building again), and its cells are walked again for scrapped junk.
 	void OnGameLoaded(bool a_newGame);
 
+	// A load's (or a new game's) work is over, whether or not OnGameLoaded ran (an earlier step of the session's may have
+	// thrown): if the block on friends' values that the load set (ResourceMirror::Applier::BeforeLoad) is still on, the
+	// new world's clear is done now (Applier::ForgetWorld), so the block can't outlast the load. Main thread.
+	void AfterLoadWork(bool a_newGame);
+
 	// The loaded save is another character's world (the session is left): the copies were placed in the world before
 	// the load, and their handles name nothing of ours now (or something else). Forgotten, not removed.
 	void OnWorldGone();

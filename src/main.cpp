@@ -612,6 +612,13 @@ namespace
 				} catch (const std::exception& e) {
 					REX::ERROR("Frame: after the load: {}", e.what());
 				}
+				// On its own, after the rest: should a step above have thrown before the workshops' own, the load's block on
+				// friends' pieces' worth on our workbenches still ends with the load.
+				try {
+					WorkshopSync::AfterLoadWork(!loaded);
+				} catch (...) {
+					REX::ERROR("Frame: after the load, the settlements' numbers: an exception");
+				}
 				EndSaveOrLoad(hold, "load");
 			});
 			break;

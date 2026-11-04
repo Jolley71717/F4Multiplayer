@@ -179,6 +179,12 @@ namespace ResourceMirror
 					}
 				} else if (it->second && (owe || (full && Any(*it->second)))) {
 					out.push_back({ it->first, *it->second });  // away: as last sent, for a joiner (or as last given, unsent)
+				} else if (owe) {
+					// Away, and tracked again since its last word (WorldGone: found in the new world, its cell gone before this
+					// poll): that word, that it counts for nothing, is sent still, and the piece is sent as it counts once it is
+					// loaded again.
+					out.push_back({ it->first, {} });
+					it->second = Values{};
 				}
 				++it;
 			}
@@ -367,13 +373,14 @@ namespace ResourceMirror
 	public:
 		// Puts the totals on the workbenches: on each, what it holds of ours made what the totals say (a workbench not in
 		// them: nothing of ours; beds: nothing, APPLIED). Not while a save's hush lasts, nor from a load's start to its new
-		// world's clear (BeforeLoad). How many values it changed. The Engine gives:
+		// world's clear (BeforeLoad), nor while the main menu is open (MainMenu). How many values it changed. The Engine
+		// gives:
 		//
 		//   bool Add(std::uint32_t bench, Kind, float delta)   false if there's no such workbench here (nothing added)
 		template <class Engine>
 		std::size_t Apply(Engine& a_engine, const std::map<std::uint32_t, Values>& a_totals, Clock::time_point a_now)
 		{
-			if (loading) {
+			if (loading || atMainMenu) {
 				return 0;
 			}
 			if (hushes > 0) {
@@ -446,29 +453,51 @@ namespace ResourceMirror
 		// was told first (BeforeLoad, and nothing went on since), what that couldn't reach was on the old world's workbench,
 		// and the new world's are as the save holds them (what the save holds of ours, its record says: TakeOffRecord).
 		// Taking off here too could take it twice. A new game from the main menu is not told first, so on one what of ours is
-		// still on a workbench of the same ID (the engine did not set it back) is taken off, and one set back is let be
-		// (TakeOffHeld). How many values it took off. The Engine gives Add and Temporary
-		// (TakeOffHeld).
+		// still on a workbench of the same ID (the engine did not set it back) is taken off, and one set back is let be. How
+		// many values it took off. The Engine gives Add and Temporary (TakeOffHeld).
 		template <class Engine>
 		std::size_t ForgetWorld(Engine& a_engine, bool a_newGame)
 		{
-			std::size_t off = 0;
-			if (a_newGame) {
-				for (const auto& [bench, have] : on) {
-					off += TakeOffHeld(a_engine, bench, have);
-				}
-			}
+			const auto off = a_newGame ? TakeOffHeldAndForget(a_engine) : 0;
 			on.clear();
 			hushes = 0;
 			loading = false;
 			return off;
 		}
 
+		// The main menu, open now (a_open) or opened since the last look (a_openedSince): the workbenches we put values on
+		// were the world before's, and a coc from the menu starts another with no message (no load, no new game), whose
+		// workbenches of the same IDs may or may not still hold them (an engine that sets the modifiers back as it quits to
+		// the menu). Taken off without looking, a value no longer there would go into the new world's next save as a negative
+		// one (the hush before it, or the session's end). So, as for a new game, only what each workbench still holds is taken
+		// off (TakeOffHeld), and the rest is forgotten; and nothing goes on while the menu is open. A load's block (BeforeLoad)
+		// and a save's hush are let be: a menu seen during a load does not end the load. Seen before anything is put on or
+		// taken off. How many values it took off. The Engine gives Add and Temporary (TakeOffHeld).
+		template <class Engine>
+		std::size_t MainMenu(Engine& a_engine, bool a_open, bool a_openedSince)
+		{
+			atMainMenu = a_open;
+			return a_open || a_openedSince ? TakeOffHeldAndForget(a_engine) : 0;
+		}
+
 		[[nodiscard]] const std::map<std::uint32_t, Values>& On() const { return on; }
 		[[nodiscard]] bool                                   Hushed() const { return hushes > 0; }
 		[[nodiscard]] bool                                   Loading() const { return loading; }
+		[[nodiscard]] bool                                   AtMainMenu() const { return atMainMenu; }
 
 	private:
+		// What each workbench still holds of ours taken off (TakeOffHeld), and all of it forgotten.
+		template <class Engine>
+		std::size_t TakeOffHeldAndForget(Engine& a_engine)
+		{
+			std::size_t off = 0;
+			for (const auto& [bench, have] : on) {
+				off += TakeOffHeld(a_engine, bench, have);
+			}
+			on.clear();
+			return off;
+		}
+
 		template <class Engine>
 		std::size_t Set(Engine& a_engine, std::uint32_t a_bench, const Values& a_want)
 		{
@@ -493,7 +522,8 @@ namespace ResourceMirror
 		std::map<std::uint32_t, Values> on;          // what we added to each workbench, of each value
 		int                             hushes = 0;  // saves under way (Hush less SaveDone)
 		Clock::time_point               hushedAt{};
-		bool                            loading = false;  // from BeforeLoad to ForgetWorld: nothing goes on
+		bool                            loading = false;     // from BeforeLoad to ForgetWorld: nothing goes on
+		bool                            atMainMenu = false;  // the main menu is open (MainMenu): nothing goes on
 	};
 
 	// A loaded save's record (DecodeRecord) taken off its workbenches (TakeOffHeld): how many values.

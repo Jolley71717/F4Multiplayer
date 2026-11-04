@@ -2576,7 +2576,13 @@ writes the permanent one, the recount the base and damage). What it added it alo
   it, or leaves a save a value it didn't hold. From a load's start to its new world's clear nothing goes on
   (`Applier::BeforeLoad`): the load's clear forgets what was on without looking, and a load longer than the save/load
   hold's 60 s lets frames run before it, which could otherwise have put values on the new world's workbenches that the
-  clear forgot while they were still on, for the next save to keep.
+  clear forgot while they were still on, for the next save to keep. Should the session's own after-load work not run
+  (an earlier step threw), the clear is done at the end of the load's message all the same, so the block never outlasts
+  the load. The main menu ends a world too, and a `coc` from it starts the next with no message at all: when it is seen
+  (open, or opened since the last look), what each workbench still holds of ours comes off as on a new game, the rest is
+  forgotten, and nothing goes on while it is open (`Applier::MainMenu`). It is looked at before anything goes on, before
+  a save's hush, before a load and as the session ends, so none of those takes the world before's values off a
+  workbench that no longer holds them and leaves a save a negative one. It doesn't end a load's block or a save's hush.
 
   The limit: the new-game clear can't tell our value from another's on the same modifier. Should the engine set it back
   and something else (the engine, a quest's start-up script, another mod) put at least as much on before the new game's
