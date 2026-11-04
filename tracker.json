@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T13:21:59+00:00",
+ "updated": "2026-11-04T14:49:51+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -925,8 +925,9 @@
    "title": "Shared resources: block value updates during a long load; guard tiny negative record values",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 298
   },
   {
    "id": "i27c",
@@ -1018,6 +1019,14 @@
    "note": "Built for the next release, experimental and off by default (bDownedCrawl); the crawl itself is untested.",
    "pr": 165,
    "desc": "Players asked to be able to crawl while downed, to reach a friend or cover. The next release adds an experimental host setting, bDownedCrawl, off by default. With it on, a downed player crawls slowly with the movement keys; a wall, ledge, railing or lack of ground stops it, and so does being within helping range of a friend. We could only test that the setting reaches every game, not the crawling itself."
+  },
+  {
+   "id": "jnwf",
+   "title": "Host crash at the main menu in the engine's save list (BuildSaveGameList), after Continue then No",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": ""
   },
   {
    "id": "js2d",
@@ -1292,8 +1301,9 @@
    "title": "Shared resources: a builder's new game (or load) leaves its old pieces counting at friends'",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 298
   },
   {
    "id": "pbne",
