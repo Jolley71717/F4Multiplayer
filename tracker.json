@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T07:07:18+00:00",
+ "updated": "2026-11-04T08:18:32+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -324,7 +324,7 @@
    "title": "Share more quests: a host setting adding every quest an automatic safety rule passes",
    "kind": "feature",
    "priority": 2,
-   "stage": 4,
+   "stage": 5,
    "note": "",
    "pr": 287
   },
