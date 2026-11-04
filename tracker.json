@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T10:54:24+00:00",
+ "updated": "2026-11-04T11:32:29+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -821,7 +821,7 @@
    "title": "A friend's resource pieces count for both players' settlements",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "Built and tested in both games: a friend's pumps and generators count in your water and power; beds not yet",
    "pr": 296
   },
@@ -895,6 +895,14 @@
    "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
    "pr": 157,
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
+  },
+  {
+   "id": "hwbu",
+   "title": "Shared resources: block value updates during a long load; guard tiny negative record values",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "i27c",
