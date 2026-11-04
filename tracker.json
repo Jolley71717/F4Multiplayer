@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T09:00:03+00:00",
+ "updated": "2026-11-04T09:07:34+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -737,6 +737,14 @@
    "title": "hits.sh: runner's own shots at the VM-run pause raider miss at every spot",
    "kind": "bug",
    "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "ezvl",
+   "title": "Pip-Boy badge over a friend (PR 173) never hangs: the Pip-Boy model is refused for having collision",
+   "kind": "bug",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
