@@ -1153,6 +1153,12 @@ namespace Session
 		if (hostedServer) {
 			return {};
 		}
+		// Never at the main menu (the multiplayer menu is open there): no character is loaded, so the server would open the
+		// wrong one's session, and a friend could arrive before our own game, and the first arrival decides the session.
+		if (!InGame()) {
+			REX::INFO("Session: can't host: {}", Text::GetEnglish("host.err_main_menu"));
+			return Text::Get("host.err_main_menu");
+		}
 		// The opening's world isn't the session's: nothing is shared from it (see Story::InOpening).
 		if (Story::InOpening()) {
 			// A new character with no name yet still has the last character's ID: hosting would open that one's session.
@@ -1313,6 +1319,7 @@ namespace Session
 		status.address = serverAddress;
 		status.rejectReason = refusals.Last();
 		status.retrySoon = refusals.RetrySoon();
+		status.inWorld = InGame();
 		status.hostWaiting = !hostedServer && Config::Get().host;
 		return status;
 	}
