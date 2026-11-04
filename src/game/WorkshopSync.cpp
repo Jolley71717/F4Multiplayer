@@ -2415,11 +2415,14 @@ namespace WorkshopSync
 			ResourceReporterEngine engine;
 			const auto             entries = resources.Poll(engine, a_now);
 			resourcePollUsMax = (std::max)(resourcePollUsMax, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count());
-			for (auto& chunk : ResourceMirror::Chunks(entries)) {
-				const auto count = chunk.size();
+			// The queue's packets go reliably; one the full queue refuses goes again at the next poll (Reporter::Unsent), so a
+			// gone piece's one word that it counts for nothing is never lost.
+			for (const auto& chunk : ResourceMirror::Chunks(entries)) {
 				std::scoped_lock l{ outLock };
-				if (outgoing.Push({ Protocol::Encode(Protocol::ResourceStates{ 0, std::move(chunk) }, Protocol::MessageType::kReportWorkshopResources), 0 })) {
-					resourcesSent += static_cast<std::uint32_t>(count);
+				if (outgoing.Push({ Protocol::Encode(Protocol::ResourceStates{ 0, chunk }, Protocol::MessageType::kReportWorkshopResources), 0 })) {
+					resourcesSent += static_cast<std::uint32_t>(chunk.size());
+				} else {
+					resources.Unsent(chunk);
 				}
 			}
 		}
@@ -2804,7 +2807,7 @@ namespace WorkshopSync
 		litCopies.clear();
 	}
 
-	void OnGameLoaded()
+	void OnGameLoaded(bool a_newGame)
 	{
 		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
 		// let go unread. The copies the save holds are found again, at their spots, when the server sends
@@ -2826,13 +2829,19 @@ namespace WorkshopSync
 		powerBenches.clear();
 		benchWorld = 0;
 		// The workbenches are the save's (or the new game's) now, which hold none of friends' pieces (BeforeSave took them
-		// off): what we had put on the old world's is forgotten, and theirs go on again as their copies are found. A load
-		// took it all off before (BeforeLoad); a new game from the main menu has no such word, so what is still on a
-		// workbench of the same ID is taken off here (Applier::ForgetWorld). Anything the save's record says it held all the
-		// same (a hush that failed) is taken off.
+		// off): what we had put on the old world's is forgotten, and theirs go on again as their copies are found. One clear
+		// for each, never both, and neither takes off more than the workbench holds (ResourceMirror::TakeOffHeld), so none
+		// leaves a value the save didn't hold:
+		// - a load took it all off before (BeforeLoad), and what that couldn't reach was the old world's: nothing is taken
+		//   off for it, only what the save's record says it held (a hush that failed);
+		// - a new game from the main menu has no such word, so what is still on a workbench of the same ID is taken off
+		//   (Applier::ForgetWorld), and no save's record is read.
 		BenchEngine benches;
-		if (const auto off = onBenches.ForgetWorld(benches); off > 0) {
-			REX::WARN("WorkshopSync: the new world's workbenches still held {} values of friends' pieces; taken off", off);
+		const auto  unreached = onBenches.On().size();
+		if (const auto off = onBenches.ForgetWorld(benches, a_newGame); off > 0) {
+			REX::WARN("WorkshopSync: the new game's workbenches still held {} values of friends' pieces; taken off", off);
+		} else if (!a_newGame && unreached > 0) {
+			REX::WARN("WorkshopSync: {} workbenches of the world before couldn't be reached before the load; forgotten", unreached);
 		}
 		resources.SendAll();
 		BenchValues leftover;
@@ -2840,9 +2849,12 @@ namespace WorkshopSync
 			std::scoped_lock l{ resourceRecordLock };
 			leftover.swap(resourcesLoaded);
 		}
+		if (a_newGame) {
+			leftover.clear();  // a new game has no save: a record read for an earlier load is no record of its
+		}
 		if (const auto off = ResourceMirror::TakeOffRecord(benches, leftover); !leftover.empty()) {
 			resourcesLeftover += static_cast<std::uint32_t>(off);
-			REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; taken off ({} values)", leftover.size(), off);
+			REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; {} values taken off (only what each still holds)", leftover.size(), off);
 		}
 		NoteResourcesOn();
 	}
@@ -3042,8 +3054,8 @@ namespace WorkshopSync
 
 	std::string DescribeResources()
 	{
-		std::string out = std::format("resources: tracked={} counting={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} leftover={} pollMsMax={:.2f}",
-			resources.Size(), resources.Counting(), resourcesSent, resourcesReceived, theirResources.Size(), theirResources.Dropped(), onBenches.On().size(), resourceChanges,
+		std::string out = std::format("resources: tracked={} counting={} owed={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} leftover={} pollMsMax={:.2f}",
+			resources.Size(), resources.Counting(), resources.Owed(), resourcesSent, resourcesReceived, theirResources.Size(), theirResources.Dropped(), onBenches.On().size(), resourceChanges,
 			resourcesHushed, onBenches.Hushed(), resourcesLeftover, static_cast<double>(resourcePollUsMax) / 1000.0);
 		for (const auto& [bench, values] : onBenches.On()) {
 			out += std::format("; {:08X}", bench);

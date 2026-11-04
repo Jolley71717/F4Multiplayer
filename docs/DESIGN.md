@@ -2528,7 +2528,9 @@ workbenches as a workshop item, standing, no copy; `TrackOwnResources` every 2 s
 as its own recount counts it. A change goes at once, all of them every 30 s and to a joiner, a piece whose cell isn't
 loaded as last sent. A piece that is no longer one of ours (scrapped, or disabled, deleted or unlinked with no scrap
 report, which a script may do) goes once as counting for nothing, so the friend's total leaves it out though its copy
-stays. Per piece, not per workbench: a
+stays. The reports go reliably; one the full send queue refuses goes again at the next poll as its piece counts then
+(`Reporter::Unsent`), so a gone piece's one word, which no later snapshot names, is never lost. Per piece, not per
+workbench: a
 friend's game counts only the pieces it has a copy of, so a piece both saves hold (two saves with one past: no copy is
 made, `OursAt`), another friend's twin of it, or a guest's building from before the session that the host's rules
 don't share never counts twice or out of nothing.
@@ -2555,10 +2557,19 @@ writes the permanent one, the recount the base and damage). What it added it alo
   save's co-save record `RSRC` (`ResourceMirror::SaveRecord`, made fresh for each save, never an earlier one's), and a
   load takes what its record names off again;
 - when the friend leaves (at once), and all of it when the session ends;
-- at a load (all of it off before it), or a new game from the main menu (no word before it): the new world's
-  workbenches hold none of it; one that still holds at least what was added on it (a new game whose engine didn't set
-  it back) has it taken off (`Applier::ForgetWorld`), what was added to the old world's is forgotten, and a friend's
-  pieces count again as their copies are found after the load.
+- at a load (all of it off before it), or a new game from the main menu (no word before it): what was added to the
+  old world's workbenches is forgotten, and a friend's pieces count again as their copies are found after it. One clear
+  for each, never both (`Applier::ForgetWorld`): after a load, only what the save's `RSRC` record names comes off (what
+  the take-off before the load couldn't reach was the old world's, and the save sets the new one's); on a new game, what
+  is still on a workbench of the same ID (an engine that didn't set it back), and no record is read. Neither takes a
+  value off unless the workbench's temporary modifier still holds all of it, nor ever more than it holds
+  (`ResourceMirror::TakeOffHeld`), so no clear of ours leaves the modifier below 0 or a save a value it didn't hold.
+
+  The limit: the new-game clear can't tell our value from another's on the same modifier. Should the engine set it back
+  and something else (the engine, a quest's start-up script, another mod) put at least as much on before the new game's
+  first frame, ours is taken out of theirs. Vanilla's workshop scripts write the permanent modifier, not this one, and a
+  new game's settlements are not yet set up then, so it isn't expected; the rig's new-game check says whether a new
+  game sets the modifier back at all (if it does, the take-off is never needed).
 
 Not beds: a modifier on beds would show in the scripts' `GetValue` as beds the settlement doesn't have in the Pip-Boy
 or in the daily update's count. They are sent and kept, and put on no workbench (`ResourceMirror::APPLIED`).

@@ -71,9 +71,9 @@ namespace WorkshopSync
 	// loaded world's lights (an old copy's ID may name a light of ours there).
 	void BeforeLoad();
 
-	// A save was loaded: the copies made before it are let go (the session sends its building again),
-	// and its cells are walked again for scrapped junk.
-	void OnGameLoaded();
+	// A save was loaded (or, a_newGame, a new game started): the copies made before it are let go (the session sends its
+	// building again), and its cells are walked again for scrapped junk.
+	void OnGameLoaded(bool a_newGame);
 
 	// The loaded save is another character's world (the session is left): the copies were placed in the world before
 	// the load, and their handles name nothing of ours now (or something else). Forgotten, not removed.

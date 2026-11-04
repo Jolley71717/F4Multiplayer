@@ -11,6 +11,7 @@
 #include <cstring>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <utility>
 #include <vector>
@@ -119,8 +120,9 @@ namespace ResourceMirror
 		void SendAll() { all = true; }
 
 		// What to send now: the pieces whose values changed since they were last sent, or all of them (SendAll, and every
-		// SNAPSHOT), each loaded one as it counts now. A piece gone is forgotten, and sent as counting for nothing if it last
-		// counted for something: a script may disable it, or unlink it, with no scrap that takes its copy. The Engine gives:
+		// SNAPSHOT), each loaded one as it counts now, and again what an earlier poll gave that couldn't be sent (Unsent). A
+		// piece gone is forgotten, and sent as counting for nothing if it last counted for something: a script may disable
+		// it, or unlink it, with no scrap that takes its copy. The Engine gives:
 		//
 		//   Look Look(std::uint32_t ref)
 		template <class Engine>
@@ -138,8 +140,9 @@ namespace ResourceMirror
 			}
 			for (auto it = tracked.begin(); it != tracked.end();) {
 				const auto look = a_engine.Look(it->first);
+				const bool owe = owed.erase(it->first) > 0;  // its last entry wasn't sent: the friend's game has an older word
 				if (look.state == Look::State::kGone) {
-					if (it->second && Any(*it->second)) {
+					if (owe || (it->second && Any(*it->second))) {
 						out.push_back({ it->first, {} });
 					}
 					it = tracked.erase(it);
@@ -148,21 +151,40 @@ namespace ResourceMirror
 				if (look.state == Look::State::kHere) {
 					const auto values = Clean(look.values);
 					// One that counts for nothing and never did is not sent (most of a settlement: walls, floors, lights).
-					const bool news = it->second ? *it->second != values : Any(values);
+					const bool news = owe || (it->second ? *it->second != values : Any(values));
 					if (news || (full && (it->second || Any(values)))) {
 						out.push_back({ it->first, values });
 						it->second = values;
 					}
-				} else if (full && it->second && Any(*it->second)) {
-					out.push_back({ it->first, *it->second });  // away: as last sent, for a joiner
+				} else if (it->second && (owe || (full && Any(*it->second)))) {
+					out.push_back({ it->first, *it->second });  // away: as last sent, for a joiner (or as last given, unsent)
 				}
 				++it;
 			}
+			// Gone pieces whose word that they count for nothing wasn't sent: no snapshot names them, so it goes again until
+			// it is.
+			for (const auto ref : owed) {
+				out.push_back({ ref, {} });
+			}
+			owed.clear();
 			return out;
+		}
+
+		// Entries a poll gave that couldn't be sent (the send queue was full): each goes again at the next poll, as its piece
+		// counts then (a gone one as nothing). Without it a gone piece's one word would be lost for good, and the friend's
+		// game would count the piece until the builder left.
+		void Unsent(std::span<const Entry> a_entries)
+		{
+			for (const auto& entry : a_entries) {
+				if (owed.size() < MAX_TRACKED || owed.contains(entry.refId)) {
+					owed.insert(entry.refId);
+				}
+			}
 		}
 
 		[[nodiscard]] std::size_t Size() const { return tracked.size(); }
 		[[nodiscard]] bool        Tracks(std::uint32_t a_ref) const { return tracked.contains(a_ref); }
+		[[nodiscard]] std::size_t Owed() const { return owed.size(); }
 
 		// The pieces that count for something, as last sent.
 		[[nodiscard]] std::size_t Counting() const
@@ -173,6 +195,7 @@ namespace ResourceMirror
 		void Clear()
 		{
 			tracked.clear();
+			owed.clear();
 			all = true;
 			nextPoll = {};
 			nextSnapshot = {};
@@ -180,6 +203,7 @@ namespace ResourceMirror
 
 	private:
 		std::map<std::uint32_t, std::optional<Values>> tracked;  // the values last sent (none: not sent yet)
+		std::set<std::uint32_t>                        owed;     // pieces whose last entry wasn't sent (Unsent)
 		bool                                           all = true;
 		Clock::time_point                              nextPoll{};
 		Clock::time_point                              nextSnapshot{};
@@ -287,6 +311,34 @@ namespace ResourceMirror
 	inline constexpr auto APPLY_EVERY = 1s;  // how often the totals are put on the workbenches
 	inline constexpr auto HUSH_LIMIT = 5s;   // a save's hush is let go this long after the last, if no word says the save is over
 
+	// What we know a workbench of the world before holds of ours, taken off it where nothing told us first (a new game, a
+	// loaded save's record): each value only if the workbench's temporary modifier still holds all of it, and never more
+	// than it holds. So none of these clears takes the modifier below 0 or below what it held without us, whatever else
+	// ran first (the engine setting it back, another clear of the same value): a save is never left a value it didn't
+	// hold. One no longer held in full is let be. How many values it took off. The Engine gives:
+	//
+	//   bool Add(std::uint32_t bench, Kind, float delta)            false if there's no such workbench here (nothing added)
+	//   std::optional<float> Temporary(std::uint32_t bench, Kind)   the workbench's temporary modifier (none: no such one)
+	template <class Engine>
+	std::size_t TakeOffHeld(Engine& a_engine, std::uint32_t a_bench, const Values& a_values)
+	{
+		std::size_t off = 0;
+		for (std::size_t k = 0; k < KINDS; ++k) {
+			if (!std::isfinite(a_values[k]) || a_values[k] <= 0.0f) {
+				continue;  // we only ever add: one that isn't above 0 is no value of ours
+			}
+			const auto kind = static_cast<Kind>(k);
+			const auto now = a_engine.Temporary(a_bench, kind);
+			if (!now || !std::isfinite(*now) || *now < a_values[k] - EPSILON) {
+				continue;
+			}
+			if (a_engine.Add(a_bench, kind, -(std::min)(a_values[k], *now))) {
+				++off;
+			}
+		}
+		return off;
+	}
+
 	// What we put on each of our workbenches, so all of it can be taken off again: the game's own recount sets only what
 	// the workbench's own pieces count for, and leaves ours be.
 	class Applier
@@ -353,26 +405,19 @@ namespace ResourceMirror
 		}
 
 		// A save was loaded, or a new game started: the workbenches are the new world's, and what we had put on the old one's
-		// is forgotten. A load was told first (TakeAllOff before it); a new game from the main menu is not, so what of ours is
-		// still on a workbench of the same ID (its temporary modifier holds at least it: the engine did not set it back) is
-		// taken off; one set back is let be. How many values it took off. The Engine gives too:
-		//
-		//   std::optional<float> Temporary(std::uint32_t bench, Kind)   the workbench's temporary modifier (none: no such one)
+		// is forgotten. After a load nothing is taken off: the load was told first (TakeAllOff before it), what that couldn't
+		// reach was on the old world's workbench, and the new world's are as the save holds them (what the save holds of ours,
+		// its record says: TakeOffRecord). Taking off here too could take it twice. A new game from the main menu is not told
+		// first, so on one what of ours is still on a workbench of the same ID (the engine did not set it back) is taken off,
+		// and one set back is let be (TakeOffHeld). How many values it took off. The Engine gives Add and Temporary
+		// (TakeOffHeld).
 		template <class Engine>
-		std::size_t ForgetWorld(Engine& a_engine)
+		std::size_t ForgetWorld(Engine& a_engine, bool a_newGame)
 		{
 			std::size_t off = 0;
-			for (const auto& [bench, have] : on) {
-				for (std::size_t k = 0; k < KINDS; ++k) {
-					if (have[k] == 0.0f) {
-						continue;
-					}
-					const auto kind = static_cast<Kind>(k);
-					const auto now = a_engine.Temporary(bench, kind);
-					const bool still = now && (have[k] > 0.0f ? *now >= have[k] - EPSILON : *now <= have[k] + EPSILON);
-					if (still && a_engine.Add(bench, kind, -have[k])) {
-						++off;
-					}
+			if (a_newGame) {
+				for (const auto& [bench, have] : on) {
+					off += TakeOffHeld(a_engine, bench, have);
 				}
 			}
 			on.clear();
@@ -410,17 +455,13 @@ namespace ResourceMirror
 		Clock::time_point               hushedAt{};
 	};
 
-	// A loaded save's record (DecodeRecord) taken off its workbenches: how many values.
+	// A loaded save's record (DecodeRecord) taken off its workbenches (TakeOffHeld): how many values.
 	template <class Engine>
 	std::size_t TakeOffRecord(Engine& a_engine, const std::vector<std::pair<std::uint32_t, Values>>& a_held)
 	{
 		std::size_t off = 0;
 		for (const auto& [bench, values] : a_held) {
-			for (std::size_t k = 0; k < KINDS; ++k) {
-				if (values[k] != 0.0f && std::isfinite(values[k]) && a_engine.Add(bench, static_cast<Kind>(k), -values[k])) {
-					++off;
-				}
-			}
+			off += TakeOffHeld(a_engine, bench, values);
 		}
 		return off;
 	}

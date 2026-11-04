@@ -1778,7 +1778,7 @@ namespace Session
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
 		Destructibles::Reset();
-		WorkshopSync::OnGameLoaded();
+		WorkshopSync::OnGameLoaded(a_newGame);
 		Drops::OnGameLoaded();
 		Drops::OnWorldStarted(a_newGame, CurrentCharacter());  // whose world the record speaks for (sent below)
 		Gifts::OnGameLoaded();

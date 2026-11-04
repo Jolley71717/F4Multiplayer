@@ -300,7 +300,7 @@ TEST("workshop resources: before a save everything of ours comes off the workben
 	CHECK(benches.held[BENCH] == Food(1));
 
 	CHECK(applier.TakeAllOff(benches) == 1u);  // a load is coming
-	CHECK(applier.ForgetWorld(benches) == 0u);  // the save's workbenches hold none of ours
+	CHECK(applier.ForgetWorld(benches, false) == 0u);  // the save's workbenches hold none of ours
 	CHECK(applier.On().empty());
 }
 
@@ -461,13 +461,13 @@ TEST("workshop resources: a new world forgets what we put on the old one's workb
 	// Rocket's was set back.
 	benches.held[RED_ROCKET] = {};
 	const auto adds = benches.adds;
-	CHECK(applier.ForgetWorld(benches) == 2u);
+	CHECK(applier.ForgetWorld(benches, true) == 2u);
 	CHECK(benches.adds == adds + 2);
 	CHECK(!Any(benches.held[BENCH]));
 	CHECK(!Any(benches.held[RED_ROCKET]));  // nothing taken off one that holds none of ours
 	CHECK(applier.On().empty());
 	CHECK(!applier.Hushed());
-	CHECK(applier.ForgetWorld(benches) == 0u);
+	CHECK(applier.ForgetWorld(benches, true) == 0u);
 
 	// A loaded save's record taken off the workbenches it names (one not here: nothing).
 	benches.held[BENCH] = Food(2);
@@ -476,3 +476,131 @@ TEST("workshop resources: a new world forgets what we put on the old one's workb
 	CHECK(!Any(benches.held[BENCH]));
 }
 
+
+TEST("workshop resources: what couldn't be sent goes again at the next poll, a gone piece's nothing until it is sent")
+{
+	Pieces   pieces;
+	Reporter reporter;
+	pieces.looks[CROP] = Here(Food(0.5f));
+	pieces.looks[PUMP] = Here(Water(3));
+	pieces.looks[TURRET] = Here({ 0, 0, 5, 0, 0, 0 });
+	for (const auto ref : { CROP, PUMP, TURRET }) {
+		reporter.Track(ref);
+	}
+	auto t = Clock::time_point{} + 1h;
+	REQUIRE(reporter.Poll(pieces, t).size() == 3u);
+
+	// The pump is scrapped, the crop's builder goes to another town, the turret is unchanged: the pump's nothing is all
+	// there is to send, and the send queue is full.
+	pieces.looks.erase(PUMP);
+	pieces.looks[CROP] = Away();
+	t += POLL;
+	auto gone = reporter.Poll(pieces, t);
+	REQUIRE(gone.size() == 1u);
+	CHECK(gone[0].refId == PUMP);
+	CHECK(!reporter.Tracks(PUMP));
+	reporter.Unsent(gone);
+	CHECK(reporter.Owed() == 1u);
+
+	t += POLL;
+	auto again = reporter.Poll(pieces, t);  // no snapshot names it: it goes again on its own
+	REQUIRE(again.size() == 1u);
+	CHECK(again[0].refId == PUMP);
+	CHECK(!Any(again[0].values));
+	reporter.Unsent(again);  // still full
+
+	t += POLL;
+	again = reporter.Poll(pieces, t);
+	REQUIRE(again.size() == 1u);
+	CHECK(again[0].refId == PUMP);
+	CHECK(reporter.Owed() == 0u);  // sent this time
+	t += POLL;
+	CHECK(reporter.Poll(pieces, t).empty());  // and not again
+	t += SNAPSHOT;
+	CHECK(!Sent(reporter.Poll(pieces, t)).contains(PUMP));
+
+	// A loaded piece's entry and an away one's, unsent, go again too, though neither changed.
+	t += POLL;
+	reporter.Unsent(std::vector<Entry>{ { TURRET, { 0, 0, 5, 0, 0, 0 } }, { CROP, Food(0.5f) } });
+	auto sent = Sent(reporter.Poll(pieces, t));
+	REQUIRE(sent.size() == 2u);
+	CHECK(sent[TURRET] == (Values{ 0, 0, 5, 0, 0, 0 }));
+	CHECK(sent[CROP] == Food(0.5f));  // as last sent
+	t += POLL;
+	CHECK(reporter.Poll(pieces, t).empty());
+
+	// One whose unsent entry said something goes as it counts now: its loss after an unsent value, as nothing.
+	t += POLL;
+	reporter.Unsent(std::vector<Entry>{ { TURRET, { 0, 0, 5, 0, 0, 0 } } });
+	pieces.looks.erase(TURRET);
+	gone = reporter.Poll(pieces, t);
+	REQUIRE(gone.size() == 1u);
+	CHECK(gone[0].refId == TURRET);
+	CHECK(!Any(gone[0].values));
+
+	reporter.Unsent(gone);
+	reporter.Clear();  // the session ended: the friend's game forgets all of ours with it
+	CHECK(reporter.Owed() == 0u);
+}
+
+TEST("workshop resources: a load takes off only what its save's record names, never below what the workbench holds")
+{
+	Benches benches;
+	Applier applier;
+	const auto t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, { 2, 3, 0, 0, 0, 0 } } }, t);
+	REQUIRE(applier.On().contains(BENCH));
+
+	// Before the load, the workbench (one made at runtime) can't be reached: what is on it stays ours on the world going.
+	benches.here.erase(BENCH);
+	CHECK(applier.TakeAllOff(benches) == 0u);
+	REQUIRE(applier.On().contains(BENCH));
+
+	// The loaded save has a workbench of that ID, holding its own record's leftover (a hush that failed then).
+	benches.here.insert(BENCH);
+	benches.held[BENCH] = Food(2);
+	const auto adds = benches.adds;
+	CHECK(applier.ForgetWorld(benches, false) == 0u);  // a load: forgotten, nothing taken off for it
+	CHECK(benches.adds == adds);
+	CHECK(applier.On().empty());
+	const std::vector<std::pair<std::uint32_t, Values>> record{ { BENCH, Food(2) } };
+	CHECK(TakeOffRecord(benches, record) == 1u);
+	CHECK(benches.held[BENCH] == Values{});  // 0, not -2 (the old world's 2 and the record's 2 both taken)
+
+	// A record naming more than the workbench holds (another clear took it, or the engine set it back): let be.
+	CHECK(TakeOffRecord(benches, record) == 0u);
+	CHECK(benches.held[BENCH] == Values{});
+	benches.held[BENCH] = Food(1);
+	CHECK(TakeOffRecord(benches, record) == 0u);
+	CHECK(benches.held[BENCH] == Food(1));
+
+	// Within EPSILON of it: what it holds is taken, and no more.
+	benches.held[BENCH] = Food(2.0f - EPSILON / 2);
+	CHECK(TakeOffRecord(benches, record) == 1u);
+	CHECK(benches.held[BENCH][kFood] == 0.0f);
+
+	// A record value we could never have added (below 0, or no number): nothing.
+	benches.held[BENCH] = Food(5);
+	CHECK(TakeOffRecord(benches, { { BENCH, { -2, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), 0, 0, 0 } } }) == 0u);
+	CHECK(benches.held[BENCH] == Food(5));
+}
+
+TEST("workshop resources: a new game's clear and a second clear of the same value leave no workbench below 0")
+{
+	Benches benches;
+	Applier applier;
+	const auto t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, { 2, 3, 0, 0, 0, 0 } } }, t);
+
+	// A new game whose engine kept a part of it only: nothing of that value is taken off.
+	benches.held[BENCH] = { 2, 1, 0, 0, 0, 0 };
+	CHECK(applier.ForgetWorld(benches, true) == 1u);
+	CHECK(benches.held[BENCH] == Water(1));
+
+	// The same value cleared twice (a record naming what the new game's clear took): the second finds it gone.
+	applier.Apply(benches, { { BENCH, Food(2) } }, t);
+	benches.held[BENCH] = Food(2);
+	CHECK(applier.ForgetWorld(benches, true) == 1u);
+	CHECK(TakeOffRecord(benches, { { BENCH, Food(2) } }) == 0u);
+	CHECK(benches.held[BENCH] == Values{});
+}
