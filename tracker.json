@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T19:52:13+00:00",
+ "updated": "2026-11-04T21:00:26+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -53,8 +53,9 @@
    "title": "Shared bench: robot workbench materials not shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 302
   },
   {
    "id": "0tnz",
@@ -133,7 +134,7 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 3,
    "note": "Fix in PR: notices no longer ask the game for a sound",
    "pr": 301
   },
@@ -383,7 +384,7 @@
    "title": "A built piece reported just before a character switch while joined can be tagged with the new world and removed for good",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 4,
    "note": "",
    "pr": 300
   },
@@ -520,7 +521,7 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 3,
    "note": "Fix in PR: the camera's way back no longer loops after a second down",
    "pr": 301
   },
@@ -1258,7 +1259,7 @@
    "title": "A plugin-placed item picked up and dropped again may vanish from the dropper's own world on a rejoin or catch-up",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 4,
    "note": "",
    "pr": 300
   },
@@ -1276,8 +1277,9 @@
    "title": "Misc quest encounters 'Gun Run' (Salem) and the Robot Race (Easy City Downs) aren't shared: their spawned enemies don't sync and stand still or react slowly",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 303
   },
   {
    "id": "ont9",
@@ -1383,8 +1385,9 @@
    "title": "Supply lines: a guest's builds use the host's supply-line materials",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 302
   },
   {
    "id": "qmst",
