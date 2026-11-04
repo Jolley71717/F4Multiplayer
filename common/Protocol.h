@@ -2005,6 +2005,9 @@ namespace Protocol
 		std::vector<std::uint32_t>    pickedUp;
 		std::vector<RefState>         refStates;  // latest per reference
 		std::vector<QuestStage>       questStages;  // in order
+		// The player who picked up each of pickedUp (same order; 0: not known), in the server's session file alone
+		// (EncodeKeptWorldState), never on the wire: empty in every WorldState a game gets.
+		std::vector<std::uint32_t>    pickers;
 	};
 
 	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
@@ -5363,7 +5366,41 @@ namespace Protocol
 		return w.Data();
 	}
 
+	// The server's session file since its layout 43 (SessionFile::PICKERS): kWorldState with, after it, the player who picked
+	// up each of its pickedUp (WorldState::pickers: a count, 0 or one for each, then the IDs). A packet without that tail
+	// reads as one naming none.
+	inline std::vector<std::uint8_t> EncodeKeptWorldState(const WorldState& a_msg)
+	{
+		auto       out = Encode(a_msg);
+		const auto picked = (std::min)(a_msg.pickedUp.size(), MAX_WORLD_STATE_ACTORS);
+		const auto count = a_msg.pickers.empty() ? 0 : picked;
+		Writer     w{ MessageType::kWorldState };
+		w.U32(static_cast<std::uint32_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(i < a_msg.pickers.size() ? a_msg.pickers[i] : 0);
+		}
+		const auto tail = w.Data();
+		out.insert(out.end(), tail.begin() + 1, tail.end());  // past the type byte the writer starts with
+		return out;
+	}
+
+	namespace detail
+	{
+		// a_pickers: the session file's, followed by WorldState::pickers (EncodeKeptWorldState).
+		inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers);
+	}
+
 	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorldState(a_data, false);
+	}
+
+	inline std::optional<WorldState> DecodeKeptWorldState(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorldState(a_data, true);
+	}
+
+	inline std::optional<WorldState> detail::DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers)
 	{
 		Reader r{ a_data };
 		r.U8();
@@ -5422,6 +5459,16 @@ namespace Protocol
 			stage.quest = r.U32();
 			stage.stage = r.U16();
 			msg.questStages.push_back(stage);
+		}
+		if (a_pickers && r.Ok() && !r.AtEnd()) {  // (a packet that ends here names none, as a file before them has it)
+			const auto pickers = r.U32();
+			if (!r.Ok() || (pickers != 0 && pickers != msg.pickedUp.size())) {
+				return std::nullopt;
+			}
+			msg.pickers.reserve(pickers);
+			for (std::uint32_t i = 0; i < pickers && r.Ok(); ++i) {
+				msg.pickers.push_back(r.U32());
+			}
 		}
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;

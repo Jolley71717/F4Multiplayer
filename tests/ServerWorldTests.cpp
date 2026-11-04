@@ -2,6 +2,7 @@
 // hits and the relays (shots, lines, voice, markers, pings).
 
 #include "ServerFixture.h"
+#include "SessionFile.h"
 
 #include "game/DeathReports.h"
 #include "game/RemoteEdits.h"
@@ -903,6 +904,67 @@ TEST("server world: a pickup is relayed once and late joiners get it")
 	const auto world = WorldStates(Received(f, 3));
 	REQUIRE(world.size() == 1);
 	CHECK(world[0].pickedUp == std::vector<std::uint32_t>{ ITEM });
+}
+
+// A plugin's item a player picked up goes back into their world as that same reference when they drop it again (outside
+// the session, or a drop not given): sent their own pickup in a world state, their game took it away for good.
+TEST("server world: a player is never sent their own pickups in a world state, after a load, a rejoin or a restart")
+{
+	constexpr std::uint32_t OTHER = 0x0003C002;
+	const TempSessionFile   file;
+	Server::Options         options;
+	options.sessionFile = file.path.string();
+	std::uint64_t session = 0;
+	const auto    has = [](const std::vector<Protocol::WorldState>& a_world, std::uint32_t a_ref) {
+		return std::ranges::any_of(a_world, [&](const Protocol::WorldState& a_state) { return std::ranges::find(a_state.pickedUp, a_ref) != a_state.pickedUp.end(); });
+	};
+	{
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, Fixture::MakeHello("Alice", 0xA));
+		REQUIRE(welcome);
+		session = welcome->sessionId;
+		JoinAs(f, 2, "Bob", 0xB);
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, Pickup(ITEM));
+		f.fake->Deliver(2, Pickup(OTHER));
+		f.fake->Deliver(2, Pickup(ITEM));  // already Alice's
+		Clear(f, { 1, 2 });
+
+		// Alice loads a save: Bob's pickup, not her own.
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ session, 0, Protocol::WorldRequest::kLoad }));
+		auto alice = WorldStates(Received(f, 1));
+		REQUIRE(!alice.empty());
+		CHECK(!has(alice, ITEM));
+		CHECK(has(alice, OTHER));
+		// Bob rejoins: Alice's, not his own.
+		f.fake->Drop(2);
+		JoinAs(f, 3, "Bob", 0xB);
+		auto bob = WorldStates(Received(f, 3));
+		CHECK(has(bob, ITEM));
+		CHECK(!has(bob, OTHER));
+		// A newcomer gets both.
+		JoinAs(f, 4, "Carol", 0xC);
+		const auto carol = WorldStates(Received(f, 4));
+		CHECK(has(carol, ITEM));
+		CHECK(has(carol, OTHER));
+	}  // stopping saves
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->pickedUp.size() == 2);
+	CHECK(saved->pickers.size() == 2);
+	{
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, Fixture::MakeHello("Alice", 0xA));
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId == session);
+		const auto alice = WorldStates(Received(f, 1));
+		CHECK(!has(alice, ITEM));
+		CHECK(has(alice, OTHER));
+		JoinAs(f, 2, "Bob", 0xB);
+		const auto bob = WorldStates(Received(f, 2));
+		CHECK(has(bob, ITEM));
+		CHECK(!has(bob, OTHER));
+	}
 }
 
 TEST("server world: door states are relayed when they change, and the latest is kept")

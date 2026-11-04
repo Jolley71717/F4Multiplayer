@@ -1293,6 +1293,13 @@ So players give each other items by dropping them, and the server decides who ha
   the copies' `kDropCopy` stays limited to references this game made) and is disabled rather than deleted
   (`DropBook::HowItMakesWay`): its record is the plugin's, and a load would put a deleted or unsaved one
   back where the plugin placed it.
+  Such an item dropped and not swapped (not given, refused, or dropped outside a session) lies in the dropper's world as
+  the reference the session keeps as picked up, so their next welcome or load would have taken it away as a friend's
+  pickup, for good (up to 0.12.0). The server keeps who picked up each item (layout 43 of its session file) and sends no
+  player their own pickups in a world state: the picker's game has the item already, in an inventory or lying where they
+  dropped it. A save of theirs from before the pickup has it where the plugin placed it, theirs to pick up again (a
+  second pickup report of it changes nothing); two characters of one PC share a player ID, so the other character's
+  world keeps it too. A file before 43 knows no picker: its pickups go to everyone, as before.
   Once it has come to rest
   (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
   with a random number of the giver's game (the nonce), its mods and template combination (read as
