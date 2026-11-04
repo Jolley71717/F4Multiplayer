@@ -99,8 +99,12 @@ namespace Storage
 	// A change our own game's scripts (or a container emptied into it) made to a workbench another game keeps: never the
 	// session's (StorageView::Client::Local). Any thread: handled on the main thread, before the view's next change.
 	void LocalChange(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
-	// A friend's change WorldSync just put into a_container: the menus reading it are filled again. Main thread.
-	void Applied(std::uint32_t a_container);
+	// A friend's change for a workbench shared storage watches (WatchesBench): made here, as one of our own changes (never
+	// reported), and the menus reading it are filled again; true if it was one. Any other container's is WorldSync's to make.
+	// Main thread.
+	[[nodiscard]] bool ApplyAtBench(const Protocol::ContainerChange& a_change);
+	// Whether the dev channel's `storage trace` logs each change at a watched workbench.
+	[[nodiscard]] bool Tracing();
 
 	// ---- WorldSync's loot ------------------------------------------------------------------------------------
 

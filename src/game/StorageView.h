@@ -693,6 +693,10 @@ namespace StorageView
 		virtual std::set<std::uint32_t> Aliased(std::uint32_t) { return {}; }
 		// Whether the session shares an item held in a container (LootScope's kShared, as SharedIn counts it).
 		virtual bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) { return SharedIn(a_container).contains(a_item); }
+		// Whether a refused take at a_container is paid from what we set aside there before our player: a workbench our
+		// workshop mode or crafting menu reads, where the take was a build's (the engine's, never into our player), and our
+		// game would have used its own stash there first.
+		virtual bool PaysFromStash(std::uint32_t) { return false; }
 		// Adds to (> 0) or takes out of (< 0) our copy of a container; what was changed (a take takes no more than there is).
 		virtual std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) = 0;
 		// The same for our player's inventory.
@@ -725,6 +729,7 @@ namespace StorageView
 			std::uint32_t notices = 0;    // notices shown (NOTICE_EVERY at most, each)
 			std::int64_t  localKept = 0;  // items our own scripts added to or took from a copy we viewed, kept out of the true copy (Local)
 			std::int64_t  localUnpaid = 0;  // of those taken, what our set-aside stash lacked (put back in the copy all the same)
+			std::int64_t  stashPaid = 0;  // of refused takes at a workbench we view, what our set-aside stash there paid (PaysFromStash)
 		};
 
 		explicit Client(Engine& a_engine) :
@@ -1011,14 +1016,31 @@ namespace StorageView
 				return;
 			}
 			if (a_undo.player != 0) {
-				const auto done = engine.ChangePlayer(PlayerChange{ a_undo.item, a_undo.player });
+				auto player = a_undo.player;
+				if (player < 0 && side.Shows(a_undo.container) && engine.PaysFromStash(a_undo.container)) {
+					// A build's components the true copy refused: our own stash at the workbench pays first, as our game's
+					// build would have taken them from it. It comes back to the copy as the view ends, less this.
+					if (const auto held = aside.find(a_undo.item); held != aside.end()) {
+						const auto paid = (std::min)(held->second, -player);
+						held->second -= paid;
+						if (held->second <= 0) {
+							aside.erase(held);
+						}
+						player += paid;
+						counts.stashPaid += paid;
+					}
+				}
 				if (a_undo.player < 0) {
 					++counts.takenBack;
 					// What our player no longer had (used, moved away in the moment it took the server to answer): for the
 					// log. Only a refusal or a shortfall takes back, never what a load or a lost connection left wrong (the
 					// true copy is put right for those: Side::Own).
-					counts.usedUp += done - a_undo.player;
+					if (player < 0) {
+						const auto done = engine.ChangePlayer(PlayerChange{ a_undo.item, player });
+						counts.usedUp += done - player;
+					}
 				} else {
+					engine.ChangePlayer(PlayerChange{ a_undo.item, player });
 					++counts.givenBack;
 				}
 			}

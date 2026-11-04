@@ -236,7 +236,7 @@ TEST("shared bench: the host's builds and scraps show in a friend's workshop mod
 	CHECK(s.host.In(BENCH, WOOD) == 6);
 }
 
-TEST("shared bench: a build the host's workbench no longer held is refused, and paid from the friend's own inventory")
+TEST("shared bench: a build the host's workbench no longer held is refused, and paid from the friend's own stash there")
 {
 	Session s;
 	s.guest.OpenBench(s.f, BENCH);
@@ -249,14 +249,33 @@ TEST("shared bench: a build the host's workbench no longer held is refused, and 
 	s.Settle();
 	CHECK(s.host.In(BENCH, STEEL) == 0);
 	CHECK(s.guest.storage.State().Stats().refusedTakes == 1);
-	CHECK(s.guest.Carried(STEEL) == 0);                 // 2 of the 3 paid from their pockets
-	CHECK(s.guest.storage.Stats().usedUp == 1);         // the third they didn't have: counted, the build stands
-	CHECK(s.guest.In(BENCH, STEEL) == 0);               // shown as it is
+	CHECK(s.guest.storage.Stats().stashPaid == 3);  // their own 4 at the workbench pay, as their game's build would have used them
+	CHECK(s.guest.Carried(STEEL) == 2);             // their pockets untouched
+	CHECK(s.guest.storage.Stats().usedUp == 0);
+	CHECK(s.guest.In(BENCH, STEEL) == 0);           // shown as it is
 	s.guest.CloseBench(s.f);
 	s.Settle();
-	CHECK(s.guest.In(BENCH, STEEL) == 4);
-	// Nothing is made twice and nothing lost from anyone's inventory; the one component neither the workbench nor the
-	// friend had was used all the same (a build can't be undone): the build stands, one steel short of paid.
+	CHECK(s.guest.In(BENCH, STEEL) == 1);  // their stash, less the 3
+	CHECK(s.Total(STEEL) == STEEL_START);  // every component the two builds used was paid for, once
+}
+
+TEST("shared bench: a refused build their stash can't cover is paid from their pockets, and what neither holds is counted")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.Build(s.host, 10);
+	Pace(HOST_PEER);
+	Sync(s.f, HOST_PEER);
+	s.Build(s.guest, 8);  // their copy still shows the host's 10
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.guest.storage.Stats().stashPaid == 4);  // all of their own stash
+	CHECK(s.guest.Carried(STEEL) == 0);             // then their 2 carried
+	CHECK(s.guest.storage.Stats().usedUp == 2);     // the last 2 nobody had: the build stands, 2 short of paid
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.In(BENCH, STEEL) == 0);
 	CHECK(s.Total(STEEL) == STEEL_START + s.guest.storage.Stats().usedUp);
 }
 

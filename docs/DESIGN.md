@@ -1100,9 +1100,16 @@ counts every item across the host's chest and the players' inventories in each s
     server closes (the host away, stale after its load) ends at once with a notice: workshop mode and a crafting
     menu are never closed under the player; they build from their own stash meanwhile. A view refused is asked again
     after 5 s, doubling to 60 s. A save or a load ends the view and it opens again after.
-  - A refused take (the host's workbench lacked it: a race, or the copy was stale) is undone like any: the items come
-    back out of the player (`usedUp=` counts what they no longer hold, as for a container); a refused put is given to
-    the player.
+  - A refused take (the host's workbench lacked it: a race, or the copy was stale) is paid by the friend: first from
+    their own stash at that workbench (set aside for the view: `stashPaid=`), as their game's build would have used it,
+    then from their inventory; what neither holds is counted (`usedUp=`) and the build stands that much short of paid
+    (a build can't be undone). A refused put is given to the player.
+  - A friend's change at a watched workbench is made in our copy by Storage itself (`Storage::ApplyAtBench`, the same
+    guarded change as the view's own), never by a console `additem`/`removeitem`: the console's change reached
+    ContainerWatcher outside the mark that tells it from the engine's, so each game reported the other's change back
+    as its own and the two fed each other (found on the rig: a put grew without end, a take ran down to a refusal).
+  - Out of a session no Frame() runs, so a disconnect fills workshop mode's or the crafting menu's list again there and
+    then (the view's end puts our own stash back in the copy).
   - The host's game reports its own engine and script changes at a workbench it keeps (its builds, its scraps, the
     day's production) as the keeper's own moves; it flushes its own pending loot before each listing so a move sent
     after it can't count twice.
@@ -1120,7 +1127,8 @@ counts every item across the host's chest and the players' inventories in each s
   `setAside=`, `views=`, `shown=`, `refusedTakes=`, `refusedPuts=`, `shortTakes=`, `unanswered=`, `unsent=`,
   `overflow=`, `lacking=`, `lacksDropped=`, `settles=`, `late=`, `settlingClosed=`, `corrected=`, `takenBack=`,
   `usedUp=`, `givenBack=`, `closedByHost=`, `unmatched=`, `listed=`, `shorts=`, `listPutOff=`, `ownRefused=` which
-  must stay 0; `bench=` the workbench viewed and how, `benches=` those known, `localKept=`, `localUnpaid=`). Each kind of notice shows at most once every 2 s. The server's "storage undid" line carries the run's
+  must stay 0; `bench=` the workbench viewed and how, `benches=` those known, `localKept=`, `localUnpaid=`,
+  `stashPaid=`). Each kind of notice shows at most once every 2 s. The server's "storage undid" line carries the run's
   total.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a

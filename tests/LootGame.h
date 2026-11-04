@@ -334,6 +334,8 @@ namespace LootTest
 
 		std::set<std::uint32_t> Aliased(std::uint32_t a_holder) override { return LootSync::Aliased(*this, a_holder); }
 
+		bool PaysFromStash(std::uint32_t a_holder) override { return benchView && *benchView == a_holder; }
+
 		bool SharedItem(std::uint32_t a_holder, std::uint32_t a_item) override
 		{
 			return LootScope::Of(Holder(a_holder), Item(a_item), LootScope::Direction::kTake) == LootScope::Scope::kShared;

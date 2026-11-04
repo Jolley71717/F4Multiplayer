@@ -99,6 +99,7 @@ namespace Storage
 		constexpr std::size_t  MAX_LOCAL = 1024;
 		std::mutex             localLock;
 		std::vector<LocalMove> localInbox;
+		std::atomic<bool>      tracing{ false };  // the dev channel's `storage trace on`
 
 		void NoteBench(std::uint32_t a_id)
 		{
@@ -217,6 +218,8 @@ namespace Storage
 			std::set<std::uint32_t> Aliased(std::uint32_t a_container) override { return WorldSync::AliasedIn(a_container); }
 
 			bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) override { return WorldSync::Shares(a_container, a_item); }
+
+			bool PaysFromStash(std::uint32_t a_container) override { return a_container == bench.id && bench.menu != BenchMenu::kNone; }
 
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
@@ -560,6 +563,10 @@ namespace Storage
 	{
 		const auto unanswered = side.InFlight();
 		client.OnDisconnected();  // nobody's truth now: the session's things leave our copy; what we sent unanswered stays on its way
+		// Workshop mode or a crafting menu still open reads our own stash again now: no Frame() runs out of a session.
+		if (std::exchange(bench.refresh, false)) {
+			RefreshBenchMenu();
+		}
 		ruleOn = false;
 		hostingOn = false;
 		ForgetBenches();
@@ -881,11 +888,24 @@ namespace Storage
 		}
 	}
 
-	void Applied(std::uint32_t a_container)
+	bool ApplyAtBench(const Protocol::ContainerChange& a_change)
 	{
-		if (a_container == bench.id && bench.menu != BenchMenu::kNone) {
+		if (!WatchesBench(a_change.container)) {
+			return false;
+		}
+		const auto done = Move(Ref(a_change.container), a_change.item, a_change.count);
+		if (a_change.container == bench.id && bench.menu != BenchMenu::kNone) {
 			bench.refresh = true;
 		}
+		if (tracing) {
+			REX::INFO("Storage: trace a friend's change at {:08X}: {} of {:08X} (made {})", a_change.container, a_change.count, a_change.item, done);
+		}
+		return true;
+	}
+
+	bool Tracing()
+	{
+		return tracing;
 	}
 
 	Keeper KeeperOf(std::uint32_t a_container)
@@ -939,7 +959,7 @@ namespace Storage
 		const auto& c = client.Stats();
 		return std::format("storage={}{} owners={} viewing={} inFlight={} settling={} lacks={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} "
 						   "unanswered={} unsent={} overflow={} lacking={} lacksDropped={} settles={} late={} settlingClosed={} corrected={} takenBack={} usedUp={} "
-						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={}",
+						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={} stashPaid={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
 			side.Settling() ? 1 : 0, side.Lacks(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.unsent, s.overflow, s.lacking,
 			s.lacksDropped, s.settles, s.late, s.settlingClosed, s.corrected, c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
@@ -948,7 +968,7 @@ namespace Storage
 				std::scoped_lock l{ benchesLock };
 				return benches.size();
 			}(),
-			c.localKept, c.localUnpaid);
+			c.localKept, c.localUnpaid, c.stashPaid);
 	}
 
 	std::string Command(std::string_view a_args)
@@ -997,6 +1017,10 @@ namespace Storage
 		// What a build does with each of its components, in workshop mode: Workshop::RemoveItemFromWorkshopContainers (the
 		// workbench, then the supply lines' benches, then the player), then the build list is filled again, as
 		// Workshop::PlaceCurrentReference does once the piece is placed (no piece is placed here).
+		if (args[0] == "trace") {
+			tracing = args.size() < 2 || args[1] != "off";
+			return tracing ? "tracing the watched workbenches' changes (the plugin log)" : "trace off";
+		}
 		if (args[0] == "build") {
 			if (!OpenMenus::Open(OpenMenus::Menu::kWorkshop) || args.size() < 3) {
 				return "error: storage build <item> <count>, in workshop mode";

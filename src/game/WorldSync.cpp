@@ -928,7 +928,12 @@ namespace WorldSync
 			}
 			const auto bench = into ? newId : oldId;
 			const auto change = into ? count : -count;
-			if (!Storage::KeepsTrueCopies() && (Storage::Scripted() || (into && oldId != 0))) {
+			const bool local = !Storage::KeepsTrueCopies() && (Storage::Scripted() || (into && oldId != 0));
+			if (Storage::Tracing()) {
+				REX::INFO("Storage: trace {:08X} -> {:08X}: {} of {:08X} (scripted={} keeper={}): {}", oldId, newId, count, a_event.baseObjectFormID, Storage::Scripted(),
+					Storage::KeepsTrueCopies(), local ? "kept local" : "a move of ours");
+			}
+			if (local) {
 				Storage::LocalChange(bench, a_event.baseObjectFormID, change);
 				return;
 			}
@@ -1283,6 +1288,11 @@ namespace WorldSync
 				if (!Equipment::MayChange(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container), OwnGear::Change::kContainer)) {
 					return;
 				}
+				// A workbench shared storage keeps: put in as one of Storage's own changes, there and then (a console command's
+				// change reaches ContainerWatcher too late to be told from the engine's own, which we report there).
+				if (Storage::ApplyAtBench(a_change)) {
+					return;
+				}
 				const auto command = a_change.count < 0 ?
 					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
@@ -1291,7 +1301,6 @@ namespace WorldSync
 					RE::Console::ExecuteCommand(command.c_str());
 					--applyingRemote;
 				}
-				Storage::Applied(a_change.container);  // a workbench our menus read: they read it again
 			}
 
 			// Shared storage: who keeps a container, and our view of a friend's (Storage).
