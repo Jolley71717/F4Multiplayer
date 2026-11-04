@@ -88,6 +88,7 @@ if (Test-Path -LiteralPath $rcPdb) {
 	"dll_sha256=$($manifest['dll_sha256'])"
 	"pdb=$pdb"
 	"enet=$($manifest['enet'])"
+	if ($manifest['movies_sha256']) { "movies_sha256=$($manifest['movies_sha256'])" }  # the rc's own movies, byte for byte
 	"promoted_from=$Rc"
 ) | Set-Content -LiteralPath (Join-Path $OutDir "$name.manifest.txt") -Encoding ASCII
 

@@ -1,0 +1,455 @@
+# Vets a pull request on GitHub's throwaway machines before anything from it reaches the maintainer's PC or the rig
+# (CONTRIBUTING.md, "Binaries and new dependencies"). Started by hand, by the repository owner only, and only from the
+# vet-runner branch, which is main's commit put there just before:
+#
+#   git fetch origin && git push --force origin origin/main:refs/heads/vet-runner
+#   gh workflow run vet.yml --ref vet-runner -f pr=<number> -f sha=<the PR's head commit you mean to vet>
+#
+# Why a branch of its own: code that runs on a runner can reach the runner's own token for this run's caches and
+# artifacts, and a cache entry it writes lands in the scope of the run's ref. Every branch can restore entries from
+# main's scope, and older branches still have a build.yml that restores caches; vet-runner's scope is read by vet-runner
+# runs only, and nothing here restores a cache. The first step refuses any other ref, and refuses when this file or
+# .github/scripts/ differ from origin/main's in any byte, so a stale vet-runner can't vet with old rules: put main there
+# again. The report job fails the vet if main's scope holds any cache entry afterwards.
+#
+# It refuses when the PR's head is not `sha`. Jobs:
+#   inspect  trusted: fetches the PR's commits as git objects and reads them as data, never running anything from them.
+#            Lists binaries, URLs in added lines and sensitive paths, and fails on a file name that isn't UTF-8 or when
+#            it read fewer files or added lines than git counts. Downloads the Flash toolchain and checks it
+#            against the pins in .github/scripts/vet.py (main's copy, so a PR can't change them) and against the PR's own.
+#   movies   untrusted: compiles every ui/<Name>/<Name>.as with the checked toolchain and the pinned Corretto, and
+#            compares each movie with the PR's committed copy.
+#   build    untrusted: builds and runs the unit tests as build.yml does. The PR's own code runs here.
+#   report   trusted: the report, in its job summary. Only that summary counts: the untrusted jobs' summaries and
+#            annotations can say anything, and the artifact vet-report-pr<N>-<commit> is a convenience copy that code in
+#            an untrusted job could replace. Every row is cut at 300 characters and each untrusted part at 64 KB, and a
+#            report over 900 KB fails the vet (GitHub drops a summary over 1 MiB without failing the step). The vet
+#            passes only when every job succeeded, every part was read and main's scope holds no cache: then the run
+#            succeeds, and its title "Vet PR <N> at <sha>" is what vet-label.yml looks for when `vetted` is added.
+# The untrusted jobs get no permissions, no secrets and no credentials, and their artifacts (the built movies and the
+# test log, kept 3 days) are for reading only: releases come from package.yml, which builds from main. The parts of the
+# report travel as job outputs, which only their own job can write, never as artifacts; a trusted part too long for one
+# fails the vet. The trusted jobs never print the PR's text (file names, URLs, its title, branch or author) to their
+# logs, where the runner would obey a workflow command in it (`::add-mask::`, `##[stop-commands]`): reports go to files
+# and job summaries, and what vet.py logs has every "::" and "##" broken up.
+# pull_request_target and workflow_run are never used to run a PR's code.
+name: Vet a pull request
+run-name: Vet PR ${{ inputs.pr }} at ${{ inputs.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: number
+      sha:
+        description: The PR's head commit you mean to vet (all 40 characters)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: vet-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: "Trusted: inspect"
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+      sha: ${{ steps.pr.outputs.sha }}
+      short: ${{ steps.pr.outputs.short }}
+      has_ui: ${{ steps.tree.outputs.has_ui }}
+      report: ${{ steps.report.outputs.report }}
+    steps:
+      - name: Check this run is on vet-runner
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != refs/heads/vet-runner ]; then
+            echo "::error::Run this from the vet-runner branch, with main's commit on it: git push --force origin origin/main:refs/heads/vet-runner, then gh workflow run vet.yml --ref vet-runner -f pr=... -f sha=..."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check this file and its scripts are main's, byte for byte
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          git -C main fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          main=$(git -C main rev-parse origin/main)
+          for rev in "$WORKFLOW_SHA" "$GITHUB_SHA"; do
+            if ! git -C main diff --quiet "$rev" "$main" -- .github/workflows/vet.yml .github/scripts; then
+              echo "::error::vet-runner ($rev) is not main ($main) in .github/workflows/vet.yml or .github/scripts: put main there again (git push --force origin origin/main:refs/heads/vet-runner) and dispatch again"
+              git -C main diff --stat "$rev" "$main" -- .github/workflows/vet.yml .github/scripts
+              exit 1
+            fi
+          done
+          echo "vet.yml and .github/scripts are main's ($main), byte for byte." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the inputs and the PR's head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]{1,7}$ ]] || { echo "::error::pr must be a pull request number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be the full 40-character commit id"; exit 1; }
+          gh api "repos/$REPO/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          head=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::PR $PR's head is not $SHA: read the new commits, then vet that head"
+            exit 1
+          fi
+          base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the PR's base is not a commit id"; exit 1; }
+          {
+            echo "pr=$PR"
+            echo "sha=$SHA"
+            echo "short=${SHA:0:7}"
+            echo "base=$base"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the PR's commits (as objects; nothing is checked out)
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          set -euo pipefail
+          git -C main fetch --no-tags --no-recurse-submodules origin "+refs/pull/$PR/head:refs/vet/head" "$BASE"
+          got=$(git -C main rev-parse refs/vet/head)
+          if [ "$got" != "$SHA" ]; then
+            echo "::error::PR $PR's head moved to $got while this ran"
+            exit 1
+          fi
+
+      - name: What the tree holds
+        id: tree
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          has() { if [ -n "$(git -C main ls-tree "$SHA" -- "$1")" ]; then echo true; else echo false; fi; }
+          echo "has_ui=$(has ui)" >> "$GITHUB_OUTPUT"
+          echo "has_flash=$(has tools/flash)" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect the changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
+          python3 -I main/.github/scripts/vet.py inspect --repo main --base "$BASE" --head "$SHA" \
+            --api-files "$RUNNER_TEMP/files.jsonl" --out "$RUNNER_TEMP/inspect.md"
+
+      - name: Check the Flash toolchain
+        if: steps.tree.outputs.has_ui == 'true' || steps.tree.outputs.has_flash == 'true'
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          python3 -I main/.github/scripts/vet.py toolchain --work "$RUNNER_TEMP/flash" --out "$RUNNER_TEMP/toolchain.md" \
+            --claims-repo main --claims-rev "$SHA"
+
+      - name: Report
+        id: report
+        # Also after a failed inspection, so its summary says why (a report too large to trust, say); the job still fails.
+        if: always() && steps.pr.outcome == 'success'
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          HAS_UI: ${{ steps.tree.outputs.has_ui }}
+          HAS_FLASH: ${{ steps.tree.outputs.has_flash }}
+        run: |
+          set -euo pipefail
+          pr="$RUNNER_TEMP/pr.json"
+          if [ -f "$RUNNER_TEMP/toolchain.md" ]; then
+            toolchain=$(cat "$RUNNER_TEMP/toolchain.md")
+          elif [ "$HAS_UI" = true ] || [ "$HAS_FLASH" = true ]; then
+            toolchain="Skipped: the PR has ui/ or tools/flash/, but the check wrote no report (it, or a step before it, failed)."
+          elif [ "$HAS_UI" = false ] && [ "$HAS_FLASH" = false ]; then
+            toolchain="Not used: the PR has no ui/ or tools/flash/."
+          else
+            toolchain="Skipped: the step that reads the PR's tree failed."
+          fi
+          [ -f "$RUNNER_TEMP/toolchain.md" ] || toolchain=$(printf '## Flash toolchain\n\n%s' "$toolchain")
+          {
+            echo "PR $PR: $(jq -r .state "$pr")$(jq -r 'if .draft then ", draft" else "" end' "$pr"), head \`$SHA\`, from $(jq -r 'if (.head.repo.full_name // "") == .base.repo.full_name then "this repository" else "a fork" end' "$pr")."
+            echo
+            if [ -f "$RUNNER_TEMP/inspect.md" ]; then cat "$RUNNER_TEMP/inspect.md"; else echo "## Trusted inspection"; echo; echo "Did not finish."; echo; fi
+            printf '%s\n\n' "$toolchain"
+          } > "$RUNNER_TEMP/trusted.md"
+          # Into the summary, never the log: the runner obeys workflow commands found in a log line, and this holds the
+          # PR's file names.
+          cat "$RUNNER_TEMP/trusted.md" >> "$GITHUB_STEP_SUMMARY"
+          # The report job takes this through an environment variable, which Linux caps at 128 KiB. When it is too
+          # long, a stand-in goes instead, and the report job fails the vet on it (TRUSTED_STAND_IN in vet.py).
+          packed=$(gzip -9c "$RUNNER_TEMP/trusted.md" | base64 -w0)
+          if [ ${#packed} -gt 100000 ]; then
+            packed=$(printf '## Trusted inspection\n\nToo long to pass on: the inspect job'"'"'s summary holds it.\n\n' | gzip -9c | base64 -w0)
+          fi
+          echo "report=$packed" >> "$GITHUB_OUTPUT"
+
+  movies:
+    name: "Untrusted: compile the menu movies"
+    needs: inspect
+    if: >-
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/vet-runner' && needs.inspect.outputs.has_ui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: {}
+    outputs:
+      report: ${{ steps.report.outputs.report }}
+    env:
+      SHA: ${{ needs.inspect.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Fetch and check Java and the Flash toolchain
+        run: |
+          set -euo pipefail
+          python3 -I trusted/.github/scripts/vet.py java --work "$RUNNER_TEMP/java-dl" --home "$RUNNER_TEMP/jdk" \
+            --report "$RUNNER_TEMP/java.md"
+          python3 -I trusted/.github/scripts/vet.py toolchain --strict --work "$RUNNER_TEMP/flash" \
+            --unpack "$RUNNER_TEMP/flex" --out "$RUNNER_TEMP/toolchain.md"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.sha }}
+          path: pr
+          persist-credentials: false
+
+      - name: Check the commit
+        run: |
+          got=$(git -C pr rev-parse HEAD)
+          [ "$got" = "$SHA" ] || { echo "::error::checked out $got, not $SHA"; exit 1; }
+
+      - name: Compile every movie from source
+        run: |
+          python3 -I trusted/.github/scripts/vet.py compile --java-home "$RUNNER_TEMP/jdk" --flex "$RUNNER_TEMP/flex" \
+            --ui pr/ui --out "$RUNNER_TEMP/movies" --report "$RUNNER_TEMP/compile.md"
+
+      - name: Compare with the PR's committed movies
+        if: always()
+        run: |
+          python3 -I trusted/.github/scripts/vet.py compare --built "$RUNNER_TEMP/movies" --ui pr/ui \
+            --report "$RUNNER_TEMP/compare.md"
+
+      - name: Report
+        id: report
+        if: always()
+        run: |
+          set -euo pipefail
+          for part in java toolchain compile compare; do
+            if [ -f "$RUNNER_TEMP/$part.md" ]; then cat "$RUNNER_TEMP/$part.md"; else echo "## $part: did not finish"; echo; fi
+          done > "$RUNNER_TEMP/movies.md"
+          cat "$RUNNER_TEMP/movies.md" >> "$GITHUB_STEP_SUMMARY"
+          packed=$(gzip -9c "$RUNNER_TEMP/movies.md" | base64 -w0)
+          if [ ${#packed} -gt 100000 ]; then
+            packed=$(printf 'Too long to pass on: this job'"'"'s summary holds it.\n' | gzip -9c | base64 -w0)
+          fi
+          echo "report=$packed" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the built movies
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vet-pr${{ needs.inspect.outputs.pr }}-${{ needs.inspect.outputs.short }}-movies
+          path: ${{ runner.temp }}/movies/
+          retention-days: 3
+          if-no-files-found: warn
+
+  build:
+    name: "Untrusted: build and run the tests"
+    needs: inspect
+    if: >-
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/vet-runner'
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions: {}
+    outputs:
+      report: ${{ steps.report.outputs.report }}
+    env:
+      SHA: ${{ needs.inspect.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.sha }}
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check the commit
+        shell: bash
+        run: |
+          got=$(git rev-parse HEAD)
+          [ "$got" = "$SHA" ] || { echo "::error::checked out $got, not $SHA"; exit 1; }
+
+      # No caches, restored or saved (its cache inputs all default to off).
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a  # v1.2.5
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Configure
+        id: configure
+        shell: pwsh
+        env:
+          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
+        run: xmake f -y -m releasedbg -a x64 -p windows --vs=2022
+
+      - name: Build
+        id: build
+        shell: pwsh
+        env:
+          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
+        run: xmake build -y
+
+      - name: Unit tests
+        id: tests
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          & build/windows/x64/releasedbg/F4MPTests.exe | Tee-Object -FilePath tests.log
+          exit $LASTEXITCODE
+
+      - name: Report
+        id: report
+        if: always()
+        shell: bash
+        env:
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+        run: |
+          {
+            echo "Configure: $CONFIGURE. Build: $BUILD. Unit tests: $TESTS."
+            if [ -f tests.log ]; then
+              echo "From tests.log:"
+              tr -d '\r' < tests.log | grep -E '^[0-9]+ tests, |^FAILED|^ +FAILED|^FIXED\?|^known ' | head -n 200 || true
+            else
+              echo "No tests.log."
+            fi
+          } > "$RUNNER_TEMP/build.md"
+          sed 's/^/    /' "$RUNNER_TEMP/build.md" >> "$GITHUB_STEP_SUMMARY"
+          packed=$(gzip -9c "$RUNNER_TEMP/build.md" | base64 -w0)
+          if [ ${#packed} -gt 100000 ]; then
+            packed=$(printf 'Too long to pass on: this job'"'"'s summary holds it.\n' | gzip -9c | base64 -w0)
+          fi
+          echo "report=$packed" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the test log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vet-pr${{ needs.inspect.outputs.pr }}-${{ needs.inspect.outputs.short }}-tests
+          path: tests.log
+          retention-days: 3
+          if-no-files-found: warn
+
+  report:
+    name: "Trusted: report"
+    needs: [inspect, movies, build]
+    if: >-
+      always() && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/vet-runner' && needs.inspect.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read  # to list the caches
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      # Each part is written to a file in a step of its own: a part too large for an environment variable (an
+      # untrusted job may hand over anything) fails only its own step, and the report says that part is missing.
+      - name: Take the trusted part
+        continue-on-error: true
+        env:
+          PART: ${{ needs.inspect.outputs.report }}
+        run: mkdir -p "$RUNNER_TEMP/parts" && printf '%s' "$PART" > "$RUNNER_TEMP/parts/inspect"
+
+      - name: Take the movies part
+        continue-on-error: true
+        env:
+          PART: ${{ needs.movies.outputs.report }}
+        run: mkdir -p "$RUNNER_TEMP/parts" && printf '%s' "$PART" > "$RUNNER_TEMP/parts/movies"
+
+      - name: Take the build part
+        continue-on-error: true
+        env:
+          PART: ${{ needs.build.outputs.report }}
+        run: mkdir -p "$RUNNER_TEMP/parts" && printf '%s' "$PART" > "$RUNNER_TEMP/parts/build"
+
+      - name: List the caches in main's scope and in vet-runner's
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          parts="$RUNNER_TEMP/parts"
+          mkdir -p "$parts"
+          for scope in main:refs/heads/main runner:refs/heads/vet-runner; do
+            gh api --paginate "repos/$REPO/actions/caches?ref=${scope#*:}&per_page=100" \
+              --jq '.actions_caches[] | [.id, .key, .ref, .created_at, .size_in_bytes] | @tsv' > "$parts/caches-${scope%%:*}.tsv"
+          done
+          touch "$parts/caches-checked"
+
+      - name: Write the report
+        env:
+          PR: ${{ needs.inspect.outputs.pr }}
+          SHA: ${{ needs.inspect.outputs.sha }}
+          HAS_UI: ${{ needs.inspect.outputs.has_ui }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          INSPECT_RESULT: ${{ needs.inspect.result }}
+          MOVIES_RESULT: ${{ needs.movies.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/parts"
+          python3 -I trusted/.github/scripts/vet.py assemble --parts "$RUNNER_TEMP/parts" --out "$RUNNER_TEMP/vet-report.md"
+          status=$?
+          cat "$RUNNER_TEMP/vet-report.md" >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Keep a copy of the report (a convenience; the job summary is the report)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vet-report-pr${{ needs.inspect.outputs.pr }}-${{ needs.inspect.outputs.short }}
+          path: ${{ runner.temp }}/vet-report.md
+          retention-days: 30
