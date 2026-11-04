@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T11:32:29+00:00",
+ "updated": "2026-11-04T11:44:42+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -47,6 +47,14 @@
    "stage": 7,
    "note": "",
    "pr": 280
+  },
+  {
+   "id": "0tgg",
+   "title": "Shared bench: robot workbench materials not shared",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "0tnz",
@@ -703,6 +711,14 @@
    "pr": 282
   },
   {
+   "id": "eals",
+   "title": "Shared bench: sub-frame window between server closing a view and the guest's game ending it",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "eex8",
    "title": "Vet: binary detection honours main's .gitattributes; if main ever marks a text pattern -diff or binary, those lines go unread",
    "kind": "feature",
@@ -954,8 +970,9 @@
    "title": "Shared workshop materials and settlement supply lines",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 297
   },
   {
    "id": "iwoy",
@@ -1326,6 +1343,14 @@
    "pr": 213
   },
   {
+   "id": "qliu",
+   "title": "Supply lines: a guest's builds use the host's supply-line materials",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "qmst",
    "title": "Catch-up menus: follow-ups from the PR 274 review",
    "kind": "feature",
@@ -1341,6 +1366,14 @@
    "stage": 3,
    "note": "",
    "pr": 291
+  },
+  {
+   "id": "qwed",
+   "title": "Shared bench: settlements the host doesn't own aren't shared",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "qx9n",
@@ -1453,6 +1486,14 @@
    "stage": 7,
    "note": "Every hit now gets an answer, so none can be silently undone. Merged; in 0.10.1-rc1, soaking now.",
    "pr": 231
+  },
+  {
+   "id": "se4h",
+   "title": "Shared bench: a refused build the guest can't pay for stands short",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "siyy",
