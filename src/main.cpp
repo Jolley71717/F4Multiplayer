@@ -1,6 +1,8 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/MainMenuEntry.h"
+#include "game/MPMenu.h"
 #include "game/AutoSave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
@@ -481,6 +483,7 @@ namespace
 			if (Config::Get().devChannel) {
 				MenuWatch::Install();  // for the stress loop's menu checks (the menus dev command)
 			}
+			MPMenu::Register();  // the multiplayer menu of our own, before the main menu can open it
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
@@ -1125,6 +1128,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
 	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
+	MainMenuEntry::Install();  // a Multiplayer entry in the main and pause menus, after Load (MainMenuPlace.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);
