@@ -23,7 +23,7 @@ namespace
 	// The race on here, near the friend who made the choice, our player at no terminal.
 	constexpr RaceHere On(std::optional<std::int32_t> a_ours = 0)
 	{
-		return { .ours = a_ours, .settled = true, .setUp = true, .over = false, .nearMaker = true, .atTerminal = false };
+		return { .ours = a_ours, .settled = true, .setUp = true, .over = false, .nearMaker = true, .raceRunning = true, .atTerminal = false };
 	}
 
 	std::vector<TerminalChoice> Choices(const std::vector<std::vector<std::uint8_t>>& a_packets)
@@ -93,6 +93,16 @@ TEST("terminal rules: a friend's choice is made only while the race is on here, 
 	CHECK(ToApply(DESTRUCT, 1, On(0)) == Step::kCall);
 	CHECK(ToApply(DESTRUCT, 1, On(4)) == Step::kDone);  // it happened here already
 	CHECK(ToApply(RESERVES, 1, On(1)) == Step::kDone);
+	// Stage 10 runs as the quest starts, race or none: the once rows wait for a race running here (RaceState 1).
+	here = On(0);
+	here.raceRunning = false;
+	CHECK(ToApply(DESTRUCT, 1, here) == Step::kWait);
+	CHECK(ToApply(RESERVES, 1, here) == Step::kWait);
+	CHECK(ToApply(DESTRUCT, 1, On(3)) == Step::kDone);
+	here.ours = 3;
+	CHECK(ToApply(DESTRUCT, 1, here) == Step::kDone);  // it happened here already, race or none
+	CHECK(ToApply(TARGETING, 2, here) == Step::kCall);  // the other rows don't wait for it
+	CHECK(ToApply(STATE, 1, here) == Step::kCall);
 }
 
 TEST("terminal rules: the book makes a friend's choice without sending it back, and drops one gone stale")
@@ -116,6 +126,13 @@ TEST("terminal rules: the book makes a friend's choice without sending it back, 
 	CHECK(book.Due(STATE, On(), T0) == Step::kDone);
 	CHECK(!book.Read(STATE, 1, true, T0));
 	CHECK(book.Read(STATE, 0, true, T0) == std::optional<std::uint8_t>{ 0 });  // our player's own choice afterwards
+
+	// A joiner's catch-up is as old as the server says: it goes stale CHOICE_LIFE after it was made, not after it came.
+	Book joined;
+	CHECK(!joined.Read(STATE, 0, false, T0));
+	joined.Heard(STATE, 1, 7, T0 - std::chrono::minutes(8));
+	CHECK(joined.Due(STATE, On(), T0 + std::chrono::minutes(1)) == Step::kCall);
+	CHECK(joined.Due(STATE, On(), T0 + std::chrono::minutes(3)) == Step::kDone);
 
 	// A friend's choice never made (our player never near them) goes stale.
 	book.Heard(TARGETING, 1, 7, T0);
@@ -207,7 +224,7 @@ TEST("terminal rules: the server passes a choice on as its player's, and tells a
 	const auto bob = JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
 
-	f.fake->Deliver(1, Protocol::Encode(TerminalChoice{ 99, TARGETING, 0 }, MT::kReportTerminalChoice));  // claims to be someone else's
+	f.fake->Deliver(1, Protocol::Encode(TerminalChoice{ 99, TARGETING, 0, 500 }, MT::kReportTerminalChoice));  // claims to be someone else's, and old
 	f.fake->Deliver(2, Protocol::Encode(TerminalChoice{ 0, TARGETING, 2 }, MT::kReportTerminalChoice));
 	f.fake->Deliver(1, Protocol::Encode(TerminalChoice{ 0, DESTRUCT, 1 }, MT::kReportTerminalChoice));
 	f.fake->Deliver(1, Protocol::Encode(TerminalChoice{ 0, STATE, 1 }, MT::kReportTerminalChoice));
@@ -244,9 +261,15 @@ TEST("terminal rules: a joiner is not told a stale choice, nor one whose maker l
 	JoinAs(f, 3, "Carol");
 	auto toCarol = Choices(Received(f, 3));
 	REQUIRE(toCarol.size() == 1);  // Bob left: his targeting is not told
-	CHECK(toCarol[0].row == STATE);
+	CHECK(toCarol[0].row == STATE && toCarol[0].ageSeconds == 0);
 
-	f.Advance(std::chrono::minutes(11));
+	f.Advance(std::chrono::minutes(5));
+	JoinAs(f, 5, "Eve");
+	const auto toEve = Choices(Received(f, 5));
+	REQUIRE(toEve.size() == 1);
+	CHECK(toEve[0].row == STATE && toEve[0].ageSeconds >= 300 && toEve[0].ageSeconds <= 302);  // its age: Eve's wait ends with the server's
+
+	f.Advance(std::chrono::minutes(6));
 	JoinAs(f, 4, "Dave");
 	CHECK(Choices(Received(f, 4)).empty());  // past its life
 }

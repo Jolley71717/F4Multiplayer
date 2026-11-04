@@ -297,7 +297,7 @@ namespace ProtocolSamples
 			s.push_back({ "ResourceStates", Encode(ResourceStates{ 2, { { 0xFF000042, { 0.5f, 0, 0, 0, 0, 0 } }, { RUNTIME_REF, { 0, 3, 0, 1, 0, 2 } } } }, type), D(DecodeResourceStates) });
 		}
 		for (const auto type : { MT::kReportTerminalChoice, MT::kTerminalChoice }) {
-			s.push_back({ "TerminalChoice", Encode(TerminalChoice{ 2, 1, 2 }, type), D(DecodeTerminalChoice) });
+			s.push_back({ "TerminalChoice", Encode(TerminalChoice{ 2, 1, 2, 90 }, type), D(DecodeTerminalChoice) });
 		}
 		// The report stands beside where the PlayerState sample (MakeState(3)) puts its sender: a server believes it.
 		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {

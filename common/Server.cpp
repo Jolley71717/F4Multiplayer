@@ -1631,7 +1631,8 @@ void Server::Run()
 			}
 			const bool makerHere = std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == choice->playerId; });
 			if (makerHere && choice->playerId != a_player.id) {
-				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ choice->playerId, row, choice->value }, Protocol::MessageType::kTerminalChoice), true);
+				const auto age = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - choice->at).count();
+				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ choice->playerId, row, choice->value, static_cast<std::uint16_t>(std::clamp<long long>(age, 0, 0xFFFF)) }, Protocol::MessageType::kTerminalChoice), true);
 			}
 		}
 		// The NPCs other games made at runtime and share now: the newcomer places its copies, before it hears who runs them.
@@ -3079,6 +3080,7 @@ void Server::Run()
 			return;
 		}
 		choice->playerId = a_player.id;
+		choice->ageSeconds = 0;
 		terminalChoices[choice->row] = TerminalRow{ choice->value, a_player.id, Clock::now() };
 		broadcast(Protocol::Encode(*choice, Protocol::MessageType::kTerminalChoice), true, a_player.key);
 	};

@@ -37,8 +37,11 @@ namespace TerminalRules
 	inline constexpr auto EXPECT_LIFE = std::chrono::seconds(3);   // a setter called here shows in its property by then (its timer: 0.25 s)
 	inline constexpr float NEAR_RANGE = 8192.0f;                   // our player within this of the friend who made it
 
-	// DN035's stages (read from the game's files): 10 runs as it starts (the route, the reserves home), 35 is the
-	// self-destruct (the robots blow up), 255 its end.
+	// DN035's stages (read from Fallout4.esm's QUST record and QF_DN035_000EF40C): 10 is a start-up stage (its INDX flag
+	// 0x02), run as the quest starts, whether or not a race is on (it puts the reserves home and sets the route), so it
+	// says only that the quest is set up here; 35 is the self-destruct (the robots blow up), 255 its end. Whether a race
+	// is actually running is RaceState (row 0) being 1 in this game: a row set once (the reserves, the self-destruct)
+	// is made only then (RaceHere::raceRunning).
 	inline constexpr std::uint16_t RACE_SET_UP = 10;
 	inline constexpr std::uint16_t RACE_DESTROYED = 35;
 	inline constexpr std::uint16_t RACE_OVER = 255;
@@ -101,6 +104,7 @@ namespace TerminalRules
 		bool setUp = false;                // RACE_SET_UP done
 		bool over = false;                 // RACE_DESTROYED or RACE_OVER done: the race is no more here
 		bool nearMaker = false;            // our player near the friend who made the choice (NEAR_RANGE, same space)
+		bool raceRunning = false;          // RaceState is 1 here: a race is running in this game
 		bool atTerminal = false;           // our player at a terminal (or just away from one)
 	};
 
@@ -117,7 +121,10 @@ namespace TerminalRules
 			return Step::kWait;
 		}
 		if (Once(a_row)) {
-			return *a_here.ours == 0 ? Step::kCall : Step::kDone;
+			if (*a_here.ours != 0) {
+				return Step::kDone;
+			}
+			return a_here.raceRunning ? Step::kCall : Step::kWait;  // not into a game whose race isn't running
 		}
 		return *a_here.ours != a_value ? Step::kCall : Step::kDone;
 	}
@@ -161,7 +168,8 @@ namespace TerminalRules
 			return send;
 		}
 
-		// A friend's choice (live, or the latest of a row, to a joiner): made here when it can be (Due).
+		// A friend's choice (live, or the latest of a row, to a joiner): made here when it can be (Due). a_time: when it
+		// was made, as near as we know (now less the server's age of it).
 		void Heard(std::uint8_t a_row, std::uint8_t a_value, std::uint32_t a_playerId, Clock::time_point a_time)
 		{
 			if (!Valid(a_row, a_value)) {

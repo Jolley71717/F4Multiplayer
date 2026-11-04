@@ -3958,12 +3958,15 @@ namespace Protocol
 	}
 
 	// kReportTerminalChoice / kTerminalChoice: a player's choice at a quest's terminal (TerminalRules.h), the value it set
-	// the row's property to. playerId is stamped by the server (in a joiner's catch-up, the player who made it).
+	// the row's property to. playerId is stamped by the server (in a joiner's catch-up, the player who made it), and so is
+	// ageSeconds: how long ago it was made (0 live; a catch-up's own age, so a joiner's wait for it ends when the server's
+	// does). A report's is ignored.
 	struct TerminalChoice
 	{
 		std::uint32_t playerId = 0;
 		std::uint8_t  row = 0;
 		std::uint8_t  value = 0;
+		std::uint16_t ageSeconds = 0;
 
 		bool operator==(const TerminalChoice&) const = default;
 	};
@@ -3974,6 +3977,7 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.U8(a_msg.row);
 		w.U8(a_msg.value);
+		w.U16(a_msg.ageSeconds);
 		return w.Data();
 	}
 
@@ -3986,6 +3990,7 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.row = r.U8();
 		msg.value = r.U8();
+		msg.ageSeconds = r.U16();
 		if (!r.Ok() || !r.AtEnd() || !TerminalValueOk(msg.row, msg.value)) {
 			return std::nullopt;
 		}

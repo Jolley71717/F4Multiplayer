@@ -120,6 +120,7 @@ namespace TerminalSync
 				here.setUp = QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_SET_UP);
 				here.over = QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_DESTROYED) || QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_OVER);
 				here.nearMaker = NearMaker(pending->playerId);
+				here.raceRunning = i == 0 ? value == 1 : ReadRow(QuestOf(0), ROWS[0]) == 1;
 			}
 			switch (book.Due(i, here, now)) {
 			case TerminalRules::Step::kWait:
@@ -157,7 +158,7 @@ namespace TerminalSync
 		++heard;
 		const auto& row = ROWS[a_choice.row];
 		REX::INFO("TerminalSync: player {} set {}.{} = {}: made here while the race is on here near them", a_choice.playerId, row.script, row.property, a_choice.value);
-		book.Heard(a_choice.row, a_choice.value, a_choice.playerId, Clock::now());
+		book.Heard(a_choice.row, a_choice.value, a_choice.playerId, Clock::now() - std::chrono::seconds(a_choice.ageSeconds));
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
