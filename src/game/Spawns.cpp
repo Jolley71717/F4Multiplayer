@@ -60,7 +60,8 @@ namespace Spawns
 		};
 		std::unordered_map<std::uint32_t, PairLook> pairLooked;
 		constexpr auto                              PAIR_LOOK = std::chrono::seconds(1);
-		std::uint32_t                               pairs = 0, unpairs = 0, keyedReported = 0, twinsHeld = 0;
+		std::uint32_t                               pairs = 0, unpairs = 0, keyedReported = 0, twinsHeld = 0, rollsRestored = 0;
+		std::unordered_map<std::uint32_t, Protocol::NpcIdentity> pairedOwn;  // by spawn id: ours as our game made it, before pairing
 		std::unordered_set<std::uint32_t>           twinsNoted;  // our NPCs held back as twins, each counted once
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
@@ -368,6 +369,7 @@ namespace Spawns
 			const auto file = facts.official ? a_quest->GetFile(0) : nullptr;
 			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 			facts.perGame = index && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
+			facts.listed = index && QuestActors::IsListed(static_cast<std::uint8_t>(*index), a_quest->GetFormID());
 			return facts;
 		}
 
@@ -469,6 +471,20 @@ namespace Spawns
 			}
 			const auto copy = theirs.Find(a_id);
 			NpcSync::DropMirror(a_id);  // its AI is its own again (Puppets::ReleaseNpc)
+			// The owner's roll, level and factions NpcSync made ours while paired go: ours is our game's again, and saved so.
+			const auto ref = it->second.get();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (const auto own = pairedOwn.find(a_id); own != pairedOwn.end()) {
+				if (actor && !actor->IsDeleted() && copy && actor->GetFormID() == copy->local) {
+					const auto now = Rolls::ReadOurs(actor, true);
+					const auto plan = NpcRoll::Decide(now, own->second, [&](std::uint32_t a_npc) { return Rolls::ReachOf(now.originalBase).Has(a_npc); });
+					if (plan.Any()) {
+						Rolls::Apply(actor, own->second, plan);
+						++rollsRestored;
+					}
+				}
+				pairedOwn.erase(own);
+			}
 			paired.erase(it);
 			if (copy) {
 				REX::INFO("Spawns: {:08X}, our quest's creature paired with player {}'s {:08X}, is our game's alone again: {}", copy->local, copy->spawn.playerId, a_id, a_why);
@@ -480,9 +496,9 @@ namespace Spawns
 		void Discard(std::uint32_t a_id);
 
 		// A friend's spawn named with a quest alias, alive, not paired: ours from that alias paired with it (true), or held
-		// back from a copy while ours is in the alias (true: nothing to place), or neither (false: a copy may be placed as
-		// for any spawn, while our run of the quest has none of its own: our player hasn't started it). A copy placed so
-		// goes once our run has its own creature there (true), which is paired next.
+		// back from a copy while ours is in the alias (true: nothing to place), or neither (false: as for any spawn; with
+		// our player not yet on the quest, its creatures' unique base places no copy, BaseOk). A copy placed of a keyed
+		// spawn (a base that isn't unique) goes once our run has its own creature there (true), which is paired next.
 		bool PairOrHold(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us, Clock::time_point a_now)
 		{
 			auto& look = pairLooked[a_id];
@@ -504,6 +520,9 @@ namespace Spawns
 			}
 			const auto local = candidate.ref->GetFormID();
 			paired[a_id] = candidate.ref->GetHandle();
+			if (auto own = Rolls::Read(candidate.ref->As<RE::Actor>(), a_id, true)) {
+				pairedOwn[a_id] = std::move(*own);  // what ours is in our game, put back as it is unpaired
+			}
 			theirs.Placed(a_id, local, a_now);
 			++pairs;
 			REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is paired with player {}'s {:08X} from the same alias: mirrored as theirs, no copy placed", local, a_copy.spawn.quest,
@@ -604,15 +623,6 @@ namespace Spawns
 		{
 			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
 			return npc && !npc->IsUnique() && !RemotePlayers::IsStandInBase(a_base);
-		}
-
-		// A friend's quest alias's creature (QuestActors.h), its base unique (each run's own creature, no named character:
-		// Salem's mirelurks): a copy of it is placed while our run of the quest has none of its own (PairOrHold).
-		bool QuestCreatureBaseOk(const Protocol::Spawn& a_spawn, std::uint32_t a_base)
-		{
-			const auto npc = a_spawn.quest != 0 ? RE::TESForm::GetFormByID<RE::TESNPC>(a_base) : nullptr;
-			const auto race = npc ? npc->GetFormRace() : nullptr;
-			return race && (static_cast<std::uint32_t>(race->data.flags) & QuestActors::RACE_ALLOWS_DIALOGUE) == 0 && !RemotePlayers::IsStandInBase(a_base);
 		}
 
 		// Somebody here is in our copy of a friend's frame (our player, getting in or in it, or anyone else of ours), or it
@@ -1085,7 +1095,7 @@ namespace Spawns
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
 			} else {
-				facts.baseOk = BaseOk(from) || QuestCreatureBaseOk(copy->spawn, from);
+				facts.baseOk = BaseOk(from);
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
@@ -1167,6 +1177,7 @@ namespace Spawns
 		std::erase_if(oursThereLooked, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(pairLooked, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(paired, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(pairedOwn, [&](const auto& a_entry) { return !paired.contains(a_entry.first); });
 		std::erase_if(keptClear, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 	}
 
@@ -1229,6 +1240,7 @@ namespace Spawns
 		}
 		placed.clear();
 		paired.clear();  // unpaired before the load (DiscardCopies): the loaded world's quests pair afresh
+		pairedOwn.clear();
 		pairLooked.clear();
 		killedHere.clear();
 		leaving.clear();
@@ -1262,6 +1274,7 @@ namespace Spawns
 		}
 		placed.clear();
 		paired.clear();
+		pairedOwn.clear();
 		pairLooked.clear();
 		seenAt.clear();
 		unplacedWhy.clear();
@@ -1279,9 +1292,9 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
-			paired.size(), pairs, unpairs, keyedReported, twinsHeld) + Unplaced() + " " + FrameLoans::Describe();
+			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

@@ -618,18 +618,23 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   is reached in each game). It is never deleted, never tracked as a placed copy and never kept out of a save: before a
   save or a load, at the session's end, when our player leaves it past KEEP_RANGE, when it unloads, and when the
   owner's game lets a living one go (they left), it is only unpaired (its mirror dropped, its AI its own again), and
-  ours then shares it itself if it is hostile. Paired only while the spawn is alive, our player within PLACE_RANGE of
-  it, ours alive, loaded and within PAIR_RANGE (4096) of theirs, and nobody's yet (granted to us, a puppet or a copy);
-  while ours is in the alias but not to be paired, no copy is placed beside it, and a copy placed while our run of the
-  quest had none of its own (the friend has not started it here: a quest creature's unique base is placed then) goes
-  once ours appears. Our game does not report a creature whose alias a friend's live spawn names (`twinsHeld=`), and the
-  server refuses such a report from another game (naming nobody, logged). Guarded so no story is touched: only a quest of
-  the game's own files that is running here, runs once, is of type none, misc or side (never the main quest's, a
-  faction's or an add-on's story), no radiant and not PER_GAME; only an alias filled by "create reference"; and only a
-  creature (its race lacks "allow PC dialogue": set on HumanRace, GhoulRace and DogmeatRace, clear on MirelurkRace), so
-  Gun Run's Barney (alias 25), whose scenes are each game's, stays each game's own. Its stages are shared only with the
-  host's `sQuests = safe` (DN083_Barney is in QuestFilter SAFE). `net status`: spawns questActors: paired= pairs=
-  unpairs= keyed= twinsHeld=.
+  ours then shares it itself if it is hostile. Unpairing also puts back the roll, level and factions NpcSync made ours
+  from the owner's (read as ours was paired, made so again with Rolls::Apply: `restored=`), so a save keeps our game's
+  own. Paired only while the spawn is alive, our player within PLACE_RANGE of it, ours alive, loaded and within
+  PAIR_RANGE (4096) of theirs, and nobody's yet (granted to us, a puppet or a copy); while ours is in the alias but not
+  to be paired, no copy is placed beside it. While our player hasn't started the quest, a friend's creature gets no copy
+  here (its base is unique: BaseOk), as before. Our game does not report a creature whose alias a friend's live spawn
+  names (`twinsHeld=`), and the server refuses such a report from another game (naming nobody, logged). Guarded so no
+  story is touched: only a quest in QuestActors::LISTED (DN083_Barney alone, until the rig shows another needs it),
+  and of those only one that is running here, runs once, is of type none, misc or side, no radiant and not PER_GAME;
+  only an alias filled by "create reference"; and only a creature (its race lacks "allow PC dialogue": set on
+  HumanRace, GhoulRace and DogmeatRace, clear on MirelurkRace), so Gun Run's Barney (alias 25), whose scenes are each
+  game's, stays each game's own. Its stages are shared only with the host's `sQuests = safe` (DN083_Barney is in
+  QuestFilter SAFE). `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
+- Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
+  while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
+  dead) places a live copy of it: that fight is fought again. Paired, ours takes the owner's roll and factions until it
+  is unpaired; a save made while paired is made after the unpairing (DiscardCopies), so it holds ours.
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
@@ -645,21 +650,32 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   player, the raiders and each other), wakes the reserves, and the self-destruct (stage 35) counts down and blows the
   robots up. The robots are the plugin's, mirrored across games, but each game's factions said whom they fought: set on
   the player at one player's terminal, they stood idle in the friend's game. TerminalRules::ROWS lists those five
-  properties (the route is set by stages 10 and 31 alone).
+  properties; Protocol::TERMINAL_VALUES has each one's values and whether it is set once.
 - Reading: four times a second, while the quest runs here, TerminalSync reads each row's property off the quest's bound
   script (no call into the VM). A change while our player has a terminal open (or for 2 s after it closed: the fragment's
   call lands a moment later) is ours: sent as kReportTerminalChoice. A first reading (after the quest starts or a load)
   is a baseline, and what no terminal set (a stage, the self-destruct's countdown) is never sent; a row that happens once
   (the reserves, the self-destruct) is sent as 1 when it goes from 0.
-- The server passes a choice on to the others as its player's (kTerminalChoice) and keeps each row's latest, sent to a
-  joiner after the welcome (player 0). Not saved: each game's save keeps what its own terminals were set to.
+- The server checks a choice's value against its row's (DecodeTerminalChoice), passes it on to the others as its
+  player's (kTerminalChoice) and keeps each row's latest with its maker and time. A joiner is told, after the welcome,
+  each row's latest that is not set once (the reserves and the self-destruct are live only), is at most 10 minutes old
+  (CHOICE_LIFE) and was made by a player still in the session, as that player's. Not saved: each game's save keeps
+  what its own terminals were set to.
 - Applying: a friend's choice is made here by calling the row's setter with the value and True, as the terminal does
-  (its announcement plays here too), only once the quest has run here 5 s, with our player at no terminal, and only if
-  ours differs (a once row only if it has not happened here); one that waits (the quest not started here) keeps the
-  latest of its row. What a friend's choice set here is never sent back. After a load the session's latest of every row
-  is made again where the loaded game differs. Only with `bSyncQuests`. `net status`: terminals: sent= heard= made=
-  failed=.
-- Not yet: only DN035's terminals; another quest whose terminals set its script's state needs its rows.
+  (its announcement plays here too), only while the race is on here: the quest has run here 5 s, its stage 10 is done
+  and neither 35 (the robots blew up) nor 255 (its end) is, and our player is within 8192 units of the friend who made
+  it (the same cell or worldspace: at the Downs with them). Our player must be at no terminal, and ours must differ (a
+  once row only if it has not happened here). A choice that waits keeps the latest of its row and is dropped after 10
+  minutes, or once the race is over here (`dropped=`). So a game far away, a later first visit, or an old save whose
+  race never ran gets nothing, and the self-destruct's stage 35 is set only in a game at that race. What a friend's
+  choice set here is not sent back: for 3 s (EXPECT_LIFE) a reading of that value is its call landing; past that, a
+  call the script refused no longer keeps our own choice of that value from being sent. After a load, a friend's
+  latest of a row (never our own: the loaded save's are its own, and never a once row) is made again under the same
+  rules. Only with `bSyncQuests`. `net status`: terminals: sent= heard= made= failed= dropped=.
+- Not yet (quest terminals): only DN035's terminals; another quest whose terminals set its script's state needs its
+  rows. The route terminals (SetRaceRoute) have no row. Two players at terminals at once, setting the same row to
+  different values, each get the other's once they step away, so the two games end up swapped; the server stamps no
+  order.
 
 ## Weapon fire (src/game/WeaponFire.cpp)
 

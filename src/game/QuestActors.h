@@ -4,7 +4,9 @@
 
 #include "Protocol.h"
 
+#include <array>
 #include <cstdint>
+#include <optional>
 
 // Creatures a quest's alias creates at runtime (the alias's "create reference" fill), the same in every game's run of
 // that quest: Salem's three mirelurks in Gun Run (DN083_Barney's StartMirelurk01 to 03). Each game's run creates its
@@ -15,13 +17,33 @@
 // (NpcSync), dying when it dies there (so that game's alias scripts count the death too), but never deleted, placed or
 // kept out of a save, as it is that game's own quest's. The server refuses a second game's report of the same alias.
 //
-// Guarded so it cannot touch a story: only a quest of the game's own files that runs once, of no story or faction line
-// (Quest type none, misc or side: never the main quest's or a faction's), no radiant (RadiantRules shares those by their
-// run) nor a quest each game runs alone (QuestFilter::PER_GAME), and only a creature: an NPC our player could talk to
-// (Barney, the quest's giver, made by its alias 25) stays each game's own, its scenes its own game's. Kept free of the
-// game so it can be tested (tests/QuestActorTests.cpp).
+// Guarded so it cannot touch a story: only a quest LISTED (Gun Run alone, until the rig shows more need it), and of those
+// only one that runs once, of no story or faction line (Quest type none, misc or side: never the main quest's or a
+// faction's), no radiant (RadiantRules shares those by their run) nor a quest each game runs alone (QuestFilter::PER_GAME),
+// and only a creature: an NPC our player could talk to (Barney, the quest's giver, made by its alias 25) stays each game's
+// own, its scenes its own game's. Kept free of the game so it can be tested (tests/QuestActorTests.cpp).
 namespace QuestActors
 {
+	// The quests whose created creatures pair: a file (StageRules::File) and the quest's form ID in it.
+	struct Listed
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+	};
+	inline constexpr std::array<Listed, 1> LISTED{ {
+		{ 0, 0x1243D6 },  // Fallout4.esm DN083_Barney (Gun Run): Salem's mirelurks, aliases 26, 38 and 41
+	} };
+
+	constexpr bool IsListed(std::optional<std::uint8_t> a_file, std::uint32_t a_quest)
+	{
+		for (const auto& entry : LISTED) {
+			if (a_file && entry.file == *a_file && entry.quest == (a_quest & 0x00FFFFFF)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// BGSRefAlias::FILL_TYPE::kCreated: the alias makes its reference as the quest starts.
 	inline constexpr std::uint16_t FILL_CREATED = 4;
 
@@ -45,6 +67,7 @@ namespace QuestActors
 	// What a quest that holds one of our runtime NPCs in an alias is.
 	struct Quest
 	{
+		bool          listed = false;    // in LISTED (IsListed)
 		bool          official = false;  // from the game's own files (Official::IsOfficialForm)
 		std::uint16_t flags = 0;         // TESQuest::data.flags
 		std::int8_t   type = 0;          // TESQuest::data.questType
@@ -56,7 +79,7 @@ namespace QuestActors
 	constexpr bool QuestPairs(const Quest& a_quest)
 	{
 		const bool typeOk = a_quest.type == QUEST_TYPE_NONE || a_quest.type == QUEST_TYPE_MISC || a_quest.type == QUEST_TYPE_SIDE;
-		return a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && (a_quest.flags & QUEST_RUN_ONCE) != 0 && typeOk && !a_quest.radiant && !a_quest.perGame;
+		return a_quest.listed && a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && (a_quest.flags & QUEST_RUN_ONCE) != 0 && typeOk && !a_quest.radiant && !a_quest.perGame;
 	}
 
 	// Whether our NPC, held by an alias of that fill type in such a quest, of a race with those flags, is named with the

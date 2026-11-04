@@ -3935,8 +3935,30 @@ namespace Protocol
 	// The rows of src/game/TerminalRules.h ROWS: a quest's script property a terminal of it sets, in every game alike.
 	inline constexpr std::uint8_t TERMINAL_ROWS = 5;
 
+	// The values a row's terminals set, and whether it is set once (its own timers count on from there: shared as "it
+	// happened", live only, never in a joiner's catch-up or made again after a load). Checked as a choice is read, by the
+	// server too, so a bad report never replaces the latest a joiner gets.
+	struct TerminalValues
+	{
+		std::uint8_t low = 0;
+		std::uint8_t high = 0;
+		bool         once = false;
+	};
+	inline constexpr std::array<TerminalValues, TERMINAL_ROWS> TERMINAL_VALUES{ {
+		{ 0, 1, false },  // DN035 RaceState: the race stopped or run
+		{ 0, 2, false },  // RaceTargeting: the player, the raiders, or each other
+		{ 0, 1, false },  // RaceCombatInhibitors: off or on
+		{ 1, 1, true },   // RaceReserves: released
+		{ 1, 1, true },   // RaceSelfDestruct: set off (stage 35)
+	} };
+
+	constexpr bool TerminalValueOk(std::uint8_t a_row, std::uint8_t a_value)
+	{
+		return a_row < TERMINAL_ROWS && a_value >= TERMINAL_VALUES[a_row].low && a_value <= TERMINAL_VALUES[a_row].high;
+	}
+
 	// kReportTerminalChoice / kTerminalChoice: a player's choice at a quest's terminal (TerminalRules.h), the value it set
-	// the row's property to. playerId is stamped by the server (0 in a joiner's catch-up: the session's latest).
+	// the row's property to. playerId is stamped by the server (in a joiner's catch-up, the player who made it).
 	struct TerminalChoice
 	{
 		std::uint32_t playerId = 0;
@@ -3955,7 +3977,7 @@ namespace Protocol
 		return w.Data();
 	}
 
-	// None for a row past TERMINAL_ROWS (each row's values are its own: TerminalRules::Valid).
+	// None for a row past TERMINAL_ROWS or a value its terminals don't set (TerminalValueOk).
 	inline std::optional<TerminalChoice> DecodeTerminalChoice(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
@@ -3964,7 +3986,7 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.row = r.U8();
 		msg.value = r.U8();
-		if (!r.Ok() || !r.AtEnd() || msg.row >= TERMINAL_ROWS) {
+		if (!r.Ok() || !r.AtEnd() || !TerminalValueOk(msg.row, msg.value)) {
 			return std::nullopt;
 		}
 		return msg;

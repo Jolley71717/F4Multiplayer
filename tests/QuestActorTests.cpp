@@ -6,6 +6,7 @@
 
 #include "game/QuestActors.h"
 #include "game/SpawnBook.h"
+#include "game/StageRules.h"
 
 using namespace TestServer;
 
@@ -26,7 +27,7 @@ namespace
 	// DN083_Barney as the game has it running.
 	Quest GunRun()
 	{
-		return { .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC };
+		return { .listed = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC };
 	}
 
 	Spot At(float a_x, std::uint32_t a_worldspace = WORLD)
@@ -69,11 +70,22 @@ namespace
 	}
 }
 
-TEST("quest actors: only a running, run-once quest of the game's own of no story or faction line pairs its creatures")
+TEST("quest actors: only Gun Run is listed, by its file and form ID")
+{
+	static_assert(static_cast<std::uint8_t>(StageRules::File::kFallout4) == 0);
+	CHECK(IsListed(0, 0x001243D6));
+	CHECK(IsListed(0, 0x011243D6));  // the load index is not the file's
+	CHECK(!IsListed(std::nullopt, 0x001243D6));
+	CHECK(!IsListed(1, 0x001243D6));  // another file's quest of that ID
+	CHECK(!IsListed(0, 0x000EF40C));  // DN035, the Downs
+}
+
+TEST("quest actors: only a listed, running, run-once quest of the game's own of no story or faction line pairs its creatures")
 {
 	CHECK(QuestPairs(GunRun()));
-	CHECK(QuestPairs({ .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));  // DN035, the Downs: type none
-	CHECK(QuestPairs({ .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));
+	CHECK(QuestPairs({ .listed = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));
+	CHECK(QuestPairs({ .listed = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));
+	CHECK(!QuestPairs({ .official = true, .flags = 0x0101, .type = QUEST_TYPE_MISC }));  // another misc quest: not listed
 	auto quest = GunRun();
 	quest.official = false;  // a mod's
 	CHECK(!QuestPairs(quest));

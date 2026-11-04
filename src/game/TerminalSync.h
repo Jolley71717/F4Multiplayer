@@ -18,7 +18,7 @@ namespace TerminalSync
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
-	// A save was loaded: our readings start afresh, and the session's choices are made again where the loaded game differs.
+	// A save was loaded: our readings start afresh, and a friend's latest of a row is made again under the same rules.
 	void OnGameLoaded();
 
 	// The session ended: nothing of it is kept.

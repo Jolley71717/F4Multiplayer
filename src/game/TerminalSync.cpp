@@ -3,6 +3,9 @@
 #include "Config.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
+#include "game/QuestStageLayout.h"
+#include "game/RemoteEdits.h"
+#include "game/RemotePlayers.h"
 #include "game/StageLog.h"
 #include "game/Story.h"
 #include "game/TerminalRules.h"
@@ -29,7 +32,7 @@ namespace TerminalSync
 		// Each row's quest here (0: not looked up yet or not in this game), and since when it has been running here.
 		std::array<std::uint32_t, ROWS.size()>                    quests{};
 		std::array<std::optional<Clock::time_point>, ROWS.size()> runningSince{};
-		std::uint32_t sent = 0, heard = 0, made = 0, failed = 0;
+		std::uint32_t sent = 0, heard = 0, made = 0, failed = 0, dropped = 0;
 
 		RE::TESQuest* QuestOf(std::size_t a_row)
 		{
@@ -54,6 +57,21 @@ namespace TerminalSync
 				return std::nullopt;
 			}
 			return RE::BSScript::get<std::int32_t>(*var);
+		}
+
+		// Our player near the friend who made a choice (TerminalRules::NEAR_RANGE, the same cell or worldspace).
+		bool NearMaker(std::uint32_t a_playerId)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto state = a_playerId != 0 ? RemotePlayers::LastStateOf(a_playerId) : std::nullopt;
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!state || !cell) {
+				return false;
+			}
+			const auto&             at = player->data.location;
+			const RemoteEdits::Spot us = cell->IsInterior() ? RemoteEdits::Spot{ cell->GetFormID(), 0, at.x, at.y, at.z } :
+			                                                  RemoteEdits::Spot{ 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0, at.x, at.y, at.z };
+			return RemoteEdits::Within(RemoteEdits::Distance(us, RemoteEdits::SpotOf(*state)), TerminalRules::NEAR_RANGE);
 		}
 
 		// Our player at a terminal, or just away from one (TerminalRules::CLOSE_GRACE).
@@ -88,30 +106,43 @@ namespace TerminalSync
 			} else if (!runningSince[i]) {
 				runningSince[i] = now;
 			}
-			if (const auto send = book.Read(i, value, atTerminal)) {
+			if (const auto send = book.Read(i, value, atTerminal, now)) {
 				outgoing.push_back(Protocol::Encode(Protocol::TerminalChoice{ 0, i, *send }, Protocol::MessageType::kReportTerminalChoice));
 				++sent;
 				REX::INFO("TerminalSync: our player set {}.{} to {} at a terminal (from {}); sent", row.script, row.property, *send, *value);
 			}
-			const bool settled = runningSince[i] && now - *runningSince[i] >= TerminalRules::SETTLE;
-			switch (book.Due(i, settled, atTerminal)) {
+			const auto pending = book.Pending(i);
+			if (!pending) {
+				continue;
+			}
+			TerminalRules::RaceHere here{ .settled = runningSince[i] && now - *runningSince[i] >= TerminalRules::SETTLE, .atTerminal = atTerminal };
+			if (value && quest) {
+				here.setUp = QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_SET_UP);
+				here.over = QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_DESTROYED) || QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_OVER);
+				here.nearMaker = NearMaker(pending->playerId);
+			}
+			switch (book.Due(i, here, now)) {
 			case TerminalRules::Step::kWait:
 				break;
 			case TerminalRules::Step::kDone:
-				book.Made(i, false);
+				if (!value || *value != pending->value) {
+					++dropped;
+					REX::INFO("TerminalSync: player {}'s {}.{} = {} is not made here: {}", pending->playerId, row.script, row.property, pending->value,
+						now - pending->at > TerminalRules::CHOICE_LIFE ? "it went stale" : here.over ? "the race is over here" : "it happened here already");
+				}
+				book.Made(i, false, now);
 				break;
 			case TerminalRules::Step::kCall:
 				{
-					const auto pending = book.Pending(i);
-					const bool called = pending && Papyrus::CallMethod(quest, row.script, row.setter, false, static_cast<std::int32_t>(*pending), true);
+					const bool called = Papyrus::CallMethod(quest, row.script, row.setter, false, static_cast<std::int32_t>(pending->value), true);
 					if (called) {
 						++made;
-						REX::INFO("TerminalSync: a friend's choice made here: {}.{}({}) (ours was {})", row.script, row.setter, *pending, value ? *value : -1);
+						REX::INFO("TerminalSync: player {}'s choice made here: {}.{}({}) (ours was {})", pending->playerId, row.script, row.setter, pending->value, value ? *value : -1);
 					} else {
 						++failed;
-						REX::WARN("TerminalSync: could not call {}.{}({}); left as our game has it", row.script, row.setter, pending ? *pending : -1);
+						REX::WARN("TerminalSync: could not call {}.{}({}); left as our game has it", row.script, row.setter, pending->value);
 					}
-					book.Made(i, called);
+					book.Made(i, called, now);
 					break;
 				}
 			}
@@ -125,9 +156,8 @@ namespace TerminalSync
 		}
 		++heard;
 		const auto& row = ROWS[a_choice.row];
-		REX::INFO("TerminalSync: {} {}.{} = {}: made here once the quest runs here", a_choice.playerId != 0 ? std::format("player {} set", a_choice.playerId) : std::string{ "the session has" },
-			row.script, row.property, a_choice.value);
-		book.Heard(a_choice.row, a_choice.value);
+		REX::INFO("TerminalSync: player {} set {}.{} = {}: made here while the race is on here near them", a_choice.playerId, row.script, row.property, a_choice.value);
+		book.Heard(a_choice.row, a_choice.value, a_choice.playerId, Clock::now());
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -137,7 +167,7 @@ namespace TerminalSync
 
 	void OnGameLoaded()
 	{
-		book.OnGameLoaded();
+		book.OnGameLoaded(Clock::now());
 		runningSince = {};
 		quests = {};
 		terminalWasOpen = false;
@@ -155,6 +185,6 @@ namespace TerminalSync
 
 	std::string Describe()
 	{
-		return std::format("terminals: sent={} heard={} made={} failed={}", sent, heard, made, failed);
+		return std::format("terminals: sent={} heard={} made={} failed={} dropped={}", sent, heard, made, failed, dropped);
 	}
 }

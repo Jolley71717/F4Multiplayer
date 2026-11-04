@@ -500,9 +500,18 @@ void Server::Run()
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
-	// The latest choice made at each quest terminal row (src/game/TerminalRules.h), whoever made it: told to a joiner, whose
-	// game makes it too. Not saved: every game's save keeps what its own terminals were set to.
-	std::array<std::optional<std::uint8_t>, Protocol::TERMINAL_ROWS> terminalChoices;
+	// The latest choice made at each quest terminal row (src/game/TerminalRules.h), whoever made it, and when: told to a
+	// joiner while it is fresh (TERMINAL_CHOICE_LIFE), its maker still here and the row not one set once (the reserves, the
+	// self-destruct: live only), and the joiner's game makes it only where its race is on near that player. Not saved:
+	// every game's save keeps what its own terminals were set to.
+	struct TerminalRow
+	{
+		std::uint8_t      value = 0;
+		std::uint32_t     playerId = 0;
+		Clock::time_point at{};
+	};
+	static constexpr auto TERMINAL_CHOICE_LIFE = std::chrono::minutes{ 10 };
+	std::array<std::optional<TerminalRow>, Protocol::TERMINAL_ROWS> terminalChoices;
 	// Power armor frames lent between players (src/game/FrameLoan.h), by spawn id: a frame its owner's game shares as a
 	// spawn, asked for by a friend (granted false) or lent to them, with the kit lent. One loan per frame and one per
 	// borrower. Each ends with a return, the borrower leaving or loading a save, or the spawn ending. Not saved, as spawns are not.
@@ -1613,10 +1622,16 @@ void Server::Run()
 			other.stateDirty = other.hasState;
 		}
 
-		// The choices made at quest terminals this session (playerId 0: the session's).
+		// The choices made at quest terminals lately, each as its maker's (TerminalRow): none set once, none stale, none of
+		// a player who left.
 		for (std::uint8_t row = 0; row < Protocol::TERMINAL_ROWS; ++row) {
-			if (terminalChoices[row]) {
-				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ 0, row, *terminalChoices[row] }, Protocol::MessageType::kTerminalChoice), true);
+			const auto& choice = terminalChoices[row];
+			if (!choice || Protocol::TERMINAL_VALUES[row].once || Clock::now() - choice->at > TERMINAL_CHOICE_LIFE) {
+				continue;
+			}
+			const bool makerHere = std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == choice->playerId; });
+			if (makerHere && choice->playerId != a_player.id) {
+				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ choice->playerId, row, choice->value }, Protocol::MessageType::kTerminalChoice), true);
 			}
 		}
 		// The NPCs other games made at runtime and share now: the newcomer places its copies, before it hears who runs them.
@@ -3064,7 +3079,7 @@ void Server::Run()
 			return;
 		}
 		choice->playerId = a_player.id;
-		terminalChoices[choice->row] = choice->value;
+		terminalChoices[choice->row] = TerminalRow{ choice->value, a_player.id, Clock::now() };
 		broadcast(Protocol::Encode(*choice, Protocol::MessageType::kTerminalChoice), true, a_player.key);
 	};
 
