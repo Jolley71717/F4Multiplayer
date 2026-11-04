@@ -71,33 +71,67 @@ namespace SendPacer
 		}
 
 		// What may go now, oldest first: the rest stays in line, in order.
-		[[nodiscard]] std::vector<T> TakeDue(Clock::time_point a_now)
-		{
-			const auto count = (std::min)(items.size(), pacer.Allowance(a_now));
-			std::vector<T> out(std::make_move_iterator(items.begin()), std::make_move_iterator(items.begin() + static_cast<std::ptrdiff_t>(count)));
-			items.erase(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
-			pacer.Sent(a_now, count);
-			return out;
-		}
+		[[nodiscard]] std::vector<T> TakeDue(Clock::time_point a_now) { return Take(a_now, items.size()); }
 
 		// Everything waiting, at once and not sent (it can't be: we're not in a session).
 		[[nodiscard]] std::vector<T> TakeAll()
 		{
 			std::vector<T> out(std::make_move_iterator(items.begin()), std::make_move_iterator(items.end()));
 			items.clear();
+			fenced = 0;
 			return out;
 		}
 
 		// Forgets what waits. What went out lately still counts: a line filled again right away goes no
 		// faster.
-		void Clear() { items.clear(); }
+		void Clear()
+		{
+			items.clear();
+			fenced = 0;
+		}
+
+		// Marks everything now waiting as from before a fence (a load: it speaks of the world before, and must reach the
+		// server ahead of the message that says the world changed). What comes after waits behind it, as ever.
+		void Fence() { fenced = items.size(); }
+
+		// What waits from before the fence: the part the pacer lets go now (oldest first, counted as sent, as TakeDue's), and
+		// the rest of it (late), taken out of the line unsent: it must not go after the fence's own message, and can't go
+		// before it any faster. What came after the fence stays in line.
+		struct Fenced
+		{
+			std::vector<T> due;
+			std::vector<T> late;
+		};
+		[[nodiscard]] Fenced TakeFenced(Clock::time_point a_now)
+		{
+			Fenced out;
+			out.due = Take(a_now, fenced);
+			const auto rest = (std::min)(fenced, items.size());
+			out.late.assign(std::make_move_iterator(items.begin()), std::make_move_iterator(items.begin() + static_cast<std::ptrdiff_t>(rest)));
+			items.erase(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(rest));
+			fenced = 0;
+			return out;
+		}
 
 		[[nodiscard]] std::size_t Size() const { return items.size(); }
 		[[nodiscard]] bool        Empty() const { return items.empty(); }
+		[[nodiscard]] std::size_t BeforeFence() const { return fenced; }
 
 	private:
+		// At most a_most of the oldest, as many as the pacer allows now.
+		std::vector<T> Take(Clock::time_point a_now, std::size_t a_most)
+		{
+			const auto count = (std::min)({ items.size(), a_most, pacer.Allowance(a_now) });
+			std::vector<T> out(std::make_move_iterator(items.begin()), std::make_move_iterator(items.begin() + static_cast<std::ptrdiff_t>(count)));
+			items.erase(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
+			pacer.Sent(a_now, count);
+			fenced -= (std::min)(fenced, count);
+			return out;
+		}
+
 		Pacer         pacer;
 		std::size_t   max;
 		std::deque<T> items;
+		std::size_t   fenced = 0;  // how many of the oldest waiting came before the last Fence
 	};
 }

@@ -2795,6 +2795,39 @@ namespace WorkshopSync
 		return packets;
 	}
 
+	std::vector<std::vector<std::uint8_t>> TakeFromWorldBefore()
+	{
+		SendPacer::Queue<Outgoing>::Fenced taken;
+		std::size_t                        after = 0;
+		{
+			std::scoped_lock l{ outLock };
+			taken = outgoing.TakeFenced(Clock::now());
+			after = outgoing.Size();
+			if (outgoing.Empty()) {
+				droppedWarned = false;
+			}
+		}
+		std::vector<std::vector<std::uint8_t>> packets;
+		for (auto& out : taken.due) {
+			packets.push_back(std::move(out.packet));
+		}
+		for (const auto& out : taken.late) {
+			if (out.worldScrap != 0) {
+				sentScraps.Forget(out.worldScrap);  // found again by the walk, if the loaded world has it scrapped too
+			}
+		}
+		if (!taken.due.empty() || !taken.late.empty()) {
+			REX::INFO("WorkshopSync: load: {} reports from the world before sent ahead of the request for the session's changes, {} dropped (more than may go at once); {} "
+					  "of the loaded world's wait",
+				taken.due.size(), taken.late.size(), after);
+		}
+		if (!taken.late.empty()) {
+			std::scoped_lock l{ outLock };
+			dropped += static_cast<std::uint32_t>(taken.late.size());
+		}
+		return packets;
+	}
+
 	void Apply(const Protocol::WorkshopItem& a_item)
 	{
 		inbox.Arrive({ a_item.playerId, a_item.refId }, a_item);
@@ -2887,6 +2920,13 @@ namespace WorkshopSync
 		// let go unread. The copies the save holds are found again, at their spots, when the server sends
 		// the session's building again after the load (FindExisting); one it had removed since the save
 		// stays. What waits in line, or for its cell, is reports, not handles, and stays.
+		// Our reports still in line are the world before's: they go ahead of the load's request for the session's changes
+		// (TakeFromWorldBefore), never after it, where the server would take them for the loaded world's. Fenced first, so
+		// what this load reports below (our power, sent again) waits behind the request.
+		{
+			std::scoped_lock l{ outLock };
+			outgoing.Fence();
+		}
 		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
 		copies.clear();
 		twins.clear();  // the session's building sent again twins them again with the copies found

@@ -115,6 +115,88 @@ TEST("send pacer: leaving the session clears the line, but what just went still 
 	CHECK(line.TakeDue(t0 + 1s) == std::vector<int>{ 1 });
 }
 
+TEST("send pacer: a load fences what waits, which goes ahead of the load's request, and what came after the load waits behind it")
+{
+	SendPacer::Queue<int> line{ 200, 8192 };
+	const auto            t0 = Clock::now();
+	for (int i = 0; i < 3; ++i) {
+		line.Push(i);  // built just before the load, not sent yet
+	}
+	line.Fence();
+	line.Push(100);  // the loaded world's (our power, sent again)
+	CHECK(line.BeforeFence() == 3);
+	const auto taken = line.TakeFenced(t0);
+	CHECK(taken.due == Numbers(0, 3));
+	CHECK(taken.late.empty());
+	CHECK(line.BeforeFence() == 0);
+	CHECK(line.TakeDue(t0) == std::vector<int>{ 100 });
+	// A second take finds nothing from before.
+	CHECK(line.TakeFenced(t0).due.empty());
+}
+
+TEST("send pacer: what the pacer can't let go before a load's request is dropped, never sent after it, and still counts as nothing sent")
+{
+	SendPacer::Queue<int> line{ 200, 8192 };
+	const auto            t0 = Clock::now();
+	for (int i = 0; i < 250; ++i) {
+		line.Push(i);
+	}
+	CHECK(line.TakeDue(t0).size() == 200);  // 50 of the world before still wait
+	for (int i = 250; i < 400; ++i) {
+		line.Push(i);
+	}
+	line.Fence();
+	line.Push(1000);
+	line.Push(1001);
+	// Half a second on, nothing may go yet (200 went at t0): every one from before is late.
+	auto taken = line.TakeFenced(t0 + 500ms);
+	CHECK(taken.due.empty());
+	CHECK(taken.late == Numbers(200, 200));
+	CHECK(line.Size() == 2);
+	CHECK(line.TakeDue(t0 + 1s) == (std::vector<int>{ 1000, 1001 }));
+
+	// With room in the second, the oldest go and the rest of them are late.
+	SendPacer::Queue<int> other{ 10, 8192 };
+	for (int i = 0; i < 15; ++i) {
+		other.Push(i);
+	}
+	other.Fence();
+	other.Push(99);
+	taken = other.TakeFenced(t0);
+	CHECK(taken.due == Numbers(0, 10));
+	CHECK(taken.late == Numbers(10, 5));
+	CHECK(other.TakeDue(t0 + 1s) == std::vector<int>{ 99 });
+}
+
+TEST("send pacer: what goes out in order takes the fence down with it, and leaving clears it")
+{
+	SendPacer::Queue<int> line{ 2, 8192 };
+	const auto            t0 = Clock::now();
+	for (int i = 0; i < 5; ++i) {
+		line.Push(i);
+	}
+	line.Fence();
+	line.Push(5);
+	CHECK(line.TakeDue(t0).size() == 2);  // no request followed the load (not in a session): they go as ever
+	CHECK(line.BeforeFence() == 3);
+	CHECK(line.TakeDue(t0 + 1s).size() == 2);
+	CHECK(line.BeforeFence() == 1);
+	CHECK(line.TakeDue(t0 + 2s) == (std::vector<int>{ 4, 5 }));
+	CHECK(line.BeforeFence() == 0);
+
+	line.Push(1);
+	line.Fence();
+	line.Clear();
+	CHECK(line.BeforeFence() == 0);
+	line.Push(2);
+	line.Fence();
+	CHECK(line.TakeAll() == std::vector<int>{ 2 });
+	CHECK(line.BeforeFence() == 0);
+	line.Push(3);
+	CHECK(line.TakeFenced(t0 + 9s).due.empty());  // nothing fenced: what came since stays in line
+	CHECK(line.Size() == 1);
+}
+
 // The workshop's line leaves most of the server's 500 events a second to everything else, and holds the
 // biggest scrap-all.
 static_assert(SendPacer::WORKSHOP_PER_SECOND * 2 <= 500);

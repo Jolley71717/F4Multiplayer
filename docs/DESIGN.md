@@ -1544,7 +1544,8 @@ a request we sent can do that.
 
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
 save's record and asks for the session's changes again. The deaths and the player's moves from the
-frame before the save or load are sent first (deaths first), so they are in that answer. A save with no record of this session (made
+frame before the save or load are sent first (deaths first), so they are in that answer. So are the workshop reports still
+waiting in their line (`WorkshopSync::TakeFromWorldBefore`; see "Whose world"). A save with no record of this session (made
 alone, or in another session) takes this one from its first change, so the saves made from it on carry
 one. Container changes carry who made them; the player's own are never replayed. Those made before the
 loaded world (the save is from before them) are counted in `ownSkipped=`: replaying them would empty
@@ -2450,7 +2451,15 @@ the wire: the builder's `DropRecord::character` when the report came). The list 
 their welcome or load has said whose world it is (the record comes after both; a world request that isn't a gap marks
 the world unknown until it does), holds only that world's pieces, and a gone report is taken only for that world's.
 What a player reports before their record is tagged when it comes (`Player::untagged`); a piece whose character isn't
-known (an older build's, a layout 41 file's) is never asked about.
+known (an older build's, a layout 41 file's) is never asked about. So a report of the world before a load must reach the
+server before the load's request for the world: the game's reports wait in a paced line (`SendPacer`, 200 a second), and
+one still waiting at a load (a piece built a moment before, a blueprint) went after the request, was tagged with the
+loaded world's character, looked for there, and removed for everyone (up to 0.12.0). Loading another character's save
+leaves the session, which empties the line, but a world under another key the session keeps: a new game, a main-menu
+`coc` world, or the same character's save from before keys (`CharacterBinding::World`). Now a load fences the line (`SendPacer::Queue::Fence`, the first
+thing `WorkshopSync::OnGameLoaded` does) and the request goes behind what was fenced (`TakeFromWorldBefore`): as many as
+the pacer lets go then, the rest dropped (`dropped=`, logged): for a friend the piece is missing rather than gone for
+everyone, and the builder's walk, where it runs, finds it again.
 
 *Reversible.* A piece reported gone is not forgotten: it is kept as lost (`WorkshopOp::kLost`, at most
 `WorkshopStore::MAX_LOST`, the longest lost going first), saved with the session, and sent in the list marked lost. A lost
