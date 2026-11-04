@@ -150,7 +150,7 @@ namespace Puppets
 	// meanwhile (a new package can make the engine walk an actor out of its furniture). Its target is still kept.
 	void Hold(RE::Actor* a_actor, bool a_hold);
 
-	// The ways a puppet is sent into furniture, tried in this order (StandInSeat::MAX_TRIES).
+	// The ways a puppet is sent into furniture, tried in this order, in rounds (StandInSeat::SnapNext, MAX_TRIES).
 	enum class Entry
 	{
 		kSnap,      // Papyrus Actor.SnapIntoInteraction: straight into it, as scenes put NPCs in their seats

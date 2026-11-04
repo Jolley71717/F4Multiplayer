@@ -2019,11 +2019,15 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   stand-in gets up as they start to. The receiver finds its own copy: the named reference if it is of that base, else the
   nearest of that base within 32 units of the spot (a settlement's furniture, which WorkshopSync copies to the same
   spot), enabled, with 3D and in the stand-in's cell or worldspace. When the friend's spot is within 256 units of it, the
-  stand-in is held (`Puppets::Hold`: not placed at its target, no locomotion events, no do-nothing package renewal) and
-  sent in with Papyrus `Actor.SnapIntoInteraction`, then, 2 s later if it is not in it, by the console's `activate`
-  (plain furniture only, never a workbench or a terminal). Once in, the furniture's graph and marker place it. When
-  neither takes, or no such furniture is found, it stays held where it stood as they sat down instead of following them
-  onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
+  stand-in is held (`Puppets::Hold`: not placed at its target, no locomotion events, no do-nothing package renewal) and,
+  once it has had its 3D and its AI process for 1 s (`StandInSeat::READY_AFTER`), sent in with Papyrus
+  `Actor.SnapIntoInteraction`, then, 2 s later if it is not in it, by the console's `activate` (plain furniture only,
+  never a workbench or a terminal). A round that does not take is followed by another 5 s later, three rounds in all,
+  and a stand-in that is out of the seat again while they still sit goes on with the rounds left. A stand-in made
+  while its friend already sat (after a load or a join) used to be sent in the frame it was spawned, with no 3D, and
+  spent both ways before its head was built: it never got in (a quarter of the misses in a 5-player game's logs). Once
+  in, the furniture's graph and marker place it. When none takes, or no such furniture is found, it stays held where
+  it stood as they sat down instead of following them onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
   their states again. Dev: `seat <puppet> <furniture> [snap|activate]`, `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
