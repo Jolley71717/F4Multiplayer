@@ -2588,7 +2588,7 @@ TEST("downed camera: the loop is read and undone by the camera's own rules")
 	CHECK(!(Camera{ .current = Camera::TRANSITION, .transitionTo = Camera::THIRD_PERSON }.Loops()));
 	CHECK(!(Camera{ .current = Camera::TRANSITION, .transitionTo = -1 }.Loops()));  // its update does nothing
 	CHECK((Camera{ .current = Camera::TRANSITION, .transitionTo = Camera::TRANSITION }.Loops()));
-	CHECK((Camera{ .current = Camera::TRANSITION, .transitionTo = Camera::BLEEDOUT }.Loops()));
+	CHECK(!(Camera{ .current = Camera::TRANSITION, .transitionTo = Camera::BLEEDOUT }.Loops()));  // a down begun in a tween
 	CHECK((Camera{ .current = Camera::BLEEDOUT, .transitionTo = Camera::THIRD_PERSON, .returns = { Camera::FIRST_PERSON, Camera::TRANSITION } }.Loops()));
 	// On the stack: where the transition was going, the view the first down left.
 	const auto stacked = Camera{ .current = Camera::BLEEDOUT, .transitionTo = Camera::THIRD_PERSON, .returns = { Camera::TRANSITION } }.Unlooped(Camera::FIRST_PERSON);

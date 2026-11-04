@@ -35,8 +35,9 @@ namespace Hud
 		MenuWatcher watcher;
 
 		// The sound a notice plays: none, as the game's own notices (Papyrus Debug.Notification, the XP and quest
-		// lines) ask for it: a null name. The HUD hands the name to UIUtils::PlayMenuSound when the notice shows, which
-		// looks it up among the sounds' editor IDs by a hash of the name (1.11.240: +828B60). A null name is never
+		// lines) ask for it: a null name. The HUD hands the name to UIUtils::PlayMenuSound (ID 2249707, 1.11.240: +1086570)
+		// when the notice shows, which looks it up among the sounds' editor IDs by a hash of the name (that lookup: ID
+		// 2214760, +828B60). A null name is never
 		// looked up, but "" is: its hash is 0, the key of any sound whose editor ID was set empty (a mod's record, or an
 		// editor-ID loader), and that sound played on the player, unstopped. A looping one (a generator's hum, rushing
 		// water) stacked with each notice until a load.

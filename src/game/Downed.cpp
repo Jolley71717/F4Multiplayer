@@ -680,13 +680,16 @@ namespace Downed
 			.sneaking = player->IsSneaking(),
 			.bleedOutCamera = afterDown && BleedOutCamera(),
 			.bleedOutLayer = afterDown && BleedOutLayer(),
-			.cameraLoop = CameraLoop() };
+			.cameraLoop = afterDown && CameraLoop() };
 		const auto step = self.Frame(facts, now);
-		// The view the player has while up and out of any down, for a camera loop (FixCamera) to go back to.
-		if (const auto camera = RE::PlayerCamera::GetSingleton(); camera && camera->currentState && !afterDown && !facts.down) {
-			const auto id = StateNumber(camera, camera->currentState.get());
-			if (id == DownRules::Camera::FIRST_PERSON || id == DownRules::Camera::THIRD_PERSON) {
-				lastView = id;
+		// The view the player has while up and out of any down, for a camera loop (FixCamera) to go back to: only where a down
+		// can come (with friends), two looks at the camera.
+		if (const auto camera = enabled && !afterDown && !facts.down ? RE::PlayerCamera::GetSingleton() : nullptr; camera && camera->currentState) {
+			const auto current = camera->currentState.get();
+			if (current == camera->cameraStates[RE::CameraStates::kFirstPerson].get()) {
+				lastView = DownRules::Camera::FIRST_PERSON;
+			} else if (current == camera->cameraStates[RE::CameraStates::k3rdPerson].get()) {
+				lastView = DownRules::Camera::THIRD_PERSON;
 			}
 		}
 		Apply(player, step);

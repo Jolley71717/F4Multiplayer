@@ -159,17 +159,18 @@ namespace DownRules
 		// the end after it makes a transition to itself, which never ends (DownRules::Self's fixCamera).
 		[[nodiscard]] bool Loops() const
 		{
-			return (current == TRANSITION && transitionTo >= 0 && !View(transitionTo)) || std::ranges::find(returns, TRANSITION) != returns.end();
+			return (current == TRANSITION && transitionTo == TRANSITION) || std::ranges::find(returns, TRANSITION) != returns.end();
 		}
 
 		// That loop undone: the transition on the return stack is where it was going (the view the last down left), or
-		// a_lastView when that is no view; a current transition to no view goes to a_lastView, as its time runs out.
+		// a_lastView when that is no view; a current transition to itself goes to a_lastView, as its time runs out. One to
+		// the bleed-out camera is no loop: a down begun in a tween goes there, and its end is FinishDown's.
 		[[nodiscard]] Camera Unlooped(int a_lastView) const
 		{
 			Camera     fixed = *this;
 			const int  view = View(transitionTo) ? transitionTo : a_lastView;
 			std::ranges::replace(fixed.returns, TRANSITION, view);
-			if (current == TRANSITION && transitionTo >= 0 && !View(transitionTo)) {
+			if (current == TRANSITION && transitionTo == TRANSITION) {
 				fixed.transitionTo = a_lastView;
 			}
 			return fixed;
