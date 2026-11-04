@@ -90,6 +90,12 @@ namespace Config
 				} else {
 					REX::WARN("Config: sStory = '{}' is neither shared nor own; the story stays {}", value, StorySetting::Name(settings.sharedStory));
 				}
+			} else if (key == "sQuests") {
+				if (const auto safe = StorySetting::ParseQuests(value)) {
+					settings.safeQuests = *safe;
+				} else {
+					REX::WARN("Config: sQuests = '{}' is neither story nor safe; it stays {}", value, StorySetting::QuestsName(settings.safeQuests));
+				}
 			} else if (key == "sIgnoredPlugins") {
 				settings.ignoredPlugins.clear();
 				for (std::size_t start = 0; start <= value.size();) {
@@ -244,7 +250,7 @@ namespace Config
 			REX::WARN("Config: sLogLevel '{}' is not info or debug; keeping {}", settings.logLevel, Log::Level());
 		}
 		// Whether the story is shared decides what a host's session shares; said here so a log shows it without hosting.
-		REX::INFO("Config: loaded {} (sStory: {})", PATH, StorySetting::Name(settings.sharedStory));
+		REX::INFO("Config: loaded {} (sStory: {}, sQuests: {})", PATH, StorySetting::Name(settings.sharedStory), StorySetting::QuestsName(settings.safeQuests));
 	}
 
 	const Settings& Get()

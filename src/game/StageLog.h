@@ -33,6 +33,27 @@ namespace StageLog
 		return fresh;
 	}
 
+	// What a quest's done stages come to, added up as they are read off the quest, in any order, without a list: how many
+	// there are and a sum of each one's index mixed. The same stages done, the same digest; others, all but surely
+	// another. A quest's stages are read out (Done) again only when it changed, not at every poll of every quest watched.
+	struct Digest
+	{
+		std::uint32_t count = 0;
+		std::uint64_t sum = 0;
+
+		void Add(std::uint16_t a_stage)
+		{
+			// splitmix64's finalizer
+			std::uint64_t x = a_stage + 0x9E3779B97F4A7C15ull;
+			x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+			x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+			sum += x ^ (x >> 31);
+			++count;
+		}
+
+		bool operator==(const Digest&) const = default;
+	};
+
 	// Adds a stage to a list (one set here from another player, so the next look doesn't report it).
 	inline void Insert(Stages& a_stages, std::uint16_t a_stage)
 	{
@@ -92,13 +113,15 @@ namespace StageLog
 			bool sending = false;      // connected and welcomed
 			bool inSession = false;    // in a session, or joining or rejoining one (a host's own game hosting one)
 			bool sharedStory = false;  // the session shares the story (the welcome says)
+			bool safeQuests = false;   // ... and the quests QuestFilter::SAFE holds (the welcome's sQuests = safe)
 		};
 
-		// a_story: a stage of the main story or of a faction's quest, for a session that shares the story only.
-		void Add(Report a_report, bool a_story = false)
+		// a_story: a stage of the main story or of a faction's quest, for a session that shares the story only. a_safe: of a
+		// quest QuestFilter::SAFE holds, for a session that shares those (and the story) only.
+		void Add(Report a_report, bool a_story = false, bool a_safe = false)
 		{
 			if (reports.size() < MAX_UNSENT) {
-				reports.push_back({ std::move(a_report), a_story });
+				reports.push_back({ std::move(a_report), a_story, a_safe });
 			}
 		}
 
@@ -117,9 +140,9 @@ namespace StageLog
 				return {};
 			}
 			downSince.reset();
-			if (!a_link.sharedStory) {
-				std::erase_if(reports, [](const Entry& a_entry) { return a_entry.story; });
-			}
+			std::erase_if(reports, [&](const Entry& a_entry) {
+				return (a_entry.story && !a_link.sharedStory) || (a_entry.safe && !(a_link.sharedStory && a_link.safeQuests));
+			});
 			if (a_now - windowStart >= std::chrono::seconds(1)) {
 				windowStart = a_now;
 				sentThisSecond = 0;
@@ -153,6 +176,7 @@ namespace StageLog
 		{
 			Report report;
 			bool   story = false;
+			bool   safe = false;
 		};
 
 		std::vector<Entry>               reports;

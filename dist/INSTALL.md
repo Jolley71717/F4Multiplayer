@@ -114,6 +114,13 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `bFriendlyFire` (false): on, players can hurt each other with weapons. Off, only enemies hurt a player.
 - `sStory` (shared): `shared`, the main story and the faction quests move along for everyone. `own`, each guest plays
   them in their own game. Side quests are shared either way. See [What is shared](#what-is-shared).
+- `sQuests` (story): with `sStory = shared`, `safe` shares more quests with the story: the misc quests and Far Harbor's
+  and Nuka-World's own quests that play out the same in every game (Diamond City's and Goodneighbor's errands, the
+  "talk to" pointers, Nuka-World's park quests). Whoever moves one on moves everyone along, and a joiner is caught up
+  on the host's. Quests whose targets each game picks, companions' quests, quests that turn a faction hostile or change
+  who owns a settlement, survival mode's and your dog's stay each
+  player's own, and a quest's reward item is given in each game. `story` (the default) shares the story's quests only.
+  The F1 menu's *More quests* switch sets it. The dedicated server takes it as `--safe-quests`.
 - `sIgnoredPlugins` (empty): plugins, comma-separated, that guests may have different. A guest is not told about
   them when their mods differ from the host's.
 - `bSaveSession` (true): the host's game keeps the shared world on disk and carries on with it next time that
@@ -483,7 +490,8 @@ Each player's own, always:
 - Companions and romance: each game keeps its own affinity.
 - Keys, notes, holotapes, bobbleheads and magazines: each of you collects your own.
 - A settlement's workbench storage, vendors, the radio, survival needs.
-- Misc quests, and the radiant quests not listed above (settlement attacks, for example).
+- Misc quests (unless the host sets `sQuests = safe`), and the radiant quests not listed above (settlement attacks,
+  for example).
 
 The main story and the factions follow the host's `sStory` setting:
 
@@ -535,7 +543,7 @@ welcome.
 
 ## Dedicated server (optional)
 
-`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story]` runs a server
+`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story] [--safe-quests]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
 `sServerAddress`.
 
@@ -552,8 +560,8 @@ without it they last until it stops.
 - Keys, notes, holotapes, bobbleheads, magazines and quest items can't be given to a friend, and a weapon or armor put
   in a container is given only with the host's experimental `bContainerGifts` on: otherwise drop it near them.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
-- Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters) and radiant quests other than those listed under
-  "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.
+- Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters, and those the host's `sQuests = safe`
+  shares) and radiant quests other than those listed under "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.
 - Vault 114's gear door and security gates opened from a terminal or card reader open for everyone. Other doors
   a quest script opens may still open only for the player who opened them.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server

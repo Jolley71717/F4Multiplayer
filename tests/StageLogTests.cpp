@@ -1214,3 +1214,50 @@ TEST("stage queue: a lock's stage that sets another quest's isn't held up by oth
 	game.Run(queue, now, 3);
 	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
 }
+
+TEST("stage outbox: a stage of a quest sQuests = safe shares goes only into a session that shares the story and those quests")
+{
+	Outbox<int> outbox;
+	const auto  now = Start();
+	outbox.Add(1, true, true);  // safe quests are shared with the story only
+	outbox.Add(2);
+	outbox.Add(3, true);
+	CHECK((outbox.Take(now, { true, true, true, false }) == std::vector<int>{ 2, 3 }));  // sQuests = story
+	CHECK(outbox.Size() == 0);
+
+	outbox.Add(4, true, true);
+	outbox.Add(5, false, true);  // a safe quest's done report
+	CHECK((outbox.Take(now + 2s, { true, true, true, true }) == std::vector<int>{ 4, 5 }));
+	outbox.Add(6, true, true);
+	outbox.Add(7, false, true);
+	CHECK(outbox.Take(now + 4s, { true, true, false, true }).empty());  // sQuests = safe means nothing with each player's own story
+	CHECK(outbox.Size() == 0);
+
+	// Kept while the connection is remade, then judged by the session's rules once it is back.
+	outbox.Add(8, true, true);
+	CHECK(outbox.Take(now + 6s, RECONNECTING).empty());
+	CHECK(outbox.Size() == 1);
+	CHECK((outbox.Take(now + 8s, { true, true, true, true }) == std::vector<int>{ 8 }));
+}
+
+TEST("stage log: a quest's done stages have one digest whatever the order they are read in, and another for other stages")
+{
+	const auto of = [](std::initializer_list<std::uint16_t> a_stages) {
+		StageLog::Digest digest;
+		for (const auto stage : a_stages) {
+			digest.Add(stage);
+		}
+		return digest;
+	};
+	CHECK(of({}) == StageLog::Digest{});
+	CHECK(of({ 10, 20, 30 }) == of({ 30, 10, 20 }));
+	CHECK(of({ 10, 20, 30 }) != of({ 10, 20 }));
+	CHECK(of({ 10, 20, 30 }) != of({ 10, 20, 40 }));
+	CHECK(of({ 0 }) != of({}));
+	CHECK(of({ 1, 2 }) != of({ 3 }));  // counted, and mixed: not a sum of the indexes
+	CHECK(of({ 0, 3 }) != of({ 1, 2 }));
+	// One stage more or less, whichever: a quest whose stages were reset reads another digest.
+	for (std::uint16_t stage = 0; stage < 2000; stage += 5) {
+		CHECK(of({ 10, 20 }) != of({ 10, 20, static_cast<std::uint16_t>(stage + 21) }));
+	}
+}

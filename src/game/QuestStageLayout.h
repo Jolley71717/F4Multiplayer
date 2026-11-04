@@ -42,6 +42,19 @@ namespace QuestStageLayout
 		return done;
 	}
 
+	// The digest of the quest's stages done in this game (StageLog::Digest), read without a list.
+	using Digest = StageLog::Digest;
+	inline Digest DigestOf(const RE::TESQuest* a_quest)
+	{
+		Digest digest;
+		for (const auto stage : a_quest->stages) {
+			if (stage && IsDone(*Of(stage))) {
+				digest.Add(Of(stage)->data.index);
+			}
+		}
+		return digest;
+	}
+
 	inline bool IsStageDone(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 	{
 		return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) {

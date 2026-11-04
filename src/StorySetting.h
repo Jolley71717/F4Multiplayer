@@ -37,4 +37,31 @@ namespace StorySetting
 	{
 		return a_shared ? "shared" : "own";
 	}
+
+	// The host's sQuests (Protocol::QuestRule): with the story shared, the story's quests only ("story", the default, also
+	// when the key is missing) or the quests src/game/QuestFilter.h's SAFE holds too ("safe"). Read as sStory is.
+	// true: safe, false: story, nullopt: neither (the setting is left as it was).
+	inline std::optional<bool> ParseQuests(std::string_view a_value)
+	{
+		const auto first = a_value.find_first_not_of(" \t\r\n\"'");
+		if (first == std::string_view::npos) {
+			return std::nullopt;
+		}
+		a_value = a_value.substr(first, a_value.find_last_not_of(" \t\r\n\"'") - first + 1);
+		const auto is = [&](std::string_view a_word) {
+			return std::ranges::equal(a_value, a_word, [](unsigned char a_left, unsigned char a_right) { return std::tolower(a_left) == a_right; });
+		};
+		if (is("safe")) {
+			return true;
+		}
+		if (is("story")) {
+			return false;
+		}
+		return std::nullopt;
+	}
+
+	constexpr std::string_view QuestsName(bool a_safe)
+	{
+		return a_safe ? "safe" : "story";
+	}
 }

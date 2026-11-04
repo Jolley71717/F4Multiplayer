@@ -402,8 +402,9 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	running = true;
 	thread = std::thread([this] { Run(); });
 	// The story's choice too: a joiner whose story progress never reaches the host's game is first asked for this line.
-	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story)", options.port,
-		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own"));
+	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story{})", options.port,
+		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own",
+		options.sharedStory && options.rules.quests == Protocol::QuestRule::kSafe ? ", safe quests too" : ""));
 	const auto kept = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	log(std::format("server: a joiner's share this run: {} world entries, {} container changes, {} built objects, {} moved object places of {}",
 		options.maxWorldEntriesPerPlayer, options.maxContainerChangesPerPlayer, options.maxWorkshopItemsPerPlayer,
