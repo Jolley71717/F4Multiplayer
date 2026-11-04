@@ -10,7 +10,7 @@ param(
 	[string]$Label = '',  # "rc3" for a release candidate: named in the zip, and with the commit in the plugin log
 	[switch]$Nexus,  # the Nexus upload: without F4MPServer.exe (only dedicated servers need it, and it is one more compiled file for their scanner); the GitHub release carries the full zip
 	[string]$OutDir = '',  # where the zip goes (dist\out); a scratch folder for trying the script out
-	[string]$Movies = '',  # the compiled menu movies (ui\<Name>\<Name>.as), as package.yml builds them; without it, from beside their sources
+	[string]$Movies = '',  # the compiled menu movies (ui\<Name>\<Name>.as), as package.yml builds them; without it, from dist\movies
 	[switch]$AllowDirty  # local experiments only: packages uncommitted changes, the build calls itself "-dirty" and promote.ps1 refuses it
 )
 
@@ -147,6 +147,8 @@ New-Item -ItemType Directory -Force $lang | Out-Null
 $langFiles = @(Get-ChildItem (Join-Path $root 'dist\lang') -Filter '*.txt' -File)
 if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lang has no en.txt' }
 Copy-Item $langFiles.FullName $lang
+# The multiplayer menu's About page (Menu.cpp).
+Copy-Item (Join-Path $root 'dist\about.txt') (Join-Path $stage 'F4SE\Plugins\F4Multiplayer')
 # The menu movies, where the game looks for menus: Data\Interface, in a folder of ours.
 if ($menuMovies) {
 	$interface = Join-Path $stage 'Interface\F4Multiplayer'
