@@ -1299,7 +1299,10 @@ So players give each other items by dropping them, and the server decides who ha
   player their own pickups in a world state: the picker's game has the item already, in an inventory or lying where they
   dropped it. A save of theirs from before the pickup has it where the plugin placed it, theirs to pick up again (a
   second pickup report of it changes nothing); two characters of one PC share a player ID, so the other character's
-  world keeps it too. A file before 43 knows no picker: its pickups go to everyone, as before.
+  world keeps it too. A file before 43 knows no picker: its pickups go to everyone, as before. Only the first picker
+  is kept: two players who pick up the same item before either hears of the other's pickup, and the second drops it
+  un-swapped, still lose it there (rare). And a picker who gave the item away and loads a save from before the pickup
+  has it again, as with container changes (`ownSkipped`): one more copy.
   Once it has come to rest
   (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
   with a random number of the giver's game (the nonce), its mods and template combination (read as
@@ -2466,7 +2469,11 @@ leaves the session, which empties the line, but a world under another key the se
 `coc` world, or the same character's save from before keys (`CharacterBinding::World`). Now a load fences the line (`SendPacer::Queue::Fence`, the first
 thing `WorkshopSync::OnGameLoaded` does) and the request goes behind what was fenced (`TakeFromWorldBefore`): as many as
 the pacer lets go then, the rest dropped (`dropped=`, logged): for a friend the piece is missing rather than gone for
-everyone, and the builder's walk, where it runs, finds it again.
+everyone, and the builder's walk, where it runs, finds it again. Only when the world changed: a load of the world the
+server last heard of (`CharacterBinding::World::SameAsTold`: a death reload, a quickload, the commonest) lifts the fence
+(`Unfence`) and the line goes on at its pace, since after the request its reports are tagged with that same world. Holding
+the request until the line drains instead would lose nothing, but it would move the record and the rest of what follows a
+load behind the backlog too.
 
 *Reversible.* A piece reported gone is not forgotten: it is kept as lost (`WorkshopOp::kLost`, at most
 `WorkshopStore::MAX_LOST`, the longest lost going first), saved with the session, and sent in the list marked lost. A lost

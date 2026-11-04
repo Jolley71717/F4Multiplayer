@@ -2795,12 +2795,21 @@ namespace WorkshopSync
 		return packets;
 	}
 
-	std::vector<std::vector<std::uint8_t>> TakeFromWorldBefore()
+	std::vector<std::vector<std::uint8_t>> TakeFromWorldBefore(bool a_sameWorld)
 	{
 		SendPacer::Queue<Outgoing>::Fenced taken;
 		std::size_t                        after = 0;
 		{
 			std::scoped_lock l{ outLock };
+			if (a_sameWorld) {
+				// The loaded world is the one the server tags our reports with already: after the request they get the same
+				// character, so they wait their turn, none dropped.
+				if (outgoing.BeforeFence() != 0) {
+					REX::INFO("WorkshopSync: load: {} reports from before it wait their turn (the same world)", outgoing.BeforeFence());
+				}
+				outgoing.Unfence();
+				return {};
+			}
 			taken = outgoing.TakeFenced(Clock::now());
 			after = outgoing.Size();
 			if (outgoing.Empty()) {

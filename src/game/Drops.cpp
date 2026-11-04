@@ -1133,11 +1133,12 @@ namespace Drops
 			copyRefIds = std::move(ids);
 		}
 
-		Protocol::DropRecord RecordForServer()
+		// a_telling: it goes to the server, which tags what we build with its character from then on (SameWorldAsTold).
+		Protocol::DropRecord RecordForServer(bool a_telling)
 		{
 			std::scoped_lock l{ recordLock };
 			auto             out = record.ForServer();
-			out.character = world.Key(WorldRandom());
+			out.character = a_telling ? world.Tell(WorldRandom()) : world.Key(WorldRandom());
 			return out;
 		}
 	}
@@ -1489,14 +1490,14 @@ namespace Drops
 		hinted = false;
 		refusalSaid = false;
 		listening = true;
-		Send(Protocol::Encode(RecordForServer()));
+		Send(Protocol::Encode(RecordForServer(true)));
 		REX::INFO("Drops: welcomed; our record of this session sent");
 	}
 
 	void SendRecord()
 	{
 		if (listening) {
-			Send(Protocol::Encode(RecordForServer()));
+			Send(Protocol::Encode(RecordForServer(true)));
 		}
 	}
 
@@ -1596,6 +1597,12 @@ namespace Drops
 		world.Started(a_newGame, a_character, WorldRandom());
 	}
 
+	bool SameWorldAsTold()
+	{
+		std::scoped_lock l{ recordLock };
+		return world.SameAsTold();
+	}
+
 	void Reset()
 	{
 		listening = false;
@@ -1609,6 +1616,7 @@ namespace Drops
 		localId = 0;
 		std::scoped_lock l{ recordLock };
 		record.Bind(0);
+		world.Untold();  // the next session's server has heard of no world of ours
 	}
 
 	std::string List()
@@ -1622,7 +1630,7 @@ namespace Drops
 		for (const auto& entry : pending) {
 			out += std::format("; pending {:08X} base={:08X} x{} {}", entry.refId, entry.base, entry.count, entry.reported ? "reported" : "settling");
 		}
-		const auto ours = RecordForServer();
+		const auto ours = RecordForServer(false);
 		out += std::format("; record: session={:016X} made={} taken={} character={:016X}", ours.sessionId, ours.made.size(), ours.taken.size(), ours.character);
 		return out;
 	}

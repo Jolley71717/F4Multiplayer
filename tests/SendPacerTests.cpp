@@ -197,6 +197,26 @@ TEST("send pacer: what goes out in order takes the fence down with it, and leavi
 	CHECK(line.Size() == 1);
 }
 
+TEST("send pacer: a fence lifted (a load of the same world) drops nothing: everything waits its turn, in order")
+{
+	SendPacer::Queue<int> line{ 200, 8192 };
+	const auto            t0 = Clock::now();
+	for (int i = 0; i < 450; ++i) {
+		line.Push(i);  // a blueprint placed just before a quickload
+	}
+	line.Fence();
+	line.Push(1000);  // the loaded world's
+	line.Unfence();
+	CHECK(line.BeforeFence() == 0);
+	CHECK(line.TakeFenced(t0).due.empty());  // nothing is from before a fence any more
+	CHECK(line.Size() == 451);
+	CHECK(line.TakeDue(t0) == Numbers(0, 200));
+	CHECK(line.TakeDue(t0 + 1s) == Numbers(200, 200));
+	auto last = Numbers(400, 50);
+	last.push_back(1000);
+	CHECK(line.TakeDue(t0 + 2s) == last);
+}
+
 // The workshop's line leaves most of the server's 500 events a second to everything else, and holds the
 // biggest scrap-all.
 static_assert(SendPacer::WORKSHOP_PER_SECOND * 2 <= 500);

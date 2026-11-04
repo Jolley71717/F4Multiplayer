@@ -1070,12 +1070,12 @@ void Server::Run()
 		// Not the receiver's own pickups: their game has those already, in an inventory or dropped again where they lie now
 		// (as the same reference, for a plugin's persistent item), and would take a dropped one away as a friend's pickup.
 		// A save from before they picked one up has it lying where it was placed: theirs to pick up again.
-		const auto                 to = players.find(a_to);
-		const auto                 toId = to != players.end() ? to->second.id : 0;
+		const auto                 receiver = players.find(a_to);
+		const auto                 receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::vector<std::uint32_t> picked;
 		picked.reserve(pickedUp.size());
 		for (const auto& [ref, picker] : pickedUp) {
-			if (picker == 0 || picker != toId) {
+			if (picker == 0 || picker != receiverId) {  // an unknown picker is never the receiver, even one not found (0)
 				picked.push_back(ref);
 			}
 		}
@@ -1130,8 +1130,6 @@ void Server::Run()
 		}
 		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
 		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
-		const auto  receiver = players.find(a_to);
-		const auto  receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::size_t healths = 0;
 		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
 			const auto owner = actorOwners.find(a_ref);

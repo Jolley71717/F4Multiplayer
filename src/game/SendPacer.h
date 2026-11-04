@@ -94,6 +94,10 @@ namespace SendPacer
 		// server ahead of the message that says the world changed). What comes after waits behind it, as ever.
 		void Fence() { fenced = items.size(); }
 
+		// The fence wasn't needed after all (what waits may as well go after the fence's message): it is lifted, and
+		// everything waits in line at its pace, as before it.
+		void Unfence() { fenced = 0; }
+
 		// What waits from before the fence: the part the pacer lets go now (oldest first, counted as sent, as TakeDue's), and
 		// the rest of it (late), taken out of the line unsent: it must not go after the fence's own message, and can't go
 		// before it any faster. What came after the fence stays in line.

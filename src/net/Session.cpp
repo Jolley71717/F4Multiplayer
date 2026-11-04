@@ -1805,8 +1805,9 @@ namespace Session
 			},
 			[](const Protocol::WorldRequest& a_request) {
 				// What we built, moved or scrapped before the load and haven't sent yet goes first: after the request the server
-				// would tag it with the loaded world's character (its next record's), and that world would report it gone.
-				for (auto& packet : WorkshopSync::TakeFromWorldBefore()) {
+				// would tag it with the loaded world's character (its next record's), and that world would report it gone. Unless the
+				// loaded world is the one the server knows already (a death reload, a quickload): then it waits its turn.
+				for (auto& packet : WorkshopSync::TakeFromWorldBefore(Drops::SameWorldAsTold())) {
 					SendOut(std::move(packet), true);
 				}
 				SendOut(Protocol::Encode(a_request), true);
