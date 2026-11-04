@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T08:24:29+00:00",
+ "updated": "2026-11-04T09:00:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -452,8 +452,9 @@
    "title": "A friend's stand-in often never gets into a seat: left standing (0.10.0, 253 times in a 5-player session, mostly one plugin's furniture)",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 295
   },
   {
    "id": "a9t8",
@@ -912,7 +913,7 @@
    "title": "Shared workshop materials and settlement supply lines",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -1436,6 +1437,14 @@
    "kind": "bug",
    "priority": 3,
    "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "t7if",
+   "title": "Some furniture never takes a friend's stand-in (work furniture, a DLC's seats): the friend shows standing",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
    "note": ""
   },
   {
