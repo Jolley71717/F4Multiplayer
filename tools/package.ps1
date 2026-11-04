@@ -192,6 +192,8 @@ $manifest = Join-Path $OutDir "$name.manifest.txt"
 	"dll_sha256=$dllHash"
 	"pdb=symbols/$pdb"
 	"enet=$enet"
+	# The menu movies are built with their build dates cleared, so these match a vet.yml run on the same sources.
+	if ($menuMovies) { "movies_sha256=$(@($menuMovies | ForEach-Object { "$(Split-Path $_ -Leaf):$(Get-Sha256 $_)" }) -join ' ')" }
 ) | Set-Content -LiteralPath $manifest -Encoding ASCII
 
 "Packaged $zip"

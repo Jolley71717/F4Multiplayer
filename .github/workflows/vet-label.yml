@@ -1,8 +1,9 @@
-# Flags pull requests that need vetting (vet.yml) before their code is built or run on the maintainer's machines: those
-# that add a binary file or touch the build, the tools, the workflows or other repository plumbing (the rules are in
-# .github/scripts/vet.py). It adds `needs-vetting` and says why; the owner runs vet.yml and adds `vetted` by hand after
-# reading the report. New commits always take `vetted` off. The owner's own PRs are not flagged: their code was written
-# on the maintainer's machines in the first place.
+# Flags pull requests that need vetting (vet.yml) before their code is built or run on the maintainer's machines (the
+# rules are in .github/scripts/vet.py, api_flags). An outside PR is flagged when it adds a binary file or touches the
+# build, the tools, the workflows or other repository plumbing. The owner's own PR is flagged only for new or changed
+# binaries, new URLs in code, scripts or build files, changes under .github/, submodule changes and xmake.lua lines that
+# fetch packages: plain edits under tools/ don't count. It adds `needs-vetting` and says why; the owner runs vet.yml and
+# adds `vetted` by hand after reading the report. New commits always take `vetted` off.
 # Like review-label.yml: pull_request_target runs this file from main with a token that can write labels, also for PRs
 # from forks. It reads only the API's list of the PR's files, never checks out or runs the PR's code, and passes
 # everything from the event through env:, never into the script's text.
@@ -46,12 +47,10 @@ jobs:
             gh pr edit "$PR" --repo "$REPO" --remove-label vetted
             gh pr comment "$PR" --repo "$REPO" --body "New commits (${BEFORE:0:7}..${AFTER:0:7}) since the vetting: the \`vetted\` label is removed until they are vetted too."
           fi
-          if [ "$AUTHOR" = "$OWNER" ]; then
-            echo "The owner's own PR: not flagged"
-            exit 0
-          fi
+          rule=()
+          if [ "$AUTHOR" = "$OWNER" ]; then rule=(--owner); fi
           gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
-          python3 -I trusted/.github/scripts/vet.py flags "$RUNNER_TEMP/files.jsonl" --comment "$RUNNER_TEMP/comment.md" > "$RUNNER_TEMP/flags.json"
+          python3 -I trusted/.github/scripts/vet.py flags "${rule[@]}" "$RUNNER_TEMP/files.jsonl" --comment "$RUNNER_TEMP/comment.md" > "$RUNNER_TEMP/flags.json"
           if ! jq -e .needs_vetting "$RUNNER_TEMP/flags.json" > /dev/null; then
             echo "Nothing that needs vetting"
             exit 0

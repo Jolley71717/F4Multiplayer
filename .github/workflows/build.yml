@@ -3,7 +3,9 @@
 # branch other than main, and by hand (Actions > Build > Run workflow, or `gh workflow run build.yml -f ref=<ref>`), never for
 # pull requests, so a fork can't spend build time. Building by hand also covers branches made before this file existed.
 # The built plugin and the test log are kept for 7 days as the run's artifact "build-<ref>" (`gh run download <run id>`).
-# Release zips are still made by tools/package.ps1. The job runs only for the repository owner, even if others get write access.
+# Release zips are made by package.yml (or tools/package.ps1). The job runs only for the repository owner, even if others get write access.
+# No cache, restored or saved: vet.yml runs pull requests' code in runs on main, where it could write a cache entry that
+# a later build would restore (an xmake binary or prebuilt packages). Keep every workflow cache-free while that holds.
 name: Build
 run-name: Build ${{ inputs.ref || github.head_ref || github.ref_name }}
 
@@ -40,24 +42,13 @@ jobs:
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: '3.1.1'
-          actions-cache-folder: .xmake-cache
-
-      - name: Cache xmake packages (ENet)
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/xmake-packages
-          key: xmake-packages-${{ hashFiles('xmake.lua') }}
 
       - name: Configure
         shell: pwsh
-        env:
-          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
         run: xmake f -y -m releasedbg -a x64 -p windows --vs=2022
 
       - name: Build
         shell: pwsh
-        env:
-          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
         run: xmake build -y
 
       - name: Unit tests

@@ -36,7 +36,10 @@ early can run it and say whether it holds. In this order:
    The menu movies (`ui/<Name>/<Name>.as`) go into the zip's `Interface/F4Multiplayer/`, compiled from
    source: `-Movies <folder>` names the folder they were compiled into (the workflow does that); without it
    they are read from beside their sources, where `tools/flash/build.ps1` builds them, and a movie git tracks
-   is refused. With no `ui/`, there are none.
+   is refused. With no `ui/`, there are none. The workflows clear the build dates mxmlc writes into a movie
+   (its compile time and its Metadata date), so the same sources make the same bytes: the manifest's
+   `movies_sha256` line can be checked against a `vet.yml` report on that commit. A movie built on this PC
+   keeps its dates and hashes differently.
 
    The plugin's log then says `F4Multiplayer build rcN <commit>` near its top: that is how a log
    names the build it came from. An untracked file under `src`, `common`, `bot` or `tests` counts as

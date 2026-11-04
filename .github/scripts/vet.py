@@ -5,7 +5,7 @@ Everything here comes from main. A pull request's files are only read as data: g
 from the pull request is imported or run, except its ActionScript sources, which `compile` hands to the pinned Flex
 compiler. Standard library only; run it with `python3 -I`.
 
-  flags FILES.jsonl [--comment FILE]   the API's file list -> {"needs_vetting": ..., "reasons": [...]}
+  flags FILES.jsonl [--owner] [--comment FILE]   the API's file list -> {"needs_vetting": ..., "reasons": [...]}
   inspect --repo DIR --base SHA --head SHA --api-files FILES.jsonl --out FILE
   toolchain --work DIR [--unpack DIR] [--strict] [--claims-repo DIR --claims-rev REV] --out FILE
   compile --flex DIR --ui DIR --out DIR --report FILE
@@ -125,26 +125,65 @@ def sha256_file(path):
 # ---------------------------------------------------------------------------------------------------------- flags
 
 
-def api_flags(files):
-    """Why a PR needs vetting, from the API's file list alone (vet-label.yml reads nothing else)."""
+# In xmake.lua, the lines that fetch something: package requirements, package repositories and definitions, includes.
+XMAKE_FETCH = re.compile(r"^[-+].*\b(add_requires|add_requireconfs|add_repositories|package|add_urls|set_urls|add_versions|includes)\s*\(",
+                         re.MULTILINE)
+
+
+def patch_urls(patch):
+    """URLs on the lines a patch adds, less those on the lines it removes (a URL moved within the file is not new)."""
+    added, removed = set(), set()
+    for line in patch.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            added.update(url.rstrip(".,;:") for url in URL.findall(line))
+        elif line.startswith("-") and not line.startswith("---"):
+            removed.update(url.rstrip(".,;:") for url in URL.findall(line))
+    return sorted(added - removed)
+
+
+def api_flags(files, owner=False):
+    """Why a PR needs vetting, from the API's file list alone (vet-label.yml reads nothing else).
+
+    An outside PR: any binary, submodule change or sensitive path. The owner's own PR: only new or changed binaries,
+    new URLs in code, scripts or build files, changes under .github/, submodule changes, and xmake.lua lines that
+    fetch packages; plain edits under tools/ and the like don't count."""
     reasons = []
     for f in files:
         path, status = f.get("filename", ""), f.get("status", "")
+        patch = f.get("patch", "")
         if status != "removed":
             if extension(path) in BINARY_EXTENSIONS:
                 reasons.append(f"binary ({status}): {path}")
             elif "patch" not in f and f.get("changes", 0) == 0 and status in ("added", "modified", "copied", "changed"):
                 reasons.append(f"no text diff, likely binary ({status}): {path}")
-        if re.search(r"^[-+]Subproject commit", f.get("patch", ""), re.MULTILINE):
+        if re.search(r"^[-+]Subproject commit", patch, re.MULTILINE):
             reasons.append(f"submodule pointer ({status}): {path}")
-        for old_or_new in {path, f.get("previous_filename") or path}:
-            for reason in sensitive_reasons(old_or_new):
-                reasons.append(f"{reason} ({status}): {old_or_new}")
+        paths = {path, f.get("previous_filename") or path}
+        if not owner:
+            for old_or_new in paths:
+                for reason in sensitive_reasons(old_or_new):
+                    reasons.append(f"{reason} ({status}): {old_or_new}")
+            continue
+        for old_or_new in paths:
+            if old_or_new.startswith(".github/"):
+                reasons.append(f".github (workflows, CI) ({status}): {old_or_new}")
+            if re.search(r"(^|/)\.gitmodules$", old_or_new):
+                reasons.append(f".gitmodules (submodules) ({status}): {old_or_new}")
+        if re.search(r"(^|/)xmake\.lua$", path):
+            if "patch" not in f:
+                reasons.append(f"xmake.lua with no diff to read ({status}): {path}")
+            elif XMAKE_FETCH.search(patch):
+                reasons.append(f"xmake.lua package requirements ({status}): {path}")
+        if not PROSE.search(path):
+            if "patch" not in f and f.get("additions", 0) > 0:
+                reasons.append(f"no diff to read for URLs ({status}): {path}")
+            for url in patch_urls(patch):
+                reasons.append(f"new URL: {path}: {url}")
     return reasons
 
 
 def cmd_flags(args):
-    reasons = api_flags(read_json_stream(args.files))
+    reasons = api_flags(read_json_stream(args.files), owner=args.owner)
     json.dump({"needs_vetting": bool(reasons), "reasons": reasons}, sys.stdout)
     sys.stdout.write("\n")
     if args.comment:
@@ -281,14 +320,15 @@ def download(url, path):
 
 
 def gpg_verify(keys, signature, data):
-    """Verify `signature` of `data` against only the keys in the file `keys`."""
+    """Verify `signature` of `data` against only the keys in the file `keys`. Only the key's fingerprint is reported,
+    never its user id, which names a person (AGENTS.md)."""
     home = tempfile.mkdtemp(prefix="vet-gpg-")
     os.chmod(home, 0o700)
     try:
         base = ["gpg", "--homedir", home, "--batch", "--no-tty"]
         subprocess.run(base + ["--import", keys], capture_output=True)
         verify = subprocess.run(base + ["--status-fd", "1", "--verify", signature, data], capture_output=True, text=True)
-        result = {"good": False, "fingerprint": "", "uids": [], "date": "", "status": []}
+        result = {"good": False, "fingerprint": "", "listed": False, "date": "", "status": []}
         for line in verify.stdout.splitlines():
             parts = line.split()
             if len(parts) < 2 or parts[0] != "[GNUPG:]":
@@ -300,10 +340,8 @@ def gpg_verify(keys, signature, data):
         result["good"] = "GOODSIG" in result["status"] and bool(result["fingerprint"]) and verify.returncode == 0
         if result["fingerprint"]:
             listing = subprocess.run(base + ["--with-colons", "--list-keys", result["fingerprint"]], capture_output=True, text=True)
-            for line in listing.stdout.splitlines():
-                fields = line.split(":")
-                if fields[0] == "uid" and len(fields) > 9:
-                    result["uids"].append(fields[9].replace("\\x3a", ":"))
+            result["listed"] = listing.returncode == 0 and any(
+                line.startswith("fpr:") and line.split(":")[9] == result["fingerprint"] for line in listing.stdout.splitlines())
         return result
     finally:
         shutil.rmtree(home, ignore_errors=True)
@@ -385,11 +423,10 @@ def cmd_toolchain(args):
         if result["fingerprint"]:
             pinned = pins["FLEX_KEY_FINGERPRINT"].replace(" ", "").upper()
             same = result["fingerprint"].upper() == pinned
-            lines.append(f"  signing key  {result['fingerprint']}  signed {result['date']}")
+            lines.append(f"  signing key  {result['fingerprint']}  signed {result['date']}, "
+                         + ("listed in this KEYS file" if result["listed"] else "NOT listed in this KEYS file"))
             lines.append(f"  pinned key   {pinned or '(none pinned yet)'}  {'MATCH' if same else 'MISMATCH' if pinned else ''}")
-            for uid in result["uids"]:
-                lines.append(f"  uid          {uid}")
-            if result["good"] and (same or not pinned):
+            if result["good"] and result["listed"] and (same or not pinned):
                 good_somewhere = True
     if not good_somewhere:
         problems.append("no KEYS file gave a good signature from the pinned key")
@@ -484,6 +521,53 @@ def clear_compile_time(data):
     return stamped
 
 
+METADATA_DATE = re.compile(rb"<dc:date>([^<]*)</dc:date>")
+
+
+def normalize_movie(movie):
+    """The movie without what mxmlc stamps into every build: the compile time in its ProductInfo tag (as
+    tools/flash/build.ps1 clears it) and the date in its Metadata tag's RDF (<dc:date>, which build.ps1 leaves; it is
+    written in the compiling machine's locale). Two builds of the same sources then give the same bytes, so a movie
+    can be checked by its hash. Returns (movie, what was cleared); a compressed movie comes back unchanged."""
+    data = bytearray(movie)
+    cleared = ["compile time"] if clear_compile_time(data) else []
+    if data[:3] != b"FWS" or len(data) < 9:
+        return bytes(data), cleared
+    at = 8 + (5 + (data[8] >> 3) * 4 + 7) // 8 + 4
+    out = bytearray(data[:at])
+    while at + 2 <= len(data):
+        start = at
+        value = int.from_bytes(data[at:at + 2], "little")
+        at += 2
+        code, length = value >> 6, value & 0x3F
+        long_form = length == 0x3F
+        if long_form:
+            length = int.from_bytes(data[at:at + 4], "little")
+            at += 4
+        body = bytes(data[at:at + length])
+        at += length
+        dated = METADATA_DATE.sub(b"<dc:date></dc:date>", body) if code == 77 else body
+        if dated != body:
+            cleared.append("Metadata date")
+            if long_form or len(dated) >= 0x3F:
+                out += ((code << 6) | 0x3F).to_bytes(2, "little") + len(dated).to_bytes(4, "little")
+            else:
+                out += ((code << 6) | len(dated)).to_bytes(2, "little")
+            out += dated
+        else:
+            out += data[start:at]
+        if code == 0:
+            break
+    out += data[at:]
+    out[4:8] = len(out).to_bytes(4, "little")
+    return bytes(out), cleared
+
+
+def metadata_date(movie):
+    match = METADATA_DATE.search(movie)
+    return match.group(1).decode("latin-1") if match else None
+
+
 TAG_NAMES = {0: "End", 1: "ShowFrame", 9: "SetBackgroundColor", 24: "Protect", 41: "ProductInfo", 43: "FrameLabel",
              56: "ExportAssets", 58: "EnableDebugger", 63: "DebugID", 64: "EnableDebugger2", 65: "ScriptLimits",
              69: "FileAttributes", 76: "SymbolClass", 77: "Metadata", 82: "DoABC", 86: "DefineSceneAndFrameLabelData",
@@ -573,11 +657,11 @@ def cmd_compile(args):
             lines.append(f"{name}.swf  mxmlc FAILED (exit {result.returncode}), {warnings} warning(s); last lines:")
             lines += ["    " + line for line in log.splitlines()[-15:]]
             continue
-        data = bytearray(open(movie, "rb").read())
-        stamped = clear_compile_time(data)
+        data, cleared = normalize_movie(open(movie, "rb").read())
         open(movie, "wb").write(data)
+        missing = [what for what in ("compile time", "Metadata date") if what not in cleared]
         lines.append(f"{name}.swf  compiled, {warnings} warning(s), {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}"
-                     + ("" if stamped else "  (no compile time found to clear)"))
+                     + (f"  (no {' or '.join(missing)} found to clear)" if missing else ""))
         lines += ["    " + line for line in log.splitlines() if "Warning:" in line or "Error:" in line][:20]
     if not movie_names(ui):
         lines.append("No ui/<Name>/<Name>.as to compile.")
@@ -601,23 +685,30 @@ def cmd_compare(args):
         if not os.path.isfile(theirs_path):
             lines.append(f"{name}.swf  the PR commits no copy (nothing to compare; ours is the one that counts)")
             continue
-        ours = bytearray(open(ours_path, "rb").read())
-        clear_compile_time(ours)
+        ours, _ = normalize_movie(open(ours_path, "rb").read())  # compile already did; this keeps compare honest
         theirs_raw = open(theirs_path, "rb").read()
-        theirs = bytearray(theirs_raw)
-        cleared = clear_compile_time(theirs)
-        if ours == theirs:
-            how = "byte for byte" if bytes(theirs) == theirs_raw else "byte for byte once its compile time is cleared"
-            lines.append(f"{name}.swf  MATCHES the committed copy {how}")
+        theirs_timed = bytearray(theirs_raw)
+        uncompressed = clear_compile_time(theirs_timed)
+        theirs, _ = normalize_movie(theirs_raw)
+        if ours == theirs_raw:
+            lines.append(f"{name}.swf  MATCHES the committed copy byte for byte")
+        elif ours == bytes(theirs_timed):
+            lines.append(f"{name}.swf  MATCHES the committed copy once its compile time is cleared")
+        elif ours == theirs:
+            lines.append(f"{name}.swf  DIFFERS from the committed copy, and only in the date mxmlc writes into its Metadata "
+                         f"tag (committed: '{metadata_date(theirs_raw)}'), which tools/flash/build.ps1 does not clear; with "
+                         f"that date and the compile time cleared, it is the same movie")
         else:
             differing = sum(1 for a, b in zip(ours, theirs) if a != b) + abs(len(ours) - len(theirs))
-            first = next((i for i, (a, b) in enumerate(zip(ours, theirs)) if a != b), min(len(ours), len(theirs)))
-            note = "" if cleared else f" (committed copy starts {bytes(theirs_raw[:3])!r}: not an uncompressed movie mxmlc made)"
-            lines.append(f"{name}.swf  DIFFERS from the committed copy: {len(ours)} vs {len(theirs)} bytes, "
-                         f"{differing} byte(s) differ, first at offset {first}{note}")
+            note = "" if uncompressed else f" (committed copy starts {bytes(theirs_raw[:3])!r}: not an uncompressed movie mxmlc made)"
+            lines.append(f"{name}.swf  DIFFERS from the committed copy beyond the build dates: {len(ours)} vs {len(theirs)} "
+                         f"bytes once both are cleared, {differing} byte(s) differ{note}")
             lines += ["    " + line for line in describe_difference(ours, theirs)[:40]]
-        lines.append(f"    built      sha256 {hashlib.sha256(ours).hexdigest()} (compile time cleared)")
-        lines.append(f"    committed  sha256 {hashlib.sha256(theirs_raw).hexdigest()} as committed")
+            if metadata_date(theirs_raw):
+                lines.append(f"    and its Metadata date: '{metadata_date(theirs_raw)}'")
+        lines.append(f"    built      sha256 {hashlib.sha256(ours).hexdigest()} (build dates cleared)")
+        lines.append(f"    committed  sha256 {hashlib.sha256(theirs_raw).hexdigest()} as committed, "
+                     f"{hashlib.sha256(theirs).hexdigest()} with its build dates cleared")
     for name in committed_only:
         lines.append(f"{name}.swf  committed with no ui/{name}/{name}.as: not built from source here")
     with open(args.report, "w", encoding="utf-8") as f:
@@ -664,6 +755,7 @@ def main():
     p = sub.add_parser("flags")
     p.add_argument("files")
     p.add_argument("--comment")
+    p.add_argument("--owner", action="store_true", help="the repository owner's own PR: the narrower rule")
     p.set_defaults(func=cmd_flags)
     p = sub.add_parser("inspect")
     for name in ("--repo", "--base", "--head", "--api-files", "--out"):

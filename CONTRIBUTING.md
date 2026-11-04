@@ -108,7 +108,9 @@ gets the `needs-vetting` label by itself. The owner then runs the vetting workfl
 head: on GitHub's throwaway machines it lists the binaries, the URLs and the sensitive changes, checks every download
 the change adds against pinned hashes and signatures, and builds and tests the code, before anything from the pull
 request is built or run on the maintainer's machines. After reading the report the owner adds `vetted`; new commits
-take it off again, and such a pull request merges only with `vetted` at its head.
+take it off again, and such a pull request merges only with `vetted` at its head. The owner's own pull requests get
+the label only for a new or changed binary, a new download URL, a change under `.github/`, or a change to the submodules
+or to `xmake.lua`'s package requirements.
 
 Nothing committed in binary form is shipped: whatever a release holds is built from source by the project's own
 workflows. Commit the sources and the script that builds them, not the build. A change that needs a new tool or

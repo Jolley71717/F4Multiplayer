@@ -13,8 +13,10 @@
 #   report   trusted: the report, in its job summary and as the artifact vet-report-pr<N>-<commit>.
 # The untrusted jobs get no permissions, no secrets and no credentials, save no caches, and their artifacts (the built
 # movies and the test log, kept 3 days) are for reading only: releases come from package.yml, which builds from main.
-# Code that runs on a runner can still reach the runner's own token for this run's caches and artifacts, so the trusted
-# part of the report reaches the report job as a job output, never as an artifact, and package.yml uses no cache at all.
+# Code that runs on a runner can still reach the runner's own token for this run's caches and artifacts, and this run's
+# ref is main: a cache entry written here would be in main's scope, which every branch reads. So no workflow in this
+# repository restores a cache (build.yml's were removed for that; package.yml never had one), and the trusted part of
+# the report reaches the report job as a job output, never as an artifact.
 # pull_request_target and workflow_run are never used to run a PR's code. The owner adds `vetted` by hand after reading
 # the report.
 name: Vet a pull request
@@ -167,7 +169,7 @@ jobs:
   movies:
     name: "Untrusted: compile the menu movies"
     needs: inspect
-    if: needs.inspect.outputs.has_ui == 'true'
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && needs.inspect.outputs.has_ui == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions: {}
@@ -238,6 +240,7 @@ jobs:
   build:
     name: "Untrusted: build and run the tests"
     needs: inspect
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
     runs-on: windows-2022
     timeout-minutes: 60
     permissions: {}
@@ -319,7 +322,7 @@ jobs:
   report:
     name: "Trusted: report"
     needs: [inspect, movies, build]
-    if: always() && needs.inspect.result == 'success'
+    if: always() && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && needs.inspect.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions: {}
