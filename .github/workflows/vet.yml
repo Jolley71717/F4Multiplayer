@@ -19,10 +19,12 @@
 #   movies   untrusted: compiles every ui/<Name>/<Name>.as with the checked toolchain and the pinned Corretto, and
 #            compares each movie with the PR's committed copy.
 #   build    untrusted: builds and runs the unit tests as build.yml does. The PR's own code runs here.
-#   report   trusted: the report, in its job summary. That summary is the report; the artifact vet-report-pr<N>-<commit>
-#            is a convenience copy that code in an untrusted job could replace. The vet passes only when every job
-#            succeeded, every part was read and main's scope holds no cache: then the run succeeds, and its title
-#            "Vet PR <N> at <sha>" is what vet-label.yml looks for when `vetted` is added.
+#   report   trusted: the report, in its job summary. Only that summary counts: the untrusted jobs' summaries and
+#            annotations can say anything, and the artifact vet-report-pr<N>-<commit> is a convenience copy that code in
+#            an untrusted job could replace. Every row is cut at 300 characters and each untrusted part at 64 KB, and a
+#            report over 900 KB fails the vet (GitHub drops a summary over 1 MiB without failing the step). The vet
+#            passes only when every job succeeded, every part was read and main's scope holds no cache: then the run
+#            succeeds, and its title "Vet PR <N> at <sha>" is what vet-label.yml looks for when `vetted` is added.
 # The untrusted jobs get no permissions, no secrets and no credentials, and their artifacts (the built movies and the
 # test log, kept 3 days) are for reading only: releases come from package.yml, which builds from main. The parts of the
 # report travel as job outputs, which only their own job can write, never as artifacts.
@@ -167,6 +169,8 @@ jobs:
 
       - name: Report
         id: report
+        # Also after a failed inspection, so its summary says why (a report too large to trust, say); the job still fails.
+        if: always() && steps.pr.outcome == 'success'
         env:
           PR: ${{ steps.pr.outputs.pr }}
           SHA: ${{ steps.pr.outputs.sha }}
@@ -176,7 +180,7 @@ jobs:
           {
             echo "PR $PR: $(jq -r .state "$pr")$(jq -r 'if .draft then ", draft" else "" end' "$pr"), head \`$SHA\`, from $(jq -r 'if (.head.repo.full_name // "") == .base.repo.full_name then "this repository" else "a fork" end' "$pr")."
             echo
-            cat "$RUNNER_TEMP/inspect.md"
+            if [ -f "$RUNNER_TEMP/inspect.md" ]; then cat "$RUNNER_TEMP/inspect.md"; else echo "## Trusted inspection"; echo; echo "Did not finish."; echo; fi
             if [ -f "$RUNNER_TEMP/toolchain.md" ]; then cat "$RUNNER_TEMP/toolchain.md"; else echo "## Flash toolchain"; echo; echo "Not used: the PR has no ui/ or tools/flash/."; echo; fi
           } > "$RUNNER_TEMP/trusted.md"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/trusted.md"

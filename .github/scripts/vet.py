@@ -82,6 +82,10 @@ SENSITIVE = [(re.compile(pattern, re.IGNORECASE), reason, owner) for pattern, re
     (r"(^|/)(AGENTS|CLAUDE|GEMINI)(\.[\w-]+)?\.md$|(^|/)\.(claude|codex|cursor|gemini|agents|windsurf|continue)(/|$)"
      r"|(^|/)\.mcp\.json$|(^|/)\.(cursorrules|windsurfrules)$", "AI agents' config (can run commands)", True),
     (r"(^|/)\.(vscode|devcontainer|idea|vs)(/|$)", "editor config (can run tasks on open)", True),
+    # Build and environment files that IDEs, MSBuild, CMake, direnv or git LFS load and act on by themselves.
+    (r"(^|/)(Directory\.Build\.(props|targets)|CMakeLists\.txt|CMake(User)?Presets\.json)$|\.(sln|vcxproj|props|targets)$",
+     "MSBuild, CMake or Visual Studio files (run on open or build)", True),
+    (r"(^|/)\.(envrc|lfsconfig)$", ".envrc or .lfsconfig (direnv, git LFS)", True),
     (r"^\.oss-scanner/", ".oss-scanner (scanner build)", False),
 ]]
 
@@ -89,21 +93,34 @@ SENSITIVE = [(re.compile(pattern, re.IGNORECASE), reason, owner) for pattern, re
 PROSE = re.compile(r"\.(md|txt)$|^dist/lang/", re.IGNORECASE)
 URL = re.compile(r"""(?i)\b(?:https?|ftps?|wss?|git|ssh|file|s3|gs|sftp)://[^\s"'<>`\\)\]}|]+|\bgit@[\w.-]+:[\w./~-]+""")
 LONG_LINE = 1000  # an added line this long may be data in disguise (base64, a minified blob)
-REPORT_LIMIT = 400  # rows per list, so the job summary stays far below its 1 MiB
+REPORT_LIMIT = 400  # rows per list
+LINE_LIMIT = 300  # characters per row; a longer one is cut and says so
+# GitHub drops a job summary over 1 MiB without failing the step, so a report that big could vanish from a green run.
+# inspect and assemble fail instead, with a short report saying why.
+REPORT_BYTES_LIMIT = 900_000
 
 
 def clean(text):
-    """PR-controlled text made safe for a Markdown code block: no control characters, no line breaks, and invisible
-    characters (format characters such as a right-to-left override, private use, separators) shown as <U+XXXX>."""
+    """PR-controlled text made safe for a Markdown code block: no control characters (C0 as '?', C1 as <U+XXXX>), no
+    line breaks, and invisible characters (format characters such as a right-to-left override, private use,
+    separators) shown as <U+XXXX>."""
     out = []
     for ch in str(text):
         if ord(ch) < 32 or ord(ch) == 127:
             out.append("?")
-        elif unicodedata.category(ch) in ("Cf", "Co", "Cs", "Cn", "Zl", "Zp"):
+        elif unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"):
             out.append(f"<U+{ord(ch):04X}>")
         else:
             out.append(ch)
     return "".join(out)
+
+
+def cut(text, limit=LINE_LIMIT):
+    """One cleaned row of at most `limit` characters, marked when cut."""
+    shown = clean(text)
+    if len(shown) <= limit:
+        return shown
+    return shown[:limit] + f" ... (cut: {len(str(text))} characters)"
 
 
 def block(lines, limit=REPORT_LIMIT):
@@ -112,10 +129,24 @@ def block(lines, limit=REPORT_LIMIT):
     if not lines:
         return "    (none)\n"
     shown = lines[:limit]
-    out = "".join("    " + clean(line) + "\n" for line in shown)
+    out = "".join("    " + cut(line) + "\n" for line in shown)
     if len(lines) > limit:
         out += f"    ... and {len(lines) - limit} more\n"
     return out
+
+
+def write_report(path, text, title):
+    """Write a report for a job summary; when it is over REPORT_BYTES_LIMIT, write a short one saying so and fail."""
+    size = len(text.encode("utf-8"))
+    if size <= REPORT_BYTES_LIMIT:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"{title}\n\n**Vet FAILED: this report came to {size} bytes, over the {REPORT_BYTES_LIMIT} a job summary "
+                "can be trusted to hold (GitHub drops one over 1 MiB without a word).** A PR can make it that big on "
+                "purpose; read its changes another way before going on.\n\n")
+    sys.exit(f"report too large: {size} bytes")
 
 
 def extension(path):
@@ -343,8 +374,7 @@ def cmd_inspect(args):
         out += ["### Compiler configuration files mxmlc reads by itself\n\n", block(configs), "\n"]
     if unseen:
         out += ["### In the API's file list but not in the git diff\n\n", block(unseen), "\n"]
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.writelines(out)
+    write_report(args.out, "".join(out), "## Trusted inspection")
 
 
 # ------------------------------------------------------------------------------------------------------ toolchain
@@ -798,11 +828,12 @@ def cmd_compare(args):
 # -------------------------------------------------------------------------------------------------------- assemble
 
 
-PART_LIMIT = 4 << 20  # bytes of a part's text kept; anything longer is cut
+UNTRUSTED_PART_LIMIT = 64 << 10  # bytes of an untrusted part's text kept; the rest is cut, and the report says so
 
 
-def read_part(parts, name):
-    """(text, problem) of the part the report job wrote to `parts`/`name` from a job output (gzip, then base64)."""
+def read_part(parts, name, limit=UNTRUSTED_PART_LIMIT):
+    """(text, problem) of the part the report job wrote to `parts`/`name` from a job output (gzip, then base64). Text
+    past `limit` bytes is cut, with a last line saying so."""
     path = os.path.join(parts, name)
     if not os.path.isfile(path):
         return "", "could not be taken from the job's output (too large to pass on, or missing)"
@@ -811,9 +842,13 @@ def read_part(parts, name):
         return "", "empty"
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(raw, validate=True))) as packed:
-            return packed.read(PART_LIMIT).decode("utf-8", "replace"), ""
+            data = packed.read(limit + 1)
     except Exception as error:  # an untrusted job may hand over anything
         return "", f"unreadable ({type(error).__name__})"
+    text = data[:limit].decode("utf-8", "replace")
+    if len(data) > limit:
+        text += f"\n... (cut at {limit} bytes)\n"
+    return text, ""
 
 
 def cmd_assemble(args):
@@ -828,7 +863,9 @@ def cmd_assemble(args):
     if jobs["build"] != "success":
         problems.append(f"the build and tests job's result is {jobs['build']}")
 
-    trusted, trouble = read_part(args.parts, "inspect")
+    trusted, trouble = read_part(args.parts, "inspect", limit=REPORT_BYTES_LIMIT)
+    if trusted.endswith(f"(cut at {REPORT_BYTES_LIMIT} bytes)\n"):
+        trouble = "is over the size limit"
     if trouble:
         problems.append(f"the trusted part {trouble}: read the inspect job's summary")
     caches = "## Caches\n\n"
@@ -881,10 +918,9 @@ def cmd_assemble(args):
     ]
     for title, text, trouble in untrusted:
         out.append(f"## Untrusted: {title}\n\n")
-        out.append(block(text.splitlines(), 2000) if text else f"    (none: {trouble or 'this job reported nothing'})\n")
+        out.append(block(text.splitlines()) if text else f"    (none: {trouble or 'this job reported nothing'})\n")
         out.append("\n")
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.writelines(out)
+    write_report(args.out, "".join(out), f"# Vetting report: PR {env('PR', '?')} at {head}")
     if problems:
         sys.exit("vet failed: " + "; ".join(problems))
 

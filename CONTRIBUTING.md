@@ -108,12 +108,18 @@ compiled movie, a DLL, an archive, an image), the URLs and the sensitive changes
 submodules, git hooks, and the config that AI agents and editors load and run, such as `.claude/`, `.codex/`,
 `AGENTS.md`, `CLAUDE.md` and `.vscode/`), checks every download the change adds against pinned hashes and signatures,
 and builds and tests the code, before anything from the pull request is built or run on the maintainer's machines.
-The vet's report is its report job's summary (the run's report artifact is only a convenience copy), and it names the
-commit it vetted. After reading it the owner adds `vetted`. That label counts only while a passed vet run exists for the
-pull request's current head: adding it to any other head takes it off again, and so do new commits. An outside pull
-request merges only with `vetted` at its head, whether or not the label workflow ran. The owner's own pull requests get
-`needs-vetting`, and the same rule, only for a new or changed binary, a new download URL, a change under `.github/`,
-to the submodules, to git hooks or to agents' or editors' config, or to `xmake.lua`'s package requirements.
+Only the summary of the vet's "Trusted: report" job counts, and it names the commit it vetted. The untrusted jobs'
+summaries and annotations come from the pull request's own code and can say anything, and the run's report artifact is
+only a convenience copy. After reading the report the owner adds `vetted`. The label workflow keeps it only while a
+passed vet run exists for the pull request's current head, run from main's `vet.yml`, and then records "Vetted at
+`<commit>`" in a comment. A merge checks for that comment naming the current head, not only the label. Adding the label
+to any other head takes it off again, and so do new commits. An outside pull request merges only that way, whether or
+not the label workflow ran. The owner's own pull requests get `needs-vetting`, and the same rule, only for a new or
+changed binary, a new download URL, a change under `.github/`, to the submodules, to git hooks, to agents' or editors'
+config, to build files that IDEs act on, or to `xmake.lua`'s package requirements.
+
+An outside pull request's code is never built with `build.yml` (it refuses pull requests' refs and commits that are not
+on one of this repository's branches): it is vetted with `vet.yml`.
 
 The owner starts a vet from the `vet-runner` branch, with main's commit put there just before:
 `git push --force origin origin/main:refs/heads/vet-runner`, then
