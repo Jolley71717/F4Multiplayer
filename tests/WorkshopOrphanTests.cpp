@@ -388,6 +388,31 @@ TEST("orphan pieces: the list waits for the record that says whose world it is, 
 	(void)bob;
 }
 
+// The game sends what it built before a load ahead of the load's request for the world (WorkshopSync::TakeFromWorldBefore):
+// only then is it the world before's. One that came after the request would be the loaded world's, looked for there.
+TEST("orphan pieces: a piece reported just before a load's request is the world before's; one reported after it, the loaded world's")
+{
+	Fixture    f{ Hosted() };
+	JoinHost(f, 1);
+	const auto bob = JoinFriend(f, 2, "Bob", BOB, BOB_A);
+	f.fake->Deliver(2, Built(Chair(0xFF000B01, 200.0f)));  // the last report before the load
+	// A new game (another key, the session kept): its request, then a report that went after it, then its record.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0 }));
+	f.fake->Deliver(2, Built(Chair(0xFF000B02, 300.0f)));
+	Sync(f, 2);
+	Clear(f, { 2 });
+	f.Advance(std::chrono::milliseconds(300));
+	f.fake->Deliver(2, Record(BOB_B));
+	Sync(f, 2);
+	CHECK((Own(Received(f, 2)) == std::set<std::uint32_t>{ 0xFF000B02 }));  // looked for in the new game, as its own
+
+	// Back in the first world: the piece reported before the request is its own, and only that one.
+	Clear(f, { 2 });
+	Load(f, 2, BOB_A);
+	CHECK((Own(Received(f, 2)) == std::set<std::uint32_t>{ 0xFF000B01 }));
+	(void)bob;
+}
+
 TEST("orphan pieces: a lost piece its builder's world has again (a later save) comes back for everyone")
 {
 	Fixture    f{ Hosted() };

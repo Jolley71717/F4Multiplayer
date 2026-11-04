@@ -120,8 +120,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
 	// Before the first file (protocol 22), the layouts of the destructibles' and shared storage's own test
-	// builds (35, 37), a layout to come (43), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 43 }, std::uint16_t{ 0xE526 } }) {
+	// builds (35, 37), a layout to come (44), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 44 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -652,4 +652,109 @@ TEST("session file: storage owners and undone moves come back from layout 38, an
 	auto unnamed = in;
 	unnamed.storageReversals[0].playerId = 0;
 	CHECK(!SessionFile::Decode(SessionFile::Encode(unnamed)));
+}
+
+// Layout 43 adds who picked up each item the session keeps as picked up (a restarted server still sends no player their own
+// pickups). A session with none known is written as before; a file before 43 reads as one with none known.
+TEST("session file: who picked up each item survives the file, and a session with nobody known is still an older layout")
+{
+	const auto layoutOf = [](const std::vector<std::uint8_t>& a_bytes) {
+		std::uint16_t version = 0;
+		std::memcpy(&version, a_bytes.data() + 4, sizeof(version));
+		return version;
+	};
+	auto in = MakeSnapshot();
+	in.pickedUp = { 0x000250FF, 0x00025100, 0x00025101 };
+	in.pickers = { 1, 0, 3 };
+	const auto bytes = SessionFile::Encode(in);
+	CHECK(layoutOf(bytes) == SessionFile::PICKERS);
+	auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->pickedUp == in.pickedUp);
+	CHECK(out->pickers == in.pickers);
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->questStages.size() == in.questStages.size());
+
+	// None known: the layout an older build reads, and nothing known read back.
+	auto none = in;
+	none.pickers = { 0, 0, 0 };
+	const auto noneBytes = SessionFile::Encode(none);
+	CHECK(layoutOf(noneBytes) < SessionFile::PICKERS);
+	out = SessionFile::Decode(noneBytes);
+	REQUIRE(out);
+	CHECK(out->pickedUp == in.pickedUp);
+	CHECK(out->pickers.empty());
+
+	// A list of the wrong length is padded with not known, never shifted onto other items.
+	auto shortList = in;
+	shortList.pickers = { 7 };
+	out = SessionFile::Decode(SessionFile::Encode(shortList));
+	REQUIRE(out);
+	CHECK(out->pickers == (std::vector<std::uint32_t>{ 7, 0, 0 }));
+
+	// More than a world state's chunk: each chunk's pickers stay with its items.
+	auto many = MakeSnapshot();
+	many.pickers.assign(many.pickedUp.size(), 0);
+	for (std::uint32_t i = 0; i < Protocol::WORLD_STATE_CHUNK + 10; ++i) {
+		many.pickedUp.push_back(0x00030000 + i);
+		many.pickers.push_back(i % 5);
+	}
+	many.pickers.resize(many.pickedUp.size(), 0);
+	out = SessionFile::Decode(SessionFile::Encode(many));
+	REQUIRE(out);
+	CHECK(out->pickedUp == many.pickedUp);
+	CHECK(out->pickers == many.pickers);
+
+	// The wire's world state never carries them, and the file's reads without its tail too.
+	Protocol::WorldState world;
+	world.pickedUp = { 0x000250FF, 0x00025100 };
+	world.pickers = { 1, 2 };
+	const auto wire = Protocol::DecodeWorldState(Protocol::Encode(world));
+	REQUIRE(wire);
+	CHECK(wire->pickers.empty());
+	const auto kept = Protocol::DecodeKeptWorldState(Protocol::EncodeKeptWorldState(world));
+	REQUIRE(kept);
+	CHECK(kept->pickers == world.pickers);
+	CHECK(!Protocol::DecodeWorldState(Protocol::EncodeKeptWorldState(world)));  // the tail is no wire packet's
+	const auto untailed = Protocol::DecodeKeptWorldState(Protocol::Encode(world));
+	REQUIRE(untailed);
+	CHECK(untailed->pickers.empty());
+	// A count that matches nothing is damage.
+	auto bad = Protocol::Encode(world);
+	const std::uint32_t one = 1;
+	bad.insert(bad.end(), reinterpret_cast<const std::uint8_t*>(&one), reinterpret_cast<const std::uint8_t*>(&one) + sizeof(one));
+	bad.insert(bad.end(), 4, 0);
+	CHECK(!Protocol::DecodeKeptWorldState(bad));
+}
+
+// Layout 42, as 0.12.0 wrote it (SessionFile::Encode at that release, built from its own headers): two pickups and a
+// piece with its character. Nobody is known to have picked up either, so every game is still sent both.
+TEST("session file: a layout 42 file (0.12.0's) loads with its pickups, none with a known picker, and is written again as 42")
+{
+	const std::vector<std::uint8_t> bytes = {
+		0x46, 0x4D, 0x50, 0x53, 0x2A, 0x00, 0x84, 0xF3, 0x72, 0xF6, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45,
+		0x23, 0x01, 0x04, 0x00, 0x00, 0x00, 0x02, 0x00, 0xCE, 0x11, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x01, 0x00, 0x00, 0x00, 0x0B, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x25, 0x00, 0x00, 0x00, 0x6B, 0x01, 0x00, 0x00, 0x00, 0xBA, 0xB2, 0x04,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0xFF, 0x50, 0x02,
+		0x00, 0x02, 0xC0, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x00, 0x00,
+		0x00, 0x83, 0x01, 0x03, 0x00, 0x00, 0x00, 0x3A, 0x0F, 0x00, 0xFF, 0x00, 0x5C, 0xF4, 0x0D, 0x00,
+		0xFE, 0x50, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3F,
+		0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xB0, 0x00, 0x00,
+	};
+	CHECK(bytes[4] == 42);
+	const auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->sessionId == 0x0123456789ABCDEFull);
+	CHECK(out->nextId == 4);
+	CHECK(out->identities.size() == 2);
+	CHECK(out->deadActors == std::vector<std::uint32_t>{ 0x0004B2BA });
+	CHECK((out->pickedUp == std::vector<std::uint32_t>{ 0x000250FF, 0x0003C002 }));
+	CHECK(out->pickers.empty());
+	REQUIRE(out->workshopItems.size() == 1);
+	CHECK(out->workshopItems[0].refId == 0xFF000F3A);
+	CHECK(out->workshopItems[0].character == 0x0000B00000000001ull);
+	// Written again with nobody known: the same layout, byte for byte.
+	CHECK(SessionFile::Encode(*out) == bytes);
 }

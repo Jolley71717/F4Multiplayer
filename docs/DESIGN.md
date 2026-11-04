@@ -1299,6 +1299,16 @@ So players give each other items by dropping them, and the server decides who ha
   the copies' `kDropCopy` stays limited to references this game made) and is disabled rather than deleted
   (`DropBook::HowItMakesWay`): its record is the plugin's, and a load would put a deleted or unsaved one
   back where the plugin placed it.
+  Such an item dropped and not swapped (not given, refused, or dropped outside a session) lies in the dropper's world as
+  the reference the session keeps as picked up, so their next welcome or load would have taken it away as a friend's
+  pickup, for good (up to 0.12.0). The server keeps who picked up each item (layout 43 of its session file) and sends no
+  player their own pickups in a world state: the picker's game has the item already, in an inventory or lying where they
+  dropped it. A save of theirs from before the pickup has it where the plugin placed it, theirs to pick up again (a
+  second pickup report of it changes nothing); two characters of one PC share a player ID, so the other character's
+  world keeps it too. A file before 43 knows no picker: its pickups go to everyone, as before. Only the first picker
+  is kept: two players who pick up the same item before either hears of the other's pickup, and the second drops it
+  un-swapped, still lose it there (rare). And a picker who gave the item away and loads a save from before the pickup
+  has it again, as with container changes (`ownSkipped`): one more copy.
   Once it has come to rest
   (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
   with a random number of the giver's game (the nonce), its mods and template combination (read as
@@ -1550,7 +1560,8 @@ a request we sent can do that.
 
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
 save's record and asks for the session's changes again. The deaths and the player's moves from the
-frame before the save or load are sent first (deaths first), so they are in that answer. A save with no record of this session (made
+frame before the save or load are sent first (deaths first), so they are in that answer. So are the workshop reports still
+waiting in their line (`WorkshopSync::TakeFromWorldBefore`; see "Whose world"). A save with no record of this session (made
 alone, or in another session) takes this one from its first change, so the saves made from it on carry
 one. Container changes carry who made them; the player's own are never replayed. Those made before the
 loaded world (the save is from before them) are counted in `ownSkipped=`: replaying them would empty
@@ -2464,7 +2475,19 @@ the wire: the builder's `DropRecord::character` when the report came). The list 
 their welcome or load has said whose world it is (the record comes after both; a world request that isn't a gap marks
 the world unknown until it does), holds only that world's pieces, and a gone report is taken only for that world's.
 What a player reports before their record is tagged when it comes (`Player::untagged`); a piece whose character isn't
-known (an older build's, a layout 41 file's) is never asked about.
+known (an older build's, a layout 41 file's) is never asked about. So a report of the world before a load must reach the
+server before the load's request for the world: the game's reports wait in a paced line (`SendPacer`, 200 a second), and
+one still waiting at a load (a piece built a moment before, a blueprint) went after the request, was tagged with the
+loaded world's character, looked for there, and removed for everyone (up to 0.12.0). Loading another character's save
+leaves the session, which empties the line, but a world under another key the session keeps: a new game, a main-menu
+`coc` world, or the same character's save from before keys (`CharacterBinding::World`). Now a load fences the line (`SendPacer::Queue::Fence`, the first
+thing `WorkshopSync::OnGameLoaded` does) and the request goes behind what was fenced (`TakeFromWorldBefore`): as many as
+the pacer lets go then, the rest dropped (`dropped=`, logged): for a friend the piece is missing rather than gone for
+everyone, and the builder's walk, where it runs, finds it again. Only when the world changed: a load of the world the
+server last heard of (`CharacterBinding::World::SameAsTold`: a death reload, a quickload, the commonest) lifts the fence
+(`Unfence`) and the line goes on at its pace, since after the request its reports are tagged with that same world. Holding
+the request until the line drains instead would lose nothing, but it would move the record and the rest of what follows a
+load behind the backlog too.
 
 *Reversible.* A piece reported gone is not forgotten: it is kept as lost (`WorkshopOp::kLost`, at most
 `WorkshopStore::MAX_LOST`, the longest lost going first), saved with the session, and sent in the list marked lost. A lost

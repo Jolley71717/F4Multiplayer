@@ -488,7 +488,10 @@ void Server::Run()
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
-	std::unordered_set<std::uint32_t>                     pickedUp;
+	// Plugin items picked up from the world, each with the player who picked it up (0: not known, a file before layout 43).
+	// A player's own are never sent to them in a world state (sendWorldState): a persistent item they picked up and dropped
+	// again lies in their world as that same reference, and their game would take it away as a friend's pickup.
+	std::unordered_map<std::uint32_t, std::uint32_t>      pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Protocol::TrapState> traps;  // world traps spent: gone off, disarmed or taken (TrapState)
 	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
@@ -622,7 +625,9 @@ void Server::Run()
 			for (const auto& change : containerChanges) {
 				++containersAuthored[change.playerId];
 			}
-			pickedUp.insert(saved->pickedUp.begin(), saved->pickedUp.end());
+			for (std::size_t i = 0; i < saved->pickedUp.size(); ++i) {
+				pickedUp.emplace(saved->pickedUp[i], i < saved->pickers.size() ? saved->pickers[i] : 0);
+			}
 			for (const auto& state : saved->refStates) {
 				refStates[state.refId] = state;
 			}
@@ -705,7 +710,10 @@ void Server::Run()
 		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
 		snapshot.healable.assign(healable.begin(), healable.end());
 		snapshot.containerChanges = containerChanges;
-		snapshot.pickedUp.assign(pickedUp.begin(), pickedUp.end());
+		for (const auto& [ref, picker] : pickedUp) {
+			snapshot.pickedUp.push_back(ref);
+			snapshot.pickers.push_back(picker);
+		}
 		for (const auto& [id, state] : refStates) {
 			snapshot.refStates.push_back(state);
 		}
@@ -1059,7 +1067,18 @@ void Server::Run()
 			send(a_to, Protocol::Encode(Protocol::ActorDeath{ refId, 0, false, at[0], at[1], at[2] }, Protocol::MessageType::kActorDied), true);
 		}
 		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
-		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
+		// Not the receiver's own pickups: their game has those already, in an inventory or dropped again where they lie now
+		// (as the same reference, for a plugin's persistent item), and would take a dropped one away as a friend's pickup.
+		// A save from before they picked one up has it lying where it was placed: theirs to pick up again.
+		const auto                 receiver = players.find(a_to);
+		const auto                 receiverId = receiver != players.end() ? receiver->second.id : 0;
+		std::vector<std::uint32_t> picked;
+		picked.reserve(pickedUp.size());
+		for (const auto& [ref, picker] : pickedUp) {
+			if (picker == 0 || picker != receiverId) {  // an unknown picker is never the receiver, even one not found (0)
+				picked.push_back(ref);
+			}
+		}
 		std::vector<Protocol::RefState>  states;
 		for (const auto& [id, state] : refStates) {
 			states.push_back(state);
@@ -1111,8 +1130,6 @@ void Server::Run()
 		}
 		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
 		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
-		const auto  receiver = players.find(a_to);
-		const auto  receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::size_t healths = 0;
 		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
 			const auto owner = actorOwners.find(a_ref);
@@ -2571,7 +2588,7 @@ void Server::Run()
 			!withinShare(a_player, kPickups)) {
 			return;
 		}
-		pickedUp.insert(pickup->refId);
+		pickedUp.emplace(pickup->refId, a_player.id);
 		objectPlaces.Forget(pickup->refId);  // in someone's pockets now, at no place
 		++budgetOf(a_player).added[kPickups];
 		noteFill(kPickups, pickedUp.size());
