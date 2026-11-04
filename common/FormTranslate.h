@@ -620,6 +620,13 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportWorkshopResources:
+		case MessageType::kWorkshopResources:
+			Apply<ResourceStates>(a_packet, ctx, DecodeResourceStates, [&](ResourceStates& m) {
+				ctx.Entries(m.entries, [&](ResourceState& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportRadiantStart:
 		case MessageType::kRadiantStarted:
 			Apply<RadiantStart>(a_packet, ctx, DecodeRadiantStart, [&](RadiantStart& m) { return detail::MapRadiantStart(ctx, m); }, typed);

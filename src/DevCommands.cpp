@@ -65,6 +65,7 @@
 #include "game/WeaponFire.h"
 #include "game/VirtualPad.h"
 #include "game/WindowFocus.h"
+#include "game/WorkshopResources.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
 
@@ -2203,6 +2204,41 @@ namespace DevCommands
 			return std::format("wire {:08X}", wire->GetFormID());
 		}
 
+		// wsres: a friend's pieces counted in our settlements (WorkshopResources). wsres av <refHex>: the reference's settlement
+		// values (value, base, modifiers); wsres mod <refHex> <av> base|perm|temp|damage <delta>; wsres pip [text]: the Pip-Boy's
+		// workshop data; wsres find <text>: buildable objects by name; wsres can <refHex>: the engine's CanProduceForWorkshop
+		// on a piece; wsres sum <benchHex>: a workbench's pieces summed as its recount sums them; wsres state: the mirror.
+		std::string WsRes(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "av") {
+				return WorkshopResources::DescribeValues(LookupRef(args[1]));
+			}
+			if (args.size() == 5 && args[0] == "mod") {
+				const auto delta = ParseFloat(args[4]);
+				if (!delta) {
+					return "error: bad delta";
+				}
+				return WorkshopResources::ModValue(LookupRef(args[1]), args[2], args[3], *delta);
+			}
+			if (!args.empty() && args[0] == "pip") {
+				return WorkshopResources::DescribePipboy(args.size() > 1 ? args[1] : std::string_view{});
+			}
+			if (args.size() >= 2 && args[0] == "find") {
+				return WorkshopResources::FindBuildable(a_args.substr(a_args.find(args[1])));
+			}
+			if (args.size() == 2 && args[0] == "can") {
+				return WorkshopResources::DescribeProduce(LookupRef(args[1]));
+			}
+			if (args.size() == 2 && args[0] == "sum") {
+				return WorkshopResources::SumPieces(LookupRef(args[1]));
+			}
+			if (args.size() == 1 && args[0] == "state") {
+				return WorkshopSync::DescribeResources();
+			}
+			return "error: usage: wsres av <refHex> | mod <refHex> <av> base|perm|temp|damage <delta> | pip [text] | find <text> | can <refHex> | sum <benchHex> | state";
+		}
+
 		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
 		std::string WsInfo(std::string_view a_args)
 		{
@@ -4183,6 +4219,7 @@ namespace DevCommands
 			Entry{ "wsbenches", WsBenches },
 			Entry{ "wslink", WsLink },
 			Entry{ "wsinfo", WsInfo },
+			Entry{ "wsres", WsRes },
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },

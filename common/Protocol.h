@@ -47,7 +47,10 @@ namespace Protocol
 	// reset brings back is rolled anew. 0.10.1 (56) is refused at the hello.
 	// 58: the host's sQuests in the welcome (SessionRules::quests, a byte after legendary): with "safe" more quests are
 	// shared with the story (src/game/QuestFilter.h SAFE). 0.11.2 (57) is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 58;
+	// 59: what a player's workshop pieces count for in their settlement (food, water, defense, beds, power made and taken):
+	// kReportWorkshopResources and kWorkshopResources (ResourceStates), so a friend's game counts them at its workbench
+	// (src/game/ResourceMirror.h). 0.11.2 (57) is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 59;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -189,6 +192,7 @@ namespace Protocol
 		kReturnFrame = 74,        // the sender got out of a frame lent to them: where it stands, and what came back of its pieces (FrameReturn)
 		kReportDamageAnswer = 75,  // the game that runs an NPC answers a friend's numbered damage on it: applied, or refused and why (DamageAnswer)
 		kReportWorkshopGone = 76,  // pieces the server keeps as the sender's own building that the sender's world no longer has (the answer to kOwnWorkshopItems; WorkshopAudit)
+		kReportWorkshopResources = 77,  // what each of the sender's own workshop pieces counts for in their settlement now: food, water, defense, beds, power (ResourceStates)
 
 		// server -> client
 		kWelcome = 101,
@@ -256,6 +260,7 @@ namespace Protocol
 		kRollLives = 178,         // how many times plugins' NPCs died this session (RollLife): a life's roll is seeded with it (also in the session file)
 		kNpcIdentities = 179,     // several kNpcIdentity at once: a joiner's catch-up of the session's rolls
 		kOwnWorkshopItems = 180,  // after the welcome and each load: what the server keeps as built by you, for your game to say which it no longer has (WorkshopAudit)
+		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -1306,6 +1311,36 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
+
+	// What one of the sender's own workshop pieces (a reference their game made: something they built) counts for in their
+	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
+	// 0: nothing now, or the piece is gone). ResourceMirror.h.
+	inline constexpr std::size_t RESOURCE_KINDS = 6;
+	inline constexpr float       MAX_RESOURCE_VALUE = 100000.0f;  // past this a message is no game's: dropped
+	// The most one piece counts for of each kind; more is taken as this. Over the biggest vanilla piece of each (the PRPS of
+	// Fallout4.esm and the DLCs: a greenhouse planter's 2 food, an industrial water purifier's 40 water, a missile turret's
+	// 15 defense, a double bed's 2 beds, an interior fusebox's 100 power, the Institute beam emitter's 20 power taken).
+	inline constexpr std::array<float, RESOURCE_KINDS> MAX_RESOURCE_PIECE{ 10.0f, 100.0f, 50.0f, 10.0f, 200.0f, 50.0f };
+
+	struct ResourceState
+	{
+		std::uint32_t                     refId = 0;
+		std::array<float, RESOURCE_KINDS> values{};
+
+		bool operator==(const ResourceState&) const = default;
+	};
+
+	// kReportWorkshopResources / kWorkshopResources: what changed, or all of them (a snapshot), MAX_RESOURCE_ENTRIES at most a
+	// packet.
+	struct ResourceStates
+	{
+		std::uint32_t              playerId = 0;  // stamped by the server
+		std::vector<ResourceState> entries;
+
+		bool operator==(const ResourceStates&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_RESOURCE_ENTRIES = 128;
 
 	// A destructible object placed by a plugin (a car, an explosive barrel, a gas pump: a reference whose base has
 	// destruction data, IsShareableRef), damaged in the sender's game: its health there (the engine's, in its own units: a
@@ -3807,6 +3842,68 @@ namespace Protocol
 				return std::nullopt;
 			}
 			entry.powered = powered == 1;
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Up to MAX_RESOURCE_ENTRIES entries (any more are left off: the sender splits them, ResourceMirror::Chunks). Each entry is
+	// its reference, a byte with a bit for each value that isn't 0 (food first), and those values.
+	inline std::vector<std::uint8_t> Encode(const ResourceStates& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_RESOURCE_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			w.U32(entry.refId);
+			std::uint8_t mask = 0;
+			for (std::size_t k = 0; k < RESOURCE_KINDS; ++k) {
+				if (entry.values[k] != 0.0f) {
+					mask |= static_cast<std::uint8_t>(1u << k);
+				}
+			}
+			w.U8(mask);
+			for (std::size_t k = 0; k < RESOURCE_KINDS; ++k) {
+				if (mask & (1u << k)) {
+					w.F32(entry.values[k]);
+				}
+			}
+		}
+		return w.Data();
+	}
+
+	// None if it names no piece, one no game made at runtime, or a value that is no count (negative, past MAX_RESOURCE_VALUE,
+	// not a number). A value over its kind's MAX_RESOURCE_PIECE is read as that.
+	inline std::optional<ResourceStates> DecodeResourceStates(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ResourceStates msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0 || count > MAX_RESOURCE_ENTRIES) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			const auto mask = r.U8();
+			if (!r.Ok() || !IsRuntimeRef(entry.refId) || (mask >> RESOURCE_KINDS) != 0) {
+				return std::nullopt;
+			}
+			for (std::size_t k = 0; k < RESOURCE_KINDS; ++k) {
+				if (mask & (1u << k)) {
+					const auto value = r.F32();
+					if (!r.Ok() || !std::isfinite(value) || value <= 0.0f || value > MAX_RESOURCE_VALUE) {
+						return std::nullopt;
+					}
+					entry.values[k] = (std::min)(value, MAX_RESOURCE_PIECE[k]);  // the server relays it so clamped, and the receiver keeps it so
+				}
+			}
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;

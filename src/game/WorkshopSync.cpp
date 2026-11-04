@@ -15,6 +15,7 @@
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
 #include "game/WorkshopPower.h"
+#include "game/WorkshopResources.h"
 #include "game/WorkshopSettle.h"
 
 #include "game/DeferredDelete.h"
@@ -2331,6 +2332,155 @@ namespace WorkshopSync
 			mirror.Refresh(engine, a_now);
 		}
 
+		// ---- Resources: what pieces count for in a settlement, across games (ResourceMirror.h) ------------
+
+		ResourceMirror::Reporter resources;      // our pieces that count for something
+		ResourceMirror::Tally    theirResources;  // what friends' games say theirs count for
+		ResourceMirror::Applier  onBenches;       // what of theirs is on our workbenches
+		Clock::time_point        nextResourceTrack{};
+		Clock::time_point        nextResourceApply{};
+		std::uint32_t            resourcesSent = 0;      // entries sent
+		std::uint32_t            resourcesReceived = 0;  // entries received
+		std::uint32_t            resourceChanges = 0;    // values changed on our workbenches
+		std::uint32_t            resourcesHushed = 0;    // values taken off our workbenches for saves
+		std::uint32_t            resourcesLeftover = 0;  // values a loaded save held of an earlier session's, taken off
+		std::int64_t             resourcePollUsMax = 0;
+		// What each save holds of friends' pieces on our workbenches (nothing, unless its hush failed or never ran): its co-save
+		// record, written on the save's thread (ResourceSaveRecord). And what a loaded save's record said, taken off our
+		// workbenches once the load is over (OnGameLoaded).
+		using BenchValues = std::vector<std::pair<std::uint32_t, ResourceMirror::Values>>;
+		std::mutex                 resourceRecordLock;
+		ResourceMirror::SaveRecord resourceRecord;   // under resourceRecordLock
+		BenchValues                resourcesLoaded;  // under resourceRecordLock
+
+		// What is on our workbenches now, for a save whose hush doesn't run (ResourceMirror::SaveRecord).
+		void NoteResourcesOn()
+		{
+			std::scoped_lock l{ resourceRecordLock };
+			resourceRecord.Live(onBenches.On());
+		}
+
+		// A piece of ours a friend's game may have a copy of, and whose worth in its settlement it is told: one we built (made
+		// at runtime), standing, one of a workbench's workshop items, and no copy (the settlers, workshop items too, count
+		// for none of the values sent).
+		bool OwnResourcePiece(RE::TESObjectREFR& a_ref)
+		{
+			return Protocol::IsRuntimeRef(a_ref.GetFormID()) && !a_ref.IsDisabled() && !a_ref.IsDeleted() && !IsCopy(&a_ref) && BenchOf(a_ref);
+		}
+
+		// Our pieces that count for anything, from the workshop items of each workbench seen.
+		void TrackOwnResources()
+		{
+			for (const auto benchId : powerBenches) {
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(benchId);
+				const auto children = bench && bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+				if (!children) {
+					continue;
+				}
+				std::vector<std::uint32_t> ids;
+				for (const auto& child : children->linkedChildren) {
+					const auto ref = child.REFR.get();
+					if (ref && child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && Protocol::IsRuntimeRef(ref->GetFormID()) &&
+						!resources.Tracks(ref->GetFormID())) {
+						ids.push_back(ref->GetFormID());
+					}
+				}
+				for (const auto id : ids) {
+					if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
+						ref && OwnResourcePiece(*ref) && WorkshopResources::CountsForAnything(*ref)) {
+						resources.Track(id);
+					}
+				}
+			}
+		}
+
+		struct ResourceReporterEngine
+		{
+			ResourceMirror::Look Look(std::uint32_t a_id)
+			{
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) };
+				if (!ref) {
+					return { ResourceMirror::Look::State::kAway, {} };  // its cell unloaded with it: it counts as it did
+				}
+				if (!OwnResourcePiece(*ref)) {
+					return {};  // scrapped, stored, or the ID is another thing's now
+				}
+				return { ResourceMirror::Look::State::kHere, WorkshopResources::Counts(*ref) };
+			}
+		};
+
+		void SendResources(Clock::time_point a_now)
+		{
+			const auto             start = Clock::now();
+			ResourceReporterEngine engine;
+			const auto             entries = resources.Poll(engine, a_now);
+			resourcePollUsMax = (std::max)(resourcePollUsMax, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count());
+			// The queue's packets go reliably; one the full queue refuses goes again at the next poll (Reporter::Unsent), so a
+			// gone piece's one word that it counts for nothing is never lost.
+			for (const auto& chunk : ResourceMirror::Chunks(entries)) {
+				std::scoped_lock l{ outLock };
+				if (outgoing.Push({ Protocol::Encode(Protocol::ResourceStates{ 0, chunk }, Protocol::MessageType::kReportWorkshopResources), 0 })) {
+					resourcesSent += static_cast<std::uint32_t>(chunk.size());
+				} else {
+					resources.Unsent(chunk);
+				}
+			}
+		}
+
+		// Where each friend's piece counts here: the workbench our copy of it was reported at, if we have a copy (none: it
+		// isn't placed yet, one of our own pieces stands at its spot, or another friend's copy stands for it).
+		struct TallyEngine
+		{
+			std::uint32_t BenchOf(const ResourceMirror::Key& a_key)
+			{
+				const auto it = copies.find(a_key);
+				if (it == copies.end() || it->second.id == 0) {
+					return 0;
+				}
+				std::scoped_lock l{ copyIdsLock };
+				return copyBenches.Of(it->second.id);
+			}
+		};
+
+		struct BenchEngine
+		{
+			bool Add(std::uint32_t a_bench, ResourceMirror::Kind a_kind, float a_delta) { return WorkshopResources::AddToBench(a_bench, a_kind, a_delta); }
+			std::optional<float> Temporary(std::uint32_t a_bench, ResourceMirror::Kind a_kind) { return WorkshopResources::TemporaryOf(a_bench, a_kind); }
+		};
+
+		void PutResourcesOn(Clock::time_point a_now)
+		{
+			nextResourceApply = a_now + ResourceMirror::APPLY_EVERY;
+			TallyEngine tally;
+			BenchEngine benches;
+			if (const auto changed = onBenches.Apply(benches, theirResources.Totals(tally), a_now); changed > 0) {
+				resourceChanges += static_cast<std::uint32_t>(changed);
+				NoteResourcesOn();
+			}
+		}
+
+		void ResourceFrame(Clock::time_point a_now)
+		{
+			if (a_now >= nextResourceTrack) {
+				nextResourceTrack = a_now + WorkshopPower::AUDIT_EVERY;
+				TrackOwnResources();
+			}
+			SendResources(a_now);
+			if (a_now >= nextResourceApply) {
+				PutResourcesOn(a_now);
+			}
+		}
+
+		// Friends' pieces off our workbenches (the session ended).
+		void TakeResourcesOff(std::string_view a_why)
+		{
+			BenchEngine benches;
+			if (const auto off = onBenches.TakeAllOff(benches); off > 0) {
+				REX::INFO("WorkshopSync: {}: {} values of friends' pieces taken off our workbenches", a_why, off);
+			}
+			NoteResourcesOn();
+		}
+
 		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
 		{
 			if (a_item.op == Protocol::WorkshopOp::kScrapped) {
@@ -2555,6 +2705,7 @@ namespace WorkshopSync
 		ReportMovedWires(now);
 		DrawShapedWires(now);
 		PowerFrame(now);
+		ResourceFrame(now);
 		AuditFrame(now);
 	}
 
@@ -2625,6 +2776,9 @@ namespace WorkshopSync
 		ClearAudit();
 		reporter.Clear();
 		mirror.Clear();
+		TakeResourcesOff("leaving");
+		resources.Clear();
+		theirResources.Clear();
 		keptTied.clear();
 		powerBenches.clear();
 		benchWorld = 0;
@@ -2646,11 +2800,14 @@ namespace WorkshopSync
 
 	void BeforeLoad()
 	{
+		// Friends' pieces off the workbenches of the world going: the load sets them as its save has them, and should it not
+		// (or should the load fail), nothing of ours is left on them (the next look after it puts back what counts).
+		TakeResourcesOff("loading");
 		std::scoped_lock l{ litLock };
 		litCopies.clear();
 	}
 
-	void OnGameLoaded()
+	void OnGameLoaded(bool a_newGame)
 	{
 		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
 		// let go unread. The copies the save holds are found again, at their spots, when the server sends
@@ -2671,6 +2828,35 @@ namespace WorkshopSync
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
+		// The workbenches are the save's (or the new game's) now, which hold none of friends' pieces (BeforeSave took them
+		// off): what we had put on the old world's is forgotten, and theirs go on again as their copies are found. One clear
+		// for each, never both, and neither takes off more than the workbench holds (ResourceMirror::TakeOffHeld), so none
+		// leaves a value the save didn't hold:
+		// - a load took it all off before (BeforeLoad), and what that couldn't reach was the old world's: nothing is taken
+		//   off for it, only what the save's record says it held (a hush that failed);
+		// - a new game from the main menu has no such word, so what is still on a workbench of the same ID is taken off
+		//   (Applier::ForgetWorld), and no save's record is read.
+		BenchEngine benches;
+		const auto  unreached = onBenches.On().size();
+		if (const auto off = onBenches.ForgetWorld(benches, a_newGame); off > 0) {
+			REX::WARN("WorkshopSync: the new game's workbenches still held {} values of friends' pieces; taken off", off);
+		} else if (!a_newGame && unreached > 0) {
+			REX::WARN("WorkshopSync: {} workbenches of the world before couldn't be reached before the load; forgotten", unreached);
+		}
+		resources.SendAll();
+		BenchValues leftover;
+		{
+			std::scoped_lock l{ resourceRecordLock };
+			leftover.swap(resourcesLoaded);
+		}
+		if (a_newGame) {
+			leftover.clear();  // a new game has no save: a record read for an earlier load is no record of its
+		}
+		if (const auto off = ResourceMirror::TakeOffRecord(benches, leftover); !leftover.empty()) {
+			resourcesLeftover += static_cast<std::uint32_t>(off);
+			REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; {} values taken off (only what each still holds)", leftover.size(), off);
+		}
+		NoteResourcesOn();
 	}
 
 	void OnWorldGone()
@@ -2686,6 +2872,7 @@ namespace WorkshopSync
 		powerBenches.clear();
 		benchWorld = 0;
 		ForgetAllCopies();
+		resources.Clear();  // the world loaded is no session's (its workbenches hold none of ours: OnGameLoaded forgot them)
 	}
 
 	void ApplyPower(const Protocol::PowerStates& a_power)
@@ -2696,6 +2883,14 @@ namespace WorkshopSync
 		powerReceived += static_cast<std::uint32_t>(a_power.entries.size());
 	}
 
+	void ApplyResources(const Protocol::ResourceStates& a_resources)
+	{
+		for (const auto& entry : a_resources.entries) {
+			theirResources.Set(a_resources.playerId, entry);
+		}
+		resourcesReceived += static_cast<std::uint32_t>(a_resources.entries.size());
+	}
+
 	bool SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered)
 	{
 		return mirror.Set(a_player, WorkshopPower::Entry{ a_ref, a_powered });
@@ -2704,11 +2899,15 @@ namespace WorkshopSync
 	void OnPlayerJoined()
 	{
 		reporter.SendAll();
+		resources.SendAll();
 	}
 
 	void OnPlayerLeft(std::uint32_t a_playerId)
 	{
 		mirror.Freeze(a_playerId);
+		// Their pieces count here no more: off our workbenches now, not at the next look.
+		theirResources.Forget(a_playerId);
+		PutResourcesOn(Clock::now());
 	}
 
 	void BeforeSave()
@@ -2725,9 +2924,65 @@ namespace WorkshopSync
 		}
 	}
 
+	void BeforeSaveResources()
+	{
+		// What friends' pieces count for on our workbenches is the session's alone: off for the save, on again after
+		// (AfterSave). What couldn't come off (no such workbench here now), or anything still on should the hush throw, goes
+		// in this save's record, for a load to take off; never an earlier save's.
+		{
+			std::scoped_lock l{ resourceRecordLock };
+			resourceRecord.BeforeSave();
+		}
+		const auto said = [] {
+			std::scoped_lock l{ resourceRecordLock };
+			resourceRecord.Hushed(onBenches.On());
+		};
+		BenchEngine benches;
+		std::size_t off = 0;
+		try {
+			off = onBenches.Hush(benches, Clock::now());
+		} catch (...) {
+			said();
+			throw;
+		}
+		said();
+		resourcesHushed += static_cast<std::uint32_t>(off);
+		if (off > 0) {
+			REX::INFO("WorkshopSync: {} values of friends' pieces taken off our workbenches for the save", off);
+		}
+		if (!onBenches.On().empty()) {
+			REX::WARN("WorkshopSync: {} workbenches kept friends' pieces' worth through the hush; the save's record names them", onBenches.On().size());
+		}
+	}
+
 	void AfterSave()
 	{
 		mirror.SaveDone();
+		onBenches.SaveDone();
+		PutResourcesOn(Clock::now());
+	}
+
+	std::vector<std::uint8_t> ResourceSaveRecord()
+	{
+		std::scoped_lock l{ resourceRecordLock };
+		return resourceRecord.Take();
+	}
+
+	void LoadResourceRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve)
+	{
+		auto held = ResourceMirror::DecodeRecord(a_bytes);
+		std::erase_if(held, [&](auto& a_bench) {
+			a_bench.first = a_resolve(a_bench.first).value_or(0);
+			return a_bench.first == 0;
+		});
+		std::scoped_lock l{ resourceRecordLock };
+		resourcesLoaded = std::move(held);
+	}
+
+	void RevertResourceRecord()
+	{
+		std::scoped_lock l{ resourceRecordLock };
+		resourcesLoaded.clear();
 	}
 
 	bool IsCopyMarked(const RE::TESObjectREFR& a_ref)
@@ -2795,6 +3050,22 @@ namespace WorkshopSync
 		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
 			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+	}
+
+	std::string DescribeResources()
+	{
+		std::string out = std::format("resources: tracked={} counting={} owed={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} leftover={} pollMsMax={:.2f}",
+			resources.Size(), resources.Counting(), resources.Owed(), resourcesSent, resourcesReceived, theirResources.Size(), theirResources.Dropped(), onBenches.On().size(), resourceChanges,
+			resourcesHushed, onBenches.Hushed(), resourcesLeftover, static_cast<double>(resourcePollUsMax) / 1000.0);
+		for (const auto& [bench, values] : onBenches.On()) {
+			out += std::format("; {:08X}", bench);
+			for (std::size_t k = 0; k < ResourceMirror::KINDS; ++k) {
+				if (values[k] != 0.0f) {
+					out += std::format(" {}={:.2f}", ResourceMirror::NAMES[k], values[k]);
+				}
+			}
+		}
+		return out;
 	}
 
 	std::string DescribeGrids(RE::TESObjectREFR* a_bench)
