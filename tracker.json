@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T09:49:13+00:00",
+ "updated": "2026-11-04T10:54:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -314,6 +314,14 @@
    "title": "hits.sh: the second phase runs out of fresh raiders the VM runs",
    "kind": "bug",
    "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "6l6j",
+   "title": "Vet: a submodule pointer replaced by a file crashes the inspection (git exit 129), so such a PR can't be vetted",
+   "kind": "bug",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -693,6 +701,14 @@
    "stage": 7,
    "note": "",
    "pr": 282
+  },
+  {
+   "id": "eex8",
+   "title": "Vet: binary detection honours main's .gitattributes; if main ever marks a text pattern -diff or binary, those lines go unread",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ehqp",
@@ -1545,7 +1561,7 @@
    "title": "Compile the Flash menus (.swf) from source in a GitHub workflow, and a release-package workflow only the maintainer starts",
    "kind": "feature",
    "priority": 3,
-   "stage": 2,
+   "stage": 5,
    "note": "",
    "pr": 294
   },
