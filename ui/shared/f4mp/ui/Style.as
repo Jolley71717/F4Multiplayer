@@ -13,6 +13,7 @@ package f4mp.ui
 	{
 		public static const FONT:String = "$MAIN_Font";  // the game's font library maps it to the language's font
 		// The game's controller glyphs: a letter each in this font (Shared.AS3.BSButtonHint's NameToTextMap, Xenon_B = "B").
+		public static const BOLD_FONT:String = "$MAIN_Font_Bold";
 		public static const BUTTONS_FONT:String = "$Controller_buttons";
 		public static const PAD_B:String = "B";
 		public static const BLACK:uint = 0x000000;
@@ -40,7 +41,7 @@ package f4mp.ui
 			text.autoSize = TextFieldAutoSize.LEFT;
 			text.defaultTextFormat = new TextFormat(a_font, a_size, a_color);
 			text.text = a_text;
-			text.filters = [ Shadow(a_scale) ];
+			// No filter: the game's list text has none either (dev gfx on the main menu); through the renderer it looks shadowed anyway.
 			return text;
 		}
 

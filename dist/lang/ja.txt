@@ -221,6 +221,7 @@ menu.keybinds = 操作設定
 menu.kb_menu = マルチプレイメニュー
 menu.kb_list = プレイヤー一覧
 menu.kb_teleport = フレンドへテレポート
+menu.teleport_to = {player}へテレポート
 menu.kb_ping = ピン
 menu.kb_where = フレンドの居場所
 menu.kb_point = エモート: 指さし

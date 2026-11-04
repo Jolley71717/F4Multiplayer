@@ -218,6 +218,7 @@ namespace Text
 		{ "menu.kb_menu", "Multiplayer menu" },
 		{ "menu.kb_list", "Player list" },
 		{ "menu.kb_teleport", "Teleport to a friend" },
+		{ "menu.teleport_to", "Teleport to {player}" },
 		{ "menu.kb_ping", "Ping" },
 		{ "menu.kb_where", "Where friends are" },
 		{ "menu.kb_point", "Emote: point" },

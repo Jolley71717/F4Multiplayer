@@ -202,6 +202,7 @@ menu.keybinds = Steuerung
 menu.kb_menu = Multiplayer-Menü
 menu.kb_list = Spielerliste
 menu.kb_teleport = Zu einem Freund teleportieren
+menu.teleport_to = Zu {player} teleportieren
 menu.kb_ping = Ping
 menu.kb_where = Wo Freunde sind
 menu.kb_point = Geste: Zeigen
