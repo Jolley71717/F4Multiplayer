@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T09:36:52+00:00",
+ "updated": "2026-11-04T09:49:13+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -805,8 +805,9 @@
    "title": "A friend's resource pieces count for both players' settlements",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "Built and tested in both games: a friend's pumps and generators count in your water and power; beds not yet",
+   "pr": 296
   },
   {
    "id": "gl6t",
