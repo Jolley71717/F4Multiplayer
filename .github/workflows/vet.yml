@@ -14,7 +14,8 @@
 #
 # It refuses when the PR's head is not `sha`. Jobs:
 #   inspect  trusted: fetches the PR's commits as git objects and reads them as data, never running anything from them.
-#            Lists binaries, URLs in added lines and sensitive paths; downloads the Flash toolchain and checks it
+#            Lists binaries, URLs in added lines and sensitive paths, and fails on a file name that isn't UTF-8 or when
+#            it read fewer files or added lines than git counts. Downloads the Flash toolchain and checks it
 #            against the pins in .github/scripts/vet.py (main's copy, so a PR can't change them) and against the PR's own.
 #   movies   untrusted: compiles every ui/<Name>/<Name>.as with the checked toolchain and the pinned Corretto, and
 #            compares each movie with the PR's committed copy.

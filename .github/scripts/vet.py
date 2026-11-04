@@ -103,15 +103,23 @@ REPORT_BYTES_LIMIT = 900_000
 TRUSTED_STAND_IN = "## Trusted inspection\n\nToo long to pass on"
 
 
+# Invisible or blank characters that are not format characters: the combining grapheme joiner, the variation
+# selectors, the Hangul fillers, the Khmer inherent vowels, the Mongolian variation selectors and the braille blank.
+INVISIBLE = re.compile("[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u2800\u3164\ufe00-\ufe0f\uffa0"
+                       "\U000e0100-\U000e01ef]")
+
+
 def clean(text):
     """PR-controlled text made safe for a Markdown code block: no control characters (C0 as '?', C1 as <U+XXXX>), no
     line breaks, and invisible characters (format characters such as a right-to-left override, private use,
-    separators) shown as <U+XXXX>."""
+    separators, spaces other than U+0020, the INVISIBLE ones, and a file name's bytes that aren't UTF-8, which
+    surrogateescape keeps as U+DC80 to U+DCFF) shown as <U+XXXX>."""
     out = []
     for ch in str(text):
         if ord(ch) < 32 or ord(ch) == 127:
             out.append("?")
-        elif unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"):
+        elif (unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp")
+              or (unicodedata.category(ch) == "Zs" and ch != " ") or INVISIBLE.match(ch)):
             out.append(f"<U+{ord(ch):04X}>")
         else:
             out.append(ch)
@@ -223,6 +231,12 @@ def patch_urls(patch):
 FILES_API_LIMIT = 3000  # the most files the API lists for a pull request
 
 
+def count(f, key):
+    """An entry's count field; anything but a whole number counts as 1, so a missing diff is still flagged."""
+    value = f.get(key, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 1
+
+
 def api_flags(files, owner=False, changed_files=None):
     """Why a PR needs vetting, from the API's file list alone (vet-label.yml reads nothing else).
 
@@ -234,15 +248,19 @@ def api_flags(files, owner=False, changed_files=None):
     if changed_files is not None and (len(files) >= FILES_API_LIMIT or len(files) < changed_files):
         reasons.append(f"the API listed {len(files)} of the PR's {changed_files} changed files: the rest can't be read here")
     for f in files:
-        path, status = f.get("filename", ""), f.get("status", "")
-        previous = f.get("previous_filename") or ""
-        patch = f.get("patch", "")
+        if not isinstance(f, dict):
+            reasons.append("an entry in the API's file list that isn't an object")
+            continue
+        path, status = str(f.get("filename") or ""), str(f.get("status") or "")
+        previous = str(f.get("previous_filename") or "")
+        has_patch = isinstance(f.get("patch"), str)
+        patch = f["patch"] if has_patch else ""
         names = sorted({path, previous} - {""})
         if status != "removed":
             for name in names:
                 if extension(name) in BINARY_EXTENSIONS:
                     reasons.append(f"binary ({status}): {name}")
-            if "patch" not in f and f.get("changes", 0) == 0 and status in ("added", "modified", "copied", "changed", "renamed"):
+            if not has_patch and count(f, "changes") == 0 and status in ("added", "modified", "copied", "changed", "renamed"):
                 reasons.append(f"no text diff, likely binary ({status}): {path}")
         if re.search(r"^[-+]Subproject commit", patch, re.MULTILINE):
             reasons.append(f"submodule pointer ({status}): {path}")
@@ -252,12 +270,12 @@ def api_flags(files, owner=False, changed_files=None):
         if not owner:
             continue
         if re.search(r"(^|/)xmake\.lua$", path, re.IGNORECASE):
-            if "patch" not in f and f.get("changes", 0) > 0:
+            if not has_patch and count(f, "changes") > 0:
                 reasons.append(f"xmake.lua with no diff to read ({status}): {path}")
             elif XMAKE_FETCH.search(patch):
                 reasons.append(f"xmake.lua package requirements ({status}): {path}")
         if not PROSE.search(path):
-            if "patch" not in f and f.get("additions", 0) > 0:
+            if not has_patch and count(f, "additions") > 0:
                 reasons.append(f"no diff to read for URLs ({status}): {path}")
             for url in patch_urls(patch):
                 reasons.append(f"new URL: {path}: {url}")
@@ -293,9 +311,10 @@ def git(repo, *args):
     return run(["git", "--literal-pathspecs", "-C", repo, "-c", "core.quotePath=false", *args])
 
 
-def added_lines(repo, base, head, path):
-    """(line number, text) of the lines `head` adds to `path`."""
-    out = git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", base, head, "--", path)
+def added_lines(repo, old_blob, new_blob):
+    """(line number, text) of the lines `new_blob` adds to `old_blob`. Blob ids, not paths: no file name goes back to
+    git, so a name git can't be handed exactly (bytes that aren't UTF-8) can't hide its lines."""
+    out = git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", old_blob, new_blob)
     lines, line_no, in_hunk = [], 0, False
     for raw in out.split(b"\n"):
         if raw.startswith(b"@@"):
@@ -314,22 +333,33 @@ def cmd_inspect(args):
     merge_base = git(repo, "merge-base", args.base, head).decode().strip()
     api = read_json_stream(args.api_files)
 
-    raw = git(repo, "diff", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", merge_base, head).split(b"\0")
-    entries = []  # (old mode, new mode, new blob, status, path)
-    for meta, path in zip(raw[0::2], raw[1::2]):
+    # Names stay bytes as git gives them (-z: no quoting). Shown, each is decoded with surrogateescape, so a byte that
+    # isn't UTF-8 shows as <U+DCxx>; nothing hands a name back to git.
+    raw = git(repo, "diff", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv", merge_base, head).split(b"\0")
+    entries = []  # (old mode, new mode, old blob, new blob, status, raw path)
+    for meta, raw_path in zip(raw[0::2], raw[1::2]):
         if not meta:
             continue
-        old_mode, new_mode, _old_blob, new_blob, status = meta.decode().lstrip(":").split()
-        entries.append((old_mode, new_mode, new_blob, status[0], path.decode("utf-8", "replace")))
+        old_mode, new_mode, old_blob, new_blob, status = meta.decode().lstrip(":").split()
+        entries.append((old_mode, new_mode, old_blob, new_blob, status[0], raw_path))
     numstat = {}
     for item in git(repo, "diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", merge_base, head).split(b"\0"):
         if item:
-            added, deleted, path = item.decode("utf-8", "replace").split("\t", 2)
-            numstat[path] = (added, deleted)
+            added, deleted, raw_path = item.split(b"\t", 2)
+            numstat[raw_path] = (added.decode(), deleted.decode())
+    names_only = [n for n in git(repo, "diff", "--name-only", "-z", "--no-renames", merge_base, head).split(b"\0") if n]
+    empty_blob = run(["git", "-C", repo, "hash-object", "-w", "--stdin"], input=b"").decode().strip()
 
+    problems, bad_names, unread = [], [], []
     binaries, modes, sensitive, urls, long_lines, configs = [], [], [], [], [], []
     url_files = set()
-    for old_mode, new_mode, blob, status, path in entries:
+    lines_read = 0
+    for old_mode, new_mode, old_blob, blob, status, raw_path in entries:
+        path = raw_path.decode("utf-8", "surrogateescape")
+        try:
+            raw_path.decode("utf-8")
+        except UnicodeDecodeError as error:
+            bad_names.append(f"{status}  not UTF-8 at byte {error.start}  {path}")
         for reason in sensitive_reasons(path):
             sensitive.append(f"{status}  {reason:42}  {path}")
         if new_mode == "160000" or old_mode == "160000":
@@ -344,7 +374,8 @@ def cmd_inspect(args):
             continue
         if new_mode == "100755" and old_mode != "100755":
             modes.append(f"{status}  executable bit  {path}")
-        is_binary = numstat.get(path, ("", ""))[0] == "-"
+        git_added = numstat.get(raw_path, ("?", ""))[0]
+        is_binary = git_added == "-"
         data = git(repo, "cat-file", "blob", blob)
         why = "git: binary" if is_binary else f"by name (.{extension(path)})" if extension(path) in BINARY_EXTENSIONS else ""
         if not why:
@@ -362,7 +393,11 @@ def cmd_inspect(args):
             continue
         if re.match(r"^ui/.*-config\.xml$|(^|/)flex-config\.xml$", path, re.IGNORECASE):
             configs.append(f"{status}  {path}")
-        for line_no, text in added_lines(repo, merge_base, head, path):
+        added = added_lines(repo, empty_blob if set(old_blob) == {"0"} else old_blob, blob)
+        lines_read += len(added)
+        if not git_added.isdigit() or int(git_added) > len(added):
+            unread.append(f"{status}  git counts {git_added} added lines, {len(added)} read  {path}")
+        for line_no, text in added:
             if len(text) >= LONG_LINE:
                 long_lines.append(f"{path}:{line_no}  {len(text)} characters")
             if not PROSE.search(path):
@@ -370,14 +405,24 @@ def cmd_inspect(args):
                     urls.append(f"{path}:{line_no}  {url.rstrip('.,;:')}")
                     url_files.add(path)
 
-    git_paths = {e[4] for e in entries}
+    git_added_total = sum(int(a) for a, _ in numstat.values() if a.isdigit())
+    if len(names_only) > len(entries) or len(numstat) > len(entries):
+        problems.append(f"git lists {max(len(names_only), len(numstat))} changed files, and only {len(entries)} were read")
+    if unread:
+        problems.append(f"fewer added lines were read than git counts in {len(unread)} file(s)")
+    if bad_names:
+        problems.append(f"{len(bad_names)} file name(s) aren't UTF-8")
+    git_paths = {e[5].decode("utf-8", "surrogateescape") for e in entries}
     api_paths = {f.get("filename") for f in api} | {f.get("previous_filename") for f in api if f.get("previous_filename")}
     unseen = sorted(p for p in api_paths - git_paths if p)
 
     out = [
         "## Trusted inspection\n\n",
+        (f"**PROBLEMS (the vet fails):** " + "; ".join(problems) + ".\n\n") if problems else "",
         f"The PR's commits were fetched as git objects and read as data; nothing from them ran here. Diff: merge base "
-        f"`{merge_base}` to head `{head}`, {len(entries)} files ({len(api)} in the API's list).\n\n",
+        f"`{merge_base}` to head `{head}`, {len(entries)} files ({len(api)} in the API's list); {lines_read} added lines "
+        f"read of the {git_added_total} git counts in text files.\n\n",
+        f"### File names that aren't UTF-8 ({len(bad_names)}; bytes that aren't show as <U+DCxx>)\n\n", block(bad_names), "\n",
         f"### Binary or non-text files added or changed ({len(binaries)}; text that isn't UTF-8 shows here too)\n\n", block(binaries), "\n",
         f"### Symlinks, submodule pointers, executable bits ({len(modes)})\n\n", block(modes), "\n",
         f"### Sensitive paths ({len(sensitive)})\n\n", block(sensitive), "\n",
@@ -387,9 +432,13 @@ def cmd_inspect(args):
     ]
     if configs:
         out += ["### Compiler configuration files mxmlc reads by itself\n\n", block(configs), "\n"]
+    if unread:
+        out += ["### Files whose added lines were not all read\n\n", block(unread), "\n"]
     if unseen:
         out += ["### In the API's file list but not in the git diff\n\n", block(unseen), "\n"]
     write_report(args.out, "".join(out), "## Trusted inspection")
+    if problems:
+        sys.exit("inspect: " + "; ".join(problems))
 
 
 # ------------------------------------------------------------------------------------------------------ toolchain
@@ -773,21 +822,21 @@ def cmd_compile(args):
             "-warnings=true", "-output", movie, os.path.join(ui, name, name + ".as"),
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=600)
-        log = (result.stdout + result.stderr).replace(ui + os.sep, "ui/").replace(flex + os.sep, "FLEX/")
+        output = (result.stdout + result.stderr).replace(ui + os.sep, "ui/").replace(flex + os.sep, "FLEX/")
         with open(os.path.join(out, name + ".log"), "w", encoding="utf-8") as f:
-            f.write(log)
-        warnings = sum(1 for line in log.splitlines() if "Warning:" in line)
+            f.write(output)
+        warnings = sum(1 for line in output.splitlines() if "Warning:" in line)
         if result.returncode != 0 or not os.path.isfile(movie):
             failed += 1
             lines.append(f"{name}.swf  mxmlc FAILED (exit {result.returncode}), {warnings} warning(s); last lines:")
-            lines += ["    " + line for line in log.splitlines()[-15:]]
+            lines += ["    " + line for line in output.splitlines()[-15:]]
             continue
         data, cleared = normalize_movie(open(movie, "rb").read())
         open(movie, "wb").write(data)
         missing = [what for what in ("compile time", "Metadata date") if what not in cleared]
         lines.append(f"{name}.swf  compiled, {warnings} warning(s), {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}"
                      + (f"  (no {' or '.join(missing)} found to clear)" if missing else ""))
-        lines += ["    " + line for line in log.splitlines() if "Warning:" in line or "Error:" in line][:20]
+        lines += ["    " + line for line in output.splitlines() if "Warning:" in line or "Error:" in line][:20]
     if not movie_names(ui):
         lines.append("No ui/<Name>/<Name>.as to compile.")
     with open(args.report, "w", encoding="utf-8") as f:

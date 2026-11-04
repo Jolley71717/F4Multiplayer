@@ -10,7 +10,8 @@
 #   vetted  `vetted` stays only if there is a successful run titled "Vet PR <N> at <the PR's head>" of vet.yml on
 #           vet-runner, started by the owner, whose commit is on main and whose vet.yml and .github/scripts are still
 #           main's. Then a comment "Vetted at <head>" records the run, once; that comment for the current head is what
-#           a merge checks. Otherwise the label comes off, with a comment. If anything here fails, the label comes off.
+#           a merge checks. Otherwise the label comes off, with a comment. If anything here fails, the label comes off,
+#           and an outside PR gets `needs-vetting` all the same.
 # Like review-label.yml: pull_request_target runs this file from main with a token that can write labels, also for PRs
 # from forks. It reads only the API (the PR's file list, vet.yml's runs), never checks out or runs the PR's code, and
 # passes everything from the event through env:, never into the script's text. Nothing from the PR (its title, branch,
@@ -133,9 +134,19 @@ jobs:
             gh pr comment "$PR" --repo "$REPO" --body "$note" > /dev/null
           fi
 
-      - name: If anything above failed, take `vetted` off
+      - name: If anything above failed, take `vetted` off, and flag an outside PR
         if: failure() || cancelled()
+        env:
+          # From the event (a PR's author never changes), so this step doesn't depend on the API calls that failed; only
+          # true or false, so the log never shows the login.
+          OUTSIDE: ${{ github.event.pull_request.user.login != github.repository_owner }}
         run: |
           if gh api -X DELETE "repos/$REPO/issues/$PR/labels/vetted" > /dev/null 2>&1; then
             gh pr comment "$PR" --repo "$REPO" --body "The label check failed, so \`vetted\` is taken off: see the vet-label run, then add it again." > /dev/null
+          fi
+          # Every outside PR is vetted: if the flag step never got that far, add the label here.
+          if [ "$OUTSIDE" != false ]; then
+            gh label create needs-vetting --repo "$REPO" --color d93f0b \
+              --description "From outside, or adds binaries, URLs or workflows: the owner runs vet.yml first" > /dev/null 2>&1 || true
+            gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=needs-vetting" > /dev/null
           fi
