@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
-          [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail "'$REF' is not a branch, tag or commit name"
+          [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail "the ref is not a branch, tag or commit name (only letters, digits and . _ / -)"
           case "$REF" in
             refs/pull/*|pull/*|refs/remotes/*) fail "build.yml never builds a pull request's ref; vet an outside PR with vet.yml" ;;
           esac

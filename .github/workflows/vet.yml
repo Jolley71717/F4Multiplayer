@@ -27,7 +27,10 @@
 #            succeeds, and its title "Vet PR <N> at <sha>" is what vet-label.yml looks for when `vetted` is added.
 # The untrusted jobs get no permissions, no secrets and no credentials, and their artifacts (the built movies and the
 # test log, kept 3 days) are for reading only: releases come from package.yml, which builds from main. The parts of the
-# report travel as job outputs, which only their own job can write, never as artifacts.
+# report travel as job outputs, which only their own job can write, never as artifacts; a trusted part too long for one
+# fails the vet. The trusted jobs never print the PR's text (file names, URLs, its title, branch or author) to their
+# logs, where the runner would obey a workflow command in it (`::add-mask::`, `##[stop-commands]`): reports go to files
+# and job summaries, and what vet.py logs has every "::" and "##" broken up.
 # pull_request_target and workflow_run are never used to run a PR's code.
 name: Vet a pull request
 run-name: Vet PR ${{ inputs.pr }} at ${{ inputs.sha }}
@@ -71,7 +74,7 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           if [ "$REF" != refs/heads/vet-runner ]; then
-            echo "::error::Run this from the vet-runner branch, with main's commit on it (this run's ref is $REF): git push --force origin origin/main:refs/heads/vet-runner, then gh workflow run vet.yml --ref vet-runner -f pr=... -f sha=..."
+            echo "::error::Run this from the vet-runner branch, with main's commit on it: git push --force origin origin/main:refs/heads/vet-runner, then gh workflow run vet.yml --ref vet-runner -f pr=... -f sha=..."
             exit 1
           fi
 
@@ -112,14 +115,16 @@ jobs:
           gh api "repos/$REPO/pulls/$PR" > "$RUNNER_TEMP/pr.json"
           head=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
           if [ "$head" != "$SHA" ]; then
-            echo "::error::PR $PR's head is $head, not $SHA: read the new commits, then vet that head"
+            echo "::error::PR $PR's head is not $SHA: read the new commits, then vet that head"
             exit 1
           fi
+          base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")
+          [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the PR's base is not a commit id"; exit 1; }
           {
             echo "pr=$PR"
             echo "sha=$SHA"
             echo "short=${SHA:0:7}"
-            echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")"
+            echo "base=$base"
           } >> "$GITHUB_OUTPUT"
 
       - name: Fetch the PR's commits (as objects; nothing is checked out)
@@ -174,17 +179,32 @@ jobs:
         env:
           PR: ${{ steps.pr.outputs.pr }}
           SHA: ${{ steps.pr.outputs.sha }}
+          HAS_UI: ${{ steps.tree.outputs.has_ui }}
+          HAS_FLASH: ${{ steps.tree.outputs.has_flash }}
         run: |
           set -euo pipefail
           pr="$RUNNER_TEMP/pr.json"
+          if [ -f "$RUNNER_TEMP/toolchain.md" ]; then
+            toolchain=$(cat "$RUNNER_TEMP/toolchain.md")
+          elif [ "$HAS_UI" = true ] || [ "$HAS_FLASH" = true ]; then
+            toolchain="Skipped: the PR has ui/ or tools/flash/, but the check wrote no report (it, or a step before it, failed)."
+          elif [ "$HAS_UI" = false ] && [ "$HAS_FLASH" = false ]; then
+            toolchain="Not used: the PR has no ui/ or tools/flash/."
+          else
+            toolchain="Skipped: the step that reads the PR's tree failed."
+          fi
+          [ -f "$RUNNER_TEMP/toolchain.md" ] || toolchain=$(printf '## Flash toolchain\n\n%s' "$toolchain")
           {
             echo "PR $PR: $(jq -r .state "$pr")$(jq -r 'if .draft then ", draft" else "" end' "$pr"), head \`$SHA\`, from $(jq -r 'if (.head.repo.full_name // "") == .base.repo.full_name then "this repository" else "a fork" end' "$pr")."
             echo
             if [ -f "$RUNNER_TEMP/inspect.md" ]; then cat "$RUNNER_TEMP/inspect.md"; else echo "## Trusted inspection"; echo; echo "Did not finish."; echo; fi
-            if [ -f "$RUNNER_TEMP/toolchain.md" ]; then cat "$RUNNER_TEMP/toolchain.md"; else echo "## Flash toolchain"; echo; echo "Not used: the PR has no ui/ or tools/flash/."; echo; fi
+            printf '%s\n\n' "$toolchain"
           } > "$RUNNER_TEMP/trusted.md"
-          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/trusted.md"
-          # The report job takes this through an environment variable, which Linux caps at 128 KiB.
+          # Into the summary, never the log: the runner obeys workflow commands found in a log line, and this holds the
+          # PR's file names.
+          cat "$RUNNER_TEMP/trusted.md" >> "$GITHUB_STEP_SUMMARY"
+          # The report job takes this through an environment variable, which Linux caps at 128 KiB. When it is too
+          # long, a stand-in goes instead, and the report job fails the vet on it (TRUSTED_STAND_IN in vet.py).
           packed=$(gzip -9c "$RUNNER_TEMP/trusted.md" | base64 -w0)
           if [ ${#packed} -gt 100000 ]; then
             packed=$(printf '## Trusted inspection\n\nToo long to pass on: the inspect job'"'"'s summary holds it.\n\n' | gzip -9c | base64 -w0)
@@ -250,7 +270,7 @@ jobs:
           for part in java toolchain compile compare; do
             if [ -f "$RUNNER_TEMP/$part.md" ]; then cat "$RUNNER_TEMP/$part.md"; else echo "## $part: did not finish"; echo; fi
           done > "$RUNNER_TEMP/movies.md"
-          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/movies.md"
+          cat "$RUNNER_TEMP/movies.md" >> "$GITHUB_STEP_SUMMARY"
           packed=$(gzip -9c "$RUNNER_TEMP/movies.md" | base64 -w0)
           if [ ${#packed} -gt 100000 ]; then
             packed=$(printf 'Too long to pass on: this job'"'"'s summary holds it.\n' | gzip -9c | base64 -w0)
@@ -338,7 +358,7 @@ jobs:
               echo "No tests.log."
             fi
           } > "$RUNNER_TEMP/build.md"
-          sed 's/^/    /' "$RUNNER_TEMP/build.md" | tee -a "$GITHUB_STEP_SUMMARY"
+          sed 's/^/    /' "$RUNNER_TEMP/build.md" >> "$GITHUB_STEP_SUMMARY"
           packed=$(gzip -9c "$RUNNER_TEMP/build.md" | base64 -w0)
           if [ ${#packed} -gt 100000 ]; then
             packed=$(printf 'Too long to pass on: this job'"'"'s summary holds it.\n' | gzip -9c | base64 -w0)

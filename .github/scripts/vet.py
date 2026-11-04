@@ -32,6 +32,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import traceback
 import unicodedata
 import urllib.error
 import urllib.request
@@ -98,6 +99,8 @@ LINE_LIMIT = 300  # characters per row; a longer one is cut and says so
 # GitHub drops a job summary over 1 MiB without failing the step, so a report that big could vanish from a green run.
 # inspect and assemble fail instead, with a short report saying why.
 REPORT_BYTES_LIMIT = 900_000
+# What vet.yml's inspect job sends in place of a trusted part too long for a job output; assemble fails the vet on it.
+TRUSTED_STAND_IN = "## Trusted inspection\n\nToo long to pass on"
 
 
 def clean(text):
@@ -113,6 +116,18 @@ def clean(text):
         else:
             out.append(ch)
     return "".join(out)
+
+
+def neutral(text):
+    """One line for a job's log. The runner obeys a workflow command found anywhere in a log line ("##[add-mask]...",
+    "::stop-commands::..."), so after clean() no two colons and no two hashes stay side by side."""
+    return re.sub(r"#(?=#)", "# ", re.sub(r":(?=:)", ": ", clean(text)))
+
+
+def log(text):
+    """Write to stderr, neutralized line by line: what goes to a log may hold a PR's file names."""
+    for line in str(text).splitlines() or [""]:
+        print(neutral(line), file=sys.stderr)
 
 
 def cut(text, limit=LINE_LIMIT):
@@ -396,7 +411,7 @@ def download(url, path):
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             last = error
         time.sleep(10 * (attempt + 1))
-    print(f"download of {url} failed: {last}", file=sys.stderr)
+    log(f"download of {url} failed: {last}")
     return 0, url
 
 
@@ -866,6 +881,8 @@ def cmd_assemble(args):
     trusted, trouble = read_part(args.parts, "inspect", limit=REPORT_BYTES_LIMIT)
     if trusted.endswith(f"(cut at {REPORT_BYTES_LIMIT} bytes)\n"):
         trouble = "is over the size limit"
+    if trusted.startswith(TRUSTED_STAND_IN):
+        trouble = "was too long to pass on"
     if trouble:
         problems.append(f"the trusted part {trouble}: read the inspect job's summary")
     caches = "## Caches\n\n"
@@ -963,7 +980,18 @@ def main():
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_assemble)
     args = parser.parse_args()
-    args.func(args)
+    # Nothing raw reaches the log: an error message or a traceback (a failed git command's arguments, say) may hold a
+    # PR's file names, and a trusted job's log must not carry a workflow command a PR wrote.
+    try:
+        args.func(args)
+    except SystemExit as error:
+        if error.code is None or isinstance(error.code, int):
+            raise
+        log(error.code)
+        sys.exit(1)
+    except BaseException:
+        log(traceback.format_exc())
+        sys.exit(1)
 
 
 if __name__ == "__main__":

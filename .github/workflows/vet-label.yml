@@ -13,7 +13,9 @@
 #           a merge checks. Otherwise the label comes off, with a comment. If anything here fails, the label comes off.
 # Like review-label.yml: pull_request_target runs this file from main with a token that can write labels, also for PRs
 # from forks. It reads only the API (the PR's file list, vet.yml's runs), never checks out or runs the PR's code, and
-# passes everything from the event through env:, never into the script's text.
+# passes everything from the event through env:, never into the script's text. Nothing from the PR (its title, branch,
+# author, file names, URLs) goes to the log, where the runner would obey a workflow command in it: only the PR's number,
+# a checked commit id and counts do.
 name: vet-label
 
 on:
@@ -53,7 +55,9 @@ jobs:
           set -euo pipefail
           gh api "repos/$REPO/pulls/$PR" > "$RUNNER_TEMP/pr.json"
           jq '[.labels[].name]' "$RUNNER_TEMP/pr.json" > "$RUNNER_TEMP/labels.json"
-          jq -r '.head.sha, .user.login, .changed_files' "$RUNNER_TEMP/pr.json"
+          head=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
+          [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the PR's head is not a commit id"; exit 1; }
+          echo "PR $PR at $head"
 
       - name: Flag the PR
         run: |
@@ -66,7 +70,8 @@ jobs:
           if [ "$author" = "$OWNER" ]; then rule+=(--owner); fi
           gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
           python3 -I trusted/.github/scripts/vet.py flags "${rule[@]}" "$RUNNER_TEMP/files.jsonl" --comment "$RUNNER_TEMP/comment.md" > "$RUNNER_TEMP/flags.json"
-          jq -r '.reasons[]' "$RUNNER_TEMP/flags.json"
+          # The reasons name the PR's files: they go to the comment, not the log.
+          echo "$(jq '.reasons | length' "$RUNNER_TEMP/flags.json") reason(s) to vet"
           if ! jq -e .needs_vetting "$RUNNER_TEMP/flags.json" > /dev/null; then
             echo "Nothing that needs vetting"
             exit 0
@@ -76,8 +81,8 @@ jobs:
               --description "From outside, or adds binaries, URLs or workflows: the owner runs vet.yml first" 2> /dev/null || true
             gh label create vetted --repo "$REPO" --color 0e8a16 \
               --description "A passed vet.yml run vetted this PR's head, and the owner read its report" 2> /dev/null || true
-            gh pr edit "$PR" --repo "$REPO" --add-label needs-vetting
-            gh pr comment "$PR" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+            gh pr edit "$PR" --repo "$REPO" --add-label needs-vetting > /dev/null
+            gh pr comment "$PR" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md" > /dev/null
           fi
 
       - name: Keep `vetted` only on a head a passed vet run vetted
@@ -86,7 +91,7 @@ jobs:
           has() { jq -e --arg label "$1" 'index($label) != null' "$RUNNER_TEMP/labels.json" > /dev/null; }
           if ! has vetted; then echo "No vetted label"; exit 0; fi
           head=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
-          [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad head $head"; exit 1; }
+          [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the PR's head is not a commit id"; exit 1; }
           gh api "repos/$REPO/actions/workflows/vet.yml/runs?branch=vet-runner&event=workflow_dispatch&status=success&per_page=100" > "$RUNNER_TEMP/runs.json"
           found=$(jq -r --arg title "Vet PR $PR at $head" --arg owner "$OWNER" '
             first(.workflow_runs[] | select(.display_title == $title and .conclusion == "success"
@@ -97,36 +102,40 @@ jobs:
             why="there is no passed vet run for this PR's head \`$head\`"
           else
             run=${found% *}; run_sha=${found#* }
-            [[ "$run_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad run commit $run_sha"; exit 1; }
-            # The run's vet.yml must be main's: its commit on main, and its rules still main's.
+            [[ "$run_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the vet run's commit is not a commit id"; exit 1; }
+            # The run's vet.yml must be main's: its commit on main, and its rules still main's. A lookup that fails or
+            # gives no commit id fails this step, and the last step takes `vetted` off.
             on_main=$(gh api "repos/$REPO/compare/main...$run_sha" --jq .status)
             rules() {
               local scripts workflow
-              scripts=$(gh api "repos/$REPO/contents/.github?ref=$1" --jq '.[] | select(.name == "scripts") | .sha' 2> /dev/null) || scripts=missing
-              workflow=$(gh api "repos/$REPO/contents/.github/workflows/vet.yml?ref=$1" --jq .sha 2> /dev/null) || workflow=missing
+              scripts=$(gh api "repos/$REPO/contents/.github?ref=$1" --jq '.[] | select(.name == "scripts") | .sha') || return 1
+              workflow=$(gh api "repos/$REPO/contents/.github/workflows/vet.yml?ref=$1" --jq .sha) || return 1
+              [[ "$scripts" =~ ^[0-9a-f]{40}$ && "$workflow" =~ ^[0-9a-f]{40}$ ]] || return 1
               echo "$scripts $workflow"
             }
+            run_rules=$(rules "$run_sha") || { echo "::error::could not read the vet run's vet.yml and .github/scripts"; exit 1; }
+            main_rules=$(rules main) || { echo "::error::could not read main's vet.yml and .github/scripts"; exit 1; }
             if [ "$on_main" != identical ] && [ "$on_main" != behind ]; then
               why="the vet run $run ran vet.yml from \`$run_sha\`, which is not on main ($on_main)"
-            elif [ "$(rules "$run_sha")" != "$(rules main)" ]; then
+            elif [ "$run_rules" != "$main_rules" ]; then
               why="the vet run $run ran under rules that main has changed since (vet.yml or .github/scripts)"
             fi
           fi
           if [ -n "$why" ]; then
             gh api -X DELETE "repos/$REPO/issues/$PR/labels/vetted" > /dev/null
-            gh pr comment "$PR" --repo "$REPO" --body "\`vetted\` is taken off: $why. Vet this head (vet.yml, from vet-runner), read its report, then add \`vetted\` again."
+            gh pr comment "$PR" --repo "$REPO" --body "\`vetted\` is taken off: $why. Vet this head (vet.yml, from vet-runner), read its report, then add \`vetted\` again." > /dev/null
             exit 0
           fi
           note="Vetted at \`$head\`: $run"
           bodies=$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" \
             --jq '.[] | select(.user.login == "github-actions[bot]") | .body')
           if ! grep -qxF "$note" <<< "$bodies"; then
-            gh pr comment "$PR" --repo "$REPO" --body "$note"
+            gh pr comment "$PR" --repo "$REPO" --body "$note" > /dev/null
           fi
 
       - name: If anything above failed, take `vetted` off
         if: failure() || cancelled()
         run: |
           if gh api -X DELETE "repos/$REPO/issues/$PR/labels/vetted" > /dev/null 2>&1; then
-            gh pr comment "$PR" --repo "$REPO" --body "The label check failed, so \`vetted\` is taken off: see the vet-label run, then add it again."
+            gh pr comment "$PR" --repo "$REPO" --body "The label check failed, so \`vetted\` is taken off: see the vet-label run, then add it again." > /dev/null
           fi

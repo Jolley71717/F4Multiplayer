@@ -122,16 +122,16 @@ jobs:
           set -euo pipefail
           python3 -I trusted/.github/scripts/vet.py java --work "$RUNNER_TEMP/java-dl" --home "$RUNNER_TEMP/jdk" \
             --report "$RUNNER_TEMP/java.md"
-          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/java.md"
+          cat "$RUNNER_TEMP/java.md" >> "$GITHUB_STEP_SUMMARY"
           python3 -I trusted/.github/scripts/vet.py toolchain --strict --work "$RUNNER_TEMP/flash" \
             --unpack "$RUNNER_TEMP/flex" --out "$RUNNER_TEMP/toolchain.md"
-          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/toolchain.md"
+          cat "$RUNNER_TEMP/toolchain.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Compile every movie from source
         run: |
           python3 -I trusted/.github/scripts/vet.py compile --java-home "$RUNNER_TEMP/jdk" --flex "$RUNNER_TEMP/flex" --ui src/ui \
             --out "$RUNNER_TEMP/movies" --report "$RUNNER_TEMP/compile.md"
-          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/compile.md"
+          cat "$RUNNER_TEMP/compile.md" >> "$GITHUB_STEP_SUMMARY"
           rm -f "$RUNNER_TEMP"/movies/*.log
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
