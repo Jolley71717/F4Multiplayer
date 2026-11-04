@@ -604,3 +604,254 @@ TEST("workshop resources: a new game's clear and a second clear of the same valu
 	CHECK(TakeOffRecord(benches, { { BENCH, Food(2) } }) == 0u);
 	CHECK(benches.held[BENCH] == Values{});
 }
+
+TEST("workshop resources: the builder's world gone (a load, a new game, the main menu), its pieces that counted go as nothing")
+{
+	Pieces   pieces;
+	Reporter reporter;
+	pieces.looks[CROP] = Here(Food(0.5f));
+	pieces.looks[PUMP] = Here(Water(3));
+	pieces.looks[WALL] = Here({});
+	pieces.looks[TURRET] = Here({ 0, 0, 5, 0, 0, 0 });
+	for (const auto ref : { CROP, PUMP, WALL, TURRET }) {
+		reporter.Track(ref);
+	}
+	auto t = Clock::time_point{} + 1h;
+	REQUIRE(reporter.Poll(pieces, t).size() == 3u);
+
+	// The turret's last entry couldn't be sent. Then the builder starts a new game: none of its pieces is there, and a look
+	// finds their IDs naming nothing, as for a piece whose cell isn't loaded.
+	reporter.Unsent(std::vector<Entry>{ { TURRET, { 0, 0, 5, 0, 0, 0 } } });
+	pieces.looks = { { CROP, Away() }, { PUMP, Away() }, { WALL, Away() }, { TURRET, Away() } };
+	CHECK(reporter.WorldGone() == 3u);  // the crop, the pump and the turret count at the friend's; the wall never did
+	CHECK(reporter.Size() == 0u);
+	CHECK(reporter.Counting() == 0u);
+
+	t += POLL;
+	auto sent = Sent(reporter.Poll(pieces, t));
+	REQUIRE(sent.size() == 3u);
+	for (const auto ref : { CROP, PUMP, TURRET }) {
+		REQUIRE(sent.contains(ref));
+		CHECK(!Any(sent[ref]));
+	}
+	CHECK(!sent.contains(WALL));
+	CHECK(reporter.Owed() == 0u);
+	t += POLL;
+	CHECK(reporter.Poll(pieces, t).empty());  // once
+	t += SNAPSHOT;
+	CHECK(reporter.Poll(pieces, t).empty());  // and no snapshot names them
+
+	// A load of a save that has some of them: the pump, found again before the poll, goes as it counts there and not as
+	// nothing; the crop, not found yet, as nothing. A word refused then is owed still.
+	for (const auto ref : { CROP, PUMP }) {
+		pieces.looks[ref] = Here(ref == CROP ? Food(0.5f) : Water(3));
+		reporter.Track(ref);
+	}
+	t += POLL;
+	REQUIRE(reporter.Poll(pieces, t).size() == 2u);
+	CHECK(reporter.WorldGone() == 2u);
+	pieces.looks[CROP] = Away();
+	reporter.Track(PUMP);
+	t += POLL;
+	auto entries = reporter.Poll(pieces, t);
+	sent = Sent(entries);
+	REQUIRE(entries.size() == 2u);  // one entry each
+	CHECK(sent[PUMP] == Water(3));
+	CHECK(!Any(sent[CROP]));
+	reporter.Unsent(std::vector<Entry>{ { CROP, {} } });
+	t += POLL;
+	entries = reporter.Poll(pieces, t);
+	REQUIRE(entries.size() == 1u);
+	CHECK(entries[0].refId == CROP);
+	CHECK(!Any(entries[0].values));
+
+	// Twice over (the main menu, then the new game after it): the second finds nothing more.
+	CHECK(reporter.WorldGone() == 1u);
+	CHECK(reporter.WorldGone() == 0u);
+	t += POLL;
+	sent = Sent(reporter.Poll(pieces, t));
+	REQUIRE(sent.size() == 1u);
+	CHECK(!Any(sent[PUMP]));
+}
+
+TEST("workshop resources: from a load's start to its new world's clear, nothing of friends' goes on a workbench")
+{
+	Benches    benches;
+	Applier    applier;
+	const auto t = Clock::time_point{} + 1h;
+	const std::map<std::uint32_t, Values> totals{ { BENCH, { 1, 3, 0, 0, 0, 0 } } };
+	applier.Apply(benches, totals, t);
+	CHECK(applier.BeforeLoad(benches) == 2u);
+	CHECK(!Any(benches.held[BENCH]));
+	CHECK(applier.Loading());
+
+	// The load outlasts the save/load hold: frames run again, with the old world's copies still known. Nothing goes on, a
+	// save's hush and its word don't end the block, and neither does HUSH_LIMIT.
+	CHECK(applier.Apply(benches, totals, t + 61s) == 0u);
+	applier.Hush(benches, t + 62s);
+	applier.SaveDone();
+	CHECK(applier.Apply(benches, totals, t + 62s + HUSH_LIMIT) == 0u);
+	CHECK(!Any(benches.held[BENCH]));
+	CHECK(applier.On().empty());
+
+	// The new world's clear: nothing to forget that is still on, and the totals go on again.
+	const auto adds = benches.adds;
+	CHECK(applier.ForgetWorld(benches, false) == 0u);
+	CHECK(benches.adds == adds);
+	CHECK(!applier.Loading());
+	CHECK(applier.Apply(benches, totals, t + 70s) == 2u);
+	CHECK(benches.held[BENCH] == (Values{ 1, 3, 0, 0, 0, 0 }));
+
+	// A new game (no load before it) isn't blocked at all.
+	Applier fresh;
+	CHECK(!fresh.Loading());
+	CHECK(fresh.Apply(benches, { { RED_ROCKET, Water(2) } }, t) == 1u);
+}
+
+TEST("workshop resources: a clear never raises a workbench: a record's tiny value against a slightly negative modifier")
+{
+	Benches benches;
+	// A corrupt record's value under EPSILON, and a modifier just below 0 (within EPSILON of it): min(value, held) is
+	// negative, and taking it off would add.
+	benches.held[BENCH] = Food(-EPSILON / 4);
+	const auto adds = benches.adds;
+	CHECK(TakeOffRecord(benches, { { BENCH, Food(EPSILON / 2) } }) == 0u);
+	CHECK(benches.adds == adds);
+	CHECK(benches.held[BENCH][kFood] == -EPSILON / 4);
+	// At exactly 0 too: nothing to take.
+	benches.held[BENCH] = {};
+	CHECK(TakeOffRecord(benches, { { BENCH, Food(EPSILON / 2) } }) == 0u);
+	CHECK(benches.adds == adds);
+	// One it holds is still taken.
+	benches.held[BENCH] = Food(EPSILON / 2);
+	CHECK(TakeOffRecord(benches, { { BENCH, Food(EPSILON / 2) } }) == 1u);
+	CHECK(benches.held[BENCH][kFood] == 0.0f);
+}
+
+TEST("workshop resources: the main menu forgets the world before's workbenches, taking off only what each still holds")
+{
+	Benches    benches;
+	Applier    applier;
+	const auto t = Clock::time_point{} + 1h;
+	const std::map<std::uint32_t, Values> totals{ { BENCH, { 1, 3, 0, 0, 0, 0 } }, { RED_ROCKET, Water(2) } };
+	REQUIRE(applier.Apply(benches, totals, t) == 3u);
+
+	// Quit to the main menu: the engine set Red Rocket's modifier back, Sanctuary's it kept. Only Sanctuary's is taken
+	// off, and nothing goes on while the menu is open.
+	benches.held[RED_ROCKET] = {};
+	CHECK(applier.MainMenu(benches, true, true) == 2u);
+	CHECK(!Any(benches.held[BENCH]));
+	CHECK(!Any(benches.held[RED_ROCKET]));  // not taken below 0
+	CHECK(applier.On().empty());
+	CHECK(applier.AtMainMenu());
+	CHECK(applier.Apply(benches, totals, t + 1s) == 0u);
+	CHECK(applier.MainMenu(benches, true, false) == 0u);  // every look while it is open: nothing more
+	CHECK(applier.Apply(benches, totals, t + 2s) == 0u);
+	CHECK(!Any(benches.held[BENCH]));
+
+	// A coc from the menu: a new world with no message. Its first save's hush, and the session's end, take nothing off a
+	// workbench that holds nothing of ours: no save gets a negative value.
+	benches.held[BENCH] = Food(4);  // the coc world's own modifier, none of it ours
+	CHECK(applier.MainMenu(benches, false, false) == 0u);
+	CHECK(!applier.AtMainMenu());
+	const auto adds = benches.adds;
+	CHECK(applier.Hush(benches, t + 3s) == 0u);
+	applier.SaveDone();
+	CHECK(applier.TakeAllOff(benches) == 0u);
+	CHECK(benches.adds == adds);
+	CHECK(benches.held[BENCH] == Food(4));
+	CHECK(benches.held[RED_ROCKET] == Values{});
+
+	// Once the menu is closed, the totals go on again, on top of what the world holds of its own.
+	CHECK(applier.Apply(benches, totals, t + 4s) == 3u);
+	CHECK(benches.held[BENCH] == (Values{ 5, 3, 0, 0, 0, 0 }));
+}
+
+TEST("workshop resources: a main menu opened and closed between two looks is seen by its count, an engine that kept ours or not")
+{
+	Benches    benches;
+	Applier    applier;
+	const auto t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, Food(2) }, { RED_ROCKET, Water(2) } }, t);
+	// The coc world is up before the next look: Sanctuary's workbench (same ID) holds a modifier of its own below ours,
+	// Red Rocket's still holds ours.
+	benches.held[BENCH] = Food(1);
+	CHECK(applier.MainMenu(benches, false, true) == 1u);
+	CHECK(benches.held[BENCH] == Food(1));  // not all of ours held: let be
+	CHECK(!Any(benches.held[RED_ROCKET]));
+	CHECK(applier.On().empty());
+	CHECK(!applier.AtMainMenu());
+	CHECK(applier.Apply(benches, { { BENCH, Food(2) } }, t + 1s) == 1u);
+
+	// The session ends at the main menu: a look first, so the end takes off only what is still held.
+	benches.held[BENCH] = {};  // set back as the game quit to the menu
+	CHECK(applier.MainMenu(benches, true, true) == 0u);
+	CHECK(applier.TakeAllOff(benches) == 0u);
+	CHECK(benches.held[BENCH] == Values{});
+	CHECK(applier.On().empty());
+}
+
+TEST("workshop resources: the main menu doesn't end a load's block or a save's hush")
+{
+	Benches    benches;
+	Applier    applier;
+	const auto t = Clock::time_point{} + 1h;
+	const std::map<std::uint32_t, Values> totals{ { BENCH, Water(3) } };
+	applier.Apply(benches, totals, t);
+
+	// A load from the main menu: the menu is open as the load starts, and closes during it.
+	CHECK(applier.MainMenu(benches, true, true) == 1u);
+	applier.BeforeLoad(benches);
+	CHECK(applier.MainMenu(benches, true, false) == 0u);
+	CHECK(applier.MainMenu(benches, false, false) == 0u);
+	CHECK(applier.Loading());
+	CHECK(applier.Apply(benches, totals, t + 61s) == 0u);
+	CHECK(!Any(benches.held[BENCH]));
+	applier.ForgetWorld(benches, false);
+	CHECK(applier.Apply(benches, totals, t + 62s) == 1u);
+
+	// A save's hush outlasts a look at the menu too.
+	applier.Hush(benches, t + 63s);
+	CHECK(applier.MainMenu(benches, false, true) == 0u);
+	CHECK(applier.Hushed());
+	CHECK(applier.Apply(benches, totals, t + 64s) == 0u);
+	applier.SaveDone();
+	CHECK(applier.Apply(benches, totals, t + 65s) == 1u);
+}
+
+TEST("workshop resources: a piece found again in the new world, away before the next poll, still sends that it counts for nothing")
+{
+	Pieces   pieces;
+	Reporter reporter;
+	pieces.looks[PUMP] = Here(Water(3));
+	reporter.Track(PUMP);
+	auto t = Clock::time_point{} + 1h;
+	REQUIRE(reporter.Poll(pieces, t).size() == 1u);
+
+	// The main menu, then a coc: the new world's pump (same ID) is found, and its cell unloads within the second.
+	CHECK(reporter.WorldGone() == 1u);
+	reporter.Track(PUMP);
+	pieces.looks[PUMP] = Away();
+	t += POLL;
+	auto entries = reporter.Poll(pieces, t);
+	REQUIRE(entries.size() == 1u);
+	CHECK(entries[0].refId == PUMP);
+	CHECK(!Any(entries[0].values));  // the friend's game counts the old world's value no more
+	CHECK(reporter.Owed() == 0u);
+	t += POLL;
+	CHECK(reporter.Poll(pieces, t).empty());  // once
+	CHECK(reporter.Counting() == 0u);
+
+	// Loaded again: sent as it counts there.
+	pieces.looks[PUMP] = Here(Water(2));
+	t += POLL;
+	entries = reporter.Poll(pieces, t);
+	REQUIRE(entries.size() == 1u);
+	CHECK(entries[0].values == Water(2));
+
+	// A piece tracked for the first time, away, and owing nothing, still sends nothing.
+	reporter.Track(CROP);
+	pieces.looks[CROP] = Away();
+	t += POLL;
+	CHECK(reporter.Poll(pieces, t).empty());
+}

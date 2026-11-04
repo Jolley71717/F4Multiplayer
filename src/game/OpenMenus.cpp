@@ -36,4 +36,14 @@ namespace OpenMenus
 	{
 		return book.AnyOpen(a_menus);
 	}
+
+	bool MainMenuOpen()
+	{
+		return book.MainMenuOpen();
+	}
+
+	std::uint32_t MainMenus()
+	{
+		return book.MainMenus();
+	}
 }

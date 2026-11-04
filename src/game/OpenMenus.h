@@ -54,6 +54,11 @@ namespace OpenMenus
 		"LevelUpMenu", "LockpickingMenu", "MessageBoxMenu", "SitWaitMenu", "SleepWaitMenu", "TerminalMenu", "TerminalHolotapeMenu", "Workshop_CaravanMenu",
 		"VignetteMenu" };
 
+	// The main menu: none of the menus above (it says nothing of what friends see us in), but kept on its own. Once it
+	// opens, the world played until then is gone, whatever starts the next one: a load, a new game, or a coc from the menu,
+	// which sends no message at all (WorkshopSync forgets our pieces of the old world by it).
+	inline constexpr std::string_view MAIN_MENU = "MainMenu";
+
 	// Whether two menu names are the same. The game's strings are case-blind (BSFixedString, and the UI's own lookup):
 	// its string pool keeps a name in the case it was first made in, which need not be the menu's own.
 	constexpr bool SameName(std::string_view a_lhs, std::string_view a_rhs)
@@ -77,6 +82,13 @@ namespace OpenMenus
 		// A menu opened or closed (its event). A menu not in the list is no business of the book's.
 		void Seen(std::string_view a_name, bool a_opening)
 		{
+			if (SameName(a_name, MAIN_MENU)) {
+				if (a_opening) {
+					mainMenus.fetch_add(1);
+				}
+				mainMenu = a_opening;
+				return;
+			}
 			for (std::size_t i = 0; i < NAMES.size(); ++i) {
 				if (SameName(a_name, NAMES[i])) {
 					const auto bit = 1u << i;
@@ -104,10 +116,16 @@ namespace OpenMenus
 			return (bits.load() & mask) != 0;
 		}
 
+		// Whether the main menu is open, and how often it has opened (the game's start is the first).
+		[[nodiscard]] bool          MainMenuOpen() const { return mainMenu.load(); }
+		[[nodiscard]] std::uint32_t MainMenus() const { return mainMenus.load(); }
+
 	private:
 		static constexpr std::uint32_t Bit(Menu a_menu) { return 1u << static_cast<std::uint32_t>(a_menu); }
 
 		std::atomic<std::uint32_t> bits{ 0 };
+		std::atomic<bool>          mainMenu{ false };
+		std::atomic<std::uint32_t> mainMenus{ 0 };
 	};
 
 	static_assert(static_cast<std::size_t>(Menu::kCount) <= 32);
@@ -123,4 +141,8 @@ namespace OpenMenus
 
 	// Whether any of a_menus is open. Any thread.
 	[[nodiscard]] bool AnyOpen(std::initializer_list<Menu> a_menus);
+
+	// Book::MainMenuOpen and Book::MainMenus. Any thread.
+	[[nodiscard]] bool          MainMenuOpen();
+	[[nodiscard]] std::uint32_t MainMenus();
 }
