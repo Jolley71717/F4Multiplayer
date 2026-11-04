@@ -11,15 +11,32 @@ early can run it and say whether it holds. In this order:
 
 1. Write `dist/RELEASE-X.Y.Z-rcN.md` and commit it: the rc's commit carries its notes. For a new
    version's first rc, `set_version` in `xmake.lua` is bumped to X.Y.Z in the same commit.
-2. `tools/package.ps1 -Label rcN` on that commit. It refuses uncommitted changes to tracked files,
-   notes that are not committed, and notes in `dist/` for a version newer than X.Y.Z-rcN (other than
-   X.Y.Z's own, which are written alongside its rcs): those mean `set_version` was not bumped. It
-   builds every target with Visual Studio 2022, runs the unit tests (and stops if one fails),
-   checks that nothing in the zip names this PC or its user, and writes to `dist/out/`:
+2. Package that commit on GitHub, with the Package workflow (`.github/workflows/package.yml`, owner only):
+   `gh workflow run package.yml -f ref=<commit> -f label=rcN` (or Actions > Package > Run workflow). The ref
+   must be on `main`; a tag `vX.Y.Z-rcN` works too, and must then match the label and `set_version`. On
+   GitHub's Windows machine it compiles the menu movies in `ui/` from source, if there are any, with the
+   pinned Flex compiler under Amazon Corretto (the toolchain's hashes and signature checked first), then runs
+   `tools/package.ps1 -Label rcN` on that commit with no build cache. The run's artifact
+   `F4Multiplayer-X.Y.Z-rcN-<commit>` holds what `dist/out/` would; put it there:
+   `gh run download <run id> -n F4Multiplayer-X.Y.Z-rcN-<commit> -D dist/out`. The soak and `promote.ps1`
+   then work on exactly those files. The artifact is kept 90 days; the `.pdb` in it is needed for crash logs
+   long after, so keep `dist/out/symbols/`. `-f trial=true` packages with any label and uncommitted notes, for
+   trying the workflow out (`-AllowDirty`: the build calls itself `<commit>-dirty` and can't be promoted).
+
+   `tools/package.ps1 -Label rcN` on this PC is the fallback and does the same. It refuses uncommitted
+   changes to tracked files, notes that are not committed, and notes in `dist/` for a version newer than
+   X.Y.Z-rcN (other than X.Y.Z's own, which are written alongside its rcs): those mean `set_version` was not
+   bumped. It builds every target with Visual Studio 2022, runs the unit tests (and stops if one fails),
+   checks that nothing in the zip names the machine or its user, and writes to `dist/out/`:
    - `F4Multiplayer-X.Y.Z-rcN.zip`, laid out like a Data folder;
    - `F4Multiplayer-X.Y.Z-rcN.manifest.txt`: the commit, the build label, the DLL's SHA-256;
    - `symbols/F4Multiplayer-X.Y.Z-rcN-<commit>.pdb`, for reading crash logs from exactly this build.
-     It stays on this PC (it is full of build paths) and is never uploaded.
+     It never goes on a release (it is full of build paths).
+
+   The menu movies (`ui/<Name>/<Name>.as`) go into the zip's `Interface/F4Multiplayer/`, compiled from
+   source: `-Movies <folder>` names the folder they were compiled into (the workflow does that); without it
+   they are read from beside their sources, where `tools/flash/build.ps1` builds them, and a movie git tracks
+   is refused. With no `ui/`, there are none.
 
    The plugin's log then says `F4Multiplayer build rcN <commit>` near its top: that is how a log
    names the build it came from. An untracked file under `src`, `common`, `bot` or `tests` counts as

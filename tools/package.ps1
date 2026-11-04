@@ -10,6 +10,7 @@ param(
 	[string]$Label = '',  # "rc3" for a release candidate: named in the zip, and with the commit in the plugin log
 	[switch]$Nexus,  # the Nexus upload: without F4MPServer.exe (only dedicated servers need it, and it is one more compiled file for their scanner); the GitHub release carries the full zip
 	[string]$OutDir = '',  # where the zip goes (dist\out); a scratch folder for trying the script out
+	[string]$Movies = '',  # the compiled menu movies (ui\<Name>\<Name>.as), as package.yml builds them; without it, from beside their sources
 	[switch]$AllowDirty  # local experiments only: packages uncommitted changes, the build calls itself "-dirty" and promote.ps1 refuses it
 )
 
@@ -19,6 +20,7 @@ $ErrorActionPreference = 'Stop'
 # ones its soak verdict was given for.
 if ($AllowDirty -and $Label -and -not $OutDir) { throw "-AllowDirty with -Label needs -OutDir (a scratch folder), so it can't replace a real rc's package" }
 
+if ($Movies) { $Movies = (Resolve-Path -LiteralPath $Movies).ProviderPath }
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 . (Join-Path $PSScriptRoot 'release-lib.ps1')
@@ -37,7 +39,7 @@ if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "xmake.lua's set_version is '$
 $changed = @(git status --porcelain --untracked-files=no)
 Assert-Native 'git status'
 $untracked = @(git status --porcelain | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3).Trim('"') } |
-	Where-Object { -not $_.StartsWith('.claude/') -and -not $_.StartsWith('dist/out/') })
+	Where-Object { -not $_.StartsWith('.claude/') -and -not $_.StartsWith('dist/out/') -and $_ -notmatch '^ui/[^/]+/[^/]+\.swf$' })
 # xmake.lua compiles every source file under these folders by pattern, so an untracked one would be
 # built into the package although the commit doesn't have it.
 $compiled = @($untracked | Where-Object { $_ -match '^(src|common|bot|tests)/' })
@@ -68,6 +70,9 @@ foreach ($doc in 'dist\INSTALL.md', 'dist\NEXUS.md') {
 	if (Select-String -LiteralPath $doc -Pattern "face and hair aren't copied" -SimpleMatch -Quiet) { throw "$doc still says friends' faces aren't copied (they are since 0.8.9)" }
 	if (Select-String -LiteralPath $doc -Pattern 'Cyrillic or CJK' -SimpleMatch -Quiet) { throw "$doc still says Cyrillic needs the game in that language (only Japanese and Chinese do)" }
 }
+
+# Looked for before the build, which takes minutes. None while there is no ui\.
+$menuMovies = @(Get-MenuMovies $root $Movies)
 
 # The plugin's first log lines name the build: "F4Multiplayer build rc3 1a2b3c4".
 $commit = (git rev-parse HEAD).Trim()
@@ -142,6 +147,12 @@ New-Item -ItemType Directory -Force $lang | Out-Null
 $langFiles = @(Get-ChildItem (Join-Path $root 'dist\lang') -Filter '*.txt' -File)
 if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lang has no en.txt' }
 Copy-Item $langFiles.FullName $lang
+# The menu movies, where the game looks for menus: Data\Interface, in a folder of ours.
+if ($menuMovies) {
+	$interface = Join-Path $stage 'Interface\F4Multiplayer'
+	New-Item -ItemType Directory -Force $interface | Out-Null
+	Copy-Item -LiteralPath $menuMovies $interface
+}
 if (-not $Nexus) { Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer') }
 Copy-Item (Join-Path $root 'dist\INSTALL.md') (Join-Path $stage 'F4Multiplayer')
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'F4Multiplayer')

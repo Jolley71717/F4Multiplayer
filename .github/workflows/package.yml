@@ -1,0 +1,203 @@
+# Packages a release candidate on GitHub's machines from a commit or tag on main (docs/RELEASING.md): builds every
+# target and runs the unit tests through tools/package.ps1 on Windows with Visual Studio 2022, after compiling the
+# menu movies in ui/ (if there are any) from source with the pinned Flex compiler under Amazon Corretto. Started by
+# hand, by the repository owner only:
+#
+#   gh workflow run package.yml -f ref=<commit or tag on main> -f label=rc1
+#
+# The artifact F4Multiplayer-<version>-<label>-<commit> holds what dist/out would: the zip, its manifest and, under
+# symbols/, the .pdb. Download it into dist/out (`gh run download <run id> -n <artifact> -D dist/out`); the soak and
+# tools/promote.ps1 then work on exactly those files. trial=true packages with any label and uncommitted notes
+# (-AllowDirty): such a build calls itself <commit>-dirty and promote.ps1 refuses it.
+# Nothing here comes from a pull request or from another run's artifacts, and no cache is restored or saved.
+name: Package
+run-name: Package ${{ inputs.ref }} as ${{ inputs.label }}${{ inputs.trial && ' (trial)' || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or tag on main to package (the commit the rc tag will name, or that tag)
+        required: true
+      label:
+        description: Build label, as tools/package.ps1 -Label takes it (rc1)
+        required: true
+      trial:
+        description: Trial package (-AllowDirty, any label); promote.ps1 refuses it
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: package-${{ inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  # The same pins as vet.yml: change both together.
+  FLEX_URL: https://archive.apache.org/dist/flex/4.16.1/binaries/apache-flex-sdk-4.16.1-bin.tar.gz
+  FLEX_SHA256: 17fda7ac8d3e476cad3127f345455ef316acfb87c6f4322e5897bd8d9b09388e
+  FLEX_KEY_FINGERPRINT: 44998F3E242727E94C4BADEB6B0A7EC905061FC8  # the release manager's key that signed 4.16.1, in Apache's KEYS
+  FLEX_KEYS_URLS: https://archive.apache.org/dist/flex/KEYS https://downloads.apache.org/flex/KEYS
+  PLAYERGLOBAL_URL: https://fpdownload.macromedia.com/get/flashplayer/updaters/32/playerglobal32_0.swc
+  PLAYERGLOBAL_SHA256: 7d4d6168d27603cfb3b750302448e354e0bbc1bdd58f5d101c3dcf6891e9bb65
+  JAVA_VERSION: '11'  # Amazon Corretto, as in vet.yml
+
+jobs:
+  resolve:
+    name: Check the commit
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.check.outputs.commit }}
+      label: ${{ steps.check.outputs.label }}
+      trial: ${{ steps.check.outputs.trial }}
+      has_ui: ${{ steps.check.outputs.has_ui }}
+      artifact: ${{ steps.check.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # every branch and tag: the ref is looked up and checked against main
+          persist-credentials: false
+
+      - name: Resolve the ref and check it is on main
+        id: check
+        env:
+          REF: ${{ inputs.ref }}
+          LABEL: ${{ inputs.label }}
+          TRIAL: ${{ inputs.trial }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$LABEL" =~ ^[A-Za-z0-9.-]+$ ]] || fail "the label may hold only letters, digits, '.' and '-'"
+          [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail "'$REF' is not a commit or tag name"
+          commit=$(git rev-parse --verify --quiet "$REF^{commit}") || fail "there is no commit or tag $REF"
+          git merge-base --is-ancestor "$commit" origin/main || fail "$REF ($commit) is not on main"
+          version=$(git show "$commit:xmake.lua" | sed -n 's/^set_version("\([0-9.]*\)").*/\1/p' | head -n 1)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "xmake.lua at $commit has no set_version like 0.8.9"
+          if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(rc[0-9]+)$ ]]; then
+            [ "${BASH_REMATCH[1]}" = "$version" ] || fail "$REF names version ${BASH_REMATCH[1]}, but xmake.lua there says $version"
+            [ "${BASH_REMATCH[2]}" = "$LABEL" ] || fail "$REF is ${BASH_REMATCH[2]}, but the label is $LABEL"
+          fi
+          has_ui=false
+          if [ -n "$(git ls-tree "$commit" -- ui)" ]; then has_ui=true; fi
+          {
+            echo "commit=$commit"
+            echo "label=$LABEL"
+            echo "trial=$TRIAL"
+            echo "has_ui=$has_ui"
+            echo "artifact=F4Multiplayer-$version-$LABEL-${commit:0:7}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Packaging $commit (version $version, label $LABEL, trial $TRIAL, menu movies: $has_ui)" >> "$GITHUB_STEP_SUMMARY"
+
+  movies:
+    name: Compile the menu movies
+    needs: resolve
+    if: needs.resolve.outputs.has_ui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          path: src
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: corretto
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Fetch and check the toolchain
+        run: |
+          python3 -I trusted/.github/scripts/vet.py toolchain --strict --work "$RUNNER_TEMP/flash" \
+            --unpack "$RUNNER_TEMP/flex" --out "$RUNNER_TEMP/toolchain.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/toolchain.md"
+
+      - name: Compile every movie from source
+        run: |
+          python3 -I trusted/.github/scripts/vet.py compile --flex "$RUNNER_TEMP/flex" --ui src/ui \
+            --out "$RUNNER_TEMP/movies" --report "$RUNNER_TEMP/compile.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/compile.md"
+          rm -f "$RUNNER_TEMP"/movies/*.log
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: movies
+          path: ${{ runner.temp }}/movies/
+          retention-days: 1
+          if-no-files-found: error
+
+  package:
+    name: Build, test and package
+    needs: [resolve, movies]
+    if: always() && needs.resolve.result == 'success' && (needs.movies.result == 'success' || needs.movies.result == 'skipped')
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      # No cache: every package is built from a clean slate.
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a  # v1.2.5
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Take the compiled movies
+        if: needs.resolve.outputs.has_ui == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: movies
+          path: ${{ runner.temp }}/movies
+
+      - name: tools/package.ps1
+        shell: powershell
+        env:
+          LABEL: ${{ needs.resolve.outputs.label }}
+          TRIAL: ${{ needs.resolve.outputs.trial }}
+          HAS_UI: ${{ needs.resolve.outputs.has_ui }}
+          MOVIES: ${{ runner.temp }}\movies
+          OUT: ${{ runner.temp }}\out
+        run: |
+          $package = @{ Label = $env:LABEL; OutDir = $env:OUT }
+          if ($env:HAS_UI -eq 'true') { $package.Movies = $env:MOVIES }
+          if ($env:TRIAL -eq 'true') { $package.AllowDirty = $true }
+          & .\tools\package.ps1 @package
+          Get-ChildItem -LiteralPath $env:OUT -Recurse -File | ForEach-Object { $_.FullName.Substring($env:OUT.Length + 1) }
+
+      - name: Summary
+        shell: bash
+        env:
+          OUT: ${{ runner.temp }}/out
+          ARTIFACT: ${{ needs.resolve.outputs.artifact }}
+        run: |
+          {
+            echo "Artifact \`$ARTIFACT\`: download it into dist/out with \`gh run download $GITHUB_RUN_ID -n $ARTIFACT -D dist/out\`."
+            echo
+            for manifest in "$OUT"/*.manifest.txt; do echo "    $(basename "$manifest"):"; sed 's/^/    /' "$manifest"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: ${{ needs.resolve.outputs.artifact }}
+          path: ${{ runner.temp }}/out/
+          retention-days: ${{ needs.resolve.outputs.trial == 'true' && 3 || 90 }}
+          if-no-files-found: error

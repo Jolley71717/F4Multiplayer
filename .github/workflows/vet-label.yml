@@ -1,0 +1,70 @@
+# Flags pull requests that need vetting (vet.yml) before their code is built or run on the maintainer's machines: those
+# that add a binary file or touch the build, the tools, the workflows or other repository plumbing (the rules are in
+# .github/scripts/vet.py). It adds `needs-vetting` and says why; the owner runs vet.yml and adds `vetted` by hand after
+# reading the report. New commits always take `vetted` off. The owner's own PRs are not flagged: their code was written
+# on the maintainer's machines in the first place.
+# Like review-label.yml: pull_request_target runs this file from main with a token that can write labels, also for PRs
+# from forks. It reads only the API's list of the PR's files, never checks out or runs the PR's code, and passes
+# everything from the event through env:, never into the script's text.
+name: vet-label
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  flag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Flag the PR, and take `vetted` off after new commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          OWNER: ${{ github.repository_owner }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          has() { jq -e --arg label "$1" 'index($label) != null' <<< "$LABELS" > /dev/null; }
+          if [ "$ACTION" = synchronize ] && has vetted; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label vetted
+            gh pr comment "$PR" --repo "$REPO" --body "New commits (${BEFORE:0:7}..${AFTER:0:7}) since the vetting: the \`vetted\` label is removed until they are vetted too."
+          fi
+          if [ "$AUTHOR" = "$OWNER" ]; then
+            echo "The owner's own PR: not flagged"
+            exit 0
+          fi
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
+          python3 -I trusted/.github/scripts/vet.py flags "$RUNNER_TEMP/files.jsonl" --comment "$RUNNER_TEMP/comment.md" > "$RUNNER_TEMP/flags.json"
+          if ! jq -e .needs_vetting "$RUNNER_TEMP/flags.json" > /dev/null; then
+            echo "Nothing that needs vetting"
+            exit 0
+          fi
+          jq -r '.reasons[]' "$RUNNER_TEMP/flags.json"
+          if has vetted && [ "$ACTION" != synchronize ]; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label vetted
+          fi
+          if ! has needs-vetting; then
+            gh label create needs-vetting --repo "$REPO" --color d93f0b \
+              --description "Adds binaries or touches build, tools or workflows: the owner runs vet.yml first" 2> /dev/null || true
+            gh label create vetted --repo "$REPO" --color 0e8a16 \
+              --description "The owner read a vet.yml report for this PR's head" 2> /dev/null || true
+            gh pr edit "$PR" --repo "$REPO" --add-label needs-vetting
+            gh pr comment "$PR" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+          fi

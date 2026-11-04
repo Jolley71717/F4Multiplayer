@@ -100,6 +100,20 @@ A pull request is merged only with the `reviewed` label, which says its code was
 itself is a comment naming that commit. New commits remove the label (`.github/workflows/review-label.yml`) until they
 are reviewed too.
 
+## Binaries and new dependencies
+
+A pull request that adds a binary file (a compiled movie, a DLL, an archive, an image) or changes the build, the tools,
+the workflows or other repository plumbing (`xmake.lua`, `tools/`, `.github/`, `.gitattributes`, submodules, git hooks)
+gets the `needs-vetting` label by itself. The owner then runs the vetting workflow (`.github/workflows/vet.yml`) on its
+head: on GitHub's throwaway machines it lists the binaries, the URLs and the sensitive changes, checks every download
+the change adds against pinned hashes and signatures, and builds and tests the code, before anything from the pull
+request is built or run on the maintainer's machines. After reading the report the owner adds `vetted`; new commits
+take it off again, and such a pull request merges only with `vetted` at its head.
+
+Nothing committed in binary form is shipped: whatever a release holds is built from source by the project's own
+workflows. Commit the sources and the script that builds them, not the build. A change that needs a new tool or
+library says where it comes from and pins it: a version and a SHA-256, and the signature where one is published.
+
 ## No personal data
 
 Commits, diffs, commit messages, logs in issues and pull request descriptions must not carry

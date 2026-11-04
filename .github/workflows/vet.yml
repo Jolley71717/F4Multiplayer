@@ -1,0 +1,354 @@
+# Vets a pull request on GitHub's throwaway machines before anything from it reaches the maintainer's PC or the rig
+# (CONTRIBUTING.md, "Binaries and new dependencies"). Started by hand, by the repository owner only:
+#
+#   gh workflow run vet.yml -f pr=<number> -f sha=<the PR's head commit you mean to vet>
+#
+# It refuses when the PR's head is not that commit. Jobs:
+#   inspect  trusted: fetches the PR's commits as git objects and reads them as data, never running anything from them.
+#            Lists binaries, URLs in added lines and sensitive paths; downloads the Flash toolchain and checks it
+#            against the pins below (this file is on main, so a PR can't change them) and against the PR's own pins.
+#   movies   untrusted: compiles every ui/<Name>/<Name>.as with the checked toolchain and compares each movie with
+#            the PR's committed copy.
+#   build    untrusted: builds and runs the unit tests as build.yml does. The PR's own code runs here.
+#   report   trusted: the report, in its job summary and as the artifact vet-report-pr<N>-<commit>.
+# The untrusted jobs get no permissions, no secrets and no credentials, save no caches, and their artifacts (the built
+# movies and the test log, kept 3 days) are for reading only: releases come from package.yml, which builds from main.
+# Code that runs on a runner can still reach the runner's own token for this run's caches and artifacts, so the trusted
+# part of the report reaches the report job as a job output, never as an artifact, and package.yml uses no cache at all.
+# pull_request_target and workflow_run are never used to run a PR's code. The owner adds `vetted` by hand after reading
+# the report.
+name: Vet a pull request
+run-name: Vet PR ${{ inputs.pr }} at ${{ inputs.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: number
+      sha:
+        description: The PR's head commit you mean to vet (all 40 characters)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: vet-${{ inputs.pr }}
+  cancel-in-progress: false
+
+env:
+  # The Flash toolchain the menu movies are built with (the same pins as package.yml: change both together). The
+  # Flex tarball is signed by an Apache release manager whose key is in Apache's KEYS file; Adobe signs nothing.
+  FLEX_URL: https://archive.apache.org/dist/flex/4.16.1/binaries/apache-flex-sdk-4.16.1-bin.tar.gz
+  FLEX_SHA256: 17fda7ac8d3e476cad3127f345455ef316acfb87c6f4322e5897bd8d9b09388e
+  FLEX_KEY_FINGERPRINT: 44998F3E242727E94C4BADEB6B0A7EC905061FC8  # the release manager's key that signed 4.16.1, in Apache's KEYS
+  FLEX_KEYS_URLS: https://archive.apache.org/dist/flex/KEYS https://downloads.apache.org/flex/KEYS
+  PLAYERGLOBAL_URL: https://fpdownload.macromedia.com/get/flashplayer/updaters/32/playerglobal32_0.swc
+  PLAYERGLOBAL_SHA256: 7d4d6168d27603cfb3b750302448e354e0bbc1bdd58f5d101c3dcf6891e9bb65
+  # Amazon Corretto (setup-java takes only a major version for it). 8 and 11 both compile the movies with no warning
+  # and give the same bytes; 11 is supported longer.
+  JAVA_VERSION: '11'
+
+jobs:
+  inspect:
+    name: "Trusted: inspect"
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+      sha: ${{ steps.pr.outputs.sha }}
+      short: ${{ steps.pr.outputs.short }}
+      has_ui: ${{ steps.tree.outputs.has_ui }}
+      report: ${{ steps.report.outputs.report }}
+    steps:
+      - name: Check the inputs and the PR's head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]{1,7}$ ]] || { echo "::error::pr must be a pull request number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be the full 40-character commit id"; exit 1; }
+          gh api "repos/$REPO/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          head=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::PR $PR's head is $head, not $SHA: read the new commits, then vet that head"
+            exit 1
+          fi
+          {
+            echo "pr=$PR"
+            echo "sha=$SHA"
+            echo "short=${SHA:0:7}"
+            echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the PR's commits (as objects; nothing is checked out)
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          set -euo pipefail
+          git -C main fetch --no-tags --no-recurse-submodules origin "+refs/pull/$PR/head:refs/vet/head" "$BASE"
+          got=$(git -C main rev-parse refs/vet/head)
+          if [ "$got" != "$SHA" ]; then
+            echo "::error::PR $PR's head moved to $got while this ran"
+            exit 1
+          fi
+
+      - name: What the tree holds
+        id: tree
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          has() { if [ -n "$(git -C main ls-tree "$SHA" -- "$1")" ]; then echo true; else echo false; fi; }
+          echo "has_ui=$(has ui)" >> "$GITHUB_OUTPUT"
+          echo "has_flash=$(has tools/flash)" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect the changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
+          python3 -I main/.github/scripts/vet.py inspect --repo main --base "$BASE" --head "$SHA" \
+            --api-files "$RUNNER_TEMP/files.jsonl" --out "$RUNNER_TEMP/inspect.md"
+
+      - name: Check the Flash toolchain
+        if: steps.tree.outputs.has_ui == 'true' || steps.tree.outputs.has_flash == 'true'
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          python3 -I main/.github/scripts/vet.py toolchain --work "$RUNNER_TEMP/flash" --out "$RUNNER_TEMP/toolchain.md" \
+            --claims-repo main --claims-rev "$SHA"
+
+      - name: Report
+        id: report
+        env:
+          PR: ${{ steps.pr.outputs.pr }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          pr="$RUNNER_TEMP/pr.json"
+          {
+            echo "PR $PR: $(jq -r .state "$pr")$(jq -r 'if .draft then ", draft" else "" end' "$pr"), head \`$SHA\`, from $(jq -r 'if (.head.repo.full_name // "") == .base.repo.full_name then "this repository" else "a fork" end' "$pr")."
+            echo
+            cat "$RUNNER_TEMP/inspect.md"
+            if [ -f "$RUNNER_TEMP/toolchain.md" ]; then cat "$RUNNER_TEMP/toolchain.md"; else echo "## Flash toolchain"; echo; echo "Not used: the PR has no ui/ or tools/flash/."; echo; fi
+          } > "$RUNNER_TEMP/trusted.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/trusted.md"
+          packed=$(gzip -9c "$RUNNER_TEMP/trusted.md" | base64 -w0)
+          if [ ${#packed} -gt 800000 ]; then
+            packed=$(printf '## Trusted inspection\n\nToo long for a job output: read the inspect job'"'"'s summary.\n\n' | gzip -9c | base64 -w0)
+          fi
+          echo "report=$packed" >> "$GITHUB_OUTPUT"
+
+  movies:
+    name: "Untrusted: compile the menu movies"
+    needs: inspect
+    if: needs.inspect.outputs.has_ui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: {}
+    outputs:
+      report: ${{ steps.report.outputs.report }}
+    env:
+      SHA: ${{ needs.inspect.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.sha }}
+          path: pr
+          persist-credentials: false
+
+      - name: Check the commit
+        run: |
+          got=$(git -C pr rev-parse HEAD)
+          [ "$got" = "$SHA" ] || { echo "::error::checked out $got, not $SHA"; exit 1; }
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        with:
+          distribution: corretto
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Fetch and check the toolchain
+        run: |
+          python3 -I trusted/.github/scripts/vet.py toolchain --strict --work "$RUNNER_TEMP/flash" \
+            --unpack "$RUNNER_TEMP/flex" --out "$RUNNER_TEMP/toolchain.md"
+
+      - name: Compile every movie from source
+        run: |
+          python3 -I trusted/.github/scripts/vet.py compile --flex "$RUNNER_TEMP/flex" --ui pr/ui \
+            --out "$RUNNER_TEMP/movies" --report "$RUNNER_TEMP/compile.md"
+
+      - name: Compare with the PR's committed movies
+        if: always()
+        run: |
+          python3 -I trusted/.github/scripts/vet.py compare --built "$RUNNER_TEMP/movies" --ui pr/ui \
+            --report "$RUNNER_TEMP/compare.md"
+
+      - name: Report
+        id: report
+        if: always()
+        run: |
+          set -euo pipefail
+          for part in toolchain compile compare; do
+            if [ -f "$RUNNER_TEMP/$part.md" ]; then cat "$RUNNER_TEMP/$part.md"; else echo "## $part: did not finish"; echo; fi
+          done > "$RUNNER_TEMP/movies.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/movies.md"
+          echo "report=$(head -c 300000 "$RUNNER_TEMP/movies.md" | gzip -9c | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the built movies
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vet-pr${{ needs.inspect.outputs.pr }}-${{ needs.inspect.outputs.short }}-movies
+          path: ${{ runner.temp }}/movies/
+          retention-days: 3
+          if-no-files-found: warn
+
+  build:
+    name: "Untrusted: build and run the tests"
+    needs: inspect
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions: {}
+    outputs:
+      report: ${{ steps.report.outputs.report }}
+    env:
+      SHA: ${{ needs.inspect.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.inspect.outputs.sha }}
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check the commit
+        shell: bash
+        run: |
+          got=$(git rev-parse HEAD)
+          [ "$got" = "$SHA" ] || { echo "::error::checked out $got, not $SHA"; exit 1; }
+
+      # No caches: a cache saved by a PR's code would be restored by main's builds.
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a  # v1.2.5
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Configure
+        id: configure
+        shell: pwsh
+        env:
+          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
+        run: xmake f -y -m releasedbg -a x64 -p windows --vs=2022
+
+      - name: Build
+        id: build
+        shell: pwsh
+        env:
+          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
+        run: xmake build -y
+
+      - name: Unit tests
+        id: tests
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          & build/windows/x64/releasedbg/F4MPTests.exe | Tee-Object -FilePath tests.log
+          exit $LASTEXITCODE
+
+      - name: Report
+        id: report
+        if: always()
+        shell: bash
+        env:
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+        run: |
+          {
+            echo "Configure: $CONFIGURE. Build: $BUILD. Unit tests: $TESTS."
+            if [ -f tests.log ]; then
+              echo "From tests.log:"
+              tr -d '\r' < tests.log | grep -E '^[0-9]+ tests, |^FAILED|^ +FAILED|^FIXED\?|^known ' | head -n 200 || true
+            else
+              echo "No tests.log."
+            fi
+          } > "$RUNNER_TEMP/build.md"
+          sed 's/^/    /' "$RUNNER_TEMP/build.md" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "report=$(head -c 300000 "$RUNNER_TEMP/build.md" | gzip -9c | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the test log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vet-pr${{ needs.inspect.outputs.pr }}-${{ needs.inspect.outputs.short }}-tests
+          path: tests.log
+          retention-days: 3
+          if-no-files-found: warn
+
+  report:
+    name: "Trusted: report"
+    needs: [inspect, movies, build]
+    if: always() && needs.inspect.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Write the report
+        env:
+          PR: ${{ needs.inspect.outputs.pr }}
+          SHA: ${{ needs.inspect.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          INSPECT_RESULT: ${{ needs.inspect.result }}
+          MOVIES_RESULT: ${{ needs.movies.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          INSPECT_REPORT: ${{ needs.inspect.outputs.report }}
+          MOVIES_REPORT: ${{ needs.movies.outputs.report }}
+          BUILD_REPORT: ${{ needs.build.outputs.report }}
+        run: |
+          python3 -I trusted/.github/scripts/vet.py assemble --out "$RUNNER_TEMP/vet-report.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/vet-report.md"
+
+      - name: Keep the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: vet-report-pr${{ needs.inspect.outputs.pr }}-${{ needs.inspect.outputs.short }}
+          path: ${{ runner.temp }}/vet-report.md
+          retention-days: 30
