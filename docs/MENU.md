@@ -6,6 +6,10 @@ this is it. The key is `iKeyMenu` in `F4Multiplayer.ini` (a Windows virtual-key 
 `70` = F1, `0` turns it off). F1 is not bound by Fallout 4 itself; if another mod uses it, change
 the key.
 
+The key opens the mod's own menu in the middle of the screen, and the MULTIPLAYER entry in the game's main and pause menus
+opens it beside their list (see [UI.md](UI.md)). This page is about what its pages do, and the message box they fall back to
+if its movie won't load.
+
 ## What it's made of
 
 The game ships no menu of ours and we add no Flash file, so the menu is the engine's own message
@@ -115,7 +119,7 @@ been asked for, so pressing *Join a friend* (or *Look again*) first asks for eve
 Pressing a name joins their lobby, and the join carries on as an accepted invite would (you see
 "joining your friend's game", then "connected"). If `sServerAddress` is set, `Join <address>`
 connects to it directly (the UDP/LAN case). With nobody to list, the page says how many friends
-Steam sees, how many are online and how many are in Fallout 4, so you can tell where the list
+are online and how many are in Fallout 4, so you can tell where the list
 stops.
 
 A host appears on this page only if the joiner's Steam shows them as playing Fallout 4: Steam

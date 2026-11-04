@@ -2505,6 +2505,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
   dialogue); the player's own lines were never voiced.
 
+## The multiplayer menu (src/game/Menu.cpp, MPMenu.cpp, MainMenuEntry.cpp, ui/)
+
+`Menu.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
+menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
+
 ## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
 
 Everything a player reads that the plugin wrote (HUD notices, the F1 menu's pages and buttons, the server's refusals
