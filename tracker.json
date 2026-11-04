@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T12:24:28+00:00",
+ "updated": "2026-11-04T13:21:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -221,6 +221,14 @@
    "pr": 153,
    "partial": "0.9.0",
    "desc": "Some players got 'You cannot use this at this time' when trying to enter a power armor frame. We could not reproduce the exact case, but found two things that cause the message: a frame left leaning, and a seat the game still thought was yours. 0.9.0 handles both, and the next release also stands a leaning frame back up so it can be entered again. It has not been tried in a real game with a leaning frame."
+  },
+  {
+   "id": "4cr8",
+   "title": "Shared bench: a guest who also owns the host's settlement produces from the host's pieces twice",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "4fss",
@@ -970,7 +978,7 @@
    "title": "Shared workshop materials and settlement supply lines",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 297
   },
