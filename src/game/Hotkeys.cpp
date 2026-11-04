@@ -100,7 +100,8 @@ namespace Hotkeys
 
 		bool MenuOpen()
 		{
-			return GameStop::Now() || OpenMenus::Open(OpenMenus::Menu::kConsole);
+			// The multiplayer menu doesn't stop the game in a session, but its keys are still not for playing.
+			return GameStop::Now() || OpenMenus::AnyOpen({ OpenMenus::Menu::kConsole, OpenMenus::Menu::kMultiplayer });
 		}
 
 		bool IsDown(std::uint32_t a_vk)

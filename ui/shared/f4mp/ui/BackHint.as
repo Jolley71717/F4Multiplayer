@@ -11,6 +11,7 @@ package f4mp.ui
 		private static const TEXT_SIZE:Number = 34;     // in the panel's units (see the movie's scale)
 		private static const FROM_BOTTOM:Number = 92;
 		private static const PAD:Number = 12;
+		private static const KEY_GAP:Number = 8;
 		private static const TICK:Number = 8;
 
 		private var onBack:Function;
@@ -36,7 +37,15 @@ package f4mp.ui
 				x += glyph.width + 4 * a_scale;
 				h = glyph.height;
 			}
-			var text:TextField = Style.Text((a_gamepad ? "" : "Esc) ") + a_word, TEXT_SIZE * a_scale, a_color, a_scale);
+			if (!a_gamepad) {
+				var key:TextField = Style.Text("Esc)", TEXT_SIZE * a_scale, a_color, a_scale);
+				key.x = x;
+				addChild(key);
+				x += key.width + KEY_GAP * a_scale;
+				h = key.height;
+			}
+			// The word in the bold of the game's headings: it's what the hint is for.
+			var text:TextField = Style.Text(a_word, TEXT_SIZE * a_scale, a_color, a_scale, Style.BOLD_FONT);
 			text.x = x;
 			addChild(text);
 			var w:Number = x + text.width + pad;

@@ -27,18 +27,27 @@ package f4mp.ui
 			return shape;
 		}
 
-		// What scrolls: as a panel's frame, faint, with its right side one whole line: the scrollbar's (ScrollBar).
-		public static function Scrolling(a_width:Number, a_height:Number, a_tick:Number, a_color:uint, a_scale:Number):Shape
+		// What can scroll: along its top and bottom, faint, its ends turned in. a_leftEnds: on the left too. a_rightLine: its right
+		// side one whole line, the scrollbar's (ScrollBar), when it has one.
+		public static function Scrolling(a_width:Number, a_height:Number, a_tick:Number, a_color:uint, a_scale:Number, a_leftEnds:Boolean, a_rightLine:Boolean):Shape
 		{
 			var half:Number = THICK / 2;
 			var tick:Number = Math.round(a_tick);
+			var right:Number = a_width - half;
+			var bottom:Number = a_height - half;
 			var shape:Shape = Line(a_color);
-			shape.graphics.moveTo(half, half + tick);
+			shape.graphics.moveTo(half, a_leftEnds ? half + tick : half);
 			shape.graphics.lineTo(half, half);
-			shape.graphics.lineTo(a_width - half, half);
-			shape.graphics.lineTo(a_width - half, a_height - half);
-			shape.graphics.lineTo(half, a_height - half);
-			shape.graphics.lineTo(half, a_height - half - tick);
+			shape.graphics.lineTo(right, half);
+			if (a_rightLine) {
+				shape.graphics.lineTo(right, bottom);
+			} else {
+				shape.graphics.lineTo(right, half + tick);
+				shape.graphics.moveTo(right, bottom - tick);
+				shape.graphics.lineTo(right, bottom);
+			}
+			shape.graphics.lineTo(half, bottom);
+			shape.graphics.lineTo(half, a_leftEnds ? bottom - tick : bottom);
 			shape.filters = [ Style.Shadow(a_scale) ];
 			shape.alpha = FAINT;
 			return shape;

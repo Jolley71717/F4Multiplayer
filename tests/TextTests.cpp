@@ -377,6 +377,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.kb_menu", {}, "Multiplayer menu" },
 		{ "menu.kb_list", {}, "Player list" },
 		{ "menu.kb_teleport", {}, "Teleport to a friend" },
+		{ "menu.teleport_to", { { "player", "Sam" } }, "Teleport to Sam" },
 		{ "menu.kb_ping", {}, "Ping" },
 		{ "menu.kb_where", {}, "Where friends are" },
 		{ "menu.kb_point", {}, "Emote: point" },

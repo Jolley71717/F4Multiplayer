@@ -26,6 +26,7 @@
 #include "game/MapMarkerLayout.h"
 #include "game/MainMenuEntry.h"
 #include "game/Menu.h"
+#include "game/MPMenu.h"
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
@@ -2755,6 +2756,24 @@ namespace DevCommands
 					extra = std::format(" text='{}' color={:06X} embed={} font='{}' size={}", text.GetString(), static_cast<std::uint32_t>(GfxNumber(color)),
 						embed.IsBoolean() && embed.GetBoolean(), font.IsString() ? font.GetString() : "?", GfxNumber(size));
 				}
+				// Its filters: how the game's own text gets its shadow.
+				Scaleform::GFx::Value filters;
+				if (child.GetMember("filters", &filters) && filters.IsArray()) {
+					for (std::uint32_t f = 0; f < filters.GetArraySize(); ++f) {
+						Scaleform::GFx::Value filter, distance, angle, alpha, blurX, blurY, strength, shade;
+						if (filters.GetElement(f, &filter)) {
+							filter.GetMember("distance", &distance);
+							filter.GetMember("angle", &angle);
+							filter.GetMember("alpha", &alpha);
+							filter.GetMember("blurX", &blurX);
+							filter.GetMember("blurY", &blurY);
+							filter.GetMember("strength", &strength);
+							filter.GetMember("color", &shade);
+							extra += std::format(" filter[distance={} angle={} alpha={} blur={}/{} strength={} color={:06X}]", GfxNumber(distance), GfxNumber(angle), GfxNumber(alpha),
+								GfxNumber(blurX), GfxNumber(blurY), GfxNumber(strength), static_cast<std::uint32_t>(GfxNumber(shade)));
+						}
+					}
+				}
 				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
 					visible.IsBoolean() && visible.GetBoolean(), extra);
 				if (a_depth > 1) {
@@ -3249,14 +3268,23 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | friends | refresh | selftest send|recv]";
 		}
 
-		// mpmenu [open | panel | scrolltest | press <buttonIndex>]: the multiplayer menu (F1, or panel: the Flash one), driven without the
-		// keyboard. In the panel, button 0 is the page's way back and the rows are 1 and up.
+		// mpmenu [open | close | panel | box | scrolltest | press <buttonIndex>]: the multiplayer menu, driven without the keyboard. open is
+		// the menu key's, in the middle of the screen; panel is the Multiplayer entry's, beside the main menu's list; box is the message box
+		// it falls back to. Button 0 is the page's way back and the rows are 1 and up.
 		std::string MpMenu(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (!args.empty() && args[0] == "open") {
+				::Menu::OpenFromKey();
+				return "opened";
+			}
+			if (!args.empty() && args[0] == "box") {
 				::Menu::Open();
 				return "opened";
+			}
+			if (!args.empty() && args[0] == "close") {
+				MPMenu::Close();
+				return "closed";
 			}
 			if (!args.empty() && args[0] == "scrolltest") {
 				MainMenuEntry::OpenPanel();

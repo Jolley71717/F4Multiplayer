@@ -6,6 +6,7 @@
 #include "game/Hud.h"
 #include "game/KeyNames.h"
 #include "game/MPMenu.h"
+#include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/RemotePlayers.h"
 #include "net/Session.h"
@@ -33,6 +34,7 @@ namespace Menu
 			std::function<void()> action;
 			std::string           hint = {};  // the panel shows it while the button is chosen; a box has only its body
 			std::string           value = {};  // the panel shows it in a column of its own on the row (a key)
+			bool                  listed = false;  // not one of the rows: the panel's list of players presses it (ShowMainPage)
 		};
 
 		struct ButtonPress
@@ -124,11 +126,17 @@ namespace Menu
 
 		bool mainShowing = false;  // the main page is the one showing
 		int listeningFor = -1;     // the Keybinds row waiting for its key
+		std::vector<std::string> pagePlayers;  // the next page's list at the right of its rows, in the panel
+		std::string pageHeader;                // the next page's player at its top (ShowPlayer), in the panel
+		bool modsShowing = false;  // the Mods page is the one showing, in the panel
+		std::string modsBody;      // what it says, to redraw when the host's answer changes that
+		Clock::time_point nextModsCheck{};
 
 		void Show(const std::string& a_body, std::vector<Button> a_buttons)
 		{
 			mainShowing = false;  // ShowMainPage says so after this
 			listeningFor = -1;    // ShowKeybinds says so after this
+			modsShowing = false;  // ShowMods says so after this
 			// The panel: no limit on buttons, and the first, the page's way back (see ShowPaged), is Esc rather than a row.
 			if (inPanel) {
 				buttons = std::move(a_buttons);
@@ -136,7 +144,7 @@ namespace Menu
 				std::vector<std::string> hints;
 				for (std::size_t i = 0; i < buttons.size(); ++i) {
 					buttons[i].label = Clean(buttons[i].label);
-					if (i > 0) {
+					if (i > 0 && !buttons[i].listed) {
 						// Clean leaves no tab in either, so the movie can split them.
 						rows.push_back(buttons[i].value.empty() ? buttons[i].label : buttons[i].label + "\t" + Clean(buttons[i].value));
 						hints.push_back(Clean(buttons[i].hint));
@@ -145,7 +153,7 @@ namespace Menu
 				++serial;
 				++pagesShown;
 				lastBody = Clean(a_body);
-				MPMenu::SetPage(serial, lastBody, std::move(rows), std::move(hints), std::exchange(keepRow, false), std::exchange(heading, false));
+				MPMenu::SetPage(serial, lastBody, std::move(rows), std::move(hints), std::exchange(keepRow, false), std::exchange(heading, false), std::exchange(pagePlayers, {}), std::exchange(pageHeader, {}));
 				MPMenu::CaptureKey(false);
 				return;
 			}
@@ -284,8 +292,9 @@ namespace Menu
 					break;
 				}
 			}
+			// The panel lists them beside its rows (PanelPlayersList), and keeps this to a line.
 			const auto players = Party::PlayerLines();
-			if (status.link == Session::Status::Link::kJoined) {
+			if (status.link == Session::Status::Link::kJoined && !inPanel) {
 				body += players.empty() ? "\n" + Text::Get("menu.nobody_else") : "\n" + Text::Format("menu.with_you", { { "n", players.size() } });
 				for (const auto& line : players) {
 					body += "\n" + line;
@@ -296,6 +305,33 @@ namespace Menu
 				}
 			}
 			return body;
+		}
+
+		// The list beside the main page's rows, while in a session: the players, or that there are none, and the host's rules.
+		std::vector<std::string> PanelPlayersList()
+		{
+			std::vector<std::string> rows;
+			if (Session::GetStatus().link != Session::Status::Link::kJoined) {
+				return rows;
+			}
+			rows = Party::PanelPlayers();
+			if (rows.empty()) {
+				rows.push_back(Text::Get("menu.nobody_else"));
+			}
+			if (const auto rules = HostRules::Summary(HostRules::Get()); HostRules::InSession() && !rules.empty()) {
+				rows.push_back(rules);
+			}
+			return rows;
+		}
+
+		// What the main page says, to redraw it when that changes.
+		std::string MainPageNow()
+		{
+			auto now = StatusBody();
+			for (const auto& row : PanelPlayersList()) {
+				now += "\n" + row;
+			}
+			return now;
 		}
 
 		void Host()
@@ -333,17 +369,27 @@ namespace Menu
 				ShowMain();  // gone meanwhile (another server, or let in with the host's load order)
 				return;
 			}
-			const auto  pages = ModDiff::Pages(*diff);
+			// The panel scrolls: everything on one page, and asking the host again stays on it until the answer redraws it.
+			constexpr std::size_t ALL_NAMES = 1'000'000;
+			const auto  pages = inPanel ? ModDiff::Pages(*diff, ALL_NAMES) : ModDiff::Pages(*diff);
 			const auto  page = a_page % pages.size();
 			std::vector<Button> choices;
 			choices.push_back({ Text::Get("menu.back"), ShowMain });
 			if (Session::GetStatus().link == Session::Status::Link::kJoined && !Session::GetStatus().hosting) {
-				choices.push_back({ Text::Get("menu.mods_ask"), [] { Session::AskHostMods(); } });
+				choices.push_back({ Text::Get("menu.mods_ask"), [page] {
+									   Session::AskHostMods();
+									   if (inPanel) {
+										   keepRow = true;
+										   ShowMods(page);
+									   }
+								   } });
 			}
 			if (pages.size() > 1) {
 				choices.push_back({ Text::Format("menu.more", { { "page", page + 1 }, { "pages", pages.size() } }), [=] { ShowMods(page + 1); } });
 			}
 			Show(pages[page], std::move(choices));
+			modsShowing = inPanel;
+			modsBody = pages[page];
 		}
 
 		// --- Host controls (while hosting): kick, ban and unban players, lock the session, set or remove the password. Each
@@ -432,6 +478,45 @@ namespace Menu
 			Show(body, std::move(choices));
 		}
 
+		// The action that kicks or bans a player, then shows a_after.
+		std::function<void()> RemovePlayer(std::uint32_t a_id, const std::string& a_name, bool a_ban, std::function<void()> a_after)
+		{
+			return [a_id, a_name, a_ban, a_after] {
+				HostDo({ a_ban ? Protocol::HostAction::kBan : Protocol::HostAction::kKick, a_id }, a_after,
+					[a_id, a_name, a_ban](const Protocol::HostInfo& a_info) {
+						if (a_info.result == Protocol::HostResult::kDone || a_info.result == Protocol::HostResult::kNotSaved ||
+							a_info.result == Protocol::HostResult::kNoIdentity) {
+							justRemoved.push_back(a_id);
+						}
+						SayResult(a_info, a_ban ? "menu.hc_banned_hud" : "menu.hc_kicked", { { "player", a_name } });
+					});
+			};
+		}
+
+		// A player chosen in the panel's list: what can be done with them.
+		void ShowPlayer(std::uint32_t a_id)
+		{
+			const auto name = RemotePlayers::NameOf(a_id);
+			const auto line = Party::PlayerLine(a_id);
+			if (name.empty() || line.empty()) {
+				ShowMain();  // gone meanwhile
+				return;
+			}
+			auto problem = Party::TeleportProblem();
+			std::vector<Button> rows{ { Text::Get("menu.back"), ShowMain },
+				{ Text::Format("menu.teleport_to", { { "player", name } }), [a_id] { Party::TeleportTo(a_id); }, std::move(problem) } };
+			if (Session::GetStatus().hosting) {
+				// What each does: the Kick or ban page's text, a line each after the player's name.
+				const auto explained = Text::Format("menu.hc_player", { { "player", name } });
+				const auto kick = explained.find('\n');
+				const auto ban = kick == std::string::npos ? std::string::npos : explained.find('\n', kick + 1);
+				rows.push_back({ Text::Format("menu.hc_kick", { { "player", name } }), RemovePlayer(a_id, name, false, ShowMain), ban == std::string::npos ? std::string{} : explained.substr(kick + 1, ban - kick - 1) });
+				rows.push_back({ Text::Format("menu.hc_ban", { { "player", name } }), RemovePlayer(a_id, name, true, ShowMain), ban == std::string::npos ? std::string{} : explained.substr(ban + 1) });
+			}
+			pageHeader = Party::PanelPlayer(a_id);
+			Show({}, std::move(rows));
+		}
+
 		// One player: kick or ban them.
 		void ShowHostPlayer(std::uint32_t a_id)
 		{
@@ -440,18 +525,7 @@ namespace Menu
 				ShowHostPlayers(0);  // gone meanwhile
 				return;
 			}
-			const auto removed = [a_id, name](bool a_ban) {
-				return [a_id, name, a_ban] {
-					HostDo({ a_ban ? Protocol::HostAction::kBan : Protocol::HostAction::kKick, a_id }, [] { ShowHostPlayers(0); },
-						[a_id, name, a_ban](const Protocol::HostInfo& a_info) {
-							if (a_info.result == Protocol::HostResult::kDone || a_info.result == Protocol::HostResult::kNotSaved ||
-								a_info.result == Protocol::HostResult::kNoIdentity) {
-								justRemoved.push_back(a_id);
-							}
-							SayResult(a_info, a_ban ? "menu.hc_banned_hud" : "menu.hc_kicked", { { "player", name } });
-						});
-				};
-			};
+			const auto removed = [a_id, name](bool a_ban) { return RemovePlayer(a_id, name, a_ban, [] { ShowHostPlayers(0); }); };
 			Show(Text::Format("menu.hc_player", { { "player", name } }),
 				{ { Text::Get("menu.back"), [] { ShowHostPlayers(0); } }, { Text::Format("menu.hc_kick", { { "player", name } }), removed(false) },
 					{ Text::Format("menu.hc_ban", { { "player", name } }), removed(true) } });
@@ -466,7 +540,9 @@ namespace Menu
 				if (std::ranges::contains(justRemoved, player.id)) {
 					continue;
 				}
-				body += "\n" + player.name;
+				if (!inPanel) {
+					body += "\n" + player.name;  // the panel has room for them on its rows alone
+				}
 				entries.push_back({ player.name, [id = player.id] { ShowHostPlayer(id); } });
 			}
 			if (entries.empty()) {
@@ -503,7 +579,9 @@ namespace Menu
 			std::vector<Button> entries;
 			for (const auto& ban : info->list) {
 				const auto label = BanLabel(ban);
-				body += "\n" + label;
+				if (!inPanel) {
+					body += "\n" + label;  // the panel has room for them on its rows alone
+				}
 				entries.push_back({ Text::Format("menu.hc_unban", { { "who", label } }), [id = ban.id, label] {
 									   HostDo({ Protocol::HostAction::kUnban, 0, id }, [] { ShowBans(0); },
 										   [label](const Protocol::HostInfo& a_info) { SayResult(a_info, "menu.hc_unbanned", { { "who", label } }); });
@@ -609,6 +687,17 @@ namespace Menu
 				entries.push_back({ Text::Get("menu.about"), ShowAbout });
 			}
 			Button close{ Text::Get("menu.close"), {} };  // first: Tab closes the menu (see ShowPaged)
+			if (inPanel) {
+				pagePlayers = PanelPlayersList();
+				// After the rows, in the list's order: the movie presses one by its place past the last row.
+				if (status.link == Session::Status::Link::kJoined) {
+					for (const auto& player : RemotePlayers::List()) {
+						Button row{ player.name, [id = player.id] { ShowPlayer(id); } };
+						row.listed = true;
+						entries.push_back(std::move(row));
+					}
+				}
+			}
 			if (entries.size() + 1 > MAX_BUTTONS) {
 				ShowPaged(body, std::move(entries), a_page, ShowMainPage, std::move(close));
 			} else {
@@ -617,7 +706,7 @@ namespace Menu
 			}
 			mainShowing = true;
 			mainPage = a_page;
-			mainStatus = said;
+			mainStatus = MainPageNow();
 		}
 
 		void ShowJoin(std::size_t a_page)
@@ -784,6 +873,9 @@ namespace Menu
 
 	void OpenFromKey()
 	{
+		if (MPMenu::Showing()) {
+			return;
+		}
 		if (!Hud::IsSettled()) {
 			keyWaiting = true;  // opened from Frame once the UI has settled
 			return;
@@ -897,7 +989,8 @@ namespace Menu
 		static bool escArmed = false;  // went down with the panel open
 		static bool escUp = false;     // and has come up
 		const bool  escDown = Hotkeys::Held(0x1B);
-		const bool  panelOpen = inPanel && MPMenu::Centered() && MPMenu::Showing();
+		// Not with a message box over the panel: Esc is that box's.
+		const bool  panelOpen = inPanel && MPMenu::Centered() && MPMenu::Showing() && !OpenMenus::Open(OpenMenus::Menu::kMessageBox);
 		if (std::exchange(escUp, false) && panelOpen) {
 			MPMenu::EscPressed();
 		}
@@ -932,9 +1025,18 @@ namespace Menu
 				pending.show();
 			}
 		}
+		if (inPanel && modsShowing && Clock::now() >= nextModsCheck) {
+			nextModsCheck = Clock::now() + 1s;
+			const auto diff = Session::HostMods();
+			constexpr std::size_t ALL_NAMES = 1'000'000;
+			if (!diff || ModDiff::Pages(*diff, ALL_NAMES).front() != modsBody) {
+				keepRow = true;
+				ShowMods(0);
+			}
+		}
 		if (inPanel && mainShowing && !pendingJoin && !pendingHost && Clock::now() >= nextMainCheck) {
 			nextMainCheck = Clock::now() + 1s;
-			if (StatusBody() != mainStatus) {
+			if (MainPageNow() != mainStatus) {
 				keepRow = true;
 				ShowMainPage(mainPage);
 			}

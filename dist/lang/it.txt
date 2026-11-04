@@ -201,6 +201,7 @@ menu.keybinds = Comandi
 menu.kb_menu = Menu multigiocatore
 menu.kb_list = Elenco giocatori
 menu.kb_teleport = Teletrasporto da un amico
+menu.teleport_to = Teletrasportarti da {player}
 menu.kb_ping = Segnala
 menu.kb_where = Dove sono gli amici
 menu.kb_point = Gesto: indica

@@ -47,6 +47,12 @@ The game's menus are Flash movies played by Scaleform GFx 4. Ours are ActionScri
   `Data/Interface/F4Multiplayer/`, a folder of our own so no other mod's movie clashes. `tools/package.ps1` puts them
   in the zip there, and refuses a zip without `MPMenu.swf`.
 
+**Changing the look without restarting the game.** The panel loads its movie each time it opens, so a change only in `ui/` can
+be tried in a running game: run `tools/flash/build.sh MPMenu`, copy `dist/movies/MPMenu.swf` over the one in
+`Data/Interface/F4Multiplayer/`, then close the panel and open it again (`mpmenu close`, `mpmenu open` on the dev channel). Seen
+under CrossOver. A change in `src/`, or one that changes what the plugin passes to the movie (`SetPage`'s arguments, say), needs a
+rebuild and a restart.
+
 On a Mac (docs/misc/MAC.md): `xmake build -y F4Multiplayer` with `XMAKE_CONFIGDIR=$PWD/.xmake/win`, then
 `tools/crossovermac.sh restart ''` to deploy and stop at the main menu. xmake sometimes stops at once with "please run
 `xmake build [target]` to build the following targets first: -> F4MPServer"; run it again (or check the DLL's time).
