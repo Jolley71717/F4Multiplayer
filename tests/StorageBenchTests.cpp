@@ -664,27 +664,37 @@ TEST("supply lines: the host's reload forgets its lines for everyone; its game t
 	CHECK(s.Steel() == LINES_START);
 }
 
-TEST("supply lines: a big supply network: the friend's game views the first few, one at a time, and the server closes none")
+namespace
 {
-	Lines s;
-	// The host owns 12 more settlements its lines link to Sanctuary's: each workbench holds 1 steel there.
-	std::vector<std::uint32_t> network{ LINKED };
-	for (std::uint32_t i = 0; i < 12; ++i) {
-		const auto bench = 0x0002'6000 + i;
-		network.push_back(bench);
-		s.host.holders[bench][STEEL] = 1;
-		for (auto* game : { &s.host, &s.guest }) {
-			game->holderFacts[bench] = { .kind = LootScope::Holder::kContainer, .workshop = true, .storage = true };
+	// The host owns a_more settlements its lines link to Sanctuary's besides LINKED: each workbench holds 1 steel there.
+	// The links, LINKED first.
+	std::vector<std::uint32_t> Network(Lines& a_s, std::uint32_t a_more)
+	{
+		std::vector<std::uint32_t> network{ LINKED };
+		for (std::uint32_t i = 0; i < a_more; ++i) {
+			const auto bench = 0x0002'6000 + i;
+			network.push_back(bench);
+			a_s.host.holders[bench][STEEL] = 1;
+			for (auto* game : { &a_s.host, &a_s.guest }) {
+				game->holderFacts[bench] = { .kind = LootScope::Holder::kContainer, .workshop = true, .storage = true };
+			}
 		}
+		a_s.Settle();
+		a_s.host.ReportLinks(a_s.f, BENCH, network);
+		a_s.Settle();
+		return network;
 	}
-	s.Settle();
-	s.host.ReportLinks(s.f, BENCH, network);
-	s.Settle();
+}
+
+TEST("supply lines: a big supply network: the friend's game views the first 32, one at a time, and the server closes none")
+{
+	Lines      s;
+	const auto network = Network(s, SupplyLines::Views::MAX + 3);  // 36 linked: more than a player builds
 	REQUIRE(s.guest.heard.With(BENCH, Any).size() == network.size());
 	s.guest.OpenBench(s.f, BENCH);
 	s.Settle();
 	CHECK(s.guest.storage.State().Viewed().size() <= 2);  // the workbench and the first link: not every one at once
-	for (int i = 0; i < 40; ++i) {
+	for (int i = 0; i < 36; ++i) {
 		s.guest.now += std::chrono::milliseconds{ 250 };
 		Receive(s.f, s.guest);
 	}
@@ -693,9 +703,31 @@ TEST("supply lines: a big supply network: the friend's game views the first few,
 	CHECK(s.guest.supplyClosed == 0);
 	CHECK(s.guest.Noticed(StorageView::Notice::kClosed) == 0);
 	CHECK(s.guest.In(network[1], STEEL) == 1);   // shown: the host's
-	CHECK(s.guest.In(network.back(), STEEL) == 0);  // past the few: their own copy (nothing there)
+	CHECK(s.guest.In(network[SupplyLines::Views::MAX - 1], STEEL) == 1);
+	CHECK(s.guest.In(network.back(), STEEL) == 0);  // past the 32: their own copy (nothing there)
 	s.guest.CloseBench(s.f);
 	s.Settle();
 	CHECK(s.guest.storage.State().Viewed().empty());
 	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: the server sends a workbench's view and all 32 of its lines' at once, refusing none")
+{
+	Lines      s;
+	const auto network = Network(s, SupplyLines::Views::MAX - 1);
+	// The friend's game asks for every view in one go (faster than it ever opens them): each is answered with contents.
+	s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ BENCH, true }));
+	for (const auto link : network) {
+		s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ link, true }));
+	}
+	Pace(FRIEND_PEER);
+	const auto got = s.guest.Fetch(s.f);
+	std::size_t contents = 0;
+	std::size_t refused = 0;
+	for (const auto& packet : got) {
+		contents += LootTest::IsType(packet, MT::kStorageContents) ? 1 : 0;
+		refused += LootTest::IsType(packet, MT::kStorageRefused) ? 1 : 0;
+	}
+	CHECK(contents == 1 + SupplyLines::Views::MAX);
+	CHECK(refused == 0);
 }

@@ -151,16 +151,17 @@ namespace SupplyLines
 	}
 
 	// A friend's game: which of the keeper's linked workbenches to view with the keeper's workbench, and when. The server
-	// sends a player at most a burst of 16 views' contents, then 8 a second (Server.cpp STORAGE_VIEW_BURST); one past that
-	// is answered closed. So no more than MAX are viewed (the first in the keeper's order; the rest stay our own, as our
-	// world's supply lines are), a new one opens no sooner than EVERY after the last, and one the server closed (or
-	// answered closed) is tried again after RETRY, doubling each time up to RETRY_MAX until its contents come.
+	// sends a player at most a burst of 48 views' contents, then 8 a second (Server.cpp STORAGE_VIEW_BURST); one past that
+	// is answered closed. So no more than MAX are viewed, enough for a settlement network a player builds (15 to 30 linked):
+	// the first in the keeper's order, the rest stay our own, as our world's supply lines are. A new one opens no sooner
+	// than EVERY after the last, and one the server closed (or answered closed) is tried again after RETRY, doubling each
+	// time up to RETRY_MAX until its contents come.
 	class Views
 	{
 	public:
 		using Clock = std::chrono::steady_clock;
 
-		static constexpr std::size_t MAX = 8;  // with the workbench's own view and the views asked afresh, well under 16
+		static constexpr std::size_t MAX = 32;  // with the workbench's own view and some asked afresh, within the server's 48
 		static constexpr Clock::duration EVERY = std::chrono::milliseconds{ 250 };  // 4 a second: under the server's 8
 		static constexpr Clock::duration RETRY = std::chrono::seconds{ 5 };
 		static constexpr Clock::duration RETRY_MAX = std::chrono::seconds{ 60 };

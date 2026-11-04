@@ -156,11 +156,16 @@ namespace
 	// dropped would be refused, and undone in their game), then the event budget's rate. Its refusals have one of the same
 	// size (past it a move gets no answer: their game keeps it on its way, and sends it again as a late move when it next
 	// settles, after a load or a rejoin). The contents a view is
-	// sent (up to ~8 KB) go a few a second at most; one past that is answered closed.
+	// sent (up to ~8 KB) go a few a second at most; one past that is answered closed. The burst holds a workbench's view
+	// with every supply line's a friend's game views with it (SupplyLines::Views::MAX, opened 4 a second) and as many asked
+	// afresh after refusals; the session's total holds four players' bursts, so a few friends building at once are never
+	// refused while one sending more than its share still is.
 	constexpr double      STORAGE_MOVE_BURST = static_cast<double>(Protocol::MAX_STORAGE_MOVES_UNANSWERED);
 	constexpr double      STORAGE_MOVES_PER_SECOND = 500.0;
-	constexpr double      STORAGE_VIEW_BURST = 16.0;
+	constexpr double      STORAGE_VIEW_BURST = 48.0;
 	constexpr double      STORAGE_VIEWS_PER_SECOND = 8.0;
+	constexpr double      STORAGE_VIEW_TOTAL_BURST = 4 * STORAGE_VIEW_BURST;
+	constexpr double      STORAGE_VIEWS_TOTAL_PER_SECOND = 4 * STORAGE_VIEWS_PER_SECOND;
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -546,6 +551,7 @@ void Server::Run()
 	// The workbenches each kept workbench's supply lines link to in its keeper's world (Protocol::BenchLinks), the latest its
 	// keeper sent. Not saved: the host's game sends them again as it lists its workbenches.
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> benchLinks;
+	TokenBucket                                           storageViewsAll{ STORAGE_VIEW_TOTAL_BURST, STORAGE_VIEWS_TOTAL_PER_SECOND };  // every player's views' contents
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -2446,7 +2452,7 @@ void Server::Run()
 		}
 		// Contents are up to ~8 KB: a few a second at most (their game asks again only once an answer has come). One past
 		// that is answered closed, as their game can't be left waiting with its menu open.
-		if (!budgetOf(a_player).storageViews.Take(Clock::now())) {
+		if (!budgetOf(a_player).storageViews.Take(Clock::now()) || !storageViewsAll.Take(Clock::now())) {
 			storage.Close(a_player.id, view->container);
 			if (budgetOf(a_player).storageRefusals.Take(Clock::now())) {
 				send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ view->container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);

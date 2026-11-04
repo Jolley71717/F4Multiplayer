@@ -738,18 +738,20 @@ TEST("shared storage: a flood of moves at a friend's storage is bounded: past th
 	CHECK(refusals < FLOOD);
 	CHECK(Count(got, MT::kContainerChanged) == 0);
 
-	// Views: a few a second; one past that is answered closed.
-	std::size_t shown = 0;
-	std::size_t closed = 0;
-	for (int i = 0; i < 40; ++i) {
+	// Views: a burst of 48 (a workbench and its supply lines' 32, and some asked afresh), then a few a second; one past
+	// that is answered closed.
+	constexpr int VIEWS = 100;
+	std::size_t   shown = 0;
+	std::size_t   closed = 0;
+	for (int i = 0; i < VIEWS; ++i) {
 		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
 	}
 	const auto views = Received(f, FRIEND_PEER);
 	shown = Count(views, MT::kStorageContents);
 	closed = Count(views, MT::kStorageRefused);
-	CHECK(shown < 40);
-	CHECK(shown >= 16);
-	CHECK(shown + closed <= 40);
+	CHECK(shown < VIEWS);
+	CHECK(shown >= 48);
+	CHECK(shown + closed <= VIEWS);
 }
 
 TEST("shared storage: who keeps each container outlasts a restart, closed to friends until the host's game lists it again")

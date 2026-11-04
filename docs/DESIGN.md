@@ -1138,9 +1138,9 @@ counts every item across the host's chest and the players' inventories in each s
     sends it with the welcome after the owners, and forgets a keeper's lines, telling everyone, as its world goes
     stale or it leaves). A friend's game viewing the host's workbench views the workbenches its lines link too (each
     a view like any: its own stash set aside, the true copy shown; one a friend's game keeps or nobody keeps is left
-    out). The server sends a player a burst of 16 views' contents, then 8 a second, and answers one past that closed, so
-    only the first 8 links are viewed (the rest stay the friend's own, as their world's lines are), one opening every
-    250 ms, and one the server closes is tried again quietly (no notice while the workbench's own view stays) after
+    out). The server sends a player a burst of 48 views' contents, then 8 a second (and the session a burst of 192,
+    then 32 a second), and answers one past that closed, so the first 32 links are viewed, enough for a network players
+    build (the rest stay the friend's own, as their world's lines are), one opening every 250 ms, and one the server closes is tried again quietly (no notice while the workbench's own view stays) after
     5 s, doubling to 60 s until its contents come (SupplyLines::Views); and both calls to `AddOtherContainers` are hooked (one 14-byte stub, the call bytes checked first): for that
     settlement's location the list after the workbench is the host's linked workbenches in the host's order, then the
     friend's own world's other linked workbenches (their own stash, as before), then the player. So a build takes from
