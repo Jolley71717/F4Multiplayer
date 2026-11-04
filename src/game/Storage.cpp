@@ -7,14 +7,18 @@
 #include "game/LootScope.h"
 #include "game/LootSync.h"
 #include "game/OpenMenus.h"
+#include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstring>
 #include <format>
+#include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Storage
@@ -48,6 +52,68 @@ namespace Storage
 			Guard(const Guard&) = delete;
 			Guard& operator=(const Guard&) = delete;
 		};
+
+		// ---- the host's workbench (Storage.h) ----
+
+		// What reads a workbench straight: workshop mode, or a crafting menu.
+		enum class BenchMenu : std::uint8_t
+		{
+			kNone,
+			kWorkshop,
+			kCrafting,
+		};
+
+		// The crafting menus: each a WorkbenchMenuBase, whose gather reads a settlement's workbench (the robot workbench's,
+		// Automatron's, isn't one OpenMenus knows: it reads only our own copy, as with the rule off).
+		constexpr std::array<OpenMenus::Menu, 3> CRAFTING_MENUS{ OpenMenus::Menu::kExamine, OpenMenus::Menu::kCooking, OpenMenus::Menu::kPowerArmorMod };
+		// A crafting menu's workbench is looked for this long after it opens (its gather may not have run yet).
+		constexpr auto CRAFTING_LOOK_FOR = std::chrono::seconds{ 2 };
+		// A view of the host's workbench that couldn't open (our moves not settled yet, the host's copy stale) is tried again
+		// after this, doubled each time it fails, up to BENCH_RETRY_MAX.
+		constexpr auto BENCH_RETRY = std::chrono::seconds{ 5 };
+		constexpr auto BENCH_RETRY_MAX = std::chrono::seconds{ 60 };
+
+		struct Bench
+		{
+			BenchMenu         menu = BenchMenu::kNone;
+			std::uint32_t     id = 0;  // the workbench it reads (0: none found, or none)
+			Clock::time_point openedAt{};
+			Clock::time_point retryAt{};
+			Clock::duration   backoff = BENCH_RETRY;
+			bool              refresh = false;  // what our copy holds changed: the engine's own container is filled again
+		} bench;  // main thread
+
+		std::atomic<bool> hostingOn{ false };  // the host's game, with the rule on (KeepsTrueCopies)
+		std::mutex                        benchesLock;
+		std::unordered_set<std::uint32_t> benches;  // workbenches kept for the session (WatchesBench)
+		std::uint32_t                     listingNow = 0;  // the container our game is listing (SharedBench), main thread
+
+		thread_local int scripted = 0;  // inside a script's AddItem or RemoveItem
+
+		struct LocalMove
+		{
+			std::uint32_t container = 0;
+			std::uint32_t item = 0;
+			std::int32_t  count = 0;
+		};
+		constexpr std::size_t  MAX_LOCAL = 1024;
+		std::mutex             localLock;
+		std::vector<LocalMove> localInbox;
+
+		void NoteBench(std::uint32_t a_id)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			if (ref && WorkshopSync::IsWorkbenchAnchor(ref)) {
+				std::scoped_lock l{ benchesLock };
+				benches.insert(a_id);
+			}
+		}
+
+		void ForgetBenches()
+		{
+			std::scoped_lock l{ benchesLock };
+			benches.clear();
+		}
 
 		RE::TESBoundObject* Object(std::uint32_t a_item)
 		{
@@ -102,7 +168,11 @@ namespace Storage
 				++counts.refusedOwn;
 				return 0;
 			}
-			return Move(ref, a_item, a_count);
+			const auto done = Move(ref, a_item, a_count);
+			if (done != 0 && a_container == bench.id) {
+				bench.refresh = true;
+			}
+			return done;
 		}
 
 		// Our player's inventory: only ever for a PlayerChange, which only StorageView::Client makes (one of our own moves
@@ -135,6 +205,9 @@ namespace Storage
 			}
 		}
 
+		void DrainLocal();
+		void EndClosedBenchView();
+
 		class GameEngine final :
 			public StorageView::Engine
 		{
@@ -143,6 +216,8 @@ namespace Storage
 
 			std::set<std::uint32_t> Aliased(std::uint32_t a_container) override { return WorldSync::AliasedIn(a_container); }
 
+			bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) override { return WorldSync::Shares(a_container, a_item); }
+
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
 				return Storage::ChangeCopy(a_container, a_item, a_count);
@@ -150,16 +225,30 @@ namespace Storage
 
 			std::int64_t ChangePlayer(const StorageView::PlayerChange& a_change) override { return Storage::ChangePlayer(a_change); }
 
-			void FlushLoot() override { WorldSync::FlushLoot(); }
+			void FlushLoot() override
+			{
+				WorldSync::FlushLoot();
+				DrainLocal();  // our scripts' changes at a viewed workbench go to what was set aside, before what the view does next
+			}
 
 			bool Reported(const Protocol::ContainerChange& a_change) override { return WorldSync::Loot().Unreport(a_change); }
 
 			void Send(std::vector<std::uint8_t> a_packet) override { WorldSync::QueueEvent(std::move(a_packet)); }
 
-			void Notify(StorageView::Notice a_notice) override { Hud::Notify(Text::Get(TextKey(a_notice))); }
+			void Notify(StorageView::Notice a_notice) override
+			{
+				const bool atBench = a_notice == StorageView::Notice::kClosed && bench.menu != BenchMenu::kNone;
+				Hud::Notify(Text::Get(atBench ? "storage.bench_closed" : TextKey(a_notice)));
+			}
 
 			void HideMenu() override
 			{
+				// Workshop mode and a crafting menu are never closed for it (only the workshop's own exit ends workshop mode:
+				// MenuMessages.h): the view ends instead, and they read our copy's own things again.
+				if (bench.menu != BenchMenu::kNone) {
+					MainThread::Post([] { EndClosedBenchView(); });
+					return;
+				}
 				// Not before the UI may be written to: the menu then stays open on our own copy, and closes as the player closes it.
 				const auto queue = RE::UIMessageQueue::GetSingleton();
 				if (queue && Hud::IsSettled() && OpenMenus::Open(OpenMenus::Menu::kContainer)) {
@@ -189,6 +278,157 @@ namespace Storage
 			std::uint32_t                          lacksFrom = 0;
 			std::vector<std::uint32_t>             lacks;
 		} loaded;
+
+		// ---- the host's workbench ----
+
+		void DrainLocal()
+		{
+			std::vector<LocalMove> moves;
+			{
+				std::scoped_lock l{ localLock };
+				moves.swap(localInbox);
+			}
+			for (const auto& move : moves) {
+				client.Local(move.container, move.item, move.count);  // nothing unless our copy of it shows the true copy
+			}
+		}
+
+		// The engine's container of what workshop mode may build with, filled again from the workbench and the rest
+		// (nothing outside workshop mode: it has no such container then).
+		void RefillWorkshop()
+		{
+			static REL::Relocation<void (*)()> refill{ REL::ID(2194977) };  // Workshop::RefillSharedWorkshopContainer (+385C50)
+			refill();
+		}
+
+		// a_fn with the open crafting menu, looked up as MenuInput looks one up: on the main thread between frames, with the UI
+		// settled, only a menu OpenMenus says is up, and the reference let go before it returns (OpenMenusTests: no menu is
+		// held where the engine's deadlock could take its chance).
+		template <class Fn>
+		void WithCraftingMenu(Fn&& a_fn)
+		{
+			MainThread::Assert("Storage::WithCraftingMenu");
+			const auto ui = RE::UI::GetSingleton();
+			const auto it = std::ranges::find_if(CRAFTING_MENUS, [](OpenMenus::Menu a_menu) { return OpenMenus::Open(a_menu); });
+			if (!ui || !Hud::IsSettled() || it == CRAFTING_MENUS.end()) {
+				return;
+			}
+			const auto name = OpenMenus::NAMES[static_cast<std::size_t>(*it)];
+			const auto menu = ui->GetMenu(RE::BSFixedString{ std::string{ name }.c_str() });
+			if (const auto workbench = menu && menu->OnStack() ? RE::fallout_cast<RE::WorkbenchMenuBase*>(menu.get()) : nullptr) {
+				a_fn(*workbench);
+			}
+		}
+
+		// The settlement workbench an open crafting menu reads (among its gather's containers); 0: none (a station outside
+		// a settlement, an inspection from the Pip-Boy).
+		std::uint32_t CraftingBench()
+		{
+			std::uint32_t found = 0;
+			WithCraftingMenu([&](RE::WorkbenchMenuBase& a_menu) {
+				for (const auto& container : a_menu.sharedContainers) {
+					if (container && WorkshopSync::IsWorkbenchAnchor(container.get())) {
+						found = container->GetFormID();
+						return;
+					}
+				}
+			});
+			return found;
+		}
+
+		// What the menu reading our workbench shows is gathered again from it (the engine's own gather, as after a build).
+		void RefreshBenchMenu()
+		{
+			if (bench.menu == BenchMenu::kWorkshop) {
+				RefillWorkshop();
+			} else if (bench.menu == BenchMenu::kCrafting) {
+				WithCraftingMenu([](RE::WorkbenchMenuBase& a_menu) { a_menu.UpdateOptimizedAutoBuildInv(); });
+			}
+		}
+
+		// A view of the workbench our menu reads, when a friend's game keeps it and our moves are settled.
+		void OpenBench()
+		{
+			const auto now = Clock::now();
+			if (!ruleOn || bench.id == 0 || side.Viewing() || now < bench.retryAt || KeeperOf(bench.id) != Keeper::kFriend) {
+				return;
+			}
+			bench.retryAt = now + bench.backoff;
+			bench.backoff = (std::min<Clock::duration>)(bench.backoff * 2, BENCH_RETRY_MAX);  // reset as its contents come
+			if (side.Settling()) {
+				return;  // the server refuses the view until our moves are settled: tried again then
+			}
+			client.Open(bench.id, true);
+			if (side.Viewing() == bench.id) {
+				REX::INFO("Storage: viewing the host's workbench {:08X} ({}): its junk, ammo and aid are the one pile", bench.id,
+					bench.menu == BenchMenu::kWorkshop ? "workshop mode" : "a crafting menu");
+			}
+		}
+
+		void CloseBench()
+		{
+			if (bench.id != 0 && side.Viewing() == bench.id) {
+				client.MenuClosed();
+			}
+			bench = {};
+		}
+
+		// The server closed our view of the host's workbench (its keeper away, or their world reloaded): the view ends at once,
+		// so workshop mode and the menu read our copy's own things again; it opens again later (OpenBench).
+		void EndClosedBenchView()
+		{
+			if (bench.id != 0 && side.Viewing() == bench.id && !side.Shows(bench.id)) {
+				client.MenuClosed();
+				bench.refresh = true;
+			}
+		}
+
+		// Every frame: a crafting menu's workbench found, a view opened that couldn't be yet, and the menu filled again.
+		void BenchFrame()
+		{
+			if (bench.menu == BenchMenu::kCrafting && bench.id == 0 && Clock::now() - bench.openedAt < CRAFTING_LOOK_FOR) {
+				bench.id = CraftingBench();
+			}
+			if (bench.menu != BenchMenu::kNone) {
+				DrainLocal();
+				OpenBench();
+			}
+			if (std::exchange(bench.refresh, false)) {
+				RefreshBenchMenu();
+			}
+		}
+
+		// A settlement's workbench the host's game lists: only one of a settlement the host owns (a workbench whose
+		// settlement is a friend's in their save, not the host's, stays theirs).
+		bool OwnBench(RE::TESObjectREFR* a_ref)
+		{
+			const auto owner = a_ref ? a_ref->GetOwner() : nullptr;
+			return owner && (owner->GetFormID() == 0x00000007 || owner->GetFormID() == 0x0001C21C);  // the player's NPC, PlayerFaction
+		}
+
+		// Our listing of a container, the workbench among them (SharedBench says it is storage while it is made). Our player's
+		// moves and the engine's changes our game reports go out first: the listing holds them already (our world has them),
+		// and the server counts none of ours numbered before it on top (StorageBook::List), so one sent after would count twice.
+		std::optional<Protocol::StorageListing> Listing(std::uint32_t a_id)
+		{
+			WorldSync::FlushLoot();
+			listingNow = a_id;
+			auto listing = WorldSync::StorageListing(a_id);
+			listingNow = 0;
+			return listing;
+		}
+
+		// Whether the scan lists a container: storage, not a vendor's, and a workbench only of a settlement the host owns.
+		bool Listable(std::uint32_t a_id, const LootScope::HolderFacts& a_facts)
+		{
+			return a_facts.storage && !a_facts.vendorChest && (!a_facts.workshop || OwnBench(Ref(a_id)));
+		}
+
+		void MarkListed(std::uint32_t a_id)
+		{
+			side.MarkListed(a_id);
+			NoteBench(a_id);
+		}
 
 		void Scan()
 		{
@@ -221,17 +461,17 @@ namespace Storage
 					break;
 				}
 				const auto facts = WorldSync::HolderFactsOf(id);
-				if (!facts.storage || facts.workshop || facts.vendorChest) {
+				if (!Listable(id, facts)) {
 					notStorage[id] = now;
 					continue;
 				}
-				const auto listing = WorldSync::StorageListing(id);
+				const auto listing = Listing(id);
 				if (!listing) {
 					++counts.listFailed;  // the ledger is still asking, or the container's inventory isn't made yet: next time
 					continue;
 				}
 				WorldSync::QueueEvent(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
-				side.MarkListed(id);
+				MarkListed(id);
 				++listed;
 			}
 			// What was listed before and the server holds stale now (our world loaded, or we rejoined) is listed again wherever it
@@ -249,13 +489,13 @@ namespace Storage
 					continue;
 				}
 				const auto facts = Ref(id) ? WorldSync::HolderFactsOf(id) : LootScope::HolderFacts{};
-				const auto listing = facts.storage && !facts.workshop && !facts.vendorChest ? WorldSync::StorageListing(id) : std::nullopt;
+				const auto listing = Listable(id, facts) ? Listing(id) : std::nullopt;
 				if (!listing) {
 					relistTried[id] = now;
 					continue;
 				}
 				WorldSync::QueueEvent(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
-				side.MarkListed(id);
+				MarkListed(id);
 				++listed;
 			}
 		}
@@ -305,6 +545,10 @@ namespace Storage
 		live = a_session;
 		client.OnWelcome(a_rule, a_hosting, a_session);
 		ruleOn = a_rule;
+		hostingOn = a_rule && a_hosting;
+		ForgetBenches();  // the owner table comes again
+		bench.retryAt = {};
+		bench.backoff = BENCH_RETRY;
 		notStorage.clear();
 		relistTried.clear();
 		scannedAt = {};
@@ -317,6 +561,8 @@ namespace Storage
 		const auto unanswered = side.InFlight();
 		client.OnDisconnected();  // nobody's truth now: the session's things leave our copy; what we sent unanswered stays on its way
 		ruleOn = false;
+		hostingOn = false;
+		ForgetBenches();
 		live = 0;
 		if (unanswered != 0) {
 			REX::INFO("Storage: {} of our moves at a friend's storage had no answer as the connection went: kept, and settled when we rejoin (sent late if the session never numbered them)", unanswered);
@@ -326,10 +572,17 @@ namespace Storage
 	void OnOwners(const Protocol::StorageOwners& a_owners)
 	{
 		client.OnOwners(a_owners, menuOn, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
+		for (const auto& owner : a_owners.entries) {
+			NoteBench(owner.container);  // a workbench kept: its changes are watched (WatchesBench)
+		}
+		bench.retryAt = {};  // a workbench our menu reads may be kept now: its view opens (BenchFrame)
 	}
 
 	void OnContents(const Protocol::StorageListing& a_contents)
 	{
+		if (a_contents.container == bench.id && side.Shows(bench.id)) {
+			bench.backoff = BENCH_RETRY;
+		}
 		client.OnContents(a_contents);
 	}
 
@@ -352,7 +605,11 @@ namespace Storage
 
 	void BeforeSaveOrLoad()
 	{
+		DrainLocal();
 		client.BeforeSaveOrLoad();
+		// A save in workshop mode: its view opens again after it (BenchFrame), and the engine's container is filled again.
+		bench.retryAt = {};
+		bench.refresh = true;
 	}
 
 	void OnGameLoaded()
@@ -367,6 +624,11 @@ namespace Storage
 			record.lacksFrom = 0;
 		}
 		client.OnLoad(session, record.unanswered, record.lacks, record.lacksFrom);
+		bench = {};  // a load ends workshop mode and the menus
+		{
+			std::scoped_lock l{ localLock };
+			localInbox.clear();
+		}
 		notStorage.clear();
 		relistTried.clear();
 		if (!record.unanswered.empty() || !record.lacks.empty()) {
@@ -384,6 +646,7 @@ namespace Storage
 			REX::INFO("Storage: settled our moves at a friend's storage once the changes we waited for were given up on ({} our world lacks)", side.Lacks());
 		}
 		Scan();
+		BenchFrame();
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
@@ -481,6 +744,150 @@ namespace Storage
 		});
 	}
 
+	namespace
+	{
+		class WorkshopModeWatcher final :
+			public RE::BSTEventSink<RE::Workshop::WorkshopModeEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::WorkshopModeEvent& a_event, RE::BSTEventSource<RE::Workshop::WorkshopModeEvent>*) override
+			{
+				OnWorkshopMode(a_event.workshop ? a_event.workshop->GetFormID() : 0, a_event.start);
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		WorkshopModeWatcher workshopModeWatcher;
+
+		// The game's Papyrus AddItem and RemoveItem, run as delay functors on the main thread (GameScript's AddItemFunctor and
+		// RemoveItemFunctor; their operator(), vtable slot 1, returns a BSScript::Variable through a hidden pointer).
+		using RunFn = void* (*)(void*, void*);
+		RunFn originalAddRun = nullptr;
+		RunFn originalRemoveRun = nullptr;
+
+		void* AddRun(void* a_this, void* a_result)
+		{
+			++scripted;
+			const auto result = originalAddRun(a_this, a_result);
+			--scripted;
+			return result;
+		}
+
+		void* RemoveRun(void* a_this, void* a_result)
+		{
+			++scripted;
+			const auto result = originalRemoveRun(a_this, a_result);
+			--scripted;
+			return result;
+		}
+
+		bool HookRun(std::uintptr_t a_vtable, REL::ID a_run, RunFn a_hook, RunFn& a_original, std::string_view a_name)
+		{
+			const auto slot = a_vtable + sizeof(void*);
+			const auto current = *reinterpret_cast<const std::uintptr_t*>(slot);
+			if (current != a_run.address()) {
+				REX::WARN("Storage: the scripts' {} isn't where 1.11.240 has it (another plugin's patch?): a script's {} at the host's workbench counts as a move of ours", a_name,
+					a_name);
+				return false;
+			}
+			a_original = reinterpret_cast<RunFn>(current);
+			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(a_hook));
+			return true;
+		}
+	}
+
+	void Install()
+	{
+		static bool installed = false;
+		if (std::exchange(installed, true)) {
+			return;
+		}
+		RE::Workshop::RegisterForWorkshopModeEvent(&workshopModeWatcher);
+		const bool add = HookRun(RE::VTABLE::GameScript____AddItemFunctor[0].address(), REL::ID(2253314), &AddRun, originalAddRun, "AddItem");
+		const bool remove = HookRun(RE::VTABLE::GameScript____RemoveItemFunctor[0].address(), REL::ID(2253317), &RemoveRun, originalRemoveRun, "RemoveItem");
+		REX::INFO("Storage: watching workshop mode; the scripts' AddItem {} and RemoveItem {}", add ? "watched" : "not watched", remove ? "watched" : "not watched");
+	}
+
+	void OnWorkshopMode(std::uint32_t a_workshop, bool a_start)
+	{
+		MainThread::Post([a_workshop, a_start] {
+			if (!a_start) {
+				if (bench.menu == BenchMenu::kWorkshop) {
+					CloseBench();
+				}
+				return;
+			}
+			CloseBench();
+			// The settlement's workbench is its workshop reference itself, a container (Workshop::GetWorkshopContainer takes the
+			// workshop when its base is a CONT, as every settlement's is).
+			const auto ref = Ref(a_workshop);
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			bench.menu = BenchMenu::kWorkshop;
+			bench.id = base && base->Is(RE::ENUM_FORM_ID::kCONT) && WorkshopSync::IsWorkbenchAnchor(ref) ? a_workshop : 0;
+			bench.openedAt = Clock::now();
+			OpenBench();
+		});
+	}
+
+	void OnWorkbenchMenu(bool a_opening)
+	{
+		MainThread::Post([a_opening] {
+			if (!a_opening) {
+				if (bench.menu == BenchMenu::kCrafting) {
+					CloseBench();
+				}
+				return;
+			}
+			if (bench.menu == BenchMenu::kWorkshop) {
+				return;  // a menu over workshop mode reads the same workbench
+			}
+			CloseBench();
+			bench.menu = BenchMenu::kCrafting;
+			bench.openedAt = Clock::now();
+			bench.id = CraftingBench();  // or found in the next frames (BenchFrame)
+			OpenBench();
+		});
+	}
+
+	bool SharedBench(std::uint32_t a_container)
+	{
+		return side.KeepsBench(a_container, listingNow == a_container);
+	}
+
+	bool WatchesBench(std::uint32_t a_container)
+	{
+		if (!ruleOn) {
+			return false;
+		}
+		std::scoped_lock l{ benchesLock };
+		return benches.contains(a_container);
+	}
+
+	bool KeepsTrueCopies()
+	{
+		return hostingOn;
+	}
+
+	bool Scripted()
+	{
+		return scripted > 0;
+	}
+
+	void LocalChange(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count)
+	{
+		std::scoped_lock l{ localLock };
+		if (localInbox.size() < MAX_LOCAL) {
+			localInbox.push_back({ a_container, a_item, a_count });
+		}
+	}
+
+	void Applied(std::uint32_t a_container)
+	{
+		if (a_container == bench.id && bench.menu != BenchMenu::kNone) {
+			bench.refresh = true;
+		}
+	}
+
 	Keeper KeeperOf(std::uint32_t a_container)
 	{
 		return side.KeeperOf(a_container, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
@@ -532,11 +939,16 @@ namespace Storage
 		const auto& c = client.Stats();
 		return std::format("storage={}{} owners={} viewing={} inFlight={} settling={} lacks={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} "
 						   "unanswered={} unsent={} overflow={} lacking={} lacksDropped={} settles={} late={} settlingClosed={} corrected={} takenBack={} usedUp={} "
-						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={}",
+						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
 			side.Settling() ? 1 : 0, side.Lacks(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.unsent, s.overflow, s.lacking,
 			s.lacksDropped, s.settles, s.late, s.settlingClosed, s.corrected, c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
-			counts.refusedOwn);
+			counts.refusedOwn, bench.menu == BenchMenu::kWorkshop ? "workshop" : bench.menu == BenchMenu::kCrafting ? "crafting" : "none", bench.id,
+			[] {
+				std::scoped_lock l{ benchesLock };
+				return benches.size();
+			}(),
+			c.localKept, c.localUnpaid);
 	}
 
 	std::string Command(std::string_view a_args)
@@ -563,8 +975,49 @@ namespace Storage
 			client.MenuClosed();
 			return "closed";
 		}
+		// The workbench our workshop mode or crafting menu reads, and what each of the engine's lists holds of an item: our
+		// copy of the workbench, workshop mode's own container (Workshop::RefillSharedWorkshopContainer's), and the open
+		// crafting menu's (WorkbenchMenuBase::sharedContainerRef, its gather's).
+		if (args[0] == "bench") {
+			std::string out = std::format("bench={} {:08X} viewing={} shows={} keeper={}", bench.menu == BenchMenu::kWorkshop ? "workshop" : bench.menu == BenchMenu::kCrafting ? "crafting" : "none",
+				bench.id, side.Viewing() == bench.id && bench.id != 0, bench.id != 0 && side.Shows(bench.id), Name(KeeperOf(bench.id)));
+			const auto object = args.size() > 1 ? Object(ParseHex(args[1])) : nullptr;
+			if (!object) {
+				return out;
+			}
+			static REL::Relocation<std::uint32_t*> sharedHandle{ REL::ID(4797256) };  // the workshop's shared container (+30F76EC)
+			RE::ObjectRefHandle handle;
+			std::memcpy(&handle, sharedHandle.get(), sizeof(handle));
+			const auto workshopList = handle ? handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+			std::int64_t craftingList = -1;
+			WithCraftingMenu([&](RE::WorkbenchMenuBase& a_menu) { craftingList = CountIn(a_menu.sharedContainerRef.get(), object); });
+			return out + std::format(" item={:08X} copy={} workshopList={} craftingList={} player={}", object->GetFormID(), CountIn(Ref(bench.id), object),
+							 workshopList ? CountIn(workshopList.get(), object) : -1, craftingList, CountIn(Player(), object));
+		}
+		// What a build does with each of its components, in workshop mode: Workshop::RemoveItemFromWorkshopContainers (the
+		// workbench, then the supply lines' benches, then the player), then the build list is filled again, as
+		// Workshop::PlaceCurrentReference does once the piece is placed (no piece is placed here).
+		if (args[0] == "build") {
+			if (!OpenMenus::Open(OpenMenus::Menu::kWorkshop) || args.size() < 3) {
+				return "error: storage build <item> <count>, in workshop mode";
+			}
+			const auto object = Object(ParseHex(args[1]));
+			std::uint32_t count = 0;
+			std::from_chars(args[2].data(), args[2].data() + args[2].size(), count);
+			if (!object || count == 0) {
+				return "error: item or count";
+			}
+			using RemoveFn = void (*)(RE::TESBoundObject*, std::uint32_t);
+			static REL::Relocation<RemoveFn> remove{ REL::ID(2195117) };  // (+392340)
+			const auto before = CountIn(Ref(bench.id), object);
+			const auto carried = CountIn(Player(), object);
+			remove(object, count);
+			RefillWorkshop();
+			return std::format("built with {} of {:08X}: workbench {} -> {}, player {} -> {}", count, object->GetFormID(), before, CountIn(Ref(bench.id), object), carried,
+				CountIn(Player(), object));
+		}
 		if (args.size() < 2) {
-			return "error: storage [status | owners | keeper <ref> | view <ref> | close | count <ref> <item> | take <ref> <item> <count> | put <ref> <item> <count>]";
+			return "error: storage [status | owners | keeper <ref> | view <ref> | close | bench [item] | build <item> <count> | count <ref> <item> | take <ref> <item> <count> | put <ref> <item> <count>]";
 		}
 		const auto id = ParseHex(args[1]);
 		const auto ref = Ref(id);

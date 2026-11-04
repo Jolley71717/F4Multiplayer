@@ -47,7 +47,11 @@ namespace Protocol
 	// reset brings back is rolled anew. 0.10.1 (56) is refused at the hello.
 	// 58: the host's sQuests in the welcome (SessionRules::quests, a byte after legendary): with "safe" more quests are
 	// shared with the story (src/game/QuestFilter.h SAFE). 0.11.2 (57) is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 58;
+	// 60: with bSharedStorage the host's game lists the workbenches of its settlements too, and friends' workshop mode and
+	// crafting menus view them (src/game/Storage.h); no message changes, but a game from before would keep a workbench
+	// each player's own while viewing the host's copy in it, so its takes there would go unreported. 58 is refused at the
+	// hello. (59 is another change's; the two are numbered at merge.)
+	inline constexpr std::uint16_t VERSION = 60;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;

@@ -176,8 +176,9 @@ TEST("open menus: the plugin looks no menu up through the UI, but for the HUD on
 	// "dialogue menu" the dialogue menu and the menu stack: on the main thread, between frames, when a developer
 	// asks, and the reference is let go before the command returns. MenuInput hands one menu a key (the settlement
 	// list's cancel, which a friend's stage opened here): on the main thread, between frames, with the UI settled, a
-	// menu OpenMenus says is up, and the reference let go before it returns, as the game's own input code holds it.
-	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 }, { "src/game/MenuInput.cpp", 1 } };
+	// menu OpenMenus says is up, and the reference let go before it returns, as the game's own input code holds it. Storage
+	// reads the open crafting menu's workbench and has it gather again, by the same rules (Storage::WithCraftingMenu).
+	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 }, { "src/game/MenuInput.cpp", 1 }, { "src/game/Storage.cpp", 1 } };
 	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
 		const auto lookups = MenuLookups(code);
 		const auto it = allowed.find(file);

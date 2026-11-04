@@ -39,6 +39,8 @@ namespace WorldSync
 	[[nodiscard]] LootScope::HolderFacts                  HolderFactsOf(std::uint32_t a_ref);
 	[[nodiscard]] std::map<std::uint32_t, std::int64_t>   SharedIn(std::uint32_t a_container);
 	[[nodiscard]] std::set<std::uint32_t>                 AliasedIn(std::uint32_t a_container);
+	// Whether the session shares a_item held in a_container (LootScope's kShared for a take of it, its quest alias aside).
+	[[nodiscard]] bool                                    Shares(std::uint32_t a_container, std::uint32_t a_item);
 	[[nodiscard]] std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container);
 	void                                                  QueueEvent(std::vector<std::uint8_t> a_packet);
 

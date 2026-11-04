@@ -150,6 +150,7 @@ storage.take_refused = Non era più nel contenitore dell'host (l'ha preso prima 
 storage.put_refused = Non poteva andare nel contenitore dell'host (al suo gioco manca la mod?): ti è stato restituito
 storage.short = Il contenitore aveva meno di quanto mostrava: ciò che non c'era è stato ripreso
 storage.settle_cut = I tuoi spostamenti nei contenitori dell'host non hanno potuto essere sistemati tutti dopo il caricamento (il registro della sessione è pieno, o la tua quota è esaurita): restano chiusi per te fino al prossimo caricamento
+storage.bench_closed = The host's workbench isn't shared right now (they are away from it, or their game loaded): you build with your own materials until it is again
 gifts.given = Ora gli amici possono prenderlo dalla loro copia del contenitore (chi lo prende per primo lo tiene); fino ad allora puoi riprenderlo
 gifts.not_given = Questo non arriva agli amici: resta solo nella tua copia del contenitore (un oggetto di una missione, una mod che ha solo il tuo gioco, o la sessione è piena)
 gifts.taken_first = Un amico l'ha preso per primo

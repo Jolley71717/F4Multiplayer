@@ -297,6 +297,14 @@ namespace StorageView
 			return Keeper::kNone;
 		}
 
+		// Whether a settlement's workbench is shared storage here (LootScope's sharedBench): a game keeps it for the session (the
+		// owner table names it), or ours is the host's and lists it (a_listing: the listing that claims it is being made). Any
+		// other workbench stays each player's own, as with the rule off.
+		[[nodiscard]] bool KeepsBench(std::uint32_t a_container, bool a_listing = false) const
+		{
+			return rule && (owners.contains(a_container) || (host && (a_listing || known.contains(a_container))));
+		}
+
 		[[nodiscard]] std::optional<std::uint32_t> OwnerOf(std::uint32_t a_container) const
 		{
 			const auto it = owners.find(a_container);
@@ -683,6 +691,8 @@ namespace StorageView
 		virtual std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container) = 0;
 		// The shared items our copy of a container holds a stack of that fills a quest alias (LootSync::Aliased).
 		virtual std::set<std::uint32_t> Aliased(std::uint32_t) { return {}; }
+		// Whether the session shares an item held in a container (LootScope's kShared, as SharedIn counts it).
+		virtual bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) { return SharedIn(a_container).contains(a_item); }
 		// Adds to (> 0) or takes out of (< 0) our copy of a container; what was changed (a take takes no more than there is).
 		virtual std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) = 0;
 		// The same for our player's inventory.
@@ -713,6 +723,8 @@ namespace StorageView
 			std::int64_t  usedUp = 0;     // of those, items our player no longer had
 			std::uint32_t givenBack = 0;  // refused puts: to our player
 			std::uint32_t notices = 0;    // notices shown (NOTICE_EVERY at most, each)
+			std::int64_t  localKept = 0;  // items our own scripts added to or took from a copy we viewed, kept out of the true copy (Local)
+			std::int64_t  localUnpaid = 0;  // of those taken, what our set-aside stash lacked (put back in the copy all the same)
 		};
 
 		explicit Client(Engine& a_engine) :
@@ -928,6 +940,36 @@ namespace StorageView
 			if (const auto undo = side.Unsent(a_change)) {
 				Apply(*undo, undo->player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 			}
+		}
+
+		// A change our own game's scripts made to our copy of a container while it shows the true copy (a settlement's daily
+		// food and water, its settlers' meals, at the host's workbench): our world's, never the session's, or every game
+		// would make the same day's food once more in the one pile. What a script added goes from the copy to what was set
+		// aside (ours again as the view ends); what it took out of the true copy shown is put back and taken from what was
+		// set aside instead, as far as that holds (what it lacks is counted, localUnpaid). Only the session's shared things
+		// (a weapon a script adds stays in our copy, as it would with no view). Nothing without a view.
+		void Local(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count)
+		{
+			if (a_count == 0 || !side.Shows(a_container) || side.Aliased(a_container, a_item) || !engine.SharedItem(a_container, a_item)) {
+				return;
+			}
+			if (a_count > 0) {
+				const auto moved = -engine.ChangeCopy(a_container, a_item, -a_count);
+				if (moved > 0) {
+					aside[a_item] += moved;
+					counts.localKept += moved;
+				}
+				return;
+			}
+			const auto back = engine.ChangeCopy(a_container, a_item, -a_count);
+			auto&      held = aside[a_item];
+			const auto paid = (std::min)(held, back);
+			held -= paid;
+			if (held <= 0) {
+				aside.erase(a_item);
+			}
+			counts.localKept += back;
+			counts.localUnpaid += back - paid;
 		}
 
 	private:
