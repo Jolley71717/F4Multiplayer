@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T08:18:32+00:00",
+ "updated": "2026-11-04T08:24:29+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -109,6 +109,14 @@
    "title": "MuzzleFlash: takenDown is counted but missing from the status line",
    "kind": "bug",
    "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "1zyv",
+   "title": "nexus-upload.yml has no owner-only guard: a collaborator with write access could dispatch a Nexus upload",
+   "kind": "feature",
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
@@ -1511,8 +1519,9 @@
    "title": "Compile the Flash menus (.swf) from source in a GitHub workflow, and a release-package workflow only the maintainer starts",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 294
   },
   {
    "id": "uyru",
