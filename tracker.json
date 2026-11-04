@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T11:44:42+00:00",
+ "updated": "2026-11-04T12:03:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -970,7 +970,7 @@
    "title": "Shared workshop materials and settlement supply lines",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "",
    "pr": 297
   },
