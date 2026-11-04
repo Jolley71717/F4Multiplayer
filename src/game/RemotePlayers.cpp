@@ -159,6 +159,7 @@ namespace RemotePlayers
 			std::uint32_t        seatActor = 0;          // the stand-in the tries below are for
 			int                  seatTries = 0;          // ways into it tried for this seat on that stand-in (Puppets::Entry)
 			ArmorFrames::PlayTime seatTriedAt{};
+			std::optional<ArmorFrames::PlayTime> seatReadySince;  // that stand-in has had its 3D and AI process since (StandInSeat::READY_AFTER)
 			bool                 seatHeld = false;       // the stand-in is held for it (Puppets::Hold)
 			bool                 seatLogged = false;     // whether it got in, or did not, was logged for this seat
 			std::uint8_t         menu = Protocol::MenuKind::kNone;  // the menu they are in (their status)
@@ -1456,6 +1457,21 @@ namespace RemotePlayers
 			a_player.seatLogged = false;
 		}
 
+		// The stand-in can be sent into furniture: its 3D is in and it has the AI process furniture use works on
+		// (Puppets::FurnitureOf reads the seat from it), and has had both StandInSeat::READY_AFTER of play.
+		bool SeatReady(RemotePlayer& a_player, RE::Actor* a_actor, ArmorFrames::PlayTime a_played)
+		{
+			const auto process = a_actor->currentProcess;
+			if (!a_actor->Get3D() || !process || !process->middleHigh || a_actor->IsDisabled()) {
+				a_player.seatReadySince.reset();
+				return false;
+			}
+			if (!a_player.seatReadySince) {
+				a_player.seatReadySince = a_played;
+			}
+			return a_played - *a_player.seatReadySince >= StandInSeat::READY_AFTER;
+		}
+
 		bool IsSeatBase(const RE::TESBoundObject* a_base)
 		{
 			// A plain seat or bed only, whatever a friend's game names: never a terminal, a workbench or a station (see
@@ -1537,6 +1553,7 @@ namespace RemotePlayers
 				a_player.seatTries = 0;
 				a_player.seatHeld = false;
 				a_player.seatLogged = false;
+				a_player.seatReadySince.reset();
 			}
 			const auto in = Puppets::FurnitureOf(a_actor);
 			const auto target = a_player.seat ? FindSeat(a_player, a_actor, a_now) : RE::NiPointer<RE::TESObjectREFR>{};
@@ -1547,6 +1564,7 @@ namespace RemotePlayers
 				const auto at = target ? target->data.location : RE::NiPoint3{ a_player.seat->x, a_player.seat->y, a_player.seat->z };
 				facts.near = a_spot.GetDistance(at) <= StandInSeat::NEAR;
 			}
+			facts.ready = SeatReady(a_player, a_actor, a_played);
 			facts.inArmor = Equipment::InPowerArmor(a_actor);
 			facts.inTarget = in && target && in.get() == target.get();
 			facts.inOther = in && !facts.inTarget && !in->As<RE::Actor>();
@@ -1568,7 +1586,7 @@ namespace RemotePlayers
 				return false;
 			case StandInSeat::Act::kEnter:
 				{
-					const auto way = a_player.seatTries == 0 ? Puppets::Entry::kSnap : Puppets::Entry::kActivate;
+					const auto way = StandInSeat::SnapNext(a_player.seatTries) ? Puppets::Entry::kSnap : Puppets::Entry::kActivate;
 					++a_player.seatTries;
 					a_player.seatTriedAt = a_played;
 					const bool asked = Puppets::Enter(a_actor, target.get(), way);
@@ -1588,7 +1606,7 @@ namespace RemotePlayers
 					a_player.seatLogged = true;
 					++seatsEntered;
 					REX::INFO("RemotePlayers: player {} stand-in {:08X} is in furniture {:08X} (sit state {}) after {} way(s) in", a_player.id, a_actor->GetFormID(), in->GetFormID(), static_cast<int>(a_actor->DoGetSitSleepState()), a_player.seatTries);
-				} else if (!a_player.seatLogged && ((facts.found && facts.tries >= StandInSeat::MAX_TRIES && facts.sinceTried >= StandInSeat::ENTRY_WAIT) || (!facts.found && a_player.seatLooks >= 3))) {
+				} else if (!a_player.seatLogged && ((facts.found && StandInSeat::Spent(facts)) || (!facts.found && a_player.seatLooks >= 3))) {
 					a_player.seatLogged = true;
 					++seatsMissed;
 					REX::WARN("RemotePlayers: player {} uses furniture {:08X} (base {:08X}); {}: stand-in {:08X} is left standing where it was as they sat down", a_player.id, a_player.seat->ref, a_player.seat->base,
@@ -3269,6 +3287,9 @@ namespace RemotePlayers
 			if (actor && loading && remote.seatHeld) {
 				Puppets::StandUp(actor);
 				remote.seatHeld = false;
+				remote.seatTries = 0;  // sent in afresh once it is placed and ready again
+				remote.seatLogged = false;
+				remote.seatReadySince.reset();
 			}
 			if (!actor && remote.registered) {
 				// The game removed our puppet (e.g. cell unload); forget the stale registration. Its form may still be
