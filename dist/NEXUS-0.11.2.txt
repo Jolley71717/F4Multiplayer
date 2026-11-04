@@ -1,0 +1,5 @@
+Patch for 0.11.1: same protocol, plays with 0.11.1 and 0.11.0 (best if everyone has it)
+A crash when enemies hit a friend just after their stand-in was redrawn (seen with Nuka-World raiders) is fixed
+A friend's NPC line played aloud stops when its recording ends, at most four at once (a possible cause of a growing noise)
+Enemies a friend's quest switches on (Gun Run's mirelurks) now appear in your game too
+Full notes on GitHub
