@@ -225,3 +225,25 @@ TEST("server: which of a player's workshop pieces are powered goes to the others
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
 	CHECK(Count(Received(f, 3), MT::kWorkshopPower) == 0u);  // Alice's game sends it all again for her
 }
+
+TEST("server: what a player's workshop pieces count for goes to the others as theirs, not back to them, and is not kept")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	TakeAliceJoined(f);
+
+	const Protocol::ResourceStates resources{ 99, { { 0xFF000042, { 0.5f, 0, 0, 0, 0, 0 } }, { 0xFF000043, {} } } };  // claims to be someone else's
+	f.fake->Deliver(2, Protocol::Encode(resources, MT::kReportWorkshopResources));
+	const auto packet = f.fake->WaitFor(1, Type(MT::kWorkshopResources));
+	REQUIRE(packet);
+	const auto relayed = Protocol::DecodeResourceStates(*packet);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);
+	CHECK(relayed->entries == resources.entries);
+	CHECK(Count(Received(f, 2), MT::kWorkshopResources) == 0u);
+
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
+	CHECK(Count(Received(f, 3), MT::kWorkshopResources) == 0u);  // Alice's game sends it all again for her
+}

@@ -124,20 +124,47 @@ namespace StandInSeat
 	// How long one way into the furniture is given to take (Puppets::Enter; the engine's own, run a frame or more later)
 	// before the next is tried.
 	constexpr auto ENTRY_WAIT = std::chrono::seconds(2);
+	// A stand-in is sent in only once it has had its 3D and its AI process this long. A stand-in made while its friend
+	// already sat (they sat as it came into view, after a load or a join) was sent in the frame it was spawned, before it
+	// had any 3D, and both ways were spent before its head was built 2.4 s later (rig, 2026-11-04): it never got in. In
+	// a 5-player game's logs a quarter of the misses were such fresh stand-ins.
+	constexpr auto READY_AFTER = std::chrono::seconds(1);
+	// The ways in go in rounds (the snap, then activation); a round that did not take is followed by another after this
+	// wait, so a stand-in whose way in failed for a moment (the furniture just loaded, the stand-in still settling, or out
+	// of it again a moment after it got in) sits down when it can.
+	constexpr auto ROUND_WAIT = std::chrono::seconds(5);
+	constexpr int  WAYS = 2;
+	constexpr int  ROUNDS = 3;
 	// Ways tried before the stand-in is left standing beside the furniture (Puppets::Entry: the snap, then activation).
-	constexpr int MAX_TRIES = 2;
+	constexpr int MAX_TRIES = WAYS * ROUNDS;
+
+	// The way the next try takes, counted from 0: the snap first in each round, activation second.
+	constexpr bool SnapNext(int a_tries) { return a_tries % WAYS == 0; }
+
+	// How long after a try the next one waits: ENTRY_WAIT within a round, ROUND_WAIT before the next.
+	constexpr Duration WaitAfter(int a_tries)
+	{
+		return a_tries % WAYS == 0 ? Duration{ ROUND_WAIT } : Duration{ ENTRY_WAIT };
+	}
 
 	struct Facts
 	{
 		bool     wanted = false;    // their status names a seat
 		bool     found = false;     // ... and it is here (Pick)
 		bool     near = false;      // their spot is within NEAR of it (of where they said it stands while none is found)
+		bool     ready = true;      // the stand-in has had its 3D and its AI process READY_AFTER: it can be sent in
 		bool     inArmor = false;   // the stand-in is in power armor: the frames' own
 		bool     inTarget = false;  // the stand-in is in that furniture
 		bool     inOther = false;   // the stand-in is in other furniture (not a seat on an actor)
 		int      tries = 0;         // ways into it tried for this seat on this stand-in
 		Duration sinceTried{};      // since the last
 	};
+
+	// Every way in was tried, and the last had its time: the stand-in is left beside the furniture.
+	constexpr bool Spent(const Facts& a_facts)
+	{
+		return a_facts.tries >= MAX_TRIES && a_facts.sinceTried >= ENTRY_WAIT;
+	}
 
 	enum class Act
 	{
@@ -147,8 +174,10 @@ namespace StandInSeat
 		kStand,   // taken out of the furniture at once, standing; it follows their states again
 	};
 
-	// One step each update. Held beside it (kHold without being in it) is where it stood as they sat down: once the ways in
-	// are spent, or while no such furniture is found here, rather than following them up onto the couch.
+	// One step each update. Held beside it (kHold without being in it) is where it stood as they sat down: while it is not
+	// ready yet, between tries, once the ways in are spent, or while no such furniture is found here, rather than
+	// following them up onto the couch. One that got in and is out of it again while they still sit goes on with the tries
+	// left.
 	constexpr Act Choose(const Facts& a_facts)
 	{
 		if (a_facts.inArmor) {
@@ -166,10 +195,10 @@ namespace StandInSeat
 		if (!a_facts.near) {
 			return Act::kFollow;
 		}
-		if (!a_facts.found) {
+		if (!a_facts.found || !a_facts.ready) {
 			return Act::kHold;
 		}
-		if (a_facts.tries == 0 || (a_facts.tries < MAX_TRIES && a_facts.sinceTried >= ENTRY_WAIT)) {
+		if (a_facts.tries == 0 || (a_facts.tries < MAX_TRIES && a_facts.sinceTried >= WaitAfter(a_facts.tries))) {
 			return Act::kEnter;
 		}
 		return Act::kHold;

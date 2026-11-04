@@ -3030,6 +3030,20 @@ void Server::Run()
 		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
 	};
 
+	// What a player's own workshop pieces count for in their settlement: passed on as theirs, and not kept (as power: the player
+	// sends all of them again when someone joins, and now and then).
+	const auto handleWorkshopResources = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto resources = Protocol::DecodeResourceStates(a_data);
+		if (!resources) {
+			return;
+		}
+		resources->playerId = a_player.id;
+		broadcast(Protocol::Encode(*resources, Protocol::MessageType::kWorkshopResources), true, a_player.key);
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -4289,6 +4303,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopPower:
 			handleWorkshopPower(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopResources:
+			handleWorkshopResources(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);

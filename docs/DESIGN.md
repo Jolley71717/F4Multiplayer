@@ -2068,11 +2068,15 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   stand-in gets up as they start to. The receiver finds its own copy: the named reference if it is of that base, else the
   nearest of that base within 32 units of the spot (a settlement's furniture, which WorkshopSync copies to the same
   spot), enabled, with 3D and in the stand-in's cell or worldspace. When the friend's spot is within 256 units of it, the
-  stand-in is held (`Puppets::Hold`: not placed at its target, no locomotion events, no do-nothing package renewal) and
-  sent in with Papyrus `Actor.SnapIntoInteraction`, then, 2 s later if it is not in it, by the console's `activate`
-  (plain furniture only, never a workbench or a terminal). Once in, the furniture's graph and marker place it. When
-  neither takes, or no such furniture is found, it stays held where it stood as they sat down instead of following them
-  onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
+  stand-in is held (`Puppets::Hold`: not placed at its target, no locomotion events, no do-nothing package renewal) and,
+  once it has had its 3D and its AI process for 1 s (`StandInSeat::READY_AFTER`), sent in with Papyrus
+  `Actor.SnapIntoInteraction`, then, 2 s later if it is not in it, by the console's `activate` (plain furniture only,
+  never a workbench or a terminal). A round that does not take is followed by another 5 s later, three rounds in all,
+  and a stand-in that is out of the seat again while they still sit goes on with the rounds left. A stand-in made
+  while its friend already sat (after a load or a join) used to be sent in the frame it was spawned, with no 3D, and
+  spent both ways before its head was built: it never got in (a quarter of the misses in a 5-player game's logs). Once
+  in, the furniture's graph and marker place it. When none takes, or no such furniture is found, it stays held where
+  it stood as they sat down instead of following them onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
   their states again. Dev: `seat <puppet> <furniture> [snap|activate]`, `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
@@ -2545,9 +2549,118 @@ workshop's reset has run, as it does when the player enters the settlement; unti
 now assigned" yet assigns nobody, so a test that loads straight into a settlement it then owns by console runs
 `cqf WorkshopParent ResetWorkshop <bench>` first).
 
+## A friend's pieces count in your settlement (src/game/ResourceMirror.h, WorkshopResources.cpp, WorkshopSync.cpp)
+
+Crops, water pumps, turrets and generators a friend built count in your settlement's food, water, defense and power,
+as they do in theirs. Before, a friend's piece was a copy that counted only in its builder's game (a copy is linked to
+no workbench: see "Settlement power"). It still is: this mirrors the numbers, never by linking a copy, putting one on a
+grid or telling the workshop scripts of it.
+
+**How the game counts.** A settlement's numbers are actor values on its workbench (`resourceFood`, `resourceWater`,
+`resourceSafety`, `resourceBed`, `powerGenerated`, `powerRequired`). Found on the rig (2026-11-04, Sanctuary, `wsres`
+dev commands), with three vanilla crops, a placed crop, water pump, bed and small generator linked to the workbench:
+
+- The workbench's recount (`RecalculateResources`, run as pieces are built, scrapped, assigned or powered) sets each
+  value's base to the sum of every linked piece's value, and its damage modifier to minus the sum of the pieces that
+  can't produce now: food base 2.00, damage -2.00 (four unassigned crops at 0.5), water base 3.00 (the pump needs no
+  worker), beds base 1.00 damage -1.00 (unassigned), power base 3.00. So it is the engine, not a script, that zeroes
+  an unassigned crop: its `CanProduceForWorkshop` condition, summed over the pieces, gave exactly the workbench's
+  numbers for every kind (`wsres sum`).
+- It leaves the permanent and temporary modifiers alone: +5 food (permanent) and +3 water (temporary) came through
+  the recount, a workshop mode visit and a piece placed and linked.
+- The Pip-Boy's workshop data (`PipboyDataManager::workshopData`) and the workshop scripts (`GetValue`: the daily
+  update's production, `GetTotalFoodRating`, `GetTotalWaterRating`, safety) read the value with both modifiers: the
+  Pip-Boy said Food 5, Water 3, Defense 4, PowerGenerated 5 with modifiers of those sizes on. Beds are the
+  exception: the Pip-Boy's Bed is the base alone (a temporary +1 left it at 1, a base +1 made it 2), and the daily
+  update reads `GetBaseValue` for a settlement's beds as well as `GetValue`.
+- Modifiers are written into the save: a save with +5 food on, +15 in memory, then a load: +5.
+
+**What is sent.** Each game tracks its own pieces that count for anything (made at runtime, linked to one of its
+workbenches as a workshop item, standing, no copy; `TrackOwnResources` every 2 s) and polls them once a second
+(`ResourceMirror::Reporter`): each one's value of each kind if the engine's test says it produces now, else nothing,
+as its own recount counts it. A change goes at once, all of them every 30 s and to a joiner, a piece whose cell isn't
+loaded as last sent. A piece that is no longer one of ours (scrapped, or disabled, deleted or unlinked with no scrap
+report, which a script may do) goes once as counting for nothing, so the friend's total leaves it out though its copy
+stays. The reports go reliably; one the full send queue refuses goes again at the next poll as its piece counts then
+(`Reporter::Unsent`), so a gone piece's one word, which no later snapshot names, is never lost. Per piece, not per
+workbench: a
+friend's game counts only the pieces it has a copy of, so a piece both saves hold (two saves with one past: no copy is
+made, `OursAt`), another friend's twin of it, or a guest's building from before the session that the host's rules
+don't share never counts twice or out of nothing.
+
+**Caps.** One piece counts for at most `Protocol::MAX_RESOURCE_PIECE` of each kind: 10 food, 100 water, 50 defense, 10
+beds, 200 power made, 50 power taken, over the biggest vanilla piece of each (the PRPS of Fallout4.esm and its DLCs: a
+greenhouse planter's 2 food, an industrial water purifier's 40 water, a missile turret's 15 defense, a double bed's 2,
+the interior fusebox's 100 power, the Institute's beam emitter's 20 power taken). A message whose value is no number,
+negative or past 100000 is dropped; a value past its kind's cap is read as the cap, so the server relays it capped
+and the friend's game keeps it so. A workbench holds at most `ResourceMirror::MAX_BENCH` from each friend, and from
+all of them together: 500 food, 2000 water, 1000 defense, 200 beds, 2000 power made, 1000 taken, past what an honest
+settlement reaches within the build limit (40 industrial purifiers make 1600 water). A value under 0.001 counts for
+nothing.
+
+**What is applied.** Each game sums what friends' games say, over the copies it has, at the workbench each copy was
+reported at (`ResourceMirror::Tally`), and once a second makes what it has added to each workbench equal that sum
+(`ResourceMirror::Applier`), on the value's temporary modifier (`WorkshopResources::AddToBench`; scripts' `ModValue`
+writes the permanent one, the recount the base and damage). What it added it alone knows and takes off:
+
+- before every save (`kPreSaveGame`, the first step and one of its own, `WorkshopSync::BeforeSaveResources`), put back
+  after it (`kPostSaveGame`, or 5 s after the last hush if no word comes; a second save before the first is over keeps
+  it off until both are). Taken off, it is all of what was added however small, so no remainder is saved. What
+  couldn't come off (no such workbench then), or all that is on should the hush throw or not run, is written in that
+  save's co-save record `RSRC` (`ResourceMirror::SaveRecord`, made fresh for each save, never an earlier one's), and a
+  load takes what its record names off again;
+- when the friend leaves (at once), and all of it when the session ends;
+- at a load (all of it off before it), or a new game from the main menu (no word before it): what was added to the
+  old world's workbenches is forgotten, and a friend's pieces count again as their copies are found after it. One clear
+  for each, never both (`Applier::ForgetWorld`): after a load, only what the save's `RSRC` record names comes off (what
+  the take-off before the load couldn't reach was the old world's, and the save sets the new one's); on a new game, what
+  is still on a workbench of the same ID (an engine that didn't set it back), and no record is read. Neither takes a
+  value off unless the workbench's temporary modifier still holds all of it, nor ever more than it holds
+  (`ResourceMirror::TakeOffHeld`), so no clear of ours leaves the modifier below 0 or a save a value it didn't hold.
+
+  The limit: the new-game clear can't tell our value from another's on the same modifier. Should the engine set it back
+  and something else (the engine, a quest's start-up script, another mod) put at least as much on before the new game's
+  first frame, ours is taken out of theirs. Vanilla's workshop scripts write the permanent modifier, not this one, and a
+  new game's settlements are not yet set up then, so it isn't expected; the rig's new-game check says whether a new
+  game sets the modifier back at all (if it does, the take-off is never needed).
+
+Not beds: a modifier on beds would show in the scripts' `GetValue` as beds the settlement doesn't have in the Pip-Boy
+or in the daily update's count. They are sent and kept, and put on no workbench (`ResourceMirror::APPLIED`).
+
+Trade-offs and limits:
+
+- A friend's piece counts only while we have its copy (its report placed, its workbench loaded here once); copies are
+  forgotten at a load and counted again once found.
+- Settlers and their jobs aren't shared: a friend's crop counts in our food only when their settler works it in their
+  game (their game says it produces), and our settlers can't work their crops.
+- A friend's generator counts in our power numbers, not on our grid: it lights nothing of ours (see "Settlement power").
+- Happiness, population and supply lines are each game's own.
+- A piece whose base was made at runtime (`ReportRef` never shares one) has no copy anywhere, so it counts only in its
+  builder's game. A Machinegun Turret placed with `wsreport place` was one (its templated record gives the actor a new
+  base); whether one built in workshop mode is too is not checked yet.
+
+On the rig (2026-11-04, Sanctuary, both directions, pieces placed with `wsreport place` and linked with `wslink`):
+the host's water pump (3) and small generator (3) showed in the VM's game as temporary +3 water and +3 power on its
+workbench and as Water 3 and PowerGenerated 3 in its Pip-Boy; the host's unassigned crop and bed (the engine says they
+don't produce) added nothing; the host scrapping the pump took the VM's water to 0 within 3 s. The VM's pump and
+generator did the same in the host's game (Pip-Boy Water 6, PowerGenerated 6: its own 3 and 3, and the VM's). Saves
+in session on both took the values off for the save and put them back; loading those saves in session showed them
+again once the copies were found, and out of session showed none (temporary 0 for every kind). The VM leaving took the
+host's to 0 at once, and the VM's own to 0 with the session.
+
+Message: `kReportWorkshopResources` 77, `kWorkshopResources` 181: playerId (u32, stamped), a count (u8, 1 to 128), then
+per entry a reference (u32, runtime range only), a mask (u8, bits 0-5: food, water, defense, beds, power made, power
+taken) and a float for each bit set (finite, above 0, at most 100000). An entry with mask 0 says the piece counts for
+nothing now. Protocol 59.
+
+Dev: `wsres state` (counters, and what is on each workbench), `wsres av <ref>` (a workbench's or piece's values: value,
+base, permanent, temporary, damage), `wsres sum <bench>` (its pieces as its recount sums them, beside its own values),
+`wsres can <ref>` (the engine's test on a piece), `wsres pip [text]` (the Pip-Boy's workshop data), `wsres mod <ref>
+<value> base|perm|temp|damage <delta>`, `wsres find <text>` (buildable objects by name).
+
 ## Status (2026-10-09)
 
-Protocol VERSION 58 (58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
+Protocol VERSION 59 (59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -2580,6 +2693,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
+| `kWorkshopResources` | anyone, of their own pieces | the event budget; 1 to 128 entries, each a reference from the runtime range, a mask of the six kinds and a finite value above 0 and at most 100000 for each (else the message is dropped), each read as at most its kind's `MAX_RESOURCE_PIECE`; the sender stamped | counted only at the workbench of a copy we made of that player's piece (keyed by builder and their reference), never for a piece of our own or of the world; at most 8192 pieces kept; each friend's sum at a workbench, and all friends' sum, at most `MAX_BENCH`; on a workbench's temporary modifier, taken off before every save and when they leave; no beds | no |
 | `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |
 | `kReportObjectHold`, `kReportObjectRest` | the player moving the object (the first to grab it; after a let-go the thrower until it rests, or whoever grabs it next) | a plugin's reference only; a hold within 512 units of the holder, angles within 8 rad, finite; a rest in the world, in one cell or worldspace, at under 5000 units a second (none at rest); refused while another player holds it (`ObjectMovers`); 20 holds a second a player, a rest budget of 24 and 6 a second (kept across rejoining) | a loose object of ours (`Movable`: loose form type, physics body, no quest alias, nothing SaveGuard, Spawns or WorkshopSync places, not in workshop mode), within 8000 units of us in the same space; a hold drawn only within 2500 units of the holder's stand-in, a rest only within 4096 units of where our copy is; never one in our player's hands; every pose finite and in the world before it is written, velocities capped | no: a move is over in seconds, and each game's save keeps where its own copy lies |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |

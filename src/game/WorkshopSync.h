@@ -2,6 +2,10 @@
 
 #include "Protocol.h"
 
+#include <functional>
+#include <optional>
+#include <span>
+
 // Shared settlement building: what a player places, moves or scraps in workshop mode is copied
 // into the other players' games (a plain copy of the object: it isn't part of their workshop, so
 // they can't scrap or power it; the builder keeps that). A power wire's copy is drawn from its
@@ -67,9 +71,9 @@ namespace WorkshopSync
 	// loaded world's lights (an old copy's ID may name a light of ours there).
 	void BeforeLoad();
 
-	// A save was loaded: the copies made before it are let go (the session sends its building again),
-	// and its cells are walked again for scrapped junk.
-	void OnGameLoaded();
+	// A save was loaded (or, a_newGame, a new game started): the copies made before it are let go (the session sends its
+	// building again), and its cells are walked again for scrapped junk.
+	void OnGameLoaded(bool a_newGame);
 
 	// The loaded save is another character's world (the session is left): the copies were placed in the world before
 	// the load, and their handles name nothing of ours now (or something else). Forgotten, not removed.
@@ -97,6 +101,17 @@ namespace WorkshopSync
 	// Someone joined: all our pieces' power goes to them.
 	void OnPlayerJoined();
 
+	// Another player's report of what their pieces count for in their settlements: a friend's piece we have a copy of counts
+	// at its workbench here too, as a modifier the session alone holds (ResourceMirror.h, WorkshopResources.h).
+	void ApplyResources(const Protocol::ResourceStates& a_resources);
+	// The co-save record of what a save held of friends' pieces on our workbenches (nothing, unless the hush before it
+	// failed or didn't run; made fresh for each save), and the one a load read, taken off once the load is over. Run on the save's or the load's thread.
+	[[nodiscard]] std::vector<std::uint8_t> ResourceSaveRecord();
+	void LoadResourceRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
+	void RevertResourceRecord();
+	// Dev: the resource mirror's counters, and what is on each workbench.
+	[[nodiscard]] std::string DescribeResources();
+
 	// Someone left: their copies keep what they show, and are not shown again until their game says so (main thread).
 	void OnPlayerLeft(std::uint32_t a_playerId);
 
@@ -105,7 +120,12 @@ namespace WorkshopSync
 	// running, with no session to stop it); AfterSave shows them as their builders' games say again.
 	void BeforeSave();
 
-	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again.
+	// A save is about to be written (main thread), a step of its own so nothing else before the save can keep it from running:
+	// what friends' pieces count for comes off our workbenches (Applier::Hush), and this save's record says what didn't.
+	void BeforeSaveResources();
+
+	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again, and
+	// friends' pieces' worth goes back on our workbenches.
 	void AfterSave();
 
 	// Dev: a friend's game said this piece of theirs is powered or not, as the server's relay would say (wspower want).

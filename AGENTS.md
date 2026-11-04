@@ -13,6 +13,10 @@ and ask.
   rule below.
 - Every PR gets a code review at its current head before it merges: a PR comment starting "Code review at <sha>" and
   the `reviewed` label. New commits remove the label (`.github/workflows/review-label.yml`); review again.
+- Every outside PR, and every `needs-vetting` PR, merges only with `vetted` at its head and a "Vetted at `<that head>`"
+  comment from the label workflow (CONTRIBUTING.md, "Binaries and new dependencies"). Only the "Trusted: report" job's
+  summary of a vet counts; the untrusted jobs' summaries can say anything. An outside PR's code is never built or run
+  on the maintainer's PC or the rig before it is vetted and reviewed, and never with `build.yml`.
 - Merge locally (`git merge --no-ff origin/<branch>`, then push `main`), not with `gh pr merge`.
 - Say how a change was tested. "Not tested in a game" is a fine answer when it's true; never imply a game test that
   didn't happen.

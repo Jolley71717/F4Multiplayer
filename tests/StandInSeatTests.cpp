@@ -53,7 +53,8 @@ namespace
 		std::optional<Seat> seat;           // as their last status said
 		bool                found = true;   // our copy of the furniture is here (FindSeat)
 		Point               furniture{ 1200.0f, -350.0f, 64.0f };
-		std::optional<int>  takes;          // the try that takes (1 the snap, 2 activation), none for neither
+		std::optional<int>  takes;          // the try that takes (1 the snap, 2 activation, 3 the next round's snap...), none for none
+		StandInSeat::Duration readyAt{};    // the stand-in has had its 3D and AI process READY_AFTER from then (SeatReady)
 
 		Point                       standIn;  // where it stands
 		bool                        held = false;
@@ -96,6 +97,7 @@ namespace
 			if (seat) {
 				facts.near = Distance(a_spot, found ? furniture : Point{ seat->x, seat->y, seat->z }) <= StandInSeat::NEAR;
 			}
+			facts.ready = a_now >= readyAt;
 			facts.inTarget = inSeat;
 			facts.tries = tries;
 			facts.sinceTried = a_now - triedAt;
@@ -357,7 +359,7 @@ TEST("seats: when the snap does not take, activation is tried, and when neither 
 		vm.Step(0ms, walkingUp);
 		Send(f, 1, OnTheCouch());
 		REQUIRE(vm.Hear(f, 2));
-		for (int i = 1; i <= 100; ++i) {
+		for (int i = 1; i <= 300; ++i) {
 			vm.Step(i * 100ms, onIt);
 		}
 		CHECK(vm.tries == (takes ? *takes : StandInSeat::MAX_TRIES));
@@ -368,7 +370,7 @@ TEST("seats: when the snap does not take, activation is tried, and when neither 
 		// Up again.
 		Send(f, 1, {});
 		REQUIRE(vm.Hear(f, 2));
-		CHECK(vm.Step(20s, walkingUp) == (takes ? Act::kStand : Act::kFollow));
+		CHECK(vm.Step(40s, walkingUp) == (takes ? Act::kStand : Act::kFollow));
 		CHECK(!vm.held);
 	}
 }
@@ -406,4 +408,120 @@ TEST("seats: a seat in a settlement is found by base and place in a friend's gam
 	CHECK(vm.seat->ref == 0u);
 	const std::vector<StandInSeat::Candidate> here{ { .id = OUR_COPY, .base = CHAIR_BASE, .x = 500.0f, .y = 500.0f, .z = 0.0f, .usable = true } };
 	CHECK(StandInSeat::Pick(*vm.seat, here) == OUR_COPY);
+}
+
+TEST("seats: the ways in go in rounds, the snap first in each, a longer wait between rounds, and then it is spent")
+{
+	CHECK(StandInSeat::MAX_TRIES == StandInSeat::WAYS * StandInSeat::ROUNDS);
+	CHECK(StandInSeat::ROUNDS > 1);
+	for (int tries = 0; tries < StandInSeat::MAX_TRIES; ++tries) {
+		CHECK(StandInSeat::SnapNext(tries) == (tries % 2 == 0));
+	}
+	Facts facts{ .wanted = true, .found = true, .near = true };
+	StandInSeat::Duration since{};
+	std::vector<int> snaps;
+	for (int tries = 0; tries < StandInSeat::MAX_TRIES; ++tries) {
+		facts.tries = tries;
+		// Not before its wait: within a round ENTRY_WAIT, before the next round ROUND_WAIT.
+		if (tries > 0) {
+			const auto wait = tries % 2 == 0 ? StandInSeat::Duration{ StandInSeat::ROUND_WAIT } : StandInSeat::Duration{ StandInSeat::ENTRY_WAIT };
+			CHECK(StandInSeat::WaitAfter(tries) == wait);
+			facts.sinceTried = wait - 1ms;
+			CHECK(StandInSeat::Choose(facts) == Act::kHold);
+			CHECK(!StandInSeat::Spent(facts));
+			facts.sinceTried = wait;
+		}
+		CHECK(StandInSeat::Choose(facts) == Act::kEnter);
+	}
+	facts.tries = StandInSeat::MAX_TRIES;
+	facts.sinceTried = StandInSeat::ENTRY_WAIT - 1ms;
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);
+	CHECK(!StandInSeat::Spent(facts));  // the last way still has its time
+	facts.sinceTried = StandInSeat::ENTRY_WAIT;
+	CHECK(StandInSeat::Spent(facts));
+	facts.sinceTried = 1h;
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);  // left beside it, never on it
+}
+
+TEST("seats: a stand-in made while its friend sits is sent in only once it is ready, and none of its tries go before")
+{
+	// The rig on 2026-11-04: the host sat; the VM's game left and came back, spawned the host's stand-in, sent it in the
+	// same frame, before it had any 3D, and spent both ways before its head was built: it never got in.
+	Facts facts{ .wanted = true, .found = true, .near = true, .ready = false };
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);  // held where it is, not following them onto the seat
+	facts.sinceTried = 1h;
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);
+	facts.ready = true;
+	facts.sinceTried = {};
+	CHECK(StandInSeat::Choose(facts) == Act::kEnter);
+	// Its 3D gone again mid-round (rebuilt for its head): no try meanwhile, the round goes on once it is back.
+	facts.tries = 1;
+	facts.ready = false;
+	facts.sinceTried = StandInSeat::ENTRY_WAIT;
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);
+	facts.ready = true;
+	CHECK(StandInSeat::Choose(facts) == Act::kEnter);
+	// Not ready never overrides getting up, other furniture or power armor.
+	CHECK(StandInSeat::Choose({ .wanted = false, .ready = false, .inTarget = true }) == Act::kStand);
+	CHECK(StandInSeat::Choose({ .wanted = true, .found = true, .near = true, .ready = false, .inOther = true }) == Act::kStand);
+	CHECK(StandInSeat::Choose({ .wanted = true, .found = true, .near = true, .ready = false, .inArmor = true }) == Act::kFollow);
+	CHECK(StandInSeat::Choose({ .wanted = true, .found = true, .near = false, .ready = false }) == Act::kFollow);
+}
+
+TEST("seats: a friend's stand-in made as they sit, after a load, sits once ready; it no longer spends its ways before it has 3D")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	Send(f, 1, OnTheCouch());
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	const Point onIt{ 1200.0f, -350.0f, 64.0f };
+	// The engine would take the stand-in only once it is ready: a try before that is lost, as on the rig.
+	struct Fresh : Hearer
+	{
+		int lost = 0;
+	};
+	Fresh vm;
+	vm.takes = 1;
+	vm.readyAt = 2400ms + StandInSeat::READY_AFTER;  // its 3D and head 2.4 s after the spawn, then READY_AFTER
+	REQUIRE(vm.Hear(f, 2));
+	for (int i = 0; i <= 100; ++i) {
+		const auto now = i * 100ms;
+		const bool ready = now >= vm.readyAt;
+		vm.Step(now, onIt);
+		if (vm.asked && !ready) {
+			++vm.lost;
+		}
+	}
+	CHECK(vm.lost == 0);
+	CHECK(vm.tries == 1);  // the snap, once it was ready
+	CHECK(vm.inSeat);
+	CHECK(Distance(vm.standIn, vm.furniture) == 0.0f);
+}
+
+TEST("seats: a stand-in that does not get in at first, or is out of the seat again while they sit, sits in a later round")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	const Point walkingUp{ 1200.0f, -300.0f, 0.0f };
+	const Point onIt{ 1200.0f, -350.0f, 64.0f };
+	Hearer vm{ .takes = 3 };  // the second round's snap
+	vm.Step(0ms, walkingUp);
+	Send(f, 1, OnTheCouch());
+	REQUIRE(vm.Hear(f, 2));
+	int i = 1;
+	for (; i <= 300 && !vm.inSeat; ++i) {
+		vm.Step(i * 100ms, onIt);
+	}
+	CHECK(vm.inSeat);
+	CHECK(vm.tries == 3);
+	// Taken out of it by the engine while they still sit: the tries left go on.
+	vm.inSeat = false;
+	vm.takes = 4;
+	for (; i <= 600 && !vm.inSeat; ++i) {
+		vm.Step(i * 100ms, onIt);
+	}
+	CHECK(vm.inSeat);
+	CHECK(vm.tries == 4);
+	CHECK(vm.held);
 }

@@ -100,6 +100,37 @@ A pull request is merged only with the `reviewed` label, which says its code was
 itself is a comment naming that commit. New commits remove the label (`.github/workflows/review-label.yml`) until they
 are reviewed too.
 
+## Binaries and new dependencies
+
+Every pull request from outside the project gets the `needs-vetting` label by itself. The owner then runs the vetting
+workflow (`.github/workflows/vet.yml`) on its head: on GitHub's throwaway machines it lists the binary files (a
+compiled movie, a DLL, an archive, an image), the URLs and the sensitive changes (the build, the tools, the workflows,
+submodules, git hooks, and the config that AI agents and editors load and run, such as `.claude/`, `.codex/`,
+`AGENTS.md`, `CLAUDE.md` and `.vscode/`), checks every download the change adds against pinned hashes and signatures,
+and builds and tests the code, before anything from the pull request is built or run on the maintainer's machines.
+Only the summary of the vet's "Trusted: report" job counts, and it names the commit it vetted. The untrusted jobs'
+summaries and annotations come from the pull request's own code and can say anything, and the run's report artifact is
+only a convenience copy. After reading the report the owner adds `vetted`. The label workflow keeps it only while a
+passed vet run exists for the pull request's current head, run from main's `vet.yml`, and then records "Vetted at
+`<commit>`" in a comment. A merge checks for that comment naming the current head, not only the label. Adding the label
+to any other head takes it off again, and so do new commits. An outside pull request merges only that way, whether or
+not the label workflow ran. The owner's own pull requests get `needs-vetting`, and the same rule, only for a new or
+changed binary, a new download URL, a change under `.github/`, to the submodules, to git hooks, to agents' or editors'
+config, to build files that IDEs act on, or to `xmake.lua`'s package requirements.
+
+An outside pull request's code is never built with `build.yml` (it refuses pull requests' refs and commits that are not
+on one of this repository's branches): it is vetted with `vet.yml`.
+
+The owner starts a vet from the `vet-runner` branch, with main's commit put there just before:
+`git push --force origin origin/main:refs/heads/vet-runner`, then
+`gh workflow run vet.yml --ref vet-runner -f pr=<number> -f sha=<head commit>`. The vet refuses any other branch, and
+refuses when its workflow or scripts differ from main's. A cache written by the pull request's code then lands in
+`vet-runner`'s scope, which no other branch reads.
+
+Nothing committed in binary form is shipped: whatever a release holds is built from source by the project's own
+workflows. Commit the sources and the script that builds them, not the build. A change that needs a new tool or
+library says where it comes from and pins it: a version and a SHA-256, and the signature where one is published.
+
 ## No personal data
 
 Commits, diffs, commit messages, logs in issues and pull request descriptions must not carry

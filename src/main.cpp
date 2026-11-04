@@ -44,6 +44,7 @@
 #include "game/HavokGuard.h"
 #include "game/InertShots.h"
 #include "game/TextureWait.h"
+#include "game/ResourceMirror.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
 #include "Text.h"
@@ -251,6 +252,11 @@ namespace
 	constexpr std::uint32_t GHOST_RECORD = 'GHST';
 	constexpr std::uint32_t GHOST_VERSION = 1;
 	constexpr std::uint32_t GHOST_MAX_LENGTH = 4 + 4 * static_cast<std::uint32_t>(GhostLedger::MAX);  // GhostLedger::Encode: a version, a count, the ids
+	// What a save holds of friends' pieces on our workbenches (WorkshopSync::ResourceSaveRecord: nothing, unless the hush
+	// before the save failed), taken off as it loads.
+	constexpr std::uint32_t RESOURCE_RECORD = 'RSRC';
+	constexpr std::uint32_t RESOURCE_VERSION = 1;
+	constexpr std::uint32_t RESOURCE_MAX_LENGTH = 2 + static_cast<std::uint32_t>(ResourceMirror::MAX_RECORD_BENCHES) * (5 + 4 * static_cast<std::uint32_t>(ResourceMirror::KINDS));
 	constexpr std::uint32_t STORAGE_RECORD = 'STOR';
 	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
 	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
@@ -285,6 +291,11 @@ namespace
 		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
 		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
 			a_intfc->WriteRecordData(looks.data(), static_cast<std::uint32_t>(looks.size()));
+		}
+		// What this save holds of friends' pieces on our workbenches (WorkshopSync::BeforeSaveResources): nothing, unless the
+		// hush before it failed or didn't run; taken off after a load of this save.
+		if (const auto held = WorkshopSync::ResourceSaveRecord(); !held.empty() && a_intfc->OpenRecord(RESOURCE_RECORD, RESOURCE_VERSION)) {
+			a_intfc->WriteRecordData(held.data(), static_cast<std::uint32_t>(held.size()));
 		}
 		// The ghosts we set against friends' explosions and have yet to see off (WeaponFire, GhostLedger): taken off as
 		// each copy loads after a load of this save.
@@ -336,6 +347,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					LooksMenu::LoadRecord(bytes);
 				}
+			} else if (type == RESOURCE_RECORD && version == RESOURCE_VERSION && length <= RESOURCE_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					WorkshopSync::LoadResourceRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
+				}
 			} else if (type == GHOST_RECORD && version == GHOST_VERSION && length <= GHOST_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -355,6 +371,7 @@ namespace
 		Storage::RevertRecord();
 		FrameLoans::RevertRecord();
 		WeaponFire::RevertGhostRecord();
+		WorkshopSync::RevertResourceRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -541,7 +558,8 @@ namespace
 								REX::ERROR("Frame: before the save, {}: an unknown exception", a_what);
 							}
 						};
-						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // first: an unworn loan's copy and kit go with it, before Spawns discards copies
+						step("the settlements' numbers", [] { WorkshopSync::BeforeSaveResources(); });  // first, on its own: no friend's piece's worth is saved on our workbenches
+						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // before the rest: an unworn loan's copy and kit go with it, before Spawns discards copies
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved
