@@ -200,6 +200,7 @@ menu.keybinds = 控制
 menu.kb_menu = 多人游戏菜单
 menu.kb_list = 玩家列表
 menu.kb_teleport = 传送到好友处
+menu.teleport_to = 传送到 {player} 那里
 menu.kb_ping = 标记
 menu.kb_where = 好友位置
 menu.kb_point = 表情：指向

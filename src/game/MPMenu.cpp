@@ -5,6 +5,7 @@
 #include "MainThread.h"
 #include "Text.h"
 #include "game/Hud.h"
+#include "game/Equipment.h"
 #include "game/KeyNames.h"
 #include "game/Menu.h"
 
@@ -12,6 +13,7 @@
 #include <array>
 #include <format>
 #include <atomic>
+#include <utility>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -47,6 +49,8 @@ namespace MPMenu
 			std::vector<std::string> hints;
 			bool                     keepRow = false;
 			bool                     heading = false;
+			std::vector<std::string> players;
+			std::string              header;
 		};
 		std::mutex          pageLock;
 		std::optional<Page> nextPage;  // under pageLock
@@ -64,7 +68,9 @@ namespace MPMenu
 		std::atomic<float> boxTop{ 0.0f };
 		std::atomic<float> boxRight{ 0.0f };
 		std::atomic<float> boxBottom{ 0.0f };
-		std::atomic<bool>  centered{ false };  // the box gives only the size: the panel goes in the middle of the stage
+		// Opened in the world: the box gives only the size, the panel goes in the middle of the stage, and the game goes on under it
+		// (the pause menu is there to pause).
+		std::atomic<bool>  centered{ false };
 
 		// The height of the pause menu's panel box on the 1280x720 stage (read in a game, 327.13), so a panel with none to line
 		// up beside has the same scale as one that has.
@@ -94,6 +100,36 @@ namespace MPMenu
 		{
 			return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 		}
+
+		// With the game going on under the panel, its keys and mouse don't reach the player. Not with an input layer: turning off
+		// fighting and the like puts the weapon away and takes the HUD with it, and the HUD is to stay. Main thread.
+		void SetPlayerControls(bool a_on)
+		{
+			static bool off = false;
+			static bool before = false;
+			const auto  controls = RE::PlayerControls::GetSingleton();
+			if (!controls || off != a_on) {
+				return;  // as asked already
+			}
+			if (!a_on) {
+				before = controls->blockPlayerInput;
+			}
+			controls->blockPlayerInput = a_on ? before : true;
+			// It doesn't stop activating what's under the crosshair, nor does the activate handler's own switch: a layer does, of
+			// that alone, which leaves the weapon and the HUD be. The key then comes to the menu as DISABLED (OnButtonEvent).
+			static RE::BSTSmartPointer<RE::BSInputEnableLayer> layer;
+			const auto manager = RE::BSInputEnableManager::GetSingleton();
+			if (manager && (layer || manager->AllocateNewLayer(layer, "F4Multiplayer menu")) && layer) {
+				manager->EnableUserEvent(layer->layerID, RE::UserEvents::USER_EVENT_FLAG::kActivate, a_on, RE::UserEvents::SENDER_ID::kScript);
+			} else {
+				REX::WARN("MPMenu: no input layer: the activate key still works in the world under the menu");
+			}
+			off = !a_on;
+		}
+
+		// In power armor its HUD has a color of its own, and a panel opened in the world goes with that HUD.
+		constexpr std::uint32_t POWER_ARMOR_COLOR = 0xF7D169;
+		std::atomic<std::uint32_t> lookColor{ 0 };  // set on the main thread before the show message, read as the menu is made
 
 		std::uint32_t NumberOf(const GValue& a_value)
 		{
@@ -155,18 +191,20 @@ namespace MPMenu
 			Panel() :
 				number(opened.load())
 			{
-				menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kUsesCursor, RE::UI_MENU_FLAGS::kUsesMenuContext,
-					RE::UI_MENU_FLAGS::kModal, RE::UI_MENU_FLAGS::kDisablePauseMenu, RE::UI_MENU_FLAGS::kUpdateUsesCursor);
+				menuFlags.set(RE::UI_MENU_FLAGS::kUsesCursor, RE::UI_MENU_FLAGS::kUsesMenuContext,
+					RE::UI_MENU_FLAGS::kDisablePauseMenu, RE::UI_MENU_FLAGS::kUpdateUsesCursor);
+				// The player's movement keys or stick, whatever they are bound to, come to the movie as Up and Down, as in the main menu.
+				menuFlags.set(RE::UI_MENU_FLAGS::kUsesMovementToDirection);
+				// Over the main or pause menu it holds what's under it. In the world the game and the HUD go on under it, so a friend's
+				// toasts can be read: a modal menu would stop the HUD.
+				if (!centered) {
+					menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame, RE::UI_MENU_FLAGS::kModal);
+				}
 				// Through GameMenuBase's renderer, FlatScreenModel, as the game's menus, cursor and message boxes are drawn. A menu
 				// that isn't draws in a later pass, over all of them.
 				menuFlags.set(RE::UI_MENU_FLAGS::kCustomRendering);
 				// Above the main and pause menus (kPauseMenu), as a message box is.
 				depthPriority = RE::UI_DEPTH_PRIORITY::kMessage;
-				// In the world, nothing under it draws (the HUD), as under the game's own main menu. Beside the main menu it would
-				// hide that menu too. What opens above it, such as a message box, still draws.
-				if (centered) {
-					menuFlags.set(RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
-				}
 				inputContext = RE::UserEvents::INPUT_CONTEXT_ID::kBasicMenuNav;
 				const auto scaleform = RE::BSScaleformManager::GetSingleton();
 				if (!scaleform || !scaleform->LoadMovieEx(*this, MOVIE, "root")) {
@@ -185,11 +223,13 @@ namespace MPMenu
 						shaderFXObjects.push_back(target.get());
 						targets.push_back(std::move(target));
 					}
-					auto ground = std::make_unique<RE::BSGFxShaderFXTarget>(*uiMovie, "root.Panel_mc.Background_mc");
-					ground->CreateAndSetFiltersToHUD(RE::HUDColorTypes::kNoColorMultiplier);
-					ground->EnableShadedBackground(RE::HUDColorTypes::kGameplayHUDColor);
-					shaderFXObjects.push_back(ground.get());
-					targets.push_back(std::move(ground));
+					for (const auto path : { "root.Panel_mc.Background_mc", "root.HintBackground_mc" }) {
+						auto ground = std::make_unique<RE::BSGFxShaderFXTarget>(*uiMovie, path);
+						ground->CreateAndSetFiltersToHUD(RE::HUDColorTypes::kNoColorMultiplier);
+						ground->EnableShadedBackground(RE::HUDColorTypes::kGameplayHUDColor);
+						shaderFXObjects.push_back(ground.get());
+						targets.push_back(std::move(ground));
+					}
 				}
 				SetCode();
 				RefreshPlatform();  // again, now that the movie can answer: keyboard or gamepad, for the back hint
@@ -200,6 +240,7 @@ namespace MPMenu
 			{
 				if (number == opened.load()) {
 					wanted = false;
+					MainThread::Post([] { SetPlayerControls(true); });  // closed by us or by the game
 				}
 			}
 
@@ -215,6 +256,10 @@ namespace MPMenu
 						Hide();
 					}
 					DrawPage();
+					if (acceptWaiting.exchange(false)) {
+						const std::array<GValue, 2> args{ GValue("Accept"), GValue(true) };
+						menuObj.Invoke("ProcessUserEvent", nullptr, args.data(), args.size());
+					}
 				}
 				GameMenuBase::AdvanceMovie(a_timeDelta, a_time);
 			}
@@ -222,6 +267,14 @@ namespace MPMenu
 			// The game's user events go on to the movie (ProcessUserEvent), but for the way back out, read here.
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
+				// The player's activate key, turned off in the world (SetPlayerControls), is still the menu's Accept.
+				if (a_event && centered && a_event->QJustPressed() && std::string_view{ a_event->QUserEvent().c_str() } == "DISABLED") {
+					const auto map = RE::ControlMap::GetSingleton();
+					if (map && a_event->QIDCode() == map->GetMappedKey("Activate", a_event->device.get())) {
+						acceptWaiting = true;
+						return;
+					}
+				}
 				if (a_event && a_event->QJustPressed()) {
 					REX::DEBUG("MPMenu: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
 					// The way back out of a menu: Esc or Tab, or the gamepad's B. None comes as a user event to a menu of
@@ -262,6 +315,7 @@ namespace MPMenu
 
 		private:
 			std::vector<std::unique_ptr<RE::BSGFxShaderFXTarget>> targets;  // before the base's list of them goes
+			std::atomic<bool>         acceptWaiting{ false };  // for the menu's own update
 			std::atomic<std::int64_t> menuKeyFrom{ 0 };  // the menu key closes it from then on (set in its first update, read in input)
 
 			void SetCode()
@@ -312,7 +366,12 @@ namespace MPMenu
 				for (const auto& hint : page->hints) {
 					hints.PushBack(GValue(hint.c_str()));
 				}
-				const std::array<GValue, 6> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->heading) };
+				GValue players;
+				uiMovie->CreateArray(&players);
+				for (const auto& player : page->players) {
+					players.PushBack(GValue(player.c_str()));
+				}
+				const std::array<GValue, 8> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->heading), players, GValue(page->header.c_str()) };
 				if (!menuObj.Invoke("SetPage", nullptr, args.data(), args.size())) {
 					REX::WARN("MPMenu: the movie has no SetPage");
 				}
@@ -327,7 +386,7 @@ namespace MPMenu
 				const auto back = Text::Get("mpmenu.back");
 				const std::array<GValue, 9> args{ GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
 					GValue(static_cast<double>(boxRight.load())), GValue(static_cast<double>(boxBottom.load())),
-					GValue(static_cast<double>(ReadHudColor())), GValue("F4Multiplayer"), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()) };
+					GValue(static_cast<double>(lookColor.load())), GValue("F4Multiplayer"), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()) };
 				if (!menuObj.Invoke("SetLook", nullptr, args.data(), args.size())) {
 					REX::WARN("MPMenu: the movie has no SetLook");
 				}
@@ -377,19 +436,22 @@ namespace MPMenu
 		if (!Hud::IsSettled()) {
 			return;  // the entry's press came as the UI went down: pressed again once it is back
 		}
+		lookColor = ReadHudColor();
 		Show(a_left, a_top, a_right, a_bottom, false);
 	}
 
 	void OpenCentered()
 	{
 		MainThread::Assert("MPMenu::OpenCentered");
+		SetPlayerControls(false);
+		lookColor = Equipment::InPowerArmor(RE::PlayerCharacter::GetSingleton()) ? POWER_ARMOR_COLOR : ReadHudColor();
 		Show(0.0f, 0.0f, 0.0f, CENTERED_BOX_HEIGHT, true);
 	}
 
-	void SetPage(std::uint32_t a_serial, std::string a_body, std::vector<std::string> a_rows, std::vector<std::string> a_hints, bool a_keepRow, bool a_heading)
+	void SetPage(std::uint32_t a_serial, std::string a_body, std::vector<std::string> a_rows, std::vector<std::string> a_hints, bool a_keepRow, bool a_heading, std::vector<std::string> a_players, std::string a_header)
 	{
 		std::scoped_lock l{ pageLock };
-		nextPage = Page{ a_serial, std::move(a_body), std::move(a_rows), std::move(a_hints), a_keepRow, a_heading };
+		nextPage = Page{ a_serial, std::move(a_body), std::move(a_rows), std::move(a_hints), a_keepRow, a_heading, std::move(a_players), std::move(a_header) };
 		nextStatus.reset();
 	}
 
@@ -406,6 +468,7 @@ namespace MPMenu
 
 	void Close()
 	{
+		SetPlayerControls(true);
 		capturing = false;
 		wanted = false;
 		if (Hud::IsSettled()) {
@@ -425,6 +488,33 @@ namespace MPMenu
 		}
 		RE::UIUtils::PlayMenuSound("UIMenuCancel");
 		Menu::PanelBack();
+	}
+
+	void OnHudAdvance(RE::IMenu* a_hud)
+	{
+		// What sits in the middle of the HUD, which draws over the panel. The rest of the HUD stays, for its toasts.
+		static constexpr std::array PATHS{ "root.CenterGroup_mc.HUDCrosshair_mc", "root.CenterGroup_mc.RolloverWidget_mc", "root.CenterGroup_mc.QuickContainerWidget_mc" };
+		static std::array<bool, PATHS.size()> before{};
+		static bool                           hidden = false;
+		const bool                            hide = centered && wanted;
+		if (!a_hud || !a_hud->uiMovie || hide == hidden) {
+			if (!hide || !a_hud || !a_hud->uiMovie) {
+				return;
+			}
+		}
+		for (std::size_t i = 0; i < PATHS.size(); ++i) {
+			GValue object;
+			if (!a_hud->uiMovie->GetVariable(&object, PATHS[i]) || !object.IsDisplayObject()) {
+				continue;
+			}
+			if (hide && !hidden) {
+				GValue visible;
+				before[i] = !object.GetMember("visible", &visible) || !visible.IsBoolean() || visible.GetBoolean();
+			}
+			// Each update while it's up: the HUD sets them itself as what's under the crosshair changes.
+			object.SetMember("visible", GValue(hide ? false : before[i]));
+		}
+		hidden = hide;
 	}
 
 	bool Centered()

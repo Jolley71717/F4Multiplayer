@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "game/GameStop.h"
 #include "game/Hud.h"
+#include "game/MPMenu.h"
 #include "game/MenuIcons.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
@@ -316,6 +317,7 @@ namespace Compass
 				return;
 			}
 			Hud::OnHudAdvance();
+			MPMenu::OnHudAdvance(a_this);
 			// The icons over friends in a menu (MenuIcons), queued by their own frame.
 			MenuIcons::OnHudAdvance(a_this);
 			Update(hudCompass, a_this);
@@ -435,6 +437,16 @@ namespace Compass
 	std::string_view MarkerName(std::uint32_t a_playerId)
 	{
 		return MarkerOf(a_playerId).name;
+	}
+
+	std::uint32_t MarkerColor(std::uint32_t a_playerId)
+	{
+		return MarkerOf(a_playerId).color;
+	}
+
+	int MarkerShape(std::uint32_t a_playerId)
+	{
+		return static_cast<int>(MarkerOf(a_playerId).shape);
 	}
 
 	std::string Describe()
