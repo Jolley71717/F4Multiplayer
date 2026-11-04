@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T02:44:11+00:00",
+ "updated": "2026-11-04T03:50:06+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1056,6 +1056,14 @@
    "note": "Fixed for the next release; blasts thrown by enemies aren't tested yet.",
    "pr": 167,
    "desc": "If the host has a DLC you don't own, its enemies are not shown in your game, but their explosions could still hit you. The next release names the enemy that set off a blast, so a game without a copy of that enemy doesn't set the blast off. Players' grenades were tested both ways on two real games."
+  },
+  {
+   "id": "mig8",
+   "title": "Workshop conveyors run for one player but not the other",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "mkbe",
