@@ -402,7 +402,10 @@ namespace Storage
 		}
 
 		// A settlement's workbench the host's game lists: only one of a settlement the host owns (a workbench whose
-		// settlement is a friend's in their save, not the host's, stays theirs).
+		// settlement is a friend's in their save, not the host's, stays theirs). WorkshopScript.SetOwnedByPlayer(true), the
+		// way a settlement becomes the player's, makes the player's NPC the workbench's owner (SetActorOwner), and losing it
+		// clears that (SetActorOwner(none)). On a save from normal play the workbenches' owner matched the script's own
+		// OwnedByPlayer on all 23 (the rig, 2026-11-04). PlayerFaction counts too, as for the other storage the player owns.
 		bool OwnBench(RE::TESObjectREFR* a_ref)
 		{
 			const auto owner = a_ref ? a_ref->GetOwner() : nullptr;
@@ -1050,8 +1053,9 @@ namespace Storage
 		}
 		if (args[0] == "keeper") {
 			const auto owner = side.OwnerOf(id);
-			return std::format("{:08X}: {} (owner {}) storage={} viewFrom={}", id, Name(KeeperOf(id)), owner ? std::to_string(*owner) : "none",
-				WorldSync::HolderFactsOf(id).storage, side.ViewFrom(id) ? std::to_string(*side.ViewFrom(id)) : "-");
+			const auto refOwner = ref->GetOwner();
+			return std::format("{:08X}: {} (owner {}) storage={} viewFrom={} refOwner={:08X} ownBench={}", id, Name(KeeperOf(id)), owner ? std::to_string(*owner) : "none",
+				WorldSync::HolderFactsOf(id).storage, side.ViewFrom(id) ? std::to_string(*side.ViewFrom(id)) : "-", refOwner ? refOwner->GetFormID() : 0, OwnBench(ref));
 		}
 		if (args[0] == "view") {
 			client.Open(id, KeeperOf(id) == Keeper::kFriend);
