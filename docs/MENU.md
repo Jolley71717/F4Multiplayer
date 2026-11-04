@@ -131,13 +131,14 @@ case, and the page says so. A lobby search
 (`RequestLobbyList`) is not an alternative: the lobby is friends-only, and Steam leaves
 friends-only lobbies out of searches.
 
-**Settings.** Seven switches, each shown with its current value and written to the ini when
+**Settings.** Eight switches, each shown with its current value and written to the ini when
 toggled (only that line changes; comments and the rest of the file stay):
 
 | Setting | Ini key | Takes effect |
 |---|---|---|
 | Friendly fire | `bFriendlyFire` | the next session you host (it's sent to joiners in the welcome) |
 | Shared story | `sStory` (`shared`/`own`) | the next session you host |
+| More quests | `sQuests` (`safe`/`story`) | the next session you host (with the story shared) |
 | Voice chat | `bVoiceChat` | at once |
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |

@@ -133,6 +133,144 @@ namespace QuestFilter
 		return std::ranges::binary_search(PER_GAME, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
 	}
 
+	// Quests the rule SAFE is made by (below) passes that are each player's all the same, so SAFE leaves them out.
+	inline constexpr Local DENIED[] = {
+		{ 0, 0x00080E },  // HC_Manager: survival mode's, each game's difficulty
+		{ 0, 0x01ED86 },  // MQ101: the opening, War Never Changes (every player's own; StageRules::IsOpening)
+		{ 0, 0x020748 },  // CZ_Arena: the Combat Zone's fight, its fighters filled by its script in each game
+		{ 0, 0x06DFAF },  // DogmeatQuest: each player's own dog
+		{ 3, 0x027704 },  // DLC04RaiderKickout: the gangs and Gage turned on the player, their settlements lost
+		{ 3, 0x032A4A },  // DLC04MQ04_RaiderOutpostTracker: each game's own raider outposts, their perks, the achievement
+		{ 3, 0x03C5A7 },  // DLC04PowerTracker: Nuka-World's park power, kept by each game's scripts
+		{ 3, 0x0447E8 },  // DLC04ParkPopulationHandler: who stands in the parks, each game's
+		{ 3, 0x044993 },  // DLC04CollectVassalIncomeMiscQuest: a player's tribute from their raided settlements
+	};
+
+	// Quests no session shares by their type that the host's sQuests = safe shares with the story (Protocol::QuestRule::
+	// kSafe; only with sStory = shared too): misc quests (type 6: Diamond City's and Goodneighbor's errands, the
+	// pointers to a quest's giver) and quests under no type with objectives (Far Harbor's and Nuka-World's own stories,
+	// Nuka-World's main line DLC04MQ03 among them) that a friend's stage can be set on here as it is, by a rule read off
+	// the game's files: a quest of the game's masters with objectives that is no radiant (RadiantRules.h), no PER_GAME
+	// and no companion's by its name; runs once or is started with the game; whose every alias is fixed (a forced
+	// reference or location, a unique actor, another quest's alias, one its scripts fill, or made at or found from one
+	// of those: none filled from the story manager's event or by its conditions, so it is the same in every game); and
+	// none of whose stages does any of these, in its own fragment, a script function it calls (its quest's script
+	// through kmyQuest, a parent's, a script a property or local is typed with) or a stage of a quest no session shares
+	// by its type that it sets or starts, followed as -Moves follows them: names a companion's affinity (an argument
+	// named *Affinity* or CA_*, a call named *Affinity*); calls SetCompanion, DismissCompanion, AddToPlayerFaction,
+	// SetAvailableToBeCompanion, SetPlayerTeammate, AllowCompanion, DisallowCompanion, ClearCompanion, ReleaseCompanion
+	// or Dogmeat's, or sets a stage of a companion's quest; calls SetEnemy, SetAlly or SetPlayerEnemy, or puts an actor
+	// in or out of a PlayerEnemy or PlayerAlly faction; calls SetOwnedByPlayer (a settlement's owner); calls
+	// RemoveAllItems or UnequipAll on the player. What it does not see: a scene a stage starts, a timer or event a
+	// script waits for, a call through a variable whose type has no script (an ObjectReference property's attached
+	// script), a quest matched by no property name, anything else a script changes (MQ00MamaMurphy 700 kills her with
+	// KillEssential: a death every game shares anyway). A shared quest's stage it sets is not followed: that stage
+	// reaches a friend's game as the story's, SAFE or not. Less DENIED. Their stages that move or charge the player are
+	// StageRules' as the story's are; an item a stage gives is given in each game, as for every shared quest. Generated
+	// by tools/questscan.ps1 -Safe from the game's files (and DENIED, PER_GAME and RadiantRules.h), which lists what it
+	// found in each quest it left out for a stage. Sorted by file and form ID. The quests the rule passes but for their
+	// objectives (a place's own quest, DN035, and some 400 more) are not here: with no objective one only counts as
+	// started once its stages read done, as a dialogue quest, which wants a rule of its own.
+	inline constexpr Local SAFE[] = {
+		{ 0, 0x02125F },  // FFDiamondCity03
+		{ 0, 0x0254B7 },  // DN154
+		{ 0, 0x048516 },  // DN054
+		{ 0, 0x04ACE8 },  // CZMisc
+		{ 0, 0x04F623 },  // FFDiamondCity01Misc
+		{ 0, 0x0684D0 },  // DN123
+		{ 0, 0x0747C9 },  // MS16MiscObj
+		{ 0, 0x084E40 },  // MS13MarowskiRevenge
+		{ 0, 0x087304 },  // BoSM01Pointer
+		{ 0, 0x099E5D },  // Vault81Tour
+		{ 0, 0x09AC24 },  // MS19MiscSeeForsythe
+		{ 0, 0x09F09F },  // FFDiamondCity07FIN
+		{ 0, 0x0A07F3 },  // ReconScopeQuest
+		{ 0, 0x0AD463 },  // Min01Misc
+		{ 0, 0x0C44D7 },  // FFDiamondCity11
+		{ 0, 0x0E9914 },  // DN070
+		{ 0, 0x0EBE71 },  // MQ00MamaMurphy
+		{ 0, 0x0EC4D9 },  // MS09MiscParsons
+		{ 0, 0x0F491A },  // MS09MiscJackReward
+		{ 0, 0x1073CE },  // DN138
+		{ 0, 0x10CB94 },  // FFGoodneighbor03
+		{ 0, 0x10D5A7 },  // FFGoodneighbor04
+		{ 0, 0x10E695 },  // DN036_Post
+		{ 0, 0x1120DE },  // FFGoodneighbor05
+		{ 0, 0x1160B3 },  // FFGoodneighbor06
+		{ 0, 0x12221F },  // FFBunkerHill03
+		{ 0, 0x122220 },  // FFBunkerHill01
+		{ 0, 0x122221 },  // FFBunkerHill02
+		{ 0, 0x1243D6 },  // DN083_Barney
+		{ 0, 0x1338B9 },  // V81_04
+		{ 0, 0x14191C },  // FFDiamondCity02
+		{ 0, 0x142434 },  // FFDiamondCity04
+		{ 0, 0x1437DB },  // FFDiamondCityWantedPosterMisc
+		{ 0, 0x143A15 },  // MS17MiscCovenant
+		{ 0, 0x144F6E },  // BoS100MiscCambridge
+		{ 0, 0x145722 },  // BoSM04Postquest
+		{ 0, 0x1488F7 },  // MS19MiscVault81
+		{ 0, 0x148BAC },  // MS10MiscTrinityTower
+		{ 0, 0x14B718 },  // MS05MiscSalem
+		{ 0, 0x14CE61 },  // MS11MiscCharleston
+		{ 0, 0x14CE64 },  // DN079MiscObj
+		{ 0, 0x18F961 },  // MS02MiscObjective
+		{ 0, 0x1B2B08 },  // BoSFFMaster
+		{ 0, 0x1DA041 },  // DNMessageInABottleQuest
+		{ 0, 0x219B92 },  // DN120Misc
+		{ 0, 0x224D29 },  // MS14Misc
+		{ 0, 0x2269A9 },  // BoSStoragePointer
+		{ 1, 0x00A990 },  // DLC03FarHarborFF03a
+		{ 1, 0x00A992 },  // DLC03FarHarborM01
+		{ 1, 0x00AEC4 },  // DLC03FarHarborFF03b
+		{ 1, 0x013F38 },  // DLC03Acadia_Institute_Misc
+		{ 1, 0x0140FC },  // DLC03KyeDialogue
+		{ 1, 0x02039A },  // DLC03FarHarborFF03c
+		{ 1, 0x0203CC },  // DLC03Acadia_RR
+		{ 1, 0x02399F },  // DLC03FarHarborS03
+		{ 1, 0x023ACA },  // DLC03FarHarborFF02
+		{ 1, 0x030CBC },  // DLC03CoA_FFNucleus01_Misc
+		{ 1, 0x03389A },  // DLC03_V118_Intro
+		{ 1, 0x036761 },  // DLC03_V118_MiscObjectives
+		{ 1, 0x038A72 },  // DLC03MQ06a_HCSynthQuest
+		{ 1, 0x03A446 },  // DLC03MQElliePostQuest
+		{ 1, 0x040AF0 },  // DLC03MQ06_PlayerExitWindFarm
+		{ 1, 0x040B06 },  // DLC03MQNickPostQuest
+		{ 1, 0x0423AA },  // DLC03Acadia_BoS_Misc
+		{ 1, 0x045F87 },  // DLC03FarHarborFF03a_Misc
+		{ 1, 0x045F88 },  // DLC03FarHarborFF01_Misc
+		{ 1, 0x046022 },  // DLC03FarHarborFF03b_Misc
+		{ 1, 0x048644 },  // DLC03FarHarborS03_Misc
+		{ 1, 0x048645 },  // DLC03FarHarborFF03c_Misc
+		{ 1, 0x048C0E },  // DLC03FarHarborS02_Misc
+		{ 1, 0x048C0F },  // DLC03FarHarborS01_Misc
+		{ 1, 0x04B129 },  // DLC03_V118_Quest2
+		{ 1, 0x04B1B8 },  // DLC03CoA_FFNucleus03_Misc
+		{ 1, 0x04B1B9 },  // DLC03CoA_AtomM02_Misc
+		{ 1, 0x04D2F5 },  // DLC03PostQuestTreasureDig
+		{ 1, 0x04DA97 },  // DLCMQ04RewardMisc
+		{ 1, 0x04DF30 },  // DLC03VisitLongFellowsCabin
+		{ 1, 0x04E779 },  // DLC03FarHarborM03
+		{ 1, 0x04E77A },  // DLC03FarHarborM02
+		{ 2, 0x00AEDD },  // DLC01DialogueQuest
+		{ 3, 0x000803 },  // DLC04MQ03
+		{ 3, 0x000806 },  // DLC04MS01
+		{ 3, 0x010D91 },  // DLC04DialogueRaiderBossOperators
+		{ 3, 0x01E34B },  // DLC04GZMiscObjective
+		{ 3, 0x025AE6 },  // DLC04MQ04MasonSceneQuest
+		{ 3, 0x026169 },  // DLC04MQ04DixieSceneQuest
+		{ 3, 0x02B019 },  // DLC04MS01MiscObjectiveHolder
+		{ 3, 0x0337CC },  // DLC04PrestonWipeOutRaiders
+		{ 3, 0x03684E },  // DLC04_BottlingPlantMAIN
+		{ 3, 0x03AC61 },  // DLC04SettlementFF02
+		{ 3, 0x03C5FA },  // DLC04FF01MiscObjectiveHolder
+		{ 3, 0x051012 },  // DLC04ShankMiscObjective
+	};
+
+	inline bool IsSafe(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		return std::ranges::binary_search(SAFE, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
+	}
+
 	// Quests whose progress is watched and shared: the shared types, the factions' finales and the
 	// dialogue quests (the latter two with the story).
 	inline bool Watched(const Quest& a_quest)

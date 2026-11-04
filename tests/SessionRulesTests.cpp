@@ -232,3 +232,15 @@ TEST("session rules: the tutorial hints are off in a session, and the player's s
 	CHECK(show);
 	CHECK(changes == 0);
 }
+
+TEST("session rules: the host's sQuests = safe is the session's quest rule; the default shares the story's quests only")
+{
+	Config::Settings settings;
+	CHECK(HostRules::FromSettings(settings).quests == Protocol::QuestRule::kStory);
+	CHECK(HostRules::Describe(HostRules::FromSettings(settings)).find("quests=story") != std::string::npos);
+	settings.safeQuests = true;
+	const auto rules = HostRules::FromSettings(settings);
+	CHECK(rules.quests == Protocol::QuestRule::kSafe);
+	CHECK(HostRules::Describe(rules).find("quests=safe") != std::string::npos);
+	CHECK(!(rules == Protocol::SessionRules{}));
+}

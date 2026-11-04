@@ -6,6 +6,7 @@
 #include "game/CatchUpMenus.h"
 #include "game/FadeWatch.h"
 #include "game/GameStop.h"
+#include "game/HostRules.h"
 #include "game/Hud.h"
 #include "game/MenuInput.h"
 #include "game/MenuMessages.h"
@@ -64,11 +65,15 @@ namespace QuestSync
 			return QuestFilter::IsDialogue(Filed(a_quest));
 		}
 
-		// Quests whose progress is watched here: the shared types, the factions' finales and the dialogue quests, and the
-		// radiants shared by their run whatever their type (Diamond City's wanted posters are misc quests).
+		bool IsSafe(const RE::TESQuest* a_quest);
+
+		// Quests whose progress is watched here: the shared types, the factions' finales and the dialogue quests, the
+		// radiants shared by their run whatever their type (Diamond City's wanted posters are misc quests), and the quests
+		// the host's sQuests = safe shares (IsSafe), whatever this session's sQuests: what was done in them is known when a
+		// session that shares them begins.
 		bool Watched(const RE::TESQuest* a_quest)
 		{
-			return QuestFilter::Watched(Filed(a_quest)) || RadiantRules::ShareOf(a_quest->GetFormID()) == RadiantRules::Share::kShared;
+			return QuestFilter::Watched(Filed(a_quest)) || RadiantRules::ShareOf(a_quest->GetFormID()) == RadiantRules::Share::kShared || IsSafe(a_quest);
 		}
 
 		// Whether the player has started the quest here, as reporting, setting friends' stages and the
@@ -114,7 +119,15 @@ namespace QuestSync
 		constexpr std::size_t BASELINE_BATCH = 256;
 
 		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last current stage seen per quest
-		std::unordered_map<std::uint32_t, StageLog::Stages> doneStages;  // the stages seen done per quest
+		// The stages seen done per quest, and the digest of the quest's done stages they were read with (QuestStageLayout::
+		// DigestOf; none: read them again at the next look, a stage was set here since).
+		struct Seen
+		{
+			StageLog::Stages                        stages;
+			std::optional<QuestStageLayout::Digest> digest;
+		};
+		std::unordered_map<std::uint32_t, Seen>          doneStages;
+		std::unordered_map<std::uint32_t, bool>          safeQuests;  // IsSafe, by form ID, once looked up
 		std::unordered_map<std::uint32_t, bool>          knownDone;    // last completed state seen per quest
 		std::unordered_map<std::uint32_t, Clock::time_point> remoteStageAt;  // when another player last moved it
 		StageLog::Queue                                  waiting;  // stages from other players, until they are set here
@@ -131,6 +144,7 @@ namespace QuestSync
 			std::uint32_t quest;
 			std::uint16_t stage;
 			bool          story;
+			bool          safe;  // of a quest QuestFilter::SAFE holds
 		};
 		std::deque<Baselined>                            baseline;
 		bool                                             baselineQueued = false;
@@ -263,16 +277,37 @@ namespace QuestSync
 			return dx * dx + dy * dy + dz * dz <= NEAR_FRIEND * NEAR_FRIEND;
 		}
 
-		// The main story and faction quests, their finales and the dialogue quests too.
-		bool IsStory(const RE::TESQuest* a_quest)
-		{
-			return IsFinale(a_quest) || IsDialogue(a_quest) || Story::IsStoryType(a_quest->data.questType);
-		}
-
 		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
 		{
 			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
 			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+		}
+
+		// A quest the host's sQuests = safe shares (QuestFilter::SAFE: misc quests and quests under no type with objectives
+		// that are the same in every game), of the game's own files. Looked up once per quest.
+		bool IsSafe(const RE::TESQuest* a_quest)
+		{
+			const auto id = a_quest->GetFormID();
+			if (const auto known = safeQuests.find(id); known != safeQuests.end()) {
+				return known->second;
+			}
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			const bool safe = file && QuestFilter::IsSafe(static_cast<std::uint8_t>(*file), id & 0x00FFFFFF);
+			safeQuests.emplace(id, safe);
+			return safe;
+		}
+
+		// The session shares the quests IsSafe names (the welcome's sQuests = safe); out of a session, no.
+		bool SafeShared()
+		{
+			return HostRules::Get().quests == Protocol::QuestRule::kSafe;
+		}
+
+		// The main story and faction quests, their finales and the dialogue quests too, and the quests sQuests = safe shares:
+		// those only with the story.
+		bool IsStory(const RE::TESQuest* a_quest)
+		{
+			return IsFinale(a_quest) || IsDialogue(a_quest) || Story::IsStoryType(a_quest->data.questType) || IsSafe(a_quest);
 		}
 
 		// A side quest the story manager starts with targets each game picks itself (QuestFilter::PER_GAME: the add-ons'
@@ -292,11 +327,11 @@ namespace QuestSync
 			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID()) && !PerGame(a_quest);
 		}
 
-		// Quests this session shares now: the story's only if the host chose a shared story. A radiant's while its run here
-		// is shared (RadiantSync).
+		// Quests this session shares now: the story's only if the host chose a shared story, the safe ones only if they chose
+		// those too (sQuests = safe). A radiant's while its run here is shared (RadiantSync).
 		bool Shared(const RE::TESQuest* a_quest)
 		{
-			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest))) || RadiantSync::Shares(a_quest->GetFormID());
+			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest)) && (SafeShared() || !IsSafe(a_quest))) || RadiantSync::Shares(a_quest->GetFormID());
 		}
 
 		const StageRules::Rule* RuleFor(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -465,7 +500,8 @@ namespace QuestSync
 			FadeWatch::Arm(std::format("set {:08X} stage {}", id, a_stage));
 			knownStages[id] = std::max(a_quest->currentStage, a_stage);
 			if (const auto known = doneStages.find(id); known != doneStages.end()) {
-				StageLog::Insert(known->second, a_stage);
+				StageLog::Insert(known->second.stages, a_stage);
+				known->second.digest.reset();  // read again at the next look, whether it reads done by then or not
 			}
 			remoteStageAt[id] = Clock::now();
 			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
@@ -776,7 +812,7 @@ namespace QuestSync
 			std::size_t quests = 0;
 			std::size_t left = 0;
 			for (const auto quest : AllQuests()) {
-				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared())) {
+				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared()) || (IsSafe(quest) && !SafeShared())) {
 					continue;
 				}
 				if (!SessionStarted(quest) && !(quest->data.flags & QUEST_COMPLETED)) {
@@ -792,7 +828,7 @@ namespace QuestSync
 						continue;  // every player's own
 					}
 					if (baseline.size() < MAX_BASELINE) {
-						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest) });
+						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest), IsSafe(quest) });
 					} else {
 						++left;
 					}
@@ -829,6 +865,9 @@ namespace QuestSync
 		}
 		if (IsDialogue(a_quest)) {
 			return "dialogue";
+		}
+		if (IsSafe(a_quest)) {
+			return SafeShared() ? "safe (shared with the story: sQuests = safe)" : "safe (not shared: sQuests = story)";
 		}
 		return Story::IsStoryType(a_quest->data.questType) ? "story" : "side";
 	}
@@ -998,7 +1037,7 @@ namespace QuestSync
 		}
 		while (!baseline.empty() && outgoing.Size() < BASELINE_BATCH) {
 			outgoing.Add(Protocol::Encode(Protocol::QuestStage{ baseline.front().quest, baseline.front().stage }, Protocol::MessageType::kReportQuestStage),
-				baseline.front().story);
+				baseline.front().story, baseline.front().safe);
 			baseline.pop_front();
 			++baselined;
 		}
@@ -1031,7 +1070,7 @@ namespace QuestSync
 				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
 				const char* name = quest->GetFullName();
 				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !IsDialogue(quest)) {
-					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone));
+					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, IsSafe(quest));
 					++completed;
 				}
 			}
@@ -1046,13 +1085,19 @@ namespace QuestSync
 			// Every stage done since the last look is progress, not just the current stage: a stage whose
 			// script moves the quest on at once (MQ104's 210 stops it) is never seen as the current one,
 			// and the others then never ran it, nor what it does (starting MQ105, an achievement).
-			auto       stages = QuestStageLayout::Done(quest);
+			// They are read again only when their digest changed (or a stage was set here since), not at each poll of every
+			// quest watched.
+			const auto digest = QuestStageLayout::DigestOf(quest);
 			const auto [known, firstLookStages] = doneStages.try_emplace(id);
 			if (firstLookStages) {
-				known->second = std::move(stages);
+				known->second = { QuestStageLayout::Done(quest), digest };
 				continue;
 			}
-			auto fresh = StageLog::NewlyDone(known->second, std::move(stages));
+			StageLog::Stages fresh;
+			if (known->second.digest != digest) {
+				fresh = StageLog::NewlyDone(known->second.stages, QuestStageLayout::Done(quest));
+				known->second.digest = digest;
+			}
 			if (!fresh.empty()) {
 				lastStageChange = now;
 			} else if (!unstarted.Has(id)) {
@@ -1067,6 +1112,7 @@ namespace QuestSync
 			// player's own then (Story::SetShared(false)), and these stages are seen done only now. The outbox
 			// sends them only if the welcome says the session shares the story (StageLog::Outbox).
 			const bool story = IsStory(quest);
+			const bool safe = IsSafe(quest);
 			// A radiant's stages go by its run, if it is shared (RadiantSync); a stage of it set here from a friend is
 			// never seen fresh, and one its script sets in reply goes too (each game takes each stage of a run once).
 			if (RadiantRules::IsRadiant(id)) {
@@ -1075,7 +1121,8 @@ namespace QuestSync
 				}
 				continue;
 			}
-			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || Story::InOpening()) {
+			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || (safe && a_inSession && !SafeShared()) ||
+				Story::InOpening()) {
 				continue;
 			}
 			if (!SessionStarted(quest) && !startedHere.contains(id)) {
@@ -1087,7 +1134,7 @@ namespace QuestSync
 				if (IsOpeningStage(quest, stage)) {
 					continue;  // the opening is every player's own: a stage of it done here (the vault's 110 outside) isn't reported
 				}
-				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story);
+				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story, safe);
 				++reported;
 			}
 		}
@@ -1100,7 +1147,7 @@ namespace QuestSync
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession)
 	{
 		// Welcomed, Story::Shared is the welcome's.
-		return outgoing.Take(Clock::now(), { a_sending, a_inSession, Story::Shared() });
+		return outgoing.Take(Clock::now(), { a_sending, a_inSession, Story::Shared(), SafeShared() });
 	}
 
 	void OnServerChanged()

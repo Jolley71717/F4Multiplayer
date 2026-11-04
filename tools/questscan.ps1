@@ -1,8 +1,8 @@
-# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -DisabledParents]:
-# reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script archives;
-# nothing is written there) and lists every quest stage whose own fragment takes something from the player, unequips
-# them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a session
-# shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is listed in
+# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -DisabledParents]
+# [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
+# archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
+# unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
+# session shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is listed in
 # src/game/StageRules.h). src/game/StageRules.h's kPays rules (stages a friend's game never sets here) were checked
 # against it; tests/StageRulesTests.cpp and QuestFilterTests.cpp hold what it found. With -SetsOther: the shared quests'
 # stages whose fragment sets a stage of another quest, what src/game/StageRules.h's SETS_ANOTHER was made from. With
@@ -11,13 +11,16 @@
 # against. With -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm,
 # 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so). With -PerGame:
 # the quests shared by their type that the story manager starts with targets each game picks itself,
-# src/game/QuestFilter.h's PER_GAME. The index of each master is src/game/StageRules.h's File. With -DisabledParents:
-# writes src/game/DisabledParents.h (or -Out), the enable parents that a script of the game's own turns off somewhere,
-# read from Fallout4.esm and every official add-on installed and their script archives (named in it: COVERED;
-# ParentScan in tools/questscan.cs says how), and prints what it read; tests/EnableChainTests.cpp checks the table
-# against what this scan found. Windows PowerShell 5.1 compiles the reader (tools/questscan.cs) on the fly.
+# src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
+# shares, by the rule there), and what was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
+# those quests alone (-Files 0,1,2,3); with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
+# The index of each master is src/game/StageRules.h's File. With -DisabledParents: writes src/game/DisabledParents.h (or
+# -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
+# official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
+# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows PowerShell
+# 5.1 compiles the reader (tools/questscan.cs) on the fly.
 param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$DisabledParents,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -26,9 +29,14 @@ if ($DisabledParents) {
 	[IO.File]::WriteAllText([IO.Path]::GetFullPath($Out), $result.Header)  # ASCII, CRLF
 	$result.Report
 	"# wrote $($result.Count) entries to $([IO.Path]::GetFullPath($Out))"
+	return
 }
-elseif ($Moves) { [MoveScan]::Run($Data) }
+$filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
+$radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants); return }
+if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
+if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
-elseif ($Rules) { [RuleScan]::Run($Data, $Files) }
-elseif ($PerGame) { [PerGameScan]::Run($Data, (Join-Path $PSScriptRoot '..\src\game\RadiantRules.h')) }
+elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
+elseif ($PerGame) { [PerGameScan]::Run($Data, $radiants) }
 else { [QuestScan]::Run($Data) }
