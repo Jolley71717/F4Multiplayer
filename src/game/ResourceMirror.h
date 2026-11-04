@@ -119,6 +119,27 @@ namespace ResourceMirror
 		// The next poll sends every piece's values (someone joined; a save was loaded).
 		void SendAll() { all = true; }
 
+		// Our world is gone (a save loaded, a new game, the main menu, from which a coc starts a world with no message): the
+		// pieces tracked were the old world's. Their IDs name nothing now, or another thing, and a look can't tell a piece
+		// gone with its world from one whose cell isn't loaded (kAway: "counts as it did"), so a friend's game would count
+		// them on until we left. So each is forgotten, and the next poll sends each that counted for something (or whose
+		// last word wasn't sent) as counting for nothing. One the new world has is tracked again as it is found and sent as
+		// it counts there (the same poll's entry, if it is found before it). Then everything is sent again (SendAll). How
+		// many pieces it forgot that a friend's game counts.
+		std::size_t WorldGone()
+		{
+			std::size_t gone = 0;
+			for (const auto& [ref, sent] : tracked) {
+				if (sent && Any(*sent)) {
+					owed.insert(ref);
+					++gone;
+				}
+			}
+			tracked.clear();
+			all = true;
+			return gone;
+		}
+
 		// What to send now: the pieces whose values changed since they were last sent, or all of them (SendAll, and every
 		// SNAPSHOT), each loaded one as it counts now, and again what an earlier poll gave that couldn't be sent (Unsent). A
 		// piece gone is forgotten, and sent as counting for nothing if it last counted for something: a script may disable
@@ -329,8 +350,8 @@ namespace ResourceMirror
 			}
 			const auto kind = static_cast<Kind>(k);
 			const auto now = a_engine.Temporary(a_bench, kind);
-			if (!now || !std::isfinite(*now) || *now < a_values[k] - EPSILON) {
-				continue;
+			if (!now || !std::isfinite(*now) || *now < a_values[k] - EPSILON || *now <= 0.0f) {
+				continue;  // not all of it held (or nothing at all: a record's tiny value must not raise a slightly negative one)
 			}
 			if (a_engine.Add(a_bench, kind, -(std::min)(a_values[k], *now))) {
 				++off;
@@ -345,13 +366,16 @@ namespace ResourceMirror
 	{
 	public:
 		// Puts the totals on the workbenches: on each, what it holds of ours made what the totals say (a workbench not in
-		// them: nothing of ours; beds: nothing, APPLIED). Not while a save's hush lasts. How many values it changed. The
-		// Engine gives:
+		// them: nothing of ours; beds: nothing, APPLIED). Not while a save's hush lasts, nor from a load's start to its new
+		// world's clear (BeforeLoad). How many values it changed. The Engine gives:
 		//
 		//   bool Add(std::uint32_t bench, Kind, float delta)   false if there's no such workbench here (nothing added)
 		template <class Engine>
 		std::size_t Apply(Engine& a_engine, const std::map<std::uint32_t, Values>& a_totals, Clock::time_point a_now)
 		{
+			if (loading) {
+				return 0;
+			}
 			if (hushes > 0) {
 				if (a_now - hushedAt < HUSH_LIMIT) {
 					return 0;
@@ -391,6 +415,19 @@ namespace ResourceMirror
 			}
 		}
 
+		// A save is about to be loaded: everything of ours taken off the world going, and nothing put on again until the new
+		// world's clear (ForgetWorld). That clear forgets what we put on without looking, which is right only if nothing went
+		// on in between. The save/load hold keeps frames out of a load for up to its limit (60 s), but past it frames on the
+		// job threads run again, and an Apply there (our copies not yet let go) would put values on the new world's
+		// workbenches by ID that the clear then forgets while they are still on, and the next save would keep. How many
+		// values it took off.
+		template <class Engine>
+		std::size_t BeforeLoad(Engine& a_engine)
+		{
+			loading = true;
+			return TakeAllOff(a_engine);
+		}
+
 		// Everything of ours taken off (the session ended). How many values.
 		template <class Engine>
 		std::size_t TakeAllOff(Engine& a_engine)
@@ -405,11 +442,12 @@ namespace ResourceMirror
 		}
 
 		// A save was loaded, or a new game started: the workbenches are the new world's, and what we had put on the old one's
-		// is forgotten. After a load nothing is taken off: the load was told first (TakeAllOff before it), what that couldn't
-		// reach was on the old world's workbench, and the new world's are as the save holds them (what the save holds of ours,
-		// its record says: TakeOffRecord). Taking off here too could take it twice. A new game from the main menu is not told
-		// first, so on one what of ours is still on a workbench of the same ID (the engine did not set it back) is taken off,
-		// and one set back is let be (TakeOffHeld). How many values it took off. The Engine gives Add and Temporary
+		// is forgotten, and the totals may go on again (BeforeLoad held them off). After a load nothing is taken off: the load
+		// was told first (BeforeLoad, and nothing went on since), what that couldn't reach was on the old world's workbench,
+		// and the new world's are as the save holds them (what the save holds of ours, its record says: TakeOffRecord).
+		// Taking off here too could take it twice. A new game from the main menu is not told first, so on one what of ours is
+		// still on a workbench of the same ID (the engine did not set it back) is taken off, and one set back is let be
+		// (TakeOffHeld). How many values it took off. The Engine gives Add and Temporary
 		// (TakeOffHeld).
 		template <class Engine>
 		std::size_t ForgetWorld(Engine& a_engine, bool a_newGame)
@@ -422,11 +460,13 @@ namespace ResourceMirror
 			}
 			on.clear();
 			hushes = 0;
+			loading = false;
 			return off;
 		}
 
 		[[nodiscard]] const std::map<std::uint32_t, Values>& On() const { return on; }
 		[[nodiscard]] bool                                   Hushed() const { return hushes > 0; }
+		[[nodiscard]] bool                                   Loading() const { return loading; }
 
 	private:
 		template <class Engine>
@@ -453,6 +493,7 @@ namespace ResourceMirror
 		std::map<std::uint32_t, Values> on;          // what we added to each workbench, of each value
 		int                             hushes = 0;  // saves under way (Hush less SaveDone)
 		Clock::time_point               hushedAt{};
+		bool                            loading = false;  // from BeforeLoad to ForgetWorld: nothing goes on
 	};
 
 	// A loaded save's record (DecodeRecord) taken off its workbenches (TakeOffHeld): how many values.

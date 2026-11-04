@@ -2533,9 +2533,14 @@ as its own recount counts it. A change goes at once, all of them every 30 s and 
 loaded as last sent. A piece that is no longer one of ours (scrapped, or disabled, deleted or unlinked with no scrap
 report, which a script may do) goes once as counting for nothing, so the friend's total leaves it out though its copy
 stays. The reports go reliably; one the full send queue refuses goes again at the next poll as its piece counts then
-(`Reporter::Unsent`), so a gone piece's one word, which no later snapshot names, is never lost. Per piece, not per
-workbench: a
-friend's game counts only the pieces it has a copy of, so a piece both saves hold (two saves with one past: no copy is
+(`Reporter::Unsent`), so a gone piece's one word, which no later snapshot names, is never lost. When the builder's own
+world goes (a load in session, a death's reload, a new game, or the main menu opening: a `coc` from it starts a world
+with no load or new-game message), every tracked piece that counted is forgotten and sent once as counting for nothing
+(`Reporter::WorldGone`), and the pieces the new world has are found and sent again (no piece is looked for while the
+main menu is open). A look can't tell a piece gone with its world from one whose cell isn't loaded (both name nothing),
+so without it a friend's game counted a builder's pieces from before a new game until the builder left (seen on the rig,
+2026-11-04). A reload of a save with the pieces in it takes them out of the friend's numbers for a moment, until they
+are found again (up to 2 s once their cell is loaded). Per piece, not per workbench: a friend's game counts only the pieces it has a copy of, so a piece both saves hold (two saves with one past: no copy is
 made, `OursAt`), another friend's twin of it, or a guest's building from before the session that the host's rules
 don't share never counts twice or out of nothing.
 
@@ -2566,8 +2571,12 @@ writes the permanent one, the recount the base and damage). What it added it alo
   for each, never both (`Applier::ForgetWorld`): after a load, only what the save's `RSRC` record names comes off (what
   the take-off before the load couldn't reach was the old world's, and the save sets the new one's); on a new game, what
   is still on a workbench of the same ID (an engine that didn't set it back), and no record is read. Neither takes a
-  value off unless the workbench's temporary modifier still holds all of it, nor ever more than it holds
-  (`ResourceMirror::TakeOffHeld`), so no clear of ours leaves the modifier below 0 or a save a value it didn't hold.
+  value off unless the workbench's temporary modifier still holds all of it, nor ever more than it holds, nor anything
+  from a modifier at 0 or below (`ResourceMirror::TakeOffHeld`), so no clear of ours leaves the modifier below 0, raises
+  it, or leaves a save a value it didn't hold. From a load's start to its new world's clear nothing goes on
+  (`Applier::BeforeLoad`): the load's clear forgets what was on without looking, and a load longer than the save/load
+  hold's 60 s lets frames run before it, which could otherwise have put values on the new world's workbenches that the
+  clear forgot while they were still on, for the next save to keep.
 
   The limit: the new-game clear can't tell our value from another's on the same modifier. Should the engine set it back
   and something else (the engine, a quest's start-up script, another mod) put at least as much on before the new game's

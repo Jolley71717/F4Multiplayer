@@ -204,3 +204,25 @@ TEST("open menus: the plugin hands no work to an F4SE UI task")
 	CHECK(UiTasks(CodeOnly(R"x(F4SE::GetTaskInterface()->AddUITask([] {});)x")) == 1);
 	CHECK(UiTasks(CodeOnly(R"x(// AddUITask is not used; MyAddUITask(); AddUITasks();)x")) == 0);
 }
+
+TEST("open menus: the main menu is kept on its own, open or not and how often it opened, and is none of the listed menus")
+{
+	Book book;
+	CHECK(!book.MainMenuOpen());
+	CHECK(book.MainMenus() == 0u);
+	book.Seen(OpenMenus::MAIN_MENU, true);  // the game's start
+	CHECK(book.MainMenuOpen());
+	CHECK(book.MainMenus() == 1u);
+	for (std::size_t i = 0; i < OpenMenus::NAMES.size(); ++i) {
+		CHECK(!book.Open(static_cast<OpenMenus::Menu>(i)));
+	}
+	book.Seen("MAINMENU", false);  // case-blind
+	CHECK(!book.MainMenuOpen());
+	// Quit to the main menu, then a coc from it: open and closed, counted though no one looked while it was open.
+	book.Seen("MainMenu", true);
+	book.Seen("MainMenu", false);
+	CHECK(!book.MainMenuOpen());
+	CHECK(book.MainMenus() == 2u);
+	book.Seen("MainMenuX", true);  // another name
+	CHECK(book.MainMenus() == 2u);
+}

@@ -23,6 +23,7 @@
 #include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/MenuWatch.h"
+#include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/Story.h"
 #include "game/TextureFlush.h"
@@ -2339,6 +2340,7 @@ namespace WorkshopSync
 		ResourceMirror::Applier  onBenches;       // what of theirs is on our workbenches
 		Clock::time_point        nextResourceTrack{};
 		Clock::time_point        nextResourceApply{};
+		std::uint32_t            mainMenusSeen = 0;      // OpenMenus::MainMenus at the last frame
 		std::uint32_t            resourcesSent = 0;      // entries sent
 		std::uint32_t            resourcesReceived = 0;  // entries received
 		std::uint32_t            resourceChanges = 0;    // values changed on our workbenches
@@ -2459,9 +2461,26 @@ namespace WorkshopSync
 			}
 		}
 
+		// Our world is gone: what our tracked pieces counted for at friends' is sent as nothing, and those of the next world
+		// are found again (Reporter::WorldGone).
+		void ForgetOwnPieces(std::string_view a_why)
+		{
+			if (const auto gone = resources.WorldGone(); gone > 0) {
+				REX::INFO("WorkshopSync: {}: {} of our pieces counting in friends' settlements were the world before's; sent as counting for nothing", a_why, gone);
+			}
+		}
+
 		void ResourceFrame(Clock::time_point a_now)
 		{
-			if (a_now >= nextResourceTrack) {
+			// The main menu: the world played until it opened is gone, whatever comes next, and a coc from it sends no message
+			// (no load, no new game). While it is open, no piece of ours is looked for (the old world's may still be in memory);
+			// one opened and closed between two frames is seen by its count.
+			const bool atMainMenu = OpenMenus::MainMenuOpen();
+			if (const auto menus = OpenMenus::MainMenus(); atMainMenu || menus != mainMenusSeen) {
+				mainMenusSeen = menus;
+				ForgetOwnPieces("the main menu");
+			}
+			if (!atMainMenu && a_now >= nextResourceTrack) {
 				nextResourceTrack = a_now + WorkshopPower::AUDIT_EVERY;
 				TrackOwnResources();
 			}
@@ -2801,8 +2820,16 @@ namespace WorkshopSync
 	void BeforeLoad()
 	{
 		// Friends' pieces off the workbenches of the world going: the load sets them as its save has them, and should it not
-		// (or should the load fail), nothing of ours is left on them (the next look after it puts back what counts).
-		TakeResourcesOff("loading");
+		// (or should the load fail), nothing of ours is left on them. None go on again until the new world's clear
+		// (Applier::BeforeLoad, OnGameLoaded): a load longer than the save/load hold's limit lets frames run before it.
+		{
+			BenchEngine benches;
+			if (const auto off = onBenches.BeforeLoad(benches); off > 0) {
+				REX::INFO("WorkshopSync: loading: {} values of friends' pieces taken off our workbenches", off);
+			}
+			NoteResourcesOn();
+		}
+		ForgetOwnPieces("loading");
 		std::scoped_lock l{ litLock };
 		litCopies.clear();
 	}
@@ -2843,7 +2870,9 @@ namespace WorkshopSync
 		} else if (!a_newGame && unreached > 0) {
 			REX::WARN("WorkshopSync: {} workbenches of the world before couldn't be reached before the load; forgotten", unreached);
 		}
-		resources.SendAll();
+		// Our own pieces tracked were the world before's: a friend's game is told they count for nothing, and those this world
+		// has are found and sent again (a load in session, a death's reload, a new game; BeforeLoad did it for a load).
+		ForgetOwnPieces(a_newGame ? "a new game" : "a load");
 		BenchValues leftover;
 		{
 			std::scoped_lock l{ resourceRecordLock };
@@ -3054,9 +3083,9 @@ namespace WorkshopSync
 
 	std::string DescribeResources()
 	{
-		std::string out = std::format("resources: tracked={} counting={} owed={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} leftover={} pollMsMax={:.2f}",
+		std::string out = std::format("resources: tracked={} counting={} owed={} sent={} received={} kept={} dropped={} benches={} changes={} hushed={} hushing={} loading={} leftover={} pollMsMax={:.2f}",
 			resources.Size(), resources.Counting(), resources.Owed(), resourcesSent, resourcesReceived, theirResources.Size(), theirResources.Dropped(), onBenches.On().size(), resourceChanges,
-			resourcesHushed, onBenches.Hushed(), resourcesLeftover, static_cast<double>(resourcePollUsMax) / 1000.0);
+			resourcesHushed, onBenches.Hushed(), onBenches.Loading(), resourcesLeftover, static_cast<double>(resourcePollUsMax) / 1000.0);
 		for (const auto& [bench, values] : onBenches.On()) {
 			out += std::format("; {:08X}", bench);
 			for (std::size_t k = 0; k < ResourceMirror::KINDS; ++k) {
