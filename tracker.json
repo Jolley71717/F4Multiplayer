@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T06:47:35+00:00",
+ "updated": "2026-11-04T07:07:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -444,7 +444,7 @@
    "title": "A friend's stand-in often never gets into a seat: left standing (0.10.0, 253 times in a 5-player session, mostly one plugin's furniture)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -780,7 +780,7 @@
    "title": "A friend's resource pieces count for both players' settlements",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
