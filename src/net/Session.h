@@ -70,6 +70,7 @@ namespace Session
 		std::string   address;        // the server we're set to reach ("" = none)
 		std::string   rejectReason;   // why the last join was refused ("" = it wasn't)
 		bool          retrySoon = false;    // the next try comes in a few seconds (the host isn't in yet), not in a minute
+		bool          inWorld = false;      // a game is loaded: no connection is tried before that
 		bool          hostWaiting = false;  // bHost, but not hosting yet: it starts once we're in the world, out of Vault 111
 	};
 	[[nodiscard]] Status GetStatus();

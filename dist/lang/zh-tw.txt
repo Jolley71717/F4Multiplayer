@@ -22,6 +22,7 @@ session.character_changed_host = 多人連線：你載入了另一個角色；�
 session.hosting_resumes = 多人連線：新角色取好名字並離開111號避難所後會重新擔任主機
 session.character_changed_left = 多人連線：你載入了另一個角色，已離開房間；請從選單重新加入
 session.unnamed_waits = 多人連線：在新角色取好名字前，房間會一直等待；在此之前的存檔帶有上一個角色的ID，會進入那個角色的房間
+host.err_main_menu = 載入遊戲後才能擔任主機
 host.err_opening = 離開111號避難所後才能擔任主機
 host.err_opening_unnamed = 新角色取好名字後才能擔任主機
 host.err_port = 無法在連接埠 {port} 上擔任主機

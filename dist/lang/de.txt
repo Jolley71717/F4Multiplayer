@@ -22,6 +22,7 @@ session.character_changed_host = Multiplayer: Du hast einen anderen Charakter ge
 session.hosting_resumes = Multiplayer: Das Hosten beginnt wieder, sobald dein neuer Charakter einen Namen hat und Vault 111 verlassen hat
 session.character_changed_left = Multiplayer: Du hast einen anderen Charakter geladen und die Sitzung verlassen; tritt über das Menü erneut bei
 session.unnamed_waits = Multiplayer: Die Sitzung wartet, bis dein neuer Charakter einen Namen hat; ein Spielstand von davor hat die ID deines letzten Charakters und würde in dessen Sitzung spielen
+host.err_main_menu = du kannst hosten, sobald du ein Spiel geladen hast
 host.err_opening = du kannst hosten, sobald du Vault 111 verlassen hast
 host.err_opening_unnamed = du kannst hosten, sobald dein neuer Charakter einen Namen hat
 host.err_port = Port {port} ließ sich nicht öffnen

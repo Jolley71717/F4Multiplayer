@@ -22,6 +22,7 @@ session.character_changed_host = Multijogador: você carregou outro personagem; 
 session.hosting_resumes = Multijogador: a hospedagem recomeça assim que seu novo personagem tiver um nome e sair do Refúgio 111
 session.character_changed_left = Multijogador: você carregou outro personagem e saiu da sessão; entre de novo pelo menu
 session.unnamed_waits = Multijogador: a sessão espera até seu novo personagem ter um nome; um jogo salvo antes disso tem o ID do seu último personagem e seria jogado na sessão dele
+host.err_main_menu = só depois de carregar um jogo
 host.err_opening = só depois de sair do Refúgio 111
 host.err_opening_unnamed = só depois de dar um nome ao seu novo personagem
 host.err_port = porta {port} indisponível
