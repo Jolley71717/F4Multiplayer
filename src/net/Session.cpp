@@ -53,6 +53,7 @@
 #include "game/Spawns.h"
 #include "game/Storage.h"
 #include "game/Story.h"
+#include "game/TerminalSync.h"
 #include "game/Traps.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -850,6 +851,11 @@ namespace Session
 					WorkshopSync::ApplyResources(*msg);
 				}
 				break;
+			case MessageType::kTerminalChoice:
+				if (const auto msg = Protocol::DecodeTerminalChoice(a_data)) {
+					TerminalSync::Apply(*msg);
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);
@@ -1036,6 +1042,7 @@ namespace Session
 			Conversations::Reset();
 			MovedObjects::Reset();
 			Destructibles::Reset();
+			TerminalSync::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
@@ -1554,6 +1561,14 @@ namespace Session
 		}
 		PERF_NEXT(perf, "QuestSync");
 		QuestSync::Frame(welcomed, hostedServer && hostedServer->Running());
+		if (welcomed) {
+			TerminalSync::Frame();
+		}
+		for (auto& packet : TerminalSync::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		PERF_NEXT(perf, "Achievements");
 		Achievements::Frame();
 		PERF_NEXT(perf, "QuestSync");
@@ -1774,6 +1789,7 @@ namespace Session
 		RemotePlayers::OnGameLoaded();
 		Spawns::OnGameLoaded();
 		FrameLoans::OnGameLoaded();  // after Spawns: our frames' spawns are let go
+		TerminalSync::OnGameLoaded();
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
@@ -1825,7 +1841,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

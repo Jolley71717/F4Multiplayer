@@ -500,6 +500,9 @@ void Server::Run()
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
+	// The latest choice made at each quest terminal row (src/game/TerminalRules.h), whoever made it: told to a joiner, whose
+	// game makes it too. Not saved: every game's save keeps what its own terminals were set to.
+	std::array<std::optional<std::uint8_t>, Protocol::TERMINAL_ROWS> terminalChoices;
 	// Power armor frames lent between players (src/game/FrameLoan.h), by spawn id: a frame its owner's game shares as a
 	// spawn, asked for by a friend (granted false) or lent to them, with the kit lent. One loan per frame and one per
 	// borrower. Each ends with a return, the borrower leaving or loading a save, or the spawn ending. Not saved, as spawns are not.
@@ -1610,6 +1613,12 @@ void Server::Run()
 			other.stateDirty = other.hasState;
 		}
 
+		// The choices made at quest terminals this session (playerId 0: the session's).
+		for (std::uint8_t row = 0; row < Protocol::TERMINAL_ROWS; ++row) {
+			if (terminalChoices[row]) {
+				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ 0, row, *terminalChoices[row] }, Protocol::MessageType::kTerminalChoice), true);
+			}
+		}
 		// The NPCs other games made at runtime and share now: the newcomer places its copies, before it hears who runs them.
 		for (const auto& [ref, spawn] : spawns) {
 			if (spawn.playerId != a_player.id) {
@@ -3044,6 +3053,21 @@ void Server::Run()
 		broadcast(Protocol::Encode(*resources, Protocol::MessageType::kWorkshopResources), true, a_player.key);
 	};
 
+	// A player's choice at a quest's terminal (src/game/TerminalRules.h): passed on to the others as theirs, and kept as the
+	// session's latest of its row for a joiner.
+	const auto handleTerminalChoice = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto choice = Protocol::DecodeTerminalChoice(a_data);
+		if (!choice) {
+			return;
+		}
+		choice->playerId = a_player.id;
+		terminalChoices[choice->row] = choice->value;
+		broadcast(Protocol::Encode(*choice, Protocol::MessageType::kTerminalChoice), true, a_player.key);
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -3137,6 +3161,20 @@ void Server::Run()
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
 			sendOwners({ { spawn->refId, it->second.playerId } }, a_player.key);
 			return;
+		}
+		// A quest alias's creature another game shares already (protocol 61): each game's run of the quest created its own,
+		// and the sender's pairs with that one (src/game/QuestActors.h). Refused, naming nobody (the id is free): their
+		// game asks again later, and by then holds the other's spawn and asks no more.
+		if (spawn->quest != 0) {
+			const auto twin = std::ranges::find_if(spawns, [&](const auto& a_entry) {
+				return a_entry.second.playerId != a_player.id && a_entry.second.quest == spawn->quest && a_entry.second.alias == spawn->alias;
+			});
+			if (twin != spawns.end()) {
+				log(std::format("server: spawn {:08X} from player {} refused: player {}'s {:08X} is the same quest alias's ({:08X} alias {})", spawn->refId, a_player.id, twin->second.playerId,
+					twin->first, spawn->quest, spawn->alias));
+				sendOwners({ { spawn->refId, 0 } }, a_player.key);
+				return;
+			}
 		}
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
@@ -4306,6 +4344,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopResources:
 			handleWorkshopResources(a_player, a_data);
+			break;
+		case MessageType::kReportTerminalChoice:
+			handleTerminalChoice(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);
