@@ -89,7 +89,13 @@
   the frame message in its place) and the window procedure never getting the message (it hooks the
   game's window again should the engine have made a new one). The judgement is
   `src/game/FrameWatch.h`, unit tested. The loading-screen gate, the one gate with no end of its own,
-  counts a loading screen as up for at most five minutes (`UiHold::Guard`, `src/game/UiHold.h`).
+  counts a loading screen as up for at most five minutes (`UiHold::Guard`, `src/game/UiHold.h`). A
+  notice goes to the HUD (`SendHUDMessage::ShowHUDMessage`) with no sound name, a null one, as the game's
+  own notices (Papyrus `Debug.Notification`, the XP and quest lines) send it. The HUD hands the name to
+  `UIUtils::PlayMenuSound` as the notice shows, which looks a sound up by a hash of its editor ID: a null
+  name is never looked up, but `""` was (hash 0), and matched any sound record whose editor ID was set
+  empty in the player's load order. That sound played on the player and was never stopped: a looping one
+  (a generator's hum, rushing water) stacked with every notice until a load (two players' reports, 0.11.2).
 - **Log:** `src/Log.cpp`. CommonLib's `F4SE::Init` opens `F4Multiplayer.log` and empties it; just
   before, `LogRotation::Rotate` (`src/LogRotation.h`, unit tested on real files) moves the last three
   launches' logs to `.1.log`..`.3.log` with `std::filesystem::rename` and error codes, so nothing can

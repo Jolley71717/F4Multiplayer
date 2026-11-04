@@ -342,6 +342,12 @@ if ($null -ne $react -and $null -ne $enterCombat) {
 	}
 }
 
+# A notice's sound (Hud.cpp): the menu sound's lookup by name returns at once for a null name, before any hash.
+$soundByName = Resolve 2214760
+if ($null -ne $soundByName) {
+	Report (HexMatches (BytesAt $soundByName 17) '48 83 EC 28 C7 44 24 30 00 00 00 00 48 85 C9 74 71') 'the menu sound''s lookup by name returns for a null name before hashing it'
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1
