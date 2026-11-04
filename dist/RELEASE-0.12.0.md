@@ -4,6 +4,7 @@ Shared workshop materials, a friend's settlement pieces counting for both of you
 seated friends shown sitting. Install it over 0.11.2. (This is the same file as the 0.12.0-rc1 test build, so seeing
 "rc1" in your log is normal.) It uses a new protocol (60), so it doesn't play with 0.11.2 or anything older: everyone
 in a session needs it, and a friend still on 0.11.2 can't join. Update together.
+
 New:
 
 - **Shared workshop materials.** With the host's `bSharedStorage` on, the workbench at each settlement the host owns
@@ -36,4 +37,3 @@ Known issues:
 - If a friend also owns the host's settlement in their own save, the host's pieces count in both games' production
   there.
 - Players whose mods change the leveled lists differently can still see different enemies.
-
