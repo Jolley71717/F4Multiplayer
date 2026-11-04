@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-03T17:39:56+00:00",
+ "updated": "2026-11-04T00:29:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -25,7 +25,7 @@
    "title": "Some friendly NPCs stand still in the client's game: they don't roam or talk to the client",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 278
   },
@@ -44,7 +44,7 @@
    "title": "Player-built lights still stay dark for the other player when powered (0.10.1)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 280
   },
@@ -53,7 +53,7 @@
    "title": "Nexus: Steam invite reaches the friend but clicking it doesn't join; the friend's game shows no co-op keys",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 277
   },
@@ -117,9 +117,9 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
+   "stage": 6,
    "note": "Save fix shipped in 0.10.1; the reporter's always-on sound is still being looked into",
-   "pr": 230
+   "pr": 292
   },
   {
    "id": "2c1b",
@@ -164,7 +164,7 @@
    "title": "PR 270: a friend's line in the subtitle area stays ~1.5 min after the session ends",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 270
   },
@@ -259,7 +259,7 @@
    "title": "PR 270: a friend's blank (whitespace-only) NPC line counts as dropped and shows an empty notice",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 270
   },
@@ -324,7 +324,7 @@
    "title": "Share more quests: a host setting adding every quest an automatic safety rule passes",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 4,
    "note": "",
    "pr": 287
   },
@@ -333,7 +333,7 @@
    "title": "Nexus: a friend's NPC conversation lines flash by too fast at the top; show them as subtitles, timed with the speech",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 270
   },
@@ -425,7 +425,7 @@
    "title": "Friend's light-bulb copy glows but never gets ExtraLight (wsinfo lit=no) while the builder's powered bulb has one",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 282
   },
@@ -446,6 +446,15 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "a9t8",
+   "title": "Ukrainian translation from a contributor (PR 285): review, uk.txt code + aliases, ship",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 1,
+   "note": "",
+   "pr": 285
   },
   {
    "id": "adfa",
@@ -469,7 +478,7 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
+   "stage": 7,
    "note": "",
    "pr": 288
   },
@@ -551,7 +560,7 @@
    "title": "Dropping an item that was picked up from the world is never shared",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 273
   },
@@ -664,7 +673,7 @@
    "title": "Workshop copies lose their tracking when their cell unloads and loads again: power changes stop reaching them",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 282
   },
@@ -673,7 +682,7 @@
    "title": "Friend's copy of a powered workshop graph refuses a repeated Powered: 8 tries, givenUp +1 and the log budget spent",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 282
   },
@@ -851,7 +860,7 @@
    "title": "A mirelurk sometimes exists only in the host's game: the client can't see it (world, compass, VATS); the host can hurt it and both get XP",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 6,
    "note": "",
    "pr": 283
   },
@@ -968,7 +977,7 @@
    "title": "Menus that open by themselves while catching up on a friend's quests",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 274
   },
@@ -1093,7 +1102,7 @@
    "title": "No stage rules for Automatron and Nuka-World: shared quests' teleport and pay stages are unguarded",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 286
   },
@@ -1165,7 +1174,7 @@
    "title": "DLC radiant side quests are shared by type though each game fills them differently",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 286
   },
@@ -1257,6 +1266,15 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "qrv1",
+   "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus dav2727)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": "",
+   "pr": 291
   },
   {
    "id": "qx9n",
@@ -1440,7 +1458,7 @@
    "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "A robot killed in one game can stay alive in the other",
    "pr": 275
   },
@@ -1477,7 +1495,7 @@
    "title": "Power armor frame-entry hook updates plain counters and reads game state off the main thread",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 269
   },
@@ -1499,6 +1517,15 @@
    "note": "Merged: the log now names the source of repeated sounds; waiting for a report from a game that clicks.",
    "pr": 200,
    "desc": "Some players hear a constant clicking after someone joins or leaves. We could not find the cause from the code alone, so the next release counts every sound the mod makes the game play and writes a line to the log when one repeats far more than normal play does. A friend's voice chat is the main suspect."
+  },
+  {
+   "id": "vxfv",
+   "title": "Crash: AIProcess::EnterCombat null process via Actor::PerformAction (queued task), Nuka-World raiders fighting a stand-in",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 6,
+   "note": "",
+   "pr": 290
   },
   {
    "id": "vxjv",
@@ -1533,7 +1560,7 @@
    "title": "Claimed NPC keeps the do-nothing package in the new runner's game (evp doesn't clear it)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 281
   },
@@ -1569,7 +1596,7 @@
    "title": "Workshop: a friend's light bulb copy loses its light after a save (every other save on the VM)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 282
   },
@@ -1674,7 +1701,7 @@
    "title": "Host's workshop junk doesn't count at crafting stations during a session (only their own inventory's components show)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 279
   },
