@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T12:03:50+00:00",
+ "updated": "2026-11-04T12:24:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -837,7 +837,7 @@
    "title": "A friend's resource pieces count for both players' settlements",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "Built and tested in both games: a friend's pumps and generators count in your water and power; beds not yet",
    "pr": 296
   },
@@ -917,7 +917,7 @@
    "title": "Shared resources: block value updates during a long load; guard tiny negative record values",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -1278,6 +1278,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; we still want a two-game test to confirm it.",
    "desc": "On a friend's screen the host's gun had its parts floating apart, like a dismantled weapon. We think this happened when a held gun was swapped for another copy of the same gun with different mods: it was removed and re-added in one frame and rebuilt half-assembled. 0.9.0 removes the old one first and gives the new one a moment later."
+  },
+  {
+   "id": "ozb0",
+   "title": "Shared resources: a builder's new game (or load) leaves its old pieces counting at friends'",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": ""
   },
   {
    "id": "pbne",
