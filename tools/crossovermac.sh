@@ -32,6 +32,18 @@ deploy() {
 	[ -f "$plugins/F4Multiplayer.ini" ] || cp "$root/dist/F4Multiplayer.ini" "$plugins/"
 	# the texts belong to the build, unlike the ini
 	cp -f "$root/dist/lang/"*.txt "$plugins/F4Multiplayer/lang/"
+	cp -f "$root/dist/about.txt" "$plugins/F4Multiplayer/"
+	# the plugin's own menu movies, in a folder of the game's Interface of their own; compiled from ui/<Name>/ when one is
+	# missing or older than its sources (git holds no movies)
+	mkdir -p "$game/Data/Interface/F4Multiplayer"
+	for dir in "$root"/ui/*/; do
+		name=$(basename "$dir")
+		[ "$name" = shared ] && continue
+		if [ ! -f "$root/dist/movies/$name.swf" ] || [ -n "$(find "$root/ui" -name '*.as' -newer "$root/dist/movies/$name.swf" | head -1)" ]; then
+			"$root/tools/flash/build.sh" "$name"
+		fi
+		cp -f "$root/dist/movies/$name.swf" "$game/Data/Interface/F4Multiplayer/"
+	done
 	echo "Deployed to $plugins"
 }
 
