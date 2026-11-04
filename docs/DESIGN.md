@@ -2144,7 +2144,15 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   out of any knock-down, it ends those the way the life state's end of a down does (the camera's bleed-out
   end, ID 2248381, and the layer's release, ID 2200873), as soon as it can and once more 2 s later if that
   did not take (`DownRules::Self` finishDown, tested): stood up by a knock-down's get-up first, a player
-  was left with the camera on the ground and no Pip-Boy until a load. If they went down sneaking and
+  was left with the camera on the ground and no Pip-Boy until a load. The camera's own bleed-out start
+  (ID 2248380) pushes the current state on its return stack, and its end makes a transition (the
+  `kPCTransition` state) from the bleed-out camera to the state it pops: a player downed again while the
+  first end's transition still ran (a rocket engine's fire, downed twice within a moment) had the
+  transition state itself pushed, and the second end made a transition to itself, which never ends, the
+  camera left by the ground and the Pip-Boy shut until a load. On the ground or up and not yet settled,
+  a transition on the return stack is replaced by where it was going (the view the first down left), and
+  a transition going to itself is sent to the last first- or third-person view (`DownRules::Camera`,
+  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). If they went down sneaking and
   are still sneaking (the stance survives a down), it stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.

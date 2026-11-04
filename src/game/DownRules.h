@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <vector>
 
 #include "Protocol.h"
 
@@ -32,6 +33,7 @@ namespace DownRules
 	inline constexpr auto  STAND_RETRY = 1s;        // helped up and still down: the engine's get-up is asked again this often
 	inline constexpr auto  KNOCK_WAIT = 3s;         // helped up while knocked over: the get-up waits this long at most for the knock-down's to end
 	inline constexpr auto  GET_UP_SETTLE = 2s;      // up this long, not knocked over, out of the menus: the get-up has played out
+	inline constexpr auto  CAMERA_FIX_RETRY = 1s;   // a camera loop undone and still seen: undone again this often (fixCamera)
 
 	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
 	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
@@ -133,6 +135,47 @@ namespace DownRules
 		return FriendNews::kNone;
 	}
 
+	// The player camera as far as a down goes, by its states' numbers (RE::CameraStates): the state it is in, where its
+	// transition state goes (-1: nowhere), and the states it is to go back to (its return stack, the top last). The engine's
+	// start of a bleed-out (1.11.240: +1028580) pushes the current state there and switches to the bleed-out camera (in a
+	// tween it pushes the bleed-out camera instead); its end (+1028600) sets the transition from the bleed-out camera to the
+	// state it pops (the first person when there is none), and the transition, when its time is up, switches to that state.
+	struct Camera
+	{
+		static constexpr int FIRST_PERSON = 0;
+		static constexpr int TRANSITION = 5;
+		static constexpr int TWEEN = 6;
+		static constexpr int THIRD_PERSON = 8;
+		static constexpr int BLEEDOUT = 11;
+
+		int              current = THIRD_PERSON;
+		int              transitionTo = -1;
+		std::vector<int> returns;
+
+		// A state a transition may end in: neither the transition itself nor the bleed-out camera.
+		static constexpr bool View(int a_state) { return a_state >= 0 && a_state != TRANSITION && a_state != BLEEDOUT; }
+
+		// The way back loops on the transition: a start made while a transition ran pushed the transition state itself, and
+		// the end after it makes a transition to itself, which never ends (DownRules::Self's fixCamera).
+		[[nodiscard]] bool Loops() const
+		{
+			return (current == TRANSITION && transitionTo >= 0 && !View(transitionTo)) || std::ranges::find(returns, TRANSITION) != returns.end();
+		}
+
+		// That loop undone: the transition on the return stack is where it was going (the view the last down left), or
+		// a_lastView when that is no view; a current transition to no view goes to a_lastView, as its time runs out.
+		[[nodiscard]] Camera Unlooped(int a_lastView) const
+		{
+			Camera     fixed = *this;
+			const int  view = View(transitionTo) ? transitionTo : a_lastView;
+			std::ranges::replace(fixed.returns, TRANSITION, view);
+			if (current == TRANSITION && transitionTo >= 0 && !View(transitionTo)) {
+				fixed.transitionTo = a_lastView;
+			}
+			return fixed;
+		}
+	};
+
 	// What the game shows of our player this frame.
 	struct Facts
 	{
@@ -147,6 +190,7 @@ namespace DownRules
 		bool sneaking = false;     // the game has the player sneaking (Actor::IsSneaking)
 		bool bleedOutCamera = false;  // the player camera is in its bleed-out state, or has it to go back to (Downed.cpp BleedOutCamera)
 		bool bleedOutLayer = false;   // the input layer the engine's start of a down puts on the player is in use (Downed.cpp BleedOutLayer)
+		bool cameraLoop = false;      // the player camera goes back to its own transition, or that transition goes to itself (Downed.cpp CameraLoop)
 	};
 
 	// What to do about it this frame.
@@ -173,6 +217,7 @@ namespace DownRules
 		bool                graphSneakStop = false;  // up again standing, though they went down sneaking: the graph told its sneak stop (as they got up, and settled)
 		bool                settled = false;       // GET_UP_SETTLE after getting up: the get-up has played out
 		bool                finishDown = false;    // up again, and the down's bleed-out camera or input layer still on: the engine's end of those (Downed.cpp FinishDown)
+		bool                fixCamera = false;     // on the ground or getting up, and the camera's way back loops on its transition: pointed at the view (Downed.cpp FixCamera)
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -207,6 +252,14 @@ namespace DownRules
 	// (finishDown): not while knocked over (a knock-down's ragdoll has the bleed-out camera too, and its own end takes it
 	// off) nor in a stopped game; once as soon as it can be, and once more when the get-up has played out if that did not
 	// take.
+	//
+	// The camera's end of a down goes back to the view the start left (the top of the camera's return stack) by its
+	// transition state, and its start, made while another camera transition runs, leaves that transition state as the
+	// view to go back to. A player downed again within a moment of a help-up (the camera still on its way back from the
+	// first down) was stood up the second time into a transition to itself, which never ends: the camera stayed by the
+	// ground and the Pip-Boy shut until a load (a player's report, 2026-11-04: a rocket engine's fire, twice). Seen on the
+	// ground or up and not yet settled, the loop is undone at once (fixCamera), and again every CAMERA_FIX_RETRY while it
+	// is still seen.
 	class Self
 	{
 	public:
@@ -356,6 +409,12 @@ namespace DownRules
 				break;
 			}
 			GettingUp(before, a_facts, step, a_now);
+			// After the phase's change: the frame a down begins in is on the ground, and the frame a get-up ends in settling.
+			if (a_facts.cameraLoop && (IsDown() || Settling()) && (!cameraFixedAt || a_now - *cameraFixedAt >= CAMERA_FIX_RETRY)) {
+				step.fixCamera = true;
+				cameraFixedAt = a_now;
+				++cameraFixes;
+			}
 			lastFrame = a_now;
 			return step;
 		}
@@ -472,6 +531,7 @@ namespace DownRules
 		std::uint32_t unsneaks = 0;     // stands asked for after those (unsneak)
 		std::uint32_t graphSneakStops = 0;  // sneak stops the graph was told after those (graphSneakStop)
 		std::uint32_t downFinishes = 0;     // ends of the down's camera and input layer asked for after those (finishDown)
+		std::uint32_t cameraFixes = 0;      // camera loops undone (fixCamera)
 
 	private:
 		// Up again after a down, however it ended (a_before: the phase as the frame began): told once (gotUp), and once the
@@ -655,6 +715,7 @@ namespace DownRules
 		bool                             sneakSeen = false;     // up again: the stance as last seen since
 		bool                             sneakPressed = false;  // up again: the stance changed since by the player's key
 		bool                             finishAsked = false;   // up again: the end of the down's camera and layer was asked for (finishDown)
+		std::optional<Clock::time_point> cameraFixedAt;         // a camera loop was last undone (fixCamera)
 	};
 
 	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,
