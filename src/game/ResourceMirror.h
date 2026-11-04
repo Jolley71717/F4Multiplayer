@@ -395,12 +395,12 @@ namespace ResourceMirror
 	{
 		std::size_t at = 0;
 		const auto  take = [&](void* a_out, std::size_t a_size) {
-            if (a_bytes.size() - at < a_size) {
-                return false;
-            }
-            std::memcpy(a_out, a_bytes.data() + at, a_size);
-            at += a_size;
-            return true;
+			if (a_bytes.size() - at < a_size) {
+				return false;
+			}
+			std::memcpy(a_out, a_bytes.data() + at, a_size);
+			at += a_size;
+			return true;
 		};
 		std::vector<std::pair<std::uint32_t, Values>> out;
 		std::uint16_t                                 count = 0;

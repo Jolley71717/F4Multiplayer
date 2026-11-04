@@ -2553,6 +2553,18 @@ Trade-offs and limits:
   game (their game says it produces), and our settlers can't work their crops.
 - A friend's generator counts in our power numbers, not on our grid: it lights nothing of ours (see "Settlement power").
 - Happiness, population and supply lines are each game's own.
+- A piece whose base was made at runtime (`ReportRef` never shares one) has no copy anywhere, so it counts only in its
+  builder's game. A Machinegun Turret placed with `wsreport place` was one (its templated record gives the actor a new
+  base); whether one built in workshop mode is too is not checked yet.
+
+On the rig (2026-11-04, Sanctuary, both directions, pieces placed with `wsreport place` and linked with `wslink`):
+the host's water pump (3) and small generator (3) showed in the VM's game as temporary +3 water and +3 power on its
+workbench and as Water 3 and PowerGenerated 3 in its Pip-Boy; the host's unassigned crop and bed (the engine says they
+don't produce) added nothing; the host scrapping the pump took the VM's water to 0 within 3 s. The VM's pump and
+generator did the same in the host's game (Pip-Boy Water 6, PowerGenerated 6: its own 3 and 3, and the VM's). Saves
+in session on both took the values off for the save and put them back; loading those saves in session showed them
+again once the copies were found, and out of session showed none (temporary 0 for every kind). The VM leaving took the
+host's to 0 at once, and the VM's own to 0 with the session.
 
 Message: `kReportWorkshopResources` 77, `kWorkshopResources` 181: playerId (u32, stamped), a count (u8, 1 to 128), then
 per entry a reference (u32, runtime range only), a mask (u8, bits 0-5: food, water, defense, beds, power made, power
