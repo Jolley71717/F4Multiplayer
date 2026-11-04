@@ -102,15 +102,24 @@ are reviewed too.
 
 ## Binaries and new dependencies
 
-A pull request that adds a binary file (a compiled movie, a DLL, an archive, an image) or changes the build, the tools,
-the workflows or other repository plumbing (`xmake.lua`, `tools/`, `.github/`, `.gitattributes`, submodules, git hooks)
-gets the `needs-vetting` label by itself. The owner then runs the vetting workflow (`.github/workflows/vet.yml`) on its
-head: on GitHub's throwaway machines it lists the binaries, the URLs and the sensitive changes, checks every download
-the change adds against pinned hashes and signatures, and builds and tests the code, before anything from the pull
-request is built or run on the maintainer's machines. After reading the report the owner adds `vetted`; new commits
-take it off again, and such a pull request merges only with `vetted` at its head. The owner's own pull requests get
-the label only for a new or changed binary, a new download URL, a change under `.github/`, or a change to the submodules
-or to `xmake.lua`'s package requirements.
+Every pull request from outside the project gets the `needs-vetting` label by itself. The owner then runs the vetting
+workflow (`.github/workflows/vet.yml`) on its head: on GitHub's throwaway machines it lists the binary files (a
+compiled movie, a DLL, an archive, an image), the URLs and the sensitive changes (the build, the tools, the workflows,
+submodules, git hooks, and the config that AI agents and editors load and run, such as `.claude/`, `.codex/`,
+`AGENTS.md`, `CLAUDE.md` and `.vscode/`), checks every download the change adds against pinned hashes and signatures,
+and builds and tests the code, before anything from the pull request is built or run on the maintainer's machines.
+The vet's report is its report job's summary (the run's report artifact is only a convenience copy), and it names the
+commit it vetted. After reading it the owner adds `vetted`. That label counts only while a passed vet run exists for the
+pull request's current head: adding it to any other head takes it off again, and so do new commits. An outside pull
+request merges only with `vetted` at its head, whether or not the label workflow ran. The owner's own pull requests get
+`needs-vetting`, and the same rule, only for a new or changed binary, a new download URL, a change under `.github/`,
+to the submodules, to git hooks or to agents' or editors' config, or to `xmake.lua`'s package requirements.
+
+The owner starts a vet from the `vet-runner` branch, with main's commit put there just before:
+`git push --force origin origin/main:refs/heads/vet-runner`, then
+`gh workflow run vet.yml --ref vet-runner -f pr=<number> -f sha=<head commit>`. The vet refuses any other branch, and
+refuses when its workflow or scripts differ from main's. A cache written by the pull request's code then lands in
+`vet-runner`'s scope, which no other branch reads.
 
 Nothing committed in binary form is shipped: whatever a release holds is built from source by the project's own
 workflows. Commit the sources and the script that builds them, not the build. A change that needs a new tool or

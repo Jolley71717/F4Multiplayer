@@ -4,14 +4,16 @@
 # pull requests, so a fork can't spend build time. Building by hand also covers branches made before this file existed.
 # The built plugin and the test log are kept for 7 days as the run's artifact "build-<ref>" (`gh run download <run id>`).
 # Release zips are made by package.yml (or tools/package.ps1). The job runs only for the repository owner, even if others get write access.
-# No cache, restored or saved: vet.yml runs pull requests' code in runs on main, where it could write a cache entry that
-# a later build would restore (an xmake binary or prebuilt packages). Keep every workflow cache-free while that holds.
+# No cache, restored or saved: a build restoring a cache would trust whatever wrote it (an xmake binary, prebuilt
+# packages). vet.yml runs pull requests' code from the vet-runner branch, whose cache scope no other branch reads, and
+# fails a vet if main's scope holds any cache entry; keep every workflow cache-free.
 name: Build
 run-name: Build ${{ inputs.ref || github.head_ref || github.ref_name }}
 
 on:
   push:
-    branches-ignore: [main, "ci-tmp/**"]  # ci-tmp: snapshots that tools build by hand (F4MP-VM agents/ci-build.sh)
+    # ci-tmp: snapshots that tools build by hand (F4MP-VM agents/ci-build.sh); vet-runner: main's commit, for vet.yml
+    branches-ignore: [main, "ci-tmp/**", vet-runner]
   workflow_dispatch:
     inputs:
       ref:
@@ -33,13 +35,15 @@ jobs:
     env:
       REF: ${{ inputs.ref || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ env.REF }}
           submodules: recursive
           fetch-depth: 1
+          persist-credentials: false
 
-      - uses: xmake-io/github-action-setup-xmake@v1
+      # No caches, restored or saved (its cache inputs all default to off).
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a  # v1.2.5
         with:
           xmake-version: '3.1.1'
 
@@ -68,7 +72,7 @@ jobs:
 
       - name: Keep the plugin and the test log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ env.ARTIFACT }}
           retention-days: 7

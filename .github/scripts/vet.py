@@ -5,21 +5,24 @@ Everything here comes from main. A pull request's files are only read as data: g
 from the pull request is imported or run, except its ActionScript sources, which `compile` hands to the pinned Flex
 compiler. Standard library only; run it with `python3 -I`.
 
-  flags FILES.jsonl [--owner] [--comment FILE]   the API's file list -> {"needs_vetting": ..., "reasons": [...]}
+  flags FILES.jsonl [--owner] [--changed-files N] [--comment FILE]
+                                       the API's file list -> {"needs_vetting": ..., "reasons": [...]}
   inspect --repo DIR --base SHA --head SHA --api-files FILES.jsonl --out FILE
   toolchain --work DIR [--unpack DIR] [--strict] [--claims-repo DIR --claims-rev REV] --out FILE
-  compile --flex DIR --ui DIR --out DIR --report FILE
+  java --work DIR --home DIR --report FILE   the pinned Amazon Corretto, checked and unpacked
+  compile --java-home DIR --flex DIR --ui DIR --out DIR --report FILE
   compare --built DIR --ui DIR --report FILE
-  assemble --out FILE                  the final report, from the jobs' outputs in the environment
+  assemble --parts DIR --out FILE      the final report, from the parts the report job wrote; exit 1 if the vet failed
 
-The toolchain's pins come from the environment, set in the workflow files on main: FLEX_URL, FLEX_SHA256,
-FLEX_KEY_FINGERPRINT, FLEX_KEYS_URLS (space-separated), PLAYERGLOBAL_URL, PLAYERGLOBAL_SHA256.
+The toolchain's pins are below (PINS), in this file on main: vet.yml refuses to run unless its copy of this file is
+main's, byte for byte.
 """
 
 import argparse
 import base64
 import gzip
 import hashlib
+import io
 import json
 import os
 import re
@@ -29,8 +32,24 @@ import sys
 import tarfile
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.request
+
+# The toolchain the menu movies are built with, pinned here only (vet.yml and package.yml both use these). The Flex
+# tarball is signed by an Apache release manager whose key is in Apache's KEYS file; Adobe signs nothing. Amazon
+# Corretto 8 and 11 both compile the movies with no warning and give the same bytes; 11 is supported longer.
+PINS = {
+    "FLEX_URL": "https://archive.apache.org/dist/flex/4.16.1/binaries/apache-flex-sdk-4.16.1-bin.tar.gz",
+    "FLEX_SHA256": "17fda7ac8d3e476cad3127f345455ef316acfb87c6f4322e5897bd8d9b09388e",
+    "FLEX_KEY_FINGERPRINT": "44998F3E242727E94C4BADEB6B0A7EC905061FC8",  # the key that signed 4.16.1, in Apache's KEYS
+    "FLEX_KEYS_URLS": "https://archive.apache.org/dist/flex/KEYS https://downloads.apache.org/flex/KEYS",
+    "PLAYERGLOBAL_URL": "https://fpdownload.macromedia.com/get/flashplayer/updaters/32/playerglobal32_0.swc",
+    "PLAYERGLOBAL_SHA256": "7d4d6168d27603cfb3b750302448e354e0bbc1bdd58f5d101c3dcf6891e9bb65",
+    # https://github.com/corretto/corretto-11/releases/tag/11.0.33.0.10 publishes this checksum.
+    "CORRETTO_URL": "https://corretto.aws/downloads/resources/11.0.33.0.10/amazon-corretto-11.0.33.0.10-linux-x64.tar.gz",
+    "CORRETTO_SHA256": "f368ac379f3b20e266080e80fcc1f5e8567d044a4f895c8786220cab5b580c15",
+}
 
 # What counts as a binary by its name, whatever git makes of its bytes.
 BINARY_EXTENSIONS = {
@@ -47,20 +66,24 @@ BINARY_EXTENSIONS = {
 }
 
 # Paths where a change can run code on a machine that builds or works on the repository, or changes what the
-# repository trusts. The first group is the maintainer's list; the rest are kin of it.
-SENSITIVE = [
-    (re.compile(r"(^|/)xmake\.lua$"), "xmake.lua (build script)"),
-    (re.compile(r"(^|/)(?!xmake\.lua$)[^/]+\.lua$"), "Lua (xmake script)"),
-    (re.compile(r"^\.github/"), ".github (workflows, CI)"),
-    (re.compile(r"^tools/"), "tools/ (scripts)"),
-    (re.compile(r"(^|/)\.gitattributes$"), ".gitattributes"),
-    (re.compile(r"(^|/)\.gitmodules$"), ".gitmodules (submodules)"),
-    (re.compile(r"(^|/)(\.githooks|\.husky|git-hooks|hooks)/"), "git hooks"),
-    (re.compile(r"^lib/"), "lib/ (submodules)"),
-    (re.compile(r"(^|/)(AGENTS|CLAUDE)(\.[\w-]+)?\.md$|^\.claude/"), "AI agents' instructions"),
-    (re.compile(r"^\.(vscode|devcontainer|idea|vs)/"), "editor config (can run tasks on open)"),
-    (re.compile(r"^\.oss-scanner/"), ".oss-scanner (scanner build)"),
-]
+# repository trusts: (pattern, reason, also for the owner's own PRs). Matched without regard to case, as Windows checks
+# files out: `claude.md` or `.VSCode/` lands on the same file as `CLAUDE.md` or `.vscode/`.
+SENSITIVE = [(re.compile(pattern, re.IGNORECASE), reason, owner) for pattern, reason, owner in [
+    (r"(^|/)xmake\.lua$", "xmake.lua (build script)", False),
+    (r"(^|/)(?!xmake\.lua$)[^/]+\.lua$", "Lua (xmake script)", False),
+    (r"^\.github/", ".github (workflows, CI)", True),
+    (r"^tools/", "tools/ (scripts)", False),
+    (r"(^|/)\.gitattributes$", ".gitattributes", False),
+    (r"(^|/)\.gitmodules$", ".gitmodules (submodules)", True),
+    (r"(^|/)(\.githooks|\.husky|\.lefthook|git-hooks|hooks)/|(^|/)(\.pre-commit-config|\.?lefthook)\.ya?ml$",
+     "git hooks", True),
+    (r"^lib/", "lib/ (submodules)", False),
+    # Anything an agent loads when it starts in the repository: instructions, settings, hooks, MCP servers, skills.
+    (r"(^|/)(AGENTS|CLAUDE|GEMINI)(\.[\w-]+)?\.md$|(^|/)\.(claude|codex|cursor|gemini|agents|windsurf|continue)(/|$)"
+     r"|(^|/)\.mcp\.json$|(^|/)\.(cursorrules|windsurfrules)$", "AI agents' config (can run commands)", True),
+    (r"(^|/)\.(vscode|devcontainer|idea|vs)(/|$)", "editor config (can run tasks on open)", True),
+    (r"^\.oss-scanner/", ".oss-scanner (scanner build)", False),
+]]
 
 # Text whose URLs are left out: prose, and the players' translations.
 PROSE = re.compile(r"\.(md|txt)$|^dist/lang/", re.IGNORECASE)
@@ -70,8 +93,17 @@ REPORT_LIMIT = 400  # rows per list, so the job summary stays far below its 1 Mi
 
 
 def clean(text):
-    """PR-controlled text made safe for a Markdown code block: no control characters, no line breaks."""
-    return "".join(ch if 32 <= ord(ch) != 127 else "?" for ch in str(text))
+    """PR-controlled text made safe for a Markdown code block: no control characters, no line breaks, and invisible
+    characters (format characters such as a right-to-left override, private use, separators) shown as <U+XXXX>."""
+    out = []
+    for ch in str(text):
+        if ord(ch) < 32 or ord(ch) == 127:
+            out.append("?")
+        elif unicodedata.category(ch) in ("Cf", "Co", "Cs", "Cn", "Zl", "Zp"):
+            out.append(f"<U+{ord(ch):04X}>")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def block(lines, limit=REPORT_LIMIT):
@@ -91,8 +123,9 @@ def extension(path):
     return name.rsplit(".", 1)[-1].lower() if "." in name else ""
 
 
-def sensitive_reasons(path):
-    return [reason for pattern, reason in SENSITIVE if pattern.search(path)]
+def sensitive_reasons(path, owner=False):
+    """Why `path` is sensitive; for the owner's own PR, only the reasons that count there."""
+    return [reason for pattern, reason, for_owner in SENSITIVE if pattern.search(path) and (for_owner or not owner)]
 
 
 def read_json_stream(path):
@@ -141,36 +174,39 @@ def patch_urls(patch):
     return sorted(added - removed)
 
 
-def api_flags(files, owner=False):
+FILES_API_LIMIT = 3000  # the most files the API lists for a pull request
+
+
+def api_flags(files, owner=False, changed_files=None):
     """Why a PR needs vetting, from the API's file list alone (vet-label.yml reads nothing else).
 
-    An outside PR: any binary, submodule change or sensitive path. The owner's own PR: only new or changed binaries,
-    new URLs in code, scripts or build files, changes under .github/, submodule changes, and xmake.lua lines that
-    fetch packages; plain edits under tools/ and the like don't count."""
+    An outside PR is labelled whatever this says (vet-label.yml); for it, these are what its report will look at: any
+    binary, submodule change or sensitive path. The owner's own PR is flagged only for new or changed binaries, new URLs
+    in code, scripts or build files, changes under .github/, submodules, agents' and editors' config and git hooks, and
+    xmake.lua lines that fetch packages; plain edits under tools/ and the like don't count."""
     reasons = []
+    if changed_files is not None and (len(files) >= FILES_API_LIMIT or len(files) < changed_files):
+        reasons.append(f"the API listed {len(files)} of the PR's {changed_files} changed files: the rest can't be read here")
     for f in files:
         path, status = f.get("filename", ""), f.get("status", "")
+        previous = f.get("previous_filename") or ""
         patch = f.get("patch", "")
+        names = sorted({path, previous} - {""})
         if status != "removed":
-            if extension(path) in BINARY_EXTENSIONS:
-                reasons.append(f"binary ({status}): {path}")
-            elif "patch" not in f and f.get("changes", 0) == 0 and status in ("added", "modified", "copied", "changed"):
+            for name in names:
+                if extension(name) in BINARY_EXTENSIONS:
+                    reasons.append(f"binary ({status}): {name}")
+            if "patch" not in f and f.get("changes", 0) == 0 and status in ("added", "modified", "copied", "changed", "renamed"):
                 reasons.append(f"no text diff, likely binary ({status}): {path}")
         if re.search(r"^[-+]Subproject commit", patch, re.MULTILINE):
             reasons.append(f"submodule pointer ({status}): {path}")
-        paths = {path, f.get("previous_filename") or path}
+        for name in names:
+            for reason in sensitive_reasons(name, owner=owner):
+                reasons.append(f"{reason} ({status}): {name}")
         if not owner:
-            for old_or_new in paths:
-                for reason in sensitive_reasons(old_or_new):
-                    reasons.append(f"{reason} ({status}): {old_or_new}")
             continue
-        for old_or_new in paths:
-            if old_or_new.startswith(".github/"):
-                reasons.append(f".github (workflows, CI) ({status}): {old_or_new}")
-            if re.search(r"(^|/)\.gitmodules$", old_or_new):
-                reasons.append(f".gitmodules (submodules) ({status}): {old_or_new}")
-        if re.search(r"(^|/)xmake\.lua$", path):
-            if "patch" not in f:
+        if re.search(r"(^|/)xmake\.lua$", path, re.IGNORECASE):
+            if "patch" not in f and f.get("changes", 0) > 0:
                 reasons.append(f"xmake.lua with no diff to read ({status}): {path}")
             elif XMAKE_FETCH.search(patch):
                 reasons.append(f"xmake.lua package requirements ({status}): {path}")
@@ -183,18 +219,23 @@ def api_flags(files, owner=False):
 
 
 def cmd_flags(args):
-    reasons = api_flags(read_json_stream(args.files), owner=args.owner)
-    json.dump({"needs_vetting": bool(reasons), "reasons": reasons}, sys.stdout)
+    reasons = api_flags(read_json_stream(args.files), owner=args.owner, changed_files=args.changed_files)
+    needs = bool(reasons) or not args.owner  # every outside PR is vetted, whatever its files
+    json.dump({"needs_vetting": needs, "reasons": reasons}, sys.stdout)
     sys.stdout.write("\n")
     if args.comment:
+        if args.owner:
+            intro = ("This pull request adds or changes binary files, download URLs, workflows, submodules, agents' or "
+                     "editors' config, git hooks or xmake.lua's packages, so it is labelled `needs-vetting`")
+        else:
+            intro = "Every pull request from outside the project is labelled `needs-vetting`"
         with open(args.comment, "w", encoding="utf-8") as f:
             f.write(
-                "This pull request adds binary files or changes build, tooling or repository files, so it is labelled "
-                "`needs-vetting`: before anything from it is built or run on the maintainer's machines, the owner runs "
-                "the vetting workflow on it (it builds the code on GitHub's throwaway machines) and adds `vetted` "
+                intro + ": before anything from it is built or run on the maintainer's machines, the owner runs the "
+                "vetting workflow on its head (it builds the code on GitHub's throwaway machines) and adds `vetted` "
                 "after reading the report. Nothing committed in binary form is shipped; it is built from source "
                 "(CONTRIBUTING.md, \"Binaries and new dependencies\").\n\n"
-                + block(reasons, 60)
+                + ("What the vetting will look at first:\n\n" + block(reasons, 60) if reasons else "")
             )
 
 
@@ -202,7 +243,8 @@ def cmd_flags(args):
 
 
 def git(repo, *args):
-    return run(["git", "-C", repo, "-c", "core.quotePath=false", *args])
+    # --literal-pathspecs: a PR's file name such as ':(exclude)*' is a name, not pathspec magic.
+    return run(["git", "--literal-pathspecs", "-C", repo, "-c", "core.quotePath=false", *args])
 
 
 def added_lines(repo, base, head, path):
@@ -257,13 +299,22 @@ def cmd_inspect(args):
         if new_mode == "100755" and old_mode != "100755":
             modes.append(f"{status}  executable bit  {path}")
         is_binary = numstat.get(path, ("", ""))[0] == "-"
-        if is_binary or extension(path) in BINARY_EXTENSIONS:
-            data = git(repo, "cat-file", "blob", blob)
-            why = "git: binary" if is_binary else f"by name (.{extension(path)})"
+        data = git(repo, "cat-file", "blob", blob)
+        why = "git: binary" if is_binary else f"by name (.{extension(path)})" if extension(path) in BINARY_EXTENSIONS else ""
+        if not why:
+            # git looks for a NUL byte only in the first 8000 bytes: read the whole file.
+            if b"\0" in data:
+                why = "NUL past 8000 bytes"
+            else:
+                try:
+                    data.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    why = f"not UTF-8 at byte {error.start}"
+        if why:
             binaries.append(f"{status}  {len(data):>9} B  sha256 {hashlib.sha256(data).hexdigest()}  {why:20}  {path}")
         if is_binary:
             continue
-        if re.match(r"^ui/.*-config\.xml$|(^|/)flex-config\.xml$", path):
+        if re.match(r"^ui/.*-config\.xml$|(^|/)flex-config\.xml$", path, re.IGNORECASE):
             configs.append(f"{status}  {path}")
         for line_no, text in added_lines(repo, merge_base, head, path):
             if len(text) >= LONG_LINE:
@@ -281,7 +332,7 @@ def cmd_inspect(args):
         "## Trusted inspection\n\n",
         f"The PR's commits were fetched as git objects and read as data; nothing from them ran here. Diff: merge base "
         f"`{merge_base}` to head `{head}`, {len(entries)} files ({len(api)} in the API's list).\n\n",
-        f"### Binary or non-text files added or changed ({len(binaries)})\n\n", block(binaries), "\n",
+        f"### Binary or non-text files added or changed ({len(binaries)}; text that isn't UTF-8 shows here too)\n\n", block(binaries), "\n",
         f"### Symlinks, submodule pointers, executable bits ({len(modes)})\n\n", block(modes), "\n",
         f"### Sensitive paths ({len(sensitive)})\n\n", block(sensitive), "\n",
         f"### URLs in added lines ({len(urls)} in {len(url_files)} files; prose and translations left out)\n\n",
@@ -386,11 +437,11 @@ def pr_claims(repo, rev):
 
 
 def cmd_toolchain(args):
-    pins = {name: os.environ.get(name, "").strip() for name in
+    pins = {name: PINS.get(name, "").strip() for name in
             ("FLEX_URL", "FLEX_SHA256", "FLEX_KEY_FINGERPRINT", "FLEX_KEYS_URLS", "PLAYERGLOBAL_URL", "PLAYERGLOBAL_SHA256")}
-    for name in ("FLEX_URL", "FLEX_SHA256", "FLEX_KEYS_URLS", "PLAYERGLOBAL_URL", "PLAYERGLOBAL_SHA256"):
-        if not pins[name]:
-            sys.exit(f"{name} is not set (the workflow pins it)")
+    for name, value in pins.items():
+        if not value:
+            sys.exit(f"{name} is not pinned (PINS in this file)")
     os.makedirs(args.work, exist_ok=True)
     flex = os.path.join(args.work, "flex.tar.gz")
     asc = os.path.join(args.work, "flex.tar.gz.asc")
@@ -425,8 +476,8 @@ def cmd_toolchain(args):
             same = result["fingerprint"].upper() == pinned
             lines.append(f"  signing key  {result['fingerprint']}  signed {result['date']}, "
                          + ("listed in this KEYS file" if result["listed"] else "NOT listed in this KEYS file"))
-            lines.append(f"  pinned key   {pinned or '(none pinned yet)'}  {'MATCH' if same else 'MISMATCH' if pinned else ''}")
-            if result["good"] and result["listed"] and (same or not pinned):
+            lines.append(f"  pinned key   {pinned}  {'MATCH' if same else 'MISMATCH'}")
+            if result["good"] and result["listed"] and same:
                 good_somewhere = True
     if not good_somewhere:
         problems.append("no KEYS file gave a good signature from the pinned key")
@@ -471,12 +522,12 @@ def cmd_toolchain(args):
         sys.exit("toolchain: " + "; ".join(problems))
 
 
-def unpack(flex, swc, home):
-    """The SDK into `home` (the tarball's top folder dropped), with playerglobal where mxmlc looks for it."""
+def extract_tar(archive, home):
+    """A .tar.gz into `home`, its top folder dropped; the "data" filter refuses links out of `home` and odd files."""
     if os.path.exists(home):
         shutil.rmtree(home)
     os.makedirs(home)
-    with tarfile.open(flex, "r:gz") as tar:
+    with tarfile.open(archive, "r:gz") as tar:
         members = []
         for member in tar.getmembers():
             parts = member.name.split("/", 1)
@@ -487,11 +538,39 @@ def unpack(flex, swc, home):
                 member.linkname = member.linkname.split("/", 1)[-1]
             members.append(member)
         tar.extractall(home, members=members, filter="data")
+
+
+def unpack(flex, swc, home):
+    """The SDK into `home`, with playerglobal where mxmlc looks for it."""
+    extract_tar(flex, home)
     player = os.path.join(home, "frameworks", "libs", "player", "32.0")
     os.makedirs(player, exist_ok=True)
     shutil.copyfile(swc, os.path.join(player, "playerglobal.swc"))
     if not os.path.isfile(os.path.join(home, "lib", "mxmlc.jar")):
         sys.exit("the Flex SDK has no lib/mxmlc.jar")
+
+
+def cmd_java(args):
+    """The pinned Amazon Corretto: downloaded, checked against its pinned sha256, unpacked into --home."""
+    os.makedirs(args.work, exist_ok=True)
+    archive = os.path.join(args.work, "corretto.tar.gz")
+    status, _ = download(PINS["CORRETTO_URL"], archive)
+    got = sha256_file(archive) if status == 200 else ""
+    lines = [f"Amazon Corretto  {PINS['CORRETTO_URL']}",
+             f"  HTTP {status}, sha256 {got or '-'}",
+             f"  pinned       {PINS['CORRETTO_SHA256']}  {'MATCH' if got == PINS['CORRETTO_SHA256'] else 'MISMATCH'}"]
+    ok = got == PINS["CORRETTO_SHA256"]
+    if ok:
+        extract_tar(archive, args.home)
+        java = os.path.join(args.home, "bin", "java")
+        version = subprocess.run([java, "-version"], capture_output=True, text=True)
+        lines += [f"  {line}" for line in (version.stderr or version.stdout).splitlines()]
+        ok = version.returncode == 0
+    with open(args.report, "w", encoding="utf-8") as f:
+        f.write("## Java (trusted pin)\n\n" + ("" if ok else "**PROBLEM:** Corretto is not the pinned one or does not run.\n\n")
+                + block(lines) + "\n")
+    if not ok:
+        sys.exit("java: Corretto is not the pinned one or does not run")
 
 
 # ------------------------------------------------------------------------------------------------- compile/compare
@@ -632,13 +711,14 @@ def movie_names(ui):
 def cmd_compile(args):
     flex, ui, out = os.path.abspath(args.flex), os.path.abspath(args.ui), os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
-    java = subprocess.run(["java", "-version"], capture_output=True, text=True)
+    java_bin = os.path.join(os.path.abspath(args.java_home), "bin", "java")
+    java = subprocess.run([java_bin, "-version"], capture_output=True, text=True)
     lines = [f"java -version: {line}" for line in (java.stderr or java.stdout).splitlines()]
     failed = 0
     for name in movie_names(ui):
         movie = os.path.join(out, name + ".swf")
         command = [
-            "java", "-Dsun.io.useCanonCaches=false", "-Djava.util.Arrays.useLegacyMergeSort=true",
+            java_bin, "-Dsun.io.useCanonCaches=false", "-Djava.util.Arrays.useLegacyMergeSort=true",
             "-jar", os.path.join(flex, "lib", "mxmlc.jar"), "+flexlib=" + os.path.join(flex, "frameworks"),
             "-target-player=32.0", "-swf-version=15", "-compress=false", "-static-link-runtime-shared-libraries=true",
             "-compiler.library-path=",
@@ -718,35 +798,95 @@ def cmd_compare(args):
 # -------------------------------------------------------------------------------------------------------- assemble
 
 
-def unpack_part(name):
-    text = os.environ.get(name, "")
-    if not text:
-        return ""
+PART_LIMIT = 4 << 20  # bytes of a part's text kept; anything longer is cut
+
+
+def read_part(parts, name):
+    """(text, problem) of the part the report job wrote to `parts`/`name` from a job output (gzip, then base64)."""
+    path = os.path.join(parts, name)
+    if not os.path.isfile(path):
+        return "", "could not be taken from the job's output (too large to pass on, or missing)"
+    raw = open(path, "rb").read().strip()
+    if not raw:
+        return "", "empty"
     try:
-        return gzip.decompress(base64.b64decode(text)).decode("utf-8", "replace")
+        with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(raw, validate=True))) as packed:
+            return packed.read(PART_LIMIT).decode("utf-8", "replace"), ""
     except Exception as error:  # an untrusted job may hand over anything
-        return f"(could not read this part: {error})"
+        return "", f"unreadable ({type(error).__name__})"
 
 
 def cmd_assemble(args):
     env = os.environ.get
+    problems = []
+    jobs = {"inspect": env("INSPECT_RESULT", "?"), "movies": env("MOVIES_RESULT", "?"), "build": env("BUILD_RESULT", "?")}
+    has_ui = env("HAS_UI", "") == "true"
+    if jobs["inspect"] != "success":
+        problems.append(f"the inspect job's result is {jobs['inspect']}")
+    if has_ui and jobs["movies"] != "success":
+        problems.append(f"the movies job's result is {jobs['movies']} (a toolchain check or a compile failed)")
+    if jobs["build"] != "success":
+        problems.append(f"the build and tests job's result is {jobs['build']}")
+
+    trusted, trouble = read_part(args.parts, "inspect")
+    if trouble:
+        problems.append(f"the trusted part {trouble}: read the inspect job's summary")
+    caches = "## Caches\n\n"
+    if not os.path.isfile(os.path.join(args.parts, "caches-checked")):
+        problems.append("the cache check did not run")
+        caches += "Not checked: the step that lists them failed.\n\n"
+    else:
+        # id, key, ref, created, bytes per line, from the API; a key may have been written by a PR's code.
+        listed = {}
+        for scope in ("main", "runner"):
+            path = os.path.join(args.parts, f"caches-{scope}.tsv")
+            text = open(path, encoding="utf-8", errors="replace").read() if os.path.isfile(path) else ""
+            listed[scope] = [line.replace("\t", "  ") for line in text.splitlines() if line.strip()]
+        if listed["main"]:
+            problems.append(f"main's scope holds {len(listed['main'])} cache entr{'y' if len(listed['main']) == 1 else 'ies'}")
+            caches += (f"**Main's scope holds {len(listed['main'])} cache entries.** Every branch's builds can restore "
+                       "them, and no workflow saves one there any more: one may have been written by a PR's code. "
+                       "Delete them (`gh cache delete --all --ref refs/heads/main`), then vet again.\n\n"
+                       + block(listed["main"]) + "\n")
+        else:
+            caches += "Main's scope holds no cache entries.\n\n"
+        caches += (f"The vet-runner scope, which only vet-runner runs can read and none restores from, holds "
+                   f"{len(listed['runner'])}" + (" (`gh cache delete --all --ref refs/heads/vet-runner` clears them):\n\n"
+                                                 + block(listed["runner"]) if listed["runner"] else ".\n") + "\n")
+
+    untrusted = []
+    for title, name, needed in (("movies", "movies", has_ui), ("build and tests", "build", True)):
+        text, trouble = read_part(args.parts, name)
+        if trouble and needed:
+            problems.append(f"the {title} part {trouble}")
+        untrusted.append((title, text, trouble if needed else "not needed: the PR has no ui/"))
+
+    head = env("SHA", "?")
+    if problems:
+        verdict = f"**Vet FAILED for `{head}`:** " + "; ".join(problems) + ". `vetted` would be taken off again.\n\n"
+    else:
+        verdict = (f"**Vet PASSED for `{head}`.** Every job succeeded and every part of the report was read; the owner "
+                   "may add `vetted` once the report is read.\n\n")
     out = [
-        f"# Vetting report: PR {env('PR', '?')} at {env('SHA', '?')}\n\n",
+        f"# Vetting report: PR {env('PR', '?')} at {head}\n\n",
+        verdict,
         f"Run: {env('RUN_URL', '')}\n\n",
-        f"Jobs: inspect {env('INSPECT_RESULT', '?')}, movies {env('MOVIES_RESULT', '?')}, "
-        f"build and tests {env('BUILD_RESULT', '?')}.\n\n",
-        "The trusted part was made by main's own code, which read the PR only as data, and reached this job as a job "
-        "output, not an artifact the other jobs could replace. The untrusted parts come from jobs that compiled the "
-        "PR's sources or ran its code: a hostile PR could forge them, so they are shown as plain text.\n\n",
-        unpack_part("INSPECT_REPORT") or "## Trusted inspection\n\n(missing)\n\n",
+        f"Jobs: inspect {jobs['inspect']}, movies {jobs['movies']}, build and tests {jobs['build']}.\n\n",
+        "This job summary is the report. The trusted part was made by main's own code, which read the PR only as data, "
+        "and reached this job as a job output, which no other job can write. The untrusted parts come from jobs that "
+        "compiled the PR's sources or ran its code: a hostile PR could forge them, so they are shown as plain text. "
+        "The run's report artifact is only a convenience copy: code in an untrusted job could replace it.\n\n",
+        trusted or "## Trusted inspection\n\n(missing: read the inspect job's summary)\n\n",
+        caches,
     ]
-    for title, part in (("movies", "MOVIES_REPORT"), ("build and tests", "BUILD_REPORT")):
-        text = unpack_part(part)
+    for title, text, trouble in untrusted:
         out.append(f"## Untrusted: {title}\n\n")
-        out.append(block(text.splitlines(), 2000) if text else "    (this job did not run or reported nothing)\n")
+        out.append(block(text.splitlines(), 2000) if text else f"    (none: {trouble or 'this job reported nothing'})\n")
         out.append("\n")
     with open(args.out, "w", encoding="utf-8") as f:
         f.writelines(out)
+    if problems:
+        sys.exit("vet failed: " + "; ".join(problems))
 
 
 def main():
@@ -756,6 +896,7 @@ def main():
     p.add_argument("files")
     p.add_argument("--comment")
     p.add_argument("--owner", action="store_true", help="the repository owner's own PR: the narrower rule")
+    p.add_argument("--changed-files", type=int, help="the PR's changed_files, to catch a file list the API cut short")
     p.set_defaults(func=cmd_flags)
     p = sub.add_parser("inspect")
     for name in ("--repo", "--base", "--head", "--api-files", "--out"):
@@ -769,8 +910,12 @@ def main():
     p.add_argument("--claims-repo")
     p.add_argument("--claims-rev", default="HEAD")
     p.set_defaults(func=cmd_toolchain)
+    p = sub.add_parser("java")
+    for name in ("--work", "--home", "--report"):
+        p.add_argument(name, required=True)
+    p.set_defaults(func=cmd_java)
     p = sub.add_parser("compile")
-    for name in ("--flex", "--ui", "--out", "--report"):
+    for name in ("--java-home", "--flex", "--ui", "--out", "--report"):
         p.add_argument(name, required=True)
     p.set_defaults(func=cmd_compile)
     p = sub.add_parser("compare")
@@ -778,6 +923,7 @@ def main():
         p.add_argument(name, required=True)
     p.set_defaults(func=cmd_compare)
     p = sub.add_parser("assemble")
+    p.add_argument("--parts", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_assemble)
     args = parser.parse_args()

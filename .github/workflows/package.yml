@@ -1,7 +1,8 @@
 # Packages a release candidate on GitHub's machines from a commit or tag on main (docs/RELEASING.md): builds every
 # target and runs the unit tests through tools/package.ps1 on Windows with Visual Studio 2022, after compiling the
-# menu movies in ui/ (if there are any) from source with the pinned Flex compiler under Amazon Corretto. Started by
-# hand, by the repository owner only:
+# menu movies in ui/ (if there are any) from source with the pinned Flex compiler under the pinned Amazon Corretto
+# (the pins are in .github/scripts/vet.py). Started by hand, by the repository owner only, and only from main (the
+# default ref, so --ref can be left out):
 #
 #   gh workflow run package.yml -f ref=<commit or tag on main> -f label=rc1
 #
@@ -33,16 +34,6 @@ concurrency:
   group: package-${{ inputs.ref }}
   cancel-in-progress: false
 
-env:
-  # The same pins as vet.yml: change both together.
-  FLEX_URL: https://archive.apache.org/dist/flex/4.16.1/binaries/apache-flex-sdk-4.16.1-bin.tar.gz
-  FLEX_SHA256: 17fda7ac8d3e476cad3127f345455ef316acfb87c6f4322e5897bd8d9b09388e
-  FLEX_KEY_FINGERPRINT: 44998F3E242727E94C4BADEB6B0A7EC905061FC8  # the release manager's key that signed 4.16.1, in Apache's KEYS
-  FLEX_KEYS_URLS: https://archive.apache.org/dist/flex/KEYS https://downloads.apache.org/flex/KEYS
-  PLAYERGLOBAL_URL: https://fpdownload.macromedia.com/get/flashplayer/updaters/32/playerglobal32_0.swc
-  PLAYERGLOBAL_SHA256: 7d4d6168d27603cfb3b750302448e354e0bbc1bdd58f5d101c3dcf6891e9bb65
-  JAVA_VERSION: '11'  # Amazon Corretto, as in vet.yml
-
 jobs:
   resolve:
     name: Check the commit
@@ -58,6 +49,15 @@ jobs:
       has_ui: ${{ steps.check.outputs.has_ui }}
       artifact: ${{ steps.check.outputs.artifact }}
     steps:
+      - name: Check this run is main's package.yml
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          if [ "$RUN_REF" != refs/heads/main ]; then
+            echo "::error::Run package.yml from main (this run's ref is $RUN_REF): its pins and scripts are main's"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0  # every branch and tag: the ref is looked up and checked against main
@@ -96,7 +96,9 @@ jobs:
   movies:
     name: Compile the menu movies
     needs: resolve
-    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && needs.resolve.outputs.has_ui == 'true'
+    if: >-
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/main' && needs.resolve.outputs.has_ui == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -115,20 +117,19 @@ jobs:
           path: src
           persist-credentials: false
 
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
-        with:
-          distribution: corretto
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Fetch and check the toolchain
+      - name: Fetch and check Java and the toolchain
         run: |
+          set -euo pipefail
+          python3 -I trusted/.github/scripts/vet.py java --work "$RUNNER_TEMP/java-dl" --home "$RUNNER_TEMP/jdk" \
+            --report "$RUNNER_TEMP/java.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/java.md"
           python3 -I trusted/.github/scripts/vet.py toolchain --strict --work "$RUNNER_TEMP/flash" \
             --unpack "$RUNNER_TEMP/flex" --out "$RUNNER_TEMP/toolchain.md"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/toolchain.md"
 
       - name: Compile every movie from source
         run: |
-          python3 -I trusted/.github/scripts/vet.py compile --flex "$RUNNER_TEMP/flex" --ui src/ui \
+          python3 -I trusted/.github/scripts/vet.py compile --java-home "$RUNNER_TEMP/jdk" --flex "$RUNNER_TEMP/flex" --ui src/ui \
             --out "$RUNNER_TEMP/movies" --report "$RUNNER_TEMP/compile.md"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/compile.md"
           rm -f "$RUNNER_TEMP"/movies/*.log
@@ -144,7 +145,8 @@ jobs:
     name: Build, test and package
     needs: [resolve, movies]
     if: >-
-      always() && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && needs.resolve.result == 'success' &&
+      always() && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/main' && needs.resolve.result == 'success' &&
       (needs.movies.result == 'success' || needs.movies.result == 'skipped')
     runs-on: windows-2022
     timeout-minutes: 90

@@ -1,24 +1,31 @@
-# Flags pull requests that need vetting (vet.yml) before their code is built or run on the maintainer's machines (the
-# rules are in .github/scripts/vet.py, api_flags). An outside PR is flagged when it adds a binary file or touches the
-# build, the tools, the workflows or other repository plumbing. The owner's own PR is flagged only for new or changed
-# binaries, new URLs in code, scripts or build files, changes under .github/, submodule changes and xmake.lua lines that
-# fetch packages: plain edits under tools/ don't count. It adds `needs-vetting` and says why; the owner runs vet.yml and
-# adds `vetted` by hand after reading the report. New commits always take `vetted` off.
+# Labels pull requests that need vetting (vet.yml) before their code is built or run on the maintainer's machines, and
+# keeps `vetted` only on a head that a passed vet run vetted.
+#   flag    Every outside PR gets `needs-vetting`, whatever its files; the comment lists what its report will look at
+#           (binaries, submodules, the build, the tools, workflows, agents' and editors' config, git hooks). The
+#           owner's own PR is flagged only for new or changed binaries, new download URLs, changes under .github/,
+#           submodules, agents' and editors' config, git hooks and xmake.lua lines that fetch packages, or when the
+#           API's file list is cut short: plain edits under tools/ don't count. The rules are in
+#           .github/scripts/vet.py (api_flags). New commits always take `vetted` off.
+#   vetted  When `vetted` is added, looks for a successful run titled "Vet PR <N> at <the PR's head>" of vet.yml on
+#           vet-runner, started by the owner. Found: a comment records the vetted commit and the run. Not found: the
+#           label comes off again.
 # Like review-label.yml: pull_request_target runs this file from main with a token that can write labels, also for PRs
-# from forks. It reads only the API's list of the PR's files, never checks out or runs the PR's code, and passes
-# everything from the event through env:, never into the script's text.
+# from forks. It reads only the API (the PR's file list, vet.yml's runs), never checks out or runs the PR's code, and
+# passes everything from the event through env:, never into the script's text.
 name: vet-label
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, labeled]
 
 permissions:
   pull-requests: write
   issues: write
+  actions: read  # vet.yml's runs
 
 jobs:
   flag:
+    if: github.event.action != 'labeled'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -38,6 +45,7 @@ jobs:
           AUTHOR: ${{ github.event.pull_request.user.login }}
           OWNER: ${{ github.repository_owner }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          CHANGED: ${{ github.event.pull_request.changed_files }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}
         run: |
@@ -47,23 +55,50 @@ jobs:
             gh pr edit "$PR" --repo "$REPO" --remove-label vetted
             gh pr comment "$PR" --repo "$REPO" --body "New commits (${BEFORE:0:7}..${AFTER:0:7}) since the vetting: the \`vetted\` label is removed until they are vetted too."
           fi
-          rule=()
-          if [ "$AUTHOR" = "$OWNER" ]; then rule=(--owner); fi
+          [[ "$CHANGED" =~ ^[0-9]+$ ]] || CHANGED=0
+          rule=(--changed-files "$CHANGED")
+          if [ "$AUTHOR" = "$OWNER" ]; then rule+=(--owner); fi
           gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[]' > "$RUNNER_TEMP/files.jsonl"
           python3 -I trusted/.github/scripts/vet.py flags "${rule[@]}" "$RUNNER_TEMP/files.jsonl" --comment "$RUNNER_TEMP/comment.md" > "$RUNNER_TEMP/flags.json"
+          jq -r '.reasons[]' "$RUNNER_TEMP/flags.json"
           if ! jq -e .needs_vetting "$RUNNER_TEMP/flags.json" > /dev/null; then
             echo "Nothing that needs vetting"
             exit 0
           fi
-          jq -r '.reasons[]' "$RUNNER_TEMP/flags.json"
           if has vetted && [ "$ACTION" != synchronize ]; then
             gh pr edit "$PR" --repo "$REPO" --remove-label vetted
           fi
           if ! has needs-vetting; then
             gh label create needs-vetting --repo "$REPO" --color d93f0b \
-              --description "Adds binaries or touches build, tools or workflows: the owner runs vet.yml first" 2> /dev/null || true
+              --description "From outside, or adds binaries, URLs or workflows: the owner runs vet.yml first" 2> /dev/null || true
             gh label create vetted --repo "$REPO" --color 0e8a16 \
-              --description "The owner read a vet.yml report for this PR's head" 2> /dev/null || true
+              --description "A passed vet.yml run vetted this PR's head, and the owner read its report" 2> /dev/null || true
             gh pr edit "$PR" --repo "$REPO" --add-label needs-vetting
             gh pr comment "$PR" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+          fi
+
+  vetted:
+    if: github.event.action == 'labeled' && github.event.label.name == 'vetted'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Keep `vetted` only on a head a passed vet run vetted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          gh api "repos/$REPO/actions/workflows/vet.yml/runs?branch=vet-runner&event=workflow_dispatch&status=success&per_page=100" > "$RUNNER_TEMP/runs.json"
+          run=$(jq -r --arg title "Vet PR $PR at $head" --arg owner "$OWNER" '
+            first(.workflow_runs[] | select(.display_title == $title and .conclusion == "success"
+              and .path == ".github/workflows/vet.yml" and .head_branch == "vet-runner" and .event == "workflow_dispatch"
+              and .actor.login == $owner and .triggering_actor.login == $owner) | .html_url) // empty' "$RUNNER_TEMP/runs.json")
+          if [ -n "$run" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body "Vetted at \`$head\`: $run"
+          else
+            gh pr edit "$PR" --repo "$REPO" --remove-label vetted
+            gh pr comment "$PR" --repo "$REPO" --body "No passed vet run for this PR's head \`$head\`, so \`vetted\` is taken off. Vet that head (vet.yml, from vet-runner), read its report, then add \`vetted\` again."
           fi

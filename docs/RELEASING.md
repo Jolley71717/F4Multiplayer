@@ -12,10 +12,11 @@ early can run it and say whether it holds. In this order:
 1. Write `dist/RELEASE-X.Y.Z-rcN.md` and commit it: the rc's commit carries its notes. For a new
    version's first rc, `set_version` in `xmake.lua` is bumped to X.Y.Z in the same commit.
 2. Package that commit on GitHub, with the Package workflow (`.github/workflows/package.yml`, owner only):
-   `gh workflow run package.yml -f ref=<commit> -f label=rcN` (or Actions > Package > Run workflow). The ref
-   must be on `main`; a tag `vX.Y.Z-rcN` works too, and must then match the label and `set_version`. On
-   GitHub's Windows machine it compiles the menu movies in `ui/` from source, if there are any, with the
-   pinned Flex compiler under Amazon Corretto (the toolchain's hashes and signature checked first), then runs
+   `gh workflow run package.yml -f ref=<commit> -f label=rcN` (or Actions > Package > Run workflow; it runs
+   only from main, the default). The ref must be on `main`; a tag `vX.Y.Z-rcN` works too, and must then match
+   the label and `set_version`. On GitHub's machines it compiles the menu movies in `ui/` from source, if there
+   are any, with the pinned Flex compiler under the pinned Amazon Corretto (the pins are in
+   `.github/scripts/vet.py`; hashes and signature are checked first), then runs
    `tools/package.ps1 -Label rcN` on that commit with no build cache. The run's artifact
    `F4Multiplayer-X.Y.Z-rcN-<commit>` holds what `dist/out/` would; put it there:
    `gh run download <run id> -n F4Multiplayer-X.Y.Z-rcN-<commit> -D dist/out`. The soak and `promote.ps1`
