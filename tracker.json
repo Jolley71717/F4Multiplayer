@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T18:43:16+00:00",
+ "updated": "2026-11-04T18:52:16+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -53,7 +53,7 @@
    "title": "Shared bench: robot workbench materials not shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -383,7 +383,7 @@
    "title": "A built piece reported just before a character switch while joined can be tagged with the new world and removed for good",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -1257,7 +1257,7 @@
    "title": "A plugin-placed item picked up and dropped again may vanish from the dropper's own world on a rejoin or catch-up",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -1381,7 +1381,7 @@
    "title": "Supply lines: a guest's builds use the host's supply-line materials",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
