@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T14:49:51+00:00",
+ "updated": "2026-11-04T18:43:16+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -484,7 +484,7 @@
    "title": "A friend's stand-in often never gets into a seat: left standing (0.10.0, 253 times in a 5-player session, mostly one plugin's furniture)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 295
   },
@@ -681,6 +681,14 @@
    "note": ""
   },
   {
+   "id": "dta6",
+   "title": "Host crash inside the dev-only 'storage' console command (game script engine creating an object), shared-workbench rig work, 2026-11-04 04:01",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "e0xc",
    "title": "A bundle of six small polish items",
    "kind": "feature",
@@ -845,7 +853,7 @@
    "title": "A friend's resource pieces count for both players' settlements",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Built and tested in both games: a friend's pumps and generators count in your water and power; beds not yet",
    "pr": 296
   },
@@ -925,7 +933,7 @@
    "title": "Shared resources: block value updates during a long load; guard tiny negative record values",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 298
   },
@@ -979,7 +987,7 @@
    "title": "Shared workshop materials and settlement supply lines",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 297
   },
@@ -1301,7 +1309,7 @@
    "title": "Shared resources: a builder's new game (or load) leaves its old pieces counting at friends'",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 298
   },
@@ -1636,7 +1644,7 @@
    "title": "Compile the Flash menus (.swf) from source in a GitHub workflow, and a release-package workflow only the maintainer starts",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 294
   },
@@ -1675,6 +1683,14 @@
    "note": "Merged: the log now names the source of repeated sounds; waiting for a report from a game that clicks.",
    "pr": 200,
    "desc": "Some players hear a constant clicking after someone joins or leaves. We could not find the cause from the code alone, so the next release counts every sound the mod makes the game play and writes a line to the log when one repeats far more than normal play does. A friend's voice chat is the main suspect."
+  },
+  {
+   "id": "vj8h",
+   "title": "Host engine crash on console coc Vault81Entry during the 0.12.0-rc1 churn soak (TESTopicInfo null in TESTopic::InitItemImpl, no plugin frame)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": ""
   },
   {
    "id": "vxfv",
