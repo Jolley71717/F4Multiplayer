@@ -845,6 +845,11 @@ namespace Session
 					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
+			case MessageType::kWorkshopResources:
+				if (const auto msg = Protocol::DecodeResourceStates(a_data)) {
+					WorkshopSync::ApplyResources(*msg);
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);

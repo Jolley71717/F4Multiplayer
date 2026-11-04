@@ -2,6 +2,10 @@
 
 #include "Protocol.h"
 
+#include <functional>
+#include <optional>
+#include <span>
+
 // Shared settlement building: what a player places, moves or scraps in workshop mode is copied
 // into the other players' games (a plain copy of the object: it isn't part of their workshop, so
 // they can't scrap or power it; the builder keeps that). A power wire's copy is drawn from its
@@ -96,6 +100,17 @@ namespace WorkshopSync
 
 	// Someone joined: all our pieces' power goes to them.
 	void OnPlayerJoined();
+
+	// Another player's report of what their pieces count for in their settlements: a friend's piece we have a copy of counts
+	// at its workbench here too, as a modifier the session alone holds (ResourceMirror.h, WorkshopResources.h).
+	void ApplyResources(const Protocol::ResourceStates& a_resources);
+	// The co-save record of what a save held of friends' pieces on our workbenches (nothing, unless the hush before it
+	// failed), and the one a load read, taken off once the load is over. Run on the save's or the load's thread.
+	[[nodiscard]] std::vector<std::uint8_t> ResourceSaveRecord();
+	void LoadResourceRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
+	void RevertResourceRecord();
+	// Dev: the resource mirror's counters, and what is on each workbench.
+	[[nodiscard]] std::string DescribeResources();
 
 	// Someone left: their copies keep what they show, and are not shown again until their game says so (main thread).
 	void OnPlayerLeft(std::uint32_t a_playerId);
