@@ -50,7 +50,11 @@ namespace Protocol
 	// 59: what a player's workshop pieces count for in their settlement (food, water, defense, beds, power made and taken):
 	// kReportWorkshopResources and kWorkshopResources (ResourceStates), so a friend's game counts them at its workbench
 	// (src/game/ResourceMirror.h). 0.11.2 (57) is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 59;
+	// 60: with bSharedStorage the host's game lists the workbenches of its settlements too, and friends' workshop mode and
+	// crafting menus view them (src/game/Storage.h); no message changes, but a game from before would keep a workbench
+	// each player's own while viewing the host's copy in it, so its takes there would go unreported. 59 is refused at the
+	// hello.
+	inline constexpr std::uint16_t VERSION = 60;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;

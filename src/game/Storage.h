@@ -65,6 +65,47 @@ namespace Storage
 	void OnMenuShown(RE::ObjectRefHandle a_container);
 	void OnMenuClosed();
 
+	// ---- the host's workbench (any thread: posted to the main thread) ---------------------------------------
+	//
+	// A settlement's workbench the host owns is listed like any storage, so it has one true copy too, the host's. Workshop
+	// mode and the crafting menus (chemistry, cooking, weapons, armor, power armor, robots) read it straight, not through a
+	// container menu: Workshop::RefillSharedWorkshopContainer (1.11.240: 2194977) copies the workbench, the benches its
+	// supply lines reach and the player into a container of its own as workshop mode starts and after every build or scrap,
+	// and a crafting menu's gather (WorkbenchMenuBase::UpdateOptimizedAutoBuildInv, 2224955) does the same for its recipes. A
+	// build or a craft takes its components out of the real workbench (Workshop::RemoveItemFromWorkshopContainers, 2195117:
+	// the workbench first, then the supply benches, then the player), and a scrap or a leftover puts into it, all as
+	// ordinary inventory changes there. So a friend's game opens a view of the host's workbench as its workshop mode or its
+	// crafting menu does (what its copy held of the shared things set aside, the true copy shown in their place), fills the
+	// engine's own container again whenever what its copy shows changes, and reports the engine's takes and puts at it as
+	// moves (WorldSync); the host's game reports its own (a build, a scrap, the day's production) as the keeper's. Nothing is
+	// linked, placed or given to a script: only the workbench's inventory changes, as it does in vanilla.
+
+	// Workshop mode started or ended at a_workshop (Workshop::WorkshopModeEvent).
+	void OnWorkshopMode(std::uint32_t a_workshop, bool a_start);
+	// A crafting menu (a WorkbenchMenuBase) opened or closed: the workbench it reads is found once it is open.
+	void OnWorkbenchMenu(bool a_opening);
+	// Watches workshop mode (at game data, with WorldSync's other sinks), and the scripts' AddItem and RemoveItem (Scripted).
+	void Install();
+
+	// Whether a_container is a settlement's workbench shared storage keeps for the session (LootScope's sharedBench).
+	// Main thread.
+	[[nodiscard]] bool SharedBench(std::uint32_t a_container);
+	// The same, from any thread (WorldSync's ContainerWatcher): workbenches the owner table names or our game listed.
+	[[nodiscard]] bool WatchesBench(std::uint32_t a_container);
+	// Whether our game keeps the true copies (the host's, with the rule on). Any thread.
+	[[nodiscard]] bool KeepsTrueCopies();
+	// Whether this thread is running a script's AddItem or RemoveItem (the game's own Papyrus functors, hooked).
+	[[nodiscard]] bool Scripted();
+	// A change our own game's scripts (or a container emptied into it) made to a workbench another game keeps: never the
+	// session's (StorageView::Client::Local). Any thread: handled on the main thread, before the view's next change.
+	void LocalChange(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
+	// A friend's change for a workbench shared storage watches (WatchesBench): made here, as one of our own changes (never
+	// reported), and the menus reading it are filled again; true if it was one. Any other container's is WorldSync's to make.
+	// Main thread.
+	[[nodiscard]] bool ApplyAtBench(const Protocol::ContainerChange& a_change);
+	// Whether the dev channel's `storage trace` logs each change at a watched workbench.
+	[[nodiscard]] bool Tracing();
+
 	// ---- WorldSync's loot ------------------------------------------------------------------------------------
 
 	[[nodiscard]] StorageView::Keeper           KeeperOf(std::uint32_t a_container);
@@ -83,6 +124,7 @@ namespace Storage
 
 	// The dev channel's `storage` (docs/DEV-CHANNEL.md): status; owners; `view <ref>` / `close` (what the menu's show and
 	// close do, without the menu); `take <ref> <item> <count>` / `put <ref> <item> <count>` (a transfer between our player
-	// and the container, as the menu makes one); `count <ref> <item>`.
+	// and the container, as the menu makes one); `count <ref> <item>`; `bench [item]` (the workbench our workshop mode or
+	// crafting menu reads, and an item's count in each list); `build <item> <count>` (a build's take, in workshop mode).
 	[[nodiscard]] std::string Command(std::string_view a_args);
 }

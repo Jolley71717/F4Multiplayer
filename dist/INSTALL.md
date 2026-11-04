@@ -134,6 +134,13 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   notes stay in each player's own copy. Off, each player keeps their own copy, and loot taken from one is taken from
   the others' copies too.
   - A container becomes shared once the host has been near it in the session. Until then it works as with this off.
+  - The host's workbenches: a settlement's workbench is shared too when the host owns the settlement. Junk either of
+    you scraps or puts in it is there for both of you in workshop mode and at that settlement's chemistry, cooking,
+    weapons, armor and power armor stations, and a build or a craft uses it up once. Each game's daily food and water
+    stay its own, weapons and armor stay each player's, and the host's supply lines feed only the host's builds (a
+    guest's own supply lines feed theirs from their own stash). The robot workbench isn't covered yet. When the host
+    is away or has just loaded a save, a guest builds from their own materials until the workbench is shared again
+    (a notice says so).
   - A guest's own stash: the ammo, aid and junk a guest had in their own copy of a container before it was shared
     stay in their copy, but out of reach. While the host keeps that container the guest sees the host's things in it,
     not their own. Their own things come back when the host turns this setting off, or when the guest plays that save
@@ -372,8 +379,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
-  With the host's `bSharedStorage` on, a home's and a settlement's containers (not the workbench) have one
-  copy for everyone, the host's (see [Host settings](#host-settings)).
+  With the host's `bSharedStorage` on, a home's and a settlement's containers, and the workbench of a settlement
+  the host owns, have one copy for everyone, the host's (see [Host settings](#host-settings)).
 - **Cars, barrels and other things that blow up:** a car, an explosive barrel, a fuel tank or a gas pump one of you
   shoots goes off in every game, once, and stays wrecked in every game: a friend who arrives later, or a reload, finds
   the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
@@ -489,7 +496,7 @@ Each player's own, always:
 - Your character: level, SPECIAL, perks, caps, inventory, weapons and armor.
 - Companions and romance: each game keeps its own affinity.
 - Keys, notes, holotapes, bobbleheads and magazines: each of you collects your own.
-- A settlement's workbench storage, vendors, the radio, survival needs.
+- A settlement's workbench storage (unless the host's `bSharedStorage` shares it), vendors, the radio, survival needs.
 - Misc quests (unless the host sets `sQuests = safe`), and the radiant quests not listed above (settlement attacks,
   for example).
 

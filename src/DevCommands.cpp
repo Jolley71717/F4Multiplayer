@@ -3767,8 +3767,10 @@ namespace DevCommands
 		// player. workshop enter [benchHex]: starts workshop mode at that workbench, or the nearest the game
 		// lets the player use. workshop exit [reentry]: asks the game to leave it. workshop junk [radius]: the
 		// nearest references workshop mode would let the player scrap, inside the workbench's build area.
-		// workshop select <refHex>: makes it the highlighted piece. workshop scrap <refHex>: scraps it with the
-		// game's own scrap (Workshop::ScrapReference), as if the player had; what it gives back is dropped.
+		// workshop select <refHex>: makes it the highlighted piece. workshop scrap <refHex> [itemHex count]...: scraps it
+		// with the game's own scrap (Workshop::ScrapReference), as if the player had. The components it gives the workbench
+		// are the ones its caller hands it (workshop mode's scrap works them out from the piece's recipe first): the
+		// pairs given, or none.
 		std::string Workshop(std::string_view a_args)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -3819,7 +3821,7 @@ namespace DevCommands
 				}
 				return out.empty() ? "none" : out;
 			}
-			if ((args[0] == "select" || args[0] == "scrap") && args.size() == 2) {
+			if ((args[0] == "select" && args.size() == 2) || (args[0] == "scrap" && args.size() >= 2 && args.size() % 2 == 0)) {
 				const auto ref = LookupRef(args[1]);
 				if (!ref || ref->IsDeleted()) {
 					return "error: no such reference";
@@ -3847,6 +3849,16 @@ namespace DevCommands
 				const RE::Workshop::ContextData context{ player };
 				RE::NiPointer<RE::TESObjectREFR> target{ ref };
 				RE::BSTArray<RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>> rewards;
+				for (std::size_t i = 2; i + 1 < args.size(); i += 2) {
+					const auto itemId = ParseHex(args[i]);
+					const auto item = itemId ? RE::TESForm::GetFormByID<RE::TESBoundObject>(*itemId) : nullptr;
+					std::uint32_t count = 0;
+					std::from_chars(args[i + 1].data(), args[i + 1].data() + args[i + 1].size(), count);
+					if (!item || count == 0) {
+						return "error: workshop scrap <refHex> [itemHex count]...";
+					}
+					rewards.push_back(RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>{ item, count });
+				}
 				scrap(context, target, &rewards);
 				return std::format("scrapped {:08X} disabled={} deleted={} parts={}", ref->GetFormID(), ref->IsDisabled(), ref->IsDeleted(), rewards.size());
 			}

@@ -104,6 +104,15 @@ namespace WorldSync
 		// session's is decided in Frame(), on the main thread, where the references can be read.
 		using Move = LootSync::Move;
 		std::vector<Move> lootInbox;
+		// Inside EngineWorld::Apply: the inventory change being made is another player's, put into our world.
+		thread_local int applyingRemote = 0;
+		void OnBenchChanged(const RE::TESContainerChangedEvent& a_event);
+
+		// The crafting menus: each reads a settlement's workbench through its gather (Storage.h).
+		bool IsCraftingMenu(std::string_view a_name)
+		{
+			return a_name == "ExamineMenu"sv || a_name == "CookingMenu"sv || a_name == "PowerArmorModMenu"sv;
+		}
 		// Trading moves everything through ordinary transfers against the vendor's chest or the vendor
 		// (BarterMenu::CompleteTrade), so moves while the barter menu is open (and just after) are trades:
 		// vendors and caps are each player's. Set from the menu event's thread.
@@ -856,6 +865,9 @@ namespace WorldSync
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				// A settlement's workbench kept as shared storage: the engine's own changes there (a build's components out, a scrap's
+				// in) are moves of ours, as the player's are, never a friend's change we apply (Storage.h).
+				OnBenchChanged(a_event);
 				if (a_event.oldContainerFormID == 0 && a_event.newContainerFormID != 0) {
 					// From nothing into a container: in workshop mode, maybe a scrap's components in its workbench (Drops).
 					Drops::OnAddedFromNowhere(a_event.newContainerFormID, a_event.baseObjectFormID, count);
@@ -893,6 +905,42 @@ namespace WorldSync
 
 		ContainerWatcher containerWatcher;
 
+		// A change at a workbench shared storage keeps that isn't a move between it and our player (those are reported as any
+		// loot) and isn't one of the session's changes WorldSync puts in (applyingRemote): the engine's. The components a build
+		// or a craft takes out of it, and what a scrap or a recipe's leftovers put in, go out as moves of ours at it (a friend's
+		// game: only while it views it; LootSync keeps the rest its own). What our scripts add or take there (a settlement's
+		// day of food and water, its settlers' meals) is our world's: the host's game reports it, the keeper's word; a friend's
+		// keeps it out of the one pile (Storage::LocalChange), or each game's production would go in. So does what another
+		// container is emptied into it (a scrapped piece's contents: ours, never the session's).
+		void OnBenchChanged(const RE::TESContainerChangedEvent& a_event)
+		{
+			using Protocol::PLAYER_REF_ID;
+			const auto oldId = a_event.oldContainerFormID;
+			const auto newId = a_event.newContainerFormID;
+			const auto count = a_event.itemCount;
+			if (applyingRemote > 0 || oldId == PLAYER_REF_ID || newId == PLAYER_REF_ID || count <= 0 || count > Protocol::MAX_ITEM_COUNT) {
+				return;
+			}
+			const bool        into = newId != 0 && Storage::WatchesBench(newId);
+			const bool        outOf = !into && oldId != 0 && Storage::WatchesBench(oldId);
+			if (!into && !outOf) {
+				return;
+			}
+			const auto bench = into ? newId : oldId;
+			const auto change = into ? count : -count;
+			const bool local = !Storage::KeepsTrueCopies() && (Storage::Scripted() || (into && oldId != 0));
+			if (Storage::Tracing()) {
+				REX::INFO("Storage: trace {:08X} -> {:08X}: {} of {:08X} (scripted={} keeper={}): {}", oldId, newId, count, a_event.baseObjectFormID, Storage::Scripted(),
+					Storage::KeepsTrueCopies(), local ? "kept local" : "a move of ours");
+			}
+			if (local) {
+				Storage::LocalChange(bench, a_event.baseObjectFormID, change);
+				return;
+			}
+			std::scoped_lock l{ inboxLock };
+			lootInbox.push_back(Move{ bench, a_event.baseObjectFormID, change });
+		}
+
 		// Only a flag is set here (the event's thread); see bartering.
 		class MenuWatcher :
 			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
@@ -900,6 +948,9 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
+				if (IsCraftingMenu(a_event.menuName.c_str())) {
+					Storage::OnWorkbenchMenu(a_event.opening);  // it may read the host's workbench: a view of its true copy
+				}
 				if (!a_event.opening && a_event.menuName == "ContainerMenu"sv) {
 					Storage::OnMenuClosed();  // a friend's storage viewed: the session's things leave our copy
 					Gifts::OnMenuClosed();  // our copies of the gifts in it leave it
@@ -1119,6 +1170,7 @@ namespace WorldSync
 			// A settlement's workbench holds what we gave it (as WorkshopSync finds them: the anchor, not every
 			// reference with workshop data).
 			facts.workshop = WorkshopSync::IsWorkbenchAnchor(ref);
+			facts.sharedBench = facts.workshop && Storage::SharedBench(a_id);  // the host's, kept for the session (Storage.h)
 			facts.vendorChest = vendorChests.contains(a_id);
 			return facts;
 		}
@@ -1236,10 +1288,19 @@ namespace WorldSync
 				if (!Equipment::MayChange(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container), OwnGear::Change::kContainer)) {
 					return;
 				}
+				// A workbench shared storage keeps: put in as one of Storage's own changes, there and then (a console command's
+				// change reaches ContainerWatcher too late to be told from the engine's own, which we report there).
+				if (Storage::ApplyAtBench(a_change)) {
+					return;
+				}
 				const auto command = a_change.count < 0 ?
 					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
-				RE::Console::ExecuteCommand(command.c_str());
+				{
+					++applyingRemote;  // never our own change (ContainerWatcher)
+					RE::Console::ExecuteCommand(command.c_str());
+					--applyingRemote;
+				}
 			}
 
 			// Shared storage: who keeps a container, and our view of a friend's (Storage).
@@ -2465,6 +2526,7 @@ namespace WorldSync
 		if (const auto ui = RE::UI::GetSingleton()) {
 			ui->RegisterSink<RE::MenuOpenCloseEvent>(&menuWatcher);
 		}
+		Storage::Install();  // workshop mode and the scripts' item changes, for the host's workbench
 		FindVendorChests();
 		ResolveScriptDoors();
 		ResolveGateLists();
@@ -2495,6 +2557,11 @@ namespace WorldSync
 	std::set<std::uint32_t> AliasedIn(std::uint32_t a_container)
 	{
 		return LootSync::Aliased(engine, a_container);
+	}
+
+	bool Shares(std::uint32_t a_container, std::uint32_t a_item)
+	{
+		return LootScope::Of(ReadHolderFacts(a_container), ReadItemFacts(RE::TESForm::GetFormByID(a_item)), LootScope::Direction::kTake) == LootScope::Scope::kShared;
 	}
 
 	std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container)

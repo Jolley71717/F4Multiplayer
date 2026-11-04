@@ -2084,7 +2084,7 @@ TEST("protocol: the save on down rule is the welcome's flag bit 128, apart from 
 
 TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule this build doesn't know shares the story's quests only")
 {
-	static_assert(VERSION >= 58);
+	static_assert(VERSION == 60);  // shared workbench (60); sQuests came in 58
 	for (const auto quests : { QuestRule::kStory, QuestRule::kSafe }) {
 		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = quests } }));
 		REQUIRE(out);

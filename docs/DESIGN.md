@@ -839,7 +839,8 @@ tests play two and three games through it against a real server (tests/LootGame.
 - Per player: keys, paper notes, holotapes, bobbleheads, magazines (`FeaturedItem`), quest items (a
   stack held in a quest alias), all weapons and armor, vendors and caps, what companions and settlers
   carry (any living NPC's inventory: trading with a companion, pickpocketing), settlement workbench
-  storage, power armor frames.
+  storage (with the host's `bSharedStorage` on, a workbench of a settlement the host owns has one true copy instead:
+  below), power armor frames.
 - Shared: ammo, chems, food, junk and other loot in containers and on corpses.
 
 Weapons and armor are per player because a move carries only the base form: another game would get a
@@ -905,7 +906,8 @@ counts every item across the host's chest and the players' inventories in each s
 - *Who keeps a container.* Only the hosting game (the server's local player) claims, by listing a container
   (`kReportStorage` 68: its shared stacks, LootScope's ammo, aid and junk, and the ledger's next number it is as of). Its
   scan lists, every 2 s and at most 16 at a time, the loaded storage containers within 8192 units of its player that are
-  not a workbench or a vendor's chest, once each since the session began, its world last loaded or it last asked the
+  not a vendor's chest, nor a workbench of a settlement the host doesn't own (owned by the player or the player's
+  faction), once each since the session began, its world last loaded or it last asked the
   server for changes. Nothing is listed while its ledger is still asking (the listing would miss changes). The server
   adds the friends' changes numbered after the listing's number, and tells everyone the owner (`kStorageOwners` 169).
   The design had the first claim win; the host alone is simpler and safer: a friend's game is never anybody's truth, a
@@ -1075,11 +1077,58 @@ counts every item across the host's chest and the players' inventories in each s
   before the claim cancel out, so nothing of the host's is taken. No move before the claim (the claim's `since`) is
   undone by a settle afterwards; the friend's game doesn't call one lacking. The server logs "claimed: N items
   friends put in it before go back out".
+- *The host's workbench (protocol 60).* One pile of building materials at the host's settlements: a workbench of a
+  settlement the host owns is listed like any storage (LootScope's `sharedBench`: a workbench is per player unless
+  shared storage keeps it), so whatever either player scraps or stores there is there for both, and a build or a
+  craft by either uses it up once. Where the engine reads components (1.11.240, by RE): workshop mode builds its list
+  in a temporary container of its own (`Workshop::RefillSharedWorkshopContainer`, 2194977: empties it and copies in
+  the workbench, the benches its supply lines reach and the player) as it starts and after each build or scrap; a
+  crafting menu's gather (`WorkbenchMenuBase::UpdateOptimizedAutoBuildInv`, 2224955) fills `sharedContainerRef` the
+  same way from the station's workbench (`GetWorkshopContainer`). A build takes each component with
+  `Workshop::RemoveItemFromWorkshopContainers` (2195117: a real `RemoveItem` from the workbench, then the supply
+  benches, then the player), a craft from `sharedContainers` (2224960), and a scrap or a build's leftovers are added
+  to the workbench (`ScrapReference`, 2195125). Every one is an ordinary inventory change at the real workbench, so
+  the view is the container menu's: nothing is linked to a workbench, placed on a grid or given to a workshop
+  script, and no copy is anything but the workbench's own inventory.
+  - A friend's game opens a view of the host's workbench as its workshop mode starts there (`WorkshopModeEvent`) or a
+    crafting menu opens beside it (ExamineMenu, CookingMenu, PowerArmorModMenu: the first workbench among the menu's
+    `sharedContainers`, looked for 2 s), and closes it as they end. Its stash's shared stacks are set aside, the true
+    copy is shown in their place, and after each change to the copy the engine's own list is filled again (the
+    refill in workshop mode, the gather on the main thread for a crafting menu), so the list is never stale. The
+    engine's takes and puts at a watched workbench (not the player's own transfers, which are loot already, nor a
+    friend's applied change) go out as moves while the view shows it, checked by the server as any. A view the
+    server closes (the host away, stale after its load) ends at once with a notice: workshop mode and a crafting
+    menu are never closed under the player; they build from their own stash meanwhile. A view refused is asked again
+    after 5 s, doubling to 60 s. A save or a load ends the view and it opens again after.
+  - A refused take (the host's workbench lacked it: a race, or the copy was stale) is paid by the friend: first from
+    their own stash at that workbench (set aside for the view: `stashPaid=`), as their game's build would have used it,
+    then from their inventory; what neither holds is counted (`usedUp=`) and the build stands that much short of paid
+    (a build can't be undone). A refused put is given to the player.
+  - A friend's change at a watched workbench is made in our copy by Storage itself (`Storage::ApplyAtBench`, the same
+    guarded change as the view's own), never by a console `additem`/`removeitem`: the console's change reached
+    ContainerWatcher outside the mark that tells it from the engine's, so each game reported the other's change back
+    as its own and the two fed each other (found on the rig: a put grew without end, a take ran down to a refusal).
+  - Out of a session no Frame() runs, so a disconnect fills workshop mode's or the crafting menu's list again there and
+    then (the view's end puts our own stash back in the copy).
+  - The host's game reports its own engine and script changes at a workbench it keeps (its builds, its scraps, the
+    day's production) as the keeper's own moves; it flushes its own pending loot before each listing so a move sent
+    after it can't count twice.
+  - A friend's own game's changes there are never the session's: what its scripts add or take (the day's food and
+    water production, workshop scripts: the game's Papyrus `AddItem` and `RemoveItem` functors are hooked, vtables
+    1563821 and 579181, slot 1 checked before it is written, to mark the thread) and what another container moves into
+    it are kept local (`StorageView::Client::Local`): an add goes into the set-aside stash, a take is put back and
+    paid from it (`localKept=`, `localUnpaid=` for a take the stash lacked). So each game's production stays out of
+    the true copy, and the host's is counted once, as the host's own.
+  - Weapons and armor stay per player as in any storage. A workbench the host doesn't own, or hasn't been near this
+    session, stays per player. The robot workbench's menu is not covered (it reads the same workbench, but the game's
+    menu list doesn't know it), and the host's supply lines reach only the host's builds: a friend's game adds its
+    own supply benches' stashes, which are its own. Tested without the game in `tests/StorageBenchTests.cpp`.
 - `net status` and the dev channel's `storage` show the counts (`inFlight=`, `settling=` 1 until settled, `lacks=` kept,
   `setAside=`, `views=`, `shown=`, `refusedTakes=`, `refusedPuts=`, `shortTakes=`, `unanswered=`, `unsent=`,
   `overflow=`, `lacking=`, `lacksDropped=`, `settles=`, `late=`, `settlingClosed=`, `corrected=`, `takenBack=`,
   `usedUp=`, `givenBack=`, `closedByHost=`, `unmatched=`, `listed=`, `shorts=`, `listPutOff=`, `ownRefused=` which
-  must stay 0). Each kind of notice shows at most once every 2 s. The server's "storage undid" line carries the run's
+  must stay 0; `bench=` the workbench viewed and how, `benches=` those known, `localKept=`, `localUnpaid=`,
+  `stashPaid=`). Each kind of notice shows at most once every 2 s. The server's "storage undid" line carries the run's
   total.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a

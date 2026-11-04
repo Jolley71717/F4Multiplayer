@@ -53,6 +53,7 @@ namespace LootScope
 	{
 		Holder kind = Holder::kOther;
 		bool   workshop = false;     // a settlement's workbench (its reference carries the workshop data, or its base the keyword)
+		bool   sharedBench = false;  // of those, one shared storage keeps for the session (the host's: Storage.h), storage like any other
 		bool   companion = false;    // our own companion: what we gave them is ours, whatever a friend's game says
 		bool   vendorChest = false;  // a faction's merchant container: a vendor's stock and caps
 		bool   alive = false;        // an actor the engine says is alive
@@ -109,7 +110,8 @@ namespace LootScope
 		if (!IsInventory(a_item.kind)) {
 			return Scope::kUnsupported;
 		}
-		if (a_holder.kind == Holder::kFurniture || a_holder.workshop || a_holder.companion) {
+		// A workbench is each player's own, unless shared storage keeps it: its ammo, aid and junk are then the host's one pile.
+		if (a_holder.kind == Holder::kFurniture || (a_holder.workshop && !a_holder.sharedBench) || a_holder.companion) {
 			return Scope::kPerPlayer;
 		}
 		if (a_holder.vendorChest) {
