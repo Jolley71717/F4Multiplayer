@@ -82,10 +82,10 @@ namespace Storage
 		{
 			BenchMenu         menu = BenchMenu::kNone;
 			std::uint32_t     id = 0;  // the workbench it reads (0: none found, or none)
-			// The workbenches the host's supply lines link to it that our game views with it (SupplyLines.h), and when each
-			// may be tried again after its view couldn't open.
-			std::vector<std::uint32_t>                           supply;
-			std::unordered_map<std::uint32_t, Clock::time_point> supplyRetryAt;
+			// The workbenches the host's supply lines link to it whose views show the true copy with it (SupplyLines.h), in
+			// the host's order, and which of them to view when (a few, one at a time, each backing off when refused).
+			std::vector<std::uint32_t> supply;
+			SupplyLines::Views         supplyViews;
 			Clock::time_point openedAt{};
 			Clock::time_point retryAt{};
 			Clock::duration   backoff = BENCH_RETRY;
@@ -272,6 +272,7 @@ namespace Storage
 
 		void DrainLocal();
 		void EndClosedBenchView();
+		bool BenchShown();
 
 		class GameEngine final :
 			public StorageView::Engine
@@ -305,6 +306,9 @@ namespace Storage
 			void Notify(StorageView::Notice a_notice) override
 			{
 				const bool atBench = a_notice == StorageView::Notice::kClosed && bench.menu != BenchMenu::kNone;
+				if (atBench && BenchShown()) {
+					return;  // a supply line's workbench's view closed, not the workbench's: it is tried again quietly (OpenSupply)
+				}
 				Hud::Notify(Text::Get(atBench ? "storage.bench_closed" : TextKey(a_notice)));
 			}
 
@@ -506,46 +510,49 @@ namespace Storage
 		}
 
 		// The views of the workbenches the host's supply lines link to the one we view (SupplyLines.h), once its own view is
-		// open: those no longer linked end, the new ones open (one that couldn't is tried again after BENCH_RETRY). And what
-		// the engine's gather is to find for its settlement.
+		// open: those no longer linked end, and the new ones open a few at a time (SupplyLines::Views: the server sends only
+		// so many views' contents). The ones shown, and what the engine's gather is to find for its settlement.
 		void OpenSupply()
 		{
 			if (bench.id == 0 || !side.Shows(bench.id)) {
 				return;
 			}
-			const auto now = Clock::now();
-			auto       supply = heard.With(bench.id, [](std::uint32_t a_id) { return Ref(a_id) && KeeperOf(a_id) == Keeper::kFriend; });
+			const auto linked = heard.With(bench.id, [](std::uint32_t a_id) { return Ref(a_id) && KeeperOf(a_id) == Keeper::kFriend; });
+			auto       viewed = side.Viewed();
+			std::erase(viewed, bench.id);
+			const auto step = bench.supplyViews.Next(linked, viewed, Clock::now());
 			bool       changed = false;
-			for (const auto viewed : side.Viewed()) {
-				if (viewed != bench.id && !std::ranges::contains(supply, viewed)) {
-					client.CloseOne(viewed);
-					changed = true;
-				}
+			for (const auto link : step.close) {
+				client.CloseOne(link);
+				changed = true;
 			}
-			for (const auto link : supply) {
-				if (side.Views(link)) {
-					continue;
-				}
-				auto& retryAt = bench.supplyRetryAt[link];
-				if (now < retryAt) {
-					continue;
-				}
-				retryAt = now + BENCH_RETRY;
-				if (client.OpenAlso(link)) {
-					changed = true;
+			if (step.open && client.OpenAlso(*step.open)) {
+				changed = true;
+			}
+			std::vector<std::uint32_t> supply;
+			for (const auto link : step.wanted) {
+				if (side.Shows(link)) {
+					supply.push_back(link);
 				}
 			}
 			if (supply != bench.supply) {
-				if (!supply.empty()) {
-					REX::INFO("Storage: the host's supply lines link {} workbench{} to {:08X}: our builds there use them too", supply.size(), supply.size() == 1 ? "" : "es", bench.id);
+				if (supply.size() > bench.supply.size() && supply.size() == step.wanted.size()) {
+					REX::INFO("Storage: the host's supply lines link {} workbench{} to {:08X}{}: our builds there use them too", supply.size(), supply.size() == 1 ? "" : "es",
+						bench.id, linked.size() > step.wanted.size() ? std::format(" (of {}; the rest stay our own)", linked.size()) : "");
 				}
-				bench.supply = supply;
-				SetGather(SettlementOf(Ref(bench.id)), supply);
+				bench.supply = std::move(supply);
+				SetGather(SettlementOf(Ref(bench.id)), bench.supply);
 				changed = true;
 			}
 			if (changed) {
 				bench.refresh = true;
 			}
+		}
+
+		// Our view of the host's workbench our menu reads shows its true copy.
+		bool BenchShown()
+		{
+			return bench.id != 0 && side.Shows(bench.id);
 		}
 
 		// A view of the workbench our menu reads, when a friend's game keeps it and our moves are settled.
@@ -592,10 +599,10 @@ namespace Storage
 				bench.refresh = true;
 				return;
 			}
-			for (const auto link : bench.supply) {
-				if (side.Views(link) && !side.Shows(link)) {
+			for (const auto link : side.Viewed()) {
+				if (link != bench.id && !side.Shows(link)) {
 					client.CloseOne(link);
-					bench.supplyRetryAt[link] = Clock::now() + BENCH_RETRY;
+					bench.supplyViews.Closed(link, Clock::now());  // tried again after its backoff (OpenSupply)
 					bench.refresh = true;
 				}
 			}
@@ -823,7 +830,7 @@ namespace Storage
 		reporter.Forget();
 		linksAt = {};
 		bench.supply.clear();
-		bench.supplyRetryAt.clear();
+		bench.supplyViews.Clear();
 		SetGather(nullptr, {});
 		bench.retryAt = {};
 		bench.backoff = BENCH_RETRY;
@@ -847,7 +854,7 @@ namespace Storage
 		ForgetBenches();
 		heard.Clear();
 		bench.supply.clear();
-		bench.supplyRetryAt.clear();
+		bench.supplyViews.Clear();
 		SetGather(nullptr, {});
 		live = 0;
 		if (unanswered != 0) {
@@ -862,7 +869,7 @@ namespace Storage
 			NoteBench(owner.container);  // a workbench kept: its changes are watched (WatchesBench)
 		}
 		bench.retryAt = {};  // a workbench our menu reads may be kept now: its view opens (BenchFrame)
-		bench.supplyRetryAt.clear();
+		bench.supplyViews.Clear();  // a linked workbench may be kept now: tried at once
 	}
 
 	void OnBenchLinks(const Protocol::BenchLinks& a_links)
@@ -874,6 +881,9 @@ namespace Storage
 	{
 		if (a_contents.container == bench.id && side.Shows(bench.id)) {
 			bench.backoff = BENCH_RETRY;
+		}
+		if (bench.id != 0 && a_contents.container != bench.id && side.Shows(a_contents.container)) {
+			bench.supplyViews.Shown(a_contents.container);
 		}
 		client.OnContents(a_contents);
 	}

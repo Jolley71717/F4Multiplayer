@@ -1134,11 +1134,14 @@ counts every item across the host's chest and the players' inventories in each s
     world's supply benches, holding its own stash. Now the host's game, every 10 s, asks its own `AddOtherContainers`
     which workbenches its lines reach from each workbench it keeps, keeps those of settlements it owns (listing any
     not listed yet, from afar: a workbench is persistent), and tells the session what changed (kReportBenchLinks 78,
-    sorted, at most 64; the server keeps a table only from the workbench's keeper, relays it as kBenchLinks 182 and
+    in its engine's order, the order of the engine's workshop list, which its own builds take in; at most 64; the server keeps a table only from the workbench's keeper, relays it as kBenchLinks 182 and
     sends it with the welcome after the owners, and forgets a keeper's lines, telling everyone, as its world goes
     stale or it leaves). A friend's game viewing the host's workbench views the workbenches its lines link too (each
     a view like any: its own stash set aside, the true copy shown; one a friend's game keeps or nobody keeps is left
-    out), and both calls to `AddOtherContainers` are hooked (one 14-byte stub, the call bytes checked first): for that
+    out). The server sends a player a burst of 16 views' contents, then 8 a second, and answers one past that closed, so
+    only the first 8 links are viewed (the rest stay the friend's own, as their world's lines are), one opening every
+    250 ms, and one the server closes is tried again quietly (no notice while the workbench's own view stays) after
+    5 s, doubling to 60 s until its contents come (SupplyLines::Views); and both calls to `AddOtherContainers` are hooked (one 14-byte stub, the call bytes checked first): for that
     settlement's location the list after the workbench is the host's linked workbenches in the host's order, then the
     friend's own world's other linked workbenches (their own stash, as before), then the player. So a build takes from
     them in the host's order, each take a move at that workbench the server checks; a refused one is paid from the

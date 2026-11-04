@@ -71,6 +71,7 @@ namespace LootTest
 		SupplyLines::Reporter                 reporter;
 		SupplyLines::Heard                    heard;
 		std::vector<std::uint32_t>            supply;
+		SupplyLines::Views                    supplyViews;
 		std::uint32_t                         listingNow = 0;  // the container being listed (Storage::SharedBench)
 		// Our scripts' changes at a workbench another game keeps (Storage::LocalChange), handled before the view's next change.
 		std::vector<LootSync::Move>           local;
@@ -113,6 +114,7 @@ namespace LootTest
 			heard.Clear();  // Storage::OnWelcome
 			reporter.Forget();
 			supply.clear();
+			supplyViews.Clear();
 			return localId;
 		}
 
@@ -123,6 +125,7 @@ namespace LootTest
 			storage.OnDisconnected();
 			heard.Clear();
 			supply.clear();
+			supplyViews.Clear();
 			loot.OnDisconnected();
 			outbox.clear();
 			connected = false;
@@ -195,6 +198,9 @@ namespace LootTest
 					}
 				} else if (IsType(packet, MT::kStorageContents)) {
 					if (const auto msg = Protocol::DecodeStorageListing(packet)) {
+						if (benchView && msg->container != *benchView && storage.State().Shows(msg->container)) {
+							supplyViews.Shown(msg->container);  // Storage::OnContents
+						}
 						storage.OnContents(*msg);
 					}
 				} else if (IsType(packet, MT::kBenchLinks)) {
@@ -223,10 +229,13 @@ namespace LootTest
 			if (benchView && storage.State().Views(*benchView) && !storage.State().Shows(*benchView)) {
 				storage.MenuClosed();
 				supply.clear();
+				supplyViews.Clear();
 			}
-			for (const auto link : std::vector{ supply }) {
-				if (storage.State().Views(link) && !storage.State().Shows(link)) {
+			for (const auto link : storage.State().Viewed()) {
+				if (benchView && link != *benchView && !storage.State().Shows(link)) {
 					storage.CloseOne(link);
+					supplyViews.Closed(link, now);
+					++supplyClosed;
 				}
 			}
 			if (a_f) {
@@ -302,23 +311,32 @@ namespace LootTest
 
 		// ---- the host's workbench (Storage.h) -------------------------------------------------------------------
 
+		std::uint32_t supplyClosed = 0;  // supply views the server closed
+
 		// Storage's OpenSupply, each frame: once the workbench's own view shows the true copy, the workbenches the host's supply
-		// lines link to it (another game keeps them) are viewed with it, and those no longer linked end.
+		// lines link to it (another game keeps them) are viewed with it, a few, one at a time (SupplyLines::Views), and those
+		// no longer linked end.
 		void OpenSupply()
 		{
 			if (!benchView || !storage.State().Shows(*benchView)) {
 				return;
 			}
-			auto linked = heard.With(*benchView, [&](std::uint32_t a_id) { return Keeper(a_id) == StorageView::Keeper::kFriend; });
-			for (const auto viewed : storage.State().Viewed()) {
-				if (viewed != *benchView && std::ranges::find(linked, viewed) == linked.end()) {
-					storage.CloseOne(viewed);
+			const auto linked = heard.With(*benchView, [&](std::uint32_t a_id) { return Keeper(a_id) == StorageView::Keeper::kFriend; });
+			auto       viewed = storage.State().Viewed();
+			std::erase(viewed, *benchView);
+			const auto step = supplyViews.Next(linked, viewed, now);
+			for (const auto link : step.close) {
+				storage.CloseOne(link);
+			}
+			if (step.open) {
+				storage.OpenAlso(*step.open);
+			}
+			supply.clear();
+			for (const auto link : step.wanted) {
+				if (storage.State().Shows(link)) {
+					supply.push_back(link);
 				}
 			}
-			for (const auto link : linked) {
-				storage.OpenAlso(link);
-			}
-			supply = std::move(linked);
 		}
 
 		// The host's game tells the session the workbenches its supply lines link to a_bench (Storage's ReportSupply).
@@ -370,6 +388,7 @@ namespace LootTest
 		{
 			benchView.reset();
 			supply.clear();
+			supplyViews.Clear();
 			storage.MenuClosed();
 			SendOut(a_f);
 		}
@@ -509,6 +528,7 @@ namespace LootTest
 		{
 			BeforeSaveOrLoad(a_f);
 			Restore(a_save);
+			reporter.Forget();  // Storage::OnGameLoaded: our world's supply lines may differ
 			outbox.push_back(Protocol::Encode(loot.AfterLoad(sessionId, localId, now)));
 			++requests;
 			SendOut(a_f);
@@ -662,6 +682,7 @@ namespace LootTest
 			storage.BeforeSaveOrLoad();  // Storage::BeforeSaveOrLoad: no save holds the session's things in a friend's copy
 			menu.reset();
 			supply.clear();
+			supplyViews.Clear();
 			SendOut(a_f);
 		}
 

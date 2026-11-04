@@ -1019,7 +1019,7 @@ namespace FrameLoans
 		bool InventoryBusy()
 		{
 			using OpenMenus::Menu;
-			return Hud::LoadingScreenUp() || OpenMenus::AnyOpen({ Menu::kPipboy, Menu::kContainer, Menu::kBarter, Menu::kExamine, Menu::kCooking, Menu::kPowerArmorMod, Menu::kWorkshop,
+			return Hud::LoadingScreenUp() || OpenMenus::AnyOpen({ Menu::kPipboy, Menu::kContainer, Menu::kBarter, Menu::kExamine, Menu::kCooking, Menu::kPowerArmorMod, Menu::kRobotMod, Menu::kWorkshop,
 												 Menu::kFader, Menu::kPause, Menu::kConsole });
 		}
 

@@ -642,3 +642,60 @@ TEST("supply lines: a container menu opened while viewing the workbench and its 
 	CHECK(s.guest.In(LINKED, STEEL) == 3);
 	CHECK(s.Steel() == LINES_START);
 }
+
+TEST("supply lines: the host's reload forgets its lines for everyone; its game tells them again from its loaded world")
+{
+	Lines s;
+	const auto save = s.host.SaveGame(s.f);
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.host.LoadGame(s.f, save);
+	s.Settle();
+	CHECK(s.guest.heard.Benches() == 0);
+	CHECK(!s.guest.storage.State().Views(LINKED));
+	CHECK(s.guest.In(LINKED, STEEL) == 3);  // their own back
+	// The loaded world's lines go out again (Storage::ReportSupply after OnGameLoaded's Forget).
+	s.host.ReportLinks(s.f, BENCH, { LINKED });
+	s.Settle();
+	CHECK(s.guest.heard.With(BENCH, Any) == std::vector<std::uint32_t>{ LINKED });
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: a big supply network: the friend's game views the first few, one at a time, and the server closes none")
+{
+	Lines s;
+	// The host owns 12 more settlements its lines link to Sanctuary's: each workbench holds 1 steel there.
+	std::vector<std::uint32_t> network{ LINKED };
+	for (std::uint32_t i = 0; i < 12; ++i) {
+		const auto bench = 0x0002'6000 + i;
+		network.push_back(bench);
+		s.host.holders[bench][STEEL] = 1;
+		for (auto* game : { &s.host, &s.guest }) {
+			game->holderFacts[bench] = { .kind = LootScope::Holder::kContainer, .workshop = true, .storage = true };
+		}
+	}
+	s.Settle();
+	s.host.ReportLinks(s.f, BENCH, network);
+	s.Settle();
+	REQUIRE(s.guest.heard.With(BENCH, Any).size() == network.size());
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	CHECK(s.guest.storage.State().Viewed().size() <= 2);  // the workbench and the first link: not every one at once
+	for (int i = 0; i < 40; ++i) {
+		s.guest.now += std::chrono::milliseconds{ 250 };
+		Receive(s.f, s.guest);
+	}
+	CHECK(s.guest.storage.State().Viewed().size() == 1 + SupplyLines::Views::MAX);
+	CHECK((s.guest.supply == std::vector<std::uint32_t>{ network.begin(), network.begin() + SupplyLines::Views::MAX }));
+	CHECK(s.guest.supplyClosed == 0);
+	CHECK(s.guest.Noticed(StorageView::Notice::kClosed) == 0);
+	CHECK(s.guest.In(network[1], STEEL) == 1);   // shown: the host's
+	CHECK(s.guest.In(network.back(), STEEL) == 0);  // past the few: their own copy (nothing there)
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.storage.State().Viewed().empty());
+	CHECK(s.Steel() == LINES_START);
+}
