@@ -26,6 +26,7 @@ session.character_changed_host = Multijoueur : vous avez chargé un autre person
 session.hosting_resumes = Multijoueur : l'hébergement reprendra une fois que votre nouveau personnage aura un nom et aura quitté l'Abri 111
 session.character_changed_left = Multijoueur : vous avez chargé un autre personnage et quitté la session ; rejoignez-la à nouveau depuis le menu
 session.unnamed_waits = Multijoueur : la session attend que votre nouveau personnage ait un nom ; une sauvegarde faite avant a l'identifiant de votre dernier personnage et jouerait dans la session de celui-ci
+host.err_main_menu = vous pourrez héberger une fois une partie chargée
 host.err_opening = vous pourrez héberger une fois sorti de l'Abri 111
 host.err_opening_unnamed = vous pourrez héberger une fois que votre nouveau personnage aura un nom
 host.err_port = impossible d'héberger sur le port {port}

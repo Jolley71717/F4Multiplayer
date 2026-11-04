@@ -22,6 +22,7 @@ session.character_changed_host = 多人联机：你载入了另一个角色；�
 session.hosting_resumes = 多人联机：新角色取好名字并离开111号避难所后会重新当主机
 session.character_changed_left = 多人联机：你载入了另一个角色，已离开房间；请从菜单重新加入
 session.unnamed_waits = 多人联机：在新角色取好名字前，房间会一直等待；在此之前的存档带有上一个角色的ID，会进入那个角色的房间
+host.err_main_menu = 载入游戏后才能当主机
 host.err_opening = 离开111号避难所后才能当主机
 host.err_opening_unnamed = 新角色取好名字后才能当主机
 host.err_port = 无法在端口 {port} 上当主机

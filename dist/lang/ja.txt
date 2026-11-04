@@ -27,6 +27,7 @@ session.character_changed_host = マルチプレイ：別のキャラクター�
 session.hosting_resumes = マルチプレイ：新しいキャラクターに名前を付けてVault111を出るとホストを再開します
 session.character_changed_left = マルチプレイ：別のキャラクターをロードしたためセッションを退出しました。メニューから参加し直してください
 session.unnamed_waits = マルチプレイ：新しいキャラクターに名前が付くまでセッションは待機します。それ以前のセーブは前のキャラクターのIDを持ち、そのキャラクターのセッションで遊ぶことになります
+host.err_main_menu = ゲームをロードしてからホストできます
 host.err_opening = Vault111を出てからホストできます
 host.err_opening_unnamed = 新しいキャラクターに名前を付けてからホストできます
 host.err_port = ポート{port}でホストできませんでした

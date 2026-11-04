@@ -24,6 +24,7 @@ session.character_changed_host = Multiplayer: wczytano inną postać; hostowanie
 session.hosting_resumes = Multiplayer: hostowanie ruszy znów, gdy nowa postać dostanie imię i opuści Kryptę 111
 session.character_changed_left = Multiplayer: wczytano inną postać i opuszczono sesję; dołącz ponownie z menu
 session.unnamed_waits = Multiplayer: sesja czeka, aż nowa postać dostanie imię; zapis zrobiony wcześniej ma ID poprzedniej postaci i grałby w jej sesji
+host.err_main_menu = hostować można dopiero po wczytaniu gry
 host.err_opening = hostować można dopiero po opuszczeniu Krypty 111
 host.err_opening_unnamed = hostować można dopiero, gdy nowa postać dostanie imię
 host.err_port = nie udało się hostować na porcie {port}
