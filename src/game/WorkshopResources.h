@@ -35,6 +35,8 @@ namespace WorkshopResources
 
 	// Adds a_delta to the workbench's value of that kind, on its temporary modifier. False if it is no workbench here.
 	bool AddToBench(std::uint32_t a_bench, ResourceMirror::Kind a_kind, float a_delta);
+	// The workbench's temporary modifier of that kind (none: no workbench here).
+	[[nodiscard]] std::optional<float> TemporaryOf(std::uint32_t a_bench, ResourceMirror::Kind a_kind);
 
 	// ---- Dev -----------------------------------------------------------------------------------------
 

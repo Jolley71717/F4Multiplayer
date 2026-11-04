@@ -2345,13 +2345,20 @@ namespace WorkshopSync
 		std::uint32_t            resourcesHushed = 0;    // values taken off our workbenches for saves
 		std::uint32_t            resourcesLeftover = 0;  // values a loaded save held of an earlier session's, taken off
 		std::int64_t             resourcePollUsMax = 0;
-		// What the last save held of friends' pieces on our workbenches (nothing, unless its hush failed): its co-save record,
-		// written on the save's thread (ResourceSaveRecord). And what a loaded save's record said, taken off our workbenches
-		// once the load is over (OnGameLoaded).
+		// What each save holds of friends' pieces on our workbenches (nothing, unless its hush failed or never ran): its co-save
+		// record, written on the save's thread (ResourceSaveRecord). And what a loaded save's record said, taken off our
+		// workbenches once the load is over (OnGameLoaded).
 		using BenchValues = std::vector<std::pair<std::uint32_t, ResourceMirror::Values>>;
-		std::mutex  resourceRecordLock;
-		BenchValues resourcesSaved;   // under resourceRecordLock
-		BenchValues resourcesLoaded;  // under resourceRecordLock
+		std::mutex                 resourceRecordLock;
+		ResourceMirror::SaveRecord resourceRecord;   // under resourceRecordLock
+		BenchValues                resourcesLoaded;  // under resourceRecordLock
+
+		// What is on our workbenches now, for a save whose hush doesn't run (ResourceMirror::SaveRecord).
+		void NoteResourcesOn()
+		{
+			std::scoped_lock l{ resourceRecordLock };
+			resourceRecord.Live(onBenches.On());
+		}
 
 		// A piece of ours a friend's game may have a copy of, and whose worth in its settlement it is told: one we built (made
 		// at runtime), standing, one of a workbench's workshop items, and no copy (the settlers, workshop items too, count
@@ -2435,6 +2442,7 @@ namespace WorkshopSync
 		struct BenchEngine
 		{
 			bool Add(std::uint32_t a_bench, ResourceMirror::Kind a_kind, float a_delta) { return WorkshopResources::AddToBench(a_bench, a_kind, a_delta); }
+			std::optional<float> Temporary(std::uint32_t a_bench, ResourceMirror::Kind a_kind) { return WorkshopResources::TemporaryOf(a_bench, a_kind); }
 		};
 
 		void PutResourcesOn(Clock::time_point a_now)
@@ -2442,7 +2450,10 @@ namespace WorkshopSync
 			nextResourceApply = a_now + ResourceMirror::APPLY_EVERY;
 			TallyEngine tally;
 			BenchEngine benches;
-			resourceChanges += static_cast<std::uint32_t>(onBenches.Apply(benches, theirResources.Totals(tally), a_now));
+			if (const auto changed = onBenches.Apply(benches, theirResources.Totals(tally), a_now); changed > 0) {
+				resourceChanges += static_cast<std::uint32_t>(changed);
+				NoteResourcesOn();
+			}
 		}
 
 		void ResourceFrame(Clock::time_point a_now)
@@ -2464,6 +2475,7 @@ namespace WorkshopSync
 			if (const auto off = onBenches.TakeAllOff(benches); off > 0) {
 				REX::INFO("WorkshopSync: {}: {} values of friends' pieces taken off our workbenches", a_why, off);
 			}
+			NoteResourcesOn();
 		}
 
 		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
@@ -2813,26 +2825,26 @@ namespace WorkshopSync
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
-		// The workbenches are the save's now, which holds none of friends' pieces (BeforeSave took them off): what we had
-		// put on the old world's is forgotten, and theirs go on again as their copies are found. Anything the save's
-		// record says it held all the same (a hush that failed) is taken off.
-		onBenches.Forget();
+		// The workbenches are the save's (or the new game's) now, which hold none of friends' pieces (BeforeSave took them
+		// off): what we had put on the old world's is forgotten, and theirs go on again as their copies are found. A load
+		// took it all off before (BeforeLoad); a new game from the main menu has no such word, so what is still on a
+		// workbench of the same ID is taken off here (Applier::ForgetWorld). Anything the save's record says it held all the
+		// same (a hush that failed) is taken off.
+		BenchEngine benches;
+		if (const auto off = onBenches.ForgetWorld(benches); off > 0) {
+			REX::WARN("WorkshopSync: the new world's workbenches still held {} values of friends' pieces; taken off", off);
+		}
 		resources.SendAll();
 		BenchValues leftover;
 		{
 			std::scoped_lock l{ resourceRecordLock };
 			leftover.swap(resourcesLoaded);
 		}
-		for (const auto& [bench, values] : leftover) {
-			for (std::size_t k = 0; k < ResourceMirror::KINDS; ++k) {
-				if (values[k] != 0.0f && WorkshopResources::AddToBench(bench, static_cast<ResourceMirror::Kind>(k), -values[k])) {
-					++resourcesLeftover;
-				}
-			}
+		if (const auto off = ResourceMirror::TakeOffRecord(benches, leftover); !leftover.empty()) {
+			resourcesLeftover += static_cast<std::uint32_t>(off);
+			REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; taken off ({} values)", leftover.size(), off);
 		}
-		if (!leftover.empty()) {
-			REX::WARN("WorkshopSync: the save held friends' pieces' worth on {} workbenches; taken off ({} values in all)", leftover.size(), resourcesLeftover);
-		}
+		NoteResourcesOn();
 	}
 
 	void OnWorldGone()
@@ -2898,16 +2910,37 @@ namespace WorkshopSync
 		if (hushed > 0) {
 			REX::INFO("WorkshopSync: {} friends' pieces shown unpowered for the save", hushed);
 		}
+	}
+
+	void BeforeSaveResources()
+	{
 		// What friends' pieces count for on our workbenches is the session's alone: off for the save, on again after
-		// (AfterSave). What couldn't come off (no such workbench here now) goes in the save's record, for a load to take off.
+		// (AfterSave). What couldn't come off (no such workbench here now), or anything still on should the hush throw, goes
+		// in this save's record, for a load to take off; never an earlier save's.
+		{
+			std::scoped_lock l{ resourceRecordLock };
+			resourceRecord.BeforeSave();
+		}
+		const auto said = [] {
+			std::scoped_lock l{ resourceRecordLock };
+			resourceRecord.Hushed(onBenches.On());
+		};
 		BenchEngine benches;
-		const auto  off = onBenches.Hush(benches, Clock::now());
+		std::size_t off = 0;
+		try {
+			off = onBenches.Hush(benches, Clock::now());
+		} catch (...) {
+			said();
+			throw;
+		}
+		said();
 		resourcesHushed += static_cast<std::uint32_t>(off);
 		if (off > 0) {
 			REX::INFO("WorkshopSync: {} values of friends' pieces taken off our workbenches for the save", off);
 		}
-		std::scoped_lock l{ resourceRecordLock };
-		resourcesSaved.assign(onBenches.On().begin(), onBenches.On().end());
+		if (!onBenches.On().empty()) {
+			REX::WARN("WorkshopSync: {} workbenches kept friends' pieces' worth through the hush; the save's record names them", onBenches.On().size());
+		}
 	}
 
 	void AfterSave()
@@ -2920,7 +2953,7 @@ namespace WorkshopSync
 	std::vector<std::uint8_t> ResourceSaveRecord()
 	{
 		std::scoped_lock l{ resourceRecordLock };
-		return ResourceMirror::EncodeRecord(resourcesSaved);
+		return resourceRecord.Take();
 	}
 
 	void LoadResourceRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve)

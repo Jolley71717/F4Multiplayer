@@ -292,11 +292,13 @@ namespace
 		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
 			a_intfc->WriteRecordData(looks.data(), static_cast<std::uint32_t>(looks.size()));
 		}
-		// The ghosts we set against friends' explosions and have yet to see off (WeaponFire, GhostLedger): taken off as
-		// each copy loads after a load of this save.
+		// What this save holds of friends' pieces on our workbenches (WorkshopSync::BeforeSaveResources): nothing, unless the
+		// hush before it failed or didn't run; taken off after a load of this save.
 		if (const auto held = WorkshopSync::ResourceSaveRecord(); !held.empty() && a_intfc->OpenRecord(RESOURCE_RECORD, RESOURCE_VERSION)) {
 			a_intfc->WriteRecordData(held.data(), static_cast<std::uint32_t>(held.size()));
 		}
+		// The ghosts we set against friends' explosions and have yet to see off (WeaponFire, GhostLedger): taken off as
+		// each copy loads after a load of this save.
 		if (const auto ghosts = WeaponFire::SaveGhostRecord(); !ghosts.empty() && a_intfc->OpenRecord(GHOST_RECORD, GHOST_VERSION)) {
 			a_intfc->WriteRecordData(ghosts.data(), static_cast<std::uint32_t>(ghosts.size()));
 		}
@@ -556,7 +558,8 @@ namespace
 								REX::ERROR("Frame: before the save, {}: an unknown exception", a_what);
 							}
 						};
-						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // first: an unworn loan's copy and kit go with it, before Spawns discards copies
+						step("the settlements' numbers", [] { WorkshopSync::BeforeSaveResources(); });  // first, on its own: no friend's piece's worth is saved on our workbenches
+						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // before the rest: an unworn loan's copy and kit go with it, before Spawns discards copies
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved

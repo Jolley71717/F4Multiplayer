@@ -1316,7 +1316,11 @@ namespace Protocol
 	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
 	// 0: nothing now, or the piece is gone). ResourceMirror.h.
 	inline constexpr std::size_t RESOURCE_KINDS = 6;
-	inline constexpr float       MAX_RESOURCE_VALUE = 100000.0f;  // far over any piece's (a fusion generator makes 100 power)
+	inline constexpr float       MAX_RESOURCE_VALUE = 100000.0f;  // past this a message is no game's: dropped
+	// The most one piece counts for of each kind; more is taken as this. Over the biggest vanilla piece of each (the PRPS of
+	// Fallout4.esm and the DLCs: a greenhouse planter's 2 food, an industrial water purifier's 40 water, a missile turret's
+	// 15 defense, a double bed's 2 beds, an interior fusebox's 100 power, the Institute beam emitter's 20 power taken).
+	inline constexpr std::array<float, RESOURCE_KINDS> MAX_RESOURCE_PIECE{ 10.0f, 100.0f, 50.0f, 10.0f, 200.0f, 50.0f };
 
 	struct ResourceState
 	{
@@ -3872,7 +3876,8 @@ namespace Protocol
 		return w.Data();
 	}
 
-	// None if it names no piece, one no game made at runtime, or a value that is no count (negative, too large, not a number).
+	// None if it names no piece, one no game made at runtime, or a value that is no count (negative, past MAX_RESOURCE_VALUE,
+	// not a number). A value over its kind's MAX_RESOURCE_PIECE is read as that.
 	inline std::optional<ResourceStates> DecodeResourceStates(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
@@ -3896,7 +3901,7 @@ namespace Protocol
 					if (!r.Ok() || !std::isfinite(value) || value <= 0.0f || value > MAX_RESOURCE_VALUE) {
 						return std::nullopt;
 					}
-					entry.values[k] = value;
+					entry.values[k] = (std::min)(value, MAX_RESOURCE_PIECE[k]);  // the server relays it so clamped, and the receiver keeps it so
 				}
 			}
 		}

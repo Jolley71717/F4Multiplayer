@@ -57,14 +57,29 @@ namespace ResourceMirror
 		return std::ranges::any_of(a_values, [](float a_v) { return a_v != 0.0f; });
 	}
 
-	// What may go on the wire: each value a count (a negative one, or one that is no number, counts for nothing), at most
-	// Protocol::MAX_RESOURCE_VALUE.
+	inline constexpr float EPSILON = 0.001f;  // a value or a change smaller than this is none
+
+	// What one piece counts for: each value a count (a negative one, one under EPSILON, or one that is no number counts for
+	// nothing), at most its kind's Protocol::MAX_RESOURCE_PIECE.
 	[[nodiscard]] inline Values Clean(Values a_values)
 	{
-		for (auto& value : a_values) {
-			value = std::isfinite(value) && value > 0.0f ? (std::min)(value, Protocol::MAX_RESOURCE_VALUE) : 0.0f;
+		for (std::size_t k = 0; k < KINDS; ++k) {
+			auto& value = a_values[k];
+			value = std::isfinite(value) && value >= EPSILON ? (std::min)(value, Protocol::MAX_RESOURCE_PIECE[k]) : 0.0f;
 		}
 		return a_values;
+	}
+
+	// The most a workbench holds of friends' pieces of each kind, from one friend and from all of them: past what any honest
+	// settlement reaches within the game's build limit (a water farm of 40 industrial purifiers makes 1600 water). What a
+	// modified game says past it counts as this.
+	inline constexpr Values MAX_BENCH{ 500.0f, 2000.0f, 1000.0f, 200.0f, 2000.0f, 1000.0f };
+
+	inline void CapBench(Values& a_values)
+	{
+		for (std::size_t k = 0; k < KINDS; ++k) {
+			a_values[k] = (std::min)(a_values[k], MAX_BENCH[k]);
+		}
 	}
 
 	// ---- The builder's side: what each of our pieces counts for ---------------------------------------
@@ -80,7 +95,7 @@ namespace ResourceMirror
 		{
 			kHere,  // loaded: it counts for `values` now (all 0: for nothing)
 			kAway,  // not loaded (its cell isn't): it counts as it did, and nothing is sent
-			kGone,  // no piece of ours any more (scrapped, stored, deleted): forgotten (its copy goes with its scrap)
+			kGone,  // no piece of ours any more (scrapped, stored, deleted, disabled, unlinked): forgotten, sent as nothing
 		};
 		State  state = State::kGone;
 		Values values{};
@@ -104,7 +119,8 @@ namespace ResourceMirror
 		void SendAll() { all = true; }
 
 		// What to send now: the pieces whose values changed since they were last sent, or all of them (SendAll, and every
-		// SNAPSHOT), each loaded one as it counts now. A piece gone is forgotten unsent. The Engine gives:
+		// SNAPSHOT), each loaded one as it counts now. A piece gone is forgotten, and sent as counting for nothing if it last
+		// counted for something: a script may disable it, or unlink it, with no scrap that takes its copy. The Engine gives:
 		//
 		//   Look Look(std::uint32_t ref)
 		template <class Engine>
@@ -123,6 +139,9 @@ namespace ResourceMirror
 			for (auto it = tracked.begin(); it != tracked.end();) {
 				const auto look = a_engine.Look(it->first);
 				if (look.state == Look::State::kGone) {
+					if (it->second && Any(*it->second)) {
+						out.push_back({ it->first, {} });
+					}
 					it = tracked.erase(it);
 					continue;
 				}
@@ -212,23 +231,34 @@ namespace ResourceMirror
 		void Clear() { kept.clear(); }
 
 		// For each of our workbenches, what friends' pieces count for there: over the pieces we have a copy of, each at the
-		// workbench its report named. The Engine gives:
+		// workbench its report named; each friend's sum, and the sum of them, at most MAX_BENCH. The Engine gives:
 		//
 		//   std::uint32_t BenchOf(const Key&)   the workbench of our copy of that piece; 0 if we have none (not placed yet,
 		//                                       or one of our own stands there, or another friend's copy stands for it)
 		template <class Engine>
 		[[nodiscard]] std::map<std::uint32_t, Values> Totals(Engine& a_engine) const
 		{
-			std::map<std::uint32_t, Values> totals;
+			std::map<std::pair<std::uint32_t, std::uint32_t>, Values> theirs;  // (workbench, friend)
 			for (const auto& [key, values] : kept) {
 				const auto bench = a_engine.BenchOf(key);
 				if (bench == 0) {
 					continue;
 				}
-				auto& total = totals[bench];
+				auto& total = theirs[{ bench, key.first }];
 				for (std::size_t k = 0; k < KINDS; ++k) {
 					total[k] += values[k];
 				}
+			}
+			std::map<std::uint32_t, Values> totals;
+			for (auto& [at, values] : theirs) {
+				CapBench(values);
+				auto& total = totals[at.first];
+				for (std::size_t k = 0; k < KINDS; ++k) {
+					total[k] += values[k];
+				}
+			}
+			for (auto& [bench, values] : totals) {
+				CapBench(values);
 			}
 			return totals;
 		}
@@ -254,9 +284,8 @@ namespace ResourceMirror
 	// sheltered beds a settlement doesn't have. The builder's game still sends them.
 	inline constexpr std::array<bool, KINDS> APPLIED{ true, true, true, false, true, true };
 
-	inline constexpr auto  APPLY_EVERY = 1s;    // how often the totals are put on the workbenches
-	inline constexpr auto  HUSH_LIMIT = 5s;     // a save's hush is let go this long after it, if no word says the save is over
-	inline constexpr float EPSILON = 0.001f;    // a change smaller than this is no change
+	inline constexpr auto APPLY_EVERY = 1s;  // how often the totals are put on the workbenches
+	inline constexpr auto HUSH_LIMIT = 5s;   // a save's hush is let go this long after the last, if no word says the save is over
 
 	// What we put on each of our workbenches, so all of it can be taken off again: the game's own recount sets only what
 	// the workbench's own pieces count for, and leaves ours be.
@@ -271,11 +300,11 @@ namespace ResourceMirror
 		template <class Engine>
 		std::size_t Apply(Engine& a_engine, const std::map<std::uint32_t, Values>& a_totals, Clock::time_point a_now)
 		{
-			if (hushed) {
-				if (!saveDone && a_now - hushedAt < HUSH_LIMIT) {
+			if (hushes > 0) {
+				if (a_now - hushedAt < HUSH_LIMIT) {
 					return 0;
 				}
-				hushed = false;
+				hushes = 0;
 			}
 			std::size_t changed = 0;
 			for (const auto& [bench, want] : a_totals) {
@@ -292,17 +321,23 @@ namespace ResourceMirror
 		}
 
 		// A save is about to be written: everything of ours taken off, so no save holds a friend's piece; put back at the
-		// first Apply after the save (SaveDone, or HUSH_LIMIT after). How many values it took off.
+		// first Apply after the save (SaveDone), or HUSH_LIMIT after the last hush if no word comes. A second save before the
+		// first one's word (a quicksave as an autosave is written) holds it off until both are done. How many values it
+		// took off.
 		template <class Engine>
 		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
 		{
-			saveDone = false;
-			hushed = true;
+			++hushes;
 			hushedAt = a_now;
 			return TakeAllOff(a_engine);
 		}
 
-		void SaveDone() { saveDone = true; }
+		void SaveDone()
+		{
+			if (hushes > 0) {
+				--hushes;
+			}
+		}
 
 		// Everything of ours taken off (the session ended). How many values.
 		template <class Engine>
@@ -317,16 +352,36 @@ namespace ResourceMirror
 			return changed;
 		}
 
-		// A save was loaded: the workbenches are the save's now, which holds none of ours (Hush); what we had put on the old
-		// world's is forgotten unread.
-		void Forget()
+		// A save was loaded, or a new game started: the workbenches are the new world's, and what we had put on the old one's
+		// is forgotten. A load was told first (TakeAllOff before it); a new game from the main menu is not, so what of ours is
+		// still on a workbench of the same ID (its temporary modifier holds at least it: the engine did not set it back) is
+		// taken off; one set back is let be. How many values it took off. The Engine gives too:
+		//
+		//   std::optional<float> Temporary(std::uint32_t bench, Kind)   the workbench's temporary modifier (none: no such one)
+		template <class Engine>
+		std::size_t ForgetWorld(Engine& a_engine)
 		{
+			std::size_t off = 0;
+			for (const auto& [bench, have] : on) {
+				for (std::size_t k = 0; k < KINDS; ++k) {
+					if (have[k] == 0.0f) {
+						continue;
+					}
+					const auto kind = static_cast<Kind>(k);
+					const auto now = a_engine.Temporary(bench, kind);
+					const bool still = now && (have[k] > 0.0f ? *now >= have[k] - EPSILON : *now <= have[k] + EPSILON);
+					if (still && a_engine.Add(bench, kind, -have[k])) {
+						++off;
+					}
+				}
+			}
 			on.clear();
-			hushed = false;
+			hushes = 0;
+			return off;
 		}
 
 		[[nodiscard]] const std::map<std::uint32_t, Values>& On() const { return on; }
-		[[nodiscard]] bool                                   Hushed() const { return hushed; }
+		[[nodiscard]] bool                                   Hushed() const { return hushes > 0; }
 
 	private:
 		template <class Engine>
@@ -335,11 +390,13 @@ namespace ResourceMirror
 			auto&       have = on[a_bench];
 			std::size_t changed = 0;
 			for (std::size_t k = 0; k < KINDS; ++k) {
-				const float delta = (APPLIED[k] ? a_want[k] : 0.0f) - have[k];
-				if (std::fabs(delta) < EPSILON || !a_engine.Add(a_bench, static_cast<Kind>(k), delta)) {
+				const float want = APPLIED[k] ? a_want[k] : 0.0f;
+				// Taken off, it is all of what we added, however little: no remainder goes into a save.
+				const float delta = want == 0.0f ? -have[k] : want - have[k];
+				if (delta == 0.0f || (want != 0.0f && std::fabs(delta) < EPSILON) || !a_engine.Add(a_bench, static_cast<Kind>(k), delta)) {
 					continue;
 				}
-				have[k] += delta;
+				have[k] = want == 0.0f ? 0.0f : have[k] + delta;
 				++changed;
 			}
 			if (!Any(have)) {
@@ -348,17 +405,31 @@ namespace ResourceMirror
 			return changed;
 		}
 
-		std::map<std::uint32_t, Values> on;  // what we added to each workbench, of each value
-		bool                            hushed = false;
-		bool                            saveDone = false;
+		std::map<std::uint32_t, Values> on;          // what we added to each workbench, of each value
+		int                             hushes = 0;  // saves under way (Hush less SaveDone)
 		Clock::time_point               hushedAt{};
 	};
 
+	// A loaded save's record (DecodeRecord) taken off its workbenches: how many values.
+	template <class Engine>
+	std::size_t TakeOffRecord(Engine& a_engine, const std::vector<std::pair<std::uint32_t, Values>>& a_held)
+	{
+		std::size_t off = 0;
+		for (const auto& [bench, values] : a_held) {
+			for (std::size_t k = 0; k < KINDS; ++k) {
+				if (values[k] != 0.0f && std::isfinite(values[k]) && a_engine.Add(bench, static_cast<Kind>(k), -values[k])) {
+					++off;
+				}
+			}
+		}
+		return off;
+	}
+
 	// ---- The save's record: what it holds of friends' pieces on our workbenches --------------------
 
-	// Nothing, unless the hush before the save left some on (Applier::Hush: a workbench not found then). A load takes what
-	// its save's record names off. Laid out: a count (u16), and for each workbench its form ID (u32, the save's), a mask
-	// of the values it holds and a float for each.
+	// Nothing, unless the hush before the save left some on (Applier::Hush: a workbench not found then), or didn't run. A
+	// load takes what its save's record names off. Laid out: a count (u16), and for each workbench its form ID (u32, the
+	// save's), a mask of the values it holds and a float for each.
 	inline constexpr std::size_t MAX_RECORD_BENCHES = 512;  // the game has about 30 settlements, its DLCs and mods' a few hundred more
 
 	[[nodiscard]] inline std::vector<std::uint8_t> EncodeRecord(const std::vector<std::pair<std::uint32_t, Values>>& a_benches)
@@ -423,4 +494,45 @@ namespace ResourceMirror
 		}
 		return at == a_bytes.size() ? out : std::vector<std::pair<std::uint32_t, Values>>{};
 	}
+
+	// What each save's record says: made fresh for each save. The hush before it (Hushed) says what it left on; a save whose
+	// hush never ran, or threw before it said, (Take with no Hushed since BeforeSave) is written with what is on now (Live),
+	// never with an earlier save's.
+	class SaveRecord
+	{
+	public:
+		using Benches = std::vector<std::pair<std::uint32_t, Values>>;
+
+		// What is on our workbenches now, whenever it changes.
+		void Live(const std::map<std::uint32_t, Values>& a_on) { live.assign(a_on.begin(), a_on.end()); }
+
+		// A save's hush starts: nothing of an earlier save's is kept.
+		void BeforeSave()
+		{
+			forSave.clear();
+			hushed = false;
+		}
+
+		// The hush is over (or threw): what it left on.
+		void Hushed(const std::map<std::uint32_t, Values>& a_on)
+		{
+			forSave.assign(a_on.begin(), a_on.end());
+			live = forSave;
+			hushed = true;
+		}
+
+		// The save's record, as it is written (empty: none).
+		[[nodiscard]] std::vector<std::uint8_t> Take()
+		{
+			auto bytes = EncodeRecord(hushed ? forSave : live);
+			forSave.clear();
+			hushed = false;
+			return bytes;
+		}
+
+	private:
+		Benches live;
+		Benches forSave;
+		bool    hushed = false;
+	};
 }

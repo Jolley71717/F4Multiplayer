@@ -259,6 +259,16 @@ namespace WorkshopResources
 		return true;
 	}
 
+	std::optional<float> TemporaryOf(std::uint32_t a_bench, ResourceMirror::Kind a_kind)
+	{
+		const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_bench);
+		const auto av = ValueOf(a_kind);
+		if (!bench || bench->IsDeleted() || !WorkshopSync::IsWorkbenchAnchor(bench) || !av) {
+			return std::nullopt;
+		}
+		return static_cast<const RE::ActorValueOwner&>(*bench).GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, *av);
+	}
+
 	std::string DescribeProduce(RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref) {

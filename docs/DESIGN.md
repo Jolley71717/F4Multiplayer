@@ -2526,22 +2526,39 @@ dev commands), with three vanilla crops, a placed crop, water pump, bed and smal
 workbenches as a workshop item, standing, no copy; `TrackOwnResources` every 2 s) and polls them once a second
 (`ResourceMirror::Reporter`): each one's value of each kind if the engine's test says it produces now, else nothing,
 as its own recount counts it. A change goes at once, all of them every 30 s and to a joiner, a piece whose cell isn't
-loaded as last sent, a scrapped one not at all (its copy goes with the scrap). Per piece, not per workbench: a
+loaded as last sent. A piece that is no longer one of ours (scrapped, or disabled, deleted or unlinked with no scrap
+report, which a script may do) goes once as counting for nothing, so the friend's total leaves it out though its copy
+stays. Per piece, not per workbench: a
 friend's game counts only the pieces it has a copy of, so a piece both saves hold (two saves with one past: no copy is
 made, `OursAt`), another friend's twin of it, or a guest's building from before the session that the host's rules
 don't share never counts twice or out of nothing.
+
+**Caps.** One piece counts for at most `Protocol::MAX_RESOURCE_PIECE` of each kind: 10 food, 100 water, 50 defense, 10
+beds, 200 power made, 50 power taken, over the biggest vanilla piece of each (the PRPS of Fallout4.esm and its DLCs: a
+greenhouse planter's 2 food, an industrial water purifier's 40 water, a missile turret's 15 defense, a double bed's 2,
+the interior fusebox's 100 power, the Institute's beam emitter's 20 power taken). A message whose value is no number,
+negative or past 100000 is dropped; a value past its kind's cap is read as the cap, so the server relays it capped
+and the friend's game keeps it so. A workbench holds at most `ResourceMirror::MAX_BENCH` from each friend, and from
+all of them together: 500 food, 2000 water, 1000 defense, 200 beds, 2000 power made, 1000 taken, past what an honest
+settlement reaches within the build limit (40 industrial purifiers make 1600 water). A value under 0.001 counts for
+nothing.
 
 **What is applied.** Each game sums what friends' games say, over the copies it has, at the workbench each copy was
 reported at (`ResourceMirror::Tally`), and once a second makes what it has added to each workbench equal that sum
 (`ResourceMirror::Applier`), on the value's temporary modifier (`WorkshopResources::AddToBench`; scripts' `ModValue`
 writes the permanent one, the recount the base and damage). What it added it alone knows and takes off:
 
-- before every save (`kPreSaveGame`, with the power hush), put back after it (`kPostSaveGame`, or 5 s after if no
-  word comes), so no save holds a friend's numbers. What couldn't come off (no such workbench then) is written in the
-  save's co-save record `RSRC`, and a load takes what its record names off again;
+- before every save (`kPreSaveGame`, the first step and one of its own, `WorkshopSync::BeforeSaveResources`), put back
+  after it (`kPostSaveGame`, or 5 s after the last hush if no word comes; a second save before the first is over keeps
+  it off until both are). Taken off, it is all of what was added however small, so no remainder is saved. What
+  couldn't come off (no such workbench then), or all that is on should the hush throw or not run, is written in that
+  save's co-save record `RSRC` (`ResourceMirror::SaveRecord`, made fresh for each save, never an earlier one's), and a
+  load takes what its record names off again;
 - when the friend leaves (at once), and all of it when the session ends;
-- at a load: the loaded save's workbenches hold none of it, what was added to the old world's is forgotten, and a
-  friend's pieces count again as their copies are found after the load.
+- at a load (all of it off before it), or a new game from the main menu (no word before it): the new world's
+  workbenches hold none of it; one that still holds at least what was added on it (a new game whose engine didn't set
+  it back) has it taken off (`Applier::ForgetWorld`), what was added to the old world's is forgotten, and a friend's
+  pieces count again as their copies are found after the load.
 
 Not beds: a modifier on beds would show in the scripts' `GetValue` as beds the settlement doesn't have in the Pip-Boy
 or in the daily update's count. They are sent and kept, and put on no workbench (`ResourceMirror::APPLIED`).
@@ -2612,7 +2629,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
-| `kWorkshopResources` | anyone, of their own pieces | the event budget; 1 to 128 entries, each a reference from the runtime range, a mask of the six kinds and a finite value above 0 and at most 100000 for each; the sender stamped | counted only at the workbench of a copy we made of that player's piece (keyed by builder and their reference), never for a piece of our own or of the world; at most 8192 pieces kept; on a workbench's temporary modifier, taken off before every save and when they leave; no beds | no |
+| `kWorkshopResources` | anyone, of their own pieces | the event budget; 1 to 128 entries, each a reference from the runtime range, a mask of the six kinds and a finite value above 0 and at most 100000 for each (else the message is dropped), each read as at most its kind's `MAX_RESOURCE_PIECE`; the sender stamped | counted only at the workbench of a copy we made of that player's piece (keyed by builder and their reference), never for a piece of our own or of the world; at most 8192 pieces kept; each friend's sum at a workbench, and all friends' sum, at most `MAX_BENCH`; on a workbench's temporary modifier, taken off before every save and when they leave; no beds | no |
 | `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |
 | `kReportObjectHold`, `kReportObjectRest` | the player moving the object (the first to grab it; after a let-go the thrower until it rests, or whoever grabs it next) | a plugin's reference only; a hold within 512 units of the holder, angles within 8 rad, finite; a rest in the world, in one cell or worldspace, at under 5000 units a second (none at rest); refused while another player holds it (`ObjectMovers`); 20 holds a second a player, a rest budget of 24 and 6 a second (kept across rejoining) | a loose object of ours (`Movable`: loose form type, physics body, no quest alias, nothing SaveGuard, Spawns or WorkshopSync places, not in workshop mode), within 8000 units of us in the same space; a hold drawn only within 2500 units of the holder's stand-in, a rest only within 4096 units of where our copy is; never one in our player's hands; every pose finite and in the world before it is written, velocities capped | no: a move is over in seconds, and each game's save keeps where its own copy lies |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |

@@ -1,6 +1,7 @@
 #include "Test.h"
 #include "game/ResourceMirror.h"
 
+#include <limits>
 #include <map>
 #include <set>
 #include <vector>
@@ -83,7 +84,7 @@ TEST("workshop resources: the builder's game sends what its pieces count for, an
 	CHECK(reporter.Poll(pieces, t).empty());  // not before the next poll
 }
 
-TEST("workshop resources: a piece out of the builder's loaded cells counts as it did, and a gone one is forgotten unsent")
+TEST("workshop resources: a piece out of the builder's loaded cells counts as it did, and a gone one is sent as nothing")
 {
 	Pieces   pieces;
 	Reporter reporter;
@@ -95,10 +96,15 @@ TEST("workshop resources: a piece out of the builder's loaded cells counts as it
 	CHECK(reporter.Poll(pieces, t).size() == 2u);
 
 	pieces.looks[CROP] = Away();  // the builder went to another town
-	pieces.looks.erase(PUMP);     // scrapped: its copy goes with the scrap
+	pieces.looks.erase(PUMP);     // scrapped, or disabled by a script, or unlinked: no scrap report may take its copy
 	t += POLL;
-	CHECK(reporter.Poll(pieces, t).empty());
+	auto gone = reporter.Poll(pieces, t);
+	REQUIRE(gone.size() == 1u);
+	CHECK(gone[0].refId == PUMP);
+	CHECK(!Any(gone[0].values));  // the friend's next total leaves it out
 	CHECK(reporter.Size() == 1u);
+	t += POLL;
+	CHECK(reporter.Poll(pieces, t).empty());  // once
 
 	reporter.SendAll();  // someone joined: the piece away goes as last sent
 	t += POLL;
@@ -111,12 +117,12 @@ TEST("workshop resources: all of them go again every SNAPSHOT, and values that a
 {
 	Pieces   pieces;
 	Reporter reporter;
-	pieces.looks[CROP] = Here({ -1.0f, std::nanf(""), 2.0f, 0, 1e9f, 0 });
+	pieces.looks[CROP] = Here({ -1.0f, std::nanf(""), 2.0f, 0.0005f, 1e9f, 0 });
 	reporter.Track(CROP);
 	auto t = Clock::time_point{} + 1h;
 	auto sent = Sent(reporter.Poll(pieces, t));
 	REQUIRE(sent.size() == 1u);
-	CHECK(sent[CROP] == (Values{ 0, 0, 2.0f, 0, Protocol::MAX_RESOURCE_VALUE, 0 }));
+	CHECK(sent[CROP] == (Values{ 0, 0, 2.0f, 0, Protocol::MAX_RESOURCE_PIECE[kPower], 0 }));  // under EPSILON: nothing; past a piece's most: that
 	t += POLL;
 	CHECK(reporter.Poll(pieces, t).empty());
 	t += SNAPSHOT;
@@ -203,6 +209,7 @@ TEST("workshop resources: a resource message names only pieces a game made, each
 	CHECK(!DecodeResourceStates(Encode(ResourceStates{ 4, { { 0xFF001234, Food(-1) } } }, MessageType::kWorkshopResources)));
 	CHECK(!DecodeResourceStates(Encode(ResourceStates{ 4, { { 0xFF001234, Food(std::nanf("")) } } }, MessageType::kWorkshopResources)));
 	CHECK(!DecodeResourceStates(Encode(ResourceStates{ 4, { { 0xFF001234, Food(MAX_RESOURCE_VALUE * 2) } } }, MessageType::kWorkshopResources)));
+	CHECK(!DecodeResourceStates(Encode(ResourceStates{ 4, { { 0xFF001234, Food(std::numeric_limits<float>::infinity()) } } }, MessageType::kWorkshopResources)));
 	auto bytes = Encode(states, MessageType::kWorkshopResources);
 	bytes[1 + 4 + 1 + 4] = 0x40;  // the first entry's mask: a value past the last
 	CHECK(!DecodeResourceStates(bytes));
@@ -235,6 +242,14 @@ namespace
 			held[a_bench][a_kind] += a_delta;
 			++adds;
 			return true;
+		}
+
+		std::optional<float> Temporary(std::uint32_t a_bench, Kind a_kind)
+		{
+			if (!here.contains(a_bench)) {
+				return std::nullopt;
+			}
+			return held[a_bench][a_kind];
 		}
 	};
 }
@@ -284,7 +299,8 @@ TEST("workshop resources: before a save everything of ours comes off the workben
 	CHECK(applier.Apply(benches, { { BENCH, Food(1) } }, t + 10s + HUSH_LIMIT) == 1u);
 	CHECK(benches.held[BENCH] == Food(1));
 
-	applier.Forget();  // a save loaded: its workbenches hold none of ours
+	CHECK(applier.TakeAllOff(benches) == 1u);  // a load is coming
+	CHECK(applier.ForgetWorld(benches) == 0u);  // the save's workbenches hold none of ours
 	CHECK(applier.On().empty());
 }
 
@@ -316,3 +332,147 @@ TEST("workshop resources: the save's record of what it held of friends' pieces r
 	badMask[2 + 4] = 0x80;
 	CHECK(DecodeRecord(badMask).empty());
 }
+
+TEST("workshop resources: a piece counts for at most its kind's most, and a workbench for at most MAX_BENCH from each friend and from all")
+{
+	using namespace Protocol;
+	// On the wire: a value past a piece's most is read as that, at the server's relay and at the friend's game alike.
+	const auto read = DecodeResourceStates(Encode(ResourceStates{ 4, { { 0xFF001234, { 500.0f, 41.0f, 60.0f, 3.0f, 99999.0f, 2.0f } } } }, MessageType::kReportWorkshopResources));
+	REQUIRE(read.has_value());
+	CHECK(read->entries[0].values == (Values{ MAX_RESOURCE_PIECE[kFood], 41.0f, MAX_RESOURCE_PIECE[kSafety], 3.0f, MAX_RESOURCE_PIECE[kPower], 2.0f }));
+	for (std::size_t k = 0; k < KINDS; ++k) {
+		CHECK(MAX_RESOURCE_PIECE[k] * 10 <= MAX_BENCH[k]);  // ten of the biggest piece of any kind fit on a workbench
+	}
+
+	// The tally: each piece clamped, each friend's sum at a workbench, and the sum of all friends', at most MAX_BENCH.
+	Tally  tally;
+	Copies copies;
+	CHECK(tally.Set(BUILDER, { 0xFF000001, Water(1e6f) }));
+	CHECK(tally.Of({ BUILDER, 0xFF000001 }) == Water(MAX_RESOURCE_PIECE[kWater]));
+	for (std::uint32_t i = 1; i <= 100; ++i) {
+		CHECK(tally.Set(BUILDER, { 0xFF000000 + i, Water(100) }));  // 10000 water from one friend
+		CHECK(tally.Set(OTHER, { 0xFF000000 + i, Food(5) }));        // and 500 food from another
+		copies.benches[{ BUILDER, 0xFF000000 + i }] = BENCH;
+		copies.benches[{ OTHER, 0xFF000000 + i }] = BENCH;
+	}
+	CHECK(tally.Set(OTHER, { 0xFF000200, Water(100) }));
+	copies.benches[{ OTHER, 0xFF000200 }] = BENCH;
+	auto totals = tally.Totals(copies);
+	CHECK(totals.at(BENCH)[kWater] == MAX_BENCH[kWater]);  // one friend's capped, and the other's 100 on top capped again
+	CHECK(totals.at(BENCH)[kFood] == MAX_BENCH[kFood]);
+	tally.Forget(BUILDER);
+	totals = tally.Totals(copies);
+	CHECK(totals.at(BENCH)[kWater] == 100.0f);
+	CHECK(totals.at(BENCH)[kFood] == MAX_BENCH[kFood]);
+
+	CHECK(tally.Set(OTHER, { 0xFF000300, { std::nanf(""), -5, 0.0004f, 0, 0, 0 } }));  // no count of anything: nothing kept
+	CHECK(!tally.Of({ OTHER, 0xFF000300 }).has_value());
+}
+
+TEST("workshop resources: taking off takes all of what we added, however little, so no remainder goes into a save")
+{
+	Benches benches;
+	Applier applier;
+	const auto t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, Food(1) } }, t);
+	CHECK(applier.Apply(benches, { { BENCH, Food(1.0005f) } }, t) == 0u);  // a change under EPSILON: none
+	CHECK(applier.Apply(benches, { { BENCH, Food(0.0005f) } }, t) == 1u);  // most of it off, a remainder under EPSILON on
+	REQUIRE(applier.On().contains(BENCH));
+	const float remainder = applier.On().at(BENCH)[kFood];
+	CHECK(remainder > 0.0f);
+	CHECK(remainder < EPSILON);
+	const auto adds = benches.adds;
+	CHECK(applier.Hush(benches, t) == 1u);  // the remainder comes off for the save
+	CHECK(benches.adds == adds + 1);
+	CHECK(applier.On().empty());
+	CHECK(std::fabs(benches.held[BENCH][kFood]) < 1e-6f);
+}
+
+TEST("workshop resources: a second save before the first is over keeps friends' pieces off until both are")
+{
+	Benches benches;
+	Applier applier;
+	const Values all{ 0.5f, 3, 8, 0, 0, 0 };
+	auto         t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, all } }, t);
+	CHECK(applier.Hush(benches, t) == 3u);
+	CHECK(applier.Hush(benches, t + 100ms) == 0u);  // a quicksave as the autosave is written: nothing more to take off
+	applier.SaveDone();                             // the first is over
+	CHECK(applier.Hushed());
+	CHECK(applier.Apply(benches, { { BENCH, all } }, t + 200ms) == 0u);
+	CHECK(!Any(benches.held[BENCH]));
+	applier.SaveDone();  // and the second
+	CHECK(!applier.Hushed());
+	CHECK(applier.Apply(benches, { { BENCH, all } }, t + 300ms) == 3u);
+	applier.SaveDone();  // a word too many changes nothing
+	CHECK(applier.Apply(benches, { { BENCH, all } }, t + 400ms) == 0u);
+	CHECK(benches.held[BENCH] == all);
+}
+
+TEST("workshop resources: a save's record is made fresh for it: what its hush left on, or all that is on if the hush didn't say")
+{
+	Benches    benches;
+	Applier    applier;
+	SaveRecord record;
+	auto       t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, Food(1) }, { RED_ROCKET, Water(2) } }, t);
+	record.Live(applier.On());
+
+	// The hush can't take Red Rocket's off (no such workbench here now): the save's record names it.
+	benches.here.erase(RED_ROCKET);
+	record.BeforeSave();
+	CHECK(applier.Hush(benches, t) == 1u);
+	record.Hushed(applier.On());
+	auto held = DecodeRecord(record.Take());
+	REQUIRE(held.size() == 1u);
+	CHECK(held[0].first == RED_ROCKET);
+	CHECK(held[0].second == Water(2));
+	applier.SaveDone();
+
+	// The next save's hush takes everything off: its record is empty, not the last save's.
+	benches.here.insert(RED_ROCKET);
+	record.BeforeSave();
+	CHECK(applier.Hush(benches, t + 1s) == 1u);
+	record.Hushed(applier.On());
+	CHECK(record.Take().empty());
+	applier.SaveDone();
+
+	// A hush that threw (or never ran) said nothing: the record holds all that is on now.
+	applier.Apply(benches, { { BENCH, Food(1) } }, t + 2s);
+	record.Live(applier.On());
+	record.BeforeSave();
+	held = DecodeRecord(record.Take());
+	REQUIRE(held.size() == 1u);
+	CHECK(held[0] == (std::pair<std::uint32_t, Values>{ BENCH, Food(1) }));
+	CHECK(DecodeRecord(record.Take()) == held);  // a save with no hush at all: still what is on
+}
+
+TEST("workshop resources: a new world forgets what we put on the old one's workbenches, taking off what is still there")
+{
+	Benches benches;
+	Applier applier;
+	const auto t = Clock::time_point{} + 1h;
+	applier.Apply(benches, { { BENCH, { 1, 3, 0, 0, 0, 0 } }, { RED_ROCKET, Water(2) } }, t);
+	applier.Hush(benches, t);  // a hush that never got its word
+	applier.Apply(benches, { { BENCH, { 1, 3, 0, 0, 0, 0 } }, { RED_ROCKET, Water(2) } }, t + HUSH_LIMIT);
+	REQUIRE(applier.On().size() == 2u);
+
+	// A new game from the main menu: Sanctuary's workbench kept what we put on (the engine didn't set it back), Red
+	// Rocket's was set back.
+	benches.held[RED_ROCKET] = {};
+	const auto adds = benches.adds;
+	CHECK(applier.ForgetWorld(benches) == 2u);
+	CHECK(benches.adds == adds + 2);
+	CHECK(!Any(benches.held[BENCH]));
+	CHECK(!Any(benches.held[RED_ROCKET]));  // nothing taken off one that holds none of ours
+	CHECK(applier.On().empty());
+	CHECK(!applier.Hushed());
+	CHECK(applier.ForgetWorld(benches) == 0u);
+
+	// A loaded save's record taken off the workbenches it names (one not here: nothing).
+	benches.held[BENCH] = Food(2);
+	const std::vector<std::pair<std::uint32_t, Values>> record{ { BENCH, Food(2) }, { 0x0001F00D, Water(1) } };
+	CHECK(TakeOffRecord(benches, record) == 1u);
+	CHECK(!Any(benches.held[BENCH]));
+}
+

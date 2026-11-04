@@ -105,7 +105,7 @@ namespace WorkshopSync
 	// at its workbench here too, as a modifier the session alone holds (ResourceMirror.h, WorkshopResources.h).
 	void ApplyResources(const Protocol::ResourceStates& a_resources);
 	// The co-save record of what a save held of friends' pieces on our workbenches (nothing, unless the hush before it
-	// failed), and the one a load read, taken off once the load is over. Run on the save's or the load's thread.
+	// failed or didn't run; made fresh for each save), and the one a load read, taken off once the load is over. Run on the save's or the load's thread.
 	[[nodiscard]] std::vector<std::uint8_t> ResourceSaveRecord();
 	void LoadResourceRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
 	void RevertResourceRecord();
@@ -120,7 +120,12 @@ namespace WorkshopSync
 	// running, with no session to stop it); AfterSave shows them as their builders' games say again.
 	void BeforeSave();
 
-	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again.
+	// A save is about to be written (main thread), a step of its own so nothing else before the save can keep it from running:
+	// what friends' pieces count for comes off our workbenches (Applier::Hush), and this save's record says what didn't.
+	void BeforeSaveResources();
+
+	// The save is over (main thread): the copies shown unpowered for it are shown as their builders' games say again, and
+	// friends' pieces' worth goes back on our workbenches.
 	void AfterSave();
 
 	// Dev: a friend's game said this piece of theirs is powered or not, as the server's relay would say (wspower want).
