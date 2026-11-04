@@ -145,6 +145,8 @@ namespace DownRules
 		bool console = false;    // the console is open, or was a moment ago (Downed.cpp): a stand-up then is the player's command
 		bool knockedOver = false;  // the knock state is not normal: a ragdoll, or the get-up after it
 		bool sneaking = false;     // the game has the player sneaking (Actor::IsSneaking)
+		bool bleedOutCamera = false;  // the player camera is in its bleed-out state, or has it to go back to (Downed.cpp BleedOutCamera)
+		bool bleedOutLayer = false;   // the input layer the engine's start of a down puts on the player is in use (Downed.cpp BleedOutLayer)
 	};
 
 	// What to do about it this frame.
@@ -170,6 +172,7 @@ namespace DownRules
 		bool                sneakKept = false;     // up again sneaking, though they went down standing: the sneak key pressed while down, theirs
 		bool                graphSneakStop = false;  // up again standing, though they went down sneaking: the graph told its sneak stop (as they got up, and settled)
 		bool                settled = false;       // GET_UP_SETTLE after getting up: the get-up has played out
+		bool                finishDown = false;    // up again, and the down's bleed-out camera or input layer still on: the engine's end of those (Downed.cpp FinishDown)
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -196,6 +199,14 @@ namespace DownRules
 	// sneak. The sneak key reads the stance, asks a graph already in sneak to start one, is refused, and does nothing until
 	// a load builds the graph again. The graph is told its own sneak stop (graphSneakStop) as they get up, and once more
 	// when the get-up has played out (a graph still in the get-up may not take it then), unless the stance changed since.
+	//
+	// The engine's start of a down puts the player camera in its bleed-out state and an input layer on the player; only
+	// the life state's own end of the down takes them off again. A player stood up some other way kept both: downed while
+	// knocked over by a grenade and helped up, the camera stayed on the ground and the Pip-Boy would not open until a load
+	// (a player's report, 2026-11-03). Up again with either still on, the rest of the down is ended the engine's way
+	// (finishDown): not while knocked over (a knock-down's ragdoll has the bleed-out camera too, and its own end takes it
+	// off) nor in a stopped game; once as soon as it can be, and once more when the get-up has played out if that did not
+	// take.
 	class Self
 	{
 	public:
@@ -446,6 +457,8 @@ namespace DownRules
 		// bled out, not giving up), and really lying there: not while the game has them up and they are being put down
 		// again (StoodUp), when the engine walks them itself and a step of ours could keep the put-down from taking.
 		[[nodiscard]] bool MayCrawl() const { return rules.crawl && phase == Phase::kDown && !giveUp && !standingSince; }
+		// Up again after a down, and the get-up not yet played out (settled): what the down left on is still looked for.
+		[[nodiscard]] bool Settling() const { return phase == Phase::kUp && upSince.has_value(); }
 
 		std::uint32_t downs = 0;
 		std::uint32_t revives = 0;
@@ -458,6 +471,7 @@ namespace DownRules
 		std::uint32_t getUps = 0;       // times up again after a down (gotUp)
 		std::uint32_t unsneaks = 0;     // stands asked for after those (unsneak)
 		std::uint32_t graphSneakStops = 0;  // sneak stops the graph was told after those (graphSneakStop)
+		std::uint32_t downFinishes = 0;     // ends of the down's camera and input layer asked for after those (finishDown)
 
 	private:
 		// Up again after a down, however it ended (a_before: the phase as the frame began): told once (gotUp), and once the
@@ -490,6 +504,8 @@ namespace DownRules
 				sneakAsked = a_step.unsneak;
 				sneakSeen = a_facts.sneaking;
 				sneakPressed = false;
+				finishAsked = false;
+				FinishDown(a_facts, a_step);
 				return;
 			}
 			if (!upSince) {
@@ -499,6 +515,7 @@ namespace DownRules
 				upSince.reset();
 				return;
 			}
+			FinishDown(a_facts, a_step);
 			// A change of the stance since they got up is the player's key, but for the stand we asked for taking.
 			if (a_facts.sneaking != sneakSeen) {
 				sneakPressed = sneakPressed || a_facts.sneaking || !sneakAsked;
@@ -511,7 +528,24 @@ namespace DownRules
 				a_step.graphSneakStop = !a_facts.sneaking && downSneaking && !sneakPressed;
 				unsneaks += a_step.unsneak ? 1u : 0u;
 				graphSneakStops += a_step.graphSneakStop ? 1u : 0u;
+				// Once more, should the end asked for as they got up not have taken.
+				if (!a_step.finishDown) {
+					finishAsked = false;
+					FinishDown(a_facts, a_step);
+				}
 			}
+		}
+
+		// Up again, and the down's bleed-out camera or input layer still on: their end asked for, once until settled (the
+		// class). Not while knocked over or in a stopped game.
+		void FinishDown(const Facts& a_facts, Step& a_step)
+		{
+			if (finishAsked || a_facts.knockedOver || a_facts.paused || !(a_facts.bleedOutCamera || a_facts.bleedOutLayer)) {
+				return;
+			}
+			a_step.finishDown = true;
+			finishAsked = true;
+			++downFinishes;
 		}
 
 		// Down and waiting for help, neither helped up nor bled out, and the game has the player up again. The game
@@ -620,6 +654,7 @@ namespace DownRules
 		bool                             sneakAsked = false;    // up again: we stood them as they got up
 		bool                             sneakSeen = false;     // up again: the stance as last seen since
 		bool                             sneakPressed = false;  // up again: the stance changed since by the player's key
+		bool                             finishAsked = false;   // up again: the end of the down's camera and layer was asked for (finishDown)
 	};
 
 	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,

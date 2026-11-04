@@ -209,6 +209,11 @@
   cuts load times substantially.
 - `ModActorValue(kDamage, health, -x)` on the player kills them at 0 health (normal death and reload).
 - `TESQuest::SetStage` doesn't start a stopped quest; the console `setstage` does.
+- A hit queues the victim's reaction to its attacker (2231180, +CD6F70), run later by the task queue (2229323, at
+  +0x2DAA) from two handles; a disabled reference's handle still resolves. The reaction checks the attacker's AI process but
+  hands the victim's to `AIProcess::EnterCombat` unchecked, and `TESObjectREFR::Disable` deletes an actor's process at once:
+  a stand-in replaced in a fight crashed the game there. `CombatReactions` (src/game/CombatReaction.h) hooks the task's call
+  and skips a victim that is disabled, deleted or has no process (`reactionsSkipped=` in `net status`).
 - The `ActorState` constructor (140CEB250) clears only bits 0-7 and 9-19 of its second flags word: bits 21-31 keep
   whatever the memory held. On some runs the player starts with `inSyncAnim` (bit 21) on, and while it is on,
   `PlayerControls::PerformInputProcessing` (140DDBE50) hands no input to the player's handlers: no walking,
@@ -362,6 +367,47 @@
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
   then left as it is. The tries start over once the copy is on, or here (`net status`: `gaveUp=`).
+  One an enable parent switches is switched on through the parent at the top of its chain (`EnableChain.h`,
+  game-free and tested; `EnableParents.h`): the engine's own `enable` returns at once for a reference with an
+  enable parent ("... has enable state parent ... will be ignored"), so up to 0.10.1 such a copy stayed off for
+  good. Gun Run (DN083_Barney, a misc quest, so each game runs its own) enables Salem's mirelurks, their ambush
+  spots and eggs through one marker (MirelurkQuestEnabler, 000C3D6F) at its stage 30, in the game of the player who
+  got there; a friend fought a mirelurk the other player could not see anywhere (a Nexus report on 0.10.1). Never a
+  parent with everyone on their own story (one marker often switches a whole scene, characters of our own story
+  among them), nor one the opposite way (that parent would have to go off). The friend's NPC running proves only
+  that their chain is on, not that ours is off because our game is behind: a plugin only our game has may hide a
+  vanilla NPC behind a marker that stays off, or our story may be ahead and a quest of ours switched the marker off
+  again. So a parent is switched on only when every link and parent comes from the game's own files (Fallout4.esm
+  and the official add-ons, no other plugin changing them) the table below was made from, no script of the game's
+  own ever turns a parent of the chain off, the top is off as its plugin has it, no parent is a dead actor or deleted, and the chain's parents
+  switch at most 64 references between them (Gun Run's marker: 48). The scripts that turn parents off are read from
+  the game's files once and kept in a table (`DisabledParents.h`, written by `tools/questscan.ps1
+  -DisabledParents`: quest stage fragments, quest, alias, reference, base object, topic, scene, package, perk and
+  terminal scripts, calls followed a few deep, each judged with the property values it has where it is attached;
+  aliases forced to a reference or filled with a forced location's references of a ref type, collection aliases
+  turned off with DisableAll): 677 of the 1624 enable parents of Fallout4.esm, Automatron, Far Harbor and Nuka-World,
+  323 of them off in their plugin. Half the quest scene markers are off in their plugin, turned on at one stage and off at a later one: the
+  airport's Brotherhood (BoSAirportGuards, 0019C046: BoSEnable's stage 10 on, its stage 200 and Inst307Fight's
+  stage 10 off) would come back for good, 11 soldiers and a scribe, in the game of a joiner past it the first time
+  the host's game ran one. Those are left to our own story (`kStoryTurnsOff`). Gun Run's marker is only ever turned
+  on. Whether the top is off as its plugin has it: the references loaded with the game's data are listed once at
+  kGameDataReady, before any save, with which of them were off. One that was off then is as its plugin has it; one
+  that was on then (every enable parent in Fallout4.esm is persistent, so loaded with the data) is refused whatever
+  its change flags say, as our game switched it off. One not loaded with the data, a temporary one, is switched on
+  only if our save records no change of its flags. A save's change of a reference's flags
+  (`BGSSaveLoadGame::GetChangeFlags`, CHANGE_FORM_FLAGS) can't say whether our game switched it: the engine records
+  it for a reference it only loads (`TESObjectREFR::Load` sets an in-game flag, which records it whether anything
+  changed or not), and a fresh game had it on Salem's marker at Gun Run's stage 5, before any script touches it, so
+  the first rig run refused every switch-on. What the table can't see is switched on all the same: a marker turned
+  off through a variable set at run time, a struct, a collection element reached by index, a conditioned alias or
+  one filled from a location that isn't forced, or by the console; one our story never needed to touch (our quest
+  took another branch); an NPC a mod only the friend has freed of its parent; a base-game marker that a script of an
+  add-on the table wasn't made from turns off. The table names the files it was made from (`COVERED`), and a parent
+  from any other official file (the workshop add-ons, Vault-Tec's among them, weren't installed where it was made) is
+  never switched on (`kNotCovered`). The
+  log line says what was switched on or why nothing, with that count, the top's change flags and its state in its
+  plugin; `switchedOn=` counts tries/those through a parent. The switch-on before a friend's kill (WorldSync) goes
+  the same way, and `switchedOnToKill=` counts only the ones that switched something on.
 - Console commands: each one is compiled and run on the spot, so the copies taken over from their own AI are
   spread out, 8 a frame at most (the rest keep their snapshots and wait a frame), and the commands run for NPCs
   are counted (`CommandMeter`; `net status`: `cmds=` last frame/most, `busy=` frames over 32, `rereg=`,
@@ -2034,8 +2080,13 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   controller's bleed-out collision bit, in that order), asked again every second while it doesn't take
   and only once a knock-down's ragdoll is over (3 s at most); full health from it is cut back to 30%.
   However a down ends with the player up (helped, a save loaded while down, stood up by the game, the
-  last friend leaving), the get-up clears any bleed-out flag left on and, if they went down sneaking and
-  are still sneaking (the stance survives a down), stands them as they get up, and again 2 s later only
+  last friend leaving), the get-up clears any bleed-out flag left on; with the bleed-out camera (current, or
+  waiting in the camera's return stack) or the down's input layer (`Player bleedout`) still on once they are
+  out of any knock-down, it ends those the way the life state's end of a down does (the camera's bleed-out
+  end, ID 2248381, and the layer's release, ID 2200873), as soon as it can and once more 2 s later if that
+  did not take (`DownRules::Self` finishDown, tested): stood up by a knock-down's get-up first, a player
+  was left with the camera on the ground and no Pip-Boy until a load. If they went down sneaking and
+  are still sneaking (the stance survives a down), it stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
   One who went down sneaking and gets up standing was stood by the game's stance alone
@@ -2191,7 +2242,24 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   info has none), checks the game has it (`BSResource::GetOrCreateStream`) and plays it with
   `BSAudioManager::GetSoundHandleByFile` as a 3D sound (flag 0x10, the `kDialogueOutputModel3D`
   output model) that follows the speaker's 3D: the same range and same-space test as the text, in a
-  conversation or a scene or not. Nothing goes through the dialogue system (no Say, topic, scene,
+  conversation or a scene or not. The flag and the extension are the engine's own: its actor voice
+  calls (Address Library 2229972 and 2229973, 1.11.240) play `sound\` + the response's file through the
+  same `GetSoundHandleByFile` with usage flags 0x10 (0x80 with priority 128, 0x4000 in one case), and the
+  audio manager's file source skips a .fuz's `FUZE` header and lip data itself. What the engine has and a
+  plain sound does not is an end: it sets the speaker's voice timer from the recording's length
+  (`GetDuration`), and the line ends with it. So each friend's line's sound has a hard end
+  (src/game/LineSounds.h): the recording's length plus 1 s, at least 2.5 s and at most 240 s (the game's
+  longest recordings are Magnolia's songs, to 214 s; companions have lines of 35-38 s), or 15 s when the
+  length can't be read. The length is read from the start of the file that plays (the .fuz, or the .wav
+  or .xwm the audio manager took instead): its lip sync and the RIFF chunks before the audio
+  (`SubtitleTime::HeaderBytes`), not the recording. At most 4 play at once (a fifth line
+  ends the oldest); a speaker's next line ends the one before. Before this, a sound that did not end by
+  itself was only ended by that speaker's next line, and one that the audio manager stopped calling
+  playing was forgotten with no way to end it: a player heard a loud engine-like noise that grew with
+  every friend's line. A sound still playing at its hard end, or crowded out, is logged (at most one line
+  in 30 s, with how many went unlogged: "Conversations: the sound of a line from player N ... ended") and
+  counted in net status
+  (`sounds=`, `cutLong=`, `cutCrowded=`). Nothing goes through the dialogue system (no Say, topic, scene,
   conversation or lip sync), so nobody can be held in one. Until 0.8.6 an NPC's line was the console's
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
   dialogue); the player's own lines were never voiced.
@@ -2430,7 +2498,7 @@ now assigned" yet assigns nobody, so a test that loads straight into a settlemen
 
 ## Status (2026-10-09)
 
-Protocol VERSION 58 (58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.0's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
+Protocol VERSION 58 (58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

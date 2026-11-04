@@ -31,7 +31,8 @@ namespace RollHook
 	// At plugin load, after F4SE::Init: one 14-byte trampoline stub and one vtable slot.
 	void Install();
 
-	// kGameDataReady, main thread: the plugins' names, which key a reference in every game whatever the load order.
+	// kGameDataReady (on the game's loading thread, not the main one; before any session): the plugins' names, which key a
+	// reference in every game whatever the load order.
 	void OnDataReady();
 
 	// Welcomed into a session (main thread): its id seeds every roll; a_rule is the host's sNpcLevel.
