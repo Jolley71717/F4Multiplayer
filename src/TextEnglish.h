@@ -231,7 +231,7 @@ namespace Text
 		{ "menu.key_taken", "{key} is already {name}" },
 		{ "menu.key_reserved", "{key} can't be used: the game or this menu needs it" },
 		{ "menu.about", "About" },
-		{ "menu.changelog", "Changelog" },
+		{ "menu.release_notes", "Release notes" },
 		{ "menu.about_missing", "The about text is missing: about.txt isn't in Data/F4SE/Plugins/F4Multiplayer." },
 		{ "menu.join_address", "Join {address}" },
 		{ "menu.address_steam_named", "{player}'s game (Steam)" },

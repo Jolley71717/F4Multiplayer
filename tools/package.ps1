@@ -149,10 +149,11 @@ if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lan
 Copy-Item $langFiles.FullName $lang
 # The multiplayer menu's About page (UiPages.cpp).
 Copy-Item (Join-Path $root 'dist\about.txt') (Join-Path $stage 'F4SE\Plugins\F4Multiplayer')
-# The release notes, for its changelog (UiPages.cpp picks which to show).
-$changelog = Join-Path $stage 'F4SE\Plugins\F4Multiplayer\changelog'
-New-Item -ItemType Directory -Force $changelog | Out-Null
-Copy-Item (Join-Path $root 'dist\RELEASE-*.md') $changelog
+# This version's release notes, for the About page's link. An rc's are its own: the release is that same package.
+$releaseNotes = Join-Path $root "dist\RELEASE-$version$(if ($Label) { "-$Label" }).md"
+if (Test-Path $releaseNotes) {
+	Copy-Item $releaseNotes (Join-Path $stage 'F4SE\Plugins\F4Multiplayer\release-notes.md')
+}
 # The menu movies, where the game looks for menus: Data\Interface, in a folder of ours.
 if ($menuMovies) {
 	$interface = Join-Path $stage 'Interface\F4Multiplayer'
