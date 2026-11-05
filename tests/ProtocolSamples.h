@@ -296,6 +296,9 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportWorkshopResources, MT::kWorkshopResources }) {
 			s.push_back({ "ResourceStates", Encode(ResourceStates{ 2, { { 0xFF000042, { 0.5f, 0, 0, 0, 0, 0 } }, { RUNTIME_REF, { 0, 3, 0, 1, 0, 2 } } } }, type), D(DecodeResourceStates) });
 		}
+		for (const auto type : { MT::kReportTerminalChoice, MT::kTerminalChoice }) {
+			s.push_back({ "TerminalChoice", Encode(TerminalChoice{ 2, 1, 2, 90 }, type), D(DecodeTerminalChoice) });
+		}
 		// The report stands beside where the PlayerState sample (MakeState(3)) puts its sender: a server believes it.
 		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
 			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true, 0x0001A2B6, 0x0000003C, 1300.0f, -900.0f, 42.0f }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
@@ -319,6 +322,8 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportSpawn, MT::kSpawned }) {
 			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0001D4D2, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f }, type), D(DecodeSpawn) });
+			// A quest alias's creature (Salem's first mirelurk: DN083_Barney, alias 26).
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x001243FF, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x001243D6, 26 }, type), D(DecodeSpawn) });
 		}
 		for (const auto type : { MT::kRename, MT::kRenamed }) {
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
@@ -446,6 +451,7 @@ namespace ProtocolSamples
 		case MT::kDropRecord:
 		case MT::kReportWorkshopPower:
 		case MT::kReportWorkshopResources:
+		case MT::kReportTerminalChoice:
 		case MT::kHostCommand:
 		case MT::kRequestHostInfo:
 		case MT::kReportObjectHold:
@@ -508,6 +514,7 @@ namespace ProtocolSamples
 		case MT::kDropList:
 		case MT::kWorkshopPower:
 		case MT::kWorkshopResources:
+		case MT::kTerminalChoice:
 		case MT::kRemoved:
 		case MT::kHostInfo:
 		case MT::kObjectHeld:

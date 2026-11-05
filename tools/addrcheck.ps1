@@ -344,6 +344,23 @@ if ($null -ne $react -and $null -ne $enterCombat) {
 	}
 }
 
+# The player camera's bleed-out start and its transition, as Downed.cpp reads them (DownRules::Camera): the start
+# compares the current state with the bleed-out camera (+138) and the tween (+110); the transition's set-up keeps
+# where it comes from at +0x38 and where it goes at +0x40.
+$cameraStart = Resolve 2248380
+$transitionSetUp = Resolve 2248448
+if ($null -ne $cameraStart) {
+	Report ((HexMatches (BytesAt ($cameraStart + 0x16) 7) '48 3B 81 38 01 00 00') -and (HexMatches (BytesAt ($cameraStart + 0x30) 7) '48 3B 81 10 01 00 00')) 'the camera''s bleed-out start compares the current state with the bleed-out camera and the tween'
+}
+if ($null -ne $transitionSetUp) {
+	Report ((HexMatches (BytesAt ($transitionSetUp + 0x45) 4) '48 89 43 38') -and (HexMatches (BytesAt ($transitionSetUp + 0x77) 4) '48 89 43 40')) 'the camera transition''s set-up keeps its states at +0x38 (from) and +0x40 (to)'
+}
+# A notice's sound (Hud.cpp): the menu sound's lookup by name returns at once for a null name, before any hash.
+$soundByName = Resolve 2214760
+if ($null -ne $soundByName) {
+	Report (HexMatches (BytesAt $soundByName 17) '48 83 EC 28 C7 44 24 30 00 00 00 00 48 85 C9 74 71') 'the menu sound''s lookup by name returns for a null name before hashing it'
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1

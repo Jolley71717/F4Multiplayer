@@ -80,6 +80,21 @@ namespace CharacterBinding
 			return key;
 		}
 
+		// The key said in a record to the server now: the one it tags what we build with from then on.
+		[[nodiscard]] std::uint64_t Tell(std::uint64_t a_random)
+		{
+			told = Key(a_random);
+			return told;
+		}
+
+		// Whether the world started is the one the server last heard of (Tell), so what we reported before the load is tagged
+		// the same whether it reaches the server before or after the load's record: a death reload or a quickload, not a new
+		// game, a coc world or a save from before keys. False when nothing was told (the session forgets it: Untold).
+		[[nodiscard]] bool SameAsTold() const { return told != 0 && key == told; }
+
+		// The session ended: the next one's server has heard nothing.
+		void Untold() { told = 0; }
+
 		// The co-save's record for a save made now.
 		[[nodiscard]] std::vector<std::uint8_t> Save(std::uint64_t a_random)
 		{
@@ -102,6 +117,7 @@ namespace CharacterBinding
 
 		std::uint64_t key = 0;
 		std::uint64_t saved = 0;  // the loaded save's (0: none), until Started
+		std::uint64_t told = 0;   // the last key said to the server (Tell; 0: none): kept through a load, as the server keeps it
 	};
 
 	// The file of a_character's session. The dev channel's test rig uses files of its own, so its test

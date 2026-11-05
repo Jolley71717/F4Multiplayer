@@ -395,6 +395,9 @@ namespace FormTranslate
 		case MessageType::kRequestHostInfo:
 		case MessageType::kRemoved:
 		case MessageType::kHostInfo:
+		// A row of TerminalRules' table and its value.
+		case MessageType::kReportTerminalChoice:
+		case MessageType::kTerminalChoice:
 			break;
 
 		case MessageType::kPlayerState:
@@ -585,7 +588,13 @@ namespace FormTranslate
 		case MessageType::kReportSpawn:
 		case MessageType::kSpawned:
 			// The spawn id is the session's own (runtime range): only what to place, and where.
-			Apply<Spawn>(a_packet, ctx, DecodeSpawn, [&](Spawn& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace); }, typed);
+			Apply<Spawn>(a_packet, ctx, DecodeSpawn, [&](Spawn& m) {
+				// A quest the other side lacks names no alias there: none (the spawn is copied as any other).
+				if (!ctx.Detail(m.quest)) {
+					m.alias = 0;
+				}
+				return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace);
+			}, typed);
 			break;
 		case MessageType::kReportDrop:
 		case MessageType::kDropPlaced:

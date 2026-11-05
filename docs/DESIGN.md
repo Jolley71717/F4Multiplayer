@@ -89,7 +89,13 @@
   the frame message in its place) and the window procedure never getting the message (it hooks the
   game's window again should the engine have made a new one). The judgement is
   `src/game/FrameWatch.h`, unit tested. The loading-screen gate, the one gate with no end of its own,
-  counts a loading screen as up for at most five minutes (`UiHold::Guard`, `src/game/UiHold.h`).
+  counts a loading screen as up for at most five minutes (`UiHold::Guard`, `src/game/UiHold.h`). A
+  notice goes to the HUD (`SendHUDMessage::ShowHUDMessage`) with no sound name, a null one, as the game's
+  own notices (Papyrus `Debug.Notification`, the XP and quest lines) send it. The HUD hands the name to
+  `UIUtils::PlayMenuSound` as the notice shows, which looks a sound up by a hash of its editor ID: a null
+  name is never looked up, but `""` was (hash 0), and matched any sound record whose editor ID was set
+  empty in the player's load order. That sound played on the player and was never stopped: a looping one
+  (a generator's hum, rushing water) stacked with every notice until a load (two players' reports, 0.11.2).
 - **Log:** `src/Log.cpp`. CommonLib's `F4SE::Init` opens `F4Multiplayer.log` and empties it; just
   before, `LogRotation::Rotate` (`src/LogRotation.h`, unit tested on real files) moves the last three
   launches' logs to `.1.log`..`.3.log` with `std::filesystem::rename` and error codes, so nothing can
@@ -606,11 +612,80 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   with a runtime mod) is not lent, and a forfeited piece left in a container for good, sold and not bought back, left on
   the floor, or put on a frame of the borrower's own is not caught (only what the borrower carries is looked at), nor
   one whose name did not hold (the sweep knows it by its name).
+- *A quest alias's creatures (src/game/QuestActors.h, protocol 61).* A quest whose alias creates its creature at runtime
+  creates one in every game that runs the quest: Gun Run (DN083_Barney) creates Salem's three mirelurks (its aliases 26,
+  38 and 41, of the unique DN083_StartMirelurk). Each game's is its own runtime NPC, so a friend's was shared as a spawn
+  of an NPC our game never made: no copy (its base is unique), and ours stood beside it idle, never hurt by what the
+  friend shot, its quest never told of its death (stage 10 waits for all three). Now the game that shares one first
+  (hostile or fighting, as any spawn: stage 5 takes them out of their intro faction) names its quest and alias with it,
+  and a friend's game pairs its own creature from that alias with the spawn instead of placing a copy: `Theirs::Placed`
+  books it as our copy, so NpcSync mirrors it from its owner's states, the owner's roll and factions are made its, a hit
+  on it is a copy's (answered by the owner), and its death there kills ours (our alias's OnDeath counts it, so stage 10
+  is reached in each game). It is never deleted, never tracked as a placed copy and never kept out of a save: before a
+  save or a load, at the session's end, when our player leaves it past KEEP_RANGE, when it unloads, and when the
+  owner's game lets a living one go (they left), it is only unpaired (its mirror dropped, its AI its own again), and
+  ours then shares it itself if it is hostile. Unpairing also puts back the roll, level and factions NpcSync made ours
+  from the owner's (read as ours was paired, made so again with Rolls::Apply: `restored=`), so a save keeps our game's
+  own. Paired only while the spawn is alive, our player within PLACE_RANGE of it, ours alive, loaded and within
+  PAIR_RANGE (4096) of theirs, and nobody's yet (granted to us, a puppet or a copy); while ours is in the alias but not
+  to be paired, no copy is placed beside it. While our player hasn't started the quest, a friend's creature gets no copy
+  here (its base is unique: BaseOk), as before. Our game does not report a creature whose alias a friend's live spawn
+  names (`twinsHeld=`), and the server refuses such a report from another game (naming nobody, logged). Guarded so no
+  story is touched: only a quest in QuestActors::LISTED (DN083_Barney alone, until the rig shows another needs it),
+  and of those only one that is running here, runs once, is of type none, misc or side, no radiant and not PER_GAME;
+  only an alias filled by "create reference"; and only a creature (its race lacks "allow PC dialogue": set on
+  HumanRace, GhoulRace and DogmeatRace, clear on MirelurkRace), so Gun Run's Barney (alias 25), whose scenes are each
+  game's, stays each game's own. Its stages are shared only with the host's `sQuests = safe` (DN083_Barney is in
+  QuestFilter SAFE). `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
+- Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
+  while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
+  dead) places a live copy of it: that fight is fought again. Paired, ours takes the owner's roll and factions until it
+  is unpaired; a save made while paired is made after the unpairing (DiscardCopies), so it holds ours.
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
   read. Each game's corpse of a
   spawn carries its own loot: each player loots their own.
+
+## Quest terminals (src/game/TerminalRules.h, TerminalSync.cpp)
+
+- Some quests keep what their terminals set in their script's properties, not in a stage: at Easy City Downs (DN035,
+  Fallout4.esm) the race's terminals call DN035QuestScript's SetRaceState, SetRaceTargeting, SetRaceCombatInhibitors,
+  SetRaceReserves and RaceSelfDestruct, each with the player's choice and True (the player directed it); each sets its
+  property and, a quarter second on, UpdateRobots sets the race's factions (the robots allied with or set against the
+  player, the raiders and each other), wakes the reserves, and the self-destruct (stage 35) counts down and blows the
+  robots up. The robots are the plugin's, mirrored across games, but each game's factions said whom they fought: set on
+  the player at one player's terminal, they stood idle in the friend's game. TerminalRules::ROWS lists those five
+  properties; Protocol::TERMINAL_VALUES has each one's values and whether it is set once.
+- Reading: four times a second, while the quest runs here, TerminalSync reads each row's property off the quest's bound
+  script (no call into the VM). A change while our player has a terminal open (or for 2 s after it closed: the fragment's
+  call lands a moment later) is ours: sent as kReportTerminalChoice. A first reading (after the quest starts or a load)
+  is a baseline, and what no terminal set (a stage, the self-destruct's countdown) is never sent; a row that happens once
+  (the reserves, the self-destruct) is sent as 1 when it goes from 0.
+- The server checks a choice's value against its row's (DecodeTerminalChoice), passes it on to the others as its
+  player's (kTerminalChoice) and keeps each row's latest with its maker and time. A joiner is told, after the welcome,
+  each row's latest that is not set once (the reserves and the self-destruct are live only), is at most 10 minutes old
+  (CHOICE_LIFE) and was made by a player still in the session, as that player's, with its age
+  (`TerminalChoice::ageSeconds`), so the joiner's wait for it ends when the server's does. Not saved: each game's save keeps
+  what its own terminals were set to.
+- Applying: a friend's choice is made here by calling the row's setter with the value and True, as the terminal does
+  (its announcement plays here too), only while the race is on here: the quest has run here 5 s, its stage 10 is done
+  and neither 35 (the robots blew up) nor 255 (its end) is, and our player is within 8192 units of the friend who made
+  it (the same cell or worldspace: at the Downs with them). Stage 10 is a start-up stage (INDX flag 0x02 in
+  Fallout4.esm), run as the quest starts whether a race is on or not, so the rows set once (the reserves, the
+  self-destruct) also wait for RaceState to be 0 here: 0 from the quest's start and after Start Race, 1 after Stop Race,
+  so they are not made into a game whose race a player stopped. Our player must be at no terminal, and ours must differ
+  (a once row only if it has not happened here). A choice that waits keeps the latest of its row and is dropped after 10
+  minutes, or once the race is over here (`dropped=`). So a game far away, a later first visit, or an old save whose
+  race never ran gets nothing, and the self-destruct's stage 35 is set only in a game at that race. What a friend's
+  choice set here is not sent back: for 3 s (EXPECT_LIFE) a reading of that value is its call landing; past that, a call
+  the script refused no longer keeps our own choice of that value from being sent. After a load, a friend's latest of a
+  row (never our own: the loaded save's are its own, and never a once row) is made again under the same rules. Only with
+  `bSyncQuests`. `net status`: terminals: sent= heard= made= failed= dropped=.
+- Not yet (quest terminals): only DN035's terminals; another quest whose terminals set its script's state needs its
+  rows. The route terminals (SetRaceRoute) have no row. Two players at terminals at once, setting the same row to
+  different values, each get the other's once they step away, so the two games end up swapped; the server stamps no
+  order.
 
 ## Weapon fire (src/game/WeaponFire.cpp)
 
@@ -1092,7 +1167,7 @@ counts every item across the host's chest and the players' inventories in each s
   script, and no copy is anything but the workbench's own inventory.
   - A friend's game opens a view of the host's workbench as its workshop mode starts there (`WorkshopModeEvent`) or a
     crafting menu opens beside it (ExamineMenu, CookingMenu, PowerArmorModMenu, and Automatron's RobotModMenu, an
-    ExamineMenu by RTTI with the same gather, since protocol 61: the first workbench among the menu's
+    ExamineMenu by RTTI with the same gather, since protocol 62: the first workbench among the menu's
     `sharedContainers`, looked for 2 s), and closes it as they end. Its stash's shared stacks are set aside, the true
     copy is shown in their place, and after each change to the copy the engine's own list is filled again (the
     refill in workshop mode, the gather on the main thread for a crafting menu), so the list is never stale. The
@@ -1122,7 +1197,7 @@ counts every item across the host's chest and the players' inventories in each s
     the true copy, and the host's is counted once, as the host's own.
   - Weapons and armor stay per player as in any storage. A workbench the host doesn't own, or hasn't been near this
     session, stays per player. Tested without the game in `tests/StorageBenchTests.cpp`.
-  - *The host's supply lines (protocol 61, src/game/SupplyLines.h).* Every one of the engine's gathers reaches a
+  - *The host's supply lines (protocol 62, src/game/SupplyLines.h).* Every one of the engine's gathers reaches a
     settlement's linked workbenches through `Workshop::AddOtherContainers` (2195029, `(list, location, excludePlayer)`):
     `BGSLocation::CollectLinkedLocations` (2199664) walks the settlement location's links of the caravan keyword
     (global 4797310; every location reachable, its own left out), each linked settlement's workbench is added from the
@@ -1133,8 +1208,8 @@ counts every item across the host's chest and the players' inventories in each s
     (`FindLocationWithKeyword`, 2199627). Those links are each save's own, so a friend's game used to find its own
     world's supply benches, holding its own stash. Now the host's game, every 10 s, asks its own `AddOtherContainers`
     which workbenches its lines reach from each workbench it keeps, keeps those of settlements it owns (listing any
-    not listed yet, from afar: a workbench is persistent), and tells the session what changed (kReportBenchLinks 78,
-    in its engine's order, the order of the engine's workshop list, which its own builds take in; at most 64; the server keeps a table only from the workbench's keeper, relays it as kBenchLinks 182 and
+    not listed yet, from afar: a workbench is persistent), and tells the session what changed (kReportBenchLinks 79,
+    in its engine's order, the order of the engine's workshop list, which its own builds take in; at most 64; the server keeps a table only from the workbench's keeper, relays it as kBenchLinks 183 and
     sends it with the welcome after the owners, and forgets a keeper's lines, telling everyone, as its world goes
     stale or it leaves). A friend's game viewing the host's workbench views the workbenches its lines link too (each
     a view like any: its own stash set aside, the true copy shown; one a friend's game keeps or nobody keeps is left
@@ -1325,6 +1400,16 @@ So players give each other items by dropping them, and the server decides who ha
   the copies' `kDropCopy` stays limited to references this game made) and is disabled rather than deleted
   (`DropBook::HowItMakesWay`): its record is the plugin's, and a load would put a deleted or unsaved one
   back where the plugin placed it.
+  Such an item dropped and not swapped (not given, refused, or dropped outside a session) lies in the dropper's world as
+  the reference the session keeps as picked up, so their next welcome or load would have taken it away as a friend's
+  pickup, for good (up to 0.12.0). The server keeps who picked up each item (layout 43 of its session file) and sends no
+  player their own pickups in a world state: the picker's game has the item already, in an inventory or lying where they
+  dropped it. A save of theirs from before the pickup has it where the plugin placed it, theirs to pick up again (a
+  second pickup report of it changes nothing); two characters of one PC share a player ID, so the other character's
+  world keeps it too. A file before 43 knows no picker: its pickups go to everyone, as before. Only the first picker
+  is kept: two players who pick up the same item before either hears of the other's pickup, and the second drops it
+  un-swapped, still lose it there (rare). And a picker who gave the item away and loads a save from before the pickup
+  has it again, as with container changes (`ownSkipped`): one more copy.
   Once it has come to rest
   (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
   with a random number of the giver's game (the nonce), its mods and template combination (read as
@@ -1576,7 +1661,8 @@ a request we sent can do that.
 
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
 save's record and asks for the session's changes again. The deaths and the player's moves from the
-frame before the save or load are sent first (deaths first), so they are in that answer. A save with no record of this session (made
+frame before the save or load are sent first (deaths first), so they are in that answer. So are the workshop reports still
+waiting in their line (`WorkshopSync::TakeFromWorldBefore`; see "Whose world"). A save with no record of this session (made
 alone, or in another session) takes this one from its first change, so the saves made from it on carry
 one. Container changes carry who made them; the player's own are never replayed. Those made before the
 loaded world (the save is from before them) are counted in `ownSkipped=`: replaying them would empty
@@ -2170,7 +2256,15 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   out of any knock-down, it ends those the way the life state's end of a down does (the camera's bleed-out
   end, ID 2248381, and the layer's release, ID 2200873), as soon as it can and once more 2 s later if that
   did not take (`DownRules::Self` finishDown, tested): stood up by a knock-down's get-up first, a player
-  was left with the camera on the ground and no Pip-Boy until a load. If they went down sneaking and
+  was left with the camera on the ground and no Pip-Boy until a load. The camera's own bleed-out start
+  (ID 2248380) pushes the current state on its return stack, and its end makes a transition (the
+  `kPCTransition` state) from the bleed-out camera to the state it pops: a player downed again while the
+  first end's transition still ran (a rocket engine's fire, downed twice within a moment) had the
+  transition state itself pushed, and the second end made a transition to itself, which never ends, the
+  camera left by the ground and the Pip-Boy shut until a load. On the ground or up and not yet settled,
+  a transition on the return stack is replaced by where it was going (the view the first down left), and
+  a transition going to itself is sent to the last first- or third-person view (`DownRules::Camera`,
+  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). If they went down sneaking and
   are still sneaking (the stance survives a down), it stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.
@@ -2482,7 +2576,19 @@ the wire: the builder's `DropRecord::character` when the report came). The list 
 their welcome or load has said whose world it is (the record comes after both; a world request that isn't a gap marks
 the world unknown until it does), holds only that world's pieces, and a gone report is taken only for that world's.
 What a player reports before their record is tagged when it comes (`Player::untagged`); a piece whose character isn't
-known (an older build's, a layout 41 file's) is never asked about.
+known (an older build's, a layout 41 file's) is never asked about. So a report of the world before a load must reach the
+server before the load's request for the world: the game's reports wait in a paced line (`SendPacer`, 200 a second), and
+one still waiting at a load (a piece built a moment before, a blueprint) went after the request, was tagged with the
+loaded world's character, looked for there, and removed for everyone (up to 0.12.0). Loading another character's save
+leaves the session, which empties the line, but a world under another key the session keeps: a new game, a main-menu
+`coc` world, or the same character's save from before keys (`CharacterBinding::World`). Now a load fences the line (`SendPacer::Queue::Fence`, the first
+thing `WorkshopSync::OnGameLoaded` does) and the request goes behind what was fenced (`TakeFromWorldBefore`): as many as
+the pacer lets go then, the rest dropped (`dropped=`, logged): for a friend the piece is missing rather than gone for
+everyone, and the builder's walk, where it runs, finds it again. Only when the world changed: a load of the world the
+server last heard of (`CharacterBinding::World::SameAsTold`: a death reload, a quickload, the commonest) lifts the fence
+(`Unfence`) and the line goes on at its pace, since after the request its reports are tagged with that same world. Holding
+the request until the line drains instead would lose nothing, but it would move the record and the rest of what follows a
+load behind the backlog too.
 
 *Reversible.* A piece reported gone is not forgotten: it is kept as lost (`WorkshopOp::kLost`, at most
 `WorkshopStore::MAX_LOST`, the longest lost going first), saved with the session, and sent in the list marked lost. A lost
@@ -2707,7 +2813,7 @@ base, permanent, temporary, damage), `wsres sum <bench>` (its pieces as its reco
 
 ## Status (2026-10-09)
 
-Protocol VERSION 61 (61: the host's supply lines at a friend's builds, kReportBenchLinks 78 and kBenchLinks 182 (`BenchLinks`: a workbench and the workbenches the keeper's supply lines link to it), see "The host's supply lines"; 60: the host's workbench as shared storage, see "The host's workbench"; 59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
+Protocol VERSION 62 (62: the host's supply lines at a friend's builds, kReportBenchLinks 79 and kBenchLinks 183 (`BenchLinks`: a workbench and the workbenches the keeper's supply lines link to it), see "The host's supply lines"; 61: a spawn names the quest alias that created it, `Spawn::quest` and `alias` last on kReportSpawn and kSpawned, see "A quest alias's creatures" under Spawns, and the server refuses another game's report of an alias a live spawn names; and a player's choices at a quest's terminals, kReportTerminalChoice 78 and kTerminalChoice 182 (`TerminalChoice`: a row of src/game/TerminalRules.h, its value and the choice's age), see "Quest terminals"; 60: with bSharedStorage the host's workbenches are viewed from friends' workshop and crafting menus, no message of its own; 59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

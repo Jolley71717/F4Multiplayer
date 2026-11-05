@@ -39,6 +39,14 @@ namespace WorkshopSync
 	// the world they reported scrapped is reported again when the walk finds it.
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
 
+	// The reports still waiting from the world before the last load (OnGameLoaded fences them), to send just before the
+	// request for the session's changes that follows the load: the server tags what a game builds with the world its next
+	// record names, so one of the old world's sent after the request would be taken for the loaded world's, looked for
+	// there, and removed for everyone. As many as the pacer lets go now; the rest of them are dropped (logged). But a_sameWorld
+	// (the loaded world has the key the server last heard, Drops::SameWorldAsTold: a death reload, a quickload) sends none
+	// ahead and drops none: after the request they are tagged with that same world, so they wait their turn as ever.
+	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeFromWorldBefore(bool a_sameWorld);
+
 	// Another player built, moved or scrapped something: in line behind what came before, and placed a
 	// few a frame (Frame).
 	void Apply(const Protocol::WorkshopItem& a_item);

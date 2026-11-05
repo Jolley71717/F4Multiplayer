@@ -54,11 +54,16 @@ namespace Protocol
 	// crafting menus view them (src/game/Storage.h); no message changes, but a game from before would keep a workbench
 	// each player's own while viewing the host's copy in it, so its takes there would go unreported. 59 is refused at the
 	// hello.
-	// 61: the host's supply lines feed a friend's builds at its settlements too: the host's game names the workbenches its
+	// 61: a spawn names the quest alias that made it (Spawn::quest and alias: a creature a misc quest's alias creates in
+	// every game, as Salem's mirelurks), so a friend's game pairs its own with it instead of placing a copy beside it, and
+	// the server refuses a second game's report of the same alias (src/game/QuestActors.h); and the choices players make
+	// at a quest's terminals (kReportTerminalChoice and kTerminalChoice: TerminalChoice), so a friend's game makes them
+	// too (src/game/TerminalRules.h: Easy City Downs' race). 60 is refused at the hello.
+	// 62: the host's supply lines feed a friend's builds at its settlements too: the host's game names the workbenches its
 	// supply lines link to each of its workbenches (kReportBenchLinks), the server tells the others (kBenchLinks, a joiner
 	// each after the owner table), and their workshop mode and crafting menus view those workbenches with the host's
-	// (src/game/SupplyLines.h). The robot workbench's menu views the host's workbench too. 60 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 61;
+	// (src/game/SupplyLines.h). The robot workbench's menu views the host's workbench too. 61 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 62;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -201,7 +206,8 @@ namespace Protocol
 		kReportDamageAnswer = 75,  // the game that runs an NPC answers a friend's numbered damage on it: applied, or refused and why (DamageAnswer)
 		kReportWorkshopGone = 76,  // pieces the server keeps as the sender's own building that the sender's world no longer has (the answer to kOwnWorkshopItems; WorkshopAudit)
 		kReportWorkshopResources = 77,  // what each of the sender's own workshop pieces counts for in their settlement now: food, water, defense, beds, power (ResourceStates)
-		kReportBenchLinks = 78,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
+		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
+		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 
 		// server -> client
 		kWelcome = 101,
@@ -270,7 +276,8 @@ namespace Protocol
 		kNpcIdentities = 179,     // several kNpcIdentity at once: a joiner's catch-up of the session's rolls
 		kOwnWorkshopItems = 180,  // after the welcome and each load: what the server keeps as built by you, for your game to say which it no longer has (WorkshopAudit)
 		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
-		kBenchLinks = 182,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
+		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
+		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -1582,6 +1589,11 @@ namespace Protocol
 		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
 		float         x = 0, y = 0, z = 0;
 		float         heading = 0;
+		// The quest alias that made it, when one created it in its owner's game (src/game/QuestActors.h): the quest's form
+		// ID (0: none) and the alias's ID in it. Every game's run of that quest creates its own; a friend's game pairs
+		// that one with this spawn instead of placing a copy beside it.
+		std::uint32_t quest = 0;
+		std::uint16_t alias = 0;
 
 		bool operator==(const Spawn&) const = default;
 	};
@@ -2026,6 +2038,9 @@ namespace Protocol
 		std::vector<std::uint32_t>    pickedUp;
 		std::vector<RefState>         refStates;  // latest per reference
 		std::vector<QuestStage>       questStages;  // in order
+		// The player who picked up each of pickedUp (same order; 0: not known), in the server's session file alone
+		// (EncodeKeptWorldState), never on the wire: empty in every WorldState a game gets.
+		std::vector<std::uint32_t>    pickers;
 	};
 
 	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
@@ -3126,10 +3141,13 @@ namespace Protocol
 		w.F32(a_msg.y);
 		w.F32(a_msg.z);
 		w.F32(a_msg.heading);
+		w.U32(a_msg.quest);
+		w.U16(a_msg.alias);
 		return w.Data();
 	}
 
-	// A spawn id, a base every game has, a place in the world, and in one space: an interior or a worldspace.
+	// A spawn id, a base every game has, a place in the world, and in one space: an interior or a worldspace. A quest
+	// alias only with a plugin's quest (with none, alias 0).
 	inline std::optional<Spawn> DecodeSpawn(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
@@ -3144,8 +3162,10 @@ namespace Protocol
 		msg.y = r.F32();
 		msg.z = r.F32();
 		msg.heading = r.F32();
+		msg.quest = r.U32();
+		msg.alias = r.U16();
 		if (!r.Ok() || !r.AtEnd() || !IsSpawnRef(msg.refId) || !IsShareableRef(msg.base) || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) ||
-			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0)) {
+			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0) || (msg.quest == 0 ? msg.alias != 0 : !IsShareableRef(msg.quest))) {
 			return std::nullopt;
 		}
 		return msg;
@@ -3968,6 +3988,71 @@ namespace Protocol
 			}
 		}
 		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The rows of src/game/TerminalRules.h ROWS: a quest's script property a terminal of it sets, in every game alike.
+	inline constexpr std::uint8_t TERMINAL_ROWS = 5;
+
+	// The values a row's terminals set, and whether it is set once (its own timers count on from there: shared as "it
+	// happened", live only, never in a joiner's catch-up or made again after a load). Checked as a choice is read, by the
+	// server too, so a bad report never replaces the latest a joiner gets.
+	struct TerminalValues
+	{
+		std::uint8_t low = 0;
+		std::uint8_t high = 0;
+		bool         once = false;
+	};
+	inline constexpr std::array<TerminalValues, TERMINAL_ROWS> TERMINAL_VALUES{ {
+		{ 0, 1, false },  // DN035 RaceState: the race running (0) or stopped (1)
+		{ 0, 2, false },  // RaceTargeting: the player, the raiders, or each other
+		{ 0, 1, false },  // RaceCombatInhibitors: off or on
+		{ 1, 1, true },   // RaceReserves: released
+		{ 1, 1, true },   // RaceSelfDestruct: set off (stage 35)
+	} };
+
+	constexpr bool TerminalValueOk(std::uint8_t a_row, std::uint8_t a_value)
+	{
+		return a_row < TERMINAL_ROWS && a_value >= TERMINAL_VALUES[a_row].low && a_value <= TERMINAL_VALUES[a_row].high;
+	}
+
+	// kReportTerminalChoice / kTerminalChoice: a player's choice at a quest's terminal (TerminalRules.h), the value it set
+	// the row's property to. playerId is stamped by the server (in a joiner's catch-up, the player who made it), and so is
+	// ageSeconds: how long ago it was made (0 live; a catch-up's own age, so a joiner's wait for it ends when the server's
+	// does). A report's is ignored.
+	struct TerminalChoice
+	{
+		std::uint32_t playerId = 0;
+		std::uint8_t  row = 0;
+		std::uint8_t  value = 0;
+		std::uint16_t ageSeconds = 0;
+
+		bool operator==(const TerminalChoice&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const TerminalChoice& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.row);
+		w.U8(a_msg.value);
+		w.U16(a_msg.ageSeconds);
+		return w.Data();
+	}
+
+	// None for a row past TERMINAL_ROWS or a value its terminals don't set (TerminalValueOk).
+	inline std::optional<TerminalChoice> DecodeTerminalChoice(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TerminalChoice msg;
+		msg.playerId = r.U32();
+		msg.row = r.U8();
+		msg.value = r.U8();
+		msg.ageSeconds = r.U16();
+		if (!r.Ok() || !r.AtEnd() || !TerminalValueOk(msg.row, msg.value)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -5421,7 +5506,41 @@ namespace Protocol
 		return w.Data();
 	}
 
+	// The server's session file since its layout 43 (SessionFile::PICKERS): kWorldState with, after it, the player who picked
+	// up each of its pickedUp (WorldState::pickers: a count, 0 or one for each, then the IDs). A packet without that tail
+	// reads as one naming none.
+	inline std::vector<std::uint8_t> EncodeKeptWorldState(const WorldState& a_msg)
+	{
+		auto       out = Encode(a_msg);
+		const auto picked = (std::min)(a_msg.pickedUp.size(), MAX_WORLD_STATE_ACTORS);
+		const auto count = a_msg.pickers.empty() ? 0 : picked;
+		Writer     w{ MessageType::kWorldState };
+		w.U32(static_cast<std::uint32_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(i < a_msg.pickers.size() ? a_msg.pickers[i] : 0);
+		}
+		const auto tail = w.Data();
+		out.insert(out.end(), tail.begin() + 1, tail.end());  // past the type byte the writer starts with
+		return out;
+	}
+
+	namespace detail
+	{
+		// a_pickers: the session file's, followed by WorldState::pickers (EncodeKeptWorldState).
+		inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers);
+	}
+
 	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorldState(a_data, false);
+	}
+
+	inline std::optional<WorldState> DecodeKeptWorldState(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorldState(a_data, true);
+	}
+
+	inline std::optional<WorldState> detail::DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers)
 	{
 		Reader r{ a_data };
 		r.U8();
@@ -5480,6 +5599,16 @@ namespace Protocol
 			stage.quest = r.U32();
 			stage.stage = r.U16();
 			msg.questStages.push_back(stage);
+		}
+		if (a_pickers && r.Ok() && !r.AtEnd()) {  // (a packet that ends here names none, as a file before them has it)
+			const auto pickers = r.U32();
+			if (!r.Ok() || (pickers != 0 && pickers != msg.pickedUp.size())) {
+				return std::nullopt;
+			}
+			msg.pickers.reserve(pickers);
+			for (std::uint32_t i = 0; i < pickers && r.Ok(); ++i) {
+				msg.pickers.push_back(r.U32());
+			}
 		}
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;

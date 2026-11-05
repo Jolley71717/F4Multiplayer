@@ -493,7 +493,10 @@ void Server::Run()
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
-	std::unordered_set<std::uint32_t>                     pickedUp;
+	// Plugin items picked up from the world, each with the player who picked it up (0: not known, a file before layout 43).
+	// A player's own are never sent to them in a world state (sendWorldState): a persistent item they picked up and dropped
+	// again lies in their world as that same reference, and their game would take it away as a friend's pickup.
+	std::unordered_map<std::uint32_t, std::uint32_t>      pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Protocol::TrapState> traps;  // world traps spent: gone off, disarmed or taken (TrapState)
 	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
@@ -505,6 +508,18 @@ void Server::Run()
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
+	// The latest choice made at each quest terminal row (src/game/TerminalRules.h), whoever made it, and when: told to a
+	// joiner while it is fresh (TERMINAL_CHOICE_LIFE), its maker still here and the row not one set once (the reserves, the
+	// self-destruct: live only), and the joiner's game makes it only where its race is on near that player. Not saved:
+	// every game's save keeps what its own terminals were set to.
+	struct TerminalRow
+	{
+		std::uint8_t      value = 0;
+		std::uint32_t     playerId = 0;
+		Clock::time_point at{};
+	};
+	static constexpr auto TERMINAL_CHOICE_LIFE = std::chrono::minutes{ 10 };
+	std::array<std::optional<TerminalRow>, Protocol::TERMINAL_ROWS> terminalChoices;
 	// Power armor frames lent between players (src/game/FrameLoan.h), by spawn id: a frame its owner's game shares as a
 	// spawn, asked for by a friend (granted false) or lent to them, with the kit lent. One loan per frame and one per
 	// borrower. Each ends with a return, the borrower leaving or loading a save, or the spawn ending. Not saved, as spawns are not.
@@ -631,7 +646,9 @@ void Server::Run()
 			for (const auto& change : containerChanges) {
 				++containersAuthored[change.playerId];
 			}
-			pickedUp.insert(saved->pickedUp.begin(), saved->pickedUp.end());
+			for (std::size_t i = 0; i < saved->pickedUp.size(); ++i) {
+				pickedUp.emplace(saved->pickedUp[i], i < saved->pickers.size() ? saved->pickers[i] : 0);
+			}
 			for (const auto& state : saved->refStates) {
 				refStates[state.refId] = state;
 			}
@@ -714,7 +731,10 @@ void Server::Run()
 		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
 		snapshot.healable.assign(healable.begin(), healable.end());
 		snapshot.containerChanges = containerChanges;
-		snapshot.pickedUp.assign(pickedUp.begin(), pickedUp.end());
+		for (const auto& [ref, picker] : pickedUp) {
+			snapshot.pickedUp.push_back(ref);
+			snapshot.pickers.push_back(picker);
+		}
 		for (const auto& [id, state] : refStates) {
 			snapshot.refStates.push_back(state);
 		}
@@ -1069,7 +1089,18 @@ void Server::Run()
 			send(a_to, Protocol::Encode(Protocol::ActorDeath{ refId, 0, false, at[0], at[1], at[2] }, Protocol::MessageType::kActorDied), true);
 		}
 		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
-		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
+		// Not the receiver's own pickups: their game has those already, in an inventory or dropped again where they lie now
+		// (as the same reference, for a plugin's persistent item), and would take a dropped one away as a friend's pickup.
+		// A save from before they picked one up has it lying where it was placed: theirs to pick up again.
+		const auto                 receiver = players.find(a_to);
+		const auto                 receiverId = receiver != players.end() ? receiver->second.id : 0;
+		std::vector<std::uint32_t> picked;
+		picked.reserve(pickedUp.size());
+		for (const auto& [ref, picker] : pickedUp) {
+			if (picker == 0 || picker != receiverId) {  // an unknown picker is never the receiver, even one not found (0)
+				picked.push_back(ref);
+			}
+		}
 		std::vector<Protocol::RefState>  states;
 		for (const auto& [id, state] : refStates) {
 			states.push_back(state);
@@ -1121,8 +1152,6 @@ void Server::Run()
 		}
 		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
 		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
-		const auto  receiver = players.find(a_to);
-		const auto  receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::size_t healths = 0;
 		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
 			const auto owner = actorOwners.find(a_ref);
@@ -1638,6 +1667,19 @@ void Server::Run()
 			other.stateDirty = other.hasState;
 		}
 
+		// The choices made at quest terminals lately, each as its maker's (TerminalRow): none set once, none stale, none of
+		// a player who left.
+		for (std::uint8_t row = 0; row < Protocol::TERMINAL_ROWS; ++row) {
+			const auto& choice = terminalChoices[row];
+			if (!choice || Protocol::TERMINAL_VALUES[row].once || Clock::now() - choice->at > TERMINAL_CHOICE_LIFE) {
+				continue;
+			}
+			const bool makerHere = std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == choice->playerId; });
+			if (makerHere && choice->playerId != a_player.id) {
+				const auto age = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - choice->at).count();
+				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ choice->playerId, row, choice->value, static_cast<std::uint16_t>(std::clamp<long long>(age, 0, 0xFFFF)) }, Protocol::MessageType::kTerminalChoice), true);
+			}
+		}
 		// The NPCs other games made at runtime and share now: the newcomer places its copies, before it hears who runs them.
 		for (const auto& [ref, spawn] : spawns) {
 			if (spawn.playerId != a_player.id) {
@@ -2625,7 +2667,7 @@ void Server::Run()
 			!withinShare(a_player, kPickups)) {
 			return;
 		}
-		pickedUp.insert(pickup->refId);
+		pickedUp.emplace(pickup->refId, a_player.id);
 		objectPlaces.Forget(pickup->refId);  // in someone's pockets now, at no place
 		++budgetOf(a_player).added[kPickups];
 		noteFill(kPickups, pickedUp.size());
@@ -3098,6 +3140,22 @@ void Server::Run()
 		broadcast(Protocol::Encode(*resources, Protocol::MessageType::kWorkshopResources), true, a_player.key);
 	};
 
+	// A player's choice at a quest's terminal (src/game/TerminalRules.h): passed on to the others as theirs, and kept as the
+	// session's latest of its row for a joiner.
+	const auto handleTerminalChoice = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto choice = Protocol::DecodeTerminalChoice(a_data);
+		if (!choice) {
+			return;
+		}
+		choice->playerId = a_player.id;
+		choice->ageSeconds = 0;
+		terminalChoices[choice->row] = TerminalRow{ choice->value, a_player.id, Clock::now() };
+		broadcast(Protocol::Encode(*choice, Protocol::MessageType::kTerminalChoice), true, a_player.key);
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -3191,6 +3249,20 @@ void Server::Run()
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
 			sendOwners({ { spawn->refId, it->second.playerId } }, a_player.key);
 			return;
+		}
+		// A quest alias's creature another game shares already (protocol 61): each game's run of the quest created its own,
+		// and the sender's pairs with that one (src/game/QuestActors.h). Refused, naming nobody (the id is free): their
+		// game asks again later, and by then holds the other's spawn and asks no more.
+		if (spawn->quest != 0) {
+			const auto twin = std::ranges::find_if(spawns, [&](const auto& a_entry) {
+				return a_entry.second.playerId != a_player.id && a_entry.second.quest == spawn->quest && a_entry.second.alias == spawn->alias;
+			});
+			if (twin != spawns.end()) {
+				log(std::format("server: spawn {:08X} from player {} refused: player {}'s {:08X} is the same quest alias's ({:08X} alias {})", spawn->refId, a_player.id, twin->second.playerId,
+					twin->first, spawn->quest, spawn->alias));
+				sendOwners({ { spawn->refId, 0 } }, a_player.key);
+				return;
+			}
 		}
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
@@ -4364,6 +4436,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopResources:
 			handleWorkshopResources(a_player, a_data);
+			break;
+		case MessageType::kReportTerminalChoice:
+			handleTerminalChoice(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);
