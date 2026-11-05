@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T05:29:42+00:00",
+ "updated": "2026-11-05T16:29:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1728,8 +1728,9 @@
    "title": "Host's open workshop list not refreshed after a guest's take at a far linked workbench",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 308
   },
   {
    "id": "vxfv",
