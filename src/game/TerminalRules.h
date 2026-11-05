@@ -40,9 +40,14 @@ namespace TerminalRules
 	// DN035's stages (read from Fallout4.esm's QUST record and QF_DN035_000EF40C): 10 is a start-up stage (its INDX flag
 	// 0x02), run as the quest starts, whether or not a race is on (it puts the reserves home and sets the route), so it
 	// says only that the quest is set up here; 35 is the self-destruct (the robots blow up), 255 its end. Whether a race
-	// is actually running is RaceState (row 0) being 1 in this game: a row set once (the reserves, the self-destruct)
-	// is made only then (RaceHere::raceRunning).
+	// is actually running is RaceState (row 0) being 0 in this game (the terminal's Stop Race sets it to 1 and then
+	// offers Start Race, seen on the rig): a row set once (the reserves, the self-destruct) is made only then
+	// (RaceHere::raceRunning).
 	inline constexpr std::uint16_t RACE_SET_UP = 10;
+	inline constexpr std::int32_t  RACE_RUNNING = 0;  // RaceState while a race runs; 1 is stopped
+
+	// A reading of RaceState (none: the quest isn't running here) says a race is running.
+	constexpr bool RaceRunning(std::optional<std::int32_t> a_state) { return a_state && *a_state == RACE_RUNNING; }
 	inline constexpr std::uint16_t RACE_DESTROYED = 35;
 	inline constexpr std::uint16_t RACE_OVER = 255;
 
@@ -104,7 +109,7 @@ namespace TerminalRules
 		bool setUp = false;                // RACE_SET_UP done
 		bool over = false;                 // RACE_DESTROYED or RACE_OVER done: the race is no more here
 		bool nearMaker = false;            // our player near the friend who made the choice (NEAR_RANGE, same space)
-		bool raceRunning = false;          // RaceState is 1 here: a race is running in this game
+		bool raceRunning = false;          // RaceState is RACE_RUNNING here: a race is running in this game
 		bool atTerminal = false;           // our player at a terminal (or just away from one)
 	};
 

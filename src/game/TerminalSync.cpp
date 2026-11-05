@@ -120,7 +120,7 @@ namespace TerminalSync
 				here.setUp = QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_SET_UP);
 				here.over = QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_DESTROYED) || QuestStageLayout::IsStageDone(quest, TerminalRules::RACE_OVER);
 				here.nearMaker = NearMaker(pending->playerId);
-				here.raceRunning = i == 0 ? value == 1 : ReadRow(QuestOf(0), ROWS[0]) == 1;
+				here.raceRunning = TerminalRules::RaceRunning(i == 0 ? value : ReadRow(QuestOf(0), ROWS[0]));
 			}
 			switch (book.Due(i, here, now)) {
 			case TerminalRules::Step::kWait:

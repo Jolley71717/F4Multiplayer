@@ -93,7 +93,7 @@ TEST("terminal rules: a friend's choice is made only while the race is on here, 
 	CHECK(ToApply(DESTRUCT, 1, On(0)) == Step::kCall);
 	CHECK(ToApply(DESTRUCT, 1, On(4)) == Step::kDone);  // it happened here already
 	CHECK(ToApply(RESERVES, 1, On(1)) == Step::kDone);
-	// Stage 10 runs as the quest starts, race or none: the once rows wait for a race running here (RaceState 1).
+	// Stage 10 runs as the quest starts, race or none: the once rows wait for a race running here (RaceState 0).
 	here = On(0);
 	here.raceRunning = false;
 	CHECK(ToApply(DESTRUCT, 1, here) == Step::kWait);
@@ -272,4 +272,12 @@ TEST("terminal rules: a joiner is not told a stale choice, nor one whose maker l
 	f.Advance(std::chrono::minutes(6));
 	JoinAs(f, 4, "Dave");
 	CHECK(Choices(Received(f, 4)).empty());  // past its life
+}
+
+TEST("terminal rules: RaceState 0 is a running race, 1 a stopped one, and no reading none")
+{
+	using TerminalRules::RaceRunning;
+	CHECK(RaceRunning(0));
+	CHECK(!RaceRunning(1));  // Stop Race sets it to 1, and the terminal then offers Start Race
+	CHECK(!RaceRunning(std::nullopt));
 }

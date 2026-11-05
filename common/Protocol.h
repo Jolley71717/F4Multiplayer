@@ -3945,7 +3945,7 @@ namespace Protocol
 		bool         once = false;
 	};
 	inline constexpr std::array<TerminalValues, TERMINAL_ROWS> TERMINAL_VALUES{ {
-		{ 0, 1, false },  // DN035 RaceState: the race stopped or run
+		{ 0, 1, false },  // DN035 RaceState: the race running (0) or stopped (1)
 		{ 0, 2, false },  // RaceTargeting: the player, the raiders, or each other
 		{ 0, 1, false },  // RaceCombatInhibitors: off or on
 		{ 1, 1, true },   // RaceReserves: released
