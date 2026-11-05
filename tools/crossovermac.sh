@@ -32,6 +32,23 @@ deploy() {
 	[ -f "$plugins/F4Multiplayer.ini" ] || cp "$root/dist/F4Multiplayer.ini" "$plugins/"
 	# the texts belong to the build, unlike the ini
 	cp -f "$root/dist/lang/"*.txt "$plugins/F4Multiplayer/lang/"
+	cp -f "$root/dist/about.txt" "$plugins/F4Multiplayer/"
+	# this version's release notes, for the About page's link, if it has them yet
+	local version notes
+	version=$(sed -n 's/^set_version("\([^"]*\)").*/\1/p' "$root/xmake.lua" | tr -d '\r')
+	notes="$root/dist/RELEASE-$version.md"
+	if [ -f "$notes" ]; then cp -f "$notes" "$plugins/F4Multiplayer/release-notes.md"; else rm -f "$plugins/F4Multiplayer/release-notes.md"; fi
+	# the plugin's own menu movies, in a folder of the game's Interface of their own; compiled from ui/<Name>/ when one is
+	# missing or older than its sources (git holds no movies)
+	mkdir -p "$game/Data/Interface/F4Multiplayer"
+	for dir in "$root"/ui/*/; do
+		name=$(basename "$dir")
+		[ "$name" = shared ] && continue
+		if [ ! -f "$root/dist/movies/$name.swf" ] || [ -n "$(find "$root/ui" -name '*.as' -newer "$root/dist/movies/$name.swf" | head -1)" ]; then
+			"$root/tools/flash/build.sh" "$name"
+		fi
+		cp -f "$root/dist/movies/$name.swf" "$game/Data/Interface/F4Multiplayer/"
+	done
 	echo "Deployed to $plugins"
 }
 

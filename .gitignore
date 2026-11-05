@@ -13,6 +13,10 @@ vs*/
 *.zip
 compile_commands.json
 
+# the menu movies, compiled from ui/ into dist/movies (tools/flash/build.sh); never committed (docs/UI.md)
+dist/movies/
+ui/**/*.swf
+
 # packaged releases
 dist/out/
 

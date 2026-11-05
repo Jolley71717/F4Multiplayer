@@ -48,7 +48,7 @@ namespace MenuKinds
 		if (any({ kDialogue })) {
 			return Protocol::MenuKind::kTalking;
 		}
-		if (any({ kLockpicking, kMessageBox, kBook, kLooks })) {
+		if (any({ kLockpicking, kMessageBox, kBook, kLooks, kMultiplayer })) {
 			return Protocol::MenuKind::kOther;
 		}
 		return Protocol::MenuKind::kNone;

@@ -1,6 +1,9 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/UiMainMenuEntry.h"
+#include "game/UiPanel.h"
+#include "game/UiDevHud.h"
 #include "game/AutoSave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
@@ -24,7 +27,7 @@
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "game/Perf.h"
-#include "game/Menu.h"
+#include "game/UiPages.h"
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/RealTime.h"
@@ -481,6 +484,8 @@ namespace
 			if (Config::Get().devChannel) {
 				MenuWatch::Install();  // for the stress loop's menu checks (the menus dev command)
 			}
+			UiPanel::Register();  // the multiplayer menu of our own, before the main menu can open it
+			UiDevHud::Register();
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
@@ -708,6 +713,10 @@ namespace
 					SyncAnimMark::Frame();  // a game that starts with the player marked as in a synced animation gets no input
 				}
 			}
+			if (a_onMain) {
+				PERF_SCOPE("UiDevHud");
+				UiDevHud::Frame();
+			}
 			{
 				PERF_SCOPE("RealTime");
 				RealTime::Frame(InSession());
@@ -718,7 +727,7 @@ namespace
 			}
 			InertShots::Frame();  // inert shots that are stale or in a cell no longer attached are ended
 			PERF_SCOPE("Menu");
-			Menu::Frame();  // after Session: a button's action sees this frame's connection state
+			UiPages::Frame();  // after Session: a button's action sees this frame's connection state
 		}
 		return FrameWatch::Outcome::kWorked;
 	}
@@ -1125,6 +1134,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
 	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
+	UiMainMenuEntry::Install();  // a Multiplayer entry in the main and pause menus, after Load (UiMainMenuPlace.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

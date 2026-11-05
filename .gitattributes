@@ -3,3 +3,4 @@
 tools/rig/*.sh text eol=lf
 tools/rig/*.awk text eol=lf
 tools/crossovermac.sh text eol=lf
+tools/flash/*.sh text eol=lf

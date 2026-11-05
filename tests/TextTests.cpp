@@ -227,6 +227,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "session.hosting_resumes", {}, "Multiplayer: hosting starts again once your new character has a name and is out of Vault 111" },
 		{ "session.character_changed_left", {}, "Multiplayer: you loaded another character and left the session; join again from the menu" },
 		{ "session.unnamed_waits", {}, "Multiplayer: the session waits until your new character has a name; a save made before then has your last character's ID and would play in that character's session" },
+		{ "host.err_main_menu", {}, "you can host once you've loaded a game" },
 		{ "host.err_opening", {}, "you can host once you're out of Vault 111" },
 		{ "host.err_opening_unnamed", {}, "you can host once your new character has a name" },
 		{ "host.err_port", { { "port", 7779 } }, "could not host on port 7779" },
@@ -369,6 +370,30 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.stop_hosting", {}, "Stop hosting" },
 		{ "menu.leave", {}, "Leave" },
 		{ "menu.join_other", {}, "Join someone else" },
+		{ "mainmenu.entry", {}, "MULTIPLAYER" },
+		{ "menu.join_help", {}, "Friend not listed?" },
+		{ "menu.searching", {}, "Looking for friends..." },
+		{ "menu.keybinds", {}, "Controls" },
+		{ "menu.kb_menu", {}, "Multiplayer menu" },
+		{ "menu.kb_list", {}, "Player list" },
+		{ "menu.kb_teleport", {}, "Teleport to a friend" },
+		{ "menu.teleport_to", { { "player", "Sam" } }, "Teleport to Sam" },
+		{ "menu.kb_ping", {}, "Ping" },
+		{ "menu.kb_where", {}, "Where friends are" },
+		{ "menu.kb_point", {}, "Emote: point" },
+		{ "menu.kb_cheer", {}, "Emote: cheer" },
+		{ "menu.kb_clap", {}, "Emote: clap" },
+		{ "menu.kb_voice", {}, "Push to talk" },
+		{ "menu.key_off", {}, "Off" },
+		{ "menu.key_waiting", {}, "press a key..." },
+		{ "menu.key_how", {}, "Esc cancels, Delete turns it off" },
+		{ "menu.key_taken", { { "key", "F2" }, { "name", "Ping" } }, "F2 is already Ping" },
+		{ "menu.key_reserved", { { "key", "F5" } }, "F5 can't be used: the game or this menu needs it" },
+		{ "menu.join_waiting", { { "address", "1.2.3.4" } }, "You'll join 1.2.3.4 once you've loaded a game." },
+		{ "menu.about", {}, "About" },
+		{ "menu.release_notes", {}, "Release notes" },
+		{ "menu.about_missing", {}, "The about text is missing: about.txt isn't in Data/F4SE/Plugins/F4Multiplayer." },
+		{ "mpmenu.back", {}, "BACK" },
 		{ "menu.host", {}, "Host a session" },
 		{ "menu.join", {}, "Join a friend" },
 		{ "menu.look_again", {}, "Look again" },
@@ -393,8 +418,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.friends_hosting", {}, "Steam friends hosting Fallout 4 co-op right now:" },
 		{ "menu.joining_host", { { "player", "Sam" } }, "Multiplayer: joining Sam's game" },
 		{ "menu.steam_missing", {}, "Steam isn't available in this game, so friends can't be listed." },
-		{ "menu.none_hosting", { { "friends", 12 }, { "online", 3 }, { "ingame", 1 } },
-			"None of your Steam friends is hosting right now (12 friends, 3 online, 1 in Fallout 4).\nA host shows up here only when Steam shows them playing Fallout 4 (their profile must say so): start the game through Steam with F4SE as the launcher, and set the profile's Game details to Friends Only or Public.\nOtherwise the host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list." },
+		{ "menu.none_hosting", { { "online", 3 }, { "friends", 12 }, { "ingame", 1 } },
+			"No Steam friends are hosting now (3/12 online, 1 in Fallout 4).\nA host shows up here only when Steam shows them playing Fallout 4 (their profile must say so): start the game through Steam with F4SE as the launcher, and set the profile's Game details to Friends Only or Public.\nOtherwise the host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list." },
 		{ "menu.ini_address", { { "address", "1.2.3.4" } }, "Address from the ini: 1.2.3.4" },
 		{ "menu.connecting_hud", { { "address", "1.2.3.4" } }, "Multiplayer: connecting to 1.2.3.4" },
 		{ "menu.setting_button", { { "name", "Voice chat" }, { "state", "On" } }, "Voice chat: On" },
@@ -412,6 +437,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.spoken_lines_what", {}, "hear what's said near you in a friend's conversations, in the speaker's voice" },
 		{ "menu.compass_markers", {}, "Compass markers" },
 		{ "menu.compass_markers_what", {}, "friends on the compass" },
+		{ "menu.developer_hud", {}, "Developer HUD" },
+		{ "menu.developer_hud_what", {}, "live numbers at the top right of the screen" },
 		{ "menu.fast_loading", {}, "Fast loading" },
 		{ "menu.fast_loading_what", {}, "vsync off during loading screens" },
 		{ "menu.lend_power_armor", {}, "Lend power armor" },
@@ -438,6 +465,17 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.hc_password_page", {}, "The menu can't type, so a new password is made up for you. Players already in the session stay." },
 		{ "menu.hc_new_password", {}, "New password" },
 		{ "menu.hc_remove_password", {}, "Remove the password" },
+		{ "menu.pw_save", {}, "Save password" },
+		{ "menu.pw_save_hint", {}, "Type it, then press Enter or choose this. Letters, digits and punctuation. Players already in the session stay." },
+		{ "menu.pw_make_up", {}, "Make one up" },
+		{ "menu.pw_setting_hint", {}, "The password for hosting or joining a session. Everyone must use the same one." },
+		{ "menu.pw_line", {}, "A password is set. Friends enter it under Password in their multiplayer settings." },
+		{ "menu.pw_view", {}, "View password" },
+		{ "menu.pw_view_hint", {}, "Shows it on the screen." },
+		{ "menu.pw_change", {}, "Change password" },
+		{ "menu.pw_set", {}, "Set a password" },
+		{ "menu.pw_remove", {}, "Remove password" },
+		{ "menu.pw_remove_ask", {}, "Remove the password? Players already in the session stay." },
 		{ "menu.hc_bans_page", { { "n", 2 } }, "Banned players (2). Pick one to unban:" },
 		{ "menu.hc_no_bans", {}, "Nobody is banned." },
 		{ "menu.hc_unban", { { "who", "Sam (~3fa2c1)" } }, "Unban Sam (~3fa2c1)" },
@@ -657,13 +695,13 @@ TEST("text: no player-facing message is a bare English literal in the code")
 	}
 	// The menu's pages and buttons: a button label or a page's text starting from a letter is English in the code.
 	// (A line break or a lower-case key, as in { "page", n }, is not.)
-	const auto menu = SourceTree::Read(*root / "src" / "game" / "Menu.cpp");
+	const auto menu = SourceTree::Read(*root / "src" / "game" / "UiPages.cpp");
 	for (const std::string_view start : { "push_back({ \"", "{ { \"", "body = \"", "body += \"" }) {
 		for (auto at = menu.find(start); at != std::string::npos; at = menu.find(start, at + 1)) {
 			const char next = at + start.size() < menu.size() ? menu[at + start.size()] : '\0';
 			if (std::isupper(static_cast<unsigned char>(next)) || (start != "{ { \"" && std::isalpha(static_cast<unsigned char>(next)))) {
 				++found;
-				Test::Fail(__FILE__, __LINE__, std::format("src/game/Menu.cpp builds text from a literal ({}{}...): use Text::Get", start, next));
+				Test::Fail(__FILE__, __LINE__, std::format("src/game/UiPages.cpp builds text from a literal ({}{}...): use Text::Get", start, next));
 			}
 		}
 	}

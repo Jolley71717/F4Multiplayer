@@ -16,6 +16,10 @@ namespace Compass
 	// What a player's marker looks like ("pink diamond"), for the player list.
 	[[nodiscard]] std::string_view MarkerName(std::uint32_t a_playerId);
 
+	// The same marker's color (0xRRGGBB) and shape (0 circle, 1 square, 2 diamond, 3 triangle), for the multiplayer menu to draw it.
+	[[nodiscard]] std::uint32_t MarkerColor(std::uint32_t a_playerId);
+	[[nodiscard]] int           MarkerShape(std::uint32_t a_playerId);
+
 	[[nodiscard]] std::string Describe();
 
 	// Whether a menu's updates have stopped while the HUD's go on: the power armor HUD, let go when the player gets out of

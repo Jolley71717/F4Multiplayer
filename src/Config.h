@@ -87,6 +87,9 @@ namespace Config
 		// is behind loading-screen crashes.
 		bool compassMarkers = true;
 
+		// Live numbers at the top right of the screen (bDeveloperHud; UiDevHud).
+		bool developerHud = false;
+
 		// An icon over a friend's stand-in while they are in the Pip-Boy or another menu (bMenuIcons; MenuIcons). Off, and
 		// not in the shipped ini: on the rig the HUD showed it only in part, or where it was first drawn (docs/DESIGN.md,
 		// Menus). Their stand-in raises its Pip-Boy and its name tag says so either way.
