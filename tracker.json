@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T19:36:36+00:00",
+ "updated": "2026-11-05T19:45:52+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -413,6 +413,14 @@
    "stage": 1,
    "note": "Looked into: the face data arrives complete, so we suspect one head-shaping value that isn't sent. Not fixed yet.",
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
+  },
+  {
+   "id": "7tds",
+   "title": "VATS skips friends' stand-ins (option), for groups where a friend stands in front",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "83dc",
