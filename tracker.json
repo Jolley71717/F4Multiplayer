@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T16:43:23+00:00",
+ "updated": "2026-11-05T16:57:38+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -53,7 +53,7 @@
    "title": "Shared bench: robot workbench materials not shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "",
    "pr": 302
   },
@@ -1295,7 +1295,7 @@
    "title": "Misc quest encounters 'Gun Run' (Salem) and the Robot Race (Easy City Downs) aren't shared: their spawned enemies don't sync and stand still or react slowly",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "",
    "pr": 303
   },
@@ -1403,7 +1403,7 @@
    "title": "Supply lines: a guest's builds use the host's supply-line materials",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "",
    "pr": 302
   },
@@ -1728,7 +1728,7 @@
    "title": "Host's open workshop list not refreshed after a guest's take at a far linked workbench",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "",
    "pr": 308
   },
