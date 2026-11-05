@@ -769,6 +769,14 @@ namespace WorkshopSync
 		// 3D and no light, one is made (+500260, through the light maker), "off" or not. In the game's own powering that make
 		// is harmless, as the light maker asks Workshop::IsPowered first; for our copies it asks litCopies (LightPoweredHook).
 		constexpr REL::ID SWITCH_LIGHT{ 2198253 };
+		// A reference's conveyor belt (BGSConveyorBelt::ConveyorBelt, kind 2 of its init actions, ExtraInitActions), as
+		// Papyrus's conveyor natives use it (ObjectReference.ConveyorBeltOn, IsConveyorBeltOn: 1.11.240's script functions
+		// jump straight to these). The find (+259210) gives the belt or null; running (+259170) whether it has one that runs;
+		// set (+259120) sets it running or stopped (through +259D90: its flag, and its surface velocity on the 3D's belt
+		// node), true if it has one. Nothing but Papyrus calls the set: the power handler (2195089) never touches a belt.
+		constexpr REL::ID FIND_CONVEYOR_BELT{ 2189355 };
+		constexpr REL::ID CONVEYOR_BELT_RUNS{ 2189353 };
+		constexpr REL::ID SET_CONVEYOR_BELT{ 2189352 };
 
 		bool                     blockCopies = true;  // dev (wspower block off): copies can be picked, to try the repair
 		std::uint32_t            copiesBlocked = 0;
@@ -2179,16 +2187,16 @@ namespace WorkshopSync
 		// the game's at runtime and no save keeps it, and a load makes it again only for one in litCopies, which the load
 		// empties (BeforeLoad). Switching it off and on around the save is what left the rig's bulb dark at every other save:
 		// the off's removal ran after the on, which found the light still there.
-		enum class Took
-		{
-			kNoModel,
-			kLight,     // a light's light switched
-			kGraph,     // the graph took the event
-			kRefused,   // the graph is loaded and didn't take it
-			kNothing,   // no light, no graph: nothing to show it on
-			kDark,      // a graph not told Powered by us refused Unpowered: dark already
-			kLit,       // a graph not told Unpowered by us refused Powered: lit already
-		};
+		//
+		// A conveyor belt (Contraptions Workshop's belts: the engine's conveyor on the reference, made running with its 3D
+		// when the model asks for one, +50A47B, or by a script's ApplyConveyorBelt) runs or stops only as Papyrus says
+		// (ConveyorBeltOn: nothing native calls it, and the power handler doesn't touch it), so by the belt's own script on
+		// the power events, which a copy never gets. A copy's belt stayed as its script left it, whatever its builder's game
+		// said (a 0.11.1 report: conveyors built and powered, not running on the friend's screen). Now it is set as
+		// ConveyorBeltOn sets it (its native, at once, no events), for a save's hush too (unlike a light's light: nothing is
+		// left to run after it). Its script may set it again after our show (a copy is never powered for it): Holds sees
+		// that and the Mirror shows it again.
+		using Took = WorkshopPower::Took;
 
 		// What we last told each copy's graph. Emptied with the copies (Reset, a load, the world gone); a copy's entry goes
 		// with it.
@@ -2211,18 +2219,51 @@ namespace WorkshopSync
 			return a_ref.extraList && a_ref.extraList->HasType(RE::EXTRA_DATA_TYPE::kLight);
 		}
 
+		std::uint32_t beltsSwitched = 0;  // copies' conveyor belts set running or stopped (ShowPoweredHow)
+
+		// Whether the reference's conveyor belt runs, or none if it has none (no init actions, or none a conveyor). Its
+		// extra data's lock is taken by the engine's find, as Papyrus's ConveyorBeltOn and IsConveyorBeltOn take it.
+		std::optional<bool> BeltRuns(RE::TESObjectREFR& a_ref)
+		{
+			using find_t = void* (*)(RE::TESObjectREFR&);
+			using runs_t = bool (*)(RE::TESObjectREFR&);
+			static REL::Relocation<find_t> find{ FIND_CONVEYOR_BELT };
+			static REL::Relocation<runs_t> runs{ CONVEYOR_BELT_RUNS };
+			if (!a_ref.extraList || !a_ref.extraList->HasType(RE::EXTRA_DATA_TYPE::kInitActions) || !find(a_ref)) {
+				return std::nullopt;
+			}
+			return runs(a_ref);
+		}
+
+		// Sets the reference's conveyor belt running or stopped, if it has one: false if it has none.
+		bool SetBelt(RE::TESObjectREFR& a_ref, bool a_on)
+		{
+			using set_t = bool (*)(RE::TESObjectREFR&, bool);
+			static REL::Relocation<set_t> set{ SET_CONVEYOR_BELT };
+			const auto runs = BeltRuns(a_ref);
+			if (!runs) {
+				return false;
+			}
+			if (*runs != a_on && set(a_ref, a_on)) {
+				++beltsSwitched;
+			}
+			return true;
+		}
+
 		Took ShowPoweredHow(RE::TESObjectREFR& a_copy, bool a_on, bool a_forSave = false)
 		{
 			static const RE::BSFixedString        powered{ "Powered" };
 			static const RE::BSFixedString        unpowered{ "Unpowered" };
 			using switch_t = void (*)(RE::TESObjectREFR&, bool);
 			static REL::Relocation<switch_t>      switchLight{ SWITCH_LIGHT };
-			if (!a_copy.Get3D()) {
-				return Took::kNoModel;
+			WorkshopPower::ShowParts parts;
+			parts.model = a_copy.Get3D() != nullptr;
+			if (!parts.model) {
+				return WorkshopPower::Outcome(parts, a_on);
 			}
 			const auto id = a_copy.GetFormID();
-			const bool light = IsLightBase(a_copy);
-			if (light && !a_forSave) {
+			parts.light = IsLightBase(a_copy);
+			if (parts.light && !a_forSave) {
 				if (IsCopy(&a_copy)) {
 					SetLit(id, a_on);  // first: switching it on makes its light, which asks LightPoweredHook
 				}
@@ -2230,29 +2271,28 @@ namespace WorkshopSync
 					switchLight(a_copy, !a_on);
 				}
 			}
+			parts.belt = !parts.light && SetBelt(a_copy, a_on);
 			const auto graph = LoadedGraph(a_copy);
-			if (graph == 0) {
-				return light ? Took::kLight : Took::kNothing;
+			parts.graph = graph != 0;
+			if (parts.graph) {
+				parts.graphTook = a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered);
+				if (parts.graphTook) {
+					graphsTold.Took(id, graph, a_on);
+				} else if (graphsTold.Refused(id, graph, a_on)) {
+					parts.alreadyShows = true;
+					++graphAlready;
+				}
 			}
-			if (a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered)) {
-				graphsTold.Took(id, graph, a_on);
-				return Took::kGraph;
+			const auto took = WorkshopPower::Outcome(parts, a_on);
+			if (took == Took::kRefused) {
+				++graphRefused;
 			}
-			if (graphsTold.Refused(id, graph, a_on)) {
-				++graphAlready;
-				return light ? Took::kLight : (a_on ? Took::kLit : Took::kDark);
-			}
-			if (light) {
-				return Took::kLight;  // its light is what was switched: no try spent
-			}
-			++graphRefused;
-			return Took::kRefused;
+			return took;
 		}
 
 		bool ShowPowered(RE::TESObjectREFR& a_copy, bool a_on)
 		{
-			const auto took = ShowPoweredHow(a_copy, a_on);
-			return took != Took::kNoModel && took != Took::kRefused;
+			return WorkshopPower::ShowCounts(ShowPoweredHow(a_copy, a_on));
 		}
 
 		struct MirrorEngine
@@ -2288,15 +2328,19 @@ namespace WorkshopSync
 				return WorkshopPower::Drawing(reinterpret_cast<std::uintptr_t>(model), model->parent != nullptr, namesGraph, graph);
 			}
 
-			// A light's light there while it is shown on, and gone while shown off; anything else holds what it was shown
-			// (its graph keeps it; one drawn anew is Drawn's).
+			// A light's light there while it is shown on, and gone while shown off; a conveyor belt running while shown on,
+			// and stopped while shown off (its own script may have set it since); anything else holds what it was shown (its
+			// graph keeps it; one drawn anew is Drawn's).
 			bool Holds(const WorkshopPower::Key& a_key, bool a_on)
 			{
 				const auto ref = CopyOf(a_key);
-				if (!ref || !ref->Get3D() || !IsLightBase(*ref)) {
+				if (!ref || !ref->Get3D()) {
 					return true;
 				}
-				return HasLight(*ref) == a_on;
+				if (IsLightBase(*ref)) {
+					return WorkshopPower::StillShows(HasLight(*ref), std::nullopt, a_on);
+				}
+				return WorkshopPower::StillShows(std::nullopt, BeltRuns(*ref), a_on);
 			}
 
 			bool Show(const WorkshopPower::Key& a_key, bool a_on)
@@ -2308,12 +2352,12 @@ namespace WorkshopSync
 				const auto took = ShowPoweredHow(*ref, a_on, forSave);
 				if (showsLogged < SHOWS_LOGGED && took != Took::kNoModel) {
 					++showsLogged;
-					static constexpr std::array<const char*, 7> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light or graph",
-						"graph dark already (never lit)", "graph lit already" };
+					static constexpr std::array<const char*, 8> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light, belt or graph",
+						"graph dark already (never lit)", "graph lit already", "belt set" };
 					REX::INFO("WorkshopSync: friend's piece {:08X} (player {} piece {:08X}) shown {}: {}", ref->GetFormID(), a_key.first, a_key.second, a_on ? "on" : "off",
 						how[static_cast<std::size_t>(took)]);
 				}
-				if (took == Took::kNoModel || took == Took::kRefused) {
+				if (!WorkshopPower::ShowCounts(took)) {
 					return false;
 				}
 				++powerShown;
@@ -3165,9 +3209,9 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeResources()
@@ -3265,6 +3309,9 @@ namespace WorkshopSync
 			out += std::format(" items={}", list->data.size());
 		}
 		out += std::format(" blocked={} powerPiece={}", Blocked(*a_ref), IsPowerPiece(*a_ref));
+		if (const auto belt = BeltRuns(*a_ref)) {
+			out += std::format(" belt={}", *belt ? "running" : "stopped");  // a conveyor belt (ShowPoweredHow)
+		}
 		// Its owner: a workshop object's assigned settler is its actor owner (how a settler's job shows).
 		if (const auto owner = a_ref->GetOwner()) {
 			out += std::format(" owner={:08X}", owner->GetFormID());

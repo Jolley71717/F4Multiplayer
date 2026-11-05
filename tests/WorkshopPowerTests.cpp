@@ -1010,3 +1010,150 @@ TEST("workshop power: a copy that comes back lit spends no tries on Powered, and
 	CHECK(!game.lit.at(key));
 	CHECK(mirror.GivenUp() == 0);
 }
+
+TEST("workshop power: a conveyor belt is set as its builder's says and counts as shown, with or without a graph that takes the event")
+{
+	ShowParts belt;
+	belt.model = true;
+	belt.belt = true;
+	// No graph (or none loaded): the belt is what shows the power.
+	CHECK(Outcome(belt, true) == Took::kBelt);
+	CHECK(ShowCounts(Outcome(belt, false)));
+	// A graph that takes the event: shown by it too.
+	belt.graph = true;
+	belt.graphTook = true;
+	CHECK(Outcome(belt, true) == Took::kGraph);
+	// A graph that refuses it spends no try: the belt was set.
+	belt.graphTook = false;
+	CHECK(Outcome(belt, true) == Took::kBelt);
+	CHECK(ShowCounts(Outcome(belt, true)));
+	belt.alreadyShows = true;
+	CHECK(Outcome(belt, true) == Took::kLit);
+	CHECK(Outcome(belt, false) == Took::kDark);
+	// No 3D: nothing shown, belt or not.
+	belt.model = false;
+	CHECK(Outcome(belt, true) == Took::kNoModel);
+	CHECK(!ShowCounts(Took::kNoModel));
+}
+
+TEST("workshop power: what a show took is as before for lights, graphs and pieces with neither")
+{
+	ShowParts parts;
+	parts.model = true;
+	CHECK(Outcome(parts, true) == Took::kNothing);
+	CHECK(ShowCounts(Took::kNothing));
+	parts.light = true;
+	CHECK(Outcome(parts, true) == Took::kLight);
+	parts.graph = true;
+	CHECK(Outcome(parts, true) == Took::kLight);  // a refusing graph: its light is what was switched
+	parts.alreadyShows = true;
+	CHECK(Outcome(parts, false) == Took::kLight);
+	parts.light = false;
+	parts.alreadyShows = false;
+	CHECK(Outcome(parts, true) == Took::kRefused);  // a plain graph that refused: tried again
+	CHECK(!ShowCounts(Took::kRefused));
+	parts.alreadyShows = true;
+	CHECK(Outcome(parts, true) == Took::kLit);
+	CHECK(Outcome(parts, false) == Took::kDark);
+	parts.graphTook = true;
+	CHECK(Outcome(parts, false) == Took::kGraph);
+}
+
+TEST("workshop power: a copy still shows what it was shown while its light and its belt are as shown")
+{
+	CHECK(StillShows(std::nullopt, std::nullopt, true));  // a graph keeps what it was told
+	CHECK(StillShows(true, std::nullopt, true));
+	CHECK(!StillShows(false, std::nullopt, true));
+	CHECK(StillShows(std::nullopt, false, false));
+	CHECK(!StillShows(std::nullopt, true, false));  // stopped when shown off, but running
+	CHECK(!StillShows(std::nullopt, false, true));  // running when shown on, but its script stopped it
+}
+
+namespace
+{
+	// A friend's conveyor belt here: running or stopped as last set, by our show or by the copy's own script (its OnLoad
+	// stops it: a copy is never powered for its script). No graph that matters to it.
+	struct ConveyorGame
+	{
+		std::map<Key, std::uintptr_t> drawn;
+		std::map<Key, bool>           runs;
+		std::uint32_t                 shows = 0;
+
+		std::uintptr_t Drawn(const Key& a_key)
+		{
+			const auto it = drawn.find(a_key);
+			return it == drawn.end() ? 0 : it->second;
+		}
+
+		bool Show(const Key& a_key, bool a_on)
+		{
+			++shows;
+			runs[a_key] = a_on;
+			ShowParts parts;
+			parts.model = true;
+			parts.belt = true;
+			return ShowCounts(Outcome(parts, a_on));
+		}
+
+		bool Holds(const Key& a_key, bool a_on)
+		{
+			const auto it = runs.find(a_key);
+			return StillShows(std::nullopt, it == runs.end() ? std::nullopt : std::optional{ it->second }, a_on);
+		}
+	};
+
+	constexpr std::uint32_t CONVEYOR = 0xFF000C01;  // a friend's conveyor belt: our copy of it
+}
+
+TEST("workshop power: a friend's conveyor runs while their game says it is powered, and runs again when its own script stops it")
+{
+	Mirror       mirror;
+	ConveyorGame game;
+	const Key    belt{ BUILDER, CONVEYOR };
+	auto         t = Clock::now();
+	mirror.Set(BUILDER, { CONVEYOR, true });
+	game.drawn[belt] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.runs.at(belt));
+	CHECK(mirror.GivenUp() == 0);
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // running: nothing to do
+	game.runs[belt] = false;              // the copy's script stops it (its OnLoad: unpowered here)
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.runs.at(belt));
+	CHECK(mirror.Lapses() == 1);
+	// Their game says it lost power: stopped here too.
+	mirror.Set(BUILDER, { CONVEYOR, false });
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.runs.at(belt));
+	// A script that keeps starting it again is answered no more often than the redraw cap allows.
+	std::size_t again = 0;
+	for (int i = 0; i < 4 * MAX_REDRAWS; ++i) {
+		game.runs[belt] = true;
+		t += REFRESH;
+		again += mirror.Refresh(game, t);
+	}
+	CHECK(again <= MAX_REDRAWS);
+	CHECK(again > 0);
+}
+
+TEST("workshop power: a friend's running conveyor is stopped for a save and runs again after it")
+{
+	Mirror       mirror;
+	ConveyorGame game;
+	const Key    belt{ BUILDER, CONVEYOR };
+	auto         t = Clock::now();
+	mirror.Set(BUILDER, { CONVEYOR, true });
+	game.drawn[belt] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(mirror.Hush(game, t) == 1);
+	CHECK(!game.runs.at(belt));
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // the save isn't over: stopped, and not shown again for the lapse
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.runs.at(belt));
+}
