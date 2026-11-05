@@ -150,7 +150,7 @@ At run time:
 - **The command bar** (`ui/shared/f4mp/ui/CommandBar.as`) is the game's `ButtonHintBar_mc` of ours. It has one command, the way back. A
   page could have more, side by side as the game's do: `Show` would take a list of commands, each with its key, word and action.
 - **Release notes** are a page off About: this version's `dist/RELEASE-*.md`, which the package copies to
-  `F4SE/Plugins/F4Multiplayer/release-notes.md` (an rc's own notes in an rc's package, and so in the release made from it). No file, no
+  `F4SE/Plugins/F4Multiplayer/release-notes.md` (an rc's own notes in an rc's package; `promote.ps1` puts the release's in the release made from it). No file, no
   link. `ui/shared/f4mp/ui/Markdown.as` shows the little markdown they use: headings, lists, paragraphs, and inline code, bold and links
   as plain text. They're in English whatever the game's language.
 - **Typing.** A dialog with a place to type (`Dialog.as`) gets the keys in `OnButtonEvent`, turned to characters with `ToUnicode`, and
