@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T02:45:11+00:00",
+ "updated": "2026-11-05T03:24:41+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1172,8 +1172,9 @@
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 305
   },
   {
    "id": "mkbe",
