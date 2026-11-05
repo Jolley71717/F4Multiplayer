@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T03:24:41+00:00",
+ "updated": "2026-11-05T03:34:29+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -287,6 +287,15 @@
    "stage": 7,
    "note": "",
    "pr": 270
+  },
+  {
+   "id": "5buv",
+   "title": "PR 302: a friend's take at a host supply-line workbench that is unloaded on the host never reaches the host's pile (dupe)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "",
+   "pr": 302
   },
   {
    "id": "5syl",
