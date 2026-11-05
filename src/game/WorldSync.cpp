@@ -111,7 +111,7 @@ namespace WorldSync
 		// The crafting menus: each reads a settlement's workbench through its gather (Storage.h).
 		bool IsCraftingMenu(std::string_view a_name)
 		{
-			return a_name == "ExamineMenu"sv || a_name == "CookingMenu"sv || a_name == "PowerArmorModMenu"sv;
+			return a_name == "ExamineMenu"sv || a_name == "CookingMenu"sv || a_name == "PowerArmorModMenu"sv || a_name == "RobotModMenu"sv;
 		}
 		// Trading moves everything through ordinary transfers against the vendor's chest or the vendor
 		// (BarterMenu::CompleteTrade), so moves while the barter menu is open (and just after) are trades:
@@ -1240,6 +1240,21 @@ namespace WorldSync
 				// between places, or on its way out, and waits.
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
 				return ref && !ref->IsDeleted() && ref->GetParentCell();
+			}
+
+			// A settlement's workbench shared storage keeps, though Loaded says no: a persistent reference far from our player,
+			// which seems to be in no cell then (an NPC of an unloaded cell logs cell 0 here too). A friend's take at such a
+			// workbench of the host's waited for the host to come near, while the server's book had it taken (the rig, a supply
+			// line far from both players). The engine takes from it there for a build's supply lines
+			// (Workshop::RemoveItemFromWorkshopContainers' RemoveItem) and its scripts add the day's production to it, so
+			// Storage's change goes in there too (ApplyAtBench: the same RemoveItem and AddObjectToContainer).
+			bool FromAfar(std::uint32_t a_holder) override
+			{
+				if (!(inWorld ? *inWorld : InWorld() && !Story::InOpening())) {
+					return false;
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				return ref && !ref->IsDeleted() && Storage::WatchesBench(a_holder) && WorkshopSync::IsWorkbenchAnchor(ref);
 			}
 
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
@@ -3254,6 +3269,7 @@ namespace WorldSync
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
+			   stats.fromAfar);
 	}
 }

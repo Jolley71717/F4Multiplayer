@@ -45,6 +45,7 @@ namespace OpenMenus
 		// vignette over a featured item's inspection (VignetteMenu; the inspection itself is ExamineMenu).
 		kCaravan,
 		kVignette,
+		kRobotMod,  // RobotModMenu: Automatron's robot workbench (an ExamineMenu: a crafting menu, Storage.cpp)
 		kCount
 	};
 
@@ -52,7 +53,7 @@ namespace OpenMenus
 	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "FaderMenu", "LooksMenu", "PauseMenu",
 		"PipboyMenu", "PowerArmorModMenu", "VATSMenu", "WorkshopMenu", "BarterMenu", "BookMenu", "ContainerMenu", "CookingMenu", "ExamineMenu", "HolotapeMenu",
 		"LevelUpMenu", "LockpickingMenu", "MessageBoxMenu", "SitWaitMenu", "SleepWaitMenu", "TerminalMenu", "TerminalHolotapeMenu", "Workshop_CaravanMenu",
-		"VignetteMenu" };
+		"VignetteMenu", "RobotModMenu" };
 
 	// The main menu: none of the menus above (it says nothing of what friends see us in), but kept on its own. Once it
 	// opens, the world played until then is gone, whatever starts the next one: a load, a new game, or a coc from the menu,

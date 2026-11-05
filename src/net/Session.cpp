@@ -608,6 +608,11 @@ namespace Session
 					Storage::OnOwners(*msg);
 				}
 				break;
+			case MessageType::kBenchLinks:
+				if (const auto msg = Protocol::DecodeBenchLinks(a_data)) {
+					Storage::OnBenchLinks(*msg);  // the host's supply lines: viewed with the workbench at our builds there
+				}
+				break;
 			case MessageType::kStorageContents:
 				if (const auto msg = Protocol::DecodeStorageListing(a_data)) {
 					Storage::OnContents(*msg);

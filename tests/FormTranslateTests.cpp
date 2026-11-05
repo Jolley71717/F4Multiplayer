@@ -389,3 +389,23 @@ TEST("form translate: a gift in a container the other game lacks is not passed t
 	CHECK(listed->drops[1].holder == 0);
 	CHECK(listed->last);
 }
+
+TEST("form translate: a workbench's supply lines leave out a workbench the other side lacks; a workbench it lacks drops them")
+{
+	using Protocol::BenchLinks;
+	for (const auto type : { MT::kReportBenchLinks, MT::kBenchLinks }) {
+		const auto packet = After(Encode(BenchLinks{ SHARED, { MINE, 0x0001'2345 } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		const auto links = DecodeBenchLinks(*packet);
+		REQUIRE(links);
+		CHECK(links->bench == SESSION_SHARED);
+		CHECK(links->links == std::vector<std::uint32_t>{ 0x0001'2345 });
+		CHECK(!After(Encode(BenchLinks{ MINE, { SHARED } }, type), MISSING, Way::kToSession));
+	}
+	// From the session: a workbench of a plugin we lack is left out, one we have comes in our numbering.
+	const auto in = After(Encode(BenchLinks{ 0x0001'2345, { THEIRS, SESSION_SHARED } }, MT::kBenchLinks), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto links = DecodeBenchLinks(*in);
+	REQUIRE(links);
+	CHECK(links->links == std::vector<std::uint32_t>{ SHARED });
+}

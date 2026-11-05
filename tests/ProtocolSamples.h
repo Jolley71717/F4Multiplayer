@@ -367,6 +367,9 @@ namespace ProtocolSamples
 		s.push_back({ "StorageView", Encode(StorageView{ REF_A, true }), D(DecodeStorageView) });
 		s.push_back({ "StorageView(closed)", Encode(StorageView{ REF_A, false }), D(DecodeStorageView) });
 		s.push_back({ "StorageOwners", Encode(StorageOwners{ { { REF_A, 1, 0 }, { REF_B, 1, 17 } } }), D(DecodeStorageOwners) });
+		for (const auto type : { MT::kReportBenchLinks, MT::kBenchLinks }) {
+			s.push_back({ "BenchLinks", Encode(BenchLinks{ REF_A, { REF_B, 0x0002'50FF } }, type), D(DecodeBenchLinks) });
+		}
 		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
 		s.push_back({ "StorageSettle", Encode(StorageSettle{ 3, 120, 40, { 41, 57 }, { { REF_A, 0x0000000F, -3 }, { REF_B, 0x0004835D, 2 } } }), D(DecodeStorageSettle) });
 		s.push_back({ "StorageSettle(nothing)", Encode(StorageSettle{ 1, 0, 0, {}, {} }), D(DecodeStorageSettle) });
@@ -527,6 +530,8 @@ namespace ProtocolSamples
 		case MT::kStorageContents:
 		case MT::kStorageOwners:
 		case MT::kStorageRefused:
+		case MT::kReportBenchLinks:
+		case MT::kBenchLinks:
 		case MT::kLoanAsked:
 		case MT::kFrameLent:
 		case MT::kFrameReturned:

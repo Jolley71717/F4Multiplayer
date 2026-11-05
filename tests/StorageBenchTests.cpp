@@ -22,6 +22,7 @@ namespace
 	constexpr PeerId        FRIEND_PEER = 2;
 	constexpr std::uint32_t BENCH = 0x0002'50FE;   // Sanctuary's workbench, say
 	constexpr std::uint32_t OTHER = 0x0002'50FF;   // a settlement's workbench the host's game never listed
+	constexpr std::uint32_t LINKED = 0x0002'5101;  // another settlement's workbench the host owns, which a supply line may link
 	constexpr std::uint32_t STEEL = 0x0001'FA8C;   // a component's scrap item (junk)
 	constexpr std::uint32_t WOOD = 0x0001'FA91;
 	constexpr std::uint32_t WATER = 0x0004'835D;   // purified water: a day's production
@@ -38,7 +39,7 @@ namespace
 
 	void Benches(Game& a_game)
 	{
-		for (const auto bench : { BENCH, OTHER }) {
+		for (const auto bench : { BENCH, OTHER, LINKED }) {
 			a_game.holderFacts[bench] = { .kind = LootScope::Holder::kContainer, .workshop = true, .storage = true };
 		}
 		a_game.items[RIFLE] = { .kind = LootScope::Item::kWeapon };
@@ -421,4 +422,383 @@ TEST("shared bench: a friend leaving mid-build: the build on its way goes throug
 	CHECK(s.guest.storage.State().Stats().late == 1);
 	CHECK(s.host.In(BENCH, STEEL) == 8);
 	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
+// ---- the host's supply lines (SupplyLines.h) -----------------------------------------------------------------------------
+//
+// The host's settlements a supply line links to the one built at: the host's game tells the session which workbenches its
+// supply lines link (from its own engine's gather), and a friend's game viewing the host's workbench views those too, so its
+// engine's gather takes from them in the host's order, then from its own world's, then from the player.
+
+namespace
+{
+	// The host's workbench at the settlement built at, and one a supply line links to it: the host's holds 5 steel there, the
+	// friend's copy 3 of their own.
+	struct Lines : Session
+	{
+		Lines()
+		{
+			host.holders[LINKED][STEEL] = 5;
+			guest.holders[LINKED][STEEL] = 3;
+			host.storage.State().Unlist(LINKED);  // listed again, as it is now (the session's first listing was empty)
+			Settle();
+			host.ReportLinks(f, BENCH, { LINKED });
+			Settle();
+		}
+
+		std::int64_t OwnAt(std::uint32_t a_bench, std::uint32_t a_item) const
+		{
+			const auto& aside = guest.storage.Aside(a_bench);
+			if (guest.storage.State().Views(a_bench)) {
+				return aside.contains(a_item) ? aside.at(a_item) : 0;
+			}
+			return guest.In(a_bench, a_item);
+		}
+
+		// Every steel in the session's worlds at the two workbenches and on the players, and what builds used up.
+		std::int64_t Steel() const
+		{
+			return host.In(BENCH, STEEL) + host.In(LINKED, STEEL) + host.Carried(STEEL) + guest.Carried(STEEL) + OwnAt(BENCH, STEEL) + OwnAt(LINKED, STEEL) + built;
+		}
+	};
+
+	constexpr std::int64_t LINES_START = 10 + 5 + 4 + 3 + 2;
+
+	bool Any(std::uint32_t)
+	{
+		return true;
+	}
+}
+
+TEST("supply lines: the host's game tells the session its supply lines; a friend's game hears them, and only changes go out again")
+{
+	Lines s;
+	CHECK(s.guest.Keeper(LINKED) == Keeper::kFriend);
+	CHECK(s.guest.heard.With(BENCH, Any) == std::vector<std::uint32_t>{ LINKED });
+	CHECK(s.host.reporter.Reports() == 1);
+	s.host.ReportLinks(s.f, BENCH, { LINKED, BENCH, 0 });  // the same lines
+	CHECK(s.host.reporter.Reports() == 1);
+	CHECK(s.host.heard.Benches() == 0);  // the keeper isn't told its own
+}
+
+TEST("supply lines: a friend's build at the host's workbench takes from the workbenches the host's supply lines link, once")
+{
+	Lines s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.supply == std::vector<std::uint32_t>{ LINKED });
+	CHECK(s.guest.storage.State().Shows(LINKED));
+	CHECK(s.guest.In(BENCH, STEEL) == 10);
+	CHECK(s.guest.In(LINKED, STEEL) == 5);  // the host's, their own 3 set aside
+	CHECK(s.guest.storage.Aside(LINKED).at(STEEL) == 3);
+	CHECK((s.guest.Gather() == std::vector<std::uint32_t>{ BENCH, LINKED }));
+	CHECK(s.Steel() == LINES_START);
+
+	// 13 steel: the workbench's 10, then 3 of the linked workbench's, as the host's game would take them.
+	s.built += 13;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 13);
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 2);
+	CHECK(s.guest.Carried(STEEL) == 2);  // their pockets untouched
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.Steel() == LINES_START);
+
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(!s.guest.storage.State().Viewing());
+	CHECK(s.guest.In(BENCH, STEEL) == 4);  // their own back at both
+	CHECK(s.guest.In(LINKED, STEEL) == 3);
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: a take the linked workbench no longer held is refused and paid from the friend's own stash there")
+{
+	Lines s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	// The host builds with the linked workbench's 5 before the friend's game hears; the friend's build takes 2 there.
+	s.built += 5;
+	s.host.Build(s.f, LINKED, STEEL, 5);
+	Pace(HOST_PEER);
+	Sync(s.f, HOST_PEER);
+	s.built += 12;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 12);
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 0);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 1);
+	CHECK(s.guest.storage.Stats().stashPaid == 2);  // their own 3 at the linked workbench pay
+	CHECK(s.guest.Carried(STEEL) == 2);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.In(LINKED, STEEL) == 1);
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: a friend's take at a linked workbench neither game has loaded comes out of the host's pile at once")
+{
+	Lines s;
+	s.host.away.insert(LINKED);   // the host far from that settlement (listed before, or from afar)
+	s.guest.away.insert(LINKED);  // the friend never went there
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	CHECK(s.guest.In(LINKED, STEEL) == 5);  // the host's, their own 3 set aside
+
+	s.built += 13;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 13);
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 2);  // the engine changes a workbench from afar: so does the friend's take
+	CHECK(s.host.loot.Waiting().empty());
+	CHECK(s.host.loot.Stats().fromAfar == 1);
+	CHECK(s.guest.In(LINKED, STEEL) == 2);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.Steel() == LINES_START);
+
+	// The host's game adds there from afar (the day's production): the friend's view shows it as it comes, not only once
+	// they look again.
+	s.host.Script(s.f, LINKED, STEEL, 4);
+	s.Settle();
+	CHECK(s.host.In(LINKED, STEEL) == 6);
+	CHECK(s.guest.In(LINKED, STEEL) == 6);
+	CHECK(s.guest.loot.Waiting().empty());
+
+	// All 6 used: every one comes off the host's pile, none refused, none used twice.
+	s.built += 6;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 6);
+	s.Settle();
+	CHECK(s.host.In(LINKED, STEEL) == 0);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.guest.Carried(STEEL) == 2);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.In(LINKED, STEEL) == 3);  // their own back
+	CHECK(s.guest.loot.Waiting().empty());
+	CHECK(s.Steel() == LINES_START + 4);
+}
+
+TEST("supply lines: a friend's take at the host's far workbench goes in even after the host's reload, and its reload's listing counts it once")
+{
+	Lines s;
+	const auto save = s.host.SaveGame(s.f);  // LINKED holds 5 in the save
+	s.host.away.insert(LINKED);
+	s.guest.away.insert(LINKED);
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.built += 12;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 12);  // 10 at the workbench, 2 at LINKED
+	s.Settle();
+	CHECK(s.host.In(LINKED, STEEL) == 3);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	// The host loads the save from before the take, still far from LINKED: the catch-up takes the friend's 2 again there,
+	// so its world holds what the server's book does (3), and the 2 are used once.
+	s.host.LoadGame(s.f, save);
+	s.Settle();
+	s.host.Wait(s.f, std::chrono::seconds{ 1 });
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 3);
+	CHECK(s.host.loot.Waiting().empty());
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: a line the host's game takes back ends that view, and the friend's own things come back there")
+{
+	Lines s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.host.ReportLinks(s.f, BENCH, {});
+	s.Settle();
+	CHECK(s.guest.supply.empty());
+	CHECK(!s.guest.storage.State().Views(LINKED));
+	CHECK(s.guest.storage.State().Shows(BENCH));  // the workbench's own view stays
+	CHECK(s.guest.In(LINKED, STEEL) == 3);
+	CHECK(s.guest.Gather() == std::vector<std::uint32_t>{ BENCH });
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: a line to a workbench nobody keeps stays the friend's own, as their world's supply lines are")
+{
+	Lines s;
+	s.host.ReportLinks(s.f, BENCH, { LINKED, OTHER });  // OTHER: never listed (not loaded in the host's world)
+	s.Settle();
+	s.guest.holders[OTHER][STEEL] = 6;
+	s.host.holders[OTHER][STEEL] = 1;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	CHECK(s.guest.supply == std::vector<std::uint32_t>{ LINKED });
+	CHECK(!s.guest.storage.State().Views(OTHER));
+	// Their own world links OTHER too: it comes after the host's lines, their own.
+	const auto order = s.guest.Gather({ OTHER, LINKED });
+	CHECK((order == std::vector<std::uint32_t>{ BENCH, LINKED, OTHER }));
+	s.built += 15;  // the two workbenches' 15; OTHER's 2 are their own world's (not in Steel())
+	s.guest.BuildFrom(s.f, order, STEEL, 17);
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 0);
+	CHECK(s.guest.In(OTHER, STEEL) == 4);  // 2 of their own
+	CHECK(s.host.In(OTHER, STEEL) == 1);   // the host's untouched
+	CHECK(s.guest.Carried(STEEL) == 2);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: lines sent for a workbench a game doesn't keep are dropped by the server")
+{
+	Lines s;
+	Pace(FRIEND_PEER);
+	s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::BenchLinks{ BENCH, { OTHER } }, MT::kReportBenchLinks));
+	s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::BenchLinks{ OTHER, { LINKED } }, MT::kReportBenchLinks));
+	s.Settle();
+	CHECK(s.host.heard.Benches() == 0);
+	// The friend rejoins: the table it is welcomed with is the host's.
+	s.guest.Disconnect(s.f);
+	s.guest.Join(s.f, "Guest");
+	s.Settle();
+	CHECK(s.guest.heard.With(BENCH, Any) == std::vector<std::uint32_t>{ LINKED });
+	CHECK(s.guest.heard.Benches() == 1);
+}
+
+TEST("supply lines: the host leaving closes every view at once, and the friend builds with their own")
+{
+	Lines s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.f.fake->Drop(HOST_PEER);
+	std::vector<std::vector<std::uint8_t>> got;
+	CHECK(Await(s.f, FRIEND_PEER, MT::kStorageRefused, got));
+	Pace(FRIEND_PEER);
+	for (auto& packet : s.guest.Fetch(s.f)) {
+		got.push_back(std::move(packet));
+	}
+	s.guest.Handle(s.f, got);
+	CHECK(!s.guest.storage.State().Viewing());
+	CHECK(s.guest.storage.State().Viewed().empty());
+	CHECK(s.guest.heard.Benches() == 0);  // the host's lines forgotten with its world
+	CHECK(s.guest.In(BENCH, STEEL) == 4);
+	CHECK(s.guest.In(LINKED, STEEL) == 3);
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 3);  // with their own: kept to their world
+	Receive(s.f, s.guest);
+	CHECK(s.guest.In(BENCH, STEEL) == 1);
+	CHECK(s.host.In(LINKED, STEEL) == 5);
+}
+
+TEST("supply lines: a container menu opened while viewing the workbench and its lines ends them all first")
+{
+	Lines s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.guest.benchView.reset();
+	s.guest.supply.clear();
+	s.guest.OpenMenu(s.f, LINKED);  // the linked workbench's own container menu, say
+	CHECK(s.guest.storage.State().Viewed() == std::vector<std::uint32_t>{ LINKED });
+	CHECK(s.guest.In(BENCH, STEEL) == 4);
+	s.Settle();
+	CHECK(s.guest.In(LINKED, STEEL) == 5);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.guest.In(LINKED, STEEL) == 3);
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: the host's reload forgets its lines for everyone; its game tells them again from its loaded world")
+{
+	Lines s;
+	const auto save = s.host.SaveGame(s.f);
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.host.LoadGame(s.f, save);
+	s.Settle();
+	CHECK(s.guest.heard.Benches() == 0);
+	CHECK(!s.guest.storage.State().Views(LINKED));
+	CHECK(s.guest.In(LINKED, STEEL) == 3);  // their own back
+	// The loaded world's lines go out again (Storage::ReportSupply after OnGameLoaded's Forget).
+	s.host.ReportLinks(s.f, BENCH, { LINKED });
+	s.Settle();
+	CHECK(s.guest.heard.With(BENCH, Any) == std::vector<std::uint32_t>{ LINKED });
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Steel() == LINES_START);
+}
+
+namespace
+{
+	// The host owns a_more settlements its lines link to Sanctuary's besides LINKED: each workbench holds 1 steel there.
+	// The links, LINKED first.
+	std::vector<std::uint32_t> Network(Lines& a_s, std::uint32_t a_more)
+	{
+		std::vector<std::uint32_t> network{ LINKED };
+		for (std::uint32_t i = 0; i < a_more; ++i) {
+			const auto bench = 0x0002'6000 + i;
+			network.push_back(bench);
+			a_s.host.holders[bench][STEEL] = 1;
+			for (auto* game : { &a_s.host, &a_s.guest }) {
+				game->holderFacts[bench] = { .kind = LootScope::Holder::kContainer, .workshop = true, .storage = true };
+			}
+		}
+		a_s.Settle();
+		a_s.host.ReportLinks(a_s.f, BENCH, network);
+		a_s.Settle();
+		return network;
+	}
+}
+
+TEST("supply lines: a big supply network: the friend's game views the first 32, one at a time, and the server closes none")
+{
+	Lines      s;
+	const auto network = Network(s, SupplyLines::Views::MAX + 3);  // 36 linked: more than a player builds
+	REQUIRE(s.guest.heard.With(BENCH, Any).size() == network.size());
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	CHECK(s.guest.storage.State().Viewed().size() <= 2);  // the workbench and the first link: not every one at once
+	for (int i = 0; i < 36; ++i) {
+		s.guest.now += std::chrono::milliseconds{ 250 };
+		Receive(s.f, s.guest);
+	}
+	CHECK(s.guest.storage.State().Viewed().size() == 1 + SupplyLines::Views::MAX);
+	CHECK((s.guest.supply == std::vector<std::uint32_t>{ network.begin(), network.begin() + SupplyLines::Views::MAX }));
+	CHECK(s.guest.supplyClosed == 0);
+	CHECK(s.guest.Noticed(StorageView::Notice::kClosed) == 0);
+	CHECK(s.guest.In(network[1], STEEL) == 1);   // shown: the host's
+	CHECK(s.guest.In(network[SupplyLines::Views::MAX - 1], STEEL) == 1);
+	CHECK(s.guest.In(network.back(), STEEL) == 0);  // past the 32: their own copy (nothing there)
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.storage.State().Viewed().empty());
+	CHECK(s.Steel() == LINES_START);
+}
+
+TEST("supply lines: the server sends a workbench's view and all 32 of its lines' at once, refusing none")
+{
+	Lines      s;
+	const auto network = Network(s, SupplyLines::Views::MAX - 1);
+	// The friend's game asks for every view in one go (faster than it ever opens them): each is answered with contents.
+	s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ BENCH, true }));
+	for (const auto link : network) {
+		s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ link, true }));
+	}
+	Pace(FRIEND_PEER);
+	const auto got = s.guest.Fetch(s.f);
+	std::size_t contents = 0;
+	std::size_t refused = 0;
+	for (const auto& packet : got) {
+		contents += LootTest::IsType(packet, MT::kStorageContents) ? 1 : 0;
+		refused += LootTest::IsType(packet, MT::kStorageRefused) ? 1 : 0;
+	}
+	CHECK(contents == 1 + SupplyLines::Views::MAX);
+	CHECK(refused == 0);
 }

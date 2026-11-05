@@ -36,6 +36,8 @@ namespace Storage
 	void OnWelcome(bool a_rule, bool a_hosting, std::uint64_t a_session);
 	void OnDisconnected();
 	void OnOwners(const Protocol::StorageOwners& a_owners);
+	// The workbenches a keeper's supply lines link to one they keep (SupplyLines.h): viewed with it at our builds there.
+	void OnBenchLinks(const Protocol::BenchLinks& a_links);
 	void OnContents(const Protocol::StorageListing& a_contents);
 	void OnRefused(const Protocol::StorageRefusal& a_refusal);
 	// The world state the server just sent answers our requests up to a_caughtUp.asked: our moves at a friend's storage are

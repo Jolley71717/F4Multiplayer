@@ -59,7 +59,11 @@ namespace Protocol
 	// the server refuses a second game's report of the same alias (src/game/QuestActors.h); and the choices players make
 	// at a quest's terminals (kReportTerminalChoice and kTerminalChoice: TerminalChoice), so a friend's game makes them
 	// too (src/game/TerminalRules.h: Easy City Downs' race). 60 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 61;
+	// 62: the host's supply lines feed a friend's builds at its settlements too: the host's game names the workbenches its
+	// supply lines link to each of its workbenches (kReportBenchLinks), the server tells the others (kBenchLinks, a joiner
+	// each after the owner table), and their workshop mode and crafting menus view those workbenches with the host's
+	// (src/game/SupplyLines.h). The robot workbench's menu views the host's workbench too. 61 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 62;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -203,6 +207,7 @@ namespace Protocol
 		kReportWorkshopGone = 76,  // pieces the server keeps as the sender's own building that the sender's world no longer has (the answer to kOwnWorkshopItems; WorkshopAudit)
 		kReportWorkshopResources = 77,  // what each of the sender's own workshop pieces counts for in their settlement now: food, water, defense, beds, power (ResourceStates)
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
+		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 
 		// server -> client
 		kWelcome = 101,
@@ -272,6 +277,7 @@ namespace Protocol
 		kOwnWorkshopItems = 180,  // after the welcome and each load: what the server keeps as built by you, for your game to say which it no longer has (WorkshopAudit)
 		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
+		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -827,6 +833,21 @@ namespace Protocol
 	//   more than the book holds; a take a put by nobody), once, and does again one it undid that the world has after all
 	//   (between `lacksFrom` and `next`, not in `lacking`: a later save loaded). A late move goes through as a move at the
 	//   container the player viewed last, without a view.
+	// kReportBenchLinks / kBenchLinks: the workbenches the keeper's supply lines link to `bench`, one of the settlement
+	// workbenches its game keeps as shared storage, as its own workshop mode gathers them (Workshop::AddOtherContainers: every
+	// settlement reachable by supply lines, not the bench itself). Only those of settlements the keeper owns. The host's game
+	// sends one as it lists the workbench and whenever its supply lines change; the server keeps the latest per workbench
+	// from its keeper alone and tells the others (a joiner, all of them after the owner table). None: no supply lines there.
+	inline constexpr std::size_t MAX_BENCH_LINKS = 64;  // a settlement's supply-line network (the game has some 40 settlements)
+
+	struct BenchLinks
+	{
+		std::uint32_t              bench = 0;
+		std::vector<std::uint32_t> links;  // at most MAX_BENCH_LINKS, each once, never the bench itself
+
+		bool operator==(const BenchLinks&) const = default;
+	};
+
 	inline constexpr std::size_t MAX_STORAGE_LACKING = 4096;            // a settle's lacking moves (the game forgets the oldest past it)
 	inline constexpr std::size_t MAX_STORAGE_REVERSALS_PER_PACKET = 4096;  // the session file's record of them
 
@@ -3376,6 +3397,43 @@ namespace Protocol
 				return std::nullopt;
 			}
 			msg.entries.push_back(entry);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const BenchLinks& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.links.size(), MAX_BENCH_LINKS);
+		w.U32(a_msg.bench);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.links[i]);
+		}
+		return w.Data();
+	}
+
+	// None if a workbench isn't a reference every game shares, one is named twice, or the bench links to itself.
+	inline std::optional<BenchLinks> DecodeBenchLinks(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		BenchLinks msg;
+		msg.bench = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || !IsShareableRef(msg.bench) || count > MAX_BENCH_LINKS) {
+			return std::nullopt;
+		}
+		msg.links.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto link = r.U32();
+			if (!r.Ok() || !IsShareableRef(link) || link == msg.bench || std::ranges::find(msg.links, link) != msg.links.end()) {
+				return std::nullopt;
+			}
+			msg.links.push_back(link);
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;
