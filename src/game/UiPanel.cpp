@@ -112,7 +112,8 @@ namespace UiPanel
 			constexpr int CAPS_LOCK = 0x14;
 			state[CAPS_LOCK] = (GetKeyState(CAPS_LOCK) & 1) != 0 ? 1 : 0;
 			wchar_t out[4]{};
-			return ToUnicode(a_key, MapVirtualKeyW(a_key, 0), state.data(), out, 4, 0) == 1 ? static_cast<std::uint32_t>(out[0]) : 0;
+			constexpr unsigned int KEEP_DEAD_KEYS = 0x4;  // leaves the keyboard's dead-key state alone (Windows 10 1607 on)
+			return ToUnicode(a_key, MapVirtualKeyW(a_key, 0), state.data(), out, 4, KEEP_DEAD_KEYS) == 1 ? static_cast<std::uint32_t>(out[0]) : 0;
 		}
 
 		constexpr std::int64_t MENU_KEY_AFTER_MS = 250;
@@ -137,7 +138,12 @@ namespace UiPanel
 			if (!a_on) {
 				before = controls->blockPlayerInput;
 			}
-			controls->blockPlayerInput = a_on ? before : true;
+			// Put back as it was, unless something else let the player go meanwhile: then that stands.
+			if (!a_on) {
+				controls->blockPlayerInput = true;
+			} else if (controls->blockPlayerInput) {
+				controls->blockPlayerInput = before;
+			}
 			// It doesn't stop activating what's under the crosshair, nor does the activate handler's own switch: a layer does, of
 			// that alone, which leaves the weapon and the HUD be. The key then comes to the menu as DISABLED (OnButtonEvent).
 			static RE::BSTSmartPointer<RE::BSInputEnableLayer> layer;
@@ -351,7 +357,9 @@ namespace UiPanel
 					}
 				}
 				if (a_event && a_event->QJustPressed()) {
-					REX::DEBUG("UiPanel: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
+					if (!typing) {  // nothing typed is logged, not even the keys that type nothing (Shift, dead keys)
+						REX::DEBUG("UiPanel: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
+					}
 					// The way back out of a menu: Esc or Tab, or the gamepad's B. None comes as a user event to a menu of
 					// ours (the game's own menus get theirs from their own input handling), so they are read by code.
 					const bool keyboard = a_event->device.get() == RE::INPUT_DEVICE::kKeyboard;

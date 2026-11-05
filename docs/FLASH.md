@@ -10,7 +10,7 @@ second movie is only for something non-modal with a life of its own, such as a H
 The pages stay in `src/game/UiPages.cpp`, which already builds them from `Session::GetStatus()` and hands each to one
 function, `Show(body, buttons)`. That function gets a second output, the Flash panel:
 
-- The movie takes a whole page: `SetPage(serial, body, rows, hints, keepRow, heading)`. Its list scrolls, so `More` goes away
+- The movie takes a whole page: `SetPage(serial, body, rows, hints, keepRow, framed, players, header, markdown)`. Its list scrolls, so `More` goes away
   from lists.
 - A page's one line of status goes across the top, with room kept for it, so rows start at the same place on every page. Rows
   take the full width, or the left 2/3 with what the chosen row does in the right 1/3 on pages that say so.
@@ -156,12 +156,3 @@ Seen only under CrossOver on a Mac: the main and pause menus, and two games in a
 - **A gamepad, and MCM installed.**
 - **Mouse buttons in Controls, and closing the panel with a menu key bound to one:** their codes in the game's input are a guess; the log says what it heard. CrossOver can't try them.
 - **Translations:** the menu's new texts are machine-written.
-
-## To file on the tracker
-
-- The status said "Connecting to..." at the main menu, where nothing is tried (fixed here: "You'll join ... once you've loaded a
-  game"). Stop hosting writes `bHost = false`, so the ini's address is what the next launch joins (step 4 stops the write).
-- Controls checks only our own keys: a key the game also uses (E, WASD) does both. The game's control map could warn of it.
-- Texts that name a key ("see F1") don't follow a rebind.
-- Settings mixes host rules (friendly fire, shared story) with personal ones (voice, compass): split as above.
-- A gamepad can scroll a long text only on a page with no rows.

@@ -6,7 +6,7 @@ Four players by default; the host can allow more (`iMaxPlayers`, see [Settings](
 - Windows, or Linux / Steam Deck through Proton (see [Linux and Steam Deck](#linux-and-steam-deck): start the game through Steam there)
 - [F4SE 0.7.9](https://www.nexusmods.com/fallout4/mods/42147?tab=files): copy `f4se_loader.exe` and `f4se_1_11_240.dll` next to `Fallout4.exe`
 - [Address Library for F4SE Plugins](https://www.nexusmods.com/fallout4/mods/47327?tab=files) (1.11.240 file)
-- This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`)
+- This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`: both its `F4SE` and `Interface` folders)
 - Ideally **the same mods** as everyone else, in any order: what comes from a mod only one of you has (its NPCs, items, quests) is left out in the other game
 
 **Everyone must use the same version of this mod.** Back up your saves (or start a fresh one)
@@ -24,7 +24,8 @@ shortcut), Shift+Tab, *Invite to Game* and the F1 menu's invite do nothing, and 
 
 1. Install F4SE, the Address Library and this mod into the game folder as on Windows
    (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, `F4Multiplayer.ini`, the
-   `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side).
+   `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side), and
+   `Data/Interface/F4Multiplayer/MPMenu.swf` (without it the F1 menu is a plain message box).
 2. Make Steam's Play button start F4SE. Either:
    - Steam > Fallout 4 > Properties > General > **Launch Options**:
      `bash -c 'exec "${@/Fallout4Launcher.exe/f4se_loader.exe}"' -- %command%`
@@ -108,8 +109,9 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `iMaxPlayers` (4): how many players can be in the session at once, the host included. More is allowed, but each
   extra player adds traffic and NPC work for the host, and sessions of more than two players have been tested
   less. A guest who comes when it is full is turned away.
-- `sPassword` (empty): if set, a guest must have the same password in their own `sPassword` to join. The host's
-  F1 menu can also make up or remove it while hosting.
+- `sPassword` (empty): if set, a guest must have the same password in their own `sPassword` to join. The F1 menu
+  sets it too: a guest types theirs under Settings > Password, and the host can type, make up or remove it while
+  hosting.
 - `iPort` (7779): the UDP port the host's game listens on. Guests only need it when they join without Steam.
 - `bFriendlyFire` (false): on, players can hurt each other with weapons. Off, only enemies hurt a player.
 - `sStory` (shared): `shared`, the main story and the faction quests move along for everyone. `own`, each guest plays
