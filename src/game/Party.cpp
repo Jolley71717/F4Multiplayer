@@ -418,28 +418,55 @@ namespace Party
 		}
 
 		// How a friend is and where, as it follows their name: " (100% HP, level 1) - Sanctuary Hills, 7 m".
-		std::string DetailsOf(const RemotePlayers::Info& a_player)
+		// How a friend is and where: each part "" when there's nothing to say.
+		struct Details
 		{
-			std::string out;
-			const auto  it = known.find(a_player.id);
-			if (it != known.end() && it->second.hasStatus) {
+			std::string state;     // health and level, or that they are down or dead
+			std::string place;     // the place they say they are in
+			std::string position;  // how far off, or that they can't be reached or are loading
+		};
+
+		Details DetailsParts(const RemotePlayers::Info& a_player)
+		{
+			Details out;
+			if (const auto it = known.find(a_player.id); it != known.end() && it->second.hasStatus) {
 				const auto& status = it->second.status;
-				out += " (" + (status.downed ? Text::Get("player.down") : status.health == 0 ? Text::Get("player.dead") :
-				                                                                                  Text::Format("player.status", { { "hp", status.health }, { "level", status.level } })) + ")";
-				if (auto place = PlaceName(status.location, status.cell); !place.empty()) {
-					out += " - " + place;
-				}
+				out.state = status.downed ? Text::Get("player.down") : status.health == 0 ? Text::Get("player.dead") :
+				                                                                            Text::Format("player.status", { { "hp", status.health }, { "level", status.level } });
+				out.place = PlaceName(status.location, status.cell);
 			}
 			if (a_player.unreachable) {
-				out += ", " + Text::Get("player.unreachable");  // not "loading" and not where they last were
+				out.position = Text::Get("player.unreachable");  // not "loading" and not where they last were
 			} else if (a_player.state) {
-				if (auto distance = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y); !distance.empty()) {
-					out += ", " + distance;
-				}
+				out.position = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y);
 			} else {
-				out += ", " + Text::Get("player.loading");
+				out.position = Text::Get("player.loading");
 			}
 			return out;
+		}
+
+		std::string DetailsOf(const RemotePlayers::Info& a_player)
+		{
+			const auto  details = DetailsParts(a_player);
+			std::string out;
+			if (!details.state.empty()) {
+				out += " (" + details.state + ")";
+			}
+			if (!details.place.empty()) {
+				out += " - " + details.place;
+			}
+			if (!details.position.empty()) {
+				out += ", " + details.position;
+			}
+			return out;
+		}
+
+		// A row of the panel's list of players: color, marker, name, how they are, where.
+		std::string PanelRow(const RemotePlayers::Info& a_player)
+		{
+			const auto details = DetailsParts(a_player);
+			const auto where = details.place.empty() || details.position.empty() ? details.place + details.position : details.place + ", " + details.position;
+			return std::format("{:06X}\t{}\t{}\t{}\t{}", Compass::MarkerColor(a_player.id), Compass::MarkerShape(a_player.id), a_player.name, details.state, where);
 		}
 
 		std::string Describe(const RemotePlayers::Info& a_player)
@@ -1063,40 +1090,15 @@ namespace Party
 
 	std::string PanelPlayer(std::uint32_t a_id)
 	{
-		const auto found = FindPlayer(a_id);
-		if (!found) {
-			return {};
-		}
-		const auto& player = *found;
-		// How they are apart from where they are: the menu shows the first in capitals.
-		std::string state;
-		std::string where;
-		const auto  addWhere = [&](const std::string& a_part) {
-			if (!a_part.empty()) {
-				where += (where.empty() ? "" : ", ") + a_part;
-			}
-		};
-		if (const auto it = known.find(player.id); it != known.end() && it->second.hasStatus) {
-			const auto& status = it->second.status;
-			state = status.downed ? Text::Get("player.down") : status.health == 0 ? Text::Get("player.dead") :
-			                                                                        Text::Format("player.status", { { "hp", status.health }, { "level", status.level } });
-			addWhere(PlaceName(status.location, status.cell));
-		}
-		if (player.unreachable) {
-			addWhere(Text::Get("player.unreachable"));
-		} else if (player.state) {
-			addWhere(DistanceTo(player.state->cell, player.state->worldspace, player.state->x, player.state->y));
-		} else {
-			addWhere(Text::Get("player.loading"));
-		}
-		return std::format("{:06X}\t{}\t{}\t{}\t{}", Compass::MarkerColor(player.id), Compass::MarkerShape(player.id), player.name, state, where);
+		const auto player = FindPlayer(a_id);
+		return player ? PanelRow(*player) : std::string{};
 	}
 
 	std::vector<std::string> PanelPlayers()
 	{
 		std::vector<std::string> rows;
 		for (const auto& player : RemotePlayers::List()) {
-			rows.push_back(PanelPlayer(player.id));
+			rows.push_back(PanelRow(player));
 		}
 		return rows;
 	}

@@ -3,6 +3,7 @@
 
 #include "Config.h"
 #include "MainThread.h"
+#include "Platform.h"
 #include "Text.h"
 #include "game/Hud.h"
 #include "game/Equipment.h"
@@ -15,11 +16,21 @@
 #include <atomic>
 #include <utility>
 #include <chrono>
+#include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
+extern "C"
+{
+	__declspec(dllimport) short __stdcall GetAsyncKeyState(int a_key);
+	__declspec(dllimport) short __stdcall GetKeyState(int a_key);
+	__declspec(dllimport) unsigned int __stdcall MapVirtualKeyW(unsigned int a_code, unsigned int a_type);
+	__declspec(dllimport) int __stdcall ToUnicode(unsigned int a_key, unsigned int a_scan, const unsigned char* a_state, wchar_t* a_out, int a_size, unsigned int a_flags);
+}
 
 namespace MPMenu
 {
@@ -41,26 +52,19 @@ namespace MPMenu
 		};
 
 		// The page to draw: set on the main thread, taken in the menu's own update.
-		struct Page
-		{
-			std::uint32_t            serial = 0;
-			std::string              body;
-			std::vector<std::string> rows;
-			std::vector<std::string> hints;
-			bool                     keepRow = false;
-			bool                     heading = false;
-			std::vector<std::string> players;
-			std::string              header;
-		};
 		std::mutex          pageLock;
-		std::optional<Page> nextPage;  // under pageLock
-		std::optional<std::string> nextStatus;  // under pageLock
+		std::deque<Page>    nextPages;  // under pageLock; in order: a dialog can come with the page it goes over
 
 		// Opened and not closed since. A menu going away counts only if it is the latest opened: one being hidden can
 		// go after the next has been asked for.
 		std::atomic<bool>          wanted{ false };
 		std::atomic<std::uint32_t> opened{ 0 };
 		std::atomic<bool>          capturing{ false };  // the next key is a keybind's
+		std::atomic<bool> typing{ false };  // every key is Menu::PanelTyped's (CaptureText)
+		// The key last typed, held: the game gives a menu only its press and release, so the repeat is ours.
+		std::atomic<std::uint32_t> repeatKey{ 0 };
+		std::atomic<std::uint32_t> repeatCharacter{ 0 };
+		std::atomic<std::int64_t>  repeatAt{ 0 };
 		std::atomic<bool>          hideWaiting{ false };  // closed while the UI was held: hidden once it has settled
 
 		// The main menu's panel box on the stage: set on the main thread before the show message, read as the menu is made.
@@ -94,7 +98,22 @@ namespace MPMenu
 			return color;
 		}
 
+		// What a key types on the player's own layout, with the modifiers down now; 0 for nothing, or more than a character.
+		std::uint32_t CharacterOf(std::uint32_t a_key)
+		{
+			std::array<unsigned char, 256> state{};
+			for (const int modifier : { 0x10, 0x11, 0x12 }) {  // Shift, Ctrl, Alt
+				state[modifier] = (GetAsyncKeyState(modifier) & 0x8000) != 0 ? 0x80 : 0;
+			}
+			constexpr int CAPS_LOCK = 0x14;
+			state[CAPS_LOCK] = (GetKeyState(CAPS_LOCK) & 1) != 0 ? 1 : 0;
+			wchar_t out[4]{};
+			return ToUnicode(a_key, MapVirtualKeyW(a_key, 0), state.data(), out, 4, 0) == 1 ? static_cast<std::uint32_t>(out[0]) : 0;
+		}
+
 		constexpr std::int64_t MENU_KEY_AFTER_MS = 250;
+		constexpr std::int64_t TYPING_REPEAT_DELAY_MS = 350;
+		constexpr std::int64_t TYPING_REPEAT_EVERY_MS = 50;
 
 		std::int64_t NowMs()
 		{
@@ -217,13 +236,13 @@ namespace MPMenu
 				// panel's ground is the renderer's, as the main menu's is (its backgrounds are no-color, shaded with the gameplay HUD
 				// color): the movie's Background_mc only gives it its size.
 				{
-					for (const auto path : { "root.Panel_mc.Content_mc", "root.Hint_mc" }) {
+					for (const auto path : { "root.Panel_mc.Content_mc", "root.CommandBar_mc" }) {
 						auto target = std::make_unique<RE::BSGFxShaderFXTarget>(*uiMovie, path);
 						target->CreateAndSetFiltersToColor(std::uint8_t{ 255 }, std::uint8_t{ 255 }, std::uint8_t{ 255 }, 1.0f);
 						shaderFXObjects.push_back(target.get());
 						targets.push_back(std::move(target));
 					}
-					for (const auto path : { "root.Panel_mc.Background_mc", "root.HintBackground_mc" }) {
+					for (const auto path : { "root.Panel_mc.Background_mc", "root.CommandBarBackground_mc" }) {
 						auto ground = std::make_unique<RE::BSGFxShaderFXTarget>(*uiMovie, path);
 						ground->CreateAndSetFiltersToHUD(RE::HUDColorTypes::kNoColorMultiplier);
 						ground->EnableShadedBackground(RE::HUDColorTypes::kGameplayHUDColor);
@@ -250,6 +269,14 @@ namespace MPMenu
 				if (menuKeyFrom.load() == 0) {
 					menuKeyFrom = NowMs() + MENU_KEY_AFTER_MS;
 				}
+				if (const auto key = repeatKey.load(); key != 0) {
+					if (!typing || (GetAsyncKeyState(static_cast<int>(key)) & 0x8000) == 0) {
+						repeatKey = 0;
+					} else if (NowMs() >= repeatAt.load()) {
+						repeatAt = NowMs() + TYPING_REPEAT_EVERY_MS;
+						MainThread::Post([key, character = repeatCharacter.load()] { Menu::PanelTyped(key, character); });
+					}
+				}
 				// Nothing written while the UI is held (UiHold.h): the engine may be releasing the movie. The page waits.
 				if (uiMovie && Hud::IsSettled()) {
 					if (hideWaiting.exchange(false)) {
@@ -267,8 +294,21 @@ namespace MPMenu
 			// The game's user events go on to the movie (ProcessUserEvent), but for the way back out, read here.
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
-				// The player's activate key, turned off in the world (SetPlayerControls), is still the menu's Accept.
-				if (a_event && centered && a_event->QJustPressed() && std::string_view{ a_event->QUserEvent().c_str() } == "DISABLED") {
+				// Before anything else, and never logged: it may be a password. What types goes to the text; Enter, Esc, Tab, the arrows and
+				// the rest work the dialog as ever.
+				if (a_event && typing && a_event->QJustPressed() && a_event->device.get() == RE::INPUT_DEVICE::kKeyboard) {
+					const auto key = a_event->QIDCode();
+					const auto character = key == KeyNames::ENTER || key == KeyNames::ESCAPE || key == KeyNames::TAB ? 0 : CharacterOf(key);
+					if (character != 0 || key == KeyNames::BACKSPACE) {
+						repeatKey = key;
+						repeatCharacter = character;
+						repeatAt = NowMs() + TYPING_REPEAT_DELAY_MS;
+						MainThread::Post([key, character] { Menu::PanelTyped(key, character); });
+						return;
+					}
+				}
+				// The player's activate key, turned off in the world (SetPlayerControls), is still the menu's Accept; unless it's the key to bind.
+				if (a_event && centered && !capturing && a_event->QJustPressed() && std::string_view{ a_event->QUserEvent().c_str() } == "DISABLED") {
 					const auto map = RE::ControlMap::GetSingleton();
 					if (map && a_event->QIDCode() == map->GetMappedKey("Activate", a_event->device.get())) {
 						acceptWaiting = true;
@@ -282,7 +322,7 @@ namespace MPMenu
 					const bool keyboard = a_event->device.get() == RE::INPUT_DEVICE::kKeyboard;
 					const bool gamepad = a_event->device.get() == RE::INPUT_DEVICE::kGamepad;
 					const bool mouse = a_event->device.get() == RE::INPUT_DEVICE::kMouse;
-					if (keyboard && centered && a_event->QIDCode() == 0x1B) {
+					if (keyboard && centered && a_event->QIDCode() == KeyNames::ESCAPE) {
 						return;  // EscPressed has it: never both, where the game does let it through
 					}
 					if (capturing && (keyboard || (mouse && KeyNames::FromMouse(a_event->QIDCode()) != 0))) {
@@ -291,7 +331,8 @@ namespace MPMenu
 						return;
 					}
 					// The key that opened it closes it, from any page. Menu::Frame sees the panel gone and tidies up.
-					if (keyboard && centered && a_event->QIDCode() == Config::Get().keyMenu) {
+					const auto boundKey = keyboard ? a_event->QIDCode() : mouse ? KeyNames::FromMouse(a_event->QIDCode()) : 0;
+					if (centered && boundKey != 0 && boundKey == Config::Get().keyMenu) {
 						// The press that opened it reaches it too: not a second press.
 						const auto at = menuKeyFrom.load();
 						if (at == 0 || NowMs() < at) {
@@ -303,8 +344,8 @@ namespace MPMenu
 						MainThread::Post([] { Close(); });
 						return;
 					}
-					constexpr std::uint32_t ESCAPE = 0x1B, TAB = 0x09, PAD_B = 0x2000;  // Windows virtual keys, XInput's B
-					if ((keyboard && (a_event->QIDCode() == ESCAPE || a_event->QIDCode() == TAB)) || (gamepad && a_event->QIDCode() == PAD_B)) {
+					constexpr std::uint32_t PAD_B = 0x2000;  // XInput's B
+					if ((keyboard && (a_event->QIDCode() == KeyNames::ESCAPE || a_event->QIDCode() == KeyNames::TAB)) || (gamepad && a_event->QIDCode() == PAD_B)) {
 						RE::UIUtils::PlayMenuSound("UIMenuCancel");
 						MainThread::Post([] { Menu::PanelBack(); });
 						return;
@@ -342,20 +383,32 @@ namespace MPMenu
 
 			void DrawPage()
 			{
-				std::optional<Page>        page;
-				std::optional<std::string> status;
+				std::deque<Page> pages;
 				{
 					std::scoped_lock l{ pageLock };
-					page.swap(nextPage);
-					status.swap(nextStatus);
+					pages.swap(nextPages);
 				}
-				if (status) {
-					const std::array<GValue, 1> args{ GValue(status->c_str()) };
-					menuObj.Invoke("SetStatus", nullptr, args.data(), args.size());
+				for (const auto& page : pages) {
+					page.dialog ? DrawDialog(page) : DrawFullPage(page);
 				}
-				if (!page) {
-					return;
+			}
+
+			void DrawDialog(const Page& a_page)
+			{
+				GValue rows;
+				uiMovie->CreateArray(&rows);
+				for (const auto& row : a_page.rows) {
+					rows.PushBack(GValue(row.c_str()));
 				}
+				const std::array<GValue, 7> args{ GValue(static_cast<double>(a_page.serial)), GValue(a_page.title.c_str()), GValue(a_page.body.c_str()), rows, GValue(a_page.keepRow), GValue(a_page.input), GValue(a_page.inputText.c_str()) };
+				if (!menuObj.Invoke("SetDialog", nullptr, args.data(), args.size())) {
+					REX::WARN("MPMenu: the movie has no SetDialog");
+				}
+			}
+
+			void DrawFullPage(const Page& a_page)
+			{
+				const auto* page = &a_page;
 				GValue rows;
 				uiMovie->CreateArray(&rows);
 				for (const auto& row : page->rows) {
@@ -371,7 +424,7 @@ namespace MPMenu
 				for (const auto& player : page->players) {
 					players.PushBack(GValue(player.c_str()));
 				}
-				const std::array<GValue, 8> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->heading), players, GValue(page->header.c_str()) };
+				const std::array<GValue, 9> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->framed), players, GValue(page->header.c_str()), GValue(page->markdown) };
 				if (!menuObj.Invoke("SetPage", nullptr, args.data(), args.size())) {
 					REX::WARN("MPMenu: the movie has no SetPage");
 				}
@@ -384,9 +437,9 @@ namespace MPMenu
 					version.resize(version.size() - 2);  // 0.10.1.0: 0.10.1
 				}
 				const auto back = Text::Get("mpmenu.back");
-				const std::array<GValue, 9> args{ GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
+				const std::array<GValue, 8> args{ GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
 					GValue(static_cast<double>(boxRight.load())), GValue(static_cast<double>(boxBottom.load())),
-					GValue(static_cast<double>(lookColor.load())), GValue("F4Multiplayer"), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()) };
+					GValue(static_cast<double>(lookColor.load())), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()) };
 				if (!menuObj.Invoke("SetLook", nullptr, args.data(), args.size())) {
 					REX::WARN("MPMenu: the movie has no SetLook");
 				}
@@ -394,6 +447,18 @@ namespace MPMenu
 
 			std::uint32_t number;  // which opening this menu is
 		};
+
+		// No movie (they're built from ui/, and not in the repo): the message boxes, without opening a menu that has nothing to show.
+		bool MovieThere()
+		{
+			std::error_code error;
+			if (std::filesystem::exists(Platform::GamePath(std::format("Data/{}", MOVIE)), error)) {
+				return true;
+			}
+			REX::ERROR("MPMenu: {} is not in Data; using message boxes", MOVIE);
+			MainThread::Post([] { Menu::Open(); });
+			return false;
+		}
 
 		RE::IMenu* Create(const RE::UIMessage&)
 		{
@@ -409,8 +474,7 @@ namespace MPMenu
 			centered = a_centered;
 			{
 				std::scoped_lock l{ pageLock };
-				nextPage.reset();
-				nextStatus.reset();
+				nextPages.clear();
 			}
 			++opened;
 			wanted = true;
@@ -436,6 +500,9 @@ namespace MPMenu
 		if (!Hud::IsSettled()) {
 			return;  // the entry's press came as the UI went down: pressed again once it is back
 		}
+		if (!MovieThere()) {
+			return;
+		}
 		lookColor = ReadHudColor();
 		Show(a_left, a_top, a_right, a_bottom, false);
 	}
@@ -443,22 +510,18 @@ namespace MPMenu
 	void OpenCentered()
 	{
 		MainThread::Assert("MPMenu::OpenCentered");
+		if (!MovieThere()) {
+			return;
+		}
 		SetPlayerControls(false);
 		lookColor = Equipment::InPowerArmor(RE::PlayerCharacter::GetSingleton()) ? POWER_ARMOR_COLOR : ReadHudColor();
 		Show(0.0f, 0.0f, 0.0f, CENTERED_BOX_HEIGHT, true);
 	}
 
-	void SetPage(std::uint32_t a_serial, std::string a_body, std::vector<std::string> a_rows, std::vector<std::string> a_hints, bool a_keepRow, bool a_heading, std::vector<std::string> a_players, std::string a_header)
+	void SetPage(Page a_page)
 	{
 		std::scoped_lock l{ pageLock };
-		nextPage = Page{ a_serial, std::move(a_body), std::move(a_rows), std::move(a_hints), a_keepRow, a_heading, std::move(a_players), std::move(a_header) };
-		nextStatus.reset();
-	}
-
-	void SetStatus(std::string a_text)
-	{
-		std::scoped_lock l{ pageLock };
-		nextStatus = std::move(a_text);
+		nextPages.push_back(std::move(a_page));
 	}
 
 	void CaptureKey(bool a_on)
@@ -466,10 +529,16 @@ namespace MPMenu
 		capturing = a_on;
 	}
 
+	void CaptureText(bool a_on)
+	{
+		typing = a_on;
+	}
+
 	void Close()
 	{
 		SetPlayerControls(true);
 		capturing = false;
+		typing = false;
 		wanted = false;
 		if (Hud::IsSettled()) {
 			Hide();
@@ -481,9 +550,8 @@ namespace MPMenu
 	void EscPressed()
 	{
 		MainThread::Assert("MPMenu::EscPressed");
-		constexpr std::uint32_t ESCAPE = 0x1B;
 		if (capturing.exchange(false)) {
-			Menu::PanelKey(true, ESCAPE);
+			Menu::PanelKey(true, KeyNames::ESCAPE);
 			return;
 		}
 		RE::UIUtils::PlayMenuSound("UIMenuCancel");
@@ -494,25 +562,19 @@ namespace MPMenu
 	{
 		// What sits in the middle of the HUD, which draws over the panel. The rest of the HUD stays, for its toasts.
 		static constexpr std::array PATHS{ "root.CenterGroup_mc.HUDCrosshair_mc", "root.CenterGroup_mc.RolloverWidget_mc", "root.CenterGroup_mc.QuickContainerWidget_mc" };
-		static std::array<bool, PATHS.size()> before{};
-		static bool                           hidden = false;
-		const bool                            hide = centered && wanted;
-		if (!a_hud || !a_hud->uiMovie || hide == hidden) {
-			if (!hide || !a_hud || !a_hud->uiMovie) {
-				return;
-			}
+		static bool hidden = false;
+		const bool  hide = centered && wanted;
+		if (!a_hud || !a_hud->uiMovie || (!hide && !hidden)) {
+			return;
 		}
-		for (std::size_t i = 0; i < PATHS.size(); ++i) {
+		for (const auto path : PATHS) {
 			GValue object;
-			if (!a_hud->uiMovie->GetVariable(&object, PATHS[i]) || !object.IsDisplayObject()) {
+			if (!a_hud->uiMovie->GetVariable(&object, path) || !object.IsDisplayObject()) {
 				continue;
 			}
-			if (hide && !hidden) {
-				GValue visible;
-				before[i] = !object.GetMember("visible", &visible) || !visible.IsBoolean() || visible.GetBoolean();
-			}
-			// Each update while it's up: the HUD sets them itself as what's under the crosshair changes.
-			object.SetMember("visible", GValue(hide ? false : before[i]));
+			// By alpha: the HUD sets their visible itself, as what's under the crosshair changes and as the player gets in or out of power
+			// armor, so what it says is still right when the panel goes. A visible saved at opening and put back left the crosshair off.
+			object.SetMember("alpha", GValue(hide ? 0.0 : 1.0));
 		}
 		hidden = hide;
 	}
@@ -520,11 +582,6 @@ namespace MPMenu
 	bool Centered()
 	{
 		return centered;
-	}
-
-	std::uint32_t HudColor()
-	{
-		return ReadHudColor();
 	}
 
 	bool Showing()

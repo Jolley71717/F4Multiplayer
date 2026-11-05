@@ -33,6 +33,8 @@ deploy() {
 	# the texts belong to the build, unlike the ini
 	cp -f "$root/dist/lang/"*.txt "$plugins/F4Multiplayer/lang/"
 	cp -f "$root/dist/about.txt" "$plugins/F4Multiplayer/"
+	mkdir -p "$plugins/F4Multiplayer/changelog"
+	cp -f "$root/dist/"RELEASE-*.md "$plugins/F4Multiplayer/changelog/"
 	# the plugin's own menu movies, in a folder of the game's Interface of their own; compiled from ui/<Name>/ when one is
 	# missing or older than its sources (git holds no movies)
 	mkdir -p "$game/Data/Interface/F4Multiplayer"

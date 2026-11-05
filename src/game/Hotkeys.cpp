@@ -189,12 +189,12 @@ namespace Hotkeys
 					REX::INFO("Hotkeys: {} ({}) pressed, not taken: {}", a_name, ModDiff::KeyName(a_vk), Blocked(chord));
 				}
 			}
-			if (down && !a_key.down) {
+			// As it goes down, not when what blocked it ends with the key still held: the menu key that closes our menu would open it again.
+			if (down && !a_key.physical) {
 				actions.push_back(a_action);
 			} else if (physical && !a_key.physical && !down) {
 				++blockedPresses;  // Describe says why
 			}
-			a_key.down = down;
 			a_key.physical = physical;
 		};
 		press(menu, settings.keyMenu, Action::kMenu, "menu");

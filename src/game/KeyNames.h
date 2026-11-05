@@ -8,6 +8,12 @@
 // the ini holds them and Hotkeys reads them. Kept free of the game so it can be tested.
 namespace KeyNames
 {
+	inline constexpr std::uint32_t BACKSPACE = 0x08;
+	inline constexpr std::uint32_t TAB = 0x09;
+	inline constexpr std::uint32_t ENTER = 0x0D;
+	inline constexpr std::uint32_t ESCAPE = 0x1B;
+	inline constexpr std::uint32_t DELETE_KEY = 0x2E;
+
 	[[nodiscard]] inline std::string Name(std::uint32_t a_vk)
 	{
 		if (a_vk >= 'A' && a_vk <= 'Z' || a_vk >= '0' && a_vk <= '9') {
@@ -61,11 +67,11 @@ namespace KeyNames
 		switch (a_vk) {
 		case 0x01:
 		case 0x02:
-		case 0x09:
+		case TAB:
 		case 0x0D:
 		case 0x11:
 		case 0x12:
-		case 0x1B:
+		case ESCAPE:
 		case 0x2C:
 		case 0x5B:
 		case 0x5C:
