@@ -150,6 +150,25 @@ namespace SupplyLines
 		return out;
 	}
 
+	// The host's game, with workshop mode or a crafting menu open at a_bench: whether a friend's changes at the workbenches
+	// in a_changed change what the menu lists, so it is gathered again. The engine's gather reads a_bench and every
+	// workbench our own supply lines reach from its settlement, wherever that is, so a friend's take at a far linked one
+	// changes the list as much as one at a_bench does; one at a workbench our lines don't reach changes nothing there.
+	// a_lines() gives the workbenches our lines reach (the engine's own AddOtherContainers), asked only when a change came
+	// somewhere other than a_bench.
+	template <class Lines>
+	[[nodiscard]] bool HostListChanged(std::uint32_t a_bench, std::span<const std::uint32_t> a_changed, Lines&& a_lines)
+	{
+		if (a_bench == 0 || a_changed.empty()) {
+			return false;
+		}
+		if (std::ranges::find(a_changed, a_bench) != a_changed.end()) {
+			return true;
+		}
+		const auto lines = a_lines();
+		return std::ranges::any_of(a_changed, [&](std::uint32_t a_id) { return a_id != 0 && std::ranges::find(lines, a_id) != lines.end(); });
+	}
+
 	// A friend's game: which of the keeper's linked workbenches to view with the keeper's workbench, and when. The server
 	// sends a player at most a burst of 48 views' contents, then 8 a second (Server.cpp STORAGE_VIEW_BURST); one past that
 	// is answered closed. So no more than MAX are viewed, enough for a settlement network a player builds (15 to 30 linked):

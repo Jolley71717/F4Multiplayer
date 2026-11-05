@@ -1225,7 +1225,12 @@ counts every item across the host's chest and the players' inventories in each s
     same (`World::FromAfar`, Storage::WatchesBench): the host's game takes a friend's take out of its pile at once, as
     its engine's own supply-line builds and the day's production change it from afar, and the friend's view shows the
     host's changes there as they come. Before, they waited for the workbench to load, which a supply line never needs:
-    the server's book had the take while the host's pile still held it, so it could be used twice (the rig). A
+    the server's book had the take while the host's pile still held it, so it could be used twice (the rig). The
+    host's own workshop mode or crafting menu, open at a workbench its lines link others to, is gathered again after a
+    friend's change at any of those, far or near (SupplyLines::HostListChanged: its own `AddOtherContainers` asked at
+    most once a frame, only when such a change came). Before, only a change at the workbench itself refilled it, so
+    after a friend's take at a far link the host's list still counted what was gone (the rig: 21 shown, 18 left), and
+    a host build from it took fewer components than it cost (`RemoveItemFromWorkshopContainers` takes what is there). A
     container menu opened meanwhile ends every view first. The host away closes every view and
     forgets the lines, so the friend builds with their own. `storage bench` lists the supply views (`supply=`) and, on
     the host, its own lines (`ourLine=`); `storage status` counts `supply=`, `linkedHeard=`, `linkedSent=`,

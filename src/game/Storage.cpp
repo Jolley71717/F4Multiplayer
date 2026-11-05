@@ -90,6 +90,9 @@ namespace Storage
 			Clock::time_point retryAt{};
 			Clock::duration   backoff = BENCH_RETRY;
 			bool              refresh = false;  // what our copy holds changed: the engine's own container is filled again
+			// The host's game: the other kept workbenches a friend changed since the last frame. Those our supply lines link
+			// to this one are in its list too, far or near, so it is filled again (SupplyLines::HostListChanged).
+			std::vector<std::uint32_t> hostChanged;
 		} bench;  // main thread
 
 		std::atomic<bool> hostingOn{ false };  // the host's game, with the rule on (KeepsTrueCopies)
@@ -617,6 +620,10 @@ namespace Storage
 			if (bench.menu != BenchMenu::kNone) {
 				DrainLocal();
 				OpenBench();
+			}
+			if (const auto changed = std::exchange(bench.hostChanged, {});
+				bench.menu != BenchMenu::kNone && SupplyLines::HostListChanged(bench.id, changed, [] { return SupplyOf(Ref(bench.id)); })) {
+				bench.refresh = true;
 			}
 			if (std::exchange(bench.refresh, false)) {
 				RefreshBenchMenu();
@@ -1196,6 +1203,9 @@ namespace Storage
 		const auto done = Move(Ref(a_change.container), a_change.item, a_change.count);
 		if (ReadByBench(a_change.container)) {
 			bench.refresh = true;
+		} else if (hosting && done != 0 && bench.menu != BenchMenu::kNone && bench.id != 0 &&
+				   std::ranges::find(bench.hostChanged, a_change.container) == bench.hostChanged.end()) {
+			bench.hostChanged.push_back(a_change.container);  // one our supply lines link to the workbench we're at? (BenchFrame)
 		}
 		if (tracing) {
 			REX::INFO("Storage: trace a friend's change at {:08X}: {} of {:08X} (made {})", a_change.container, a_change.count, a_change.item, done);
