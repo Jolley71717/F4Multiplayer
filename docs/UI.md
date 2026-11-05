@@ -148,9 +148,10 @@ At run time:
     the panel only 250 ms after its first update. Hotkeys fire only as a key goes down, so the press that closes it doesn't open it again.
 - **The command bar** (`ui/shared/f4mp/ui/CommandBar.as`) is the game's `ButtonHintBar_mc` of ours. It has one command, the way back. A
   page could have more, side by side as the game's do: `Show` would take a list of commands, each with its key, word and action.
-- **The changelog** is a page off About, of the latest ten versions' `dist/RELEASE-*.md`, which the package copies to
-  `F4SE/Plugins/F4Multiplayer/changelog/`. `src/game/UiReleaseNotes.h` picks them, and `ui/shared/f4mp/ui/Markdown.as` shows the little
-  markdown they use: headings, lists, paragraphs, and inline code, bold and links as plain text. They're in English whatever the game's language.
+- **Release notes** are a page off About: this version's `dist/RELEASE-*.md`, which the package copies to
+  `F4SE/Plugins/F4Multiplayer/release-notes.md` (an rc's own notes in an rc's package, and so in the release made from it). No file, no
+  link. `ui/shared/f4mp/ui/Markdown.as` shows the little markdown they use: headings, lists, paragraphs, and inline code, bold and links
+  as plain text. They're in English whatever the game's language.
 - **Typing.** A dialog with a place to type (`Dialog.as`) gets the keys in `OnButtonEvent`, turned to characters with `ToUnicode`, and
   `ControlMap::SetTextEntryMode` keeps them from the game for as long: without it `o` worked the power armor's radio, and others the
   Pip-Boy and VATS. The game gives a menu only a key's press and release, so the key repeat and the caret are ours. Nothing typed is logged.

@@ -391,7 +391,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.key_reserved", { { "key", "F5" } }, "F5 can't be used: the game or this menu needs it" },
 		{ "menu.join_waiting", { { "address", "1.2.3.4" } }, "You'll join 1.2.3.4 once you've loaded a game." },
 		{ "menu.about", {}, "About" },
-		{ "menu.changelog", {}, "Changelog" },
+		{ "menu.release_notes", {}, "Release notes" },
 		{ "menu.about_missing", {}, "The about text is missing: about.txt isn't in Data/F4SE/Plugins/F4Multiplayer." },
 		{ "mpmenu.back", {}, "BACK" },
 		{ "menu.host", {}, "Host a session" },

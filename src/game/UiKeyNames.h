@@ -16,7 +16,7 @@ namespace UiKeyNames
 
 	[[nodiscard]] inline std::string Name(std::uint32_t a_vk)
 	{
-		if (a_vk >= 'A' && a_vk <= 'Z' || a_vk >= '0' && a_vk <= '9') {
+		if ((a_vk >= 'A' && a_vk <= 'Z') || (a_vk >= '0' && a_vk <= '9')) {
 			return std::string(1, static_cast<char>(a_vk));
 		}
 		if (a_vk >= 0x70 && a_vk <= 0x87) {

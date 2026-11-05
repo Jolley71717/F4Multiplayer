@@ -6,7 +6,6 @@
 #include "game/Hud.h"
 #include "game/UiKeyNames.h"
 #include "game/UiPasswordEntry.h"
-#include "game/UiReleaseNotes.h"
 #include "game/UiPanel.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
@@ -758,31 +757,18 @@ namespace UiPages
 		// More buttons than a box has (the Mods button, when our mods differ from the host's, besides Leave, Join
 		// someone else and Settings) turn into pages, "Close" first on each.
 		// What the mod is, from a file of ours, with its name and version over it.
-		// The latest release notes, as packaged beside the about text, as one markdown text; "" if there are none.
-		std::string Changelog()
+		// This version's release notes, packaged beside the about text as markdown; "" if it has none.
+		std::string ReleaseNotes()
 		{
-			constexpr std::size_t VERSIONS_SHOWN = 10;
-			const auto            folder = Platform::GamePath("Data/F4SE/Plugins/F4Multiplayer/changelog");
-			std::vector<std::string> files;
-			std::error_code          error;
-			for (const auto& entry : std::filesystem::directory_iterator{ folder, error }) {
-				files.push_back(entry.path().filename().string());
-			}
-			const auto  running = F4SE::GetPluginVersion();
-			std::string text;
-			for (const auto& file : UiReleaseNotes::Pick(files, { running.major(), running.minor(), running.patch() }, VERSIONS_SHOWN)) {
-				std::ifstream in{ folder / file, std::ios::binary };
-				text.append(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
-				text += "\n\n";
-			}
-			return text;
+			std::ifstream in{ Platform::GamePath("Data/F4SE/Plugins/F4Multiplayer/release-notes.md"), std::ios::binary };
+			return { std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{} };
 		}
 
-		void ShowChangelog()
+		void ShowReleaseNotes()
 		{
 			nextPage.framed = true;
 			nextPage.markdown = true;
-			Show(Changelog(), { { Text::Get("menu.back"), ShowAbout } });
+			Show(ReleaseNotes(), { { Text::Get("menu.back"), ShowAbout } });
 		}
 
 		void ShowAbout()
@@ -794,8 +780,8 @@ namespace UiPages
 			}
 			nextPage.framed = true;
 			std::vector<Button> rows{ { Text::Get("menu.back"), ShowMain } };
-			if (inPanel && !Changelog().empty()) {
-				rows.push_back({ Text::Get("menu.changelog"), ShowChangelog });
+			if (inPanel && !ReleaseNotes().empty()) {
+				rows.push_back({ Text::Get("menu.release_notes"), ShowReleaseNotes });
 			}
 			Show(body, std::move(rows));
 		}
