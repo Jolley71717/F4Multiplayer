@@ -1242,6 +1242,21 @@ namespace WorldSync
 				return ref && !ref->IsDeleted() && ref->GetParentCell();
 			}
 
+			// A settlement's workbench shared storage keeps, though Loaded says no: a persistent reference far from our player,
+			// which seems to be in no cell then (an NPC of an unloaded cell logs cell 0 here too). A friend's take at such a
+			// workbench of the host's waited for the host to come near, while the server's book had it taken (the rig, a supply
+			// line far from both players). The engine takes from it there for a build's supply lines
+			// (Workshop::RemoveItemFromWorkshopContainers' RemoveItem) and its scripts add the day's production to it, so
+			// Storage's change goes in there too (ApplyAtBench: the same RemoveItem and AddObjectToContainer).
+			bool FromAfar(std::uint32_t a_holder) override
+			{
+				if (!(inWorld ? *inWorld : InWorld() && !Story::InOpening())) {
+					return false;
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				return ref && !ref->IsDeleted() && Storage::WatchesBench(a_holder) && WorkshopSync::IsWorkbenchAnchor(ref);
+			}
+
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
 
 			std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
@@ -3254,6 +3269,7 @@ namespace WorldSync
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
+			   stats.fromAfar);
 	}
 }

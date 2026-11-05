@@ -200,6 +200,25 @@ TEST("shared storage: a friend's take and put go through to the host's chest, an
 	CHECK(s.Total(WATER) == 5);
 }
 
+TEST("shared storage: a friend's take at a host's chest its game hasn't loaded waits for it to load there (a workbench's goes in at once)")
+{
+	Session s;
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.host.away.insert(CHEST);  // the host's game left the chest's cell after listing it
+	s.guest.Take(s.f, CHEST, STIMPAK, 3);
+	s.Settle();
+	CHECK(s.host.In(CHEST, STIMPAK) == 5);
+	CHECK(s.host.loot.Waiting().size() == 1);
+	s.host.away.erase(CHEST);
+	s.host.Wait(s.f, std::chrono::seconds{ 1 });
+	CHECK(s.host.In(CHEST, STIMPAK) == 2);
+	CHECK(s.host.loot.Waiting().empty());
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.Total(STIMPAK) == 5);
+}
+
 TEST("shared storage: two friends taking the last stimpaks at once: one gets them, the other's take is given back")
 {
 	Session s;

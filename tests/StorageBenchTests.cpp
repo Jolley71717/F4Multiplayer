@@ -538,6 +538,77 @@ TEST("supply lines: a take the linked workbench no longer held is refused and pa
 	CHECK(s.Steel() == LINES_START);
 }
 
+TEST("supply lines: a friend's take at a linked workbench neither game has loaded comes out of the host's pile at once")
+{
+	Lines s;
+	s.host.away.insert(LINKED);   // the host far from that settlement (listed before, or from afar)
+	s.guest.away.insert(LINKED);  // the friend never went there
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	CHECK(s.guest.In(LINKED, STEEL) == 5);  // the host's, their own 3 set aside
+
+	s.built += 13;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 13);
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 2);  // the engine changes a workbench from afar: so does the friend's take
+	CHECK(s.host.loot.Waiting().empty());
+	CHECK(s.host.loot.Stats().fromAfar == 1);
+	CHECK(s.guest.In(LINKED, STEEL) == 2);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.Steel() == LINES_START);
+
+	// The host's game adds there from afar (the day's production): the friend's view shows it as it comes, not only once
+	// they look again.
+	s.host.Script(s.f, LINKED, STEEL, 4);
+	s.Settle();
+	CHECK(s.host.In(LINKED, STEEL) == 6);
+	CHECK(s.guest.In(LINKED, STEEL) == 6);
+	CHECK(s.guest.loot.Waiting().empty());
+
+	// All 6 used: every one comes off the host's pile, none refused, none used twice.
+	s.built += 6;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 6);
+	s.Settle();
+	CHECK(s.host.In(LINKED, STEEL) == 0);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	CHECK(s.guest.Carried(STEEL) == 2);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.In(LINKED, STEEL) == 3);  // their own back
+	CHECK(s.guest.loot.Waiting().empty());
+	CHECK(s.Steel() == LINES_START + 4);
+}
+
+TEST("supply lines: a friend's take at the host's far workbench goes in even after the host's reload, and its reload's listing counts it once")
+{
+	Lines s;
+	const auto save = s.host.SaveGame(s.f);  // LINKED holds 5 in the save
+	s.host.away.insert(LINKED);
+	s.guest.away.insert(LINKED);
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	REQUIRE(s.guest.storage.State().Shows(LINKED));
+	s.built += 12;
+	s.guest.BuildFrom(s.f, s.guest.Gather(), STEEL, 12);  // 10 at the workbench, 2 at LINKED
+	s.Settle();
+	CHECK(s.host.In(LINKED, STEEL) == 3);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	// The host loads the save from before the take, still far from LINKED: the catch-up takes the friend's 2 again there,
+	// so its world holds what the server's book does (3), and the 2 are used once.
+	s.host.LoadGame(s.f, save);
+	s.Settle();
+	s.host.Wait(s.f, std::chrono::seconds{ 1 });
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 0);
+	CHECK(s.host.In(LINKED, STEEL) == 3);
+	CHECK(s.host.loot.Waiting().empty());
+	CHECK(s.Steel() == LINES_START);
+}
+
 TEST("supply lines: a line the host's game takes back ends that view, and the friend's own things come back there")
 {
 	Lines s;

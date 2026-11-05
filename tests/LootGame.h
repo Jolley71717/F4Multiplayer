@@ -582,6 +582,13 @@ namespace LootTest
 
 		bool Loaded(std::uint32_t a_holder) override { return !away.contains(a_holder); }
 
+		// A workbench WorldSync watches is changed wherever it is (WorldSync's FromAfar); other storage only once loaded.
+		bool FromAfar(std::uint32_t a_holder) override
+		{
+			const auto it = holderFacts.find(a_holder);
+			return it != holderFacts.end() && it->second.workshop && Watches(a_holder);
+		}
+
 		LootScope::HolderFacts Holder(std::uint32_t a_holder) override
 		{
 			const auto it = holderFacts.find(a_holder);

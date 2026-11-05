@@ -57,6 +57,10 @@ namespace LootSync
 
 		// The holder can be changed now: we are in the world (out of the opening) and its reference is here.
 		virtual bool                   Loaded(std::uint32_t a_holder) = 0;
+		// The holder can be changed now though it isn't loaded (Loaded): a settlement's workbench shared storage keeps
+		// (Storage::WatchesBench), whose inventory the engine itself changes from afar (a build's supply lines, a settlement's
+		// production), and so does Storage. We are in the world, and its reference is here. None, by default.
+		virtual bool                   FromAfar(std::uint32_t) { return false; }
 		virtual LootScope::HolderFacts Holder(std::uint32_t a_holder) = 0;
 		// The item's own facts (questAlias is the holder's: see QuestAlias).
 		virtual LootScope::ItemFacts   Item(std::uint32_t a_item) = 0;
@@ -149,6 +153,7 @@ namespace LootSync
 			std::uint32_t storageSkipped = 0;  // other players' changes to storage another game keeps, not shown here (no view of it)
 			std::uint32_t storageOverflow = 0; // the player's moves at a friend's storage undone unsent (too many unanswered)
 			std::uint32_t openApplied = 0;     // waiting changes that went in as our player opened their holder (Opened)
+			std::uint32_t fromAfar = 0;        // changes that went in at a workbench shared storage keeps, not loaded here (FromAfar)
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -653,7 +658,7 @@ namespace LootSync
 				return false;
 			}
 			const auto from = a_world.ViewFrom(a_change.container);
-			if (from && a_index >= *from && *from != StorageView::NOT_YET && a_change.item != Protocol::CONTAINER_EMPTIED && a_world.Loaded(a_change.container) &&
+			if (from && a_index >= *from && *from != StorageView::NOT_YET && a_change.item != Protocol::CONTAINER_EMPTIED && Reachable(a_change.container, a_world) &&
 				!a_world.Aliased(a_change.container, a_change.item)) {
 				return false;
 			}
@@ -661,12 +666,18 @@ namespace LootSync
 			return true;
 		}
 
+		// The holder can be changed now: loaded, or a workbench shared storage keeps, which the engine changes wherever it is.
+		// A friend's take at a host's linked workbench far from both players waited for the host to come near (it never
+		// loads for a supply line), while the server's book had it taken: the host's game could use it once more, and the
+		// host's own moves there went on from a pile the book no longer had (up to the first rig test of the supply lines).
+		static bool Reachable(std::uint32_t a_holder, World& a_world) { return a_world.Loaded(a_holder) || a_world.FromAfar(a_holder); }
+
 		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world)
 		{
 			if (SkipStorage(a_index, a_change, a_world)) {
 				return Applied::kDone;
 			}
-			if (!a_world.Loaded(a_change.container)) {
+			if (!Reachable(a_change.container, a_world)) {
 				return Applied::kNotLoaded;
 			}
 			const auto keeper = a_world.Keeper(a_change.container);
@@ -720,6 +731,9 @@ namespace LootSync
 				if (direction == LootScope::Direction::kTake && LootScope::Rolled(holder)) {
 					friendTook[a_change.container].insert(a_change.item);
 				}
+			}
+			if (!a_world.Loaded(a_change.container)) {
+				++counts.fromAfar;
 			}
 			a_world.Apply(a_change);
 			return Applied::kDone;

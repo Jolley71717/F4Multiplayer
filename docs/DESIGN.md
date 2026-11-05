@@ -1145,7 +1145,13 @@ counts every item across the host's chest and the players' inventories in each s
     settlement's location the list after the workbench is the host's linked workbenches in the host's order, then the
     friend's own world's other linked workbenches (their own stash, as before), then the player. So a build takes from
     them in the host's order, each take a move at that workbench the server checks; a refused one is paid from the
-    friend's stash there. A container menu opened meanwhile ends every view first. The host away closes every view and
+    friend's stash there. A linked settlement is mostly far from both players, its workbench not loaded in either game
+    (LootSync's `Loaded` says no: seemingly in no cell), and every change at a workbench shared storage keeps goes in there and then all the
+    same (`World::FromAfar`, Storage::WatchesBench): the host's game takes a friend's take out of its pile at once, as
+    its engine's own supply-line builds and the day's production change it from afar, and the friend's view shows the
+    host's changes there as they come. Before, they waited for the workbench to load, which a supply line never needs:
+    the server's book had the take while the host's pile still held it, so it could be used twice (the rig). A
+    container menu opened meanwhile ends every view first. The host away closes every view and
     forgets the lines, so the friend builds with their own. `storage bench` lists the supply views (`supply=`) and, on
     the host, its own lines (`ourLine=`); `storage status` counts `supply=`, `linkedHeard=`, `linkedSent=`,
     `linkReports=`, `supplyGathers=`.
