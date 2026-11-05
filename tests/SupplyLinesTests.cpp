@@ -106,6 +106,31 @@ TEST("supply lines: the gather finds the keeper's lines after what it held, then
 	CHECK((SupplyLines::Gathered(have, Ids{ BENCH, 0, C, C }, Ids{ BENCH, B, B, 0 }) == Ids{ B, C }));
 }
 
+TEST("supply lines: the host's open list is gathered again after a friend's change at any workbench its lines reach, far or near")
+{
+	int        asked = 0;
+	const auto lines = [&] {
+		++asked;
+		return Ids{ A, B };
+	};
+	// No change, or no workbench open: nothing to gather, and the engine isn't asked.
+	CHECK(!SupplyLines::HostListChanged(BENCH, {}, lines));
+	CHECK(!SupplyLines::HostListChanged(0, Ids{ A }, lines));
+	CHECK(asked == 0);
+	// A change at the workbench itself: gathered again without asking for the lines.
+	CHECK(SupplyLines::HostListChanged(BENCH, Ids{ BENCH }, lines));
+	CHECK(asked == 0);
+	// A take at a linked workbench (the rig: far from the host, the list stayed 21 when 18 were left).
+	CHECK(SupplyLines::HostListChanged(BENCH, Ids{ B }, lines));
+	CHECK(asked == 1);
+	// Several changes ask once; one among them linked is enough.
+	CHECK(SupplyLines::HostListChanged(BENCH, Ids{ C, 0, A }, lines));
+	CHECK(asked == 2);
+	// A workbench our lines don't reach (a friend building at another settlement) changes nothing in this list.
+	CHECK(!SupplyLines::HostListChanged(BENCH, Ids{ C }, lines));
+	CHECK(!SupplyLines::HostListChanged(BENCH, Ids{ 0 }, lines));
+}
+
 TEST("supply lines: the wire refuses a list with the workbench itself, repeats, nothing, our player, or bytes after it")
 {
 	using Protocol::BenchLinks;
