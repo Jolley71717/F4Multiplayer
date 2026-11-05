@@ -16,7 +16,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
-#include "game/Menu.h"
+#include "game/UiPages.h"
 #include "game/MenuKinds.h"
 #include "game/TeleportRules.h"
 #include "game/NpcSync.h"
@@ -851,7 +851,7 @@ namespace Party
 			for (const auto action : Hotkeys::Poll()) {
 				// The menu is how you get into a session, so it doesn't need one.
 				if (action == Hotkeys::Action::kMenu) {
-					Menu::OpenFromKey();
+					UiPages::OpenFromKey();
 					continue;
 				}
 				if (localId == 0) {

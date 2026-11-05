@@ -7,7 +7,7 @@ The plan for the multiplayer menu. How it's built and what was learned about the
 Every page below is a page of `F4MPMenu` and `MPMenu.swf`: the same menu, input and lifetime in every session state. A
 second movie is only for something non-modal with a life of its own, such as a HUD party strip or a hosting badge.
 
-The pages stay in `src/game/Menu.cpp`, which already builds them from `Session::GetStatus()` and hands each to one
+The pages stay in `src/game/UiPages.cpp`, which already builds them from `Session::GetStatus()` and hands each to one
 function, `Show(body, buttons)`. That function gets a second output, the Flash panel:
 
 - The movie takes a whole page: `SetPage(serial, body, rows, hints, keepRow, heading)`. Its list scrolls, so `More` goes away
@@ -23,7 +23,7 @@ function, `Show(body, buttons)`. That function gets a second output, the Flash p
 - The panel stays open between pages. The main thread queues a page and the panel applies it in `AdvanceMovie` (Flash
   objects are written only in a menu's own update). A press carries the page's serial, so a stale one is dropped.
 - Esc, Tab and the gamepad's B go back a page. The main page redraws when its status changes.
-- `Menu::Press` and `Describe` work on the panel too, so the rig scripts it and reads the log, without screenshots.
+- `UiPages::Press` and `Describe` work on the panel too, so the rig scripts it and reads the log, without screenshots.
 - While the panel is open, the Multiplayer row under it dims as the game's own do with a submenu open.
 - The menu key (F1) opens the panel in the middle of the screen, and closes it from any page. The Multiplayer entry opens it
   beside the main menu's list. The message box stays as the fallback if the movie doesn't load.

@@ -1,5 +1,5 @@
-#include "game/MPMenu.h"
-#include "game/MainMenuEntry.h"
+#include "game/UiPanel.h"
+#include "game/UiMainMenuEntry.h"
 
 #include "Config.h"
 #include "MainThread.h"
@@ -7,8 +7,8 @@
 #include "Text.h"
 #include "game/Hud.h"
 #include "game/Equipment.h"
-#include "game/KeyNames.h"
-#include "game/Menu.h"
+#include "game/UiKeyNames.h"
+#include "game/UiPages.h"
 
 #include <algorithm>
 #include <array>
@@ -32,7 +32,7 @@ extern "C"
 	__declspec(dllimport) int __stdcall ToUnicode(unsigned int a_key, unsigned int a_scan, const unsigned char* a_state, wchar_t* a_out, int a_size, unsigned int a_flags);
 }
 
-namespace MPMenu
+namespace UiPanel
 {
 	namespace
 	{
@@ -60,7 +60,7 @@ namespace MPMenu
 		std::atomic<bool>          wanted{ false };
 		std::atomic<std::uint32_t> opened{ 0 };
 		std::atomic<bool>          capturing{ false };  // the next key is a keybind's
-		std::atomic<bool> typing{ false };  // every key is Menu::PanelTyped's (CaptureText)
+		std::atomic<bool> typing{ false };  // every key is UiPages::PanelTyped's (CaptureText)
 		// The key last typed, held: the game gives a menu only its press and release, so the repeat is ours.
 		std::atomic<std::uint32_t> repeatKey{ 0 };
 		std::atomic<std::uint32_t> repeatCharacter{ 0 };
@@ -141,7 +141,7 @@ namespace MPMenu
 			if (manager && (layer || manager->AllocateNewLayer(layer, "F4Multiplayer menu")) && layer) {
 				manager->EnableUserEvent(layer->layerID, RE::UserEvents::USER_EVENT_FLAG::kActivate, a_on, RE::UserEvents::SENDER_ID::kScript);
 			} else {
-				REX::WARN("MPMenu: no input layer: the activate key still works in the world under the menu");
+				REX::WARN("UiPanel: no input layer: the activate key still works in the world under the menu");
 			}
 			off = !a_on;
 		}
@@ -177,12 +177,12 @@ namespace MPMenu
 				case Code::kPressed:
 					{
 						if (a_params.argCount > 1) {
-							Menu::PanelPress(NumberOf(a_params.args[0]), NumberOf(a_params.args[1]));
+							UiPages::PanelPress(NumberOf(a_params.args[0]), NumberOf(a_params.args[1]));
 						}
 					}
 					break;
 				case Code::kClose:
-					MainThread::Post([] { Menu::PanelBack(); });
+					MainThread::Post([] { UiPages::PanelBack(); });
 					break;
 				case Code::kPlaySound:
 					if (a_params.argCount > 0 && a_params.args[0].IsString()) {
@@ -191,12 +191,12 @@ namespace MPMenu
 					break;
 				case Code::kMouseOutside:
 					if (a_params.argCount > 2 && a_params.args[0].IsNumber() && a_params.args[1].IsNumber() && a_params.args[2].IsBoolean()) {
-						MainMenuEntry::PanelMouse(static_cast<float>(a_params.args[0].GetNumber()), static_cast<float>(a_params.args[1].GetNumber()), a_params.args[2].GetBoolean());
+						UiMainMenuEntry::PanelMouse(static_cast<float>(a_params.args[0].GetNumber()), static_cast<float>(a_params.args[1].GetNumber()), a_params.args[2].GetBoolean());
 					}
 					break;
 				case Code::kLog:
 					if (a_params.argCount > 0 && a_params.args[0].IsString()) {
-						REX::INFO("MPMenu: movie says {}", a_params.args[0].GetString());
+						REX::INFO("UiPanel: movie says {}", a_params.args[0].GetString());
 					}
 					break;
 				}
@@ -227,8 +227,8 @@ namespace MPMenu
 				inputContext = RE::UserEvents::INPUT_CONTEXT_ID::kBasicMenuNav;
 				const auto scaleform = RE::BSScaleformManager::GetSingleton();
 				if (!scaleform || !scaleform->LoadMovieEx(*this, MOVIE, "root")) {
-					REX::ERROR("MPMenu: {} could not be loaded; is it in Data/Interface? Using message boxes", MOVIE);
-					MainThread::Post([] { Menu::Open(); });
+					REX::ERROR("UiPanel: {} could not be loaded; is it in Data/Interface? Using message boxes", MOVIE);
+					MainThread::Post([] { UiPages::Open(); });
 					return;
 				}
 				// Our objects with a size, as shader targets for the renderer (each one's bounds becomes a quad; the movie's root
@@ -274,7 +274,7 @@ namespace MPMenu
 						repeatKey = 0;
 					} else if (NowMs() >= repeatAt.load()) {
 						repeatAt = NowMs() + TYPING_REPEAT_EVERY_MS;
-						MainThread::Post([key, character = repeatCharacter.load()] { Menu::PanelTyped(key, character); });
+						MainThread::Post([key, character = repeatCharacter.load()] { UiPages::PanelTyped(key, character); });
 					}
 				}
 				// Nothing written while the UI is held (UiHold.h): the engine may be releasing the movie. The page waits.
@@ -298,12 +298,12 @@ namespace MPMenu
 				// the rest work the dialog as ever.
 				if (a_event && typing && a_event->QJustPressed() && a_event->device.get() == RE::INPUT_DEVICE::kKeyboard) {
 					const auto key = a_event->QIDCode();
-					const auto character = key == KeyNames::ENTER || key == KeyNames::ESCAPE || key == KeyNames::TAB ? 0 : CharacterOf(key);
-					if (character != 0 || key == KeyNames::BACKSPACE) {
+					const auto character = key == UiKeyNames::ENTER || key == UiKeyNames::ESCAPE || key == UiKeyNames::TAB ? 0 : CharacterOf(key);
+					if (character != 0 || key == UiKeyNames::BACKSPACE) {
 						repeatKey = key;
 						repeatCharacter = character;
 						repeatAt = NowMs() + TYPING_REPEAT_DELAY_MS;
-						MainThread::Post([key, character] { Menu::PanelTyped(key, character); });
+						MainThread::Post([key, character] { UiPages::PanelTyped(key, character); });
 						return;
 					}
 				}
@@ -316,38 +316,38 @@ namespace MPMenu
 					}
 				}
 				if (a_event && a_event->QJustPressed()) {
-					REX::DEBUG("MPMenu: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
+					REX::DEBUG("UiPanel: input '{}' device {} code {:X}", a_event->QUserEvent().c_str(), static_cast<int>(a_event->device.get()), a_event->QIDCode());
 					// The way back out of a menu: Esc or Tab, or the gamepad's B. None comes as a user event to a menu of
 					// ours (the game's own menus get theirs from their own input handling), so they are read by code.
 					const bool keyboard = a_event->device.get() == RE::INPUT_DEVICE::kKeyboard;
 					const bool gamepad = a_event->device.get() == RE::INPUT_DEVICE::kGamepad;
 					const bool mouse = a_event->device.get() == RE::INPUT_DEVICE::kMouse;
-					if (keyboard && centered && a_event->QIDCode() == KeyNames::ESCAPE) {
+					if (keyboard && centered && a_event->QIDCode() == UiKeyNames::ESCAPE) {
 						return;  // EscPressed has it: never both, where the game does let it through
 					}
-					if (capturing && (keyboard || (mouse && KeyNames::FromMouse(a_event->QIDCode()) != 0))) {
+					if (capturing && (keyboard || (mouse && UiKeyNames::FromMouse(a_event->QIDCode()) != 0))) {
 						capturing = false;
-						MainThread::Post([keyboard, code = a_event->QIDCode()] { Menu::PanelKey(keyboard, code); });
+						MainThread::Post([keyboard, code = a_event->QIDCode()] { UiPages::PanelKey(keyboard, code); });
 						return;
 					}
-					// The key that opened it closes it, from any page. Menu::Frame sees the panel gone and tidies up.
-					const auto boundKey = keyboard ? a_event->QIDCode() : mouse ? KeyNames::FromMouse(a_event->QIDCode()) : 0;
+					// The key that opened it closes it, from any page. UiPages::Frame sees the panel gone and tidies up.
+					const auto boundKey = keyboard ? a_event->QIDCode() : mouse ? UiKeyNames::FromMouse(a_event->QIDCode()) : 0;
 					if (centered && boundKey != 0 && boundKey == Config::Get().keyMenu) {
 						// The press that opened it reaches it too: not a second press.
 						const auto at = menuKeyFrom.load();
 						if (at == 0 || NowMs() < at) {
-							REX::INFO("MPMenu: the menu key while opening: ignored");
+							REX::INFO("UiPanel: the menu key while opening: ignored");
 							return;
 						}
-						REX::INFO("MPMenu: closed by the menu key");
+						REX::INFO("UiPanel: closed by the menu key");
 						RE::UIUtils::PlayMenuSound("UIMenuCancel");
 						MainThread::Post([] { Close(); });
 						return;
 					}
 					constexpr std::uint32_t PAD_B = 0x2000;  // XInput's B
-					if ((keyboard && (a_event->QIDCode() == KeyNames::ESCAPE || a_event->QIDCode() == KeyNames::TAB)) || (gamepad && a_event->QIDCode() == PAD_B)) {
+					if ((keyboard && (a_event->QIDCode() == UiKeyNames::ESCAPE || a_event->QIDCode() == UiKeyNames::TAB)) || (gamepad && a_event->QIDCode() == PAD_B)) {
 						RE::UIUtils::PlayMenuSound("UIMenuCancel");
-						MainThread::Post([] { Menu::PanelBack(); });
+						MainThread::Post([] { UiPages::PanelBack(); });
 						return;
 					}
 				}
@@ -363,7 +363,7 @@ namespace MPMenu
 			{
 				GValue engines;
 				const bool had = menuObj.GetMember("BGSCodeObj", &engines);
-				REX::INFO("MPMenu: the game's code object: {} (type {}, Pressed {})", had, static_cast<int>(engines.GetType()),
+				REX::INFO("UiPanel: the game's code object: {} (type {}, Pressed {})", had, static_cast<int>(engines.GetType()),
 					engines.IsObject() && engines.HasMember("Pressed"));
 				if (!codeHandler) {
 					codeHandler = new CodeHandler();
@@ -377,7 +377,7 @@ namespace MPMenu
 					code.SetMember(name, function);
 				}
 				if (!menuObj.SetMember("BGSCodeObj", code)) {
-					REX::WARN("MPMenu: the movie took no BGSCodeObj");
+					REX::WARN("UiPanel: the movie took no BGSCodeObj");
 				}
 			}
 
@@ -402,7 +402,7 @@ namespace MPMenu
 				}
 				const std::array<GValue, 7> args{ GValue(static_cast<double>(a_page.serial)), GValue(a_page.title.c_str()), GValue(a_page.body.c_str()), rows, GValue(a_page.keepRow), GValue(a_page.input), GValue(a_page.inputText.c_str()) };
 				if (!menuObj.Invoke("SetDialog", nullptr, args.data(), args.size())) {
-					REX::WARN("MPMenu: the movie has no SetDialog");
+					REX::WARN("UiPanel: the movie has no SetDialog");
 				}
 			}
 
@@ -426,7 +426,7 @@ namespace MPMenu
 				}
 				const std::array<GValue, 9> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->framed), players, GValue(page->header.c_str()), GValue(page->markdown) };
 				if (!menuObj.Invoke("SetPage", nullptr, args.data(), args.size())) {
-					REX::WARN("MPMenu: the movie has no SetPage");
+					REX::WARN("UiPanel: the movie has no SetPage");
 				}
 			}
 
@@ -441,7 +441,7 @@ namespace MPMenu
 					GValue(static_cast<double>(boxRight.load())), GValue(static_cast<double>(boxBottom.load())),
 					GValue(static_cast<double>(lookColor.load())), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()) };
 				if (!menuObj.Invoke("SetLook", nullptr, args.data(), args.size())) {
-					REX::WARN("MPMenu: the movie has no SetLook");
+					REX::WARN("UiPanel: the movie has no SetLook");
 				}
 			}
 
@@ -455,8 +455,8 @@ namespace MPMenu
 			if (std::filesystem::exists(Platform::GamePath(std::format("Data/{}", MOVIE)), error)) {
 				return true;
 			}
-			REX::ERROR("MPMenu: {} is not in Data; using message boxes", MOVIE);
-			MainThread::Post([] { Menu::Open(); });
+			REX::ERROR("UiPanel: {} is not in Data; using message boxes", MOVIE);
+			MainThread::Post([] { UiPages::Open(); });
 			return false;
 		}
 
@@ -482,7 +482,7 @@ namespace MPMenu
 			if (const auto queue = RE::UIMessageQueue::GetSingleton()) {
 				queue->AddMessage(NAME, RE::UI_MESSAGE_TYPE::kShow);
 			}
-			Menu::OpenInPanel();
+			UiPages::OpenInPanel();
 		}
 	}
 
@@ -490,13 +490,13 @@ namespace MPMenu
 	{
 		if (const auto ui = RE::UI::GetSingleton()) {
 			ui->RegisterMenu(NAME, &Create);
-			REX::INFO("MPMenu: registered {}", NAME);
+			REX::INFO("UiPanel: registered {}", NAME);
 		}
 	}
 
 	void Open(float a_left, float a_top, float a_right, float a_bottom)
 	{
-		MainThread::Assert("MPMenu::Open");
+		MainThread::Assert("UiPanel::Open");
 		if (!Hud::IsSettled()) {
 			return;  // the entry's press came as the UI went down: pressed again once it is back
 		}
@@ -509,7 +509,7 @@ namespace MPMenu
 
 	void OpenCentered()
 	{
-		MainThread::Assert("MPMenu::OpenCentered");
+		MainThread::Assert("UiPanel::OpenCentered");
 		if (!MovieThere()) {
 			return;
 		}
@@ -549,13 +549,13 @@ namespace MPMenu
 
 	void EscPressed()
 	{
-		MainThread::Assert("MPMenu::EscPressed");
+		MainThread::Assert("UiPanel::EscPressed");
 		if (capturing.exchange(false)) {
-			Menu::PanelKey(true, KeyNames::ESCAPE);
+			UiPages::PanelKey(true, UiKeyNames::ESCAPE);
 			return;
 		}
 		RE::UIUtils::PlayMenuSound("UIMenuCancel");
-		Menu::PanelBack();
+		UiPages::PanelBack();
 	}
 
 	void OnHudAdvance(RE::IMenu* a_hud)

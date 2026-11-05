@@ -5,7 +5,7 @@
 #include <string>
 
 // What a password typed in the multiplayer menu may hold. Kept free of the game so it can be tested.
-namespace PasswordEntry
+namespace UiPasswordEntry
 {
 	// The keyboard's printable ASCII, so friends on any layout can type it and it reads back from the ini as written. Not a space (the
 	// ini trims them at the ends, and they can't be seen there), nor < or > (the menu's text drops those, so it wouldn't show as typed).

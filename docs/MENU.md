@@ -12,14 +12,14 @@ if its movie won't load.
 
 ## What it's made of
 
-The pages are built in [src/game/Menu.cpp](../src/game/Menu.cpp), and shown in the panel ([UI.md](UI.md)) when its movie loads:
+The pages are built in [src/game/UiPages.cpp](../src/game/UiPages.cpp), and shown in the panel ([UI.md](UI.md)) when its movie loads:
 every row on one scrolling page, and the players in a list at the right of the main page. Choosing a player opens their page.
 
 If the movie is missing or won't load, the same pages show in the engine's own message box instead: the "Are you sure you want to
 quit?" dialog (`MessageBoxMenu`), created through `MessageMenuManager::Create` with our header, body text and up to **four buttons**.
 Each page is one box; pressing a button closes it, and on the next frame its action runs and usually opens the next page. Longer
 lists get a `More (1/3)` button. This is only a fallback, kept while the panel is new, and is to go in a later version once the panel
-has been fully adopted. Everything that exists only for it in `Menu.cpp` (`inPanel`'s other branch, the paging, `MAX_BUTTONS`) goes
+has been fully adopted. Everything that exists only for it in `UiPages.cpp` (`inPanel`'s other branch, the paging, `MAX_BUTTONS`) goes
 with it.
 
 ## Pages
