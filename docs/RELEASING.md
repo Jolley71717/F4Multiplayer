@@ -102,7 +102,9 @@ verdict=PASS
 1. `tools/promote.ps1 -Rc vX.Y.Z-rcN`. It refuses unless the rc's zip matches its manifest, the tag
    `vX.Y.Z-rcN` is the manifest's commit, the rc was not packaged with `-AllowDirty`, and the verdict
    is a PASS for that commit and that DLL. It writes `F4Multiplayer-X.Y.Z.zip` (and `-nexus.zip`,
-   without the dedicated server) holding the rc's files byte for byte, plus their manifest and the
+   without the dedicated server) holding the rc's files byte for byte, but for the About page's notes
+   (`release-notes.md`, the rc's own in the rc), which become `dist/RELEASE-X.Y.Z.md`: write those notes
+   first, it refuses without them. Then their manifest and the
    `.pdb` under the release's name. Only `promote.ps1` makes a release zip; skipping the soak means
    publishing by hand, as a deliberate and visible choice.
 2. Run the commands it prints: tag the rc's commit `vX.Y.Z`, push the tag, and create the GitHub
