@@ -263,7 +263,6 @@ menu.hc_remove_password = Rimuovi la password
 menu.pw_save = Salva password
 menu.pw_save_hint = Digitala, poi premi Invio o scegli questa voce. Lettere, numeri e punteggiatura. I giocatori nella sessione restano.
 menu.pw_make_up = Creane una
-menu.pw_make_up_hint = Otto lettere e numeri che non si confondono tra loro. I giocatori nella sessione restano.
 menu.pw_setting_hint = La password per ospitare o entrare in una sessione. Tutti devono usare la stessa.
 menu.pw_line = È impostata una password. Gli amici la inseriscono in Password, nelle impostazioni multigiocatore.
 menu.pw_view = Mostra password

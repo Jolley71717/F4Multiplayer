@@ -259,7 +259,10 @@ namespace UiPanel
 			{
 				if (number == opened.load()) {
 					wanted = false;
-					MainThread::Post([] { SetPlayerControls(true); });  // closed by us or by the game
+					MainThread::Post([] {
+						SetPlayerControls(true);  // closed by us or by the game
+						CaptureText(false);
+					});
 				}
 			}
 
@@ -531,14 +534,19 @@ namespace UiPanel
 
 	void CaptureText(bool a_on)
 	{
-		typing = a_on;
+		// The game's own text mode, or the keys typed work the game too: the Pip-Boy, VATS. It counts, so only as this changes.
+		if (typing.exchange(a_on) != a_on) {
+			if (const auto map = RE::ControlMap::GetSingleton()) {
+				map->SetTextEntryMode(a_on);
+			}
+		}
 	}
 
 	void Close()
 	{
 		SetPlayerControls(true);
 		capturing = false;
-		typing = false;
+		CaptureText(false);
 		wanted = false;
 		if (Hud::IsSettled()) {
 			Hide();

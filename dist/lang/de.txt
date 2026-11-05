@@ -262,7 +262,6 @@ menu.hc_remove_password = Passwort entfernen
 menu.pw_save = Passwort speichern
 menu.pw_save_hint = Eingeben, dann Enter drücken oder dies wählen. Buchstaben, Ziffern und Satzzeichen. Spieler in der Sitzung bleiben.
 menu.pw_make_up = Eines erstellen
-menu.pw_make_up_hint = Acht Buchstaben und Ziffern, die sich nicht verwechseln lassen. Spieler in der Sitzung bleiben.
 menu.pw_setting_hint = Das Passwort zum Hosten oder Beitreten einer Sitzung. Alle müssen dasselbe verwenden.
 menu.pw_line = Ein Passwort ist festgelegt. Freunde geben es in ihren Mehrspieler-Einstellungen unter Passwort ein.
 menu.pw_view = Passwort anzeigen
