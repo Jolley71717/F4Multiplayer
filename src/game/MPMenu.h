@@ -17,18 +17,34 @@ namespace MPMenu
 	// Main thread. In the middle of the screen, with no main menu to line up beside (the menu key). The UI must have settled.
 	void OpenCentered();
 
-	// Main thread. A page to show: its text, its rows and what each does (a_hints, one per row, "" for nothing to say). It
-	// is drawn in the menu's own update. a_keepRow: it's the page showing again, so the same row stays chosen.
-	// a_heading: the mod's name and version over the text.
-	// a_players: a list at the right of the rows (Party::PanelPlayers), or a line of text with no tabs; empty for none.
-	// a_header: one such player at the top of the page, under the status line's place; "" for none.
-	void SetPage(std::uint32_t a_serial, std::string a_body, std::vector<std::string> a_rows, std::vector<std::string> a_hints, bool a_keepRow, bool a_heading, std::vector<std::string> a_players, std::string a_header);
+	// A page to show.
+	struct Page
+	{
+		std::uint32_t            serial = 0;  // what its presses carry
+		std::string              body;        // its text
+		std::vector<std::string> rows;
+		std::vector<std::string> hints;           // what each row does, one per row, "" for nothing to say
+		bool                     keepRow = false;  // it's the page showing again, so the same row stays chosen
+		bool                     framed = false;    // the text always in a frame, as About's and the changelog's are
+		bool                     markdown = false;  // the text is markdown (Markdown.as)
+		std::vector<std::string> players;          // a list at the right of the rows (Party::PanelPlayers), or a line of text with no tabs
+		std::string              header;           // one such player at the top of the page, under the status line's place
+		// A dialog over the page showing rather than a page (Dialog.as): the title, the body as its text, the rows, a place to type.
+		bool                     dialog = false;
+		std::string              title;
+		bool                     input = false;
+		std::string              inputText;
+	};
 
-	// Main thread. Only the shown page's status line changes, so its rows are left alone. A page asked for since wins.
-	void SetStatus(std::string a_text);
+	// Main thread. It is drawn in the menu's own update.
+	void SetPage(Page a_page);
 
 	// Main thread. On: the next key or mouse button goes to Menu::PanelKey, not to the menu. A gamepad's still work the menu.
 	void CaptureKey(bool a_on);
+
+	// Main thread. On: every key goes to Menu::PanelTyped as what it types, not to the menu, until it's off. The mouse and a gamepad's
+	// still work the menu. What's typed may be a password: nothing here logs it.
+	void CaptureText(bool a_on);
 
 	// Main thread.
 	void Close();
@@ -42,9 +58,6 @@ namespace MPMenu
 
 	// Opened in the middle of the screen. Any thread.
 	[[nodiscard]] bool Centered();
-
-	// The player's HUD color (Settings > Display), 0xRRGGBB. Main thread.
-	[[nodiscard]] std::uint32_t HudColor();
 
 	// Opened and not closed since, by us or by the game. Any thread.
 	[[nodiscard]] bool Showing();

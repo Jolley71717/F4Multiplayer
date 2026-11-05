@@ -153,9 +153,8 @@ Seen only under CrossOver on a Mac: the main and pause menus, and two games in a
   ground is see-through), Controls, and the `build.ps1`, `package.ps1` and `deploy.ps1` changes (each pull request gets this on the project's rig).
 - **The rest of a session:** hosting and joined pages in the pause menu, the main page's live status, host controls, hosting
   from the menu's own row, and joining over Steam with an invite.
-- **The panel opened with F1 in the world:** it pauses the game, as the game's own menus do; what that does to a session.
 - **A gamepad, and MCM installed.**
-- **Mouse side buttons in Controls:** their codes in the game's input are a guess; the log says what it heard.
+- **Mouse buttons in Controls, and closing the panel with a menu key bound to one:** their codes in the game's input are a guess; the log says what it heard. CrossOver can't try them.
 - **Translations:** the menu's new texts are machine-written.
 
 ## To file on the tracker

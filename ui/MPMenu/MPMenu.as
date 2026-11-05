@@ -1,8 +1,11 @@
 package
 {
-	import f4mp.ui.BackHint;
 	import f4mp.ui.Brackets;
+	import f4mp.ui.CommandBar;
+	import f4mp.ui.Dialog;
 	import f4mp.ui.EntryList;
+	import f4mp.ui.Logo;
+	import f4mp.ui.Markdown;
 	import f4mp.ui.ScrollBar;
 	import f4mp.ui.Style;
 
@@ -18,10 +21,10 @@ package
 	// The multiplayer menu's movie (src/game/MPMenu.cpp loads it as Interface/F4Multiplayer/MPMenu.swf): a second column
 	// beside the main menu's list, laid out as the game's own (Settings, Add-ons) are: just right of the main panel, its
 	// bottom level with it, scaled to its height, brackets along its top and bottom, the chosen entry a bar across it, the
-	// mod's name and version at its bottom right, and the back hint at the bottom of the screen, all in the player's HUD
+	// logo and version over it, and the command bar at the bottom of the screen, all in the player's HUD
 	// color. The plugin sets its place and look once (SetLook), gives it each page (SetPage) and is told what the player does
 	// through BGSCodeObj. Keys and the gamepad come as the game's user events (ProcessUserEvent); the mouse is the list's and
-	// the hint's own.
+	// the command bar's own.
 	public class MPMenu extends MovieClip
 	{
 		// Set by the plugin (MPMenu SetCode): Pressed(serial, row), Close() (the way back), PlaySound(name), Log(text).
@@ -29,7 +32,7 @@ package
 
 		// Measured from the game's own second column against its main panel, in units of the main panel's height / 652.
 		private static const REF_HEIGHT:Number = 652;
-		private static const HINT_BELOW:Number = 16;    // the panel's bottom to the back hint, in the middle of the screen
+		private static const COMMAND_BAR_BELOW:Number = 16;  // the panel's bottom to the command bar, in the middle of the screen
 		private static const GAP:Number = 10;           // main panel to ours
 		private static const TOP_DROP:Number = 40;      // our top below the main panel's
 		private static const FIRST_ROW:Number = 69;     // our top to the first bar
@@ -41,12 +44,12 @@ package
 
 		// Ours, in the same units, set by eye in the game.
 		private static const ROW_TEXT_INSET:Number = 39;     // the text's left: half the bar's padding of the game's column
-		private static const ALIGN_DROP:Number = 2.5;        // down, to sit level with the main panel
+		private static const ALIGN_DROP:Number = 0.5;        // beside the main menu: the whole panel down, set by eye to sit level with it
 		private static const TEXT_SIZE:Number = 38;
 		private static const BODY_WIDTH:Number = 900;        // the panel's width, unless a row needs more
 		private static const BODY_SIZE:Number = 28;
 		private static const BODY_SHARE:Number = 0.55;       // of the panel's height, with many rows; a longer text scrolls
-		private static const BODY_ABOVE_FOOTER:Number = 16;  // a text and its frame stop this far over the version
+		private static const BODY_ABOVE_BOTTOM:Number = 0;   // a text and its frame stop this far over the bottom inset
 		private static const STAGE_MARGIN:Number = 40;       // the stage's right side to the panel's widest
 		private static const LIST_SHARE:Number = 2 / 3;      // of the panel's width, on a page with text for its rows
 		private static const PLAYERS_SHARE:Number = 0.55;  // of the panel's width, for the rows beside a list of players: the same in every language, and room for the longest
@@ -57,39 +60,37 @@ package
 		private static const PLAYER_GAP:Number = 6;
 		private static const PLAYERS_GAP:Number = 8;    // the rows to the list of players
 		private static const PLAYERS_INSET:Number = 7; // the list's frame to its text, left and right
-		private static const PLAYERS_BAR_ROOM:Number = 24;  // kept for the list's scrollbar when it needs one
+		private static const SCROLL_ROOM:Number = 24;   // taken from what scrolls, for its scrollbar, only when it has one
 		private static const WHEEL_ROW:Number = 60;     // the wheel's step along the list
 		private static const HINT_GAP:Number = 16;
 		private static const FRAME_PAD:Number = 6;           // a scrolling text to its frame
 		private static const FRAME_TICK:Number = 6;
-		private static const FOOTER_SIZE:Number = 17;
-		private static const FOOTER_INSET:Number = 18;
-		private static const HEADING_SIZE:Number = 44;
-		private static const HEADING_TOP:Number = 21;
-		private static const HEADING_NOTE_SIZE:Number = 22;
-		private static const HEADING_NOTE_GAP:Number = 10;
-		private static const HEADING_NOTE_RISE:Number = 3;   // the version off the name's bottom, on its line
-		private static const HEADING_BELOW:Number = 12;
+		private static const BOTTOM_INSET:Number = 18;       // what's in the panel stops this far over its bottom
+		private static const LOGO_HEIGHT:Number = 34;        // over the panel, outside it, as the game's panels have their titles
+		private static const LOGO_ABOVE:Number = 8;
+		private static const VERSION_SIZE:Number = 22;
+		private static const VERSION_GAP:Number = 10;
+		private static const VERSION_RISE:Number = 3;        // the version's text field up from the logo's bottom, to sit on its line
 
-		// The plugin's shader targets (MPMenu.cpp): Panel_mc.Background_mc, Panel_mc.Content_mc and Hint_mc.
+		// The plugin's shader targets (MPMenu.cpp): Panel_mc.Background_mc, Panel_mc.Content_mc, CommandBar_mc and CommandBarBackground_mc.
 		private var panel:Sprite;
 		private var background:Sprite;
 		private var content:Sprite;
 		private var list:EntryList;
-		private var hint:BackHint;
-		private var hintGround:Sprite = new Sprite();
+		private var commandBar:CommandBar;
+		private var commandBarGround:Sprite = new Sprite();
 
 		private var color:uint = 0x12FF15;  // the player's HUD color, from the plugin
 		private var scale:Number = 0.5;
 		private var centered:Boolean = false;  // in the world, with no main menu to line up beside
 		private var panelHeight:Number = 0;
-		private var footerText:String = "";
-		private var modName:String = "";
 		private var modVersion:String = "";
 		private var serial:Number = 0;
 		private var hints:Array = [];
 		private var hintField:TextField = null;
 		private var bodyField:TextField = null;
+		private var dialog:Dialog = null;  // over the page, with the keys going to it
+		private var shownWidth:Number = 0;
 		private var bodyBar:ScrollBar = null;
 		private var players:Sprite = null;
 		private var playerRows:Array = [];
@@ -121,15 +122,15 @@ package
 				ChoosePlayer(-1);
 				ShowChosen();
 			});
-			hint = new BackHint(Back);
-			hint.name = "Hint_mc";
-			hintGround.name = "HintBackground_mc";
+			commandBar = new CommandBar(Back);
+			commandBar.name = "CommandBar_mc";
+			commandBarGround.name = "CommandBarBackground_mc";
 			panel.addChild(background);
 			panel.addChild(content);
 			panel.addEventListener(MouseEvent.MOUSE_WHEEL, Wheel);
 			addChild(panel);
-			addChild(hintGround);
-			addChild(hint);
+			addChild(commandBarGround);
+			addChild(commandBar);
 			addEventListener(Event.ENTER_FRAME, Repeat);
 			// The main list beside us is another movie's, under this menu: the mouse is passed on to it.
 			if (stage != null) {
@@ -139,43 +140,45 @@ package
 		}
 
 		// From the plugin, once: the main panel's box on the stage (this movie's stage has the same size and
-		// scale mode as the main menu's); the HUD color; the mod's name and version and the back hint's word.
+		// scale mode as the main menu's); the HUD color; the mod's version and the way back's word.
 		// a_centered: the box gives only the size, and the panel goes in the middle of the stage.
-		public function SetLook(a_left:Number, a_top:Number, a_right:Number, a_bottom:Number, a_color:uint, a_name:String, a_version:String, a_back:String, a_centered:Boolean):void
+		public function SetLook(a_left:Number, a_top:Number, a_right:Number, a_bottom:Number, a_color:uint, a_version:String, a_back:String, a_centered:Boolean):void
 		{
 			color = a_color;
 			backWord = a_back;
 			scale = (a_bottom - a_top) / REF_HEIGHT;
-			modName = a_name;
 			modVersion = a_version;
-			footerText = a_name + " " + a_version;
-			var top:Number = Math.round(a_top + TOP_DROP * scale);
-			panelHeight = Math.round(a_bottom) - top;
 			centered = a_centered;
+			// Beside the main menu, its top line runs through the middle of our logo. In the middle of the screen, the box's size less the drop.
+			var top:Number = Math.round(a_top + (centered ? TOP_DROP * scale : (LOGO_ABOVE + LOGO_HEIGHT / 2) * scale + ALIGN_DROP));
+			panelHeight = Math.round(a_bottom) - top;
 			panel.x = Math.round(a_right + GAP * scale);
 			panel.y = centered ? Math.round((Style.STAGE_H - panelHeight) / 2) : top + ALIGN_DROP;
-			ShowHint();
+			ShowCommandBar();
 		}
 
-		// The back hint: at the bottom of the screen beside the main menu, just under the panel in the middle of the screen.
-		private function ShowHint():void
+		// The command bar: at the bottom of the screen beside the main menu, just under the panel in the middle of the screen.
+		private function ShowCommandBar():void
 		{
-			hint.Show(backWord, gamepad, color, scale);
+			commandBar.Show(backWord, gamepad, color, scale);
 			if (centered) {
-				hint.y = Math.round(panel.y + panelHeight + HINT_BELOW * scale + hint.height);
+				commandBar.y = Math.round(panel.y + panelHeight + COMMAND_BAR_BELOW * scale + commandBar.height);
+			} else {
+				commandBar.y = Math.round(commandBar.y - commandBar.height);  // clear of what the game shows at the screen's bottom
 			}
 			// The renderer's see-through ground, as the panel has (MPMenu.cpp).
-			Style.Clear(hintGround);
-			hintGround.addChild(Ground(hint.width, hint.height));
-			hintGround.x = hint.x;
-			hintGround.y = hint.y;
+			Style.Clear(commandBarGround);
+			commandBarGround.addChild(Ground(commandBar.width, commandBar.height));
+			commandBarGround.x = commandBar.x;
+			commandBarGround.y = commandBar.y;
 		}
 
 		// From the plugin: a page, with its serial for the presses to carry: its text across the top, its rows under it, and
-		// beside them what the chosen row does (a_hints, one a row, "": nothing to say). The way back isn't a row: it's the
-		// back hint. a_keepRow: this page again, with the same row chosen. a_heading: the mod's name and version on top.
-		public function SetPage(a_serial:Number, a_body:String, a_rows:Array, a_hints:Array, a_keepRow:Boolean, a_heading:Boolean, a_players:Array, a_header:String):void
+		// beside them what the chosen row does (a_hints, one a row, "": nothing to say). The way back isn't a row: it's on the
+		// command bar. a_keepRow: this page again, with the same row chosen. a_framed: its text in a frame, as About's is. a_markdown: its text is markdown.
+		public function SetPage(a_serial:Number, a_body:String, a_rows:Array, a_hints:Array, a_keepRow:Boolean, a_framed:Boolean, a_players:Array, a_header:String, a_markdown:Boolean):void
 		{
+			dialog = null;  // Style.Clear takes it
 			var keptRow:int = list.selectedIndex;
 			var keptPlayer:int = a_keepRow ? chosenPlayer : -1;
 			chosenPlayer = -1;
@@ -213,63 +216,22 @@ package
 			if (centered) {
 				panel.x = Math.round((Style.STAGE_W - width) / 2);
 			}
+			shownWidth = width;
 			var height:Number = panelHeight;
 			var listWidth:Number = a_players.length > 0 ? Math.round(width * PLAYERS_SHARE) : anyHint ? Math.round(width * LIST_SHARE) : width;
 
 			background.addChild(Ground(width, height));
 			content.addChild(Brackets.Panel(width, height, TICK * scale, color, scale));
 
-			var footer:TextField = Style.Text(footerText, FOOTER_SIZE * scale, color, scale);
-			footer.x = width - footer.width - FOOTER_INSET * scale;
-			footer.y = height - footer.height - FOOTER_INSET * scale * 0.6;
+			DrawLogo(width);
+			var bottom:Number = height - BOTTOM_INSET * scale;
 
 			// The rows start at the same place on every page: a line is kept for the page's status, whether it has one or not.
-			var bodyTop:Number = FIRST_ROW * scale * 0.25;
 			var oneLine:TextField = Style.Text("Ag", BODY_SIZE * scale, color, scale);
+			var bodyTop:Number = FIRST_ROW * scale * 0.25;
 			var listTop:Number = ListBelow(bodyTop + oneLine.height);
-			if (a_heading) {
-				var title:TextField = Style.Text(modName, HEADING_SIZE * scale, color, scale);
-				title.x = ROW_TEXT_INSET * scale;
-				title.y = HEADING_TOP * scale;
-				content.addChild(title);
-				var note:TextField = Style.Text(modVersion, HEADING_NOTE_SIZE * scale, color, scale);
-				note.x = title.x + title.width + HEADING_NOTE_GAP * scale;
-				note.y = title.y + title.height - note.height - HEADING_NOTE_RISE * scale;
-				content.addChild(note);
-				bodyTop = title.y + title.height + HEADING_BELOW * scale;
-				listTop = ListBelow(bodyTop + oneLine.height);
-			}
 			if (a_body != "") {
-				var body:TextField = Style.Wrapped(a_body, width - (ROW_TEXT_INSET + TEXT_INSET) * scale, BODY_SIZE * scale, color, scale);
-				body.x = ROW_TEXT_INSET * scale;
-				body.y = bodyTop;
-				// With few rows the text has the room they leave, so a long text shows more of itself.
-				var left:Number = footer.y - body.y - BODY_ABOVE_FOOTER * scale;
-				var room:Number = a_rows.length > 0 ? Math.max(height * BODY_SHARE, left - (a_rows.length + 0.5) * ROW_PITCH * scale) : left;
-				if (body.height > room) {
-					body.autoSize = TextFieldAutoSize.NONE;
-					body.height = room;
-				}
-				bodyField = body;
-				content.addChild(body);
-				// About always shows where its text ends; a long text anywhere has the handle too.
-				if (body.maxScrollV > 1 || a_heading) {
-					var pad:Number = FRAME_PAD * scale;
-					var frameWidth:Number = Math.round(width - TEXT_INSET * scale);
-					var frameHeight:Number = Math.round(body.height + pad * 2);
-					var frame:Shape = Brackets.Scrolling(frameWidth, frameHeight, FRAME_TICK * scale, color, scale, false, body.maxScrollV > 1);
-					frame.x = Math.round(TEXT_INSET * scale * 0.5);
-					frame.y = Math.round(body.y - pad);
-					content.addChild(frame);
-					if (body.maxScrollV > 1) {
-						bodyBar = new ScrollBar(BodyTo, frameHeight - Brackets.THICK * 2, color, scale);
-						bodyBar.x = frame.x + frameWidth - Brackets.THICK;
-						bodyBar.y = frame.y + Brackets.THICK;
-						content.addChild(bodyBar);
-						ShowBodyBar();
-					}
-				}
-				listTop = Math.max(listTop, ListBelow(body.y + body.height));
+				listTop = Math.max(listTop, ListBelow(DrawBody(a_body, width, height, a_rows.length, bodyTop, bottom, a_framed, a_markdown)));
 			}
 
 			// The player a page is about, drawn as in the list, and not to be chosen.
@@ -290,62 +252,149 @@ package
 			}
 
 			if (a_players.length > 0) {
-				// As long a list as there are players, scrolled as a long text is when it doesn't fit. The page is drawn again as
-				// they move, so where it was scrolled to stays.
-				var playersWidth:Number = width - listWidth - PLAYERS_GAP * scale - TEXT_INSET * scale * 0.5;
-				var playersInset:Number = PLAYERS_INSET * scale;
-				var playersRoom:Number = footer.y - listTop - BODY_ABOVE_FOOTER * scale;
-				playersWidth -= PLAYERS_BAR_ROOM * scale;  // kept whether it scrolls or not, so the text doesn't move when it starts to
-				players = Players(a_players, playersWidth - playersInset * 2, true);
-				playersX = listWidth + PLAYERS_GAP * scale;
-				players.x = playersX + playersInset;
-				playersTop = listTop;
-				content.addChild(players);
-				playersHeight = players.height;
-				playersShown = playersRoom;
-				playersBar = null;
-				// Its top and bottom always show where it ends, with the same frame and handle as a long text's when it scrolls.
-				var playersScrolls:Boolean = playersHeight > playersRoom;
-				var playersPad:Number = FRAME_PAD * scale;
-				var playersFrameWidth:Number = Math.round(playersWidth + PLAYERS_BAR_ROOM * scale + playersPad);
-				var playersFrameHeight:Number = Math.round(playersRoom + playersPad * 2);
-				var playersFrame:Shape = Brackets.Scrolling(playersFrameWidth, playersFrameHeight, FRAME_TICK * scale, color, scale, true, playersScrolls);
-				playersFrame.x = Math.round(playersX - playersPad);
-				playersFrame.y = Math.round(listTop - playersPad);
-				content.addChild(playersFrame);
-				if (playersScrolls) {
-					var clip:Shape = new Shape();
-					clip.graphics.beginFill(Style.WHITE);
-					clip.graphics.drawRect(0, 0, playersWidth + PLAYERS_BAR_ROOM * scale, playersRoom);
-					clip.graphics.endFill();
-					clip.x = playersX;
-					clip.y = listTop;
-					content.addChild(clip);
-					players.mask = clip;
-					playersBar = new ScrollBar(PlayersTo, playersFrameHeight - Brackets.THICK * 2, color, scale);
-					playersBar.x = playersFrame.x + playersFrameWidth - Brackets.THICK;
-					playersBar.y = playersFrame.y + Brackets.THICK;
-					content.addChild(playersBar);
-				} else {
-					playersAt = 0;
-				}
-				PlayersTo(playersAt);
+				DrawPlayers(a_players, width, listWidth, listTop, bottom);
 			}
 
 			list.Build(labels, values, { pitch: ROW_PITCH * scale, barHeight: BAR_HEIGHT * scale, barInset: BAR_INSET * scale, textInset: ROW_TEXT_INSET * scale,
-				width: listWidth, height: Math.max(BAR_HEIGHT * scale, footer.y - listTop) }, color, scale);
+				width: listWidth, height: Math.max(BAR_HEIGHT * scale, bottom - listTop) }, color, scale);
 			if (a_keepRow) {
 				list.Restore(keptRow, keptFirst);
 			}
 			list.y = listTop;
 			content.addChild(list);
-			content.addChild(footer);
 			builtMouseX = mouseX;
 			builtMouseY = mouseY;
 			if (keptPlayer >= 0 && playerRows.length > 0) {
 				ChoosePlayer(Math.min(keptPlayer, playerRows.length - 1));
 			}
 			ShowChosen();
+		}
+
+		// The logo and the version after it, over the panel, outside it, the two centered on its width.
+		private function DrawLogo(a_width:Number):void
+		{
+			var logo:Logo = new Logo(LOGO_HEIGHT * scale, color);
+			logo.y = Math.round(-logo.height - LOGO_ABOVE * scale);
+			content.addChild(logo);
+			var version:TextField = Style.Text("v" + modVersion, VERSION_SIZE * scale, color, scale);
+			logo.x = Math.round((a_width - logo.width - VERSION_GAP * scale - version.width) / 2);
+			version.x = Math.round(logo.x + logo.width + VERSION_GAP * scale);
+			version.y = Math.round(logo.y + logo.height - version.height + VERSION_RISE * scale);
+			content.addChild(version);
+		}
+
+		// The page's text. Returns where it ends.
+		private function DrawBody(a_body:String, a_width:Number, a_height:Number, a_rows:int, a_top:Number, a_bottom:Number, a_framed:Boolean, a_markdown:Boolean):Number
+		{
+			// To the frame's right as far in as it starts on the left; less the scrollbar's room if it won't fit.
+			var bodyWidth:Number = a_width - ROW_TEXT_INSET * 2 * scale;
+			var body:TextField = BodyField(a_body, bodyWidth, a_markdown);
+			// With few rows the text has the room they leave, so a long text shows more of itself.
+			var left:Number = a_bottom - a_top - BODY_ABOVE_BOTTOM * scale;
+			var room:Number = a_rows > 0 ? Math.max(a_height * BODY_SHARE, left - (a_rows + 0.5) * ROW_PITCH * scale) : left;
+			if (body.height > room) {
+				body = BodyField(a_body, bodyWidth - SCROLL_ROOM * scale, a_markdown);
+				body.autoSize = TextFieldAutoSize.NONE;
+				body.height = room;
+			}
+			body.x = ROW_TEXT_INSET * scale;
+			body.y = a_top;
+			bodyField = body;
+			content.addChild(body);
+			// About always shows where its text ends; a long text anywhere has the handle too.
+			if (body.maxScrollV > 1 || a_framed) {
+				var pad:Number = FRAME_PAD * scale;
+				bodyBar = ScrollFrame(Math.round(TEXT_INSET * scale * 0.5), Math.round(body.y - pad), Math.round(a_width - TEXT_INSET * scale), Math.round(body.height + pad * 2), false, body.maxScrollV > 1, BodyTo);
+				ShowBodyBar();
+			}
+			return body.y + body.height;
+		}
+
+		private function BodyField(a_body:String, a_width:Number, a_markdown:Boolean):TextField
+		{
+			var field:TextField = Style.Wrapped(a_markdown ? "" : a_body, a_width, BODY_SIZE * scale, color, scale);
+			if (a_markdown) {
+				new Markdown(a_body).ApplyTo(field, BODY_SIZE * scale);
+			}
+			return field;
+		}
+
+		// The list of players at the right of the rows: as long a list as there are players, scrolled as a long text is when it
+		// doesn't fit. The page is drawn again as they move, so where it was scrolled to stays.
+		private function DrawPlayers(a_players:Array, a_width:Number, a_listWidth:Number, a_top:Number, a_bottom:Number):void
+		{
+			var outer:Number = a_width - a_listWidth - PLAYERS_GAP * scale - TEXT_INSET * scale * 0.5;
+			var inset:Number = PLAYERS_INSET * scale;
+			var room:Number = a_bottom - a_top - BODY_ABOVE_BOTTOM * scale;
+			players = Players(a_players, outer - inset * 2, true);
+			// The whole width, less the scrollbar's room only if it won't fit.
+			var scrolls:Boolean = players.height > room;
+			if (scrolls) {
+				playerRows = [];
+				players = Players(a_players, outer - SCROLL_ROOM * scale - inset * 2, true);
+			}
+			playersX = a_listWidth + PLAYERS_GAP * scale;
+			players.x = playersX + inset;
+			playersTop = a_top;
+			content.addChild(players);
+			playersHeight = players.height;
+			playersShown = room;
+			// Its top and bottom always show where it ends, with the same frame and handle as a long text's when it scrolls.
+			var pad:Number = FRAME_PAD * scale;
+			playersBar = ScrollFrame(Math.round(playersX - pad), Math.round(a_top - pad), Math.round(outer + pad), Math.round(room + pad * 2), scrolls, scrolls, PlayersTo);
+			if (scrolls) {
+				var clip:Shape = new Shape();
+				clip.graphics.beginFill(Style.WHITE);
+				clip.graphics.drawRect(0, 0, outer, room);
+				clip.graphics.endFill();
+				clip.x = playersX;
+				clip.y = a_top;
+				content.addChild(clip);
+				players.mask = clip;
+			} else {
+				playersAt = 0;
+			}
+			PlayersTo(playersAt);
+		}
+
+		// The frame round what can scroll, and its handle when it does: returned, or null.
+		private function ScrollFrame(a_x:Number, a_y:Number, a_width:Number, a_height:Number, a_rightLine:Boolean, a_scrolls:Boolean, a_onDrag:Function):ScrollBar
+		{
+			var frame:Shape = Brackets.Scrolling(a_width, a_height, FRAME_TICK * scale, color, scale, a_rightLine);
+			frame.x = a_x;
+			frame.y = a_y;
+			content.addChild(frame);
+			if (!a_scrolls) {
+				return null;
+			}
+			var bar:ScrollBar = new ScrollBar(a_onDrag, a_height - Brackets.THICK * 2, color, scale);
+			bar.x = a_x + a_width - Brackets.THICK;
+			bar.y = a_y + Brackets.THICK;
+			content.addChild(bar);
+			return bar;
+		}
+
+		// From the plugin: a dialog over the page showing, which stays as it is under it. The way back is the page's way, button 0: the
+		// rows are 1 and up, as on a page. a_keepRow: this one again (a key typed), with the same row chosen.
+		public function SetDialog(a_serial:Number, a_title:String, a_text:String, a_rows:Array, a_keepRow:Boolean, a_hasInput:Boolean, a_input:String):void
+		{
+			var keptRow:int = 0;
+			if (dialog != null) {
+				keptRow = dialog.rows.selectedIndex;
+				content.removeChild(dialog);
+			}
+			held = 0;
+			serial = a_serial;
+			var labels:Array = [];
+			for (var i:int = 0; i < a_rows.length; ++i) {
+				labels.push(Style.Text(String(a_rows[i]), TEXT_SIZE * scale, color, scale));
+			}
+			dialog = new Dialog(Pressed, function():void { Code("PlaySound", "UIMenuFocus"); });
+			dialog.Build(a_title, a_text, labels, a_hasInput, a_input, shownWidth, panelHeight, { pitch: ROW_PITCH * scale, barHeight: BAR_HEIGHT * scale }, color, scale);
+			if (a_keepRow) {
+				dialog.rows.Restore(keptRow, 0);
+			}
+			content.addChild(dialog);
 		}
 
 		// From the list's scrollbar and the wheel: how far along it is, 0 to 1.
@@ -500,14 +549,6 @@ package
 		}
 
 		// Where the rows start under what ends at a_y, leaving the chevrons their room.
-		// The page's status line changed and nothing else, as often as it likes: the rows and the chosen one stay as they are.
-		public function SetStatus(a_text:String):void
-		{
-			if (bodyField != null) {
-				bodyField.text = a_text;
-			}
-		}
-
 		private function ListBelow(a_y:Number):Number
 		{
 			return Math.round(a_y + ROW_PITCH * scale * EntryList.CHEVRON_SLOT);
@@ -552,7 +593,7 @@ package
 			gamepad = a_platform != 0;
 			Code("Log", "platform " + a_platform + (a_psn ? " (PlayStation)" : ""));
 			if (backWord != "") {
-				ShowHint();
+				ShowCommandBar();
 			}
 		}
 
@@ -560,7 +601,7 @@ package
 		public function ProcessUserEvent(a_event:String, a_pressed:Boolean):Boolean
 		{
 			// The player's movement keys come as Forward and Back (Back is a direction here, not the way back: that's Cancel).
-			if (a_pressed && playerRows.length > 0 && (a_event == "Left" || a_event == "StrafeLeft" || a_event == "Right" || a_event == "StrafeRight")) {
+			if (a_pressed && dialog == null && playerRows.length > 0 && (a_event == "Left" || a_event == "StrafeLeft" || a_event == "Right" || a_event == "StrafeRight")) {
 				var toList:Boolean = a_event == "Right" || a_event == "StrafeRight";
 				if (toList != (chosenPlayer >= 0)) {
 					Code("PlaySound", "UIMenuFocus");
@@ -582,7 +623,9 @@ package
 			switch (a_event) {
 				case "Accept":
 				case "Activate":  // the player's activate key, as well as the menus' own Enter and the gamepad's A
-					if (chosenPlayer >= 0) {
+					if (dialog != null) {
+						dialog.rows.PressSelected();
+					} else if (chosenPlayer >= 0) {
 						Pressed(list.length + chosenPlayer);
 					} else {
 						list.PressSelected();
@@ -606,18 +649,23 @@ package
 
 		private function Step(a_by:int):void
 		{
-			if (chosenPlayer >= 0) {
+			if (dialog != null) {
+				dialog.rows.Move(a_by);
+			} else if (chosenPlayer >= 0) {
 				ChoosePlayer(Math.max(0, Math.min(playerRows.length - 1, chosenPlayer + a_by)));
-			} else if (list.length > 0) {
+			} else if (list.length > 1) {
 				list.Move(a_by);
 			} else {
-				ScrollBody(a_by);
+				ScrollBody(a_by);  // with no rows to move between, or the one
 			}
 		}
 
 		// Over the text (when it scrolls) the text, else the rows.
 		private function Wheel(a_e:MouseEvent):void
 		{
+			if (dialog != null) {
+				return;
+			}
 			var by:int = a_e.delta > 0 ? -1 : 1;
 			if (playersBar != null && content.mouseX >= playersX) {
 				PlayersTo(playersAt + by * WHEEL_ROW * scale / Math.max(1, playersHeight - playersShown));
@@ -661,7 +709,7 @@ package
 
 		private function Outside(a_e:MouseEvent, a_click:Boolean):void
 		{
-			if (centered || BGSCodeObj == null || panel.hitTestPoint(a_e.stageX, a_e.stageY, false) || hint.hitTestPoint(a_e.stageX, a_e.stageY, true)) {
+			if (centered || BGSCodeObj == null || panel.hitTestPoint(a_e.stageX, a_e.stageY, false) || commandBar.hitTestPoint(a_e.stageX, a_e.stageY, true)) {
 				return;
 			}
 			try {
