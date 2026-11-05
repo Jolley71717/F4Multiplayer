@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T04:53:07+00:00",
+ "updated": "2026-11-05T05:29:42+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -53,7 +53,7 @@
    "title": "Shared bench: robot workbench materials not shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 302
   },
@@ -1403,7 +1403,7 @@
    "title": "Supply lines: a guest's builds use the host's supply-line materials",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 302
   },
@@ -1480,6 +1480,14 @@
    "note": "Merged for the next release; checked in two games, the real flyover not yet.",
    "pr": 205,
    "desc": "A friend didn't see the Prydwen arrive. Each game showed the airship moored at Boston Airport only when its own flyover ended, so a friend indoors, far away or on their own story never got it. The next release shares the moored airship as soon as it arrives in any game, and waits while the friend's own flyover is still in the air so there is never a second one."
+  },
+  {
+   "id": "rgxx",
+   "title": "Host crashes at shutdown when quitting in workshop mode (also on v0.12.1)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "rhq6",
