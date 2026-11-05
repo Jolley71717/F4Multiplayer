@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-04T22:04:53+00:00",
+ "updated": "2026-11-05T00:30:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -53,7 +53,7 @@
    "title": "Shared bench: robot workbench materials not shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 2,
+   "stage": 3,
    "note": "",
    "pr": 302
   },
@@ -134,7 +134,7 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Fix in PR: notices no longer ask the game for a sound",
    "pr": 301
   },
@@ -287,6 +287,14 @@
    "stage": 7,
    "note": "",
    "pr": 270
+  },
+  {
+   "id": "5syl",
+   "title": "Rig: smoke's floating-NPC check flags a corpse left by hits.sh; hits.sh kill set-up fails when the runner's shots miss",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "5ylb",
@@ -521,7 +529,7 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Fix in PR: the camera's way back no longer loops after a second down",
    "pr": 301
   },
@@ -1385,7 +1393,7 @@
    "title": "Supply lines: a guest's builds use the host's supply-line materials",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "",
    "pr": 302
   },
