@@ -1,12 +1,12 @@
 #include "Test.h"
 
-#include "game/MainMenuPlace.h"
+#include "game/UiMainMenuPlace.h"
 
 #include <array>
 
-using MainMenuPlace::Entry;
-using MainMenuPlace::ENTRY_INDEX;
-using MainMenuPlace::InsertAt;
+using UiMainMenuPlace::Entry;
+using UiMainMenuPlace::ENTRY_INDEX;
+using UiMainMenuPlace::InsertAt;
 
 TEST("main menu entry: goes straight after Load in the main menu")
 {

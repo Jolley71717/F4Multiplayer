@@ -24,9 +24,9 @@
 #include "game/FrameClock.h"
 #include "game/GameStop.h"
 #include "game/MapMarkerLayout.h"
-#include "game/MainMenuEntry.h"
-#include "game/Menu.h"
-#include "game/MPMenu.h"
+#include "game/UiMainMenuEntry.h"
+#include "game/UiPages.h"
+#include "game/UiPanel.h"
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
@@ -3371,19 +3371,19 @@ namespace DevCommands
 		{
 			const auto args = SplitArgs(a_args);
 			if (!args.empty() && args[0] == "open") {
-				::Menu::OpenFromKey();
+				::UiPages::OpenFromKey();
 				return "opened";
 			}
 			if (!args.empty() && args[0] == "box") {
-				::Menu::Open();
+				::UiPages::Open();
 				return "opened";
 			}
 			if (!args.empty() && args[0] == "close") {
-				MPMenu::Close();
+				UiPanel::Close();
 				return "closed";
 			}
 			if (!args.empty() && args[0] == "panel") {
-				MainMenuEntry::OpenPanel();
+				UiMainMenuEntry::OpenPanel();
 				return "opened";
 			}
 			if (args.size() >= 3 && args[0] == "mouse") {
@@ -3391,12 +3391,12 @@ namespace DevCommands
 				float y = 0.0f;
 				std::from_chars(args[1].data(), args[1].data() + args[1].size(), x);
 				std::from_chars(args[2].data(), args[2].data() + args[2].size(), y);
-				MainMenuEntry::PanelMouse(x, y, args.size() > 3 && args[3] == "click");
+				UiMainMenuEntry::PanelMouse(x, y, args.size() > 3 && args[3] == "click");
 				return "passed";
 			}
 			if (args.size() == 2 && args[0] == "type") {
 				for (const char character : args[1]) {
-					::Menu::PanelTyped(0, static_cast<unsigned char>(character));
+					::UiPages::PanelTyped(0, static_cast<unsigned char>(character));
 				}
 				return "typed";
 			}
@@ -3406,10 +3406,10 @@ namespace DevCommands
 				if (index < 0 || index > 255) {
 					return "error: usage: mpmenu press <0-255>";
 				}
-				::Menu::Press(static_cast<std::uint32_t>(index));
+				::UiPages::Press(static_cast<std::uint32_t>(index));
 				return "pressed";
 			}
-			return ::Menu::Describe();
+			return ::UiPages::Describe();
 		}
 
 		// topics <npcBaseHex>: topics with lines conditioned on that speaker (for `say`).

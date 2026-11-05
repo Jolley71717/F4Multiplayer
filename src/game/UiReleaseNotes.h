@@ -11,7 +11,7 @@
 #include <vector>
 
 // Which of the release notes the About page's changelog shows (dist/RELEASE-<version>.md). Kept free of the game so it can be tested.
-namespace ReleaseNotes
+namespace UiReleaseNotes
 {
 	using Version = std::array<int, 3>;
 

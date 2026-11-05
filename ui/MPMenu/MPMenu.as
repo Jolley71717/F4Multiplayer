@@ -18,7 +18,7 @@ package
 	import flash.text.TextFieldAutoSize;
 	import flash.utils.getTimer;
 
-	// The multiplayer menu's movie (src/game/MPMenu.cpp loads it as Interface/F4Multiplayer/MPMenu.swf): a second column
+	// The multiplayer menu's movie (src/game/UiPanel.cpp loads it as Interface/F4Multiplayer/MPMenu.swf): a second column
 	// beside the main menu's list, laid out as the game's own (Settings, Add-ons) are: just right of the main panel, its
 	// bottom level with it, scaled to its height, brackets along its top and bottom, the chosen entry a bar across it, the
 	// logo and version over it, and the command bar at the bottom of the screen, all in the player's HUD
@@ -72,7 +72,7 @@ package
 		private static const VERSION_GAP:Number = 10;
 		private static const VERSION_RISE:Number = 3;        // the version's text field up from the logo's bottom, to sit on its line
 
-		// The plugin's shader targets (MPMenu.cpp): Panel_mc.Background_mc, Panel_mc.Content_mc, CommandBar_mc and CommandBarBackground_mc.
+		// The plugin's shader targets (UiPanel.cpp): Panel_mc.Background_mc, Panel_mc.Content_mc, CommandBar_mc and CommandBarBackground_mc.
 		private var panel:Sprite;
 		private var background:Sprite;
 		private var content:Sprite;
@@ -166,7 +166,7 @@ package
 			} else {
 				commandBar.y = Math.round(commandBar.y - commandBar.height);  // clear of what the game shows at the screen's bottom
 			}
-			// The renderer's see-through ground, as the panel has (MPMenu.cpp).
+			// The renderer's see-through ground, as the panel has (UiPanel.cpp).
 			Style.Clear(commandBarGround);
 			commandBarGround.addChild(Ground(commandBar.width, commandBar.height));
 			commandBarGround.x = commandBar.x;

@@ -147,9 +147,9 @@ New-Item -ItemType Directory -Force $lang | Out-Null
 $langFiles = @(Get-ChildItem (Join-Path $root 'dist\lang') -Filter '*.txt' -File)
 if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lang has no en.txt' }
 Copy-Item $langFiles.FullName $lang
-# The multiplayer menu's About page (Menu.cpp).
+# The multiplayer menu's About page (UiPages.cpp).
 Copy-Item (Join-Path $root 'dist\about.txt') (Join-Path $stage 'F4SE\Plugins\F4Multiplayer')
-# The release notes, for its changelog (Menu.cpp picks which to show).
+# The release notes, for its changelog (UiPages.cpp picks which to show).
 $changelog = Join-Path $stage 'F4SE\Plugins\F4Multiplayer\changelog'
 New-Item -ItemType Directory -Force $changelog | Out-Null
 Copy-Item (Join-Path $root 'dist\RELEASE-*.md') $changelog

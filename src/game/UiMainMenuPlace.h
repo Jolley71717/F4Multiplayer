@@ -7,8 +7,8 @@
 
 // Where the Multiplayer entry goes in the main menu's list (and the pause menu's, the same movie in PauseMode). The
 // list's entries are AS3 objects with a text (a translation key such as "$LOAD") and an index the menu acts on; ours
-// carries an index no entry of the game's has. Kept free of the game so it can be tested; MainMenuEntry reads the list.
-namespace MainMenuPlace
+// carries an index no entry of the game's has. Kept free of the game so it can be tested; UiMainMenuEntry reads the list.
+namespace UiMainMenuPlace
 {
 	// Far above the game's own indexes (0 to about 15), so the menu's press handler has no case for it.
 	inline constexpr int ENTRY_INDEX = 900;

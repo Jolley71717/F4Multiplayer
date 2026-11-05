@@ -6,7 +6,7 @@
 // up to four buttons), one box per page with longer lists getting a "More" button. That fallback goes
 // once the panel has been out for a version. A button's action runs on the next frame, and most show
 // the next page. Main thread only.
-namespace Menu
+namespace UiPages
 {
 	// Shows the main page in a message box.
 	void Open();
@@ -24,7 +24,7 @@ namespace Menu
 	// Main thread: Esc, Tab, the gamepad's B or the back hint in the panel: the page's way back, or closed with no page.
 	void PanelBack();
 
-	// Main thread: the key or mouse button heard for a keybind (MPMenu::CaptureKey): a Windows virtual key, or the game's
+	// Main thread: the key or mouse button heard for a keybind (UiPanel::CaptureKey): a Windows virtual key, or the game's
 	// code for a mouse button.
 	void PanelKey(bool a_keyboard, std::uint32_t a_code);
 

@@ -1,10 +1,10 @@
-#include "game/MainMenuEntry.h"
+#include "game/UiMainMenuEntry.h"
 
 #include "MainThread.h"
 #include "Text.h"
 #include "game/Hud.h"
-#include "game/MainMenuPlace.h"
-#include "game/MPMenu.h"
+#include "game/UiMainMenuPlace.h"
+#include "game/UiPanel.h"
 
 #include <array>
 #include <format>
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace MainMenuEntry
+namespace UiMainMenuEntry
 {
 	namespace
 	{
@@ -114,14 +114,14 @@ namespace MainMenuEntry
 				GValue selected;
 				GValue index;
 				if (!a_params.movie || !FindList(a_params.movie, list) || !list.GetMember("selectedEntry", &selected) || !selected.IsObject() ||
-					!selected.GetMember("index", &index) || static_cast<int>(Number(index)) != MainMenuPlace::ENTRY_INDEX) {
+					!selected.GetMember("index", &index) || static_cast<int>(Number(index)) != UiMainMenuPlace::ENTRY_INDEX) {
 					return;
 				}
 				const auto now = advances.load();
 				if (pressedAt.exchange(now) == now) {
 					return;
 				}
-				REX::INFO("MainMenuEntry: Multiplayer pressed");
+				REX::INFO("UiMainMenuEntry: Multiplayer pressed");
 				MainThread::Post([] { OpenPanel(); });
 			}
 		};
@@ -159,9 +159,9 @@ namespace MainMenuEntry
 
 		// The mouse passed on from the multiplayer menu: a hover chooses the row, a click on another row closes that menu, and
 		// once it has gone the row is pressed by a click on its clip, as the game's own list hears one.
-		void PassMouse(Scaleform::GFx::Movie* a_movie, GValue& a_list, const std::vector<MainMenuPlace::Entry>& a_entries)
+		void PassMouse(Scaleform::GFx::Movie* a_movie, GValue& a_list, const std::vector<UiMainMenuPlace::Entry>& a_entries)
 		{
-			if (pressWaiting && !MPMenu::Showing()) {
+			if (pressWaiting && !UiPanel::Showing()) {
 				const int row = *std::exchange(pressWaiting, std::nullopt);
 				a_list.SetMember("selectedIndex", GValue(static_cast<double>(row)));
 				GValue selected;
@@ -183,7 +183,7 @@ namespace MainMenuEntry
 				std::scoped_lock l{ mouseLock };
 				mouse.swap(passedMouse);
 			}
-			if (!mouse || !MPMenu::Showing()) {
+			if (!mouse || !UiPanel::Showing()) {
 				return;
 			}
 			GValue clip;
@@ -197,10 +197,10 @@ namespace MainMenuEntry
 				a_list.SetMember("selectedIndex", GValue(static_cast<double>(row)));
 				RE::UIUtils::PlayMenuSound("UIMenuFocus");
 			}
-			const bool ours = row >= 0 && row < static_cast<int>(a_entries.size()) && a_entries[row].index == MainMenuPlace::ENTRY_INDEX;
+			const bool ours = row >= 0 && row < static_cast<int>(a_entries.size()) && a_entries[row].index == UiMainMenuPlace::ENTRY_INDEX;
 			if (mouse->click && !ours) {
 				pressWaiting = row;
-				MainThread::Post([] { MPMenu::Close(); });
+				MainThread::Post([] { UiPanel::Close(); });
 			}
 		}
 
@@ -214,7 +214,7 @@ namespace MainMenuEntry
 			GValue     list;
 			if (!movie || !FindList(movie, list)) {
 				if (movie && !std::exchange(a_hooked.loggedNoList, true)) {
-					REX::WARN("MainMenuEntry: the {} has no list where MainMenu.swf has it; no Multiplayer entry there", a_hooked.menu);
+					REX::WARN("UiMainMenuEntry: the {} has no list where MainMenu.swf has it; no Multiplayer entry there", a_hooked.menu);
 				}
 				return;
 			}
@@ -233,7 +233,7 @@ namespace MainMenuEntry
 			// The texts are copied out: a GValue's string lives only as long as the value.
 			const auto                         count = entries.GetArraySize();
 			std::vector<std::string>           texts(count);
-			std::vector<MainMenuPlace::Entry>  read(count);
+			std::vector<UiMainMenuPlace::Entry>  read(count);
 			for (std::uint32_t i = 0; i < count; ++i) {
 				GValue entry;
 				GValue text;
@@ -251,7 +251,7 @@ namespace MainMenuEntry
 			}
 			// While the multiplayer menu is open, our row looks as the game's own does with its submenu open: a list whose
 			// entries find the focus elsewhere draws the chosen one's square at half strength (BSScrollingListFadeEntry).
-			if (const bool dim = MPMenu::Showing(); dim != a_hooked.dimmed) {
+			if (const bool dim = UiPanel::Showing(); dim != a_hooked.dimmed) {
 				GValue stage;
 				if (list.GetMember("stage", &stage) && stage.IsObject()) {
 					a_hooked.dimmed = dim;
@@ -260,7 +260,7 @@ namespace MainMenuEntry
 				}
 			}
 			PassMouse(movie, list, read);
-			const auto at = MainMenuPlace::InsertAt(read);
+			const auto at = UiMainMenuPlace::InsertAt(read);
 			if (!at) {
 				return;
 			}
@@ -270,7 +270,7 @@ namespace MainMenuEntry
 			GValue entry;
 			movie->CreateObject(&entry);
 			entry.SetMember("text", GValue(label.c_str()));
-			entry.SetMember("index", GValue(static_cast<double>(MainMenuPlace::ENTRY_INDEX)));
+			entry.SetMember("index", GValue(static_cast<double>(UiMainMenuPlace::ENTRY_INDEX)));
 			const std::array<GValue, 3> splice{ GValue(static_cast<double>(*at)), GValue(0.0), entry };
 			if (!entries.Invoke("splice", nullptr, splice.data(), splice.size())) {
 				return;
@@ -280,7 +280,7 @@ namespace MainMenuEntry
 			movie->CreateFunction(&onPress, handler);
 			const std::array<GValue, 2> listen{ GValue(ITEM_PRESS), onPress };
 			const bool                  listening = list.Invoke("addEventListener", nullptr, listen.data(), listen.size());
-			REX::INFO("MainMenuEntry: Multiplayer entry added to the {} at {} of {} (listening: {})", a_hooked.menu, *at, count + 1, listening);
+			REX::INFO("UiMainMenuEntry: Multiplayer entry added to the {} at {} of {} (listening: {})", a_hooked.menu, *at, count + 1, listening);
 		}
 
 		void MainMenuAdvance(RE::IMenu* a_this, float a_timeDelta, std::uint64_t a_time)
@@ -302,7 +302,7 @@ namespace MainMenuEntry
 			const auto slot = a_vtable + sizeof(void*) * ADVANCE_MOVIE_INDEX;
 			a_hooked.original = *reinterpret_cast<AdvanceFn*>(slot);
 			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(a_advance));
-			REX::INFO("MainMenuEntry: hooked the {}'s update (vtable {:X})", a_hooked.menu, a_vtable);
+			REX::INFO("UiMainMenuEntry: hooked the {}'s update (vtable {:X})", a_hooked.menu, a_vtable);
 		}
 	}
 
@@ -322,7 +322,7 @@ namespace MainMenuEntry
 			std::scoped_lock l{ boxLock };
 			box = mainBox;
 		}
-		MPMenu::Open(static_cast<float>(box.x), static_cast<float>(box.y), static_cast<float>(box.x + box.width), static_cast<float>(box.y + box.height));
+		UiPanel::Open(static_cast<float>(box.x), static_cast<float>(box.y), static_cast<float>(box.x + box.width), static_cast<float>(box.y + box.height));
 	}
 
 	void Install()

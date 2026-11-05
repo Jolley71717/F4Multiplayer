@@ -205,7 +205,7 @@ namespace Text
 		{ "menu.stop_hosting", "Stop hosting" },
 		{ "menu.leave", "Leave" },
 		{ "menu.join_other", "Join someone else" },
-		// The entry in the game's main and pause menus (MainMenuEntry), in capitals as the game's own entries are.
+		// The entry in the game's main and pause menus (UiMainMenuEntry), in capitals as the game's own entries are.
 		{ "mainmenu.entry", "MULTIPLAYER" },
 		// The multiplayer menu of our own (MPMenu), in capitals as the main menu's entries are.
 		{ "mpmenu.back", "BACK" },

@@ -696,13 +696,13 @@ TEST("text: no player-facing message is a bare English literal in the code")
 	}
 	// The menu's pages and buttons: a button label or a page's text starting from a letter is English in the code.
 	// (A line break or a lower-case key, as in { "page", n }, is not.)
-	const auto menu = SourceTree::Read(*root / "src" / "game" / "Menu.cpp");
+	const auto menu = SourceTree::Read(*root / "src" / "game" / "UiPages.cpp");
 	for (const std::string_view start : { "push_back({ \"", "{ { \"", "body = \"", "body += \"" }) {
 		for (auto at = menu.find(start); at != std::string::npos; at = menu.find(start, at + 1)) {
 			const char next = at + start.size() < menu.size() ? menu[at + start.size()] : '\0';
 			if (std::isupper(static_cast<unsigned char>(next)) || (start != "{ { \"" && std::isalpha(static_cast<unsigned char>(next)))) {
 				++found;
-				Test::Fail(__FILE__, __LINE__, std::format("src/game/Menu.cpp builds text from a literal ({}{}...): use Text::Get", start, next));
+				Test::Fail(__FILE__, __LINE__, std::format("src/game/UiPages.cpp builds text from a literal ({}{}...): use Text::Get", start, next));
 			}
 		}
 	}

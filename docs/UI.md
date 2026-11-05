@@ -9,8 +9,8 @@ menus (seen so far under CrossOver only). What is still to check, and the plan, 
 
 | What | Where |
 |---|---|
-| The MULTIPLAYER entry in the main and pause menus, after LOAD | [src/game/MainMenuEntry.cpp](../src/game/MainMenuEntry.cpp), placement rule in [MainMenuPlace.h](../src/game/MainMenuPlace.h) (unit tested) |
-| Our menu (F4MPMenu in the game's UI), opened by the entry | [src/game/MPMenu.cpp](../src/game/MPMenu.cpp) |
+| The MULTIPLAYER entry in the main and pause menus, after LOAD | [src/game/UiMainMenuEntry.cpp](../src/game/UiMainMenuEntry.cpp), placement rule in [UiMainMenuPlace.h](../src/game/UiMainMenuPlace.h) (unit tested) |
+| Our menu (F4MPMenu in the game's UI), opened by the entry | [src/game/UiPanel.cpp](../src/game/UiPanel.cpp) |
 | Its movie, `Interface/F4Multiplayer/MPMenu.swf` | [ui/MPMenu/MPMenu.as](../ui/MPMenu/MPMenu.as), compiled into `dist/movies/` and never committed |
 | Pieces for other movies: look, brackets, command bar, entry list | [ui/shared/f4mp/ui/](../ui/shared/f4mp/ui/) (`Style`, `Brackets`, `BackHint`, `EntryList`, `ScrollBar`) |
 | The compiler, pinned | [tools/flash/fetch.sh](../tools/flash/fetch.sh) |
@@ -141,14 +141,14 @@ At run time:
   - The player can't move: `PlayerControls::blockPlayerInput` and an input layer turning off only `kActivate`. A full layer put the gun
     away and hid the HUD. The activate key then comes to the menu as the user event `DISABLED`, and is matched against
     `ControlMap::GetMappedKey("Activate", device)`, so whatever the player has it bound to is the menu's Accept.
-  - Esc never reached the menu here, so `Menu::Frame` reads the key. It acts the frame after the key comes up: closing on the way down
+  - Esc never reached the menu here, so `UiPages::Frame` reads the key. It acts the frame after the key comes up: closing on the way down
     let the game's own Esc open the pause menu.
   - The press that opens the panel reaches it as well (logged on every opening), and closed the first one again: the menu key closes
     the panel only 250 ms after its first update. Hotkeys fire only as a key goes down, so the press that closes it doesn't open it again.
 - **The command bar** (`ui/shared/f4mp/ui/CommandBar.as`) is the game's `ButtonHintBar_mc` of ours. It has one command, the way back. A
   page could have more, side by side as the game's do: `Show` would take a list of commands, each with its key, word and action.
 - **The changelog** is a page off About, of the latest ten versions' `dist/RELEASE-*.md`, which the package copies to
-  `F4SE/Plugins/F4Multiplayer/changelog/`. `src/game/ReleaseNotes.h` picks them, and `ui/shared/f4mp/ui/Markdown.as` shows the little
+  `F4SE/Plugins/F4Multiplayer/changelog/`. `src/game/UiReleaseNotes.h` picks them, and `ui/shared/f4mp/ui/Markdown.as` shows the little
   markdown they use: headings, lists, paragraphs, and inline code, bold and links as plain text. They're in English whatever the game's language.
 - **Threads.** Flash objects are written only inside a menu's own update (`AdvanceMovie`, hooked in its vtable for
   the main and pause menus, as the compass does for the HUD) or by the menu's own movie; anything that touches the

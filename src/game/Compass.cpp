@@ -4,7 +4,7 @@
 #include "Config.h"
 #include "game/GameStop.h"
 #include "game/Hud.h"
-#include "game/MPMenu.h"
+#include "game/UiPanel.h"
 #include "game/MenuIcons.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
@@ -317,7 +317,7 @@ namespace Compass
 				return;
 			}
 			Hud::OnHudAdvance();
-			MPMenu::OnHudAdvance(a_this);
+			UiPanel::OnHudAdvance(a_this);
 			// The icons over friends in a menu (MenuIcons), queued by their own frame.
 			MenuIcons::OnHudAdvance(a_this);
 			Update(hudCompass, a_this);
