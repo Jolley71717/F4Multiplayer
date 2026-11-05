@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T16:57:38+00:00",
+ "updated": "2026-11-05T19:36:36+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -560,6 +560,14 @@
    "stage": 7,
    "note": "Merged for the next release; tested in two games.",
    "pr": 210
+  },
+  {
+   "id": "bau3",
+   "title": "Rig checks: the rc's 90-minute run covers the newer features with asserting steps",
+   "kind": "feature",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "bd5v",
