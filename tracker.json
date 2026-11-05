@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T03:34:29+00:00",
+ "updated": "2026-11-05T04:19:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -293,7 +293,7 @@
    "title": "PR 302: a friend's take at a host supply-line workbench that is unloaded on the host never reaches the host's pile (dupe)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
+   "stage": 3,
    "note": "",
    "pr": 302
   },
@@ -1713,6 +1713,14 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
+   "note": ""
+  },
+  {
+   "id": "vl9s",
+   "title": "Host's open workshop list not refreshed after a guest's take at a far linked workbench",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
    "note": ""
   },
   {
