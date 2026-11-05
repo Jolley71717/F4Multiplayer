@@ -39,6 +39,9 @@ namespace UiPanel
 	// Main thread. It is drawn in the menu's own update.
 	void SetPage(Page a_page);
 
+	// Main thread. Only the shown page's status line changes, so its rows are left alone. A page asked for since wins.
+	void SetStatus(std::string a_text);
+
 	// Main thread. On: the next key or mouse button goes to UiPages::PanelKey, not to the menu. A gamepad's still work the menu.
 	void CaptureKey(bool a_on);
 
@@ -58,6 +61,9 @@ namespace UiPanel
 
 	// Opened in the middle of the screen. Any thread.
 	[[nodiscard]] bool Centered();
+
+	// The player's HUD color (Settings > Display), 0xRRGGBB. Main thread.
+	[[nodiscard]] std::uint32_t HudColor();
 
 	// Opened and not closed since, by us or by the game. Any thread.
 	[[nodiscard]] bool Showing();
