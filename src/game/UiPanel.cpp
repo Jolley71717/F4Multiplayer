@@ -639,6 +639,11 @@ namespace UiPanel
 		return centered;
 	}
 
+	std::uint32_t HudColor()
+	{
+		return ReadHudColor();
+	}
+
 	bool Showing()
 	{
 		return wanted;
