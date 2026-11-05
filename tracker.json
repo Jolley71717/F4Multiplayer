@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T19:45:52+00:00",
+ "updated": "2026-11-05T19:46:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -158,6 +158,14 @@
    "note": "Fixed for the next release; tested with another companion, not yet with Dogmeat himself.",
    "pr": 152,
    "desc": "A player reported on 0.9.1 that the host's Dogmeat could not be seen by the client inside interiors. The fix brings a companion that followed its player into an interior to the friend's game there too. On two real games we tested it with Codsworth standing in for Dogmeat."
+  },
+  {
+   "id": "2pfd",
+   "title": "Multiplayer menu: Gamepad can scroll a long text only on a page with no rows",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "2r3",
@@ -570,6 +578,14 @@
    "pr": 210
   },
   {
+   "id": "b6tn",
+   "title": "Multiplayer menu: About would show the rc's notes in a promoted release",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "bau3",
    "title": "Rig checks: the rc's 90-minute run covers the newer features with asserting steps",
    "kind": "feature",
@@ -848,6 +864,14 @@
    "note": ""
   },
   {
+   "id": "f9bz",
+   "title": "Multiplayer menu: Menu texts that name a key (see F1) don't follow a rebind",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "fewf",
    "title": "Catching up a friend's story can send you into Kellogg's memories",
    "kind": "bug",
@@ -1018,6 +1042,14 @@
    "desc": "Objects another player placed sometimes vibrated or looked blurry on and off, most likely two copies at the same spot. The next release places a friend's building only once the area is loaded in your game, and removes doubled copies a save holds. On two real games a piece waited while the friend was elsewhere, was placed once on return, and scrapped cleanly."
   },
   {
+   "id": "imek",
+   "title": "Multiplayer menu: a press may drop while the main page redraws",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "irq2",
    "title": "Shared workshop materials and settlement supply lines",
    "kind": "feature",
@@ -1097,6 +1129,14 @@
    "stage": 7,
    "note": "Merged",
    "pr": 222
+  },
+  {
+   "id": "k9ll",
+   "title": "Multiplayer menu: Controls page: a key the game also uses (E, WASD) does both; warn from the game's control map",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "kgr0",
@@ -1258,6 +1298,14 @@
    "stage": 1,
    "note": "Seen once and never again; the crash was inside the game's own startup code.",
    "desc": "On one start the host's game crashed about 12 seconds in, before any join, inside the game's own interface drawing setup. The mod's code was not part of the crash, and it did not happen again across many later starts and a one-hour test. We are watching for a repeat. If you see a crash, a crash log from Buffout 4 or Addictol helps."
+  },
+  {
+   "id": "nmrt",
+   "title": "Multiplayer menu: Settings page mixes host rules with personal ones; split them",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "np3",
