@@ -1,15 +1,13 @@
 #pragma once
 
 // The multiplayer menu (F1 by default; iKeyMenu): host a session, join a friend, see who's in the
-// session and change the main settings, without the ini or the console. It's built from the
-// game's own message box (the "Are you sure?" dialog: a header, a body and up to four buttons),
-// one box per page; longer lists get a "More" button. A button's action runs on the next frame,
-// and most show the next page. Main thread only.
+// session and change the main settings, without the ini or the console. Its pages show in the panel
+// (MPMenu), or, if the panel's movie won't load, in the game's own message box (a header, a body and
+// up to four buttons), one box per page with longer lists getting a "More" button. That fallback goes
+// once the panel has been out for a version. A button's action runs on the next frame, and most show
+// the next page. Main thread only.
 namespace Menu
 {
-	// Dev: a page with more text and rows than the panel holds, to try its scrolling. The panel must be open.
-	void ScrollTest();
-
 	// Shows the main page in a message box.
 	void Open();
 
@@ -29,6 +27,9 @@ namespace Menu
 	// Main thread: the key or mouse button heard for a keybind (MPMenu::CaptureKey): a Windows virtual key, or the game's
 	// code for a mouse button.
 	void PanelKey(bool a_keyboard, std::uint32_t a_code);
+
+	// Main thread. A key pressed while a password is being typed: a_key its virtual key, a_character what it types (0: nothing).
+	void PanelTyped(std::uint32_t a_key, std::uint32_t a_character);
 
 	// Carries out the button pressed on the page showing and shows what follows. Every frame.
 	void Frame();

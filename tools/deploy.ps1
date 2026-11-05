@@ -24,6 +24,9 @@ $lang = Join-Path $plugins 'F4Multiplayer\lang'
 New-Item -ItemType Directory -Force $lang | Out-Null
 Copy-Item (Join-Path $root 'dist\lang\*.txt') $lang -Force
 Copy-Item (Join-Path $root 'dist\about.txt') (Join-Path $plugins 'F4Multiplayer') -Force
+$changelog = Join-Path $plugins 'F4Multiplayer\changelog'
+New-Item -ItemType Directory -Force $changelog | Out-Null
+Copy-Item (Join-Path $root 'dist\RELEASE-*.md') $changelog -Force
 # The plugin's own menu movies, compiled from ui\<Name>\ when one is missing or older than its sources (git holds no movies).
 $interface = Join-Path $GamePath 'Data\Interface\F4Multiplayer'
 New-Item -ItemType Directory -Force $interface | Out-Null

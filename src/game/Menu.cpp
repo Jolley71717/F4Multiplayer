@@ -5,6 +5,8 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/KeyNames.h"
+#include "game/PasswordEntry.h"
+#include "game/ReleaseNotes.h"
 #include "game/MPMenu.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
@@ -15,6 +17,7 @@
 #include "steam/SteamTransport.h"
 #include "Text.h"
 
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <random>
@@ -77,8 +80,9 @@ namespace Menu
 		bool                openWaiting = false;
 		bool                keyWaiting = false;  // the same for the panel, asked for with the menu key
 		bool                inPanel = false;  // the pages go to the panel (MPMenu) rather than to message boxes
-		bool                heading = false;  // the next page has the mod's name and version over its text
-		bool                keepRow = false;  // the next page is this one again (a setting toggled): the same row stays chosen
+		std::string         typedPassword;           // the password page's text so far
+		bool                typingPassword = false;  // that page is showing, with the keys going to it
+		MPMenu::Page        nextPage;         // what the next page has besides its text and rows, in the panel: Show takes it, panel or not
 
 		// "Join a friend" first asks Steam for the friends' rich presence (a host's names their lobby,
 		// and Steam hands it out only once asked), then shows the page when the answers are in or
@@ -126,14 +130,13 @@ namespace Menu
 
 		bool mainShowing = false;  // the main page is the one showing
 		int listeningFor = -1;     // the Keybinds row waiting for its key
-		std::vector<std::string> pagePlayers;  // the next page's list at the right of its rows, in the panel
-		std::string pageHeader;                // the next page's player at its top (ShowPlayer), in the panel
 		bool modsShowing = false;  // the Mods page is the one showing, in the panel
 		std::string modsBody;      // what it says, to redraw when the host's answer changes that
 		Clock::time_point nextModsCheck{};
 
 		void Show(const std::string& a_body, std::vector<Button> a_buttons)
 		{
+			auto page = std::exchange(nextPage, {});
 			mainShowing = false;  // ShowMainPage says so after this
 			listeningFor = -1;    // ShowKeybinds says so after this
 			modsShowing = false;  // ShowMods says so after this
@@ -153,8 +156,14 @@ namespace Menu
 				++serial;
 				++pagesShown;
 				lastBody = Clean(a_body);
-				MPMenu::SetPage(serial, lastBody, std::move(rows), std::move(hints), std::exchange(keepRow, false), std::exchange(heading, false), std::exchange(pagePlayers, {}), std::exchange(pageHeader, {}));
+				page.serial = serial;
+				page.body = lastBody;
+				page.rows = std::move(rows);
+				page.hints = std::move(hints);
+				MPMenu::SetPage(std::move(page));
 				MPMenu::CaptureKey(false);
+				MPMenu::CaptureText(false);
+				typingPassword = false;
 				return;
 			}
 			const auto manager = RE::MessageMenuManager::GetSingleton();
@@ -180,8 +189,26 @@ namespace Menu
 		}
 
 		// The game's message box over the panel, with one button that just closes it: the serial no page ever has, so no press.
+		void ShowMain();
+
+		// Over the page showing, in the panel; in a box it's the page itself, the title dropped. The first of a_buttons is the way back.
+		void ShowDialog(std::string a_title, const std::string& a_text, std::vector<Button> a_buttons)
+		{
+			nextPage.dialog = true;
+			nextPage.title = Clean(a_title);
+			Show(a_text, std::move(a_buttons));
+		}
+
 		void Popup(const std::string& a_text)
 		{
+			if (inPanel) {
+				const auto back = [] {
+					nextPage.keepRow = true;
+					ShowMain();
+				};
+				ShowDialog(HEADER, a_text, { { Text::Get("menu.back"), back }, { Text::Get("menu.close"), back } });
+				return;
+			}
 			if (const auto manager = RE::MessageMenuManager::GetSingleton()) {
 				const auto text = Clean(a_text);
 				const auto close = Text::Get("menu.close");
@@ -189,7 +216,6 @@ namespace Menu
 			}
 		}
 
-		void ShowMain();
 		void ShowAbout();
 		void ShowKeybinds(int a_listening, std::string a_said);
 		void ShowJoin(std::size_t a_page);
@@ -336,11 +362,10 @@ namespace Menu
 
 		void Host()
 		{
+			std::string failed;
 			if (const auto error = Session::StartHosting(); !error.empty()) {
-				const auto failed = Text::Format("menu.host_failed", { { "error", error } });
-				if (inPanel) {
-					Popup(failed);  // the panel's text is one line of status
-				} else {
+				failed = Text::Format("menu.host_failed", { { "error", error } });
+				if (!inPanel) {
 					notice = failed;
 				}
 			} else {
@@ -348,8 +373,11 @@ namespace Menu
 				Config::Mutable().host = true;
 				Config::Write("bHost", "true");
 			}
-			keepRow = inPanel;
+			nextPage.keepRow = inPanel;
 			ShowMain();
+			if (inPanel && !failed.empty()) {
+				Popup(failed);  // the panel's text is one line of status
+			}
 		}
 
 		void StopHosting()
@@ -379,7 +407,7 @@ namespace Menu
 				choices.push_back({ Text::Get("menu.mods_ask"), [page] {
 									   Session::AskHostMods();
 									   if (inPanel) {
-										   keepRow = true;
+										   nextPage.keepRow = true;
 										   ShowMods(page);
 									   }
 								   } });
@@ -396,6 +424,7 @@ namespace Menu
 		// goes to our own server (Session::SendHostCommand), which takes them from the host's game only.
 
 		void ShowHostControls(std::size_t a_page);
+		void ShowPasswordPage();
 		void ShowHostPlayers(std::size_t a_page);
 		void ShowBans(std::size_t a_page);
 
@@ -440,6 +469,9 @@ namespace Menu
 			if (!a_info.password) {
 				return Text::Get("menu.hc_no_password");
 			}
+			if (inPanel) {
+				return Text::Get("menu.pw_line");  // shown only when asked for (ShowPasswordPage)
+			}
 			return Text::Format("menu.hc_password", { { "password", password.empty() ? std::string{ "?" } : password } });
 		}
 
@@ -460,11 +492,95 @@ namespace Menu
 		{
 			Config::Mutable().password = a_password;
 			Config::Write("sPassword", a_password);
-			HostDo({ Protocol::HostAction::kSetPassword, 0, 0, a_password }, [] { ShowHostControls(0); });
+			HostDo({ Protocol::HostAction::kSetPassword, 0, 0, a_password }, [] {
+				if (inPanel) {
+					ShowPasswordPage();
+				} else {
+					ShowHostControls(0);
+				}
+			});
+		}
+
+		// Back to where the password page was opened from.
+		void LeavePasswordPage()
+		{
+			if (Session::GetStatus().hosting) {
+				ShowHostControls(0);
+			} else {
+				nextPage.keepRow = true;
+				ShowSettings(0);
+			}
+		}
+
+		void SavePassword(const std::string& a_password)
+		{
+			if (Session::GetStatus().hosting) {
+				SetPassword(a_password);
+			} else {
+				Config::Mutable().password = a_password;
+				Config::Write("sPassword", a_password);
+				ShowPasswordPage();
+			}
+		}
+
+		// The dialog to type one in: what's typed shows as it comes.
+		void ShowPasswordInput()
+		{
+			std::vector<Button> rows{ { Text::Get("menu.back"), ShowPasswordPage } };
+			rows.push_back({ Text::Get("menu.pw_save"), [] {
+								if (typedPassword.empty()) {
+									nextPage.keepRow = true;
+									ShowPasswordInput();
+								} else {
+									SavePassword(typedPassword);
+								}
+							} });
+			// For a gamepad, which can't type: it goes in the box, and the row chosen goes back to Save.
+			rows.push_back({ Text::Get("menu.pw_make_up"), [] {
+								typedPassword = NewPassword();
+								ShowPasswordInput();
+							} });
+			nextPage.input = true;
+			nextPage.inputText = typedPassword;
+			ShowDialog(Text::Get("menu.hc_password_button"), Text::Get("menu.pw_save_hint"), std::move(rows));
+			typingPassword = true;
+			MPMenu::CaptureText(true);
+		}
+
+		// The password is for hosting and for joining alike: the ini has one.
+		void ShowPasswordPage()
+		{
+			const bool          any = !Config::Get().password.empty();
+			std::vector<Button> rows{ { Text::Get("menu.back"), LeavePasswordPage } };
+			if (any) {
+				rows.push_back({ Text::Get("menu.pw_view"), [] {
+									ShowDialog(Text::Get("menu.hc_password_button"), Config::Get().password,
+										{ { Text::Get("menu.back"), ShowPasswordPage }, { Text::Get("menu.close"), ShowPasswordPage } });
+									lastBody = {};  // not for the dev channel's report (Describe)
+								},
+					Text::Get("menu.pw_view_hint") });
+			}
+			rows.push_back({ Text::Get(any ? "menu.pw_change" : "menu.pw_set"), [] {
+								typedPassword.clear();
+								ShowPasswordInput();
+							},
+				Text::Get("menu.pw_setting_hint") });
+			if (any) {
+				rows.push_back({ Text::Get("menu.pw_remove"), [] {
+									ShowDialog(Text::Get("menu.pw_remove"), Text::Get("menu.pw_remove_ask"),
+										{ { Text::Get("menu.back"), ShowPasswordPage }, { Text::Get("menu.pw_remove"), [] { SavePassword({}); } }, { Text::Get("menu.back"), ShowPasswordPage } });
+								},
+					Text::Get("menu.hc_no_password") });
+			}
+			Show({}, std::move(rows));
 		}
 
 		void ShowHostPassword()
 		{
+			if (inPanel) {
+				ShowPasswordPage();
+				return;
+			}
 			const auto info = Session::HostControls();
 			if (!info) {
 				ShowHostControls(0);
@@ -513,7 +629,7 @@ namespace Menu
 				rows.push_back({ Text::Format("menu.hc_kick", { { "player", name } }), RemovePlayer(a_id, name, false, ShowMain), ban == std::string::npos ? std::string{} : explained.substr(kick + 1, ban - kick - 1) });
 				rows.push_back({ Text::Format("menu.hc_ban", { { "player", name } }), RemovePlayer(a_id, name, true, ShowMain), ban == std::string::npos ? std::string{} : explained.substr(ban + 1) });
 			}
-			pageHeader = Party::PanelPlayer(a_id);
+			nextPage.header = Party::PanelPlayer(a_id);
 			Show({}, std::move(rows));
 		}
 
@@ -614,17 +730,21 @@ namespace Menu
 			for (const auto& player : RemotePlayers::List()) {
 				others += !std::ranges::contains(justRemoved, player.id);
 			}
-			const auto body = Text::Get(info->locked ? "menu.hc_locked" : "menu.hc_open") + "\n" + PasswordLine(*info) + "\n" + Text::Format("menu.hc_banned", { { "n", info->bans } });
+			// In the panel, what each row is about shows beside it when chosen.
+			const auto lockLine = Text::Get(info->locked ? "menu.hc_locked" : "menu.hc_open");
+			const auto bansLine = Text::Format("menu.hc_banned", { { "n", info->bans } });
+			const auto body = inPanel ? std::string{} : lockLine + "\n" + PasswordLine(*info) + "\n" + bansLine;
 			std::vector<Button> entries;
-			entries.push_back({ Text::Format("menu.hc_players", { { "n", others } }), [] { ShowHostPlayers(0); } });
+			entries.push_back({ Text::Format("menu.hc_players", { { "n", others } }), [] { ShowHostPlayers(0); }, Text::Get("menu.hc_pick_player") });
 			entries.push_back({ Text::Get(info->locked ? "menu.hc_unlock" : "menu.hc_lock"), [locked = info->locked, a_page] {
 								   HostDo({ locked ? Protocol::HostAction::kUnlock : Protocol::HostAction::kLock }, [a_page] {
-									   keepRow = true;
+									   nextPage.keepRow = true;
 									   ShowHostControls(a_page);
 								   });
-							   } });
-			entries.push_back({ Text::Get("menu.hc_password_button"), ShowHostPassword });
-			entries.push_back({ Text::Format("menu.hc_bans", { { "n", info->bans } }), [] { ShowBans(0); } });
+							   },
+				lockLine });
+			entries.push_back({ Text::Get("menu.hc_password_button"), ShowHostPassword, PasswordLine(*info) });
+			entries.push_back({ Text::Format("menu.hc_bans", { { "n", info->bans } }), [] { ShowBans(0); }, bansLine });
 			ShowPaged(body, std::move(entries), a_page, ShowHostControls, { Text::Get("menu.back"), ShowMain });
 		}
 
@@ -638,6 +758,33 @@ namespace Menu
 		// More buttons than a box has (the Mods button, when our mods differ from the host's, besides Leave, Join
 		// someone else and Settings) turn into pages, "Close" first on each.
 		// What the mod is, from a file of ours, with its name and version over it.
+		// The latest release notes, as packaged beside the about text, as one markdown text; "" if there are none.
+		std::string Changelog()
+		{
+			constexpr std::size_t VERSIONS_SHOWN = 10;
+			const auto            folder = Platform::GamePath("Data/F4SE/Plugins/F4Multiplayer/changelog");
+			std::vector<std::string> files;
+			std::error_code          error;
+			for (const auto& entry : std::filesystem::directory_iterator{ folder, error }) {
+				files.push_back(entry.path().filename().string());
+			}
+			const auto  running = F4SE::GetPluginVersion();
+			std::string text;
+			for (const auto& file : ReleaseNotes::Pick(files, { running.major(), running.minor(), running.patch() }, VERSIONS_SHOWN)) {
+				std::ifstream in{ folder / file, std::ios::binary };
+				text.append(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
+				text += "\n\n";
+			}
+			return text;
+		}
+
+		void ShowChangelog()
+		{
+			nextPage.framed = true;
+			nextPage.markdown = true;
+			Show(Changelog(), { { Text::Get("menu.back"), ShowAbout } });
+		}
+
 		void ShowAbout()
 		{
 			std::ifstream in{ Platform::GamePath("Data/F4SE/Plugins/F4Multiplayer/about.txt"), std::ios::binary };
@@ -645,8 +792,12 @@ namespace Menu
 			if (body.empty()) {
 				body = Text::Get("menu.about_missing");
 			}
-			heading = true;
-			Show(body, { { Text::Get("menu.back"), ShowMain } });
+			nextPage.framed = true;
+			std::vector<Button> rows{ { Text::Get("menu.back"), ShowMain } };
+			if (inPanel && !Changelog().empty()) {
+				rows.push_back({ Text::Get("menu.changelog"), ShowChangelog });
+			}
+			Show(body, std::move(rows));
 		}
 
 		// The main page in the panel stays true: redrawn when what it says changes (the second it's seen, not at once).
@@ -688,7 +839,7 @@ namespace Menu
 			}
 			Button close{ Text::Get("menu.close"), {} };  // first: Tab closes the menu (see ShowPaged)
 			if (inPanel) {
-				pagePlayers = PanelPlayersList();
+				nextPage.players = PanelPlayersList();
 				// After the rows, in the list's order: the movie presses one by its place past the last row.
 				if (status.link == Session::Status::Link::kJoined) {
 					for (const auto& player : RemotePlayers::List()) {
@@ -814,13 +965,13 @@ namespace Menu
 		{
 			const auto&         settings = Config::Get();
 			std::vector<Button> rows{ { Text::Get("menu.back"), a_listening < 0 ? std::function<void()>{ ShowMain } : std::function<void()>{ [] {
-																   keepRow = true;
+																   nextPage.keepRow = true;
 																   ShowKeybinds(-1, {});
 															   } } } };
 			for (int i = 0; i < static_cast<int>(KEYBINDS.size()); ++i) {
 				const auto& bind = KEYBINDS[i];
 				rows.push_back({ Text::Get(bind.name), [i] {
-									keepRow = true;
+									nextPage.keepRow = true;
 									ShowKeybinds(i, {});
 								},
 					{}, i == a_listening ? Text::Get("menu.key_waiting") : KeyText(settings.*bind.value) });
@@ -848,10 +999,13 @@ namespace Menu
 									   const bool now = !(s.*toggle.value);
 									   s.*toggle.value = now;
 									   Config::Write(toggle.key, now ? toggle.onValue : toggle.offValue);
-									   keepRow = true;
+									   nextPage.keepRow = true;
 									   ShowSettings(a_page);
 								   },
 					inPanel ? Text::Get(toggle.what) : std::string{} });
+			}
+			if (inPanel) {
+				entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
 			}
 			body += (body.empty() ? "" : "\n") + Text::Get("menu.settings_saved");
 			ShowPaged(body, std::move(entries), a_page, ShowSettings, { Text::Get("menu.back"), ShowMain });
@@ -894,28 +1048,6 @@ namespace Menu
 		ShowMain();
 	}
 
-	void ScrollTest()
-	{
-		if (!inPanel) {
-			return;
-		}
-		std::vector<Button> rows{ { Text::Get("menu.back"), ShowMain }, { std::format("Long text, no rows"), [] {
-										 std::string text;
-										 for (int i = 1; i <= 40; ++i) {
-											 text += std::format("Line {} of a text too long for the panel, to scroll with the wheel or Up and Down.\n", i);
-										 }
-										 Show(text, { { Text::Get("menu.back"), ScrollTest } });
-									 } } };
-		for (int i = 2; i <= 24; ++i) {
-			rows.push_back({ std::format("Row {}", i), [] { keepRow = true; ScrollTest(); }, std::format("What row {} does, long enough to wrap to a few lines in this column.", i) });
-		}
-		std::string body;
-		for (int i = 1; i <= 16; ++i) {
-			body += std::format("Line {} of a page's text.\n", i);
-		}
-		Show(body, std::move(rows));
-	}
-
 	void PanelPress(std::uint32_t a_serial, std::uint32_t a_row)
 	{
 		std::scoped_lock l{ Callback::pressedLock };
@@ -927,18 +1059,17 @@ namespace Menu
 		if (!inPanel || listeningFor < 0 || listeningFor >= static_cast<int>(KEYBINDS.size())) {
 			return;
 		}
-		constexpr std::uint32_t ESCAPE = 0x1B, DELETE_KEY = 0x2E;
 		const auto vk = a_keyboard ? a_code : KeyNames::FromMouse(a_code);
 		const auto& bind = KEYBINDS[listeningFor];
 		REX::INFO("Menu: {} heard {} code {:X}", bind.key, a_keyboard ? "key" : "mouse button", a_code);
 		std::string said;
-		if (vk == 0 || vk == ESCAPE) {
+		if (vk == 0 || vk == KeyNames::ESCAPE) {
 			// nothing to do: a button of no use, or the way out
 		} else if (KeyNames::Reserved(vk)) {
 			said = Text::Format("menu.key_reserved", { { "key", KeyNames::Name(vk) } });
 		} else {
 			auto&      settings = Config::Mutable();
-			const auto next = vk == DELETE_KEY ? 0u : vk;
+			const auto next = vk == KeyNames::DELETE_KEY ? 0u : vk;
 			const auto taken = next == 0 ? KEYBINDS.end() : std::ranges::find_if(KEYBINDS, [&](const Keybind& a_other) { return &a_other != &bind && settings.*a_other.value == next; });
 			if (taken != KEYBINDS.end()) {
 				said = Text::Format("menu.key_taken", { { "key", KeyNames::Name(next) }, { "name", Text::Get(taken->name) } });
@@ -947,8 +1078,25 @@ namespace Menu
 				Config::Write(bind.key, std::format("{:02X}", next));
 			}
 		}
-		keepRow = true;
+		nextPage.keepRow = true;
 		ShowKeybinds(-1, std::move(said));
+	}
+
+	void PanelTyped(std::uint32_t a_key, std::uint32_t a_character)
+	{
+		if (!inPanel || !typingPassword) {
+			return;
+		}
+		if (a_key == KeyNames::BACKSPACE) {
+			if (typedPassword.empty()) {
+				return;
+			}
+			typedPassword.pop_back();
+		} else if (!PasswordEntry::Add(typedPassword, a_character, Protocol::MAX_PASSWORD_LENGTH)) {
+			return;
+		}
+		nextPage.keepRow = true;
+		ShowPasswordInput();
 	}
 
 	void PanelBack()
@@ -988,7 +1136,7 @@ namespace Menu
 		static bool escWasDown = false;
 		static bool escArmed = false;  // went down with the panel open
 		static bool escUp = false;     // and has come up
-		const bool  escDown = Hotkeys::Held(0x1B);
+		const bool  escDown = Hotkeys::Held(KeyNames::ESCAPE);
 		// Not with a message box over the panel: Esc is that box's.
 		const bool  panelOpen = inPanel && MPMenu::Centered() && MPMenu::Showing() && !OpenMenus::Open(OpenMenus::Menu::kMessageBox);
 		if (std::exchange(escUp, false) && panelOpen) {
@@ -1025,28 +1173,29 @@ namespace Menu
 				pending.show();
 			}
 		}
-		if (inPanel && modsShowing && Clock::now() >= nextModsCheck) {
-			nextModsCheck = Clock::now() + 1s;
-			const auto diff = Session::HostMods();
-			constexpr std::size_t ALL_NAMES = 1'000'000;
-			if (!diff || ModDiff::Pages(*diff, ALL_NAMES).front() != modsBody) {
-				keepRow = true;
-				ShowMods(0);
-			}
-		}
-		if (inPanel && mainShowing && !pendingJoin && !pendingHost && Clock::now() >= nextMainCheck) {
-			nextMainCheck = Clock::now() + 1s;
-			if (MainPageNow() != mainStatus) {
-				keepRow = true;
-				ShowMainPage(mainPage);
-			}
-		}
 		std::optional<ButtonPress> press;
 		{
 			std::scoped_lock l{ Callback::pressedLock };
 			press = std::exchange(Callback::pressed, std::nullopt);
 		}
 		if (!press || press->serial != serial) {
+			// Only with no press to take: a redraw makes a new page, and the press would be for the old one.
+			if (inPanel && modsShowing && Clock::now() >= nextModsCheck) {
+				nextModsCheck = Clock::now() + 1s;
+				const auto diff = Session::HostMods();
+				constexpr std::size_t ALL_NAMES = 1'000'000;
+				if (!diff || ModDiff::Pages(*diff, ALL_NAMES).front() != modsBody) {
+					nextPage.keepRow = true;
+					ShowMods(0);
+				}
+			}
+			if (inPanel && mainShowing && !pendingJoin && !pendingHost && Clock::now() >= nextMainCheck) {
+				nextMainCheck = Clock::now() + 1s;
+				if (MainPageNow() != mainStatus) {
+					nextPage.keepRow = true;
+					ShowMainPage(mainPage);
+				}
+			}
 			return;
 		}
 		++pressesHandled;
@@ -1078,6 +1227,6 @@ namespace Menu
 		// The body on one line (the dev channel's reply is one line).
 		std::string body = lastBody;
 		std::ranges::replace(body, '\n', '/');
-		return std::format("menu: pages={} presses={} serial={} panel={} pendingJoin={} pendingHost={} openWaiting={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, inPanel, pendingJoin.has_value(), pendingHost.has_value(), openWaiting, labels, body);
+		return std::format("menu: pages={} presses={} serial={} panel={} centered={} showing={} pendingJoin={} pendingHost={} openWaiting={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, inPanel, MPMenu::Centered(), MPMenu::Showing(), pendingJoin.has_value(), pendingHost.has_value(), openWaiting, labels, body);
 	}
 }

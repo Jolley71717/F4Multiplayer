@@ -4,9 +4,11 @@ package f4mp.ui
 	import flash.events.MouseEvent;
 	import flash.text.TextField;
 
-	// The way back out, at the bottom of the screen as the game's menus show it: "[Esc) BACK]", or with a gamepad the B
-	// glyph in the game's controller font. A click goes back too.
-	public class BackHint extends Sprite
+	// The menu's command bar, as the game's menus show theirs (their ButtonHintBar_mc): each command's key and what it does, in
+	// brackets, on a ground of its own. For now the one command every page has, the way back: "[Esc) BACK]", or with a gamepad the B
+	// glyph in the game's controller font. A click does it too. A page could have more, side by side as the game's do: Show would
+	// take a list of commands, each with its key, word and action, and the brackets would go round each. Nothing needs that yet.
+	public class CommandBar extends Sprite
 	{
 		private static const TEXT_SIZE:Number = 34;     // in the panel's units (see the movie's scale)
 		private static const FROM_BOTTOM:Number = 92;
@@ -16,7 +18,7 @@ package f4mp.ui
 
 		private var onBack:Function;
 
-		public function BackHint(a_onBack:Function)
+		public function CommandBar(a_onBack:Function)
 		{
 			super();
 			onBack = a_onBack;
@@ -44,7 +46,7 @@ package f4mp.ui
 				x += key.width + KEY_GAP * a_scale;
 				h = key.height;
 			}
-			// The word in the bold of the game's headings: it's what the hint is for.
+			// The word in the bold of the game's headings: it's what the command is.
 			var text:TextField = Style.Text(a_word, TEXT_SIZE * a_scale, a_color, a_scale, Style.BOLD_FONT);
 			text.x = x;
 			addChild(text);

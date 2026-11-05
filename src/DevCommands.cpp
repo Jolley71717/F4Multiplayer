@@ -2830,12 +2830,13 @@ namespace DevCommands
 				if (!a_object.Invoke("getChildAt", &child, &index, 1)) {
 					continue;
 				}
-				Scaleform::GFx::Value name, x, y, width, visible;
+				Scaleform::GFx::Value name, x, y, width, visible, opacity;
 				child.GetMember("name", &name);
 				child.GetMember("x", &x);
 				child.GetMember("y", &y);
 				child.GetMember("width", &width);
 				child.GetMember("visible", &visible);
+				child.GetMember("alpha", &opacity);
 				const std::string path = a_path + "." + (name.IsString() ? name.GetString() : std::format("#{}", i));
 				Scaleform::GFx::Value text, height, color, embed;
 				child.GetMember("height", &height);
@@ -2869,8 +2870,8 @@ namespace DevCommands
 						}
 					}
 				}
-				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
-					visible.IsBoolean() && visible.GetBoolean(), extra);
+				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={} alpha={:.2f}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
+					visible.IsBoolean() && visible.GetBoolean(), GfxNumber(opacity), extra);
 				if (a_depth > 1) {
 					DumpGfx(child, path, a_depth - 1);
 				}
@@ -3363,7 +3364,7 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | friends | refresh | selftest send|recv]";
 		}
 
-		// mpmenu [open | close | panel | box | scrolltest | press <buttonIndex>]: the multiplayer menu, driven without the keyboard. open is
+		// mpmenu [open | close | panel | box | press <buttonIndex> | type <text>]: the multiplayer menu, driven without the keyboard. type is for the password page. open is
 		// the menu key's, in the middle of the screen; panel is the Multiplayer entry's, beside the main menu's list; box is the message box
 		// it falls back to. Button 0 is the page's way back and the rows are 1 and up.
 		std::string MpMenu(std::string_view a_args)
@@ -3381,11 +3382,6 @@ namespace DevCommands
 				MPMenu::Close();
 				return "closed";
 			}
-			if (!args.empty() && args[0] == "scrolltest") {
-				MainMenuEntry::OpenPanel();
-				::Menu::ScrollTest();
-				return "opened";
-			}
 			if (!args.empty() && args[0] == "panel") {
 				MainMenuEntry::OpenPanel();
 				return "opened";
@@ -3397,6 +3393,12 @@ namespace DevCommands
 				std::from_chars(args[2].data(), args[2].data() + args[2].size(), y);
 				MainMenuEntry::PanelMouse(x, y, args.size() > 3 && args[3] == "click");
 				return "passed";
+			}
+			if (args.size() == 2 && args[0] == "type") {
+				for (const char character : args[1]) {
+					::Menu::PanelTyped(0, static_cast<unsigned char>(character));
+				}
+				return "typed";
 			}
 			if (args.size() == 2 && args[0] == "press") {
 				int index = -1;
