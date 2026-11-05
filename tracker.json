@@ -1,6 +1,6 @@
 {
  "release": "0.10.0",
- "updated": "2026-11-05T00:30:08+00:00",
+ "updated": "2026-11-05T02:45:11+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1172,7 +1172,7 @@
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
@@ -1901,6 +1901,14 @@
    "note": "Probably fixed in 0.9.2; not yet tried in a real game.",
    "pr": 264,
    "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
+  },
+  {
+   "id": "zen3",
+   "title": "PR 303 rig: TerminalRules raceRunning reads RaceState==1 as running, but 1 is stopped (once rows apply only into a stopped race)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "zr1r",
