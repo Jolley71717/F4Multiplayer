@@ -911,13 +911,14 @@ namespace UiPages
 			const char* onValue;
 			const char* offValue;
 		};
-		constexpr std::array<Toggle, 8> TOGGLES{ {
+		constexpr std::array<Toggle, 9> TOGGLES{ {
 			{ "menu.friendly_fire", "menu.friendly_fire_what", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
 			{ "menu.shared_story", "menu.shared_story_what", &Config::Settings::sharedStory, "sStory", "shared", "own" },
 			{ "menu.safe_quests", "menu.safe_quests_what", &Config::Settings::safeQuests, "sQuests", "safe", "story" },
 			{ "menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat", "true", "false" },
 			{ "menu.spoken_lines", "menu.spoken_lines_what", &Config::Settings::spokenLines, "bSpokenLines", "true", "false" },
 			{ "menu.compass_markers", "menu.compass_markers_what", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false" },
+			{ "menu.developer_hud", "menu.developer_hud_what", &Config::Settings::developerHud, "bDeveloperHud", "true", "false" },
 			{ "menu.fast_loading", "menu.fast_loading_what", &Config::Settings::fastLoading, "bFastLoading", "true", "false" },
 			{ "menu.lend_power_armor", "menu.lend_power_armor_what", &Config::Settings::lendPowerArmor, "bLendPowerArmor", "true", "false" },
 		} };

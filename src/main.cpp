@@ -3,6 +3,7 @@
 #include "DevCommands.h"
 #include "game/UiMainMenuEntry.h"
 #include "game/UiPanel.h"
+#include "game/UiDevHud.h"
 #include "game/AutoSave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
@@ -484,6 +485,7 @@ namespace
 				MenuWatch::Install();  // for the stress loop's menu checks (the menus dev command)
 			}
 			UiPanel::Register();  // the multiplayer menu of our own, before the main menu can open it
+			UiDevHud::Register();
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
@@ -710,6 +712,10 @@ namespace
 					GateInput();
 					SyncAnimMark::Frame();  // a game that starts with the player marked as in a synced animation gets no input
 				}
+			}
+			if (a_onMain) {
+				PERF_SCOPE("UiDevHud");
+				UiDevHud::Frame();
 			}
 			{
 				PERF_SCOPE("RealTime");

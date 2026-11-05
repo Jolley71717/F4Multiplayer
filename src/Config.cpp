@@ -183,6 +183,8 @@ namespace Config
 				settings.runInBackground = ParseBool(value);
 			} else if (key == "bCompassMarkers") {
 				settings.compassMarkers = ParseBool(value);
+			} else if (key == "bDeveloperHud") {
+				settings.developerHud = ParseBool(value);
 			} else if (key == "bMenuIcons") {
 				settings.menuIcons = ParseBool(value);
 			} else if (key == "bSyncTime") {

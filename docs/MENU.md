@@ -142,6 +142,7 @@ toggled (only that line changes; comments and the rest of the file stay):
 | Voice chat | `bVoiceChat` | at once |
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |
+| Developer HUD | `bDeveloperHud` | at once |
 | Fast loading | `bFastLoading` | the next loading screen |
 | Lend power armor | `bLendPowerArmor` | the next time a friend asks |
 

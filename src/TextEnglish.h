@@ -271,6 +271,8 @@ namespace Text
 		{ "menu.spoken_lines_what", "hear what's said near you in a friend's conversations, in the speaker's voice" },
 		{ "menu.compass_markers", "Compass markers" },
 		{ "menu.compass_markers_what", "friends on the compass" },
+		{ "menu.developer_hud", "Developer HUD" },
+		{ "menu.developer_hud_what", "live numbers at the top right of the screen" },
 		{ "menu.fast_loading", "Fast loading" },
 		{ "menu.fast_loading_what", "vsync off during loading screens" },
 		{ "menu.lend_power_armor", "Lend power armor" },

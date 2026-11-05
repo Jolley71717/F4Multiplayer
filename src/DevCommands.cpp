@@ -37,6 +37,7 @@
 #include "game/MovedObjects.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
+#include "game/UiDevHud.h"
 #include "game/Perf.h"
 #include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
@@ -4157,6 +4158,15 @@ namespace DevCommands
 			return "error: saveguard [strays | rtti <offset> | exclude <ref> | poison <ref> <name>]";
 		}
 
+		// devhud [on|off]: the developer HUD's state, turned on or off for this run if asked (the ini is left alone).
+		std::string DevHudState(std::string_view a_args)
+		{
+			if (a_args == "on" || a_args == "off") {
+				Config::Mutable().developerHud = a_args == "on";
+			}
+			return UiDevHud::Describe();
+		}
+
 		struct Entry
 		{
 			std::string_view name;
@@ -4165,6 +4175,7 @@ namespace DevCommands
 
 		constexpr std::array COMMANDS{
 			Entry{ "status", Status },
+			Entry{ "devhud", DevHudState },
 			Entry{ "frames", Frames },
 			Entry{ "perf", PerfStats },
 			Entry{ "stall", Stall },

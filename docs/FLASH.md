@@ -28,6 +28,12 @@ function, `Show(body, buttons)`. That function gets a second output, the Flash p
 - The menu key (F1) opens the panel in the middle of the screen, and closes it from any page. The Multiplayer entry opens it
   beside the main menu's list. The message box stays as the fallback if the movie doesn't load.
 
+## Developer HUD
+
+`bDeveloperHud`, and a row in the menu's settings: live numbers in the top right corner while a game is loaded, for testing and bug reports. `ui/DevHud` and `src/game/UiDevHud.cpp` are the second movie: a menu of the game's UI that doesn't pause, take input or show a cursor. The main thread gathers the text four times a second and the menu writes it in its own update. It is drawn in the HUD color it is told, not through the game's renderer. Addresses are masked and players are `player N`, as it goes into screenshots. `devhud [on|off]` on the dev channel reads it, and turns it on or off for the run.
+
+So far: the link and why it isn't up yet, ping, players and how far away, frame rate and times, the mod's cost, and where you are. The dev channel's counters could follow.
+
 ## Main menu → Multiplayer
 
 ```
