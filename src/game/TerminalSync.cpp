@@ -109,7 +109,7 @@ namespace TerminalSync
 			if (const auto send = book.Read(i, value, atTerminal, now)) {
 				outgoing.push_back(Protocol::Encode(Protocol::TerminalChoice{ 0, i, *send }, Protocol::MessageType::kReportTerminalChoice));
 				++sent;
-				REX::INFO("TerminalSync: our player set {}.{} to {} at a terminal (from {}); sent", row.script, row.property, *send, *value);
+				REX::INFO("TerminalSync: our player set {}.{} to {} at a terminal; sent", row.script, row.property, *send);
 			}
 			const auto pending = book.Pending(i);
 			if (!pending) {

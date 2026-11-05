@@ -93,7 +93,7 @@ TEST("terminal rules: a friend's choice is made only while the race is on here, 
 	CHECK(ToApply(DESTRUCT, 1, On(0)) == Step::kCall);
 	CHECK(ToApply(DESTRUCT, 1, On(4)) == Step::kDone);  // it happened here already
 	CHECK(ToApply(RESERVES, 1, On(1)) == Step::kDone);
-	// Stage 10 runs as the quest starts, race or none: the once rows wait for a race running here (RaceState 0).
+	// Stage 10 runs as the quest starts, race or none: the once rows wait while a player stopped this game's race (RaceState 1).
 	here = On(0);
 	here.raceRunning = false;
 	CHECK(ToApply(DESTRUCT, 1, here) == Step::kWait);

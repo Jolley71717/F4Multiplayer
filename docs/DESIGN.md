@@ -667,14 +667,15 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and neither 35 (the robots blew up) nor 255 (its end) is, and our player is within 8192 units of the friend who made
   it (the same cell or worldspace: at the Downs with them). Stage 10 is a start-up stage (INDX flag 0x02 in
   Fallout4.esm), run as the quest starts whether a race is on or not, so the rows set once (the reserves, the
-  self-destruct) also wait for RaceState to be 1 here: a race actually running in this game. Our player must be at no terminal, and ours must differ (a
-  once row only if it has not happened here). A choice that waits keeps the latest of its row and is dropped after 10
+  self-destruct) also wait for RaceState to be 0 here: 0 from the quest's start and after Start Race, 1 after Stop Race,
+  so they are not made into a game whose race a player stopped. Our player must be at no terminal, and ours must differ
+  (a once row only if it has not happened here). A choice that waits keeps the latest of its row and is dropped after 10
   minutes, or once the race is over here (`dropped=`). So a game far away, a later first visit, or an old save whose
   race never ran gets nothing, and the self-destruct's stage 35 is set only in a game at that race. What a friend's
-  choice set here is not sent back: for 3 s (EXPECT_LIFE) a reading of that value is its call landing; past that, a
-  call the script refused no longer keeps our own choice of that value from being sent. After a load, a friend's
-  latest of a row (never our own: the loaded save's are its own, and never a once row) is made again under the same
-  rules. Only with `bSyncQuests`. `net status`: terminals: sent= heard= made= failed= dropped=.
+  choice set here is not sent back: for 3 s (EXPECT_LIFE) a reading of that value is its call landing; past that, a call
+  the script refused no longer keeps our own choice of that value from being sent. After a load, a friend's latest of a
+  row (never our own: the loaded save's are its own, and never a once row) is made again under the same rules. Only with
+  `bSyncQuests`. `net status`: terminals: sent= heard= made= failed= dropped=.
 - Not yet (quest terminals): only DN035's terminals; another quest whose terminals set its script's state needs its
   rows. The route terminals (SetRaceRoute) have no row. Two players at terminals at once, setting the same row to
   different values, each get the other's once they step away, so the two games end up swapped; the server stamps no
