@@ -50,7 +50,8 @@ The game's menus are Flash movies played by Scaleform GFx 4. Ours are ActionScri
 **Changing the look without restarting the game.** The panel loads its movie each time it opens, so a change only in `ui/` can
 be tried in a running game: run `tools/flash/build.sh MPMenu`, copy `dist/movies/MPMenu.swf` over the one in
 `Data/Interface/F4Multiplayer/`, then close the panel and open it again (`mpmenu close`, `mpmenu open` on the dev channel). Seen
-under CrossOver. A change in `src/`, or one that changes what the plugin passes to the movie (`SetPage`'s arguments, say), needs a
+under CrossOver, in the world with no other menu open: with the main or pause menu up, the panel kept showing the movie it had
+already loaded, and only a restart changed it. So check it took (`gfx F4MPMenu root 1` gives the panel's place). A change in `src/`, or one that changes what the plugin passes to the movie (`SetPage`'s arguments, say), needs a
 rebuild and a restart.
 
 On a Mac (docs/misc/MAC.md): `xmake build -y F4Multiplayer` with `XMAKE_CONFIGDIR=$PWD/.xmake/win`, then
@@ -150,6 +151,9 @@ At run time:
 - **The changelog** is a page off About, of the latest ten versions' `dist/RELEASE-*.md`, which the package copies to
   `F4SE/Plugins/F4Multiplayer/changelog/`. `src/game/UiReleaseNotes.h` picks them, and `ui/shared/f4mp/ui/Markdown.as` shows the little
   markdown they use: headings, lists, paragraphs, and inline code, bold and links as plain text. They're in English whatever the game's language.
+- **Typing.** A dialog with a place to type (`Dialog.as`) gets the keys in `OnButtonEvent`, turned to characters with `ToUnicode`, and
+  `ControlMap::SetTextEntryMode` keeps them from the game for as long: without it `o` worked the power armor's radio, and others the
+  Pip-Boy and VATS. The game gives a menu only a key's press and release, so the key repeat and the caret are ours. Nothing typed is logged.
 - **Threads.** Flash objects are written only inside a menu's own update (`AdvanceMovie`, hooked in its vtable for
   the main and pause menus, as the compass does for the HUD) or by the menu's own movie; anything that touches the
   game goes to the main thread (`MainThread::Post`).

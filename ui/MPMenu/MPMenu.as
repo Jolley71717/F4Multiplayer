@@ -49,7 +49,6 @@ package
 		private static const BODY_WIDTH:Number = 900;        // the panel's width, unless a row needs more
 		private static const BODY_SIZE:Number = 28;
 		private static const BODY_SHARE:Number = 0.55;       // of the panel's height, with many rows; a longer text scrolls
-		private static const BODY_ABOVE_BOTTOM:Number = 0;   // a text and its frame stop this far over the bottom inset
 		private static const STAGE_MARGIN:Number = 40;       // the stage's right side to the panel's widest
 		private static const LIST_SHARE:Number = 2 / 3;      // of the panel's width, on a page with text for its rows
 		private static const PLAYERS_SHARE:Number = 0.55;  // of the panel's width, for the rows beside a list of players: the same in every language, and room for the longest
@@ -223,7 +222,7 @@ package
 			background.addChild(Ground(width, height));
 			content.addChild(Brackets.Panel(width, height, TICK * scale, color, scale));
 
-			DrawLogo(width);
+			DrawLogo();
 			var bottom:Number = height - BOTTOM_INSET * scale;
 
 			// The rows start at the same place on every page: a line is kept for the page's status, whether it has one or not.
@@ -270,14 +269,14 @@ package
 			ShowChosen();
 		}
 
-		// The logo and the version after it, over the panel, outside it, the two centered on its width.
-		private function DrawLogo(a_width:Number):void
+		// The logo and the version after it, over the panel, outside it, the logo's left in line with the page's text.
+		private function DrawLogo():void
 		{
 			var logo:Logo = new Logo(LOGO_HEIGHT * scale, color);
 			logo.y = Math.round(-logo.height - LOGO_ABOVE * scale);
 			content.addChild(logo);
 			var version:TextField = Style.Text("v" + modVersion, VERSION_SIZE * scale, color, scale);
-			logo.x = Math.round((a_width - logo.width - VERSION_GAP * scale - version.width) / 2);
+			logo.x = Math.round(ROW_TEXT_INSET * scale + Style.TEXT_GUTTER);
 			version.x = Math.round(logo.x + logo.width + VERSION_GAP * scale);
 			version.y = Math.round(logo.y + logo.height - version.height + VERSION_RISE * scale);
 			content.addChild(version);
@@ -290,7 +289,7 @@ package
 			var bodyWidth:Number = a_width - ROW_TEXT_INSET * 2 * scale;
 			var body:TextField = BodyField(a_body, bodyWidth, a_markdown);
 			// With few rows the text has the room they leave, so a long text shows more of itself.
-			var left:Number = a_bottom - a_top - BODY_ABOVE_BOTTOM * scale;
+			var left:Number = a_bottom - a_top;
 			var room:Number = a_rows > 0 ? Math.max(a_height * BODY_SHARE, left - (a_rows + 0.5) * ROW_PITCH * scale) : left;
 			if (body.height > room) {
 				body = BodyField(a_body, bodyWidth - SCROLL_ROOM * scale, a_markdown);
@@ -325,7 +324,7 @@ package
 		{
 			var outer:Number = a_width - a_listWidth - PLAYERS_GAP * scale - TEXT_INSET * scale * 0.5;
 			var inset:Number = PLAYERS_INSET * scale;
-			var room:Number = a_bottom - a_top - BODY_ABOVE_BOTTOM * scale;
+			var room:Number = a_bottom - a_top;
 			players = Players(a_players, outer - inset * 2, true);
 			// The whole width, less the scrollbar's room only if it won't fit.
 			var scrolls:Boolean = players.height > room;

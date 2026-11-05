@@ -153,7 +153,7 @@ conversation, a Say or a scene, so it can't leave you held in dialogue the way t
 
 The dev channel drives it without the keyboard: `mpmenu open` opens the panel in the middle of the screen, `mpmenu panel` beside the
 main or pause menu's list, `mpmenu box` the message box; `mpmenu close` closes it. `mpmenu press <n>` presses a button of the page
-showing (0 is the way back, the rows are 1 and up, then the players), and `mpmenu` reports the page's buttons, counters and body text
+showing (0 is the way back, the rows are 1 and up, then the players), `mpmenu type <text>` types in a dialog, and `mpmenu` reports the page's buttons, counters and body text
 (line breaks shown as `/`; the channel's reply is a single line, as are all of these).
 `hotkeys` says why a key may be doing nothing: focus, `menuMode`, the console, which chord keys
 (Alt, Ctrl, Win) are down, each hotkey's code and whether it's down, and how many presses were

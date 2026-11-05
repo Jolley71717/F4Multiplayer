@@ -268,7 +268,6 @@ menu.hc_remove_password = Supprimer le mot de passe
 menu.pw_save = Enregistrer le mot de passe
 menu.pw_save_hint = Saisissez-le, puis appuyez sur Entrée ou choisissez ceci. Lettres, chiffres et ponctuation. Les joueurs de la session restent.
 menu.pw_make_up = En créer un
-menu.pw_make_up_hint = Huit lettres et chiffres impossibles à confondre. Les joueurs de la session restent.
 menu.pw_setting_hint = Le mot de passe pour héberger ou rejoindre une session. Tout le monde doit utiliser le même.
 menu.pw_line = Un mot de passe est défini. Vos amis le saisissent sous Mot de passe, dans leurs paramètres multijoueur.
 menu.pw_view = Voir le mot de passe

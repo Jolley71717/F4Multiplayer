@@ -283,7 +283,6 @@ menu.hc_remove_password = パスワードを削除
 menu.pw_save = パスワードを保存
 menu.pw_save_hint = 入力して Enter を押すか、これを選択します。英数字と記号が使えます。セッション中のプレイヤーはそのままです。
 menu.pw_make_up = 自動で作成
-menu.pw_make_up_hint = 紛らわしくない英数字8文字です。セッション中のプレイヤーはそのままです。
 menu.pw_setting_hint = セッションのホストや参加に使うパスワードです。全員が同じものを使う必要があります。
 menu.pw_line = パスワードが設定されています。フレンドはマルチプレイ設定の「パスワード」で入力します。
 menu.pw_view = パスワードを表示
