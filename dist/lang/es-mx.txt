@@ -262,7 +262,6 @@ menu.hc_remove_password = Quitar la contraseña
 menu.pw_save = Guardar contraseña
 menu.pw_save_hint = Escríbela y presiona Enter o elige esto. Letras, números y signos de puntuación. Los jugadores de la sesión se quedan.
 menu.pw_make_up = Crear una
-menu.pw_make_up_hint = Ocho letras y números que no se confunden entre sí. Los jugadores de la sesión se quedan.
 menu.pw_setting_hint = La contraseña para alojar o unirse a una sesión. Todos deben usar la misma.
 menu.pw_line = Hay una contraseña. Tus amigos la ingresan en Contraseña, en sus ajustes multijugador.
 menu.pw_view = Ver contraseña

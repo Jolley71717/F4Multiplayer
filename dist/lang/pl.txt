@@ -264,7 +264,6 @@ menu.hc_remove_password = Usuń hasło
 menu.pw_save = Zapisz hasło
 menu.pw_save_hint = Wpisz je, a następnie naciśnij Enter lub wybierz tę opcję. Litery, cyfry i znaki interpunkcyjne. Gracze w sesji pozostają.
 menu.pw_make_up = Utwórz automatycznie
-menu.pw_make_up_hint = Osiem liter i cyfr, których nie da się pomylić. Gracze w sesji pozostają.
 menu.pw_setting_hint = Hasło do hostowania sesji lub dołączania do niej. Wszyscy muszą używać tego samego.
 menu.pw_line = Hasło jest ustawione. Znajomi wpisują je w opcji Hasło w ustawieniach gry wieloosobowej.
 menu.pw_view = Pokaż hasło

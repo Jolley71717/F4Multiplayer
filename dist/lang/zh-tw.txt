@@ -262,7 +262,6 @@ menu.hc_remove_password = 移除密碼
 menu.pw_save = 儲存密碼
 menu.pw_save_hint = 輸入後按 Enter 或選擇此項。可使用字母、數字和標點。已在工作階段中的玩家不受影響。
 menu.pw_make_up = 自動產生
-menu.pw_make_up_hint = 八位不易混淆的字母和數字。已在工作階段中的玩家不受影響。
 menu.pw_setting_hint = 用於主持或加入工作階段的密碼。所有人必須使用相同的密碼。
 menu.pw_line = 已設定密碼。好友可在多人設定的「密碼」中輸入。
 menu.pw_view = 檢視密碼

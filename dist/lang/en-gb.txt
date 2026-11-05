@@ -284,7 +284,6 @@ menu.hc_remove_password = Remove the password
 menu.pw_save = Save password
 menu.pw_save_hint = Type it, then press Enter or choose this. Letters, digits and punctuation. Players already in the session stay.
 menu.pw_make_up = Make one up
-menu.pw_make_up_hint = Eight letters and digits that can't be mistaken for each other. Players already in the session stay.
 menu.pw_setting_hint = The password for hosting or joining a session. Everyone must use the same one.
 menu.pw_line = A password is set. Friends enter it under Password in their multiplayer settings.
 menu.pw_view = View password

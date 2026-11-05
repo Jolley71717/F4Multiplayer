@@ -21,6 +21,7 @@ package f4mp.ui
 		// The game's menu movies are 1280x720, shown whole; ours are made the same (tools/flash/build.sh).
 		public static const STAGE_W:Number = 1280;
 		public static const STAGE_H:Number = 720;
+		public static const TEXT_GUTTER:Number = 2;  // Flash's, between a text field's edge and its text
 		private static const SHADOW_ALPHA:Number = 0.4;
 		private static const SHADOW_SHARE:Number = 0.6;  // of the scale, down and right
 		private static const SHADOW_LEAST:Number = 0.3;
