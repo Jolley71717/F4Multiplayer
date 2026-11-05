@@ -183,6 +183,8 @@ namespace Config
 				settings.runInBackground = ParseBool(value);
 			} else if (key == "bCompassMarkers") {
 				settings.compassMarkers = ParseBool(value);
+			} else if (key == "bTalkHud") {
+				settings.talkHud = ParseBool(value);
 			} else if (key == "bMenuIcons") {
 				settings.menuIcons = ParseBool(value);
 			} else if (key == "bSyncTime") {
@@ -209,6 +211,11 @@ namespace Config
 				settings.voiceOpenMic = ParseBool(value);
 			} else if (key == "iKeyVoice") {
 				ParseInt(value, settings.keyVoice, 16);
+			} else if (key == "iVoiceVolume") {
+				ParseInt(value, settings.voiceVolume);
+				settings.voiceVolume = std::clamp<std::uint32_t>(settings.voiceVolume, 0, 200);
+			} else if (key == "sVoiceOutput") {
+				settings.voiceOutput = std::string(value);
 			} else if (key == "fVoiceRange") {
 				float range = settings.voiceRange;
 				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), range);

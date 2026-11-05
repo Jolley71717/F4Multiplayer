@@ -30,11 +30,22 @@ namespace Party
 	// One line per other player (name, marker, health, level, where), as the player list shows them.
 	[[nodiscard]] std::vector<std::string> PlayerLines();
 
+	// The same for the multiplayer menu's list of players: "RRGGBB<tab>shape<tab>name<tab>health and level<tab>place and distance".
+	[[nodiscard]] std::vector<std::string> PanelPlayers();
+	// One player's row of it, "" if they're gone.
+	[[nodiscard]] std::string PanelPlayer(std::uint32_t a_id);
+
 	// What the hotkeys do, also reachable from dev commands.
 	void ShowPlayerList();
 	// Each friend's distance and direction on the HUD (the iKeyWhere hotkey).
 	void ShowWhere();
 	void PickTeleportTarget();
+	// Teleports to this player, with the same checks as the key.
+	void TeleportTo(std::uint32_t a_id);
+	// Why teleporting wouldn't work now, for the menu to say; "" if nothing stops it.
+	[[nodiscard]] std::string TeleportProblem();
+	// One player's line of PlayerLines, "" if they're gone.
+	[[nodiscard]] std::string PlayerLine(std::uint32_t a_id);
 	void TeleportToTarget();
 	void SendPing();
 

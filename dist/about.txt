@@ -1,0 +1,15 @@
+F4Multiplayer is a multiplayer mod for Fallout 4, free under the GPL.
+
+It is in alpha: expect bugs, and keep backups of the saves you care about.
+
+Four players, or more if the host allows it, share one world over Steam or a LAN. Each player keeps their own save. Friends see each other with their own face, gear and name.
+
+NPC AI is shared between games, and enemies can fight any player. Deaths, loot, pickups, doors, locks and side quests are synced, and so is the main story unless the host gives each player their own.
+
+Friends may have other mods, or the same ones in another order. What comes from a mod only one player has is left out in the other games, and Compare mods names the ones that differ.
+
+Each friend is a stand-in in your game, with the gear from their own save. You can't loot, trade with or talk to a stand-in.
+
+Something broke? Report it on the project's GitHub page. It helps to say which version you play, whether you were the host or joined, how you were connected, your mods, and the steps that led to it. Your log is in Documents/My Games/Fallout4/F4SE/F4Multiplayer.log. It names other players only as player N.
+
+The project is at github.com/Jolley71717/F4Multiplayer, built with F4SE and CommonLibF4.

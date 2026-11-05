@@ -117,9 +117,9 @@ function Find-VisualStudio([string]$Versions) {
 	return "$($found[0])".Trim()
 }
 
-# The plugin's own menu movies to package: ui\<Name>\<Name>.swf for every ui\<Name>\<Name>.as (ui\shared holds only
+# The plugin's own menu movies to package: <Name>.swf for every ui\<Name>\<Name>.as (ui\shared holds only
 # code they share), compiled from source. $Movies is the folder package.yml compiles them into on GitHub; without it,
-# each is read from beside its source, where tools\flash\build.ps1 builds it on this PC, and one that git tracks is
+# each is read from dist\movies, where tools\flash\build.ps1 builds it on this PC, and one that git tracks is
 # refused: what ships is built from source, never a committed binary. No ui\ folder, no movies.
 function Get-MenuMovies([string]$Root, [string]$Movies) {
 	$ui = Join-Path $Root 'ui'
@@ -137,9 +137,9 @@ function Get-MenuMovies([string]$Root, [string]$Movies) {
 		if ($Movies) {
 			$file = Join-Path $Movies "$name.swf"
 		} else {
-			$file = Join-Path $ui "$name\$name.swf"
-			if (git -C $Root ls-files -- "ui/$name/$name.swf") {
-				throw "ui/$name/$name.swf is committed: a package holds only movies built from source (tools\flash\build.ps1, or package.yml)"
+			$file = Join-Path $Root "dist\movies\$name.swf"
+			if (git -C $Root ls-files -- "dist/movies/$name.swf" "ui/$name/$name.swf") {
+				throw "$name.swf is committed: a package holds only movies built from source (tools\flash\build.ps1, or package.yml)"
 			}
 		}
 		if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {

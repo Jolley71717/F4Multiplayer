@@ -16,7 +16,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
-#include "game/Menu.h"
+#include "game/UiPages.h"
 #include "game/MenuKinds.h"
 #include "game/TeleportRules.h"
 #include "game/NpcSync.h"
@@ -417,28 +417,61 @@ namespace Party
 			return "?";
 		}
 
-		std::string Describe(const RemotePlayers::Info& a_player)
+		// How a friend is and where, as it follows their name: " (100% HP, level 1) - Sanctuary Hills, 7 m".
+		// How a friend is and where: each part "" when there's nothing to say.
+		struct Details
 		{
-			std::string out = std::format("{} [{}]", a_player.name, Compass::MarkerName(a_player.id));
-			const auto  it = known.find(a_player.id);
-			if (it != known.end() && it->second.hasStatus) {
+			std::string state;     // health and level, or that they are down or dead
+			std::string place;     // the place they say they are in
+			std::string position;  // how far off, or that they can't be reached or are loading
+		};
+
+		Details DetailsParts(const RemotePlayers::Info& a_player)
+		{
+			Details out;
+			if (const auto it = known.find(a_player.id); it != known.end() && it->second.hasStatus) {
 				const auto& status = it->second.status;
-				out += " (" + (status.downed ? Text::Get("player.down") : status.health == 0 ? Text::Get("player.dead") :
-				                                                                                  Text::Format("player.status", { { "hp", status.health }, { "level", status.level } })) + ")";
-				if (auto place = PlaceName(status.location, status.cell); !place.empty()) {
-					out += " - " + place;
-				}
+				out.state = status.downed ? Text::Get("player.down") : status.health == 0 ? Text::Get("player.dead") :
+				                                                                            Text::Format("player.status", { { "hp", status.health }, { "level", status.level } });
+				out.place = PlaceName(status.location, status.cell);
 			}
 			if (a_player.unreachable) {
-				out += ", " + Text::Get("player.unreachable");  // not "loading" and not where they last were
+				out.position = Text::Get("player.unreachable");  // not "loading" and not where they last were
 			} else if (a_player.state) {
-				if (auto distance = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y); !distance.empty()) {
-					out += ", " + distance;
-				}
+				out.position = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y);
 			} else {
-				out += ", " + Text::Get("player.loading");
+				out.position = Text::Get("player.loading");
 			}
 			return out;
+		}
+
+		std::string DetailsOf(const RemotePlayers::Info& a_player)
+		{
+			const auto  details = DetailsParts(a_player);
+			std::string out;
+			if (!details.state.empty()) {
+				out += " (" + details.state + ")";
+			}
+			if (!details.place.empty()) {
+				out += " - " + details.place;
+			}
+			if (!details.position.empty()) {
+				out += ", " + details.position;
+			}
+			return out;
+		}
+
+		// A row of the panel's list of players: color, marker, name, how they are, where.
+		std::string PanelRow(const RemotePlayers::Info& a_player)
+		{
+			const auto details = DetailsParts(a_player);
+			const auto where = details.place.empty() || details.position.empty() ? details.place + details.position : details.place + ", " + details.position;
+			return std::format("{:06X}\t{}\t{}\t{}\t{}", Compass::MarkerColor(a_player.id), Compass::MarkerShape(a_player.id), a_player.name, details.state, where);
+		}
+
+		std::string Describe(const RemotePlayers::Info& a_player)
+		{
+			return std::format("{} [{}]{}", a_player.name, Compass::MarkerName(a_player.id), DetailsOf(a_player));
 		}
 
 		// How far and which way a friend is ("30 m NE"), or where they are when that is elsewhere, or that they are loading.
@@ -818,7 +851,7 @@ namespace Party
 			for (const auto action : Hotkeys::Poll()) {
 				// The menu is how you get into a session, so it doesn't need one.
 				if (action == Hotkeys::Action::kMenu) {
-					Menu::Open();
+					UiPages::OpenFromKey();
 					continue;
 				}
 				if (localId == 0) {
@@ -1055,6 +1088,21 @@ namespace Party
 		return lines;
 	}
 
+	std::string PanelPlayer(std::uint32_t a_id)
+	{
+		const auto player = FindPlayer(a_id);
+		return player ? PanelRow(*player) : std::string{};
+	}
+
+	std::vector<std::string> PanelPlayers()
+	{
+		std::vector<std::string> rows;
+		for (const auto& player : RemotePlayers::List()) {
+			rows.push_back(PanelRow(player));
+		}
+		return rows;
+	}
+
 	void ShowPlayerList()
 	{
 		const auto players = RemotePlayers::List();
@@ -1093,6 +1141,25 @@ namespace Party
 		}
 		teleportTarget = next->id;
 		Hud::Notify(Text::Format("party.teleport_prompt", { { "player", Describe(*next) }, { "key", KeyName(Config::Get().keyTeleport) } }));
+	}
+
+	void TeleportTo(std::uint32_t a_id)
+	{
+		teleportTarget = a_id;
+		TeleportToTarget();
+	}
+
+	std::string TeleportProblem()
+	{
+		const auto player = Player();
+		const auto reason = player ? TeleportBlocked(player) : std::string{};
+		return reason.empty() ? std::string{} : Text::Get(reason);
+	}
+
+	std::string PlayerLine(std::uint32_t a_id)
+	{
+		const auto player = FindPlayer(a_id);
+		return player ? Describe(*player) : std::string{};
 	}
 
 	void TeleportToTarget()

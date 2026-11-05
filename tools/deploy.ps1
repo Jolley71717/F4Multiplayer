@@ -23,5 +23,24 @@ if (-not (Test-Path $ini)) {
 $lang = Join-Path $plugins 'F4Multiplayer\lang'
 New-Item -ItemType Directory -Force $lang | Out-Null
 Copy-Item (Join-Path $root 'dist\lang\*.txt') $lang -Force
+Copy-Item (Join-Path $root 'dist\about.txt') (Join-Path $plugins 'F4Multiplayer') -Force
+# This version's release notes, for the About page's link, if it has them yet.
+$version = (Select-String -Path (Join-Path $root 'xmake.lua') -Pattern 'set_version\("([^"]+)"\)').Matches[0].Groups[1].Value
+$releaseNotes = Join-Path $root "dist\RELEASE-$version.md"
+$deployedNotes = Join-Path $plugins 'F4Multiplayer\release-notes.md'
+if (Test-Path $releaseNotes) { Copy-Item $releaseNotes $deployedNotes -Force } else { Remove-Item $deployedNotes -Force -ErrorAction SilentlyContinue }
+# The plugin's own menu movies, compiled from ui\<Name>\ when one is missing or older than its sources (git holds no movies).
+$interface = Join-Path $GamePath 'Data\Interface\F4Multiplayer'
+New-Item -ItemType Directory -Force $interface | Out-Null
+$ui = Join-Path $root 'ui'
+$sources = @(Get-ChildItem $ui -Recurse -File -Filter '*.as')
+$newest = ($sources | Measure-Object LastWriteTimeUtc -Maximum).Maximum
+Get-ChildItem $ui -Directory | Where-Object { $_.Name -ne 'shared' } | ForEach-Object {
+	$movie = Join-Path $root "dist\movies\$($_.Name).swf"
+	if (-not (Test-Path $movie) -or (Get-Item $movie).LastWriteTimeUtc -lt $newest) {
+		& (Join-Path $PSScriptRoot 'flash\build.ps1') -Names $_.Name
+	}
+	Copy-Item $movie $interface -Force
+}
 
 "Deployed to $plugins"

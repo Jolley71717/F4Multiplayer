@@ -87,6 +87,9 @@ namespace Config
 		// is behind loading-screen crashes.
 		bool compassMarkers = true;
 
+		// A microphone and its level near the bottom of the screen while transmitting (bTalkHud; UiTalkHud).
+		bool talkHud = true;
+
 		// An icon over a friend's stand-in while they are in the Pip-Boy or another menu (bMenuIcons; MenuIcons). Off, and
 		// not in the shipped ini: on the rig the HUD showed it only in part, or where it was first drawn (docs/DESIGN.md,
 		// Menus). Their stand-in raises its Pip-Boy and its name tag says so either way.
@@ -124,6 +127,8 @@ namespace Config
 		bool          voiceOpenMic = false;
 		std::uint32_t keyVoice = 0x05;  // mouse side button (back)
 		float         voiceRange = 60.0f;
+		std::uint32_t voiceVolume = 100;  // percent, friends' voices
+		std::string   voiceOutput;        // the device they play on, by name; "" = the system's default
 
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
