@@ -62,6 +62,10 @@ namespace UiPanel
 		std::atomic<bool>          capturing{ false };  // the next key is a keybind's
 		std::atomic<bool> typing{ false };  // every key is UiPages::PanelTyped's (CaptureText)
 		// The key last typed, held: the game gives a menu only its press and release, so the repeat is ours.
+		// The game's text mode holds back the menu's own events too: what moves in a dialog with a place to type is read as keys, and
+		// goes to the movie from its update. -1 Up, 1 Down.
+		std::atomic<int>  typingStep{ 0 };
+		std::atomic<bool> typingStepUp{ false };
 		std::atomic<std::uint32_t> repeatKey{ 0 };
 		std::atomic<std::uint32_t> repeatCharacter{ 0 };
 		std::atomic<std::int64_t>  repeatAt{ 0 };
@@ -290,6 +294,14 @@ namespace UiPanel
 						const std::array<GValue, 2> args{ GValue("Accept"), GValue(true) };
 						menuObj.Invoke("ProcessUserEvent", nullptr, args.data(), args.size());
 					}
+					if (const auto step = typingStep.exchange(0); step != 0) {
+						const std::array<GValue, 2> args{ GValue(step < 0 ? "Up" : "Down"), GValue(true) };
+						menuObj.Invoke("ProcessUserEvent", nullptr, args.data(), args.size());
+					}
+					if (typingStepUp.exchange(false)) {
+						const std::array<GValue, 2> args{ GValue("Up"), GValue(false) };  // either way: the repeat stops
+						menuObj.Invoke("ProcessUserEvent", nullptr, args.data(), args.size());
+					}
 				}
 				GameMenuBase::AdvanceMovie(a_timeDelta, a_time);
 			}
@@ -297,8 +309,28 @@ namespace UiPanel
 			// The game's user events go on to the movie (ProcessUserEvent), but for the way back out, read here.
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
-				// Before anything else, and never logged: it may be a password. What types goes to the text; Enter, Esc, Tab, the arrows and
-				// the rest work the dialog as ever.
+				// Before anything else, and never logged: it may be a password. What types goes to the text; the arrows or the D-pad and Enter
+				// or A work the dialog, and Esc, Tab, B and the rest go on as ever.
+				if (a_event && typing && (a_event->device.get() == RE::INPUT_DEVICE::kKeyboard || a_event->device.get() == RE::INPUT_DEVICE::kGamepad)) {
+					const bool keys = a_event->device.get() == RE::INPUT_DEVICE::kKeyboard;
+					const std::uint32_t code = a_event->QIDCode();
+					constexpr std::uint32_t KEY_UP = 0x26, KEY_DOWN = 0x28, PAD_UP = 0x0001, PAD_DOWN = 0x0002, PAD_A = 0x1000;  // Windows virtual keys, XInput's buttons
+					const int step = code == (keys ? KEY_UP : PAD_UP) ? -1 : code == (keys ? KEY_DOWN : PAD_DOWN) ? 1 : 0;
+					if (step != 0) {
+						if (a_event->QJustPressed()) {
+							typingStep = step;
+						} else if (a_event->QReleased()) {
+							typingStepUp = true;
+						}
+						return;
+					}
+					if (code == (keys ? UiKeyNames::ENTER : PAD_A)) {
+						if (a_event->QJustPressed()) {
+							acceptWaiting = true;
+						}
+						return;
+					}
+				}
 				if (a_event && typing && a_event->QJustPressed() && a_event->device.get() == RE::INPUT_DEVICE::kKeyboard) {
 					const auto key = a_event->QIDCode();
 					const auto character = key == UiKeyNames::ENTER || key == UiKeyNames::ESCAPE || key == UiKeyNames::TAB ? 0 : CharacterOf(key);
