@@ -6,7 +6,7 @@
 
 // The keys a player can bind in the multiplayer menu: what each is called, and which can't be had. Windows virtual keys, as
 // the ini holds them and Hotkeys reads them. Kept free of the game so it can be tested.
-namespace KeyNames
+namespace UiKeyNames
 {
 	inline constexpr std::uint32_t BACKSPACE = 0x08;
 	inline constexpr std::uint32_t TAB = 0x09;
