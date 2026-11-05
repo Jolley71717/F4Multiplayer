@@ -3364,7 +3364,7 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | friends | refresh | selftest send|recv]";
 		}
 
-		// mpmenu [open | close | panel | box | press <buttonIndex> | type <text>]: the multiplayer menu, driven without the keyboard. type is for the password page. open is
+		// mpmenu [open | close | panel | box | press <buttonIndex> | type <text> | mouse <x> <y> [click]]: the multiplayer menu, driven without the keyboard. type is for the password page. open is
 		// the menu key's, in the middle of the screen; panel is the Multiplayer entry's, beside the main menu's list; box is the message box
 		// it falls back to. Button 0 is the page's way back and the rows are 1 and up.
 		std::string MpMenu(std::string_view a_args)

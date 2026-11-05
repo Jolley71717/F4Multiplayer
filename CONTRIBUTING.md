@@ -43,7 +43,8 @@ If you already cloned without submodules: `git submodule update --init --recursi
 The multiplayer menu's Flash movies are compiled from `ui/` and never committed; a pull request holds only the
 ActionScript. Building the plugin needs nothing more, but seeing the menu in a game needs **Java** (8 or later):
 `tools\deploy.ps1` and `tools/crossovermac.sh deploy` run `tools\flash\build.ps1` (`tools/flash/build.sh`) when a movie is
-missing or older than its sources, which fetches the pinned compiler once into your user folder. See
+missing or older than its sources, which fetches the pinned compiler once into your user folder. Without Java they
+warn and deploy the rest; `-Movies <folder>` (`--movies <folder>`) deploys movies the Package workflow compiled. See
 [docs/UI.md](docs/UI.md).
 
 On a Mac: [docs/misc/MAC.md](docs/misc/MAC.md).

@@ -426,8 +426,7 @@ namespace Party
 			return "?";
 		}
 
-		// How a friend is and where, as it follows their name: " (100% HP, level 1) - Sanctuary Hills, 7 m".
-		// How a friend is and where: each part "" when there's nothing to say.
+		// How a friend is and where, as it follows their name (" (100% HP, level 1) - Sanctuary Hills, 7 m"): each part "" when there's nothing to say.
 		struct Details
 		{
 			std::string state;     // health and level, or that they are down or dead

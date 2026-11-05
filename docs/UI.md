@@ -12,7 +12,7 @@ menus (seen so far under CrossOver only). What is still to check, and the plan, 
 | The MULTIPLAYER entry in the main and pause menus, after LOAD | [src/game/UiMainMenuEntry.cpp](../src/game/UiMainMenuEntry.cpp), placement rule in [UiMainMenuPlace.h](../src/game/UiMainMenuPlace.h) (unit tested) |
 | Our menu (F4MPMenu in the game's UI), opened by the entry | [src/game/UiPanel.cpp](../src/game/UiPanel.cpp) |
 | Its movie, `Interface/F4Multiplayer/MPMenu.swf` | [ui/MPMenu/MPMenu.as](../ui/MPMenu/MPMenu.as), compiled into `dist/movies/` and never committed |
-| Pieces for other movies: look, brackets, command bar, entry list | [ui/shared/f4mp/ui/](../ui/shared/f4mp/ui/) (`Style`, `Brackets`, `BackHint`, `EntryList`, `ScrollBar`) |
+| Pieces for other movies: look, brackets, command bar, entry list | [ui/shared/f4mp/ui/](../ui/shared/f4mp/ui/) (`Style`, `Brackets`, `CommandBar`, `EntryList`, `ScrollBar`) |
 | The compiler, pinned | [tools/flash/fetch.sh](../tools/flash/fetch.sh) |
 | Building the movies | [tools/flash/build.sh](../tools/flash/build.sh), [build.ps1](../tools/flash/build.ps1) |
 
@@ -32,8 +32,9 @@ The game's menus are Flash movies played by Scaleform GFx 4. Ours are ActionScri
 - **Movies are never committed**: a pull request holds only `ui/`, and git ignores `dist/movies/`, where they compile to. Every movie a player
   gets is compiled from source on GitHub's machines (the Package workflow, docs/RELEASING.md), and `vet.yml` checks the
   toolchain and compiles the same sources. Building the plugin and its tests needs no Java. `tools\deploy.ps1` and
-  `tools/crossovermac.sh deploy` compile a movie that is missing or older than its sources, so playing a build you
-  made needs Java. Without a movie the plugin falls back to the message-box menu. `dist/movies/<Name>.sources`
+  `tools/crossovermac.sh deploy` compile a movie that is missing or older than its sources when Java is there, and
+  take the Package workflow's compiled `movies` instead with `-Movies <folder>` (`--movies <folder>`). A movie they
+  can't have is a warning, not a failed deploy: without one the plugin falls back to the message-box menu. `dist/movies/<Name>.sources`
   records what a local movie was built from.
 - `tools/flash/build.sh [Name]` builds each `ui/<Name>/<Name>.as` (with `ui/shared` on the source path) into
   `dist/movies/<Name>.swf`, uncompressed, at **SWF 15**, the game's own version (Flash Player 11.2), against playerglobal 32.0 linked
@@ -114,7 +115,7 @@ At run time:
 - **Keyboard or gamepad.** `IMenu::RefreshPlatform` calls the movie's `SetPlatform(platform, psn)`; 0 is the keyboard
   and mouse. Call it again after setting the code object if the movie answers through it.
 - **The look.** The HUD color from the game's `iHUDColorR/G/B:Interface` settings; the game's `$MAIN_Font`; the hard
-  shadow (black, no blur, equal down and right); panel brackets as two-pixel lines (one looks too thin through the renderer). Controller glyphs are letters in the game's `$Controller_buttons` font:
+  shadow (black, no blur, equal down and right); panel brackets as 1.5-pixel lines (`Brackets.THICK`: one looks too thin through the renderer). Controller glyphs are letters in the game's `$Controller_buttons` font:
   `Shared.AS3.BSButtonHint`'s `NameToTextMap` gives Xenon_A "A", Xenon_B "B", Xenon_X "C", Xenon_Y "D",
   Xenon_Select "E", Xenon_LS "F", Xenon_L1 "G", Xenon_L3 "H", Xenon_L2 "I", … Xenon_Start "O" (PlayStation has a map of
   its own, not read yet).
@@ -123,7 +124,7 @@ At run time:
   was seen under CrossOver, not how the renderer is known to work: ours drew only where its `shaderFXObjects` (`BSGFxShaderFXTarget`s)
   gave a quad, though the main menu draws far more than its few cached quads, so there is more to it:
   - With no target, or one with no filter (it makes no quad), a sliver of the movie shows. A target on the movie's root has an empty
-    quad. So the targets go on objects with a size: `Content_mc` and `Hint_mc`. (F4SE's `CustomMenu` shows where to look: its
+    quad. So the targets go on objects with a size: `Content_mc` and `CommandBar_mc`. (F4SE's `CustomMenu` shows where to look: its
     `filterHolder`, a target on the root.)
   - A target needs a filter to make a quad. The no-color one (`kNoColorMultiplier`) draws the movie's colors black; a white one
     (`CreateAndSetFiltersToColor(255, 255, 255, 1)`) leaves them as they are.

@@ -25,7 +25,7 @@ namespace Hotkeys
 
 		struct Key
 		{
-			bool              down = false;      // down and counted (focus, no menu, no chord)
+			bool              down = false;      // the teleport key: a press that began in play and is still held
 			bool              physical = false;  // down at all
 			bool              held = false;      // the hold action fired for this press
 			Clock::time_point since{};
@@ -208,17 +208,21 @@ namespace Hotkeys
 		// Teleport: a tap picks, a hold goes.
 		const bool teleportPhysical = IsDown(settings.keyTeleport);
 		anyHotkey |= teleportPhysical;
-		const bool down = active && teleportPhysical;
-		if (down && !teleport.down) {
+		// A press counts only from when the key goes down, as for the others: not when a menu closes with it still held.
+		if (active && teleportPhysical && !teleport.physical) {
+			teleport.down = true;
 			teleport.since = now;
 			teleport.held = false;
-		} else if (down && !teleport.held && now - teleport.since >= HOLD_TIME) {
+		} else if (teleport.down && !(active && teleportPhysical)) {
+			if (active && !teleport.held) {
+				actions.push_back(Action::kTeleportPick);
+			}
+			teleport.down = false;
+		} else if (teleport.down && !teleport.held && now - teleport.since >= HOLD_TIME) {
 			teleport.held = true;
 			actions.push_back(Action::kTeleportGo);
-		} else if (!down && teleport.down && !teleport.held && active) {
-			actions.push_back(Action::kTeleportPick);
 		}
-		teleport.down = down;
+		teleport.physical = teleportPhysical;
 		actionsFired += actions.size();
 		WatchKeys(active, anyHotkey);
 		return actions;

@@ -141,6 +141,19 @@ namespace UiPages
 			modsShowing = false;  // ShowMods says so after this
 			// The panel: no limit on buttons, and the first, the page's way back (see ShowPaged), is Esc rather than a row.
 			if (inPanel) {
+				// A redraw of the same rows in place (the main page as a friend's distance changes) keeps the serial, so a
+				// press made as it was drawn still counts: by its place, it means the same button.
+				const auto sameRows = [&] {
+					if (!page.keepRow || a_buttons.size() != buttons.size()) {
+						return false;
+					}
+					for (std::size_t i = 0; i < buttons.size(); ++i) {
+						if (Clean(a_buttons[i].label) != buttons[i].label || a_buttons[i].listed != buttons[i].listed) {
+							return false;
+						}
+					}
+					return true;
+				}();
 				buttons = std::move(a_buttons);
 				std::vector<std::string> rows;
 				std::vector<std::string> hints;
@@ -152,7 +165,9 @@ namespace UiPages
 						hints.push_back(Clean(buttons[i].hint));
 					}
 				}
-				++serial;
+				if (!sameRows) {
+					++serial;
+				}
 				++pagesShown;
 				lastBody = Clean(a_body);
 				page.serial = serial;
@@ -621,12 +636,9 @@ namespace UiPages
 			std::vector<Button> rows{ { Text::Get("menu.back"), ShowMain },
 				{ Text::Format("menu.teleport_to", { { "player", name } }), [a_id] { Party::TeleportTo(a_id); }, std::move(problem) } };
 			if (Session::GetStatus().hosting) {
-				// What each does: the Kick or ban page's text, a line each after the player's name.
-				const auto explained = Text::Format("menu.hc_player", { { "player", name } });
-				const auto kick = explained.find('\n');
-				const auto ban = kick == std::string::npos ? std::string::npos : explained.find('\n', kick + 1);
-				rows.push_back({ Text::Format("menu.hc_kick", { { "player", name } }), RemovePlayer(a_id, name, false, ShowMain), ban == std::string::npos ? std::string{} : explained.substr(kick + 1, ban - kick - 1) });
-				rows.push_back({ Text::Format("menu.hc_ban", { { "player", name } }), RemovePlayer(a_id, name, true, ShowMain), ban == std::string::npos ? std::string{} : explained.substr(ban + 1) });
+				// What each does, as the Kick or ban page says it.
+				rows.push_back({ Text::Format("menu.hc_kick", { { "player", name } }), RemovePlayer(a_id, name, false, ShowMain), Text::Get("menu.hc_kick_hint") });
+				rows.push_back({ Text::Format("menu.hc_ban", { { "player", name } }), RemovePlayer(a_id, name, true, ShowMain), Text::Get("menu.hc_ban_hint") });
 			}
 			nextPage.header = Party::PanelPlayer(a_id);
 			Show({}, std::move(rows));
@@ -641,7 +653,7 @@ namespace UiPages
 				return;
 			}
 			const auto removed = [a_id, name](bool a_ban) { return RemovePlayer(a_id, name, a_ban, [] { ShowHostPlayers(0); }); };
-			Show(Text::Format("menu.hc_player", { { "player", name } }),
+			Show(name + "\n" + Text::Get("menu.hc_kick_hint") + "\n" + Text::Get("menu.hc_ban_hint"),
 				{ { Text::Get("menu.back"), [] { ShowHostPlayers(0); } }, { Text::Format("menu.hc_kick", { { "player", name } }), removed(false) },
 					{ Text::Format("menu.hc_ban", { { "player", name } }), removed(true) } });
 		}
