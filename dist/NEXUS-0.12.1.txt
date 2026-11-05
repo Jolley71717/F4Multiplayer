@@ -1,0 +1,4 @@
+Patch for 0.12.0: same protocol (60), plays with 0.12.0 (best if everyone has it)
+A loud looping sound (generator hum, rushing water) no longer starts with multiplayer notices and builds up until you reload
+The camera no longer stays stuck after being downed again right as a friend helps you up
+Full notes on GitHub
