@@ -1,6 +1,12 @@
 {
- "release": "0.10.0",
- "updated": "2026-11-05T21:01:22+00:00",
+ "release": "0.13.0",
+ "known_issues": [
+  "Workshop conveyor belts (Contraptions) run in the builder's game but not a friend's. A fix is waiting for a test.",
+  "A workbench is shared only at settlements the host owns.",
+  "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
+  "Players whose mods change the leveled lists differently can still see different enemies."
+ ],
+ "updated": "2026-11-05T21:28:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -306,14 +312,6 @@
    "pr": 302
   },
   {
-   "id": "5syl",
-   "title": "Rig: smoke's floating-NPC check flags a corpse left by hits.sh; hits.sh kill set-up fails when the runner's shots miss",
-   "kind": "feature",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "5ylb",
    "title": "A legendary enemy in one game is a normal one in another",
    "kind": "bug",
@@ -350,14 +348,6 @@
    "note": "Fixed for the next release; we couldn't test a face that large, so it still needs confirming.",
    "pr": 155,
    "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
-  },
-  {
-   "id": "6frn",
-   "title": "hits.sh: the second phase runs out of fresh raiders the VM runs",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "6l6j",
@@ -533,14 +523,6 @@
    "pr": 285
   },
   {
-   "id": "adfa",
-   "title": "Rig check: a single empty VM clock read fails the power armor stand-in check",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "af5k",
    "title": "A friend in power armor slides along without walking",
    "kind": "bug",
@@ -582,14 +564,6 @@
    "title": "Multiplayer menu: About would show the rc's notes in a promoted release",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "bau3",
-   "title": "Rig checks: the rc's 90-minute run covers the newer features with asserting steps",
-   "kind": "feature",
-   "priority": 1,
    "stage": 0,
    "note": ""
   },
@@ -838,14 +812,6 @@
    "stage": 7,
    "note": "",
    "pr": 223
-  },
-  {
-   "id": "ev19",
-   "title": "hits.sh: runner's own shots at the VM-run pause raider miss at every spot",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "ezvl",
@@ -1400,14 +1366,6 @@
    "pr": 298
   },
   {
-   "id": "pbne",
-   "title": "Rig check messages: trace.sh run reports 0 ms drift when the second clock reading fails; two messages blame ssh for 'no steady reading'; one error can show a blank count",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "pcg4",
    "title": "Doors and gates opened by scripts stay shut for friends (Vault 114)",
    "kind": "bug",
@@ -1619,14 +1577,6 @@
   {
    "id": "se4h",
    "title": "Shared bench: a refused build the guest can't pay for stands short",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "siyy",
-   "title": "Rig: PA moving-distance check fails when the VM clock reading after the trace comes back empty",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
