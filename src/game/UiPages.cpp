@@ -7,6 +7,8 @@
 #include "game/UiKeyNames.h"
 #include "game/UiPasswordEntry.h"
 #include "game/UiPanel.h"
+#include "game/Voice.h"
+#include "game/VoiceSteps.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/RemotePlayers.h"
@@ -129,6 +131,8 @@ namespace UiPages
 
 		bool mainShowing = false;  // the main page is the one showing
 		int listeningFor = -1;     // the Keybinds row waiting for its key
+		bool voiceShowing = false; // the Voice page is the one showing
+		Clock::time_point nextVoiceDraw{};
 		bool modsShowing = false;  // the Mods page is the one showing, in the panel
 		std::string modsBody;      // what it says, to redraw when the host's answer changes that
 		Clock::time_point nextModsCheck{};
@@ -138,6 +142,7 @@ namespace UiPages
 			auto page = std::exchange(nextPage, {});
 			mainShowing = false;  // ShowMainPage says so after this
 			listeningFor = -1;    // ShowKeybinds says so after this
+			voiceShowing = false; // ShowVoice says so after this
 			modsShowing = false;  // ShowMods says so after this
 			// The panel: no limit on buttons, and the first, the page's way back (see ShowPaged), is Esc rather than a row.
 			if (inPanel) {
@@ -217,6 +222,7 @@ namespace UiPages
 
 		void ShowAbout();
 		void ShowKeybinds(int a_listening, std::string a_said);
+		void ShowVoice();
 		void ShowJoin(std::size_t a_page);
 		void ShowSettings(std::size_t a_page);
 
@@ -820,6 +826,7 @@ namespace UiPages
 			}
 			entries.push_back({ Text::Get("menu.settings"), [] { ShowSettings(0); } });
 			if (inPanel) {
+				entries.push_back({ Text::Get("menu.voice"), ShowVoice });
 				entries.push_back({ Text::Get("menu.keybinds"), [] { ShowKeybinds(-1, {}); } });
 				entries.push_back({ Text::Get("menu.about"), ShowAbout });
 			}
@@ -969,6 +976,70 @@ namespace UiPages
 			}
 		}
 
+		std::string VoiceStatus()
+		{
+			if (!Voice::MicTesting()) {
+				return Text::Get("menu.voice_mic_note");
+			}
+			const auto level = Voice::MicLevel();
+			return Text::Format("menu.mic_level", { { "bar", VoiceSteps::Bar(level) }, { "db", std::format("{:.0f}", level) } });
+		}
+
+		// Voice chat's settings and a mic test (the panel only: the message box has four buttons). The microphone itself is
+		// Steam's choice: its voice calls take no device.
+		void ShowVoice()
+		{
+			const auto& settings = Config::Get();
+			const auto  again = [] {
+				nextPage.keepRow = true;
+				ShowVoice();
+			};
+			const auto toggle = [&](const char* a_name, const char* a_what, bool Config::Settings::*a_value, const char* a_key) -> Button {
+				return { Text::Get(a_name), [=] {
+							auto&      s = Config::Mutable();
+							const bool now = !(s.*a_value);
+							s.*a_value = now;
+							Config::Write(a_key, now ? "true" : "false");
+							again();
+						},
+					Text::Get(a_what), OnOff(settings.*a_value) };
+			};
+			std::vector<Button> rows{ { Text::Get("menu.back"), [] { Voice::SetMicTest(false); ShowMain(); } } };
+			rows.push_back(toggle("menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat"));
+			rows.push_back(toggle("menu.open_mic", "menu.open_mic_what", &Config::Settings::voiceOpenMic, "bVoiceOpenMic"));
+			rows.push_back(toggle("menu.talk_hud", "menu.talk_hud_what", &Config::Settings::talkHud, "bTalkHud"));
+			rows.push_back({ Text::Get("menu.voice_volume"), [=] {
+								auto& s = Config::Mutable();
+								s.voiceVolume = VoiceSteps::Next(VoiceSteps::VOLUMES, s.voiceVolume);
+								Config::Write("iVoiceVolume", std::to_string(s.voiceVolume).c_str());
+								again();
+							},
+				Text::Get("menu.voice_volume_what"), std::format("{}%", settings.voiceVolume) });
+			rows.push_back({ Text::Get("menu.voice_range"), [=] {
+								auto& s = Config::Mutable();
+								s.voiceRange = VoiceSteps::Next(VoiceSteps::RANGES, s.voiceRange);
+								Config::Write("fVoiceRange", std::format("{:.0f}", s.voiceRange).c_str());
+								again();
+							},
+				Text::Get("menu.voice_range_what"), settings.voiceRange > 0.0f ? std::format("{:.0f} m", settings.voiceRange) : Text::Get("menu.voice_range_all") });
+			rows.push_back({ Text::Get("menu.voice_output"), [=] {
+								auto&      s = Config::Mutable();
+								const auto names = Voice::Outputs();
+								s.voiceOutput = VoiceSteps::NextOutput(names, s.voiceOutput);
+								Config::Write("sVoiceOutput", s.voiceOutput.c_str());
+								Voice::CloseOutputs();
+								again();
+							},
+				Text::Get("menu.voice_output_what"), settings.voiceOutput.empty() ? Text::Get("menu.voice_output_default") : settings.voiceOutput });
+			rows.push_back({ Text::Get("menu.mic_test"), [=] {
+								Voice::SetMicTest(!Voice::MicTesting());
+								again();
+							},
+				Text::Get("menu.mic_test_what"), OnOff(Voice::MicTesting()) });
+			Show(VoiceStatus(), std::move(rows));
+			voiceShowing = true;
+		}
+
 		void ShowSettings(std::size_t a_page)
 		{
 			const auto& settings = Config::Get();
@@ -1101,6 +1172,10 @@ namespace UiPages
 
 	void Frame()
 	{
+		// The mic test lasts as long as its page does, whichever way that goes.
+		if (Voice::MicTesting() && (!inPanel || !voiceShowing)) {
+			Voice::SetMicTest(false);
+		}
 		// The panel went (the game closed it for a load, say): the pages with it.
 		if (inPanel && !UiPanel::Showing()) {
 			REX::INFO("Menu: the panel has gone");
@@ -1158,6 +1233,11 @@ namespace UiPages
 				}
 				pending.show();
 			}
+		}
+		if (inPanel && voiceShowing && Voice::MicTesting() && Clock::now() >= nextVoiceDraw) {
+			nextVoiceDraw = Clock::now() + 100ms;
+			lastBody = Clean(VoiceStatus());
+			UiPanel::SetStatus(lastBody);
 		}
 		std::optional<ButtonPress> press;
 		{

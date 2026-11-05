@@ -28,6 +28,12 @@ function, `Show(body, buttons)`. That function gets a second output, the Flash p
 - The menu key (F1) opens the panel in the middle of the screen, and closes it from any page. The Multiplayer entry opens it
   beside the main menu's list. The message box stays as the fallback if the movie doesn't load.
 
+## Push-to-talk HUD
+
+`bTalkHud`, on by default. `ui/TalkHud` and `src/game/UiTalkHud.cpp`: while the player transmits, a microphone at about (907, 658) on the 1280x720 stage, between the crit meter and the fatigue head. Its inner bracket lights with speech and its outer one when loud; the microphone itself stays solid. Hosting with nobody there yet, the talk key still records and meters, sending nothing, so the icon can be tried alone. The level comes from decoding our own voice pieces (`VoiceLevel.h`). Its thresholds are guesses until set from real values: the log has each press's level. Friends who are talking could follow.
+
+**Voice**, on the main page of the panel: voice chat, open mic, the talk icon, voice volume, range, the output device, and a mic test that plays you back and shows your level, sending nothing to anyone. The mic itself is chosen in Steam's settings: its voice calls take no device.
+
 ## Main menu → Multiplayer
 
 ```

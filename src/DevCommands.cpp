@@ -37,6 +37,7 @@
 #include "game/MovedObjects.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
+#include "game/UiTalkHud.h"
 #include "game/Perf.h"
 #include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
@@ -4157,6 +4158,11 @@ namespace DevCommands
 			return "error: saveguard [strays | rtti <offset> | exclude <ref> | poison <ref> <name>]";
 		}
 
+		std::string TalkHudState(std::string_view)
+		{
+			return UiTalkHud::Describe();
+		}
+
 		struct Entry
 		{
 			std::string_view name;
@@ -4165,6 +4171,7 @@ namespace DevCommands
 
 		constexpr std::array COMMANDS{
 			Entry{ "status", Status },
+			Entry{ "talkhud", TalkHudState },
 			Entry{ "frames", Frames },
 			Entry{ "perf", PerfStats },
 			Entry{ "stall", Stall },

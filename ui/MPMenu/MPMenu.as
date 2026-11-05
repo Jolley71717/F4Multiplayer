@@ -547,6 +547,14 @@ package
 			return shape;
 		}
 
+		// The page's status line changed and nothing else, as often as it likes: the rows and the chosen one stay as they are.
+		public function SetStatus(a_text:String):void
+		{
+			if (bodyField != null) {
+				bodyField.text = a_text;
+			}
+		}
+
 		// Where the rows start under what ends at a_y, leaving the chevrons their room.
 		private function ListBelow(a_y:Number):Number
 		{

@@ -54,6 +54,7 @@ namespace UiPanel
 		// The page to draw: set on the main thread, taken in the menu's own update.
 		std::mutex          pageLock;
 		std::deque<Page>    nextPages;  // under pageLock; in order: a dialog can come with the page it goes over
+		std::optional<std::string> nextStatus;  // under pageLock
 
 		// Opened and not closed since. A menu going away counts only if it is the latest opened: one being hidden can
 		// go after the next has been asked for.
@@ -418,10 +419,16 @@ namespace UiPanel
 
 			void DrawPage()
 			{
-				std::deque<Page> pages;
+				std::deque<Page>           pages;
+				std::optional<std::string> status;
 				{
 					std::scoped_lock l{ pageLock };
 					pages.swap(nextPages);
+					status.swap(nextStatus);
+				}
+				if (status) {
+					const std::array<GValue, 1> args{ GValue(status->c_str()) };
+					menuObj.Invoke("SetStatus", nullptr, args.data(), args.size());
 				}
 				for (const auto& page : pages) {
 					page.dialog ? DrawDialog(page) : DrawFullPage(page);
@@ -510,6 +517,7 @@ namespace UiPanel
 			{
 				std::scoped_lock l{ pageLock };
 				nextPages.clear();
+				nextStatus.reset();
 			}
 			++opened;
 			wanted = true;
@@ -557,6 +565,13 @@ namespace UiPanel
 	{
 		std::scoped_lock l{ pageLock };
 		nextPages.push_back(std::move(a_page));
+		nextStatus.reset();
+	}
+
+	void SetStatus(std::string a_text)
+	{
+		std::scoped_lock l{ pageLock };
+		nextStatus = std::move(a_text);
 	}
 
 	void CaptureKey(bool a_on)
@@ -622,6 +637,11 @@ namespace UiPanel
 	bool Centered()
 	{
 		return centered;
+	}
+
+	std::uint32_t HudColor()
+	{
+		return ReadHudColor();
 	}
 
 	bool Showing()
