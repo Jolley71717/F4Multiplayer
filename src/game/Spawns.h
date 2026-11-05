@@ -42,7 +42,9 @@ namespace Spawns
 	// The spawn id our own NPC is shared under (not a copy's), 0 if none.
 	[[nodiscard]] std::uint32_t OwnIdOf(std::uint32_t a_local);
 
-	// The spawn our copy is of (not our own NPC's), 0 if it is no copy of ours.
+	// The spawn our copy is of (not our own NPC's), 0 if it is no copy of ours. Our quest's own creature paired with a
+	// friend's spawn from the same alias (QuestActors.h) counts as our copy of it: mirrored, its roll and factions theirs
+	// (it is never deleted, and saved as our game's: unpaired before every save).
 	[[nodiscard]] std::uint32_t CopyIdOf(std::uint32_t a_local);
 
 	// A friend's game shares one (kSpawned).

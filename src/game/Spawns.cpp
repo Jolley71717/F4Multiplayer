@@ -6,7 +6,11 @@
 #include "game/FrameLoans.h"
 #include "game/FrameShare.h"
 #include "game/NpcSync.h"
+#include "game/Official.h"
 #include "game/Puppets.h"
+#include "game/QuestActors.h"
+#include "game/QuestFilter.h"
+#include "game/RadiantRules.h"
 #include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
@@ -14,6 +18,7 @@
 #include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SpawnBook.h"
+#include "game/StageRules.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
 
@@ -41,6 +46,23 @@ namespace Spawns
 			HeldCopy::Ids       ids;
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
+
+		// Friends' spawns our game's own creature from the same quest alias stands for (QuestActors.h), by spawn id: ours,
+		// paired with theirs (Theirs::Placed names it as our copy, so NpcSync mirrors it and deaths and hits go by the spawn
+		// id). Never in placed: never deleted, never kept out of a save. Unpaired, it is our game's alone again.
+		std::unordered_map<std::uint32_t, RE::ObjectRefHandle> paired;
+		// When each friend's spawn named with an alias was last looked at for ours to pair (once a PAIR_LOOK at most), and
+		// whether ours was there (alive in that alias) though not to be paired yet: no copy beside it meanwhile.
+		struct PairLook
+		{
+			Clock::time_point at{};
+			bool              oursThere = false;
+		};
+		std::unordered_map<std::uint32_t, PairLook> pairLooked;
+		constexpr auto                              PAIR_LOOK = std::chrono::seconds(1);
+		std::uint32_t                               pairs = 0, unpairs = 0, keyedReported = 0, twinsHeld = 0, rollsRestored = 0;
+		std::unordered_map<std::uint32_t, Protocol::NpcIdentity> pairedOwn;  // by spawn id: ours as our game made it, before pairing
+		std::unordered_set<std::uint32_t>           twinsNoted;  // our NPCs held back as twins, each counted once
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
 		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
@@ -338,9 +360,205 @@ namespace Spawns
 			return handle;
 		}
 
-		// Deletes our copy of a spawn (the record stays, unplaced, unless the spawn is over).
+		// ---- A quest alias's creatures, paired across games (QuestActors.h) --------------------------------------------
+
+		QuestActors::Quest QuestFactsOf(const RE::TESQuest* a_quest)
+		{
+			QuestActors::Quest facts{ .official = Official::IsOfficialForm(a_quest), .flags = a_quest->data.flags, .type = a_quest->data.questType,
+				.radiant = RadiantRules::IsRadiant(a_quest->GetFormID()) };
+			const auto file = facts.official ? a_quest->GetFile(0) : nullptr;
+			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+			facts.perGame = index && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
+			facts.listed = index && QuestActors::IsListed(static_cast<std::uint8_t>(*index), a_quest->GetFormID());
+			return facts;
+		}
+
+		// Its race's flags; with no race, as if our player could talk to it (never taken for a creature).
+		std::uint32_t RaceFlags(const RE::Actor* a_actor)
+		{
+			return a_actor->race ? static_cast<std::uint32_t>(a_actor->race->data.flags) : QuestActors::RACE_ALLOWS_DIALOGUE;
+		}
+
+		struct AliasKey
+		{
+			std::uint32_t quest = 0;  // 0: none
+			std::uint16_t alias = 0;
+		};
+
+		// The quest alias that created our NPC, when that quest's creatures are paired across games (QuestActors::Keyed).
+		AliasKey KeyOf(RE::Actor* a_actor)
+		{
+			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return {};
+			}
+			const auto               race = RaceFlags(a_actor);
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest &&
+					QuestActors::Keyed(QuestFactsOf(entry.quest), entry.alias->fillType, race, entry.alias->aliasID)) {
+					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
+				}
+			}
+			return {};
+		}
+
+		// Whether a friend's live spawn names that alias (QuestActors::Twin).
+		bool HasTwin(const AliasKey& a_key)
+		{
+			if (a_key.quest == 0) {
+				return false;
+			}
+			for (const auto id : theirs.Ids()) {
+				if (const auto copy = theirs.Find(id); copy && QuestActors::Twin(copy->spawn, copy->dead || copy->gone, a_key.quest, a_key.alias)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// What our run of the quest a friend's spawn names holds in that alias, and whether it is ours to pair with it now.
+		struct PairCandidate
+		{
+			RE::NiPointer<RE::TESObjectREFR> ref;
+			bool                             oursThere = false;  // an NPC of ours, alive, is in the alias
+			bool                             pairs = false;      // QuestActors::Pairs
+		};
+
+		PairCandidate CandidateFor(const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us)
+		{
+			PairCandidate out;
+			QuestActors::PairFacts facts{ .keyed = a_copy.spawn.quest != 0, .over = a_copy.dead || a_copy.gone, .theirsAt = a_copy.at, .player = a_us };
+			const auto quest = facts.keyed ? RE::TESForm::GetFormByID<RE::TESQuest>(a_copy.spawn.quest) : nullptr;
+			if (!quest) {
+				return out;
+			}
+			const auto questFacts = QuestFactsOf(quest);
+			facts.questPairs = QuestActors::QuestPairs(questFacts);
+			const auto alias = std::ranges::find_if(quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == a_copy.spawn.alias; });
+			if (!facts.questPairs || alias == quest->aliases.end()) {
+				return out;
+			}
+			const char* type = (*alias)->QType().c_str();
+			if (!type || std::string_view{ type } != RE::BGSRefAlias::TYPE) {
+				return out;
+			}
+			out.ref = quest->GetAliasedRef(a_copy.spawn.alias).get();
+			const auto actor = out.ref ? out.ref->As<RE::Actor>() : nullptr;
+			const auto local = actor ? actor->GetFormID() : 0;
+			if (!actor || !Protocol::IsSpawnRef(local) || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
+				return out;
+			}
+			out.oursThere = true;
+			facts.ours = !actor->IsDisabled() && actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
+			             !NpcSync::IsOurCompanion(actor) && !Leaving(local);
+			facts.creature = QuestActors::Keyed(questFacts, (*alias)->fillType, RaceFlags(actor), (*alias)->aliasID);
+			// One our game reported and the server granted is ours (the server refuses a second game's report of the alias,
+			// so theirs could not be granted too); one reported and not answered yet will be refused, as this one's twin.
+			facts.shared = ours.IdOf(local) != 0 || theirs.IdOf(local) != 0;
+			if (facts.ours) {
+				facts.oursAt = SpotOf(actor);
+			}
+			out.pairs = QuestActors::Pairs(facts, SpawnBook::PLACE_RANGE);
+			return out;
+		}
+
+		void Unpair(std::uint32_t a_id, std::string_view a_why)
+		{
+			const auto it = paired.find(a_id);
+			if (it == paired.end()) {
+				return;
+			}
+			const auto copy = theirs.Find(a_id);
+			NpcSync::DropMirror(a_id);  // its AI is its own again (Puppets::ReleaseNpc)
+			// The owner's roll, level and factions NpcSync made ours while paired go: ours is our game's again, and saved so.
+			const auto ref = it->second.get();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (const auto own = pairedOwn.find(a_id); own != pairedOwn.end()) {
+				if (actor && !actor->IsDeleted() && copy && actor->GetFormID() == copy->local) {
+					const auto now = Rolls::ReadOurs(actor, true);
+					const auto plan = NpcRoll::Decide(now, own->second, [&](std::uint32_t a_npc) { return Rolls::ReachOf(now.originalBase).Has(a_npc); });
+					if (plan.Any()) {
+						Rolls::Apply(actor, own->second, plan);
+						++rollsRestored;
+					}
+				}
+				pairedOwn.erase(own);
+			}
+			paired.erase(it);
+			if (copy) {
+				REX::INFO("Spawns: {:08X}, our quest's creature paired with player {}'s {:08X}, is our game's alone again: {}", copy->local, copy->spawn.playerId, a_id, a_why);
+			}
+			theirs.Unplaced(a_id);
+			++unpairs;
+		}
+
+		void Discard(std::uint32_t a_id);
+
+		// A friend's spawn named with a quest alias, alive, not paired: ours from that alias paired with it (true), or held
+		// back from a copy while ours is in the alias (true: nothing to place), or neither (false: as for any spawn; with
+		// our player not yet on the quest, its creatures' unique base places no copy, BaseOk). A copy placed of a keyed
+		// spawn (a base that isn't unique) goes once our run has its own creature there (true), which is paired next.
+		bool PairOrHold(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us, Clock::time_point a_now)
+		{
+			auto& look = pairLooked[a_id];
+			if (look.at != Clock::time_point{} && a_now - look.at < PAIR_LOOK) {
+				return look.oursThere && a_copy.local == 0;
+			}
+			look.at = a_now;
+			const auto candidate = CandidateFor(a_copy, a_us);
+			look.oursThere = candidate.oursThere;
+			if (look.oursThere && a_copy.local != 0) {
+				REX::INFO("Spawns: our quest {:08X} has its own creature from alias {} now; our copy {:08X} of player {}'s {:08X} goes, and ours pairs with it", a_copy.spawn.quest, a_copy.spawn.alias,
+					a_copy.local, a_copy.spawn.playerId, a_id);
+				Discard(a_id);
+				look.at = {};  // looked at again next frame
+				return true;
+			}
+			if (!candidate.pairs || a_copy.local != 0) {
+				return look.oursThere && a_copy.local == 0;
+			}
+			const auto local = candidate.ref->GetFormID();
+			paired[a_id] = candidate.ref->GetHandle();
+			if (auto own = Rolls::Read(candidate.ref->As<RE::Actor>(), a_id, true)) {
+				pairedOwn[a_id] = std::move(*own);  // what ours is in our game, put back as it is unpaired
+			}
+			theirs.Placed(a_id, local, a_now);
+			++pairs;
+			REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is paired with player {}'s {:08X} from the same alias: mirrored as theirs, no copy placed", local, a_copy.spawn.quest,
+				a_copy.spawn.alias, a_copy.spawn.playerId, a_id);
+			return true;
+		}
+
+		// A pairing's every frame (QuestActors::Decide).
+		void UpdatePaired(std::uint32_t a_id, const SpawnBook::Theirs::Copy& a_copy, const RemoteEdits::Spot& a_us)
+		{
+			const auto it = paired.find(a_id);
+			if (it == paired.end()) {
+				return;
+			}
+			const auto ref = it->second.get();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			QuestActors::KeepFacts facts{ .there = actor && !actor->IsDeleted() && actor->GetFormID() == a_copy.local, .gone = a_copy.gone, .dead = a_copy.dead, .player = a_us };
+			if (facts.there) {
+				facts.loaded = actor->Get3D() != nullptr && actor->GetParentCell() != nullptr;
+				if (facts.loaded) {
+					facts.oursAt = SpotOf(actor);
+				}
+			}
+			if (QuestActors::Decide(facts, SpawnBook::KEEP_RANGE) == QuestActors::Keep::kUnpair) {
+				Unpair(a_id, !facts.there ? "it is gone" : !facts.loaded ? "it unloaded" : a_copy.gone ? "their game let go of theirs" : "our player left it behind");
+			}
+		}
+
+		// Deletes our copy of a spawn (the record stays, unplaced, unless the spawn is over). Ours paired with it is
+		// unpaired instead, never deleted.
 		void Discard(std::uint32_t a_id)
 		{
+			if (paired.contains(a_id)) {
+				Unpair(a_id, "our copies go");
+				return;
+			}
 			NpcSync::DropMirror(a_id);
 			if (const auto it = placed.find(a_id); it != placed.end()) {
 				Refresh(a_id, it->second);  // one the engine unloaded is forgotten here, its record dropped
@@ -563,15 +781,29 @@ namespace Spawns
 			NoteBlocked(a_actor, local, block);
 			return 0;
 		}
+		// A quest alias's creature (QuestActors.h): named with its alias. One a friend's game shares already is not
+		// reported (the server would refuse it): ours pairs with theirs (Frame).
+		const auto key = KeyOf(a_actor);
+		if (HasTwin(key)) {
+			if (twinsNoted.size() >= MAX_BLOCKED_NOTED) {
+				twinsNoted.clear();
+			}
+			if (twinsNoted.insert(local).second) {
+				++twinsHeld;
+				REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is not shared: a friend's game shares theirs from the alias, and ours pairs with it", local, key.quest, key.alias);
+			}
+			return 0;
+		}
 		const auto id = ours.Offer(local, Clock::now(), [](std::uint32_t a_id) { return theirs.Knows(a_id); });
 		if (!id) {
 			return 0;
 		}
-		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z }, Protocol::MessageType::kReportSpawn));
+		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias }, Protocol::MessageType::kReportSpawn));
 		++reported;
-		if (logged < LOGGED) {
+		keyedReported += key.quest != 0;
+		if (logged < LOGGED || (key.quest != 0 && keyedReported <= LOGGED)) {
 			++logged;
-			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}", local, base, *id);
+			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}{}", local, base, *id, key.quest != 0 ? std::format(", our quest {:08X}'s creature from alias {}", key.quest, key.alias) : std::string{});
 		}
 		return 0;  // not until the server grants it
 	}
@@ -840,6 +1072,15 @@ namespace Spawns
 				UpdateFrameCopy(id, cell, now, placedNow);
 				continue;
 			}
+			// A quest alias's creature (QuestActors.h): ours from the same alias paired with it, or held back from a copy
+			// while ours is in the alias.
+			if (paired.contains(id)) {
+				UpdatePaired(id, *copy, us);
+				continue;
+			}
+			if (copy->spawn.quest != 0 && !copy->dead && !copy->gone && PairOrHold(id, *copy, us, now)) {
+				continue;
+			}
 			SpawnBook::Facts facts{ .player = us };
 			if (const auto state = RemotePlayers::LastStateOf(copy->spawn.playerId)) {
 				facts.owner = RemoteEdits::SpotOf(*state);
@@ -934,6 +1175,9 @@ namespace Spawns
 		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(oursThere, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 		std::erase_if(oursThereLooked, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(pairLooked, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(paired, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(pairedOwn, [&](const auto& a_entry) { return !paired.contains(a_entry.first); });
 		std::erase_if(keptClear, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
 	}
 
@@ -995,9 +1239,13 @@ namespace Spawns
 			theirs.Unplaced(id);
 		}
 		placed.clear();
+		paired.clear();  // unpaired before the load (DiscardCopies): the loaded world's quests pair afresh
+		pairedOwn.clear();
+		pairLooked.clear();
 		killedHere.clear();
 		leaving.clear();
 		blockedNoted.clear();  // the loaded world's ids name other NPCs
+		twinsNoted.clear();
 		unplacedWhy.clear();
 		oursThere.clear();  // the loaded world's frames are looked at afresh
 		keptClear.clear();
@@ -1025,9 +1273,13 @@ namespace Spawns
 			}
 		}
 		placed.clear();
+		paired.clear();
+		pairedOwn.clear();
+		pairLooked.clear();
 		seenAt.clear();
 		unplacedWhy.clear();
 		blockedNoted.clear();
+		twinsNoted.clear();
 		absentNoBase.clear();
 		theirs.Clear();
 		ours.Clear();
@@ -1040,8 +1292,9 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size()) + Unplaced() + " " + FrameLoans::Describe();
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
+			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

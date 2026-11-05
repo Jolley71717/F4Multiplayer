@@ -278,6 +278,17 @@ TEST("form translate: a spawn keeps the session's own id, and a broken packet is
 	CHECK(placed->base == SHARED);
 	// What to place is of a mod we lack: nothing to place.
 	CHECK(!After(Encode(Spawn{ 2, RUNTIME_REF, THEIRS, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f }, MT::kSpawned), MISSING, Way::kToLocal));
+	// The quest alias that made it: the quest in our numbering, or, of a mod we lack, none (a spawn like any other).
+	const auto keyedPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, SESSION_SHARED, 26 }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(keyedPacket);
+	const auto keyed = DecodeSpawn(*keyedPacket);
+	REQUIRE(keyed);
+	CHECK(keyed->quest == SHARED && keyed->alias == 26);
+	const auto unkeyedPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, THEIRS, 26 }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(unkeyedPacket);
+	const auto unkeyed = DecodeSpawn(*unkeyedPacket);
+	REQUIRE(unkeyed);
+	CHECK(unkeyed->quest == 0 && unkeyed->alias == 0 && unkeyed->base == SHARED);
 
 	auto broken = Encode(ActorDeath{ MINE, 1, true }, MT::kReportDeath);
 	broken.pop_back();
