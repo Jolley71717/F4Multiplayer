@@ -78,6 +78,7 @@ step_preflight() {
 	section "preflight"
 	local a h v
 	rig_up "both games up"; rig_ssh_up "ssh to the VM"
+	pads_off   # a virtual pad left plugged by an interrupted run takes the keyboard and mouse from this one
 	for a in host vm; do rig_keys_move $a "$a's keys move its player"; done
 	ns host; ns vm
 	expect_match "host session is up" "$(nsf host status)" "^(hosting|host|joined)$"
@@ -489,6 +490,10 @@ PARK_SPOT="-79600 88900"     # on the road about 1000 u from the marker: out of 
 # wait_for <seconds> <command...>: runs the command every 0.5 s until it succeeds or the time is up
 wait_for() { local end=$((SECONDS + $1)); shift; while :; do "$@" && return 0; [ $SECONDS -ge "$end" ] && return 1; sleep 0.5; done; }
 pads_off() { dc host "pad unplug" >/dev/null; dc vm "pad unplug" >/dev/null; }
+# is_int <value>: a whole number. A dev-channel reply that isn't one (an "error: timed out waiting for game thread") inside $(( )) is a
+# syntax error, which ends the whole top-level if/while holding the step without a word: so every value read from a game is checked
+# before arithmetic. Like is_num but without decimals, which $(( )) can't take either.
+is_int() { [[ $1 =~ ^-?[0-9]+$ ]]; }
 # walk <who> <check name> <speed> <radius> <target: ref | x y>: that game's player walks there (tools/rig/walkto.sh), up to 2 tries.
 # One that never arrives FAILS under the name (WALK_LAST: how the walk ended). 0 = arrived.
 walk() {
@@ -544,7 +549,10 @@ _in_workshop() { [ "$(field "$(dc "$1" workshop)" menu)" = "$2" ]; }
 _no_msgbox() { dc "$1" menus | grep -q 'MessageBoxMenu:' || return 0; dc "$1" "menu MessageBoxMenu hide" >/dev/null; return 1; }
 _ws_enter() { dc "$1" "workshop enter" >/dev/null; wait_for 25 _in_workshop "$1" true || return 1; sleep 2; wait_for 8 _no_msgbox "$1"; return 0; }
 _ws_exit() { wait_for 8 _no_msgbox "$1"; dc "$1" "workshop exit" >/dev/null; wait_for 15 _in_workshop "$1" false; }
-_host_total() { echo $(( $(dc host "count $SANCT_BENCH $BENCH_ITEM") + $(dc host "count $LINK_BENCH $BENCH_ITEM") )); }
+_host_total() {  # the host's two piles added; "unreadable(a|b)" (not a number) when a count didn't come back as one
+	local a b; a=$(dc host "count $SANCT_BENCH $BENCH_ITEM"); b=$(dc host "count $LINK_BENCH $BENCH_ITEM")
+	if is_int "$a" && is_int "$b"; then echo $((a + b)); else echo "unreadable($a|$b)"; fi
+}
 _vm_sees() {  # the VM's view shows the linked workbench, with the host's counts at both
 	local b; b=$(_bench_view vm)
 	[ "$(field "$b" supply)" = "$LINK_BENCH:shown" ] && [ "$(field "$b" copy)" = "$(dc host "count $SANCT_BENCH $BENCH_ITEM")" ] && [ "$(field "$b" at$LINK_BENCH)" = "$(dc host "count $LINK_BENCH $BENCH_ITEM")" ]
@@ -573,9 +581,12 @@ step_bench() {
 	# the host's 10 s supply-line report and the VM's paced views
 	if wait_for 30 _vm_sees; then pass "bench: the VM views the host's workbench and the one its supply line links, with the host's counts" "$(_bench_view vm | grep -oE 'supply=.*')"
 	else fail "bench: the VM views the host's workbench and the one its supply line links, with the host's counts" "VM: $(_bench_view vm | cut -c1-260) | host: Sanctuary $(host "count $SANCT_BENCH $BENCH_ITEM") Abernathy Farm $(host "count $LINK_BENCH $BENCH_ITEM")"; _ws_exit vm; pads_off; return; fi
-	hs=$(host "count $SANCT_BENCH $BENCH_ITEM"); hr=$(host "count $LINK_BENCH $BENCH_ITEM"); t0=$((hs + hr)); n=$((hs + 3))
+	hs=$(host "count $SANCT_BENCH $BENCH_ITEM"); hr=$(host "count $LINK_BENCH $BENCH_ITEM")
+	if ! is_int "$hs" || ! is_int "$hr"; then fail "bench: the host's piles are read before the build" "Sanctuary '$hs', Abernathy Farm '$hr': not numbers"; _ws_exit vm; pads_off; return; fi
+	t0=$((hs + hr)); n=$((hs + 3))
 	built=$(vm "storage build $BENCH_ITEM $n"); sleep 6
 	t1=$(_host_total)
+	if ! is_int "$t1"; then fail "bench: the host's piles are read after the VM's build" "$t1 ($built)"; _ws_exit vm; pads_off; return; fi
 	expect_eq "bench: the VM's build of $n comes off the host's piles once (host total)" "$t1" "$((t0 - n))"
 	expect_eq "bench: ... Sanctuary's emptied, 3 from Abernathy Farm's across the supply line" "$(host "count $SANCT_BENCH $BENCH_ITEM")/$(host "count $LINK_BENCH $BENCH_ITEM")" "0/$((hr - 3))"
 	if wait_for 6 _list_is vm "$t1"; then pass "bench: the VM's list agrees with the host's piles" "$t1 ($built)"; else fail "bench: the VM's list agrees with the host's piles" "VM list $(field "$(_bench_view vm)" workshopList), host total $t1 ($built)"; fi
@@ -588,8 +599,11 @@ step_bench() {
 		host "pad unplug" >/dev/null
 		if _ws_enter host; then
 			t0=$(_host_total); built=$(host "storage build $BENCH_ITEM 2"); sleep 4; t1=$(_host_total)
-			expect_eq "bench: the host's build of 2 (from Abernathy Farm's) comes off its piles" "$t1" "$((t0 - 2))"
-			if wait_for 6 _list_is vm "$t1"; then pass "bench: the VM's list follows the host's build" "$t1"; else fail "bench: the VM's list follows the host's build" "VM list $(field "$(_bench_view vm)" workshopList), host total $t1 ($built)"; fi
+			if ! is_int "$t0" || ! is_int "$t1"; then fail "bench: the host's piles are read around its build" "before $t0, after $t1 ($built)"
+			else
+				expect_eq "bench: the host's build of 2 (from Abernathy Farm's) comes off its piles" "$t1" "$((t0 - 2))"
+				if wait_for 6 _list_is vm "$t1"; then pass "bench: the VM's list follows the host's build" "$t1"; else fail "bench: the VM's list follows the host's build" "VM list $(field "$(_bench_view vm)" workshopList), host total $t1 ($built)"; fi
+			fi
 			_ws_exit host
 		else fail "bench: the host enters workshop mode at its workbench" "$(host workshop)"; fi
 	fi
@@ -618,12 +632,13 @@ step_loot() {
 		other=$(other_game $who)
 		host "console $LOOT_BOX.additem $LOOT_ITEM $LOOT_N" >/dev/null; vm "console $LOOT_BOX.additem $LOOT_ITEM $LOOT_N" >/dev/null; sleep 1.5
 		tb=$(dc $who "count $LOOT_BOX $LOOT_ITEM"); ob=$(dc $other "count $LOOT_BOX $LOOT_ITEM"); ib=$(dc $who "count 00000014 $LOOT_ITEM")
-		if ! is_num "$tb" || ! is_num "$ob" || ! is_num "$ib" || [ "$tb" -lt $LOOT_N ] || [ "$ob" -lt $LOOT_N ]; then fail "loot ($who takes): set-up: the stack is in both copies" "$who '$tb' $other '$ob' (taker holds '$ib')"; continue; fi
+		if ! is_int "$tb" || ! is_int "$ob" || ! is_int "$ib" || [ "$tb" -lt $LOOT_N ] || [ "$ob" -lt $LOOT_N ]; then fail "loot ($who takes): set-up: the stack is in both copies" "$who '$tb' $other '$ob' (taker holds '$ib')"; continue; fi
 		walk $who "loot ($who takes): set-up: walks to the mailbox" 1 100 $CONCORD_WAY1 && walk $who "loot ($who takes): set-up: walks to the mailbox" 1 100 $CONCORD_WAY2 \
 			&& walk $who "loot ($who takes): set-up: walks to the mailbox" 0.8 90 $LOOT_BOX || { pads_off; continue; }
 		if press_a $who $LOOT_BOX "wait_for 2 _box_none $who" auto 30 45 auto 15 60; then
-			ia=$(dc $who "count 00000014 $LOOT_ITEM"); took=$((ia - ib))
-			expect_eq "loot ($who takes, $PRESSES press(es)): the taker has the $tb that left its copy" "$took" "$tb"
+			ia=$(dc $who "count 00000014 $LOOT_ITEM")
+			if is_int "$ia"; then expect_eq "loot ($who takes, $PRESSES press(es)): the taker has the $tb that left its copy" "$((ia - ib))" "$tb"
+			else fail "loot ($who takes, $PRESSES press(es)): the taker has the $tb that left its copy" "the taker's count after the take is '$ia', not a number"; fi
 			want=$((ob - tb)); [ $want -lt 0 ] && want=0
 			if wait_for 8 _box_is $other $want; then pass "loot ($who takes): the other game's copy lost the same (to none)" "$ob -> $want"
 			else oa=$(dc $other "count $LOOT_BOX $LOOT_ITEM"); fail "loot ($who takes): the other game's copy lost the same (to none)" "$ob -> $oa (want $want)"; fi
@@ -690,6 +705,7 @@ step_drops() {
 		dc $giver "pad unplug" >/dev/null
 		dc $giver "console player.additem $DROP_ITEM $DROP_N" >/dev/null; sleep 1
 		gb=$(dc $giver "count 00000014 $DROP_ITEM"); tb=$(dc $taker "count 00000014 $DROP_ITEM"); ids=$(_drop_ids $taker)
+		if ! is_int "$gb" || ! is_int "$tb"; then fail "drop ($giver gives): set-up: both counts are read before the drop" "giver '$gb' taker '$tb': not numbers"; walk $giver "drop: set-up: back to the marker" 1 100 $MARKER_SPOT; continue; fi
 		dc $giver "dropitem $DROP_ITEM $DROP_N" >/dev/null
 		if wait_for 6 _count_is $giver $((gb - DROP_N)); then pass "drop ($giver gives): its count fell by $DROP_N" "$gb -> $((gb - DROP_N))"
 		else fail "drop ($giver gives): its count fell by $DROP_N" "$gb -> $(dc $giver "count 00000014 $DROP_ITEM")"; walk $giver "drop: set-up: back to the marker" 1 100 $MARKER_SPOT; continue; fi
@@ -699,7 +715,7 @@ step_drops() {
 		if wait_for 8 _shown $taker "$copy"; then pass "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]* y=[^ ]* z=[^ ]*')"
 		else fail "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | cut -c1-200)"; fi
 		if walk $taker "drop ($giver gives): set-up: the other player walks to the copy" 0.6 70 "$copy"; then
-			p=$(pitch_to $taker "$copy"); is_num "$p" || p=50
+			p=$(pitch_to $taker "$copy"); is_int "$p" || p=50
 			if press_a $taker "$copy" "wait_for 4 _count_is $taker $((tb + DROP_N))" "$p" $((p + 10)) $((p - 10)) 50 60; then
 				pass "drop ($giver gives): the other player takes it with a press" "$tb -> $((tb + DROP_N)) after $PRESSES press(es)"
 			else fail "drop ($giver gives): the other player takes it with a press" "count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses (copy: $(dc $taker "refinfo $copy" | cut -c1-120))"; fi

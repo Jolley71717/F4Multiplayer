@@ -68,7 +68,9 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
 against a threshold (movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe,
 reconnect, `perf`), the plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash
 logs; its exit code is the number of failed checks. The steps for what players do together (bench, loot, doors, drops,
-downed) walk the players with the dev channel's virtual pad and press its buttons, as a player would; the console only
+downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
+its buttons for the takes, the door and the Pip-Boy; entering workshop mode, building and dropping an item use dev commands
+(`workshop enter`, `storage build`, `dropitem`), not a player's keys; the console only
 places them at Sanctuary (Concord for the loot), stocks the items, makes Sanctuary and Abernathy Farm the host's for
 the supply line, and injects the damage that downs a player. Each asserts the two games agree: the workbench counts
 after each build (nothing taken twice), the container's copy after a take, the door's state, the drop listed and placed

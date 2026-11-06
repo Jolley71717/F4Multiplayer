@@ -9,7 +9,8 @@
 # each with its checks, both ways where a step has two) round after round until the time is up, then the end steps
 # (reconnect, fuzz, the cleanup and final checks) once. A round is 25 to 30 minutes with the default 3-minute churn; the
 # next starts only while at least half the last one's length is left, so a run ends within about half a round of the
-# time asked. Each round's sections are named "(round N)". --only and --skip still pick the steps.
+# time asked. Each round's sections are named "(round N)". --only and --skip still pick the steps (leaving none of the loop steps
+# is refused up front). A round that starts and doesn't finish, or a loop that ends early, is a FAIL.
 # The bench step needs the host's bSharedStorage = true (F4Multiplayer.ini); without it, it fails saying so.
 #
 # Needs both games running and joined (tools/rig: `rig.sh deploy` then `rig.sh join` in the rig's stage folder), and the
@@ -28,11 +29,18 @@ LOOP="movement combat terminals grenades workshop bench loot doors drops downed 
 ALL="preflight cleanup $LOOP reconnect fuzz final"
 only=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
 while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
-[ -z "$soak_min" ] || [[ $soak_min =~ ^[0-9]+$ ]] || { echo "--soak wants whole minutes"; exit 2; }
+[ -z "$soak_min" ] || [[ $soak_min =~ ^[1-9][0-9]*$ ]] || { echo "--soak wants whole minutes, at least 1"; exit 2; }
 steps=${only:-$ALL}
+if [ -n "$soak_min" ]; then   # --soak repeats the loop steps: with --only/--skip leaving none there is nothing to repeat, and it would spin to the time limit
+	n=0; for s in $LOOP; do case " $skip " in *" $s "*) continue;; esac; case " $steps " in *" $s "*) n=1;; esac; done
+	[ $n = 1 ] || { echo "--soak: --only/--skip leave none of the loop steps ($LOOP) to repeat"; exit 2; }
+fi
 rig_guard || exit 2
 a_init "$([ -n "$soak_min" ] && echo soak || echo smoke)"; A_NOTE=""
-trap a_interrupted INT TERM
+# Ctrl-C or TERM: the virtual pads are unplugged first (a pad left plugged takes the keyboard and mouse from the next run), once: a second
+# signal while a game is slow to answer goes straight to the verdict.
+smoke_interrupted() { [ -z "$SMOKE_INT" ] && { SMOKE_INT=1; pads_off; }; a_interrupted; }
+trap smoke_interrupted INT TERM
 tunnel
 run() {
 	case " $skip " in *" $1 "*) return;; esac; case " $steps " in *" $1 "*) ;; *) return;; esac
@@ -61,12 +69,20 @@ run preflight step_preflight
 run cleanup   smoke_cleanup_start
 if [ -z "$soak_min" ]; then loop_steps
 else
-	soak_end=$((SECONDS + soak_min * 60)); last=0; A_ROUND=0
+	soak_end=$((SECONDS + soak_min * 60)); last=0; A_ROUND=0; A_DONE=0
 	while [ $((SECONDS + last / 2)) -lt "$soak_end" ] && [ -z "$A_RIG_STOPPED" ]; do
 		A_ROUND=$((A_ROUND + 1)); t=$SECONDS; echo; echo "######## soak round $A_ROUND ($(( (soak_end - SECONDS + 59) / 60 )) min left)"
-		loop_steps; last=$((SECONDS - t))
+		loop_steps; A_DONE=$A_ROUND; last=$((SECONDS - t))
 	done
 	echo; echo "######## soak: $A_ROUND round(s) of the loop steps in $(( (SECONDS - soak_end) / 60 + soak_min )) min; the end steps follow"; A_ROUND=""
+fi
+# Belt and braces: a shell error inside a round (a syntax error in arithmetic) ends the whole if/while above without a word, skipping the
+# rest of the round, every later round and the summary line. A round that started and never finished, or a loop that ended with more than
+# the half round the rule above allows still unspent, is a FAIL, not a short PASS.
+if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
+	if [ "$A_DONE" != "$A_ROUND" ] && [ -n "$A_ROUND" ]; then fail "soak: every round that started ran to its end" "round $A_ROUND started and did not finish (a shell error ended the soak loop?): rounds finished $A_DONE"; A_ROUND=""
+	elif [ "$A_DONE" = 0 ]; then fail "soak: at least one round ran" "no round of the loop steps ran"
+	elif [ $((SECONDS + last / 2)) -lt "$soak_end" ]; then fail "soak: ran as long as asked" "$(( (SECONDS - soak_end) / 60 + soak_min )) min of the $soak_min asked for, with more than half a round ($((last / 120)) min) left"; fi
 fi
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
