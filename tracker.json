@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-06T01:33:18+00:00",
+ "updated": "2026-11-06T03:07:04+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -417,8 +417,9 @@
    "title": "VATS skips friends' stand-ins (option), for groups where a friend stands in front",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 310
   },
   {
    "id": "83dc",
