@@ -435,7 +435,7 @@ step_pa() {
 		[ -n "$f" ] && dc $d "turnto $f 300" >/dev/null; sleep 1; dc $d "mouse 0 -150" >/dev/null; sleep 0.8; dc $d "key 0x45 120" >/dev/null; sleep 10
 		[ "$(dcf $d pa extraPA)" = "true" ] && break; dc $d "key 0x57 100" >/dev/null; sleep 0.8
 	done
-	if [ "$(dcf $d pa extraPA)" != "true" ]; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame $f)"; return; fi
+	if [ "$(dcf $d pa extraPA)" != "true" ]; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame $f)"; _pa_frames_off $d; return; fi
 	pass "power armor ($d): got into the frame" "after $tries tries (frame $f)"
 	ns $v
 	hp=$(grep -o "puppet=FF[0-9A-F]*" <<<"${NS[$v]}" | head -1 | cut -d= -f2)
@@ -479,6 +479,21 @@ step_pa() {
 	for tries in 1 2 3; do dc $d "mouse 0 -900" >/dev/null; sleep 0.3; dc $d "key 0x45 1300" >/dev/null; sleep 6; [ "$(dcf $d pa extraPA)" = "false" ] && break; done
 	expect_eq "power armor ($d): climbed out" "$(dcf $d pa extraPA)" false
 	ns $v; expect_eq "power armor ($d): the other game's stand-in is out of the suit" "$(grep -o 'pa=[a-z/]*' <<<"${NS[$v]}" | head -1)" "pa=false/false"
+	_pa_frames_off $d
+}
+
+# _pa_frames_off <driver>: the frames step_pa placed (base 0004A9C1, and any copy the other game made of one) are taken out of both games
+# near Sanctuary's bridge: left standing, a soak's next round walked into one on the doors and drops paths (2026-11-06).
+# The driver's game first (its copies then go from the other game by themselves). The engine disables a worn frame, and a
+# disabled one is skipped, so a frame someone is still in (a failed climb-out) is never taken from under them. Game-made refs only.
+_pa_frames_off() {
+	local g r
+	for g in $1 $([ "$1" = host ] && echo vm || echo host); do
+		for r in $(dc $g "refs 42 1500" | tr ';' '\n' | grep "0004A9C1" | awk '{print $1}' | grep "^FF"); do
+			[ "$(field "$(dc $g "refinfo $r")" disabled)" = false ] || continue
+			dc $g "console $r.disable" >/dev/null; dc $g "console $r.markfordelete" >/dev/null
+		done
+	done
 }
 
 # ---- what players do together: the workbench, containers, doors, giving items, down and helped up ------------------------------------
