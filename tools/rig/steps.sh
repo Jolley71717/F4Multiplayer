@@ -109,6 +109,9 @@ _mv_check() {  # _mv_check <logfile> <who sees whom label> <line prefix>
 step_movement() {
 	section "movement both ways"
 	local rc
+	# Into Sanctuary first: round 1 starts there from the join, but a soak round starts wherever the churn before it ended (an
+	# interior, 2026-11-06), and placing by coordinates alone left each game without the other's stand-in.
+	enter_both SanctuaryExt 14
 	place host -80500 89300 7784 45; place vm -80380 89400 7784 45; sleep 3
 	bash "$RIG/trace.sh" run 18 > "$A_OUT/movement.log" 2>&1; rc=$?
 	if [ $rc -ne 0 ]; then fail "movement trace ran" "trace.sh refused or failed: $(grep -m1 'not tracing\|could not\|not fitting\|error' "$A_OUT/movement.log")"; return; fi
