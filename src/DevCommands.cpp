@@ -57,6 +57,7 @@
 #include "game/Storage.h"
 #include "game/StateBuffer.h"
 #include "game/Traps.h"
+#include "game/VatsTargets.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
@@ -3411,6 +3412,19 @@ namespace DevCommands
 			return RealTime::Describe();
 		}
 
+		// vatstargets: VATS's potential target list as the engine last gathered it (form ID@distance, "(friend)" for a
+		// stand-in) and how often a stand-in was left out (game/VatsTargets.h). vatstargets skip on|off: bVatsSkipsFriends
+		// for this run.
+		std::string VatsTargetsCommand(std::string_view a_args)
+		{
+			if (a_args == "skip on" || a_args == "skip off") {
+				VatsTargets::SetSkipFriends(a_args == "skip on");
+			} else if (!a_args.empty()) {
+				return "usage: vatstargets [skip on|off]";
+			}
+			return VatsTargets::DescribeTargets();
+		}
+
 		// menuclock on [seconds] | off: logs the clocks a menu could stop, each frame for a while after any menu opens
 		// or closes (game/MenuClock.h), to find what stops the world under a menu (F4Multiplayer-tnl5). Nothing: the
 		// state and the clocks now.
@@ -4187,6 +4201,7 @@ namespace DevCommands
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
 			Entry{ "timescale", TimeScale },
+			Entry{ "vatstargets", VatsTargetsCommand },
 			Entry{ "menuclock", MenuClockCommand },
 			Entry{ "rules", Rules },
 			Entry{ "idles", Idles },

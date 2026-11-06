@@ -355,6 +355,29 @@ if ($null -ne $cameraStart) {
 if ($null -ne $transitionSetUp) {
 	Report ((HexMatches (BytesAt ($transitionSetUp + 0x45) 4) '48 89 43 38') -and (HexMatches (BytesAt ($transitionSetUp + 0x77) 4) '48 89 43 40')) 'the camera transition''s set-up keeps its states at +0x38 (from) and +0x40 (to)'
 }
+# The four calls VatsTargets::Install patches (src/game/VatsTargetRules.h): each calls VATS's target check +B16220, which
+# begins by resolving the actor's handle (movzx r14d,dl; ...; call GetSmartPointer) and asks IsChild (vtable +3F0) first.
+# The plugin checks the four calls itself at load and patches none unless all match.
+$vatsCheck = Resolve 2224729
+Report ($vatsCheck -eq 0xB16220) ('VATS''s target check 2224729 is +{0:X}' -f $vatsCheck)
+if ($null -ne $vatsCheck) {
+	Report ((HexMatches (BytesAt $vatsCheck 21) '40 53 56 41 56 48 83 EC 20 44 0F B6 F2 40 32 F6 48 8B D1 48 8D') -and
+		(HexMatches (BytesAt ($vatsCheck + 0x2B) 17) '48 8B 03 48 8B CB 48 89 6C 24 40 FF 90 F0 03 00 00')) 'VATS''s target check begins as read: the handle resolved, then IsChild (vtable +3F0)'
+	foreach ($site in @(@(2224731, 0x18F, 'the gather of potential targets'), @(2224730, 0x69, 'the reference''s check'), @(2224716, 0xCB, 'VATSMenu::HandleMenuButton'), @(2224725, 0x58, 'the potential target list''s refill'))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('VATS site {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $vatsCheck) ('{0}+0x{1:X} (+{2:X}): {3} calls VATS''s target check' -f $site[0], $site[1], $at, $site[2])
+	}
+}
+# VATS's potential target list (VatsTargets::DescribeTargets, dev only): a BSTArray whose capacity (+8) and size (+10)
+# have IDs of their own.
+Report ((Resolve 4804507) -eq 0x328FE00 -and (Resolve 4804508) -eq 0x328FE08 -and (Resolve 4804509) -eq 0x328FE10) 'VATS''s potential target list 4804507 is +328FE00, its capacity and size at +8 and +10'
+
 # A notice's sound (Hud.cpp): the menu sound's lookup by name returns at once for a null name, before any hash.
 $soundByName = Resolve 2214760
 if ($null -ne $soundByName) {
