@@ -70,6 +70,10 @@ namespace Config
 		// Off: the stand-in throws from an empty fist, as 0.8.11 and earlier showed it.
 		bool grenadeInHand = true;
 
+		// Your own (not the host's): VATS never targets a friend's stand-in, so it locks onto the enemies behind one
+		// (game/VatsTargetRules.h). Shooting a friend without VATS is as before. Off: VATS treats a stand-in as any NPC.
+		bool vatsSkipsFriends = true;
+
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 

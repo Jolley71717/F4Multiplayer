@@ -41,6 +41,7 @@
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
 #include "game/CombatReactions.h"
+#include "game/VatsTargets.h"
 #include "game/HavokGuard.h"
 #include "game/InertShots.h"
 #include "game/TextureWait.h"
@@ -1084,9 +1085,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 262 of 320 bytes used: nine 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 276 of 320 bytes used: ten 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// CombatReactions::Install's one, Storage::InstallGather's two share one), HavokGuard::Install's
+	// CombatReactions::Install's one, Storage::InstallGather's two share one, VatsTargets::Install's four share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
@@ -1118,6 +1119,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
+	VatsTargets::Install();  // VATS never targets a friend's stand-in (bVatsSkipsFriends; VatsTargetRules.h)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
 	Equipment::InstallFrameGate();  // and its Transfer

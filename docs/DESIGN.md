@@ -2362,7 +2362,24 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   and its target follow it; Jet sets the same slowdown to 0.3), and a shot playing out through the VATS
   camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time
   multiplier under 1 is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier(1, true)`), unless the
-  slowdown was already on the frame before VATS came up (Jet or the like). Tutorial hints: the game's
+  slowdown was already on the frame before VATS came up (Jet or the like).
+- VATS never targets a friend's stand-in (src/game/VatsTargets.cpp, src/game/VatsTargetRules.h; `bVatsSkipsFriends`,
+  each player's own, on by default; no protocol). VATS lists, highlights and locks onto the nearest target first, which
+  in a group was the stand-in of the friend in front. Every actor VATS can list or keep as a target is first asked of one
+  engine function (+B16220, ID 2224729), from four calls in the VATS menu's code: the gather of potential targets from
+  the process lists' high actors (+B164B0, within `fVATSMaxEngageDistance`), the check of a target reference the menu's
+  other paths ask (its update, its highlights, the projectiles' gather), and the two "anything to target?" checks (the menu
+  button, and the refill of an empty list, which plays `UIVATSNoTarget` with none). It already says no for a child, a
+  player teammate (Actor flag 0x4000000 at +2D0: why companions are never in VATS), a ghost, the dead, a hidden 3D and a
+  Stealth Boy. The four calls go through a hook (checked to call that function where 1.11.240 does, all or none
+  patched) that says no for a friend's stand-in (`Puppets::IsPuppet`; a mirrored NPC stays a target) and asks the engine
+  for anyone else. Engine data was looked at first and none fits: teammate also puts the stand-in in the player's team
+  for the AI, perks and quest conditions; a ghost cannot be hit at all; the `VATSRestrictedTarget` keyword (what shows
+  `sVATSFollowerTarget`) keeps the actor in the list, highlighted and nearest first, only refusing the attack; the form
+  flag `TESForm::SetVATSTargetOverride` sets is read for destructible objects only. With only friends around VATS does not
+  open. Shooting a friend without VATS is as before (friendly fire is the host's `bFriendlyFire`). `net status`:
+  `vatsSkip=` on/off/unhooked, `vatsFriendsSkipped=`; the dev `vatstargets` command lists the potential targets.
+- Tutorial hints: the game's
   `bShowTutorials:Interface`, which its help messages read each time, is held off in a session
   (Background::Switch) and put back after; its tutorial message boxes are not gated by it.
 - Menus still pause: clearing `kPausesGame` as a menu is made (wrapping its `UIMenuEntry::create`) was tried
