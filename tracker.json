@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-06T04:12:29+00:00",
+ "updated": "2026-11-06T10:03:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -80,6 +80,14 @@
    "stage": 7,
    "note": "Review fixes pushed and rig-tested both ways; awaiting re-review",
    "pr": 245
+  },
+  {
+   "id": "14x5",
+   "title": "Power armor: host couldn't climb out in 3 tries in a soak round (script or game?)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "161b",
