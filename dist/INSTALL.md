@@ -216,6 +216,8 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `bCompassMarkers` (true): friends' markers on your compass.
 - `bFriendFaces` (true): friends' stand-ins wear their own face. Off, they all have the settler's face.
 - `bGrenadeInHand` (true): a friend's grenade is seen in their stand-in's hand as they throw.
+- `bVatsSkipsFriends` (true): VATS never targets a friend's stand-in, so it locks on to the enemies around them.
+  Off, a friend standing in front can be picked like anyone else.
 - `iMyAppearance` (0) and `iPuppetBaseForm` (the female settler): which character friends see for you, and which one
   you see for friends who haven't picked one. Friends see only the two settlers.
 - `bShareMap` (true): locations friends discover show on your map, and yours show on theirs.
