@@ -277,6 +277,13 @@ _loot() {
 }
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
 _useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$who" >/dev/null; sleep 1; }   # a blind second Tab opened the Pip-Boy when the first closed the terminal
+# _safe_term <who> <terminal>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s), picks the unlock
+# entry and closes it.
+_safe_term() {
+	clear_menus "$1" >/dev/null; dc "$1" focus >/dev/null; sleep 1; dc "$1" "console $2.activate player" >/dev/null
+	menu_open "$1" TerminalMenu 10; sleep 2
+	dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$1" >/dev/null; sleep 3
+}
 _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper Mart safe through the storage terminal
 	local actor=$1 other safe term=001CA8C8 b_a b_o a_a a_o
 	other=$([ "$actor" = host ] && echo vm || echo host)
@@ -285,9 +292,12 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	host "console $safe.lock 25" >/dev/null; vm "console $safe.lock 25" >/dev/null; host "console $term.unlock" >/dev/null; vm "console $term.unlock" >/dev/null; sleep 1
 	b_a=$(dcf "$actor" "refinfo $safe" locked); b_o=$(dcf "$other" "refinfo $safe" locked)
 	[ -n "$b_a" ] && [ -n "$b_o" ] && [ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
-	dc "$actor" focus >/dev/null; sleep 1; dc "$actor" "console $term.activate player" >/dev/null; sleep 3
-	dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x0D 60" >/dev/null; sleep 2; dc "$actor" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$actor" >/dev/null; sleep 3
-	a_a=$(dcf "$actor" "refinfo $safe" locked); a_o=$(dcf "$other" "refinfo $safe" locked)
+	_safe_term "$actor" $term
+	a_a=$(dcf "$actor" "refinfo $safe" locked)
+	# Once more if the actor's own game still has it locked: 2026-11-06 the VM stalled 5 s through the key presses and the unlock
+	# entry was never picked (both games agreed it was locked). A second miss still fails.
+	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
+	a_o=$(dcf "$other" "refinfo $safe" locked)
 	expect_eq "safe ($actor unlocks): unlocked in the actor's game" "$a_a" no
 	expect_eq "safe ($actor unlocks): the other game sees it unlocked" "$a_o" no
 }
@@ -476,8 +486,14 @@ step_pa() {
 		else fail "power armor ($d): stand-in distance while moving, at the same moment" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
 	fi
 	expect_le "power armor ($d): stand-in distance after stopping" "$settled" "$T_PA_SETTLED" u
-	for tries in 1 2 3; do dc $d "mouse 0 -900" >/dev/null; sleep 0.3; dc $d "key 0x45 1300" >/dev/null; sleep 6; [ "$(dcf $d pa extraPA)" = "false" ] && break; done
-	expect_eq "power armor ($d): climbed out" "$(dcf $d pa extraPA)" false
+	# Up to five tries, each with nothing open in front and the window focused: 2026-11-06 three blind tries left the host in the
+	# suit with nothing in its log (a press that never reached the game, or the game refusing: the failure says what was open).
+	for tries in 1 2 3 4 5; do
+		clear_menus $d >/dev/null; dc $d focus >/dev/null; sleep 0.3
+		dc $d "mouse 0 -900" >/dev/null; sleep 0.3; dc $d "key 0x45 1500" >/dev/null; sleep 6; [ "$(dcf $d pa extraPA)" = "false" ] && break
+	done
+	if [ "$(dcf $d pa extraPA)" = "false" ]; then pass "power armor ($d): climbed out" "after $tries tries"
+	else fail "power armor ($d): climbed out" "extraPA still true after 5 tries; menus: $(dc $d menus | grep -oE 'open=[^ ]*'); pa: $(dc $d pa)"; fi
 	ns $v; expect_eq "power armor ($d): the other game's stand-in is out of the suit" "$(grep -o 'pa=[a-z/]*' <<<"${NS[$v]}" | head -1)" "pa=false/false"
 	_pa_frames_off $d
 }
