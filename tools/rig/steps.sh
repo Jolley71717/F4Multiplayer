@@ -451,14 +451,16 @@ step_pa() {
 	# still settling), so the offset is read again before and after the trace, and must hold still across it. A reading of -103
 	# between two of -12 (2026-11-01) was this side stalling through a whole read, not the VM's clock: trace.sh offset now takes
 	# a reading only once enough of its lines came through with no stall, and says unknown otherwise
-	bash "$RIG/trace.sh" clock >/dev/null 2>&1; sleep 3; clk0=$(bash "$RIG/trace.sh" offset 2>/dev/null)
+	# A reading can come back empty (an ssh hiccup, 2026-11-05: before '', after -13): up to three tries, 2 s apart.
+	_offset() { local o i; for i in 1 2 3; do o=$(bash "$RIG/trace.sh" offset 2>/dev/null); is_num "$o" && break; sleep 2; done; echo "$o"; }
+	bash "$RIG/trace.sh" clock >/dev/null 2>&1; sleep 3; clk0=$(_offset)
 	did=$(dcf $d 'net status' id)
 	bash "$RIG/dcfast.sh" both "trace start 20" >/dev/null 2>&1; dc $d focus >/dev/null; sleep 0.3
 	dc $d "key 0x57 3000" >/dev/null; dc $d "mouse 600 0" >/dev/null
 	for i in $(seq 1 12); do
 		case $i in 3) dc $d "key 0x57 2500" >/dev/null;; 5) dc $d "key 0x20 80" >/dev/null;; 6) dc $d "mouse 1587 0" >/dev/null; dc $d "key 0x57 3000" >/dev/null;; esac; sleep 0.6
 	done
-	sleep 1.5; host 'trace stop' >/dev/null; vm 'trace stop' >/dev/null; settled=$(_dist); clk1=$(bash "$RIG/trace.sh" offset 2>/dev/null)
+	sleep 1.5; host 'trace stop' >/dev/null; vm 'trace stop' >/dev/null; settled=$(_dist); clk1=$(_offset)
 	clk=""; is_num "$clk0" && is_num "$clk1" && [ $(( clk1 > clk0 ? clk1 - clk0 : clk0 - clk1 )) -le 50 ] && clk=$(( (clk0 + clk1) / 2 ))
 	cp -f "$HOST_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-host.csv" 2>/dev/null; scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-vm.csv" 2>/dev/null
 	if ! is_num "$clk" || [ "${clk#-}" -gt 500 ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "the VM's clock offset is unknown, moved over 50 ms during the trace or is over 500 ms (before '$clk0', after '$clk1'): the two traces can't be lined up"

@@ -93,7 +93,8 @@ smoke_cleanup_end() {
 	# What this run placed must be gone, and so must every test piece a game can still take out (its own, or a copy whose builder's
 	# game still has it: cleanup.sh exits 1). Copies of pieces only the session file still holds (orphans: no game has them to scrap)
 	# come back at every join until the session file is one without them; they are listed, and are not this run's doing.
-	for r in $(cat "$A_OUT/ws-placed.txt" 2>/dev/null); do st=$(host "refinfo $r"); case "$st" in *"deleted=true"*) ;; *) left="$left $r";; esac; done
+	# Removed is deleted=true, or "no such reference" once the game has let the scrapped piece go altogether (2026-11-05).
+	for r in $(cat "$A_OUT/ws-placed.txt" 2>/dev/null); do st=$(host "refinfo $r"); case "$st" in *"deleted=true"*|*"no such reference"*) ;; *) left="$left $r";; esac; done
 	if [ -z "$left" ]; then pass "the pieces this run placed are removed" "$(wc -w < "$A_OUT/ws-placed.txt" 2>/dev/null) piece(s)"; else fail "the pieces this run placed are removed" "still there:$left"; fi
 	if [ "$rc" = 0 ]; then pass "no test piece left that a game can take out (own pieces, copies whose builder has them)" "$(grep -c orphaned "$A_OUT/cleanup-end.log") game(s) show orphans of the session file (cleanup-end.log)"
 	else fail "no test piece left that a game can take out (own pieces, copies whose builder has them)" "$(grep 'still has' "$A_OUT/cleanup-end.log" | tr '\n' ' ' | cut -c1-170)"; fi
