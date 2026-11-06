@@ -48,7 +48,7 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 section() {  # section <title>
 	[ -z "$A_RIG_STOPPED" ] && [ -n "$A_RESULTS" ] && [ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && _rig_stop "$(_rig_last_signal)"
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"
-	A_SECTION=$1; A_SEC_T0=$SECONDS; echo; echo "=== $1 ($(date +%T))"
+	A_SECTION="$1${A_ROUND:+ (round $A_ROUND)}"; A_SEC_T0=$SECONDS; echo; echo "=== $A_SECTION ($(date +%T))"   # A_ROUND: smoke.sh --soak's round
 }
 
 record() {  # record <PASS|FAIL|WARN> <name> <reason>

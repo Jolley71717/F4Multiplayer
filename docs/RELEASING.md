@@ -55,22 +55,31 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
 
 1. the unit tests pass (`tools/package.ps1` runs them; `xmake build` builds them with everything else);
 2. the standing set passes once on the rig in both directions (host to joiner and joiner to host): movement
-   trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, power armor in
-   motion, the cell churn with a save reload, a VM restart and rejoin, fuzz on the host. `sweep.sh`,
-   or one cycle of `soak.sh`, is that set;
+   trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, a workshop piece, the host's
+   workbench shared with a take across a supply line, container loot, a door, an item dropped and picked up, a
+   player downed and helped up, power armor in motion, the cell churn with a save reload, a VM restart and rejoin,
+   fuzz on the host;
 3. no new crash log on either machine during it;
 4. on both machines, `Select-String -Path F4Multiplayer*.log -Pattern (Get-Content ~/.f4mp-private-patterns)`
    in `Documents\My Games\Fallout4\F4SE` finds nothing from this rc's sessions, and neither do
    `-Pattern '7656\d{13}'` nor an IP address other than 127.0.0.1.
 
-`tools/rig/smoke.sh` is steps 2 to 4 with a verdict: the standing set above, each number checked against a threshold
-(movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe, reconnect, `perf`), the
-plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash logs; its exit code is
-the number of failed checks. `tools/rig/hits.sh` is the health check: both players shoot the same NPCs, and the two
-games' health must agree, never rise, and survive a pause menu. Both need the rig held (`tools/rig/guard.sh`) and leave
-no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`). `tools/rig/backup.sh` saves and restores the ini and
-session files on both machines. Nothing about a person or a machine is in the repository: the rig's own folder holds
-`rig.conf` (see `tools/rig/env.sh`).
+`tools/rig/smoke.sh` is steps 2 to 4 with a verdict, in about 30 minutes: the standing set above, each number checked
+against a threshold (movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe,
+reconnect, `perf`), the plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash
+logs; its exit code is the number of failed checks. The steps for what players do together (bench, loot, doors, drops,
+downed) walk the players with the dev channel's virtual pad and press its buttons, as a player would; the console only
+places them at Sanctuary (Concord for the loot), stocks the items, makes Sanctuary and Abernathy Farm the host's for
+the supply line, and injects the damage that downs a player. Each asserts the two games agree: the workbench counts
+after each build (nothing taken twice), the container's copy after a take, the door's state, the drop listed and placed
+for the other player and gone from both once taken, and the downed player helped up with the rules' health, a normal
+camera and a working Pip-Boy. The bench step needs `bSharedStorage = true` in the host's `F4Multiplayer.ini` (back the
+ini and the session files up with `backup.sh` first: the containers of a settlement the host owns stay its storage in
+the session file); without it, it fails saying so. `tools/rig/hits.sh` is the health check: both players shoot the
+same NPCs, and the two games' health must agree, never rise, and survive a pause menu. Both need the rig held
+(`tools/rig/guard.sh`) and leave no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`).
+`tools/rig/backup.sh` saves and restores the ini and session files on both machines. Nothing about a person or a
+machine is in the repository: the rig's own folder holds `rig.conf` (see `tools/rig/env.sh`).
 
 Before the rig run, `tools/addrcheck.ps1` (Windows PowerShell, read-only, the game is not started) resolves every
 Address Library ID the plugin names against the installed `version-1-11-240-0.bin` and checks the game code the
@@ -80,16 +89,16 @@ Library changed, or an ID in `src/` is wrong: look at it before going further.
 
 ## Promotion to the release
 
-The release is the rc that held, not a new build. The soak of the rc's zip is a churn-heavy run of about 90 minutes
-after the gate passes: `SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --only
-preflight,combat,churn,reconnect,final --churn 75`. Cells are hopped and saves reloaded for 75 minutes, the hopper and
-the watcher swapping halfway, then the VM's game is restarted and rejoins; the end checks read the crash logs, the
-plugin logs' new errors and the privacy scan. The combat step is there for its working-set baseline: the growth from
-combat to the churn's end is printed and warned on, not failed. It replaced the 3-hour `soak.sh 3` loop in 0.11.0:
-that loop asserted only that both games were alive, and the one crash it caught in its last eight rc soaks came during
-the churn. When
-it exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict
-goes in `dist/out/soak-verdict.txt`:
+The release is the rc that held, not a new build. The soak of the rc's zip is a 90-minute run after the gate passes:
+`SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --soak 90`. It runs the whole standing set's loop
+(movement through the cell churn, every step with its checks, both directions where a step has two) round after round,
+25 to 30 minutes a round (three in 90 minutes), until the 90 minutes are up, then the end steps once: the VM's
+game is restarted and rejoins, fuzz, the cleanup of test pieces, and the end checks of the crash logs, the plugin logs'
+new errors and the privacy scan. A failure names its round. The working set's growth from the first combat to each
+churn's end is printed and warned on, not failed. The soak used to be cell churn alone (and before 0.11.0 a 3-hour loop
+that asserted only that both games were alive); looping the set exercises what players do over the same time. When it
+exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict goes
+in `dist/out/soak-verdict.txt`:
 
 ```
 commit=<the rc's commit, as in its manifest>
