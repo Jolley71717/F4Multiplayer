@@ -435,7 +435,7 @@ step_pa() {
 		[ -n "$f" ] && dc $d "turnto $f 300" >/dev/null; sleep 1; dc $d "mouse 0 -150" >/dev/null; sleep 0.8; dc $d "key 0x45 120" >/dev/null; sleep 10
 		[ "$(dcf $d pa extraPA)" = "true" ] && break; dc $d "key 0x57 100" >/dev/null; sleep 0.8
 	done
-	if [ "$(dcf $d pa extraPA)" != "true" ]; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame $f)"; return; fi
+	if [ "$(dcf $d pa extraPA)" != "true" ]; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame $f)"; _pa_frames_off; return; fi
 	pass "power armor ($d): got into the frame" "after $tries tries (frame $f)"
 	ns $v
 	hp=$(grep -o "puppet=FF[0-9A-F]*" <<<"${NS[$v]}" | head -1 | cut -d= -f2)
@@ -443,7 +443,7 @@ step_pa() {
 	expect_eq "power armor ($d): the other game's stand-in is in the suit" "$(field "$s" in)/$(field "$s" skel)" "true/true"
 	pieces=$(field "$s" pieces)
 	if [ -n "$pieces" ] && [ "$(part "$pieces" 1)" = "$(part "$pieces" 2)" ] && [ "$(part "$pieces" 2)" != 0 ]; then pass "power armor ($d): stand-in wears all pieces" "$pieces"; else fail "power armor ($d): stand-in wears all pieces" "pieces='$pieces'"; fi
-	if [ -z "$hp" ]; then fail "power armor ($d): stand-in found" "no puppet=FF.. in the other game's net status"; return; fi
+	if [ -z "$hp" ]; then fail "power armor ($d): stand-in found" "no puppet=FF.. in the other game's net status"; _pa_frames_off; return; fi
 	_xy() { grep -o " [xy]=[-0-9]*" <<<"$1" | cut -d= -f2 | tr '\n' ' '; }
 	_dist() { local hq; hq=$(dc $v "refinfo $hp"); read -r vx vy <<<"$(_xy "$(dc $d 'refinfo 00000014')")"; read -r hx hy <<<"$(_xy "$hq")"; awk -v a=$vx -v b=$vy -v c=$hx -v e=$hy 'BEGIN{printf "%d", sqrt((a-c)^2+(b-e)^2)}'; }
 	# While moving, the driver and its stand-in are compared at the same moment: both games trace (dev `trace`, 20 Hz, each row
@@ -479,6 +479,18 @@ step_pa() {
 	for tries in 1 2 3; do dc $d "mouse 0 -900" >/dev/null; sleep 0.3; dc $d "key 0x45 1300" >/dev/null; sleep 6; [ "$(dcf $d pa extraPA)" = "false" ] && break; done
 	expect_eq "power armor ($d): climbed out" "$(dcf $d pa extraPA)" false
 	ns $v; expect_eq "power armor ($d): the other game's stand-in is out of the suit" "$(grep -o 'pa=[a-z/]*' <<<"${NS[$v]}" | head -1)" "pa=false/false"
+	_pa_frames_off
+}
+
+# _pa_frames_off: the frames step_pa placed (base 0004A9C1, and any copy the other game made of one) are taken out of both games
+# near Sanctuary's bridge: left standing, a soak's next round walked into one on the doors and drops paths (2026-11-06).
+_pa_frames_off() {
+	local g r
+	for g in host vm; do
+		for r in $(dc $g "refs 42 1500" | tr ';' '\n' | grep "0004A9C1" | awk '{print $1}'); do
+			dc $g "console $r.disable" >/dev/null; dc $g "console $r.markfordelete" >/dev/null
+		done
+	done
 }
 
 # ---- what players do together: the workbench, containers, doors, giving items, down and helped up ------------------------------------
