@@ -1,41 +1,89 @@
 #!/bin/bash
-# smoke.sh [--only step,step,...] [--churn MINUTES] [--skip step,...]
+# smoke.sh [--only step,step,...] [--skip step,...] [--churn MINUTES] [--soak MINUTES]
 #
 # The standing two-game set with a verdict. The rc gate's step 2 (docs/RELEASING.md): every number the old soak only
 # printed is now a named check with a threshold (tools/rig/steps.sh holds them), the plugin log and the crash logs are
-# read, and the exit code is the number of failed checks (0 = PASS). About 20 minutes.
+# read, and the exit code is the number of failed checks (0 = PASS). About 30 minutes.
+#
+# --soak MINUTES is the rc soak (docs/RELEASING.md): after preflight and cleanup it runs the loop steps (movement to churn,
+# each with its checks, both ways where a step has two) round after round until the time is up, then the end steps
+# (reconnect, fuzz, the cleanup and final checks) once. A round is 25 to 30 minutes with the default 3-minute churn; the
+# next starts only while at least half the last one's length is left, so a run ends within about half a round of the
+# time asked. Each round's sections are named "(round N)". --only and --skip still pick the steps (leaving none of the loop steps
+# is refused up front). A round that starts and doesn't finish, or a loop that ends early, is a FAIL.
+# The bench step needs the host's bSharedStorage = true (F4Multiplayer.ini); without it, it fails saying so.
 #
 # Needs both games running and joined (tools/rig: `rig.sh deploy` then `rig.sh join` in the rig's stage folder), and the
 # rig held by you: take it first, `bash $STAGE/rigq.sh take <name>`, and pass that name as F4MP_RIG_OWNER.
 # SMOKE_ZIP=<rc zip> also checks that the DLL on both machines is the zip's; CHECK_DLL=<a built F4Multiplayer.dll, or its md5> that it
 # is that build (a branch's: rig.sh deploy copies the main checkout's build folder). A mismatch stops the run.
 #
-# Steps, in order: preflight cleanup movement combat terminals grenades workshop pa_vm pa_host churn reconnect fuzz final (our frame cost is read after each phase)
+# Steps, in order: preflight cleanup, the loop steps movement combat terminals grenades workshop bench loot doors drops downed
+# pa_vm pa_host churn, then reconnect fuzz final (our frame cost is read after each loop step)
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
 . "$RIG/guard.sh"
 
-ALL="preflight cleanup movement combat terminals grenades workshop pa_vm pa_host churn reconnect fuzz final"
-only=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}
-while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
+LOOP="movement combat terminals grenades workshop bench loot doors drops downed pa_vm pa_host churn"
+ALL="preflight cleanup $LOOP reconnect fuzz final"
+only=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
+while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
+[ -z "$soak_min" ] || [[ $soak_min =~ ^[1-9][0-9]*$ ]] || { echo "--soak wants whole minutes, at least 1"; exit 2; }
 steps=${only:-$ALL}
+if [ -n "$soak_min" ]; then   # --soak repeats the loop steps: with --only/--skip leaving none there is nothing to repeat, and it would spin to the time limit
+	n=0; for s in $LOOP; do case " $skip " in *" $s "*) continue;; esac; case " $steps " in *" $s "*) n=1;; esac; done
+	[ $n = 1 ] || { echo "--soak: --only/--skip leave none of the loop steps ($LOOP) to repeat"; exit 2; }
+fi
 rig_guard || exit 2
-a_init smoke; A_NOTE=""
-trap a_interrupted INT TERM
+a_init "$([ -n "$soak_min" ] && echo soak || echo smoke)"; A_NOTE=""
+# Ctrl-C or TERM: the virtual pads are unplugged first (a pad left plugged takes the keyboard and mouse from the next run), once: a second
+# signal while a game is slow to answer goes straight to the verdict.
+smoke_interrupted() { [ -z "$SMOKE_INT" ] && { SMOKE_INT=1; pads_off; }; a_interrupted; }
+trap smoke_interrupted INT TERM
 tunnel
-run() { case " $skip " in *" $1 "*) return;; esac; case " $steps " in *" $1 "*) ;; *) return;; esac; "${@:2}"; case "$1" in movement|combat|terminals|grenades|workshop|pa_vm|pa_host|churn) perf_phase "$1";; esac; [ "$1" = combat ] && ws_mark; [ "$1" = churn ] && ws_check; return 0; }
+run() {
+	case " $skip " in *" $1 "*) return;; esac; case " $steps " in *" $1 "*) ;; *) return;; esac
+	"${@:2}"
+	case " $LOOP " in *" $1 "*) perf_phase "$1";; esac
+	[ "$1" = combat ] && [ -z "$WS_MARKED" ] && { ws_mark; WS_MARKED=1; }   # the working set's growth is read from the first combat on
+	[ "$1" = churn ] && ws_check; return 0
+}
+loop_steps() {
+	run movement  step_movement
+	run combat    step_combat
+	run terminals step_terminals
+	run grenades  step_grenades
+	run workshop  step_workshop
+	run bench     step_bench
+	run loot      step_loot
+	run doors     step_doors
+	run drops     step_drops
+	run downed    step_downed
+	run pa_vm     step_pa vm
+	run pa_host   step_pa host
+	run churn     step_churn "$churn_min"
+}
 
 run preflight step_preflight
 run cleanup   smoke_cleanup_start
-run movement  step_movement
-run combat    step_combat
-run terminals step_terminals
-run grenades  step_grenades
-run workshop  step_workshop
-run pa_vm     step_pa vm
-run pa_host   step_pa host
-run churn     step_churn "$churn_min"
+if [ -z "$soak_min" ]; then loop_steps
+else
+	soak_end=$((SECONDS + soak_min * 60)); last=0; A_ROUND=0; A_DONE=0
+	while [ $((SECONDS + last / 2)) -lt "$soak_end" ] && [ -z "$A_RIG_STOPPED" ]; do
+		A_ROUND=$((A_ROUND + 1)); t=$SECONDS; echo; echo "######## soak round $A_ROUND ($(( (soak_end - SECONDS + 59) / 60 )) min left)"
+		loop_steps; A_DONE=$A_ROUND; last=$((SECONDS - t))
+	done
+	echo; echo "######## soak: $A_ROUND round(s) of the loop steps in $(( (SECONDS - soak_end) / 60 + soak_min )) min; the end steps follow"; A_ROUND=""
+fi
+# Belt and braces: a shell error inside a round (a syntax error in arithmetic) ends the whole if/while above without a word, skipping the
+# rest of the round, every later round and the summary line. A round that started and never finished, or a loop that ended with more than
+# the half round the rule above allows still unspent, is a FAIL, not a short PASS.
+if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
+	if [ "$A_DONE" != "$A_ROUND" ] && [ -n "$A_ROUND" ]; then fail "soak: every round that started ran to its end" "round $A_ROUND started and did not finish (a shell error ended the soak loop?): rounds finished $A_DONE"; A_ROUND=""
+	elif [ "$A_DONE" = 0 ]; then fail "soak: at least one round ran" "no round of the loop steps ran"
+	elif [ $((SECONDS + last / 2)) -lt "$soak_end" ]; then fail "soak: ran as long as asked" "$(( (SECONDS - soak_end) / 60 + soak_min )) min of the $soak_min asked for, with more than half a round ($((last / 120)) min) left"; fi
+fi
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {
