@@ -635,7 +635,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and of those only one that is running here, runs once, is of type none, misc or side, no radiant and not PER_GAME;
   only an alias filled by "create reference"; and only a creature (its race lacks "allow PC dialogue": set on
   HumanRace, GhoulRace and DogmeatRace, clear on MirelurkRace), so Gun Run's Barney (alias 25), whose scenes are each
-  game's, stays each game's own. Its stages are shared only with the host's `sQuests = safe` (DN083_Barney is in
+  game's, stays each game's own. A vertibird (VertibirdRace, also without "allow PC dialogue") is never paired either:
+  the player sits in it, and pairing would mirror it to the owner's bird while its own flight scene still moves it, so
+  a seated player could be dropped. Its stages are shared only with the host's `sQuests = safe` (DN083_Barney is in
   QuestFilter SAFE). `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
 - Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
   while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
