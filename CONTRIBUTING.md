@@ -56,6 +56,15 @@ run only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F
 `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin.
 `xmake config --analyze=y` turns on the MSVC code analyser for our own sources.
 
+The tests also build and run on Linux (`xmake f -p linux --toolchain=gcc`, g++ 14 or newer: everything but the
+plugin), and `tools/coverage.sh` measures their line coverage there, on Linux or in WSL (Ubuntu 24.04: `apt install
+g++-14 gcovr`, plus xmake 3.1). It builds the tests with `--coverage` into `build/coverage` (with its own xmake
+configuration, so yours is left alone), runs them, and writes gcovr's reports for `common/` and `src/` to
+`build/coverage/report`: a text report per file, a Cobertura `coverage.xml`, `coverage.json` (the totals) and
+`coverage.md` (the total and each folder). Its exit code is the tests' own; a substring argument runs only the
+matching tests. GitHub runs it for every pull request into main and the maintainer's pushes (`.github/workflows/tests.yml`): the coverage is in the
+run's summary, and a pull request from this repository's branches gets a comment with it and the change against main.
+
 Anything that touches the game (`src/game`, `src/steam`, the sync classes) can only be tested in a
 game. Say in the pull request whether you ran it with two games (host and joiner) and what you saw;
 "not tested in a game" is a fine answer, as long as it is said. A fix for something seen in a game

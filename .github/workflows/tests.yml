@@ -1,0 +1,240 @@
+# Runs the unit tests on Linux with line coverage (tools/coverage.sh) and shows the coverage: in the job summary for
+# every run, and as one comment on each pull request from this repository's own branches, kept up to date in place,
+# with the change against main. It runs for
+#   pull requests into main, from any branch or fork. A fork's run is GitHub's "pull_request" run: a read-only token,
+#            no secrets, and for a first-time contributor it waits for the maintainer's approval (the repository's
+#            Actions setting). Its coverage is in the run's summary only: it gets no comment, see `comment` below.
+#   pushes   the repository owner's, to main (main's coverage is what a PR is compared with) and to any other branch
+#            that has no open pull request into main (a branch with one is tested by the PR's run, not twice).
+# One run at a time per pull request or branch: a new push cancels the run before it, so pushes don't pile up.
+# Jobs:
+#   gate      for a push to a branch other than main: does it have an open PR? Reads the API only.
+#   tests     untrusted: builds and runs the PR's or branch's code. contents: read, no secrets, no credentials kept.
+#             The reports go to the job summary and to the artifact "coverage" (Cobertura XML, gcovr's JSON and text
+#             reports, the test log; kept 90 days for main, 14 otherwise).
+#   comment   trusted, PRs from this repository only: checks out and runs nothing. It reads coverage.json from this
+#             run's artifact and from main's latest run's as data (unzip -p of that one file; only numbers and folder
+#             names that pass a strict pattern are used) and writes the PR's coverage comment with pull-requests: write.
+#             A fork's PR never gets it: its token can't comment, and its artifact is not trusted to.
+# No cache is restored or saved (see build.yml), every action is pinned by commit, and pull_request_target and
+# workflow_run are not used. Windows builds and tests stay in build.yml.
+name: Tests
+run-name: Tests ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    # ci-tmp: snapshots that tools build by hand; vet-runner: main's commit, for vet.yml (as in build.yml)
+    branches-ignore: ["ci-tmp/**", vet-runner]
+
+permissions: {}
+
+concurrency:
+  group: tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Has an open PR?
+    if: github.event_name == 'push' && github.actor == github.repository_owner && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      open_pr: ${{ steps.pr.outputs.open_pr }}
+    steps:
+      - name: Look for an open PR into main from this branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          n=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f "head=$OWNER:$BRANCH" --jq length)
+          [[ "$n" =~ ^[0-9]+$ ]] || { echo "::error::could not read the open pull requests"; exit 1; }
+          if [ "$n" -gt 0 ]; then
+            echo "open_pr=true" >> "$GITHUB_OUTPUT"
+            echo "This branch has an open pull request into main: its run tests this push." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "open_pr=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  tests:
+    name: Unit tests and coverage (Linux)
+    needs: gate
+    if: >-
+      !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'push' &&
+      github.actor == github.repository_owner && needs.gate.outputs.open_pr != 'true'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      # A PR's run checks out GitHub's merge of the PR into main; the Linux build needs no submodule.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # No caches, restored or saved (its cache inputs all default to off).
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a  # v1.2.5
+        with:
+          xmake-version: '3.1.1'
+
+      - name: Install g++ 14 and gcovr (Ubuntu's packages)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends g++-14 gcovr
+
+      - name: tools/coverage.sh
+        timeout-minutes: 40
+        run: bash tools/coverage.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          report=build/coverage/report
+          {
+            if [ -f "$report/coverage.md" ]; then cat "$report/coverage.md"; else echo "No coverage report: the build or gcovr failed (see the log)."; fi
+            if [ -f "$report/tests.log" ] && grep -qE '^(FAILED|FIXED\?)' "$report/tests.log"; then
+              echo
+              echo '```'
+              grep -E '^(FAILED|FIXED\?)' "$report/tests.log" | sed -n 1,100p
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: coverage
+          retention-days: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 90 || 14 }}
+          if-no-files-found: warn
+          path: build/coverage/report/
+
+  comment:
+    name: Coverage comment
+    needs: tests
+    # Only a PR from this repository's own branches: a fork's token is read-only, and its artifact could say anything.
+    if: >-
+      !cancelled() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (needs.tests.result == 'success' || needs.tests.result == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read        # this run's artifact and main's
+      pull-requests: write # the comment
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+      RESULT: ${{ needs.tests.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Write or update the PR's coverage comment
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ && "$HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected event"; exit 1; }
+          marker='<!-- tests-coverage -->'
+          # One run's coverage.json, as rows "name covered lines" that passed the checks, into $2. Nothing from the
+          # artifact but this one file is read, and it is never run or printed.
+          take() {
+            local run=$1 dest=$2 id
+            : > "$dest"
+            id=$(gh api "repos/$REPO/actions/runs/$run/artifacts?name=coverage" --jq '.artifacts[0].id // empty') || return 1
+            [[ "$id" =~ ^[0-9]+$ ]] || return 1
+            gh api "repos/$REPO/actions/artifacts/$id/zip" > "$RUNNER_TEMP/a.zip" || return 1
+            unzip -p "$RUNNER_TEMP/a.zip" coverage.json 2> /dev/null | head -c 200000 > "$RUNNER_TEMP/c.json" || return 1
+            jq -r '(["TOTAL", .total.covered, .total.lines] | @tsv),
+                   (.dirs | to_entries | .[:20][] | [.key, .value.covered, .value.lines] | @tsv),
+                   (if .tests then ["TESTS", .tests.run, .tests.failed, .tests.known] | @tsv else empty end)' \
+              "$RUNNER_TEMP/c.json" 2> /dev/null > "$RUNNER_TEMP/rows" || return 1
+            while IFS=$'\t' read -r name a b c; do
+              if [ "$name" = TESTS ]; then
+                [[ "$a" =~ ^[0-9]{1,7}$ && "$b" =~ ^[0-9]{1,7}$ && "$c" =~ ^[0-9]{1,7}$ ]] && echo "TESTS $a $b $c" >> "$dest"
+              elif [[ ( "$name" = TOTAL || "$name" =~ ^[A-Za-z0-9_.-]{1,40}/$ ) && "$a" =~ ^[0-9]{1,9}$ && "$b" =~ ^[0-9]{1,9}$ && -z "$c" ]]; then
+                echo "$name $a $b" >> "$dest"
+              fi
+            done < "$RUNNER_TEMP/rows"
+            grep -q '^TOTAL ' "$dest"
+          }
+          pct() { awk -v c="$1" -v l="$2" 'BEGIN { if (l > 0) printf "%.2f", 100 * c / l; else printf "n/a" }'; }
+          delta() { awk -v a="$1" -v b="$2" 'BEGIN { if (a == "n/a" || b == "n/a") exit; d = a - b; printf " (%s%.2f)", d >= 0 ? "+" : "", d }'; }
+
+          have_pr=false
+          if take "$GITHUB_RUN_ID" "$RUNNER_TEMP/pr.rows"; then have_pr=true; fi
+
+          # main's coverage: its latest finished push run that kept a report (a run whose tests failed still measured).
+          have_main=false
+          gh api "repos/$REPO/actions/workflows/tests.yml/runs?branch=main&event=push&status=completed&per_page=10" \
+            --jq '.workflow_runs[] | select(.head_repository.full_name == "'"$REPO"'" and (.conclusion == "success" or .conclusion == "failure")) | "\(.id) \(.head_sha)"' \
+            > "$RUNNER_TEMP/main-runs" || true
+          while read -r run sha; do
+            [[ "$run" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
+            if take "$run" "$RUNNER_TEMP/main.rows"; then have_main=true; main_sha=$sha; main_run=$run; break; fi
+          done < "$RUNNER_TEMP/main-runs"
+
+          {
+            echo "$marker"
+            echo "### Unit tests and line coverage"
+            echo
+            if [ "$RESULT" = success ]; then verdict="passed"; else verdict="**failed**"; fi
+            tests=""
+            if $have_pr && read -r _ run failed known < <(grep '^TESTS ' "$RUNNER_TEMP/pr.rows"); then
+              tests=" ($run tests, $failed failed"
+              if [ "$known" -gt 0 ]; then tests="$tests, $known known bugs still failing"; fi
+              tests="$tests)"
+            fi
+            echo "Linux build at ${HEAD:0:7}: $verdict$tests. [Run, with the full report]($RUN_URL)"
+            echo
+            if $have_pr; then
+              if $have_main; then
+                echo "| | Lines covered | Lines | Coverage | main (${main_sha:0:7}) |"
+                echo "|---|---:|---:|---:|---:|"
+              else
+                echo "| | Lines covered | Lines | Coverage |"
+                echo "|---|---:|---:|---:|"
+              fi
+              while read -r name covered lines; do
+                [ "$name" = TESTS ] && continue
+                p=$(pct "$covered" "$lines")
+                label="\`$name\`"; [ "$name" = TOTAL ] && label="**Total**"
+                row="| $label | $covered | $lines | $p% |"
+                if $have_main; then
+                  if read -r mc ml < <(awk -v n="$name" '$1 == n { print $2, $3; exit }' "$RUNNER_TEMP/main.rows"); then
+                    m=$(pct "$mc" "$ml")
+                    row="$row $m%$(delta "$p" "$m") |"
+                  else
+                    row="$row |"
+                  fi
+                fi
+                echo "$row"
+              done < "$RUNNER_TEMP/pr.rows"
+              echo
+              if $have_main; then
+                echo "The change in brackets is in percentage points against main's last measured run ([$main_run]($GITHUB_SERVER_URL/$REPO/actions/runs/$main_run))."
+              else
+                echo "No coverage of main to compare with yet (a push to main measures it)."
+              fi
+            else
+              echo "No coverage report: the build, the tests' run or gcovr failed. See the run."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+
+          id=$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | sed -n 1p)
+          if [[ "$id" =~ ^[0-9]+$ ]]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F "body=@$RUNNER_TEMP/comment.md" > /dev/null
+            echo "Updated the coverage comment"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F "body=@$RUNNER_TEMP/comment.md" > /dev/null
+            echo "Wrote the coverage comment"
+          fi
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
