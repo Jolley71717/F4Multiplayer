@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T16:17:26+00:00",
+ "updated": "2026-11-07T16:27:38+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -126,6 +126,14 @@
    "stage": 7,
    "note": "",
    "pr": 243
+  },
+  {
+   "id": "1nbs",
+   "title": "Join catch-up: DialogueDiamondCityEntrance (000190BC) stage 0 'still not done 5 s after setting it' on both games",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "1vf3",
