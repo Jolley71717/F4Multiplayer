@@ -1,0 +1,6 @@
+Friends' laser beams and tracers are seen in flight (bFriendShotTrails, on by default)
+A friend's powered conveyor belts now run in your game
+Home Plate: only the buyer pays the caps, everyone in the session owns it
+The camera no longer gets stuck after being downed and helped up several times in quick succession
+Same protocol as 0.13.0: plays with 0.13.0 and 0.13.1
+Full notes on GitHub
