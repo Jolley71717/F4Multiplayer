@@ -119,6 +119,8 @@ namespace Config
 				settings.friendFaces = ParseBool(value);
 			} else if (key == "bGrenadeInHand") {
 				settings.grenadeInHand = ParseBool(value);
+			} else if (key == "bFriendShotTrails") {
+				settings.friendShotTrails = ParseBool(value);
 			} else if (key == "bSyncQuests") {
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bSharedRadiants") {

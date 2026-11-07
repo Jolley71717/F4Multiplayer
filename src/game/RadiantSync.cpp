@@ -8,6 +8,7 @@
 #include "game/RadiantRules.h"
 #include "game/Spawns.h"
 #include "game/StageLog.h"
+#include "game/StageRules.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
 
@@ -376,6 +377,15 @@ namespace RadiantSync
 			bool                       replaced = false;  // this game's own run of it was stopped for it: started again if theirs isn't (RestartOwn)
 		};
 		std::optional<Starting> starting;
+
+		// A quest the developer's `radiantstart` started, its forced definitions kept until it runs (or 10 s): put back by Frame.
+		struct DevStart
+		{
+			std::uint32_t      quest = 0;
+			std::vector<Saved> saved;
+			Clock::time_point  since{};
+		};
+		std::optional<DevStart> devStart;
 
 		const char* QuestName(const RE::TESQuest* a_quest)
 		{
@@ -843,7 +853,7 @@ namespace RadiantSync
 		std::optional<RadiantRules::QuestHere> QuestHereOf(std::uint32_t a_id)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_id);
-			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || RadiantRules::ShareOf(a_id) != RadiantRules::Share::kShared) {
+			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || RadiantSync::ShareOf(quest) != RadiantRules::Share::kShared) {
 				return std::nullopt;
 			}
 			return RadiantRules::QuestHere{ QuestStageLayout::Done(quest), FillsOf(quest) };
@@ -900,6 +910,142 @@ namespace RadiantSync
 		return config.sharedRadiants && config.syncQuests && Story::Shared();
 	}
 
+	namespace
+	{
+		// A quest by its file and its form ID there (no load index), as RadiantRules::RADIANTS names it: nothing for a form
+		// from a mod, a runtime-made one or a file the rules do not know. The load order of this game does not matter.
+		std::optional<std::pair<std::uint8_t, std::uint32_t>> LocalOf(const RE::TESQuest* a_quest)
+		{
+			if (!a_quest || !Official::IsOfficialForm(a_quest)) {
+				return std::nullopt;
+			}
+			const auto file = a_quest->GetFile(0);
+			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+			if (!index) {
+				return std::nullopt;
+			}
+			return std::pair{ static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFFu };
+		}
+
+		// RADIANTS' quests in this game: the runtime form ID of each (0: its file is not in this load order, so the quest is
+		// skipped, quietly). Resolved once the game's data is loaded (the first poll in a session): a load order is
+		// fixed for the life of the process.
+		std::array<std::uint32_t, RadiantRules::RADIANTS.size()> radiantQuests{};
+		bool                                                      radiantsResolved = false;
+
+		void ResolveRadiants()
+		{
+			if (radiantsResolved) {
+				return;
+			}
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return;
+			}
+			for (std::size_t i = 0; i < RadiantRules::RADIANTS.size(); ++i) {
+				const auto& entry = RadiantRules::RADIANTS[i];
+				const auto  quest = handler->LookupForm<RE::TESQuest>(entry.quest, StageRules::FileName(static_cast<StageRules::File>(entry.file)));
+				radiantQuests[i] = quest ? quest->GetFormID() : 0;
+			}
+			radiantsResolved = true;
+		}
+	}
+
+	const RadiantRules::Entry* EntryOf(const RE::TESQuest* a_quest)
+	{
+		// Polled for every quest: the form ID alone (cheap) rules out nearly all of them before the file name is compared.
+		if (!a_quest || !RadiantRules::MayBeRadiant(a_quest->GetFormID() & 0x00FFFFFFu)) {
+			return nullptr;
+		}
+		const auto local = LocalOf(a_quest);
+		return local ? RadiantRules::Find(local->first, local->second) : nullptr;
+	}
+
+	const RadiantRules::Entry* EntryOf(std::uint32_t a_questId)
+	{
+		return EntryOf(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
+	RadiantRules::Share ShareOf(const RE::TESQuest* a_quest)
+	{
+		const auto entry = EntryOf(a_quest);
+		return entry ? entry->share : RadiantRules::Share::kNotRadiant;
+	}
+
+	RadiantRules::Share ShareOf(std::uint32_t a_questId)
+	{
+		return ShareOf(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
+	bool IsRadiant(const RE::TESQuest* a_quest)
+	{
+		return ShareOf(a_quest) != RadiantRules::Share::kNotRadiant;
+	}
+
+	bool IsRadiant(std::uint32_t a_questId)
+	{
+		return IsRadiant(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases)
+	{
+		if (!a_quest || !Calibrated()) {
+			return "error: no such quest, or this game's aliases can't be read";
+		}
+		if (a_quest->data.flags & QUEST_RUNNING) {
+			return "error: it is running already";
+		}
+		if (devStart) {
+			return "error: an earlier radiantstart is still waiting for its quest to run";
+		}
+		RadiantRules::Plan plan;
+		for (const auto alias : a_quest->aliases) {
+			if (!alias || alias->aliasID == NO_ALIAS) {
+				continue;
+			}
+			// Named by the caller (alias ID, form), or what the story manager's event fills: its reference (the settlement's
+			// workshop, the quest giver) and, where the quest reads one, its location.
+			const auto named = std::ranges::find(a_aliases, alias->aliasID, &std::pair<std::uint32_t, std::uint32_t>::first);
+			if (const auto ref = AsRef(alias)) {
+				if (named != a_aliases.end()) {
+					plan.forces.push_back({ alias->aliasID, Kind::kRef, named->second });
+				} else if (a_ref != 0 && ref->fillType == static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kFromEvent)) {
+					plan.forces.push_back({ alias->aliasID, Kind::kRef, a_ref });
+				}
+			} else if (const auto loc = AsLoc(alias)) {
+				if (named != a_aliases.end()) {
+					plan.forces.push_back({ alias->aliasID, Kind::kLoc, named->second });
+				} else if (a_location != 0 && loc->forcedFromEvent != 0xFFFFFFFF && loc->forcedFromAlias == 0xFFFFFFFF) {
+					plan.forces.push_back({ alias->aliasID, Kind::kLoc, a_location });
+				}
+			}
+		}
+		if (plan.forces.empty()) {
+			return "error: nothing to force: none of its aliases is filled from the story manager's event, and none was named";
+		}
+		std::vector<Saved> saved;
+		if (!Force(a_quest, plan, saved)) {
+			return "error: an alias couldn't be forced";
+		}
+		// The caller named these, so the game's own pick between them is theirs: their conditions are lifted for the start
+		// (Restore puts them back), as a friend's pick is for an optional alias.
+		for (const auto& entry : saved) {
+			if (const auto ref = AsRef(entry.alias)) {
+				ref->conditions = nullptr;
+			} else if (const auto loc = AsLoc(entry.alias)) {
+				loc->conditions = nullptr;
+			}
+		}
+		RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_quest->GetFormID()).c_str());
+		const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
+		// The definitions stay forced until the quest runs or 10 s have passed (Frame): a start's alias fill can come after the console
+		// call returns, as for a friend's run (StartHere, FinishStart).
+		devStart = DevStart{ a_quest->GetFormID(), std::move(saved), Clock::now() };
+		return running ? std::format("ok: {:08X} '{}' is running with {} alias(es) forced (put back shortly)", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size())
+		               : std::format("pending: {:08X} '{}' isn't running yet with {} alias(es) forced; they are put back when it runs or after 10 s: ask `quests edid:` for the outcome",
+			                 a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
+	}
+
 	void SetLocalPlayer(std::uint32_t a_id)
 	{
 		self = a_id;
@@ -916,7 +1062,7 @@ namespace RadiantSync
 
 	void OnStart(const Protocol::RadiantStart& a_start)
 	{
-		if (!Enabled() || a_start.playerId == 0 || a_start.playerId == self || RadiantRules::ShareOf(a_start.quest) != RadiantRules::Share::kShared) {
+		if (!Enabled() || a_start.playerId == 0 || a_start.playerId == self || RadiantSync::ShareOf(a_start.quest) != RadiantRules::Share::kShared) {
 			return;
 		}
 		const Run run{ a_start.playerId, a_start.serial };
@@ -934,7 +1080,7 @@ namespace RadiantSync
 
 	void OnStage(const Protocol::RadiantStage& a_stage)
 	{
-		if (!Enabled() || RadiantRules::ShareOf(a_stage.quest) != RadiantRules::Share::kShared) {
+		if (!Enabled() || RadiantSync::ShareOf(a_stage.quest) != RadiantRules::Share::kShared) {
 			return;
 		}
 		const Run run{ a_stage.origin, a_stage.serial };
@@ -993,6 +1139,15 @@ namespace RadiantSync
 	{
 		inSession = a_inSession;
 		const auto now = Clock::now();  // QuestSync polls twice a second
+		if (devStart) {
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(devStart->quest);
+			if ((quest && (quest->data.flags & QUEST_RUNNING)) || now - devStart->since >= START_TIMEOUT) {
+				Restore(devStart->saved);
+				REX::INFO("RadiantSync: the developer's start of {:08X} '{}': {}; its forced aliases are put back", devStart->quest, QuestName(quest),
+					quest && (quest->data.flags & QUEST_RUNNING) ? "it runs" : "it didn't start");
+				devStart.reset();
+			}
+		}
 		if (!WorldSync::InWorld()) {
 			return;
 		}
@@ -1074,15 +1229,18 @@ namespace RadiantSync
 		}
 
 		// Runs of ours: a shared radiant handed out here (an objective shown), not one of a friend's.
-		for (const auto& entry : RadiantRules::RADIANTS) {
-			if (entry.share != RadiantRules::Share::kShared || book.Shares(entry.formId) || book.IsStarting(entry.formId)) {
+		ResolveRadiants();
+		for (std::size_t i = 0; i < RadiantRules::RADIANTS.size(); ++i) {
+			const auto  id = radiantQuests[i];  // 0: the add-on is not in this load order
+			const auto& entry = RadiantRules::RADIANTS[i];
+			if (id == 0 || entry.share != RadiantRules::Share::kShared || book.Shares(id) || book.IsStarting(id)) {
 				continue;
 			}
-			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(entry.formId);
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
 			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || !QuestSync::PlayerStarted(quest)) {
 				continue;
 			}
-			if (std::ranges::any_of(pending, [&](const Protocol::RadiantStart& a_start) { return a_start.quest == entry.formId; })) {
+			if (std::ranges::any_of(pending, [&](const Protocol::RadiantStart& a_start) { return a_start.quest == id; })) {
 				continue;  // a friend's run of it comes first: it may be this one
 			}
 			Begin(quest);
@@ -1141,6 +1299,22 @@ namespace RadiantSync
 		}
 	}
 
+		// A condition list as `fn(p1,p2)` items (the function's number as SCRIPT_OUTPUT has it, its two parameters as the game holds
+		// them, hex), `|` between ones joined by or, `&` by and: for reading why an alias can't be filled.
+		static std::string CondText(const RE::TESCondition* a_condition)
+		{
+			std::string out;
+			if (!a_condition) {
+				return "none";
+			}
+			int count = 0;
+			for (auto item = a_condition->head; item && count < 12; item = item->next, ++count) {
+				out += std::format("{}{}({:X},{:X})", count ? (item->data.compareOr ? "|" : "&") : "", static_cast<int>(item->data.functionData.function.underlying()),
+					reinterpret_cast<std::uintptr_t>(item->data.functionData.param[0]), reinterpret_cast<std::uintptr_t>(item->data.functionData.param[1]));
+			}
+			return out.empty() ? "none" : out;
+		}
+
 	std::string DumpAliases(const RE::TESQuest* a_constQuest)
 	{
 		if (!a_constQuest) {
@@ -1148,7 +1322,7 @@ namespace RadiantSync
 		}
 		const auto  quest = const_cast<RE::TESQuest*>(a_constQuest);
 		std::string out = std::format("{:08X} '{}' flags={:04X} stage={} aliases={} share={}", quest->GetFormID(), QuestName(quest), quest->data.flags, quest->currentStage,
-			quest->aliases.size(), static_cast<int>(RadiantRules::ShareOf(quest->GetFormID())));
+			quest->aliases.size(), static_cast<int>(RadiantSync::ShareOf(quest)));
 		Calibrate();
 		out += " | calibration: " + calibration.summary;
 		for (const auto alias : quest->aliases) {
@@ -1159,11 +1333,11 @@ namespace RadiantSync
 			out += std::format(" | {} {} {} flags={:06X} fillType={}", TypeOf(alias), alias->aliasID, name ? name : "", Flags(alias), alias->fillType);
 			if (const auto ref = AsRef(alias)) {
 				out += std::format(" data={:X},{:X},{:X} cond={} fill={} here={:08X}", ref->fillData.data[0], ref->fillData.data[1], ref->fillData.data[2],
-					static_cast<const void*>(ref->conditions), static_cast<int>(RadiantRules::RefFill(ref->fillType, Flags(ref))), Here(quest, Kind::kRef, alias->aliasID));
+					CondText(ref->conditions), static_cast<int>(RadiantRules::RefFill(ref->fillType, Flags(ref))), Here(quest, Kind::kRef, alias->aliasID));
 			} else if (const auto loc = AsLoc(alias)) {
 				out += std::format(" forced={:08X} fromAlias={:X} fromEvent={:X} eventData={:X} external={:08X}/{:X} closestTo={:X} cond={} fill={} here={:08X}",
 					loc->forcedLoc ? loc->forcedLoc->GetFormID() : 0, loc->forcedFromAlias, loc->forcedFromEvent, loc->forcedEventData,
-					loc->externalQuest ? loc->externalQuest->GetFormID() : 0, loc->externalAlias, loc->closestToAlias, static_cast<const void*>(loc->conditions),
+					loc->externalQuest ? loc->externalQuest->GetFormID() : 0, loc->externalAlias, loc->closestToAlias, CondText(loc->conditions),
 					static_cast<int>(LocFillOf(loc)), Here(quest, Kind::kLoc, alias->aliasID));
 			}
 		}

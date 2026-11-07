@@ -47,6 +47,7 @@
 #include "game/TextureWait.h"
 #include "game/ResourceMirror.h"
 #include "game/WorkshopSync.h"
+#include "game/QuestSync.h"
 #include "net/Session.h"
 #include "Text.h"
 
@@ -520,6 +521,7 @@ namespace
 							}
 						};
 						step("the shields", [] { WeaponFire::BeforeLoad(); });  // first: the shields Session ends below would send setghost 0 into the load
+						step("the waived prices", [] { QuestSync::BeforeLoad(); });  // a waived price is put back before the load can run frames that would set it to 0
 						step("the binding", [] { Session::OnBeforeLoad(); });
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the lent frames", [] { FrameLoans::BeforeLoad(); });  // the extra data of the pieces we lent is let go while the old world is still there
@@ -1118,6 +1120,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
 	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
+	WeaponFire::SetShotTrails(Config::Get().friendShotTrails);  // a friend's plain bullet or beam flies inert (AttackKind::ShotReplay)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 	VatsTargets::Install();  // VATS never targets a friend's stand-in (bVatsSkipsFriends; VatsTargetRules.h)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)

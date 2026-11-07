@@ -1,6 +1,7 @@
 #include "Test.h"
 
 #include "game/RadiantRules.h"
+#include "game/StageRules.h"
 
 #include <map>
 
@@ -70,23 +71,24 @@ namespace
 
 TEST("radiants: the Minutemen's settlement requests are shared by their run; attacks and the factions' other radiants are left alone")
 {
-	CHECK(ShareOf(MIN_RECRUIT01) == Share::kShared);
-	CHECK(ShareOf(MIN_RECRUIT02) == Share::kShared);
-	CHECK(ShareOf(0x0003DF95) == Share::kShared);  // MinRadiantOwned02: raiders near a settlement of the player's
-	CHECK(ShareOf(0x0003E0C1) == Share::kShared);  // MinRadiantOwned03: kidnapping
+	CHECK(ShareOf(0, MIN_RECRUIT01) == Share::kShared);
+	CHECK(ShareOf(0, MIN_RECRUIT02) == Share::kShared);
+	CHECK(ShareOf(0, 0x0003DF95) == Share::kShared);  // MinRadiantOwned02: raiders near a settlement of the player's
+	CHECK(ShareOf(0, 0x0003E0C1) == Share::kShared);  // MinRadiantOwned03: kidnapping
 	// Each game simulates its own attack: the attackers are made at the settlement.
-	CHECK(ShareOf(MIN_OWNED01) == Share::kLeftAlone);
-	CHECK(ShareOf(MIN_DEFEND_CASTLE) == Share::kLeftAlone);
+	CHECK(ShareOf(0, MIN_OWNED01) == Share::kLeftAlone);
+	CHECK(ShareOf(0, MIN_DEFEND_CASTLE) == Share::kLeftAlone);
 	// Not radiants: QuestFilter decides.
-	CHECK(ShareOf(MQ104) == Share::kNotRadiant);
-	CHECK(ShareOf(MIN01) == Share::kNotRadiant);
-	CHECK(!IsRadiant(MIN01));
-	CHECK(IsRadiant(MIN_OWNED01));
-	// Every entry once, and every one Fallout4.esm's.
-	std::set<std::uint32_t> seen;
+	CHECK(ShareOf(0, MQ104) == Share::kNotRadiant);
+	CHECK(ShareOf(0, MIN01) == Share::kNotRadiant);
+	CHECK(!IsRadiant(0, MIN01));
+	CHECK(IsRadiant(0, MIN_OWNED01));
+	// Every entry once (by its file and form ID there), of a file the rules know, with a form ID that has no load index.
+	std::set<std::pair<std::uint8_t, std::uint32_t>> seen;
 	for (const auto& entry : RADIANTS) {
-		CHECK(seen.insert(entry.formId).second);
-		CHECK((entry.formId >> 24) == 0);
+		CHECK(seen.insert({ entry.file, entry.quest }).second);
+		CHECK(entry.file <= 3);
+		CHECK((entry.quest >> 24) == 0);
 		CHECK(!entry.editorId.empty());
 		// Only a shared radiant's run is ever stopped for a friend's.
 		CHECK((!entry.replace || entry.share == Share::kShared));
@@ -97,37 +99,37 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 {
 	// The Minutemen's: the locket, the hostile settlements, Preston's building, generator and synth requests.
 	for (const std::uint32_t minutemen : { 0x00106F05u, 0x0015F03Fu, 0x0015F040u, 0x00161D1Du, 0x00162F44u, 0x00109D73u }) {
-		CHECK(ShareOf(minutemen) == Share::kShared);
+		CHECK(ShareOf(0, minutemen) == Share::kShared);
 	}
-	CHECK(ShareOf(0x00157577) == Share::kLeftAlone);  // a synth boss made at runtime
-	CHECK(ShareOf(0x00164167) == Share::kLeftAlone);  // refugees made at runtime
+	CHECK(ShareOf(0, 0x00157577) == Share::kLeftAlone);  // a synth boss made at runtime
+	CHECK(ShareOf(0, 0x00164167) == Share::kLeftAlone);  // refugees made at runtime
 	// Every settlement attack: the attackers are made at runtime.
 	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u, 0x000BDB04u }) {
-		CHECK(ShareOf(attack) == Share::kLeftAlone);
+		CHECK(ShareOf(0, attack) == Share::kLeftAlone);
 	}
 	// The Brotherhood's: Cleansing the Commonwealth, Quartermastery, Feeding the Troops.
-	CHECK(ShareOf(BOSR01) == Share::kShared);
-	CHECK(ShareOf(BOSR02) == Share::kShared);
-	CHECK(ShareOf(BOSR05) == Share::kShared);
-	CHECK(ShareOf(0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
-	CHECK(ShareOf(0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
+	CHECK(ShareOf(0, BOSR01) == Share::kShared);
+	CHECK(ShareOf(0, BOSR02) == Share::kShared);
+	CHECK(ShareOf(0, BOSR05) == Share::kShared);
+	CHECK(ShareOf(0, 0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
+	CHECK(ShareOf(0, 0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
 	// The Institute's: Pest Control, Hypothesis, Political Leanings.
-	CHECK(ShareOf(INSTR01) == Share::kShared);
-	CHECK(ShareOf(0x000EB268) == Share::kShared);
-	CHECK(ShareOf(0x000F0D8C) == Share::kShared);
-	CHECK(ShareOf(0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
-	CHECK(ShareOf(0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
+	CHECK(ShareOf(0, INSTR01) == Share::kShared);
+	CHECK(ShareOf(0, 0x000EB268) == Share::kShared);
+	CHECK(ShareOf(0, 0x000F0D8C) == Share::kShared);
+	CHECK(ShareOf(0, 0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
+	CHECK(ShareOf(0, 0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
 	// The Railroad's: Butcher's Bill (both parts), Concierge, Jackpot, Mercer and Randolph Safehouse, Weathervane.
 	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
-		CHECK(ShareOf(railroad) == Share::kShared);
+		CHECK(ShareOf(0, railroad) == Share::kShared);
 	}
 	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
-		CHECK(ShareOf(railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
+		CHECK(ShareOf(0, railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
 	}
 	// Diamond City's wanted posters (misc quests).
-	CHECK(ShareOf(0x0014182C) == Share::kShared);
-	CHECK(ShareOf(0x0018127D) == Share::kShared);
-	CHECK(ShareOf(0x00181280) == Share::kShared);
+	CHECK(ShareOf(0, 0x0014182C) == Share::kShared);
+	CHECK(ShareOf(0, 0x0018127D) == Share::kShared);
+	CHECK(ShareOf(0, 0x00181280) == Share::kShared);
 }
 
 TEST("radiants: a run here its player hasn't been given is stopped for a friend's only where that changes nothing else")
@@ -186,7 +188,7 @@ TEST("radiants: a Railroad job stopped for a friend's run while on offer is coun
 	CHECK(!LeavesCounted(INSTR01, std::vector<std::uint16_t>{ 5 }, 0.0f));
 	// Every quest with an offer is a shared one that may be stopped (and only such a one needs it).
 	for (const auto& offer : OFFERS) {
-		const auto entry = Find(offer.quest);
+		const auto entry = Find(0, offer.quest);
 		REQUIRE(entry != nullptr);
 		CHECK(entry->share == Share::kShared);
 		CHECK(entry->replace);
@@ -943,4 +945,62 @@ TEST("radiants: a run shared here and shared again under a new number is joined 
 	CHECK(book.OnStart(MIN_RECRUIT02, again, false, fills) == Answer::kStart);
 	book.Starting(MIN_RECRUIT02, again, fills);
 	CHECK(!book.Join(MIN_RECRUIT02, again, fills));
+}
+
+TEST("radiants: the add-ons' radiants are named by their file and form ID there, so one's form ID is no other file's")
+{
+	// The four QuestFilter once listed as each game's own, whose aliases are the game's own references and locations.
+	struct Dlc
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+	};
+	for (const auto [file, quest] : { Dlc{ 0, 0x026340 }, Dlc{ 0, 0x0482CD }, Dlc{ 1, 0x00EB51 }, Dlc{ 1, 0x040A86 } }) {
+		const auto entry = Find(file, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(!entry->replace);  // each is handed out by one game's conversation or event: a friend's run with other targets is not stopped
+		CHECK(ShareOf(file, quest) == Share::kShared);
+		CHECK(IsRadiant(file, quest));
+	}
+	// Far Harbor's settlement request and Fallout4.esm's share a form ID digit for digit with none of this file's.
+	CHECK(Find(1, 0x00EB51) != nullptr);
+	CHECK(Find(0, 0x00EB51) == nullptr);
+	CHECK(Find(2, 0x00EB51) == nullptr);
+	CHECK(ShareOf(0, 0x00EB51) == Share::kNotRadiant);
+	CHECK(Find(0, 0x019088) == nullptr);
+	CHECK(Find(3, 0x017F46) == nullptr);  // DLC04_RQ_KillRivalBoss: kept in PER_GAME
+	CHECK(Find(3, 0x026340) == nullptr);  // Saugus Ironworks is Fallout4.esm's
+	CHECK(Find(0, 0x11B36E) != nullptr);  // MinRecruit00
+	CHECK(Find(1, 0x11B36E) == nullptr);
+	// The add-ons' runs that make NPCs at runtime stay each player's own (QuestFilter::PER_GAME), so they are not listed here.
+	CHECK(Find(1, 0x00EB4C) == nullptr);  // DLC03WorkshopRadiantOwned01
+	CHECK(Find(3, 0x00DB37) == nullptr);  // DLC04RaidWipeOut
+	// The replacement rules, keyed by runtime ID, never match an add-on's quest (its ID carries its load index).
+	CHECK(!Replaces(0x0200EB51u, false, false, false));
+	CHECK(!Replaces(0x0000EB51u, false, false, false));
+	CHECK(Takes(0x0200EB51u, 0));
+	CHECK(OfferOf(0x0200EB51u) == nullptr);
+	// A radiant is looked up by form ID before its file (RadiantSync::EntryOf): every entry is found that way.
+	for (const auto& entry : RADIANTS) {
+		CHECK(MayBeRadiant(entry.quest));
+	}
+	CHECK(!MayBeRadiant(0x000001));
+}
+
+TEST("radiants: StageRules names the game files in the order questscan reads them (tools/questscan.cs MASTERS)")
+{
+	using StageRules::File;
+	CHECK(StageRules::FileName(File::kFallout4) == "Fallout4.esm");
+	CHECK(StageRules::FileName(File::kCoast) == "DLCCoast.esm");
+	CHECK(StageRules::FileName(File::kRobot) == "DLCRobot.esm");
+	CHECK(StageRules::FileName(File::kNukaWorld) == "DLCNukaWorld.esm");
+	// RADIANTS' file numbers are StageRules::File's: FileOf reads each name back as its own number.
+	for (std::uint8_t file = 0; file <= 3; ++file) {
+		const auto back = StageRules::FileOf(StageRules::FileName(static_cast<File>(file)));
+		REQUIRE(back.has_value());
+		CHECK(static_cast<std::uint8_t>(*back) == file);
+	}
+	CHECK(StageRules::FileOf("dlccoast.ESM") == File::kCoast);  // the game compares names without regard to case
+	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));
 }

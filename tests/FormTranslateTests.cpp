@@ -409,3 +409,42 @@ TEST("form translate: a workbench's supply lines leave out a workbench the other
 	REQUIRE(links);
 	CHECK(links->links == std::vector<std::uint32_t>{ SHARED });
 }
+
+TEST("form translate: a Far Harbor radiant's start goes between games that load DLCCoast.esm at other places, and is dropped for a game without it")
+{
+	// Ours: DLCCoast.esm is load index 02. The session's: 05.
+	const FormIds::Mapper both(Protocol::ComparedLoadOrder({ "Fallout4.esm", "A.esp", "DLCCoast.esm" }, {}),
+		Protocol::ComparedLoadOrder({ "Fallout4.esm", "B.esp", "C.esp", "D.esp", "E.esp", "DLCCoast.esm" }, {}));
+	constexpr std::uint32_t QUEST = 0x0200EB51;      // DLC03WorkshopRadiantOwned02
+	constexpr std::uint32_t SESSION_QUEST = 0x0500EB51;
+	constexpr std::uint32_t FAR_HARBOR = 0x02001234;  // a location of the add-on
+	constexpr std::uint32_t SESSION_FAR_HARBOR = 0x05001234;
+	constexpr std::uint32_t SANCTUARY = 0x000250FE;  // Fallout4.esm's: the same in every game
+	const RadiantStart start{ 3, QUEST, 7, { RadiantFill{ 4, 1, FAR_HARBOR }, RadiantFill{ 9, 0, SANCTUARY } }, { 10 } };
+
+	const auto toSession = After(Encode(start, MT::kReportRadiantStart), both, Way::kToSession);
+	REQUIRE(toSession);
+	const auto sent = DecodeRadiantStart(*toSession);
+	REQUIRE(sent);
+	CHECK(sent->quest == SESSION_QUEST);
+	REQUIRE(sent->fills.size() == 2);
+	CHECK(sent->fills[0].form == SESSION_FAR_HARBOR);
+	CHECK(sent->fills[1].form == SANCTUARY);
+	CHECK(sent->serial == 7);
+	CHECK((sent->stages == std::vector<std::uint16_t>{ 10 }));
+
+	// And back to the game that has it at 02.
+	const auto toLocal = After(Encode(*sent, MT::kRadiantStarted), both, Way::kToLocal);
+	REQUIRE(toLocal);
+	CHECK(*DecodeRadiantStart(*toLocal) == start);
+	// A stage of that run is named the same way.
+	const auto stage = After(Encode(RadiantStage{ 0, QUEST, 3, 7, 10 }, MT::kReportRadiantStage), both, Way::kToSession);
+	REQUIRE(stage);
+	CHECK(DecodeRadiantStage(*stage)->quest == SESSION_QUEST);
+
+	// The session's game that lacks the add-on: the start is dropped on the way to it (the run stays the sender's own).
+	const FormIds::Mapper without(Protocol::ComparedLoadOrder({ "Fallout4.esm" }, {}),
+		Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm" }, {}));
+	CHECK(!After(Encode(RadiantStart{ 3, 0x0100EB51, 7, {}, {} }, MT::kRadiantStarted), without, Way::kToLocal));
+	CHECK(!After(Encode(RadiantStage{ 0, 0x0100EB51, 3, 7, 10 }, MT::kRadiantStage), without, Way::kToLocal));
+}

@@ -387,6 +387,82 @@ step_grenades() {
 	done
 }
 
+# ---- friends' shot trails: a stand-in's plain bullet and laser beam are launched inert in the watcher's game, both ways ---------------
+# Each player fires a 10mm pistol (a bullet) and a laser gun (a beam), facing away from the other, 300 u apart. The WATCHER's game
+# (the one with the shooter's stand-in) must launch one inert trail per shot (`trails=`, `firesInert=`), hold none (`firesHeld=`), see no
+# hit by the stand-in on its player (`puppetHitsOnUs=`) or on any actor (`puppetHits=`), and have none left in flight afterwards
+# (`inertLive=`). Then each fires the laser once more facing the other (the watcher's player in the line of fire, 300 u): still no hit.
+# Then `trails off` on the watcher: the same shots are held as before (`firesHeld=`, `trailsHeld=` rise; `firesInert=`, `trails=` don't). What it measures is the
+# counters, not pixels: every laser trail must come out a tracer (`trailTracers=`), which a beam needs for its 3D; the beam itself was seen
+# drawn on the rig by eye (2026-11-07, docs/DESIGN.md, Weapon fire). The graph refuses an
+# attack while the last one plays, so a few of an automatic gun's shots launch nothing (T_TRAIL_FRACTION: the share of the shooter's shots
+# that must have launched a trail; the pistol and the laser lost 0 to 1 in 20 on the rig, 2026-11-06).
+TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
+TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
+T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
+# _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots trailTracers puppetHits", one `net status`
+_tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots) $(field "$s" trailTracers) $(field "$s" puppetHits)"; }
+_tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
+# _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
+# on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
+# beam without the projectile's tracer flag gets no 3D and draws nothing.
+_trail_burst() {
+	local shooter=$1 gun=$2 label=$3 n=$4 mode=$5 beam=${6:-} watcher b a s0 s1 v i shots need ok=1
+	watcher=$(other_game "$shooter")
+	dc "$watcher" "trails $mode" >/dev/null
+	dc "$shooter" "console player.equipitem $gun" >/dev/null; sleep 3; dc "$shooter" "draw on" >/dev/null; sleep 1.5; dc "$shooter" focus >/dev/null; sleep 0.5
+	b=($(_tr_snap "$watcher")); s0=$(field "$(dc "$shooter" 'net status')" shots)
+	for i in $(seq 1 "$n"); do dc "$shooter" "click 120" >/dev/null; sleep 1.4; done
+	sleep 4
+	a=($(_tr_snap "$watcher")); s1=$(field "$(dc "$shooter" 'net status')" shots)
+	dc "$watcher" "trails on" >/dev/null
+	for v in "${b[@]}" "${a[@]}" "$s0" "$s1"; do is_int "$v" || ok=0; done
+	[ ${#b[@]} = 10 ] && [ ${#a[@]} = 10 ] || ok=0
+	[ $ok = 1 ] || { fail "$label: counters read" "before '${b[*]}' after '${a[*]}' shooter's shots '$s0' '$s1'"; return; }
+	shots=$((s1 - s0))
+	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
+	need=$(( (shots * T_TRAIL_FRACTION + 99) / 100 ))
+	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
+	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
+	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
+	if [ "$mode" = on ]; then
+		expect_ge "$label: trails launched inert in the watcher's game (of $shots shots)" "$((a[2] - b[2]))" "$need"
+		expect_ge "$label: firesInert rose with them" "$((a[0] - b[0]))" "$need"
+		expect_zero "$label: none held (firesHeld)" "$((a[1] - b[1]))"
+		[ -z "$beam" ] || expect_ge "$label: every trail a tracer, so the beam is drawn (trailTracers)" "$((a[8] - b[8]))" "$((a[2] - b[2]))"
+		if wait_for 15 _tr_idle "$watcher"; then pass "$label: no inert shot left in flight" "inertLive back to 0"; else fail "$label: no inert shot left in flight" "inertLive still $(field "$(dc "$watcher" 'net status')" inertLive) after 15 s"; fi
+	else
+		expect_zero "$label (trails off): nothing launched inert" "$((a[2] - b[2]))"
+		expect_zero "$label (trails off): firesInert did not rise" "$((a[0] - b[0]))"
+		expect_ge "$label (trails off): held as before (firesHeld)" "$((a[1] - b[1]))" "$need"
+		expect_ge "$label (trails off): counted in trailsHeld" "$((a[3] - b[3]))" "$need"
+	fi
+}
+step_trails() {
+	section "friend shot trails (a stand-in's plain bullet and laser beam fly inert, both ways)"
+	local who gun
+	enter_both SanctuaryExt 14
+	crash_snapshot
+	place host -80650 89300 7784 270; place vm -80350 89300 7784 90   # 300 u apart, each facing away from the other
+	for who in host vm; do
+		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
+	done
+	sleep 4
+	for who in host vm; do
+		_trail_burst "$who" "$TRAIL_PISTOL" "10mm shot by $who" 6 on
+		_trail_burst "$who" "$TRAIL_LASER" "laser shot by $who" 6 on beam
+	done
+	# Facing each other: the watcher's player in the line of fire of the friend's inert laser.
+	place host -80650 89300 7784 90; place vm -80350 89300 7784 270; sleep 1
+	for who in host vm; do
+		_trail_burst "$who" "$TRAIL_LASER" "laser shot by $who at the watcher" 5 on beam
+	done
+	place host -80650 89300 7784 270; place vm -80350 89300 7784 90; sleep 1
+	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
+	for who in host vm; do dc "$who" "trails on" >/dev/null; done
+	crash_verdict "friend shot trails"
+}
+
 # ---- workshop build sync, then clean up what the test placed --------------------------------------------------------------------
 step_workshop() {
 	section "workshop build sync"
@@ -818,7 +894,8 @@ step_drops() {
 # helped from afar; helped up after the walk, the helper's game counting the help; health back to the rules' share; the camera a
 # first- or third-person view again (dev `controls`: camera=0 or 8, not the bleed-out's 11 or a transition's 5) with the life state
 # alive; the Pip-Boy opens on a press of the pad's B and closes on another; and the log window holds the help and no warning that the
-# down left its camera or input layer on, or looped the camera. God mode goes back on and health back to full after.
+# down left its camera or input layer on, or looped the camera. God mode goes back on and health back to full after. Then the joiner
+# is downed again and again (step_downed_repeat).
 _down_waits() { local r; r=$(dc "$1" rules); [ "$(field "$r" down)" = true ] && [ "$(field "$r" waits)" = true ]; }
 _friends_down() { local n; n=$(field "$(dc "$1" rules)" friendsDown); is_num "$n" && [ "$n" -ge 1 ]; }
 _helped_up() { local r; r=$(dc "$1" rules); [ "$(field "$r" down)" = false ] && is_num "$(field "$r" revives)" && [ "$(field "$r" revives)" -gt "$2" ]; }
@@ -875,7 +952,62 @@ step_downed() {
 		pads_off
 	done
 	pads_off
+	step_downed_repeat vm 5   # the joiner, as in the reports: downed again at once on each help-up
 }
+# ---- downed again and again ------------------------------------------------------------------------------------------------------------------
+# A player downed, helped up and downed again at once, over and over (as in a fire that keeps burning, a rocket engine's): each next
+# down starts while the camera is still on its way back from the one before, or the body still getting up. The helper stands at the
+# down player's stand-in the whole time (reached by a real walk), so each down is helped up after the rules' help time. The next lethal
+# hit (console damageav, as the host's gunfire is injected for combat; sent on the down player's own machine by downrepeat.ps1, as a
+# command over the tunnel takes too long) comes as soon as the down player's game says they are up (in the
+# get-up), half a second on, or 0.3 s after a grenade's explosion at their feet (which on the rig does not knock the player over), and
+# one round takes a second hit while still down. Asserted after the last help-up: the camera a first- or third-person view (not a
+# transition or the bleed-out camera), still so a few seconds on, alive; the camera near the player (dev `rules`: away, where the build
+# has it) before and after the down player walks off; the Pip-Boy opens and closes. The log's camera fixes are counted, never failed.
+_view() { local c; c=$(dc "$1" controls); echo "camera=$(grep -oE 'camera=[0-9-]+' <<<"$c" | cut -d= -f2) life=$(grep -oE 'life=[0-9]+' <<<"$c" | cut -d= -f2)"; }
+_away() { dc "$1" rules | grep -oE 'away [0-9?]+' | tail -1 | cut -d' ' -f2; }
+step_downed_repeat() {
+	local down=${1:-vm} rounds=${2:-5} helper puppet g v a0 a1 f n out hits=0
+	helper=$(other_game "$down")
+	section "downed again and again at once on each help-up ($down, $rounds rounds)"
+	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+	[ -n "$puppet" ] || { fail "repeat ($down): set-up: the helper's game has the stand-in" "no puppet= in its net status"; return; }
+	walk "$helper" "repeat ($down): set-up: the helper walks to the stand-in" 0.8 100 "$puppet" || return
+	dc "$helper" "pad unplug" >/dev/null
+	win_mark rep "$down"
+	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($down): set-up: god mode off" "$g"; return; }
+	# the rounds run on the down player's own machine (tools/rig/downrepeat.ps1): over the tunnel a command is too slow for a get-up
+	if [ "$down" = vm ]; then
+		scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$RIG/downrepeat.ps1" "$VM_SSH:downrepeat.ps1" 2>/dev/null
+		out=$(vmssh "powershell -NoProfile -ExecutionPolicy Bypass -File downrepeat.ps1 -Rounds $rounds -Explosion $GRENADE_EXPLOSION")
+	else out=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$RIG/downrepeat.ps1")" -Rounds "$rounds" -Explosion "$GRENADE_EXPLOSION" | tr -d '\r'); fi
+	sed 's/^/  /' <<<"$out"
+	hits=$(grep -c ': helped up$' <<<"$out")
+	expect_eq "repeat ($down): downed and helped up again and again" "$hits" "$rounds"
+	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	sleep 6   # the last get-up plays out, and a stuck transition would outlast the game's own (0.5-1 s) by far
+	v=$(_view "$down"); expect_match "repeat ($down): the camera a first- or third-person view, alive" "$v" '^camera=(0|8) life=0$'
+	sleep 3; v=$(_view "$down"); expect_match "repeat ($down): still a view 3 s on" "$v" '^camera=(0|8) life=0$'
+	a0=$(_away "$down")
+	walk "$down" "repeat ($down): set-up: the down player walks off" 1 100 $PARK_SPOT
+	a1=$(_away "$down")
+	if is_num "$a0" && is_num "$a1"; then expect_le "repeat ($down): the camera near the player, before and after a walk" "$(( a0 > a1 ? a0 : a1 ))" 400 u
+	else pass "repeat ($down): the camera near the player" "not measured: this build's rules have no camera distance"; fi
+	dc "$down" "pad button b" >/dev/null
+	if menu_open "$down" PipboyMenu 4; then
+		sleep 1; dc "$down" "pad button b" >/dev/null
+		if wait_for 6 _pipboy_gone "$down"; then pass "repeat ($down): the Pip-Boy opens on a press and closes" "pad B twice"; else fail "repeat ($down): the Pip-Boy opens on a press and closes" "it opened and stayed open"; clear_menus "$down" >/dev/null; fi
+	else fail "repeat ($down): the Pip-Boy opens on a press and closes" "no PipboyMenu after the pad's B ($(dc "$down" menus | grep -oE 'open=[^ ]*'))"; fi
+	f=$(win_read rep "$down")
+	if [ -s "$f" ]; then
+		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($down): its log has the help-ups" "$n" "$rounds"
+		pass "repeat ($down): camera fixes in its log (counted only)" "loops $(grep -c "looped" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
+	else fail "repeat ($down): its log window read" "no new lines"; fi
+	walk "$down" "repeat: set-up: back to the marker" 1 100 $MARKER_SPOT; walk "$helper" "repeat: set-up: the helper back to the marker" 1 100 $MARKER_SPOT
+	pads_off
+}
+
 
 # ---- churn: cell hops with save and reload ------------------------------------------------------------------------------------
 step_churn() {
@@ -989,4 +1121,62 @@ ws_check() {
 	echo "working set: host ${WSA_HOST:-?} -> ${h:-?} MB, vm ${WSA_VM:-?} -> ${v:-?} MB (after combat -> before the reconnect)"
 	if [ -n "$WSA_HOST" ] && [ -n "$h" ]; then warn_gt "working set growth (host, combat to churn end)" "$((h - WSA_HOST))" "$T_WS_GROWTH_MB" MB; fi
 	if [ -n "$WSA_VM" ] && [ -n "$v" ]; then warn_gt "working set growth (vm, combat to churn end)" "$((v - WSA_VM))" "$T_WS_GROWTH_MB" MB; fi
+}
+
+# ---- a story-manager radiant shared by its run: Out of the Fire (DN121) and Troubled Waters (DN151) ----------------------------------------
+# Run on demand (`smoke.sh --only radiants --skip cleanup`), never in the loop: both quests run once, so a game takes this step once per
+# fresh start (a game that has run one skips it with a WARN). RadiantRules shares them by their run (PR 320): both players arrive at the
+# place (console player.moveto its map marker: placement to reach the scene, no movement stands in for anything), where the story manager
+# hands each game the same quest with the same settlement; each shows its objective, which starts the sharing. The game's forced start of
+# a friend's run was refused for these two by the game in a VM that stood elsewhere (its log: "the game didn't start it with their fills"; the
+# cause was not found), so the runs are joined by their same targets (RadiantSync: "it runs here with the same targets"). Asserted: the run is shared in both games with the
+# same settlement, a stage the host sets is set once in each game, the reward stage gives the player an item in each game, and neither
+# game makes or places a spawn for it.
+# case: <edid> <quest id> <map marker to arrive at> <objective to show> <a middle stage> <reward stage> <end stage>
+RAD_CASES=${RAD_CASES:-"DN121 00026340 0002C07B 1 100 900 1000;DN151 000482CD 0002B889 5 100 400 500"}
+_rad_run() { dc "$1" "quests edid:$2" | tr ';' '\n' | grep -E " $2 " | grep -o 'running=[a-z0-9]*' | head -1; }
+_rad_done() { dc "$1" "stages $2" | grep -o 'done([0-9]*)=[0-9a-z,]*' | sed 's/^done([0-9]*)=//'; }
+_rad_inv() { dc "$1" inventory | grep -o ' items=[0-9]*' | sed 's/ items=//'; }
+_rad_spawns() { dc "$1" 'net status' | grep -o 'spawns: ours=[0-9]* theirs=[0-9]* copies=[0-9]* reported=[0-9]* granted=[0-9]* refused=[0-9]* received=[0-9]* placed=[0-9]*'; }
+_rad_here() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ Ref [0-9]+ (Workshop|EventWorkshop|FoundWorkshop) " | grep -o 'here=[0-9A-F]*' | sort | tr '\n' ' '; }
+_rad_is_running() { [ "$(_rad_run "$1" "$2")" = running=true ]; }
+_rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
+_rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* joined=[^ ]* declined=[^ ]* sent=[^ ]* taken=[0-9]*" | sed "s/.*taken=//"; }
+_rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }
+step_radiants() {
+	section "radiants (story-manager runs shared by their run, both ways)"
+	local entry edid id marker obj mid reward end who other h0 v0 d0 s0 st
+	enter_both SanctuaryExt 14
+	IFS=';' read -ra cases <<<"$RAD_CASES"
+	for entry in "${cases[@]}"; do
+		read -r edid id marker obj mid reward end <<<"$entry"
+		if [ "$(_rad_run host "$edid")" != "running=false" ] || [ "$(_rad_run vm "$edid")" != "running=false" ] || [ "$(_rad_done host "$id")" != none ]; then
+			warn "radiants ($edid): not run: a game has run it already (it runs once: restart both games)" "host $(_rad_run host "$edid") vm $(_rad_run vm "$edid")"; continue
+		fi
+		h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"
+		for who in host vm; do dc "$who" "console player.moveto $marker" >/dev/null; wait_ingame "$who" 40; done
+		for who in host vm; do
+			if ! wait_for 30 _rad_is_running "$who" "$edid"; then fail "radiants ($edid): the story manager hands the quest to $who" "$(_rad_run "$who" "$edid")"; continue 2; fi
+		done
+		pass "radiants ($edid): both games run it" "arrived at $marker"
+		for who in host vm; do dc "$who" "console setobjectivedisplayed $edid $obj 1" >/dev/null; done
+		if wait_for 20 _rad_shared host "$id" && wait_for 20 _rad_shared vm "$id"; then pass "radiants ($edid): the run is shared in both games" "$(_rad_here host "$id")"
+		else fail "radiants ($edid): the run is shared in both games" "host '$(dc host "stages $id" | cut -c1-90)' vm '$(dc vm "stages $id" | cut -c1-90)'"; continue; fi
+		expect_eq "radiants ($edid): the same settlement in both games" "$(_rad_here vm "$id")" "$(_rad_here host "$id")"
+		ns host; ns vm; h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"; st=$(_rad_taken vm)
+		dc host "console setstage $edid $mid" >/dev/null
+		if wait_for 12 _rad_stage_once vm "$id" "$mid"; then pass "radiants ($edid): the host's stage $mid is set in the other game" "vm done $(_rad_done vm "$id")"
+		else fail "radiants ($edid): the host's stage $mid is set in the other game" "host $(_rad_done host "$id") vm $(_rad_done vm "$id")"; fi
+		dc host "console setstage $edid $reward" >/dev/null
+		wait_for 12 _rad_stage_once vm "$id" "$reward"
+		[ "$end" != "$reward" ] && { dc host "console setstage $edid $end" >/dev/null; wait_for 12 _rad_stage_once vm "$id" "$end"; }
+		sleep 3
+		expect_eq "radiants ($edid): the same stages are done in both games" "$(_rad_done vm "$id")" "$(_rad_done host "$id")"
+		d0=$(_rad_done vm "$id" | tr ',' '\n' | sort | uniq -d | tr '\n' ' ')
+		expect_eq "radiants ($edid): no stage is set twice (the done list has each once)" "$d0" ""
+		expect_between "radiants ($edid): the other game took each stage of the host's once" "$(( $(_rad_taken vm) - st ))" 1 "$(( $(_rad_done host "$id" | tr ',' '\n' | wc -l) ))" stage
+		expect_ge "radiants ($edid): the reward is in the host's pack" "$(( $(_rad_inv host) - h0 ))" 1 item
+		expect_ge "radiants ($edid): the reward is in the other game's pack" "$(( $(_rad_inv vm) - v0 ))" 1 item
+		expect_eq "radiants ($edid): no spawns made or placed for it" "$(_rad_spawns host) / $(_rad_spawns vm)" "$s0"
+	done
 }

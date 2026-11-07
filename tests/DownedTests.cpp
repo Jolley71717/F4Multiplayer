@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <map>
+#include <random>
 #include <span>
 
 namespace
@@ -63,6 +65,7 @@ namespace
 		int               transitionLeft = 0;
 		int               lastView = DownRules::Camera::THIRD_PERSON;  // as Downed.cpp keeps it, while up
 		int               cameraFixes = 0;
+		bool              transitionFrozen = false;  // a transition whose time never runs out
 
 		// The engine's start of a bleed-out (+1028580): the current state pushed (in a tween, the bleed-out camera), and
 		// the bleed-out camera.
@@ -97,13 +100,37 @@ namespace
 			std::erase(camera.returns, DownRules::Camera::BLEEDOUT);
 		}
 
+		// A knock-down's ragdoll (+D4B4A0): the same start of the bleed-out camera; its end, as the player is up from it and
+		// the knock state normal again (+D36149), the same end with a transition that takes no time.
+		void KnockStart()
+		{
+			knockedOver = true;
+			CameraStart();
+		}
+
+		void KnockEnd()
+		{
+			knockedOver = false;
+			const bool fromBleedOut = camera.current == DownRules::Camera::BLEEDOUT;
+			CameraEnd();
+			if (fromBleedOut) {
+				transitionLeft = 0;
+			}
+		}
+
+		// The bleed-out camera on, or waiting on the return stack (Downed.cpp BleedOutCamera).
+		[[nodiscard]] bool CameraHasBleedOut() const
+		{
+			return camera.current == DownRules::Camera::BLEEDOUT || std::ranges::find(camera.returns, DownRules::Camera::BLEEDOUT) != camera.returns.end();
+		}
+
 		// The camera's frame: a transition whose time is up switches to where it goes (to itself, it stays a transition).
 		void CameraFrame()
 		{
 			if (camera.current != DownRules::Camera::TRANSITION) {
 				return;
 			}
-			if (transitionLeft > 0) {
+			if (transitionLeft > 0 && !transitionFrozen) {
 				--transitionLeft;
 			}
 			if (transitionLeft == 0 && camera.transitionTo >= 0) {
@@ -194,6 +221,8 @@ namespace
 		int               settled = 0;
 		int               unsneaks = 0;
 		int               sneakKept = 0;
+		int               strayEnds = 0;
+		int               transitionEnds = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
@@ -232,8 +261,8 @@ namespace
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
 			const DownRules::Facts facts{ .enabled = withFriends && self.GetRules().revive, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console,
-				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down), .bleedOutCamera = body.bleedOutCamera,
-				.bleedOutLayer = body.bleedOutLayer, .cameraLoop = body.camera.Loops() };
+				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down), .bleedOutCamera = body.bleedOutCamera || body.CameraHasBleedOut(),
+				.bleedOutLayer = body.bleedOutLayer, .cameraLoop = body.camera.Loops(), .inTransition = body.camera.current == DownRules::Camera::TRANSITION };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -259,18 +288,25 @@ namespace
 					body.fullHealth = true;
 				}
 			}
+			if (step.fixCamera) {
+				// Downed.cpp FixCamera (before FinishDown, as there).
+				body.camera = body.camera.Unlooped(body.lastView);
+				++body.cameraFixes;
+			}
 			if (step.finishDown) {
 				// Downed.cpp FinishDown: the engine's end of the camera's bleed-out state, and of the layer.
 				++body.finishes;
+				strayEnds += step.strayBleedOut;
 				if (!body.finishIgnored) {
 					body.bleedOutCamera = false;
 					body.bleedOutLayer = false;
+					body.CameraEnd();
 				}
 			}
-			if (step.fixCamera) {
-				// Downed.cpp FixCamera.
-				body.camera = body.camera.Unlooped(body.lastView);
-				++body.cameraFixes;
+			if (step.endTransition && body.camera.current == DownRules::Camera::TRANSITION) {
+				// Downed.cpp EndTransition.
+				body.camera.current = body.camera.StuckEnd(body.down, body.lastView);
+				++transitionEnds;
 			}
 			if (step.unsneak) {
 				// Downed.cpp Unsneak: the stance, and the graph told its sneak stop.
@@ -2448,7 +2484,7 @@ TEST("downed get-up: up some other way with the camera or the layer left on, the
 	}
 }
 
-TEST("downed get-up: an end of the camera and layer that does not take is asked once more when the get-up has played out, then left")
+TEST("downed get-up: an end of the camera and layer that does not take is asked once more when the get-up has played out, then every few seconds")
 {
 	Game game;
 	auto now = Start();
@@ -2464,10 +2500,23 @@ TEST("downed get-up: an end of the camera and layer that does not take is asked 
 	game.Run(now, DownRules::GET_UP_SETTLE);
 	CHECK(game.settled == 1);
 	CHECK(game.body.finishes == 2);
-	game.Run(now, 10s);
-	CHECK(game.body.finishes == 2);  // never every frame
-	CHECK(game.self.downFinishes == 2);
+	CHECK(game.strayEnds == 0);
+	// Up and settled and still on: a down's left behind, ended STRAY_WAIT on and every STRAY_RETRY after, never every frame.
+	game.Run(now, DownRules::STRAY_WAIT + 2 * DownRules::STRAY_RETRY + 500ms);
+	CHECK(game.body.finishes == 5);
+	CHECK(game.strayEnds == 3);
+	CHECK(game.self.strayEnds == 3);
+	CHECK(game.self.downFinishes == 5);
 	CHECK(game.body.bleedOutCamera);
+	// Once it takes, nothing more.
+	game.body.finishIgnored = false;
+	game.Run(now, DownRules::STRAY_RETRY + 1s);
+	CHECK(game.strayEnds == 4);
+	CHECK(!game.body.bleedOutCamera);
+	CHECK(!game.body.CameraHasBleedOut());
+	CHECK(game.body.InView());
+	game.Run(now, 20s);
+	CHECK(game.strayEnds == 4);
 }
 
 TEST("downed camera: the engine's start and end of a bleed-out, as modelled, go back to the view the down began in")
@@ -2555,7 +2604,7 @@ TEST("downed camera: the transition on the return stack with nowhere known to go
 	CHECK(game.self.cameraFixes >= 1);
 }
 
-TEST("downed camera: a loop the fix does not undo is tried again once a second, and never while up and settled")
+TEST("downed camera: a loop the fix does not undo is tried again once a second, up and settled too")
 {
 	Game game;
 	auto now = Start();
@@ -2569,7 +2618,7 @@ TEST("downed camera: a loop the fix does not undo is tried again once a second, 
 		now += FRAME;
 	}
 	CHECK(game.self.cameraFixes == 3);
-	// Up and settled, a camera loop is nothing of the down's.
+	// Up and settled, a loop is still undone: the game never makes one of its own (the class's notes).
 	game.body.camera.returns.clear();
 	game.body.camera.returns.push_back(DownRules::Camera::THIRD_PERSON);
 	REQUIRE(game.Revived(now));
@@ -2577,8 +2626,12 @@ TEST("downed camera: a loop the fix does not undo is tried again once a second, 
 	REQUIRE(game.settled == 1);
 	const auto fixes = game.self.cameraFixes;
 	game.body.camera.returns = { DownRules::Camera::TRANSITION };
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.self.cameraFixes == fixes + 1);
+	CHECK(game.body.camera.returns == std::vector<int>{ game.body.lastView });
 	game.Run(now, 3s);
-	CHECK(game.self.cameraFixes == fixes);
+	CHECK(game.self.cameraFixes == fixes + 1);
 }
 
 TEST("downed camera: the loop is read and undone by the camera's own rules")
@@ -2601,4 +2654,218 @@ TEST("downed camera: the loop is read and undone by the camera's own rules")
 	CHECK(itself.returns == std::vector<int>{ Camera::FIRST_PERSON });
 	CHECK(itself.transitionTo == Camera::FIRST_PERSON);
 	CHECK(!itself.Loops());
+}
+
+TEST("downed camera: downed again and again within moments of each stand-up, and once more while getting up, the camera ends in the view")
+{
+	// The same report again on 0.13.0: a joining player downed by a rocket engine's fire, helped up, and downed again by it
+	// at once, several times over. Each next down begins while the camera is still on its way back from the one before.
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	for (int round = 0; round < 5; ++round) {
+		game.body.LethalHit();
+		game.Run(now, 1s);
+		REQUIRE(game.self.Now() == Phase::kDown);
+		REQUIRE(game.Revived(now));
+		game.Frame(now);  // the stand-up: the camera's transition back begins
+		now += FRAME;
+		REQUIRE(game.body.camera.current == DownRules::Camera::TRANSITION);
+		if (round == 2) {
+			// Down again before our next frame saw them up: still getting up, stood up again by STAND_RETRY.
+			game.body.LethalHit();
+			game.Run(now, DownRules::STAND_RETRY + 300ms);
+			REQUIRE(!game.body.down);
+			REQUIRE(game.body.camera.current == DownRules::Camera::TRANSITION);
+		}
+		game.Frame(now);
+		now += FRAME;  // a moment up: the fire again
+	}
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 10s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.camera.current == DownRules::Camera::THIRD_PERSON);
+	CHECK(!game.body.camera.Loops());
+	CHECK(!game.body.CameraHasBleedOut());
+	CHECK(game.self.cameraFixes >= 4);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed camera: a knock-down started in another's instant way back, out of any down, still has its loop undone")
+{
+	// Two ragdolls in one frame (a second explosion): the second start pushes the first end's transition, which takes no
+	// time but has not run yet; the second end would make it a transition to itself. 0.13 looked only around a down.
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.KnockStart();
+	game.Run(now, 2s);
+	game.body.KnockEnd();
+	game.body.KnockStart();  // before the camera's next update
+	REQUIRE(game.body.camera.returns == std::vector<int>{ DownRules::Camera::TRANSITION });
+	game.Run(now, 3s);
+	game.body.KnockEnd();
+	game.Run(now, 2s);
+	CHECK(game.body.InView());
+	CHECK(!game.body.camera.Loops());
+	CHECK(game.self.cameraFixes >= 1);
+	CHECK(game.self.downs == 0);
+}
+
+TEST("downed camera: the bleed-out camera or layer on while up, settled and out of any down or knock-down is ended, after a moment")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 5s);
+	// As a start that no end followed would leave it: the camera in its bleed-out state, the player alive and up.
+	game.body.CameraStart();
+	game.body.bleedOutLayer = true;
+	game.Run(now, DownRules::STRAY_WAIT - 200ms);
+	CHECK(game.strayEnds == 0);  // not at once: the game's own ends may come a frame or two behind
+	game.Run(now, 1s);
+	CHECK(game.strayEnds == 1);
+	CHECK(game.self.strayEnds == 1);
+	CHECK(!game.body.bleedOutLayer);
+	CHECK(!game.body.CameraHasBleedOut());
+	game.Run(now, 1s);
+	CHECK(game.body.InView());
+	// Never while knocked over (the ragdoll's own), or in a menu.
+	game.body.KnockStart();
+	game.Run(now, 5s);
+	game.paused = true;
+	game.body.knockedOver = false;
+	game.Run(now, 5s);
+	CHECK(game.strayEnds == 1);
+	game.paused = false;
+	game.body.knockedOver = true;
+	game.body.KnockEnd();
+	game.Run(now, 5s);
+	CHECK(game.strayEnds == 1);
+	CHECK(game.body.InView());
+}
+
+TEST("downed camera: a transition left on far longer than the game's own is ended, where it goes or the view")
+{
+	// Where it goes: a view.
+	{
+		Game game;
+		auto now = Start();
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 1s);
+		game.body.transitionFrozen = true;
+		REQUIRE(game.Revived(now));
+		game.Run(now, DownRules::TRANSITION_STUCK - 1s);
+		REQUIRE(game.body.camera.current == DownRules::Camera::TRANSITION);
+		CHECK(game.transitionEnds == 0);
+		game.Run(now, 2s);
+		CHECK(game.transitionEnds == 1);
+		CHECK(game.body.camera.current == DownRules::Camera::THIRD_PERSON);
+	}
+	// Nowhere known, up: the last view. A menu's time does not count.
+	{
+		Game game;
+		auto now = Start();
+		game.body.camera.current = DownRules::Camera::FIRST_PERSON;
+		game.Run(now, 1s);
+		game.body.camera = { .current = DownRules::Camera::TRANSITION, .transitionTo = -1 };
+		game.paused = true;
+		game.Run(now, 10s);
+		CHECK(game.transitionEnds == 0);
+		game.paused = false;
+		game.Run(now, DownRules::TRANSITION_STUCK + 500ms);
+		CHECK(game.transitionEnds == 1);
+		CHECK(game.body.camera.current == DownRules::Camera::FIRST_PERSON);
+	}
+	// Nowhere known while down: the bleed-out camera, which the down's end then takes off.
+	{
+		Game game;
+		auto now = Start();
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, 1s);
+		game.body.camera.current = DownRules::Camera::TRANSITION;
+		game.body.camera.transitionTo = -1;
+		game.Run(now, DownRules::TRANSITION_STUCK + 500ms);
+		CHECK(game.body.camera.current == DownRules::Camera::BLEEDOUT);
+		REQUIRE(game.Revived(now));
+		game.Run(now, 3s);
+		CHECK(game.body.InView());
+	}
+}
+
+TEST("downed camera: downs, help-ups, ragdolls and their ends in any order and timing, the camera always ends in the view")
+{
+	// Random sequences of what drives the engine's starts and ends of the bleed-out camera: lethal hits (on the ground,
+	// getting up, just up), friends' help, ragdolls begun and ended, the game's own stand-ups, a few frames apart. Once it
+	// is all over the camera must be a view, with no loop and no bleed-out camera or layer left anywhere.
+	int                        windowMissed = 0;  // runs that reached a loop or a stray bleed-out camera outside 0.13's window
+	std::vector<std::uint32_t> failed;
+	for (std::uint32_t seed = 1; seed <= 400; ++seed) {
+		std::mt19937 random{ seed };
+		const auto   chance = [&](int a_percent) { return static_cast<int>(random() % 100) < a_percent; };
+		Game         game;
+		auto         now = Start();
+		game.body.transitionFrames = 1 + static_cast<int>(random() % 6);
+		if (chance(30)) {
+			game.body.camera.current = DownRules::Camera::FIRST_PERSON;
+		}
+		game.Run(now, 1s);
+		bool missed = false;
+		for (int event = 0; event < 40; ++event) {
+			switch (random() % 6) {
+			case 0:
+			case 1:
+				game.body.LethalHit();
+				break;
+			case 2:
+				game.Revived(now);
+				break;
+			case 3:
+				if (!game.body.knockedOver) {
+					game.body.KnockStart();
+				}
+				break;
+			case 4:
+				if (game.body.knockedOver) {
+					game.body.KnockEnd();
+				}
+				break;
+			default:
+				if (chance(30)) {
+					game.body.StoodUpByGame();
+				}
+				break;
+			}
+			const int frames = static_cast<int>(random() % 12);
+			for (int i = 0; i < frames; ++i) {
+				const bool outside = !game.self.IsDown() && !game.self.Settling();
+				missed = missed || (outside && (game.body.camera.Loops() || (game.body.CameraHasBleedOut() && !game.body.knockedOver && !game.body.down)));
+				game.Frame(now);
+				now += FRAME;
+			}
+		}
+		// It all ends: out of the ragdoll and the fire, helped up.
+		game.body.god = true;
+		if (game.body.knockedOver) {
+			game.body.KnockEnd();
+		}
+		game.Run(now, 1s);
+		game.Revived(now);
+		game.Run(now, DownRules::GET_UP_TIME);
+		windowMissed += missed ? 1 : 0;
+		const bool ok = !game.body.dead && game.self.Now() == Phase::kUp && !game.body.down && game.body.InView() && !game.body.camera.Loops() &&
+		                !game.body.CameraHasBleedOut() && !game.body.bleedOutLayer;
+		if (!ok) {
+			failed.push_back(seed);
+		}
+	}
+	for (std::size_t i = 0; i < failed.size() && i < 10; ++i) {
+		std::printf("    camera left wrong with seed %u\n", failed[i]);
+	}
+	CHECK(failed.empty());
+	CHECK(windowMissed > 0);  // the sequences do reach what 0.13 never looked at
 }

@@ -63,11 +63,29 @@ namespace AttackKind
 	}
 
 	// The projectile record's flags (BGSProjectile::BGSProjectileFlags; WeaponFire.cpp checks them against CommonLib's):
-	// its explosion flag, and its motion type (one bit each, in the high half).
+	// hitscan, its explosion flag, and its motion type (one bit each, in the high half).
+	inline constexpr std::uint32_t PROJECTILE_HITSCAN = 0x1;
 	inline constexpr std::uint32_t PROJECTILE_EXPLOSION = 0x2;
 	inline constexpr std::uint32_t PROJECTILE_MOTION_MISSILE = 0x10000;  // a bullet, and a missile launcher's missile
 	inline constexpr std::uint32_t PROJECTILE_MOTION_BEAM = 0x40000;
 	inline constexpr std::uint32_t PROJECTILE_MOTION_TYPES = 0x7F0000;
+
+	// Whether a record's motion type is a plain bullet's or a beam's: none set, missile or beam (not a lobbed grenade, a
+	// flamer's stream, a cone, a barrier or an arrow).
+	constexpr bool IsPlainMotion(std::uint32_t a_flags)
+	{
+		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
+		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM;
+	}
+
+	// Whether a plain bullet or beam may fly as a friend's trail: a plain motion and not hitscan. A hitscan record may
+	// settle what it hits inside Projectile::Launch, before the inert launch zeroes the made projectile's damage
+	// (InertShots), so it is held as before. None of the game's own guns seen has the flag (their bullets and lasers are
+	// 40A0C and 40A08); this is for other and modded records.
+	constexpr bool IsPlainTrail(std::uint32_t a_flags)
+	{
+		return IsPlainMotion(a_flags) && (a_flags & PROJECTILE_HITSCAN) == 0;
+	}
 
 	// What becomes of a replayed shot's own projectile on a stand-in or a copy.
 	enum class Fire
@@ -78,21 +96,27 @@ namespace AttackKind
 	};
 
 	// What a stand-in's (a_standIn) or a mirrored NPC's shot of a gun firing this projectile (a_flags) comes to, with
-	// a_explodes: the projectile names an explosion or has the explosion flag, and a_enchanted: one of the gun's
+	// a_explodes: the projectile names an explosion or has the explosion flag, a_enchanted: one of the gun's
 	// enchantments has an effect that sets off an explosion (which no game legendary has; Explosive swaps the
-	// projectile instead). Whatever goes off by its projectile: a missile, a mini nuke, a grenade launcher's shell, a
+	// projectile instead), and a_hasEnchantment: the gun carries any enchantment at all (a legendary's Wounding,
+	// Freezing, Poisoner's). Whatever goes off by its projectile: a missile, a mini nuke, a grenade launcher's shell, a
 	// beam or a bullet with a blast of its own, a legendary's Explosive round. Its blast goes off in the shooter's game
 	// and comes here as that game's report (WeaponFire::ApplyExplosion), once: fired here as it is, it went off twice,
 	// and the stand-in's own blast hurt the NPCs our game runs a second time (docs/DESIGN.md, "Who sets off an
 	// explosion"). With the inert launch in place (a_inert: InertShots::Installed) it is fired from a record with no
 	// blast, so friends see it fly; without it, held. One that goes off by an enchantment alone is held: there is no
-	// record to take the blast from. A stand-in's plain one, a bullet or a beam, is held: it hit our player and shows
-	// nothing in flight but what the replay draws (MuzzleFlash); a copy's is the engine's, as before. What neither goes
-	// off nor flies straight is fired as before, so friends see it: a flamer's or a cryolator's stream, a harpoon or a
-	// railway spike, which hurt nobody here (the puppet's damage multiplier is zero, Puppets) and go where the friend
-	// aimed, not at whoever the engine has the stand-in look at (InertShot::Aims). A gun whose projectile
-	// we can't read (a_known false) is taken for a plain one.
-	constexpr Fire ShotReplay(bool a_standIn, bool a_known, std::uint32_t a_flags, bool a_explodes, bool a_enchanted, bool a_inert)
+	// record to take the blast from. A stand-in's plain one, a bullet or a beam, used to be held (a real round of its
+	// own hit our player, and nothing flew for friends to see but what the replay draws, MuzzleFlash); with the inert
+	// launch in place and the trails on (a_trails: ini bFriendShotTrails, dev `trails`) it is launched inert like a
+	// missile, from a copy of its record with no damage of its own and aimed where its friend aimed (InertShot::Swaps,
+	// InertShot::Aims), so friends see a tracer or a laser's beam fly. Without either it is held, as before; so is one
+	// from a gun with any enchantment (should an inert trail ever register a hit, a legendary's bleed or poison would
+	// land on top of the friend's reported damage) and a hitscan one (IsPlainTrail). A copy's plain one is the
+	// engine's, as before. What neither goes off nor flies straight is fired as before, so friends see
+	// it: a flamer's or a cryolator's stream, a harpoon or a railway spike, which hurt nobody here (the puppet's damage
+	// multiplier is zero, Puppets) and go where the friend aimed, not at whoever the engine has the stand-in look at
+	// (InertShot::Aims). A gun whose projectile we can't read (a_known false) is taken for a plain one, and held.
+	constexpr Fire ShotReplay(bool a_standIn, bool a_known, std::uint32_t a_flags, bool a_explodes, bool a_enchanted, bool a_hasEnchantment, bool a_inert, bool a_trails)
 	{
 		if (a_known && a_explodes) {
 			return a_inert ? Fire::kInert : Fire::kHeld;
@@ -103,8 +127,10 @@ namespace AttackKind
 		if (!a_standIn) {
 			return Fire::kFired;
 		}
-		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
-		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM ? Fire::kHeld : Fire::kFired;
+		if (IsPlainMotion(a_flags)) {
+			return a_inert && a_trails && IsPlainTrail(a_flags) && !a_hasEnchantment ? Fire::kInert : Fire::kHeld;
+		}
+		return Fire::kFired;
 	}
 
 	enum class Replay
