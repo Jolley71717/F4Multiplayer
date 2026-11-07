@@ -3,6 +3,7 @@
 #include "game/QuestFilter.h"
 #include "game/RadiantRules.h"
 
+#include <algorithm>
 #include <iterator>
 #include <utility>
 
@@ -184,8 +185,10 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
-	// A place's own quest with no objectives (DN035) is not in this table: one counts as started only by its stages.
+	// A place's own quest with no objectives (DN035) is not in this table but SILENT: one counts as started only by its
+	// stages.
 	CHECK(!QuestFilter::IsSafe(0, 0x0EF40C));
+	CHECK(QuestFilter::IsSilent(0, 0x0EF40C));
 	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping, its raiders' kickout
 	// and its outpost count: denied.
 	for (const auto& denied : QuestFilter::DENIED) {
@@ -222,4 +225,62 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, MQ104));
 	CHECK(!QuestFilter::IsSafe(0, MS17));
 	CHECK(!QuestFilter::IsSafe(3, 0x000801));  // DLC04MQ01
+}
+
+TEST("quest filter: the objective-less quests sQuests = safe shares are the rule's less those denied, sorted, none shared another way (tools/questscan.ps1 -Safe)")
+{
+	const auto key = [](const QuestFilter::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; };
+	for (auto it = std::next(std::begin(QuestFilter::SILENT)); it != std::end(QuestFilter::SILENT); ++it) {
+		CHECK(key(*std::prev(it)) < key(*it));
+	}
+	// 116: Fallout4.esm's 79, Far Harbor's 19, Automatron's 5, Nuka-World's 13.
+	CHECK(std::size(QuestFilter::SILENT) == 116);
+	std::size_t perFile[4]{};
+	for (const auto& silent : QuestFilter::SILENT) {
+		REQUIRE(silent.file <= 3);
+		CHECK(silent.quest <= 0x00FFFFFF);
+		++perFile[silent.file];
+		// None SAFE's (those have objectives), DENIED, PER_GAME, a radiant or a finale.
+		CHECK(!QuestFilter::IsSafe(silent.file, silent.quest));
+		CHECK(std::ranges::find_if(QuestFilter::DENIED, [&](const QuestFilter::Local& a_local) { return key(a_local) == key(silent); }) == std::end(QuestFilter::DENIED));
+		CHECK(!QuestFilter::IsPerGame(silent.file, silent.quest));
+		if (silent.file == 0) {
+			CHECK(std::ranges::find(QuestFilter::STORY_FINALES, silent.quest) == QuestFilter::STORY_FINALES.end());
+			CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return (a_radiant.formId & 0x00FFFFFF) == silent.quest; }) == std::end(RadiantRules::RADIANTS));
+		}
+	}
+	CHECK(perFile[0] == 79);
+	CHECK(perFile[1] == 19);
+	CHECK(perFile[2] == 5);
+	CHECK(perFile[3] == 13);
+
+	// A place's own quests, the Castle's waves, the Prydwen's arrival (BoSEnable; its 15 is ScriptDoors' all the same),
+	// Vault 114's gear door (DN142), Far Harbor's fight at the Nucleus's gate.
+	CHECK(QuestFilter::IsSilent(0, 0x0EF40C));     // DN035
+	CHECK(QuestFilter::IsSilent(0, 0x03479A));     // DN102
+	CHECK(QuestFilter::IsSilent(0, 0x0ABF55));     // DN029FirstWave
+	CHECK(QuestFilter::IsSilent(0, 0x1851A0));     // BoSEnable
+	CHECK(QuestFilter::IsSilent(0, 0x13B747));     // DN142
+	CHECK(QuestFilter::IsSilent(1, 0x043822));     // DLC03MQ02Fight
+	// A form ID is the quest's only in its own file.
+	CHECK(!QuestFilter::IsSilent(1, 0x0EF40C));
+	// Denied by name: the game's systems, ambient scenes.
+	CHECK(!QuestFilter::IsSilent(0, 0x21666E));  // Achievements
+	CHECK(!QuestFilter::IsSilent(0, 0x249E2E));  // Patch_1_3
+	CHECK(!QuestFilter::IsSilent(0, 0x160147));  // Tutorial
+	CHECK(!QuestFilter::IsSilent(0, 0x1C4E44));  // InstituteSS1
+	CHECK(!QuestFilter::IsSilent(0, 0x152706));  // BoSPrydwenScene_Airport
+	CHECK(!QuestFilter::IsSilent(0, 0x22DCC5));  // RECheckpoint_InstInitQuest
+	// Denied by hand: teleports of the player or their companion, the player's own gear.
+	CHECK(!QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup
+	CHECK(!QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects
+	CHECK(!QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack
+	CHECK(!QuestFilter::IsSilent(0, 0x0DEC92));  // MS04PostQuest
+	CHECK(!QuestFilter::IsSilent(3, 0x00A549));  // DLC04MQ01Gauntlet
+	// Left out by the rule: the opening, survival mode's, Nick's companion quest's stage.
+	CHECK(!QuestFilter::IsSilent(0, 0x01ED86));  // MQ101
+	CHECK(!QuestFilter::IsSilent(0, 0x00080E));  // HC_Manager
+	CHECK(!QuestFilter::IsSilent(0, 0x18817F));  // MS07cPostQuest
+	// The dialogue quests are shared by their name, not by this table.
+	CHECK(!QuestFilter::IsSilent(0, DC_GATE));
 }

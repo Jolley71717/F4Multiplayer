@@ -102,6 +102,14 @@ TEST("script doors: the list holds Vault 114's gear door (DN142's 50) and only s
 	CHECK(!ScriptDoors::Find(QUESTS, 0x0001F25E, 50));  // MQ104, the story quest that leads there
 	CHECK(!ScriptDoors::Find({ 0 }, 0, OPENS));         // a door whose plugin isn't loaded is never matched
 	CHECK(!ScriptDoors::Find({}, DN142, OPENS));        // nor before the game's data is loaded
+
+	// DN142 and BoSEnable are SILENT's (QuestSync shares them with sQuests = safe), but these two stages stay ScriptDoors'
+	// with either setting: QuestSync never reports them (Owns, by the quest's plugin and its form ID there).
+	CHECK(ScriptDoors::Owns("Fallout4.esm", DN142, OPENS));
+	CHECK(ScriptDoors::Owns("FALLOUT4.ESM", BOS_ENABLE, MOORS));
+	CHECK(!ScriptDoors::Owns("Fallout4.esm", DN142, 5));
+	CHECK(!ScriptDoors::Owns("Fallout4.esm", BOS_ENABLE, 10));
+	CHECK(!ScriptDoors::Owns("DLCCoast.esm", DN142, OPENS));
 }
 
 TEST("script doors: the stages the survey left out are not listed (docs/script-doors-survey.md)")

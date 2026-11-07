@@ -349,6 +349,11 @@ public static class QuestScan
     // what every session shares).
     public static HashSet<Tuple<int, uint>> Safe;
 
+    // The quests QuestFilter.h's SILENT holds, once SafeScan.Load has made them: those the rule passes but for their
+    // objectives, less the ones denied by name or by hand. Shared with sQuests = safe too, stages unordered as a
+    // dialogue quest's. Null: not made.
+    public static HashSet<Tuple<int, uint>> Silent;
+
     // Fallout4.esm's radiants (src/game/RadiantRules.h, by form ID in the file) and QuestFilter.h's PER_GAME, once
     // SafeScan.Load has read them (null: not read). Quests shared by their type that no friend's stage is ever set on.
     public static HashSet<uint> Radiants;
@@ -370,6 +375,7 @@ public static class QuestScan
     public static string Shared(GearScan.Quest q, int a_file)
     {
         if (Safe != null && Safe.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF))) return "shared (safe)";
+        if (Silent != null && Silent.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF))) return "shared (silent)";
         if (q.Type > 0 && q.Type != 6) return "shared";
         if (q.Type == 0 && a_file == 0 && FINALES.Contains(q.Id & 0xFFFFFF)) return "shared (finale)";
         if (q.Type == 0 && q.Objectives == 0 && IsDialogueName(q.Edid)) return "shared (dialogue)";
@@ -1644,7 +1650,7 @@ public static class RuleScan
 
     public static string Run(string data, int[] a_files) { return Run(data, a_files, false); }
 
-    // a_safeOnly: the rows of src/game/QuestFilter.h's SAFE quests alone (SafeScan.Load first).
+    // a_safeOnly: the rows of src/game/QuestFilter.h's SAFE and SILENT quests alone (SafeScan.Load first).
     public static string Run(string data, int[] a_files, bool a_safeOnly)
     {
         MoveScan.Load(data);
@@ -1655,7 +1661,7 @@ public static class RuleScan
             foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
             {
                 var shared = QuestScan.Shared(quest, file);
-                if (shared == "not shared" || (a_safeOnly && shared != "shared (safe)")) continue;
+                if (shared == "not shared" || (a_safeOnly && shared != "shared (safe)" && shared != "shared (silent)")) continue;
                 bool first = true;
                 var stages = MoveScan.Fragments(file, quest.Id);
                 foreach (var stage in stages.Keys.OrderBy(k => k))
@@ -1879,11 +1885,71 @@ public static class SafeScan
         return "";
     }
 
-    // Makes the SAFE set (QuestScan.Safe), less DENIED, and returns each quest's verdict, by file and form ID.
+    // The objective-less quests (those the rule passes but for their objectives) left out of SILENT by their name (the
+    // editor ID less its DLCnn_ prefix), as families, with why: each pattern and its reason.
+    static readonly Tuple<string, string>[] DENY_PATTERNS = {
+        Tuple.Create(@"^(Achievements|Patch|Tutorial|Crafting$|PerksQuest$|modskill_)", "the game's own systems: achievements, patches, tutorials, crafting, perks"),
+        Tuple.Create(@"(Holotapes|Radio|Legendary|CustomItemQuest|AspirationalItems)", "items, holotapes and radio stations each game hands out itself"),
+        Tuple.Create(@"^(HC_|Player)|PowerArmorRecall|^SystemPowerArmor", "the player's own state: survival, the player's quests, their power armor"),
+        Tuple.Create(@"^(Debug|CC_|VFT|zFAB$|2Djam)", "debug and test quests"),
+        Tuple.Create(@"^(Conv|IntroScene|V81_Conv_|AO(_|$)|EE(_|$)|CabotHouse)|CreatureDialogue|Hellos$|DrinkingBuddy", "ambient chatter"),
+        Tuple.Create(@"^BoSPrydwenScene_|^BoSScene_|^BoSIdleHandler|^InstituteSS\d|^SettlementSS\d|Scenes$|IntroScene$|Sermon$|HolySite$|^NickScene|^V81_Lesson_", "ambient scenes"),
+        Tuple.Create(@"^(CA_|CIS_)", "a companion's"),
+        Tuple.Create(@"(Manager|Tracker|Parent|ParentQuest|Template|TEMPLATE|SharedInfos?|PostQuestFlags|Disable)$|MasterQuest|^(EncounterManagementSystem|EMSystemQuest)$|^Common", "bookkeeping other quests use: managers, trackers, parents, templates, shared lines"),
+        Tuple.Create(@"^RE[A-Z]", "random encounters, each game's own"),
+        Tuple.Create(@"BotModQuest|Workshop", "workshops and robot building: each player's settlements and robots") };
+
+    // The objective-less quests left out of SILENT by hand, by editor ID, with why: what a stage of theirs does (read
+    // in their fragments and the scripts these call, as the walk does but deeper) is each player's, or they are
+    // ambient.
+    static readonly Dictionary<string, string> DENY_SILENT = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "BoSDialoguePrydwen", "the player's Brotherhood rank and what it unlocks" },
+        { "BoSDialogueSquire", "ambient chatter with the player" },
+        { "BoSKickOutSoft", "the player's expulsion from the Brotherhood, their companion's too" },
+        { "CaravanBase", "each game's caravans, and it pays caps" },
+        { "DLC03_V118_PearlHiring", "Pearl follows the player; factions' hostility to the player" },
+        { "DLC04GZLocationLoaded", "a faction's hostility to the player" },
+        { "DLC04GZTrackingQuest", "the star cores the player holds; a faction's hostility to the player" },
+        { "DLC04GZVaultTec", "a faction's hostility to the player" },
+        { "DLC04MQ01Gauntlet", "each player's own run of the Gauntlet: takes and gives gear, moves the player" },
+        { "DLC04MQ04TutorialQuest", "help messages" },
+        { "DLC04NukaCade", "arcade tokens and an achievement, the player's own" },
+        { "DLC04NukaPatch", "a patch's bookkeeping" },
+        { "DLC04RaiderControllerQuest", "the raider gangs' bookkeeping: ranks, the player's standing" },
+        { "DN011OverdueBooks", "each player's own book returns and their reward" },
+        { "DN130-RR302", "a companion's affinity event" },
+        { "DN136_Attack", "teleports the companion and Dogmeat into the Institute with the player" },
+        { "DNPrime_BoS304", "the Institute attack's teleports, as DN136_Attack's" },
+        { "FFGoodneighbor01MemorySequence", "the memory lounger: fades out, takes the controls and hides the player" },
+        { "GenericGoHome", "a tool other quests' scripts use for their own actors" },
+        { "InstituteFirstVisitQuest", "each player's own first visit" },
+        { "InstituteTeleportEffects", "teleports the player" },
+        { "MQ302Post", "after the ending: teleports, companions, affinity and factions" },
+        { "MS04PostQuest", "Kent's costume upgrades take and give the player's Silver Shroud gear, and pay caps" },
+        { "MS07cGreetingHandler", "a companion's (Nick's greeting)" },
+        { "MS07NickHateHandler", "a companion's (Nick's affinity)" },
+        { "MinutemenCentralQuest", "the player's own Minutemen: settlements, radio, recruits" },
+        { "RRAct3Pickup", "teleports the player into the Institute and adds them to its faction" } };
+
+    // Why an objective-less quest is not in SILENT ("" it is).
+    static string WhySilent(GearScan.Quest q)
+    {
+        if (q.Stages == 0) return "no objectives, no stages";
+        var bare = System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "");
+        foreach (var d in DENY_PATTERNS)
+            if (System.Text.RegularExpressions.Regex.IsMatch(bare, d.Item1)) return "denied by name: " + d.Item2;
+        string why;
+        if (DENY_SILENT.TryGetValue(q.Edid, out why)) return "denied by hand: " + why;
+        return "";
+    }
+
+    // Makes the SAFE set (QuestScan.Safe) and the SILENT one (QuestScan.Silent), less DENIED, and returns each quest's
+    // verdict, by file and form ID: "" SAFE, "silent" SILENT.
     public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules)
     {
         MoveScan.Load(data);
         QuestScan.Safe = null;
+        QuestScan.Silent = null;
         var radiants = new HashSet<uint>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*0x([0-9A-Fa-f]+),\\s*\"")
             .Cast<System.Text.RegularExpressions.Match>().Select(m => Convert.ToUInt32(m.Groups[1].Value, 16) & 0xFFFFFF));
         var perGame = Table(a_questFilter, "PER_GAME");
@@ -1896,9 +1962,11 @@ public static class SafeScan
             {
                 var key = Tuple.Create(file, q.Id & 0xFFFFFF);
                 var why = Why(q, file, radiants, perGame);
-                verdicts[key] = why == "" && denied.Contains(key) ? "denied (DENIED)" : why;
+                if (why == "no objectives") { why = WhySilent(q); if (why == "") why = "silent"; }
+                verdicts[key] = (why == "" || why == "silent") && denied.Contains(key) ? "denied (DENIED)" : why;
             }
         QuestScan.Safe = new HashSet<Tuple<int, uint>>(verdicts.Where(kv => kv.Value == "").Select(kv => kv.Key));
+        QuestScan.Silent = new HashSet<Tuple<int, uint>>(verdicts.Where(kv => kv.Value == "silent").Select(kv => kv.Key));
         return verdicts;
     }
 
@@ -1921,14 +1989,15 @@ public static class SafeScan
         { "MS13MarowskiRevenge 380 -> 400 -> MS13MarowskiRevenge 400: kPays",
             "400 takes the caps only when 380 is not done (its GetStageDone(380) branch jumps over the RemoveItem), and it is set from 380" } };
 
-    // Payments through a SAFE stage. A stage that takes caps or ordinary items from the player is never set from a
-    // friend's game (StageRules.h kPays), but a SAFE stage whose fragment sets it, or starts its quest, runs it here when
-    // the friend's stage is set. So every stage of every SAFE quest is walked as -Moves walks them, into every stage it
-    // sets or starts, of any quest (shared or not; its own too), a few calls deep, and each stage reached that has a
-    // kPays row is listed, with how it is reached (the first way found for each SAFE stage). The walk does not follow a
-    // branch on a stage being done, so a stage that pays only if another is not done is listed all the same: those read
-    // by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones marked, and the size of the
-    // rest as src/game/StageRules.h's SAFE_REACHES_PAYS, which tests/StageRulesTests.cpp checks is 0.
+    // Payments through a SAFE or SILENT stage. A stage that takes caps or ordinary items from the player is never set
+    // from a friend's game (StageRules.h kPays), but a SAFE stage whose fragment sets it, or starts its quest, runs it
+    // here when the friend's stage is set. So every stage of every SAFE and SILENT quest is walked as -Moves walks
+    // them, into every stage it sets or starts, of any quest (shared or not; its own too), a few calls deep, and each
+    // stage reached that has a kPays row is listed, with how it is reached (the first way found for each stage). The
+    // walk does not follow a branch on a stage being done, so a stage that pays only if another is not done is listed
+    // all the same: those read by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones
+    // marked, and the size of the rest as src/game/StageRules.h's SAFE_REACHES_PAYS, which tests/StageRulesTests.cpp
+    // checks is 0.
     public static string Payments(HashSet<Tuple<int, uint, int>> a_pays)
     {
         var walk = new MoveScan.Walk
@@ -1938,7 +2007,7 @@ public static class SafeScan
         };
         var lines = new List<string>();
         int open = 0;
-        foreach (var key in QuestScan.Safe.OrderBy(k => k))
+        foreach (var key in QuestScan.Safe.Concat(QuestScan.Silent).OrderBy(k => k))
         {
             var q = MoveScan.perFile[key.Item1][key.Item2];
             var stages = MoveScan.Fragments(key.Item1, q.Id);
@@ -1953,13 +2022,13 @@ public static class SafeScan
             }
         }
         var sb = new StringBuilder();
-        sb.AppendLine(string.Format("# stages reached from a SAFE stage that pay (StageRules.h kPays, {0} rows): {1}, {2} read by hand", a_pays.Count, lines.Count, lines.Count - open));
+        sb.AppendLine(string.Format("# stages reached from a SAFE or SILENT stage that pay (StageRules.h kPays, {0} rows): {1}, {2} read by hand", a_pays.Count, lines.Count, lines.Count - open));
         foreach (var l in lines) sb.AppendLine(l);
         sb.AppendLine(string.Format("inline constexpr std::size_t SAFE_REACHES_PAYS = {0};", open));
         return sb.ToString();
     }
 
-    // SAFE's rows, then what was left out and why.
+    // SAFE's rows, SILENT's, then what was left out and why.
     public static string Run(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
         var verdicts = Load(data, a_questFilter, a_radiantRules);
@@ -1974,9 +2043,22 @@ public static class SafeScan
             sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}", kv.Key.Item1, kv.Key.Item2, q.Edid));
         }
         sb.AppendLine(string.Format("# {0} quests ({1}), {2} stages", QuestScan.Safe.Count, string.Join(", ", GearScan.MASTERS.Select((m, i) => m.Esm + " " + byFile[i]).ToArray()), stages));
+        sb.AppendLine("# SILENT:");
+        byFile = new int[GearScan.MASTERS.Length];
+        stages = 0;
+        foreach (var kv in verdicts.Where(kv => kv.Value == "silent"))
+        {
+            var q = MoveScan.perFile[kv.Key.Item1][kv.Key.Item2];
+            byFile[kv.Key.Item1]++;
+            stages += q.Stages;
+            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}", kv.Key.Item1, kv.Key.Item2, q.Edid));
+        }
+        sb.AppendLine(string.Format("# {0} quests ({1}), {2} stages", QuestScan.Silent.Count, string.Join(", ", GearScan.MASTERS.Select((m, i) => m.Esm + " " + byFile[i]).ToArray()), stages));
+        foreach (var kv in verdicts.Where(kv => kv.Value.StartsWith("denied by hand")))
+            sb.AppendLine(string.Format("# {0}: {1} 0x{2:X6} {3}", kv.Value, kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
         foreach (var kv in verdicts.Where(kv => kv.Value == "denied (DENIED)"))
             sb.AppendLine(string.Format("# denied: {0} 0x{1:X6} {2}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
-        foreach (var g in verdicts.Values.Where(v => v != "" && !v.StartsWith("denied")).GroupBy(v => v).OrderBy(g => g.Key))
+        foreach (var g in verdicts.Values.Where(v => v != "" && v != "silent" && !v.StartsWith("denied (") && !v.StartsWith("denied by hand")).GroupBy(v => v).OrderBy(g => g.Key))
             sb.AppendLine(string.Format("# left out, {0}: {1}", g.Key, g.Count()));
         // what each quest left out for a stage does, and how its stage gets there, but the shared ones'
         foreach (var kv in found.Where(kv => verdicts[kv.Key].StartsWith("a stage")).OrderBy(kv => kv.Key))

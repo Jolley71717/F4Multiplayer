@@ -385,6 +385,34 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(!SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ, no longer SAFE's
 }
 
+TEST("stage rules: the stages of the objective-less quests sQuests = safe shares (QuestFilter::SILENT; tools/questscan.ps1 -Safe -Rules)")
+{
+	using namespace StageRules;
+	// DLC03MQ02Fight's quickstart moves the player; its 0 (another) is no start-up stage: left out.
+	CHECK(FlagsOf(0x043822, 5, File::kCoast) == kMoves);
+	CHECK(!Find(0x043822, 0, File::kCoast));
+	// Grandchester's pre-war money and its ticket are taken: never from a friend's stage.
+	CHECK(FlagsOf(0x000808, 100, File::kNukaWorld) == kPays);
+	CHECK(FlagsOf(0x000808, 120, File::kNukaWorld) == kPays);
+	CHECK(!Find(0x000808, 0, File::kNukaWorld));
+	CHECK(Judge(Find(0x000808, 100, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	// The Children of Atom's pump regulators are the quest's own (as the fog condenser modules): no row.
+	CHECK(!Find(0x02B4FF, 20, File::kCoast));  // DLC03CoA_FFNucleus03_PumpHandler
+	CHECK(!Find(0x02B4FF, 30, File::kCoast));
+	// Waits: the Castle's waves, the Prydwen's arrival (BoSEnable 10 and 20; its 15 is ScriptDoors').
+	REQUIRE(Find(0x0ABF55, 500));  // DN029FirstWave
+	CHECK(Find(0x0ABF55, 500)->wait == 30);
+	CHECK(FlagsOf(0x1851A0, 10) == 0);
+	CHECK(!Find(0x1851A0, 15));
+	// Their stages that set another quest's (-Safe -SetsOther), and the shared quests' that set one of theirs.
+	CHECK(SetsAnother(File::kFallout4, 0x022A02, 170));  // MS11 starts DN029FirstWave
+	CHECK(SetsAnother(File::kFallout4, 0x0ABF55, 500));  // DN029FirstWave sets MS11 180
+	CHECK(SetsAnother(File::kFallout4, 0x0229E7, 900));  // MQ106 sets BoSEnable 10
+	CHECK(SetsAnother(File::kFallout4, 0x1851A0, 10));   // BoSEnable sets DN165Exterior 255
+	CHECK(SetsAnother(File::kCoast, 0x043822, 100));     // DLC03MQ02Fight sets DLC03MQ02 300
+	CHECK(SetsAnother(File::kNukaWorld, 0x046A18, 20));  // DLC04MQ00TransitCenter sets DLC04MQ00 500
+}
+
 TEST("stage rules: no stage of a quest sQuests = safe shares sets a stage that pays (tools/questscan.ps1 -Safe)")
 {
 	using namespace StageRules;
