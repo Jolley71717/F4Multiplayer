@@ -194,12 +194,17 @@ namespace QuestSync
 		Clock::rep                                       playerActivatedSeen = 0;  // ... as last handed to menuGuard
 		std::optional<Clock::time_point>                 warnedAt;
 		// The follow offers made (StageRules::Verdict::kOffer: a live stage that moves the player, its friend far away),
-		// by quest << 16 | stage: when, and the friend to go with. Taken up, run out or set, each is dropped.
+		// by quest << 16 | stage: when, and the friend to go with. Taken up, run out or set, each is dropped. Its OFFER_FOR is
+		// counted in time it was judged: a loading screen (the queue paused), or a teleport to that friend on its way, doesn't eat it.
 		struct Offer
 		{
 			Clock::time_point at;
 			std::uint32_t     playerId;
+			Clock::time_point seen;      // last judged
+			Clock::duration   paused{};  // not counted: gaps between judgements longer than OFFER_GAP, and a teleport's flight
 		};
+		// Polls are POLL_INTERVAL apart: a longer gap between two judgements of an offer is time the queue was paused.
+		constexpr auto OFFER_GAP = 2s;
 		std::unordered_map<std::uint64_t, Offer>         offers;
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
@@ -784,13 +789,22 @@ namespace QuestSync
 			}
 			// The follow offer: made once while the stage is live, open for OFFER_FOR, for the friend who did it.
 			const auto offer = offers.find(Key(a_quest, a_stage));
-			if (offer != offers.end()) {
-				now.offered = a_now - offer->second.at;
-			}
 			const std::uint32_t friendId = offer != offers.end() ? offer->second.playerId : live != liveAt.end() ? live->second.playerId : 0u;
+			// A teleport to that friend still on its way (their cell loading): not beside them until it lands (its cell's load
+			// can put the player there a frame before), and the offer's time stands still meanwhile.
+			const bool teleporting = friendId != 0 && Party::TeleportingTo(friendId);
+			if (offer != offers.end()) {
+				auto&      o = offer->second;
+				const auto gap = a_now - o.seen;
+				if (teleporting || gap > OFFER_GAP) {
+					o.paused += gap;
+				}
+				o.seen = a_now;
+				now.offered = a_now - o.at - o.paused;
+			}
 			now.followable = friendId != 0 && !RemotePlayers::NameOf(friendId).empty();
 			if (rule && (rule->flags & StageRules::kMoves) && (now.live || (now.offered && *now.offered < StageRules::OFFER_FOR))) {
-				now.nearFriend = NearFriend(friendId);
+				now.nearFriend = !teleporting && NearFriend(friendId);
 			}
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
@@ -801,6 +815,8 @@ namespace QuestSync
 					const auto arrived = Party::TeleportedTo(friendId);
 					followed = arrived && *arrived >= offer->second.at ? std::format(" after arriving beside player {} by the teleport key", friendId) :
 					                                                      std::format(" after arriving beside player {} (came near them)", friendId);
+				} else if (!now.followable) {
+					REX::INFO("QuestSync: the offer to follow player {} into {:08X} '{}' stage {} ends: they left the session", friendId, a_quest, name ? name : "", a_stage);
 				} else {
 					REX::INFO("QuestSync: the offer to follow player {} into {:08X} '{}' stage {} was not taken up in {} s", friendId, a_quest, name ? name : "", a_stage,
 						std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count());
@@ -813,9 +829,10 @@ namespace QuestSync
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kOffer:
-				// The rest of its quest waits meanwhile; other quests go on.
+				// The rest of its quest waits meanwhile; other quests go on, but not past a bridge: what came after it waits
+				// as behind its warning (MQ206's 1000 offered, the MQ207 it starts must not run here first).
 				if (offer == offers.end()) {
-					offers[Key(a_quest, a_stage)] = Offer{ a_now, friendId };
+					offers[Key(a_quest, a_stage)] = Offer{ a_now, friendId, a_now };
 					const auto blocked = Party::OfferFollow(friendId);
 					const bool fight = rule && (rule->flags & StageRules::kHostile);
 					// A name in brackets is the editor's, never shown in the Pip-Boy ("[DN070 - Jamaica Plain]"): "a quest" then.
@@ -831,7 +848,7 @@ namespace QuestSync
 						name ? name : "", a_stage, fight ? "a faction turns on the player" : "it moves the player", std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count(),
 						blocked.empty() ? std::string{} : std::format(" (the teleport can't go now: {})", blocked));
 				}
-				return StageLog::Set::kQuestWaits;
+				return rule && (rule->flags & StageRules::kBridge) ? StageLog::Set::kLater : StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kWarn:
 				warnedAt = a_now;
 				Hud::Notify(Text::Format("quest.catching_up", { { "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count() },
@@ -1216,7 +1233,7 @@ namespace QuestSync
 			combatHold = CombatHold(now);
 			std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= LIVE_FOR; });
 			// Offers whose stage was never judged again (its quest went away): long out of date.
-			std::erase_if(offers, [&](const auto& a_entry) { return now - a_entry.second.at >= 2 * StageRules::OFFER_FOR; });
+			std::erase_if(offers, [&](const auto& a_entry) { return now - a_entry.second.seen >= 5min; });
 			Game game{ now };
 			const bool paused = Paused();
 			CheckReleased(a_inSession);

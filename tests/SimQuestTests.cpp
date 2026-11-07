@@ -378,6 +378,114 @@ TEST("sim quests: a friend far away when a stage moves them is offered to go wit
 	CHECK(carol.Quests().Has(MS17, 315));
 }
 
+namespace
+{
+	std::size_t SetAt(const Client& a_player, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto& history = a_player.Quests().History();
+		const auto  it = std::ranges::find(history, std::pair{ a_quest, a_stage });
+		return it == history.end() ? history.size() : static_cast<std::size_t>(it - history.begin());
+	}
+}
+
+TEST("sim quests: a far friend's offered bridge (the Institute teleporter) holds back what came after it, as its warning did; taken up, the bridge comes first")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);  // across the map
+	Settled(s);
+
+	Reach(host, MQ206, { 500, 1000, 1050, 1200 });
+	s.PlayFor(1s);         // (a poll reports its stages quest by quest: what came later comes in a later one)
+	host.Stage(SIDE, 10);  // a step after the bridge, of another quest (as the MQ207 that MQ206's teleporter starts)
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	CHECK(bob.Quests().Notices()[0].starts_with("Going into"));
+	CHECK(!bob.Quests().Has(MQ206, 500));
+	CHECK(!bob.Quests().Has(SIDE, 10));  // held behind the offered bridge, not set first
+	s.PlayFor(40s);
+	CHECK(!bob.Quests().Has(SIDE, 10));
+
+	bob.Move(1100.0f, 1000.0f);  // the teleport key: beside the host
+	s.PlayFor(60s);  // the teleporter (1000) runs on 40 s before what came after it goes
+	CHECK((Order(bob, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(bob.Quests().followed == 1);
+	CHECK(bob.Quests().Has(SIDE, 10));
+	CHECK(SetAt(bob, MQ206, 1000) < SetAt(bob, SIDE, 10));  // the teleporter before what came after it
+	CHECK(bob.Quests().Controls());
+	CHECK(bob.Quests().Skipped().empty());
+}
+
+TEST("sim quests: a far friend's offered bridge, not taken up, still comes before what came after it; an offered stage that is no bridge lets other quests go on")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);
+	Settled(s);
+
+	// No bridge (MS17's 150): only its own quest waits for the offer.
+	host.Stage(MS17, 150);
+	host.Stage(SIDE, 10);
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	CHECK(!bob.Quests().Has(MS17, 150));
+	CHECK(bob.Quests().Has(SIDE, 10));  // set while the offer is open
+	s.PlayFor(StageRules::OFFER_FOR);
+	CHECK((bob.Quests().Skipped() == History{ { MS17, 150 } }));
+
+	// A bridge (MQ206's): what came after it waits through the offer and the warning, and comes after the teleporter.
+	Reach(host, MQ206, { 500, 1000, 1050, 1200 });
+	s.PlayFor(1s);
+	host.Stage(SIDE, 20);
+	s.PlayFor(StageRules::OFFER_FOR - 5s);
+	CHECK(!bob.Quests().Has(MQ206, 500));
+	CHECK(!bob.Quests().Has(SIDE, 20));
+	s.PlayFor(70s);
+	CHECK((Order(bob, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(bob.Quests().Has(SIDE, 20));
+	CHECK(SetAt(bob, MQ206, 1000) < SetAt(bob, SIDE, 20));
+	CHECK(bob.Quests().followed == 0);
+	CHECK(bob.Quests().Controls());
+}
+
+TEST("sim quests: a loading screen doesn't eat a follow offer's time")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);
+	Settled(s);
+
+	host.Stage(MS17, 150);
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	s.PlayFor(60s);
+	bob.Quests().loading = true;  // a long load: the queue is paused
+	s.PlayFor(60s);
+	bob.Quests().loading = false;
+	s.PlayFor(10s);  // about 73 s of the offer's 90 counted
+	CHECK(!bob.Quests().Has(MS17, 150));
+	CHECK(bob.Quests().Skipped().empty());
+	bob.Move(1100.0f, 1000.0f);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().Has(MS17, 150));
+	CHECK(bob.Quests().followed == 1);
+}
+
 TEST("sim quests: a friend's stage that turns a faction on the player (the robot shops' DN049) reaches you beside them, not when you're far, and their payment never")
 {
 	constexpr std::uint32_t DN049 = 0x0004542B;  // shared for its outcome: 120 makes Madden's champion hostile, 711 pays pre-war money

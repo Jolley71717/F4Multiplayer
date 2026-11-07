@@ -1900,9 +1900,13 @@ A friend's stage that moves the player (kMoves: into Kellogg's memory, through t
 cave) is set only with the friend who did it near (NEAR_FRIEND, 6000 units). A player farther
 away is no longer just skipped: while the stage is live, the HUD says "<friend> is going into <quest>: hold <key> to go
 with them" and the teleport key is aimed at that friend (as when a friend goes down). For OFFER_FOR (90 s) the stage's
-quest waits (other quests go on); the moment the player is beside the friend, by the teleport key or on foot, it is set
-as it would have been live beside them, and the log says "set ... after arriving beside player N" (Party::ArrivedBeside,
-the teleport's landing). Not taken up in 90 s, it goes as before: skipped, or, for a bridge (a stage nothing else would
+quest waits (other quests go on; behind a bridge, everything that came after it waits, as behind its warning: MQ206's
+teleporter offered, the MQ207 it starts must not run here first); the moment the player is beside the friend, by the
+teleport key or on foot, it is set as it would have been live beside them, and the log says "set ... after arriving
+beside player N by the teleport key" (Party::TeleportedTo, the teleport's landing) or "(came near them)". While a
+teleport to that friend is on its way (Party::TeleportingTo: their cell loading) the player is not beside them yet, and
+the offer's 90 s count only time it was judged: a loading screen (the queue paused: a gap of more than 2 s between two
+judgements) or the teleport's flight doesn't eat them. A friend who leaves ends the offer (the log says so). Not taken up in 90 s, it goes as before: skipped, or, for a bridge (a stage nothing else would
 make, MQ206's), the 10 s warning and then set anyway. Only a live stage is offered: one caught up from the session (a
 joiner, a load) never is, nor one from a friend not known to this game, nor while this game is in the opening. The
 teleport's own refusals stand (a conversation, a scene, furniture, Survival, a place this game lacks): when one holds at

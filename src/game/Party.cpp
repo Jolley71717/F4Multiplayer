@@ -1226,10 +1226,12 @@ namespace Party
 
 	std::optional<Clock::time_point> TeleportedTo(std::uint32_t a_id)
 	{
-		if (pendingTeleport && pendingTeleport->playerId == a_id) {
-			return pendingTeleport->deadline - TELEPORT_TIMEOUT;
-		}
 		return arrival && arrival->playerId == a_id ? std::optional{ arrival->at } : std::nullopt;
+	}
+
+	bool TeleportingTo(std::uint32_t a_id)
+	{
+		return pendingTeleport && pendingTeleport->playerId == a_id;
 	}
 
 	void SendPing()
