@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T21:17:06+00:00",
+ "updated": "2026-11-07T21:49:11+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1252,7 +1252,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 2,
-   "note": "106 silent + 10 story-outcome quests + 4 DLC radiants merged for 0.14.0; creature pairing (step C) in rig test",
+   "note": "106 silent + 10 story-outcome quests + 4 DLC radiants + quest creatures shared across games, merged for 0.14.0; 'go with your friend' in rig test",
    "pr": 326
   },
   {
