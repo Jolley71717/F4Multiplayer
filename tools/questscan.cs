@@ -1762,8 +1762,8 @@ public static class PerGameScan
 // (MQ101, DogmeatQuest, DLC04RaiderKickout) the rule leaves out by itself, for a stage, and stays there in case it
 // changes. The quests the rule passes but for their objectives (a location's quest, DN035) are counted at the end: a
 // quest with no objective counts as started here only once something shows it, which needs a rule of its own. Then,
-// for each quest left out for a stage, the first stage found and its chain. Last, the payments reached through a SAFE
-// stage (Payments).
+// for each quest left out for a stage, the first stage found and its chain. Last, the payments reached through a shared
+// stage, SAFE's or any other quest's a friend's stage is set on (Payments).
 public static class SafeScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -1902,8 +1902,9 @@ public static class SafeScan
         return verdicts;
     }
 
-    // The (file, quest, stage) of the rows of src/game/StageRules.h's RULES that are kPays: from "RULES[] = {" to its "};".
-    public static HashSet<Tuple<int, uint, int>> Pays(string a_stageRules)
+    // The (file, quest, stage) of the rows of src/game/StageRules.h's RULES that have a flag (kPays, kFree): from
+    // "RULES[] = {" to its "};".
+    public static HashSet<Tuple<int, uint, int>> Pays(string a_stageRules, string a_flag = "kPays")
     {
         var text = File.ReadAllText(a_stageRules);
         int at = text.IndexOf("RULES[] = {", StringComparison.Ordinal);
@@ -1911,52 +1912,86 @@ public static class SafeScan
         var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
         var rows = new HashSet<Tuple<int, uint, int>>();
         foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+),\s*([^,}]+),\s*\d+\s*\}"))
-            if (m.Groups[4].Value.Contains("kPays")) rows.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
+            if (m.Groups[4].Value.Contains(a_flag)) rows.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
         return rows;
     }
 
-    // Payments through a SAFE stage that were read by hand and pay nothing, by "SAFE quest stage -> how it is reached"
+    // Payments through a shared stage that were read by hand and pay nothing, by "shared quest stage -> how it is reached"
     // (as the scan prints it), with why.
     static readonly Dictionary<string, string> PAYS_CHECKED = new Dictionary<string, string> {
         { "MS13MarowskiRevenge 380 -> 400 -> MS13MarowskiRevenge 400: kPays",
             "400 takes the caps only when 380 is not done (its GetStageDone(380) branch jumps over the RemoveItem), and it is set from 380" } };
 
-    // Payments through a SAFE stage. A stage that takes caps or ordinary items from the player is never set from a
-    // friend's game (StageRules.h kPays), but a SAFE stage whose fragment sets it, or starts its quest, runs it here when
-    // the friend's stage is set. So every stage of every SAFE quest is walked as -Moves walks them, into every stage it
-    // sets or starts, of any quest (shared or not; its own too), a few calls deep, and each stage reached that has a
-    // kPays row is listed, with how it is reached (the first way found for each SAFE stage). The walk does not follow a
-    // branch on a stage being done, so a stage that pays only if another is not done is listed all the same: those read
-    // by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones marked, and the size of the
-    // rest as src/game/StageRules.h's SAFE_REACHES_PAYS, which tests/StageRulesTests.cpp checks is 0.
-    public static string Payments(HashSet<Tuple<int, uint, int>> a_pays)
+    // Payments through a shared stage. A stage that takes caps or ordinary items from the player is never set from a
+    // friend's game (StageRules.h kPays), but a shared stage whose fragment sets it, or starts its quest, runs it here when
+    // the friend's stage is set: DialogueDiamondCity 64 and 300 (Home Plate bought from Geneva or the mayor) set
+    // FFDiamondCity02 10, which takes the house's price and gives the key and the house, and a friend's purchase was made
+    // again in every game it was set in (up to 0.13.1). So every stage of every quest a friend's stage is set on (shared by
+    // its type, a finale, a dialogue quest, SAFE's, or a radiant, shared by its run; not PER_GAME, never shared) that is not
+    // itself a kPays row or the opening's (never set from a friend's) is walked as -Moves walks them, into every stage it
+    // sets or starts, of any quest (shared or not; its own too), a few calls deep, and each stage reached that has a kPays
+    // row, or whose own code or a function it calls takes caps or empties the inventory (Payment), is listed, with how it
+    // is reached (the first way found for each stage). The walk does not follow a branch on a stage being done, so a
+    // stage that pays only if another is not done is listed all the same: those read by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones marked, and the size of the rest as
+    // src/game/StageRules.h's SHARED_REACHES_PAYS, which tests/StageRulesTests.cpp checks is 0. A stage listed is made a
+    // kPays row itself (a friend's is then never set here), a kFree row (a purchase set here with its price at 0:
+    // StageRules.h PRICES; not walked, but one reached from another stage is a payment all the same), or read and added
+    // to PAYS_CHECKED.
+    public static string Payments(HashSet<Tuple<int, uint, int>> a_pays, HashSet<Tuple<int, uint, int>> a_free)
     {
         var walk = new MoveScan.Walk
         {
-            Direct = c => null,
-            Reaches = (file, q, stage) => a_pays.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kPays" : null
+            Direct = Payment,
+            Reaches = (file, q, stage) => a_pays.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kPays"
+                : a_free.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kFree" : null
         };
         var lines = new List<string>();
-        int open = 0;
-        foreach (var key in QuestScan.Safe.OrderBy(k => k))
-        {
-            var q = MoveScan.perFile[key.Item1][key.Item2];
-            var stages = MoveScan.Fragments(key.Item1, q.Id);
-            foreach (var stage in stages.Keys.OrderBy(k => k))
+        int open = 0, quests = 0, walked = 0;
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var key in MoveScan.perFile[file].Keys.OrderBy(k => k))
             {
-                var how = walk.Stage(key.Item1, q, stage);
-                if (how == null) continue;
-                string why;
-                bool checkedByHand = PAYS_CHECKED.TryGetValue(q.Edid + " " + stage + " -> " + how, out why);
-                if (!checkedByHand) open++;
-                lines.Add(string.Format("#   {0} 0x{1:X6} {2} {3} -> {4}{5}", key.Item1, key.Item2, q.Edid, stage, how, checkedByHand ? " (read by hand, pays nothing: " + why + ")" : ""));
+                var q = MoveScan.perFile[file][key];
+                if (QuestScan.Shared(q, file) == "not shared" || QuestScan.PerGame.Contains(Tuple.Create(file, key))) continue;
+                quests++;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    if (a_pays.Contains(Tuple.Create(file, key, stage)) || a_free.Contains(Tuple.Create(file, key, stage)) || Opening(file, key, stage)) continue;
+                    walked++;
+                    var how = walk.Stage(file, q, stage);
+                    if (how == null) continue;
+                    string why;
+                    bool checkedByHand = PAYS_CHECKED.TryGetValue(q.Edid + " " + stage + " -> " + how, out why);
+                    if (!checkedByHand) open++;
+                    lines.Add(string.Format("#   {0} 0x{1:X6} {2} {3} -> {4}{5}", file, key, q.Edid, stage, how, checkedByHand ? " (read by hand, pays nothing: " + why + ")" : ""));
+                }
             }
-        }
         var sb = new StringBuilder();
-        sb.AppendLine(string.Format("# stages reached from a SAFE stage that pay (StageRules.h kPays, {0} rows): {1}, {2} read by hand", a_pays.Count, lines.Count, lines.Count - open));
+        sb.AppendLine(string.Format("# stages reached from a shared stage that pay (StageRules.h kPays, {0} rows, and kFree, {1}; {2} stages of {3} shared quests walked): {4}, {5} read by hand",
+            a_pays.Count, a_free.Count, walked, quests, lines.Count, lines.Count - open));
         foreach (var l in lines) sb.AppendLine(l);
-        sb.AppendLine(string.Format("inline constexpr std::size_t SAFE_REACHES_PAYS = {0};", open));
+        sb.AppendLine(string.Format("inline constexpr std::size_t SHARED_REACHES_PAYS = {0};", open));
         return sb.ToString();
+    }
+
+    // What a function's own code takes from the player that is a payment whatever the quest, or null: caps (RemoveItem or
+    // SellItem of a Caps001 property) or the whole inventory (RemoveAllItems, UnequipAll). The stages that does in a quest
+    // no friend's stage is set on were never read for kPays rows (only the shared quests' were), so the walk looks for it
+    // in every function it reaches, a stage's own fragment too: what else a stage there takes (QuestScan.Takes) was read
+    // by hand when this was written, from every shared stage, and was the quest's own item each time (MS19's cure, the
+    // Institute's beacon grenades, MS11's parts, an alias's reference).
+    static string Payment(List<GearScan.Instr> a_code)
+    {
+        var takes = QuestScan.Takes(new GearScan.Func { Code = a_code })
+            .Where(t => t.Item2 == "" || ((Is(t.Item1, "RemoveItem") || Is(t.Item1, "SellItem")) && System.Text.RegularExpressions.Regex.IsMatch(t.Item2, "^p?Caps001$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)))
+            .Select(t => t.Item1 + (t.Item2 == "" ? "" : " " + t.Item2) + t.Item3).ToArray();
+        return takes.Length == 0 ? null : "takes " + string.Join(", ", takes);
+    }
+
+    // The opening's stages (src/game/StageRules.h IsOpening: MQ102 below 10, all of DialogueVault111): never set from a
+    // friend's game.
+    static bool Opening(int a_file, uint a_quest, int a_stage)
+    {
+        return a_file == 0 && ((a_quest == 0x01CC2A && a_stage < 10) || a_quest == 0x01ED62);
     }
 
     // SAFE's rows, then what was left out and why.
@@ -1981,7 +2016,7 @@ public static class SafeScan
         // what each quest left out for a stage does, and how its stage gets there, but the shared ones'
         foreach (var kv in found.Where(kv => verdicts[kv.Key].StartsWith("a stage")).OrderBy(kv => kv.Key))
             sb.AppendLine(string.Format("#   {0} 0x{1:X6} {2} {3}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid, kv.Value));
-        sb.Append(Payments(Pays(a_stageRules)));
+        sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
         return sb.ToString();
     }
 }

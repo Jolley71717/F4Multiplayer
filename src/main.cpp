@@ -47,6 +47,7 @@
 #include "game/TextureWait.h"
 #include "game/ResourceMirror.h"
 #include "game/WorkshopSync.h"
+#include "game/QuestSync.h"
 #include "net/Session.h"
 #include "Text.h"
 
@@ -520,6 +521,7 @@ namespace
 							}
 						};
 						step("the shields", [] { WeaponFire::BeforeLoad(); });  // first: the shields Session ends below would send setghost 0 into the load
+						step("the waived prices", [] { QuestSync::BeforeLoad(); });  // a waived price is put back before the load can run frames that would set it to 0
 						step("the binding", [] { Session::OnBeforeLoad(); });
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the lent frames", [] { FrameLoans::BeforeLoad(); });  // the extra data of the pieces we lent is let go while the old world is still there
