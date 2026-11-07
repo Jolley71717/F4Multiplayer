@@ -434,7 +434,7 @@ TEST("world key: saves from before keys are their character's world, the same fo
 	const auto save = SavedKey(world);  // SOLO's
 	CHECK(AfterLoad(world, save, SOLO, 0x4) == CharacterBinding::World::FromCharacter(SOLO));
 	// No random number makes a key one of those (nor 0).
-	for (const std::uint64_t random : { 0ull, 1ull << 63, CharacterBinding::World::FromCharacter(COOP), ~0ull }) {
+	for (const std::uint64_t random : std::initializer_list<std::uint64_t>{ 0, std::uint64_t{ 1 } << 63, CharacterBinding::World::FromCharacter(COOP), ~std::uint64_t{ 0 } }) {
 		const auto key = CharacterBinding::World::Fresh(random);
 		CHECK(key != 0);
 		CHECK((key >> 63) == 0);
