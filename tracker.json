@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T01:39:14+00:00",
+ "updated": "2026-11-07T01:41:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -886,7 +886,7 @@
    "id": "gjw9",
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
-   "priority": 2,
+   "priority": 1,
    "stage": 0,
    "note": ""
   },
