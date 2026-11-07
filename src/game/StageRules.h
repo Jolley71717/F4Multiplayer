@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -474,6 +475,16 @@ namespace StageRules
 		{ 3, 0x016E18, 95, 0, 10 },     // DLC04RaidSubdue
 		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
 	};
+
+	// How many stages of the quests the host's sQuests = safe shares (QuestFilter::SAFE) set, through their fragments and
+	// the script functions those call, a few levels down and in their own quest or another, shared or not, a stage with a
+	// kPays row. A friend's game is never sent a stage that pays, but one of these runs its fragment here when the friend's
+	// is set, and the stage it sets would pay in this game. None does: tools/questscan.ps1 -Safe walks every SAFE stage
+	// that way and prints the count last, as this line (tests/StageRulesTests.cpp checks it is 0). The scan does list
+	// MS13MarowskiRevenge 380, which sets its own 400 (the caps), and does not count it: 400 takes them only if 380 is not
+	// done (a GetStageDone branch the scan does not follow), and it is set from 380. Paste the scan's line here when it
+	// changes; a count above 0 is a payment a friend's stage would make here.
+	inline constexpr std::size_t SAFE_REACHES_PAYS = 0;
 
 	// Stages whose script takes the player's controls away until a later stage gives them back. They
 	// are only set once that stage is coming too (waiting here, or done), so the player is never left

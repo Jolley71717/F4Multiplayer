@@ -41,6 +41,7 @@ public static class GearScan
     {
         public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>();
         public string Event = "";  // the story manager event that starts it (ENAM), if any
+        public List<string> Scripts = new List<string>();  // the scripts attached to the quest itself (its VMAD), not its stage fragments' or aliases'
         public List<string> Fills = new List<string>();  // each alias's fill, name=forced, unique, external, created, event, fromalias, matching or empty
         public List<Alias> Aliases = new List<Alias>();  // the same, with each alias's ID and the alias it is filled from
     }
@@ -151,6 +152,7 @@ public static class GearScan
                                 if (st == "ENAM" && ss >= 4) q.Event = Encoding.ASCII.GetString(body, d, 4);
                                 if (st == "INDX") { q.Stages++; if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
                                 if (st == "QOBJ") q.Objectives++;
+                                if (st == "VMAD") q.Scripts = ParentScan.OwnScripts(body, d, ss);
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
                             if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; }
@@ -346,6 +348,24 @@ public static class QuestScan
     // with the host's sQuests = safe, so the other scans take them for shared too. Null: not made (the scans see only
     // what every session shares).
     public static HashSet<Tuple<int, uint>> Safe;
+
+    // Fallout4.esm's radiants (src/game/RadiantRules.h, by form ID in the file) and QuestFilter.h's PER_GAME, once
+    // SafeScan.Load has read them (null: not read). Quests shared by their type that no friend's stage is ever set on.
+    public static HashSet<uint> Radiants;
+    public static HashSet<Tuple<int, uint>> PerGame;
+
+    // Whether a stage set in one game is set on this quest in a friend's: shared by its type, finale or dialogue quest
+    // (Shared), but not a radiant (RadiantRules.h decides those, by their run) and not PER_GAME (never shared). A quest
+    // that does not reach a friend is one whose stages a walk through a shared stage's fragment has to follow: the
+    // friend's game runs that fragment, and what it sets there is set there only.
+    public static bool ReachesFriend(GearScan.Quest q, int a_file)
+    {
+        if (Shared(q, a_file) == "not shared") return false;
+        uint local = q.Id & 0xFFFFFF;
+        if (a_file == 0 && Radiants != null && Radiants.Contains(local)) return false;
+        if (PerGame != null && PerGame.Contains(Tuple.Create(a_file, local))) return false;
+        return true;
+    }
 
     public static string Shared(GearScan.Quest q, int a_file)
     {
@@ -563,6 +583,27 @@ public static class MoveScan
         return null;
     }
 
+    // The quest a script is attached to (its own VMAD), by script name: a script on exactly one quest only. One attached to
+    // several (a template) says nothing about which a variable typed with it holds.
+    static readonly Dictionary<string, Tuple<GearScan.Quest, int>> questScripts = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> sharedScripts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    static void NoteScripts(GearScan.Quest q, int a_file)
+    {
+        foreach (var name in q.Scripts.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (questScripts.ContainsKey(name)) { questScripts.Remove(name); sharedScripts.Add(name); }
+            else if (!sharedScripts.Contains(name)) questScripts[name] = Tuple.Create(q, a_file);
+        }
+    }
+
+    // The quest whose script a variable is typed with, when that script is on one quest only (null: not a quest's).
+    static Tuple<GearScan.Quest, int> QuestOfScript(string a_type)
+    {
+        Tuple<GearScan.Quest, int> t;
+        return a_type != null && questScripts.TryGetValue(a_type, out t) ? t : null;
+    }
+
     static bool Literal(string a) { int n; float x; return a == "True" || a == "False" || a == "None" || a.StartsWith("\"") || int.TryParse(a, out n) || float.TryParse(a, out x); }
 
     // The instructions a call can run, in order: with the literal arguments it is called with (null: not known), a branch
@@ -647,6 +688,9 @@ public static class MoveScan
         public Func<List<GearScan.Instr>, string> Direct;
         public Func<GearScan.Quest, string> Target = q => null;
         public Func<GearScan.Quest, int, bool> Follow = (q, file) => true;
+        // Said of each stage a function sets or starts (file, quest, stage; its own quest's too) before it is walked: what
+        // is wrong with the stage itself, or null (the walk goes on into it). Not said of the stage Stage was asked about.
+        public Func<int, GearScan.Quest, int, string> Reaches;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -680,7 +724,9 @@ public static class MoveScan
                     if (!own) list.AddRange(target.Item1.Startup);  // starts it, if it isn't running
                     foreach (var st in list)
                     {
-                        var w = Stage(target.Item2, target.Item1, st, a_seen);
+                        var w = Reaches == null ? null : Reaches(target.Item2, target.Item1, st);
+                        if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
+                        w = Stage(target.Item2, target.Item1, st, a_seen);
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
                     }
                     continue;
@@ -693,8 +739,10 @@ public static class MoveScan
                 string owner;
                 var g = Find(type, name, out owner);
                 if (g == null) continue;
-                // a call on the quest's own script keeps the quest (kmyQuest.StartQuest), another script's doesn't
-                var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : null;
+                // a call on the quest's own script keeps the quest (kmyQuest.StartQuest), and one through a variable typed with the
+                // script of exactly one quest is that quest's (DN036_Post 15: DN036QuestScript.InstituteEnding sets DN036 stages),
+                // any other script's doesn't
+                var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : i.Op == 23 ? QuestOfScript(type) : null;
                 int first = i.Op == 24 ? 2 : 3;
                 var args = i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray();
                 var w2 = Function(g, args, q, a_seen);
@@ -751,7 +799,7 @@ public static class MoveScan
         for (int file = 0; file < files.Length; file++)
         {
             var d = new Dictionary<uint, GearScan.Quest>();
-            foreach (var q in GearScan.Quests(Path.Combine(data, files[file].Esm), file)) { d[q.Id & 0xFFFFFF] = q; if (!byEdid.ContainsKey(q.Edid)) byEdid[q.Edid] = Tuple.Create(q, file); }
+            foreach (var q in GearScan.Quests(Path.Combine(data, files[file].Esm), file)) { d[q.Id & 0xFFFFFF] = q; if (!byEdid.ContainsKey(q.Edid)) byEdid[q.Edid] = Tuple.Create(q, file); NoteScripts(q, file); }
             perFile.Add(d);
             foreach (var kv in GearScan.Ba2(Path.Combine(data, files[file].Ba2), n => n.EndsWith(".pex", StringComparison.OrdinalIgnoreCase)))
             {
@@ -916,6 +964,21 @@ public static class ParentScan
         int n = v.U16();
         for (int k = 0; k < n; k++) list.Add(ReadScript(v));
         return list;
+    }
+
+    // The names of the scripts attached to a record itself (the first part of its VMAD at a_at, a_size long): not a
+    // quest's fragments' or aliases'. None if it can't be read.
+    public static List<string> OwnScripts(byte[] a_body, int a_at, int a_size)
+    {
+        var names = new List<string>();
+        try
+        {
+            var v = new V { B = a_body, P = a_at, End = a_at + a_size };
+            v.S16(); v.Format = v.S16();
+            foreach (var s in Scripts(v)) if (s != null) names.Add(s.Script);
+        }
+        catch (Exception) { names.Clear(); }
+        return names;
     }
 
     // A record's VMAD: its scripts, and a quest's, a topic's, a scene's, a package's, a perk's or a terminal's fragment
@@ -1689,14 +1752,18 @@ public static class PerGameScan
 // unique actor, another quest's alias, one its scripts fill, or one made at or found from such an alias, none filled
 // from the story manager's event or by its conditions (directly or through the alias it is made at or found from), so
 // it holds the same in every game; and none of whose stages, walked as -Moves walks them (MoveScan.Walk: its fragment,
-// the script functions it calls, the stages it sets or starts of the quests no session shares by its type; a shared
-// quest's stage reaches a friend's game as the story's anyway), touches what each game keeps for itself (Direct): a
+// the script functions it calls, the stages it sets or starts of the quests no friend's game is sent the stages of: not
+// shared by their type, or radiants or PER_GAME, QuestScan.ReachesFriend; a shared quest's stage reaches a friend's game
+// as the story's anyway), touches what each game keeps for itself (Direct): a
 // companion's affinity, who is or may be a companion (or a stage of a companion's quest), a faction's hostility to
 // another or to the player, a settlement's owner, or the player's whole inventory. Less QuestFilter.h's DENIED (read
-// from the file passed): quests the rule passes that are each player's all the same (survival's, Nuka-World's park
-// bookkeeping and outpost count). The quests the rule passes but for their objectives (a location's quest, DN035) are
-// counted at the end: a quest with no objective counts as started here only once something shows it, which needs a
-// rule of its own. Then, for each quest left out for a stage, the first stage found and its chain.
+// from the file passed), a backstop: the quests the rule passes that are each player's all the same (survival's,
+// the Combat Zone's fight, Nuka-World's park bookkeeping and outpost count: the six "denied:" lines). The rest of DENIED
+// (MQ101, DogmeatQuest, DLC04RaiderKickout) the rule leaves out by itself, for a stage, and stays there in case it
+// changes. The quests the rule passes but for their objectives (a location's quest, DN035) are counted at the end: a
+// quest with no objective counts as started here only once something shows it, which needs a rule of its own. Then,
+// for each quest left out for a stage, the first stage found and its chain. Last, the payments reached through a SAFE
+// stage (Payments).
 public static class SafeScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -1780,8 +1847,9 @@ public static class SafeScan
 
     // What each stage does, followed into the scripts it calls and the stages it sets or starts as -Moves follows them,
     // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
-    // a dialogue quest, a finale: QuestScan.Shared): what one of those does a friend's game is sent anyway, SAFE or not.
-    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => QuestScan.Shared(q, file) == "not shared" };
+    // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
+    // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
 
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
     static readonly Dictionary<Tuple<int, uint>, string> found = new Dictionary<Tuple<int, uint>, string>();
@@ -1819,6 +1887,8 @@ public static class SafeScan
         var radiants = new HashSet<uint>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*0x([0-9A-Fa-f]+),\\s*\"")
             .Cast<System.Text.RegularExpressions.Match>().Select(m => Convert.ToUInt32(m.Groups[1].Value, 16) & 0xFFFFFF));
         var perGame = Table(a_questFilter, "PER_GAME");
+        QuestScan.Radiants = radiants;
+        QuestScan.PerGame = perGame;
         var denied = Table(a_questFilter, "DENIED");
         var verdicts = new SortedDictionary<Tuple<int, uint>, string>();
         for (int file = 0; file < MoveScan.perFile.Count; file++)
@@ -1832,8 +1902,65 @@ public static class SafeScan
         return verdicts;
     }
 
+    // The (file, quest, stage) of the rows of src/game/StageRules.h's RULES that are kPays: from "RULES[] = {" to its "};".
+    public static HashSet<Tuple<int, uint, int>> Pays(string a_stageRules)
+    {
+        var text = File.ReadAllText(a_stageRules);
+        int at = text.IndexOf("RULES[] = {", StringComparison.Ordinal);
+        if (at < 0) throw new Exception("RULES not found in " + a_stageRules);
+        var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+        var rows = new HashSet<Tuple<int, uint, int>>();
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+),\s*([^,}]+),\s*\d+\s*\}"))
+            if (m.Groups[4].Value.Contains("kPays")) rows.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
+        return rows;
+    }
+
+    // Payments through a SAFE stage that were read by hand and pay nothing, by "SAFE quest stage -> how it is reached"
+    // (as the scan prints it), with why.
+    static readonly Dictionary<string, string> PAYS_CHECKED = new Dictionary<string, string> {
+        { "MS13MarowskiRevenge 380 -> 400 -> MS13MarowskiRevenge 400: kPays",
+            "400 takes the caps only when 380 is not done (its GetStageDone(380) branch jumps over the RemoveItem), and it is set from 380" } };
+
+    // Payments through a SAFE stage. A stage that takes caps or ordinary items from the player is never set from a
+    // friend's game (StageRules.h kPays), but a SAFE stage whose fragment sets it, or starts its quest, runs it here when
+    // the friend's stage is set. So every stage of every SAFE quest is walked as -Moves walks them, into every stage it
+    // sets or starts, of any quest (shared or not; its own too), a few calls deep, and each stage reached that has a
+    // kPays row is listed, with how it is reached (the first way found for each SAFE stage). The walk does not follow a
+    // branch on a stage being done, so a stage that pays only if another is not done is listed all the same: those read
+    // by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones marked, and the size of the
+    // rest as src/game/StageRules.h's SAFE_REACHES_PAYS, which tests/StageRulesTests.cpp checks is 0.
+    public static string Payments(HashSet<Tuple<int, uint, int>> a_pays)
+    {
+        var walk = new MoveScan.Walk
+        {
+            Direct = c => null,
+            Reaches = (file, q, stage) => a_pays.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kPays" : null
+        };
+        var lines = new List<string>();
+        int open = 0;
+        foreach (var key in QuestScan.Safe.OrderBy(k => k))
+        {
+            var q = MoveScan.perFile[key.Item1][key.Item2];
+            var stages = MoveScan.Fragments(key.Item1, q.Id);
+            foreach (var stage in stages.Keys.OrderBy(k => k))
+            {
+                var how = walk.Stage(key.Item1, q, stage);
+                if (how == null) continue;
+                string why;
+                bool checkedByHand = PAYS_CHECKED.TryGetValue(q.Edid + " " + stage + " -> " + how, out why);
+                if (!checkedByHand) open++;
+                lines.Add(string.Format("#   {0} 0x{1:X6} {2} {3} -> {4}{5}", key.Item1, key.Item2, q.Edid, stage, how, checkedByHand ? " (read by hand, pays nothing: " + why + ")" : ""));
+            }
+        }
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Format("# stages reached from a SAFE stage that pay (StageRules.h kPays, {0} rows): {1}, {2} read by hand", a_pays.Count, lines.Count, lines.Count - open));
+        foreach (var l in lines) sb.AppendLine(l);
+        sb.AppendLine(string.Format("inline constexpr std::size_t SAFE_REACHES_PAYS = {0};", open));
+        return sb.ToString();
+    }
+
     // SAFE's rows, then what was left out and why.
-    public static string Run(string data, string a_questFilter, string a_radiantRules)
+    public static string Run(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
         var verdicts = Load(data, a_questFilter, a_radiantRules);
         var sb = new StringBuilder();
@@ -1854,6 +1981,7 @@ public static class SafeScan
         // what each quest left out for a stage does, and how its stage gets there, but the shared ones'
         foreach (var kv in found.Where(kv => verdicts[kv.Key].StartsWith("a stage")).OrderBy(kv => kv.Key))
             sb.AppendLine(string.Format("#   {0} 0x{1:X6} {2} {3}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid, kv.Value));
+        sb.Append(Payments(Pays(a_stageRules)));
         return sb.ToString();
     }
 }
