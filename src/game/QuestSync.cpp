@@ -193,6 +193,14 @@ namespace QuestSync
 		std::atomic<Clock::rep>                          playerActivatedAt{ 0 };  // our player last activated something (any thread)
 		Clock::rep                                       playerActivatedSeen = 0;  // ... as last handed to menuGuard
 		std::optional<Clock::time_point>                 warnedAt;
+		// The follow offers made (StageRules::Verdict::kOffer: a live stage that moves the player, its friend far away),
+		// by quest << 16 | stage: when, and the friend to go with. Taken up, run out or set, each is dropped.
+		struct Offer
+		{
+			Clock::time_point at;
+			std::uint32_t     playerId;
+		};
+		std::unordered_map<std::uint64_t, Offer>         offers;
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
 		Clock::time_point                                caughtUpLast{};
@@ -771,16 +779,55 @@ namespace QuestSync
 			} else if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}
-			if (rule && (rule->flags & StageRules::kMoves) && now.live) {
-				now.nearFriend = NearFriend(live->second.playerId);
+			// The follow offer: made once while the stage is live, open for OFFER_FOR, for the friend who did it.
+			const auto offer = offers.find(Key(a_quest, a_stage));
+			if (offer != offers.end()) {
+				now.offered = a_now - offer->second.at;
+			}
+			const std::uint32_t friendId = offer != offers.end() ? offer->second.playerId : live != liveAt.end() ? live->second.playerId : 0u;
+			now.followable = friendId != 0 && !RemotePlayers::NameOf(friendId).empty();
+			if (rule && (rule->flags & StageRules::kMoves) && (now.live || (now.offered && *now.offered < StageRules::OFFER_FOR))) {
+				now.nearFriend = NearFriend(friendId);
 			}
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
-			switch (StageRules::Judge(rule, now)) {
+			const auto verdict = StageRules::Judge(rule, now);
+			std::string followed;  // how an offer was taken up, for the log
+			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
+				if (verdict == StageRules::Verdict::kSet) {
+					const auto arrived = Party::ArrivedBeside(friendId);
+					followed = arrived && *arrived >= offer->second.at ? std::format(" after arriving beside player {} by the teleport key", friendId) :
+					                                                      std::format(" after arriving beside player {} (came near them)", friendId);
+				} else {
+					REX::INFO("QuestSync: the offer to follow player {} into {:08X} '{}' stage {} was not taken up in {} s", friendId, a_quest, name ? name : "", a_stage,
+						std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count());
+				}
+				offers.erase(offer);
+			}
+			switch (verdict) {
 			case StageRules::Verdict::kSkip:
 				++skipped;
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
 				return StageLog::Set::kSkipped;
+			case StageRules::Verdict::kOffer:
+				// The rest of its quest waits meanwhile; other quests go on.
+				if (offer == offers.end()) {
+					offers[Key(a_quest, a_stage)] = Offer{ a_now, friendId };
+					const auto blocked = Party::OfferFollow(friendId);
+					const bool fight = rule && (rule->flags & StageRules::kHostile);
+					Hud::Notify(Text::Format(fight ? "quest.follow_fight" : "quest.follow_offer",
+						{ { "player", RemotePlayers::NameOf(friendId) },
+							{ "quest", name && *name && !Unordered(quest) ? std::string{ name } : Text::Get("quest.a_quest") },
+							{ "key", Party::TeleportKeyName() },
+							{ "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count() } }));
+					if (!blocked.empty()) {
+						Hud::Notify(blocked);
+					}
+					REX::INFO("QuestSync: offer to follow player {} into {:08X} '{}' stage {} ({}) for {} s; it is set once the player is beside them{}", friendId, a_quest,
+						name ? name : "", a_stage, fight ? "a faction turns on the player" : "it moves the player", std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count(),
+						blocked.empty() ? std::string{} : std::format(" (the teleport can't go now: {})", blocked));
+				}
+				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kWarn:
 				warnedAt = a_now;
 				Hud::Notify(Text::Format("quest.catching_up", { { "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count() },
@@ -814,8 +861,8 @@ namespace QuestSync
 			}
 
 			SetStageHere(quest, a_stage);
-			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live ? "" : " (catching up)",
-				starting ? " (starting the quest here for the session)" : "");
+			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live || !followed.empty() ? "" : " (catching up)",
+				starting ? " (starting the quest here for the session)" : "", followed);
 			if (starting) {
 				startedHere.insert(a_quest);
 				catchingUp.insert(a_quest);
@@ -1159,6 +1206,8 @@ namespace QuestSync
 			busy = PlayerBusy(now);
 			combatHold = CombatHold(now);
 			std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= LIVE_FOR; });
+			// Offers whose stage was never judged again (its quest went away): long out of date.
+			std::erase_if(offers, [&](const auto& a_entry) { return now - a_entry.second.at >= 2 * StageRules::OFFER_FOR; });
 			Game game{ now };
 			const bool paused = Paused();
 			CheckReleased(a_inSession);
@@ -1333,6 +1382,7 @@ namespace QuestSync
 		}
 		waited.clear();
 		liveAt.clear();
+		offers.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneHold.Clear();  // what was set is forgotten; a scene of the session's the player is still in stays the session's (a reconnect)
@@ -1378,6 +1428,7 @@ namespace QuestSync
 		waiting.Clear();
 		waited.clear();
 		liveAt.clear();
+		offers.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneHold.Clear();

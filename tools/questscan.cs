@@ -1684,6 +1684,8 @@ public static class RuleScan
                     }
                     var flags = new List<string>();
                     if (moves != null || enemy != null) flags.Add("kMoves");
+                    // ... and kHostile when that is all it does (no move as well): the follow offer says the friend is fighting
+                    if (moves == null && enemy != null) flags.Add("kHostile");
                     if (takes.Count > 0) flags.Add("kPays");
                     var what = new List<string>();
                     foreach (var chain in new[] { moves, enemy })

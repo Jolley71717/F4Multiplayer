@@ -12,7 +12,7 @@
 // StageLog::Outbox keeps or drops those reports while not connected (the story's sent only if the
 // welcome shares it), at a pace the server takes.
 // The glue between them is a copy of QuestSync.cpp's and only as good as that copy: when a stage counts
-// as live, the friend nearby, the combat hold, the warning and its cover, the lock and its release (looked
+// as live, the friend nearby, the follow offer, the combat hold, the warning and its cover, the lock and its release (looked
 // at before the queue's poll), what is dropped when the session ends (with Session's
 // Story::SetShared(false)) or the server changes, the 5 s settle before reporting, and the opening's own
 // stages (StageRules::IsOpening: never reported, in the host's baseline or set), and the scene the player is in
@@ -242,6 +242,7 @@ namespace Sim
 				busy = sceneHold.Holds({ .talking = talking, .scene = playerScene, .sceneQuest = playerSceneQuest, .sceneQuestWaiting = playerScene != 0 && waiting.Contains(playerSceneQuest) }, now);
 				combatHold = CombatHold();
 				std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= StageRules::LIVE_FOR; });
+				std::erase_if(offers, [&](const auto& a_entry) { return now - a_entry.second.at >= 2 * StageRules::OFFER_FOR; });
 				CheckReleased(a_inSession);
 				Game game{ *this };
 				gaveUp += waiting.Poll(now, game, paused).size();
@@ -320,6 +321,7 @@ namespace Sim
 			}
 			waited.clear();
 			liveAt.clear();
+			offers.clear();
 			warnedAt.reset();
 			remoteStageAt.clear();
 			startedHere.clear();
@@ -346,6 +348,7 @@ namespace Sim
 			waiting.Clear();
 			waited.clear();
 			liveAt.clear();
+			offers.clear();
 			warnedAt.reset();
 			locked.reset();
 			console.clear();
@@ -387,6 +390,7 @@ namespace Sim
 		std::size_t openingDropped = 0;  // friends' stages of the opening, never set (StageRules::IsOpening)
 		std::size_t baselined = 0;  // stages of this game's progress so far reported when it hosts (QueueBaseline)
 		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
+		std::size_t followed = 0;  // stages set after a follow offer, once the player was beside the friend
 		std::vector<std::uint32_t> started;  // quests a friend's stage started here, in order
 
 	private:
@@ -560,13 +564,35 @@ namespace Sim
 			} else if (warnedAt && now - *warnedAt < StageRules::WARNING_COVERS) {
 				situation.warned = now - *warnedAt;
 			}
-			if (rule && (rule->flags & StageRules::kMoves) && situation.live) {
-				situation.nearFriend = NearFriend(live->second.playerId);
+			// QuestSync's follow offer: made once while live, open for OFFER_FOR, for the friend who did it (known here
+			// when the sim knows where they are).
+			const auto offer = offers.find(Key(a_id, a_stage));
+			if (offer != offers.end()) {
+				situation.offered = now - offer->second.at;
 			}
-			switch (StageRules::Judge(rule, situation)) {
+			const std::uint32_t friendId = offer != offers.end() ? offer->second.playerId : live != liveAt.end() ? live->second.playerId : 0u;
+			situation.followable = friendId != 0 && friendAt && friendAt(friendId).has_value();
+			if (rule && (rule->flags & StageRules::kMoves) && (situation.live || (situation.offered && *situation.offered < StageRules::OFFER_FOR))) {
+				situation.nearFriend = NearFriend(friendId);
+			}
+			const auto verdict = StageRules::Judge(rule, situation);
+			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
+				if (verdict == StageRules::Verdict::kSet) {
+					++followed;
+				}
+				offers.erase(offer);
+			}
+			switch (verdict) {
 			case StageRules::Verdict::kSkip:
 				skipped.emplace_back(a_id, a_stage);
 				return StageLog::Set::kSkipped;
+			case StageRules::Verdict::kOffer:
+				if (offer == offers.end()) {
+					offers[Key(a_id, a_stage)] = Live{ now, friendId };
+					notices.push_back(std::format("{} {}: hold the teleport key within {} s", (rule->flags & StageRules::kHostile) ? "Fighting" : "Going into", a_id,
+						std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count()));
+				}
+				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kWarn:
 				warnedAt = now;
 				notices.push_back(std::format("Catching up with your friends' story in {} s (it may move you)",
@@ -639,7 +665,8 @@ namespace Sim
 		StageLog::Queue                                     waiting;
 		std::set<std::uint32_t>                             waited;
 		std::map<std::uint64_t, Live>                       liveAt;
-		std::optional<LockHeld>                               locked;
+		std::map<std::uint64_t, Live>                       offers;  // follow offers made (when, the friend to go with)
+		std::optional<LockHeld>                             locked;
 		std::optional<Clock::time_point>                    warnedAt;
 		std::map<std::uint32_t, StageLog::Stages>           doneStages;
 		std::map<std::uint32_t, Clock::time_point>          remoteStageAt;
