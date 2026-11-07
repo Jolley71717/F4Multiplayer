@@ -2868,7 +2868,9 @@ void Server::Run()
 		// about a change at most every few seconds; the latest one follows when the time is up (the tick).
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
-		if (now - budget.lastFace < options.faceInterval) {
+		// lastFace{} is "never": the steady clock's zero is the machine's boot on Linux, so a server (or a test with a long
+		// interval) on a machine up for less than the interval held the first face as if one had just gone.
+		if (budget.lastFace != Clock::time_point{} && now - budget.lastFace < options.faceInterval) {
 			a_player.faceDirty = true;
 			return;
 		}
