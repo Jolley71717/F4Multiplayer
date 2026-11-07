@@ -1756,6 +1756,7 @@ namespace Session
 		step("going down", [] { Downed::OnBeforeSave(); });
 		step("the moved objects", [] { MovedObjects::BeforeSaveOrLoad(); });
 		step("the destructibles", [] { Destructibles::BeforeSaveOrLoad(); });
+		step("the waived prices", [] { QuestSync::BeforeSaveOrLoad(); });  // no save holds a friend's purchase's price at 0
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		step("the session file", [] {
 			if (hostedServer) {

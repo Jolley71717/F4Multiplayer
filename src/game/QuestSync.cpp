@@ -561,10 +561,14 @@ namespace QuestSync
 			}
 			waivedPolled = a_now;
 			const bool given = PlayerHas(waived->given) > waived->givenBefore;
+			const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(waived->global);
 			if (!StageRules::PriceBack(given, waived->played)) {
+				if (global) {
+					global->value = 0.0f;  // again after a save, which put its own value back (BeforeSaveOrLoad)
+				}
 				return;
 			}
-			if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(waived->global)) {
+			if (global) {
 				global->value = waived->value;
 			}
 			if (given) {
@@ -1286,8 +1290,21 @@ namespace QuestSync
 		// remade is reported once it is back (outgoing), and playing alone the reports are dropped.
 	}
 
+	void BeforeSaveOrLoad()
+	{
+		if (!waived) {
+			return;
+		}
+		if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(waived->global)) {
+			global->value = waived->value;
+		}
+		REX::INFO("QuestSync: before the save or load, the price {:08X} of the friend's purchase ({:08X} stage {}) is {} again", waived->global, waived->quest,
+			waived->stage, waived->value);
+	}
+
 	void Rebaseline()
 	{
+		waived.reset();  // its own value was put back before the load (BeforeSaveOrLoad)
 		knownStages.clear();
 		doneStages.clear();
 		miscStages.clear();

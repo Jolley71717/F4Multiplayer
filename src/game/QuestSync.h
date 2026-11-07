@@ -55,6 +55,10 @@ namespace QuestSync
 	// (set even though the story is the player's own again). What other players moved lately goes too.
 	void OnSessionEnded();
 
+	// Before a save or a load: a friend's purchase's price waived here (StageRules::PRICES) has its own value back, so no save
+	// holds it at 0; the waiver goes on after a save (its next poll sets it to 0 again) and ends with a load.
+	void BeforeSaveOrLoad();
+
 	// Forget the known stages and the waiting ones; the next Frame takes a fresh baseline (after
 	// loading a save, which can move quests back; the session's stages then arrive again).
 	void Rebaseline();
