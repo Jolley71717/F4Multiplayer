@@ -1002,7 +1002,7 @@ namespace RadiantSync
 		return IsRadiant(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
 	}
 
-	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location)
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases)
 	{
 		if (!a_quest || !Calibrated()) {
 			return "error: no such quest, or this game's aliases can't be read";
@@ -1015,26 +1015,44 @@ namespace RadiantSync
 			if (!alias || alias->aliasID == NO_ALIAS) {
 				continue;
 			}
-			// What the story manager's event fills: its reference (the settlement's workshop, the quest giver) and, where the
-			// quest reads one, its location.
-			if (const auto ref = AsRef(alias); ref && ref->fillType == static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kFromEvent)) {
-				plan.forces.push_back({ alias->aliasID, Kind::kRef, a_ref });
-			} else if (const auto loc = AsLoc(alias); loc && a_location != 0 && loc->forcedFromEvent != 0xFFFFFFFF && loc->forcedFromAlias == 0xFFFFFFFF) {
-				plan.forces.push_back({ alias->aliasID, Kind::kLoc, a_location });
+			// Named by the caller (alias ID, form), or what the story manager's event fills: its reference (the settlement's
+			// workshop, the quest giver) and, where the quest reads one, its location.
+			const auto named = std::ranges::find(a_aliases, alias->aliasID, &std::pair<std::uint32_t, std::uint32_t>::first);
+			if (const auto ref = AsRef(alias)) {
+				if (named != a_aliases.end()) {
+					plan.forces.push_back({ alias->aliasID, Kind::kRef, named->second });
+				} else if (a_ref != 0 && ref->fillType == static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kFromEvent)) {
+					plan.forces.push_back({ alias->aliasID, Kind::kRef, a_ref });
+				}
+			} else if (const auto loc = AsLoc(alias)) {
+				if (named != a_aliases.end()) {
+					plan.forces.push_back({ alias->aliasID, Kind::kLoc, named->second });
+				} else if (a_location != 0 && loc->forcedFromEvent != 0xFFFFFFFF && loc->forcedFromAlias == 0xFFFFFFFF) {
+					plan.forces.push_back({ alias->aliasID, Kind::kLoc, a_location });
+				}
 			}
 		}
 		if (plan.forces.empty()) {
-			return "error: none of its aliases is filled from the story manager's event";
+			return "error: nothing to force: none of its aliases is filled from the story manager's event, and none was named";
 		}
 		std::vector<Saved> saved;
 		if (!Force(a_quest, plan, saved)) {
 			return "error: an alias couldn't be forced";
 		}
+		// The caller named these, so the game's own pick between them is theirs: their conditions are lifted for the start
+		// (Restore puts them back), as a friend's pick is for an optional alias.
+		for (const auto& entry : saved) {
+			if (const auto ref = AsRef(entry.alias)) {
+				ref->conditions = nullptr;
+			} else if (const auto loc = AsLoc(entry.alias)) {
+				loc->conditions = nullptr;
+			}
+		}
 		RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_quest->GetFormID()).c_str());
 		const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
 		Restore(saved);
-		return running ? std::format("ok: {:08X} '{}' is running with {} alias(es) forced from the event", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size())
-		               : std::format("error: the game didn't start {:08X} '{}' with {} alias(es) forced from the event", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
+		return running ? std::format("ok: {:08X} '{}' is running with {} alias(es) forced", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size())
+		               : std::format("error: the game didn't start {:08X} '{}' with {} alias(es) forced", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
 	}
 
 	void SetLocalPlayer(std::uint32_t a_id)
@@ -1281,6 +1299,22 @@ namespace RadiantSync
 		}
 	}
 
+		// A condition list as `fn(p1,p2)` items (the function's number as SCRIPT_OUTPUT has it, its two parameters as the game holds
+		// them, hex), `|` between ones joined by or, `&` by and: for reading why an alias can't be filled.
+		static std::string CondText(const RE::TESCondition* a_condition)
+		{
+			std::string out;
+			if (!a_condition) {
+				return "none";
+			}
+			int count = 0;
+			for (auto item = a_condition->head; item && count < 12; item = item->next, ++count) {
+				out += std::format("{}{}({:X},{:X})", count ? (item->data.compareOr ? "|" : "&") : "", static_cast<int>(item->data.functionData.function.underlying()),
+					reinterpret_cast<std::uintptr_t>(item->data.functionData.param[0]), reinterpret_cast<std::uintptr_t>(item->data.functionData.param[1]));
+			}
+			return out.empty() ? "none" : out;
+		}
+
 	std::string DumpAliases(const RE::TESQuest* a_constQuest)
 	{
 		if (!a_constQuest) {
@@ -1299,11 +1333,11 @@ namespace RadiantSync
 			out += std::format(" | {} {} {} flags={:06X} fillType={}", TypeOf(alias), alias->aliasID, name ? name : "", Flags(alias), alias->fillType);
 			if (const auto ref = AsRef(alias)) {
 				out += std::format(" data={:X},{:X},{:X} cond={} fill={} here={:08X}", ref->fillData.data[0], ref->fillData.data[1], ref->fillData.data[2],
-					static_cast<const void*>(ref->conditions), static_cast<int>(RadiantRules::RefFill(ref->fillType, Flags(ref))), Here(quest, Kind::kRef, alias->aliasID));
+					CondText(ref->conditions), static_cast<int>(RadiantRules::RefFill(ref->fillType, Flags(ref))), Here(quest, Kind::kRef, alias->aliasID));
 			} else if (const auto loc = AsLoc(alias)) {
 				out += std::format(" forced={:08X} fromAlias={:X} fromEvent={:X} eventData={:X} external={:08X}/{:X} closestTo={:X} cond={} fill={} here={:08X}",
 					loc->forcedLoc ? loc->forcedLoc->GetFormID() : 0, loc->forcedFromAlias, loc->forcedFromEvent, loc->forcedEventData,
-					loc->externalQuest ? loc->externalQuest->GetFormID() : 0, loc->externalAlias, loc->closestToAlias, static_cast<const void*>(loc->conditions),
+					loc->externalQuest ? loc->externalQuest->GetFormID() : 0, loc->externalAlias, loc->closestToAlias, CondText(loc->conditions),
 					static_cast<int>(LocFillOf(loc)), Here(quest, Kind::kLoc, alias->aliasID));
 			}
 		}

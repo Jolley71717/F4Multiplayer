@@ -1608,19 +1608,36 @@ namespace DevCommands
 			return RadiantSync::DumpAliases(quest);
 		}
 
-		// radiantstart <questHex> <refHex> [locationHex]: starts a radiant quest as the story manager's event would, its event-filled
-		// aliases forced to that reference (the settlement's workshop, the quest giver) and that location, for the rig (the
-		// console's startquest can't fill them). Then it is this game's own run, shared with friends like any (RadiantSync).
+		// radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]: starts a radiant quest as the story manager's event
+		// would, for the rig (the console's startquest can't fill these): its aliases filled from the event forced to that reference
+		// (the settlement's workshop, the quest giver) and that location, and any alias named as alias=formHex (the alias ID as
+		// `aliases` prints it, the form's hex) forced to that form; all put back once it has started. Then it is this game's own run,
+		// shared with friends like any (RadiantSync).
 		std::string RadiantStart(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
+			const auto orNone = [](std::string_view a_text) { return a_text == "-" ? std::optional<std::uint32_t>{ 0 } : ParseHex(a_text); };
 			const auto quest = args.empty() ? std::nullopt : ParseHex(args[0]);
-			const auto ref = args.size() > 1 ? ParseHex(args[1]) : std::nullopt;
-			const auto loc = args.size() > 2 ? ParseHex(args[2]) : std::optional<std::uint32_t>{ 0 };
-			if (!quest || !ref || !loc) {
-				return "error: usage: radiantstart <questHex> <refHex> [locationHex]";
+			const auto ref = args.size() > 1 ? orNone(args[1]) : std::optional<std::uint32_t>{ 0 };
+			const auto loc = args.size() > 2 ? orNone(args[2]) : std::optional<std::uint32_t>{ 0 };
+			std::vector<std::pair<std::uint32_t, std::uint32_t>> aliases;
+			for (std::size_t i = 1; i < args.size(); ++i) {
+				const auto eq = args[i].find('=');
+				if (eq == std::string_view::npos) {
+					continue;
+				}
+				std::uint32_t id = 0;
+				const auto    text = args[i].substr(0, eq);
+				const auto    form = ParseHex(args[i].substr(eq + 1));
+				if (std::from_chars(text.data(), text.data() + text.size(), id).ec != std::errc{} || !form) {
+					return "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]";
+				}
+				aliases.emplace_back(id, *form);
 			}
-			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc);
+			if (!quest || !ref || !loc) {
+				return "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]";
+			}
+			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc, aliases);
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
