@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T07:43:06+00:00",
+ "updated": "2026-11-07T08:18:19+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -261,8 +261,9 @@
    "title": "Home Plate purchase may charge the friend: DialogueDiamondCity 64/300 set FFDiamondCity02 10 (caps taken, key and ownership given) and DialogueDiamondCity is shared",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 319
   },
   {
    "id": "4x4f",
@@ -1228,9 +1229,9 @@
    "title": "Share all quests in co-op (the end goal), step by step after the safe ones",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
+   "stage": 2,
    "note": "",
-   "pr": 317
+   "pr": 318
   },
   {
    "id": "lzyx",
