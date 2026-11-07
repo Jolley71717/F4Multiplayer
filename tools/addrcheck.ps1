@@ -355,6 +355,12 @@ if ($null -ne $cameraStart) {
 if ($null -ne $transitionSetUp) {
 	Report ((HexMatches (BytesAt ($transitionSetUp + 0x45) 4) '48 89 43 38') -and (HexMatches (BytesAt ($transitionSetUp + 0x77) 4) '48 89 43 40')) 'the camera transition''s set-up keeps its states at +0x38 (from) and +0x40 (to)'
 }
+# The camera's SetState (Downed.cpp EndTransition): the current state (+28) told its End (vtable +50), then the new one
+# stored there, as a transition's own end does it.
+$setState = Resolve 2214742
+if ($null -ne $setState) {
+	Report ((HexMatches (BytesAt ($setState + 0x10) 4) '48 8B 49 28') -and (HexMatches (BytesAt ($setState + 0x1C) 3) 'FF 50 50') -and (HexMatches (BytesAt ($setState + 0x31) 4) '48 89 5F 28')) 'the camera''s SetState ends the current state (+28, vtable +50) and stores the new one'
+}
 # The four calls VatsTargets::Install patches (src/game/VatsTargetRules.h): each calls VATS's target check +B16220, which
 # begins by resolving the actor's handle (movzx r14d,dl; ...; call GetSmartPointer) and asks IsChild (vtable +3F0) first.
 # The plugin checks the four calls itself at load and patches none unless all match.

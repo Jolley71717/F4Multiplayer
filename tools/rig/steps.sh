@@ -773,7 +773,8 @@ step_drops() {
 # helped from afar; helped up after the walk, the helper's game counting the help; health back to the rules' share; the camera a
 # first- or third-person view again (dev `controls`: camera=0 or 8, not the bleed-out's 11 or a transition's 5) with the life state
 # alive; the Pip-Boy opens on a press of the pad's B and closes on another; and the log window holds the help and no warning that the
-# down left its camera or input layer on, or looped the camera. God mode goes back on and health back to full after.
+# down left its camera or input layer on, or looped the camera. God mode goes back on and health back to full after. Then the joiner
+# is downed again and again (step_downed_repeat).
 _down_waits() { local r; r=$(dc "$1" rules); [ "$(field "$r" down)" = true ] && [ "$(field "$r" waits)" = true ]; }
 _friends_down() { local n; n=$(field "$(dc "$1" rules)" friendsDown); is_num "$n" && [ "$n" -ge 1 ]; }
 _helped_up() { local r; r=$(dc "$1" rules); [ "$(field "$r" down)" = false ] && is_num "$(field "$r" revives)" && [ "$(field "$r" revives)" -gt "$2" ]; }
@@ -830,7 +831,62 @@ step_downed() {
 		pads_off
 	done
 	pads_off
+	step_downed_repeat vm 5   # the joiner, as in the reports: downed again at once on each help-up
 }
+# ---- downed again and again ------------------------------------------------------------------------------------------------------------------
+# A player downed, helped up and downed again at once, over and over (as in a fire that keeps burning, a rocket engine's): each next
+# down starts while the camera is still on its way back from the one before, or the body still getting up. The helper stands at the
+# down player's stand-in the whole time (reached by a real walk), so each down is helped up after the rules' help time. The next lethal
+# hit (console damageav, as the host's gunfire is injected for combat; sent on the down player's own machine by downrepeat.ps1, as a
+# command over the tunnel takes too long) comes as soon as the down player's game says they are up (in the
+# get-up), half a second on, or 0.3 s after a grenade's explosion at their feet (which on the rig does not knock the player over), and
+# one round takes a second hit while still down. Asserted after the last help-up: the camera a first- or third-person view (not a
+# transition or the bleed-out camera), still so a few seconds on, alive; the camera near the player (dev `rules`: away, where the build
+# has it) before and after the down player walks off; the Pip-Boy opens and closes. The log's camera fixes are counted, never failed.
+_view() { local c; c=$(dc "$1" controls); echo "camera=$(grep -oE 'camera=[0-9-]+' <<<"$c" | cut -d= -f2) life=$(grep -oE 'life=[0-9]+' <<<"$c" | cut -d= -f2)"; }
+_away() { dc "$1" rules | grep -oE 'away [0-9?]+' | tail -1 | cut -d' ' -f2; }
+step_downed_repeat() {
+	local down=${1:-vm} rounds=${2:-5} helper puppet g v a0 a1 f n out hits=0
+	helper=$(other_game "$down")
+	section "downed again and again at once on each help-up ($down, $rounds rounds)"
+	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+	[ -n "$puppet" ] || { fail "repeat ($down): set-up: the helper's game has the stand-in" "no puppet= in its net status"; return; }
+	walk "$helper" "repeat ($down): set-up: the helper walks to the stand-in" 0.8 100 "$puppet" || return
+	dc "$helper" "pad unplug" >/dev/null
+	win_mark rep "$down"
+	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($down): set-up: god mode off" "$g"; return; }
+	# the rounds run on the down player's own machine (tools/rig/downrepeat.ps1): over the tunnel a command is too slow for a get-up
+	if [ "$down" = vm ]; then
+		scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$RIG/downrepeat.ps1" "$VM_SSH:downrepeat.ps1" 2>/dev/null
+		out=$(vmssh "powershell -NoProfile -ExecutionPolicy Bypass -File downrepeat.ps1 -Rounds $rounds -Explosion $GRENADE_EXPLOSION")
+	else out=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$RIG/downrepeat.ps1")" -Rounds "$rounds" -Explosion "$GRENADE_EXPLOSION" | tr -d '\r'); fi
+	sed 's/^/  /' <<<"$out"
+	hits=$(grep -c ': helped up$' <<<"$out")
+	expect_eq "repeat ($down): downed and helped up again and again" "$hits" "$rounds"
+	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	sleep 6   # the last get-up plays out, and a stuck transition would outlast the game's own (0.5-1 s) by far
+	v=$(_view "$down"); expect_match "repeat ($down): the camera a first- or third-person view, alive" "$v" '^camera=(0|8) life=0$'
+	sleep 3; v=$(_view "$down"); expect_match "repeat ($down): still a view 3 s on" "$v" '^camera=(0|8) life=0$'
+	a0=$(_away "$down")
+	walk "$down" "repeat ($down): set-up: the down player walks off" 1 100 $PARK_SPOT
+	a1=$(_away "$down")
+	if is_num "$a0" && is_num "$a1"; then expect_le "repeat ($down): the camera near the player, before and after a walk" "$(( a0 > a1 ? a0 : a1 ))" 400 u
+	else pass "repeat ($down): the camera near the player" "not measured: this build's rules have no camera distance"; fi
+	dc "$down" "pad button b" >/dev/null
+	if menu_open "$down" PipboyMenu 4; then
+		sleep 1; dc "$down" "pad button b" >/dev/null
+		if wait_for 6 _pipboy_gone "$down"; then pass "repeat ($down): the Pip-Boy opens on a press and closes" "pad B twice"; else fail "repeat ($down): the Pip-Boy opens on a press and closes" "it opened and stayed open"; clear_menus "$down" >/dev/null; fi
+	else fail "repeat ($down): the Pip-Boy opens on a press and closes" "no PipboyMenu after the pad's B ($(dc "$down" menus | grep -oE 'open=[^ ]*'))"; fi
+	f=$(win_read rep "$down")
+	if [ -s "$f" ]; then
+		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($down): its log has the help-ups" "$n" "$rounds"
+		pass "repeat ($down): camera fixes in its log (counted only)" "loops $(grep -c "looped" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
+	else fail "repeat ($down): its log window read" "no new lines"; fi
+	walk "$down" "repeat: set-up: back to the marker" 1 100 $MARKER_SPOT; walk "$helper" "repeat: set-up: the helper back to the marker" 1 100 $MARKER_SPOT
+	pads_off
+}
+
 
 # ---- churn: cell hops with save and reload ------------------------------------------------------------------------------------
 step_churn() {

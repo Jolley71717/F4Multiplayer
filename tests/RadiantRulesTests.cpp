@@ -949,13 +949,13 @@ TEST("radiants: a run shared here and shared again under a new number is joined 
 
 TEST("radiants: the add-ons' radiants are named by their file and form ID there, so one's form ID is no other file's")
 {
-	// The nine QuestFilter once listed as each game's own, whose aliases are the game's own references and locations.
+	// The six QuestFilter once listed as each game's own, whose aliases are the game's own references and locations.
 	struct Dlc
 	{
 		std::uint8_t  file;
 		std::uint32_t quest;
 	};
-	for (const auto [file, quest] : { Dlc{ 0, 0x026340 }, Dlc{ 0, 0x0482CD }, Dlc{ 1, 0x00EB51 }, Dlc{ 1, 0x040A86 }, Dlc{ 3, 0x019088 }, Dlc{ 3, 0x017F46 }, Dlc{ 3, 0x04BD3C }, Dlc{ 3, 0x01B170 }, Dlc{ 3, 0x02191C } }) {
+	for (const auto [file, quest] : { Dlc{ 0, 0x026340 }, Dlc{ 0, 0x0482CD }, Dlc{ 1, 0x00EB51 }, Dlc{ 1, 0x040A86 }, Dlc{ 3, 0x017F46 }, Dlc{ 3, 0x04BD3C } }) {
 		const auto entry = Find(file, quest);
 		REQUIRE(entry != nullptr);
 		CHECK(entry->share == Share::kShared);
@@ -968,7 +968,7 @@ TEST("radiants: the add-ons' radiants are named by their file and form ID there,
 	CHECK(Find(0, 0x00EB51) == nullptr);
 	CHECK(Find(2, 0x00EB51) == nullptr);
 	CHECK(ShareOf(0, 0x00EB51) == Share::kNotRadiant);
-	CHECK(Find(0, 0x019088) == nullptr);  // Nuka-World's, not Fallout4.esm's
+	CHECK(Find(0, 0x017F46) == nullptr);  // Nuka-World's, not Fallout4.esm's
 	CHECK(Find(3, 0x026340) == nullptr);  // Saugus Ironworks is Fallout4.esm's
 	CHECK(Find(0, 0x11B36E) != nullptr);  // MinRecruit00
 	CHECK(Find(1, 0x11B36E) == nullptr);
@@ -1002,4 +1002,47 @@ TEST("radiants: StageRules names the game files in the order questscan reads the
 	}
 	CHECK(StageRules::FileOf("dlccoast.ESM") == File::kCoast);  // the game compares names without regard to case
 	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));
+}
+
+TEST("radiants: a gang job (Kill or Collar Rival Boss) is declined by a game whose player hasn't been given such jobs, and started by one that has")
+{
+	constexpr std::uint32_t KILL = 0x017F46, COLLAR = 0x04BD3C, MANAGER = 0x017F47;
+	// Only these two need anything: the gangs' manager (DLC04_RQ_Manager) must run in the game that starts the friend's run.
+	for (const auto& entry : RADIANTS) {
+		const bool gang = entry.file == 3 && (entry.quest == KILL || entry.quest == COLLAR);
+		CHECK((entry.needs.quest != 0) == gang);
+		if (gang) {
+			CHECK(entry.needs.file == 3);
+			CHECK(entry.needs.quest == MANAGER);
+		}
+	}
+	const auto nothingRuns = [](std::uint8_t, std::uint32_t) { return false; };
+	const auto managerRuns = [&](std::uint8_t a_file, std::uint32_t a_quest) { return a_file == 3 && a_quest == MANAGER; };
+	const auto elsewhere = [&](std::uint8_t a_file, std::uint32_t a_quest) { return a_file == 0 && a_quest == MANAGER; };  // Fallout4.esm's form of that ID is no such quest
+	for (const auto quest : { KILL, COLLAR }) {
+		const auto entry = Find(3, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(MissingNeed(*entry, nothingRuns) == &entry->needs);
+		CHECK(MissingNeed(*entry, elsewhere) == &entry->needs);
+		CHECK(MissingNeed(*entry, managerRuns) == nullptr);
+	}
+	// A radiant with no need is never held up by the check.
+	CHECK(MissingNeed(*Find(0, MIN_RECRUIT01), nothingRuns) == nullptr);
+	CHECK(MissingNeed(*Find(1, 0x00EB51), nothingRuns) == nullptr);
+
+	// The path a declined run takes (RadiantSync::StartHere): the book asked first, the need found missing, the run refused. It is
+	// then not shared, not left starting and ignored when the friend's game sends it again, and its stages are not taken.
+	Book      book;
+	const Run theirs{ 2, 1 };
+	const auto runtimeQuest = 0x04000000u | KILL;  // the quest as this game numbers it
+	CHECK(book.OnStart(runtimeQuest, theirs, false) == Answer::kStart);
+	CHECK(MissingNeed(*Find(3, KILL), nothingRuns) != nullptr);
+	book.Refuse(runtimeQuest, theirs);
+	CHECK(!book.Shares(runtimeQuest));
+	CHECK(!book.IsStarting(runtimeQuest));
+	CHECK(book.OnStart(runtimeQuest, theirs, false) == Answer::kIgnore);
+	CHECK(!book.Accept(runtimeQuest, theirs, 100));
+	// A later run of the friend's, when this player has got that far, starts.
+	CHECK(book.OnStart(runtimeQuest, Run{ 2, 2 }, false) == Answer::kStart);
+	CHECK(MissingNeed(*Find(3, KILL), managerRuns) == nullptr);
 }

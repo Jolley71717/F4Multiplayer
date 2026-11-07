@@ -629,10 +629,30 @@ namespace RadiantSync
 			return GameStop::Now();
 		}
 
+		// Why a friend's run of this quest can't start in this game for want of what hands its job out (RadiantRules::Needs):
+		// empty if nothing is needed or it is running here. A forced alias skips its own conditions, so without this a game
+		// whose player hasn't got that far would start the job the friend was given.
+		std::string Lacks(const RE::TESQuest* a_quest)
+		{
+			const auto entry = RadiantSync::EntryOf(a_quest);
+			if (!entry) {
+				return {};
+			}
+			const auto missing = RadiantRules::MissingNeed(*entry, [](std::uint8_t a_file, std::uint32_t a_local) {
+				const auto handler = RE::TESDataHandler::GetSingleton();
+				const auto needed = handler ? handler->LookupForm<RE::TESQuest>(a_local, StageRules::FileName(static_cast<StageRules::File>(a_file))) : nullptr;
+				return needed && (needed->data.flags & QUEST_RUNNING) != 0;
+			});
+			return missing ? std::format("this game's {:X} of {} isn't running, so its player hasn't been given such jobs", missing->quest, StageRules::FileName(static_cast<StageRules::File>(missing->file))) : std::string{};
+		}
+
 		// Why a friend's run can't be started here with its fills (empty: it can be tried), asked before StartHere stops
 		// anything.
 		std::string CannotStart(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start)
 		{
+			if (const auto lacks = Lacks(a_quest); !lacks.empty()) {
+				return lacks;
+			}
 			if (!Calibrated()) {
 				return "this game's aliases can't be read";
 			}
@@ -660,6 +680,10 @@ namespace RadiantSync
 			};
 			if (!Calibrated()) {
 				decline("this game's aliases can't be read");
+				return;
+			}
+			if (const auto lacks = Lacks(a_quest); !lacks.empty()) {
+				decline(lacks);
 				return;
 			}
 			const auto aliases = AliasesOf(a_quest);
@@ -976,6 +1000,41 @@ namespace RadiantSync
 	bool IsRadiant(std::uint32_t a_questId)
 	{
 		return IsRadiant(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location)
+	{
+		if (!a_quest || !Calibrated()) {
+			return "error: no such quest, or this game's aliases can't be read";
+		}
+		if (a_quest->data.flags & QUEST_RUNNING) {
+			return "error: it is running already";
+		}
+		RadiantRules::Plan plan;
+		for (const auto alias : a_quest->aliases) {
+			if (!alias || alias->aliasID == NO_ALIAS) {
+				continue;
+			}
+			// What the story manager's event fills: its reference (the settlement's workshop, the quest giver) and, where the
+			// quest reads one, its location.
+			if (const auto ref = AsRef(alias); ref && ref->fillType == static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kFromEvent)) {
+				plan.forces.push_back({ alias->aliasID, Kind::kRef, a_ref });
+			} else if (const auto loc = AsLoc(alias); loc && a_location != 0 && loc->forcedFromEvent != 0xFFFFFFFF && loc->forcedFromAlias == 0xFFFFFFFF) {
+				plan.forces.push_back({ alias->aliasID, Kind::kLoc, a_location });
+			}
+		}
+		if (plan.forces.empty()) {
+			return "error: none of its aliases is filled from the story manager's event";
+		}
+		std::vector<Saved> saved;
+		if (!Force(a_quest, plan, saved)) {
+			return "error: an alias couldn't be forced";
+		}
+		RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_quest->GetFormID()).c_str());
+		const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
+		Restore(saved);
+		return running ? std::format("ok: {:08X} '{}' is running with {} alias(es) forced from the event", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size())
+		               : std::format("error: the game didn't start {:08X} '{}' with {} alias(es) forced from the event", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
 	}
 
 	void SetLocalPlayer(std::uint32_t a_id)

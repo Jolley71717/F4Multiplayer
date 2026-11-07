@@ -1608,6 +1608,21 @@ namespace DevCommands
 			return RadiantSync::DumpAliases(quest);
 		}
 
+		// radiantstart <questHex> <refHex> [locationHex]: starts a radiant quest as the story manager's event would, its event-filled
+		// aliases forced to that reference (the settlement's workshop, the quest giver) and that location, for the rig (the
+		// console's startquest can't fill them). Then it is this game's own run, shared with friends like any (RadiantSync).
+		std::string RadiantStart(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto quest = args.empty() ? std::nullopt : ParseHex(args[0]);
+			const auto ref = args.size() > 1 ? ParseHex(args[1]) : std::nullopt;
+			const auto loc = args.size() > 2 ? ParseHex(args[2]) : std::optional<std::uint32_t>{ 0 };
+			if (!quest || !ref || !loc) {
+				return "error: usage: radiantstart <questHex> <refHex> [locationHex]";
+			}
+			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc);
+		}
+
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
@@ -4160,6 +4175,7 @@ namespace DevCommands
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
 			Entry{ "aliases", Aliases },
+			Entry{ "radiantstart", RadiantStart },
 			Entry{ "global", Global },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },

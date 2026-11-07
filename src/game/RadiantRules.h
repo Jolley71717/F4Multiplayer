@@ -46,6 +46,15 @@ namespace RadiantRules
 		kLeftAlone,   // a radiant each player keeps for themselves
 	};
 
+	// A quest (by file and form ID there) that must be running in a game for a friend's run of a radiant to start in it. The
+	// forced aliases of a run bypass their own conditions, so a game whose player hasn't reached what hands the job out
+	// would start it anyway; with this it declines the run (each player's own), as one it can't fill.
+	struct Needs
+	{
+		std::uint8_t  file = 0;
+		std::uint32_t quest = 0;  // 0: none
+	};
+
 	struct Entry
 	{
 		std::uint8_t     file;    // StageRules::File: 0 Fallout4.esm, 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm
@@ -58,6 +67,8 @@ namespace RadiantRules
 		// its own. Only where stopping it before it is given changes nothing else: nothing counted, enabled or hidden
 		// by its start, no stage run as it stops, and a quest that can run again (not "run once").
 		bool replace = false;
+		// What must be running here for a friend's run to start here (Needs); nothing for most.
+		Needs needs{};
 	};
 
 	// The radiants by file and form ID (tools/questscan.cs reads them; their aliases were read the same way). Fallout4.esm's first.
@@ -138,20 +149,19 @@ namespace RadiantRules
 		Entry{ 0, 0x181280, "FFDiamondCityWanted07", Share::kShared },
 		Entry{ 0, 0x02C59B, "FFDiamondCity05", Share::kLeftAlone },  // a bloatfly's gland: the bloatfly is made at runtime
 		// The add-ons' radiants and the story manager's side quests that were each player's own (QuestFilter::PER_GAME,
-		// which said these nine could be shared by their run): every alias is filled by its conditions, from the start's
+		// which said these six could be shared by their run): every alias is filled by its conditions, from the start's
 		// event or is the game's own reference, and what the quest makes at runtime (the settlement's two created
-		// aliases, the attackers and defenders at the caches' markers) is each game's own, left as kDerived. Each is
-		// handed out by a conversation or an event in one game, so a friend's own run of it with other targets is not
-		// stopped (replace stays false).
+		// aliases) is each game's own, left as kDerived. Each is handed out by a conversation or an event in one game, so a
+		// friend's own run of it with other targets is not stopped (replace stays false). Left in PER_GAME, as not shared by
+		// a run: the cache jobs (StealCache, DefendCache: their attackers and defenders are made at runtime and the enemy
+		// gang is rolled in each game) and DLC04RaidCoerce (its 20 takes the settlement from the player; tools/questscan.ps1
+		// -Safe reports a shared radiant's stage that does).
 		Entry{ 0, 0x026340, "DN121", Share::kShared },                        // Saugus Ironworks: the settlement from the event; 2 aliases made at runtime
 		Entry{ 0, 0x0482CD, "DN151", Share::kShared },                        // Weston Water Treatment: the settlement from the event (its 500 places something at runtime)
 		Entry{ 1, 0x00EB51, "DLC03WorkshopRadiantOwned02", Share::kShared },  // Far Harbor: a settlement's request
 		Entry{ 1, 0x040A86, "DLC03WorkshopRadiantOwned04", Share::kShared },
-		Entry{ 3, 0x019088, "DLC04RaidCoerce", Share::kShared },              // Nuka-World: a raid to coerce (its 90 takes caps: StageRules kPays)
-		Entry{ 3, 0x017F46, "DLC04_RQ_KillRivalBoss", Share::kShared },       // a gang's job: its boss
-		Entry{ 3, 0x04BD3C, "DLC04_RQ_CollarRivalBoss", Share::kShared },
-		Entry{ 3, 0x01B170, "DLC04_RQ_StealCache", Share::kShared },          // the cache's and defenders' markers are plugin references; who stands there is made in each game
-		Entry{ 3, 0x02191C, "DLC04_RQ_DefendCache", Share::kShared },
+		Entry{ 3, 0x017F46, "DLC04_RQ_KillRivalBoss", Share::kShared, false, Needs{ 3, 0x017F47 } },  // a gang's job: its boss; the gangs hand them out only once DLC04_RQ_Manager runs (the raiders' path)
+		Entry{ 3, 0x04BD3C, "DLC04_RQ_CollarRivalBoss", Share::kShared, false, Needs{ 3, 0x017F47 } },
 	};
 
 	// The radiant filed under a quest's file and its form ID there (no load index).
@@ -170,6 +180,13 @@ namespace RadiantRules
 	inline bool IsRadiant(std::uint8_t a_file, std::uint32_t a_quest)
 	{
 		return ShareOf(a_file, a_quest) != Share::kNotRadiant;
+	}
+
+	// The need of a radiant that a_running (file, local form ID: whether that quest runs in this game) says is not met, or null.
+	template <class Running>
+	inline const Needs* MissingNeed(const Entry& a_entry, Running&& a_running)
+	{
+		return a_entry.needs.quest != 0 && !a_running(a_entry.needs.file, a_entry.needs.quest) ? &a_entry.needs : nullptr;
 	}
 
 	// Whether some radiant has this form ID in some file: a cheap test before the quest's file is looked up.
