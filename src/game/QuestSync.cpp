@@ -18,6 +18,7 @@
 #include "game/RadiantSync.h"
 #include "game/RemotePlayers.h"
 #include "game/SceneHold.h"
+#include "game/ScriptDoors.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 #include "game/Story.h"
@@ -66,25 +67,33 @@ namespace QuestSync
 		}
 
 		bool IsSafe(const RE::TESQuest* a_quest);
+		bool IsSilent(const RE::TESQuest* a_quest);
+
+		// A quest whose stages are no steps in order and which counts as started once it runs: a dialogue quest, or an
+		// objective-less one the host's sQuests = safe shares (IsSilent). Neither shows an objective.
+		bool Unordered(const RE::TESQuest* a_quest)
+		{
+			return IsDialogue(a_quest) || IsSilent(a_quest);
+		}
 
 		// Quests whose progress is watched here: the shared types, the factions' finales and the dialogue quests, the
-		// radiants shared by their run whatever their type (Diamond City's wanted posters are misc quests), and the quests
-		// the host's sQuests = safe shares (IsSafe), whatever this session's sQuests: what was done in them is known when a
-		// session that shares them begins.
+		// radiants shared by their run whatever their type (Diamond City's wanted posters are misc quests), and the
+		// quests the host's sQuests = safe shares (IsSafe, SILENT's too), whatever this session's sQuests: what was
+		// done in them is known when a session that shares them begins.
 		bool Watched(const RE::TESQuest* a_quest)
 		{
 			return QuestFilter::Watched(Filed(a_quest)) || RadiantSync::ShareOf(a_quest) == RadiantRules::Share::kShared || IsSafe(a_quest);
 		}
 
 		// Whether the player has started the quest here, as reporting, setting friends' stages and the
-		// host's baseline read it: an objective shown (PlayerStarted), or for a dialogue quest, which has
-		// none, running or with stages done.
+		// host's baseline read it: an objective shown (PlayerStarted), or for a dialogue or silent quest, which
+		// has none (Unordered), running or with stages done.
 		bool SessionStarted(const RE::TESQuest* a_quest)
 		{
 			if (PlayerStarted(a_quest)) {
 				return true;
 			}
-			return IsDialogue(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty());
+			return Unordered(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty());
 		}
 
 		// A quest that completes this soon after a stage from another player was completed by them.
@@ -127,7 +136,7 @@ namespace QuestSync
 			std::optional<QuestStageLayout::Digest> digest;
 		};
 		std::unordered_map<std::uint32_t, Seen>          doneStages;
-		std::unordered_map<std::uint32_t, bool>          safeQuests;  // IsSafe, by form ID, once looked up
+		std::unordered_map<std::uint32_t, std::uint8_t>  safeQuests;  // SafeKindOf, by form ID, once looked up
 		std::unordered_map<std::uint32_t, bool>          knownDone;    // last completed state seen per quest
 		std::unordered_map<std::uint32_t, Clock::time_point> remoteStageAt;  // when another player last moved it
 		StageLog::Queue                                  waiting;  // stages from other players, until they are set here
@@ -284,18 +293,46 @@ namespace QuestSync
 			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 		}
 
-		// A quest the host's sQuests = safe shares (QuestFilter::SAFE: misc quests and quests under no type with objectives
-		// that are the same in every game), of the game's own files. Looked up once per quest.
-		bool IsSafe(const RE::TESQuest* a_quest)
+		// Whether the host's sQuests = safe shares a quest of the game's own files: 0 no, 1 QuestFilter::SAFE (misc
+		// quests and quests under no type with objectives that are the same in every game), 2 QuestFilter::SILENT
+		// (those with no objectives). Looked up once per quest.
+		std::uint8_t SafeKindOf(const RE::TESQuest* a_quest)
 		{
 			const auto id = a_quest->GetFormID();
 			if (const auto known = safeQuests.find(id); known != safeQuests.end()) {
 				return known->second;
 			}
-			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
-			const bool safe = file && QuestFilter::IsSafe(static_cast<std::uint8_t>(*file), id & 0x00FFFFFF);
-			safeQuests.emplace(id, safe);
-			return safe;
+			const auto   file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			const auto   local = id & 0x00FFFFFF;
+			std::uint8_t kind = 0;
+			if (file && QuestFilter::IsSafe(static_cast<std::uint8_t>(*file), local)) {
+				kind = 1;
+			} else if (file && QuestFilter::IsSilent(static_cast<std::uint8_t>(*file), local)) {
+				kind = 2;
+			}
+			safeQuests.emplace(id, kind);
+			return kind;
+		}
+
+		// A quest the host's sQuests = safe shares, SAFE or SILENT: every rule for one (shared only with sQuests =
+		// safe, only with the story, marked so in the outbox and the baseline) is for both.
+		bool IsSafe(const RE::TESQuest* a_quest)
+		{
+			return SafeKindOf(a_quest) != 0;
+		}
+
+		// One of those with no objectives (QuestFilter::SILENT): shared as a dialogue quest is (Unordered).
+		bool IsSilent(const RE::TESQuest* a_quest)
+		{
+			return SafeKindOf(a_quest) == 2;
+		}
+
+		// A stage ScriptDoors shares by itself, with either sQuests (DN142's 50, BoSEnable's 15): never reported as a
+		// SILENT quest's, so it goes once, as the door's (a friend's comes to ScriptDoors first anyway).
+		bool DoorsStage(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = a_quest->GetFile(0);
+			return file && ScriptDoors::Owns(file->GetFilename(), a_quest->GetFormID() & 0x00FFFFFF, a_stage);
 		}
 
 		// The session shares the quests IsSafe names (the welcome's sQuests = safe); out of a session, no.
@@ -397,8 +434,8 @@ namespace QuestSync
 			}
 			// A dialogue quest that ran here and stopped is over (its 100 stops Diamond City's entrance scene,
 			// the gate open): starting it again would play it over, so what is left of it is dropped, not
-			// kept waiting.
-			if (IsDialogue(quest) && !(quest->data.flags & QUEST_RUNNING) && RanBefore(quest)) {
+			// kept waiting. A silent quest's too (a place's quest that ran its course).
+			if (Unordered(quest) && !(quest->data.flags & QUEST_RUNNING) && RanBefore(quest)) {
 				if (const auto stages = waiting.Waiting(a_quest); !stages.empty()) {
 					REX::INFO("QuestSync: {} stage(s) of {:08X} from friends dropped (the first {}): the scene ran here and is over", stages.size(), a_quest, stages.front());
 				}
@@ -436,14 +473,14 @@ namespace QuestSync
 		// already past here is left alone, done or not (it may be a branch this player didn't take).
 		// Except a dialogue quest's: its stages aren't steps in order (a player at Diamond City's gate can
 		// have the entrance scene's 400 without the 32, 40 and 100 that open the gate and end it), so only
-		// a stage done here is.
+		// a stage done here is. Nor a silent quest's (Unordered).
 		bool IsSettled(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
 			if (!quest) {
 				return true;
 			}
-			if (IsDialogue(quest)) {
+			if (Unordered(quest)) {
 				return QuestStageLayout::IsStageDone(quest, a_stage);
 			}
 			return a_stage <= quest->currentStage || QuestStageLayout::IsStageDone(quest, a_stage);
@@ -790,7 +827,7 @@ namespace QuestSync
 			}
 			if (waited.erase(a_quest) > 0) {
 				++caughtUp;
-				NoteCaughtUp(IsDialogue(quest) ? nullptr : name, a_now);  // a dialogue quest's name is the editor's, not one the player knows
+				NoteCaughtUp(Unordered(quest) ? nullptr : name, a_now);  // a dialogue or silent quest's name is the editor's, not one the player knows
 			}
 			Achievements::AfterStageSet(a_quest, a_stage);
 			return StageLog::Set::kSet;
@@ -943,6 +980,9 @@ namespace QuestSync
 					if (IsOpeningStage(quest, stage)) {
 						continue;  // every player's own
 					}
+					if (DoorsStage(quest, stage)) {
+						continue;  // ScriptDoors'
+					}
 					if (baseline.size() < MAX_BASELINE) {
 						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest), IsSafe(quest) });
 					} else {
@@ -981,6 +1021,9 @@ namespace QuestSync
 		}
 		if (IsDialogue(a_quest)) {
 			return "dialogue";
+		}
+		if (IsSilent(a_quest)) {
+			return SafeShared() ? "silent (shared with the story: sQuests = safe)" : "silent (not shared: sQuests = story)";
 		}
 		if (IsSafe(a_quest)) {
 			return SafeShared() ? "safe (shared with the story: sQuests = safe)" : "safe (not shared: sQuests = story)";
@@ -1187,7 +1230,7 @@ namespace QuestSync
 				const auto remote = remoteStageAt.find(id);
 				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
 				const char* name = quest->GetFullName();
-				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !IsDialogue(quest)) {
+				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !Unordered(quest)) {
 					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, IsSafe(quest));
 					++completed;
 				}
@@ -1251,6 +1294,9 @@ namespace QuestSync
 			for (const auto stage : fresh) {
 				if (IsOpeningStage(quest, stage)) {
 					continue;  // the opening is every player's own: a stage of it done here (the vault's 110 outside) isn't reported
+				}
+				if (DoorsStage(quest, stage)) {
+					continue;  // ScriptDoors reports it
 				}
 				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story, safe);
 				++reported;

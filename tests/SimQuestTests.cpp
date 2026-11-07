@@ -687,6 +687,65 @@ TEST("sim quests: with a shared story, a friend whose own scene at Diamond City'
 	CHECK(host.Quests().WaitingCount() == 0);
 }
 
+namespace
+{
+	// A place's own quest with no objectives that the host's sQuests = safe shares (QuestFilter::SILENT, as the Castle's
+	// waves, DN029*): 10 and 30 its events, 20 one a game can come to after 30, 100 its end, which stops it. Shared as
+	// a dialogue quest is (the sim's dialogue flag is QuestSync's Unordered); an ID of its own, with no StageRules row.
+	constexpr std::uint32_t PLACE = 0x0001ED89;
+
+	Quest PlacesOwn()
+	{
+		Quest quest;
+		quest.stages = { 0, 10, 20, 30, 100 };
+		quest.quiet = quest.stages;
+		quest.story = true;
+		quest.dialogue = true;
+		quest.stops = { 100 };
+		return quest;
+	}
+}
+
+TEST("sim quests: a place's own quest with no objectives (sQuests = safe) is started in a friend's game by the host's stages, taken in any order, and left alone where it ran and stopped")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	GiveQuests({ &host, &bob, &carol });
+	auto here = PlacesOwn();  // the host is there: the quest runs
+	here.running = true;
+	host.GiveQuest(PLACE, here);
+	bob.GiveQuest(PLACE, PlacesOwn());  // Bob never went there
+	auto over = PlacesOwn();            // Carol went there before and saw it through
+	over.done = { 0, 10, 100 };
+	over.current = 100;
+	carol.GiveQuest(PLACE, over);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	Settled(s);
+
+	host.Stage(PLACE, 10);
+	host.Stage(PLACE, 30);
+	s.PlayFor(5s);
+	host.Stage(PLACE, 20);  // below 30, but not done in Bob's game
+	s.PlayFor(5s);
+	host.Stage(PLACE, 100);
+	s.PlayFor(5s);
+
+	CHECK(host.Quests().reported == 4);
+	CHECK((Order(bob, PLACE) == std::vector<std::uint16_t>{ 0, 10, 30, 20, 100 }));  // 0 the game runs as it starts the quest
+	CHECK((bob.Quests().started == std::vector<std::uint32_t>{ PLACE }));
+	CHECK(!bob.Quests().Of(PLACE).running);  // over in his game too
+	CHECK(bob.Quests().WaitingCount() == 0);
+	// Carol's ran and stopped: starting it again would play it over, so the host's stages are dropped.
+	CHECK(Order(carol, PLACE).empty());
+	CHECK(!carol.Quests().Of(PLACE).running);
+	CHECK(carol.Quests().WaitingCount() == 0);
+	CHECK(bob.Quests().reported == 0);  // nothing set from the host's game goes back to it
+}
+
 TEST("sim quests: a stage below where your quest already is, though you never did it, still isn't set from a friend's game unless the quest is a dialogue quest")
 {
 	Session s;

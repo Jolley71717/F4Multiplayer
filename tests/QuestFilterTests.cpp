@@ -3,6 +3,7 @@
 #include "game/QuestFilter.h"
 #include "game/RadiantRules.h"
 
+#include <algorithm>
 #include <iterator>
 #include <utility>
 
@@ -156,18 +157,18 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 92: Fallout4.esm's 47, Far Harbor's 32, Automatron's 1, Nuka-World's 12.
-	CHECK(std::size(QuestFilter::SAFE) == 92);
+	// 88: Fallout4.esm's 44, Far Harbor's 32, Automatron's 1, Nuka-World's 11.
+	CHECK(std::size(QuestFilter::SAFE) == 88);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 47);
+	CHECK(perFile[0] == 44);
 	CHECK(perFile[1] == 32);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 12);
+	CHECK(perFile[3] == 11);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
@@ -179,6 +180,12 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(QuestFilter::IsSafe(2, 0x00AEDD));  // DLC01DialogueQuest
 	// Mama Murphy's: her death at 700 is already every game's (a kill is shared).
 	CHECK(QuestFilter::IsSafe(0, 0x0EBE71));  // MQ00MamaMurphy
+	// A stage that starts or sets a quest each game runs its own way (a repeatable one, PER_GAME) leaves its quest out:
+	// a friend's game would start that one there, unshared.
+	CHECK(!QuestFilter::IsSafe(0, 0x048516));  // DN054: starts the repeatable DN054Radio
+	CHECK(!QuestFilter::IsSafe(0, 0x0684D0));  // DN123: sets the repeatable Skylanes assault
+	CHECK(!QuestFilter::IsSafe(0, 0x145722));  // BoSM04Postquest: sets the repeatable DN053
+	CHECK(!QuestFilter::IsSafe(3, 0x010D91));  // DLC04DialogueRaiderBossOperators: sets DLC04RaidCoerce (PER_GAME)
 	// A stage that, itself or through the scripts it calls and the unshared quests' stages it sets, turns a faction on
 	// another or on the player, makes or lets someone be a companion, or changes a settlement's owner: each game's.
 	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ: Cait's and Tommy's ally faction, Cait recruitable
@@ -191,8 +198,10 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
-	// A place's own quest with no objectives (DN035) is not in this table: one counts as started only by its stages.
+	// A place's own quest with no objectives (DN035) is not in this table but SILENT: one counts as started only by its
+	// stages.
 	CHECK(!QuestFilter::IsSafe(0, 0x0EF40C));
+	CHECK(QuestFilter::IsSilent(0, 0x0EF40C));
 	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping, its raiders' kickout
 	// and its outpost count: denied.
 	for (const auto& denied : QuestFilter::DENIED) {
@@ -229,4 +238,78 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, MQ104));
 	CHECK(!QuestFilter::IsSafe(0, MS17));
 	CHECK(!QuestFilter::IsSafe(3, 0x000801));  // DLC04MQ01
+}
+
+TEST("quest filter: the objective-less quests sQuests = safe shares are the rule's less those denied, sorted, none shared another way (tools/questscan.ps1 -Safe)")
+{
+	const auto key = [](const QuestFilter::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; };
+	for (auto it = std::next(std::begin(QuestFilter::SILENT)); it != std::end(QuestFilter::SILENT); ++it) {
+		CHECK(key(*std::prev(it)) < key(*it));
+	}
+	// 106: Fallout4.esm's 70, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
+	CHECK(std::size(QuestFilter::SILENT) == 106);
+	std::size_t perFile[4]{};
+	for (const auto& silent : QuestFilter::SILENT) {
+		REQUIRE(silent.file <= 3);
+		CHECK(silent.quest <= 0x00FFFFFF);
+		++perFile[silent.file];
+		// None SAFE's (those have objectives), DENIED, PER_GAME, a radiant or a finale.
+		CHECK(!QuestFilter::IsSafe(silent.file, silent.quest));
+		CHECK(std::ranges::find_if(QuestFilter::DENIED, [&](const QuestFilter::Local& a_local) { return key(a_local) == key(silent); }) == std::end(QuestFilter::DENIED));
+		CHECK(!QuestFilter::IsPerGame(silent.file, silent.quest));
+		if (silent.file == 0) {
+			CHECK(std::ranges::find(QuestFilter::STORY_FINALES, silent.quest) == QuestFilter::STORY_FINALES.end());
+		}
+		CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return a_radiant.file == silent.file && a_radiant.quest == silent.quest; }) == std::end(RadiantRules::RADIANTS));
+	}
+	CHECK(perFile[0] == 70);
+	CHECK(perFile[1] == 19);
+	CHECK(perFile[2] == 5);
+	CHECK(perFile[3] == 12);
+
+	// A place's own quests, the Castle's waves, the Prydwen's arrival (BoSEnable; its 15 is ScriptDoors' all the same),
+	// Vault 114's gear door (DN142), Far Harbor's fight at the Nucleus's gate.
+	CHECK(QuestFilter::IsSilent(0, 0x0EF40C));     // DN035
+	CHECK(QuestFilter::IsSilent(0, 0x03479A));     // DN102
+	CHECK(QuestFilter::IsSilent(0, 0x0ABF55));     // DN029FirstWave
+	CHECK(QuestFilter::IsSilent(0, 0x1851A0));     // BoSEnable
+	CHECK(QuestFilter::IsSilent(0, 0x13B747));     // DN142
+	CHECK(QuestFilter::IsSilent(1, 0x043822));     // DLC03MQ02Fight
+	// A form ID is the quest's only in its own file.
+	CHECK(!QuestFilter::IsSilent(1, 0x0EF40C));
+	// Denied by name: the game's systems, ambient scenes.
+	CHECK(!QuestFilter::IsSilent(0, 0x21666E));  // Achievements
+	CHECK(!QuestFilter::IsSilent(0, 0x249E2E));  // Patch_1_3
+	CHECK(!QuestFilter::IsSilent(0, 0x160147));  // Tutorial
+	CHECK(!QuestFilter::IsSilent(0, 0x1C4E44));  // InstituteSS1
+	CHECK(!QuestFilter::IsSilent(0, 0x152706));  // BoSPrydwenScene_Airport
+	CHECK(!QuestFilter::IsSilent(0, 0x22DCC5));  // RECheckpoint_InstInitQuest
+	CHECK(!QuestFilter::IsSilent(0, 0x056649));  // ConvDiamondCityGenericMoe01 (ambient chatter)
+	CHECK(!QuestFilter::IsSilent(0, 0x0BBD98));  // COMNick (a companion's)
+	CHECK(!QuestFilter::IsSilent(0, 0x07921A));  // COMCait
+	// A change-location hook whose stage starts a quest each game runs its own way: a story event for a Minutemen
+	// request (the story manager starts DN121 or DN151 with that game's own picks, PER_GAME), or the repeatable DN017
+	// or DN053 started outright.
+	CHECK(!QuestFilter::IsSilent(0, 0x1310AB));  // DN121_ChangeLocation
+	CHECK(!QuestFilter::IsSilent(0, 0x0E6AB0));  // DN151_ChangeLocation
+	CHECK(!QuestFilter::IsSilent(0, 0x0DEDDD));  // DN017_ChangeLocation
+	CHECK(!QuestFilter::IsSilent(0, 0x0AEC4E));  // DN053_ChangeLocation
+	CHECK(!QuestFilter::IsSilent(0, 0x0F8D39));  // DN084_BoS303Battle: its 200 sets DN084, whose 10 starts a repeatable one
+	// A stage that stops the quest below one that does more: a friend catching up on the host's stages, lowest first,
+	// would stop it before MS07Intro's 400 starts Nick's case files.
+	CHECK(!QuestFilter::IsSilent(0, 0x0282A7));  // MS07Intro
+	// Denied by hand: teleports of the player or their companion, the player's own gear.
+	CHECK(!QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup
+	CHECK(!QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects
+	CHECK(!QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack
+	CHECK(!QuestFilter::IsSilent(0, 0x0DEC92));  // MS04PostQuest
+	CHECK(!QuestFilter::IsSilent(3, 0x00A549));  // DLC04MQ01Gauntlet
+	CHECK(!QuestFilter::IsSilent(0, 0x048327));  // DN151_Tracking: the tracker of the PER_GAME DN151
+	CHECK(!QuestFilter::IsSilent(0, 0x15DE65));  // FFGoodneighbor08: each game's own timer ends it where its player isn't
+	// Left out by the rule: the opening, survival mode's, Nick's companion quest's stage.
+	CHECK(!QuestFilter::IsSilent(0, 0x01ED86));  // MQ101
+	CHECK(!QuestFilter::IsSilent(0, 0x00080E));  // HC_Manager
+	CHECK(!QuestFilter::IsSilent(0, 0x18817F));  // MS07cPostQuest
+	// The dialogue quests are shared by their name, not by this table.
+	CHECK(!QuestFilter::IsSilent(0, DC_GATE));
 }

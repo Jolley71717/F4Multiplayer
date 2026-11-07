@@ -116,10 +116,13 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   them in their own game. Side quests are shared either way. See [What is shared](#what-is-shared).
 - `sQuests` (story): with `sStory = shared`, `safe` shares more quests with the story: the misc quests and Far Harbor's
   and Nuka-World's own quests that play out the same in every game (Diamond City's and Goodneighbor's errands, the
-  "talk to" pointers, Nuka-World's park quests). Whoever moves one on moves everyone along, and a joiner is caught up
-  on the host's. Quests whose targets each game picks, companions' quests, quests that turn a faction hostile or change
-  who owns a settlement, survival mode's and your dog's stay each
-  player's own, and a quest's reward item is given in each game. `story` (the default) shares the story's quests only.
+  "talk to" pointers, Nuka-World's park quests), and the places' own quests that show no objective (a dungeon's
+  events, the Castle's waves, the Prydwen's arrival). Whoever moves one on moves everyone along, and a joiner is caught
+  up on the host's. Quests whose targets each game picks or that start one, repeatable quests, companions' quests,
+  quests that turn a faction hostile or change who owns a settlement, survival mode's and your dog's, and quests that
+  teleport you or your companion or deal with your own gear or rank stay each player's own. Your companion may still
+  react to what a shared quest does, as to the story's quests, and a quest's reward item is given in each game.
+  `story` (the default) shares the story's quests only.
   The F1 menu's *More quests* switch sets it. The dedicated server takes it as `--safe-quests`.
 - `sIgnoredPlugins` (empty): plugins, comma-separated, that guests may have different. A guest is not told about
   them when their mods differ from the host's.

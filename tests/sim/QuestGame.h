@@ -54,7 +54,8 @@ namespace Sim
 		std::set<std::uint16_t> stages;           // the stages it has
 		bool                    running = false;
 		bool                    started = false;  // an objective has been shown (QuestSync::PlayerStarted)
-		// One of the game's dialogue quests (QuestFilter::IsDialogue, shared with the story): it has no
+		// One of the game's dialogue quests (QuestFilter::IsDialogue, shared with the story), or an objective-less
+		// one the host's sQuests = safe shares (QuestFilter::SILENT; QuestSync's Unordered): it has no
 		// objectives, so it counts as started once it is running or has stages done (QuestSync's
 		// SessionStarted); only a stage done here is past it, and once it ran and stopped it is over.
 		bool                    dialogue = false;
