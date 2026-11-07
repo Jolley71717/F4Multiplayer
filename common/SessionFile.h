@@ -240,42 +240,36 @@ namespace SessionFile
 		if (a_snapshot.worldTime) {
 			packet(Protocol::Encode(*a_snapshot.worldTime, Protocol::MessageType::kWorldTime));
 		}
-		for (std::size_t i = 0; i < a_snapshot.markers.size(); i += Protocol::MAX_MARKERS_PER_PACKET) {
+		Protocol::ForEachChunk(a_snapshot.markers, Protocol::MAX_MARKERS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
 			Protocol::MarkersFound batch;
-			for (std::size_t j = i; j < a_snapshot.markers.size() && j < i + Protocol::MAX_MARKERS_PER_PACKET; ++j) {
-				batch.markers.push_back({ a_snapshot.markers[j].first, a_snapshot.markers[j].second });
+			for (auto it = a_first; it != a_last; ++it) {
+				batch.markers.push_back({ it->first, it->second });
 			}
 			packet(Protocol::Encode(batch, Protocol::MessageType::kMarkersFound));
-		}
-		for (std::size_t i = 0; i < a_snapshot.workshopItems.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.workshopItems.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			const std::vector<Protocol::WorkshopItem> items(a_snapshot.workshopItems.begin() + i, a_snapshot.workshopItems.begin() + end);
+		});
+		Protocol::ForEachChunk(a_snapshot.workshopItems, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			const std::vector<Protocol::WorkshopItem> items(a_first, a_last);
 			packet(HasWorkshopCharacters(layout) ? Protocol::EncodeKeptWorkshopItems(items) : Protocol::Encode(items));
-		}
-		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
-			const Protocol::DropList list{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } };
+		});
+		Protocol::ForEachChunk(a_snapshot.drops, Protocol::MAX_DROPS_PER_PACKET, [&](auto a_first, auto a_last, bool a_isLast) {
+			const Protocol::DropList list{ a_isLast, { a_first, a_last } };
 			packet(HasCharacters(layout) ? Protocol::EncodeWithCharacters(list) : HasHolders(layout) ? Protocol::Encode(list) : Protocol::EncodeBeforeHolders(list));
-		}
-		for (std::size_t i = 0; i < a_snapshot.traps.size(); i += Protocol::MAX_TRAPS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.traps.size(), i + Protocol::MAX_TRAPS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::TrapStates{ false, { a_snapshot.traps.begin() + i, a_snapshot.traps.begin() + end } }));
-		}
-		for (std::size_t i = 0; i < a_snapshot.destructions.size(); i += Protocol::MAX_DESTRUCTION_ENTRIES) {
-			const auto end = (std::min)(a_snapshot.destructions.size(), i + Protocol::MAX_DESTRUCTION_ENTRIES);
-			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_snapshot.destructions.begin() + i, a_snapshot.destructions.begin() + end } }, Protocol::MessageType::kDestructions));
-		}
+		});
+		Protocol::ForEachChunk(a_snapshot.traps, Protocol::MAX_TRAPS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::TrapStates{ false, { a_first, a_last } }));
+		});
+		Protocol::ForEachChunk(a_snapshot.destructions, Protocol::MAX_DESTRUCTION_ENTRIES, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_first, a_last } }, Protocol::MessageType::kDestructions));
+		});
 		for (const auto& place : a_snapshot.objectPlaces) {
 			packet(Protocol::Encode(place, Protocol::MessageType::kObjectRested));
 		}
-		for (std::size_t i = 0; i < a_snapshot.storageOwners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.storageOwners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::StorageOwners{ { a_snapshot.storageOwners.begin() + i, a_snapshot.storageOwners.begin() + end } }));
-		}
-		for (std::size_t i = 0; i < a_snapshot.storageReversals.size(); i += Protocol::MAX_STORAGE_REVERSALS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.storageReversals.size(), i + Protocol::MAX_STORAGE_REVERSALS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::StorageReversals{ { a_snapshot.storageReversals.begin() + i, a_snapshot.storageReversals.begin() + end } }));
-		}
+		Protocol::ForEachChunk(a_snapshot.storageOwners, Protocol::MAX_STORAGE_OWNERS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::StorageOwners{ { a_first, a_last } }));
+		});
+		Protocol::ForEachChunk(a_snapshot.storageReversals, Protocol::MAX_STORAGE_REVERSALS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::StorageReversals{ { a_first, a_last } }));
+		});
 		if (HasRolls(layout)) {
 			for (const auto& identity : a_snapshot.npcIdentities) {
 				packet(Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity));
@@ -283,10 +277,9 @@ namespace SessionFile
 			if (a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0) {
 				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel, a_snapshot.legendaryMult }));
 			}
-			for (std::size_t i = 0; i < a_snapshot.rollLives.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-				const auto end = (std::min)(a_snapshot.rollLives.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-				packet(Protocol::Encode(std::vector<Protocol::RollLife>{ a_snapshot.rollLives.begin() + i, a_snapshot.rollLives.begin() + end }));
-			}
+			Protocol::ForEachChunk(a_snapshot.rollLives, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+				packet(Protocol::Encode(std::vector<Protocol::RollLife>{ a_first, a_last }));
+			});
 		}
 		return out;
 	}

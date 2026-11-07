@@ -1555,6 +1555,17 @@ namespace Protocol
 	// NPC AI ownership: one player's game runs each NPC; the others copy its movement.
 	inline constexpr std::size_t MAX_ACTORS_PER_PACKET = 64;
 
+	// a_visit(first, last, isLast) for each run of at most a_max of a_items, in order: a list that goes out, or into the
+	// session file, many to a packet. Nothing for an empty list.
+	template <class Items, class Visit>
+	void ForEachChunk(const Items& a_items, std::size_t a_max, Visit&& a_visit)
+	{
+		for (std::size_t i = 0; i < a_items.size(); i += a_max) {
+			const auto end = (std::min)(a_items.size(), i + a_max);
+			a_visit(a_items.begin() + static_cast<std::ptrdiff_t>(i), a_items.begin() + static_cast<std::ptrdiff_t>(end), end == a_items.size());
+		}
+	}
+
 	enum class ClaimReason : std::uint8_t
 	{
 		kUnowned = 0,    // the sender has it loaded; run it if nobody does
@@ -2589,10 +2600,10 @@ namespace Protocol
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
-			rules.npcLevel = npcLevel < NPC_LEVEL_RULES ? static_cast<NpcLevelRule>(npcLevel) : NpcLevelRule::kAverage;
-			rules.legendary = legendary < LEGENDARY_RULES ? static_cast<LegendaryRule>(legendary) : LegendaryRule::kAverage;
-			rules.quests = quests < QUEST_RULES ? static_cast<QuestRule>(quests) : QuestRule::kStory;
-			msg.rules = rules.Clamped();
+			rules.npcLevel = static_cast<NpcLevelRule>(npcLevel);
+			rules.legendary = static_cast<LegendaryRule>(legendary);
+			rules.quests = static_cast<QuestRule>(quests);
+			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}
 		return msg;
 	}
