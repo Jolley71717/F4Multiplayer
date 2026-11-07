@@ -23,6 +23,8 @@ namespace
 	constexpr std::uint32_t SPAWN3 = 0xFF009ABC;
 	constexpr std::uint32_t HUMAN_RACE = 0x50A08943;     // HumanRace's flags in Fallout4.esm
 	constexpr std::uint32_t MIRELURK_RACE = 0x52008148;  // MirelurkRace's
+	constexpr std::uint32_t ANY_RACE_FORM = 0x00001234;  // a race form that is not the vertibird's
+	constexpr std::uint32_t VERTIBIRD_FLAGS = 0;         // VertibirdRace allows no PC dialogue either
 
 	// DN083_Barney as the game has it running.
 	Quest GunRun()
@@ -115,15 +117,22 @@ TEST("quest actors: only a listed, running, run-once quest of the game's own of 
 
 TEST("quest actors: a creature its alias created is named with the alias; a talker, or one the alias found, is not")
 {
-	CHECK(Keyed(GunRun(), FILL_CREATED, MIRELURK_RACE, 26));
-	CHECK(!Keyed(GunRun(), FILL_CREATED, HUMAN_RACE, 25));      // Barney: our player talks to him, his scenes are each game's
-	CHECK(!Keyed(GunRun(), 0, MIRELURK_RACE, 26));             // filled by conditions: the plugin's, mirrored already
-	CHECK(!Keyed(GunRun(), 1, MIRELURK_RACE, 26));             // forced
-	CHECK(!Keyed(GunRun(), FILL_CREATED, MIRELURK_RACE, 0x10000));  // past what the wire holds
+	CHECK(Keyed(GunRun(), FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 26));
+	CHECK(!Keyed(GunRun(), FILL_CREATED, HUMAN_RACE, ANY_RACE_FORM, 25));      // Barney: our player talks to him, his scenes are each game's
+	CHECK(!Keyed(GunRun(), 0, MIRELURK_RACE, ANY_RACE_FORM, 26));             // filled by conditions: the plugin's, mirrored already
+	CHECK(!Keyed(GunRun(), 1, MIRELURK_RACE, ANY_RACE_FORM, 26));             // forced
+	CHECK(!Keyed(GunRun(), FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 0x10000));  // past what the wire holds
 	auto main = GunRun();
 	main.type = 1;
-	CHECK(!Keyed(main, FILL_CREATED, MIRELURK_RACE, 26));
+	CHECK(!Keyed(main, FILL_CREATED, MIRELURK_RACE, ANY_RACE_FORM, 26));
 	static_assert((HUMAN_RACE & RACE_ALLOWS_DIALOGUE) != 0 && (MIRELURK_RACE & RACE_ALLOWS_DIALOGUE) == 0);
+}
+
+TEST("quest actors: a vertibird a shared quest's alias created is not named with the alias (the player sits in it)")
+{
+	static_assert((VERTIBIRD_FLAGS & RACE_ALLOWS_DIALOGUE) == 0);
+	CHECK(!Keyed(GunRun(), FILL_CREATED, VERTIBIRD_FLAGS, VERTIBIRD_RACE, 26));
+	CHECK(Keyed(GunRun(), FILL_CREATED, VERTIBIRD_FLAGS, ANY_RACE_FORM, 26));  // the same flags in another race still pair
 }
 
 TEST("quest actors: ours from the same alias is paired with a friend's spawn near it, alive, and nobody's yet")

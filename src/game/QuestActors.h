@@ -21,7 +21,8 @@
 // only one that runs once, of no story or faction line (Quest type none, misc or side: never the main quest's or a
 // faction's), no radiant (RadiantRules shares those by their run) nor a quest each game runs alone (QuestFilter::PER_GAME),
 // and only a creature: an NPC our player could talk to (Barney, the quest's giver, made by its alias 25) stays each game's
-// own, its scenes its own game's. Kept free of the game so it can be tested (tests/QuestActorTests.cpp).
+// own, its scenes its own game's, and not a vehicle the player sits in (a vertibird: paired, it would be mirrored to the
+// owner's while its own flight scene still moves it, and a seated player could be dropped). Kept free of the game so it can be tested (tests/QuestActorTests.cpp).
 namespace QuestActors
 {
 	// The quests whose created creatures pair: a file (StageRules::File) and the quest's form ID in it.
@@ -61,6 +62,10 @@ namespace QuestActors
 	// MirelurkRace (read from the game's files).
 	inline constexpr std::uint32_t RACE_ALLOWS_DIALOGUE = 0x00200000;
 
+	// VertibirdRace in Fallout4.esm (load index 0, so the full form ID): the player sits in a vertibird, yet it allows no
+	// PC dialogue, so the creature rule alone would pair it.
+	inline constexpr std::uint32_t VERTIBIRD_RACE = 0x000D77E3;
+
 	// A friend's game's creature and ours stand this close at most to be paired (both are created at the same marker).
 	inline constexpr float PAIR_RANGE = 4096.0f;
 
@@ -82,11 +87,11 @@ namespace QuestActors
 		return a_quest.listed && a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && (a_quest.flags & QUEST_RUN_ONCE) != 0 && typeOk && !a_quest.radiant && !a_quest.perGame;
 	}
 
-	// Whether our NPC, held by an alias of that fill type in such a quest, of a race with those flags, is named with the
-	// alias as we share it. An alias ID past what the wire holds is not.
-	constexpr bool Keyed(const Quest& a_quest, std::uint16_t a_fillType, std::uint32_t a_raceFlags, std::uint32_t a_alias)
+	// Whether our NPC, held by an alias of that fill type in such a quest, of a race with those flags and that form ID, is
+	// named with the alias as we share it. An alias ID past what the wire holds is not, nor is a vertibird.
+	constexpr bool Keyed(const Quest& a_quest, std::uint16_t a_fillType, std::uint32_t a_raceFlags, std::uint32_t a_raceForm, std::uint32_t a_alias)
 	{
-		return a_fillType == FILL_CREATED && (a_raceFlags & RACE_ALLOWS_DIALOGUE) == 0 && a_alias <= 0xFFFF && QuestPairs(a_quest);
+		return a_fillType == FILL_CREATED && (a_raceFlags & RACE_ALLOWS_DIALOGUE) == 0 && a_raceForm != VERTIBIRD_RACE && a_alias <= 0xFFFF && QuestPairs(a_quest);
 	}
 
 	// A friend's spawn named with an alias, and what our game has in that alias of our run of the quest.

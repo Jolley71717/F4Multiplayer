@@ -379,6 +379,12 @@ namespace Spawns
 			return a_actor->race ? static_cast<std::uint32_t>(a_actor->race->data.flags) : QuestActors::RACE_ALLOWS_DIALOGUE;
 		}
 
+		// Its race's form ID (0 with no race).
+		std::uint32_t RaceForm(const RE::Actor* a_actor)
+		{
+			return a_actor->race ? a_actor->race->GetFormID() : 0;
+		}
+
 		struct AliasKey
 		{
 			std::uint32_t quest = 0;  // 0: none
@@ -393,10 +399,11 @@ namespace Spawns
 				return {};
 			}
 			const auto               race = RaceFlags(a_actor);
+			const auto               raceForm = RaceForm(a_actor);
 			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 			for (const auto& entry : aliases->aliasArray) {
 				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest &&
-					QuestActors::Keyed(QuestFactsOf(entry.quest), entry.alias->fillType, race, entry.alias->aliasID)) {
+					QuestActors::Keyed(QuestFactsOf(entry.quest), entry.alias->fillType, race, raceForm, entry.alias->aliasID)) {
 					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
 				}
 			}
@@ -452,7 +459,7 @@ namespace Spawns
 			out.oursThere = true;
 			facts.ours = !actor->IsDisabled() && actor->Get3D() && actor->GetParentCell() && !Puppets::IsPuppet(actor) && !Puppets::IsRegistered(actor) && !SaveGuard::Placed(actor) &&
 			             !NpcSync::IsOurCompanion(actor) && !Leaving(local);
-			facts.creature = QuestActors::Keyed(questFacts, (*alias)->fillType, RaceFlags(actor), (*alias)->aliasID);
+			facts.creature = QuestActors::Keyed(questFacts, (*alias)->fillType, RaceFlags(actor), RaceForm(actor), (*alias)->aliasID);
 			// One our game reported and the server granted is ours (the server refuses a second game's report of the alias,
 			// so theirs could not be granted too); one reported and not answered yet will be refused, as this one's twin.
 			facts.shared = ours.IdOf(local) != 0 || theirs.IdOf(local) != 0;
