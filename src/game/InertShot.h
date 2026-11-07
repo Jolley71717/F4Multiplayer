@@ -8,6 +8,8 @@
 #include <optional>
 #include <span>
 
+#include "game/AttackKind.h"
+
 // A friend's or a mirrored NPC's shot that would go off (a missile, a mini nuke, a grenade launcher's shell, a
 // cannonball, an Explosive round, a beam with a blast) flies in our game for everyone to see, and goes off nowhere: it
 // is launched from a copy of its projectile record with no explosion, no force and nothing to pin or pick up, so the
@@ -39,6 +41,13 @@ namespace InertShot
 	inline constexpr std::uint32_t FLAG_PINS_LIMBS = 0x100;
 	inline constexpr std::uint32_t FLAGS_TAKEN = FLAG_EXPLOSION | FLAG_EXPLOSION_ALT_TRIGGER | FLAG_CAN_TURN_OFF | FLAG_CAN_PICKUP | FLAG_PINS_LIMBS;
 
+	// The made projectile's own flag (Projectile::flags) for a tracer: Projectile::Launch sets it when the launch data
+	// asks for one (ProjectileLaunchData::tracer, which no engine caller seen sets) or, otherwise, when the shooter's
+	// tracer count comes round to the record's tracerFrequency (an actor with a high process: its count, kept per actor;
+	// any other shooter: one chance in tracerFrequency). Read from 1.11.240's Launch (+E421E0, the 0x10 bit set at +E42632/
+	// +E42673/+E426F1). Frequency 0: never a tracer (a 10mm round shows no trail in anyone's game).
+	inline constexpr std::uint64_t PROJECTILE_TRACER = 0x10;
+
 	constexpr std::uint32_t InertFlags(std::uint32_t a_flags)
 	{
 		return a_flags & ~FLAGS_TAKEN;
@@ -51,12 +60,22 @@ namespace InertShot
 		return a_namesExplosion || (a_flags & FLAG_EXPLOSION) != 0;
 	}
 
-	// Whether a launch is swapped: a stand-in's or a copy's (a_puppet), of a record that goes off. Anything else is the
-	// engine's as before: our player's and our NPCs' shots, a flamer's stream from a stand-in (hurts nobody, Puppets'
-	// zero damage multiplier), a trap's.
-	constexpr bool Swaps(bool a_puppet, std::uint32_t a_flags, bool a_namesExplosion)
+	// Whether a record is a plain trail: a bullet or a beam (a motion type of none, missile or beam), not hitscan (its hit
+	// may be settled inside the launch, before the made projectile's damage is zeroed). Shared with
+	// AttackKind::ShotReplay, which launches a stand-in's such shot inert.
+	constexpr bool IsPlainTrail(std::uint32_t a_flags)
 	{
-		return a_puppet && GoesOff(a_flags, a_namesExplosion);
+		return AttackKind::IsPlainTrail(a_flags);
+	}
+
+	// Whether a launch is swapped: a stand-in's or a copy's (a_puppet), of a record that goes off; or a stand-in's
+	// (a_standIn) plain bullet or beam (IsPlainTrail), so friends see a tracer or a laser fly (it is given its owner's
+	// aim, Aims, and its damage is zeroed once made). Anything else is the engine's as before: our player's and our
+	// NPCs' shots, a copy's plain shot (real, zero damage multiplier, its owner's game reports what it hits), a flamer's
+	// stream from a stand-in (hurts nobody, Puppets' zero damage multiplier), a trap's.
+	constexpr bool Swaps(bool a_puppet, bool a_standIn, std::uint32_t a_flags, bool a_namesExplosion)
+	{
+		return a_puppet && (GoesOff(a_flags, a_namesExplosion) || (a_standIn && IsPlainTrail(a_flags)));
 	}
 
 	// A rel32 from the end of an instruction at a_next to a_to, when it reaches (2 GB either way).

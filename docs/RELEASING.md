@@ -55,7 +55,7 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
 
 1. the unit tests pass (`tools/package.ps1` runs them; `xmake build` builds them with everything else);
 2. the standing set passes once on the rig in both directions (host to joiner and joiner to host): movement
-   trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, a workshop piece, the host's
+   trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, a friend's plain bullet and laser beam launched inert (the `trails` step), a workshop piece, the host's
    workbench shared with a take across a supply line, container loot, a door, an item dropped and picked up, a
    player downed and helped up, power armor in motion, the cell churn with a save reload, a VM restart and rejoin,
    fuzz on the host;

@@ -320,6 +320,21 @@ namespace MuzzleFlash
 		return false;
 	}
 
+	bool GunEnchanted(RE::Actor* a_actor)
+	{
+		const auto gun = EquippedGun(a_actor);
+		const auto instance = gun.instance ? gun.instance : gun.weapon ? &gun.weapon->weaponData : nullptr;
+		if (!instance || !instance->enchantments) {
+			return false;
+		}
+		for (const auto enchantment : *instance->enchantments) {
+			if (enchantment) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool LoadGun(RE::Actor* a_actor, std::uint32_t a_rounds)
 	{
 		auto       gun = EquippedGun(a_actor);

@@ -1387,6 +1387,43 @@ namespace DevCommands
 			return std::format("handthrowable={}", !WeaponFire::HandThrowables() ? "off" : WeaponFire::HandModelFallback() ? "model" : "on");
 		}
 
+		// trails on|off|status | trails tracer always|engine: a friend's stand-in's plain bullet or beam is launched inert so we see it
+		// fly (AttackKind::ShotReplay, InertShot::Swaps); off holds it as before. Follows bFriendShotTrails (on by default) at each
+		// start. `tracer always` sets the launch data's tracer flag on those launches, so every one is a tracer (the engine makes every
+		// tracerFrequency-th of an actor's one, InertShot::PROJECTILE_TRACER; an experiment, off at every start).
+		std::string TrailsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "tracer" && (args[1] == "always" || args[1] == "engine")) {
+				InertShots::SetForceTracer(args[1] == "always");
+			} else if (args.size() == 1 && (args[0] == "on" || args[0] == "off")) {
+				WeaponFire::SetShotTrails(args[0] == "on");
+			} else if (!(args.size() == 1 && args[0] == "status")) {
+				return "error: usage: trails on|off|status | trails tracer always|engine";
+			}
+			return std::format("trails={} inertHook={} tracer={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off", InertShots::ForceTracer() ? "always" : "engine");
+		}
+
+		// launchlog [n]: the next n (default 20, at most 200) launches of anyone's projectile written to the log in full: every field of the
+		// launch data, what the inert hook did, the projectile made and its first frames (InertShots::LogLaunches). `launchlog 0` stops it.
+		// Read-only.
+		std::string LaunchLogCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			int        n = 20;
+			if (args.size() == 1) {
+				int parsed = 0;
+				if (std::from_chars(args[0].data(), args[0].data() + args[0].size(), parsed).ec != std::errc{} || parsed < 0) {
+					return "error: usage: launchlog [n]";
+				}
+				n = std::min(parsed, 200);
+			} else if (!args.empty()) {
+				return "error: usage: launchlog [n]";
+			}
+			InertShots::LogLaunches(n);
+			return std::format("launchlog={} inertHook={}", InertShots::LaunchesToLog(), InertShots::Installed() ? "on" : "off");
+		}
+
 		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's
 		// grenade slot empty: the engine's own 3D refresh of a reference (what it rebuilds on a stand-in is
 		// not known, so it is run by hand on the rig, with `equipped` before and after). Dev only.
@@ -4173,6 +4210,8 @@ namespace DevCommands
 			Entry{ "itemmods", ItemModsCommand },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
+			Entry{ "trails", TrailsCommand },
+			Entry{ "launchlog", LaunchLogCommand },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "gate", Gate },
