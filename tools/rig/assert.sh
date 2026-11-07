@@ -70,10 +70,14 @@ warn() { record WARN "$1" "$2"; }
 RIG_BREAK_AT=${RIG_BREAK_AT:-2}
 _rig_last_signal() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {s=substr($4, 13); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
 _rig_broken_count() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
-_rig_stop() {  # _rig_stop <signal>: the run ends here, its verdict FAIL
+_rig_stop() {  # _rig_stop <signal> [why]: the run ends here, its verdict FAIL. why: a stop for a reason that isn't the rig's
 	A_RIG_STOPPED=1
-	record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
-	echo "STOP: rig broken ($1)"
+	if [ -n "$2" ]; then
+		record FAIL "run stopped: $1" "$2. The checks after this point were not made"; echo "STOP: $1: $2"
+	else
+		record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
+		echo "STOP: rig broken ($1)"
+	fi
 	declare -F crash_verdict >/dev/null && [ -n "$A_NAME" ] && crash_verdict "$A_NAME"   # a game that went down may have crashed: that is the mod's, and is said
 	a_summary
 }
@@ -83,7 +87,8 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 	return 0
 }
 # A rig fault is a check the rig could not make this time, with the rest of the rig fine: the two machines' clocks could
-# not line a trace up (a time service set one of them across it). It is recorded RIG, not FAIL: no verdict on the mod
+# not line a trace up (the VM's clock offset could not be read over ssh, which was every one on 2026-11-07 under a loaded
+# host, or a time service set a clock between a reading and the trace). It is recorded RIG, not FAIL: no verdict on the mod
 # either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
 # passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
 rig_fault() {  # rig_fault <signal: clock> <check name> <reason>

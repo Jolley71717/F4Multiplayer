@@ -921,8 +921,9 @@ namespace DevCommands
 			}
 			if (!args.empty() && args[0] == "stop") {
 				// How far the system clock moved from the run-on stamps since the start: 0, give or take a millisecond, when
-				// nothing set it. None for a trace that never started.
-				const auto step = trace.wall0 > 0.0 ? std::format(" wallStep={:.0f}", WallMs() - trace.Stamp(std::chrono::steady_clock::now())) : std::string{};
+				// nothing set it. None unless this trace is running: a stop whose start was lost would otherwise measure from
+				// an earlier trace's start (wall0 outlives a stop).
+				const auto step = trace.active && trace.wall0 > 0.0 ? std::format(" wallStep={:.0f}", WallMs() - trace.Stamp(std::chrono::steady_clock::now())) : std::string{};
 				trace.active = false;
 				const auto path = DevChannel::DevFile("F4Multiplayer_trace.csv");
 				if (path.empty()) {

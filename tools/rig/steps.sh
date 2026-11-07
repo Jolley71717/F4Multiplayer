@@ -232,7 +232,7 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # to see. Up to LOOT_CHESTS (3) are looted.
 LOOT_ITEM=0001F276; LOOT_N=7; LOOT_CHESTS=${LOOT_CHESTS:-3}
 _loot() {
-	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl how k0 k1 lost="" takehow="" keep
+	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl how k0 k1 k2="" kr takehow=""
 	: > "$A_OUT/looted.txt"
 	cl=$(clear_menus vm) || { fail "loot: set-up: no menu open in the VM's game before looting" "$cl"; return; }
 	[ -n "$cl" ] && echo "closed in the VM's game before looting: $cl" >> "$A_OUT/looted.txt"
@@ -261,22 +261,20 @@ _loot() {
 		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
 		# R (take all) also closes the menu: a Tab after it opens the Pip-Boy, and every activate after that opens nothing
 		# (2026-11-01: one chest looted, then each one after it "opened no container menu"). Tab only while the menu is still up.
-		# R is pressed once the menu has been up a second (its movie takes no input while it loads), and pressed again only when
-		# it provably never reached the game: no keyboard message reached the game's window (`mousedev` keys=, the window's raw
-		# input; Windows hands it only to the window in front). The 0.13.2 soak's two lost takes (2026-11-07) left no trace of which,
-		# and a blind second R would hide a take the game got and the mod lost. An R that reached the window with the menu still
-		# up is the game's answer: no second press, and the check says so.
-		menu_up_for vm ContainerMenu 1 4; how=""
-		for i in 1 2 3; do
-			vm focus >/dev/null; k0=$(keys_seen vm); vm "key 0x52 100" >/dev/null; sleep 1.5
-			if ! menu_open vm ContainerMenu 0; then how="R $i: the menu closed"; break; fi
-			k1=$(keys_seen vm)
-			if ! is_int "$k0" || ! is_int "$k1"; then how="R $i: the menu stayed up (keyboard messages unread: '$k0' -> '$k1')"; break; fi
-			if [ "$k1" -gt "$k0" ]; then how="R $i reached the game's window (keyboard messages $k0 -> $k1) and the menu stayed up"; break; fi
-			how="R $i never reached the game's window (keyboard messages $k0 -> $k1; $(dc vm focus | grep -oE '^front=[a-z]+'))"; echo "$c: $how: pressed again" >> "$A_OUT/looted.txt"
-			[ $i = 3 ] && { lost="$lost $c"; how="R never reached the game's window in 3 presses"; }
-		done
-		echo "$c: $how" >> "$A_OUT/looted.txt"; [ -n "$how" ] && takehow="$takehow $c: $how;"
+		# R is pressed ONCE, once the menu has been up a second (its movie takes no input while it loads). A press that leaves the
+		# menu up fails the take as it always has: no second press. The 0.13.2 soak's two lost takes (2026-11-07) left no trace of
+		# whether R reached the game, so each press is now logged with what would tell: the window in front as the key went
+		# (`key`'s front=), the keyboard messages the game's window took off its queue (`mousedev` keys=: its raw input, which
+		# Windows hands only to the window in front) before, 1.5 s after and 3.5 s after (a late rise is a late press, not a lost
+		# one), and the input tally (`focus`: a press dropped because the game couldn't be brought to the front is counted there).
+		# A resend gated on "never reached the game" waits until those counts are seen to be trustworthy (PR 332's review).
+		menu_up_for vm ContainerMenu 1 4
+		vm focus >/dev/null; k0=$(keys_seen vm); kr=$(vm "key 0x52 100" | grep -oE 'front=[a-z]+'); sleep 1.5
+		k1=$(keys_seen vm)
+		if ! menu_open vm ContainerMenu 0; then how="R: the menu closed"
+		else sleep 2; k2=$(keys_seen vm); how="R: the menu stayed up"; fi
+		how="$how (keys $k0 -> $k1${k2:+ -> $k2}; key $kr; $(dc vm focus | grep -oE 'input: .*' | cut -c1-160))"; k2=""
+		echo "$c: $how" >> "$A_OUT/looted.txt"; takehow="$takehow $c: $how;"
 		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
 		cl=$(clear_menus vm); [ -n "$cl" ] && echo "$c: closed after the take: $cl" >> "$A_OUT/looted.txt"
 		va=$(vm "contents $c"); if ! contents_ok "$va"; then unread="$unread $c"; elif has_items "$va"; then notaken="$notaken $c"; fi
@@ -285,7 +283,6 @@ _loot() {
 	sleep 5
 	while read -r c _; do
 		[ -n "$c" ] || continue
-		case " $lost " in *" $c "*) continue;; esac   # R never reached the VM's game there: nothing was taken, nothing to see
 		vb=$(sed -n "s/^$c host .* | vm //p" "$A_OUT/looted.txt" | head -1); hb=$(sed -n "s/^$c host \(.*\) | vm .*/\1/p" "$A_OUT/looted.txt" | head -1)
 		ha=$(host "contents $c"); echo "$c host after: $ha" >> "$A_OUT/looted.txt"
 		contents_ok "$ha" || { hunread="$hunread $c"; continue; }   # no reading of the host's copy: nothing about it is known
@@ -300,11 +297,6 @@ _loot() {
 	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
 	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice, or known to open by a script of its own)"
 	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no chest within 2500 u could be stocked in both games and opened (reasons in looted.txt): nothing was looted (inconclusive)"; return; fi
-	# A chest whose R never reached the VM's game (three presses) is the rig's dead input, not a take that failed
-	if [ -n "$lost" ]; then
-		keep=""; for c in $notaken; do case " $lost " in *" $c "*) ;; *) keep="$keep $c";; esac; done; notaken=$keep
-		rig_broken input "loot: the VM's take key reaches its game" "no keyboard message reached the VM game's window in three R presses at:$lost (it was brought to the front before each; looted.txt)"
-	fi
 	if [ -n "$unread" ]; then fail "loot: VM takes all from $chests chest(s) in the container menu" "the VM's contents after the take could not be read for:$unread${notaken:+; still holding items:$notaken}"
 	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen; the presses:$takehow)"; fi
 	if [ -n "$hunread" ]; then fail "loot: the VM's takes reach the host's chests" "the host's contents after the takes could not be read for:$hunread (looted.txt): nothing is known of those"
@@ -581,9 +573,10 @@ step_pa() {
 	# readings agree: a forced resync before every trace was what let the VM's second time source set it 1.9 s ahead). A reading
 	# of -103 between two of -12 (2026-11-01) was this side stalling through a whole read, not the VM's clock: trace.sh offset
 	# takes a reading only once enough of its lines came through with no stall, and says unknown otherwise. A reading can come
-	# back empty (an ssh hiccup, 2026-11-05: before '', after -13): up to three tries, 2 s apart. Offsets that can't line the
-	# traces up are the rig's: a rig fault, not a failure.
-	_offset() { local o i; for i in 1 2 3; do o=$(bash "$RIG/trace.sh" offset 2>/dev/null); is_num "$o" && break; sleep 2; done; echo "$o"; }
+	# back empty (an ssh hiccup, 2026-11-05: before '', after -13; under a loaded host, 2026-11-07): trace.sh offset tries up to
+	# CLOCK_TRIES (4) times, 3 s apart, a measurement only. Offsets that can't line the traces up are the rig's:
+	# a rig fault, not a failure.
+	_offset() { local o; o=$(bash "$RIG/trace.sh" offset 2>/dev/null); is_num "$o" && echo "$o"; }
 	bash "$RIG/trace.sh" clock >/dev/null 2>&1; clk0=$(_offset)
 	did=$(dcf $d 'net status' id)
 	bash "$RIG/dcfast.sh" both "trace start 20" >/dev/null 2>&1; dc $d focus >/dev/null; sleep 0.3
@@ -1075,9 +1068,11 @@ step_churn() {
 		# the run was stopped by hand, and the verdict said only "interrupted".
 		case "$a" in *DOWN*) downs=$((downs + 1)); down_run=$((down_run + 1));; *) down_run=0;; esac
 		if [ "$down_run" -ge 2 ]; then
-			# the run ends here: every step after it would fail on the missing game (_rig_stop reads the crash logs and names a crash)
+			# the run ends here: every step after it would fail on the missing game (_rig_stop reads the crash logs and names a crash).
+			# A game gone mid-churn is most likely the mod's (a crash or a hang), so it is a plain FAIL, not "rig broken".
 			expect_zero "churn: hops after which a game was down" "$downs"
-			rig_broken game "churn: both games up" "$a after two hops in a row: the churn stopped"; [ -z "$A_RIG_STOPPED" ] && _rig_stop game; return
+			fail "churn: both games up" "$a after two hops in a row: a game went down (a crash or a hang); the churn stopped"
+			[ -z "$A_RIG_STOPPED" ] && _rig_stop "a game went down in the churn" "$a after two hops in a row (a crash or a hang: the crash check below says which)"; return
 		fi
 		i=$((i + 1))
 	done

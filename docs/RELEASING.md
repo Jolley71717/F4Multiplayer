@@ -68,7 +68,8 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
 against a threshold (movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe,
 reconnect, `perf`), the plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash
 logs; its exit code is the number of failed checks. A check the rig could not make (the two machines' clocks could not
-line a trace up: a time service set one across it) is a rig fault, listed as RIG and never a failure of the mod: a soak
+line a trace up: the VM's clock offset could not be read over ssh, or a clock was set between a reading and the trace) is
+a rig fault, listed as RIG and never a failure of the mod: a soak
 that made and passed that check in another round still passes, and one that never made it ends `VERDICT: RIG` with a
 non-zero exit, to be run again. The steps for what players do together (bench, loot, doors, drops,
 downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
