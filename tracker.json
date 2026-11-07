@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T04:24:41+00:00",
+ "updated": "2026-11-07T07:26:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -554,9 +554,9 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
+   "stage": 2,
    "note": "Fix in PR: the camera's way back no longer loops after a second down",
-   "pr": 301
+   "pr": 322
   },
   {
    "id": "b3l8",
@@ -613,6 +613,14 @@
    "stage": 7,
    "note": "",
    "pr": 253
+  },
+  {
+   "id": "br7k",
+   "title": "After a joiner bleeds out, their game may fail to load the newest save (main menu on 0.13.1, loading screen hung 4+ min on the PR 322 build)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "briz",
@@ -896,8 +904,9 @@
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
    "priority": 1,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 321
   },
   {
    "id": "gkz8",
