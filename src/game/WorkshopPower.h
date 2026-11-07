@@ -674,7 +674,7 @@ namespace WorkshopPower
 		// many (MAX_REDRAWS), and it is let be.
 		bool Redrawn(Want& a_want, Clock::time_point a_now)
 		{
-			if (a_now - a_want.redrawsSince >= REDRAW_WINDOW) {
+			if (a_want.redraws == 0 || a_now - a_want.redrawsSince >= REDRAW_WINDOW) {  // a window starts with its first redraw, not at the clock's epoch
 				a_want.redrawsSince = a_now;
 				a_want.redraws = 0;
 			}
