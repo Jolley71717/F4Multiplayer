@@ -449,6 +449,28 @@ TEST("workshop power: a copy made anew just slower than it settles is shown no m
 	CHECK(mirror.RedrawsCapped() > 0);
 }
 
+TEST("workshop power: the redraw cap holds the same on a machine just booted, whose clock is near its epoch")
+{
+	// A copy's redraw window starts with its first redraw. It once started at the steady clock's epoch (a time point never set),
+	// which on a machine up less than a window let the count run on past the cap and reset at the wrong moment.
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::time_point{} + REDRAW_WINDOW / 2;  // the window's length since the epoch falls inside the run
+	mirror.Set(BUILDER, { LIGHT, true });
+	std::size_t    shows = 0;
+	std::uintptr_t model = 0x1000;
+	const auto     every = (SETTLE + REFRESH) / REFRESH;
+	for (int i = 0; i < 200; ++i, t += REFRESH) {
+		if (i % every == 0) {
+			game.drawn[{ BUILDER, LIGHT }] = model;
+			model += 0x10;
+		}
+		shows += mirror.Refresh(game, t);
+	}
+	CHECK(shows == 1u + MAX_REDRAWS);
+	CHECK(mirror.RedrawsCapped() > 0);
+}
+
 TEST("workshop power: a copy given up on is not shown once more when it settles")
 {
 	Mirror     mirror;
