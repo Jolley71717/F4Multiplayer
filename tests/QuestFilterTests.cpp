@@ -157,18 +157,18 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 88: Fallout4.esm's 44, Far Harbor's 32, Automatron's 1, Nuka-World's 11.
-	CHECK(std::size(QuestFilter::SAFE) == 88);
+	// 98: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
+	CHECK(std::size(QuestFilter::SAFE) == 98);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 44);
-	CHECK(perFile[1] == 32);
+	CHECK(perFile[0] == 46);
+	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 11);
+	CHECK(perFile[3] == 13);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
@@ -193,8 +193,6 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: a stage of Nick's companion quest
 	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
 	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout: DLC04SendKickOut, through its quest's script
-	CHECK(!QuestFilter::IsSafe(1, 0x023ACB));  // DLC03FarHarborFF01: SetOwnedByPlayer
-	CHECK(!QuestFilter::IsSafe(1, 0x00A991));  // DLC03FarHarborS01: a settler added, through the workshop's scripts
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
@@ -221,9 +219,8 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	}
 	CHECK(backstop == 3);
 	// A call through a variable typed with a quest's script is followed (DN036_Post 15 and 25: DN036QuestScript's endings
-	// set DN036 1000, which keeps nothing for each game): DN036_Post stays in, DN036 itself is out (SetEnemy at 500).
+	// set DN036 1000, which keeps nothing for each game): DN036_Post stays in (DN036 itself is in for its outcomes).
 	CHECK(QuestFilter::IsSafe(0, 0x10E695));   // DN036_Post
-	CHECK(!QuestFilter::IsSafe(0, 0x08FCED));  // DN036
 	// None that the game's targets make each player's own, no radiant, no finale (those are shared their own way).
 	for (const auto& local : QuestFilter::PER_GAME) {
 		CHECK(!QuestFilter::IsSafe(local.file, local.quest));
@@ -238,6 +235,44 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, MQ104));
 	CHECK(!QuestFilter::IsSafe(0, MS17));
 	CHECK(!QuestFilter::IsSafe(3, 0x000801));  // DLC04MQ01
+}
+
+TEST("quest filter: the quests shared for their faction or settlement outcomes are SAFE's (tools/questscan.cs ALLOW_OUTCOMES; tools/questscan.ps1 -Safe)")
+{
+	// The scan's "# outcomes shared with the story" lines: every ALLOW_OUTCOMES quest, each with objectives, SAFE.
+	const QuestFilter::Local outcomes[] = {
+		{ 0, 0x04542B },  // DN049: the robot-run shops
+		{ 0, 0x08FCED },  // DN036: Egret Tours Marina
+		{ 1, 0x004C8E },  // DLC03CoA_DialogueNucleus
+		{ 1, 0x00A991 },  // DLC03FarHarborS01
+		{ 1, 0x00AEC3 },  // DLC03FarHarborS02: Echo Lake Lumber
+		{ 1, 0x013F3A },  // DLC03Acadia_Institute
+		{ 1, 0x023ACB },  // DLC03FarHarborFF01: Dalton Farm
+		{ 1, 0x02C687 },  // DLC03_ADV017
+		{ 3, 0x01AABF },  // DLC04DialogueSettlement: Nuka-Town's traders
+		{ 3, 0x03684F },  // DLC04_KiddieKingdomMain
+	};
+	for (const auto& quest : outcomes) {
+		CHECK(QuestFilter::IsSafe(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSilent(quest.file, quest.quest));
+	}
+	// Read and left out: the Hubologists' (their sessions are each player's: rads, the chair, donations, rank bonuses),
+	// and those the rule still leaves out for a stage that starts a quest each game runs its own way.
+	CHECK(!QuestFilter::IsSafe(3, 0x00CBD0));  // DLC04DialogueHubologists
+	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: the park's power, DLC04GZNukaGalaxy
+	CHECK(!QuestFilter::IsSafe(3, 0x0243A5));  // DLC04DialogueHarvey: DLC04REObjectCT03
+	CHECK(!QuestFilter::IsSafe(3, 0x0260E2));  // DLC04SafariAdventureQuest: DLC04SafariAdventurePOST
+	// Not in ALLOW_OUTCOMES, so still left out for their faction stage: the Combat Zone, Goodneighbor's 07, the Institute's
+	// fight, Nuka-World's raider kick-out and Sierra's attacks.
+	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ
+	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07
+	CHECK(!QuestFilter::IsSafe(0, 0x174029));  // Inst307Fight
+	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout
+	CHECK(!QuestFilter::IsSafe(3, 0x035790));  // DLC04MS01SierraAttacks
+	// The objective-less ones (the kick-outs, DN084, DN117, Far Harbor's endings) are not shared yet: neither table's.
+	CHECK(!QuestFilter::IsSilent(0, 0x16FF04));  // BoSKickOut
+	CHECK(!QuestFilter::IsSilent(0, 0x082615));  // DN117
+	CHECK(!QuestFilter::IsSafe(0, 0x082615));
 }
 
 TEST("quest filter: the objective-less quests sQuests = safe shares are the rule's less those denied, sorted, none shared another way (tools/questscan.ps1 -Safe)")

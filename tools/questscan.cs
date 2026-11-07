@@ -698,6 +698,9 @@ public static class MoveScan
         // Said of each stage a function sets or starts (file, quest, stage; its own quest's too) before it is walked: what
         // is wrong with the stage itself, or null (the walk goes on into it). Not said of the stage Stage was asked about.
         public Func<int, GearScan.Quest, int, string> Reaches;
+        // Whether a script function called is walked into (by its name): SafeScan's walk of an ALLOW_OUTCOMES quest does not
+        // go into what a settlement's own scripts do once it is given or taken (SetOwnedByPlayer) or gains or loses a settler.
+        public Func<string, bool> Enter = name => true;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -742,7 +745,7 @@ public static class MoveScan
                 if (i.Op == 25) { type = i.Args[0]; name = i.Args[1]; }
                 else if (i.Op == 24) { Script sc; type = scripts.TryGetValue(f.Obj, out sc) ? sc.Obj.Parent : null; name = i.Args[0]; }
                 else { type = TypeOf(f, i.Args[1]); name = i.Args[0]; }
-                if (type == null) continue;
+                if (type == null || !Enter(name)) continue;
                 string owner;
                 var g = Find(type, name, out owner);
                 if (g == null) continue;
@@ -1668,23 +1671,28 @@ public static class RuleScan
                 foreach (var stage in stages.Keys.OrderBy(k => k))
                 {
                     var moves = MoveScan.StageMoves(file, quest, stage);
+                    // a SAFE or SILENT quest's stage that makes the player a faction's enemy (SafeScan.StageHostile): judged as
+                    // one that moves the player (kMoves, the maintainer's choice): it reaches a friend only near the one who did it
+                    var enemy = shared == "shared (safe)" || shared == "shared (silent)" ? SafeScan.StageHostile(file, quest, stage) : null;
                     var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
-                    if (moves == null && takes.Count == 0 && wait == 0) continue;
+                    if (moves == null && enemy == null && takes.Count == 0 && wait == 0) continue;
                     if (stage == 0 && !quest.Startup.Contains(0))
                     {
-                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
+                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? (enemy != null ? "the player an enemy: " + enemy : "waits " + wait)));
                         continue;
                     }
                     var flags = new List<string>();
-                    if (moves != null) flags.Add("kMoves");
+                    if (moves != null || enemy != null) flags.Add("kMoves");
                     if (takes.Count > 0) flags.Add("kPays");
                     var what = new List<string>();
-                    if (moves != null)
+                    foreach (var chain in new[] { moves, enemy })
                     {
-                        var hops = moves.Split(new[] { " -> " }, StringSplitOptions.None);
+                        if (chain == null) continue;
+                        var hops = chain.Split(new[] { " -> " }, StringSplitOptions.None);
                         var effect = hops[hops.Length - 1];
                         effect = effect.Substring(effect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
+                        if (chain == enemy) effect = "the player an enemy: " + effect;
                         what.Add(hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect);
                     }
                     if (takes.Count > 0) what.Add(string.Join(" ", takes.Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").Distinct().ToArray()));
@@ -1822,8 +1830,11 @@ public static class SafeScan
     // player (FACTIONS, or adding to or taking out of a PlayerEnemy or PlayerAlly faction); a settlement's owner
     // (SetOwnedByPlayer); emptying the player's inventory (RemoveAllItems, UnequipAll on the player); or a story event
     // (SendStoryEvent: the quests the story manager starts from it, DN121_ChangeLocation's Minutemen request for one, are
-    // started in each game with that game's own picks, and are not followed).
-    static string Direct(List<GearScan.Instr> a_code)
+    // started in each game with that game's own picks, and are not followed). a_outcomes false: a faction's hostility and a
+    // settlement's owner are not looked for (the walk of an ALLOW_OUTCOMES quest, for what else its stages do).
+    static string Direct(List<GearScan.Instr> a_code) { return Direct(a_code, true); }
+
+    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes)
     {
         var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Func<string, bool> player = v => players.Contains(v) || Bare(v).IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -1839,12 +1850,12 @@ public static class SafeScan
             var m = i.Op == 25 ? i.Args[1] : i.Args[0];
             if (i.Op == 25 && Is(i.Args[0], "game") && Is(m, "GetPlayer")) { players.Add(i.Args[2]); continue; }
             if (COMPANIONS.Contains(m)) return "companion " + m;
-            if (FACTIONS.Contains(m)) return "factions " + m;
-            if (SETTLEMENTS.Contains(m)) return "settlement " + m + (i.Args.Count > 3 && Is(i.Args[3], "False") ? "(False)" : "");  // (False): the settlement is taken from the player
+            if (FACTIONS.Contains(m) && a_outcomes) return "factions " + m;
+            if (SETTLEMENTS.Contains(m) && a_outcomes) return "settlement " + m + (i.Args.Count > 3 && Is(i.Args[3], "False") ? "(False)" : "");  // (False): the settlement is taken from the player
             if (Is(m, "SendStoryEvent") || Is(m, "SendStoryEventAndWait")) return "story " + m + " " + Bare(i.Op == 25 ? i.Args[0] : i.Args[1]);
             if (m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
             if (i.Op == 25) continue;
-            if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0))
+            if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0) && a_outcomes)
                 return "factions " + m + " " + Bare(i.Args[3]);
             if ((Is(m, "GetReference") || Is(m, "GetRef") || Is(m, "GetActorRef") || Is(m, "GetActorReference")) && Bare(i.Args[1]).IndexOf("Player", StringComparison.OrdinalIgnoreCase) >= 0) { players.Add(i.Args[2]); continue; }
             if ((Is(m, "RemoveAllItems") || Is(m, "UnequipAll")) && player(i.Args[1])) return "empties " + m;
@@ -1888,9 +1899,79 @@ public static class SafeScan
     // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
     // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
     static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
+    // The same walk for an ALLOW_OUTCOMES quest: what its stages do but turn a faction hostile or friendly or give or take
+    // a settlement (a companion, affinity, the inventory emptied, a story event or a quest each game runs its own way still
+    // leave it out). It does not go into the workshop scripts a settlement given or taken (SetOwnedByPlayer) or a settler
+    // added or removed (SETTLERS) runs: that is each game's workshop keeping its own settlement, as it does for any the
+    // player owns there (the radio beacon's story event deep in WorkshopParentScript.UpdateRadioObject, which unassigning
+    // a settler reaches only for a radio beacon assigned to them).
+    static readonly HashSet<string> SETTLERS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
+    static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
+        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
+    // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
+    // settlement given or taken, or a settler added or removed (the first found).
+    static readonly MoveScan.Walk outcome = new MoveScan.Walk {
+        Direct = c => {
+            var d = Direct(c, true);
+            if (d != null && (d.StartsWith("factions ") || d.StartsWith("settlement "))) return d;
+            var s = c.FirstOrDefault(i => i.Op == 23 && SETTLERS.Contains(i.Args[0]));
+            return s == null ? null : "settlement " + s.Args[0];
+        },
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
+
+    // The quests whose stages' faction or settlement outcomes are shared with the story, by the maintainer's choice
+    // (2026-11-06): with sQuests = safe one player's outcome is both players', as the shared story's kick-outs already
+    // are; with it off each keeps their own. By editor ID, with why, each read in its stage fragments (the stages each
+    // flagged one sets too). Why lets a stage that does only that through (rest); the rest of the rule holds for them,
+    // and RuleScan makes a stage that turns a faction on the player kMoves (StageRules.h). These are the ones
+    // with objectives (SAFE). Read and left out: DLC04DialogueHubologists (its other stages are each player's own
+    // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
+    // bonus spells), and three the rule still leaves out for another stage, a quest each game runs its own way it
+    // starts (DLC04MQ05's park power and clean-up, DLC04DialogueHarvey 1000's DLC04REObjectCT03,
+    // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST). The objective-less ones (SILENT's: DN084, DN117, the
+    // kick-outs, Far Harbor's endings) come in a later change.
+    static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DN036", "Egret Tours Marina: 500 turns Phyllis on the player, 550/600/700 (each ending) give the player the marina's workshop" },
+        { "DN049", "the robot-run shops: each shop's robots turned on the player (x49), made peaceful (x50), shut down (x55) or destroyed (x56) by the player's choices; 711's pre-war money is kPays" },
+        { "DLC03FarHarborS01", "Uncle Ken's settlement: 500 adds its two settlers to the workshop (and gives its reward), 425 takes Ken out of it" },
+        { "DLC03FarHarborS02", "Echo Lake Lumber: 210 turns Malcolm on the player, 425 gives the player the workshop with its settlers" },
+        { "DLC03FarHarborFF01", "Dalton Farm: 220 gives the player the workshop with its settlers" },
+        { "DLC03Acadia_Institute", "the Institute's move on Acadia: 200 sets DLC03AcadiaDefense 100, Acadia turned on the player (and the story's DLC03MQ05 8990)" },
+        { "DLC03_ADV017", "100 makes Erikson and his dogs the player's allies" },
+        { "DLC03CoA_DialogueNucleus", "the Nucleus's talks: 70 sets DLC03CoA_Kickout 700, the Children of Atom turned on the player, as the story's kick-outs" },
+        { "DLC04_KiddieKingdomMain", "Kiddie Kingdom: 740 starts the fight with Oswald (his faction on the player); 600 and 700 run the quest script's one-time Init, which sets the hostile ghouls on the player as they are anyway" },
+        { "DLC04DialogueSettlement", "Nuka-Town's traders: 700 makes the traders and visitors the hub raiders' enemies and the player's allies (the raiders' end); 110's bloodworm meat is kPays" },
+    };
 
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
     static readonly Dictionary<Tuple<int, uint>, string> found = new Dictionary<Tuple<int, uint>, string>();
+
+    // A stage of a SAFE or SILENT quest that makes the player an enemy of a faction (SetPlayerEnemy, SetEnemy with the
+    // player's faction and neither side a friend to the other, or someone added to a PlayerEnemy faction), itself or
+    // through what it calls and sets, as -Moves walks: RuleScan gives it kMoves (StageRules.h), so a friend's is set here
+    // only live with the friend near, as a stage that moves the player.
+    // Faction.SetEnemy(akOther, abSelfIsNeutralToOther, abOtherIsNeutralToSelf): with either True that side is made neutral
+    // instead (DN049's robots made peaceful again: SetEnemy(PlayerFaction, True, False), then StopCombat).
+    static string Hostile(List<GearScan.Instr> a_code)
+    {
+        foreach (var i in a_code)
+        {
+            if (i.Op != 23) continue;
+            var m = i.Args[0];
+            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) return "SetPlayerEnemy " + Bare(i.Args[1]);
+            if (Is(m, "SetEnemy") && !i.Args.Skip(4).Any(a => Is(a, "True"))
+                && i.Args.Where((a, k) => k == 1 || k == 3).Any(a => Bare(a).IndexOf("PlayerFaction", StringComparison.OrdinalIgnoreCase) >= 0))
+                return "SetEnemy " + Bare(i.Args[1]) + " " + (i.Args.Count > 3 ? Bare(i.Args[3]) : "");
+            if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) return "AddToFaction " + Bare(i.Args[3]);
+        }
+        return null;
+    }
+
+    static readonly MoveScan.Walk hostile = new MoveScan.Walk { Direct = Hostile };
+
+    // How a stage makes the player a faction's enemy (the first way found), or null.
+    public static string StageHostile(int a_file, GearScan.Quest a_quest, int a_stage) { return hostile.Stage(a_file, a_quest, a_stage); }
 
     // Why a quest is not in SAFE ("" it is), as the rule reads it in order; "no objectives" for one that passes all else.
     static string Why(GearScan.Quest q, int a_file, HashSet<Tuple<int, uint>> a_radiants, HashSet<Tuple<int, uint>> a_perGame)
@@ -1905,9 +1986,10 @@ public static class SafeScan
         var aliases = new Dictionary<int, GearScan.Alias>();
         foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
         if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
-            var each = walk.Stage(a_file, q, stage);
+            var each = (outcomes ? rest : walk).Stage(a_file, q, stage);
             if (each == null) continue;
             found[Tuple.Create(a_file, local)] = stage + " " + each;
             var last = each.Substring(each.LastIndexOf(": ", StringComparison.Ordinal) + 2);
@@ -2117,6 +2199,39 @@ public static class SafeScan
         return a_file == 0 && ((a_quest == 0x01CC2A && a_stage < 10) || a_quest == 0x01ED62);
     }
 
+    // The ALLOW_OUTCOMES quests: each with its verdict (SAFE, SILENT or why it is still left out), why it is allowed, and
+    // its stages that turn a faction hostile or friendly or give or take a settlement, with what each does (the effect at
+    // the end of the walk's chain, and the first hop when it is reached through a call or another stage).
+    static string Outcomes(SortedDictionary<Tuple<int, uint>, string> a_verdicts)
+    {
+        var sb = new StringBuilder();
+        var lines = new List<string>();
+        int safe = 0, silent = 0;
+        foreach (var kv in a_verdicts)
+        {
+            var q = MoveScan.perFile[kv.Key.Item1][kv.Key.Item2];
+            string why;
+            if (!ALLOW_OUTCOMES.TryGetValue(q.Edid, out why)) continue;
+            if (kv.Value == "") safe++;
+            if (kv.Value == "silent") silent++;
+            var what = new List<string>();
+            foreach (var stage in MoveScan.Fragments(kv.Key.Item1, q.Id).Keys.OrderBy(k => k))
+            {
+                var each = outcome.Stage(kv.Key.Item1, q, stage);
+                if (each == null) continue;
+                var hops = each.Split(new[] { " -> " }, StringSplitOptions.None);
+                var effect = hops[hops.Length - 1];
+                effect = effect.Substring(effect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
+                what.Add(stage + " " + effect + (hops.Length > 1 ? " (by " + hops[0] + ")" : ""));
+            }
+            lines.Add(string.Format("#   {0} 0x{1:X6} {2} ({3}): {4}; {5}", kv.Key.Item1, kv.Key.Item2, q.Edid,
+                kv.Value == "" ? "SAFE" : kv.Value == "silent" ? "SILENT" : "left out, " + kv.Value, why, string.Join(", ", what.ToArray())));
+        }
+        sb.AppendLine(string.Format("# outcomes shared with the story (ALLOW_OUTCOMES): {0} quests, {1} SAFE, {2} SILENT", lines.Count, safe, silent));
+        foreach (var l in lines) sb.AppendLine(l);
+        return sb.ToString();
+    }
+
     // SAFE's rows, SILENT's, then what was left out and why.
     public static string Run(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
@@ -2143,6 +2258,7 @@ public static class SafeScan
             sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}", kv.Key.Item1, kv.Key.Item2, q.Edid));
         }
         sb.AppendLine(string.Format("# {0} quests ({1}), {2} stages", QuestScan.Silent.Count, string.Join(", ", GearScan.MASTERS.Select((m, i) => m.Esm + " " + byFile[i]).ToArray()), stages));
+        sb.Append(Outcomes(verdicts));
         foreach (var kv in verdicts.Where(kv => kv.Value.StartsWith("denied by hand") || kv.Value.StartsWith(STOPS_EARLY)))
             sb.AppendLine(string.Format("# {0}: {1} 0x{2:X6} {3}", kv.Value, kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
         foreach (var kv in verdicts.Where(kv => kv.Value == "denied (DENIED)"))
