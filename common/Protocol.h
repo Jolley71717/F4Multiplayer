@@ -2180,7 +2180,9 @@ namespace Protocol
 		}
 
 		[[nodiscard]] bool Ok() const { return !failed; }
-		[[nodiscard]] bool AtEnd() const { return offset == data.size(); }
+		// Everything read, and all of it there: a read that ran past the end leaves the offset short of it, except one
+		// that began exactly at the end, which read nothing and must not pass as the end reached.
+		[[nodiscard]] bool AtEnd() const { return !failed && offset == data.size(); }
 
 	private:
 		template <class T>

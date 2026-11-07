@@ -2,6 +2,10 @@
 
 #include "game/OwnGear.h"
 
+#include <chrono>
+#include <set>
+#include <string_view>
+
 namespace
 {
 	using OwnGear::Change;
@@ -289,5 +293,32 @@ TEST("own gear: a gift's copy goes in and out of a container only, and our playe
 	CHECK(OwnGear::Name(Change::kGiftTake) == "giftTake");
 	for (const auto change : ALL) {
 		CHECK(OwnGear::Judge(change, Player()) == Verdict::kOurPlayer);
+	}
+}
+
+TEST("own gear: every change and every verdict has a log name of its own, so a refusal's line names what was refused and why")
+{
+	std::set<std::string_view> changeNames;
+	for (std::size_t i = 0; i < static_cast<std::size_t>(Change::kCount); ++i) {
+		const auto name = OwnGear::Name(static_cast<Change>(i));
+		CHECK(name != "?");
+		CHECK(changeNames.insert(name).second);
+	}
+	CHECK(OwnGear::Name(Change::kCount) == "?");
+	std::set<std::string_view> verdictNames;
+	for (std::size_t i = 0; i < static_cast<std::size_t>(Verdict::kCount); ++i) {
+		const auto name = OwnGear::Name(static_cast<Verdict>(i));
+		CHECK(name != "?");
+		CHECK(verdictNames.insert(name).second);
+	}
+	CHECK(OwnGear::Name(Verdict::kCount) == "?");
+	// A refusal is kept and tried again only while the item is in no cell, and only for so long.
+	CHECK(OwnGear::TryAgain(Verdict::kNotPlaced, std::chrono::seconds(0)));
+	CHECK(OwnGear::TryAgain(Verdict::kNotPlaced, OwnGear::PICKUP_WAIT - std::chrono::seconds(1)));
+	CHECK(!OwnGear::TryAgain(Verdict::kNotPlaced, OwnGear::PICKUP_WAIT));
+	for (std::size_t i = 0; i < static_cast<std::size_t>(Verdict::kCount); ++i) {
+		if (static_cast<Verdict>(i) != Verdict::kNotPlaced) {
+			CHECK(!OwnGear::TryAgain(static_cast<Verdict>(i), std::chrono::seconds(0)));
+		}
 	}
 }
