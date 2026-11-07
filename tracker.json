@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T17:01:45+00:00",
+ "updated": "2026-11-07T17:45:13+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1244,8 +1244,8 @@
    "kind": "feature",
    "priority": 2,
    "stage": 2,
-   "note": "106 more quests and 4 DLC radiants merged for 0.14.0; next steps queued",
-   "pr": 318
+   "note": "10 more story-outcome quests in review (PR 326); creature pairing (step C) in rig test",
+   "pr": 326
   },
   {
    "id": "lzyx",
@@ -1559,6 +1559,14 @@
    "stage": 5,
    "note": "",
    "pr": 324
+  },
+  {
+   "id": "rfba",
+   "title": "Crash on a console cell jump into a location (seen once in a long soak)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Seen once in the 0.12.0 soak; the mod was not on the crash's stack"
   },
   {
    "id": "rfcp",
