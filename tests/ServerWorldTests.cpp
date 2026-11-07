@@ -979,12 +979,18 @@ TEST("server world: door states are relayed when they change, and the latest is 
 	auto states = Decoded(Received(f, 2), MT::kRefStateChanged, Protocol::DecodeRefState);
 	REQUIRE(states.size() == 1);
 	CHECK(states[0].SameState(RS{ DOOR, RS::kYes, RS::kNo }));
-	CHECK(Count(Received(f, 1), MT::kRefStateChanged) == 0);
+	CHECK(states[0].playerId == 1);
+	// The reporter hears the session's answer, as nobody's: what it kept (its own report, here).
+	const auto echoed = Decoded(Received(f, 1), MT::kRefStateChanged, Protocol::DecodeRefState);
+	REQUIRE(echoed.size() == 1);
+	CHECK(echoed[0].SameState(RS{ DOOR, RS::kYes, RS::kNo }));
+	CHECK(echoed[0].playerId == 0);
 
-	// No change: nothing to pass on.
+	// No change: nothing to pass on, and no answer.
 	f.fake->Deliver(1, Door(DOOR, RS::kYes, RS::kNo));
 	f.fake->Deliver(1, Door(RUNTIME, RS::kYes, RS::kNo));
 	CHECK(Count(Received(f, 2), MT::kRefStateChanged) == 0);
+	CHECK(Count(Received(f, 1), MT::kRefStateChanged) == 0);
 
 	f.fake->Deliver(2, Door(DOOR, RS::kNo, RS::kYes));
 	states = Decoded(Received(f, 1), MT::kRefStateChanged, Protocol::DecodeRefState);

@@ -274,6 +274,29 @@ TEST("terminal rules: a joiner is not told a stale choice, nor one whose maker l
 	CHECK(Choices(Received(f, 4)).empty());  // past its life
 }
 
+TEST("terminal rules: a new session (another load order after everyone left) forgets the old one's choices, though their maker comes back under their old number")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice", 0xA11CE);
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Protocol::Encode(TerminalChoice{ 0, STATE, 1 }, MT::kReportTerminalChoice));
+	REQUIRE(Choices(Received(f, 2)).size() == 1);
+	f.fake->Drop(2);
+	f.fake->Drop(1);
+
+	auto hello = Fixture::MakeHello("Alice", 0xA11CE);
+	hello.contentHash = 0x9999;
+	const auto back = f.Join(3, hello);
+	REQUIRE(back);
+	CHECK(back->playerId == alice);  // a known identity keeps its number across sessions
+	CHECK(f.Logged("load order changed"));
+	auto bobAgain = Fixture::MakeHello("Bob");
+	bobAgain.contentHash = 0x9999;
+	REQUIRE(f.Join(4, bobAgain));
+	CHECK(Choices(Received(f, 4)).empty());  // the new session's terminals are untouched
+}
+
 TEST("terminal rules: RaceState 0 is a running race, 1 a stopped one, and no reading none")
 {
 	using TerminalRules::RaceRunning;
