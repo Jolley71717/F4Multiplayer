@@ -144,6 +144,12 @@ namespace WeaponFire
 	[[nodiscard]] bool HandThrowables();
 	[[nodiscard]] bool HandModelFallback();
 
+	// A stand-in's plain bullet or beam is launched inert, so friends see its tracer or its laser fly (AttackKind::ShotReplay,
+	// InertShot::Swaps): set from bFriendShotTrails at load, and by the dev's trails on|off. Off, it is held, as before.
+	// Read on the main thread.
+	void               SetShotTrails(bool a_on);
+	[[nodiscard]] bool ShotTrails();
+
 	// Takes the model out of this actor's hand: called before the actor is deleted.
 	void DropHandThrowable(std::uint32_t a_actorFormId);
 

@@ -21,16 +21,37 @@ TEST("InertShot: the copy of a projectile record keeps its motion and loses its 
 	CHECK(!GoesOff(InertFlags(missile), false));
 }
 
-TEST("InertShot: a stand-in's or a copy's launch of a record that goes off is swapped, nothing else is")
+TEST("InertShot: a stand-in's or a copy's launch of a record that goes off is swapped, and so is a stand-in's plain bullet or beam, nothing else")
 {
 	using namespace InertShot;
-	CHECK(Swaps(true, 0x10000 | FLAG_EXPLOSION, true));   // a missile
-	CHECK(Swaps(true, 0x10000, true));                    // a record naming an explosion without the flag
-	CHECK(Swaps(true, 0x40000 | FLAG_EXPLOSION, false));  // a beam with the flag alone
-	CHECK(!Swaps(true, 0x10000, false));                  // a bullet (held at the animation for a stand-in, fired for a copy)
-	CHECK(!Swaps(true, 0x80000, false));                  // a flamer's stream
-	CHECK(!Swaps(false, 0x10000 | FLAG_EXPLOSION, true));  // our player's or our NPC's missile: the engine's, watched and reported
-	CHECK(!Swaps(false, 0, false));
+	// A record that goes off: a stand-in's or a copy's alike.
+	for (const bool standIn : { true, false }) {
+		CHECK(Swaps(true, standIn, 0x10000 | FLAG_EXPLOSION, true));   // a missile
+		CHECK(Swaps(true, standIn, 0x10000, true));                    // a record naming an explosion without the flag
+		CHECK(Swaps(true, standIn, 0x40000 | FLAG_EXPLOSION, false));  // a beam with the flag alone
+		CHECK(!Swaps(true, standIn, 0x80000, false));                  // a flamer's stream
+		CHECK(!Swaps(true, standIn, 0x20000, false));                  // a lobbed one with no blast
+		CHECK(!Swaps(true, standIn, 0x400000, false));                 // a harpoon's arrow
+		CHECK(!Swaps(false, standIn, 0x10000 | FLAG_EXPLOSION, true));  // our player's or our NPC's missile: the engine's, watched and reported
+		CHECK(!Swaps(false, standIn, 0x10000, false));                  // ... and their plain bullets
+		CHECK(!Swaps(false, standIn, 0, false));
+	}
+	// A stand-in's plain bullet (the missile motion, or none set) and beam: swapped, so friends see the tracer and the beam.
+	CHECK(Swaps(true, true, 0x10000, false));
+	CHECK(Swaps(true, true, 0x40000, false));
+	CHECK(Swaps(true, true, 0, false));
+	CHECK(Swaps(true, true, 0x10000 | 0x8 | 0x80, false));  // with a muzzle flash and supersonic flags
+	// A copy's plain shot is the engine's, as before (real, a zero damage multiplier, reported by its owner's game).
+	CHECK(!Swaps(true, false, 0x10000, false));
+	CHECK(!Swaps(true, false, 0x40000, false));
+	CHECK(!Swaps(true, false, 0, false));
+	// A harpoon-like record (missile motion, pins limbs, can be picked up) is plain too; its copy loses both.
+	CHECK(Swaps(true, true, 0x10000 | FLAG_PINS_LIMBS | FLAG_CAN_PICKUP, false));
+	CHECK(InertFlags(0x10000 | FLAG_PINS_LIMBS | FLAG_CAN_PICKUP) == 0x10000);
+	// Only the motion types are plain ones.
+	CHECK(IsPlainTrail(0) && IsPlainTrail(0x10000) && IsPlainTrail(0x40000));
+	CHECK(!IsPlainTrail(0x20000) && !IsPlainTrail(0x80000) && !IsPlainTrail(0x100000) && !IsPlainTrail(0x200000) && !IsPlainTrail(0x400000));
+	CHECK(!IsPlainTrail(0x10000 | 0x40000));  // two motion bits: not a record we know
 }
 
 TEST("InertShot: the hook goes in only where Projectile::Launch begins as 1.11.240 has it")

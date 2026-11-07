@@ -8,6 +8,8 @@
 #include <optional>
 #include <span>
 
+#include "game/AttackKind.h"
+
 // A friend's or a mirrored NPC's shot that would go off (a missile, a mini nuke, a grenade launcher's shell, a
 // cannonball, an Explosive round, a beam with a blast) flies in our game for everyone to see, and goes off nowhere: it
 // is launched from a copy of its projectile record with no explosion, no force and nothing to pin or pick up, so the
@@ -51,12 +53,21 @@ namespace InertShot
 		return a_namesExplosion || (a_flags & FLAG_EXPLOSION) != 0;
 	}
 
-	// Whether a launch is swapped: a stand-in's or a copy's (a_puppet), of a record that goes off. Anything else is the
-	// engine's as before: our player's and our NPCs' shots, a flamer's stream from a stand-in (hurts nobody, Puppets'
-	// zero damage multiplier), a trap's.
-	constexpr bool Swaps(bool a_puppet, std::uint32_t a_flags, bool a_namesExplosion)
+	// Whether a record is a plain trail: a bullet or a beam (a motion type of none, missile or beam) that the record's
+	// flags say nothing else about here. Shared with AttackKind::ShotReplay, which launches a stand-in's such shot inert.
+	constexpr bool IsPlainTrail(std::uint32_t a_flags)
 	{
-		return a_puppet && GoesOff(a_flags, a_namesExplosion);
+		return AttackKind::IsPlainTrail(a_flags);
+	}
+
+	// Whether a launch is swapped: a stand-in's or a copy's (a_puppet), of a record that goes off; or a stand-in's
+	// (a_standIn) plain bullet or beam (IsPlainTrail), so friends see a tracer or a laser fly (it is given its owner's
+	// aim, Aims, and its damage is zeroed once made). Anything else is the engine's as before: our player's and our
+	// NPCs' shots, a copy's plain shot (real, zero damage multiplier, its owner's game reports what it hits), a flamer's
+	// stream from a stand-in (hurts nobody, Puppets' zero damage multiplier), a trap's.
+	constexpr bool Swaps(bool a_puppet, bool a_standIn, std::uint32_t a_flags, bool a_namesExplosion)
+	{
+		return a_puppet && (GoesOff(a_flags, a_namesExplosion) || (a_standIn && IsPlainTrail(a_flags)));
 	}
 
 	// A rel32 from the end of an instruction at a_next to a_to, when it reaches (2 GB either way).

@@ -16,8 +16,9 @@ namespace InertShots
 	[[nodiscard]] bool Installed();
 
 	// Makes the inert copy of a projectile record before a replayed shot needs it, on the main thread (the launch may
-	// come on another: a copy is made there too, but this is where forms are best made). Null is fine.
-	void Prepare(RE::BGSProjectile* a_base);
+	// come on another: a copy is made there too, but this is where forms are best made). Null is fine. A record that goes off
+	// is copied for anyone; a plain bullet or beam only for a stand-in (a_standIn: its shot flies, InertShot::Swaps).
+	void Prepare(RE::BGSProjectile* a_base, bool a_standIn = false);
 
 	// Whether an inert copy of this record exists (dev `proj`).
 	[[nodiscard]] bool HasCopy(RE::BGSProjectile* a_base);
@@ -41,7 +42,7 @@ namespace InertShots
 	void ExpectSpawned(RE::BGSProjectile* a_spawn);
 
 	// Counters for `net status`: launches seen, swapped, refused (no copy to be had), copies made, launches off the
-	// main thread, shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, and stand-ins'
+	// main thread, stand-ins' plain bullets and beams swapped (trails=), shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, and stand-ins'
 	// launches of their own record given their friend's aim.
 	[[nodiscard]] std::string Describe();
 }

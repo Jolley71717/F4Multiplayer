@@ -145,6 +145,8 @@ namespace WeaponFire
 		std::atomic<std::uint32_t>                                               firesLogged{ 0 };
 		std::uint32_t                                                            firesLetGo = 0;  // stand-ins' shots fired as before: a flame, a harpoon
 		std::uint32_t                                                            firesInert = 0;  // stand-ins' and copies' shots launched inert: a missile, a shell, an explosive round
+		std::atomic<bool>                                                        shotTrailsOn{ true };  // bFriendShotTrails, dev `trails`: a stand-in's plain bullet or beam flies inert (AttackKind::ShotReplay)
+		std::uint32_t                                                            trailsHeld = 0;        // stand-ins' plain shots held all the same: trails off, or no inert launch to give them
 
 		static_assert(AttackKind::PROJECTILE_EXPLOSION == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
 		static_assert(AttackKind::PROJECTILE_MOTION_MISSILE == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionMissile));
@@ -164,14 +166,19 @@ namespace WeaponFire
 		}
 
 		// What becomes of the stand-in's (a_standIn) or the copy's own shot of a replay (AttackKind::ShotReplay): held, the
-		// engine's as before, or launched inert (InertShots: one that would go off flies with no blast, so friends see it).
+		// engine's as before, or launched inert (InertShots: one that would go off flies with no blast, so friends see it; so does a
+		// stand-in's plain bullet or beam while the trails are on, shotTrailsOn).
 		// Main thread (PlayShot).
 		AttackKind::Fire ShotReplayOf(RE::Actor* a_actor, bool a_standIn)
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
 			const bool explodes = projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0);
-			return AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, MuzzleFlash::GunEnchantmentExplodes(a_actor),
-				InertShots::Installed());
+			const bool enchanted = MuzzleFlash::GunEnchantmentExplodes(a_actor);
+			const auto fire = AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, enchanted,
+				InertShots::Installed(), shotTrailsOn.load(std::memory_order_relaxed));
+			// A plain bullet or beam of a stand-in's that is held all the same (the trails are off, or there is no inert launch).
+			trailsHeld += a_standIn && fire == AttackKind::Fire::kHeld && projectile && !explodes && !enchanted && AttackKind::IsPlainTrail(projectile->data.flags);
+			return fire;
 		}
 
 		// A stand-in has its player's gun and nothing to fire from it: its replayed shot of a gun whose shot flies here
@@ -691,7 +698,7 @@ namespace WeaponFire
 			firesLetGo += puppet && fire == AttackKind::Fire::kFired;
 		}
 		if (fire == AttackKind::Fire::kInert) {
-			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor));  // the inert copy, made here on the main thread
+			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor), puppet);  // the inert copy, made here on the main thread
 			if (puppet) {
 				GiveShotAmmo(a_actor);
 			}
@@ -830,7 +837,7 @@ namespace WeaponFire
 	std::string Describe()
 	{
 		const auto [ledgerCounts, ledgerOpen] = LedgerCounts();
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} trailsHeld={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, trailsHeld, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -1495,6 +1502,16 @@ namespace WeaponFire
 	bool HandThrowables()
 	{
 		return handThrowablesOn.load(std::memory_order_relaxed);
+	}
+
+	bool ShotTrails()
+	{
+		return shotTrailsOn.load(std::memory_order_relaxed);
+	}
+
+	void SetShotTrails(bool a_on)
+	{
+		shotTrailsOn = a_on;
 	}
 
 	bool HandModelFallback()

@@ -28,6 +28,8 @@ namespace InertShots
 
 		std::atomic<std::uint32_t> launches{ 0 };  // every launch the engine made since the hook went in
 		std::atomic<std::uint32_t> swapped{ 0 };   // ... a stand-in's or a copy's, made from the inert copy of the record
+		std::atomic<std::uint32_t> trails{ 0 };    // ... of those, a stand-in's plain bullet or beam (InertShot::IsPlainTrail): friends see it fly
+		std::atomic<std::uint32_t> trailsLogged{ 0 };
 		std::atomic<std::uint32_t> refused{ 0 };   // ... that got no copy (none could be made): nothing launched
 		std::atomic<std::uint32_t> offMain{ 0 };   // ... swapped or refused on a thread other than the main one
 		std::atomic<std::uint32_t> logged{ 0 };
@@ -195,8 +197,10 @@ namespace InertShots
 						spawned ? "swapped" : "not the spawn record", since.count(), expectedSpawn->GetFormID(), shooter ? std::format("{:08X} (no actor)", shooter->GetFormID()) : "none");
 				}
 			}
-			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, base->data.flags, base->data.explosionType != nullptr);
 			const bool standIn = actor && Puppets::IsPuppet(actor);
+			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, standIn, base->data.flags, base->data.explosionType != nullptr);
+			// A stand-in's plain bullet or beam, swapped so friends see its trail (it goes off nowhere to begin with).
+			const bool trail = puppets && !InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr);
 			if (!puppets && !spawned && InertShot::Aims(standIn, false)) {
 				// A stand-in's launch of its own record (a flamer's stream, a harpoon: AttackKind::ShotReplay): the engine's,
 				// sent where its friend aimed rather than at whoever the engine has it look at (InertShot::Aims).
@@ -263,6 +267,12 @@ namespace InertShots
 			if (spawned) {
 				++spawnedSwapped;
 			}
+			if (trail) {
+				++trails;
+				if (trailsLogged.fetch_add(1) < 20) {
+					REX::INFO("InertShots: {:08X}'s plain {:08X} (flags {:X}, tracer every {}) launched as a trail{}", shooterId, base->GetFormID(), base->data.flags, base->data.tracerFrequency, onMain ? "" : " (off the main thread)");
+				}
+			}
 			// What the copy's record already says, said again on the projectile itself: no blast, no damage of its own.
 			RE::NiPointer<RE::Projectile> made;
 			if (a_out) {
@@ -275,8 +285,8 @@ namespace InertShots
 				Keep({ .handle = *a_out, .launched = Clock::now() });
 			}
 			if (logged.fetch_add(1) < 20) {
-				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}: its blast comes as its shooter's game's report", shooterId, base->GetFormID(),
-					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
+				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}{}", shooterId, base->GetFormID(),
+					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)", trail ? ": a plain bullet or beam, seen in flight" : ": its blast comes as its shooter's game's report");
 			}
 			return result;
 		}
@@ -321,9 +331,9 @@ namespace InertShots
 		return installed.load(std::memory_order_relaxed);
 	}
 
-	void Prepare(RE::BGSProjectile* a_base)
+	void Prepare(RE::BGSProjectile* a_base, bool a_standIn)
 	{
-		if (installed && a_base && InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr)) {
+		if (installed && a_base && (InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr) || (a_standIn && InertShot::IsPlainTrail(a_base->data.flags)))) {
 			CopyOf(a_base);
 		}
 	}
@@ -427,7 +437,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
+		return std::format("inert={}/{} trails={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), trails.load(), refused.load(), made, offMain.load(),
 			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load());
 	}
 }

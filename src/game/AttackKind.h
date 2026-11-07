@@ -69,6 +69,14 @@ namespace AttackKind
 	inline constexpr std::uint32_t PROJECTILE_MOTION_BEAM = 0x40000;
 	inline constexpr std::uint32_t PROJECTILE_MOTION_TYPES = 0x7F0000;
 
+	// Whether a record's motion type is a plain bullet's or a beam's: none set, missile or beam (not a lobbed grenade, a
+	// flamer's stream, a cone, a barrier or an arrow).
+	constexpr bool IsPlainTrail(std::uint32_t a_flags)
+	{
+		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
+		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM;
+	}
+
 	// What becomes of a replayed shot's own projectile on a stand-in or a copy.
 	enum class Fire
 	{
@@ -86,13 +94,16 @@ namespace AttackKind
 	// and the stand-in's own blast hurt the NPCs our game runs a second time (docs/DESIGN.md, "Who sets off an
 	// explosion"). With the inert launch in place (a_inert: InertShots::Installed) it is fired from a record with no
 	// blast, so friends see it fly; without it, held. One that goes off by an enchantment alone is held: there is no
-	// record to take the blast from. A stand-in's plain one, a bullet or a beam, is held: it hit our player and shows
-	// nothing in flight but what the replay draws (MuzzleFlash); a copy's is the engine's, as before. What neither goes
-	// off nor flies straight is fired as before, so friends see it: a flamer's or a cryolator's stream, a harpoon or a
-	// railway spike, which hurt nobody here (the puppet's damage multiplier is zero, Puppets) and go where the friend
-	// aimed, not at whoever the engine has the stand-in look at (InertShot::Aims). A gun whose projectile
-	// we can't read (a_known false) is taken for a plain one.
-	constexpr Fire ShotReplay(bool a_standIn, bool a_known, std::uint32_t a_flags, bool a_explodes, bool a_enchanted, bool a_inert)
+	// record to take the blast from. A stand-in's plain one, a bullet or a beam, used to be held (a real round of its
+	// own hit our player, and nothing flew for friends to see but what the replay draws, MuzzleFlash); with the inert
+	// launch in place and the trails on (a_trails: ini bFriendShotTrails, dev `trails`) it is launched inert like a
+	// missile, from a copy of its record with no damage of its own and aimed where its friend aimed (InertShot::Swaps,
+	// InertShot::Aims), so friends see a tracer or a laser's beam fly. Without either it is held, as before. A copy's
+	// plain one is the engine's, as before. What neither goes off nor flies straight is fired as before, so friends see
+	// it: a flamer's or a cryolator's stream, a harpoon or a railway spike, which hurt nobody here (the puppet's damage
+	// multiplier is zero, Puppets) and go where the friend aimed, not at whoever the engine has the stand-in look at
+	// (InertShot::Aims). A gun whose projectile we can't read (a_known false) is taken for a plain one, and held.
+	constexpr Fire ShotReplay(bool a_standIn, bool a_known, std::uint32_t a_flags, bool a_explodes, bool a_enchanted, bool a_inert, bool a_trails)
 	{
 		if (a_known && a_explodes) {
 			return a_inert ? Fire::kInert : Fire::kHeld;
@@ -103,8 +114,10 @@ namespace AttackKind
 		if (!a_standIn) {
 			return Fire::kFired;
 		}
-		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
-		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM ? Fire::kHeld : Fire::kFired;
+		if (IsPlainTrail(a_flags)) {
+			return a_inert && a_trails ? Fire::kInert : Fire::kHeld;
+		}
+		return Fire::kFired;
 	}
 
 	enum class Replay

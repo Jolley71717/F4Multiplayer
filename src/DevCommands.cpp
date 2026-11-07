@@ -1387,6 +1387,19 @@ namespace DevCommands
 			return std::format("handthrowable={}", !WeaponFire::HandThrowables() ? "off" : WeaponFire::HandModelFallback() ? "model" : "on");
 		}
 
+		// trails on|off|status: a friend's stand-in's plain bullet or beam is launched inert so we see it fly (AttackKind::
+		// ShotReplay, InertShot::Swaps); off holds it as before. Follows bFriendShotTrails (on by default) at each start.
+		std::string TrailsCommand(std::string_view a_args)
+		{
+			if (a_args != "on" && a_args != "off" && a_args != "status") {
+				return "error: usage: trails on|off|status";
+			}
+			if (a_args != "status") {
+				WeaponFire::SetShotTrails(a_args == "on");
+			}
+			return std::format("trails={} inertHook={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off");
+		}
+
 		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's
 		// grenade slot empty: the engine's own 3D refresh of a reference (what it rebuilds on a stand-in is
 		// not known, so it is run by hand on the rig, with `equipped` before and after). Dev only.
@@ -4173,6 +4186,7 @@ namespace DevCommands
 			Entry{ "itemmods", ItemModsCommand },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
+			Entry{ "trails", TrailsCommand },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "gate", Gate },
