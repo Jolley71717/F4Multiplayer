@@ -387,6 +387,70 @@ step_grenades() {
 	done
 }
 
+# ---- friends' shot trails: a stand-in's plain bullet and laser beam are launched inert in the watcher's game, both ways ---------------
+# Each player fires a 10mm pistol (a bullet) and a laser gun (a beam), facing away from the other, 300 u apart. The WATCHER's game
+# (the one with the shooter's stand-in) must launch one inert trail per shot (`trails=`, `firesInert=`), hold none (`firesHeld=`), see no
+# hit by the stand-in on its player (`puppetHitsOnUs=`), and have none left in flight afterwards (`inertLive=`). Then `trails off` on the
+# watcher: the same shots are held as before (`firesHeld=`, `trailsHeld=` rise; `firesInert=`, `trails=` don't). What it measures is the
+# counters, not what is drawn: whether the tracer or the beam shows is for a pair of eyes (docs/DESIGN.md, Weapon fire). The graph refuses an
+# attack while the last one plays, so a few of an automatic gun's shots launch nothing (T_TRAIL_FRACTION: the share of the shooter's shots
+# that must have launched a trail; the pistol and the laser lost 0 to 1 in 20 on the rig, 2026-11-06).
+TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
+TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
+T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
+# _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots", one `net status`
+_tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots)"; }
+_tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
+# _trail_burst <shooter> <gun> <label> <clicks> <on|off>: the shooter fires that gun; its friend's game (the watcher) has its trails on or off
+_trail_burst() {
+	local shooter=$1 gun=$2 label=$3 n=$4 mode=$5 watcher b a s0 s1 v i shots need ok=1
+	watcher=$(other_game "$shooter")
+	dc "$watcher" "trails $mode" >/dev/null
+	dc "$shooter" "console player.equipitem $gun" >/dev/null; sleep 3; dc "$shooter" "draw on" >/dev/null; sleep 1.5; dc "$shooter" focus >/dev/null; sleep 0.5
+	b=($(_tr_snap "$watcher")); s0=$(field "$(dc "$shooter" 'net status')" shots)
+	for i in $(seq 1 "$n"); do dc "$shooter" "click 120" >/dev/null; sleep 1.4; done
+	sleep 4
+	a=($(_tr_snap "$watcher")); s1=$(field "$(dc "$shooter" 'net status')" shots)
+	dc "$watcher" "trails on" >/dev/null
+	for v in "${b[@]}" "${a[@]}" "$s0" "$s1"; do is_int "$v" || ok=0; done
+	[ ${#b[@]} = 8 ] && [ ${#a[@]} = 8 ] || ok=0
+	[ $ok = 1 ] || { fail "$label: counters read" "before '${b[*]}' after '${a[*]}' shooter's shots '$s0' '$s1'"; return; }
+	shots=$((s1 - s0))
+	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
+	need=$(( (shots * T_TRAIL_FRACTION + 99) / 100 ))
+	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
+	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
+	if [ "$mode" = on ]; then
+		expect_ge "$label: trails launched inert in the watcher's game (of $shots shots)" "$((a[2] - b[2]))" "$need"
+		expect_ge "$label: firesInert rose with them" "$((a[0] - b[0]))" "$need"
+		expect_zero "$label: none held (firesHeld)" "$((a[1] - b[1]))"
+		if wait_for 15 _tr_idle "$watcher"; then pass "$label: no inert shot left in flight" "inertLive back to 0"; else fail "$label: no inert shot left in flight" "inertLive still $(field "$(dc "$watcher" 'net status')" inertLive) after 15 s"; fi
+	else
+		expect_zero "$label (trails off): nothing launched inert" "$((a[2] - b[2]))"
+		expect_zero "$label (trails off): firesInert did not rise" "$((a[0] - b[0]))"
+		expect_ge "$label (trails off): held as before (firesHeld)" "$((a[1] - b[1]))" "$need"
+		expect_ge "$label (trails off): counted in trailsHeld" "$((a[3] - b[3]))" "$need"
+	fi
+}
+step_trails() {
+	section "friend shot trails (a stand-in's plain bullet and laser beam fly inert, both ways)"
+	local who gun
+	enter_both SanctuaryExt 14
+	crash_snapshot
+	place host -80650 89300 7784 270; place vm -80350 89300 7784 90   # 300 u apart, each facing away from the other
+	for who in host vm; do
+		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
+	done
+	sleep 4
+	for who in host vm; do
+		_trail_burst "$who" "$TRAIL_PISTOL" "10mm shot by $who" 6 on
+		_trail_burst "$who" "$TRAIL_LASER" "laser shot by $who" 6 on
+	done
+	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
+	for who in host vm; do dc "$who" "trails on" >/dev/null; done
+	crash_verdict "friend shot trails"
+}
+
 # ---- workshop build sync, then clean up what the test placed --------------------------------------------------------------------
 step_workshop() {
 	section "workshop build sync"

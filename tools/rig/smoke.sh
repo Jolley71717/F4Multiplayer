@@ -18,14 +18,14 @@
 # SMOKE_ZIP=<rc zip> also checks that the DLL on both machines is the zip's; CHECK_DLL=<a built F4Multiplayer.dll, or its md5> that it
 # is that build (a branch's: rig.sh deploy copies the main checkout's build folder). A mismatch stops the run.
 #
-# Steps, in order: preflight cleanup, the loop steps movement combat terminals grenades workshop bench loot doors drops downed
+# Steps, in order: preflight cleanup, the loop steps movement combat terminals grenades trails workshop bench loot doors drops downed
 # pa_vm pa_host churn, then reconnect fuzz final (our frame cost is read after each loop step)
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
 . "$RIG/guard.sh"
 
-LOOP="movement combat terminals grenades workshop bench loot doors drops downed pa_vm pa_host churn"
+LOOP="movement combat terminals grenades trails workshop bench loot doors drops downed pa_vm pa_host churn"
 ALL="preflight cleanup $LOOP reconnect fuzz final"
 only=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
 while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
@@ -54,6 +54,7 @@ loop_steps() {
 	run combat    step_combat
 	run terminals step_terminals
 	run grenades  step_grenades
+	run trails    step_trails
 	run workshop  step_workshop
 	run bench     step_bench
 	run loot      step_loot

@@ -20,6 +20,11 @@ namespace InertShots
 	// is copied for anyone; a plain bullet or beam only for a stand-in (a_standIn: its shot flies, InertShot::Swaps).
 	void Prepare(RE::BGSProjectile* a_base, bool a_standIn = false);
 
+	// Dev `trails tracer always|engine`: a stand-in's plain bullet or beam is launched with the engine's tracer flag set, which the engine
+	// leaves clear for every launch of a stand-in's (an experiment: is the tracer art drawn then?). Off (the engine's) by default.
+	void               SetForceTracer(bool a_on);
+	[[nodiscard]] bool ForceTracer();
+
 	// Whether an inert copy of this record exists (dev `proj`).
 	[[nodiscard]] bool HasCopy(RE::BGSProjectile* a_base);
 

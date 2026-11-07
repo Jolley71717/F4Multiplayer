@@ -711,8 +711,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   `InertShots`, `firesInert=`; the stand-in's gun is given a few rounds first, `ammoGiven=`), so friends see it fly;
   so does a stand-in's plain bullet or beam while `bFriendShotTrails` is on (default; dev `trails on|off`): launched from an
   inert copy of its record, with no damage of its own, aimed where its friend aimed (`InertShot::Swaps`, `Aims`; `trails=`),
-  so friends see a tracer or a laser's beam fly; a copy's plain shot stays the engine's, and with the key off or no inert
-  launch it is held as before (`trailsHeld=`). A real impact of it, with zero damage, may still show blood or a hit marker on
+  launched so friends can see a tracer or a laser's beam fly (counted on the rig; whether either is drawn is for a pair of eyes: the engine leaves its tracer flag clear on every launch of a stand-in's, `trailTracers=`, dev `trails tracer always`); a copy's plain shot stays the engine's, and with the key off or no inert
+  launch it is held as before (`trailsHeld=`). On the rig none of its impacts on our player was counted as a hit and none changed its health, but a zero-damage impact could still show blood or a hit marker on
   whoever it lands on (`puppetHitsOnUs=` counts those on our player, none is relayed);
   "Who sets off an explosion" below. A stand-in's graph can refuse "attackStart" while it says an animation drives
   it (`bAnimationDriven`) with the stand-in in no furniture and no frame (seen on the rig right after a join: every

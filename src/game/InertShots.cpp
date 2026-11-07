@@ -30,6 +30,8 @@ namespace InertShots
 		std::atomic<std::uint32_t> swapped{ 0 };   // ... a stand-in's or a copy's, made from the inert copy of the record
 		std::atomic<std::uint32_t> trails{ 0 };    // ... of those, a stand-in's plain bullet or beam (InertShot::IsPlainTrail): friends see it fly
 		std::atomic<std::uint32_t> trailsLogged{ 0 };
+		std::atomic<std::uint32_t> trailsTraced{ 0 };  // ... of those, launched with the engine's tracer flag set (whether a tracer is drawn)
+		std::atomic<bool>          forceTracer{ false };  // dev `trails tracer always`: a trail is launched with the tracer flag set
 		std::atomic<std::uint32_t> refused{ 0 };   // ... that got no copy (none could be made): nothing launched
 		std::atomic<std::uint32_t> offMain{ 0 };   // ... swapped or refused on a thread other than the main one
 		std::atomic<std::uint32_t> logged{ 0 };
@@ -201,6 +203,7 @@ namespace InertShots
 			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, standIn, base->data.flags, base->data.explosionType != nullptr);
 			// A stand-in's plain bullet or beam, swapped so friends see its trail (it goes off nowhere to begin with).
 			const bool trail = puppets && !InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr);
+			const bool tracer = a_data->tracer;  // as the engine had it, before the launch
 			if (!puppets && !spawned && InertShot::Aims(standIn, false)) {
 				// A stand-in's launch of its own record (a flamer's stream, a harpoon: AttackKind::ShotReplay): the engine's,
 				// sent where its friend aimed rather than at whoever the engine has it look at (InertShot::Aims).
@@ -258,8 +261,17 @@ namespace InertShots
 			const auto given = InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor) : std::nullopt;
 			const bool aimed = given.has_value();
 			a_data->projectileBase = copy;
+			// The engine marks none of a stand-in's launches as a tracer (seen on the rig); dev `trails tracer always` marks a trail's, to see
+			// whether the tracer art is drawn for it then.
+			const bool forced = trail && forceTracer.load(std::memory_order_relaxed) && !tracer;
+			if (forced) {
+				a_data->tracer = true;
+			}
 			const auto result = continuation(a_out, a_data);
 			a_data->projectileBase = base;  // the caller's own data again: nothing of ours is left for it to read
+			if (forced) {
+				a_data->tracer = false;
+			}
 			if (given) {
 				PutBack(a_data, *given);
 			}
@@ -269,8 +281,9 @@ namespace InertShots
 			}
 			if (trail) {
 				++trails;
+				trailsTraced += tracer;
 				if (trailsLogged.fetch_add(1) < 20) {
-					REX::INFO("InertShots: {:08X}'s plain {:08X} (flags {:X}, tracer every {}) launched as a trail{}", shooterId, base->GetFormID(), base->data.flags, base->data.tracerFrequency, onMain ? "" : " (off the main thread)");
+					REX::INFO("InertShots: {:08X}'s plain {:08X} (flags {:X}, tracer every {}, the engine's tracer flag {}) launched as a trail{}", shooterId, base->GetFormID(), base->data.flags, base->data.tracerFrequency, tracer ? "set" : "clear", onMain ? "" : " (off the main thread)");
 				}
 			}
 			// What the copy's record already says, said again on the projectile itself: no blast, no damage of its own.
@@ -336,6 +349,16 @@ namespace InertShots
 		if (installed && a_base && (InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr) || (a_standIn && InertShot::IsPlainTrail(a_base->data.flags)))) {
 			CopyOf(a_base);
 		}
+	}
+
+	void SetForceTracer(bool a_on)
+	{
+		forceTracer = a_on;
+	}
+
+	bool ForceTracer()
+	{
+		return forceTracer.load(std::memory_order_relaxed);
 	}
 
 	bool HasCopy(RE::BGSProjectile* a_base)
@@ -437,7 +460,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} trails={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), trails.load(), refused.load(), made, offMain.load(),
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
 			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load());
 	}
 }

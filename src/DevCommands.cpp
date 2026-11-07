@@ -1387,17 +1387,21 @@ namespace DevCommands
 			return std::format("handthrowable={}", !WeaponFire::HandThrowables() ? "off" : WeaponFire::HandModelFallback() ? "model" : "on");
 		}
 
-		// trails on|off|status: a friend's stand-in's plain bullet or beam is launched inert so we see it fly (AttackKind::
-		// ShotReplay, InertShot::Swaps); off holds it as before. Follows bFriendShotTrails (on by default) at each start.
+		// trails on|off|status | trails tracer always|engine: a friend's stand-in's plain bullet or beam is launched inert so we see it
+		// fly (AttackKind::ShotReplay, InertShot::Swaps); off holds it as before. Follows bFriendShotTrails (on by default) at each
+		// start. `tracer always` sets the engine's tracer flag on those launches (it leaves it clear for a stand-in's: seen on the rig;
+		// an experiment, off at every start).
 		std::string TrailsCommand(std::string_view a_args)
 		{
-			if (a_args != "on" && a_args != "off" && a_args != "status") {
-				return "error: usage: trails on|off|status";
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "tracer" && (args[1] == "always" || args[1] == "engine")) {
+				InertShots::SetForceTracer(args[1] == "always");
+			} else if (args.size() == 1 && (args[0] == "on" || args[0] == "off")) {
+				WeaponFire::SetShotTrails(args[0] == "on");
+			} else if (!(args.size() == 1 && args[0] == "status")) {
+				return "error: usage: trails on|off|status | trails tracer always|engine";
 			}
-			if (a_args != "status") {
-				WeaponFire::SetShotTrails(a_args == "on");
-			}
-			return std::format("trails={} inertHook={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off");
+			return std::format("trails={} inertHook={} tracer={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off", InertShots::ForceTracer() ? "always" : "engine");
 		}
 
 		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's
