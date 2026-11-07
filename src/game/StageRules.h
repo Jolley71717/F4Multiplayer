@@ -80,9 +80,10 @@ namespace StageRules
 	// -Files 0,1,2,3, the same scans, their payments checked by hand: caps, a fern flower and a Nuka-Cola Quartz are
 	// kPays; what a stage takes that is the quest's own (Far Harbor's fog condenser modules and its mirelurk carapaces
 	// for Brooks, FFGoodneighbor03's HalluciGen gas canister) is not, as for the story's quest items. Most of their
-	// moves are quickstarts too (BoSM04Postquest 2, DLC04MQ03 1-5); the others (DN070 5 into the treasure's cave,
-	// DLC04MS01 550, DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their
-	// stage 0s that move the player and are no start-up stage are left out: DN154, BoSM04Postquest, DLC04MQ03. The
+	// moves are quickstarts too (DLC04MQ03 1-5); the others (DN070 5 into the treasure's cave, DLC04MS01 550,
+	// DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their stage 0s that
+	// move the player and are no start-up stage are left out: DN154, DLC04MQ03. BoSM04Postquest is no longer SAFE's (its
+	// 0 sets the repeatable DN053), so its gantry quickstart has no row. The
 	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, one
 	// quickstart (DLC03MQ02Fight 5; its 0 is no start-up stage, left out with MS05BTapes's 0 and DLC04Grandchester's
 	// 0), and Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
@@ -406,7 +407,6 @@ namespace StageRules
 		{ 0, 0x142FD3, 100, 0, 1 },
 		{ 0, 0x142FD3, 800, 0, 1 },
 		{ 0, 0x142FD3, 1200, 0, 100 },
-		{ 0, 0x145722, 2, kMoves, 20 },  // BoSM04Postquest: MoveTo BoS301IngramGantryMarker
 		{ 0, 0x14B717, 25, 0, 5 },  // MS05B
 		{ 0, 0x14B717, 125, 0, 25 },
 		{ 0, 0x14B717, 157, 0, 10 },
@@ -629,7 +629,7 @@ namespace StageRules
 		{ 0, 0x01E64E, 50 }, { 0, 0x01E64E, 200 }, { 0, 0x01E64E, 275 },  // DialogueCodsworthPostWar
 		{ 0, 0x01F25E, 50 }, { 0, 0x01F25E, 205 }, { 0, 0x01F25E, 210 },  // MQ104
 		{ 0, 0x0229E5, 100 },  // MQ103
-		{ 0, 0x0229E6, 0 }, { 0, 0x0229E6, 10 }, { 0, 0x0229E6, 62 }, { 0, 0x0229E6, 200 }, { 0, 0x0229E6, 600 }, { 0, 0x0229E6, 1000 },  // MQ105
+		{ 0, 0x0229E6, 0 }, { 0, 0x0229E6, 62 }, { 0, 0x0229E6, 200 }, { 0, 0x0229E6, 600 }, { 0, 0x0229E6, 1000 },  // MQ105
 		{ 0, 0x0229E7, 0 }, { 0, 0x0229E7, 10 }, { 0, 0x0229E7, 500 }, { 0, 0x0229E7, 900 }, { 0, 0x0229E7, 1000 }, { 0, 0x0229E7, 1150 }, { 0, 0x0229E7, 2000 },  // MQ106
 		{ 0, 0x0229E8, 0 }, { 0, 0x0229E8, 15 }, { 0, 0x0229E8, 17 }, { 0, 0x0229E8, 100 }, { 0, 0x0229E8, 110 }, { 0, 0x0229E8, 150 },  // MQ201
 		{ 0, 0x0229E9, 0 }, { 0, 0x0229E9, 300 },  // MQ202
@@ -654,7 +654,6 @@ namespace StageRules
 		{ 0, 0x022A0A, 4 }, { 0, 0x022A0A, 9 }, { 0, 0x022A0A, 35 }, { 0, 0x022A0A, 60 }, { 0, 0x022A0A, 100 }, { 0, 0x022A0A, 150 }, { 0, 0x022A0A, 400 },  // MS19
 		{ 0, 0x026340, 3 }, { 0, 0x026340, 4 }, { 0, 0x026340, 30 }, { 0, 0x026340, 50 },  // DN121
 		{ 0, 0x026AA0, 15 },  // DN120
-		{ 0, 0x0282A7, 200 }, { 0, 0x0282A7, 205 }, { 0, 0x0282A7, 350 }, { 0, 0x0282A7, 400 },  // MS07Intro
 		{ 0, 0x02B4E9, 350 },  // Inst303
 		{ 0, 0x02BF20, 0 }, { 0, 0x02BF20, 200 },  // BoS200
 		{ 0, 0x02BF21, 0 }, { 0, 0x02BF21, 1 }, { 0, 0x02BF21, 2 }, { 0, 0x02BF21, 3 }, { 0, 0x02BF21, 4 }, { 0, 0x02BF21, 5 }, { 0, 0x02BF21, 10 },  // BoS201
@@ -753,7 +752,6 @@ namespace StageRules
 		{ 0, 0x142FD3, 300 }, { 0, 0x142FD3, 400 }, { 0, 0x142FD3, 500 }, { 0, 0x142FD3, 600 }, { 0, 0x142FD3, 700 }, { 0, 0x142FD3, 800 }, { 0, 0x142FD3, 900 },
 		{ 0, 0x142FD3, 950 }, { 0, 0x142FD3, 1000 }, { 0, 0x142FD3, 1100 }, { 0, 0x142FD3, 1200 }, { 0, 0x142FD3, 1300 }, { 0, 0x142FD3, 1400 }, { 0, 0x142FD3, 1500 },
 		{ 0, 0x142FD3, 1600 },
-		{ 0, 0x145722, 0 }, { 0, 0x145722, 1 },  // BoSM04Postquest
 		{ 0, 0x146C84, 200 },  // MS10b
 		{ 0, 0x14A24C, 300 },  // MS07cTapes
 		{ 0, 0x14B717, 7 }, { 0, 0x14B717, 25 }, { 0, 0x14B717, 50 }, { 0, 0x14B717, 125 }, { 0, 0x14B717, 150 }, { 0, 0x14B717, 157 }, { 0, 0x14B717, 225 },  // MS05B
@@ -841,15 +839,13 @@ namespace StageRules
 		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 }, { 3, 0x000804, 50 }, { 3, 0x000804, 300 }, { 3, 0x000804, 305 },  // DLC04MQ04
 		{ 3, 0x000806, 40 }, { 3, 0x000806, 60 }, { 3, 0x000806, 70 }, { 3, 0x000806, 75 }, { 3, 0x000806, 100 },  // DLC04MS01
 		{ 3, 0x00DB37, 15 }, { 3, 0x00DB37, 20 }, { 3, 0x00DB37, 105 },  // DLC04RaidWipeOut
-		{ 3, 0x010D91, 70 },  // DLC04DialogueRaiderBossOperators
-		{ 3, 0x014352, 20 }, { 3, 0x014352, 21 },  // DLC04RaidChaseOff
+		{ 3, 0x014352, 20 },  // DLC04RaidChaseOff
 		{ 3, 0x016E18, 15 }, { 3, 0x016E18, 20 }, { 3, 0x016E18, 65 }, { 3, 0x016E18, 70 }, { 3, 0x016E18, 95 }, { 3, 0x016E18, 100 },  // DLC04RaidSubdue
-		{ 3, 0x019088, 20 }, { 3, 0x019088, 21 },  // DLC04RaidCoerce
+		{ 3, 0x019088, 20 },  // DLC04RaidCoerce
 		{ 3, 0x01E34A, 210 }, { 3, 0x01E34A, 212 }, { 3, 0x01E34A, 300 }, { 3, 0x01E34A, 1000 }, { 3, 0x01E34A, 1500 }, { 3, 0x01E34A, 1600 }, { 3, 0x01E34A, 2000 },  // DLC04GZMainQuest
 		{ 3, 0x035791, 20 },  // DLC04MS01BradbertonDies
 		{ 3, 0x03684E, 1000 },  // DLC04_BottlingPlantMAIN
 		{ 3, 0x0431AB, 800 }, { 3, 0x0431AB, 900 }, { 3, 0x0431AB, 1000 },  // DLC04DryRockGulch
-		{ 3, 0x046A18, 20 },  // DLC04MQ00TransitCenter
 	};
 
 	inline bool SetsAnother(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)

@@ -686,13 +686,14 @@ public static class MoveScan
     // script a property or local is typed with, with the literal arguments it passes) and the stages of the quests it
     // sets or starts (its own by SetStage on self, any other matched by the property's name, with that quest's start-up
     // stages), each as deep as it goes until a cycle. Direct says what a function's own code does that is looked for
-    // (null: nothing); Target what setting a stage of another quest, or starting it, does in itself (null: nothing, its
-    // stages are followed); Follow whether another quest's stages are followed at all (by its file). -Moves and
-    // SafeScan's rule walk the same way.
+    // (null: nothing); Target what setting a stage of another quest, or starting it, does in itself (by its file and the
+    // call, SetStage or Start; null: nothing, its stages are followed; never asked of the quest's own, by self or by its
+    // own property); Follow whether another quest's stages are followed at all (by its file). -Moves and SafeScan's rule
+    // walk the same way.
     public class Walk
     {
         public Func<List<GearScan.Instr>, string> Direct;
-        public Func<GearScan.Quest, string> Target = q => null;
+        public Func<GearScan.Quest, int, string, string> Target = (q, file, call) => null;
         public Func<GearScan.Quest, int, bool> Follow = (q, file) => true;
         // Said of each stage a function sets or starts (file, quest, stage; its own quest's too) before it is walked: what
         // is wrong with the stage itself, or null (the walk goes on into it). Not said of the stage Stage was asked about.
@@ -721,7 +722,7 @@ public static class MoveScan
                     var own = Own(i.Args[1]);
                     var target = own ? a_quest : QuestOf(i.Args[1]);
                     if (target == null) continue;
-                    var itself = own ? null : Target(target.Item1);
+                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) ? null : Target(target.Item1, target.Item2, i.Args[0]);
                     if (itself != null) { why = f.Obj + "." + f.Name + ": " + itself; break; }
                     if (!own && !Follow(target.Item1, target.Item2)) continue;
                     var list = new List<int>();
@@ -1762,12 +1763,14 @@ public static class PerGameScan
 // shared by their type, or radiants or PER_GAME, QuestScan.ReachesFriend; a shared quest's stage reaches a friend's game
 // as the story's anyway), touches what each game keeps for itself (Direct): a
 // companion's affinity, who is or may be a companion (or a stage of a companion's quest), a faction's hostility to
-// another or to the player, a settlement's owner, or the player's whole inventory. Less QuestFilter.h's DENIED (read
+// another or to the player, a settlement's owner, or the player's whole inventory; or sends a story event, or starts a
+// quest each game runs its own way (Target: a radiant, PER_GAME, repeatable, or with its own picks), which a friend's
+// game would start there unshared. Less QuestFilter.h's DENIED (read
 // from the file passed), a backstop: the quests the rule passes that are each player's all the same (survival's,
 // the Combat Zone's fight, Nuka-World's park bookkeeping and outpost count: the six "denied:" lines). The rest of DENIED
 // (MQ101, DogmeatQuest, DLC04RaiderKickout) the rule leaves out by itself, for a stage, and stays there in case it
-// changes. The quests the rule passes but for their objectives (a location's quest, DN035) are counted at the end: a
-// quest with no objective counts as started here only once something shows it, which needs a rule of its own. Then,
+// changes. The quests the rule passes but for their objectives (a location's quest, DN035) are SILENT's, printed after
+// SAFE, less those denied by name or by hand or that stop early (WhySilent), each listed with why. Then,
 // for each quest left out for a stage, the first stage found and its chain. Last, the payments reached through a SAFE
 // stage (Payments).
 public static class SafeScan
@@ -1809,13 +1812,17 @@ public static class SafeScan
     // The kinds of what a stage does that make its quest each player's, as Why names them.
     static readonly Dictionary<string, string> KINDS = new Dictionary<string, string> {
         { "affinity", "touches affinity" }, { "companion", "changes companions" }, { "empties", "empties the inventory" },
-        { "factions", "changes factions' hostility" }, { "settlement", "changes a settlement's owner" } };
+        { "factions", "changes factions' hostility" }, { "settlement", "changes a settlement's owner" },
+        { "story", "sends a story event (the story manager starts quests each game picks itself)" },
+        { "unshared", "starts a quest each game runs its own way (a radiant, PER_GAME, repeatable, or its own picks)" } };
 
     // What a function's own code does that makes its quest each player's, as "kind what" (a key of KINDS), or null: a
     // companion's affinity (an argument named *Affinity*, CA_*, or a call named *Affinity* that isn't a Get, Is or Trace);
     // companions (COMPANIONS: who is or can be one, a teammate, a dismissal); a faction's hostility to another or to the
     // player (FACTIONS, or adding to or taking out of a PlayerEnemy or PlayerAlly faction); a settlement's owner
-    // (SetOwnedByPlayer); or emptying the player's inventory (RemoveAllItems, UnequipAll on the player).
+    // (SetOwnedByPlayer); emptying the player's inventory (RemoveAllItems, UnequipAll on the player); or a story event
+    // (SendStoryEvent: the quests the story manager starts from it, DN121_ChangeLocation's Minutemen request for one, are
+    // started in each game with that game's own picks, and are not followed).
     static string Direct(List<GearScan.Instr> a_code)
     {
         var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1834,6 +1841,7 @@ public static class SafeScan
             if (COMPANIONS.Contains(m)) return "companion " + m;
             if (FACTIONS.Contains(m)) return "factions " + m;
             if (SETTLEMENTS.Contains(m)) return "settlement " + m;
+            if (Is(m, "SendStoryEvent") || Is(m, "SendStoryEventAndWait")) return "story " + m + " " + Bare(i.Op == 25 ? i.Args[0] : i.Args[1]);
             if (m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
             if (i.Op == 25) continue;
             if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0))
@@ -1845,10 +1853,34 @@ public static class SafeScan
         return null;
     }
 
-    // Setting a stage of a companion's quest (its name as the rule's COMPANION), or starting one, is a companion's.
-    static string Target(GearScan.Quest q)
+    // Setting a stage of a companion's quest (its name as the rule's COMPANION), or starting one, is a companion's. So is
+    // starting a quest each game runs its own way (EachGames: a radiant, PER_GAME, a repeatable one or one with an alias
+    // each game fills, as Why leaves them out), by Start or by setting a stage of one the game doesn't start itself
+    // (start game enabled, flag 0x1, runs in every game; the stage set, its fragment, is walked as any). A friend's game
+    // would start it there unshared, with its own picks: DN017_ChangeLocation 0 starts the repeatable DN017 (as a story
+    // event does, Direct's "story"). A quest the rule leaves out for what a stage does (MS07, DLC03FarHarborS01) is
+    // fixed and runs once: the stages started or set are walked as any, and what its later stages do happens in the
+    // friend's game as the friend plays it.
+    static string Target(GearScan.Quest q, int a_file, string a_call)
     {
-        return COMPANION.IsMatch(System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "")) ? "companion SetStage " + q.Edid : null;
+        if (COMPANION.IsMatch(System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", ""))) return "companion SetStage " + q.Edid;
+        if (QuestScan.ReachesFriend(q, a_file) || !(Is(a_call, "Start") || (q.Flags & 1) == 0)) return null;
+        var own = EachGames(q, a_file);
+        return own == null ? null : "unshared " + a_call + " " + q.Edid + " (" + own + ")";
+    }
+
+    // Why a quest is each game's own by what it picks or how often it runs (Why's reasons for a radiant, PER_GAME, a
+    // repeatable quest or an alias each game fills), or null.
+    static string EachGames(GearScan.Quest q, int a_file)
+    {
+        uint local = q.Id & 0xFFFFFF;
+        if (a_file == 0 && QuestScan.Radiants != null && QuestScan.Radiants.Contains(local)) return "a radiant";
+        if (QuestScan.PerGame != null && QuestScan.PerGame.Contains(Tuple.Create(a_file, local))) return "PER_GAME";
+        if ((q.Flags & 0x101) == 0) return "repeatable";
+        var aliases = new Dictionary<int, GearScan.Alias>();
+        foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
+        if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        return null;
     }
 
     // What each stage does, followed into the scripts it calls and the stages it sets or starts as -Moves follows them,
@@ -1919,8 +1951,10 @@ public static class SafeScan
         { "DN011OverdueBooks", "each player's own book returns and their reward" },
         { "DN130-RR302", "a companion's affinity event" },
         { "DN136_Attack", "teleports the companion and Dogmeat into the Institute with the player" },
+        { "DN151_Tracking", "the tracker of DN151, a Minutemen request each game picks itself (PER_GAME)" },
         { "DNPrime_BoS304", "the Institute attack's teleports, as DN136_Attack's" },
         { "FFGoodneighbor01MemorySequence", "the memory lounger: fades out, takes the controls and hides the player" },
+        { "FFGoodneighbor08", "its 200, set by each game's own timer, ends the event (300) when this game's player is away from Goodneighbor: a far friend would end it in the host's game" },
         { "GenericGoHome", "a tool other quests' scripts use for their own actors" },
         { "InstituteFirstVisitQuest", "each player's own first visit" },
         { "InstituteTeleportEffects", "teleports the player" },
@@ -1932,7 +1966,7 @@ public static class SafeScan
         { "RRAct3Pickup", "teleports the player into the Institute and adds them to its faction" } };
 
     // Why an objective-less quest is not in SILENT ("" it is).
-    static string WhySilent(GearScan.Quest q)
+    static string WhySilent(GearScan.Quest q, int a_file)
     {
         if (q.Stages == 0) return "no objectives, no stages";
         var bare = System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "");
@@ -1940,7 +1974,27 @@ public static class SafeScan
             if (System.Text.RegularExpressions.Regex.IsMatch(bare, d.Item1)) return "denied by name: " + d.Item2;
         string why;
         if (DENY_SILENT.TryGetValue(q.Edid, out why)) return "denied by hand: " + why;
+        why = StopsEarly(q, a_file);
+        if (why != null) return STOPS_EARLY + why;
         return "";
+    }
+
+    const string STOPS_EARLY = "stops early: ";
+
+    // A stage whose own fragment stops the quest (Stop on itself) below a stage whose fragment does more than stop it, as
+    // "<stop> stops it, below <stage>", or null. A friend catching up is sent the host's stages done before the session
+    // in ascending order (the game keeps no order of them), and once a silent quest ran and stopped in a game, the rest
+    // of it is dropped there: MS07Intro's 350 would stop it before its 400 starts Nick's case files there. Only the
+    // fragment's own code is read; a stop through a function it calls is not seen.
+    static string StopsEarly(GearScan.Quest q, int a_file)
+    {
+        Func<GearScan.Instr, bool> stop = i => i.Op == 23 && Is(i.Args[0], "Stop") && (Is(i.Args[1], "self") || Is(i.Args[1], "kmyQuest") || Is(i.Args[1], "__temp"));
+        Func<GearScan.Instr, bool> call = i => i.Op == 23 || i.Op == 24 || i.Op == 25;
+        var stages = MoveScan.Fragments(a_file, q.Id);
+        foreach (var s in stages.Where(kv => kv.Value.Any(f => f.Code.Any(stop))).Select(kv => kv.Key).OrderBy(k => k))
+            foreach (var t in stages.Where(kv => kv.Key > s && kv.Value.Any(f => f.Code.Any(i => call(i) && !stop(i)))).Select(kv => kv.Key).OrderBy(k => k))
+                return s + " stops it, below " + t;
+        return null;
     }
 
     // Makes the SAFE set (QuestScan.Safe) and the SILENT one (QuestScan.Silent), less DENIED, and returns each quest's
@@ -1962,7 +2016,7 @@ public static class SafeScan
             {
                 var key = Tuple.Create(file, q.Id & 0xFFFFFF);
                 var why = Why(q, file, radiants, perGame);
-                if (why == "no objectives") { why = WhySilent(q); if (why == "") why = "silent"; }
+                if (why == "no objectives") { why = WhySilent(q, file); if (why == "") why = "silent"; }
                 verdicts[key] = (why == "" || why == "silent") && denied.Contains(key) ? "denied (DENIED)" : why;
             }
         QuestScan.Safe = new HashSet<Tuple<int, uint>>(verdicts.Where(kv => kv.Value == "").Select(kv => kv.Key));
@@ -2054,11 +2108,11 @@ public static class SafeScan
             sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6} }},  // {2}", kv.Key.Item1, kv.Key.Item2, q.Edid));
         }
         sb.AppendLine(string.Format("# {0} quests ({1}), {2} stages", QuestScan.Silent.Count, string.Join(", ", GearScan.MASTERS.Select((m, i) => m.Esm + " " + byFile[i]).ToArray()), stages));
-        foreach (var kv in verdicts.Where(kv => kv.Value.StartsWith("denied by hand")))
+        foreach (var kv in verdicts.Where(kv => kv.Value.StartsWith("denied by hand") || kv.Value.StartsWith(STOPS_EARLY)))
             sb.AppendLine(string.Format("# {0}: {1} 0x{2:X6} {3}", kv.Value, kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
         foreach (var kv in verdicts.Where(kv => kv.Value == "denied (DENIED)"))
             sb.AppendLine(string.Format("# denied: {0} 0x{1:X6} {2}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid));
-        foreach (var g in verdicts.Values.Where(v => v != "" && v != "silent" && !v.StartsWith("denied (") && !v.StartsWith("denied by hand")).GroupBy(v => v).OrderBy(g => g.Key))
+        foreach (var g in verdicts.Values.Where(v => v != "" && v != "silent" && !v.StartsWith("denied (") && !v.StartsWith("denied by hand") && !v.StartsWith(STOPS_EARLY)).GroupBy(v => v).OrderBy(g => g.Key))
             sb.AppendLine(string.Format("# left out, {0}: {1}", g.Key, g.Count()));
         // what each quest left out for a stage does, and how its stage gets there, but the shared ones'
         foreach (var kv in found.Where(kv => verdicts[kv.Key].StartsWith("a stage")).OrderBy(kv => kv.Key))

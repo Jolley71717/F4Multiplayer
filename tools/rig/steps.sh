@@ -715,6 +715,51 @@ step_doors() {
 	pads_off
 }
 
+# ---- quests: a silent quest's stages, set in the host's game ------------------------------------------------------------------------------
+# A quest with no objectives the host's sQuests = safe shares (src/game/QuestFilter.h SILENT; DN046, Fort Strong's own) gets two of its
+# stages set by the host's console (setstage: Fort Strong is out of the rig's walking reach), the higher first. The host's setting is
+# the one the `stages` line names ("silent (shared with the story: sQuests = safe)" or "(not shared: sQuests = story)"). With safe:
+# the VM's game starts it for the session and sets both, out of order. With story: nothing of it moves there. Either way the VM's
+# player stays where it was, with the same inventory (no teleport, nothing given or taken). Once a game has done them all (a soak's
+# later rounds) there is nothing left to set: a PASS when both games agree, a WARN otherwise.
+QUEST_SILENT=${QUEST_SILENT:-000423D5}; QUEST_STAGES=${QUEST_STAGES:-10 50 100 200}
+_q_done() { dc "$1" "stages $QUEST_SILENT" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
+_q_has() { case ",$(_q_done "$1")," in *",$2,"*) return 0;; esac; return 1; }
+_q_moved() {  # _q_moved <pos before> <pos after>: how far the player went, in units (x and y)
+	awk -v a="$(field "$1" x) $(field "$1" y)" -v b="$(field "$2" x) $(field "$2" y)" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") {print "?"; exit} printf "%d", sqrt((q[1]-p[1])^2+(q[2]-p[2])^2)}'
+}
+step_quests() {
+	section "quests (a silent quest's stages set in the host's game by console setstage)"
+	local line kind todo s lo hi vd0 pos0 inv0 moved
+	enter_both SanctuaryExt 14
+	line=$(dc host "stages $QUEST_SILENT")
+	case "$line" in
+	*"sQuests = safe"*) kind=safe ;;
+	*"sQuests = story"*) kind=story ;;
+	*) fail "quests: set-up: the host reads $QUEST_SILENT as a silent quest" "got '$line'"; return ;;
+	esac
+	todo=""; for s in $QUEST_STAGES; do _q_has host "$s" || todo="$todo $s"; done
+	read -r lo hi <<<"$(awk '{print $1, $NF}' <<<"$todo")"
+	if [ -z "$lo" ] || [ "$lo" = "$hi" ]; then
+		if [ $kind = story ] || [ "$(_q_done vm)" = "$(_q_done host)" ]; then pass "quests ($kind): nothing left to set" "host and VM done $(_q_done host)"
+		else warn "quests ($kind): nothing left to set" "host done $(_q_done host), VM $(_q_done vm)"; fi
+		return
+	fi
+	vd0=$(_q_done vm); pos0=$(dc vm pos); inv0=$(field "$(dc vm inventory)" hash)
+	dc host "console setstage $QUEST_SILENT $hi" >/dev/null; sleep 3; dc host "console setstage $QUEST_SILENT $lo" >/dev/null
+	if ! wait_for 10 _q_has host "$lo" || ! _q_has host "$hi"; then fail "quests ($kind): set-up: the host's console set $hi, then $lo" "host done $(_q_done host)"; return; fi
+	if [ $kind = safe ]; then
+		if wait_for 20 _q_has vm "$lo" && _q_has vm "$hi"; then pass "quests (safe): the VM's game set the host's $hi and $lo" "done $(_q_done vm) (was $vd0)"
+		else fail "quests (safe): the VM's game set the host's $hi and $lo" "VM done $(_q_done vm) (was $vd0)"; fi
+	else
+		sleep 15; expect_eq "quests (story): nothing of it moves in the VM's game" "$(_q_done vm)" "$vd0"
+	fi
+	moved=$(_q_moved "$pos0" "$(dc vm pos)")
+	if is_num "$moved"; then expect_le "quests ($kind): the VM's player stays where it was" "$moved" 64 u
+	else fail "quests ($kind): the VM's player stays where it was" "no position read"; fi
+	expect_eq "quests ($kind): the VM's inventory is unchanged" "$(field "$(dc vm inventory)" hash)" "$inv0"
+}
+
 # ---- giving an item: drop and pickup, both ways ---------------------------------------------------------------------------------------------
 # A dropped item is the session's (src/game/Drops.cpp): the server numbers it, each other game places a copy where it lies, the first
 # to take it has it, and the other copies go. The giver walks off to the road, gets DROP_N of DROP_ITEM (console additem) and drops

@@ -149,37 +149,40 @@ namespace QuestFilter
 		{ 3, 0x044993 },  // DLC04CollectVassalIncomeMiscQuest: a player's tribute from their raided settlements
 	};
 
-	// Quests no session shares by their type that the host's sQuests = safe shares with the story (Protocol::QuestRule::
-	// kSafe; only with sStory = shared too): misc quests (type 6: Diamond City's and Goodneighbor's errands, the
-	// pointers to a quest's giver) and quests under no type with objectives (Far Harbor's and Nuka-World's own stories,
-	// Nuka-World's main line DLC04MQ03 among them) that a friend's stage can be set on here as it is, by a rule read off
-	// the game's files: a quest of the game's masters with objectives that is no radiant (RadiantRules.h), no PER_GAME
-	// and no companion's by its name; runs once or is started with the game; whose every alias is fixed (a forced
-	// reference or location, a unique actor, another quest's alias, one its scripts fill, or made at or found from one
-	// of those: none filled from the story manager's event or by its conditions, so it is the same in every game); and
-	// none of whose stages does any of these, in its own fragment, a script function it calls (its quest's script
-	// through kmyQuest, a parent's, a script a property or local is typed with) or a stage of a quest no session shares
-	// by its type that it sets or starts, followed as -Moves follows them: names a companion's affinity (an argument
-	// named *Affinity* or CA_*, a call named *Affinity*); calls SetCompanion, DismissCompanion, AddToPlayerFaction,
-	// SetAvailableToBeCompanion, SetPlayerTeammate, AllowCompanion, DisallowCompanion, ClearCompanion, ReleaseCompanion
-	// or Dogmeat's, or sets a stage of a companion's quest; calls SetEnemy, SetAlly or SetPlayerEnemy, or puts an actor
-	// in or out of a PlayerEnemy or PlayerAlly faction; calls SetOwnedByPlayer (a settlement's owner); calls
-	// RemoveAllItems or UnequipAll on the player. What it does not see: a scene a stage starts, a timer or event a
-	// script waits for, a call through a variable whose type has no script (an ObjectReference property's attached
-	// script), a quest matched by no property name, anything else a script changes (MQ00MamaMurphy 700 kills her with
-	// KillEssential: a death every game shares anyway). A shared quest's stage it sets is not followed: that stage
-	// reaches a friend's game as the story's, SAFE or not. Less DENIED. Their stages that move or charge the player are
-	// StageRules' as the story's are; an item a stage gives is given in each game, as for every shared quest. Generated
-	// by tools/questscan.ps1 -Safe from the game's files (and DENIED, PER_GAME and RadiantRules.h), which lists what it
-	// found in each quest it left out for a stage. Sorted by file and form ID. The quests the rule passes but for their
-	// objectives are SILENT's (below).
+	// Quests no session shares by their type that the host's sQuests = safe shares with the story
+	// (Protocol::QuestRule::kSafe; only with sStory = shared too): misc quests (type 6: Diamond City's and
+	// Goodneighbor's errands, the pointers to a quest's giver) and quests under no type with objectives (Far Harbor's
+	// and Nuka-World's own stories, Nuka-World's main line DLC04MQ03 among them) that a friend's stage can be set on
+	// here as it is, by a rule read off the game's files: a quest of the game's masters with objectives that is no
+	// radiant (RadiantRules.h), no PER_GAME and no companion's by its name; runs once or is started with the game;
+	// whose every alias is fixed (a forced reference or location, a unique actor, another quest's alias, one its
+	// scripts fill, or made at or found from one of those: none filled from the story manager's event or by its
+	// conditions, so it is the same in every game); and none of whose stages does any of these, in its own fragment, a
+	// script function it calls (its quest's script through kmyQuest, a parent's, a script a property or local is typed
+	// with) or a stage of a quest no session shares by its type that it sets or starts, followed as -Moves follows
+	// them: names a companion's affinity (an argument named *Affinity* or CA_*, a call named *Affinity*); calls
+	// SetCompanion, DismissCompanion, AddToPlayerFaction, SetAvailableToBeCompanion, SetPlayerTeammate, AllowCompanion,
+	// DisallowCompanion, ClearCompanion, ReleaseCompanion or Dogmeat's, or sets a stage of a companion's quest; calls
+	// SetEnemy, SetAlly or SetPlayerEnemy, or puts an actor in or out of a PlayerEnemy or PlayerAlly faction; calls
+	// SetOwnedByPlayer (a settlement's owner); calls RemoveAllItems or UnequipAll on the player; sends a story event
+	// (the story manager starts quests from it with each game's own picks); starts a quest each game runs its own way
+	// (a radiant, PER_GAME, a repeatable quest or one with an alias each game fills), by Start or by setting a stage of
+	// one the game doesn't start itself: a friend's game would start it there, unshared (DN054, DN123, BoSM04Postquest,
+	// DLC04DialogueRaiderBossOperators are left out so). A fixed, run-once quest it starts runs in the friend's game as
+	// the friend plays it. What it does not see: a scene a stage starts, a timer or event a script waits for, a call
+	// through a variable whose type has no script (an ObjectReference property's attached script), a quest matched by
+	// no property name, anything else a script changes (MQ00MamaMurphy 700 kills her with KillEssential: a death every
+	// game shares anyway). A shared quest's stage it sets is not followed: that stage reaches a friend's game as the
+	// story's, SAFE or not. Less DENIED. Their stages that move or charge the player are StageRules' as the story's
+	// are; an item a stage gives is given in each game, as for every shared quest. Generated by tools/questscan.ps1
+	// -Safe from the game's files (and DENIED, PER_GAME and RadiantRules.h), which lists what it found in each quest it
+	// left out for a stage. Sorted by file and form ID. The quests the rule passes but for their objectives are
+	// SILENT's (below).
 	inline constexpr Local SAFE[] = {
 		{ 0, 0x02125F },  // FFDiamondCity03
 		{ 0, 0x0254B7 },  // DN154
-		{ 0, 0x048516 },  // DN054
 		{ 0, 0x04ACE8 },  // CZMisc
 		{ 0, 0x04F623 },  // FFDiamondCity01Misc
-		{ 0, 0x0684D0 },  // DN123
 		{ 0, 0x0747C9 },  // MS16MiscObj
 		{ 0, 0x084E40 },  // MS13MarowskiRevenge
 		{ 0, 0x087304 },  // BoSM01Pointer
@@ -209,7 +212,6 @@ namespace QuestFilter
 		{ 0, 0x1437DB },  // FFDiamondCityWantedPosterMisc
 		{ 0, 0x143A15 },  // MS17MiscCovenant
 		{ 0, 0x144F6E },  // BoS100MiscCambridge
-		{ 0, 0x145722 },  // BoSM04Postquest
 		{ 0, 0x1488F7 },  // MS19MiscVault81
 		{ 0, 0x148BAC },  // MS10MiscTrinityTower
 		{ 0, 0x14B718 },  // MS05MiscSalem
@@ -256,7 +258,6 @@ namespace QuestFilter
 		{ 2, 0x00AEDD },  // DLC01DialogueQuest
 		{ 3, 0x000803 },  // DLC04MQ03
 		{ 3, 0x000806 },  // DLC04MS01
-		{ 3, 0x010D91 },  // DLC04DialogueRaiderBossOperators
 		{ 3, 0x01E34B },  // DLC04GZMiscObjective
 		{ 3, 0x025AE6 },  // DLC04MQ04MasonSceneQuest
 		{ 3, 0x026169 },  // DLC04MQ04DixieSceneQuest
@@ -275,23 +276,27 @@ namespace QuestFilter
 
 	// Quests the rule above passes but for their objectives, which the host's sQuests = safe shares too: a place's own
 	// quest (DN035, the Vault 114 gear door's DN142, the Castle's waves DN029*), the Prydwen's arrival (BoSEnable), the
-	// add-ons' fights and hand-offs between their quests (DLC03MQ02Fight, DLC04MQ00TransitCenter). With no objective a
-	// quest shows nothing, so one is shared as a dialogue quest is (QuestSync): started here once a friend's stage of
-	// it is set, its stages taken in any order, dropped once it ran and stopped. Less those that are no content both
-	// players should share, by name (tools/questscan.cs's DENY_PATTERNS: the game's systems, achievements, patches,
-	// tutorials, items and holotapes it hands out, the player's own state, debug quests, ambient chatter and scenes,
-	// companions', bookkeeping other quests use, random encounters, workshops) or read by hand (its DENY_SILENT, each
-	// with why: a stage that teleports the player or their companion, a companion's affinity or greeting, the player's
-	// faction rank or a faction's hostility to them, gear or tokens of the player's own, the memory lounger, the
-	// Gauntlet), less the ones with no stages (nothing to share), less DENIED. A quest's own actors made at a marker (a
-	// "created" alias) are made in each game. Their stages that move or charge the player are StageRules' as the
-	// story's are; the stages ScriptDoors works (DN142 50, BoSEnable 15) are its own, with either setting. Generated by
-	// tools/questscan.ps1 -Safe, which prints them after SAFE with what it denied and why. Sorted by file and form ID.
+	// add-ons' fights (DLC03MQ02Fight). With no objective a quest shows nothing, so one is shared as a dialogue quest
+	// is (QuestSync): started here once a friend's stage of it is set, its stages taken in any order, dropped once it
+	// ran and stopped. Less those that are no content both players should share, by name (tools/questscan.cs's
+	// DENY_PATTERNS: the game's systems, achievements, patches, tutorials, items and holotapes it hands out, the
+	// player's own state, debug quests, ambient chatter and scenes, companions', bookkeeping other quests use, random
+	// encounters, workshops) or read by hand (its DENY_SILENT, each with why: a stage that teleports the player or
+	// their companion, a companion's affinity or greeting, the player's faction rank or a faction's hostility to them,
+	// gear or tokens of the player's own, the memory lounger, the Gauntlet, DN151's tracker, Goodneighbor's gate
+	// guards), less those whose stage stops the quest below a stage that does more (MS07Intro's 350 below its 400: a
+	// friend catching up is sent the host's stages done before the session lowest first, the game keeping no order of
+	// them, and the 350 would stop it there before the 400 ran), less the ones with no stages (nothing to share), less
+	// DENIED. The rule's start of a quest each game runs its own way leaves out the change-location hooks that send a
+	// Minutemen request's story event (DN121_ChangeLocation, DN151_ChangeLocation) or start the repeatable DN017 or
+	// DN053. A quest's own actors made at a marker (a "created" alias) are made in each game. Their stages that move or
+	// charge the player are StageRules' as the story's are; the stages ScriptDoors works (DN142 50, BoSEnable 15) are
+	// its own, with either setting. Generated by tools/questscan.ps1 -Safe, which prints them after SAFE with what it
+	// denied and why. Sorted by file and form ID.
 	inline constexpr Local SILENT[] = {
 		{ 0, 0x01D7FD },  // DN017_Overrides
 		{ 0, 0x01D806 },  // DN092
 		{ 0, 0x026AA0 },  // DN120
-		{ 0, 0x0282A7 },  // MS07Intro
 		{ 0, 0x02AFE9 },  // BoSPAMPostGame
 		{ 0, 0x02B759 },  // DN058
 		{ 0, 0x03479A },  // DN102
@@ -301,7 +306,6 @@ namespace QuestFilter
 		{ 0, 0x043A4A },  // DN001BADTFL
 		{ 0, 0x045770 },  // DN050
 		{ 0, 0x046BB5 },  // DN131
-		{ 0, 0x048327 },  // DN151_Tracking
 		{ 0, 0x054E26 },  // MS16BobbiDialogue
 		{ 0, 0x05F816 },  // MS07bPostQuest
 		{ 0, 0x064C66 },  // DN009_MQ205
@@ -316,17 +320,12 @@ namespace QuestFilter
 		{ 0, 0x0ABF55 },  // DN029FirstWave
 		{ 0, 0x0ADCA6 },  // DN029SecondWaveA
 		{ 0, 0x0AE44C },  // DN029SecondWaveB
-		{ 0, 0x0AEC4E },  // DN053_ChangeLocation
 		{ 0, 0x0BACBC },  // DN119Fight
 		{ 0, 0x0D39B9 },  // DN024
 		{ 0, 0x0D51C1 },  // DN129
-		{ 0, 0x0DEDDD },  // DN017_ChangeLocation
 		{ 0, 0x0E5593 },  // DN020
-		{ 0, 0x0E6AB0 },  // DN151_ChangeLocation
 		{ 0, 0x0E75B7 },  // DN031
 		{ 0, 0x0EF40C },  // DN035
-		{ 0, 0x0F8D39 },  // DN084_BoS303Battle
-		{ 0, 0x0F8D3A },  // DN084_Inst303Battle
 		{ 0, 0x0FF3C2 },  // DN011
 		{ 0, 0x1026A7 },  // DN033
 		{ 0, 0x10B9D7 },  // DN116
@@ -335,13 +334,11 @@ namespace QuestFilter
 		{ 0, 0x112D10 },  // DN165
 		{ 0, 0x114C74 },  // DN077
 		{ 0, 0x12D059 },  // DN045
-		{ 0, 0x1310AB },  // DN121_ChangeLocation
 		{ 0, 0x138442 },  // CZPostQuest
 		{ 0, 0x13B747 },  // DN142
 		{ 0, 0x145676 },  // FFDiamondCity09
 		{ 0, 0x14A24C },  // MS07cTapes
 		{ 0, 0x14DCFE },  // MS07bGrasshopper
-		{ 0, 0x15DE65 },  // FFGoodneighbor08
 		{ 0, 0x162A3E },  // BoS303LL
 		{ 0, 0x165A54 },  // Inst305MeetingUpdate
 		{ 0, 0x16854F },  // MS05BTapes
@@ -401,7 +398,6 @@ namespace QuestFilter
 		{ 3, 0x03C12C },  // DLC04MQ04ShankFinalSceneOfferQuest
 		{ 3, 0x04430B },  // DLC04NukaSodas
 		{ 3, 0x044F0A },  // DLC04NWJunkyard
-		{ 3, 0x046A18 },  // DLC04MQ00TransitCenter
 		{ 3, 0x04AC08 },  // DLC04EvanQuest
 		{ 3, 0x056DB1 },  // DLC04PostQuestGangDisables
 	};

@@ -350,11 +350,12 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
-	// Fallout4.esm's: Diamond City's caps, the Prydwen's gantry, the treasure's cave (the Combat Zone's are gone with it).
+	// Fallout4.esm's: Diamond City's caps, the treasure's cave (the Combat Zone's are gone with it, the Prydwen's gantry
+	// with BoSM04Postquest, which starts the repeatable DN053).
 	CHECK(!Find(0x02074B, 1));               // CZ
 	CHECK(FlagsOf(0x14191C, 10) == kPays);   // FFDiamondCity02
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);   // DN070
-	CHECK(FlagsOf(0x145722, 2) == kMoves);   // BoSM04Postquest
+	CHECK(!Find(0x145722, 2));               // BoSM04Postquest
 	// Far Harbor's treasure dig fades the screen out.
 	CHECK(FlagsOf(0x04D2F5, 200, File::kCoast) == kMoves);  // DLC03PostQuestTreasureDig
 	// A quest's own item taken is left alone (only its script's wait kept): the fog condenser module.
@@ -410,7 +411,9 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	CHECK(SetsAnother(File::kFallout4, 0x0229E7, 900));  // MQ106 sets BoSEnable 10
 	CHECK(SetsAnother(File::kFallout4, 0x1851A0, 10));   // BoSEnable sets DN165Exterior 255
 	CHECK(SetsAnother(File::kCoast, 0x043822, 100));     // DLC03MQ02Fight sets DLC03MQ02 300
-	CHECK(SetsAnother(File::kNukaWorld, 0x046A18, 20));  // DLC04MQ00TransitCenter sets DLC04MQ00 500
+	// DLC04MQ00TransitCenter is no longer SILENT's (its 30 sets the repeatable DLC04TransitCenterAnnouncements): its 20,
+	// which sets DLC04MQ00 500, is no row.
+	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
 }
 
 TEST("stage rules: no stage of a quest sQuests = safe shares sets a stage that pays (tools/questscan.ps1 -Safe)")
