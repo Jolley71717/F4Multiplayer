@@ -323,7 +323,7 @@ TEST("sim quests: a friend's teleport into the Institute takes you along when yo
 	CHECK(carol.Quests().Achievements().contains(INSTITUTE_ACHIEVEMENT));
 }
 
-TEST("sim quests: a friend's stage that turns a faction on the player (the robot shops' DN049) reaches you at once beside them, after a warning when you're far, and their payment never")
+TEST("sim quests: a friend's stage that turns a faction on the player (the robot shops' DN049) reaches you beside them, not when you're far, and their payment never")
 {
 	constexpr std::uint32_t DN049 = 0x0004542B;  // shared for its outcome: 120 makes Madden's champion hostile, 711 pays pre-war money
 	Session s{ SharedStory() };
@@ -347,18 +347,19 @@ TEST("sim quests: a friend's stage that turns a faction on the player (the robot
 	s.PlayFor(1s);
 	CHECK(host.Quests().Has(DN049, 120));  // beside Bob: the champion turns on them both at once
 	CHECK(host.Quests().Notices().empty());
-	CHECK(!carol.Quests().Has(DN049, 120));  // far away: warned first
-	REQUIRE(carol.Quests().Notices().size() == 1);
-	CHECK(carol.Quests().Notices()[0].starts_with("Catching up with your friends' story in 10 s"));
+	// Carol, far away, is not turned on: a stage that moves the player and is no bridge (none of these starts another
+	// shared quest or awards an achievement; a bridge's warning is the Institute's test above). No warning either.
 	s.PlayFor(11s);
-	CHECK(carol.Quests().Has(DN049, 120));
+	CHECK(!carol.Quests().Has(DN049, 120));
+	CHECK(carol.Quests().Notices().empty());
+	CHECK((carol.Quests().Skipped() == History{ { DN049, 120 } }));
 
 	bob.Stage(DN049, 711);  // Bob is paid
 	s.PlayFor(12s);
 	CHECK(!host.Quests().Has(DN049, 711));
 	CHECK(!carol.Quests().Has(DN049, 711));
 	CHECK((host.Quests().Skipped() == History{ { DN049, 711 } }));
-	CHECK((carol.Quests().Skipped() == History{ { DN049, 711 } }));
+	CHECK((carol.Quests().Skipped() == History{ { DN049, 120 }, { DN049, 711 } }));
 }
 
 // ---- catching up ------------------------------------------------------------------------------------

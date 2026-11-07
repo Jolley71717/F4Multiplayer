@@ -1671,9 +1671,8 @@ public static class RuleScan
                 foreach (var stage in stages.Keys.OrderBy(k => k))
                 {
                     var moves = MoveScan.StageMoves(file, quest, stage);
-                    // a SAFE or SILENT quest's stage that makes the player a faction's enemy (SafeScan.StageHostile): as one that
-                    // moves the player, but needed all the same (kBridge: a far player is warned and it is set); one that moves the
-                    // player too stays kMoves alone (a far player is not moved)
+                    // a SAFE or SILENT quest's stage that makes the player a faction's enemy (SafeScan.StageHostile): judged as
+                    // one that moves the player (kMoves, the maintainer's choice): it reaches a friend only near the one who did it
                     var enemy = shared == "shared (safe)" || shared == "shared (silent)" ? SafeScan.StageHostile(file, quest, stage) : null;
                     var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
@@ -1685,7 +1684,6 @@ public static class RuleScan
                     }
                     var flags = new List<string>();
                     if (moves != null || enemy != null) flags.Add("kMoves");
-                    if (moves == null && enemy != null) flags.Add("kBridge");
                     if (takes.Count > 0) flags.Add("kPays");
                     var what = new List<string>();
                     foreach (var chain in new[] { moves, enemy })
@@ -1926,7 +1924,7 @@ public static class SafeScan
     // (2026-11-06): with sQuests = safe one player's outcome is both players', as the shared story's kick-outs already
     // are; with it off each keeps their own. By editor ID, with why, each read in its stage fragments (the stages each
     // flagged one sets too). Why lets a stage that does only that through (rest); the rest of the rule holds for them,
-    // and RuleScan makes a stage that turns a faction on the player kMoves | kBridge (StageRules.h). These are the ones
+    // and RuleScan makes a stage that turns a faction on the player kMoves (StageRules.h). These are the ones
     // with objectives (SAFE). Read and left out: DLC04DialogueHubologists (its other stages are each player's own
     // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
     // bonus spells), and three the rule still leaves out for another stage, a quest each game runs its own way it
@@ -1951,8 +1949,8 @@ public static class SafeScan
 
     // A stage of a SAFE or SILENT quest that makes the player an enemy of a faction (SetPlayerEnemy, SetEnemy with the
     // player's faction and neither side a friend to the other, or someone added to a PlayerEnemy faction), itself or
-    // through what it calls and sets, as -Moves walks: RuleScan gives it kMoves | kBridge (StageRules.h), so a friend's is
-    // set here live with the friend near, and otherwise only after a warning, as a stage that moves the player.
+    // through what it calls and sets, as -Moves walks: RuleScan gives it kMoves (StageRules.h), so a friend's is set here
+    // only live with the friend near, as a stage that moves the player.
     // Faction.SetEnemy(akOther, abSelfIsNeutralToOther, abOtherIsNeutralToSelf): with either True that side is made neutral
     // instead (DN049's robots made peaceful again: SetEnemy(PlayerFaction, True, False), then StopCombat).
     static string Hostile(List<GearScan.Instr> a_code)

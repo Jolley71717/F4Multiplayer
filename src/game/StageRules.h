@@ -19,7 +19,7 @@ namespace StageRules
 
 	// What a stage's script does (or a stage it sets, a few levels down, in its own quest or another).
 	inline constexpr std::uint8_t kMoves = 1 << 0;   // moves the player (MoveTo, a door it makes them use), fades the screen out, takes away their controls
-	inline constexpr std::uint8_t kBridge = 1 << 1;  // ... and starts another shared quest or awards an achievement, or turns a faction on the player (an outcome shared, see RULES): needed all the same
+	inline constexpr std::uint8_t kBridge = 1 << 1;  // ... and starts another shared quest or awards an achievement: needed all the same
 	inline constexpr std::uint8_t kPays = 1 << 2;    // takes caps or ordinary items (not quest items) from the player: a bribe, a payment
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
@@ -95,10 +95,10 @@ namespace StageRules
 	// SAFE's quests shared for their outcomes (tools/questscan.cs ALLOW_OUTCOMES: a faction's hostility, a settlement)
 	// come from the same scan, with one more kind: a stage that turns a faction on the player (SetPlayerEnemy, SetEnemy
 	// with the player's faction and neither side made neutral, someone put in a PlayerEnemy faction; itself or through
-	// what it calls and sets: SafeScan.Hostile) is kMoves | kBridge, judged as a stage that moves the player but is
-	// needed all the same (the maintainer's choice, 2026-11-06): set at once with the friend who did it near, otherwise
-	// after the warning, and held while the player fights. One that moves the player too stays kMoves alone (a far
-	// player is not moved: Kiddie Kingdom's quickstart 6). So DN036 500 (Phyllis), DN049's x49 (a shop's robots), the
+	// what it calls and sets: SafeScan.Hostile) is kMoves, judged as a stage that moves the player (the maintainer's
+	// choice, 2026-11-06): set only live with the friend who did it near, skipped otherwise. None is a bridge: none
+	// starts another shared quest or awards an achievement (Acadia 200's DLC03MQ05 8990 reaches a friend as the story's
+	// own stage). So DN036 500 (Phyllis), DN049's x49 (a shop's robots), the
 	// Nucleus's 70 and the Institute's Acadia 200 (through the kick-out and defence quests' stages they set), Far
 	// Harbor S02 210 (Malcolm), Kiddie Kingdom 740 (Oswald's fight), and its 600 and 700, whose quest script's
 	// one-time Init sets the hostile ghouls on the player as they already are. Their payments: DN049 711's pre-war
@@ -252,17 +252,17 @@ namespace StageRules
 		{ 0, 0x04402C, 9, kMoves, 80 },
 		{ 0, 0x04402C, 150, 0, 60 },
 		{ 0, 0x04402C, 210, kMoves, 0 },
-		{ 0, 0x04542B, 120, kMoves | kBridge, 0 },  // DN049: the player an enemy: SetEnemy DN049MaddensChampFaction PlayerFaction
-		{ 0, 0x04542B, 149, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049MaddensFaction PlayerFaction
-		{ 0, 0x04542B, 221, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
-		{ 0, 0x04542B, 249, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049OutletFaction PlayerFaction
-		{ 0, 0x04542B, 349, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049DinerFaction PlayerFaction
-		{ 0, 0x04542B, 449, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049FallonsFaction PlayerFaction
-		{ 0, 0x04542B, 549, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049BakeryFaction PlayerFaction
-		{ 0, 0x04542B, 649, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049SlocumFaction PlayerFaction
+		{ 0, 0x04542B, 120, kMoves, 0 },  // DN049: the player an enemy: SetEnemy DN049MaddensChampFaction PlayerFaction
+		{ 0, 0x04542B, 149, kMoves, 0 },  // the player an enemy: SetEnemy DN049MaddensFaction PlayerFaction
+		{ 0, 0x04542B, 221, kMoves, 0 },  // the player an enemy: SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
+		{ 0, 0x04542B, 249, kMoves, 0 },  // the player an enemy: SetEnemy DN049OutletFaction PlayerFaction
+		{ 0, 0x04542B, 349, kMoves, 0 },  // the player an enemy: SetEnemy DN049DinerFaction PlayerFaction
+		{ 0, 0x04542B, 449, kMoves, 0 },  // the player an enemy: SetEnemy DN049FallonsFaction PlayerFaction
+		{ 0, 0x04542B, 549, kMoves, 0 },  // the player an enemy: SetEnemy DN049BakeryFaction PlayerFaction
+		{ 0, 0x04542B, 649, kMoves, 0 },  // the player an enemy: SetEnemy DN049SlocumFaction PlayerFaction
 		{ 0, 0x04542B, 711, kPays, 0 },  // RemoveItem(PrewarMoney x5000)
-		{ 0, 0x04542B, 749, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049BowlingAlleyFaction PlayerFaction
-		{ 0, 0x04542B, 849, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049DirectorFaction PlayerFaction
+		{ 0, 0x04542B, 749, kMoves, 0 },  // the player an enemy: SetEnemy DN049BowlingAlleyFaction PlayerFaction
+		{ 0, 0x04542B, 849, kMoves, 0 },  // the player an enemy: SetEnemy DN049DirectorFaction PlayerFaction
 		{ 0, 0x04542B, 856, 0, 50 },
 		{ 0, 0x0459D2, 0, 0, 1 },  // RR101
 		{ 0, 0x0459D2, 600, kMoves, 40 },
@@ -302,7 +302,7 @@ namespace StageRules
 		{ 0, 0x07CC61, 200, 0, 10 },
 		{ 0, 0x07CC61, 210, 0, 20 },
 		{ 0, 0x084E40, 400, kPays, 0 },  // MS13MarowskiRevenge: caps
-		{ 0, 0x08FCED, 500, kMoves | kBridge, 0 },  // DN036: the player an enemy: SetEnemy DN036PhyllisFaction PlayerFaction
+		{ 0, 0x08FCED, 500, kMoves, 0 },  // DN036: the player an enemy: SetEnemy DN036PhyllisFaction PlayerFaction
 		{ 0, 0x0986C7, 0, kMoves, 20 },  // InstM01
 		{ 0, 0x0986C7, 35, kPays, 0 },
 		{ 0, 0x099848, 90, kPays, 0 },  // MinRecruit02
@@ -475,13 +475,13 @@ namespace StageRules
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
 		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker
-		{ 1, 0x004C8E, 70, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8E, 70, kMoves, 0 },  // the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
-		{ 1, 0x00AEC3, 210, kMoves | kBridge, 0 },  // DLC03FarHarborS02: the player an enemy: AddToFaction pPlayerEnemyFaction
+		{ 1, 0x00AEC3, 210, kMoves, 0 },  // DLC03FarHarborS02: the player an enemy: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
 		{ 1, 0x01055C, 30, 0, 45 },  // DLC03CoA_FFNucleus01
-		{ 1, 0x013F3A, 200, kMoves | kBridge, 0 },  // DLC03Acadia_Institute: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
+		{ 1, 0x013F3A, 200, kMoves, 0 },  // DLC03Acadia_Institute: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 250, 0, 6 },
 		{ 1, 0x013F3A, 460, 0, 32 },
 		{ 1, 0x01CBFA, 1, kMoves, 50 },  // DLC03MQ04_01: into DiMA's memories (MQ04Script.EnterVR)
@@ -541,9 +541,9 @@ namespace StageRules
 		{ 3, 0x0295C8, 50, 0, 100 },  // DLC04GZBattlezone
 		{ 3, 0x0295C8, 60, 0, 20 },
 		{ 3, 0x03684F, 6, kMoves, 50 },  // DLC04_KiddieKingdomMain: MoveTo temp6; the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
-		{ 3, 0x03684F, 600, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
-		{ 3, 0x03684F, 700, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
-		{ 3, 0x03684F, 740, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
+		{ 3, 0x03684F, 600, kMoves, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
+		{ 3, 0x03684F, 700, kMoves, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
+		{ 3, 0x03684F, 740, kMoves, 0 },  // the player an enemy: SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
 		{ 3, 0x03684F, 791, 0, 5 },
 	};
 

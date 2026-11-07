@@ -417,7 +417,7 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
 }
 
-TEST("stage rules: a stage of a quest shared for its outcome that turns a faction on the player is set with the friend near, otherwise after a warning (tools/questscan.ps1 -Safe -Rules)")
+TEST("stage rules: a stage of a quest shared for its outcome that turns a faction on the player is set only with the friend near, as one that moves the player (tools/questscan.ps1 -Safe -Rules)")
 {
 	using namespace StageRules;
 	// Each one the scan found (SafeScan.Hostile), in the quests tools/questscan.cs ALLOW_OUTCOMES lets into SAFE.
@@ -443,15 +443,15 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	for (const auto& [file, quest, stage] : hostile) {
 		const auto rule = Find(quest, stage, file);
 		REQUIRE(rule);
-		CHECK(rule->flags == (kMoves | kBridge));
+		CHECK(rule->flags == kMoves);  // no bridge: none starts another shared quest or awards an achievement
 		CHECK(rule->wait == 0);
-		// With the friend who did it near: at once. Far: after the warning, and not while the player fights.
+		// With the friend who did it near: at once, fighting or not. Far, or caught up from the session: never, and no
+		// warning.
 		CHECK(Judge(rule, { .live = true, .nearFriend = true }) == Verdict::kSet);
-		CHECK(Judge(rule, { .live = true, .nearFriend = false }) == Verdict::kWarn);
-		CHECK(Judge(rule, { .live = false }) == Verdict::kWarn);
-		CHECK(Judge(rule, { .live = false, .warned = WARNING }) == Verdict::kSet);
-		CHECK(Judge(rule, { .live = false, .warned = 2s }) == Verdict::kLater);
-		CHECK(Judge(rule, { .live = false, .held = true, .warned = WARNING }) == Verdict::kLater);
+		CHECK(Judge(rule, { .live = true, .nearFriend = true, .held = true }) == Verdict::kSet);
+		CHECK(Judge(rule, { .live = true, .nearFriend = false }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .live = false }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .live = false, .nearFriend = true }) == Verdict::kSkip);
 		CHECK(Judge(rule, { .opening = true }) == Verdict::kOpeningWaits);
 	}
 	// The peace a stage makes is no row: DN049's x50 (SetEnemy(PlayerFaction, True, False), then StopCombat) and its 55.
@@ -466,8 +466,8 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(!Find(0x023ACB, 220, File::kCoast));
 	CHECK(!Find(0x01AABF, 700, File::kNukaWorld));
 	CHECK(!Find(0x02C687, 100, File::kCoast));
-	// One that moves the player too stays kMoves alone (a far player is not moved): Kiddie Kingdom's quickstart 6, which
-	// sets its 600. And the Nucleus's quickstart.
+	// One that moves the player is kMoves the same way: Kiddie Kingdom's quickstart 6, which sets its 600. And the
+	// Nucleus's quickstart.
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == kMoves);
 	CHECK(Judge(Find(0x03684F, 6, File::kNukaWorld), { .live = false }) == Verdict::kSkip);
 	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == kMoves);
