@@ -417,6 +417,72 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
 }
 
+TEST("stage rules: a stage of a quest shared for its outcome that turns a faction on the player is set with the friend near, otherwise after a warning (tools/questscan.ps1 -Safe -Rules)")
+{
+	using namespace StageRules;
+	// Each one the scan found (SafeScan.Hostile), in the quests tools/questscan.cs ALLOW_OUTCOMES lets into SAFE.
+	const std::tuple<File, std::uint32_t, std::uint16_t> hostile[] = {
+		{ File::kFallout4, 0x08FCED, 500 },  // DN036: Phyllis
+		{ File::kFallout4, 0x04542B, 120 },  // DN049: the champion
+		{ File::kFallout4, 0x04542B, 149 },  // DN049: each shop's robots
+		{ File::kFallout4, 0x04542B, 221 },
+		{ File::kFallout4, 0x04542B, 249 },
+		{ File::kFallout4, 0x04542B, 349 },
+		{ File::kFallout4, 0x04542B, 449 },
+		{ File::kFallout4, 0x04542B, 549 },
+		{ File::kFallout4, 0x04542B, 649 },
+		{ File::kFallout4, 0x04542B, 749 },
+		{ File::kFallout4, 0x04542B, 849 },
+		{ File::kCoast, 0x004C8E, 70 },       // DLC03CoA_DialogueNucleus: sets DLC03CoA_Kickout 700
+		{ File::kCoast, 0x00AEC3, 210 },      // DLC03FarHarborS02: Malcolm
+		{ File::kCoast, 0x013F3A, 200 },      // DLC03Acadia_Institute: sets DLC03AcadiaDefense 100
+		{ File::kNukaWorld, 0x03684F, 600 },  // DLC04_KiddieKingdomMain: its script's one-time Init
+		{ File::kNukaWorld, 0x03684F, 700 },
+		{ File::kNukaWorld, 0x03684F, 740 },  // Oswald's fight
+	};
+	for (const auto& [file, quest, stage] : hostile) {
+		const auto rule = Find(quest, stage, file);
+		REQUIRE(rule);
+		CHECK(rule->flags == (kMoves | kBridge));
+		CHECK(rule->wait == 0);
+		// With the friend who did it near: at once. Far: after the warning, and not while the player fights.
+		CHECK(Judge(rule, { .live = true, .nearFriend = true }) == Verdict::kSet);
+		CHECK(Judge(rule, { .live = true, .nearFriend = false }) == Verdict::kWarn);
+		CHECK(Judge(rule, { .live = false }) == Verdict::kWarn);
+		CHECK(Judge(rule, { .live = false, .warned = WARNING }) == Verdict::kSet);
+		CHECK(Judge(rule, { .live = false, .warned = 2s }) == Verdict::kLater);
+		CHECK(Judge(rule, { .live = false, .held = true, .warned = WARNING }) == Verdict::kLater);
+		CHECK(Judge(rule, { .opening = true }) == Verdict::kOpeningWaits);
+	}
+	// The peace a stage makes is no row: DN049's x50 (SetEnemy(PlayerFaction, True, False), then StopCombat) and its 55.
+	CHECK(!Find(0x04542B, 50));
+	CHECK(!Find(0x04542B, 150));
+	CHECK(!Find(0x04542B, 155));
+	// Nor a settlement given (DN036's endings, Far Harbor's S02 425 and FF01 220), nor two factions set on each other
+	// (DLC04DialogueSettlement 700), nor an ally made (DLC03_ADV017 100).
+	CHECK(!Find(0x08FCED, 550));
+	CHECK(!Find(0x08FCED, 700));
+	CHECK(!Find(0x00AEC3, 425, File::kCoast));
+	CHECK(!Find(0x023ACB, 220, File::kCoast));
+	CHECK(!Find(0x01AABF, 700, File::kNukaWorld));
+	CHECK(!Find(0x02C687, 100, File::kCoast));
+	// One that moves the player too stays kMoves alone (a far player is not moved): Kiddie Kingdom's quickstart 6, which
+	// sets its 600. And the Nucleus's quickstart.
+	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == kMoves);
+	CHECK(Judge(Find(0x03684F, 6, File::kNukaWorld), { .live = false }) == Verdict::kSkip);
+	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == kMoves);
+	// Their payments: DN049's pre-war money, the bloodworm meat Nuka-Town's trader takes.
+	CHECK(FlagsOf(0x04542B, 711) == kPays);
+	CHECK(FlagsOf(0x01AABF, 110, File::kNukaWorld) == kPays);
+	CHECK(Judge(Find(0x04542B, 711), { .live = true, .nearFriend = true }) == Verdict::kSkip);
+	// Their stages that set another shared quest's (-Safe -SetsOther): Far Harbor's settlements move its main quest on.
+	CHECK(SetsAnother(File::kCoast, 0x00A991, 500));  // DLC03FarHarborS01 sets DLC03FarHarborM03 775
+	CHECK(SetsAnother(File::kCoast, 0x00AEC3, 400));  // DLC03FarHarborS02 sets DLC03FarHarborM03 875
+	CHECK(SetsAnother(File::kCoast, 0x013F3A, 200));  // DLC03Acadia_Institute sets DLC03MQ05 8990
+	CHECK(SetsAnother(File::kNukaWorld, 0x000804, 10));  // DLC04MQ04 sets DLC04DialogueSettlement 140
+	CHECK(!SetsAnother(File::kNukaWorld, 0x00CBD0, 200));  // DLC04DialogueHubologists: not shared
+}
+
 TEST("stage rules: no shared stage a friend's game sets pays through a stage it sets (tools/questscan.ps1 -Safe)")
 {
 	using namespace StageRules;

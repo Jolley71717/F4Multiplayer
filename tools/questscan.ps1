@@ -12,8 +12,10 @@
 # 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so). With -PerGame:
 # the quests shared by their type that the story manager starts with targets each game picks itself,
 # src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
-# shares, by the rule there), and what was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
-# those quests alone (-Files 0,1,2,3); with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
+# shares, by the rule there; the quests in ALLOW_OUTCOMES in tools/questscan.cs pass it with stages that turn a faction
+# on the player or give a settlement, by the maintainer's choice), and what was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
+# those quests alone (-Files 0,1,2,3; a stage of a SAFE or SILENT quest that makes the player an enemy is kMoves | kBridge,
+# set with the friend near or after the warning); with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
 # -Safe also lists src/game/QuestFilter.h's SILENT after SAFE (the quests the rule passes but for their objectives,
 # less the ones denied by name, DENY_PATTERNS in tools/questscan.cs, or by hand, DENY_SILENT, each listed with why;
 # -Rules and -SetsOther take them for shared too), and ends with the payments reached through a stage of any quest a

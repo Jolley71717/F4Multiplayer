@@ -323,6 +323,44 @@ TEST("sim quests: a friend's teleport into the Institute takes you along when yo
 	CHECK(carol.Quests().Achievements().contains(INSTITUTE_ACHIEVEMENT));
 }
 
+TEST("sim quests: a friend's stage that turns a faction on the player (the robot shops' DN049) reaches you at once beside them, after a warning when you're far, and their payment never")
+{
+	constexpr std::uint32_t DN049 = 0x0004542B;  // shared for its outcome: 120 makes Madden's champion hostile, 711 pays pre-war money
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	for (const auto player : { &host, &bob, &carol }) {
+		auto quest = Started({ 10, 120, 711 });
+		quest.story = true;  // shared with the story, as QuestSync shares SAFE
+		player->GiveQuest(DN049, std::move(quest));
+	}
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(1200.0f, 1000.0f);
+	carol.Move(50000.0f, 1000.0f);  // across the map
+	Settled(s);
+
+	bob.Stage(DN049, 120);
+	s.PlayFor(1s);
+	CHECK(host.Quests().Has(DN049, 120));  // beside Bob: the champion turns on them both at once
+	CHECK(host.Quests().Notices().empty());
+	CHECK(!carol.Quests().Has(DN049, 120));  // far away: warned first
+	REQUIRE(carol.Quests().Notices().size() == 1);
+	CHECK(carol.Quests().Notices()[0].starts_with("Catching up with your friends' story in 10 s"));
+	s.PlayFor(11s);
+	CHECK(carol.Quests().Has(DN049, 120));
+
+	bob.Stage(DN049, 711);  // Bob is paid
+	s.PlayFor(12s);
+	CHECK(!host.Quests().Has(DN049, 711));
+	CHECK(!carol.Quests().Has(DN049, 711));
+	CHECK((host.Quests().Skipped() == History{ { DN049, 711 } }));
+	CHECK((carol.Quests().Skipped() == History{ { DN049, 711 } }));
+}
+
 // ---- catching up ------------------------------------------------------------------------------------
 
 TEST("sim quests: a friend who joins late catches up on the session's stages in order, isn't moved by a step from the session, and gets the achievement")

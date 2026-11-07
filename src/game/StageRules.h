@@ -19,7 +19,7 @@ namespace StageRules
 
 	// What a stage's script does (or a stage it sets, a few levels down, in its own quest or another).
 	inline constexpr std::uint8_t kMoves = 1 << 0;   // moves the player (MoveTo, a door it makes them use), fades the screen out, takes away their controls
-	inline constexpr std::uint8_t kBridge = 1 << 1;  // ... and starts another shared quest or awards an achievement: needed all the same
+	inline constexpr std::uint8_t kBridge = 1 << 1;  // ... and starts another shared quest or awards an achievement, or turns a faction on the player (an outcome shared, see RULES): needed all the same
 	inline constexpr std::uint8_t kPays = 1 << 2;    // takes caps or ordinary items (not quest items) from the player: a bribe, a payment
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
@@ -92,6 +92,17 @@ namespace StageRules
 	// 0), and Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
 	// (DLC03CoA_FFNucleus03_PumpHandler 20 and 30) are the quest's own, as the fog condenser modules: no row. What
 	// their stages give (caps from a fight's prize or a reward) both players get, as a shared quest's reward.
+	// SAFE's quests shared for their outcomes (tools/questscan.cs ALLOW_OUTCOMES: a faction's hostility, a settlement)
+	// come from the same scan, with one more kind: a stage that turns a faction on the player (SetPlayerEnemy, SetEnemy
+	// with the player's faction and neither side made neutral, someone put in a PlayerEnemy faction; itself or through
+	// what it calls and sets: SafeScan.Hostile) is kMoves | kBridge, judged as a stage that moves the player but is
+	// needed all the same (the maintainer's choice, 2026-11-06): set at once with the friend who did it near, otherwise
+	// after the warning, and held while the player fights. One that moves the player too stays kMoves alone (a far
+	// player is not moved: Kiddie Kingdom's quickstart 6). So DN036 500 (Phyllis), DN049's x49 (a shop's robots), the
+	// Nucleus's 70 and the Institute's Acadia 200 (through the kick-out and defence quests' stages they set), Far
+	// Harbor S02 210 (Malcolm), Kiddie Kingdom 740 (Oswald's fight), and its 600 and 700, whose quest script's
+	// one-time Init sets the hostile ghouls on the player as they already are. Their payments: DN049 711's pre-war
+	// money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -241,6 +252,18 @@ namespace StageRules
 		{ 0, 0x04402C, 9, kMoves, 80 },
 		{ 0, 0x04402C, 150, 0, 60 },
 		{ 0, 0x04402C, 210, kMoves, 0 },
+		{ 0, 0x04542B, 120, kMoves | kBridge, 0 },  // DN049: the player an enemy: SetEnemy DN049MaddensChampFaction PlayerFaction
+		{ 0, 0x04542B, 149, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049MaddensFaction PlayerFaction
+		{ 0, 0x04542B, 221, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
+		{ 0, 0x04542B, 249, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049OutletFaction PlayerFaction
+		{ 0, 0x04542B, 349, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049DinerFaction PlayerFaction
+		{ 0, 0x04542B, 449, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049FallonsFaction PlayerFaction
+		{ 0, 0x04542B, 549, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049BakeryFaction PlayerFaction
+		{ 0, 0x04542B, 649, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049SlocumFaction PlayerFaction
+		{ 0, 0x04542B, 711, kPays, 0 },  // RemoveItem(PrewarMoney x5000)
+		{ 0, 0x04542B, 749, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049BowlingAlleyFaction PlayerFaction
+		{ 0, 0x04542B, 849, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DN049DirectorFaction PlayerFaction
+		{ 0, 0x04542B, 856, 0, 50 },
 		{ 0, 0x0459D2, 0, 0, 1 },  // RR101
 		{ 0, 0x0459D2, 600, kMoves, 40 },
 		{ 0, 0x0459D2, 710, 0, 3 },
@@ -279,6 +302,7 @@ namespace StageRules
 		{ 0, 0x07CC61, 200, 0, 10 },
 		{ 0, 0x07CC61, 210, 0, 20 },
 		{ 0, 0x084E40, 400, kPays, 0 },  // MS13MarowskiRevenge: caps
+		{ 0, 0x08FCED, 500, kMoves | kBridge, 0 },  // DN036: the player an enemy: SetEnemy DN036PhyllisFaction PlayerFaction
 		{ 0, 0x0986C7, 0, kMoves, 20 },  // InstM01
 		{ 0, 0x0986C7, 35, kPays, 0 },
 		{ 0, 0x099848, 90, kPays, 0 },  // MinRecruit02
@@ -450,10 +474,16 @@ namespace StageRules
 		{ 1, 0x001B44, 3, 0, 20 },
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
+		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker
+		{ 1, 0x004C8E, 70, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
+		{ 1, 0x00AEC3, 210, kMoves | kBridge, 0 },  // DLC03FarHarborS02: the player an enemy: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
 		{ 1, 0x01055C, 30, 0, 45 },  // DLC03CoA_FFNucleus01
+		{ 1, 0x013F3A, 200, kMoves | kBridge, 0 },  // DLC03Acadia_Institute: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
+		{ 1, 0x013F3A, 250, 0, 6 },
+		{ 1, 0x013F3A, 460, 0, 32 },
 		{ 1, 0x01CBFA, 1, kMoves, 50 },  // DLC03MQ04_01: into DiMA's memories (MQ04Script.EnterVR)
 		{ 1, 0x01E3FE, 350, kMoves, 50 },  // DLC03MQ04_05: out of them
 		{ 1, 0x02127F, 1, kMoves | kBridge, 85 },  // DLC03MQ06a
@@ -507,8 +537,14 @@ namespace StageRules
 		{ 3, 0x014352, 90, kPays, 0 },  // DLC04RaidChaseOff: caps
 		{ 3, 0x016E18, 95, 0, 10 },     // DLC04RaidSubdue
 		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
+		{ 3, 0x01AABF, 110, kPays, 0 },  // DLC04DialogueSettlement: RemoveItem(DLC04_MeatBloodworm x10)
 		{ 3, 0x0295C8, 50, 0, 100 },  // DLC04GZBattlezone
 		{ 3, 0x0295C8, 60, 0, 20 },
+		{ 3, 0x03684F, 6, kMoves, 50 },  // DLC04_KiddieKingdomMain: MoveTo temp6; the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
+		{ 3, 0x03684F, 600, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
+		{ 3, 0x03684F, 700, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
+		{ 3, 0x03684F, 740, kMoves | kBridge, 0 },  // the player an enemy: SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
+		{ 3, 0x03684F, 791, 0, 5 },
 	};
 
 	// How many stages of the quests a friend's stage is set on (shared by their type, the finales, the dialogue quests,
@@ -961,14 +997,21 @@ namespace StageRules
 		{ 1, 0x001B43, 0 }, { 1, 0x001B43, 1 }, { 1, 0x001B43, 50 }, { 1, 0x001B43, 60 }, { 1, 0x001B43, 105 }, { 1, 0x001B43, 120 }, { 1, 0x001B43, 125 },  // DLC03MQ05
 		{ 1, 0x001B43, 220 }, { 1, 0x001B43, 230 }, { 1, 0x001B43, 240 }, { 1, 0x001B43, 250 }, { 1, 0x001B43, 500 }, { 1, 0x001B43, 8900 },
 		{ 1, 0x001B44, 1 }, { 1, 0x001B44, 2 }, { 1, 0x001B44, 3 }, { 1, 0x001B44, 200 }, { 1, 0x001B44, 250 }, { 1, 0x001B44, 500 },  // DLC03MQ06
+		{ 1, 0x004C8E, 30 }, { 1, 0x004C8E, 52 }, { 1, 0x004C8E, 55 }, { 1, 0x004C8E, 57 }, { 1, 0x004C8E, 60 }, { 1, 0x004C8E, 75 }, { 1, 0x004C8E, 90 },  // DLC03CoA_DialogueNucleus
+		{ 1, 0x004C8E, 92 }, { 1, 0x004C8E, 96 }, { 1, 0x004C8E, 97 }, { 1, 0x004C8E, 98 }, { 1, 0x004C8E, 99 }, { 1, 0x004C8E, 115 }, { 1, 0x004C8E, 117 },
+		{ 1, 0x004C8E, 119 }, { 1, 0x004C8E, 120 }, { 1, 0x004C8E, 124 }, { 1, 0x004C8E, 125 }, { 1, 0x004C8E, 130 },
 		{ 1, 0x004F2C, 145 }, { 1, 0x004F2C, 150 },  // DLC03MQPostQuest
 		{ 1, 0x005BD7, 700 }, { 1, 0x005BD7, 710 }, { 1, 0x005BD7, 720 }, { 1, 0x005BD7, 9000 },  // DLC03DialogueFarHarbor
 		{ 1, 0x00A990, 0 }, { 1, 0x00A990, 100 }, { 1, 0x00A990, 250 }, { 1, 0x00A990, 290 }, { 1, 0x00A990, 300 }, { 1, 0x00A990, 375 },  // DLC03FarHarborFF03a
+		{ 1, 0x00A991, 100 }, { 1, 0x00A991, 200 }, { 1, 0x00A991, 500 }, { 1, 0x00A991, 9000 },  // DLC03FarHarborS01
 		{ 1, 0x00A992, 1 }, { 1, 0x00A992, 50 }, { 1, 0x00A992, 100 }, { 1, 0x00A992, 500 },  // DLC03FarHarborM01
+		{ 1, 0x00AB19, 150 }, { 1, 0x00AB19, 200 }, { 1, 0x00AB19, 350 },  // DLC03FarHarborS01Defend
+		{ 1, 0x00AEC3, 1 }, { 1, 0x00AEC3, 100 }, { 1, 0x00AEC3, 200 }, { 1, 0x00AEC3, 300 }, { 1, 0x00AEC3, 325 }, { 1, 0x00AEC3, 400 },  // DLC03FarHarborS02
 		{ 1, 0x00AEC4, 50 }, { 1, 0x00AEC4, 100 }, { 1, 0x00AEC4, 300 }, { 1, 0x00AEC4, 350 },  // DLC03FarHarborFF03b
 		{ 1, 0x00AFB1, 150 },  // DLC03AtomM01
 		{ 1, 0x01055C, 10 }, { 1, 0x01055C, 200 },  // DLC03CoA_FFNucleus01
 		{ 1, 0x013F39, 40 }, { 1, 0x013F39, 200 }, { 1, 0x013F39, 1000 },  // DLC03Acadia_BoS
+		{ 1, 0x013F3A, 40 }, { 1, 0x013F3A, 200 }, { 1, 0x013F3A, 1000 },  // DLC03Acadia_Institute
 		{ 1, 0x01536F, 600 }, { 1, 0x01536F, 700 }, { 1, 0x01536F, 750 },  // DLC03AcadiaM01
 		{ 1, 0x01B0AF, 100 }, { 1, 0x01B0AF, 700 },  // DLC03AtomM02
 		{ 1, 0x01CBFA, 100 }, { 1, 0x01CBFA, 102 }, { 1, 0x01CBFA, 104 }, { 1, 0x01CBFA, 106 }, { 1, 0x01CBFA, 108 }, { 1, 0x01CBFA, 110 }, { 1, 0x01CBFA, 115 },  // DLC03MQ04_01
@@ -984,6 +1027,7 @@ namespace StageRules
 		{ 1, 0x02127F, 1000 },
 		{ 1, 0x02399F, 0 }, { 1, 0x02399F, 1 }, { 1, 0x02399F, 50 }, { 1, 0x02399F, 100 }, { 1, 0x02399F, 500 },  // DLC03FarHarborS03
 		{ 1, 0x023ACA, 100 }, { 1, 0x023ACA, 400 },  // DLC03FarHarborFF02
+		{ 1, 0x023ACB, 100 }, { 1, 0x023ACB, 400 },  // DLC03FarHarborFF01
 		{ 1, 0x02B4FF, 20 }, { 1, 0x02B4FF, 30 },  // DLC03CoA_FFNucleus03_PumpHandler
 		{ 1, 0x02B500, 10 }, { 1, 0x02B500, 30 }, { 1, 0x02B500, 50 },  // DLC03CoA_FFNucleus03
 		{ 1, 0x02BBDB, 10 },  // DLC03DialogueKasumiAcadia
@@ -1013,15 +1057,20 @@ namespace StageRules
 		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 1000 },  // DLC04MQ01
 		{ 3, 0x000802, 0 }, { 3, 0x000802, 1000 },  // DLC04MQ02
 		{ 3, 0x000803, 655 },  // DLC04MQ03
-		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 }, { 3, 0x000804, 50 }, { 3, 0x000804, 300 }, { 3, 0x000804, 305 },  // DLC04MQ04
+		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 }, { 3, 0x000804, 10 }, { 3, 0x000804, 50 }, { 3, 0x000804, 300 },  // DLC04MQ04
+		{ 3, 0x000804, 305 },
 		{ 3, 0x000806, 40 }, { 3, 0x000806, 60 }, { 3, 0x000806, 70 }, { 3, 0x000806, 75 }, { 3, 0x000806, 100 },  // DLC04MS01
+		{ 3, 0x000807, 100 }, { 3, 0x000807, 300 }, { 3, 0x000807, 500 },  // DLC04MS02
+		{ 3, 0x000808, 11 },  // DLC04Grandchester
 		{ 3, 0x00DB37, 15 }, { 3, 0x00DB37, 20 }, { 3, 0x00DB37, 105 },  // DLC04RaidWipeOut
 		{ 3, 0x014352, 20 },  // DLC04RaidChaseOff
 		{ 3, 0x016E18, 15 }, { 3, 0x016E18, 20 }, { 3, 0x016E18, 65 }, { 3, 0x016E18, 70 }, { 3, 0x016E18, 95 }, { 3, 0x016E18, 100 },  // DLC04RaidSubdue
 		{ 3, 0x019088, 20 },  // DLC04RaidCoerce
+		{ 3, 0x01AABF, 47 }, { 3, 0x01AABF, 200 },  // DLC04DialogueSettlement
 		{ 3, 0x01E34A, 210 }, { 3, 0x01E34A, 212 }, { 3, 0x01E34A, 300 }, { 3, 0x01E34A, 1000 }, { 3, 0x01E34A, 1500 }, { 3, 0x01E34A, 1600 }, { 3, 0x01E34A, 2000 },  // DLC04GZMainQuest
 		{ 3, 0x035791, 20 },  // DLC04MS01BradbertonDies
 		{ 3, 0x03684E, 1000 },  // DLC04_BottlingPlantMAIN
+		{ 3, 0x03684F, 780 }, { 3, 0x03684F, 795 }, { 3, 0x03684F, 800 }, { 3, 0x03684F, 820 }, { 3, 0x03684F, 1000 },  // DLC04_KiddieKingdomMain
 		{ 3, 0x0431AB, 800 }, { 3, 0x0431AB, 900 }, { 3, 0x0431AB, 1000 },  // DLC04DryRockGulch
 	};
 
