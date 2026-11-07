@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T16:10:28+00:00",
+ "updated": "2026-11-07T16:13:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1637,6 +1637,14 @@
    "id": "se4h",
    "title": "Shared bench: a refused build the guest can't pay for stands short",
    "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "sokb",
+   "title": "Ride the same vertibird together (shared seats, flight path, door gun)",
+   "kind": "feature",
    "priority": 3,
    "stage": 0,
    "note": ""
