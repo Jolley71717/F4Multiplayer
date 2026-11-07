@@ -29,6 +29,11 @@ namespace QuestSync
 	// running long before that: a new game already runs some side quests in the background.)
 	[[nodiscard]] bool PlayerStarted(const RE::TESQuest* a_quest);
 
+	// Whether this session shares the quest's stages now (a side quest; the story's and SAFE's or SILENT's as the host's
+	// shared story and sQuests = safe reach them; a radiant's shared run too). For QuestActors: a shared quest's created
+	// creatures pair across games.
+	[[nodiscard]] bool SharesHere(const RE::TESQuest* a_quest);
+
 	// Why a session can share this quest: "side", "story", "finale" or "dialogue" (see QuestFilter), or "no"
 	// (misc, internal, or from a mod). For the developer's quest commands.
 	[[nodiscard]] const char* Kind(const RE::TESQuest* a_quest);

@@ -1002,6 +1002,11 @@ namespace QuestSync
 		});
 	}
 
+	bool SharesHere(const RE::TESQuest* a_quest)
+	{
+		return a_quest && Shared(a_quest);
+	}
+
 	const char* Kind(const RE::TESQuest* a_quest)
 	{
 		if (a_quest && RadiantSync::ShareOf(a_quest) != RadiantRules::Share::kNotRadiant) {
