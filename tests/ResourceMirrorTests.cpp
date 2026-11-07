@@ -28,9 +28,9 @@ namespace
 	// Our pieces, as the builder's game finds them.
 	struct Pieces
 	{
-		std::map<std::uint32_t, Look> looks;
+		std::map<std::uint32_t, ResourceMirror::Look> looks;
 
-		Look Look(std::uint32_t a_ref)
+		ResourceMirror::Look Look(std::uint32_t a_ref)
 		{
 			const auto it = looks.find(a_ref);
 			return it != looks.end() ? it->second : ResourceMirror::Look{};
