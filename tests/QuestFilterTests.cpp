@@ -197,6 +197,17 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, 0x06DFAF));  // DogmeatQuest
 	CHECK(!QuestFilter::IsSafe(0, 0x00080E));  // HC_Manager
 	CHECK(!QuestFilter::IsSafe(3, 0x03C5A7));  // DLC04PowerTracker
+	// DENIED is a backstop: the rule leaves MQ101 (empties the inventory), DogmeatQuest (AllowCompanion) and
+	// DLC04RaiderKickout (SetEnemy) out by itself, and -Safe prints "denied:" for the other six only.
+	std::size_t backstop = 0;
+	for (const auto& denied : QuestFilter::DENIED) {
+		backstop += (denied.file == 0 && (denied.quest == 0x01ED86 || denied.quest == 0x06DFAF)) || (denied.file == 3 && denied.quest == 0x027704);
+	}
+	CHECK(backstop == 3);
+	// A call through a variable typed with a quest's script is followed (DN036_Post 15 and 25: DN036QuestScript's endings
+	// set DN036 1000, which keeps nothing for each game): DN036_Post stays in, DN036 itself is out (SetEnemy at 500).
+	CHECK(QuestFilter::IsSafe(0, 0x10E695));   // DN036_Post
+	CHECK(!QuestFilter::IsSafe(0, 0x08FCED));  // DN036
 	// None that the game's targets make each player's own, no radiant, no finale (those are shared their own way).
 	for (const auto& local : QuestFilter::PER_GAME) {
 		CHECK(!QuestFilter::IsSafe(local.file, local.quest));

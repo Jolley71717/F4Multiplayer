@@ -1,5 +1,6 @@
 #include "Test.h"
 
+#include "game/QuestFilter.h"
 #include "game/StageRules.h"
 
 #include <chrono>
@@ -382,4 +383,17 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(SetsAnother(File::kNukaWorld, 0x01E34A, 1000));
 	CHECK(SetsAnother(File::kCoast, 0x023ACA, 400));  // DLC03FarHarborFF02
 	CHECK(!SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ, no longer SAFE's
+}
+
+TEST("stage rules: no stage of a quest sQuests = safe shares sets a stage that pays (tools/questscan.ps1 -Safe)")
+{
+	using namespace StageRules;
+	// The scan's last line, SAFE_REACHES_PAYS: the stages reached from a SAFE stage, through fragments and the script
+	// functions they call, in their own quest or any other, that have a kPays row and are not read by hand.
+	CHECK(SAFE_REACHES_PAYS == 0);
+	// The one it lists and has read by hand: MS13MarowskiRevenge 380 (SAFE) sets its own 400, which takes the caps unless 380
+	// is done, and is set from 380.
+	CHECK(QuestFilter::IsSafe(0, 0x084E40));
+	CHECK(FlagsOf(0x084E40, 400) == kPays);
+	CHECK(!Find(0x084E40, 380));
 }

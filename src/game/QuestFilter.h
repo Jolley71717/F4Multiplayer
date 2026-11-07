@@ -133,7 +133,10 @@ namespace QuestFilter
 		return std::ranges::binary_search(PER_GAME, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
 	}
 
-	// Quests the rule SAFE is made by (below) passes that are each player's all the same, so SAFE leaves them out.
+	// Quests SAFE leaves out whatever the rule it is made by (below) says: a backstop. Six are quests the rule passes that
+	// are each player's all the same (tools/questscan.ps1 -Safe prints them as "denied:": HC_Manager, CZ_Arena and the
+	// four DLC04 bookkeeping quests). The other three, MQ101, DogmeatQuest and DLC04RaiderKickout, the rule leaves out by
+	// itself, for a stage (empties the inventory, AllowCompanion, SetEnemy); they stay here in case the rule changes.
 	inline constexpr Local DENIED[] = {
 		{ 0, 0x00080E },  // HC_Manager: survival mode's, each game's difficulty
 		{ 0, 0x01ED86 },  // MQ101: the opening, War Never Changes (every player's own; StageRules::IsOpening)
