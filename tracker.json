@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T17:45:13+00:00",
+ "updated": "2026-11-07T18:03:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -325,6 +325,14 @@
    "stage": 7,
    "note": "",
    "pr": 270
+  },
+  {
+   "id": "5a8r",
+   "title": "questscan: stages that turn NPCs on the player without a faction change get no kMoves row (KiddieKingdomMain 590, DLC03_ADV017 8)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "5buv",
@@ -1244,7 +1252,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 2,
-   "note": "10 more story-outcome quests in review (PR 326); creature pairing (step C) in rig test",
+   "note": "106 silent + 10 story-outcome quests + 4 DLC radiants merged for 0.14.0; creature pairing (step C) in rig test",
    "pr": 326
   },
   {
