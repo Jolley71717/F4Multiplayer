@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T02:17:17+00:00",
+ "updated": "2026-11-07T03:20:32+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1204,8 +1204,9 @@
    "title": "Share all quests in co-op (the end goal), step by step after the safe ones",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "",
+   "pr": 317
   },
   {
    "id": "lzyx",
@@ -1222,7 +1223,7 @@
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 5,
    "note": "",
    "pr": 305
   },
@@ -1951,6 +1952,14 @@
    "stage": 7,
    "note": "",
    "pr": 279
+  },
+  {
+   "id": "yrbg",
+   "title": "Workshop belts: after a friend leaves, our copy of their belt stays shown running (a save then may keep it running)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "yx7v",
