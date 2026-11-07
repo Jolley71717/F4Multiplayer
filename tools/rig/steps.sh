@@ -390,8 +390,9 @@ step_grenades() {
 # ---- friends' shot trails: a stand-in's plain bullet and laser beam are launched inert in the watcher's game, both ways ---------------
 # Each player fires a 10mm pistol (a bullet) and a laser gun (a beam), facing away from the other, 300 u apart. The WATCHER's game
 # (the one with the shooter's stand-in) must launch one inert trail per shot (`trails=`, `firesInert=`), hold none (`firesHeld=`), see no
-# hit by the stand-in on its player (`puppetHitsOnUs=`), and have none left in flight afterwards (`inertLive=`). Then `trails off` on the
-# watcher: the same shots are held as before (`firesHeld=`, `trailsHeld=` rise; `firesInert=`, `trails=` don't). What it measures is the
+# hit by the stand-in on its player (`puppetHitsOnUs=`) or on any actor (`puppetHits=`), and have none left in flight afterwards
+# (`inertLive=`). Then each fires the laser once more facing the other (the watcher's player in the line of fire, 300 u): still no hit.
+# Then `trails off` on the watcher: the same shots are held as before (`firesHeld=`, `trailsHeld=` rise; `firesInert=`, `trails=` don't). What it measures is the
 # counters, not pixels: every laser trail must come out a tracer (`trailTracers=`), which a beam needs for its 3D; the beam itself was seen
 # drawn on the rig by eye (2026-11-07, docs/DESIGN.md, Weapon fire). The graph refuses an
 # attack while the last one plays, so a few of an automatic gun's shots launch nothing (T_TRAIL_FRACTION: the share of the shooter's shots
@@ -399,8 +400,8 @@ step_grenades() {
 TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
 TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
 T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
-# _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots trailTracers", one `net status`
-_tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots) $(field "$s" trailTracers)"; }
+# _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots trailTracers puppetHits", one `net status`
+_tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots) $(field "$s" trailTracers) $(field "$s" puppetHits)"; }
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
 # _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
 # on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
@@ -416,12 +417,13 @@ _trail_burst() {
 	a=($(_tr_snap "$watcher")); s1=$(field "$(dc "$shooter" 'net status')" shots)
 	dc "$watcher" "trails on" >/dev/null
 	for v in "${b[@]}" "${a[@]}" "$s0" "$s1"; do is_int "$v" || ok=0; done
-	[ ${#b[@]} = 9 ] && [ ${#a[@]} = 9 ] || ok=0
+	[ ${#b[@]} = 10 ] && [ ${#a[@]} = 10 ] || ok=0
 	[ $ok = 1 ] || { fail "$label: counters read" "before '${b[*]}' after '${a[*]}' shooter's shots '$s0' '$s1'"; return; }
 	shots=$((s1 - s0))
 	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
 	need=$(( (shots * T_TRAIL_FRACTION + 99) / 100 ))
 	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
+	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
 	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
 	if [ "$mode" = on ]; then
 		expect_ge "$label: trails launched inert in the watcher's game (of $shots shots)" "$((a[2] - b[2]))" "$need"
@@ -450,6 +452,12 @@ step_trails() {
 		_trail_burst "$who" "$TRAIL_PISTOL" "10mm shot by $who" 6 on
 		_trail_burst "$who" "$TRAIL_LASER" "laser shot by $who" 6 on beam
 	done
+	# Facing each other: the watcher's player in the line of fire of the friend's inert laser.
+	place host -80650 89300 7784 90; place vm -80350 89300 7784 270; sleep 1
+	for who in host vm; do
+		_trail_burst "$who" "$TRAIL_LASER" "laser shot by $who at the watcher" 5 on beam
+	done
+	place host -80650 89300 7784 270; place vm -80350 89300 7784 90; sleep 1
 	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	crash_verdict "friend shot trails"

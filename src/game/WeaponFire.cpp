@@ -146,9 +146,11 @@ namespace WeaponFire
 		std::uint32_t                                                            firesLetGo = 0;  // stand-ins' shots fired as before: a flame, a harpoon
 		std::uint32_t                                                            firesInert = 0;  // stand-ins' and copies' shots launched inert: a missile, a shell, an explosive round
 		std::atomic<bool>                                                        shotTrailsOn{ true };  // bFriendShotTrails, dev `trails`: a stand-in's plain bullet or beam flies inert (AttackKind::ShotReplay)
-		std::uint32_t                                                            trailsHeld = 0;        // stand-ins' plain shots held all the same: trails off, or no inert launch to give them
+		std::uint32_t                                                            trailsHeld = 0;        // stand-ins' plain shots held all the same: trails off, no inert launch, or trailsHeldGun
+		std::uint32_t                                                            trailsHeldGun = 0;     // ... of those, held for the gun: it carries an enchantment, or its record is hitscan
 
-		static_assert(AttackKind::PROJECTILE_EXPLOSION == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
+		static_assert(AttackKind::PROJECTILE_HITSCAN == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kHitscan));
+		static_assert(AttackKind::PROJECTILE_EXPLOSION ==std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
 		static_assert(AttackKind::PROJECTILE_MOTION_MISSILE == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionMissile));
 		static_assert(AttackKind::PROJECTILE_MOTION_BEAM == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionBeam));
 		static_assert(AttackKind::PROJECTILE_MOTION_TYPES == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionTypes));
@@ -174,10 +176,20 @@ namespace WeaponFire
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
 			const bool explodes = projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0);
 			const bool enchanted = MuzzleFlash::GunEnchantmentExplodes(a_actor);
-			const auto fire = AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, enchanted,
+			const bool hasEnchantment = a_standIn && projectile && MuzzleFlash::GunEnchanted(a_actor);
+			const auto fire = AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, enchanted, hasEnchantment,
 				InertShots::Installed(), shotTrailsOn.load(std::memory_order_relaxed));
-			// A plain bullet or beam of a stand-in's that is held all the same (the trails are off, or there is no inert launch).
-			trailsHeld += a_standIn && fire == AttackKind::Fire::kHeld && projectile && !explodes && !enchanted && AttackKind::IsPlainTrail(projectile->data.flags);
+			// A plain bullet or beam of a stand-in's that is held all the same (the trails are off, there is no inert launch, or the gun
+			// is enchanted or its record hitscan: AttackKind::ShotReplay).
+			if (a_standIn && fire == AttackKind::Fire::kHeld && projectile && !explodes && !enchanted && AttackKind::IsPlainMotion(projectile->data.flags)) {
+				++trailsHeld;
+				if (hasEnchantment || !AttackKind::IsPlainTrail(projectile->data.flags)) {
+					if (trailsHeldGun++ < 10) {
+						REX::INFO("WeaponFire: {:08X}'s plain shot ({:08X}, flags {:X}) held, no trail: {}", a_actor->GetFormID(), projectile->GetFormID(), projectile->data.flags,
+							hasEnchantment ? "its gun is enchanted" : "its record is hitscan");
+					}
+				}
+			}
 			return fire;
 		}
 
@@ -684,14 +696,16 @@ namespace WeaponFire
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
 		bool       animated = false;
-		// A stand-in's plain shot is held: what it hit comes as the shooter's game's report. A stand-in's or a copy's shot
-		// that would go off flies, launched inert (InertShots: no blast, no damage of its own), so friends see the missile
-		// or the explosive round in flight, and its blast comes as the shooter's game's report, once (docs/DESIGN.md,
-		// "Who sets off an explosion"); with no inert launch to be had, it is held too.
+		// What the stand-in's or the copy's own shot comes to (AttackKind::ShotReplay). A stand-in's or a copy's shot that would
+		// go off flies, launched inert (InertShots: no blast, no damage of its own), so friends see the missile or the explosive
+		// round in flight, and its blast comes as the shooter's game's report, once (docs/DESIGN.md, "Who sets off an
+		// explosion"). A stand-in's plain bullet or beam flies inert too while the trails are on (bFriendShotTrails), so friends
+		// see its tracer or beam; what it hit comes as the shooter's game's report. Held (nothing leaves the gun): with no inert
+		// launch to be had, a plain shot with the trails off, from an enchanted gun or of a hitscan record.
 		const bool puppet = Puppets::IsPuppet(a_actor);
 		const auto fire = replay == AttackKind::Replay::kFire ? ShotReplayOf(a_actor, puppet) : AttackKind::Fire::kFired;
-		const bool standIn = fire == AttackKind::Fire::kHeld;
-		if (standIn) {
+		const bool held = fire == AttackKind::Fire::kHeld;
+		if (held) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
 		} else if (replay == AttackKind::Replay::kFire) {
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
@@ -714,10 +728,10 @@ namespace WeaponFire
 			animated = true;
 		}
 		// The engine shows the gun's flash and light when the gun fires; a shot whose animation the graph refused gets
-		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a stand-in's plain shot, whose own fire is kept
-		// from the engine (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
+		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a held shot, whose own fire is kept from the engine
+		// (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
 		if (replay == AttackKind::Replay::kFire) {
-			MuzzleFlash::OnShot(a_actor, animated && !standIn);
+			MuzzleFlash::OnShot(a_actor, animated && !held);
 		}
 		if (fire == AttackKind::Fire::kInert && inertReplaysLogged < 20) {
 			++inertReplaysLogged;
@@ -837,7 +851,7 @@ namespace WeaponFire
 	std::string Describe()
 	{
 		const auto [ledgerCounts, ledgerOpen] = LedgerCounts();
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} trailsHeld={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, trailsHeld, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} trailsHeld={} trailsHeldGun={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, trailsHeld, trailsHeldGun, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)

@@ -81,45 +81,74 @@ TEST("attack kind: a stand-in's shot that would go off, or a plain bullet or bea
 	// inert launch in place and the trails on, so friends see them fly; held with either missing. A copy's is the
 	// engine's, as before.
 	for (const std::uint32_t plain : { 0u, AttackKind::PROJECTILE_MOTION_MISSILE, AttackKind::PROJECTILE_MOTION_BEAM }) {
-		CHECK(ShotReplay(standIn, known, plain, false, false, inert, trails) == Fire::kInert);
-		CHECK(ShotReplay(standIn, known, plain, false, false, !inert, trails) == Fire::kHeld);
-		CHECK(ShotReplay(standIn, known, plain, false, false, inert, !trails) == Fire::kHeld);
-		CHECK(ShotReplay(standIn, known, plain, false, false, !inert, !trails) == Fire::kHeld);
-		CHECK(ShotReplay(copy, known, plain, false, false, inert, trails) == Fire::kFired);
-		CHECK(ShotReplay(copy, known, plain, false, false, inert, !trails) == Fire::kFired);
-		CHECK(ShotReplay(standIn, !known, plain, false, false, inert, trails) == Fire::kHeld);  // the record unknown: held whatever
-		CHECK(ShotReplay(standIn, known, plain, false, true, inert, trails) == Fire::kHeld);   // an enchantment that explodes: no record to take it from
+		CHECK(ShotReplay(standIn, known, plain, false, false, false, inert, trails) == Fire::kInert);
+		CHECK(ShotReplay(standIn, known, plain, false, false, false, !inert, trails) == Fire::kHeld);
+		CHECK(ShotReplay(standIn, known, plain, false, false, false, inert, !trails) == Fire::kHeld);
+		CHECK(ShotReplay(standIn, known, plain, false, false, false, !inert, !trails) == Fire::kHeld);
+		CHECK(ShotReplay(copy, known, plain, false, false, false, inert, trails) == Fire::kFired);
+		CHECK(ShotReplay(copy, known, plain, false, false, false, inert, !trails) == Fire::kFired);
+		CHECK(ShotReplay(standIn, !known, plain, false, false, false, inert, trails) == Fire::kHeld);  // the record unknown: held whatever
+		CHECK(ShotReplay(standIn, known, plain, false, true, false, inert, trails) == Fire::kHeld);   // an enchantment that explodes: no record to take it from
 	}
 	// The trails toggle touches nothing that goes off, and nothing that was already fired.
-	CHECK(ShotReplay(standIn, known, missile, true, false, inert, !trails) == Fire::kInert);
-	CHECK(ShotReplay(copy, known, missile, true, false, inert, !trails) == Fire::kInert);
-	CHECK(ShotReplay(standIn, known, 0x80000, false, false, inert, !trails) == Fire::kFired);
-	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_MOTION_BEAM, false, false, inert, trails) == Fire::kFired);
+	CHECK(ShotReplay(standIn, known, missile, true, false, false, inert, !trails) == Fire::kInert);
+	CHECK(ShotReplay(copy, known, missile, true, false, false, inert, !trails) == Fire::kInert);
+	CHECK(ShotReplay(standIn, known, 0x80000, false, false, false, inert, !trails) == Fire::kFired);
+	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_MOTION_BEAM, false, false, false, inert, trails) == Fire::kFired);
 	// Whatever goes off by its projectile: launched from a record with no blast, for a stand-in and a copy alike, so
 	// friends see it fly; its blast comes as the shooter's report, once.
-	CHECK(ShotReplay(standIn, known, missile, true, false, inert, trails) == Fire::kInert);
-	CHECK(ShotReplay(copy, known, missile, true, false, inert, trails) == Fire::kInert);
-	CHECK(ShotReplay(standIn, known, shell, true, false, inert, trails) == Fire::kInert);
-	CHECK(ShotReplay(standIn, known, AttackKind::PROJECTILE_MOTION_BEAM, true, false, inert, trails) == Fire::kInert);  // a beam with a blast: it lands within the frame, inert from the start
-	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_EXPLOSION, true, false, inert, trails) == Fire::kInert);        // an Explosive round's own record
-	CHECK(ShotReplay(standIn, known, missile, true, true, inert, trails) == Fire::kInert);                               // enchanted as well: the record's blast is the one taken
+	CHECK(ShotReplay(standIn, known, missile, true, false, false, inert, trails) == Fire::kInert);
+	CHECK(ShotReplay(copy, known, missile, true, false, false, inert, trails) == Fire::kInert);
+	CHECK(ShotReplay(standIn, known, shell, true, false, false, inert, trails) == Fire::kInert);
+	CHECK(ShotReplay(standIn, known, AttackKind::PROJECTILE_MOTION_BEAM, true, false, false, inert, trails) == Fire::kInert);  // a beam with a blast: it lands within the frame, inert from the start
+	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_EXPLOSION, true, false, false, inert, trails) == Fire::kInert);        // an Explosive round's own record
+	CHECK(ShotReplay(standIn, known, missile, true, true, false, inert, trails) == Fire::kInert);                               // enchanted as well: the record's blast is the one taken
 	// With no inert launch (the engine's entry not as 1.11.240 has it): held, as every such shot was (fired as it is,
 	// it went off twice).
-	CHECK(ShotReplay(standIn, known, missile, true, false, !inert, trails) == Fire::kHeld);
-	CHECK(ShotReplay(copy, known, missile, true, false, !inert, trails) == Fire::kHeld);
-	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_MOTION_BEAM, true, false, !inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(standIn, known, missile, true, false, false, !inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(copy, known, missile, true, false, false, !inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_MOTION_BEAM, true, false, false, !inert, trails) == Fire::kHeld);
 	// One that goes off by an enchantment alone (no game legendary does): held, there is no record to take the blast from.
-	CHECK(ShotReplay(standIn, known, 0x80000, false, true, inert, trails) == Fire::kHeld);
-	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_MOTION_MISSILE, false, true, inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(standIn, known, 0x80000, false, true, false, inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(copy, known, AttackKind::PROJECTILE_MOTION_MISSILE, false, true, false, inert, trails) == Fire::kHeld);
 	// What neither goes off nor flies straight: a lobbed one with no blast, a flamer's or cryolator's stream, a cone, a
 	// barrier, a harpoon: fired.
 	for (const std::uint32_t motion : { 0x20000u, 0x80000u, 0x100000u, 0x200000u, 0x400000u }) {
-		CHECK(ShotReplay(standIn, known, motion, false, false, inert, trails) == Fire::kFired);
-		CHECK(ShotReplay(copy, known, motion, false, false, inert, trails) == Fire::kFired);
+		CHECK(ShotReplay(standIn, known, motion, false, false, false, inert, trails) == Fire::kFired);
+		CHECK(ShotReplay(copy, known, motion, false, false, false, inert, trails) == Fire::kFired);
 	}
 	// What the gun fires unknown: a stand-in's held, as every shot was; a copy's the engine's, as before.
-	CHECK(ShotReplay(standIn, !known, 0x80000, false, false, inert, trails) == Fire::kHeld);
-	CHECK(ShotReplay(standIn, !known, AttackKind::PROJECTILE_EXPLOSION, true, false, inert, trails) == Fire::kHeld);
-	CHECK(ShotReplay(copy, !known, 0, false, false, inert, trails) == Fire::kFired);
-	CHECK(ShotReplay(copy, !known, 0, false, true, inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(standIn, !known, 0x80000, false, false, false, inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(standIn, !known, AttackKind::PROJECTILE_EXPLOSION, true, false, false, inert, trails) == Fire::kHeld);
+	CHECK(ShotReplay(copy, !known, 0, false, false, false, inert, trails) == Fire::kFired);
+	CHECK(ShotReplay(copy, !known, 0, false, true, false, inert, trails) == Fire::kHeld);
+}
+
+TEST("attack kind: a stand-in's plain bullet or beam from an enchanted gun or of a hitscan record is held, trails or not; nothing else changes for them")
+{
+	using AttackKind::Fire;
+	using AttackKind::ShotReplay;
+	constexpr bool standIn = true, copy = false, known = true, inert = true, trails = true, enchanted = true;
+	constexpr std::uint32_t hitscan = AttackKind::PROJECTILE_HITSCAN;
+	constexpr std::uint32_t missile = AttackKind::PROJECTILE_MOTION_MISSILE | AttackKind::PROJECTILE_EXPLOSION;
+	for (const std::uint32_t plain : { 0u, AttackKind::PROJECTILE_MOTION_MISSILE, AttackKind::PROJECTILE_MOTION_BEAM, 0x40A0Cu, 0x40A08u }) {
+		// A legendary (Wounding, Freezing, Poisoner's) on the stand-in's gun: held as before the trails, whatever the toggle.
+		CHECK(ShotReplay(standIn, known, plain, false, false, enchanted, inert, trails) == Fire::kHeld);
+		CHECK(ShotReplay(standIn, known, plain, false, false, enchanted, inert, !trails) == Fire::kHeld);
+		CHECK(ShotReplay(standIn, known, plain, false, false, enchanted, !inert, trails) == Fire::kHeld);
+		// The hitscan flag: held (never handed to the engine as it is, which a real round of the stand-in's was).
+		CHECK(ShotReplay(standIn, known, plain | hitscan, false, false, false, inert, trails) == Fire::kHeld);
+		CHECK(ShotReplay(standIn, known, plain | hitscan, false, false, false, inert, !trails) == Fire::kHeld);
+		// A copy's plain shot stays the engine's, enchanted or hitscan (as before the trails).
+		CHECK(ShotReplay(copy, known, plain, false, false, enchanted, inert, trails) == Fire::kFired);
+		CHECK(ShotReplay(copy, known, plain | hitscan, false, false, false, inert, trails) == Fire::kFired);
+	}
+	// The game's own bullet and laser records (no hitscan flag), unenchanted: still trails.
+	CHECK(ShotReplay(standIn, known, 0x40A0C, false, false, false, inert, trails) == Fire::kInert);
+	CHECK(ShotReplay(standIn, known, 0x40A08, false, false, false, inert, trails) == Fire::kInert);
+	// What goes off is launched inert as before, enchanted (a Wounding missile launcher) or not.
+	CHECK(ShotReplay(standIn, known, missile, true, false, enchanted, inert, trails) == Fire::kInert);
+	CHECK(ShotReplay(copy, known, missile | hitscan, true, false, enchanted, inert, trails) == Fire::kInert);
+	// A stream or a harpoon from an enchanted gun: fired as before.
+	CHECK(ShotReplay(standIn, known, 0x80000, false, false, enchanted, inert, trails) == Fire::kFired);
 }

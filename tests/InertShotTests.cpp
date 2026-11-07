@@ -52,6 +52,13 @@ TEST("InertShot: a stand-in's or a copy's launch of a record that goes off is sw
 	CHECK(IsPlainTrail(0) && IsPlainTrail(0x10000) && IsPlainTrail(0x40000));
 	CHECK(!IsPlainTrail(0x20000) && !IsPlainTrail(0x80000) && !IsPlainTrail(0x100000) && !IsPlainTrail(0x200000) && !IsPlainTrail(0x400000));
 	CHECK(!IsPlainTrail(0x10000 | 0x40000));  // two motion bits: not a record we know
+	// A hitscan record (flag 0x1) is no trail: its hit may be settled inside the launch, before the damage is zeroed. A stray
+	// launch of one (the hold missed it) is not swapped, as before the trails; one that goes off still is.
+	CHECK(!IsPlainTrail(0x1) && !IsPlainTrail(0x10000 | 0x1) && !IsPlainTrail(0x40000 | 0x1));
+	CHECK(!Swaps(true, true, 0x40000 | 0x1, false));
+	CHECK(!Swaps(true, true, 0x10000 | 0x1, false));
+	CHECK(Swaps(true, true, 0x10000 | 0x1 | FLAG_EXPLOSION, false));
+	CHECK(IsPlainTrail(0x40A0C) && IsPlainTrail(0x40A08));  // the game's 10mm and minigun rounds, and the laser
 }
 
 TEST("InertShot: the hook goes in only where Projectile::Launch begins as 1.11.240 has it")

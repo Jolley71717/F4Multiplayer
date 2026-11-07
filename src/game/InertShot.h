@@ -60,8 +60,9 @@ namespace InertShot
 		return a_namesExplosion || (a_flags & FLAG_EXPLOSION) != 0;
 	}
 
-	// Whether a record is a plain trail: a bullet or a beam (a motion type of none, missile or beam) that the record's
-	// flags say nothing else about here. Shared with AttackKind::ShotReplay, which launches a stand-in's such shot inert.
+	// Whether a record is a plain trail: a bullet or a beam (a motion type of none, missile or beam), not hitscan (its hit
+	// may be settled inside the launch, before the made projectile's damage is zeroed). Shared with
+	// AttackKind::ShotReplay, which launches a stand-in's such shot inert.
 	constexpr bool IsPlainTrail(std::uint32_t a_flags)
 	{
 		return AttackKind::IsPlainTrail(a_flags);

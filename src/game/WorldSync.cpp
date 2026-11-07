@@ -776,6 +776,7 @@ namespace WorldSync
 		}
 
 		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
+		std::atomic<std::uint32_t> hitsByPuppets{ 0 };      // hits on any actor (our player, a settler, a companion, an NPC) by a friend's stand-in
 		std::uint32_t              standInBlowsThere = 0;  // explosions' hits on stand-ins not passed on: they go off in that game too
 
 		class HitWatcher :
@@ -797,8 +798,21 @@ namespace WorldSync
 				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
-				// A friend's stand-in replays their attacks and must hit nobody; one
-				// that hits our player is logged, with what it hit with, for the rig.
+				// A friend's stand-in replays their attacks and must hit nobody (its shots fly inert, its swings and other shots
+				// deal nothing): every hit of one on an actor is counted (puppetHits=: the rig's trails step asks it to stay 0), and
+				// logged, with what it hit and with what.
+				if (!byPlayer && target != cause && target->As<RE::Actor>()) {
+					const auto by = cause->As<RE::Actor>();
+					if (by && Puppets::IsPuppet(by)) {
+						const auto n = ++hitsByPuppets;
+						if (n <= 20) {
+							REX::INFO("WorldSync: puppet {:08X} hit actor {:08X}{} (weapon {:08X}, projectile {:08X}, damage {:.1f}, flags {:08X}); {} so far", attacker, target->GetFormID(),
+								target->IsPlayerRef() ? " (our player)" : "", a_event.hitData.weapon.object ? a_event.hitData.weapon.object->GetFormID() : 0, a_event.projectileFormID,
+								a_event.usesHitData ? a_event.hitData.totalDamage : -1.0f, a_event.usesHitData ? a_event.hitData.flags.underlying() : 0u, n);
+						}
+					}
+				}
+				// One that hits our player is logged as well, for the rig.
 				if (target->IsPlayerRef() && !byPlayer) {
 					const auto by = cause->As<RE::Actor>();
 					if (by && Puppets::IsPuppet(by)) {
@@ -3269,7 +3283,7 @@ namespace WorldSync
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
+		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar);
 	}
 }
