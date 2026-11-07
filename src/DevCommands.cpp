@@ -24,7 +24,9 @@
 #include "game/FrameClock.h"
 #include "game/GameStop.h"
 #include "game/MapMarkerLayout.h"
-#include "game/Menu.h"
+#include "game/UiMainMenuEntry.h"
+#include "game/UiPages.h"
+#include "game/UiPanel.h"
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
@@ -2734,12 +2736,13 @@ namespace DevCommands
 				if (!a_object.Invoke("getChildAt", &child, &index, 1)) {
 					continue;
 				}
-				Scaleform::GFx::Value name, x, y, width, visible;
+				Scaleform::GFx::Value name, x, y, width, visible, opacity;
 				child.GetMember("name", &name);
 				child.GetMember("x", &x);
 				child.GetMember("y", &y);
 				child.GetMember("width", &width);
 				child.GetMember("visible", &visible);
+				child.GetMember("alpha", &opacity);
 				const std::string path = a_path + "." + (name.IsString() ? name.GetString() : std::format("#{}", i));
 				Scaleform::GFx::Value text, height, color, embed;
 				child.GetMember("height", &height);
@@ -2755,8 +2758,26 @@ namespace DevCommands
 					extra = std::format(" text='{}' color={:06X} embed={} font='{}' size={}", text.GetString(), static_cast<std::uint32_t>(GfxNumber(color)),
 						embed.IsBoolean() && embed.GetBoolean(), font.IsString() ? font.GetString() : "?", GfxNumber(size));
 				}
-				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
-					visible.IsBoolean() && visible.GetBoolean(), extra);
+				// Its filters: how the game's own text gets its shadow.
+				Scaleform::GFx::Value filters;
+				if (child.GetMember("filters", &filters) && filters.IsArray()) {
+					for (std::uint32_t f = 0; f < filters.GetArraySize(); ++f) {
+						Scaleform::GFx::Value filter, distance, angle, alpha, blurX, blurY, strength, shade;
+						if (filters.GetElement(f, &filter)) {
+							filter.GetMember("distance", &distance);
+							filter.GetMember("angle", &angle);
+							filter.GetMember("alpha", &alpha);
+							filter.GetMember("blurX", &blurX);
+							filter.GetMember("blurY", &blurY);
+							filter.GetMember("strength", &strength);
+							filter.GetMember("color", &shade);
+							extra += std::format(" filter[distance={} angle={} alpha={} blur={}/{} strength={} color={:06X}]", GfxNumber(distance), GfxNumber(angle), GfxNumber(alpha),
+								GfxNumber(blurX), GfxNumber(blurY), GfxNumber(strength), static_cast<std::uint32_t>(GfxNumber(shade)));
+						}
+					}
+				}
+				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={} alpha={:.2f}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
+					visible.IsBoolean() && visible.GetBoolean(), GfxNumber(opacity), extra);
 				if (a_depth > 1) {
 					DumpGfx(child, path, a_depth - 1);
 				}
@@ -3249,24 +3270,52 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | friends | refresh | selftest send|recv]";
 		}
 
-		// mpmenu [open | press <buttonIndex>]: the multiplayer menu (F1), driven without the keyboard.
+		// mpmenu [open | close | panel | box | press <buttonIndex> | type <text> | mouse <x> <y> [click]]: the multiplayer menu, driven without the keyboard. type is for the password page. open is
+		// the menu key's, in the middle of the screen; panel is the Multiplayer entry's, beside the main menu's list; box is the message box
+		// it falls back to. Button 0 is the page's way back and the rows are 1 and up.
 		std::string MpMenu(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (!args.empty() && args[0] == "open") {
-				::Menu::Open();
+				::UiPages::OpenFromKey();
 				return "opened";
+			}
+			if (!args.empty() && args[0] == "box") {
+				::UiPages::Open();
+				return "opened";
+			}
+			if (!args.empty() && args[0] == "close") {
+				UiPanel::Close();
+				return "closed";
+			}
+			if (!args.empty() && args[0] == "panel") {
+				UiMainMenuEntry::OpenPanel();
+				return "opened";
+			}
+			if (args.size() >= 3 && args[0] == "mouse") {
+				float x = 0.0f;
+				float y = 0.0f;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), x);
+				std::from_chars(args[2].data(), args[2].data() + args[2].size(), y);
+				UiMainMenuEntry::PanelMouse(x, y, args.size() > 3 && args[3] == "click");
+				return "passed";
+			}
+			if (args.size() == 2 && args[0] == "type") {
+				for (const char character : args[1]) {
+					::UiPages::PanelTyped(0, static_cast<unsigned char>(character));
+				}
+				return "typed";
 			}
 			if (args.size() == 2 && args[0] == "press") {
 				int index = -1;
 				std::from_chars(args[1].data(), args[1].data() + args[1].size(), index);
-				if (index < 0 || index > 3) {
-					return "error: usage: mpmenu press <0-3>";
+				if (index < 0 || index > 255) {
+					return "error: usage: mpmenu press <0-255>";
 				}
-				::Menu::Press(static_cast<std::uint8_t>(index));
+				::UiPages::Press(static_cast<std::uint32_t>(index));
 				return "pressed";
 			}
-			return ::Menu::Describe();
+			return ::UiPages::Describe();
 		}
 
 		// topics <npcBaseHex>: topics with lines conditioned on that speaker (for `say`).
