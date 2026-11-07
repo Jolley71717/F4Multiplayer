@@ -1,14 +1,12 @@
 {
- "release": "0.13.1",
+ "release": "0.13.2",
  "known_issues": [
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
-  "After being downed and helped up several times in quick succession (the Arc Jet engine fire, say), the camera can stop following your character until you load a save. A fix is in the works.",
-  "Workshop conveyor belts (Contraptions) run in the builder's game but not a friend's. A fix is waiting for a test.",
   "A workbench is shared only at settlements the host owns.",
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T08:18:19+00:00",
+ "updated": "2026-11-07T15:45:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -261,7 +259,7 @@
    "title": "Home Plate purchase may charge the friend: DialogueDiamondCity 64/300 set FFDiamondCity02 10 (caps taken, key and ownership given) and DialogueDiamondCity is shared",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 319
   },
@@ -555,7 +553,7 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Fix in PR: the camera's way back no longer loops after a second down",
    "pr": 322
   },
@@ -905,7 +903,7 @@
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
    "priority": 1,
-   "stage": 2,
+   "stage": 7,
    "note": "",
    "pr": 321
   },
@@ -1248,7 +1246,7 @@
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 305
   },
@@ -1271,6 +1269,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0 for alt-tabbing out of the game.",
    "desc": "With bRunInBackground on, pressing Alt to tab out could make the character shoot at clicks meant for another window, because the game kept reading the mouse and keys while unfocused. 0.9.0 stops the game reading input while its window is not in front. A click that brings the game back to the front is not counted."
+  },
+  {
+   "id": "mnss",
+   "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "n22z",
@@ -1644,6 +1650,14 @@
    "note": "Merged for the next release; tested in two games.",
    "pr": 195,
    "desc": "After being revived, a player can stay crouched in sneak until they get themselves out of it."
+  },
+  {
+   "id": "svjl",
+   "title": "Radiant sharing: a friend's game refuses to start the host's DN121/DN151 run from its fills (MinRecruit00 starts); find the refused alias",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "t7ak",
