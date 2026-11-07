@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T03:34:32+00:00",
+ "updated": "2026-11-07T04:10:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -155,17 +155,6 @@
    "pr": 301
   },
   {
-   "id": "2c1b",
-   "title": "See a friend's Pip-Boy and a marker when they are in a menu",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 3,
-   "note": "Built but held up: the Pip-Boy model we hang on the friend's character doesn't show yet, so it stays off by default.",
-   "pr": 173,
-   "blocked": true,
-   "desc": "Players asked to see a friend's Pip-Boy on their wrist, the tapping animation, and a marker above their head. Since 0.9.0 a friend in the Pip-Boy raises their wrist and their name tag says so. We built a Pip-Boy that hangs on the friend's character, off by default behind bMenuBadges, but in testing the model we picked does not appear and we need a different one."
-  },
-  {
    "id": "2jop",
    "title": "The host's Dogmeat is invisible to a friend indoors",
    "kind": "bug",
@@ -260,8 +249,10 @@
    "title": "See a friend raise their Pip-Boy and a marker when in a menu",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": "The raised wrist and name tag shipped in 0.9.0; the icon above the head is still off by default.",
+   "stage": 3,
+   "note": "Built but held up: the Pip-Boy model we hang on the friend's character doesn't show yet, so it stays off by default.",
+   "pr": 173,
+   "blocked": true,
    "partial": "0.9.0",
    "desc": "Players asked to see a friend's Pip-Boy, the raise animation, and an icon over their head while they are in a menu. Since 0.9.0 a friend in the Pip-Boy raises their wrist, and their name tag says [Pip-Boy] or [in a menu]. The icon exists but is off by default (bMenuIcons) because it only drew partly. Showing the Pip-Boy itself is tracked separately."
   },
@@ -325,7 +316,7 @@
    "title": "PR 302: a friend's take at a host supply-line workbench that is unloaded on the host never reaches the host's pile (dupe)",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
+   "stage": 7,
    "note": "",
    "pr": 302
   },
@@ -636,7 +627,7 @@
    "title": "hits.sh pause step counts a shooter's missed shot as the mod's failure",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 271
   },
@@ -931,7 +922,7 @@
    "title": "smoke: a host grenade counted as 2 explosions (reported 2, replayed 2) once",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 7,
    "note": ""
   },
   {
@@ -1467,7 +1458,7 @@
   },
   {
    "id": "qrv1",
-   "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus dav2727)",
+   "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus report)",
    "kind": "bug",
    "priority": 1,
    "stage": 3,
