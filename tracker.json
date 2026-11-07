@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T04:10:47+00:00",
+ "updated": "2026-11-07T04:24:41+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -531,6 +531,14 @@
    "stage": 1,
    "note": "",
    "pr": 285
+  },
+  {
+   "id": "adya",
+   "title": "Two players can recruit the same companion or Dogmeat; no session rule decides whose companion it is",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "af5k",
@@ -1141,6 +1149,14 @@
    "pr": 274
   },
   {
+   "id": "km9t",
+   "title": "Check: a friend's own story manager starting an ambient scene on an NPC the host runs may hold the NPC so the friend can't talk to it",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "krne",
    "title": "A friend's grenade or Molotov stays stuck in their hand",
    "kind": "bug",
@@ -1502,6 +1518,14 @@
    "pr": 168,
    "partial": "0.9.0",
    "desc": "Players asked that tutorial hints not pop up in a session and that menus not freeze things for friends. 0.9.0 turns tutorial hints off during a session (bHideTutorials) and they come back afterward. The next release handles one effect of a menu pausing your game: after five seconds in a menu, the enemies your game runs are handed to a friend nearby so they no longer freeze on the friend's screen. A menu that doesn't pause is tracked separately."
+  },
+  {
+   "id": "rb3u",
+   "title": "Quest sharing: generic creature pairing (roadmap PR C) would pair vertibirds and could drop a seated player; exclude vehicles first",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "rfcp",
