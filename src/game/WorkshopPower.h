@@ -346,6 +346,69 @@ namespace WorkshopPower
 		return a_on ? a_told != Told::kUnpowered : a_told != Told::kPowered;
 	}
 
+	// What showing a copy powered or not took (WorkshopSync's ShowPoweredHow), from what the show found on it (ShowParts).
+	enum class Took : std::uint8_t
+	{
+		kNoModel,   // no 3D: nothing shown
+		kLight,     // a light's light switched
+		kGraph,     // the graph took the event
+		kRefused,   // the graph is loaded and didn't take it (a try spent)
+		kNothing,   // no light, belt or graph: nothing to show it on
+		kDark,      // a graph not told Powered by us refused Unpowered: dark already
+		kLit,       // a graph not told Unpowered by us refused Powered: lit already
+		kBelt,      // a conveyor belt set running or stopped
+	};
+
+	// What a show found on a copy, and what its graph made of the event.
+	//
+	// A conveyor belt (Contraptions Workshop's belts and lifts) runs by the engine's own conveyor on its reference
+	// (BGSConveyorBelt::ConveyorBelt, one of its init actions, ExtraInitActions), not by its graph or a light: running or
+	// stopped is only ever set by Papyrus (ObjectReference.ConveyorBeltOn, whose native nothing else in 1.11.240 calls),
+	// so by the belt's own script on the power events, which a copy never gets (the power handler isn't run for copies:
+	// their scripts would take them for ours). A show sets it as ConveyorBeltOn would, without the events.
+	struct ShowParts
+	{
+		bool model = false;         // its 3D is there
+		bool light = false;         // a light (LIGH): its light was switched
+		bool belt = false;          // it has a conveyor belt: set running or stopped
+		bool graph = false;         // its graph is loaded
+		bool graphTook = false;     // ...and took the event
+		bool alreadyShows = false;  // ...or refused it, showing so already (GraphsTold::Refused)
+	};
+
+	[[nodiscard]] constexpr Took Outcome(const ShowParts& a_parts, bool a_on)
+	{
+		if (!a_parts.model) {
+			return Took::kNoModel;
+		}
+		if (!a_parts.graph) {
+			return a_parts.light ? Took::kLight : a_parts.belt ? Took::kBelt : Took::kNothing;
+		}
+		if (a_parts.graphTook) {
+			return Took::kGraph;
+		}
+		if (a_parts.alreadyShows) {
+			return a_parts.light ? Took::kLight : (a_on ? Took::kLit : Took::kDark);
+		}
+		// A refusing graph spends no try when the light or the belt is what shows the power: that was set.
+		return a_parts.light ? Took::kLight : a_parts.belt ? Took::kBelt : Took::kRefused;
+	}
+
+	// Whether the show counts (Mirror's Show): not one with no 3D yet, nor one a loaded graph refused.
+	[[nodiscard]] constexpr bool ShowCounts(Took a_took)
+	{
+		return a_took != Took::kNoModel && a_took != Took::kRefused;
+	}
+
+	// Whether a copy shown a_on, drawn the same since, still shows it (Mirror's Holds): its light there while shown on and
+	// gone while shown off (a_lit, for a light), and its conveyor belt running while shown on and stopped while shown off
+	// (a_beltRuns, for a piece with a belt: the copy's own script may set it again, its OnLoad with the copy unpowered here,
+	// after our show). None of either: it holds (its graph keeps what it was told).
+	[[nodiscard]] constexpr bool StillShows(std::optional<bool> a_lit, std::optional<bool> a_beltRuns, bool a_on)
+	{
+		return (!a_lit || *a_lit == a_on) && (!a_beltRuns || *a_beltRuns == a_on);
+	}
+
 	// What we last told each copy's graph (by the copy's form ID, with the graph's address: a graph made anew is told nothing
 	// yet), for RefusalShows.
 	class GraphsTold

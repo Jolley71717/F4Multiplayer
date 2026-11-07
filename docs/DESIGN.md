@@ -2673,6 +2673,18 @@ pieces, and both games show the result.
   ("friend's piece ... shown on: graph took" / "light switched"). Not through the game's own power handler: that
   fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio beacon's) would act
   on them as if the piece were ours.
+- A conveyor belt (Contraptions Workshop's belts) is neither a graph nor a light: it runs by the engine's conveyor
+  on its reference (`BGSConveyorBelt::ConveyorBelt`, one of its init actions, `ExtraInitActions`; a surface velocity
+  on the model's belt node), made running with its 3D when the model asks for one (+50A47B) or by a script's
+  `ApplyConveyorBelt`. Whether it runs is set only by Papyrus (`ObjectReference.ConveyorBeltOn`, whose native nothing
+  else in 1.11.240 calls; the power handler never touches a belt), so by the belt's own script on the power events,
+  which a copy never gets: through 0.12.1 a friend's conveyor stayed as its own script left it, stopped while their
+  game ran it (a 0.11.1 report). So a show also sets a copy's belt running or stopped as `ConveyorBeltOn` does (its
+  native, +259120, no events), a save's hush too, and a belt its own script stopped or started again since our show
+  (a copy is never powered for it) counts as a lapse and is shown again (`WorkshopPower::StillShows`, with the
+  redraw cap). `beltsSwitched=` in `wspower` (`lightLapses=` counts the belts' lapses too), `belt=running|stopped` in
+  `wsinfo`; the log's first shows say "belt set" for one with no graph. Not known without the DLC's files: what the
+  belt's script does on its other events; a script that keeps setting it is answered at most 6 times a minute.
 
 **A save never keeps a copy running.** A copy's graph keeps what it was told, and a save writes it: a friend's generator
 shown "Powered" came back from the save running, with no session to tell it otherwise, and a copy can't be scrapped (the block
