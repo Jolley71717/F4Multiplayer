@@ -2692,14 +2692,19 @@ pieces, and both games show the result.
   `wsinfo`; the log's first shows say "belt set" for one with no graph. Not known without the DLC's files: what the
   belt's script does on its other events; a script that keeps setting it is answered at most 6 times a minute.
 
-**A save never keeps a copy running.** A copy's graph keeps what it was told, and a save writes it: a friend's generator
+**A save keeps no copy running (but a travel's autosave may).** A copy's graph keeps what it was told, and a save writes it: a friend's generator
 shown "Powered" came back from the save running, with no session to tell it otherwise, and a copy can't be scrapped (the block
 keyword), so its engine ran on in a game with no friend in it (found on the rig, after a Nexus report of a generator sound that
 never stops: show a copy on, save, `net leave`, load: the sound is there and nothing stops it; with the copy
-shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
-shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
-`HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
-`wspower`. Not done: a copy a save from before this holds running (or one nobody reports any more: its piece is gone from the
+shown off before the save, a load is silent). So before a save (`WorkshopSync::BeforeSave`) each copy shown powered is
+shown unpowered (`Mirror::Hush`: its graph; a light's light is let be, no save keeps it), and once the save is over
+(kPostSaveGame: `AfterSave`, else `HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it
+keeps what it showed). `hushed=` in `wspower`. Two exceptions, for a crash and not a sound: no hush runs while a loading
+screen is up (a travel's autosave: cells coming and going, their 3D and graphs set up or torn down by the game, and no frame
+of ours touches a copy then; the log says "save behind a loading screen"), and a copy drawn anew since a frame last showed it
+(its 3D or graph made again: its cell came in with the travel) is not hushed either. Such a copy can have come back lit with
+its cell (`RefusalShows`), so a travel's autosave on a return to a settlement where a friend's generator was shown on keeps it
+running, as before 0.10.1, as may one in a cell the travel leaves. Not done: a copy a save from before this holds running (or one nobody reports any more: its piece is gone from the
 friend's game) stays so in a game that has it; the session's reports show the ones it names, the others stay.
 
 Trade-offs:
