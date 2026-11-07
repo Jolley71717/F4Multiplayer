@@ -8,6 +8,7 @@
 #include "game/RadiantRules.h"
 #include "game/Spawns.h"
 #include "game/StageLog.h"
+#include "game/StageRules.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
 
@@ -843,7 +844,7 @@ namespace RadiantSync
 		std::optional<RadiantRules::QuestHere> QuestHereOf(std::uint32_t a_id)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_id);
-			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || RadiantRules::ShareOf(a_id) != RadiantRules::Share::kShared) {
+			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || RadiantSync::ShareOf(quest) != RadiantRules::Share::kShared) {
 				return std::nullopt;
 			}
 			return RadiantRules::QuestHere{ QuestStageLayout::Done(quest), FillsOf(quest) };
@@ -900,6 +901,83 @@ namespace RadiantSync
 		return config.sharedRadiants && config.syncQuests && Story::Shared();
 	}
 
+	namespace
+	{
+		// A quest by its file and its form ID there (no load index), as RadiantRules::RADIANTS names it: nothing for a form
+		// from a mod, a runtime-made one or a file the rules do not know. The load order of this game does not matter.
+		std::optional<std::pair<std::uint8_t, std::uint32_t>> LocalOf(const RE::TESQuest* a_quest)
+		{
+			if (!a_quest || !Official::IsOfficialForm(a_quest)) {
+				return std::nullopt;
+			}
+			const auto file = a_quest->GetFile(0);
+			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+			if (!index) {
+				return std::nullopt;
+			}
+			return std::pair{ static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFFu };
+		}
+
+		// RADIANTS' quests in this game: the runtime form ID of each (0: its file is not in this load order, so the quest is
+		// skipped, quietly). Resolved once the game's data is loaded (the first poll in a session): a load order is
+		// fixed for the life of the process.
+		std::array<std::uint32_t, RadiantRules::RADIANTS.size()> radiantQuests{};
+		bool                                                      radiantsResolved = false;
+
+		void ResolveRadiants()
+		{
+			if (radiantsResolved) {
+				return;
+			}
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return;
+			}
+			for (std::size_t i = 0; i < RadiantRules::RADIANTS.size(); ++i) {
+				const auto& entry = RadiantRules::RADIANTS[i];
+				const auto  quest = handler->LookupForm<RE::TESQuest>(entry.quest, StageRules::FileName(static_cast<StageRules::File>(entry.file)));
+				radiantQuests[i] = quest ? quest->GetFormID() : 0;
+			}
+			radiantsResolved = true;
+		}
+	}
+
+	const RadiantRules::Entry* EntryOf(const RE::TESQuest* a_quest)
+	{
+		// Polled for every quest: the form ID alone (cheap) rules out nearly all of them before the file name is compared.
+		if (!a_quest || !RadiantRules::MayBeRadiant(a_quest->GetFormID() & 0x00FFFFFFu)) {
+			return nullptr;
+		}
+		const auto local = LocalOf(a_quest);
+		return local ? RadiantRules::Find(local->first, local->second) : nullptr;
+	}
+
+	const RadiantRules::Entry* EntryOf(std::uint32_t a_questId)
+	{
+		return EntryOf(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
+	RadiantRules::Share ShareOf(const RE::TESQuest* a_quest)
+	{
+		const auto entry = EntryOf(a_quest);
+		return entry ? entry->share : RadiantRules::Share::kNotRadiant;
+	}
+
+	RadiantRules::Share ShareOf(std::uint32_t a_questId)
+	{
+		return ShareOf(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
+	bool IsRadiant(const RE::TESQuest* a_quest)
+	{
+		return ShareOf(a_quest) != RadiantRules::Share::kNotRadiant;
+	}
+
+	bool IsRadiant(std::uint32_t a_questId)
+	{
+		return IsRadiant(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
+	}
+
 	void SetLocalPlayer(std::uint32_t a_id)
 	{
 		self = a_id;
@@ -916,7 +994,7 @@ namespace RadiantSync
 
 	void OnStart(const Protocol::RadiantStart& a_start)
 	{
-		if (!Enabled() || a_start.playerId == 0 || a_start.playerId == self || RadiantRules::ShareOf(a_start.quest) != RadiantRules::Share::kShared) {
+		if (!Enabled() || a_start.playerId == 0 || a_start.playerId == self || RadiantSync::ShareOf(a_start.quest) != RadiantRules::Share::kShared) {
 			return;
 		}
 		const Run run{ a_start.playerId, a_start.serial };
@@ -934,7 +1012,7 @@ namespace RadiantSync
 
 	void OnStage(const Protocol::RadiantStage& a_stage)
 	{
-		if (!Enabled() || RadiantRules::ShareOf(a_stage.quest) != RadiantRules::Share::kShared) {
+		if (!Enabled() || RadiantSync::ShareOf(a_stage.quest) != RadiantRules::Share::kShared) {
 			return;
 		}
 		const Run run{ a_stage.origin, a_stage.serial };
@@ -1074,15 +1152,18 @@ namespace RadiantSync
 		}
 
 		// Runs of ours: a shared radiant handed out here (an objective shown), not one of a friend's.
-		for (const auto& entry : RadiantRules::RADIANTS) {
-			if (entry.share != RadiantRules::Share::kShared || book.Shares(entry.formId) || book.IsStarting(entry.formId)) {
+		ResolveRadiants();
+		for (std::size_t i = 0; i < RadiantRules::RADIANTS.size(); ++i) {
+			const auto  id = radiantQuests[i];  // 0: the add-on is not in this load order
+			const auto& entry = RadiantRules::RADIANTS[i];
+			if (id == 0 || entry.share != RadiantRules::Share::kShared || book.Shares(id) || book.IsStarting(id)) {
 				continue;
 			}
-			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(entry.formId);
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
 			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || !QuestSync::PlayerStarted(quest)) {
 				continue;
 			}
-			if (std::ranges::any_of(pending, [&](const Protocol::RadiantStart& a_start) { return a_start.quest == entry.formId; })) {
+			if (std::ranges::any_of(pending, [&](const Protocol::RadiantStart& a_start) { return a_start.quest == id; })) {
 				continue;  // a friend's run of it comes first: it may be this one
 			}
 			Begin(quest);
@@ -1148,7 +1229,7 @@ namespace RadiantSync
 		}
 		const auto  quest = const_cast<RE::TESQuest*>(a_constQuest);
 		std::string out = std::format("{:08X} '{}' flags={:04X} stage={} aliases={} share={}", quest->GetFormID(), QuestName(quest), quest->data.flags, quest->currentStage,
-			quest->aliases.size(), static_cast<int>(RadiantRules::ShareOf(quest->GetFormID())));
+			quest->aliases.size(), static_cast<int>(RadiantSync::ShareOf(quest)));
 		Calibrate();
 		out += " | calibration: " + calibration.summary;
 		for (const auto alias : quest->aliases) {

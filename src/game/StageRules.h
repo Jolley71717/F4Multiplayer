@@ -529,6 +529,22 @@ namespace StageRules
 		return std::nullopt;
 	}
 
+	// The game file a StageRules::File names, as the load order lists it (tools/questscan.cs MASTERS: Fallout4.esm,
+	// DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm). The inverse of FileOf.
+	inline constexpr std::string_view FileName(File a_file)
+	{
+		switch (a_file) {
+		case File::kCoast:
+			return "DLCCoast.esm";
+		case File::kRobot:
+			return "DLCRobot.esm";
+		case File::kNukaWorld:
+			return "DLCNukaWorld.esm";
+		default:
+			return "Fallout4.esm";
+		}
+	}
+
 	inline const Rule* Find(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
 	{
 		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };

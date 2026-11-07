@@ -10,7 +10,7 @@
 #include "game/Puppets.h"
 #include "game/QuestActors.h"
 #include "game/QuestFilter.h"
-#include "game/RadiantRules.h"
+#include "game/RadiantSync.h"
 #include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
@@ -365,7 +365,7 @@ namespace Spawns
 		QuestActors::Quest QuestFactsOf(const RE::TESQuest* a_quest)
 		{
 			QuestActors::Quest facts{ .official = Official::IsOfficialForm(a_quest), .flags = a_quest->data.flags, .type = a_quest->data.questType,
-				.radiant = RadiantRules::IsRadiant(a_quest->GetFormID()) };
+				.radiant = RadiantSync::IsRadiant(a_quest) };
 			const auto file = facts.official ? a_quest->GetFile(0) : nullptr;
 			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 			facts.perGame = index && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
