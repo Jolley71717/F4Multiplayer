@@ -170,6 +170,68 @@ TEST("stage rules: a friend's stage is set, skipped, or waits")
 	CHECK(Judge(&bridge, { .live = false, .held = false, .warned = WARNING }) == Verdict::kSet);
 }
 
+TEST("stage rules: a friend far away when their stage moves them is offered to go with them, and it is set once beside them; not taken up, it goes as before")
+{
+	using namespace StageRules;
+	const Rule plain{ 0, 0x1, 10, 0, 0 };
+	const Rule moves{ 0, 0x1, 10, kMoves, 0 };
+	const Rule bridge{ 0, 0x1, 10, kMoves | kBridge, 0 };
+	const Rule fight{ 0, 0x1, 10, kMoves | kHostile, 0 };
+	const Rule paysToo{ 0, 0x1, 10, kMoves | kPays, 0 };
+
+	// Live, the friend who did it far and known here: offered (the HUD line, the teleport key aimed at them).
+	CHECK(Judge(&moves, { .live = true, .followable = true }) == Verdict::kOffer);
+	CHECK(Judge(&fight, { .live = true, .followable = true }) == Verdict::kOffer);
+	CHECK(Judge(&moves, { .live = true, .held = true, .followable = true }) == Verdict::kOffer);  // fighting: offered all the same
+	// Nobody to follow (a stage the server named no player for): as before, skipped.
+	CHECK(Judge(&moves, { .live = true }) == Verdict::kSkip);
+	// Beside them already: set at once, no offer.
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .followable = true }) == Verdict::kSet);
+
+	// Offered: it waits, past the live window too, until OFFER_FOR has gone by.
+	CHECK(OFFER_FOR > LIVE_FOR);
+	CHECK(Judge(&moves, { .live = true, .followable = true, .offered = 1s }) == Verdict::kOffer);
+	CHECK(Judge(&moves, { .live = false, .followable = true, .offered = 60s }) == Verdict::kOffer);
+	CHECK(Judge(&moves, { .live = false, .followable = true, .offered = OFFER_FOR - 1s }) == Verdict::kOffer);
+	// ... and is set the moment the player is beside them (the teleport key's arrival, or on foot).
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .followable = true, .offered = 5s }) == Verdict::kSet);
+	CHECK(Judge(&moves, { .live = false, .nearFriend = true, .followable = true, .offered = 60s }) == Verdict::kSet);
+	CHECK(Judge(&moves, { .live = false, .nearFriend = true, .held = true, .followable = true, .offered = 60s }) == Verdict::kSet);
+
+	// Not taken up: skipped, as a far friend's stage was before; a bridge warned and set as ever.
+	CHECK(Judge(&moves, { .live = false, .followable = true, .offered = OFFER_FOR }) == Verdict::kSkip);
+	CHECK(Judge(&moves, { .live = false, .nearFriend = true, .followable = true, .offered = OFFER_FOR }) == Verdict::kSkip);
+	CHECK(Judge(&bridge, { .live = true, .followable = true }) == Verdict::kOffer);
+	CHECK(Judge(&bridge, { .live = false, .followable = true, .offered = OFFER_FOR }) == Verdict::kWarn);
+	CHECK(Judge(&bridge, { .live = false, .warned = 5s, .followable = true, .offered = OFFER_FOR + 5s }) == Verdict::kLater);
+	CHECK(Judge(&bridge, { .live = false, .warned = WARNING, .followable = true, .offered = OFFER_FOR + 10s }) == Verdict::kSet);
+	// The friend gone from the session meanwhile: nobody to follow, as before.
+	CHECK(Judge(&moves, { .live = false, .followable = false, .offered = 30s }) == Verdict::kSkip);
+
+	// Never for a stage caught up from the session (a joiner, a load): skipped, or a bridge warned.
+	CHECK(Judge(&moves, { .live = false, .followable = true }) == Verdict::kSkip);
+	CHECK(Judge(&bridge, { .live = false, .followable = true }) == Verdict::kWarn);
+	// Nor for one that doesn't move the player, a payment, a side quest's step of an unshared story, the opening, or a
+	// lock whose release isn't coming.
+	CHECK(Judge(&plain, { .live = true, .followable = true }) == Verdict::kSet);
+	CHECK(Judge(&paysToo, { .live = true, .followable = true }) == Verdict::kSkip);
+	CHECK(Judge(&moves, { .live = true, .opening = true, .followable = true }) == Verdict::kOpeningWaits);
+	CHECK(Judge(&bridge, { .live = true, .releaseComing = false, .followable = true }) == Verdict::kQuestWaits);
+	CHECK(Judge(&bridge, { .live = false, .releaseComing = false, .followable = true, .offered = 10s }) == Verdict::kQuestWaits);
+
+	// The rows: Kellogg's memory (MQ203 10) and DN070's cave (5) are offered; Kiddie Kingdom's quickstart 6 is a move,
+	// not a fight.
+	CHECK(Judge(Find(0x0229EA, 10), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);
+	CHECK(FlagsOf(0x0E9914, 5) == kMoves);  // DN070: MoveTo DN070_TreasuresEntry (the rig's step_follow)
+	CHECK(Judge(Find(0x0E9914, 5), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);
+	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == kMoves);
+	CHECK(FlagsOf(0x03684F, 740, File::kNukaWorld) == (kMoves | kHostile));
+	// kHostile is only ever with kMoves.
+	for (const auto& rule : RULES) {
+		CHECK(!(rule.flags & kHostile) || (rule.flags & kMoves));
+	}
+}
+
 TEST("stage rules: starting a stuck main story's next quest (MQ105, whose start moves the player) warns first and waits out a fight")
 {
 	// QuestSync::RepairStory judges MQ105's stage 0 as a stage caught up from the session.
@@ -443,13 +505,17 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	for (const auto& [file, quest, stage] : hostile) {
 		const auto rule = Find(quest, stage, file);
 		REQUIRE(rule);
-		CHECK(rule->flags == kMoves);  // no bridge: none starts another shared quest or awards an achievement
+		// No bridge: none starts another shared quest or awards an achievement. kHostile: the follow offer says "fighting".
+		CHECK(rule->flags == (kMoves | kHostile));
 		CHECK(rule->wait == 0);
-		// With the friend who did it near: at once, fighting or not. Far, or caught up from the session: never, and no
-		// warning.
+		// With the friend who did it near: at once, fighting or not. Far: offered to join them, and set once beside them;
+		// not taken up, or caught up from the session: never, and no warning.
 		CHECK(Judge(rule, { .live = true, .nearFriend = true }) == Verdict::kSet);
 		CHECK(Judge(rule, { .live = true, .nearFriend = true, .held = true }) == Verdict::kSet);
-		CHECK(Judge(rule, { .live = true, .nearFriend = false }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .live = true, .nearFriend = false }) == Verdict::kSkip);  // the friend not known here: nobody to follow
+		CHECK(Judge(rule, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kOffer);
+		CHECK(Judge(rule, { .live = false, .nearFriend = true, .followable = true, .offered = 40s }) == Verdict::kSet);
+		CHECK(Judge(rule, { .live = false, .followable = true, .offered = OFFER_FOR }) == Verdict::kSkip);
 		CHECK(Judge(rule, { .live = false }) == Verdict::kSkip);
 		CHECK(Judge(rule, { .live = false, .nearFriend = true }) == Verdict::kSkip);
 		CHECK(Judge(rule, { .opening = true }) == Verdict::kOpeningWaits);

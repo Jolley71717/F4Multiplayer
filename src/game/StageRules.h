@@ -23,6 +23,7 @@ namespace StageRules
 	inline constexpr std::uint8_t kPays = 1 << 2;    // takes caps or ordinary items (not quest items) from the player: a bribe, a payment
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
+	inline constexpr std::uint8_t kHostile = 1 << 5;  // with kMoves: what it does is turn a faction on the player, not move them (the follow offer says "fighting")
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -96,7 +97,9 @@ namespace StageRules
 	// come from the same scan, with one more kind: a stage that turns a faction on the player (SetPlayerEnemy, SetEnemy
 	// with the player's faction and neither side made neutral, someone put in a PlayerEnemy faction; itself or through
 	// what it calls and sets: SafeScan.Hostile) is kMoves, judged as a stage that moves the player (the maintainer's
-	// choice, 2026-11-06): set only live with the friend who did it near, skipped otherwise. None is a bridge: none
+	// choice, 2026-11-06): set only live with the friend who did it near, skipped otherwise, and kHostile too when it
+	// doesn't move the player as well, so the offer to go with the friend (Verdict::kOffer) says they are fighting, not
+	// going somewhere (Kiddie Kingdom's quickstart 6, a MoveTo, has no kHostile). None is a bridge: none
 	// starts another shared quest or awards an achievement (Acadia 200's DLC03MQ05 8990 reaches a friend as the story's
 	// own stage). So DN036 500 (Phyllis), DN049's x49 (a shop's robots), the
 	// Nucleus's 70 and the Institute's Acadia 200 (through the kick-out and defence quests' stages they set), Far
@@ -252,17 +255,17 @@ namespace StageRules
 		{ 0, 0x04402C, 9, kMoves, 80 },
 		{ 0, 0x04402C, 150, 0, 60 },
 		{ 0, 0x04402C, 210, kMoves, 0 },
-		{ 0, 0x04542B, 120, kMoves, 0 },  // DN049: the player an enemy: SetEnemy DN049MaddensChampFaction PlayerFaction
-		{ 0, 0x04542B, 149, kMoves, 0 },  // the player an enemy: SetEnemy DN049MaddensFaction PlayerFaction
-		{ 0, 0x04542B, 221, kMoves, 0 },  // the player an enemy: SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
-		{ 0, 0x04542B, 249, kMoves, 0 },  // the player an enemy: SetEnemy DN049OutletFaction PlayerFaction
-		{ 0, 0x04542B, 349, kMoves, 0 },  // the player an enemy: SetEnemy DN049DinerFaction PlayerFaction
-		{ 0, 0x04542B, 449, kMoves, 0 },  // the player an enemy: SetEnemy DN049FallonsFaction PlayerFaction
-		{ 0, 0x04542B, 549, kMoves, 0 },  // the player an enemy: SetEnemy DN049BakeryFaction PlayerFaction
-		{ 0, 0x04542B, 649, kMoves, 0 },  // the player an enemy: SetEnemy DN049SlocumFaction PlayerFaction
+		{ 0, 0x04542B, 120, kMoves | kHostile, 0 },  // DN049: the player an enemy: SetEnemy DN049MaddensChampFaction PlayerFaction
+		{ 0, 0x04542B, 149, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049MaddensFaction PlayerFaction
+		{ 0, 0x04542B, 221, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
+		{ 0, 0x04542B, 249, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049OutletFaction PlayerFaction
+		{ 0, 0x04542B, 349, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049DinerFaction PlayerFaction
+		{ 0, 0x04542B, 449, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049FallonsFaction PlayerFaction
+		{ 0, 0x04542B, 549, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049BakeryFaction PlayerFaction
+		{ 0, 0x04542B, 649, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049SlocumFaction PlayerFaction
 		{ 0, 0x04542B, 711, kPays, 0 },  // RemoveItem(PrewarMoney x5000)
-		{ 0, 0x04542B, 749, kMoves, 0 },  // the player an enemy: SetEnemy DN049BowlingAlleyFaction PlayerFaction
-		{ 0, 0x04542B, 849, kMoves, 0 },  // the player an enemy: SetEnemy DN049DirectorFaction PlayerFaction
+		{ 0, 0x04542B, 749, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049BowlingAlleyFaction PlayerFaction
+		{ 0, 0x04542B, 849, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DN049DirectorFaction PlayerFaction
 		{ 0, 0x04542B, 856, 0, 50 },
 		{ 0, 0x0459D2, 0, 0, 1 },  // RR101
 		{ 0, 0x0459D2, 600, kMoves, 40 },
@@ -302,7 +305,7 @@ namespace StageRules
 		{ 0, 0x07CC61, 200, 0, 10 },
 		{ 0, 0x07CC61, 210, 0, 20 },
 		{ 0, 0x084E40, 400, kPays, 0 },  // MS13MarowskiRevenge: caps
-		{ 0, 0x08FCED, 500, kMoves, 0 },  // DN036: the player an enemy: SetEnemy DN036PhyllisFaction PlayerFaction
+		{ 0, 0x08FCED, 500, kMoves | kHostile, 0 },  // DN036: the player an enemy: SetEnemy DN036PhyllisFaction PlayerFaction
 		{ 0, 0x0986C7, 0, kMoves, 20 },  // InstM01
 		{ 0, 0x0986C7, 35, kPays, 0 },
 		{ 0, 0x099848, 90, kPays, 0 },  // MinRecruit02
@@ -475,13 +478,13 @@ namespace StageRules
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
 		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker
-		{ 1, 0x004C8E, 70, kMoves, 0 },  // the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8E, 70, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
-		{ 1, 0x00AEC3, 210, kMoves, 0 },  // DLC03FarHarborS02: the player an enemy: AddToFaction pPlayerEnemyFaction
+		{ 1, 0x00AEC3, 210, kMoves | kHostile, 0 },  // DLC03FarHarborS02: the player an enemy: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
 		{ 1, 0x01055C, 30, 0, 45 },  // DLC03CoA_FFNucleus01
-		{ 1, 0x013F3A, 200, kMoves, 0 },  // DLC03Acadia_Institute: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
+		{ 1, 0x013F3A, 200, kMoves | kHostile, 0 },  // DLC03Acadia_Institute: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 250, 0, 6 },
 		{ 1, 0x013F3A, 460, 0, 32 },
 		{ 1, 0x01CBFA, 1, kMoves, 50 },  // DLC03MQ04_01: into DiMA's memories (MQ04Script.EnterVR)
@@ -541,9 +544,9 @@ namespace StageRules
 		{ 3, 0x0295C8, 50, 0, 100 },  // DLC04GZBattlezone
 		{ 3, 0x0295C8, 60, 0, 20 },
 		{ 3, 0x03684F, 6, kMoves, 50 },  // DLC04_KiddieKingdomMain: MoveTo temp6; the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
-		{ 3, 0x03684F, 600, kMoves, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
-		{ 3, 0x03684F, 700, kMoves, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
-		{ 3, 0x03684F, 740, kMoves, 0 },  // the player an enemy: SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
+		{ 3, 0x03684F, 600, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
+		{ 3, 0x03684F, 700, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
+		{ 3, 0x03684F, 740, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
 		{ 3, 0x03684F, 791, 0, 5 },
 	};
 
@@ -1115,18 +1118,21 @@ namespace StageRules
 		kWarn,        // not yet: tell the player first that it will move them
 		kQuestWaits,  // not yet: its quest waits for the stage that frees the player; other quests go on
 		kOpeningWaits,  // not yet: it moves the player, and this game is still in the opening; other quests go on
+		kOffer,         // not yet: the player is offered to go with the friend who did it (the teleport key); its quest waits, other quests go on
 	};
 
 	struct Situation
 	{
 		bool                           sharedStory = false;   // the host shares the main story and the factions'
 		bool                           live = false;          // it just happened in a friend's game (not caught up from the session)
-		bool                           nearFriend = false;    // a friend is close by
+		bool                           nearFriend = false;    // the friend who did it is close by
 		bool                           held = false;          // caught-up stages wait now (the player is fighting)
 		bool                           releaseComing = true;  // a stage that takes the controls away: the one that gives them back is coming too
 		bool                           opening = false;       // this game is still in the opening (Story::InOpening)
 		bool                           friendInOpening = false;  // a friend's is (their status): it holds nothing here
 		std::optional<Clock::duration> warned;                // since the player was told a stage would move them
+		bool                           followable = false;    // the friend who did it is known: the teleport key can take the player to them
+		std::optional<Clock::duration> offered;               // since the player was offered to go with them (kOffer)
 	};
 
 	inline constexpr auto WARNING = std::chrono::seconds(10);
@@ -1137,6 +1143,9 @@ namespace StageRules
 	// (game units, about 85 m): it moves them along with that friend.
 	inline constexpr auto  LIVE_FOR = std::chrono::seconds(30);
 	inline constexpr float NEAR_FRIEND = 6000.0f;
+	// A live stage that moves the player, the friend who did it far away: the player is offered to go with them (the
+	// teleport key) this long, and it is set once they are beside the friend, as if they had been there all along.
+	inline constexpr auto OFFER_FOR = std::chrono::seconds(90);
 
 	// A friend's stage that moves the player is set while the player is with them (it moves them along,
 	// as it moved the friend), and skipped otherwise, unless nothing else would start what it starts:
@@ -1145,6 +1154,9 @@ namespace StageRules
 	// the player is set while this game is in the opening: the vault's own scripts fade the screen and take the controls
 	// there, and a friend's stage moving the player meanwhile breaks the scripts that give them back. A friend still in
 	// the vault holds nobody else's: their own game holds them (with three or more, the others go on together).
+	// A live one whose friend is far is first offered: the player can go with them (the teleport key) for OFFER_FOR,
+	// and it is set once they are beside the friend. Not taken up, it goes as before: skipped, or a bridge warned and set.
+	// Never offered for a stage caught up from the session (only a live one), nor while this game is in the opening.
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
@@ -1157,8 +1169,12 @@ namespace StageRules
 		if (!a_now.releaseComing) {
 			return Verdict::kQuestWaits;
 		}
-		if (a_now.live && (!(flags & kMoves) || a_now.nearFriend)) {
+		const bool offerOpen = a_now.offered && *a_now.offered < OFFER_FOR;
+		if ((a_now.live || offerOpen) && (!(flags & kMoves) || a_now.nearFriend)) {
 			return Verdict::kSet;
+		}
+		if ((flags & kMoves) && a_now.followable && (offerOpen || (a_now.live && !a_now.offered))) {
+			return Verdict::kOffer;
 		}
 		if (a_now.held) {
 			return Verdict::kLater;

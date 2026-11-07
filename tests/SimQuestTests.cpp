@@ -314,13 +314,176 @@ TEST("sim quests: a friend's teleport into the Institute takes you along when yo
 	CHECK(!host.Quests().Locked());
 	CHECK(host.Quests().Notices().empty());  // no warning: it happened beside them
 
-	// Carol, far away, is warned first and taken along 10 s later: nothing else starts the Institute.
+	// Carol, far away, is offered to go with Bob first; she stays where she is, so once the offer runs out she is
+	// warned and taken along 10 s later: nothing else starts the Institute.
 	s.PlayFor(10s);
 	REQUIRE(carol.Quests().Notices().size() == 1);
-	CHECK(carol.Quests().Notices()[0].starts_with("Catching up with your friends' story in 10 s"));
+	CHECK(carol.Quests().Notices()[0].starts_with("Going into"));
+	CHECK(!carol.Quests().Has(MQ206, 500));
+	s.PlayFor(StageRules::OFFER_FOR);
+	REQUIRE(carol.Quests().Notices().size() == 2);
+	CHECK(carol.Quests().Notices()[1].starts_with("Catching up with your friends' story in 10 s"));
+	s.PlayFor(15s);
 	CHECK((Order(carol, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(carol.Quests().followed == 0);
 	CHECK(carol.Quests().Controls());
 	CHECK(carol.Quests().Achievements().contains(INSTITUTE_ACHIEVEMENT));
+}
+
+TEST("sim quests: a friend far away when a stage moves them is offered to go with them; coming over sets it beside them, and their next steps follow")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);  // across the map
+	Settled(s);
+
+	host.Stage(MS17, 150);  // moves the host (MS17's 150)
+	host.Stage(MS17, 315);  // a step after it, which moves nobody
+	host.Stage(SIDE, 10);   // another quest's step
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	CHECK(bob.Quests().Notices()[0].starts_with("Going into"));
+	CHECK(!bob.Quests().Has(MS17, 150));
+	CHECK(!bob.Quests().Has(MS17, 315));  // the quest waits for the offer
+	CHECK(bob.Quests().Has(SIDE, 10));    // other quests go on
+	CHECK(bob.Quests().moved == 0);
+
+	// Past the live window, still within the offer: Bob takes the teleport key and lands beside the host.
+	s.PlayFor(40s);
+	CHECK(!bob.Quests().Has(MS17, 150));
+	bob.Move(1100.0f, 1000.0f);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().Has(MS17, 150));  // moved along with the host, as if he had been there
+	CHECK(bob.Quests().moved == 1);
+	CHECK(bob.Quests().followed == 1);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().Has(MS17, 315));
+	CHECK(bob.Quests().Skipped().empty());
+	CHECK(bob.Quests().Notices().size() == 1);  // no warning, no second offer
+	CHECK(bob.Quests().WaitingCount() == 0);
+
+	// A friend who joins later catches up on the same stage: never offered (it is no longer live), skipped.
+	auto& carol = s.Player("Carol");
+	carol.GiveQuest(MS17, Started({ 0, 150, 175, 315, 331, 450 }));
+	REQUIRE(carol.Join());
+	carol.Move(90000.0f, 1000.0f);
+	s.PlayFor(10s);
+	CHECK(carol.Quests().Notices().empty());
+	CHECK((carol.Quests().Skipped() == History{ { MS17, 150 } }));
+	CHECK(carol.Quests().Has(MS17, 315));
+}
+
+namespace
+{
+	std::size_t SetAt(const Client& a_player, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto& history = a_player.Quests().History();
+		const auto  it = std::ranges::find(history, std::pair{ a_quest, a_stage });
+		return it == history.end() ? history.size() : static_cast<std::size_t>(it - history.begin());
+	}
+}
+
+TEST("sim quests: a far friend's offered bridge (the Institute teleporter) holds back what came after it, as its warning did; taken up, the bridge comes first")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);  // across the map
+	Settled(s);
+
+	Reach(host, MQ206, { 500, 1000, 1050, 1200 });
+	s.PlayFor(1s);         // (a poll reports its stages quest by quest: what came later comes in a later one)
+	host.Stage(SIDE, 10);  // a step after the bridge, of another quest (as the MQ207 that MQ206's teleporter starts)
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	CHECK(bob.Quests().Notices()[0].starts_with("Going into"));
+	CHECK(!bob.Quests().Has(MQ206, 500));
+	CHECK(!bob.Quests().Has(SIDE, 10));  // held behind the offered bridge, not set first
+	s.PlayFor(40s);
+	CHECK(!bob.Quests().Has(SIDE, 10));
+
+	bob.Move(1100.0f, 1000.0f);  // the teleport key: beside the host
+	s.PlayFor(60s);  // the teleporter (1000) runs on 40 s before what came after it goes
+	CHECK((Order(bob, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(bob.Quests().followed == 1);
+	CHECK(bob.Quests().Has(SIDE, 10));
+	CHECK(SetAt(bob, MQ206, 1000) < SetAt(bob, SIDE, 10));  // the teleporter before what came after it
+	CHECK(bob.Quests().Controls());
+	CHECK(bob.Quests().Skipped().empty());
+}
+
+TEST("sim quests: a far friend's offered bridge, not taken up, still comes before what came after it; an offered stage that is no bridge lets other quests go on")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);
+	Settled(s);
+
+	// No bridge (MS17's 150): only its own quest waits for the offer.
+	host.Stage(MS17, 150);
+	host.Stage(SIDE, 10);
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	CHECK(!bob.Quests().Has(MS17, 150));
+	CHECK(bob.Quests().Has(SIDE, 10));  // set while the offer is open
+	s.PlayFor(StageRules::OFFER_FOR);
+	CHECK((bob.Quests().Skipped() == History{ { MS17, 150 } }));
+
+	// A bridge (MQ206's): what came after it waits through the offer and the warning, and comes after the teleporter.
+	Reach(host, MQ206, { 500, 1000, 1050, 1200 });
+	s.PlayFor(1s);
+	host.Stage(SIDE, 20);
+	s.PlayFor(StageRules::OFFER_FOR - 5s);
+	CHECK(!bob.Quests().Has(MQ206, 500));
+	CHECK(!bob.Quests().Has(SIDE, 20));
+	s.PlayFor(70s);
+	CHECK((Order(bob, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(bob.Quests().Has(SIDE, 20));
+	CHECK(SetAt(bob, MQ206, 1000) < SetAt(bob, SIDE, 20));
+	CHECK(bob.Quests().followed == 0);
+	CHECK(bob.Quests().Controls());
+}
+
+TEST("sim quests: a loading screen doesn't eat a follow offer's time")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(50000.0f, 1000.0f);
+	Settled(s);
+
+	host.Stage(MS17, 150);
+	s.PlayFor(3s);
+	REQUIRE(bob.Quests().Notices().size() == 1);
+	s.PlayFor(60s);
+	bob.Quests().loading = true;  // a long load: the queue is paused
+	s.PlayFor(60s);
+	bob.Quests().loading = false;
+	s.PlayFor(10s);  // about 73 s of the offer's 90 counted
+	CHECK(!bob.Quests().Has(MS17, 150));
+	CHECK(bob.Quests().Skipped().empty());
+	bob.Move(1100.0f, 1000.0f);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().Has(MS17, 150));
+	CHECK(bob.Quests().followed == 1);
 }
 
 TEST("sim quests: a friend's stage that turns a faction on the player (the robot shops' DN049) reaches you beside them, not when you're far, and their payment never")
@@ -347,11 +510,17 @@ TEST("sim quests: a friend's stage that turns a faction on the player (the robot
 	s.PlayFor(1s);
 	CHECK(host.Quests().Has(DN049, 120));  // beside Bob: the champion turns on them both at once
 	CHECK(host.Quests().Notices().empty());
-	// Carol, far away, is not turned on: a stage that moves the player and is no bridge (none of these starts another
-	// shared quest or awards an achievement; a bridge's warning is the Institute's test above). No warning either.
+	// Carol, far away, is offered to join the fight; she doesn't come, so she is not turned on: a stage that moves the
+	// player and is no bridge (none of these starts another shared quest or awards an achievement; a bridge's warning
+	// is the Institute's test above). No warning either.
 	s.PlayFor(11s);
 	CHECK(!carol.Quests().Has(DN049, 120));
-	CHECK(carol.Quests().Notices().empty());
+	REQUIRE(carol.Quests().Notices().size() == 1);
+	CHECK(carol.Quests().Notices()[0].starts_with("Fighting"));
+	CHECK(carol.Quests().Skipped().empty());  // the offer is still open
+	s.PlayFor(StageRules::OFFER_FOR);
+	CHECK(!carol.Quests().Has(DN049, 120));
+	CHECK(carol.Quests().Notices().size() == 1);
 	CHECK((carol.Quests().Skipped() == History{ { DN049, 120 } }));
 
 	bob.Stage(DN049, 711);  // Bob is paid
@@ -1212,6 +1381,11 @@ TEST("sim quests: a friend's game that says another player did a step can't move
 	CHECK(!host.Quests().Has(MS17, 150));
 	CHECK(carol.Quests().moved == 0);
 	CHECK(host.Quests().moved == 0);
+	// Each is offered to go with Bob, who did it (not the host beside Carol); neither goes.
+	CHECK(carol.Quests().Notices().size() == 1);
+	CHECK(host.Quests().Notices().size() == 1);
+	s.PlayFor(StageRules::OFFER_FOR);
+	CHECK(!carol.Quests().Has(MS17, 150));
 	CHECK((carol.Quests().Skipped() == History{ { MS17, 150 } }));
 
 	// A step Bob really does takes along the friend who stands with him, and only her.
@@ -1221,6 +1395,8 @@ TEST("sim quests: a friend's game that says another player did a step can't move
 	s.PlayFor(3s);
 	CHECK(carol.Quests().Has(MS17, 175));
 	CHECK(carol.Quests().moved == 1);
+	CHECK(!host.Quests().Has(MS17, 175));
+	s.PlayFor(StageRules::OFFER_FOR);  // the host's offer to go with Bob runs out
 	CHECK(!host.Quests().Has(MS17, 175));
 	CHECK((host.Quests().Skipped() == History{ { MS17, 150 }, { MS17, 175 } }));
 	bob.Stage(MS17, 315);  // a step that moves nobody reaches everyone

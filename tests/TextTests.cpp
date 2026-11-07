@@ -344,6 +344,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "quest.stuck", { { "quest", "Reunions" } }, "Your main story was stuck; it goes on with Reunions" },
 		{ "quest.next", {}, "the next quest" },
 		{ "quest.completed", { { "player", "Sam" }, { "quest", "Reunions" } }, "Sam completed Reunions" },
+		{ "quest.follow_offer", { { "player", "Sam" }, { "quest", "Reunions" }, { "key", "Y" }, { "n", 90 } }, "Sam is going into Reunions: hold Y within 90 s to go with them" },
+		{ "quest.follow_fight", { { "player", "Sam" }, { "quest", "Reunions" }, { "key", "Y" }, { "n", 90 } }, "Sam is fighting in Reunions: hold Y within 90 s to join them" },
 		{ "workshop.rescued", {}, "What you kept in a friend's container is in your inventory" },
 		{ "drops.container_hint", {}, "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", {}, "Friends can't pick this item up: it stays on the ground in your game only" },

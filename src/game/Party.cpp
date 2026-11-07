@@ -65,6 +65,14 @@ namespace Party
 			std::uint32_t     worldspace = 0;
 			RE::NiPoint3      position;
 			Clock::time_point deadline{};
+			std::uint32_t     playerId = 0;  // the friend it goes to
+		};
+
+		// Our player's last arrival beside a friend by the teleport key (TeleportedTo: QuestSync's follow offer).
+		struct Arrival
+		{
+			std::uint32_t     playerId = 0;
+			Clock::time_point at{};
 		};
 
 		std::uint32_t                          localId = 0;
@@ -101,6 +109,7 @@ namespace Party
 
 		std::uint32_t                  teleportTarget = 0;
 		std::optional<PendingTeleport> pendingTeleport;
+		std::optional<Arrival>         arrival;
 		// The landing after a teleport's last move: its autosave waits for the player on the ground (TeleportRules.h).
 		TeleportRules::Landing landing;
 		bool                   fallLogged = false;  // the held fall's start logged once a landing
@@ -784,6 +793,8 @@ namespace Party
 				return;
 			}
 			player->SetPosition(to, true);
+			arrival = Arrival{ pendingTeleport->playerId, a_now };
+			REX::INFO("Party: arrived beside player {} at {}", pendingTeleport->playerId, Where(to));
 			pendingTeleport.reset();
 			landing.Begin(a_now, true);
 			fallLogged = false;
@@ -1153,6 +1164,7 @@ namespace Party
 			player->SetPosition(position, true);
 			landing.Begin(Clock::now(), travel);
 			fallLogged = false;
+			arrival = Arrival{ target->id, Clock::now() };
 			REX::INFO("Party: teleported to player {}, from {} to {}", target->id, Where(from), Where(position));
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
 			return;
@@ -1185,9 +1197,41 @@ namespace Party
 			Hud::Notify(Text::Format("party.cant_teleport_to", { { "player", target->name } }));
 			return;
 		}
-		pendingTeleport = PendingTeleport{ state.cell, state.worldspace, position, Clock::now() + TELEPORT_TIMEOUT };
+		pendingTeleport = PendingTeleport{ state.cell, state.worldspace, position, Clock::now() + TELEPORT_TIMEOUT, target->id };
 		REX::INFO("Party: teleporting to player {}", target->id);
 		Hud::Notify(Text::Format("party.teleporting", { { "player", target->name } }));
+	}
+
+	std::string OfferFollow(std::uint32_t a_id)
+	{
+		// Holding the teleport key goes to them, as for a friend who is down.
+		teleportTarget = a_id;
+		const auto player = Player();
+		if (!player) {
+			return {};
+		}
+		if (const auto reason = TeleportBlocked(player); !reason.empty()) {
+			return Text::Get(reason);
+		}
+		if (const auto target = FindPlayer(a_id); target && target->unreachable) {
+			return Text::Format("party.cant_teleport_unreachable", { { "player", target->name } });
+		}
+		return {};
+	}
+
+	std::string TeleportKeyName()
+	{
+		return KeyName(Config::Get().keyTeleport);
+	}
+
+	std::optional<Clock::time_point> TeleportedTo(std::uint32_t a_id)
+	{
+		return arrival && arrival->playerId == a_id ? std::optional{ arrival->at } : std::nullopt;
+	}
+
+	bool TeleportingTo(std::uint32_t a_id)
+	{
+		return pendingTeleport && pendingTeleport->playerId == a_id;
 	}
 
 	void SendPing()
@@ -1241,6 +1285,7 @@ namespace Party
 		ownWear.Forget();
 		landing.Cancel();  // the teleport was in the game left behind: no autosave of the one just loaded
 		pendingTeleport.reset();  // and no move into the one just loaded
+		arrival.reset();
 	}
 
 	void Reset()

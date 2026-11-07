@@ -91,6 +91,7 @@ if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
 	elif [ $((SECONDS + last / 2)) -lt "$soak_end" ]; then fail "soak: ran as long as asked" "$(( (SECONDS - soak_end) / 60 + soak_min )) min of the $soak_min asked for, with more than half a round ($((last / 120)) min) left"; fi
 fi
 run radiants  step_radiants
+run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {
