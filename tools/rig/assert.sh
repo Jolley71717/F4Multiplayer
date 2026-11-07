@@ -12,7 +12,8 @@
 #     expect_match "label" "$got" 'regex'  # extended regex
 #     expect_zero "label" "$got"           # shorthand for expect_eq "$got" 0
 #     warn_gt "label" "$got" 5 u           # number above a soft limit: WARN (printed in the summary), never a FAIL
-#     a_summary                            # one screen: counts, every FAIL and WARN, times; exits non-zero on a FAIL
+#     rig_fault clock "name" "reason"      # a check the rig could not make (RIG, not FAIL; see rig_fault below)
+#     a_summary                            # one screen: counts, every FAIL, RIG and WARN, times; exits non-zero on a FAIL or a check never made
 #     trap a_interrupted INT TERM          # after a_init: a run stopped by a signal records a FAIL ("run interrupted") and ends in VERDICT FAIL
 #
 # Reading the games (both are driven through the dev channel, see env.sh):
@@ -69,10 +70,14 @@ warn() { record WARN "$1" "$2"; }
 RIG_BREAK_AT=${RIG_BREAK_AT:-2}
 _rig_last_signal() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {s=substr($4, 13); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
 _rig_broken_count() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
-_rig_stop() {  # _rig_stop <signal>: the run ends here, its verdict FAIL
+_rig_stop() {  # _rig_stop <signal> [why]: the run ends here, its verdict FAIL. why: a stop for a reason that isn't the rig's
 	A_RIG_STOPPED=1
-	record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
-	echo "STOP: rig broken ($1)"
+	if [ -n "$2" ]; then
+		record FAIL "run stopped: $1" "$2. The checks after this point were not made"; echo "STOP: $1: $2"
+	else
+		record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
+		echo "STOP: rig broken ($1)"
+	fi
 	declare -F crash_verdict >/dev/null && [ -n "$A_NAME" ] && crash_verdict "$A_NAME"   # a game that went down may have crashed: that is the mod's, and is said
 	a_summary
 }
@@ -80,6 +85,14 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 	record FAIL "$2" "rig broken ($1): $3"
 	[ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop "$1"
 	return 0
+}
+# A rig fault is a check the rig could not make this time, with the rest of the rig fine: the two machines' clocks could
+# not line a trace up (the VM's clock offset could not be read over ssh, which was every one on 2026-11-07 under a loaded
+# host, or a time service set a clock between a reading and the trace). It is recorded RIG, not FAIL: no verdict on the mod
+# either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
+# passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
+rig_fault() {  # rig_fault <signal: clock> <check name> <reason>
+	record RIG "$2" "rig fault ($1): $3"
 }
 # rig_ssh_up <label>: the VM answers ssh
 rig_ssh_up() { if [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ]; then pass "$1" "ssh to the VM answers"; return 0; fi; rig_broken ssh "$1" "ssh to the VM does not answer"; return 1; }
@@ -266,18 +279,24 @@ log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta o
 # --- the verdict ---------------------------------------------------------------------------------------------
 a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary.txt, exits non-zero on a FAIL
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"; A_SECTION=""
-	local np nf nw total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS")
+	local np nf nw nr nu total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS"); nr=$(grep -c '^RIG' "$A_RESULTS")
+	# rig faults whose check never passed in this run (by name; a soak's rounds repeat each name): those were never made
+	nu=$(awk -F'\t' '$1=="PASS"{p[$3]=1} $1=="RIG"{r[$3]=1} END{n=0; for (k in r) if (!(k in p)) n++; print n}' "$A_RESULTS")
 	total=$((SECONDS - A_T0)); mins=$(awk -v s=$total 'BEGIN{printf "%.1f", s/60}')
 	{
 		echo; echo "================ $A_NAME summary ================"
-		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings"
+		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings$([ "$nr" -gt 0 ] && echo ", $nr rig fault(s)")"
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
 		if [ "$nf" -gt 0 ]; then echo "FAILED:"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nw" -gt 0 ]; then echo "warnings:"; awk -F'\t' '$1=="WARN"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
-		if [ "$nf" -eq 0 ]; then echo "VERDICT: PASS ($A_NAME)"; else echo "VERDICT: FAIL ($A_NAME: $nf failed check(s))"; fi
+		if [ "$nf" -gt 0 ]; then echo "VERDICT: FAIL ($A_NAME: $nf failed check(s))"
+		elif [ "$nu" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed; $nu check(s) the rig never made, listed under rig faults: run them again)"
+		elif [ "$nr" -gt 0 ]; then echo "VERDICT: PASS ($A_NAME; $nr rig fault(s), each check made and passed in another round)"
+		else echo "VERDICT: PASS ($A_NAME)"; fi
 		echo "details: $A_OUT"
 	} | tee "$A_OUT/summary.txt"
-	[ "$nf" -gt 125 ] && nf=125
+	nf=$((nf + nu)); [ "$nf" -gt 125 ] && nf=125
 	exit "$nf"
 }
 
@@ -364,6 +383,14 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	hasnt "rig_input_ready: a message box left open is closed before the click" "$o" "rig broken"; has "rig_input_ready: ... and named" "$o" "closed MessageBoxMenu"
 	o=$(brk 'sleep() { :; }; dc() { case "$2" in pos) echo "x=10.0 y=20.0 z=0";; *) echo ok;; esac; }; rig_keys_move host "moves" >/dev/null')
 	has "rig_keys_move: no movement is signal input" "$o" "rig broken (input): host's player moved '0' u"
+	# rig faults: no FAIL, never the breaker; PASS when each was made in another round, RIG (non-zero) when one never was
+	o=$(brk 'pass "pa distance" ok >/dev/null; rig_fault clock "pa distance" "a clock was set" >/dev/null; rig_fault clock "pa distance" "again" >/dev/null; rig_fault clock "pa distance" "again" >/dev/null')
+	has "rig_fault: three never trip the breaker" "$o" REACHED; has "rig_fault: listed" "$o" "rig fault (clock): a clock was set"
+	has "rig_fault: made in another round is a PASS" "$o" "VERDICT: PASS (brk; 3 rig fault(s)"; [ "${o%%|*}" = 0 ] && echo "ok   rig_fault: ... exit 0" || { echo "FAIL rig_fault: made in another round exits 0: [${o%%|*}]"; bad=1; }
+	o=$(brk 'pass "other" ok >/dev/null; rig_fault clock "pa distance" "a clock was set" >/dev/null')
+	has "rig_fault: never made is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"; [ "${o%%|*}" = 1 ] && echo "ok   rig_fault: ... exit 1" || { echo "FAIL rig_fault: never made exits 1: [${o%%|*}]"; bad=1; }
+	o=$(brk 'rig_fault clock "pa distance" "x" >/dev/null; fail "hp" "differs" >/dev/null')
+	has "rig_fault: a FAIL still makes it FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	rm -rf "$d" "$F4MP_CHECKS"; exit $bad
 fi

@@ -4,6 +4,8 @@
 # only to reach a scene, never injected or teleported movement in place of walking) and records named checks.
 # Thresholds are variables so a run can say what it used; the reasons are in docs/RELEASING.md and the PR that added this.
 
+. "$RIG/clocklib.sh"   # clock_lineup, wall_step: the two machines' traces lined up by their clocks
+
 # movement (trace.sh): passing runs of 0.8.8 to 0.10.1 were mean error 0 to 5 u, best lag 100 to 150 ms
 T_MOVE_MEAN=${T_MOVE_MEAN:-10}          # u, mean position error at the best lag, each way
 T_MOVE_LAG=${T_MOVE_LAG:-400}           # ms, best lag
@@ -114,6 +116,15 @@ step_movement() {
 	enter_both SanctuaryExt 14
 	place host -80500 89300 7784 45; place vm -80380 89400 7784 45; sleep 3
 	bash "$RIG/trace.sh" run 18 > "$A_OUT/movement.log" 2>&1; rc=$?
+	# Exit 3: the clocks could not line the traces up (clocklib.sh), so nothing was fitted: the rig's. Placed again and traced
+	# once more (the same walk); a second one is recorded as a rig fault, not a failure.
+	if [ $rc -eq 3 ]; then
+		echo "movement: $(grep -m1 'VM clock: RIG\|not tracing\|could not' "$A_OUT/movement.log"); placed again and traced once more"
+		cp -f "$A_OUT/movement.log" "$A_OUT/movement-clock1.log"
+		place host -80500 89300 7784 45; place vm -80380 89400 7784 45; sleep 3
+		bash "$RIG/trace.sh" run 18 > "$A_OUT/movement.log" 2>&1; rc=$?
+		if [ $rc -eq 3 ]; then rig_fault clock "movement trace ran" "twice: $(grep -m1 'VM clock: RIG\|not tracing\|could not' "$A_OUT/movement.log")"; return; fi
+	fi
 	if [ $rc -ne 0 ]; then fail "movement trace ran" "trace.sh refused or failed: $(grep -m1 'not tracing\|could not\|not fitting\|error' "$A_OUT/movement.log")"; return; fi
 	pass "movement trace ran" "clock $(sed -n 's/^VM clock: \(-\?[0-9]*\) ms from.*/\1/p' "$A_OUT/movement.log" | head -1) ms off, drift $(sed -n 's/.*drift \(-\?[0-9]*\) ms.*/\1/p' "$A_OUT/movement.log" | head -1) ms"
 	_mv_check "$A_OUT/movement.log" "VM player seen by host" "VM player as the host sees them"
@@ -171,6 +182,12 @@ step_combat() {
 # menu_open <who> <menu> <seconds>: the menu is open in that game (dev `menus`: "open=HUDMenu:2051.3,ContainerMenu:1.2 ..."),
 # waiting up to that many seconds for it
 menu_open() { local w=0; while :; do grep -qE "[=,]$2:" <<<"$(dc "$1" menus | grep -oE 'open=[^ ]*')" && return 0; [ "$w" -ge "$(( $3 * 4 ))" ] && return 1; sleep 0.25; w=$((w + 1)); done; }
+# menu_up_for <who> <menu> <seconds> <wait>: waits up to <wait> seconds for that menu to have been open at least <seconds> (`menus`
+# gives each open menu its seconds open)
+menu_up_for() { local i s; for i in $(seq 1 $(( $4 * 4 ))); do s=$(dc "$1" menus | grep -oE "[=,]$2:[0-9.]+" | head -1 | cut -d: -f2); [ -n "$s" ] && _cmp "$s" ">=" "$3" && return 0; sleep 0.25; done; return 1; }
+# keys_seen <who>: the keyboard messages that game's window has taken off its queue so far (dev `mousedev` keys=: its raw input, which
+# Windows hands only to the window in front; empty from a build without it)
+keys_seen() { field "$(dc "$1" mousedev)" keys; }
 # clear_menus <who>: closes what would swallow the next activate or key in that game: a message box (Enter: its one button,
 # OK), the Pip-Boy, a terminal or a container menu (Tab). 2026-11-01: a Tab after a take opened the Pip-Boy, and an ammo stack
 # added to a magazine rack opened "You can only place Magazines on the Rack"; each made every activate after it open nothing.
@@ -215,7 +232,7 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # to see. Up to LOOT_CHESTS (3) are looted.
 LOOT_ITEM=0001F276; LOOT_N=7; LOOT_CHESTS=${LOOT_CHESTS:-3}
 _loot() {
-	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl
+	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl how k0 k1 k2="" kr takehow=""
 	: > "$A_OUT/looted.txt"
 	cl=$(clear_menus vm) || { fail "loot: set-up: no menu open in the VM's game before looting" "$cl"; return; }
 	[ -n "$cl" ] && echo "closed in the VM's game before looting: $cl" >> "$A_OUT/looted.txt"
@@ -244,7 +261,20 @@ _loot() {
 		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
 		# R (take all) also closes the menu: a Tab after it opens the Pip-Boy, and every activate after that opens nothing
 		# (2026-11-01: one chest looted, then each one after it "opened no container menu"). Tab only while the menu is still up.
-		sleep 0.5; vm "key 0x52 60" >/dev/null; sleep 1.5
+		# R is pressed ONCE, once the menu has been up a second (its movie takes no input while it loads). A press that leaves the
+		# menu up fails the take as it always has: no second press. The 0.13.2 soak's two lost takes (2026-11-07) left no trace of
+		# whether R reached the game, so each press is now logged with what would tell: the window in front as the key went
+		# (`key`'s front=), the keyboard messages the game's window took off its queue (`mousedev` keys=: its raw input, which
+		# Windows hands only to the window in front) before, 1.5 s after and 3.5 s after (a late rise is a late press, not a lost
+		# one), and the input tally (`focus`: a press dropped because the game couldn't be brought to the front is counted there).
+		# A resend gated on "never reached the game" waits until those counts are seen to be trustworthy (PR 332's review).
+		menu_up_for vm ContainerMenu 1 4
+		vm focus >/dev/null; k0=$(keys_seen vm); kr=$(vm "key 0x52 100" | grep -oE 'front=[a-z]+'); sleep 1.5
+		k1=$(keys_seen vm)
+		if ! menu_open vm ContainerMenu 0; then how="R: the menu closed"
+		else sleep 2; k2=$(keys_seen vm); how="R: the menu stayed up"; fi
+		how="$how (keys $k0 -> $k1${k2:+ -> $k2}; key $kr; $(dc vm focus | grep -oE 'input: .*' | cut -c1-160))"; k2=""
+		echo "$c: $how" >> "$A_OUT/looted.txt"; takehow="$takehow $c: $how;"
 		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
 		cl=$(clear_menus vm); [ -n "$cl" ] && echo "$c: closed after the take: $cl" >> "$A_OUT/looted.txt"
 		va=$(vm "contents $c"); if ! contents_ok "$va"; then unread="$unread $c"; elif has_items "$va"; then notaken="$notaken $c"; fi
@@ -268,7 +298,7 @@ _loot() {
 	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice, or known to open by a script of its own)"
 	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no chest within 2500 u could be stocked in both games and opened (reasons in looted.txt): nothing was looted (inconclusive)"; return; fi
 	if [ -n "$unread" ]; then fail "loot: VM takes all from $chests chest(s) in the container menu" "the VM's contents after the take could not be read for:$unread${notaken:+; still holding items:$notaken}"
-	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen)"; fi
+	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen; the presses:$takehow)"; fi
 	if [ -n "$hunread" ]; then fail "loot: the VM's takes reach the host's chests" "the host's contents after the takes could not be read for:$hunread (looted.txt): nothing is known of those"
 	elif [ $taken -eq 0 ] && [ $other -gt 0 ]; then warn "loot: the VM's takes reach the host's chests" "the host's rolls held none of the $other shared stack(s) the VM took (each game rolls a chest on its own; what only one roll put there stays by design): nothing to see, inconclusive"
 	elif [ $taken -eq 0 ]; then fail "loot: the VM's takes reach the host's chests" "the VM took no item of the kind the session shares (only weapons, armor, keys, notes, books: $kept stack(s)): inconclusive"
@@ -440,7 +470,7 @@ _trail_burst() {
 }
 step_trails() {
 	section "friend shot trails (a stand-in's plain bullet and laser beam fly inert, both ways)"
-	local who gun
+	local who gun h0="$C_HOST0" v0="$C_VM0"   # the run's crash baseline, put back at the end: the end check counts from the start
 	enter_both SanctuaryExt 14
 	crash_snapshot
 	place host -80650 89300 7784 270; place vm -80350 89300 7784 90   # 300 u apart, each facing away from the other
@@ -461,6 +491,7 @@ step_trails() {
 	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	crash_verdict "friend shot trails"
+	C_HOST0="$h0"; C_VM0="$v0"   # (it used to stay this step's, so a crash before the last trails step of a soak went unseen at the end)
 }
 
 # ---- workshop build sync, then clean up what the test placed --------------------------------------------------------------------
@@ -534,32 +565,39 @@ step_pa() {
 	_dist() { local hq; hq=$(dc $v "refinfo $hp"); read -r vx vy <<<"$(_xy "$(dc $d 'refinfo 00000014')")"; read -r hx hy <<<"$(_xy "$hq")"; awk -v a=$vx -v b=$vy -v c=$hx -v e=$hy 'BEGIN{printf "%d", sqrt((a-c)^2+(b-e)^2)}'; }
 	# While moving, the driver and its stand-in are compared at the same moment: both games trace (dev `trace`, 20 Hz, each row
 	# stamped with its machine's clock) and the driver's own path is read at each stand-in sample's time, the VM's clock offset
-	# taken out (trace.sh clock). Reading the two games one after the other used to count up to ~0.3 s of running as distance.
-	local clk clk0 clk1 did tr
-	# trace.sh clock resyncs the VM's time service; a reading right after it once said 1078 ms and then -14 (2026-11-01: the step
-	# still settling), so the offset is read again before and after the trace, and must hold still across it. A reading of -103
-	# between two of -12 (2026-11-01) was this side stalling through a whole read, not the VM's clock: trace.sh offset now takes
-	# a reading only once enough of its lines came through with no stall, and says unknown otherwise
-	# A reading can come back empty (an ssh hiccup, 2026-11-05: before '', after -13): up to three tries, 2 s apart.
-	_offset() { local o i; for i in 1 2 3; do o=$(bash "$RIG/trace.sh" offset 2>/dev/null); is_num "$o" && break; sleep 2; done; echo "$o"; }
-	bash "$RIG/trace.sh" clock >/dev/null 2>&1; sleep 3; clk0=$(_offset)
+	# taken out. Reading the two games one after the other used to count up to ~0.3 s of running as distance.
+	local clk clk0 clk1 did tr hs vs lu pa_moving="power armor ($d): stand-in distance while moving, at the same moment"
+	# The offset is read before and after the trace and lined up with what each game says its clock stepped during it
+	# (clocklib.sh clock_lineup): a time service setting a clock mid-trace failed this check in the 0.12.0, 0.13.1 and 0.13.2
+	# soaks. trace.sh clock settles the VM's clock first (a resync only when it is over 100 ms off, then waiting until two
+	# readings agree: a forced resync before every trace was what let the VM's second time source set it 1.9 s ahead). A reading
+	# of -103 between two of -12 (2026-11-01) was this side stalling through a whole read, not the VM's clock: trace.sh offset
+	# takes a reading only once enough of its lines came through with no stall, and says unknown otherwise. A reading can come
+	# back empty (an ssh hiccup, 2026-11-05: before '', after -13; under a loaded host, 2026-11-07): trace.sh offset tries up to
+	# CLOCK_TRIES (4) times, 3 s apart, a measurement only. Offsets that can't line the traces up are the rig's:
+	# a rig fault, not a failure.
+	_offset() { local o; o=$(bash "$RIG/trace.sh" offset 2>/dev/null); is_num "$o" && echo "$o"; }
+	bash "$RIG/trace.sh" clock >/dev/null 2>&1; clk0=$(_offset)
 	did=$(dcf $d 'net status' id)
 	bash "$RIG/dcfast.sh" both "trace start 20" >/dev/null 2>&1; dc $d focus >/dev/null; sleep 0.3
 	dc $d "key 0x57 3000" >/dev/null; dc $d "mouse 600 0" >/dev/null
 	for i in $(seq 1 12); do
 		case $i in 3) dc $d "key 0x57 2500" >/dev/null;; 5) dc $d "key 0x20 80" >/dev/null;; 6) dc $d "mouse 1587 0" >/dev/null; dc $d "key 0x57 3000" >/dev/null;; esac; sleep 0.6
 	done
-	sleep 1.5; host 'trace stop' >/dev/null; vm 'trace stop' >/dev/null; settled=$(_dist); clk1=$(_offset)
-	clk=""; is_num "$clk0" && is_num "$clk1" && [ $(( clk1 > clk0 ? clk1 - clk0 : clk0 - clk1 )) -le 50 ] && clk=$(( (clk0 + clk1) / 2 ))
+	sleep 1.5; hs=$(host 'trace stop'); vs=$(vm 'trace stop'); settled=$(_dist); clk1=$(_offset)
+	lu=$(clock_lineup "$clk0" "$clk1" "$(wall_step "$hs")" "$(wall_step "$vs")"); clk=""; case "$lu" in ok*) clk=$(cut -d' ' -f2 <<<"$lu");; esac
+	echo "power armor ($d): VM clock before '$clk0' after '$clk1', stepped during the trace host '$(wall_step "$hs")' vm '$(wall_step "$vs")': $lu"
 	cp -f "$HOST_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-host.csv" 2>/dev/null; scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-vm.csv" 2>/dev/null
-	if ! is_num "$clk" || [ "${clk#-}" -gt 500 ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "the VM's clock offset is unknown, moved over 50 ms during the trace or is over 500 ms (before '$clk0', after '$clk1'): the two traces can't be lined up"
-	elif [ -z "$did" ]; then fail "power armor ($d): stand-in distance while moving, at the same moment" "no player id in the driver's net status"
+	if [ -z "$clk" ]; then rig_fault clock "$pa_moving" "the two traces can't be lined up: ${lu#rig }"
+	elif [ -z "$did" ]; then fail "$pa_moving" "no player id in the driver's net status"
 	else
 		tr=$(pa_same_time "$A_OUT/pa-$d-$d.csv" "$A_OUT/pa-$d-$v.csv" "p$did" "$([ $d = vm ] && echo "$clk" || echo 0)" "$([ $v = vm ] && echo "$clk" || echo 0)")
 		echo "$tr" > "$A_OUT/pa-$d-distance.txt"
 		if [ "$(field "$tr" n)" -ge 40 ] 2>/dev/null; then
-			expect_le "power armor ($d): stand-in distance while moving, at the same moment (max of $(field "$tr" n) samples; mean $(field "$tr" mean) u, p95 $(field "$tr" p95) u; VM clock $clk ms)" "$(field "$tr" max)" "$T_PA_MOVING" u
-		else fail "power armor ($d): stand-in distance while moving, at the same moment" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
+			# the name stays the same from round to round (a soak's summary tells a rig fault made good in another round by it)
+			if is_num "$(field "$tr" max)" && _cmp "$(field "$tr" max)" '<=' "$T_PA_MOVING"; then pass "$pa_moving" "$(field "$tr" max) u (at most $T_PA_MOVING; max of $(field "$tr" n) samples, mean $(field "$tr" mean) u, p95 $(field "$tr" p95) u; VM clock $clk ms)"
+			else fail "$pa_moving" "$(field "$tr" max) u, want at most $T_PA_MOVING (max of $(field "$tr" n) samples, mean $(field "$tr" mean) u, p95 $(field "$tr" p95) u; VM clock $clk ms)"; fi
+		else fail "$pa_moving" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
 	fi
 	expect_le "power armor ($d): stand-in distance after stopping" "$settled" "$T_PA_SETTLED" u
 	# Up to five tries, each with nothing open in front and the window focused: 2026-11-06 three blind tries left the host in the
@@ -1218,7 +1256,7 @@ step_downed_repeat() {
 
 # ---- churn: cell hops with save and reload ------------------------------------------------------------------------------------
 step_churn() {
-	local mins=${1:-3} end half hopper=vm watcher=host i=0 lastsave c a
+	local mins=${1:-3} end half hopper=vm watcher=host i=0 lastsave c a down_run=0
 	section "cell churn with save and reload (${mins} min)"
 	local cells=(Vault81Entry Vault81 SuperDuperMart01 RedRocketExt SanctuaryExt) hops=0 downs=0
 	end=$(( $(date +%s) + mins * 60 )); half=$(( $(date +%s) + mins * 30 )); lastsave=$(date +%s)
@@ -1231,7 +1269,18 @@ step_churn() {
 			[ $hopper = host ] && { sleep 8; host "key 0x0D 100" >/dev/null; }
 			sleep 20; lastsave=$(date +%s)
 		fi
-		a=$(alive); hops=$((hops + 1)); echo "$(date +%T) hop $i $c: $a"; case "$a" in *DOWN*) downs=$((downs + 1));; esac
+		a=$(alive); hops=$((hops + 1)); echo "$(date +%T) hop $i $c: $a"
+		# A game down after two hops in a row is gone (a load outlasts one): the churn stops there and the crash logs are read
+		# now. 2026-11-04 the host crashed 70 minutes into the 0.12.0 soak's churn, which hopped the VM alone for 8 more minutes until
+		# the run was stopped by hand, and the verdict said only "interrupted".
+		case "$a" in *DOWN*) downs=$((downs + 1)); down_run=$((down_run + 1));; *) down_run=0;; esac
+		if [ "$down_run" -ge 2 ]; then
+			# the run ends here: every step after it would fail on the missing game (_rig_stop reads the crash logs and names a crash).
+			# A game gone mid-churn is most likely the mod's (a crash or a hang), so it is a plain FAIL, not "rig broken".
+			expect_zero "churn: hops after which a game was down" "$downs"
+			fail "churn: both games up" "$a after two hops in a row: a game went down (a crash or a hang); the churn stopped"
+			[ -z "$A_RIG_STOPPED" ] && _rig_stop "a game went down in the churn" "$a after two hops in a row (a crash or a hang: the crash check below says which)"; return
+		fi
 		i=$((i + 1))
 	done
 	expect_zero "churn: hops after which a game was down" "$downs"
