@@ -56,8 +56,12 @@ namespace QuestSync
 	void OnSessionEnded();
 
 	// Before a save or a load: a friend's purchase's price waived here (StageRules::PRICES) has its own value back, so no save
-	// holds it at 0; the waiver goes on after a save (its next poll sets it to 0 again) and ends with a load.
+	// holds it at 0; the waiver goes on after a save (its next poll sets it to 0 again).
 	void BeforeSaveOrLoad();
+
+	// A load begins (kPreLoadGame): a waiver ends, its price put back. A load longer than the save/load hold's limit lets frames
+	// run, which would otherwise set the price to 0 in the loaded game.
+	void BeforeLoad();
 
 	// Forget the known stages and the waiting ones; the next Frame takes a fresh baseline (after
 	// loading a save, which can move quests back; the session's stages then arrive again).

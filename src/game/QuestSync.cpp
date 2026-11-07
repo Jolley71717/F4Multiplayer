@@ -493,19 +493,9 @@ namespace QuestSync
 		}
 
 		// A friend's purchase being set here with its price at 0 (StageRules::Price): the global's own value, put back once
-		// the script that sells it has given what was bought, or after PRICE_TIMEOUT of play.
-		struct Waived
-		{
-			std::uint32_t   global;
-			float           value;
-			std::uint32_t   given;
-			std::uint32_t   givenBefore;
-			std::uint32_t   quest;
-			std::uint16_t   stage;
-			Clock::duration played{};
-		};
-		std::optional<Waived> waived;
-		Clock::time_point     waivedPolled{};
+		// the script that sells it has given what was bought, after PRICE_TIMEOUT of play, at a save (for the save), when a
+		// load begins and when the main menu opens. The rules are StageRules::PriceWaiver's; this does them to the global.
+		StageRules::PriceWaiver waiver;
 
 		std::uint32_t PlayerHas(std::uint32_t a_item)
 		{
@@ -516,6 +506,13 @@ namespace QuestSync
 				player->GetItemCount(n, item, false);
 			}
 			return n;
+		}
+
+		void SetGlobal(std::uint32_t a_global, float a_value)
+		{
+			if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(a_global)) {
+				global->value = a_value;
+			}
 		}
 
 		// Before a friend's purchase is set here: its price to 0 while the script that takes it runs, so this player gets what
@@ -536,49 +533,68 @@ namespace QuestSync
 					bought->GetFormID(), a_price.boughtStage);
 				return true;
 			}
-			if (!waived) {
-				waived = Waived{ global->GetFormID(), global->value, file | a_price.given, PlayerHas(file | a_price.given), a_quest, a_stage };
-			} else {
-				waived->played = {};  // another stage of the same purchase: its own value is kept
+			// A global already waived keeps the value from before (the one now may be the 0 of the waiver), and one purchase
+			// at a time: another price would be zeroed and never put back.
+			const bool again = waiver.On() && waiver.Current()->global == global->GetFormID();
+			StageRules::PriceWaiver::Waived waived;
+			waived.global = global->GetFormID();
+			waived.value = global->value;
+			waived.given = file | a_price.given;
+			waived.givenBefore = PlayerHas(waived.given);
+			waived.quest = a_quest;
+			waived.stage = a_stage;
+			waived.mainMenus = OpenMenus::MainMenus();
+			if (!waiver.Begin(waived, a_now)) {
+				REX::WARN("QuestSync: {:08X} stage {} is a friend's purchase, but the price {:08X} of another ({:08X} stage {}) is waived now", a_quest, a_stage,
+					waived.global, waiver.Current()->quest, waiver.Current()->stage);
+				return false;
 			}
-			waivedPolled = a_now;
 			global->value = 0.0f;
 			++waivedPrices;
-			REX::INFO("QuestSync: {:08X} stage {} is a friend's purchase: its price {:08X} ({}) is 0 here until {:08X} is given (the friend paid)", a_quest, a_stage,
-				waived->global, waived->value, waived->given);
+			REX::INFO("QuestSync: {:08X} stage {} is a friend's purchase: its price {:08X} ({}) is 0 here until {:08X} is given (the friend paid){}", a_quest, a_stage,
+				waived.global, waiver.Current()->value, waived.given, again ? " (the waiver goes on)" : "");
 			return true;
 		}
 
-		// The waived price back once what was bought is given, or after PRICE_TIMEOUT of play (time paused or loading doesn't
-		// count: no script runs then).
+		// The waived price back once what was bought is given, after PRICE_TIMEOUT of play (time paused or loading doesn't
+		// count: no script runs then), or when a main menu has opened.
 		void CheckWaived(Clock::time_point a_now, bool a_paused)
 		{
-			if (!waived) {
+			if (!waiver.On()) {
 				return;
 			}
-			if (!a_paused) {
-				waived->played += a_now - waivedPolled;
-			}
-			waivedPolled = a_now;
-			const bool given = PlayerHas(waived->given) > waived->givenBefore;
-			const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(waived->global);
-			if (!StageRules::PriceBack(given, waived->played)) {
-				if (global) {
-					global->value = 0.0f;  // again after a save, which put its own value back (BeforeSaveOrLoad)
-				}
+			const auto& current = *waiver.Current();
+			const auto  polled = waiver.Poll(a_now, a_paused, PlayerHas(current.given) > current.givenBefore, OpenMenus::MainMenus());
+			const auto& waived = polled.waived;
+			if (polled.what == StageRules::PriceWaiver::Do::kHold) {
+				SetGlobal(waived.global, 0.0f);  // again after a save, which put its own value back (BeforeSaveOrLoad)
 				return;
 			}
-			if (global) {
-				global->value = waived->value;
+			SetGlobal(waived.global, waived.value);
+			switch (polled.why) {
+			case StageRules::PriceWaiver::Why::kGiven:
+				REX::INFO("QuestSync: {:08X} given for the friend's purchase ({:08X} stage {}); its price {:08X} is {} again", waived.given, waived.quest, waived.stage,
+					waived.global, waived.value);
+				break;
+			case StageRules::PriceWaiver::Why::kMainMenu:
+				REX::WARN("QuestSync: the main menu opened with the friend's purchase ({:08X} stage {}) waived; its price {:08X} is {} again", waived.quest, waived.stage,
+					waived.global, waived.value);
+				break;
+			default:
+				REX::WARN("QuestSync: {:08X} not given {} s after the friend's purchase ({:08X} stage {}) was set; its price {:08X} is {} again", waived.given,
+					std::chrono::duration_cast<std::chrono::seconds>(StageRules::PRICE_TIMEOUT).count(), waived.quest, waived.stage, waived.global, waived.value);
+				break;
 			}
-			if (given) {
-				REX::INFO("QuestSync: {:08X} given for the friend's purchase ({:08X} stage {}); its price {:08X} is {} again", waived->given, waived->quest, waived->stage,
-					waived->global, waived->value);
-			} else {
-				REX::WARN("QuestSync: {:08X} not given {} s after the friend's purchase ({:08X} stage {}) was set; its price {:08X} is {} again", waived->given,
-					std::chrono::duration_cast<std::chrono::seconds>(StageRules::PRICE_TIMEOUT).count(), waived->quest, waived->stage, waived->global, waived->value);
+		}
+
+		// A waiver over because a load began, or a world was loaded or begun: the price back (before anything resets).
+		void EndWaived(const char* a_when)
+		{
+			if (const auto waived = waiver.End()) {
+				SetGlobal(waived->global, waived->value);
+				REX::INFO("QuestSync: {}, the price {:08X} of the friend's purchase ({:08X} stage {}) is {} again and no longer waived", a_when, waived->global, waived->quest,
+					waived->stage, waived->value);
 			}
-			waived.reset();
 		}
 
 		// Sets a stage here as one from another player: through the console (it runs a moment later),
@@ -1292,19 +1308,21 @@ namespace QuestSync
 
 	void BeforeSaveOrLoad()
 	{
-		if (!waived) {
-			return;
+		if (const auto waived = waiver.BeforeSave()) {
+			SetGlobal(waived->global, waived->value);
+			REX::INFO("QuestSync: before the save or load, the price {:08X} of the friend's purchase ({:08X} stage {}) is {} again", waived->global, waived->quest,
+				waived->stage, waived->value);
 		}
-		if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(waived->global)) {
-			global->value = waived->value;
-		}
-		REX::INFO("QuestSync: before the save or load, the price {:08X} of the friend's purchase ({:08X} stage {}) is {} again", waived->global, waived->quest,
-			waived->stage, waived->value);
+	}
+
+	void BeforeLoad()
+	{
+		EndWaived("a load begins");
 	}
 
 	void Rebaseline()
 	{
-		waived.reset();  // its own value was put back before the load (BeforeSaveOrLoad)
+		EndWaived("a world is loaded");  // first: nothing is reset with a price still at 0
 		knownStages.clear();
 		doneStages.clear();
 		miscStages.clear();
@@ -1351,7 +1369,7 @@ namespace QuestSync
 	{
 		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released,
-			waivedPrices, waived ? " (one waived now)" : "", outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+			waivedPrices, waiver.On() ? " (one waived now)" : "", outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +
 		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe();

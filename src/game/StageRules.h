@@ -9,6 +9,7 @@
 #include <optional>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 // What some quest stages' scripts do, for setting another player's stages here. Kept free of the
 // game so it can be tested.
@@ -518,7 +519,12 @@ namespace StageRules
 		{ 0, 0x003648, 300, 0x0D35FA, 0x14191C, 10, 0x141946 },  // DialogueDiamondCity, the mayor: the same
 		{ 0, 0x14191C, 10, 0x0D35FA, 0x14191C, 10, 0x141946 },   // FFDiamondCity02 itself (shared with sQuests = safe)
 	};
-	inline constexpr auto PRICE_TIMEOUT = std::chrono::seconds(60);
+	// How long a waived price stays 0 at most, in play (time paused or loading doesn't count: no script runs then). The script
+	// that takes it normally runs within a second of the stage, but Papyrus runs it from a queue, which a heavily scripted
+	// game can leave minutes behind: a price put back before the script runs would make the friend pay in full. The cost of
+	// a long window is small: only this player's own purchase is free meanwhile, and no save or load holds the price at 0
+	// (PriceWaiver).
+	inline constexpr auto PRICE_TIMEOUT = std::chrono::minutes(5);
 
 	inline const Price* FindPrice(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
 	{
@@ -534,6 +540,113 @@ namespace StageRules
 	{
 		return a_given || a_played >= PRICE_TIMEOUT;
 	}
+
+	// The one price waived now, and when it goes back (game-free: QuestSync does what each call says to the global, and
+	// tests/StageRulesTests.cpp walks the calls). The rule it keeps: a waiver is never dropped without its price put back, so
+	// no save holds a global at 0. Each way a waiver ends (End) returns what to put back, and so does a save (BeforeSave),
+	// which leaves the waiver on:
+	//   given / timed out  Poll: what was bought is in the inventory, or PRICE_TIMEOUT of play went by
+	//   a save             BeforeSave: back for the save; the next Poll holds it at 0 again
+	//   a load begins      End: the loaded world has the value its save had, and nothing sets it to 0 after, though the
+	//                      frame hold lets frames run in a load longer than its limit
+	//   the main menu      Poll sees another main menu than the one at Begin (quit to the menu, then a new game, whose
+	//                      kNewGame has no message before it); and End, after a load or a new game, as a last resort
+	class PriceWaiver
+	{
+	public:
+		struct Waived
+		{
+			std::uint32_t   global = 0;
+			float           value = 0.0f;       // the global's own value, to put back
+			std::uint32_t   given = 0;          // what the script gives after it takes the price
+			std::uint32_t   givenBefore = 0;    // how many of it the player had when the waiver began
+			std::uint32_t   quest = 0;          // the stage that began it (for the log)
+			std::uint16_t   stage = 0;
+			std::uint32_t   mainMenus = 0;      // the main menus opened by then (OpenMenus::MainMenus)
+			Clock::duration played{};
+		};
+
+		enum class Do
+		{
+			kNothing,  // no waiver
+			kHold,     // the global stays 0 (the caller sets it again if a save put it back)
+			kRestore,  // the global gets its value back (Waived::value) and the waiver is over
+		};
+		enum class Why
+		{
+			kNone,
+			kGiven,
+			kTimeout,
+			kMainMenu,
+		};
+		struct Polled
+		{
+			Do     what = Do::kNothing;
+			Why    why = Why::kNone;
+			Waived waived;  // as it was, for the log and the restore
+		};
+
+		[[nodiscard]] bool On() const { return waived.has_value(); }
+		[[nodiscard]] const std::optional<Waived>& Current() const { return waived; }
+
+		// A friend's purchase is being set: its price goes to 0 (the caller does it, whatever this returns true for). One
+		// waiver at a time, of one global: another stage of the same purchase extends it (the window starts over, the
+		// first value is kept); a purchase with another price is refused (false: its stage isn't set) rather than zero a
+		// global that would never be put back.
+		bool Begin(const Waived& a_new, Clock::time_point a_now)
+		{
+			if (waived) {
+				if (waived->global != a_new.global) {
+					return false;
+				}
+				waived->played = {};
+			} else {
+				waived = a_new;
+				waived->played = {};
+			}
+			polled = a_now;
+			return true;
+		}
+
+		// Each poll: a_paused is true while the game is paused or loading (no time played), a_given whether what was bought
+		// has come, a_mainMenus the main menus opened so far.
+		Polled Poll(Clock::time_point a_now, bool a_paused, bool a_given, std::uint32_t a_mainMenus)
+		{
+			if (!waived) {
+				return {};
+			}
+			if (!a_paused) {
+				waived->played += a_now - polled;
+			}
+			polled = a_now;
+			Polled result{ Do::kHold, Why::kNone, *waived };
+			if (a_mainMenus != waived->mainMenus) {
+				result.what = Do::kRestore;
+				result.why = Why::kMainMenu;
+			} else if (PriceBack(a_given, waived->played)) {
+				result.what = Do::kRestore;
+				result.why = a_given ? Why::kGiven : Why::kTimeout;
+			}
+			if (result.what == Do::kRestore) {
+				waived.reset();
+			}
+			return result;
+		}
+
+		// A save is coming: the value to put back for it, the waiver left on.
+		[[nodiscard]] std::optional<Waived> BeforeSave() const { return waived; }
+
+		// A load begins, or the world is loaded or new (nothing may be left on across it): the value to put back, the waiver
+		// over.
+		std::optional<Waived> End()
+		{
+			return std::exchange(waived, std::nullopt);
+		}
+
+	private:
+		std::optional<Waived> waived;
+		Clock::time_point     polled{};
+	};
 
 	// Stages whose script takes the player's controls away until a later stage gives them back. They
 	// are only set once that stage is coming too (waiting here, or done), so the player is never left
