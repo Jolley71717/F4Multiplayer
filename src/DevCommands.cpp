@@ -879,14 +879,31 @@ namespace DevCommands
 		// speed) at a fixed rate into F4Multiplayer_trace.csv next to the dev token. Run in both
 		// games at once and compare the files: the owner's path against the stand-in's copy of it
 		// (lag, error) is what a movement-sync change has to keep or improve.
+		// The rows are stamped with the system clock as it read at `trace start`, run on by the steady clock: a step of the
+		// system clock during a trace (a time service setting it; 2026-11-07 the VM's was set 1.9 s ahead and back within
+		// 15 s) moves no row, and `trace stop` says how far the system clock stepped (wallStep=: its reading less the run-on
+		// one), so a script lining two machines' traces up by their clocks' offset tells a step from a steady offset.
 		struct Trace
 		{
-			bool                              active = false;
-			std::chrono::milliseconds         gap{ 50 };
+			bool                                  active = false;
+			std::chrono::milliseconds             gap{ 50 };
 			std::chrono::steady_clock::time_point next{};
-			std::vector<std::string>          rows;
+			std::chrono::steady_clock::time_point steady0{};
+			double                                wall0 = 0.0;  // the system clock at steady0, ms since the epoch
+			std::vector<std::string>              rows;
+
+			// A steady-clock moment's stamp: the system clock at the start, run on by the steady clock.
+			[[nodiscard]] double Stamp(std::chrono::steady_clock::time_point a_at) const
+			{
+				return wall0 + std::chrono::duration<double, std::milli>(a_at - steady0).count();
+			}
 		};
 		Trace trace;
+
+		double WallMs()
+		{
+			return std::chrono::duration<double, std::milli>(std::chrono::system_clock::now().time_since_epoch()).count();
+		}
 
 		std::string TraceCmd(std::string_view a_args)
 		{
@@ -896,11 +913,16 @@ namespace DevCommands
 				trace = {};
 				// Up to every frame (a rate over the frame rate samples each frame once): smoothness is a frame-by-frame thing.
 				trace.gap = std::chrono::milliseconds{ static_cast<int>(1000.0f / std::clamp(hz, 1.0f, 500.0f)) };
+				trace.steady0 = std::chrono::steady_clock::now();
+				trace.wall0 = WallMs();
 				trace.active = true;
 				trace.rows.push_back("ms,who,x,y,z,rz,speed");
 				return std::format("tracing every {} ms", trace.gap.count());
 			}
 			if (!args.empty() && args[0] == "stop") {
+				// How far the system clock moved from the run-on stamps since the start: 0, give or take a millisecond, when
+				// nothing set it. None for a trace that never started.
+				const auto step = trace.wall0 > 0.0 ? std::format(" wallStep={:.0f}", WallMs() - trace.Stamp(std::chrono::steady_clock::now())) : std::string{};
 				trace.active = false;
 				const auto path = DevChannel::DevFile("F4Multiplayer_trace.csv");
 				if (path.empty()) {
@@ -912,7 +934,7 @@ namespace DevCommands
 				}
 				const auto count = trace.rows.size();
 				trace.rows.clear();
-				return std::format("{} rows -> {}", count, path.string());
+				return std::format("{} rows -> {}{}", count, path.string(), step);
 			}
 			return "error: usage: trace start [hz] | trace stop";
 		}
@@ -995,7 +1017,7 @@ namespace DevCommands
 			if (!player || !player->GetParentCell()) {
 				return;
 			}
-			const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			const auto ms = std::llround(trace.Stamp(now));
 			const auto row = [&](std::string_view a_who, RE::Actor* a_actor) {
 				const auto& p = a_actor->data.location;
 				float speed = 0.0f;
@@ -1007,10 +1029,10 @@ namespace DevCommands
 				trace.rows.push_back(std::format("{},{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", ms, a_who, p.x, p.y, p.z, a_actor->data.angle.z * 57.29578f, speed));
 			};
 			row("me", player);
-			// Read together, so stamps from the steady clock land on the system clock to a fraction of a millisecond (the whole
-			// one the rows above are stamped with is 5% of a frame at 48 fps).
+			// Stamps from the steady clock on the trace's own clock, to a fraction of a millisecond (the whole one the rows above
+			// are stamped with is 5% of a frame at 48 fps).
 			const auto   steadyNow = std::chrono::steady_clock::now();
-			const double msNow = std::chrono::duration<double, std::milli>(std::chrono::system_clock::now().time_since_epoch()).count();
+			const double msNow = trace.Stamp(steadyNow);
 			// A stand-in as its engine update last put it, stamped with that moment: what was drawn, and when.
 			for (const auto& info : RemotePlayers::List()) {
 				if (!info.actor) {

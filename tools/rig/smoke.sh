@@ -3,7 +3,8 @@
 #
 # The standing two-game set with a verdict. The rc gate's step 2 (docs/RELEASING.md): every number the old soak only
 # printed is now a named check with a threshold (tools/rig/steps.sh holds them), the plugin log and the crash logs are
-# read, and the exit code is the number of failed checks (0 = PASS). About 30 minutes.
+# read, and the exit code is the number of failed checks (0 = PASS), plus any check the rig never managed to make (a rig fault:
+# the clocks could not line a trace up; recorded RIG, not FAIL, and VERDICT: RIG when no round made that check). About 30 minutes.
 #
 # --soak MINUTES is the rc soak (docs/RELEASING.md): after preflight and cleanup it runs the loop steps (movement to churn,
 # each with its checks, both ways where a step has two) round after round until the time is up, then the end steps

@@ -4,15 +4,19 @@
 # and compares the VM player's own path with the host's stand-in copy of it (and the reverse).
 # trace.sh analyse [host.csv vm.csv [vmClockMs]] re-runs the comparison on fetched files. Outputs in stage/trace/.
 # (run needs the rig held, see guard.sh: F4MP_RIG_OWNER.)
-# trace.sh clock resyncs the VM's clock and prints how far it is from the host's (no game needed).
+# trace.sh clock settles the VM's clock (a resync only when it is over 100 ms off) and prints how far it is from the
+# host's (no game needed).
 #
-# The two files are stamped with each machine's wall clock, so a VM clock that is off reads as lag and
-# error: on 2026-10-17 the VM's w32time service was stopped, its clock drifted ~1.4 s, and every trace
-# showed 200-400 u errors on old and new builds alike. So a run first resyncs the VM (w32time over ssh)
-# and measures the offset; it refuses to trace when the clock is still more than MAX_CLOCK_MS off,
-# measures again after the run (drift), and the fit takes the measured offset out of the VM's samples.
+# The two files are stamped with each machine's clock, so a VM clock that is off reads as lag and error: on
+# 2026-10-17 the VM's w32time service was stopped, its clock drifted ~1.4 s, and every trace showed 200-400 u errors
+# on old and new builds alike. So a run first measures the offset (resyncing the VM over ssh and waiting for it to
+# settle when it is over 100 ms), refuses to trace when it is still more than MAX_CLOCK_MS off, measures again after
+# the run, and the fit takes the offset out of the VM's samples. A step of either clock during the trace (a time
+# service setting it) is told from a steady offset by clocklib.sh's clock_lineup; one that leaves the offset unknown
+# is the rig's, not the mod's: run exits 3 then, as when the clock is unread or too far off before it, and smoke records a rig fault.
 # The offset is saved in stage/trace/clock.txt next to the CSVs, where analyse finds it.
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+. "$RIG/clocklib.sh"
 . "$RIG/guard.sh"
 K=$VM_KEY; H=$VM_SSH
 O=$STAGE/trace; mkdir -p "$O"
@@ -57,11 +61,27 @@ clock_resync() {
 
 abs() { local v=$1; echo $((v < 0 ? -v : v)); }
 
-# clock_check: resync, measure and judge the VM's clock. Sets CLOCK_MS; fails when unknown or too far off.
+# clock_settle: the VM's offset read; when it is over SETTLE_MS, the time service resyncs (a forced resync is a step of
+# the VM's clock, which the service makes a few seconds after the command returns: 2026-11-01 a reading right after one
+# said 1078 ms and then -14), and the offset is read every 3 s until two readings in a row agree within 10 ms, for up to
+# 45 s. Prints the last reading; fails when none could be made.
+SETTLE_MS=100
+clock_settle() {
+	local o p i
+	o=$(clock_offset) || return 1
+	if [ $(abs "$o") -le $SETTLE_MS ]; then echo "$o"; return 0; fi
+	echo "VM clock: $o ms off: resyncing" >&2; clock_resync >&2
+	for i in $(seq 1 15); do
+		sleep 3; p=$o; o=$(clock_offset) || continue
+		is_int "$p" && [ $(abs $((o - p))) -le 10 ] && { echo "$o"; return 0; }
+	done
+	echo "VM clock: still moving 45 s after a resync (last '$o')" >&2; echo "$o"; return 0
+}
+is_int() { [[ $1 =~ ^-?[0-9]+$ ]]; }
+
+# clock_check: the VM's clock settled and judged. Sets CLOCK_MS; fails when unknown or too far off.
 clock_check() {
-	echo "VM clock: resyncing"
-	clock_resync
-	CLOCK_MS=$(clock_offset) || { echo "VM clock: could not measure it (ssh); not tracing"; return 1; }
+	CLOCK_MS=$(clock_settle) || { echo "VM clock: could not measure it (no steady reading over ssh); not tracing"; return 1; }
 	echo "VM clock: $CLOCK_MS ms from the host's (VM minus host, give or take the link delay of a few ms)"
 	if [ $(abs $CLOCK_MS) -gt $MAX_CLOCK_MS ]; then
 		echo "VM clock: more than $MAX_CLOCK_MS ms off after a resync: not tracing (fix the VM's time service first)"
@@ -71,7 +91,7 @@ clock_check() {
 
 run() {
 	secs=${1:-20}
-	clock_check || return 1
+	clock_check || return 3   # the clock: the rig's (smoke records a rig fault)
 	before=$CLOCK_MS
 	# TRACE_HZ: samples a second (240 = every frame, for smooth); NETSIM / NETSIM_VM: netsim arguments for the host / the VM
 	# (friends' states held back as over a worse connection, NetSim.h), turned off again after the run.
@@ -86,16 +106,20 @@ run() {
 	vm "mouse 1587 0" >/dev/null; sleep 0.3; bash "$RIG/dcfast.sh" both "key 0x57 3000" >/dev/null; sleep 3.3
 	vm "key 0x20 80" >/dev/null; sleep 1.5
 	rest=$((secs - 15)); [ $rest -gt 0 ] && sleep $rest
-	echo "host: $(host 'trace stop')"; echo "vm:   $(vm 'trace stop')"
+	hs=$(host 'trace stop'); vs=$(vm 'trace stop'); echo "host: $hs"; echo "vm:   $vs"
 	[ -n "$NETSIM" ] && echo "host netsim after: $(host netsim)" && host "netsim off" >/dev/null
 	[ -n "$NETSIM_VM" ] && echo "vm netsim after: $(vm netsim)" && vm "netsim off" >/dev/null
 	cp "$HOSTCSV" "$O/host.csv"
 	scp -q -i "$K" "$H:$VM_F4SE/F4Multiplayer_trace.csv" "$O/vm.csv"
-	# Again after the run: a clock that moved during it is drift the fit can't take out.
-	after=$(clock_offset) || after=$before
-	echo "VM clock: $after ms after the run (drift $((after - before)) ms)"
-	echo "$(( (before + after) / 2 )) $before $after" > "$O/clock.txt"
-	analyse "$O/host.csv" "$O/vm.csv" $(( (before + after) / 2 ))
+	# Again after the run, up to three tries (a reading can come back empty): with each game's wallStep it tells whether the
+	# offset read before held for the rows (clocklib.sh). One that can't line the traces up is the rig's: exit 3, no fit.
+	local i lu; for i in 1 2 3; do after=$(clock_offset) && break; after=""; sleep 2; done
+	lu=$(clock_lineup "$before" "$after" "$(wall_step "$hs")" "$(wall_step "$vs")")
+	echo "VM clock: ${after:-unread} ms after the run (drift $(is_int "$after" && echo $((after - before)) || echo '?') ms; stepped during the trace: host '$(wall_step "$hs")' vm '$(wall_step "$vs")' ms)"
+	case "$lu" in ok*) ;; *) echo "VM clock: RIG: ${lu#rig }: not fitting"; return 3;; esac
+	set -- $lu; echo "VM clock: lined up at $2 ms (${lu#ok $2 })"
+	echo "$2 $before $after" > "$O/clock.txt"
+	analyse "$O/host.csv" "$O/vm.csv" "$2"
 }
 
 # compare <ownerCsv> <ownerWho> <viewerCsv> <viewerWho> <label> [ownerClockMs viewerClockMs]: the owner's own
@@ -206,8 +230,7 @@ analyse() {
 }
 
 clock() {
-	clock_resync
-	local ms; ms=$(clock_offset) || { echo "VM clock: could not measure it (ssh)"; return 1; }
+	local ms; ms=$(clock_settle) || { echo "VM clock: could not measure it (no steady reading over ssh)"; return 1; }
 	if [ $(abs $ms) -gt $MAX_CLOCK_MS ]; then
 		echo "VM clock: $ms ms from the host's (VM minus host): over $MAX_CLOCK_MS ms, run and analyse will refuse"; return 1
 	fi
