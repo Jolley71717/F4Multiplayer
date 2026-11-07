@@ -10,6 +10,7 @@
 #include "game/Puppets.h"
 #include "game/QuestActors.h"
 #include "game/QuestFilter.h"
+#include "game/QuestSync.h"
 #include "game/RadiantSync.h"
 #include "game/RefTag.h"
 #include "game/RemoteEdits.h"
@@ -369,7 +370,7 @@ namespace Spawns
 			const auto file = facts.official ? a_quest->GetFile(0) : nullptr;
 			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 			facts.perGame = index && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
-			facts.listed = index && QuestActors::IsListed(static_cast<std::uint8_t>(*index), a_quest->GetFormID());
+			facts.shared = QuestSync::SharesHere(a_quest);
 			return facts;
 		}
 

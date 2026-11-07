@@ -77,7 +77,9 @@ after each build (nothing taken twice), the container's copy after a take, the d
 for the other player and gone from both once taken, and the downed player helped up with the rules' health, a normal
 camera and a working Pip-Boy. The bench step needs `bSharedStorage = true` in the host's `F4Multiplayer.ini` (back the
 ini and the session files up with `backup.sh` first: the containers of a settlement the host owns stay its storage in
-the session file); without it, it fails saying so. `tools/rig/hits.sh` is the health check: both players shoot the
+the session file); without it, it fails saying so. The questactors step (a shared quest's created creatures paired
+across games: Gun Run's mirelurks at Salem, then a silent quest's, both scenes reached by console placement and walked
+into) needs `sQuests = safe` there too, and fails saying so without it. `tools/rig/hits.sh` is the health check: both players shoot the
 same NPCs, and the two games' health must agree, never rise, and survive a pause menu. Both need the rig held
 (`tools/rig/guard.sh`) and leave no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`).
 `tools/rig/backup.sh` saves and restores the ini and session files on both machines. Nothing about a person or a

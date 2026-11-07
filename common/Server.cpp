@@ -1223,23 +1223,21 @@ void Server::Run()
 			return;
 		}
 		const auto own = workshop.BuiltBy(a_player.id, drops.CharacterOf(a_player.id));
-		for (std::size_t i = 0; i < own.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(own.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			send(a_player.key, Protocol::Encode(std::vector<Protocol::WorkshopItem>(own.begin() + i, own.begin() + end), Protocol::MessageType::kOwnWorkshopItems), true);
-		}
+		Protocol::ForEachChunk(own, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			send(a_player.key, Protocol::Encode(std::vector<Protocol::WorkshopItem>(a_first, a_last), Protocol::MessageType::kOwnWorkshopItems), true);
+		});
 	};
 
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
-		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_owners.begin() + i, a_owners.begin() + end));
+		Protocol::ForEachChunk(a_owners, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_first, a_last));
 			if (a_to) {
 				send(a_to, packet, true);
 			} else {
 				broadcast(packet, true, 0);
 			}
-		}
+		});
 	};
 
 	// (An NPC nobody runs has no gear kept: its next runner reports its own.)
@@ -1307,15 +1305,14 @@ void Server::Run()
 
 	// Whose game keeps storage containers, in packets. a_to = 0: everyone.
 	const auto sendStorageOwners = [&](const std::vector<Protocol::StorageOwner>& a_owners, ConnectionKey a_to) {
-		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
-			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
-			const auto packet = Protocol::Encode(Protocol::StorageOwners{ { a_owners.begin() + i, a_owners.begin() + end } });
+		Protocol::ForEachChunk(a_owners, Protocol::MAX_STORAGE_OWNERS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			const auto packet = Protocol::Encode(Protocol::StorageOwners{ { a_first, a_last } });
 			if (a_to) {
 				send(a_to, packet, true);
 			} else {
 				broadcast(packet, true, 0);
 			}
-		}
+		});
 	};
 
 	// The connection of the welcomed player a_id, or 0.
@@ -1696,10 +1693,7 @@ void Server::Run()
 		for (const auto& [ref, owner] : actorOwners) {
 			owners.push_back({ ref, owner.playerId });
 		}
-		for (std::size_t i = 0; i < owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
-		}
+		sendOwners(owners, a_player.key);
 		// ... and what those NPCs are wearing, as their owners reported it.
 		for (const auto& [ref, items] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
@@ -2868,7 +2862,9 @@ void Server::Run()
 		// about a change at most every few seconds; the latest one follows when the time is up (the tick).
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
-		if (now - budget.lastFace < options.faceInterval) {
+		// lastFace{} is "never": the steady clock's zero is the machine's boot on Linux, so a server (or a test with a long
+		// interval) on a machine up for less than the interval held the first face as if one had just gone.
+		if (budget.lastFace != Clock::time_point{} && now - budget.lastFace < options.faceInterval) {
 			a_player.faceDirty = true;
 			return;
 		}
