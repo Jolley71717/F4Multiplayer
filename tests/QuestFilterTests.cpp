@@ -259,8 +259,8 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 		CHECK(!QuestFilter::IsPerGame(silent.file, silent.quest));
 		if (silent.file == 0) {
 			CHECK(std::ranges::find(QuestFilter::STORY_FINALES, silent.quest) == QuestFilter::STORY_FINALES.end());
-			CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return (a_radiant.formId & 0x00FFFFFF) == silent.quest; }) == std::end(RadiantRules::RADIANTS));
 		}
+		CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return a_radiant.file == silent.file && a_radiant.quest == silent.quest; }) == std::end(RadiantRules::RADIANTS));
 	}
 	CHECK(perFile[0] == 70);
 	CHECK(perFile[1] == 19);
