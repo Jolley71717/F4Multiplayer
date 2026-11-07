@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T07:26:03+00:00",
+ "updated": "2026-11-07T07:43:06+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -554,7 +554,7 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 5,
    "note": "Fix in PR: the camera's way back no longer loops after a second down",
    "pr": 322
   },
