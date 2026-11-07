@@ -569,11 +569,12 @@ namespace Storage
 			if (!ruleOn || bench.id == 0 || side.Viewing() || now < bench.retryAt || KeeperOf(bench.id) != Keeper::kFriend) {
 				return;
 			}
-			bench.retryAt = now + bench.backoff;
-			bench.backoff = (std::min<Clock::duration>)(bench.backoff * 2, BENCH_RETRY_MAX);  // reset as its contents come
 			if (side.Settling()) {
-				return;  // the server refuses the view until our moves are settled: tried again then
+				return;  // the server refuses the view until our moves are settled: tried again then, and that wait is no failure
 			}
+			// A try: the next waits BENCH_RETRY, doubled each time one fails, up to BENCH_RETRY_MAX (reset as its contents come).
+			bench.retryAt = now + bench.backoff;
+			bench.backoff = (std::min<Clock::duration>)(bench.backoff * 2, BENCH_RETRY_MAX);
 			client.Open(bench.id, true);
 			if (side.Views(bench.id)) {
 				REX::INFO("Storage: viewing the host's workbench {:08X} ({}): its junk, ammo and aid are the one pile", bench.id,
