@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/RadiantRules.h"
 
 // Radiant quests (the Minutemen's, the Brotherhood's, the Institute's, the Railroad's and Diamond City's wanted posters,
 // but those with NPCs made at runtime), shared by their run (RadiantRules has which and why): when this player's game
@@ -16,6 +17,21 @@ namespace RadiantSync
 {
 	// Whether the session can share radiants now: bSharedRadiants and bSyncQuests on, and the story shared.
 	[[nodiscard]] bool Enabled();
+
+	// The radiant a quest is, by the game file that made it and its form ID there (RadiantRules::RADIANTS), whatever load
+	// order this game has: nothing for a quest that is none, or from a mod. The runtime form ID overloads look the quest up.
+	[[nodiscard]] const RadiantRules::Entry* EntryOf(const RE::TESQuest* a_quest);
+	[[nodiscard]] const RadiantRules::Entry* EntryOf(std::uint32_t a_questId);
+	[[nodiscard]] RadiantRules::Share        ShareOf(const RE::TESQuest* a_quest);
+	[[nodiscard]] RadiantRules::Share        ShareOf(std::uint32_t a_questId);
+	[[nodiscard]] bool                       IsRadiant(const RE::TESQuest* a_quest);
+	[[nodiscard]] bool                       IsRadiant(std::uint32_t a_questId);
+
+	// For the developer's commands (`radiantstart`): starts a radiant here the way the story manager's event does, with the
+	// aliases the event fills (a_ref: the settlement's workshop, the quest giver; a_location: any location the event gives,
+	// 0 for none) forced for the start and put back after, and a_aliases (alias ID, form) named by the caller too. It is then this game's own run, shared like any (Frame). The
+	// reply says whether it is running.
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases);
 
 	// This player's id in the session (the welcome's).
 	void SetLocalPlayer(std::uint32_t a_id);

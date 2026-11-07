@@ -349,9 +349,9 @@ public static class QuestScan
     // what every session shares).
     public static HashSet<Tuple<int, uint>> Safe;
 
-    // Fallout4.esm's radiants (src/game/RadiantRules.h, by form ID in the file) and QuestFilter.h's PER_GAME, once
+    // The radiants (src/game/RadiantRules.h, by file and form ID in it) and QuestFilter.h's PER_GAME, once
     // SafeScan.Load has read them (null: not read). Quests shared by their type that no friend's stage is ever set on.
-    public static HashSet<uint> Radiants;
+    public static HashSet<Tuple<int, uint>> Radiants;
     public static HashSet<Tuple<int, uint>> PerGame;
 
     // Whether a stage set in one game is set on this quest in a friend's: shared by its type, finale or dialogue quest
@@ -362,7 +362,7 @@ public static class QuestScan
     {
         if (Shared(q, a_file) == "not shared") return false;
         uint local = q.Id & 0xFFFFFF;
-        if (a_file == 0 && Radiants != null && Radiants.Contains(local)) return false;
+        if (Radiants != null && Radiants.Contains(Tuple.Create(a_file, local))) return false;
         if (PerGame != null && PerGame.Contains(Tuple.Create(a_file, local))) return false;
         return true;
     }
@@ -1827,7 +1827,7 @@ public static class SafeScan
             if (i.Op == 25 && Is(i.Args[0], "game") && Is(m, "GetPlayer")) { players.Add(i.Args[2]); continue; }
             if (COMPANIONS.Contains(m)) return "companion " + m;
             if (FACTIONS.Contains(m)) return "factions " + m;
-            if (SETTLEMENTS.Contains(m)) return "settlement " + m;
+            if (SETTLEMENTS.Contains(m)) return "settlement " + m + (i.Args.Count > 3 && Is(i.Args[3], "False") ? "(False)" : "");  // (False): the settlement is taken from the player
             if (m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
             if (i.Op == 25) continue;
             if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0))
@@ -1855,11 +1855,11 @@ public static class SafeScan
     static readonly Dictionary<Tuple<int, uint>, string> found = new Dictionary<Tuple<int, uint>, string>();
 
     // Why a quest is not in SAFE ("" it is), as the rule reads it in order; "no objectives" for one that passes all else.
-    static string Why(GearScan.Quest q, int a_file, HashSet<uint> a_radiants, HashSet<Tuple<int, uint>> a_perGame)
+    static string Why(GearScan.Quest q, int a_file, HashSet<Tuple<int, uint>> a_radiants, HashSet<Tuple<int, uint>> a_perGame)
     {
         uint local = q.Id & 0xFFFFFF;
         if (QuestScan.Shared(q, a_file) != "not shared") return "shared by its type";
-        if (a_file == 0 && a_radiants.Contains(local)) return "a radiant (RadiantRules.h)";
+        if (a_radiants.Contains(Tuple.Create(a_file, local))) return "a radiant (RadiantRules.h)";
         if (a_perGame.Contains(Tuple.Create(a_file, local))) return "each game's (PER_GAME)";
         var bare = System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "");
         if (COMPANION.IsMatch(bare)) return "a companion's";
@@ -1884,8 +1884,8 @@ public static class SafeScan
     {
         MoveScan.Load(data);
         QuestScan.Safe = null;
-        var radiants = new HashSet<uint>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*0x([0-9A-Fa-f]+),\\s*\"")
-            .Cast<System.Text.RegularExpressions.Match>().Select(m => Convert.ToUInt32(m.Groups[1].Value, 16) & 0xFFFFFF));
+        var radiants = new HashSet<Tuple<int, uint>>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*(\\d),\\s*0x([0-9A-Fa-f]+),\\s*\"")
+            .Cast<System.Text.RegularExpressions.Match>().Select(m => Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16) & 0xFFFFFF)));
         var perGame = Table(a_questFilter, "PER_GAME");
         QuestScan.Radiants = radiants;
         QuestScan.PerGame = perGame;
@@ -2016,6 +2016,21 @@ public static class SafeScan
         // what each quest left out for a stage does, and how its stage gets there, but the shared ones'
         foreach (var kv in found.Where(kv => verdicts[kv.Key].StartsWith("a stage")).OrderBy(kv => kv.Key))
             sb.AppendLine(string.Format("#   {0} 0x{1:X6} {2} {3}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid, kv.Value));
+        // The radiants shared by their run (RadiantRules.h) whose stage takes a settlement from the player (SetOwnedByPlayer(False)),
+        // directly or through what it calls: a friend's game runs that stage too, so the host's raid would cost the friend theirs.
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*(\\d),\\s*0x([0-9A-Fa-f]+),\\s*\"[^\"]*\",\\s*Share::kShared"))
+        {
+            int file = int.Parse(m.Groups[1].Value);
+            uint local = Convert.ToUInt32(m.Groups[2].Value, 16) & 0xFFFFFF;
+            GearScan.Quest q;
+            if (file >= MoveScan.perFile.Count || !MoveScan.perFile[file].TryGetValue(local, out q)) continue;
+            foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+            {
+                var each = walk.Stage(file, q, stage);
+                if (each != null && each.EndsWith("SetOwnedByPlayer(False)") && each.IndexOf(" -> ", StringComparison.Ordinal) < 0)  // its own fragment: what the settlement code deeper in does only when a happiness drops
+                    sb.AppendLine(string.Format("# shared radiant {0} 0x{1:X6} {2}: stage {3} takes a settlement from the player: {4}", file, local, q.Edid, stage, each));
+            }
+        }
         sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
         return sb.ToString();
     }

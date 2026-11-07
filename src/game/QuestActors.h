@@ -71,7 +71,7 @@ namespace QuestActors
 		bool          official = false;  // from the game's own files (Official::IsOfficialForm)
 		std::uint16_t flags = 0;         // TESQuest::data.flags
 		std::int8_t   type = 0;          // TESQuest::data.questType
-		bool          radiant = false;   // RadiantRules::IsRadiant
+		bool          radiant = false;   // RadiantSync::IsRadiant (by file and form ID in it)
 		bool          perGame = false;   // QuestFilter::IsPerGame
 	};
 

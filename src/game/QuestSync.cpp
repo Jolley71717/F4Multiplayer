@@ -73,7 +73,7 @@ namespace QuestSync
 		// session that shares them begins.
 		bool Watched(const RE::TESQuest* a_quest)
 		{
-			return QuestFilter::Watched(Filed(a_quest)) || RadiantRules::ShareOf(a_quest->GetFormID()) == RadiantRules::Share::kShared || IsSafe(a_quest);
+			return QuestFilter::Watched(Filed(a_quest)) || RadiantSync::ShareOf(a_quest) == RadiantRules::Share::kShared || IsSafe(a_quest);
 		}
 
 		// Whether the player has started the quest here, as reporting, setting friends' stages and the
@@ -325,7 +325,7 @@ namespace QuestSync
 		// game fills its own way (PerGame).
 		bool Shareable(const RE::TESQuest* a_quest)
 		{
-			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID()) && !PerGame(a_quest);
+			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantSync::IsRadiant(a_quest) && !PerGame(a_quest);
 		}
 
 		// Quests this session shares now: the story's only if the host chose a shared story, the safe ones only if they chose
@@ -964,8 +964,8 @@ namespace QuestSync
 
 	const char* Kind(const RE::TESQuest* a_quest)
 	{
-		if (a_quest && RadiantRules::ShareOf(a_quest->GetFormID()) != RadiantRules::Share::kNotRadiant) {
-			if (RadiantRules::ShareOf(a_quest->GetFormID()) == RadiantRules::Share::kLeftAlone) {
+		if (a_quest && RadiantSync::ShareOf(a_quest) != RadiantRules::Share::kNotRadiant) {
+			if (RadiantSync::ShareOf(a_quest) == RadiantRules::Share::kLeftAlone) {
 				return "radiant (each player's own)";
 			}
 			return RadiantSync::Shares(a_quest->GetFormID()) ? "radiant (this run shared)" : "radiant (by its run)";
@@ -995,7 +995,7 @@ namespace QuestSync
 	{
 		// A radiant's stages come by its run (ApplyRadiant): one that comes as the quest's (an older game's, or the
 		// session file's from before) is of some run with other targets.
-		if (RadiantRules::IsRadiant(a_stage.quest)) {
+		if (RadiantSync::IsRadiant(a_stage.quest)) {
 			return;
 		}
 		Queue(a_stage, a_live);
@@ -1233,7 +1233,7 @@ namespace QuestSync
 			const bool safe = IsSafe(quest);
 			// A radiant's stages go by its run, if it is shared (RadiantSync); a stage of it set here from a friend is
 			// never seen fresh, and one its script sets in reply goes too (each game takes each stage of a run once).
-			if (RadiantRules::IsRadiant(id)) {
+			if (RadiantSync::IsRadiant(quest)) {
 				if (report && !Story::InOpening()) {
 					RadiantSync::OnDone(quest, fresh);
 				}

@@ -26,7 +26,7 @@
 // A fill one game can't match (an NPC made at runtime that isn't shared, a reference that isn't there)
 // leaves that run each player's own, said in the log, so neither game's quest is broken.
 //
-// Which radiants are shared (RADIANTS, all from Fallout4.esm): every one whose targets are the game's own
+// Which radiants are shared (RADIANTS, by file and form ID there: Fallout4.esm's, and Far Harbor's and Nuka-World's that can be): every one whose targets are the game's own
 // references and locations (a settlement, a dungeon, its people, bosses and map marker, a container), with items
 // the quest makes (a locket, a holotape, a tracker) made in each game for its own player. The Minutemen's
 // settlement requests, Preston's requests from settlements the player has (but their attacks), the Brotherhood's,
@@ -48,7 +48,8 @@ namespace RadiantRules
 
 	struct Entry
 	{
-		std::uint32_t    formId;  // Fallout4.esm (load index 00)
+		std::uint8_t     file;    // StageRules::File: 0 Fallout4.esm, 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm
+		std::uint32_t    quest;   // its form ID in that file (no load index: an add-on's is the player's load order's)
 		std::string_view editorId;
 		Share            share;
 		// A run of it here that this player hasn't been given (no objective shown) may be stopped for a friend's with
@@ -59,101 +60,126 @@ namespace RadiantRules
 		bool replace = false;
 	};
 
-	// Fallout4.esm's radiants (tools/questscan.cs reads them; their aliases were read the same way).
+	// The radiants by file and form ID (tools/questscan.cs reads them; their aliases were read the same way). Fallout4.esm's first.
 	inline constexpr std::array RADIANTS{
 		// The Minutemen's "a settlement needs our help": the settlement (its workshop), the place nearest it and
 		// who lives there. Its 400 gives the reward (MinRecruitQuestScript.FinishQuest: MinRadiantReward to the
 		// player, the settlement the player's), set once in each game.
-		Entry{ 0x0011B36E, "MinRecruit00", Share::kShared },  // raiders (Oberland Station, Tenpines Bluff or another)
-		Entry{ 0x00098136, "MinRecruit01", Share::kShared },  // raider troubles
-		Entry{ 0x00099848, "MinRecruit02", Share::kShared },  // kidnapping (its 90, paying the ransom, is never set from a friend: StageRules)
-		Entry{ 0x00157CA5, "MinRecruit04", Share::kShared },  // clear a place
-		Entry{ 0x00186642, "MinRecruit07", Share::kShared },  // ghoul problem
-		Entry{ 0x00106F05, "MinRecruit03", Share::kShared },  // Abernathy Farm's locket: the satellite station's container (the locket made in each game's)
-		Entry{ 0x0015F03F, "MinRecruit05", Share::kShared },  // a hostile settlement to take, and its bosses
-		Entry{ 0x0015F040, "MinRecruit06", Share::kShared },
-		Entry{ 0x00157577, "MinRecruit08", Share::kLeftAlone },  // a synth boss made at runtime
-		Entry{ 0x00164167, "MinRecruit09", Share::kLeftAlone },  // refugees made at runtime
+		Entry{ 0, 0x11B36E, "MinRecruit00", Share::kShared },  // raiders (Oberland Station, Tenpines Bluff or another)
+		Entry{ 0, 0x098136, "MinRecruit01", Share::kShared },  // raider troubles
+		Entry{ 0, 0x099848, "MinRecruit02", Share::kShared },  // kidnapping (its 90, paying the ransom, is never set from a friend: StageRules)
+		Entry{ 0, 0x157CA5, "MinRecruit04", Share::kShared },  // clear a place
+		Entry{ 0, 0x186642, "MinRecruit07", Share::kShared },  // ghoul problem
+		Entry{ 0, 0x106F05, "MinRecruit03", Share::kShared },  // Abernathy Farm's locket: the satellite station's container (the locket made in each game's)
+		Entry{ 0, 0x15F03F, "MinRecruit05", Share::kShared },  // a hostile settlement to take, and its bosses
+		Entry{ 0, 0x15F040, "MinRecruit06", Share::kShared },
+		Entry{ 0, 0x157577, "MinRecruit08", Share::kLeftAlone },  // a synth boss made at runtime
+		Entry{ 0, 0x164167, "MinRecruit09", Share::kLeftAlone },  // refugees made at runtime
 		// Preston's requests from the player's own settlements.
-		Entry{ 0x0003DF95, "MinRadiantOwned02", Share::kShared },               // raiders
-		Entry{ 0x0003E0C1, "MinRadiantOwned03ChangeLocOnly", Share::kShared },  // kidnapping
-		Entry{ 0x00161D1D, "MinRadiantOwned06ChangeLocOnly", Share::kShared },  // building up a settlement (built in every game)
-		Entry{ 0x00162F44, "MinRadiantOwned07ChangeLocOnly", Share::kShared },  // a settlement's generator, a dungeon's part for it
-		Entry{ 0x00109D73, "MinRadiantOwned10ChangeLocOnly", Share::kShared },  // a synth among the settlers (one recruited at runtime: each player's own)
+		Entry{ 0, 0x03DF95, "MinRadiantOwned02", Share::kShared },               // raiders
+		Entry{ 0, 0x03E0C1, "MinRadiantOwned03ChangeLocOnly", Share::kShared },  // kidnapping
+		Entry{ 0, 0x161D1D, "MinRadiantOwned06ChangeLocOnly", Share::kShared },  // building up a settlement (built in every game)
+		Entry{ 0, 0x162F44, "MinRadiantOwned07ChangeLocOnly", Share::kShared },  // a settlement's generator, a dungeon's part for it
+		Entry{ 0, 0x109D73, "MinRadiantOwned10ChangeLocOnly", Share::kShared },  // a synth among the settlers (one recruited at runtime: each player's own)
 		// Settlement attacks and the Castle's: the attackers (and the Castle's waves, its defenders and vertibirds) are
 		// made at runtime by the quest, in each game that runs it. One game's attackers are in its friends' games already,
 		// as the copies of any NPC made at runtime (Spawns); a friend's game starting the same attack would send a second
 		// wave of its own.
-		Entry{ 0x000A1412, "MinRadiantOwned01", Share::kLeftAlone },  // raiders
-		Entry{ 0x0005E51F, "MinRadiantOwned09ChangeLocOnly", Share::kLeftAlone },
-		Entry{ 0x00160409, "MinRadiantOwned05", Share::kLeftAlone },  // super mutants
-		Entry{ 0x00186A08, "MinRadiantOwned08", Share::kLeftAlone },  // gunners
-		Entry{ 0x000E477F, "MinRadiantOwned04_BOS", Share::kLeftAlone },
-		Entry{ 0x001533A9, "MinRadiantOwned11", Share::kLeftAlone },  // synths
-		Entry{ 0x000BDB04, "MinDefendCastle", Share::kLeftAlone },    // the Castle attacked
-		Entry{ 0x00176328, "MinDefendCastleRadiantStarter", Share::kLeftAlone },
-		Entry{ 0x0022FD6E, "MinDefendCastle_Attackers", Share::kLeftAlone },
+		Entry{ 0, 0x0A1412, "MinRadiantOwned01", Share::kLeftAlone },  // raiders
+		Entry{ 0, 0x05E51F, "MinRadiantOwned09ChangeLocOnly", Share::kLeftAlone },
+		Entry{ 0, 0x160409, "MinRadiantOwned05", Share::kLeftAlone },  // super mutants
+		Entry{ 0, 0x186A08, "MinRadiantOwned08", Share::kLeftAlone },  // gunners
+		Entry{ 0, 0x0E477F, "MinRadiantOwned04_BOS", Share::kLeftAlone },
+		Entry{ 0, 0x1533A9, "MinRadiantOwned11", Share::kLeftAlone },  // synths
+		Entry{ 0, 0x0BDB04, "MinDefendCastle", Share::kLeftAlone },    // the Castle attacked
+		Entry{ 0, 0x176328, "MinDefendCastleRadiantStarter", Share::kLeftAlone },
+		Entry{ 0, 0x22FD6E, "MinDefendCastle_Attackers", Share::kLeftAlone },
 		// The Brotherhood's. Their giver's line sets their 10 (it starts them), the player taking the job their 20, and
 		// the reward is their 50: an item, and BoS200's stage for the job done (shared with the story too, set once). The
 		// 0 is the developers' shortcut (it makes the player a member and moves them to the giver): never taken (UNTAKEN).
 		// The squire's and the scribe's jobs are left alone: the one who follows the player is made at runtime.
-		Entry{ 0x00064EC7, "BoSR01", Share::kShared, true },  // Cleansing the Commonwealth: a dungeon by the player's level, its bosses
-		Entry{ 0x000C30DC, "BosR02", Share::kShared, true },  // Quartermastery: a dungeon, the tech in its boss's container (made in each game)
-		Entry{ 0x0009A687, "BoSR01PostHello", Share::kLeftAlone },  // dialogue only
-		Entry{ 0x000C8675, "BoSR03", Share::kLeftAlone },  // Leading by Example: a squire made at runtime follows the player
-		Entry{ 0x000CF3E2, "BoSR04", Share::kLeftAlone },  // Learning Curve: a scribe made at runtime follows the player
-		Entry{ 0x000CF3E3, "BoSR04_AO_Scribe", Share::kLeftAlone },
-		Entry{ 0x000D1EB2, "BoSR05", Share::kShared, true },  // Feeding the Troops: a settlement (its happiness changed in every game)
+		Entry{ 0, 0x064EC7, "BoSR01", Share::kShared, true },  // Cleansing the Commonwealth: a dungeon by the player's level, its bosses
+		Entry{ 0, 0x0C30DC, "BosR02", Share::kShared, true },  // Quartermastery: a dungeon, the tech in its boss's container (made in each game)
+		Entry{ 0, 0x09A687, "BoSR01PostHello", Share::kLeftAlone },  // dialogue only
+		Entry{ 0, 0x0C8675, "BoSR03", Share::kLeftAlone },  // Leading by Example: a squire made at runtime follows the player
+		Entry{ 0, 0x0CF3E2, "BoSR04", Share::kLeftAlone },  // Learning Curve: a scribe made at runtime follows the player
+		Entry{ 0, 0x0CF3E3, "BoSR04_AO_Scribe", Share::kLeftAlone },
+		Entry{ 0, 0x0D1EB2, "BoSR05", Share::kShared, true },  // Feeding the Troops: a settlement (its happiness changed in every game)
 		// The Institute's: all five start when the player joins (Inst301) and wait at their 5 until their giver hands one
 		// out (its 100); each pays at its turn-in (10 or 20, and 1000).
-		Entry{ 0x000F7933, "InstR01", Share::kShared, true },  // Pest Control: a dungeon and its bosses
-		Entry{ 0x000EB268, "InstR02", Share::kShared, true },  // Hypothesis: a dungeon, its boss, the data on it (made in each game)
-		Entry{ 0x000F0D8C, "InstR05", Share::kShared, true },  // Political Leanings: the same NPC and marker in every game
-		Entry{ 0x000E8D19, "InstR01_OLD", Share::kLeftAlone },  // not used by the game
-		Entry{ 0x000EC1E9, "InstR03_OLD", Share::kLeftAlone },
-		Entry{ 0x000EDCEF, "InstR03NEW", Share::kLeftAlone },  // Appropriation: an assault, its defenders made at runtime
-		Entry{ 0x000EDE28, "InstR04", Share::kLeftAlone },     // Reclamation: the synth to bring back is made at runtime
+		Entry{ 0, 0x0F7933, "InstR01", Share::kShared, true },  // Pest Control: a dungeon and its bosses
+		Entry{ 0, 0x0EB268, "InstR02", Share::kShared, true },  // Hypothesis: a dungeon, its boss, the data on it (made in each game)
+		Entry{ 0, 0x0F0D8C, "InstR05", Share::kShared, true },  // Political Leanings: the same NPC and marker in every game
+		Entry{ 0, 0x0E8D19, "InstR01_OLD", Share::kLeftAlone },  // not used by the game
+		Entry{ 0, 0x0EC1E9, "InstR03_OLD", Share::kLeftAlone },
+		Entry{ 0, 0x0EDCEF, "InstR03NEW", Share::kLeftAlone },  // Appropriation: an assault, its defenders made at runtime
+		Entry{ 0, 0x0EDE28, "InstR04", Share::kLeftAlone },     // Reclamation: the synth to bring back is made at runtime
 		// The Railroad's. Their HQ and each other's stages start them whenever they can (Butcher's Bill's 100 offers Mercer
 		// Safehouse, whose 300 offers Jackpot and Concierge), and most count the job as on offer (RRQuestsAvailable, counted
 		// off as the job is taken): one stopped for a friend's run before it was taken is counted off as it stops (OFFERS).
 		// Butcher's Bill and its second part run once, and Randolph Safehouse's offer hides the place's enemies until it is
 		// taken: those are never stopped (a game holding its own run of one keeps it).
-		Entry{ 0x000B1F1D, "RRR01a", Share::kShared },        // Butcher's Bill: a dead drop by its conditions
-		Entry{ 0x000B1F1C, "RRR01b", Share::kShared },        // Butcher's Bill 2: a place; the dead captive and what is on them made in each game
-		Entry{ 0x000B3E82, "RRR02a", Share::kShared, true },  // Concierge: a place, its people (nothing counted at its start)
-		Entry{ 0x000B926B, "RRR03", Share::kShared, true },   // Jackpot: a place and its door; the tracker made in each game
-		Entry{ 0x000B26C2, "RRR04", Share::kShared, true },   // Mercer Safehouse: a settlement to build up (built in every game)
-		Entry{ 0x000B926A, "RRR05", Share::kShared, true },   // Weathervane: a high point; the MILA made in each game; offered again when done
-		Entry{ 0x001845F7, "RRR06", Share::kShared },         // Randolph Safehouse: a dead drop and a place, its bosses
-		Entry{ 0x00186C79, "RRR07", Share::kLeftAlone },   // Variable Removal: a courser made at runtime
-		Entry{ 0x0013A33D, "RRR08", Share::kLeftAlone },   // To the Mattresses: the bosses are made at runtime
-		Entry{ 0x00145F1A, "RRR09", Share::kLeftAlone },   // Lost Soul: the one to rescue is made at runtime
-		Entry{ 0x0014A34A, "RRR10", Share::kLeftAlone },   // A Clean Equation: a patrol made at runtime
-		Entry{ 0x00150577, "RRR11", Share::kLeftAlone },   // High Ground: a vertibird and its crew made at runtime
+		Entry{ 0, 0x0B1F1D, "RRR01a", Share::kShared },        // Butcher's Bill: a dead drop by its conditions
+		Entry{ 0, 0x0B1F1C, "RRR01b", Share::kShared },        // Butcher's Bill 2: a place; the dead captive and what is on them made in each game
+		Entry{ 0, 0x0B3E82, "RRR02a", Share::kShared, true },  // Concierge: a place, its people (nothing counted at its start)
+		Entry{ 0, 0x0B926B, "RRR03", Share::kShared, true },   // Jackpot: a place and its door; the tracker made in each game
+		Entry{ 0, 0x0B26C2, "RRR04", Share::kShared, true },   // Mercer Safehouse: a settlement to build up (built in every game)
+		Entry{ 0, 0x0B926A, "RRR05", Share::kShared, true },   // Weathervane: a high point; the MILA made in each game; offered again when done
+		Entry{ 0, 0x1845F7, "RRR06", Share::kShared },         // Randolph Safehouse: a dead drop and a place, its bosses
+		Entry{ 0, 0x186C79, "RRR07", Share::kLeftAlone },   // Variable Removal: a courser made at runtime
+		Entry{ 0, 0x13A33D, "RRR08", Share::kLeftAlone },   // To the Mattresses: the bosses are made at runtime
+		Entry{ 0, 0x145F1A, "RRR09", Share::kLeftAlone },   // Lost Soul: the one to rescue is made at runtime
+		Entry{ 0, 0x14A34A, "RRR10", Share::kLeftAlone },   // A Clean Equation: a patrol made at runtime
+		Entry{ 0, 0x150577, "RRR11", Share::kLeftAlone },   // High Ground: a vertibird and its crew made at runtime
 		// Diamond City's wanted posters (misc quests): a dungeon and its bosses, the poster's note made in each game. All
 		// three start with the game and run once, so a game whose own poster names another dungeon keeps its own.
-		Entry{ 0x0014182C, "FFDiamondCityWanted01", Share::kShared },
-		Entry{ 0x0018127D, "FFDiamondCityWanted04", Share::kShared },
-		Entry{ 0x00181280, "FFDiamondCityWanted07", Share::kShared },
-		Entry{ 0x0002C59B, "FFDiamondCity05", Share::kLeftAlone },  // a bloatfly's gland: the bloatfly is made at runtime
+		Entry{ 0, 0x14182C, "FFDiamondCityWanted01", Share::kShared },
+		Entry{ 0, 0x18127D, "FFDiamondCityWanted04", Share::kShared },
+		Entry{ 0, 0x181280, "FFDiamondCityWanted07", Share::kShared },
+		Entry{ 0, 0x02C59B, "FFDiamondCity05", Share::kLeftAlone },  // a bloatfly's gland: the bloatfly is made at runtime
+		// The add-ons' radiants and the story manager's side quests that were each player's own (QuestFilter::PER_GAME,
+		// which said these four could be shared by their run): every alias is filled by its conditions, from the start's
+		// event or is the game's own reference, and what the quest makes at runtime (the settlement's two created
+		// aliases) is each game's own, left as kDerived. Each is handed out by a conversation or an event in one game, so a
+		// friend's own run of it with other targets is not stopped (replace stays false). Left in PER_GAME, as not shared by
+		// a run: the cache jobs (StealCache, DefendCache: their attackers and defenders are made at runtime and the enemy
+		// gang is rolled in each game) and DLC04RaidCoerce (its 20 takes the settlement from the player; tools/questscan.ps1
+		// -Safe reports a shared radiant's stage that does), and the gang jobs Kill and Collar Rival Boss (DLC04_RQ_Manager runs in
+		// every save with Nuka-World, so nothing says the player took the raiders' path: they return with a check tested on a raider save).
+		Entry{ 0, 0x026340, "DN121", Share::kShared },                        // Saugus Ironworks: the settlement from the event; 2 aliases made at runtime
+		Entry{ 0, 0x0482CD, "DN151", Share::kShared },                        // Weston Water Treatment: the settlement from the event (its 500 places something at runtime)
+		Entry{ 1, 0x00EB51, "DLC03WorkshopRadiantOwned02", Share::kShared },  // Far Harbor: a settlement's request
+		Entry{ 1, 0x040A86, "DLC03WorkshopRadiantOwned04", Share::kShared },
 	};
 
-	inline const Entry* Find(std::uint32_t a_formId)
+	// The radiant filed under a quest's file and its form ID there (no load index).
+	inline const Entry* Find(std::uint8_t a_file, std::uint32_t a_quest)
 	{
-		const auto it = std::ranges::find(RADIANTS, a_formId, &Entry::formId);
+		const auto it = std::ranges::find_if(RADIANTS, [&](const Entry& a_entry) { return a_entry.file == a_file && a_entry.quest == a_quest; });
 		return it != RADIANTS.end() ? &*it : nullptr;
 	}
 
-	inline Share ShareOf(std::uint32_t a_formId)
+	inline Share ShareOf(std::uint8_t a_file, std::uint32_t a_quest)
 	{
-		const auto entry = Find(a_formId);
+		const auto entry = Find(a_file, a_quest);
 		return entry ? entry->share : Share::kNotRadiant;
 	}
 
-	inline bool IsRadiant(std::uint32_t a_formId)
+	inline bool IsRadiant(std::uint8_t a_file, std::uint32_t a_quest)
 	{
-		return ShareOf(a_formId) != Share::kNotRadiant;
+		return ShareOf(a_file, a_quest) != Share::kNotRadiant;
 	}
+
+
+	// Whether some radiant has this form ID in some file: a cheap test before the quest's file is looked up.
+	inline bool MayBeRadiant(std::uint32_t a_quest)
+	{
+		return std::ranges::any_of(RADIANTS, [&](const Entry& a_entry) { return a_entry.quest == a_quest; });
+	}
+
+	// Takes, OfferOf, LeavesCounted and Replaces below are keyed by a quest's runtime form ID, as RadiantSync holds it. All
+	// their rows are Fallout4.esm's, whose load index is 00 in every load order (it is the master), so there the runtime ID
+	// is the local one; an add-on's quest has a runtime ID above 0x00FFFFFF and matches none of them.
 
 	// Stages of a shared radiant never taken from a friend: the developers' shortcuts, which a player never reaches
 	// (BoSR01's, BosR02's and BoSR05's 0 make the player a member of the Brotherhood, set its story's stages and move
@@ -234,7 +260,7 @@ namespace RadiantRules
 	// objective shown), of a quest that may be (Entry::replace) and can run again (a_runOnce: the quest's own flag).
 	inline bool Replaces(std::uint32_t a_quest, bool a_known, bool a_given, bool a_runOnce)
 	{
-		const auto entry = Find(a_quest);
+		const auto entry = Find(0, a_quest);  // Fallout4.esm's only (see above)
 		return entry && entry->share == Share::kShared && entry->replace && !a_known && !a_given && !a_runOnce;
 	}
 
@@ -551,7 +577,7 @@ namespace RadiantRules
 	};
 
 	inline constexpr std::uint16_t SAVED_VERSION = 1;
-	inline constexpr std::size_t   MAX_SAVED_QUESTS = 64;     // RADIANTS has fewer
+	inline constexpr std::size_t   MAX_SAVED_QUESTS = 128;    // RADIANTS has fewer (63; room for the settlement attacks to come)
 	inline constexpr std::size_t   MAX_SAVED_RUNS = 8;        // of one quest's (the latest kept)
 	inline constexpr std::size_t   MAX_SAVED_FINISHED = 256;  // of one session's (the oldest forgotten)
 	inline constexpr std::size_t   MAX_SAVED_SESSIONS = 4;    // the one played longest ago forgotten

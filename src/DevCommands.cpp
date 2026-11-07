@@ -1645,6 +1645,40 @@ namespace DevCommands
 			return RadiantSync::DumpAliases(quest);
 		}
 
+		// radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]: starts a radiant quest as the story manager's event
+		// would, for the rig (the console's startquest can't fill these): its aliases filled from the event forced to that reference
+		// (the settlement's workshop, the quest giver) and that location, and any alias named as alias=formHex (the alias ID as
+		// `aliases` prints it, the form's hex) forced to that form; all put back once it has started. Then it is this game's own run,
+		// shared with friends like any (RadiantSync).
+		std::string RadiantStart(std::string_view a_args)
+		{
+			const auto usage = "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...] (the alias=form pairs may come anywhere)";
+			const auto orNone = [](std::string_view a_text) { return a_text == "-" ? std::optional<std::uint32_t>{ 0 } : ParseHex(a_text); };
+			std::vector<std::string_view>                        positional;
+			std::vector<std::pair<std::uint32_t, std::uint32_t>> aliases;
+			for (const auto arg : SplitArgs(a_args)) {
+				const auto eq = arg.find('=');
+				if (eq == std::string_view::npos) {
+					positional.push_back(arg);
+					continue;
+				}
+				std::uint32_t id = 0;
+				const auto    text = arg.substr(0, eq);
+				const auto    form = ParseHex(arg.substr(eq + 1));
+				if (std::from_chars(text.data(), text.data() + text.size(), id).ec != std::errc{} || !form) {
+					return usage;
+				}
+				aliases.emplace_back(id, *form);
+			}
+			const auto quest = positional.empty() ? std::nullopt : ParseHex(positional[0]);
+			const auto ref = positional.size() > 1 ? orNone(positional[1]) : std::optional<std::uint32_t>{ 0 };
+			const auto loc = positional.size() > 2 ? orNone(positional[2]) : std::optional<std::uint32_t>{ 0 };
+			if (!quest || !ref || !loc || positional.size() > 3) {
+				return usage;
+			}
+			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc, aliases);
+		}
+
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
@@ -4197,6 +4231,7 @@ namespace DevCommands
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
 			Entry{ "aliases", Aliases },
+			Entry{ "radiantstart", RadiantStart },
 			Entry{ "global", Global },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },
