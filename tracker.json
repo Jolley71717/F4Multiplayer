@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T23:25:28+00:00",
+ "updated": "2026-11-07T23:28:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -749,6 +749,14 @@
   {
    "id": "d618",
    "title": "Storing a pre-placed settlement crop in a session leaves it in the friend's game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "dmxn",
+   "title": "Server: a client's status level is unbounded and SessionLevel's highest pins the session at it for life",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -1709,6 +1717,14 @@
    "desc": "After being revived, a player can stay crouched in sneak until they get themselves out of it."
   },
   {
+   "id": "staa",
+   "title": "RollHook: a pending roll is handed to the next template copy on the thread with no owner check (suspected wrong NPC roll)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "svjl",
    "title": "Radiant sharing: a friend's game refuses to start the host's DN121/DN151 run from its fills (MinRecruit00 starts); find the refused alias",
    "kind": "feature",
@@ -1965,6 +1981,14 @@
    "id": "xl7e",
    "title": "Extended Facial Sculpting's extra sculpts on friends",
    "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "xr9k",
+   "title": "Game-side stability batch: workshop graveyard growth, EnableParents loader-thread flag, auditLock across engine looks, uncapped MainThread::Post",
+   "kind": "bug",
    "priority": 3,
    "stage": 0,
    "note": ""
