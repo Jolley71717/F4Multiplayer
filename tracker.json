@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T21:49:11+00:00",
+ "updated": "2026-11-07T23:06:04+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -904,6 +904,14 @@
    "note": ""
   },
   {
+   "id": "fywn",
+   "title": "Random encounters that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) show in one player's game only",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "g6s5",
    "title": "Power armor loans: after a borrower gets out away from where the frame stood, their game keeps its copy at the old spot (an extra suit) and has none to borrow at the new spot for minutes",
    "kind": "bug",
@@ -1439,6 +1447,14 @@
    "stage": 7,
    "note": "",
    "pr": 298
+  },
+  {
+   "id": "p7nb",
+   "title": "VM game's main thread stopped reading window messages for 69 s during the soak's combat step",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "pcg4",
