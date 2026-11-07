@@ -109,7 +109,7 @@ TEST("quest filter: the side quests the story manager starts with targets each g
 		const auto& before = *std::prev(it);
 		CHECK((std::pair{ before.file, before.quest } < std::pair{ it->file, it->quest }));
 	}
-	CHECK(std::size(QuestFilter::PER_GAME) == 19);
+	CHECK(std::size(QuestFilter::PER_GAME) == 21);
 	// Far Harbor's settlement requests that make a settler at runtime, Automatron's robot assaults, Nuka-World's raids and
 	// the gangs' troublemakers.
 	CHECK(QuestFilter::IsPerGame(1, 0x00EB4C));  // DLC03WorkshopRadiantOwned01
@@ -118,17 +118,17 @@ TEST("quest filter: the side quests the story manager starts with targets each g
 	CHECK(QuestFilter::IsPerGame(2, 0x00D5FC));  // DLC01MQPostQuestRadiantScene02
 	CHECK(QuestFilter::IsPerGame(3, 0x014352));  // DLC04RaidChaseOff
 	CHECK(QuestFilter::IsPerGame(3, 0x0322DA));  // DLC04_RQ_KillTroubleMaker
-	// The six whose aliases are the game's own are RadiantRules's now (shared by their run), not listed here.
+	// The four whose aliases are the game's own are RadiantRules's now (shared by their run), not listed here.
 	CHECK(!QuestFilter::IsPerGame(0, 0x026340));  // DN121
 	CHECK(!QuestFilter::IsPerGame(0, 0x0482CD));  // DN151
 	CHECK(!QuestFilter::IsPerGame(1, 0x00EB51));  // DLC03WorkshopRadiantOwned02
 	CHECK(!QuestFilter::IsPerGame(1, 0x040A86));  // DLC03WorkshopRadiantOwned04
-	CHECK(!QuestFilter::IsPerGame(3, 0x017F46));  // DLC04_RQ_KillRivalBoss
-	CHECK(!QuestFilter::IsPerGame(3, 0x04BD3C));  // DLC04_RQ_CollarRivalBoss
 	// Kept each game's own for what they do in each game: the raid that takes the settlement, the cache jobs' spawns.
 	CHECK(QuestFilter::IsPerGame(3, 0x019088));  // DLC04RaidCoerce: its 20 takes the raided settlement from the player
 	CHECK(QuestFilter::IsPerGame(3, 0x01B170));  // DLC04_RQ_StealCache: attackers made and the enemy gang rolled in each game
 	CHECK(QuestFilter::IsPerGame(3, 0x02191C));  // DLC04_RQ_DefendCache: the same
+	CHECK(QuestFilter::IsPerGame(3, 0x017F46));  // DLC04_RQ_KillRivalBoss: waits for a raider-path check, tested on a raider save
+	CHECK(QuestFilter::IsPerGame(3, 0x04BD3C));  // DLC04_RQ_CollarRivalBoss: the same
 	// The add-ons' own stories and side quests are shared by their type as before.
 	CHECK(!QuestFilter::IsPerGame(2, 0x000806));  // DLC01MQ01
 	CHECK(!QuestFilter::IsPerGame(3, 0x000801));  // DLC04MQ01

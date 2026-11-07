@@ -1007,8 +1007,8 @@ ws_check() {
 # fresh start (a game that has run one skips it with a WARN). RadiantRules shares them by their run (PR 320): both players arrive at the
 # place (console player.moveto its map marker: placement to reach the scene, no movement stands in for anything), where the story manager
 # hands each game the same quest with the same settlement; each shows its objective, which starts the sharing. The game's forced start of
-# a friend's run fails for these two in a game that is elsewhere (its log: "the game didn't start it with their fills"), so the runs are
-# joined by their same targets (RadiantSync: "it runs here with the same targets"). Asserted: the run is shared in both games with the
+# a friend's run was refused for these two by the game in a VM that stood elsewhere (its log: "the game didn't start it with their fills"; the
+# cause was not found), so the runs are joined by their same targets (RadiantSync: "it runs here with the same targets"). Asserted: the run is shared in both games with the
 # same settlement, a stage the host sets is set once in each game, the reward stage gives the player an item in each game, and neither
 # game makes or places a spawn for it.
 # case: <edid> <quest id> <map marker to arrive at> <objective to show> <a middle stage> <reward stage> <end stage>

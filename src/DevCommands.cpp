@@ -1615,27 +1615,29 @@ namespace DevCommands
 		// shared with friends like any (RadiantSync).
 		std::string RadiantStart(std::string_view a_args)
 		{
-			const auto args = SplitArgs(a_args);
+			const auto usage = "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...] (the alias=form pairs may come anywhere)";
 			const auto orNone = [](std::string_view a_text) { return a_text == "-" ? std::optional<std::uint32_t>{ 0 } : ParseHex(a_text); };
-			const auto quest = args.empty() ? std::nullopt : ParseHex(args[0]);
-			const auto ref = args.size() > 1 ? orNone(args[1]) : std::optional<std::uint32_t>{ 0 };
-			const auto loc = args.size() > 2 ? orNone(args[2]) : std::optional<std::uint32_t>{ 0 };
+			std::vector<std::string_view>                        positional;
 			std::vector<std::pair<std::uint32_t, std::uint32_t>> aliases;
-			for (std::size_t i = 1; i < args.size(); ++i) {
-				const auto eq = args[i].find('=');
+			for (const auto arg : SplitArgs(a_args)) {
+				const auto eq = arg.find('=');
 				if (eq == std::string_view::npos) {
+					positional.push_back(arg);
 					continue;
 				}
 				std::uint32_t id = 0;
-				const auto    text = args[i].substr(0, eq);
-				const auto    form = ParseHex(args[i].substr(eq + 1));
+				const auto    text = arg.substr(0, eq);
+				const auto    form = ParseHex(arg.substr(eq + 1));
 				if (std::from_chars(text.data(), text.data() + text.size(), id).ec != std::errc{} || !form) {
-					return "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]";
+					return usage;
 				}
 				aliases.emplace_back(id, *form);
 			}
-			if (!quest || !ref || !loc) {
-				return "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]";
+			const auto quest = positional.empty() ? std::nullopt : ParseHex(positional[0]);
+			const auto ref = positional.size() > 1 ? orNone(positional[1]) : std::optional<std::uint32_t>{ 0 };
+			const auto loc = positional.size() > 2 ? orNone(positional[2]) : std::optional<std::uint32_t>{ 0 };
+			if (!quest || !ref || !loc || positional.size() > 3) {
+				return usage;
 			}
 			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc, aliases);
 		}
