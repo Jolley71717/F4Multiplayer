@@ -836,6 +836,171 @@ step_quests() {
 	expect_eq "quests ($kind): the VM's inventory is unchanged" "$(field "$(dc vm inventory)" hash)" "$inv0"
 }
 
+# ---- a shared quest's created creatures, paired across games (src/game/QuestActors.h) ------------------------------------------------------
+# A quest the session shares (with the host's sQuests = safe: SAFE's Gun Run, SILENT's objective-less ones) creates its creatures in each
+# game's run; the game that shares one first names its alias, and the other game pairs its own creature from that alias with it (mirrored,
+# dying when it dies there). Two scenes, each reached by console placement (said in the report; the walk into the scene is real movement):
+# 1. Gun Run (DN083_Barney, SAFE: running from a new game's start, its mirelurks made at Salem). Both players are placed QA_GR_APPROACH
+#    from the first mirelurk, the host walks up to it (the ambush: stage 5), both shoot (the host's real clicks, the VM's game's `click`).
+#    Asserted: stage 5 in both games; a pairing (`questActors: paired=`, expected in the VM's game: the host's ambush goes first); each
+#    mirelurk, by its alias, alive or dead alike in both games with the same health; once the three are dead, stage 10 in both; and no
+#    storm of the server's same-alias refusals (host log window).
+# 2. A SILENT quest whose creatures are made as it starts (QA_QUEST, default DN119Fight: Rotten Landfill's molerats, started as the
+#    location loads). The host walks to QA_TRIGGER_SPOT ("x y z"; by default its QA_MARKER alias's marker), the VM placed 100 u behind it.
+#    Asserted: the quest started in both games (a stage done) and how the VM's started (the session's "starting the quest here" line, or
+#    its own story manager: a WARN, as both players stood there); a pairing; each creature, by its alias, dead or alive alike after the kill.
+# Needs the host's sQuests = safe (`rules` quests=safe): a FAIL saying so otherwise. Once a game's run is over (a soak's later rounds),
+# there is nothing left to pair: a PASS when both games agree, a WARN otherwise.
+QA_GR_QUEST=001243D6; QA_GR_RE=${QA_GR_RE:-Mirelurk}; QA_GR_APPROACH=${QA_GR_APPROACH:-900 0}
+QA_QUEST=${QA_QUEST:-000BACBC}; QA_RE=${QA_RE:-^Molerat0[0-9]$}; QA_MARKER=${QA_MARKER:-MoleratStartMarker01}; QA_CELL=${QA_CELL:-}
+QA_TRIGGER_SPOT=${QA_TRIGGER_SPOT:-}; QA_APPROACH=${QA_APPROACH:-1500 0}
+QA_GUN=00004822; QA_AMMO=0001F276   # a 10mm pistol and its rounds, given to both players (console) for the fight
+# _qa_aliases <who> <quest> <name regex> [fill type]: "<alias id> <ref>" of the quest's ref aliases of that fill type (4, created; any
+# with none) whose name matches and that hold a reference now (`aliases`: " | Ref 26 StartMirelurk01 flags=.. fillType=4 .. here=FF001234")
+_qa_aliases() {
+	dc "$1" "aliases $2" | tr '|' '\n' | awk -v re="$3" -v ft="$4" '
+		$1 == "Ref" && $3 ~ re && (ft == "" || index($0, "fillType=" ft " ") > 0) && match($0, /here=[0-9A-F]+/) {
+			h = substr($0, RSTART + 5, RLENGTH - 5); if (h != "00000000") print $2, h }'
+}
+# _qa_forced <who> <quest> <alias name>: the reference a forced alias names (its data's first value), as 8 hex digits
+_qa_forced() {
+	local d; d=$(dc "$1" "aliases $2" | tr '|' '\n' | awk -v n="$3" '$1 == "Ref" && $3 == n && match($0, /data=[0-9A-F]+/) { print substr($0, RSTART + 5, RLENGTH - 5); exit }')
+	[ -n "$d" ] && printf '%08X\n' "0x$d"
+}
+_qa_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
+_qa_has() { case ",$(_qa_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
+_qa_started() { local d; d=$(_qa_done "$1" "$2"); [ -n "$d" ] && [ "$d" != none ]; }
+_qa_paired() { field "$(dc "$1" 'net status' | grep -oE 'questActors: [^|;]*')" "$2"; }   # _qa_paired <who> <field: paired|pairs|keyed|twinsHeld>
+_qa_any_paired() { local h v; h=$(_qa_paired host paired); v=$(_qa_paired vm paired); { is_int "$v" && [ "$v" -ge 1 ]; } || { is_int "$h" && [ "$h" -ge 1 ]; }; }
+_qa_all_dead() {  # _qa_all_dead <who> <"alias ref" lines>
+	local a r; while read -r a r; do [ -z "$r" ] && continue; [ "$(field "$(dc "$1" "combat $r")" dead)" = true ] || return 1; done <<<"$2"; return 0
+}
+_qa_arm() {  # _qa_arm <who>: a pistol and rounds, drawn
+	dc "$1" "console player.additem $QA_GUN 1" >/dev/null; dc "$1" "console player.additem $QA_AMMO 300" >/dev/null
+	dc "$1" "console player.equipitem $QA_GUN" >/dev/null; dc "$1" "draw on" >/dev/null; sleep 1
+}
+# _qa_first_alive <who> <"alias ref" lines>: the first of them alive in that game
+_qa_first_alive() { local a r; while read -r a r; do [ -n "$r" ] && [ "$(field "$(dc "$1" "combat $r")" dead)" = false ] && { echo "$r"; return; }; done <<<"$2"; }
+# _qa_shoot <host lines> <vm lines> <seconds>: both players shoot at the first living creature of their own game's list (by alias), the host
+# with real clicks on its window, the VM's game with its `click`, until every one of the host's is dead or the time is up
+_qa_shoot() {
+	local end=$((SECONDS + $3)) t
+	pads_off; _qa_arm host; _qa_arm vm; host focus >/dev/null
+	while [ $SECONDS -lt "$end" ] && ! _qa_all_dead host "$1"; do
+		t=$(_qa_first_alive host "$1")
+		[ -n "$t" ] && { host "turnto $t 300" >/dev/null; sleep 0.4; powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Click -HoldMs 400 >/dev/null 2>&1; }
+		t=$(_qa_first_alive vm "$2")
+		[ -n "$t" ] && { vm "turnto $t 300" >/dev/null; sleep 0.4; vm "click 150" >/dev/null; }
+		sleep 1
+	done
+	_qa_all_dead host "$1"
+}
+# _qa_compare <label> <host lines> <vm lines>: each alias's creature in both games, alive or dead alike, the same health while alive
+_qa_compare() {
+	local a r rv h v n=0 bad=0 odd=""
+	while read -r a r; do
+		[ -z "$r" ] && continue; rv=$(awk -v a="$a" '$1 == a { print $2 }' <<<"$3")
+		if [ -z "$rv" ]; then odd="$odd alias $a: none in the VM's game;"; bad=$((bad + 1)); continue; fi
+		h=$(actor_hp host "$r"); v=$(actor_hp vm "$rv"); n=$((n + 1))
+		if [ "$(field "$h" dead)" != "$(field "$v" dead)" ]; then bad=$((bad + 1)); odd="$odd alias $a $r/$rv dead=$(field "$h" dead)/$(field "$v" dead);"
+		elif [ "$(field "$h" dead)" = false ] && ! awk -v a="$(field "$h" hp)" -v b="$(field "$v" hp)" -v t="$T_HP_DIFF" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(a!="" && b!="" && d<=t)}'; then
+			bad=$((bad + 1)); odd="$odd alias $a $r/$rv hp=$(field "$h" hp)/$(field "$v" hp);"
+		fi
+	done <<<"$2"
+	if [ $n -eq 0 ]; then fail "$1" "no creature compared:$odd"
+	elif [ $bad -eq 0 ]; then pass "$1" "$n by alias, alike in both games"
+	else fail "$1" "$bad of $n differ:$odd"; fi
+}
+# _qa_place_near <x> <y> <z> <dx> <dy>: both players placed at that point plus the offset (console: to reach the scene), the VM 100 u
+# further back on the same line, both facing the point
+_qa_place_near() {
+	local hx hy vx vy ang hz
+	hx=$(awk -v a="$1" -v d="$4" 'BEGIN{printf "%d", a + d}'); hy=$(awk -v a="$2" -v d="$5" 'BEGIN{printf "%d", a + d}')
+	vx=$(awk -v a="$hx" -v d="$4" -v e="$5" 'BEGIN{l=sqrt(d*d+e*e); if(l==0)l=1; printf "%d", a + d / l * 100}')
+	vy=$(awk -v a="$hy" -v d="$4" -v e="$5" 'BEGIN{l=sqrt(d*d+e*e); if(l==0)l=1; printf "%d", a + e / l * 100}')
+	ang=$(awk -v d="$4" -v e="$5" 'BEGIN{a=atan2(-d, -e) * 57.29578; if (a < 0) a += 360; printf "%d", a}')
+	hz=$(awk -v a="$3" 'BEGIN{printf "%d", a + 150}')
+	place host "$hx" "$hy" "$hz" "$ang"; place vm "$vx" "$vy" "$hz" "$ang"
+	sleep 8
+}
+# _qa_over <label> <quest> <last stage>: the run is over in the host's game already (a soak's later rounds): both games agree or not
+_qa_over() {
+	_qa_has host "$2" "$3" || return 1
+	if [ "$(_qa_done vm "$2")" = "$(_qa_done host "$2")" ]; then pass "$1: its run is over, nothing left to pair" "host and VM done $(_qa_done host "$2")"
+	else warn "$1: its run is over, nothing left to pair" "host done $(_qa_done host "$2"), VM $(_qa_done vm "$2")"; fi
+	return 0
+}
+_qa_gunrun() {
+	local hl vl r x y z f n p0 h0 a
+	_qa_over "quest actors (Gun Run)" $QA_GR_QUEST 10 && return
+	hl=$(_qa_aliases host $QA_GR_QUEST "$QA_GR_RE" 4)
+	r=$(head -1 <<<"$hl" | awk '{print $2}')
+	if [ -z "$r" ]; then fail "quest actors (Gun Run): set-up: the host's game holds its mirelurks" "$(dc host "stages $QA_GR_QUEST" | cut -c1-160); aliases: $(dc host "aliases $QA_GR_QUEST" | cut -c1-200)"; return; fi
+	f=$(dc host "refinfo $r"); x=$(field "$f" x); y=$(field "$f" y); z=$(field "$f" z)
+	if ! is_num "$x" || ! is_num "$y" || ! is_num "$z"; then fail "quest actors (Gun Run): set-up: where the first mirelurk is" "refinfo $r: '$(cut -c1-160 <<<"$f")'"; return; fi
+	_qa_place_near "$x" "$y" "$z" $QA_GR_APPROACH
+	win_mark qa host; p0=$(_qa_paired vm pairs); h0=$(_qa_paired host pairs)
+	walk host "quest actors (Gun Run): set-up: the host walks up to the first mirelurk" 0.8 250 "$r"
+	if wait_for 20 _qa_has host $QA_GR_QUEST 5 && wait_for 20 _qa_has vm $QA_GR_QUEST 5; then pass "quest actors (Gun Run): the ambush (stage 5) in both games" "host done $(_qa_done host $QA_GR_QUEST), VM $(_qa_done vm $QA_GR_QUEST)"
+	else fail "quest actors (Gun Run): the ambush (stage 5) in both games" "host done $(_qa_done host $QA_GR_QUEST), VM $(_qa_done vm $QA_GR_QUEST)"; fi
+	if wait_for 15 _qa_any_paired; then pass "quest actors (Gun Run): a mirelurk paired" "VM paired=$(_qa_paired vm paired) pairs $p0 -> $(_qa_paired vm pairs) keyed=$(_qa_paired vm keyed); host paired=$(_qa_paired host paired) pairs $h0 -> $(_qa_paired host pairs) keyed=$(_qa_paired host keyed)"
+	else fail "quest actors (Gun Run): a mirelurk paired" "VM: $(dc vm 'net status' | grep -oE 'questActors: [^|;]*'); host: $(dc host 'net status' | grep -oE 'questActors: [^|;]*')"; fi
+	vl=$(_qa_aliases vm $QA_GR_QUEST "$QA_GR_RE" 4)
+	sleep 3; _qa_compare "quest actors (Gun Run): each mirelurk alike in both games, before the shots" "$hl" "$vl"
+	if _qa_shoot "$hl" "$vl" 90; then pass "quest actors (Gun Run): the host's mirelurks die to both players' shots" "$(wc -l <<<"$hl") dead"
+	else fail "quest actors (Gun Run): the host's mirelurks die to both players' shots" "after 90 s: $(while read -r a r; do echo -n "$a $(actor_hp host "$r"); "; done <<<"$hl")"; fi
+	sleep 4; _qa_compare "quest actors (Gun Run): each mirelurk alike in both games, after the shots" "$hl" "$vl"
+	if wait_for 30 _qa_has host $QA_GR_QUEST 10 && wait_for 10 _qa_has vm $QA_GR_QUEST 10; then pass "quest actors (Gun Run): all three counted dead in both games (stage 10)" "host done $(_qa_done host $QA_GR_QUEST), VM $(_qa_done vm $QA_GR_QUEST)"
+	else fail "quest actors (Gun Run): all three counted dead in both games (stage 10)" "host done $(_qa_done host $QA_GR_QUEST), VM $(_qa_done vm $QA_GR_QUEST)"; fi
+	f=$(win_read qa host); n=$(grep -c "is the same quest alias's" "$f" 2>/dev/null)
+	expect_le "quest actors (Gun Run): the server's same-alias refusals (no storm)" "${n:-0}" 3
+}
+_qa_silent() {
+	local k hl vl r x y z f p0 h0 who
+	[ -n "$QA_CELL" ] && enter_both "$QA_CELL" 16
+	k=$(dc host "stages $QA_QUEST")
+	case "$k" in *"silent (shared"*) ;; *) fail "quest actors ($QA_QUEST): set-up: the host's game shares it as a silent quest" "got '$(cut -c1-200 <<<"$k")'"; return;; esac
+	# Started before and not running now: its run is over
+	f=$(field "$k" flags)
+	if _qa_started host $QA_QUEST && [[ $f =~ ^[0-9A-F]{4}$ ]] && [ $((0x$f & 1)) -eq 0 ]; then
+		if [ "$(_qa_done vm $QA_QUEST)" = "$(_qa_done host $QA_QUEST)" ]; then pass "quest actors ($QA_QUEST): its run is over, nothing left to pair" "host and VM done $(_qa_done host $QA_QUEST)"
+		else warn "quest actors ($QA_QUEST): its run is over, nothing left to pair" "host done $(_qa_done host $QA_QUEST), VM $(_qa_done vm $QA_QUEST)"; fi
+		return
+	fi
+	if [ -n "$QA_TRIGGER_SPOT" ]; then read -r x y z <<<"$QA_TRIGGER_SPOT"
+	else
+		r=$(_qa_forced host $QA_QUEST "$QA_MARKER")
+		[ -n "$r" ] && { f=$(dc host "refinfo $r"); x=$(field "$f" x); y=$(field "$f" y); z=$(field "$f" z); }
+	fi
+	if ! is_num "$x" || ! is_num "$y" || ! is_num "$z"; then fail "quest actors ($QA_QUEST): set-up: where its scene is" "no QA_TRIGGER_SPOT and no $QA_MARKER marker read ('$r')"; return; fi
+	_qa_place_near "$x" "$y" "$z" $QA_APPROACH
+	win_mark qa2 vm; p0=$(_qa_paired vm pairs); h0=$(_qa_paired host pairs)
+	walk host "quest actors ($QA_QUEST): set-up: the host walks to its scene" 0.8 300 "$x" "$y"
+	if wait_for 10 _qa_started host $QA_QUEST && wait_for 10 _qa_started vm $QA_QUEST; then pass "quest actors ($QA_QUEST): started in both games" "host done $(_qa_done host $QA_QUEST), VM $(_qa_done vm $QA_QUEST)"
+	else fail "quest actors ($QA_QUEST): started in both games" "host done $(_qa_done host $QA_QUEST), VM $(_qa_done vm $QA_QUEST)"; return; fi
+	f=$(win_read qa2 vm)
+	if grep -q "QuestSync: set $QA_QUEST .*(starting the quest here for the session)" "$f" 2>/dev/null; then pass "quest actors ($QA_QUEST): the VM's game started it for the session" "$(grep -m1 "QuestSync: set $QA_QUEST .*starting the quest here" "$f" | cut -c1-200)"
+	else warn "quest actors ($QA_QUEST): the VM's game started it for the session" "no such line: its own game started it (both players stood at the scene)"; fi
+	hl=$(_qa_aliases host $QA_QUEST "$QA_RE" 4)
+	if [ -z "$hl" ]; then fail "quest actors ($QA_QUEST): set-up: the host's game made its creatures" "aliases: $(dc host "aliases $QA_QUEST" | cut -c1-200)"; return; fi
+	if wait_for 15 _qa_any_paired; then pass "quest actors ($QA_QUEST): a creature paired" "VM paired=$(_qa_paired vm paired) pairs $p0 -> $(_qa_paired vm pairs); host paired=$(_qa_paired host paired) pairs $h0 -> $(_qa_paired host pairs)"
+	else fail "quest actors ($QA_QUEST): a creature paired" "VM: $(dc vm 'net status' | grep -oE 'questActors: [^|;]*'); host: $(dc host 'net status' | grep -oE 'questActors: [^|;]*')"; fi
+	vl=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4)
+	who=$(_qa_shoot "$hl" "$vl" 60 && echo "all dead" || echo "not all dead after 60 s")
+	sleep 10; _qa_compare "quest actors ($QA_QUEST): each creature alike in both games 10 s after the shots ($who in the host's game)" "$hl" "$vl"
+}
+step_questactors() {
+	section "quest actors (a shared quest's created creatures paired across games: Gun Run, then $QA_QUEST)"
+	local q
+	q=$(field "$(host rules)" quests)
+	if [ "$q" != safe ]; then fail "quest actors: set-up: the host's sQuests = safe" "rules say quests='$q'"; return; fi
+	enter_both SanctuaryExt 14
+	_qa_gunrun; pads_off
+	expect_match "quest actors (Gun Run): both games up" "$(alive)" "host=ingame=true vm=ingame=true"
+	_qa_silent; pads_off
+	expect_match "quest actors ($QA_QUEST): both games up" "$(alive)" "host=ingame=true vm=ingame=true"
+}
+
 # ---- giving an item: drop and pickup, both ways ---------------------------------------------------------------------------------------------
 # A dropped item is the session's (src/game/Drops.cpp): the server numbers it, each other game places a copy where it lies, the first
 # to take it has it, and the other copies go. The giver walks off to the road, gets DROP_N of DROP_ITEM (console additem) and drops
