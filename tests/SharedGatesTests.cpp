@@ -306,6 +306,7 @@ TEST("shared gates: a gate opened from the host's terminal opens in the friend's
 	friendGame.Take(Received(f, 2));
 	CHECK(friendGame.set == 1);
 	CHECK(friendGame.gates[TERMINAL_GATE].timer == std::optional{ true });
+	CHECK(Count(Received(f, 1), MT::kRefStateChanged) == 1);  // the session's answer to the host's own report, nobody's
 
 	// Until the friend's script runs the gate reads shut there: the friend's watcher doesn't send that back.
 	CHECK(!friendGame.Report(TERMINAL_GATE));

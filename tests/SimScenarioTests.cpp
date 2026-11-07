@@ -5,6 +5,7 @@
 #include "sim/Sim.h"
 
 #include <algorithm>
+#include <array>
 
 using namespace Sim;
 using Reason = Protocol::ClaimReason;
@@ -816,11 +817,9 @@ TEST("sim: kills, quest stages, pickups and scraps that arrive twice or out of o
 	}
 }
 
-// ---- known bugs -------------------------------------------------------------------------------------
+// ---- doors worked at the same moment ----------------------------------------------------------------
 
-TEST_KNOWN_BUG("sim: two friends working the same door at the same moment end up seeing it the same way",
-	"a door's state is relayed to the others but not echoed to its reporter in the server's order, so the "
-	"reporter keeps its own state while everyone else (and the session) keeps the later one")
+TEST("sim: two friends working the same door at the same moment end up seeing it the same way")
 {
 	Session s;
 	auto&   host = s.Host();
@@ -840,9 +839,44 @@ TEST_KNOWN_BUG("sim: two friends working the same door at the same moment end up
 	// door, and the host was told of it.
 	CHECK(doorOf(carol) == shut);
 	CHECK(doorOf(host) == shut);
-	// The bug: Bob was told of the host's open door after shutting it, and nothing ever tells him the
-	// session kept his own.
-	KNOWN_CHECK(doorOf(bob) == shut);
+	// Bob was told of the host's open door after shutting it; the server's answer to his own report, after
+	// that, tells him the session kept his.
+	CHECK(doorOf(bob) == shut);
+}
+
+TEST("sim: however three friends work the same few doors over an evening, at the same moments or not, every game and a late joiner see each door the same way")
+{
+	constexpr std::array<std::uint32_t, 4> DOORS{ DOOR, 0x0001D001, 0x0001D002, 0x0001D003 };
+	for (std::uint32_t seed = 1; seed <= 4; ++seed) {
+		Session              s{ {}, seed };
+		std::vector<Client*> players{ &s.Host(), &s.Player("Bob"), &s.Player("Carol") };
+		auto&                dice = s.Random();
+		for (const auto player : players) {
+			REQUIRE(player->Join());
+		}
+		for (int round = 0; round < 80; ++round) {
+			// Several of them may work a door in the same moment: each acts before hearing of the others. (A door's
+			// report always says both whether it is open and whether it is locked: kUnknown is for a lock with no
+			// door, and the session keeps the latest report whole.)
+			for (const auto player : players) {
+				if (dice.Chance(0.5)) {
+					player->Door(dice.Pick(DOORS), static_cast<std::uint8_t>(dice.Between(0, 1)), static_cast<std::uint8_t>(dice.Between(0, 1)));
+				}
+			}
+			if (dice.Chance(0.5)) {
+				s.Settle();
+			}
+		}
+		s.Settle();
+		auto& dave = s.Player("Dave");
+		REQUIRE(dave.Join());
+		players.push_back(&dave);
+		const int failuresBefore = Test::Failures();
+		CHECK_AGREE(players);
+		if (Test::Failures() != failuresBefore) {
+			std::printf("  (seed %u)\n", seed);
+		}
+	}
 }
 
 // ---- leveled NPCs: one roll for the session ----------------------------------------------------------------------

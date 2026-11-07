@@ -811,6 +811,7 @@ void Server::Run()
 		benchLinks.clear();
 		questStages.clear();
 		questStageKeys.clear();
+		terminalChoices = {};  // the new session's terminals are untouched; a rejoining maker keeps their player number
 		worldTime.reset();
 		markers.clear();
 		hostHadAlive.clear();
@@ -2695,6 +2696,12 @@ void Server::Run()
 		Protocol::RefState relayed = *state;
 		relayed.playerId = a_player.id;  // the others take it only if this player is near the thing
 		broadcast(Protocol::Encode(relayed, Protocol::MessageType::kRefStateChanged), true, a_player.key);
+		// The reporter hears the session's answer too, as a world state (nobody's, so their game takes it as it is):
+		// two players working the same door at the same moment each hear the other's report after sending their own,
+		// and the one the server heard last would otherwise keep the other's state while the session, and everyone
+		// else, keeps theirs. A report that stands is a repeat of what their game knows (DoorShare::Book), so it costs
+		// them nothing.
+		send(a_player.key, Protocol::Encode(stored, Protocol::MessageType::kRefStateChanged), true);
 	};
 
 	// Who runs an NPC's AI:
@@ -3517,9 +3524,14 @@ void Server::Run()
 			return;
 		}
 		status->playerId = a_player.id;
+		// The session's NPC level and legendary chance follow the players' levels and difficulties: looked at again only
+		// when this status brings a new one (a status comes several times a second from each player).
+		const bool levelled = !a_player.status || a_player.status->level != status->level || a_player.status->legendaryMult != status->legendaryMult;
 		a_player.status = *status;
 		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
-		updateSessionLevel(0);
+		if (levelled) {
+			updateSessionLevel(0);
+		}
 	};
 
 	// The session's clock is the host's: the host's own game, else the player here longest.

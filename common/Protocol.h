@@ -3857,6 +3857,9 @@ namespace Protocol
 				if (!ReadWorkshopItem(r, item, a_withWire, lost)) {
 					return std::nullopt;
 				}
+				if (type == MessageType::kReportWorkshopGone && item.op != WorkshopOp::kScrapped) {
+					return std::nullopt;  // a gone report says only what is gone (WorkshopAudit sends each as a scrap)
+				}
 				if (a_characters) {
 					item.character = r.U64();
 				}
