@@ -4,9 +4,7 @@
 
 #include "Protocol.h"
 
-#include <array>
 #include <cstdint>
-#include <optional>
 
 // Creatures a quest's alias creates at runtime (the alias's "create reference" fill), the same in every game's run of
 // that quest: Salem's three mirelurks in Gun Run (DN083_Barney's StartMirelurk01 to 03). Each game's run creates its
@@ -17,39 +15,25 @@
 // (NpcSync), dying when it dies there (so that game's alias scripts count the death too), but never deleted, placed or
 // kept out of a save, as it is that game's own quest's. The server refuses a second game's report of the same alias.
 //
-// Guarded so it cannot touch a story: only a quest LISTED (Gun Run alone, until the rig shows more need it), and of those
-// only one that runs once, of no story or faction line (Quest type none, misc or side: never the main quest's or a
-// faction's), no radiant (RadiantRules shares those by their run) nor a quest each game runs alone (QuestFilter::PER_GAME),
-// and only a creature: an NPC our player could talk to (Barney, the quest's giver, made by its alias 25) stays each game's
-// own, its scenes its own game's, and not a vehicle the player sits in (a vertibird: paired, it would be mirrored to the
-// owner's while its own flight scene still moves it, and a seated player could be dropped). Kept free of the game so it can be tested (tests/QuestActorTests.cpp).
+// Guarded so it cannot touch a story: only a quest this session shares (QuestSync::SharesHere: a side quest, or with the
+// host's sQuests = safe a SAFE or SILENT one; its stages go between the games, so its creatures' deaths must too), of
+// those only one that is running here and runs once or starts with the game (never started twice: a second run's alias
+// would be the first's on the wire), of no story or faction line (Quest type none, misc or side: never the main quest's
+// or a faction's), no radiant (RadiantRules shares those by their run) nor a quest each game runs alone
+// (QuestFilter::PER_GAME), and only a creature: an NPC our player could talk to (Barney, Gun Run's giver, made by its
+// alias 25) stays each game's own, its scenes its own game's, and not a vehicle the player sits in (a vertibird: paired,
+// it would be mirrored to the owner's while its own flight scene still moves it, and a seated player could be dropped).
+// The pairing's wire, the server's refusal and the every-frame rules are those Gun Run, the first quest paired, brought
+// (protocol 61). Kept free of the game so it can be tested (tests/QuestActorTests.cpp).
 namespace QuestActors
 {
-	// The quests whose created creatures pair: a file (StageRules::File) and the quest's form ID in it.
-	struct Listed
-	{
-		std::uint8_t  file;
-		std::uint32_t quest;
-	};
-	inline constexpr std::array<Listed, 1> LISTED{ {
-		{ 0, 0x1243D6 },  // Fallout4.esm DN083_Barney (Gun Run): Salem's mirelurks, aliases 26, 38 and 41
-	} };
-
-	constexpr bool IsListed(std::optional<std::uint8_t> a_file, std::uint32_t a_quest)
-	{
-		for (const auto& entry : LISTED) {
-			if (a_file && entry.file == *a_file && entry.quest == (a_quest & 0x00FFFFFF)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	// BGSRefAlias::FILL_TYPE::kCreated: the alias makes its reference as the quest starts.
 	inline constexpr std::uint16_t FILL_CREATED = 4;
 
-	// TESQuest::data.flags: running, and runs once (it can't be started again once it stops).
+	// TESQuest::data.flags (CommonLibF4's RE::QuestFlag): running (kEnabled), starts with the game (kStartsEnabled), and
+	// runs once (kRunOnce: it can't be started again once it stops).
 	inline constexpr std::uint16_t QUEST_RUNNING = 0x0001;
+	inline constexpr std::uint16_t QUEST_STARTS_ENABLED = 0x0010;
 	inline constexpr std::uint16_t QUEST_RUN_ONCE = 0x0100;
 
 	// TESQuest::data.questType: none, misc and side quests. 1 to 5 are the main quest's and the factions' (the
@@ -72,7 +56,7 @@ namespace QuestActors
 	// What a quest that holds one of our runtime NPCs in an alias is.
 	struct Quest
 	{
-		bool          listed = false;    // in LISTED (IsListed)
+		bool          shared = false;    // the session shares its stages now (QuestSync::SharesHere)
 		bool          official = false;  // from the game's own files (Official::IsOfficialForm)
 		std::uint16_t flags = 0;         // TESQuest::data.flags
 		std::int8_t   type = 0;          // TESQuest::data.questType
@@ -80,11 +64,14 @@ namespace QuestActors
 		bool          perGame = false;   // QuestFilter::IsPerGame
 	};
 
-	// Whether a quest's created creatures are paired across games.
+	// Whether a quest's created creatures are paired across games. One that starts with the game but has no run-once flag
+	// (Fallout4.esm's MS13 and DN054, read from the file's flags) is taken as running once per game all the same: the new
+	// game starts it, and no event starts it again.
 	constexpr bool QuestPairs(const Quest& a_quest)
 	{
 		const bool typeOk = a_quest.type == QUEST_TYPE_NONE || a_quest.type == QUEST_TYPE_MISC || a_quest.type == QUEST_TYPE_SIDE;
-		return a_quest.listed && a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && (a_quest.flags & QUEST_RUN_ONCE) != 0 && typeOk && !a_quest.radiant && !a_quest.perGame;
+		const bool once = (a_quest.flags & (QUEST_RUN_ONCE | QUEST_STARTS_ENABLED)) != 0;
+		return a_quest.shared && a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && once && typeOk && !a_quest.radiant && !a_quest.perGame;
 	}
 
 	// Whether our NPC, held by an alias of that fill type in such a quest, of a race with those flags and that form ID, is

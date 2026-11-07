@@ -631,14 +631,18 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   to be paired, no copy is placed beside it. While our player hasn't started the quest, a friend's creature gets no copy
   here (its base is unique: BaseOk), as before. Our game does not report a creature whose alias a friend's live spawn
   names (`twinsHeld=`), and the server refuses such a report from another game (naming nobody, logged). Guarded so no
-  story is touched: only a quest in QuestActors::LISTED (DN083_Barney alone, until the rig shows another needs it),
-  and of those only one that is running here, runs once, is of type none, misc or side, no radiant and not PER_GAME;
+  story is touched: only a quest this session shares (`QuestSync::SharesHere`: a side quest, or with the host's
+  `sQuests = safe` a SAFE or SILENT one: its stages go between the games, so its creatures' deaths must too; Gun Run
+  was the first, the SAFE misc quests and SILENT's objective-less ones such as DN119Fight and DN045 follow), and of
+  those only one that is running here and runs once or starts with the game (kRunOnce or kStartsEnabled: never started
+  twice, as a second run's alias would be the first's on the wire), is of type none, misc or side (a story's or a
+  faction's creatures stay each game's own even with a shared story), no radiant and not PER_GAME;
   only an alias filled by "create reference"; and only a creature (its race lacks "allow PC dialogue": set on
   HumanRace, GhoulRace and DogmeatRace, clear on MirelurkRace), so Gun Run's Barney (alias 25), whose scenes are each
   game's, stays each game's own. A vertibird (VertibirdRace, also without "allow PC dialogue") is never paired either:
   the player sits in it, and pairing would mirror it to the owner's bird while its own flight scene still moves it, so
-  a seated player could be dropped. Its stages are shared only with the host's `sQuests = safe` (DN083_Barney is in
-  QuestFilter SAFE). `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
+  a seated player could be dropped. Gun Run's stages are shared only with the host's `sQuests = safe` (DN083_Barney is
+  in QuestFilter SAFE), so with `sQuests = story` its mirelurks are each game's own again. `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
 - Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
   while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
   dead) places a live copy of it: that fight is fought again. Paired, ours takes the owner's roll and factions until it

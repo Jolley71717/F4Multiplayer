@@ -6,7 +6,8 @@
 
 #include "game/QuestActors.h"
 #include "game/SpawnBook.h"
-#include "game/StageRules.h"
+
+#include <array>
 
 using namespace TestServer;
 
@@ -29,7 +30,7 @@ namespace
 	// DN083_Barney as the game has it running.
 	Quest GunRun()
 	{
-		return { .listed = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC };
+		return { .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC };
 	}
 
 	Spot At(float a_x, std::uint32_t a_worldspace = WORLD)
@@ -72,22 +73,37 @@ namespace
 	}
 }
 
-TEST("quest actors: only Gun Run is listed, by its file and form ID")
+TEST("quest actors: a quest pairs its creatures only while the session shares it")
 {
-	static_assert(static_cast<std::uint8_t>(StageRules::File::kFallout4) == 0);
-	CHECK(IsListed(0, 0x001243D6));
-	CHECK(IsListed(0, 0x011243D6));  // the load index is not the file's
-	CHECK(!IsListed(std::nullopt, 0x001243D6));
-	CHECK(!IsListed(1, 0x001243D6));  // another file's quest of that ID
-	CHECK(!IsListed(0, 0x000EF40C));  // DN035, the Downs
+	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC }));
+	CHECK(!QuestPairs({ .shared = false, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC }));  // sQuests = story, or alone
+	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));    // a side quest
+	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));
+	for (const std::int8_t type : std::array<std::int8_t, 6>{ 1, 2, 3, 4, 5, 8 }) {  // the main quest's, the factions', an add-on's story: never, even shared
+		CHECK(!QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = type }));
+	}
+	CHECK(!QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC, .radiant = true }));
+	CHECK(!QuestPairs({ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_MISC, .perGame = true }));
 }
 
-TEST("quest actors: only a listed, running, run-once quest of the game's own of no story or faction line pairs its creatures")
+TEST("quest actors: a quest pairs its creatures only while it runs, and only one that runs once or starts with the game")
+{
+	static_assert(QUEST_RUNNING == 0x0001 && QUEST_STARTS_ENABLED == 0x0010 && QUEST_RUN_ONCE == 0x0100);  // RE::QuestFlag
+	const auto with = [](std::uint16_t a_flags) { return Quest{ .shared = true, .official = true, .flags = a_flags, .type = QUEST_TYPE_MISC }; };
+	CHECK(QuestPairs(with(0x0101)));   // running, runs once (Gun Run)
+	CHECK(QuestPairs(with(0x0011)));   // running, starts with the game (MS13, DN054): never started again
+	CHECK(QuestPairs(with(0x0111)));   // both
+	CHECK(!QuestPairs(with(0x0001)));  // running only: a second run's alias would be the first's on the wire
+	CHECK(!QuestPairs(with(0x0110)));  // not running here
+	CHECK(!QuestPairs(with(0x0000)));
+}
+
+TEST("quest actors: only a shared, running, run-once quest of the game's own of no story or faction line pairs its creatures")
 {
 	CHECK(QuestPairs(GunRun()));
-	CHECK(QuestPairs({ .listed = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));
-	CHECK(QuestPairs({ .listed = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));
-	CHECK(!QuestPairs({ .official = true, .flags = 0x0101, .type = QUEST_TYPE_MISC }));  // another misc quest: not listed
+	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_NONE }));
+	CHECK(QuestPairs({ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE }));
+	CHECK(!QuestPairs({ .official = true, .flags = 0x0101, .type = QUEST_TYPE_MISC }));  // a misc quest the session doesn't share
 	auto quest = GunRun();
 	quest.official = false;  // a mod's
 	CHECK(!QuestPairs(quest));
@@ -95,7 +111,7 @@ TEST("quest actors: only a listed, running, run-once quest of the game's own of 
 	quest.flags &= ~QUEST_RUNNING;  // stopped, or not started here
 	CHECK(!QuestPairs(quest));
 	quest = GunRun();
-	quest.flags &= ~QUEST_RUN_ONCE;  // started again and again, each run its own
+	quest.flags &= ~(QUEST_RUN_ONCE | QUEST_STARTS_ENABLED);  // started again and again, each run its own
 	CHECK(!QuestPairs(quest));
 	for (std::int8_t type = 1; type <= 5; ++type) {  // the main quest's and the factions'
 		quest = GunRun();
