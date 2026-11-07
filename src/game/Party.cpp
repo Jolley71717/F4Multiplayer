@@ -68,7 +68,7 @@ namespace Party
 			std::uint32_t     playerId = 0;  // the friend it goes to
 		};
 
-		// Our player's last arrival beside a friend by the teleport key (ArrivedBeside: QuestSync's follow offer).
+		// Our player's last arrival beside a friend by the teleport key (TeleportedTo: QuestSync's follow offer).
 		struct Arrival
 		{
 			std::uint32_t     playerId = 0;
@@ -1224,8 +1224,11 @@ namespace Party
 		return KeyName(Config::Get().keyTeleport);
 	}
 
-	std::optional<Clock::time_point> ArrivedBeside(std::uint32_t a_id)
+	std::optional<Clock::time_point> TeleportedTo(std::uint32_t a_id)
 	{
+		if (pendingTeleport && pendingTeleport->playerId == a_id) {
+			return pendingTeleport->deadline - TELEPORT_TIMEOUT;
+		}
 		return arrival && arrival->playerId == a_id ? std::optional{ arrival->at } : std::nullopt;
 	}
 

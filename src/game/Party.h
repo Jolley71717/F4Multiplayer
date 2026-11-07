@@ -42,8 +42,9 @@ namespace Party
 	[[nodiscard]] std::string OfferFollow(std::uint32_t a_id);
 	// The teleport key, as the HUD names it.
 	[[nodiscard]] std::string TeleportKeyName();
-	// When our player last arrived beside this friend by the teleport key, if they did (none after a load).
-	[[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ArrivedBeside(std::uint32_t a_id);
+	// When the teleport key last took our player to this friend, if it did (none after a load): the arrival, or the start of a
+	// teleport to them still on its way (its cell loading: our player can be beside them a frame before it lands).
+	[[nodiscard]] std::optional<std::chrono::steady_clock::time_point> TeleportedTo(std::uint32_t a_id);
 	void SendPing();
 
 	// The pings shown on the compass: who pinged (their marker color) and where the target is now, in our player's cell

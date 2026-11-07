@@ -534,6 +534,9 @@ namespace QuestSync
 			if (a_flags & StageRules::kStory) {
 				return "it moves the main story or a faction's on, and the story isn't shared";
 			}
+			if (a_flags & StageRules::kHostile) {
+				return "it turns a faction on the player, who isn't with the friend who did it";
+			}
 			return "it moves the player, who isn't with the friend who did it";
 		}
 
@@ -795,7 +798,7 @@ namespace QuestSync
 			std::string followed;  // how an offer was taken up, for the log
 			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
 				if (verdict == StageRules::Verdict::kSet) {
-					const auto arrived = Party::ArrivedBeside(friendId);
+					const auto arrived = Party::TeleportedTo(friendId);
 					followed = arrived && *arrived >= offer->second.at ? std::format(" after arriving beside player {} by the teleport key", friendId) :
 					                                                      std::format(" after arriving beside player {} (came near them)", friendId);
 				} else {
@@ -815,9 +818,10 @@ namespace QuestSync
 					offers[Key(a_quest, a_stage)] = Offer{ a_now, friendId };
 					const auto blocked = Party::OfferFollow(friendId);
 					const bool fight = rule && (rule->flags & StageRules::kHostile);
+					// A name in brackets is the editor's, never shown in the Pip-Boy ("[DN070 - Jamaica Plain]"): "a quest" then.
 					Hud::Notify(Text::Format(fight ? "quest.follow_fight" : "quest.follow_offer",
 						{ { "player", RemotePlayers::NameOf(friendId) },
-							{ "quest", name && *name && !Unordered(quest) ? std::string{ name } : Text::Get("quest.a_quest") },
+							{ "quest", name && *name && *name != '[' && !Unordered(quest) ? std::string{ name } : Text::Get("quest.a_quest") },
 							{ "key", Party::TeleportKeyName() },
 							{ "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::OFFER_FOR).count() } }));
 					if (!blocked.empty()) {

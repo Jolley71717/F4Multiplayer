@@ -845,11 +845,12 @@ step_quests() {
 # Accept: the host's console setstage DN070 5; the VM's log has the offer and the stage waits; the VM takes it with the teleport key's own
 # action (dev `party go`, what the key calls; the offer aimed it at the host), and within FOLLOW_SET s its log has the stage set "after
 # arriving beside player N" and the stage is done there. Decline: the VM's console coc back to SanctuaryExt (set-up); the host's console
-# setstage DN036 500; the VM's log has the fight offer, the stage is not set while it is open, and after OFFER_FOR the offer "was not taken
-# up" and the stage is skipped. Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after). Once a
-# game has a stage done there is nothing to test: a FAIL naming it (load a save from before).
+# shows DN036's objective (a quest the player never started is not shared) and sets its 500; the VM's log has the fight offer,
+# the stage is not set while it is open, and after OFFER_FOR the offer "was not taken up" and the stage is skipped. Quest stages are for good in a save: run
+# it on throwaway saves (backup.sh before, restore after). Once a game has a stage done there is nothing to test: a FAIL naming it.
 FOLLOW_MOVE_QUEST=${FOLLOW_MOVE_QUEST:-000E9914}; FOLLOW_MOVE_STAGE=${FOLLOW_MOVE_STAGE:-5}     # DN070
 FOLLOW_FIGHT_QUEST=${FOLLOW_FIGHT_QUEST:-0008FCED}; FOLLOW_FIGHT_STAGE=${FOLLOW_FIGHT_STAGE:-500}  # DN036
+FOLLOW_FIGHT_OBJECTIVE=${FOLLOW_FIGHT_OBJECTIVE:-10}  # DN036 500 alone leaves the quest unstarted (no objective shown), and a quest the player never started isn't shared: shown first
 FOLLOW_HOST_CELL=${FOLLOW_HOST_CELL:-ConcordExt}; FOLLOW_SET=${FOLLOW_SET:-45}; FOLLOW_OFFER_FOR=${FOLLOW_OFFER_FOR:-90}
 _f_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
 _f_has() { case ",$(_f_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
@@ -897,6 +898,7 @@ step_follow() {
 	# Decline: the VM back at Sanctuary, far again; a fight offer it doesn't take.
 	dc vm "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame vm 30
 	if ! wait_for 20 _f_far; then fail "follow: set-up: the VM's coc back to SanctuaryExt put it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
+	dc host "console setobjectivedisplayed $FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_OBJECTIVE 1" >/dev/null; sleep 2   # set-up: the host has the quest started
 	win_mark follow vm
 	dc host "console setstage $FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE" >/dev/null
 	if ! wait_for 15 _f_has host "$FOLLOW_FIGHT_QUEST" "$FOLLOW_FIGHT_STAGE"; then fail "follow: set-up: the host's console set $FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE" "host done $(_f_done host "$FOLLOW_FIGHT_QUEST")"; return; fi
