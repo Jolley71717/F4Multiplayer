@@ -250,8 +250,9 @@ TEST("stage rules: a stage that moves the player through another quest it sets (
 	CHECK(FlagsOf(0x036763, 548, File::kCoast) == kMoves); // DLC03_V118_Quest: the date
 	CHECK(FlagsOf(0x0229F7, 17) == kMoves);                // MS02: controls frozen
 	CHECK(FlagsOf(0x022A0A, 60) == kMoves);                // MS19: controls frozen
-	CHECK(FlagsOf(0x0BA4F2, 150) == kMoves);               // MQ101TVStation: would start MQ101, the pre-war opening, again
-	CHECK(FlagsOf(0x0C3309, 500) == kMoves);               // MQ101SanctuaryHills: the same
+	// MQ101TVStation: would start MQ101, the pre-war opening, again, whose start-up stage also empties the inventory
+	CHECK(FlagsOf(0x0BA4F2, 150) == (kMoves | kPays));
+	CHECK(FlagsOf(0x0C3309, 500) == (kMoves | kPays));     // MQ101SanctuaryHills: the same
 	// A branch on the argument is followed one way: MQ302 800 calls ControlToggle(1), which gives the controls back.
 	CHECK(FlagsOf(0x0229EE, 800) == 0);
 }
@@ -352,7 +353,7 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
 	// Fallout4.esm's: Diamond City's caps, the Prydwen's gantry, the treasure's cave (the Combat Zone's are gone with it).
 	CHECK(!Find(0x02074B, 1));               // CZ
-	CHECK(FlagsOf(0x14191C, 10) == kPays);   // FFDiamondCity02
+	CHECK(FlagsOf(0x14191C, 10) == kFree);   // FFDiamondCity02: Home Plate, its price waived in a friend's game (PRICES)
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);   // DN070
 	CHECK(FlagsOf(0x145722, 2) == kMoves);   // BoSM04Postquest
 	// Far Harbor's treasure dig fades the screen out.
@@ -385,12 +386,57 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(!SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ, no longer SAFE's
 }
 
-TEST("stage rules: no stage of a quest sQuests = safe shares sets a stage that pays (tools/questscan.ps1 -Safe)")
+TEST("stage rules: no shared stage a friend's game sets pays through a stage it sets (tools/questscan.ps1 -Safe)")
 {
 	using namespace StageRules;
-	// The scan's last line, SAFE_REACHES_PAYS: the stages reached from a SAFE stage, through fragments and the script
-	// functions they call, in their own quest or any other, that have a kPays row and are not read by hand.
-	CHECK(SAFE_REACHES_PAYS == 0);
+	// The scan's last line, SHARED_REACHES_PAYS: the stages of every quest a friend's stage is set on (the story's,
+	// the dialogue quests', SAFE's, the radiants') that are no kPays or kFree row and reach, through their fragments and
+	// the script functions they call, in their own quest or any other, a stage with a kPays or kFree row, caps taken or the
+	// inventory emptied, not read by hand.
+	CHECK(SHARED_REACHES_PAYS == 0);
+	// What it found: buying Home Plate from Geneva (DialogueDiamondCity 64) or the mayor (300) sets FFDiamondCity02 10,
+	// which takes the price and gives the key and the house. A friend's purchase is set here with its price at 0: every
+	// player has the key and the house, only the buyer pays. Set like any stage that doesn't move the player.
+	for (const int stage : { 64, 300 }) {
+		CHECK(FlagsOf(0x003648, static_cast<std::uint16_t>(stage)) == kFree);
+		CHECK(Judge(Find(0x003648, static_cast<std::uint16_t>(stage)), { .sharedStory = true, .live = true, .nearFriend = false }) == Verdict::kSet);
+		CHECK(Judge(Find(0x003648, static_cast<std::uint16_t>(stage)), { .sharedStory = true, .live = false }) == Verdict::kSet);
+		const auto price = FindPrice(File::kFallout4, 0x003648, static_cast<std::uint16_t>(stage));
+		REQUIRE(price);
+		CHECK(price->global == 0x0D35FA);       // ServiceCostBuyHouse
+		CHECK(price->boughtQuest == 0x14191C);  // FFDiamondCity02 10
+		CHECK(price->boughtStage == 10);
+		CHECK(price->given == 0x141946);        // DmndPlayerHouseKey
+	}
+	CHECK(FlagsOf(0x14191C, 10) == kFree);  // FFDiamondCity02 itself, shared with sQuests = safe
+	CHECK(FindPrice(File::kFallout4, 0x14191C, 10));
+	CHECK(!FindPrice(File::kFallout4, 0x003648, 70));  // the bat's sale is no purchase: never made here
+	CHECK(!FindPrice(File::kCoast, 0x003648, 64));
+	CHECK(SetsAnother(File::kFallout4, 0x003648, 64));   // what they set is another quest's stage
+	CHECK(SetsAnother(File::kFallout4, 0x003648, 300));
+	CHECK(!Find(0x003648, 65));  // the rest of Geneva's talk is not held back
+	// Every kFree row has its price, and every price is a kFree row's.
+	for (const auto& rule : RULES) {
+		if (rule.flags & kFree) {
+			CHECK(FindPrice(static_cast<File>(rule.file), rule.quest, rule.stage));
+			CHECK(!(rule.flags & kPays));
+		}
+	}
+	for (const auto& price : PRICES) {
+		CHECK(FlagsOf(price.quest, price.stage, static_cast<File>(price.file)) == kFree);
+	}
+	// The price stays 0 until the key is given, or a minute of play if it never is.
+	CHECK(!PriceBack(false, 0s));
+	CHECK(!PriceBack(false, 59s));
+	CHECK(PriceBack(true, 0s));
+	CHECK(PriceBack(false, PRICE_TIMEOUT));
+	// InstM01_OLD, an old cut of InstM01 never started in a game played through, takes 500 caps at its 35 as InstM01 does.
+	CHECK(FlagsOf(0x0498B5, 35) == kPays);
+	CHECK(FlagsOf(0x0986C7, 35) == kPays);
+	// The pre-war stages that set MQ101's (its start-up stage empties the inventory) are never set from a friend's.
+	for (const auto& [quest, stage] : { std::pair{ 0x0BA4F2u, 150 }, std::pair{ 0x0BA4F2u, 200 }, std::pair{ 0x0C3309u, 91 }, std::pair{ 0x0C3309u, 500 } }) {
+		CHECK(Judge(Find(quest, static_cast<std::uint16_t>(stage)), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
 	// The one it lists and has read by hand: MS13MarowskiRevenge 380 (SAFE) sets its own 400, which takes the caps unless 380
 	// is done, and is set from 380.
 	CHECK(QuestFilter::IsSafe(0, 0x084E40));

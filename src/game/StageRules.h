@@ -21,6 +21,7 @@ namespace StageRules
 	inline constexpr std::uint8_t kBridge = 1 << 1;  // ... and starts another shared quest or awards an achievement: needed all the same
 	inline constexpr std::uint8_t kPays = 1 << 2;    // takes caps or ordinary items (not quest items) from the player: a bribe, a payment
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
+	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -48,8 +49,9 @@ namespace StageRules
 	// came from the quest). Story is only flagged in Fallout4.esm: Far Harbor files its own story as
 	// side quests and main quests both. Sorted by file, quest and stage.
 	// The dialogue quests (shared with the story since, see QuestFilter::IsDialogue) were scanned again for what their
-	// stages take from the player (tools/questscan.ps1): five pay or sell. What that scan sees: a quest's own
-	// Fragment_Stage_ functions calling RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem,
+	// stages take from the player (tools/questscan.ps1): five pay or sell, and two more, Home Plate's purchase
+	// (DialogueDiamondCity 64 and 300), through the stage they set (kFree: see SHARED_REACHES_PAYS). What that scan sees: a
+	// quest's own Fragment_Stage_ functions calling RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem,
 	// UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property. In those it found no shared
 	// quest's stage taking weapons, armor or the Pip-Boy, unequipping them, or emptying the inventory (RemoveAllItems is
 	// only in MQ101, the opening, and DN019JoinCult, both misc quests, never shared). What it does not see: a call made
@@ -84,7 +86,9 @@ namespace StageRules
 	// DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their stage 0s that
 	// move the player and are no start-up stage are left out: DN154, BoSM04Postquest, DLC04MQ03.
 	inline constexpr Rule RULES[] = {
+		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
+		{ 0, 0x003648, 300, kFree, 0 },  // DialogueDiamondCity: Home Plate bought from the mayor (sets FFDiamondCity02 10 too)
 		{ 0, 0x019955, 210, kPays, 0 },  // DialogueBunkerHill: 10 caps
 		{ 0, 0x01CB51, 0, kMoves, 40 },  // MS07a
 		{ 0, 0x01CB51, 17, 0, 15 },
@@ -232,7 +236,8 @@ namespace StageRules
 		{ 0, 0x0459D2, 0, 0, 1 },  // RR101
 		{ 0, 0x0459D2, 600, kMoves, 40 },
 		{ 0, 0x0459D2, 710, 0, 3 },
-		{ 0, 0x0498B5, 0, kMoves, 20 },  // InstM01_OLD
+		{ 0, 0x0498B5, 0, kMoves, 20 },  // InstM01_OLD (an old cut of InstM01, its 0 a playtest start)
+		{ 0, 0x0498B5, 35, kPays, 0 },   // 500 caps, as InstM01's 35
 		{ 0, 0x0537FC, 0, kMoves | kBridge, 60 },  // BoS201B
 		{ 0, 0x0537FF, 0, kMoves | kBridge, 60 },  // BoS202
 		{ 0, 0x0537FF, 1, kMoves | kBridge, 60 },
@@ -326,8 +331,8 @@ namespace StageRules
 		{ 0, 0x0B9F9D, 1, kMoves | kBridge, 90 },
 		{ 0, 0x0B9F9D, 2, kMoves | kBridge, 90 },
 		{ 0, 0x0B9F9D, 155, 0, 100 },
-		{ 0, 0x0BA4F2, 150, kMoves, 0 },  // MQ101TVStation: sets a stage of MQ101, the pre-war opening, whose start-up stage takes the controls
-		{ 0, 0x0BA4F2, 200, kMoves, 0 },
+		{ 0, 0x0BA4F2, 150, kMoves | kPays, 0 },  // MQ101TVStation: sets a stage of MQ101, the pre-war opening, whose start-up stage takes the controls and empties the inventory (RemoveAllItems)
+		{ 0, 0x0BA4F2, 200, kMoves | kPays, 0 },
 		{ 0, 0x0BACFF, 0, kMoves, 20 },  // Inst307
 		{ 0, 0x0BACFF, 30, 0, 50 },
 		{ 0, 0x0BACFF, 35, kMoves, 60 },
@@ -340,8 +345,8 @@ namespace StageRules
 		{ 0, 0x0BAD00, 40, kMoves, 20 },
 		{ 0, 0x0BDB04, 0, 0, 10 },  // MinDefendCastle
 		{ 0, 0x0C30DC, 0, kMoves | kBridge, 20 },  // BosR02
-		{ 0, 0x0C3309, 91, kMoves, 0 },  // MQ101SanctuaryHills: the same
-		{ 0, 0x0C3309, 500, kMoves, 0 },
+		{ 0, 0x0C3309, 91, kMoves | kPays, 0 },  // MQ101SanctuaryHills: the same
+		{ 0, 0x0C3309, 500, kMoves | kPays, 0 },
 		{ 0, 0x0C8675, 0, kMoves | kBridge, 60 },  // BoSR03
 		{ 0, 0x0C9B0B, 50, kMoves | kBridge, 0 },  // MQ00: the ending's slides
 		{ 0, 0x0C9B0B, 60, kMoves | kBridge, 1 },
@@ -381,7 +386,7 @@ namespace StageRules
 		{ 0, 0x122221, 400, 0, 1 },  // FFBunkerHill02
 		{ 0, 0x134297, 0, kMoves | kBridge, 20 },  // MQ106Investigations
 		{ 0, 0x136329, 0, kMoves | kBridge, 40 },  // Min207
-		{ 0, 0x14191C, 10, kPays, 0 },  // FFDiamondCity02: caps
+		{ 0, 0x14191C, 10, kFree, 0 },  // FFDiamondCity02: Home Plate's price, its key and the house
 		{ 0, 0x142EDC, 0, kMoves | kBridge, 40 },  // BoSM00
 		{ 0, 0x142FD3, 1, kMoves | kBridge, 41 },  // RR304
 		{ 0, 0x142FD3, 20, kMoves, 61 },
@@ -476,15 +481,59 @@ namespace StageRules
 		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
 	};
 
-	// How many stages of the quests the host's sQuests = safe shares (QuestFilter::SAFE) set, through their fragments and
-	// the script functions those call, a few levels down and in their own quest or another, shared or not, a stage with a
-	// kPays row. A friend's game is never sent a stage that pays, but one of these runs its fragment here when the friend's
-	// is set, and the stage it sets would pay in this game. None does: tools/questscan.ps1 -Safe walks every SAFE stage
-	// that way and prints the count last, as this line (tests/StageRulesTests.cpp checks it is 0). The scan does list
+	// How many stages of the quests a friend's stage is set on (shared by their type, the finales, the dialogue quests,
+	// QuestFilter::SAFE's, the radiants shared by their run; not PER_GAME) that are no kPays row themselves set, through
+	// their fragments and the script functions those call, a few levels down and in their own quest or another, shared or
+	// not, a stage with a kPays row, or take caps or empty the inventory themselves. A friend's game never sets a stage
+	// that pays, but one of these runs its fragment here when the friend's is set, and the stage it sets pays in this game:
+	// DialogueDiamondCity 64 and 300, Home Plate bought from Geneva or the mayor, set FFDiamondCity02 10, which takes the
+	// price and gives the key and the house, so up to 0.13.1 a friend's purchase was paid for again by every player in the
+	// session who had the caps. They are kFree rows now (PRICES): set here with the price at 0, so every player has the key
+	// and the house and only the buyer pays. A kFree stage is not walked (its price is waived here), but one reached from
+	// another stage counts as a payment, as a kPays one does. tools/questscan.ps1 -Safe walks every such stage that way and
+	// prints the count last, as this line (tests/StageRulesTests.cpp checks it is 0). The scan does list
 	// MS13MarowskiRevenge 380, which sets its own 400 (the caps), and does not count it: 400 takes them only if 380 is not
 	// done (a GetStageDone branch the scan does not follow), and it is set from 380. Paste the scan's line here when it
 	// changes; a count above 0 is a payment a friend's stage would make here.
-	inline constexpr std::size_t SAFE_REACHES_PAYS = 0;
+	inline constexpr std::size_t SHARED_REACHES_PAYS = 0;
+
+	// The purchases a friend's stage makes here for free (kFree): what a friend bought, every player in the session has, and
+	// only the buyer pays. The script that sells it reads its price from a global (FFDiamondCity02 10: RemoveItem(Caps001,
+	// ServiceCostBuyHouse.GetValueInt()), then the key, the doors' and the house's owner, its map marker), so the global is
+	// 0 here while that script runs: from just before the stage is set until what is bought (the key, given right after
+	// the RemoveItem) is in the player's inventory, or PRICE_TIMEOUT of play if it never comes. A purchase already made
+	// here (its bought stage done) is set as it is: its script's SetStage does nothing. Form IDs in the quest's own file.
+	struct Price
+	{
+		std::uint8_t  file;         // File
+		std::uint32_t quest;        // the friend's stage
+		std::uint16_t stage;
+		std::uint32_t global;       // the price, read by the script that takes it
+		std::uint32_t boughtQuest;  // the stage whose script takes the price and gives what is bought
+		std::uint16_t boughtStage;
+		std::uint32_t given;        // given by that script after it takes the price
+	};
+	inline constexpr Price PRICES[] = {
+		{ 0, 0x003648, 64, 0x0D35FA, 0x14191C, 10, 0x141946 },   // DialogueDiamondCity, Geneva: ServiceCostBuyHouse, FFDiamondCity02 10, DmndPlayerHouseKey
+		{ 0, 0x003648, 300, 0x0D35FA, 0x14191C, 10, 0x141946 },  // DialogueDiamondCity, the mayor: the same
+		{ 0, 0x14191C, 10, 0x0D35FA, 0x14191C, 10, 0x141946 },   // FFDiamondCity02 itself (shared with sQuests = safe)
+	};
+	inline constexpr auto PRICE_TIMEOUT = std::chrono::seconds(60);
+
+	inline const Price* FindPrice(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto it = std::ranges::find_if(PRICES, [&](const Price& a_price) {
+			return a_price.file == static_cast<std::uint8_t>(a_file) && a_price.quest == a_quest && a_price.stage == a_stage;
+		});
+		return it != std::end(PRICES) ? &*it : nullptr;
+	}
+
+	// Whether a waived price goes back: what was bought has been given (the script is past its RemoveItem), or it has been
+	// waived PRICE_TIMEOUT of play (the script never ran: the quest could not start here).
+	inline bool PriceBack(bool a_given, Clock::duration a_played)
+	{
+		return a_given || a_played >= PRICE_TIMEOUT;
+	}
 
 	// Stages whose script takes the player's controls away until a later stage gives them back. They
 	// are only set once that stage is coming too (waiting here, or done), so the player is never left
