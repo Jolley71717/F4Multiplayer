@@ -831,6 +831,69 @@ step_downed() {
 	done
 	pads_off
 }
+# ---- downed again and again ------------------------------------------------------------------------------------------------------------------
+# A player downed, helped up and downed again at once, over and over (as in a fire that keeps burning, a rocket engine's): each next
+# down starts while the camera is still on its way back from the one before, or the body still getting up. The helper stands at the
+# down player's stand-in the whole time (reached by a real walk), so each down is helped up after the rules' help time. The next lethal
+# hit (console damageav, as the host's gunfire is injected for combat) comes as soon as the down player's game says they are up (in the
+# get-up), half a second on, or after an explosion at their feet (a knock-down and its ragdoll, then the hit while knocked over), and
+# one round takes a second hit while still down. Asserted after the last help-up: the camera a first- or third-person view (not a
+# transition or the bleed-out camera), still so a few seconds on, alive; the camera near the player (dev `rules`: away, where the build
+# has it) before and after the down player walks off; the Pip-Boy opens and closes. The log's camera fixes are counted, never failed.
+_up_now() { [ "$(field "$(dc "$1" rules)" down)" = false ]; }
+_until_fast() { local end=$((SECONDS + $1)); shift; while :; do "$@" && return 0; [ $SECONDS -ge "$end" ] && return 1; done; }   # wait_for without the half-second sleep
+_view() { local c; c=$(dc "$1" controls); echo "camera=$(grep -oE 'camera=[0-9-]+' <<<"$c" | cut -d= -f2) life=$(grep -oE 'life=[0-9]+' <<<"$c" | cut -d= -f2)"; }
+_away() { dc "$1" rules | grep -oE 'away [0-9?]+' | tail -1 | cut -d' ' -f2; }
+step_downed_repeat() {
+	local down=${1:-vm} rounds=${2:-5} helper puppet g i v a0 a1 f n hits=0
+	helper=$(other_game "$down")
+	section "downed again and again at once on each help-up ($down, $rounds rounds)"
+	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+	[ -n "$puppet" ] || { fail "repeat ($down): set-up: the helper's game has the stand-in" "no puppet= in its net status"; return; }
+	walk "$helper" "repeat ($down): set-up: the helper walks to the stand-in" 0.8 100 "$puppet" || return
+	dc "$helper" "pad unplug" >/dev/null
+	win_mark rep "$down"
+	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($down): set-up: god mode off" "$g"; return; }
+	dc "$down" "console player.damageav health 10000" >/dev/null
+	for i in $(seq 1 "$rounds"); do
+		if ! wait_for 6 _down_waits "$down"; then fail "repeat ($down): round $i: goes down" "$(dc "$down" rules | grep -oE 'downed: [^|]*' | cut -c1-200)"; break; fi
+		[ "$i" = 2 ] && { sleep 1; dc "$down" "console player.damageav health 10000" >/dev/null; }   # hit again while down
+		if ! _until_fast 20 _up_now "$down"; then fail "repeat ($down): round $i: helped up" "$(dc "$down" rules | grep -oE 'downed: [^|]*' | cut -c1-200)"; break; fi
+		hits=$i
+		[ "$i" = "$rounds" ] && break
+		case $((i % 3)) in
+		1) ;;                                                                                                        # at once: in the get-up
+		2) sleep 0.5 ;;                                                                                              # just up
+		0) dc "$down" "console player.placeatme $GRENADE_EXPLOSION" >/dev/null; sleep 0.3 ;;                         # knocked over first
+		esac
+		dc "$down" "console player.damageav health 10000" >/dev/null
+		echo "  round $i: up, hit again ($(_view "$down"))"
+	done
+	expect_eq "repeat ($down): downed and helped up again and again" "$hits" "$rounds"
+	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	sleep 6   # the last get-up plays out, and a stuck transition would outlast the game's own (0.5-1 s) by far
+	v=$(_view "$down"); expect_match "repeat ($down): the camera a first- or third-person view, alive" "$v" '^camera=(0|8) life=0$'
+	sleep 3; v=$(_view "$down"); expect_match "repeat ($down): still a view 3 s on" "$v" '^camera=(0|8) life=0$'
+	a0=$(_away "$down")
+	walk "$down" "repeat ($down): set-up: the down player walks off" 1 100 $PARK_SPOT
+	a1=$(_away "$down")
+	if is_num "$a0" && is_num "$a1"; then expect_le "repeat ($down): the camera near the player, before and after a walk" "$(( a0 > a1 ? a0 : a1 ))" 400 u
+	else pass "repeat ($down): the camera near the player" "not measured: this build's rules have no camera distance"; fi
+	dc "$down" "pad button b" >/dev/null
+	if menu_open "$down" PipboyMenu 4; then
+		sleep 1; dc "$down" "pad button b" >/dev/null
+		if wait_for 6 _pipboy_gone "$down"; then pass "repeat ($down): the Pip-Boy opens on a press and closes" "pad B twice"; else fail "repeat ($down): the Pip-Boy opens on a press and closes" "it opened and stayed open"; clear_menus "$down" >/dev/null; fi
+	else fail "repeat ($down): the Pip-Boy opens on a press and closes" "no PipboyMenu after the pad's B ($(dc "$down" menus | grep -oE 'open=[^ ]*'))"; fi
+	f=$(win_read rep "$down")
+	if [ -s "$f" ]; then
+		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($down): its log has the help-ups" "$n" "$rounds"
+		pass "repeat ($down): camera fixes in its log (counted only)" "loops $(grep -c "looped" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
+	else fail "repeat ($down): its log window read" "no new lines"; fi
+	walk "$down" "repeat: set-up: back to the marker" 1 100 $MARKER_SPOT; walk "$helper" "repeat: set-up: the helper back to the marker" 1 100 $MARKER_SPOT
+	pads_off
+}
+
 
 # ---- churn: cell hops with save and reload ------------------------------------------------------------------------------------
 step_churn() {
