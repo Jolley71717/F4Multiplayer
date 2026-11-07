@@ -20,10 +20,17 @@ namespace InertShots
 	// is copied for anyone; a plain bullet or beam only for a stand-in (a_standIn: its shot flies, InertShot::Swaps).
 	void Prepare(RE::BGSProjectile* a_base, bool a_standIn = false);
 
-	// Dev `trails tracer always|engine`: a stand-in's plain bullet or beam is launched with the engine's tracer flag set, which the engine
-	// leaves clear for every launch of a stand-in's (an experiment: is the tracer art drawn then?). Off (the engine's) by default.
+	// Dev `trails tracer always|engine`: a stand-in's plain bullet or beam is launched with the launch data's tracer flag set, which
+	// makes every one a tracer (the engine otherwise makes every tracerFrequency-th one of an actor's a tracer, InertShot::PROJECTILE_TRACER).
+	// Off (the engine's) by default.
 	void               SetForceTracer(bool a_on);
 	[[nodiscard]] bool ForceTracer();
+
+	// Dev `launchlog <n>`: the next n launches of anyone's (our player's, an NPC's, a stand-in's) are written to the log in full, every
+	// field of the launch data as the engine filled it, what the hook did, and the projectile made, followed for its first frames.
+	// Read-only. How many are still to be logged.
+	void              LogLaunches(int a_count);
+	[[nodiscard]] int LaunchesToLog();
 
 	// Whether an inert copy of this record exists (dev `proj`).
 	[[nodiscard]] bool HasCopy(RE::BGSProjectile* a_base);

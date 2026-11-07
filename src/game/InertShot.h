@@ -41,6 +41,13 @@ namespace InertShot
 	inline constexpr std::uint32_t FLAG_PINS_LIMBS = 0x100;
 	inline constexpr std::uint32_t FLAGS_TAKEN = FLAG_EXPLOSION | FLAG_EXPLOSION_ALT_TRIGGER | FLAG_CAN_TURN_OFF | FLAG_CAN_PICKUP | FLAG_PINS_LIMBS;
 
+	// The made projectile's own flag (Projectile::flags) for a tracer: Projectile::Launch sets it when the launch data
+	// asks for one (ProjectileLaunchData::tracer, which no engine caller seen sets) or, otherwise, when the shooter's
+	// tracer count comes round to the record's tracerFrequency (an actor with a high process: its count, kept per actor;
+	// any other shooter: one chance in tracerFrequency). Read from 1.11.240's Launch (+E421E0, the 0x10 bit set at +E42632/
+	// +E42673/+E426F1). Frequency 0: never a tracer (a 10mm round shows no trail in anyone's game).
+	inline constexpr std::uint64_t PROJECTILE_TRACER = 0x10;
+
 	constexpr std::uint32_t InertFlags(std::uint32_t a_flags)
 	{
 		return a_flags & ~FLAGS_TAKEN;
