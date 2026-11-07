@@ -1,12 +1,14 @@
 {
- "release": "0.13.0",
+ "release": "0.13.1",
  "known_issues": [
+  "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
+  "After being downed and helped up several times in quick succession (the Arc Jet engine fire, say), the camera can stop following your character until you load a save. A fix is in the works.",
   "Workshop conveyor belts (Contraptions) run in the builder's game but not a friend's. A fix is waiting for a test.",
   "A workbench is shared only at settlements the host owns.",
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T01:41:50+00:00",
+ "updated": "2026-11-07T02:17:17+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -425,7 +427,7 @@
    "title": "VATS skips friends' stand-ins (option), for groups where a friend stands in front",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "",
    "pr": 310
   },
@@ -545,7 +547,7 @@
    "title": "Camera stuck underground after being downed and revived (client); Pip-Boy won't open; reload needed",
    "kind": "bug",
    "priority": 1,
-   "stage": 7,
+   "stage": 1,
    "note": "Fix in PR: the camera's way back no longer loops after a second down",
    "pr": 301
   },
@@ -887,7 +889,7 @@
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
    "priority": 1,
-   "stage": 0,
+   "stage": 1,
    "note": ""
   },
   {
