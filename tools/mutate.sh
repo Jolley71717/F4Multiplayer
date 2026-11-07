@@ -16,7 +16,7 @@ for H in "$@"; do
 	# Candidate mutants: "line<TAB>original<TAB>mutated", code lines only (no comments, includes, pragmas, declarations).
 	perl -ne 'chomp; s/\r$//; $n=$.; next if /^\s*(\/\/|#)/ || /^\s*$/; next if /^\s*[\w:<>,]+\s+\w+\s*=\s*[^;(]+;/; $o=$_;
 		my @ops=(["==","!="],["!=","=="],["<=","<"],[">=",">"],["<","<="],[">",">="],["&&","||"],["||","&&"],["true","false"],["false","true"],["+ 1","- 1"],["- 1","+ 1"],["return true","return false"],["return false","return true"],["++","--"],["\\* 2","* 1"]);
-		for my $op (@ops) { my ($f,$t)=@$op; my $i=index($o,$f); next if $i<0; next if $f eq "<" && ($o=~/#include|template|std::|<[A-Za-z_:]+>/); next if $f eq ">" && ($o=~/->|#include|template|std::|<[A-Za-z_:]+>/); next if $f eq "&&" && $o=~/w&&/;
+		for my $op (@ops) { my ($f,$t)=@$op; my $i=index($o,$f); next if $i<0; next if $f eq "<" && ($o=~/#include|\btemplate\s*<|std::|<[A-Za-z_:]+>/); next if $f eq ">" && ($o=~/->|#include|\btemplate\s*<|std::|<[A-Za-z_:]+>/); next if $f eq "&&" && $o=~/\w&&/;
 			my $m=$o; substr($m,$i,length $f)=$t; next if $m eq $o; print "$n\t$o\t$m\n"; }' "$H" | awk -F'\t' '!seen[$1 FS $3]++' | shuf --random-source=<(yes) | head -n $MAX > $O/$name.cands
 	total=$(wc -l < $O/$name.cands); i=0
 	while IFS=$'\t' read -r line orig mut; do
