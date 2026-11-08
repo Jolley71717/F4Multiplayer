@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T14:58:02+00:00",
+ "updated": "2026-11-08T16:15:11+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1823,8 +1823,9 @@
    "title": "Calm encounters: the first line of a scene is lost when it arrives just before the copy is placed",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged to main for 0.15.0",
+   "pr": 343
   },
   {
    "id": "sokb",
