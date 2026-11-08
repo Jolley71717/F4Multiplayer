@@ -2353,7 +2353,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
   HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
-- Menu (src/game/Menu.cpp, F1): the engine's message box (`MessageMenuManager::Create`, four
+- Menu (src/game/UiPages.cpp, F1): the engine's message box (`MessageMenuManager::Create`, four
   buttons, our `IMessageBoxCallback`) as a paged menu: host, join a Steam friend who advertises a
   lobby, who's here, and five settings written back to the ini (`common/IniFile.h`, one line
   replaced). The button press is kept under a lock and acted on in the next frame, where the next
@@ -2580,6 +2580,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   conversation or lip sync), so nobody can be held in one. Until 0.8.6 an NPC's line was the console's
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
   dialogue); the player's own lines were never voiced.
+
+## The multiplayer menu (src/game/UiPages.cpp, UiPanel.cpp, UiMainMenuEntry.cpp, ui/)
+
+`UiPages.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
+menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
 
 ## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
 
