@@ -142,11 +142,11 @@ namespace Encounters
 		// of a quest's actor is when our run of it started, as far as the book can tell (one running before the book looked
 		// was settled by Settle), and where the actor first stood is where it stays for the book: the run's spot is its
 		// markers, wherever its actors walk to. True when it is a run's; false for an actor of a quest we stopped lately
-		// (IsStopped), which makes no new run and is the game's to remove (Doomed), as the run's others were.
+		// (IsStopped), which makes no new run and is not offered. Which of those the game removes is the game's call
+		// (the stopped run's, which it knows from the stop; not a fresh roll's of the same quest within STOPPED_FOR).
 		bool OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now)
 		{
 			if (IsStopped(a_quest, a_now)) {
-				Doom(a_quest, a_local);
 				return false;
 			}
 			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now }).first->second;
@@ -172,8 +172,8 @@ namespace Encounters
 			ours.erase(a_quest);
 		}
 
-		// We stopped our run of a_quest: left alone for STOPPED_FOR, and its actors, the ones seen so far and any seen
-		// meanwhile (OursSeen), are the game's to remove (Doomed): the quest's own stop leaves some standing.
+		// We stopped our run of a_quest: left alone for STOPPED_FOR, and its actors seen so far are the game's to remove
+		// (Doomed): the quest's own stop leaves some standing.
 		void Stopped(std::uint32_t a_quest, Clock::time_point a_now)
 		{
 			stopped[a_quest] = a_now;
@@ -194,7 +194,7 @@ namespace Encounters
 			bool operator==(const Doomed&) const = default;
 		};
 
-		// The actors of runs we stopped that the game is to remove, each once (Stopped, and OursSeen while stopped).
+		// The actors of runs we stopped that the game is to remove, each once (Stopped).
 		std::vector<Doomed> TakeDoomed()
 		{
 			return std::exchange(doomed, {});

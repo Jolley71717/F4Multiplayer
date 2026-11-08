@@ -531,13 +531,12 @@ TEST("encounters: a stopped run's actors are the game's to remove, the ones seen
 	const std::vector<Doomed> seen{ { OURS, LC01 }, { OURS2, LC01 } };
 	CHECK(book.TakeDoomed() == seen);
 	CHECK(book.TakeDoomed().empty());
-	// A third actor of the run, first seen after the stop (its aliases still name the quest): no new run, to be removed.
+	// A third actor of the quest, first seen after the stop: no new run, not offered, and not the book's to doom (it
+	// may be a fresh roll's of the same quest, which runs again; the game tells the two apart by the quest running).
 	constexpr std::uint32_t OURS3 = 0xFF010003;
 	CHECK(!book.OursSeen(LC01, OURS3, At(1200.0f), now + 2s));
 	CHECK(!book.Knows(LC01));
-	CHECK(!book.OursSeen(LC01, OURS3, At(1200.0f), now + 3s));  // seen again: still once
-	const std::vector<Doomed> later{ { OURS3, LC01 } };
-	CHECK(book.TakeDoomed() == later);
+	CHECK(!book.OursSeen(LC01, OURS3, At(1200.0f), now + 3s));
 	CHECK(book.TakeDoomed().empty());
 	// An actor of the other run, and of the same quest once the stop is forgotten (a new run): a run's, not removed.
 	CHECK(book.OursSeen(DN083, 0xFF0FFFFE, At(-90000.0f), now + 3s));

@@ -695,8 +695,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   shared are then shared on plain: reported again under their ids with no quest, which the server takes and sends
   again to the others (`kSpawned`), whose copies stay as they are (`Theirs::Rekind`); so no game counts an encounter
   as running at their spot (a radstag of an ended encounter once made a friend's game stop five new runs near it). A
-  stopped quest is left alone for `STOPPED_FOR` (60 s) while the engine winds it down, and its actors seen meanwhile
-  are removed, not offered. A receiver takes a friend's word for the kind only when the quest named is an encounter in its own files
+  stopped quest is left alone for `STOPPED_FOR` (60 s) while the engine winds it down; its actors seen meanwhile are
+  not offered, and removed while the quest does not run (running again, it is a fresh roll, whose actors are its
+  own). A receiver takes a friend's word for the kind only when the quest named is an encounter in its own files
   (`kindsVetoed=`; else the spawn is plain here: the twin rule and the unique bases as for any), and a named character's
   copy is withheld while our own game runs that encounter. Calm actors take at most `MAX_CALM` (16) of our 32 spawns, so
   a fight's raiders are never refused for a crowd of bystanders (`calmHeld=`; one that turns hostile or joins a fight

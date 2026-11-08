@@ -80,6 +80,18 @@ namespace Spawns
 		std::unordered_set<std::uint32_t> calmHeldNoted;
 		// Runs of ours to stop for a friend's (StopEncounter): stopped from Frame, never from inside the actor scan.
 		std::vector<std::uint32_t> pendingStops;
+		// Our encounter actors as seen in the scan, by their ids, with their handles: the book names a stopped run's
+		// actors by id, and the id alone could name another NPC by the time the stop is done (RemoveDoomed). Pruned as
+		// their handles stop resolving (CheckRuns); never many (Encounters::MAX_ACTORS a run).
+		constexpr std::size_t                                   MAX_ENCOUNTER_ACTORS = 256;
+		std::unordered_map<std::uint32_t, RE::ObjectRefHandle> encounterActors;
+		// Actors of stopped runs seen in the scan after the stop, with their quest (for the log): removed from Frame.
+		struct Removal
+		{
+			RE::ObjectRefHandle handle;
+			std::uint32_t       quest = 0;
+		};
+		std::vector<Removal> pendingRemovals;
 		// The encounter quests running on the first in-world frame of a session, or after a load, are settled in the book
 		// (never stopped): the book can't tell when they began. Set until that frame has been.
 		bool                       settleRuns = true;
@@ -567,29 +579,46 @@ namespace Spawns
 		}
 
 		// The runs booked for a stop are stopped: their actors first, every loaded one the quest's aliases still name,
-		// alive or dead (the stop may clear the aliases), then the quest; and the actors of stopped runs the book has
-		// (seen before the stop, or since) go too.
+		// alive or dead (the stop may clear the aliases), gathered before any is touched (a removal must not change the
+		// list under the walk), then the quest. The book's actors of the run (seen before the stop) go too, each by the
+		// handle the scan saw it under (its id alone could name another NPC by now), and so do the actors of stopped runs
+		// the scan saw since, while their quest did not run (pendingRemovals: a fresh roll of the same quest within
+		// STOPPED_FOR runs again, and its actors are nobody's to remove).
 		void StopPending()
 		{
-			const auto lists = RE::ProcessLists::GetSingleton();
+			std::vector<Removal> removals;
+			const auto           lists = RE::ProcessLists::GetSingleton();
 			for (const auto quest : pendingStops) {
 				if (lists) {
 					for (const auto& handle : lists->highActorHandles) {
 						const auto ptr = handle.get();
 						if (const auto actor = ptr.get(); actor && EncounterOf(actor).quest == quest) {
-							RemoveActor(actor, quest);
+							removals.push_back({ actor->GetHandle(), quest });
 						}
 					}
 				}
+			}
+			for (const auto& doomed : encounters.TakeDoomed()) {
+				if (const auto it = encounterActors.find(doomed.local); it != encounterActors.end()) {
+					removals.push_back({ it->second, doomed.quest });
+				}
+			}
+			for (const auto& removal : removals) {
+				if (const auto ref = removal.handle.get(); ref && ref->As<RE::Actor>()) {
+					RemoveActor(ref->As<RE::Actor>(), removal.quest);
+				}
+			}
+			for (const auto quest : pendingStops) {
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", quest).c_str());
 				NpcSync::CountCommands(1);
 			}
 			pendingStops.clear();
-			for (const auto& doomed : encounters.TakeDoomed()) {
-				if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(doomed.local)) {
-					RemoveActor(actor, doomed.quest);
+			for (const auto& removal : pendingRemovals) {
+				if (const auto ref = removal.handle.get(); ref && ref->As<RE::Actor>()) {
+					RemoveActor(ref->As<RE::Actor>(), removal.quest);
 				}
 			}
+			pendingRemovals.clear();
 		}
 
 		// The encounter quests running here as the session's first in-world frame comes, or the first after a load: settled
@@ -645,6 +674,10 @@ namespace Spawns
 				}
 			}
 			encounters.Expire(a_now);
+			std::erase_if(encounterActors, [](const auto& a_entry) {
+				const auto ref = a_entry.second.get();
+				return !ref || ref->GetFormID() != a_entry.first;
+			});
 			for (auto it = offeredEncounter.begin(); it != offeredEncounter.end();) {
 				const auto [id, quest] = *it;
 				const auto local = ours.LocalOf(id);  // 0 until granted: looked at again once it is
@@ -652,8 +685,10 @@ namespace Spawns
 					++it;
 					continue;
 				}
+				// Loaded (its 3D in), so the scan still sees it: one unloaded is being let go of (NpcSync's release), and a
+				// report of it now would race the release and leave the server a spawn nobody runs. It is let go of here too.
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local);
-				if (actor && !actor->IsDead(false) && !actor->IsDeleted() && !actor->IsDisabled() && actor->GetParentCell()) {
+				if (actor && !actor->IsDead(false) && !actor->IsDeleted() && !actor->IsDisabled() && actor->GetParentCell() && actor->Get3D()) {
 					const auto base = BaseToPlace(actor);
 					const auto at = SpotOf(actor);
 					if (base != 0 && (at.cell == 0) != (at.worldspace == 0)) {
@@ -1038,14 +1073,24 @@ namespace Spawns
 		// plain (CheckRuns), one not shared yet goes as a fight's spawn would, hostile or fighting.
 		auto encounter = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) ? EncounterOf(a_actor) : AliasKey{};
 		if (encounter.quest != 0 && encounters.IsStopped(encounter.quest, now)) {
-			encounters.OursSeen(encounter.quest, local, at, now);  // a stopped run's: booked for removal (Frame), never offered
+			// A quest we stopped lately: never offered. Its actor still standing while the quest does not run is the stopped
+			// run's, removed (Frame); with the quest running again it is a fresh roll's, left to that run (judged after
+			// STOPPED_FOR).
+			if (!QuestRunningHere(encounter.quest)) {
+				pendingRemovals.push_back({ a_actor->GetHandle(), encounter.quest });
+			}
 			return 0;
 		}
 		if (encounter.quest != 0 && !QuestRunningHere(encounter.quest)) {
 			encounter = {};
 		}
 		if (encounter.quest != 0) {
-			encounters.OursSeen(encounter.quest, local, at, now);
+			if (encounters.OursSeen(encounter.quest, local, at, now)) {
+				if (encounterActors.size() >= MAX_ENCOUNTER_ACTORS) {
+					encounterActors.clear();
+				}
+				encounterActors.try_emplace(local, a_actor->GetHandle());
+			}
 			if (encounters.MayStop(encounter.quest, now, { .unsettled = settleRuns })) {
 				const Encounters::Holds holds{ .unsettled = settleRuns, .talking = PlayerInTalk() };
 				if (const auto rival = encounters.RivalOf(encounter.quest, TheirEncounters(), now, holds)) {
@@ -1623,6 +1668,8 @@ namespace Spawns
 		calmOffered.clear();
 		calmHeldNoted.clear();
 		pendingStops.clear();  // a quest of the world left behind
+		pendingRemovals.clear();
+		encounterActors.clear();
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
 		const auto released = ours.Ids();
@@ -1667,6 +1714,8 @@ namespace Spawns
 		calmOffered.clear();
 		calmHeldNoted.clear();
 		pendingStops.clear();
+		pendingRemovals.clear();
+		encounterActors.clear();
 		settleRuns = true;  // the next session's world is settled as it comes up
 		outgoing.clear();
 	}
