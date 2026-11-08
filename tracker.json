@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T08:25:27+00:00",
+ "updated": "2026-11-08T09:00:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -721,6 +721,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0: emotes are no longer played in power armor.",
    "desc": "Pressing the clap emote key (F4 by default) in power armor made everything slide to the left on screen. 0.9.0 does not play emotes in power armor and shows a line saying why."
+  },
+  {
+   "id": "clgv",
+   "title": "A copy's death caused by its owner's own kill is reported anyway and dropped by the server",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "cnj2",
