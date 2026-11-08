@@ -26,7 +26,7 @@ package f4mp.ui
 			addEventListener(MouseEvent.CLICK, function(a_e:MouseEvent):void { onBack(); });
 		}
 
-		public function Show(a_word:String, a_gamepad:Boolean, a_color:uint, a_scale:Number):void
+		public function Show(a_word:String, a_key:String, a_gamepad:Boolean, a_color:uint, a_scale:Number):void
 		{
 			Style.Clear(this);
 			var pad:Number = PAD * a_scale;
@@ -40,7 +40,7 @@ package f4mp.ui
 				h = glyph.height;
 			}
 			if (!a_gamepad) {
-				var key:TextField = Style.Text("Esc)", TEXT_SIZE * a_scale, a_color, a_scale);
+				var key:TextField = Style.Text(a_key, TEXT_SIZE * a_scale, a_color, a_scale);
 				key.x = x;
 				addChild(key);
 				x += key.width + KEY_GAP * a_scale;
