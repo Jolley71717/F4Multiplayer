@@ -3847,6 +3847,14 @@ void Server::Run()
 		if (!line) {
 			return;
 		}
+		// A spawn's line comes from the game that shares it (protocol 63, src/game/Encounters.h): one naming another
+		// player's spawn, or one the server doesn't hold, is dropped, so no game is made to play a line at an NPC of its own.
+		if (Protocol::IsSpawnRef(line->speaker)) {
+			const auto spawn = spawns.find(line->speaker);
+			if (spawn == spawns.end() || spawn->second.playerId != a_player.id) {
+				return;
+			}
+		}
 		budgetOf(a_player).lastLine = now;
 		line->playerId = a_player.id;
 		broadcast(Protocol::Encode(*line, Protocol::MessageType::kLineSpoken), true, a_player.key);

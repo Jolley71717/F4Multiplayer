@@ -1,6 +1,7 @@
 // Random encounters shared calm (src/game/Encounters.h): which quests are encounters, the spawn's kind on the wire, a
-// line said by a spawn, the server granting two games' actors of one encounter quest, and the book that stops our run
-// of an encounter where a friend's already runs, from the server's order.
+// line said by a spawn, the server granting two games' actors of one encounter quest and relaying a spawn's line from
+// its sharer alone, and the book that stops our run of an encounter where a friend's already runs, from the server's
+// order, as the real server sends it.
 
 #include "ServerFixture.h"
 
@@ -39,9 +40,9 @@ namespace
 		return { 0, a_worldspace, a_x, a_y, 100.0f };
 	}
 
-	Protocol::Spawn Actor(std::uint32_t a_id, std::uint32_t a_quest, std::uint16_t a_alias, SpawnKind a_kind, std::uint32_t a_base = ACTOR_BASE)
+	Protocol::Spawn Actor(std::uint32_t a_id, std::uint32_t a_quest, std::uint16_t a_alias, SpawnKind a_kind, std::uint32_t a_base = ACTOR_BASE, float a_x = 1000.0f)
 	{
-		return { 0, a_id, a_base, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f, a_quest, a_alias, a_kind };
+		return { 0, a_id, a_base, 0, WORLD, a_x, 2000.0f, 100.0f, 0.5f, a_quest, a_alias, a_kind };
 	}
 
 	auto Report(const Protocol::Spawn& a_spawn)
@@ -68,11 +69,50 @@ namespace
 		return Decoded(a_packets, MT::kSpawned, [](auto a_data) { return Protocol::DecodeSpawn(a_data); });
 	}
 
+	std::vector<Protocol::Line> Lines(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kLineSpoken, [](auto a_data) { return Protocol::DecodeLine(a_data); });
+	}
+
 	// A friend's encounter spawn as the book sees it.
 	Theirs Friends(std::uint32_t a_spawn, std::uint32_t a_quest, const Spot& a_at, std::uint64_t a_seq, bool a_over = false)
 	{
 		return { a_spawn, a_quest, 7, a_at, a_seq, a_over };
 	}
+
+	// What a game does with the spawn messages the server sent it, in the order they came (Spawns::Add and OnOwners): a
+	// friend's kSpawned is a friend's encounter with the next number, and a kActorOwners that grants one of our own
+	// reported encounter actors gives our run its number. a_ours: our reported spawn ids, by the quest each is of.
+	struct Game
+	{
+		Book                 book;
+		std::vector<Theirs>  theirs;
+		std::uint32_t        id = 0;
+
+		void Take(const Packets& a_packets, const std::map<std::uint32_t, std::uint32_t>& a_ours)
+		{
+			for (const auto& packet : a_packets) {
+				if (packet.empty()) {
+					continue;
+				}
+				if (packet[0] == Type(MT::kSpawned)) {
+					const auto spawn = Protocol::DecodeSpawn(packet);
+					REQUIRE(spawn);
+					if (spawn->kind == SpawnKind::kEncounter) {
+						theirs.push_back({ spawn->refId, spawn->quest, spawn->playerId, { spawn->cell, spawn->worldspace, spawn->x, spawn->y, spawn->z }, book.Next(), false });
+					}
+				} else if (packet[0] == Type(MT::kActorOwners)) {
+					const auto owners = Protocol::DecodeOwners(packet);
+					REQUIRE(owners);
+					for (const auto& owner : *owners) {
+						if (const auto ours = a_ours.find(owner.refId); ours != a_ours.end() && owner.playerId == id) {
+							book.OursGranted(ours->second, book.Next());
+						}
+					}
+				}
+			}
+		}
+	};
 }
 
 TEST("encounters: the game's random-encounter quests are told by their name and type")
@@ -182,15 +222,47 @@ TEST("encounters: the server grants two games' actors of one encounter quest and
 	CHECK(std::ranges::count_if(toThird, [](const auto& a_spawn) { return a_spawn.kind == SpawnKind::kQuestActor; }) == 1);
 }
 
+TEST("encounters: the server relays a spawn's line from the game that shares it alone")
+{
+	Fixture f;
+	JoinAs(f, 1, "Player One");
+	JoinAs(f, 2, "Player Two");
+	f.fake->Deliver(1, Report(Actor(SPAWN, LC01, 3, SpawnKind::kEncounter)));
+	Clear(f, { 1, 2 });
+
+	// The sharer's line about its spawn reaches the other.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::Line{ 0, SPAWN, "Hello there" }, MT::kReportLine));
+	const auto heard = Lines(Received(f, 2));
+	REQUIRE(heard.size() == 1);
+	CHECK(heard[0].speaker == SPAWN && heard[0].playerId == 1);
+	std::this_thread::sleep_for(300ms);  // a player's lines go at most four a second
+
+	// Another player's line under that spawn, or under a spawn the server doesn't hold, is dropped; their own is not.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::Line{ 0, SPAWN, "Hello there" }, MT::kReportLine));
+	CHECK(Lines(Received(f, 1)).empty());
+	std::this_thread::sleep_for(300ms);
+	f.fake->Deliver(2, Protocol::Encode(Protocol::Line{ 0, SPAWN2, "Hello there" }, MT::kReportLine));
+	CHECK(Lines(Received(f, 1)).empty());
+	std::this_thread::sleep_for(300ms);
+	f.fake->Deliver(2, Protocol::Encode(Protocol::Line{ 0, 0, "Hello there" }, MT::kReportLine));
+	CHECK(Lines(Received(f, 1)).size() == 1);
+}
+
 TEST("encounters: a friend's encounter that was first at the spot stops our run begun there")
 {
 	Book       book;
 	const auto now = Encounters::Clock::now();
+	// The book met nothing before: its first run is settled (met under way, as after a load). The runs begun once the
+	// grace is past are judged; below, every run of ours begins past it.
+	book.OursSeen(KMK01, OURS, At(50000.0f), now - Encounters::SETTLE_GRACE);
+	CHECK(book.Settled(KMK01));
 	// Our run of RESceneLC01: its two actors seen, no grant yet.
 	book.OursSeen(LC01, OURS, At(1000.0f), now);
 	book.OursSeen(LC01, OURS2, At(1100.0f), now);
 	CHECK(book.Knows(LC01));
-	CHECK(!book.Knows(KMK01));
+	CHECK(!book.Settled(LC01));
+	CHECK(book.MayStop(LC01, now + 1s));
+	CHECK(!book.MayStop(KMK01, now + 1s));
 
 	// A friend's actor of another encounter 500 units away, which came before any grant of ours: ours gives way.
 	const std::array near{ Friends(SPAWN, KMK01, At(1500.0f), 1) };
@@ -215,17 +287,21 @@ TEST("encounters: a friend's encounter that was first at the spot stops our run 
 	const std::array noQuest{ Friends(SPAWN, 0, At(1500.0f), 1) };
 	CHECK(!book.RivalOf(LC01, noQuest, now + 1s));
 
-	// A run the book doesn't know, and nothing of theirs at all.
-	CHECK(!book.RivalOf(KMK01, near, now + 1s));
+	// A run the book doesn't know, a settled one, and nothing of theirs at all.
+	CHECK(!book.RivalOf(DN083, near, now + 1s));
+	const std::array besideSettled{ Friends(SPAWN, LC01, At(50100.0f), 1) };
+	CHECK(!book.RivalOf(KMK01, besideSettled, now + 1s));
 	CHECK(!book.RivalOf(LC01, std::span<const Theirs>{}, now + 1s));
 }
 
 TEST("encounters: the server's order decides, so two games decide alike")
 {
 	// What the server did: granted game A's actor first (its kActorOwners to both, kSpawned to B), then game B's.
-	// Game A: its own grant arrives first, then B's spawn.
-	Book       a;
+	// Game A: its own grant arrives first, then B's spawn. (Each book's first sighting is long before the runs here.)
 	const auto now = Encounters::Clock::now();
+	const auto Begun = [&](Book& a_book) { a_book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min); };
+	Book a;
+	Begun(a);
 	a.OursSeen(LC01, OURS, At(1000.0f), now);
 	a.OursGranted(LC01, a.Next());                           // 1
 	const std::array bSpawn{ Friends(SPAWN2, KMK01, At(1300.0f), a.Next()) };  // 2
@@ -233,6 +309,7 @@ TEST("encounters: the server's order decides, so two games decide alike")
 
 	// Game B: A's spawn arrives first, then its own grant.
 	Book b;
+	Begun(b);
 	b.OursSeen(KMK01, OURS, At(1300.0f), now);
 	const std::array aSpawn{ Friends(SPAWN, LC01, At(1000.0f), b.Next()) };  // 1
 	b.OursGranted(KMK01, b.Next());                                            // 2
@@ -246,6 +323,7 @@ TEST("encounters: the server's order decides, so two games decide alike")
 	a.OursGranted(LC01, 5);
 	CHECK(!a.RivalOf(LC01, bSpawn, now + 2s));
 	Book c;
+	Begun(c);
 	c.OursSeen(KMK01, OURS, At(1300.0f), now);
 	c.OursGranted(KMK01, 3);
 	const std::array laterSpawn{ Friends(SPAWN, LC01, At(1000.0f), 4) };
@@ -254,49 +332,105 @@ TEST("encounters: the server's order decides, so two games decide alike")
 	CHECK(!c.RivalOf(KMK01, laterSpawn, now + 2s));
 }
 
-TEST("encounters: past the window ours stays, a stopped run is left alone, and old runs are forgotten")
+TEST("encounters: two games fed the real server's messages in arrival order decide alike")
+{
+	// Two players roll different encounters at one trigger, within a second of each other: each game sees its own
+	// actor, reports it, and takes what the server sends in the order it comes. The server took the first player's
+	// report first, so the first player's run stays and the second's gives way, in both games' books.
+	Fixture    f;
+	const auto first = JoinAs(f, 1, "Player One");
+	const auto second = JoinAs(f, 2, "Player Two");
+	Clear(f, { 1, 2 });
+	const auto now = Encounters::Clock::now();
+	Game a{ .id = first };
+	Game b{ .id = second };
+	for (auto* game : { &a, &b }) {
+		game->book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // the book's first sighting, long before
+	}
+	a.book.OursSeen(LC01, OURS, At(1000.0f), now);
+	b.book.OursSeen(KMK01, OURS2, At(1300.0f), now);
+	f.fake->Deliver(1, Report(Actor(SPAWN, LC01, 3, SpawnKind::kEncounter, ACTOR_BASE, 1000.0f)));
+	f.fake->Deliver(2, Report(Actor(SPAWN2, KMK01, 14, SpawnKind::kEncounter, RAIDER, 1300.0f)));
+	a.Take(Received(f, 1), { { SPAWN, LC01 } });
+	b.Take(Received(f, 2), { { SPAWN2, KMK01 } });
+
+	REQUIRE(a.theirs.size() == 1);
+	REQUIRE(b.theirs.size() == 1);
+	CHECK(!a.book.RivalOf(LC01, a.theirs, now + 1s));  // the first player's run stays
+	const auto rival = b.book.RivalOf(KMK01, b.theirs, now + 1s);
+	REQUIRE(rival);                                     // the second's gives way
+	CHECK(rival->spawnId == SPAWN && rival->quest == LC01 && rival->player == first);
+}
+
+TEST("encounters: past the window ours stays, a stopped run is left alone, and a run met under way is never stopped")
 {
 	Book       book;
 	const auto now = Encounters::Clock::now();
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // the book's first sighting, long before
 	book.OursSeen(LC01, OURS, At(1000.0f), now);
 	const std::array theirs{ Friends(SPAWN, KMK01, At(1200.0f), 1) };
 	CHECK(book.RivalOf(LC01, theirs, now + Encounters::STOP_WINDOW - 1s));
 	CHECK(!book.RivalOf(LC01, theirs, now + Encounters::STOP_WINDOW));
+	CHECK(!book.MayStop(LC01, now + Encounters::STOP_WINDOW));
 	// Seen again later: the run's start is still its first sighting.
 	book.OursSeen(LC01, OURS, At(1000.0f), now + Encounters::STOP_WINDOW + 5s);
 	CHECK(!book.RivalOf(LC01, theirs, now + Encounters::STOP_WINDOW + 6s));
 	CHECK(book.StartedAt(LC01) == now);
 
-	// Stopped: left alone for STOPPED_FOR, and its actors seen again in that time don't make a new run.
+	// Stopped: left alone for STOPPED_FOR, and its actors seen again in that time make no new run.
 	Book stopped;
+	stopped.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);
 	stopped.OursSeen(LC01, OURS, At(1000.0f), now);
 	stopped.Stopped(LC01, now + 1s);
 	CHECK(stopped.IsStopped(LC01, now + 1s));
 	CHECK(!stopped.Knows(LC01));
 	stopped.OursSeen(LC01, OURS, At(1000.0f), now + 2s);
-	CHECK(stopped.IsStopped(LC01, now + 2s));
+	CHECK(!stopped.Knows(LC01));
 	CHECK(!stopped.RivalOf(LC01, theirs, now + 3s));
 	CHECK(!stopped.IsStopped(LC01, now + 1s + Encounters::STOPPED_FOR));
 	CHECK(!stopped.IsStopped(KMK01, now + 1s));
 	stopped.Expire(now + 1s + Encounters::STOPPED_FOR);
 	CHECK(!stopped.IsStopped(LC01, now + 2s));  // forgotten: the quest may run here again
 
-	// A run none of whose actors has been seen for FORGET_AFTER is forgotten; one seen lately is kept.
-	Book old;
-	old.OursSeen(LC01, OURS, At(1000.0f), now);
-	old.OursSeen(KMK01, OURS2, At(5000.0f), now + Encounters::FORGET_AFTER - 1s);
-	old.Expire(now + Encounters::FORGET_AFTER);
-	CHECK(!old.Knows(LC01));
-	CHECK(old.Knows(KMK01));
-	CHECK(old.Size() == 1);
-	old.Clear();
-	CHECK(old.Size() == 0);
+	// Over (the quest stopped running here): forgotten; running again later, it is a new run, judged afresh.
+	Book over;
+	over.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);
+	over.OursSeen(LC01, OURS, At(1000.0f), now);
+	over.OursOver(LC01);
+	CHECK(!over.Knows(LC01));
+	over.OursSeen(LC01, OURS, At(1000.0f), now + 5min);
+	CHECK(over.Knows(LC01));
+	CHECK(over.RivalOf(LC01, theirs, now + 5min + 1s));
+
+	// Met under way: a run first seen within SETTLE_GRACE of the book's first sighting since it was cleared (a load, a
+	// session's start) began before the book could know when, and is never stopped, whatever stands beside it. One a
+	// friend's older encounter stands beside, say ours ran long and we came back to it after a load, stays.
+	Book loaded;
+	loaded.OursSeen(LC01, OURS, At(1000.0f), now);
+	loaded.OursSeen(KMK01, OURS2, At(5000.0f), now + Encounters::SETTLE_GRACE - 1s);
+	CHECK(loaded.Settled(LC01));
+	CHECK(loaded.Settled(KMK01));
+	CHECK(!loaded.MayStop(LC01, now + 1s));
+	CHECK(!loaded.RivalOf(LC01, theirs, now + 1s));
+	const std::array olderBeside{ Friends(SPAWN, KMK01, At(1200.0f), 1) };
+	CHECK(!loaded.RivalOf(LC01, olderBeside, now + 1s));
+	// A run begun once the grace is past is judged as any.
+	loaded.OursSeen(DN083, 0xFF0FFFFE, At(1000.0f), now + Encounters::SETTLE_GRACE);
+	CHECK(!loaded.Settled(DN083));
+	CHECK(loaded.RivalOf(DN083, olderBeside, now + Encounters::SETTLE_GRACE + 1s));
+	// Cleared (a load): what it meets next is settled again.
+	loaded.Clear();
+	CHECK(loaded.Size() == 0);
+	loaded.OursSeen(DN083, 0xFF0FFFFE, At(1000.0f), now + 1h);
+	CHECK(loaded.Settled(DN083));
+	CHECK(!loaded.RivalOf(DN083, olderBeside, now + 1h + 1s));
 }
 
 TEST("encounters: the nearest of several rivals, and a run's actors are kept to a limit")
 {
 	Book       book;
 	const auto now = Encounters::Clock::now();
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // the book's first sighting, long before
 	book.OursSeen(LC01, OURS, At(1000.0f), now);
 	const std::array theirs{ Friends(SPAWN, KMK01, At(2500.0f), 1), Friends(SPAWN2, DN083, At(1800.0f), 2), Friends(SPAWN3, KMK01, At(1200.0f), 3) };
 	const auto       rival = book.RivalOf(LC01, theirs, now + 1s);
@@ -312,6 +446,7 @@ TEST("encounters: the nearest of several rivals, and a run's actors are kept to 
 
 	// Actors past MAX_ACTORS are not kept, so a crowd doesn't grow the book; a known actor's spot is moved.
 	Book crowd;
+	crowd.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);
 	const auto spread = [](std::uint32_t a_i) { return At(100000.0f + static_cast<float>(a_i) * 2.0f * Encounters::COLLIDE_RANGE); };  // each out of the others' range
 	for (std::uint32_t i = 0; i < Encounters::MAX_ACTORS + 8; ++i) {
 		crowd.OursSeen(KMK01, 0xFF020000 + i, spread(i), now);
@@ -325,4 +460,8 @@ TEST("encounters: the nearest of several rivals, and a run's actors are kept to 
 	CHECK(crowd.RivalOf(KMK01, nearKept, now + 1s));  // the last actor within the limit was noted
 	const std::array nearLast{ Friends(SPAWN, LC01, spread(Encounters::MAX_ACTORS + 7), 1) };
 	CHECK(!crowd.RivalOf(KMK01, nearLast, now + 1s));  // an actor past the limit was never noted
+	auto quests = crowd.Quests();
+	std::ranges::sort(quests);
+	const std::vector<std::uint32_t> both{ KMK01, DN083 };  // sorted: KMK01 is the lower form ID
+	CHECK(quests == both);
 }

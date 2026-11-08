@@ -28,7 +28,8 @@
 // Art", whose accusor only aims). Now one of our runtime NPCs that an alias of a running encounter quest created is ours
 // to share calm or not; the server tells it apart from a shared quest's paired creature (QuestActors.h) by the spawn's
 // kind (Protocol::SpawnKind::kEncounter): an encounter quest is repeatable and every game's run is its own, so two
-// games running RETravelKMK01 at two ends of the map both share theirs, and no twin refusal applies.
+// games running RETravelKMK01 at two ends of the map both share theirs, and no twin refusal applies. A receiver takes a
+// friend's word for the kind only when the quest named is an encounter in its own game's files.
 //
 // Each game rolls encounters for its own player: the trigger references (RETriggerScene, RETriggerTravel, ...) send a
 // story event on the player's entering them (RETriggerScript), and the story manager picks one quest for it. Two players
@@ -37,7 +38,10 @@
 // REParent's cleanup and which deletes its created actors), and our copies of theirs are placed: one encounter per spot.
 // Who was first is the server's order: every spawn message that arrives (a friend's kSpawned, our own grant in
 // kActorOwners) is numbered as it comes, the same order in every game since the server sends them in the order it took
-// them, so the two games decide alike and exactly one stops. Kept free of the game so it can be tested
+// them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW): past that
+// its player is in it. A run the book meets already under way (the first scan after a load, a session's start, a book
+// cleared) is settled from the start: the book can't tell when it began, and a long-running encounter must never be
+// stopped partway for a friend's that came to stand beside it. Kept free of the game so it can be tested
 // (tests/EncounterTests.cpp).
 namespace Encounters
 {
@@ -55,11 +59,15 @@ namespace Encounters
 	inline constexpr auto STOP_WINDOW = std::chrono::seconds(20);
 	// A quest we stopped is left alone this long: the engine winds it down and deletes its actors meanwhile.
 	inline constexpr auto STOPPED_FOR = std::chrono::seconds(60);
-	// An encounter of ours none of whose actors has been seen for this long is forgotten (it stopped, or its actors
-	// unloaded for good).
-	inline constexpr auto FORGET_AFTER = std::chrono::minutes(5);
+	// Runs first seen this soon after the book's first sighting since it was cleared (a load, a session's start) were
+	// under way before the book could know when they began: settled, never stopped.
+	inline constexpr auto SETTLE_GRACE = std::chrono::seconds(10);
 	// Actors of one encounter whose spots are kept (a travelling group is three to eight).
 	inline constexpr std::size_t MAX_ACTORS = 16;
+	// Calm encounter actors one game shares at once: half its spawns (Protocol::MAX_SPAWNS_PER_PLAYER), a camp and a
+	// travelling group, so a fight's raiders are never refused for a crowd of bystanders. A calm actor that turns hostile
+	// or joins a fight is shared as any fight's spawn, past this.
+	inline constexpr std::size_t MAX_CALM = 16;
 
 	// Whether this is a name the game gives its random encounters: RE and a capital or an underscore (RESceneLC01,
 	// REChokepointSC01, RECheckpoint02_SynthAttackers, REScene_VertibirdKMK01), after the add-on's prefix in an add-on's
@@ -104,11 +112,18 @@ namespace Encounters
 		std::uint64_t Next() { return ++seq; }
 
 		// One of our encounter actors (a_local, of quest a_quest) was seen in the scan, standing at a_at. The first sighting
-		// of a quest's actor is when our run of it started, as far as the book can tell.
+		// of a quest's actor is when our run of it started, as far as the book can tell; one first seen within SETTLE_GRACE
+		// of the book's first sighting since it was cleared was under way before, and is settled. Nothing for a quest we
+		// stopped lately (IsStopped): its actors still standing make no new run.
 		void OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now)
 		{
-			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now }).first->second;
-			run.lastSeen = a_now;
+			if (IsStopped(a_quest, a_now)) {
+				return;
+			}
+			if (!firstSighting) {
+				firstSighting = a_now;
+			}
+			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now, .settled = a_now - *firstSighting < SETTLE_GRACE }).first->second;
 			if (const auto it = std::ranges::find(run.actors, a_local, &Actor::local); it != run.actors.end()) {
 				it->at = a_at;
 			} else if (run.actors.size() < MAX_ACTORS) {
@@ -126,6 +141,12 @@ namespace Encounters
 			}
 		}
 
+		// Our run of a_quest is over (the quest no longer runs here): forgotten. Seen running again later, it is a new run.
+		void OursOver(std::uint32_t a_quest)
+		{
+			ours.erase(a_quest);
+		}
+
 		// We stopped our run of a_quest: left alone for STOPPED_FOR, and its actors not offered meanwhile.
 		void Stopped(std::uint32_t a_quest, Clock::time_point a_now)
 		{
@@ -139,17 +160,23 @@ namespace Encounters
 			return it != stopped.end() && a_now - it->second < STOPPED_FOR;
 		}
 
-		// The friend's encounter our run of a_quest gives way to, if any: a live spawn of theirs within COLLIDE_RANGE of one
-		// of our run's actors, whose number in the server's order is below our run's first grant (or our run has none yet),
-		// while our run started within STOP_WINDOW. The nearest when several. Nothing for a run the book doesn't know, one
-		// past the window, or one stopped already.
-		[[nodiscard]] std::optional<Rival> RivalOf(std::uint32_t a_quest, std::span<const Theirs> a_theirs, Clock::time_point a_now) const
+		// Whether our run of a_quest could still give way to a friend's: known, not settled, within STOP_WINDOW of its start
+		// and not stopped already. RivalOf says to which, if any; what it needs of theirs is gathered only when this holds.
+		[[nodiscard]] bool MayStop(std::uint32_t a_quest, Clock::time_point a_now) const
 		{
 			const auto it = ours.find(a_quest);
-			if (it == ours.end() || IsStopped(a_quest, a_now) || a_now - it->second.firstSeen >= STOP_WINDOW) {
+			return it != ours.end() && !it->second.settled && !IsStopped(a_quest, a_now) && a_now - it->second.firstSeen < STOP_WINDOW;
+		}
+
+		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs within
+		// COLLIDE_RANGE of one of our run's actors, whose number in the server's order is below our run's first grant (or
+		// our run has none yet). The nearest when several.
+		[[nodiscard]] std::optional<Rival> RivalOf(std::uint32_t a_quest, std::span<const Theirs> a_theirs, Clock::time_point a_now) const
+		{
+			if (!MayStop(a_quest, a_now)) {
 				return std::nullopt;
 			}
-			const auto&          run = it->second;
+			const auto&          run = ours.at(a_quest);
 			std::optional<Rival> best;
 			for (const auto& theirs : a_theirs) {
 				if (theirs.over || theirs.quest == 0 || (run.grant && theirs.seq >= *run.grant)) {
@@ -165,15 +192,21 @@ namespace Encounters
 			return best;
 		}
 
-		// Runs none of whose actors has been seen for FORGET_AFTER, and stops past STOPPED_FOR, are forgotten.
+		// Stops past STOPPED_FOR are forgotten. Runs are kept until OursOver (the quest stopped running) or Clear.
 		void Expire(Clock::time_point a_now)
 		{
-			std::erase_if(ours, [&](const auto& a_entry) { return a_now - a_entry.second.lastSeen >= FORGET_AFTER; });
 			std::erase_if(stopped, [&](const auto& a_entry) { return a_now - a_entry.second >= STOPPED_FOR; });
 		}
 
 		// Whether the book knows our run of a_quest.
 		[[nodiscard]] bool Knows(std::uint32_t a_quest) const { return ours.contains(a_quest); }
+
+		// Whether our run of a_quest is settled: met already under way, never stopped.
+		[[nodiscard]] bool Settled(std::uint32_t a_quest) const
+		{
+			const auto it = ours.find(a_quest);
+			return it != ours.end() && it->second.settled;
+		}
 
 		// Where our run of a_quest was first seen (for the log), or nothing.
 		[[nodiscard]] std::optional<Clock::time_point> StartedAt(std::uint32_t a_quest) const
@@ -182,12 +215,25 @@ namespace Encounters
 			return it != ours.end() ? std::optional{ it->second.firstSeen } : std::nullopt;
 		}
 
+		// The quests of our runs (for the check that each still runs).
+		[[nodiscard]] std::vector<std::uint32_t> Quests() const
+		{
+			std::vector<std::uint32_t> out;
+			out.reserve(ours.size());
+			for (const auto& [quest, run] : ours) {
+				out.push_back(quest);
+			}
+			return out;
+		}
+
 		[[nodiscard]] std::size_t Size() const { return ours.size(); }
 
+		// A load, a session's end: what the book knew is of another world. The runs it meets next are settled.
 		void Clear()
 		{
 			ours.clear();
 			stopped.clear();
+			firstSighting.reset();
 		}
 
 	private:
@@ -199,12 +245,13 @@ namespace Encounters
 		struct Run
 		{
 			Clock::time_point            firstSeen{};
-			Clock::time_point            lastSeen{};
-			std::optional<std::uint64_t> grant;  // the number of the first grant of one of its actors
+			bool                         settled = false;  // met already under way: never stopped
+			std::optional<std::uint64_t> grant;            // the number of the first grant of one of its actors
 			std::vector<Actor>           actors;
 		};
 		std::unordered_map<std::uint32_t, Run>               ours;     // our encounter runs, by quest
 		std::unordered_map<std::uint32_t, Clock::time_point> stopped;  // quests we stopped, and when
+		std::optional<Clock::time_point>                     firstSighting;  // the first OursSeen since the book was cleared
 		std::uint64_t                                        seq = 0;
 	};
 }
