@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T09:24:26+00:00",
+ "updated": "2026-11-08T09:54:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -32,7 +32,7 @@
    "kind": "feature",
    "priority": 1,
    "stage": 6,
-   "note": "In 0.14.0-rc1, soaking now",
+   "note": "In 0.14.0-rc2, soaking now",
    "pr": 333
   },
   {
@@ -68,8 +68,8 @@
    "title": "Quest creatures not paired when the joiner's game starts the quest itself (both players at the scene): deaths don't match",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged (PR 340); goes out in 0.14.0-rc2",
+   "stage": 6,
+   "note": "In 0.14.0-rc2, soaking now",
    "pr": 340
   },
   {
@@ -431,7 +431,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 6,
-   "note": "In 0.14.0-rc1, soaking now",
+   "note": "In 0.14.0-rc2, soaking now",
    "pr": 287
   },
   {
@@ -1700,7 +1700,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 6,
-   "note": "In 0.14.0-rc1, soaking now",
+   "note": "In 0.14.0-rc2, soaking now",
    "pr": 324
   },
   {
