@@ -36,7 +36,7 @@ early can run it and say whether it holds. In this order:
 
    The menu movies (`ui/<Name>/<Name>.as`) go into the zip's `Interface/F4Multiplayer/`, compiled from
    source: `-Movies <folder>` names the folder they were compiled into (the workflow does that); without it
-   they are read from beside their sources, where `tools/flash/build.ps1` builds them, and a movie git tracks
+   they are read from `dist/movies/`, where `tools/flash/build.ps1` builds them, and a movie git tracks
    is refused. With no `ui/`, there are none. The workflows clear the build dates mxmlc writes into a movie
    (its compile time and its Metadata date), so the same sources make the same bytes: the manifest's
    `movies_sha256` line can be checked against a `vet.yml` report on that commit. A movie built on this PC
@@ -132,7 +132,9 @@ verdict=PASS
 1. `tools/promote.ps1 -Rc vX.Y.Z-rcN`. It refuses unless the rc's zip matches its manifest, the tag
    `vX.Y.Z-rcN` is the manifest's commit, the rc was not packaged with `-AllowDirty`, and the verdict
    is a PASS for that commit and that DLL. It writes `F4Multiplayer-X.Y.Z.zip` (and `-nexus.zip`,
-   without the dedicated server) holding the rc's files byte for byte, plus their manifest and the
+   without the dedicated server) holding the rc's files byte for byte, but for the About page's notes
+   (`release-notes.md`, the rc's own in the rc), which become `dist/RELEASE-X.Y.Z.md`: write those notes
+   first, it refuses without them. Then their manifest and the
    `.pdb` under the release's name. Only `promote.ps1` makes a release zip; skipping the soak means
    publishing by hand, as a deliberate and visible choice.
 2. Run the commands it prints: tag the rc's commit `vX.Y.Z`, push the tag, and create the GitHub

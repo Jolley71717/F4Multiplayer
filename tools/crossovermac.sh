@@ -2,7 +2,8 @@
 # Fallout 4 under CrossOver on a Mac: what deploy.ps1, restart-game.ps1 and devctl.ps1 do on Windows, for the plugin
 # built with tools/xwin.lua (docs/misc/MAC.md).
 #
-#   tools/crossovermac.sh deploy [mode]                 # the build into the game; the ini only if the game has none
+#   tools/crossovermac.sh deploy [mode] [--movies dir]  # the build into the game; the ini only if the game has none;
+#                                                       # --movies: package.yml's compiled movies, not dist/movies
 #   tools/crossovermac.sh restart [cell] [--no-deploy]  # close, deploy, start through Steam, SanctuaryExt in god mode
 #   tools/crossovermac.sh restart ''                    # stop at the main menu
 #   tools/crossovermac.sh dev status pos "console coc QASmoke"
@@ -25,13 +26,52 @@ bottle_dir="${game%%/Bottles/*}/Bottles/$bottle"
 f4se_docs="$bottle_dir/drive_c/users/crossover/Documents/My Games/Fallout4/F4SE"
 
 deploy() {
-	local build="$root/build/windows/x64/${1:-releasedbg}"
+	local mode=releasedbg movies=""
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--movies) movies=${2:?--movies needs a folder}; shift 2 ;;
+		*) mode=$1; shift ;;
+		esac
+	done
+	local build="$root/build/windows/x64/$mode"
 	local plugins="$game/Data/F4SE/Plugins"
 	mkdir -p "$plugins/F4Multiplayer/lang"
 	cp -f "$build/F4Multiplayer.dll" "$build/F4Multiplayer.pdb" "$plugins/"
 	[ -f "$plugins/F4Multiplayer.ini" ] || cp "$root/dist/F4Multiplayer.ini" "$plugins/"
 	# the texts belong to the build, unlike the ini
 	cp -f "$root/dist/lang/"*.txt "$plugins/F4Multiplayer/lang/"
+	cp -f "$root/dist/about.txt" "$plugins/F4Multiplayer/"
+	# this version's release notes, for the About page's link, if it has them yet
+	local version notes
+	version=$(sed -n 's/^set_version("\([^"]*\)").*/\1/p' "$root/xmake.lua" | tr -d '\r')
+	notes="$root/dist/RELEASE-$version.md"
+	if [ -f "$notes" ]; then cp -f "$notes" "$plugins/F4Multiplayer/release-notes.md"; else rm -f "$plugins/F4Multiplayer/release-notes.md"; fi
+	# the plugin's own menu movies, in a folder of the game's Interface of their own (git holds none): from --movies, or
+	# from dist/movies, compiled from ui/<Name>/ when one is missing or older than its sources and java is here. A movie
+	# that can't be had is a warning, not a failure: without it the plugin falls back to its message box.
+	mkdir -p "$game/Data/Interface/F4Multiplayer"
+	local dir name movie
+	for dir in "$root"/ui/*/; do
+		name=$(basename "$dir")
+		[ "$name" = shared ] && continue
+		if [ -n "$movies" ]; then
+			movie="$movies/$name.swf"
+		else
+			movie="$root/dist/movies/$name.swf"
+			if [ ! -f "$movie" ] || [ -n "$(find "$root/ui" -name '*.as' -newer "$movie" | head -1)" ]; then
+				if ! command -v java > /dev/null; then
+					echo "warning: $name.swf is missing or older than ui/: java is not on PATH to compile it (or pass --movies)" >&2
+				elif ! "$root/tools/flash/build.sh" "$name"; then
+					echo "warning: $name.swf did not compile" >&2
+				fi
+			fi
+		fi
+		if [ -f "$movie" ]; then
+			cp -f "$movie" "$game/Data/Interface/F4Multiplayer/"
+		else
+			echo "warning: no $movie to deploy: the game keeps the $name.swf it has, if any (without one the plugin shows its message box)" >&2
+		fi
+	done
 	echo "Deployed to $plugins"
 }
 

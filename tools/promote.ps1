@@ -1,6 +1,7 @@
 # Makes the release from a release candidate that held, without building anything: the release zips
 # hold the rc's own files, byte for byte, so what was soaked is what ships (its plugin log still says
-# "build rcN <commit>"; the notes say the release is identical to rcN).
+# "build rcN <commit>"; the notes say the release is identical to rcN). One file differs: the About page's
+# release-notes.md becomes the release's own notes, dist\RELEASE-X.Y.Z.md, in place of the rc's tester notes.
 #
 #   tools\promote.ps1 -Rc v0.8.6-rc3
 #
@@ -31,7 +32,8 @@ $label = $Matches[2]
 $rcName = "F4Multiplayer-$version-$label"
 $rcZip = Join-Path $OutDir "$rcName.zip"
 $manifestPath = Join-Path $OutDir "$rcName.manifest.txt"
-foreach ($path in $rcZip, $manifestPath, $Verdict) {
+$releaseNotes = Join-Path $root "dist\RELEASE-$version.md"
+foreach ($path in $rcZip, $manifestPath, $Verdict, $releaseNotes) {
 	if (-not (Test-Path -LiteralPath $path)) { throw "Missing $path" }
 }
 
@@ -57,6 +59,8 @@ Expand-Zip $rcZip $stage
 try {
 	$dll = Join-Path $stage 'F4SE\Plugins\F4Multiplayer.dll'
 	if ((Get-Sha256 $dll) -ne $manifest['dll_sha256']) { throw "The DLL in $rcName.zip is not the one its manifest names" }
+	# The About page's notes: the release's, not the rc's ("A test build of ...").
+	Copy-Item -LiteralPath $releaseNotes (Join-Path $stage 'F4SE\Plugins\F4Multiplayer\release-notes.md') -Force
 
 	$name = "F4Multiplayer-$version"
 	$zip = Join-Path $OutDir "$name.zip"
