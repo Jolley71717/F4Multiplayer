@@ -5,6 +5,7 @@
 
 #include "game/Dialogue.h"
 #include "game/Hud.h"
+#include "game/LineHold.h"
 #include "game/LineShare.h"
 #include "game/LineSounds.h"
 #include "game/NpcSync.h"
@@ -64,17 +65,29 @@ namespace Conversations
 		std::uint32_t                               cutUnlogged = 0;  // ... of them, not logged (CUT_LOG_EVERY) since the last cut logged
 		std::optional<Clock::time_point>            cutLoggedAt;      // when a cut was last logged
 
-		// Friends' lines held for a copy of their speaker about to be placed (Apply, HeldLinesFrame): a spawn's first line
-		// came 0.3 s before the copies stood on the rig (0.14.0), and nobody was there to say it.
+		// Friends' lines held for a copy of their speaker about to be placed (Apply, HeldLinesFrame; LineHold.h): a spawn's
+		// first line came 0.3 s before the copies stood on the rig (0.14.0), and nobody was there to say it.
 		struct Held
 		{
 			Protocol::Line    line;
 			Clock::time_point since{};
 		};
-		constexpr auto        HOLD_FOR = 2s;
-		constexpr std::size_t MAX_HELD = 16;
-		std::vector<Held>     heldLines;
-		std::uint32_t         held = 0, heldDropped = 0;  // lines held; of them, let go unsaid (no copy came in time)
+		std::vector<Held> heldLines;
+		std::uint32_t     held = 0, heldDropped = 0;  // lines held; of them, let go unsaid (no copy stood in time)
+
+		// Our copy of a friend's spawn, as a line's speaker: placed (Spawns::LocalOf names it), and standing with its 3D.
+		struct CopyState
+		{
+			bool placed = false;
+			bool loaded = false;
+		};
+
+		CopyState CopyOf(std::uint32_t a_spawn)
+		{
+			const auto local = Spawns::LocalOf(a_spawn);
+			const auto actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+			return { local != 0, actor && actor->Get3D() };
+		}
 
 		// The sounds of friends' lines, keyed like Shown (a speaker says one line at a time), each with a hard end.
 		using Sounds = LineSounds<RE::BSSoundHandle>;
@@ -758,14 +771,21 @@ namespace Conversations
 			const auto now = Clock::now();
 			std::vector<Protocol::Line> due;
 			for (auto it = heldLines.begin(); it != heldLines.end();) {
-				if (now - it->since >= HOLD_FOR || !Spawns::Expects(it->line.speaker)) {  // over (dead, gone): not said at a corpse
+				const auto copy = CopyOf(it->line.speaker);
+				switch (LineHold::Decide(Spawns::Expects(it->line.speaker), copy.placed, copy.loaded, now - it->since)) {
+				case LineHold::Step::kDrop:
 					++heldDropped;
+					REX::DEBUG("Conversations: a line from player {} (speaker {:08X}, info {:08X}) held for its speaker's copy is let go: {}", it->line.playerId, it->line.speaker, it->line.info,
+						!Spawns::Expects(it->line.speaker) ? "the spawn is over" : copy.placed ? "the copy's 3D did not come in time" : "no copy was placed in time");
 					it = heldLines.erase(it);
-				} else if (Spawns::LocalOf(it->line.speaker) != 0) {
+					break;
+				case LineHold::Step::kSay:
 					due.push_back(it->line);
 					it = heldLines.erase(it);
-				} else {
+					break;
+				case LineHold::Step::kHold:
 					++it;
+					break;
 				}
 			}
 			for (const auto& line : due) {
@@ -805,25 +825,51 @@ namespace Conversations
 	{
 		++received;
 		const auto player = RE::PlayerCharacter::GetSingleton();
-		// A friend's spawn whose copy is not placed here yet (one just shared: the copy follows in a moment) says its
-		// line before anyone is here to say it: held for a little, and said once the copy stands (Frame).
-		if (Protocol::IsSpawnRef(a_line.speaker) && Spawns::LocalOf(a_line.speaker) == 0 && Spawns::Expects(a_line.speaker) && heldLines.size() < MAX_HELD) {
-			heldLines.push_back({ a_line, Clock::now() });
-			++held;
+		// A friend's spawn whose copy is not standing here yet (one just shared: the copy follows in a moment, and has a
+		// cell before its 3D) says its line before anyone is here to say it: held for a little, and said once the copy
+		// stands with its 3D (Frame, LineHold).
+		if (Protocol::IsSpawnRef(a_line.speaker)) {
+			const auto copy = CopyOf(a_line.speaker);
+			if (LineHold::Holds(Spawns::Expects(a_line.speaker), copy.placed, copy.loaded, heldLines.size())) {
+				heldLines.push_back({ a_line, Clock::now() });
+				++held;
+				REX::DEBUG("Conversations: a line from player {} (speaker {:08X}, info {:08X}) is held: its speaker's copy is {} yet", a_line.playerId, a_line.speaker, a_line.info,
+					copy.placed ? "placed, without its 3D" : "not placed");
+				return;
+			}
+		}
+		// Why a line ends unsaid, for the log (DEBUG): a line that reached nobody on the rig left no trace otherwise.
+		const auto unsaid = [&](std::string_view a_why) {
+			REX::DEBUG("Conversations: a line from player {} (speaker {:08X}, info {:08X}) is not said: {}", a_line.playerId, a_line.speaker, a_line.info, a_why);
+		};
+		const auto [actor, name] = FindSpeaker(a_line);
+		if (!player || !actor) {
+			if (a_line.speaker == 0) {
+				unsaid("their stand-in is not here");
+			} else {
+				const auto local = Protocol::IsSpawnRef(a_line.speaker) ? Spawns::LocalOf(a_line.speaker) : a_line.speaker;
+				const auto here = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+				unsaid(!here ? "no copy of the speaker here" : here->IsDead(false) ? "the speaker is dead here" : "the speaker's copy has no 3D");
+			}
 			return;
 		}
-		const auto [actor, name] = FindSpeaker(a_line);
-		if (!player || !actor || !SameSpace(player, actor) ||
-			actor->data.location.GetDistance(player->data.location) > HEAR_RANGE) {
+		if (!SameSpace(player, actor)) {
+			unsaid("the speaker is in another space");
+			return;
+		}
+		if (const float distance = actor->data.location.GetDistance(player->data.location); distance > HEAR_RANGE) {
+			unsaid(std::format("the speaker is {:.0f} units away, out of hearing", distance));
 			return;
 		}
 		// Our own copy is saying it too (or we're in this conversation ourselves): we hear it already.
 		if (a_line.speaker != 0 && (actor->IsTalking() || NpcSync::TalkingTo() == actor->GetFormID())) {
+			unsaid(actor->IsTalking() ? "our copy of the speaker says it itself" : "we are in this conversation ourselves");
 			return;
 		}
 		const auto key = (static_cast<std::uint64_t>(a_line.playerId) << 32) | a_line.speaker;
 		const auto now = Clock::now();
 		if (Throttled(key, a_line.text, now)) {
+			unsaid("the same line again, or too many lately");
 			return;
 		}
 		shown.push_back({ key, a_line.text, now });

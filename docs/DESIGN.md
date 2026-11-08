@@ -669,7 +669,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and play the recording there as for any NPC a friend runs; the recording is found by the line's info id and its
   plugin even when the engine has no form for the info here (a quest's dialogue is in memory as that quest needs it:
   RESceneLC01's accusor came as text alone on the rig, his files in the archives all the while); a line that comes
-  before the copy of its speaker stands is held up to 2 s for it; a creature's line (a race the player can't talk to)
+  before the copy of its speaker stands with its 3D is held for it, up to 2 s (`LineHold`, game-free and tested: a copy
+  just placed has a cell before its 3D, and the accusation's first line, let go as the copy was placed, ended silently
+  on the rig); a creature's line (a race the player can't talk to)
   is shared only when the speaker's own game has its recording (`LineShare`, game-free and tested): a growl names a
   sound descriptor and no voice file, an eyebot's broadcast or Liberty Prime's line is recorded and goes. Each game rolls encounters for its own player (the
   `RETrigger*` references send a story event as the player enters them; `REScript` stops the quest itself on
