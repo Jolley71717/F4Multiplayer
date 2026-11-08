@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T03:34:59+00:00",
+ "updated": "2026-11-08T03:49:57+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -780,6 +780,14 @@
    "note": ""
   },
   {
+   "id": "dri9",
+   "title": "Stand-in re-dressed every 3 s when the wanted gear holds two weapons (10mm and laser rifle)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found in the 0.14.0 soak: a friend's stand-in is re-dressed every few seconds"
+  },
+  {
    "id": "dta6",
    "title": "Host crash inside the dev-only 'storage' console command (game script engine creating an object), shared-workbench rig work, 2026-11-04 04:01",
    "kind": "bug",
@@ -1222,6 +1230,14 @@
    "pr": 236
   },
   {
+   "id": "kgwm",
+   "title": "Host's press doesn't take an item the VM dropped (0.14.0-rc1 rerun)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "kihp",
    "title": "Menus that open by themselves while catching up on a friend's quests",
    "kind": "bug",
@@ -1322,6 +1338,14 @@
    "note": "Fixed for the next release; blasts thrown by enemies aren't tested yet.",
    "pr": 167,
    "desc": "If the host has a DLC you don't own, its enemies are not shown in your game, but their explosions could still hit you. The next release names the enemy that set off a blast, so a game without a copy of that enemy doesn't set the blast off. Players' grenades were tested both ways on two real games."
+  },
+  {
+   "id": "m4da",
+   "title": "A player walking into a friend's stand-in can stick fast against it (stick pushed 20 s, no movement)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found in the 0.14.0 soak: a player can stick against a friend's stand-in"
   },
   {
    "id": "mig8",
@@ -1521,6 +1545,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "paue",
+   "title": "Weapons fired from inside power armor: laser tracers not shown, an inert laser hit a watcher",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found in the 0.14.0 soak: shots from inside power armor"
   },
   {
    "id": "pcg4",
