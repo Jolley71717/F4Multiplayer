@@ -151,7 +151,8 @@ rig_up() {
 	pass "$1" "$a, both joined"; return 0
 }
 # rig_input_ready <who> [seconds]: before an input probe, that game is brought to the front and its player left free to act:
-# nothing open but the HUD (dev `menus`). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
+# nothing open but the HUD (dev `menus`; the power armor HUD counts as the HUD: it stays listed after a climb-out, and every
+# probe after the first power armor step waited 30 s for it, 2026-11-07). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
 # a container (Tab), the pause menu (Esc), the console (~). Anything else is waited out, up to <seconds> (default 30): a loading
 # screen, a fade, or the engine's level-up prompt (PromptMenu, its input layer up for about 20 s), which a game shows once,
 # half a minute after its first load (2026-11-01: a hits run started right after a deploy and join met it). INPUT_READY says
@@ -163,7 +164,7 @@ rig_input_ready() {
 	dc "$w" focus >/dev/null
 	while :; do
 		m=$(dc "$w" menus | grep -oE 'open=[^ ]*'); [ -n "$m" ] || break
-		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|none' | tr '\n' ' '); open=${open% }
+		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|PowerArmorHUDMenu|none' | tr '\n' ' '); open=${open% }
 		[ -z "$open" ] && break
 		if [ $((SECONDS - t0)) -ge "$limit" ]; then INPUT_READY="${did:+closed$did; }${waited:+waited for$waited; }still open after $limit s: $open"; return 1; fi
 		dc "$w" focus >/dev/null

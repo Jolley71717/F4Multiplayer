@@ -83,6 +83,8 @@ _keys_move_ok() {
 	d=$(awk -v a="$(field "$p0" x)" -v b="$(field "$p0" y)" -v c="$(field "$p1" x)" -v e="$(field "$p1" y)" 'BEGIN{if (a=="" || c=="") {print ""; exit}; printf "%d", sqrt((c-a)^2 + (e-b)^2)}')
 	is_num "$d" && [ "$d" -ge 20 ]
 }
+# _wants_step <step>: smoke.sh will run that step (its --only and --skip; outside smoke.sh, every step is wanted)
+_wants_step() { case " ${skip:-} " in *" $1 "*) return 1;; esac; [ -z "${steps:-}" ] && return 0; case " $steps " in *" $1 "*) return 0;; esac; return 1; }
 # _vm_restart_rejoin <log name>: the VM's game is stopped, started again by its own start script and rejoins the host's session
 # (the reconnect step's sequence; logs in $A_OUT/<name>-vm.log and <name>-join.log)
 _vm_restart_rejoin() {
@@ -105,6 +107,17 @@ step_preflight() {
 		_keys_move_ok vm && healed "preflight: vm's keys move its player" "a forward key moved nothing, twice; the VM's game was restarted and rejoined, and its keys move the player again"
 	fi
 	for a in host vm; do rig_keys_move $a "$a's keys move its player"; done
+	# The host's ini settings the chosen steps need (a rig set-up, not the mod's): read up front, so a run set up without them
+	# stops here as the rig's (VERDICT: RIG) instead of failing the bench and quest-actor steps every round (2026-11-07: a soak
+	# started on the rig's resting ini).
+	local need="" rr; rr=$(host rules)
+	_wants_step bench && [ "$(field "$rr" sharedStorage)" != true ] && need="$need bSharedStorage = true (rules say sharedStorage='$(field "$rr" sharedStorage)');"
+	_wants_step questactors && [ "$(field "$rr" quests)" != safe ] && need="$need sQuests = safe (rules say quests='$(field "$rr" quests)');"
+	if [ -n "$need" ]; then
+		rig_unhealed setup "preflight: the host's ini has what the chosen steps need" "the host's F4Multiplayer.ini wants${need%;}: set it, restart the host's game and run again"
+		[ -z "$A_RIG_STOPPED" ] && { A_RIG_STOPPED=1; echo "STOP: the host's ini is not set up for these steps"; a_summary; }
+	fi
+	pass "preflight: the host's ini has what the chosen steps need" "sharedStorage=$(field "$rr" sharedStorage) quests=$(field "$rr" quests)"
 	ns host; ns vm
 	expect_match "host session is up" "$(nsf host status)" "^(hosting|host|joined)$"
 	expect_eq "vm session joined" "$(nsf vm status)" joined
