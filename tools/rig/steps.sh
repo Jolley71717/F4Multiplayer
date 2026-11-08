@@ -714,7 +714,7 @@ _pa_frames_off() {
 SANCT_BENCH=000250FE; LINK_BENCH=0006F5C5; LINK_LOCATION=0006B4D0; CODSWORTH=0001CA7D
 MARKER_SPOT="-80300 89550"   # just past Sanctuary's coc marker, on the road: the walks below start or pass here
 PARK_SPOT="-79600 88900"     # on the road about 1000 u from the marker: out of a helper's reach, out of the way of a crosshair
-DROP_ASIDE="-79400 88700"    # 280 u on from PARK_SPOT along the road: where a giver stands while the taker comes for the drop
+DROP_ASIDE=${DROP_ASIDE:-"-79400 88700"}   # 280 u on from PARK_SPOT along the road: where a giver stands while the taker comes for the drop
 
 # wait_for <seconds> <command...>: runs the command every 0.5 s until it succeeds or the time is up
 wait_for() { local end=$((SECONDS + $1)); shift; while :; do "$@" && return 0; [ $SECONDS -ge "$end" ] && return 1; sleep 0.5; done; }
@@ -1303,9 +1303,26 @@ step_drops() {
 		bash "$RIG/walkto.sh" $giver $DROP_ASIDE 1 100 30 >/dev/null 2>&1; dc $giver "pad unplug" >/dev/null
 		if walk $taker "drop ($giver gives): set-up: the other player walks to the copy" 0.6 70 "$copy"; then
 			p=$(pitch_to $taker "$copy"); is_int "$p" || p=50
+			# Whether a press reached the copy is read from the taker's own claims (`net status` drops: claimed=, a press on a
+			# copy asks the server for it; takeFailed=, a grant the engine's pickup then lost). 2026-11-07: the host's five presses
+			# on the VM's drop took nothing (0.14.0-rc1, the soak's round 2 and a rerun) and nothing in either log said whether
+			# one had landed. A press that claimed it and got nothing is the mod's failure. No claim at all means no press
+			# activated the copy: the game's own activate of it (dev `activate`, the engine's ActivateRef, not a player's press)
+			# then tells a working copy, which makes this the rig's aim or press (a rig fault: the step is healed and run again,
+			# so the real press is still checked), from a copy nothing can take (the mod's failure).
+			local c0 c1 tf0 tf1 st
+			st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c0=$(field "$st" claimed); tf0=$(field "$st" takeFailed)
 			if press_a $taker "$copy" "wait_for 4 _count_is $taker $((tb + DROP_N))" "$p" $((p + 10)) $((p - 10)) 50 60; then
 				pass "drop ($giver gives): the other player takes it with a press" "$tb -> $((tb + DROP_N)) after $PRESSES press(es)"
-			else fail "drop ($giver gives): the other player takes it with a press" "count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses (copy: $(dc $taker "refinfo $copy" | cut -c1-120))"; fi
+			else
+				st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c1=$(field "$st" claimed); tf1=$(field "$st" takeFailed)
+				local why="count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses; claims $c0 -> $c1, failed takes $tf0 -> $tf1; the taker at ($(_xy_of $taker)), the giver at ($(_xy_of $giver)) (copy: $(dc $taker "refinfo $copy" | cut -c1-120))"
+				if is_int "$c0" && is_int "$c1" && [ "$c1" -eq "$c0" ]; then
+					local act; act=$(dc $taker "activate $copy"); sleep 0.5
+					if wait_for 6 _count_is $taker $((tb + DROP_N)); then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made), and the game's own activate of it took it ($act): the aim or the press never landed; $why"
+					else fail "drop ($giver gives): the other player takes it with a press" "no press activated the copy, and the game's own activate of it took nothing either ($act): $why"; fi
+				else fail "drop ($giver gives): the other player takes it with a press" "a press claimed the copy and the take never came: $why"; fi
+			fi
 			if wait_for 8 _drop_gone $taker "$id" && wait_for 4 _drop_gone $giver "$id"; then pass "drop ($giver gives): neither game lists it after the take" "drop $id"
 			else fail "drop ($giver gives): neither game lists it after the take" "host: $(host drops | cut -c1-160) | vm: $(vm drops | cut -c1-160)"; fi
 			ga=$(dc $giver "count 00000014 $DROP_ITEM"); expect_eq "drop ($giver gives): the giver doesn't get it back" "$ga" "$((gb - DROP_N))"
