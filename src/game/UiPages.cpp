@@ -1,6 +1,7 @@
 #include "game/UiPages.h"
 
 #include "Config.h"
+#include "game/Downed.h"
 #include "game/HostRules.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
@@ -1146,6 +1147,15 @@ namespace UiPages
 			escUp = std::exchange(escArmed, false);
 		}
 		escWasDown = escDown;
+		// Going down closes the panel in the middle of the screen, so the downed screen and the way back up are seen. Only as
+		// it happens: opened while down, it stays. The pages go next frame, as for any panel the game closes.
+		static bool wasDown = false;
+		const bool  down = Downed::IsDown();
+		if (down && !wasDown && inPanel && UiPanel::Centered() && UiPanel::Showing()) {
+			REX::INFO("Menu: closed as the player went down");
+			UiPanel::Close();
+		}
+		wasDown = down;
 		if (std::exchange(keyWaiting, false)) {
 			UiPanel::OpenCentered();
 		}
