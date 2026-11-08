@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T06:47:56+00:00",
+ "updated": "2026-11-08T06:52:54+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1237,6 +1237,15 @@
    "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
+  },
+  {
+   "id": "kgwm",
+   "title": "A friend can't pick up a dropped item while the giver stands on it",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "A friend can't pick up a drop while the giver stands on it",
+   "pr": 339
   },
   {
    "id": "kihp",
