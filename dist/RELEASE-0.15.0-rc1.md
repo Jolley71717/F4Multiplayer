@@ -26,6 +26,7 @@ Known issues:
 - Random events that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) still play out in one player's game only. Sharing them comes in the next version.
 - Closing the game (Alt+F4 or the console's `qqq`) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.
 - A workbench is shared only at settlements the host owns.
+- Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.
 - Players whose mods change the leveled lists differently can still see different enemies.
 
 Reporting a bug: install a crash logger (Buffout 4 or Addictol), then use the GitHub bug form with the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) and the crash log.
