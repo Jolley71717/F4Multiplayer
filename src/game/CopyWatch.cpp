@@ -222,6 +222,18 @@ namespace CopyWatch
 		return std::format("{} (extra {})", a_actor->GetGhost() ? "on" : "off", held);
 	}
 
+	// Whether a reference is linked to a workbench as one of its settlement's items (WorkshopItemKeyword, as WorkshopSync
+	// and NpcSync read it): a turret or a robot built there, or WorkshopSync's copy of a friend's.
+	static bool LinkedToWorkshop(const RE::TESObjectREFR& a_ref)
+	{
+		constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
+		const auto              linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+		if (!linked) {
+			return false;
+		}
+		return std::ranges::any_of(linked->linkedRefs, [](const auto& a_link) { return a_link.keyword && a_link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && a_link.REFR; });
+	}
+
 	CopyHealth::Cause CauseOf(std::uint32_t a_refId)
 	{
 		CopyHealth::Cause cause;
@@ -236,6 +248,13 @@ namespace CopyWatch
 		cause.shareable = Protocol::IsShareableRef(a_refId);
 		cause.owner = cause.shareable ? NpcSync::Owner(a_refId) : 0;
 		cause.ourCompanion = NpcSync::IsOurCompanion(actor);
+		// A runtime NPC of ours shared as a spawn and run by our game (CopyHealth::Judge): its copies in friends' games only
+		// play its shots. Not one of a workshop's (WorkshopSync's turrets and robots fire for real in every game).
+		if (!cause.shareable && !cause.player && !cause.standIn) {
+			const auto spawn = Spawns::OwnIdOf(a_refId);
+			const auto local = NpcSync::LocalPlayer();
+			cause.ourSpawn = spawn != 0 && local != 0 && NpcSync::Owner(spawn) == local && !LinkedToWorkshop(*actor);
+		}
 		return cause;
 	}
 
