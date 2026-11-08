@@ -5,6 +5,7 @@
 
 #include "game/Dialogue.h"
 #include "game/Hud.h"
+#include "game/LineShare.h"
 #include "game/LineSounds.h"
 #include "game/NpcSync.h"
 #include "game/QuestActors.h"
@@ -258,23 +259,24 @@ namespace Conversations
 			return a_text;
 		}
 
-		// Who reports a line: the player for their own lines; for an NPC, the game that runs it,
-		// or the player talking to it (their copy is the one in the conversation). Combat barks
-		// and grunts aren't shared: they'd bury the conversations in notifications.
+		// Whether our own game has the recording a line names (Resolve finds its voice file, loose or in an archive): what
+		// a creature's line must have to be shared (LineShare), since its growls name sound descriptors and no file.
+		bool HasRecording(const Recording& a_recording);
+
+		// A creature: a race our player can't talk to (a feral dog, a stingwing, a mutant hound; not an eyebot's or
+		// Liberty Prime's recorded speech, which LineShare keeps by their recordings).
+		bool IsCreature(const RE::Actor* a_actor)
+		{
+			return a_actor->race && (static_cast<std::uint32_t>(a_actor->race->data.flags) & QuestActors::RACE_ALLOWS_DIALOGUE) == 0;
+		}
+
+		// Whose line it is to report, and under what id: the player's own (0); an NPC's when our game runs it, or our
+		// player talks to it (their copy is the one in the conversation), under the NPC's id or its spawn id. Nothing for
+		// an NPC another game runs. Whether the line goes at all is LineShare::Reported (Watch).
 		std::optional<std::uint32_t> Reportable(RE::Actor* a_actor, bool a_isPlayer)
 		{
-			if (a_actor->IsInCombat()) {
-				return std::nullopt;
-			}
 			if (a_isPlayer) {
 				return 0u;
-			}
-			// A creature (a race our player can't talk to: a feral dog, a stingwing, a mutant hound) has no recorded lines:
-			// its growls are sound descriptors named in its dialogue's responses, with no voice file (Fallout4.esm: the
-			// feral dog's 0004335A names the descriptor 0004335D, and the Voices archive holds nothing for it), so the hearers
-			// found no file for every one (the rig, 0.14.0) and the text was noise. Not shared; their copies growl on their own.
-			if (a_actor->race && (static_cast<std::uint32_t>(a_actor->race->data.flags) & QuestActors::RACE_ALLOWS_DIALOGUE) == 0) {
-				return std::nullopt;
 			}
 			const auto id = a_actor->GetFormID();
 			if (Protocol::IsShareableRef(id) && (NpcSync::RunsLocally(id) || NpcSync::TalkingTo() == id)) {
@@ -301,9 +303,12 @@ namespace Conversations
 			if (talking && !text.empty() && (!wasTalking || changed)) {
 				++heard;
 				const auto speaker = Reportable(a_actor, a_isPlayer);
-				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, speaker ? " (reported)" : "");
-				if (speaker && a_connected) {
-					const auto recording = RecordingOf(a_actor, a_isPlayer, text);
+				const auto recording = speaker ? RecordingOf(a_actor, a_isPlayer, text) : Recording{};
+				// A creature's line goes only with a recording our game has (one archive lookup, for creatures' lines alone).
+				const bool creature = speaker && !a_isPlayer && IsCreature(a_actor);
+				const bool goes = speaker && LineShare::Reported(a_actor->IsInCombat(), a_isPlayer, true, creature, creature && HasRecording(recording));
+				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, goes ? " (reported)" : (creature && !a_actor->IsInCombat() ? " (a creature's, no recording: not reported)" : ""));
+				if (goes && a_connected) {
 					outgoing.push_back(Protocol::Encode(Protocol::Line{ 0, *speaker, Fit(text), recording.info, recording.response, recording.voiceType },
 						Protocol::MessageType::kReportLine));
 					++reported;
@@ -434,6 +439,11 @@ namespace Conversations
 				return { info, std::move(path) };
 			}
 			return { info, {} };
+		}
+
+		bool HasRecording(const Recording& a_recording)
+		{
+			return a_recording.info != 0 && !Resolve(Protocol::Line{ 0, 0, "-", a_recording.info, a_recording.response, a_recording.voiceType }).path.empty();
 		}
 
 		// The length of a voice file's recording, read from the file (loose or in an archive): only its start, the
@@ -747,11 +757,11 @@ namespace Conversations
 			const auto now = Clock::now();
 			std::vector<Protocol::Line> due;
 			for (auto it = heldLines.begin(); it != heldLines.end();) {
-				if (Spawns::LocalOf(it->line.speaker) != 0) {
-					due.push_back(it->line);
-					it = heldLines.erase(it);
-				} else if (now - it->since >= HOLD_FOR || !Spawns::Expects(it->line.speaker)) {
+				if (now - it->since >= HOLD_FOR || !Spawns::Expects(it->line.speaker)) {  // over (dead, gone): not said at a corpse
 					++heldDropped;
+					it = heldLines.erase(it);
+				} else if (Spawns::LocalOf(it->line.speaker) != 0) {
+					due.push_back(it->line);
 					it = heldLines.erase(it);
 				} else {
 					++it;

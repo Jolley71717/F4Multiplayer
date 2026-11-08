@@ -464,7 +464,48 @@ namespace Spawns
 
 		// ---- Random encounters (Encounters.h) ----------------------------------------------------------------------------
 
-		// The encounter quest whose alias created our NPC (Encounters::IsEncounter), running here or not (the caller asks:
+		// The quests a story manager quest node lists (BGSStoryManagerQuestNode::children): the ones the story manager
+		// starts on an event, every random encounter among them. Gathered once from the data handler, as first asked;
+		// empty when it could not be (the nodes not loaded yet), and then no test.
+		std::unordered_set<std::uint32_t> storyQuests;
+		bool                              storyQuestsGathered = false;
+
+		// Whether the story manager starts a_quest: a quest node lists it. The positive test beside the event's shape
+		// (Encounters::IsStoryEvent): true as well when no node could be read, so the event alone decides then.
+		void GatherStoryQuests()
+		{
+			if (storyQuestsGathered) {
+				return;
+			}
+			if (const auto handler = RE::TESDataHandler::GetSingleton()) {
+				for (const auto node : handler->GetFormArray<RE::BGSStoryManagerQuestNode>()) {
+					if (!node) {
+						continue;
+					}
+					for (const auto quest : node->children) {
+						if (quest) {
+							storyQuests.insert(quest->GetFormID());
+						}
+					}
+				}
+				storyQuestsGathered = !storyQuests.empty();
+			}
+		}
+
+		bool StoryStarts(const RE::TESQuest* a_quest)
+		{
+			GatherStoryQuests();
+			return storyQuests.empty() || storyQuests.contains(a_quest->GetFormID());
+		}
+
+		// Whether a quest is a random encounter here (Encounters::IsEncounter, and a story manager quest node lists it).
+		bool IsEncounterQuest(const RE::TESQuest* a_quest)
+		{
+			const char* name = a_quest->formEditorID.c_str();
+			return name && Encounters::IsEncounter(a_quest->data.questType, a_quest->eventID, name) && StoryStarts(a_quest);
+		}
+
+		// The encounter quest whose alias created our NPC (IsEncounterQuest), running here or not (the caller asks:
 		// QuestRunningHere), and that alias. Quest 0 when it is no encounter's: an alias that found an NPC of ours rather
 		// than making it (a settler) names nothing.
 		AliasKey EncounterOf(RE::Actor* a_actor)
@@ -479,8 +520,7 @@ namespace Spawns
 					entry.alias->aliasID > 0xFFFF) {
 					continue;
 				}
-				const char* name = entry.quest->formEditorID.c_str();
-				if (name && Encounters::IsEncounter(entry.quest->data.questType, entry.quest->eventID, name)) {
+				if (IsEncounterQuest(entry.quest)) {
 					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
 				}
 			}
@@ -517,9 +557,8 @@ namespace Spawns
 		// word for a spawn's kind is taken only then.
 		RE::TESQuest* EncounterQuestHere(std::uint32_t a_quest)
 		{
-			const auto  quest = a_quest != 0 ? RE::TESForm::GetFormByID<RE::TESQuest>(a_quest) : nullptr;
-			const char* name = quest ? quest->formEditorID.c_str() : nullptr;
-			return name && Encounters::IsEncounter(quest->data.questType, quest->eventID, name) ? quest : nullptr;
+			const auto quest = a_quest != 0 ? RE::TESForm::GetFormByID<RE::TESQuest>(a_quest) : nullptr;
+			return quest && IsEncounterQuest(quest) ? quest : nullptr;
 		}
 
 		// Whether our own game runs that quest now.
@@ -630,21 +669,25 @@ namespace Spawns
 			if (!handler) {
 				return;
 			}
+			GatherStoryQuests();
 			std::vector<std::uint32_t> running;
 			for (const auto quest : handler->GetFormArray<RE::TESQuest>()) {
 				const char* name = quest ? quest->formEditorID.c_str() : nullptr;
 				if (!name || (quest->data.flags & QuestActors::QUEST_RUNNING) == 0 || !Encounters::IsEncounterName(name)) {
 					continue;
 				}
-				if (Encounters::IsEncounter(quest->data.questType, quest->eventID, name)) {
+				if (IsEncounterQuest(quest)) {
 					running.push_back(quest->GetFormID());
 				} else if (quest->data.questType == Encounters::QUEST_TYPE_MISC) {
 					// The system's bookkeeping (REFactionShared), running from the game's start: named like one, no encounter.
-					// What the game holds for "no event" is logged, so the rule (Encounters::IsStoryEvent) can be checked against it.
-					REX::INFO("Encounters: {:08X} '{}' runs, named like an encounter, but no story event starts it (its event reads {:08X}): not one", quest->GetFormID(), name, quest->eventID);
+					// What the game holds for "no event", and whether a story node lists it, are logged, so the rule can be
+					// checked against them (a real encounter's event is a word such as SCPT, and a node lists it).
+					REX::INFO("Encounters: {:08X} '{}' runs, named like an encounter, but the story manager does not start it (its event reads {:08X}, a story node {} it): not one", quest->GetFormID(), name,
+						quest->eventID, storyQuests.contains(quest->GetFormID()) ? "lists" : "does not list");
 				}
 			}
 			encounters.Settle(running, a_now);
+			REX::INFO("Encounters: the story manager's quest nodes list {} quests{}", storyQuests.size(), storyQuests.empty() ? " (none read: the event's shape alone tells an encounter)" : "");
 			if (!running.empty()) {
 				std::string names;
 				for (const auto quest : running) {

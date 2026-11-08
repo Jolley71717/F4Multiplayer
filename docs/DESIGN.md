@@ -649,7 +649,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   runtime NPC was shared only once in combat or hostile to its player, so a calm scene stood in one game alone (a
   Nexus report on 0.13.2). An encounter is a misc quest (type 6) that a story manager event starts (`TESQuest::eventID`,
   the record's ENAM, a word of four capitals such as the triggers' `SCPT`; a quest no event starts holds no such word
-  there, whatever the game puts in its place: `Encounters::IsStoryEvent`) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
+  there, whatever the game puts in its place: `Encounters::IsStoryEvent`; and a story manager quest node lists it,
+  `BGSStoryManagerQuestNode::children`, read once: `Spawns::StoryStarts`) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
   and a capital or an underscore (`RESceneLC01`, `RETravelKMK01`, `DLC03RESceneKMK01`; not `ReconScopeQuest`, nor
   `REParent` and the checkpoint bookkeeping, which are of other types, nor `REFactionShared` and the treasure hunts'
   reward quests, misc but started by no event): Fallout4.esm has 236 RE-named quests, 207 of them encounters, every
@@ -668,8 +669,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and play the recording there as for any NPC a friend runs; the recording is found by the line's info id and its
   plugin even when the engine has no form for the info here (a quest's dialogue is in memory as that quest needs it:
   RESceneLC01's accusor came as text alone on the rig, his files in the archives all the while); a line that comes
-  before the copy of its speaker stands is held up to 2 s for it; a creature's lines (a race the player can't talk to)
-  are not shared at all, its growls being sound descriptors with no voice file. Each game rolls encounters for its own player (the
+  before the copy of its speaker stands is held up to 2 s for it; a creature's line (a race the player can't talk to)
+  is shared only when the speaker's own game has its recording (`LineShare`, game-free and tested): a growl names a
+  sound descriptor and no voice file, an eyebot's broadcast or Liberty Prime's line is recorded and goes. Each game rolls encounters for its own player (the
   `RETrigger*` references send a story event as the player enters them; `REScript` stops the quest itself on
   `REParent`'s cleanup once the player is far, which deletes its created actors), so two players crossing one trigger
   together usually roll two different encounters at the same markers, sometimes the same one. So where a friend's
