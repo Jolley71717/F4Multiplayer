@@ -76,11 +76,34 @@ dll_preflight() {
 		warn "the DLL is the one given" "no CHECK_DLL (or SMOKE_ZIP) given: both games run $hd, unchecked against the build meant for the run"
 	fi
 }
+# _keys_move_ok <who>: a forward key press (0.8 s) moves that game's player at least 20 u (no record; rig_keys_move is the check)
+_keys_move_ok() {
+	local p0 p1 d
+	rig_input_ready "$1"; sleep 1; p0=$(dc "$1" pos); dc "$1" "key 0x57 800" >/dev/null; sleep 1.6; p1=$(dc "$1" pos)
+	d=$(awk -v a="$(field "$p0" x)" -v b="$(field "$p0" y)" -v c="$(field "$p1" x)" -v e="$(field "$p1" y)" 'BEGIN{if (a=="" || c=="") {print ""; exit}; printf "%d", sqrt((c-a)^2 + (e-b)^2)}')
+	is_num "$d" && [ "$d" -ge 20 ]
+}
+# _vm_restart_rejoin <log name>: the VM's game is stopped, started again by its own start script and rejoins the host's session
+# (the reconnect step's sequence; logs in $A_OUT/<name>-vm.log and <name>-join.log)
+_vm_restart_rejoin() {
+	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$1-vm.log" 2>&1
+	vmssh 'Get-Content "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE\F4Multiplayer_dev.token" -Raw' | tr -d '[:space:]' > "$STAGE/vm-dev.token"
+	bash "$STAGE/rig.sh" join > "$A_OUT/$1-join.log" 2>&1
+	sleep 3
+}
 step_preflight() {
 	section "preflight"
 	local a h v
 	rig_up "both games up"; rig_ssh_up "ssh to the VM"
 	pads_off   # a virtual pad left plugged by an interrupted run takes the keyboard and mouse from this one
+	# A VM game whose window is in front and takes no key at all (2026-11-07: "its input still never reached the player", the
+	# whole soak void) comes back when the game is started again: the VM's game is restarted and rejoins, as the reconnect step
+	# does, and the check made after it (a HEAL). Its keys staying dead after that is a broken rig, and the run stops.
+	if [ -z "$A_RIG_STOPPED" ] && ! _keys_move_ok vm && ! _keys_move_ok vm; then
+		echo "preflight: the VM's keys move nothing: its game is restarted and rejoins"
+		_vm_restart_rejoin preflight-restart; _vm_minsteam; sleep 2; vm focus >/dev/null; sleep 1
+		_keys_move_ok vm && healed "preflight: vm's keys move its player" "a forward key moved nothing, twice; the VM's game was restarted and rejoined, and its keys move the player again"
+	fi
 	for a in host vm; do rig_keys_move $a "$a's keys move its player"; done
 	ns host; ns vm
 	expect_match "host session is up" "$(nsf host status)" "^(hosting|host|joined)$"
@@ -123,7 +146,7 @@ step_movement() {
 		cp -f "$A_OUT/movement.log" "$A_OUT/movement-clock1.log"
 		place host -80500 89300 7784 45; place vm -80380 89400 7784 45; sleep 3
 		bash "$RIG/trace.sh" run 18 > "$A_OUT/movement.log" 2>&1; rc=$?
-		if [ $rc -eq 3 ]; then rig_fault clock "movement trace ran" "twice: $(grep -m1 'VM clock: RIG\|not tracing\|could not' "$A_OUT/movement.log")"; return; fi
+		if [ $rc -eq 3 ]; then rig_fault clock "movement trace ran" "twice: $(grep -m1 'VM clock: RIG\|not tracing\|could not' "$A_OUT/movement.log"); clocks set in the last 6 min: $(clock_steps 6)"; return; fi
 	fi
 	if [ $rc -ne 0 ]; then fail "movement trace ran" "trace.sh refused or failed: $(grep -m1 'not tracing\|could not\|not fitting\|error' "$A_OUT/movement.log")"; return; fi
 	pass "movement trace ran" "clock $(sed -n 's/^VM clock: \(-\?[0-9]*\) ms from.*/\1/p' "$A_OUT/movement.log" | head -1) ms off, drift $(sed -n 's/.*drift \(-\?[0-9]*\) ms.*/\1/p' "$A_OUT/movement.log" | head -1) ms"
@@ -232,10 +255,10 @@ shared_item() { local t; t=${_ITYPE[$1]}; [ -z "$t" ] && { t=$(dcf vm "edid $1" 
 # to see. Up to LOOT_CHESTS (3) are looted.
 LOOT_ITEM=0001F276; LOOT_N=7; LOOT_CHESTS=${LOOT_CHESTS:-3}
 _loot() {
-	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl how k0 k1 k2="" kr takehow=""
-	: > "$A_OUT/looted.txt"
+	local conts c name hb vb va ha i n vn taken=0 chests=0 notaken="" lost="" nl left="" kept=0 other=0 nomenu="" opened unread="" hunread="" skip cl how k0 k1 k2="" kr takehow=""
+	LOOTED="$A_OUT/looted$(rsuf).txt"; : > "$LOOTED"
 	cl=$(clear_menus vm) || { fail "loot: set-up: no menu open in the VM's game before looting" "$cl"; return; }
-	[ -n "$cl" ] && echo "closed in the VM's game before looting: $cl" >> "$A_OUT/looted.txt"
+	[ -n "$cl" ] && echo "closed in the VM's game before looting: $cl" >> "$LOOTED"
 	conts=$(host 'refs 31 2500' | tr ';' '\n' | grep -oE "[0-9A-F]{8} base=[0-9A-F]+ '[^']*'" | sed -E "s/ base=[0-9A-F]+ /|/")
 	while IFS='|' read -r c name; do
 		[ -n "$c" ] || continue
@@ -252,39 +275,52 @@ _loot() {
 			elif ! contents_ok "$hb" || ! contents_ok "$vb"; then skip="contents not read (host: $hb | vm: $vb)"
 			elif [ "$(count_in "$hb" $LOOT_ITEM)" -lt $LOOT_N ] || [ "$(count_in "$vb" $LOOT_ITEM)" -lt $LOOT_N ]; then skip="the stocked stack is not in both copies (host: $hb | vm: $vb)"; fi
 		fi
-		if [ -n "$skip" ]; then echo "$c $name: left out: $skip" >> "$A_OUT/looted.txt"; continue; fi
+		if [ -n "$skip" ]; then echo "$c $name: left out: $skip" >> "$LOOTED"; continue; fi
 		# The take is pressed only once the container menu is open, and the activate is tried again once. A chest that opens by a
 		# script of its own never opens the menu for a console activate: it is left out (a WARN), not counted as a take that failed.
 		clear_menus vm >/dev/null; vm focus >/dev/null; sleep 0.3; opened=0
-		for i in 1 2; do vm "console $c.activate player" >/dev/null; menu_open vm ContainerMenu 4 && { opened=1; break; }; echo "$c: activate $i opened no container menu" >> "$A_OUT/looted.txt"; done
+		for i in 1 2; do vm "console $c.activate player" >/dev/null; menu_open vm ContainerMenu 4 && { opened=1; break; }; echo "$c: activate $i opened no container menu" >> "$LOOTED"; done
 		if [ $opened = 0 ]; then nomenu="$nomenu $c"; continue; fi
-		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$A_OUT/looted.txt"
+		chests=$((chests + 1)); printf '%s host %s | vm %s\n' "$c" "$hb" "$vb" >> "$LOOTED"
 		# R (take all) also closes the menu: a Tab after it opens the Pip-Boy, and every activate after that opens nothing
 		# (2026-11-01: one chest looted, then each one after it "opened no container menu"). Tab only while the menu is still up.
-		# R is pressed ONCE, once the menu has been up a second (its movie takes no input while it loads). A press that leaves the
-		# menu up fails the take as it always has: no second press. The 0.13.2 soak's two lost takes (2026-11-07) left no trace of
-		# whether R reached the game, so each press is now logged with what would tell: the window in front as the key went
-		# (`key`'s front=), the keyboard messages the game's window took off its queue (`mousedev` keys=: its raw input, which
-		# Windows hands only to the window in front) before, 1.5 s after and 3.5 s after (a late rise is a late press, not a lost
-		# one), and the input tally (`focus`: a press dropped because the game couldn't be brought to the front is counted there).
-		# A resend gated on "never reached the game" waits until those counts are seen to be trustworthy (PR 332's review).
+		# R is pressed once the menu has been up a second (its movie takes no input while it loads), and each press is logged with
+		# what tells whether it reached the game: the window in front as the key went (`key`'s front=), the keyboard messages the
+		# game's window took off its queue (`mousedev` keys=: its raw input, which Windows hands only to the window in front) before,
+		# 1.5 s after and 3.5 s after (a late rise is a late press, not a lost one), and the input tally (`focus`). The counts are
+		# trustworthy: in the 0.14.0-rc1 soak (2026-11-07) every R that took raised keys= by 2 (down and up), as PR 332's review
+		# asked to see before a resend gated on them. So R is pressed again once, and only, when the menu stayed up AND the press
+		# is seen never to have reached the game (keys= flat 3.5 s on, or the window not in front as it went): a press the rig lost,
+		# recorded HEAL when the second takes. A press that reached the game and left the menu up is the mod's failure (or the
+		# game's), as always. Two presses that both never reached it are the rig's: a rig fault (input), not a failure.
 		menu_up_for vm ContainerMenu 1 4
-		vm focus >/dev/null; k0=$(keys_seen vm); kr=$(vm "key 0x52 100" | grep -oE 'front=[a-z]+'); sleep 1.5
-		k1=$(keys_seen vm)
-		if ! menu_open vm ContainerMenu 0; then how="R: the menu closed"
-		else sleep 2; k2=$(keys_seen vm); how="R: the menu stayed up"; fi
-		how="$how (keys $k0 -> $k1${k2:+ -> $k2}; key $kr; $(dc vm focus | grep -oE 'input: .*' | cut -c1-160))"; k2=""
-		echo "$c: $how" >> "$A_OUT/looted.txt"; takehow="$takehow $c: $how;"
+		for i in 1 2; do
+			vm focus >/dev/null; k0=$(keys_seen vm); kr=$(vm "key 0x52 100" | grep -oE 'front=[a-z]+'); sleep 1.5
+			k1=$(keys_seen vm); k2=""
+			if ! menu_open vm ContainerMenu 0; then how="R: the menu closed"
+			else sleep 2; k2=$(keys_seen vm); how="R: the menu stayed up"; fi
+			how="$how (keys $k0 -> $k1${k2:+ -> $k2}; key $kr; $(dc vm focus | grep -oE 'input: .*' | cut -c1-160))"
+			echo "$c: press $i: $how" >> "$LOOTED"; takehow="$takehow $c: $how;"
+			# lost: the menu still up, and the press seen not to have reached the game's window
+			menu_open vm ContainerMenu 0 || break
+			if [ "$kr" = front=no ] || { is_int "$k0" && is_int "$k2" && [ "$k2" -le "$k0" ]; }; then
+				[ $i = 1 ] && { echo "$c: the press never reached the game's window: pressed again" >> "$LOOTED"; continue; }
+				lost="$lost $c"
+			fi
+			break
+		done
+		[ $i = 2 ] && ! menu_open vm ContainerMenu 0 && healed "loot: the take's R reached the game" "$c: the first R never reached the game's window (keys flat, $kr), the second took"
 		menu_open vm ContainerMenu 0 && { vm "key 0x09 60" >/dev/null; sleep 1; }
-		cl=$(clear_menus vm); [ -n "$cl" ] && echo "$c: closed after the take: $cl" >> "$A_OUT/looted.txt"
+		cl=$(clear_menus vm); [ -n "$cl" ] && echo "$c: closed after the take: $cl" >> "$LOOTED"
 		va=$(vm "contents $c"); if ! contents_ok "$va"; then unread="$unread $c"; elif has_items "$va"; then notaken="$notaken $c"; fi
-		echo "$c vm after the take: $va" >> "$A_OUT/looted.txt"
+		echo "$c vm after the take: $va" >> "$LOOTED"
 	done <<<"$conts"
 	sleep 5
 	while read -r c _; do
 		[ -n "$c" ] || continue
-		vb=$(sed -n "s/^$c host .* | vm //p" "$A_OUT/looted.txt" | head -1); hb=$(sed -n "s/^$c host \(.*\) | vm .*/\1/p" "$A_OUT/looted.txt" | head -1)
-		ha=$(host "contents $c"); echo "$c host after: $ha" >> "$A_OUT/looted.txt"
+		case " $lost " in *" $c "*) echo "$c: no take reached the game (the rig's): not compared" >> "$LOOTED"; continue;; esac
+		vb=$(sed -n "s/^$c host .* | vm //p" "$LOOTED" | head -1); hb=$(sed -n "s/^$c host \(.*\) | vm .*/\1/p" "$LOOTED" | head -1)
+		ha=$(host "contents $c"); echo "$c host after: $ha" >> "$LOOTED"
 		contents_ok "$ha" || { hunread="$hunread $c"; continue; }   # no reading of the host's copy: nothing about it is known
 		while read -r i vn; do
 			[ -n "$i" ] || continue
@@ -294,24 +330,37 @@ _loot() {
 			[ "$(count_in "$hb" "$i")" -gt 0 ] || { other=$((other + 1)); continue; }
 			taken=$((taken + 1)); n=$(count_in "$ha" "$i"); [ "$n" -gt 0 ] && left="$left $c:${i}x$n"
 		done <<<"$(stacks_of "$vb")"
-	done < <(grep -E "^[0-9A-F]{8} host " "$A_OUT/looted.txt")
+	done < <(grep -E "^[0-9A-F]{8} host " "$LOOTED")
 	[ -n "$nomenu" ] && warn "loot: chests a console activate opens no container menu for (left out)" "$nomenu (each tried twice, or known to open by a script of its own)"
-	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no chest within 2500 u could be stocked in both games and opened (reasons in looted.txt): nothing was looted (inconclusive)"; return; fi
+	if [ $chests -eq 0 ]; then fail "loot: VM takes all from the host's chests" "no chest within 2500 u could be stocked in both games and opened (reasons in ${LOOTED##*/}): nothing was looted (inconclusive)"; return; fi
 	if [ -n "$unread" ]; then fail "loot: VM takes all from $chests chest(s) in the container menu" "the VM's contents after the take could not be read for:$unread${notaken:+; still holding items:$notaken}"
-	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"; else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen; the presses:$takehow)"; fi
-	if [ -n "$hunread" ]; then fail "loot: the VM's takes reach the host's chests" "the host's contents after the takes could not be read for:$hunread (looted.txt): nothing is known of those"
+	elif [ -z "$notaken" ]; then pass "loot: VM takes all from $chests chest(s) in the container menu" "each empty in the VM's game after R"
+	else
+		nl=""; for c in $notaken; do case " $lost " in *" $c "*) ;; *) nl="$nl $c";; esac; done   # chests whose R reached the game
+		if [ -z "$nl" ]; then rig_fault input "loot: VM takes all from $chests chest(s) in the container menu" "R never reached the VM's game window, pressed twice, for:$lost (the presses:$takehow)"
+		else fail "loot: VM takes all from $chests chest(s) in the container menu" "still holding items in the VM's game:$notaken (the menu take did not happen${lost:+; R never reached the game for:$lost}; the presses:$takehow)"; fi
+	fi
+	if [ -n "$hunread" ]; then fail "loot: the VM's takes reach the host's chests" "the host's contents after the takes could not be read for:$hunread (${LOOTED##*/}): nothing is known of those"
 	elif [ $taken -eq 0 ] && [ $other -gt 0 ]; then warn "loot: the VM's takes reach the host's chests" "the host's rolls held none of the $other shared stack(s) the VM took (each game rolls a chest on its own; what only one roll put there stays by design): nothing to see, inconclusive"
 	elif [ $taken -eq 0 ]; then fail "loot: the VM's takes reach the host's chests" "the VM took no item of the kind the session shares (only weapons, armor, keys, notes, books: $kept stack(s)): inconclusive"
 	elif [ -z "$left" ]; then pass "loot: the VM's takes reach the host's chests" "$taken shared stack(s) both games held gone from the host's copies; $other only the VM's roll had; $kept weapon/armor/personal stack(s) stay by design"
-	else fail "loot: the VM's takes reach the host's chests" "still in the host's copy:$left (of $taken shared stacks taken; details in looted.txt)"; fi
+	else fail "loot: the VM's takes reach the host's chests" "still in the host's copy:$left (of $taken shared stacks taken; details in ${LOOTED##*/})"; fi
 }
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
 _useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$who" >/dev/null; sleep 1; }   # a blind second Tab opened the Pip-Boy when the first closed the terminal
-# _safe_term <who> <terminal>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s), picks the unlock
-# entry and closes it.
+# _safe_term <who> <terminal>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s; the activate tried
+# twice), picks the unlock entry and closes it. 1 = the terminal's menu never opened (SAFE_DIAG says what the game showed): no
+# press of the unlock entry was made, so a safe still locked after it says nothing of the mod.
 _safe_term() {
-	clear_menus "$1" >/dev/null; dc "$1" focus >/dev/null; sleep 1; dc "$1" "console $2.activate player" >/dev/null
-	menu_open "$1" TerminalMenu 10; sleep 2
+	local i
+	SAFE_DIAG=""
+	for i in 1 2; do
+		clear_menus "$1" >/dev/null; dc "$1" focus >/dev/null; sleep 1; dc "$1" "console $2.activate player" >/dev/null
+		menu_open "$1" TerminalMenu 10 && break
+		SAFE_DIAG="$SAFE_DIAG activate $i: no terminal menu in 10 s (menus $(dc "$1" menus | grep -oE 'open=[^ ]*' | cut -c1-80); $(dc "$1" pa | cut -c1-60));"
+		[ $i = 2 ] && return 1
+	done
+	sleep 2
 	dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$1" >/dev/null; sleep 3
 }
 _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper Mart safe through the storage terminal
@@ -322,11 +371,14 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	host "console $safe.lock 25" >/dev/null; vm "console $safe.lock 25" >/dev/null; host "console $term.unlock" >/dev/null; vm "console $term.unlock" >/dev/null; sleep 1
 	b_a=$(dcf "$actor" "refinfo $safe" locked); b_o=$(dcf "$other" "refinfo $safe" locked)
 	[ -n "$b_a" ] && [ -n "$b_o" ] && [ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
-	_safe_term "$actor" $term
+	local opened=0
+	_safe_term "$actor" $term && opened=1
 	a_a=$(dcf "$actor" "refinfo $safe" locked)
 	# Once more if the actor's own game still has it locked: 2026-11-06 the VM stalled 5 s through the key presses and the unlock
-	# entry was never picked (both games agreed it was locked). A second miss still fails.
-	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
+	# entry was never picked (both games agreed it was locked). A second miss still fails, unless the terminal never opened in
+	# either: then the unlock was never asked for (a rig fault, the step healed and run again).
+	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term && opened=1; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
+	if [ "$a_a" != no ] && [ $opened = 0 ]; then rig_fault input "safe ($actor unlocks): unlocked in the actor's game" "the storage terminal's menu never opened for $actor (two tries of two activates):$SAFE_DIAG"; return; fi
 	a_o=$(dcf "$other" "refinfo $safe" locked)
 	expect_eq "safe ($actor unlocks): unlocked in the actor's game" "$a_a" no
 	expect_eq "safe ($actor unlocks): the other game sees it unlocked" "$a_o" no
@@ -537,6 +589,22 @@ pa_same_time() {
 		printf "n=%d mean=%.0f p95=%.0f max=%.0f\n", k, s / k, d[p], d[k]
 	}' "$1" "$2"
 }
+# clock_steps <minutes>: who set a clock lately, read from each machine's own record of it (the System log's Kernel-General event 1,
+# "the system time has changed", read only): "host 16:24:29 +1525 ms (reason 1); vm ..." for every step of 50 ms or more in the
+# last N minutes, or "none". Neither machine's time settings are touched. Found 2026-11-07: the host's own time service steps
+# the host's clock by 1 to 6 s about once a day, and the VM's time sync follows it within seconds; a trace running then can't
+# be lined up. That is the rig's (a rig fault), and this names it.
+CLOCK_PS='Get-WinEvent -FilterHashtable @{LogName="System";ProviderName="Microsoft-Windows-Kernel-General";Id=1;StartTime=(Get-Date).AddMinutes(-MIN)} -ErrorAction SilentlyContinue | ForEach-Object { $x=[xml]$_.ToXml(); $d=@{}; $x.Event.EventData.Data | ForEach-Object { $d[$_.Name]=$_."#text" }; $ms=[int](([datetime]$d["NewTime"] - [datetime]$d["OldTime"]).TotalMilliseconds); if ([math]::Abs($ms) -ge 50) { "{0:HH:mm:ss} {1:+0;-0} ms (reason {2})" -f $_.TimeCreated, $ms, $d["Reason"] } }'
+clock_steps() {
+	local enc h v; enc=$(printf '%s' "${CLOCK_PS//MIN/$1}" | iconv -f utf-8 -t utf-16le | base64 -w0)
+	h=$(powershell.exe -NoProfile -EncodedCommand "$enc" 2>/dev/null | tr -d '\r' | paste -sd, - | sed 's/,/, /g')
+	v=$(vmssh "powershell -NoProfile -EncodedCommand $enc" | paste -sd, - | sed 's/,/, /g')
+	[ -z "$h$v" ] && { echo none; return; }
+	echo "${h:+host $h}${h:+${v:+; }}${v:+vm $v}"
+}
+# rsuf: a suffix naming this round (and the second attempt after a rig fault) for a step's evidence files, so a soak keeps every
+# round's rather than only the last's: "-r2", "-r2-again", "" outside a soak
+rsuf() { echo "${A_ROUND:+-r$A_ROUND}${A_AGAIN:+-again}"; }
 step_pa() {
 	local d=$1 v tries f worst settled i hp vx vy hx hy dd s skel pieces dx dy ang
 	v=$([ "$d" = host ] && echo vm || echo host)
@@ -587,12 +655,12 @@ step_pa() {
 	sleep 1.5; hs=$(host 'trace stop'); vs=$(vm 'trace stop'); settled=$(_dist); clk1=$(_offset)
 	lu=$(clock_lineup "$clk0" "$clk1" "$(wall_step "$hs")" "$(wall_step "$vs")"); clk=""; case "$lu" in ok*) clk=$(cut -d' ' -f2 <<<"$lu");; esac
 	echo "power armor ($d): VM clock before '$clk0' after '$clk1', stepped during the trace host '$(wall_step "$hs")' vm '$(wall_step "$vs")': $lu"
-	cp -f "$HOST_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-host.csv" 2>/dev/null; scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-vm.csv" 2>/dev/null
-	if [ -z "$clk" ]; then rig_fault clock "$pa_moving" "the two traces can't be lined up: ${lu#rig }"
+	cp -f "$HOST_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-host$(rsuf).csv" 2>/dev/null; scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/F4Multiplayer_trace.csv" "$A_OUT/pa-$d-vm$(rsuf).csv" 2>/dev/null
+	if [ -z "$clk" ]; then rig_fault clock "$pa_moving" "the two traces can't be lined up: ${lu#rig }; clocks set in the last 3 min: $(clock_steps 3)"
 	elif [ -z "$did" ]; then fail "$pa_moving" "no player id in the driver's net status"
 	else
-		tr=$(pa_same_time "$A_OUT/pa-$d-$d.csv" "$A_OUT/pa-$d-$v.csv" "p$did" "$([ $d = vm ] && echo "$clk" || echo 0)" "$([ $v = vm ] && echo "$clk" || echo 0)")
-		echo "$tr" > "$A_OUT/pa-$d-distance.txt"
+		tr=$(pa_same_time "$A_OUT/pa-$d-$d$(rsuf).csv" "$A_OUT/pa-$d-$v$(rsuf).csv" "p$did" "$([ $d = vm ] && echo "$clk" || echo 0)" "$([ $v = vm ] && echo "$clk" || echo 0)")
+		echo "$tr" > "$A_OUT/pa-$d-distance$(rsuf).txt"
 		if [ "$(field "$tr" n)" -ge 40 ] 2>/dev/null; then
 			# the name stays the same from round to round (a soak's summary tells a rig fault made good in another round by it)
 			if is_num "$(field "$tr" max)" && _cmp "$(field "$tr" max)" '<=' "$T_PA_MOVING"; then pass "$pa_moving" "$(field "$tr" max) u (at most $T_PA_MOVING; max of $(field "$tr" n) samples, mean $(field "$tr" mean) u, p95 $(field "$tr" p95) u; VM clock $clk ms)"
@@ -600,14 +668,24 @@ step_pa() {
 		else fail "$pa_moving" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
 	fi
 	expect_le "power armor ($d): stand-in distance after stopping" "$settled" "$T_PA_SETTLED" u
-	# Up to five tries, each with nothing open in front and the window focused: 2026-11-06 three blind tries left the host in the
-	# suit with nothing in its log (a press that never reached the game, or the game refusing: the failure says what was open).
-	for tries in 1 2 3 4 5; do
-		clear_menus $d >/dev/null; dc $d focus >/dev/null; sleep 0.3
-		dc $d "mouse 0 -900" >/dev/null; sleep 0.3; dc $d "key 0x45 1500" >/dev/null; sleep 6; [ "$(dcf $d pa extraPA)" = "false" ] && break
-	done
-	if [ "$(dcf $d pa extraPA)" = "false" ]; then pass "power armor ($d): climbed out" "after $tries tries"
-	else fail "power armor ($d): climbed out" "extraPA still true after 5 tries; menus: $(dc $d menus | grep -oE 'open=[^ ]*'); pa: $(dc $d pa)"; fi
+	# The climb-out: the keyboard's E, then the pad's A, then the game's own Activate (state.sh pa_climb_out), each read for whether
+	# it reached the game. 2026-11-06 (host) and 2026-11-07 (the VM, 0.14.0-rc1) the E alone, up to five times, left the player in the
+	# suit, and the VM spent a whole round in it, failing four later steps. Out by any press is a pass of the climb-out (each is a
+	# player's way out); out only by the pad or Activate also warns, saying whether the E reached the game's window (it didn't: the
+	# rig's input; it did and the game did nothing: worth a look). Out by none is the mod's failure (or the game's), with what the
+	# game said; the player is then taken out by the console, said so, so the stand-in's check and the steps after are still made.
+	clear_menus $d >/dev/null
+	if pa_climb_out $d 3; then
+		pass "power armor ($d): climbed out" "$PA_HOW"
+		case "$PA_HOW" in "E held"*) ;; *)
+			if [ -n "$PA_REACHED" ]; then warn "power armor ($d): the keyboard's E climbs out" "the E reached the game's window and the player stayed in; out by $PA_HOW;$PA_DIAG"
+			else warn "power armor ($d): the keyboard's E climbs out" "the E never reached the game's window (the rig's input); out by $PA_HOW;$PA_DIAG"; fi;;
+		esac
+	else
+		fail "power armor ($d): climbed out" "still in after the keyboard's E (3 tries), the pad's A and the game's own Activate:$PA_DIAG"
+		if pa_force_out $d; then healed "power armor ($d): out of the suit for the next checks" "taken out by the console (Actor.SwitchToPowerArmor none): not a player's action"
+		else rig_unhealed state "power armor ($d): out of the suit for the next checks" "the console did not take the player out either"; fi
+	fi
 	ns $v; expect_eq "power armor ($d): the other game's stand-in is out of the suit" "$(grep -o 'pa=[a-z/]*' <<<"${NS[$v]}" | head -1)" "pa=false/false"
 	_pa_frames_off $d
 }
@@ -636,6 +714,7 @@ _pa_frames_off() {
 SANCT_BENCH=000250FE; LINK_BENCH=0006F5C5; LINK_LOCATION=0006B4D0; CODSWORTH=0001CA7D
 MARKER_SPOT="-80300 89550"   # just past Sanctuary's coc marker, on the road: the walks below start or pass here
 PARK_SPOT="-79600 88900"     # on the road about 1000 u from the marker: out of a helper's reach, out of the way of a crosshair
+DROP_ASIDE="-79400 88700"    # 280 u on from PARK_SPOT along the road: where a giver stands while the taker comes for the drop
 
 # wait_for <seconds> <command...>: runs the command every 0.5 s until it succeeds or the time is up
 wait_for() { local end=$((SECONDS + $1)); shift; while :; do "$@" && return 0; [ $SECONDS -ge "$end" ] && return 1; sleep 0.5; done; }
@@ -644,16 +723,37 @@ pads_off() { dc host "pad unplug" >/dev/null; dc vm "pad unplug" >/dev/null; }
 # syntax error, which ends the whole top-level if/while holding the step without a word: so every value read from a game is checked
 # before arithmetic. Like is_num but without decimals, which $(( )) can't take either.
 is_int() { [[ $1 =~ ^-?[0-9]+$ ]]; }
-# walk <who> <check name> <speed> <radius> <target: ref | x y>: that game's player walks there (tools/rig/walkto.sh), up to 2 tries.
-# One that never arrives FAILS under the name (WALK_LAST: how the walk ended). 0 = arrived.
+# walk <who> <check name> <speed> <radius> <target: ref | x y>: that game's player walks there (tools/rig/walkto.sh), up to 3 tries.
+# A walk that sticks (no headway for 8 s) is freed the way a player frees one before the next try: the other player, standing
+# within WALK_CROWD u, steps away from them (2026-11-07, the 0.14.0-rc1 soak: the taker of a drop walked up to the copy at the
+# giver's feet, into the giver's stand-in, and pushed the stick for 20 s without moving an inch until the giver walked off);
+# otherwise the walker backs off and steps to the side. A walk freed that way is recorded HEAL. One that never arrives is a rig
+# fault under the name (RIG: the set-up of the step's checks failed, not the mod; smoke.sh heals and runs the step again), with
+# what held the player: the other player's distance, and the game's input layers (a layer of the mod's holding movement off
+# would be the mod's, and is there to be read). WALK_LAST: how the last walk ended. 0 = arrived.
+WALK_CROWD=${WALK_CROWD:-220}
+_xy_of() { local p; p=$(dc "$1" pos); echo "$(field "$p" x) $(field "$p" y)"; }
+_dist_xy() { awk -v a="$1" -v b="$2" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") {print ""; exit} printf "%d", sqrt((q[1]-p[1])^2+(q[2]-p[2])^2)}'; }
 walk() {
-	local who=$1 label=$2 sp=$3 r=$4 try; shift 4
-	for try in 1 2; do
+	local who=$1 label=$2 sp=$3 r=$4 try other me them d to heal="" why; shift 4
+	other=$(other_game "$who")
+	for try in 1 2 3; do
 		WALK_LAST=$(bash "$RIG/walkto.sh" "$who" "$@" "$sp" "$r" 60 2>&1 | tail -1)
-		case "$WALK_LAST" in *": arrived "*) return 0;; esac
-		sleep 1
+		case "$WALK_LAST" in *": arrived "*) [ -n "$heal" ] && healed "$label" "$who's walk stuck, freed:$heal; arrived on try $try"; return 0;; esac
+		case "$WALK_LAST" in *" stuck "*) ;; *) sleep 1; continue;; esac
+		me=$(_xy_of "$who"); them=$(_xy_of "$other"); d=$(_dist_xy "$me" "$them")
+		if is_int "$d" && [ "$d" -lt "$WALK_CROWD" ]; then
+			# the other player steps 300 u straight away from the walker (a real walk), and comes back for the step after
+			to=$(awk -v a="$me" -v b="$them" 'BEGIN{split(a,p," "); split(b,q," "); dx=q[1]-p[1]; dy=q[2]-p[2]; l=sqrt(dx*dx+dy*dy); if (l<1) {dx=1; dy=0; l=1} printf "%d %d", q[1]+dx/l*300, q[2]+dy/l*300}')
+			bash "$RIG/walkto.sh" "$other" $to 1 100 30 >/dev/null 2>&1; dc "$other" "pad unplug" >/dev/null
+			heal="$heal the other player ($other) stood $d u away and stepped aside;"
+		else
+			dc "$who" "pad stick l 0 -1 900" >/dev/null; sleep 1.2; dc "$who" "pad stick l 1 0 700" >/dev/null; sleep 1
+			heal="$heal backed off and stepped to the side (the other player ${d:-?} u away);"
+		fi
 	done
-	fail "$label" "$who's walk to $* did not arrive, twice: $WALK_LAST"; dc "$who" "pad unplug" >/dev/null; return 1
+	why="at ($(_xy_of "$who")), the other player $(_dist_xy "$(_xy_of "$who")" "$(_xy_of "$other")") u away; input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)"
+	rig_fault walk "$label" "$who's walk to $* did not arrive in 3 tries: $WALK_LAST${heal:+ (tried:$heal)}; $why"; dc "$who" "pad unplug" >/dev/null; return 1
 }
 # pitch_to <who> <ref>: degrees down from that player's eyes (120 u over its feet) to the reference's origin
 pitch_to() {
@@ -1198,6 +1298,9 @@ step_drops() {
 		pass "drop ($giver gives): the other game lists it and placed a copy" "drop $id, copy $copy"
 		if wait_for 8 _shown $taker "$copy"; then pass "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]* y=[^ ]* z=[^ ]*')"
 		else fail "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | cut -c1-200)"; fi
+		# The giver steps aside first (a real walk, not checked): the copy lies at the giver's feet, and a taker walking up to it
+		# walked into the giver's stand-in and stuck there for 20 s (2026-11-07, the 0.14.0-rc1 soak), a walk that never arrived.
+		bash "$RIG/walkto.sh" $giver $DROP_ASIDE 1 100 30 >/dev/null 2>&1; dc $giver "pad unplug" >/dev/null
 		if walk $taker "drop ($giver gives): set-up: the other player walks to the copy" 0.6 70 "$copy"; then
 			p=$(pitch_to $taker "$copy"); is_int "$p" || p=50
 			if press_a $taker "$copy" "wait_for 4 _count_is $taker $((tb + DROP_N))" "$p" $((p + 10)) $((p - 10)) 50 60; then
@@ -1405,10 +1508,7 @@ nsf_now() { field "$(dc "$1" 'net status')" "$2"; }
 step_reconnect() {
 	section "reconnect (the VM's game restarts and rejoins)"
 	local j
-	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/reconnect-vm.log" 2>&1
-	vmssh 'Get-Content "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE\F4Multiplayer_dev.token" -Raw' | tr -d '[:space:]' > "$STAGE/vm-dev.token"
-	bash "$STAGE/rig.sh" join > "$A_OUT/reconnect-join.log" 2>&1
-	sleep 3; ns vm; ns host
+	_vm_restart_rejoin reconnect; ns vm; ns host
 	expect_eq "reconnect: VM rejoined" "$(nsf vm status)" joined
 	# the players list names people: only its length is used, never printed
 	np=$(grep -oE 'players: \[.*' <<<"${NS[host]}" | grep -oE "puppet=FF[0-9A-F]+" | sort -u | wc -l)

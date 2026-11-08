@@ -71,7 +71,14 @@ logs; its exit code is the number of failed checks. A check the rig could not ma
 line a trace up: the VM's clock offset could not be read over ssh, or a clock was set between a reading and the trace) is
 a rig fault, listed as RIG and never a failure of the mod: a soak
 that made and passed that check in another round still passes, and one that never made it ends `VERDICT: RIG` with a
-non-zero exit, to be run again. The steps for what players do together (bench, loot, doors, drops,
+non-zero exit, to be run again. A set-up walk that never arrives, or a press seen never to reach the game's window, is a
+rig fault the same way. Before each loop step a state guard (`tools/rig/state.sh`) checks both players: out of power
+armor, up, nothing open, a normal camera, god mode on. It puts a wrong state right the way a player would (keys, the
+pad's buttons, a friend's walk to help a downed player up) and lists each fix as HEAL; getting a player out of power armor
+by the console, when no press does, is the one fix that is not a player's action, and it says so. A step that met a rig
+fault has its results set aside (listed as VOID with what they were), the guard runs again and the step runs once more,
+so its checks are still made. A state the guard can't put right, or a rig fault in both attempts, is a RIGFAULT: those
+checks were not made, and the run ends `VERDICT: RIG`, never PASS. So a FAIL is the mod's. The steps for what players do together (bench, loot, doors, drops,
 downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
 its buttons for the takes, the door and the Pip-Boy; entering workshop mode, building and dropping an item use dev commands
 (`workshop enter`, `storage build`, `dropitem`), not a player's keys; the console only

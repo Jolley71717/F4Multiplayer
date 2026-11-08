@@ -6,6 +6,9 @@
 # read, and the exit code is the number of failed checks (0 = PASS), plus any check the rig never managed to make (a rig fault:
 # the clocks could not line a trace up: an offset unread over ssh, or a clock set outside the trace; recorded RIG, not FAIL, and
 # VERDICT: RIG when no round made that check). About 30 minutes.
+# Each loop step starts behind the state guard (state.sh, run() below): a wrong rig state is healed (HEAL) or, when it can't be,
+# the step is not run (RIGFAULT); a step that met a rig fault has its lines set aside (VOID) and runs once more. A RIGFAULT
+# never ends in PASS: a FAIL is the mod's, a rig that stayed broken is VERDICT: RIG.
 #
 # --soak MINUTES is the rc soak (docs/RELEASING.md): after preflight and cleanup it runs the loop steps (movement to churn,
 # each with its checks, both ways where a step has two) round after round until the time is up, then the end steps
@@ -27,6 +30,7 @@
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
 . "$RIG/guard.sh"
+. "$RIG/state.sh"
 
 LOOP="movement combat terminals grenades trails workshop bench loot doors quests questactors drops downed pa_vm pa_host churn"
 ALL="preflight cleanup $LOOP reconnect fuzz final"
@@ -45,10 +49,32 @@ a_init "$([ -n "$soak_min" ] && echo soak || echo smoke)"; A_NOTE=""
 smoke_interrupted() { [ -z "$SMOKE_INT" ] && { SMOKE_INT=1; pads_off; }; a_interrupted; }
 trap smoke_interrupted INT TERM
 tunnel
+# run <step> <function...>: one step. A loop step starts behind the state guard (state.sh: both players out of power armor, up,
+# nothing open, a normal camera, god mode on; a wrong state is healed, one that stays is a RIGFAULT and the step is not run).
+# An attempt that meets a rig fault (a RIG line: a clock that couldn't line a trace up, a set-up walk that never arrived, a press
+# that never reached the game; or a FAIL saying "rig broken") is set aside (VOID), the guard runs again and the step is run once
+# more, so its checks are still made and a failure that followed from the rig's fault never stands as the mod's. A second
+# attempt that meets one too is a RIGFAULT (its own failures set aside): the rig was broken, the run is not a PASS.
 run() {
 	case " $skip " in *" $1 "*) return;; esac; case " $steps " in *" $1 "*) ;; *) return;; esac
-	"${@:2}"
-	case " $LOOP " in *" $1 "*) perf_phase "$1";; esac
+	local loop="" sig
+	case " $LOOP " in *" $1 "*) loop=1;; esac
+	if [ -n "$loop" ] && ! rig_state_guard "$1"; then return 0; fi
+	a_attempt_mark; "${@:2}"
+	if [ -n "$loop" ] && [ -z "$A_RIG_STOPPED" ] && sig=$(a_attempt_rig); then
+		a_attempt_void
+		echo "RIG: $1 met a rig fault ($sig): its lines are set aside; healed and run again"
+		healed "$1${A_ROUND:+ (round $A_ROUND)}: run again after a rig fault" "$sig"
+		if rig_state_guard "$1"; then
+			A_AGAIN=1; a_attempt_mark; "${@:2}"; A_AGAIN=""
+			if [ -z "$A_RIG_STOPPED" ] && sig=$(a_attempt_rig); then
+				a_attempt_void FAIL
+				local s; s=$(sed -nE 's/.*rig (fault|broken) \(([a-z]+)\).*/\2/p' <<<"$sig" | head -1)
+				rig_unhealed "${s:-rig}" "$1${A_ROUND:+ (round $A_ROUND)}: a rig fault in both attempts" "$sig"
+			fi
+		fi
+	fi
+	[ -n "$loop" ] && perf_phase "$1"
 	[ "$1" = combat ] && [ -z "$WS_MARKED" ] && { ws_mark; WS_MARKED=1; }   # the working set's growth is read from the first combat on
 	[ "$1" = churn ] && ws_check; return 0
 }
