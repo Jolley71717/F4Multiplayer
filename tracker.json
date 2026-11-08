@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T04:13:17+00:00",
+ "updated": "2026-11-08T05:08:14+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -950,7 +950,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 3,
-   "note": "Rig test: copies, outcome and loading pass; double roll leaves actors, ended encounters still block. Fixing.",
+   "note": "Rig-test fixes reviewed at 45e94a2c; two-game re-test after the rig fix",
    "pr": 337
   },
   {
@@ -1066,7 +1066,7 @@
    "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
+   "stage": 3,
    "note": "",
    "pr": 337
   },
@@ -1270,7 +1270,7 @@
    "title": "Calm encounters: stopping a double-rolled run leaves its actors alive",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 3,
    "note": "",
    "pr": 337
   },
@@ -1390,8 +1390,8 @@
    "id": "mokv",
    "title": "Shared encounter lines: accusor's lines show as text with no voice",
    "kind": "bug",
-   "priority": 3,
-   "stage": 2,
+   "priority": 2,
+   "stage": 3,
    "note": "",
    "pr": 337
   },
@@ -2012,7 +2012,7 @@
    "title": "Calm encounters: an ended encounter's leftover actor still counts as running",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 3,
    "note": "",
    "pr": 337
   },
