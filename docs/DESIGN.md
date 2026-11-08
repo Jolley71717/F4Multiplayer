@@ -807,7 +807,11 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
 - Known limits:
   - An NPC whose game is in a loading screen when the report comes takes no blow from it. A copy more than 1024 units
     from where its NPC stands in its own game can be hit by a blast the NPC's game sets off out of its reach.
-    An NPC our game made at runtime and doesn't share (a companion aside) hits copies for nobody (as before).
+    An NPC our game made at runtime and doesn't share (a companion aside) hits copies for nobody (as before). One it
+    shares as a spawn and runs hits them for us, as any NPC our game runs (CopyHealth::Judge's `ourSpawn`, since
+    0.14.0-rc2; a workshop's turret or robot, a friend's workshop copy and a settler recruited at runtime excepted): before, its blows on a friend's NPC were given back, and one that
+    killed at once left our copy dead and the NPC alive in its own game (a quest's fight split across the games, its
+    people each game's own and its creatures paired: Rotten Landfill's scavenger and molerats in a 0.14.0-rc1 soak).
   - A connection that stalls for more than about 2.7 s with the gate at its limit (an explosive minigun firing on) has
     its resent reports arrive in one go, past the server's burst of 16: the excess is dropped, and its blows on copies,
     given back, are dealt nowhere. A client that rejoins under new identities on ENet can drain the joiners' pool.
