@@ -13,7 +13,11 @@
 #     expect_zero "label" "$got"           # shorthand for expect_eq "$got" 0
 #     warn_gt "label" "$got" 5 u           # number above a soft limit: WARN (printed in the summary), never a FAIL
 #     rig_fault clock "name" "reason"      # a check the rig could not make (RIG, not FAIL; see rig_fault below)
-#     a_summary                            # one screen: counts, every FAIL, RIG and WARN, times; exits non-zero on a FAIL or a check never made
+#     healed "name" "how"                  # a rig state put right before or during a step (HEAL: no failure, listed)
+#     rig_unhealed state "name" "reason"   # a rig state that stayed wrong: checks not made (RIGFAULT: never a PASS, counts toward the breaker)
+#     a_attempt_mark; a_attempt_rig; a_attempt_void [first]  # smoke.sh's re-run: a rig fault since the mark? lines from it on set aside (VOID)
+#     a_summary                            # one screen: counts, every FAIL, RIGFAULT, RIG, HEAL, VOID and WARN, times; exits non-zero on a
+#                                          # FAIL, a RIGFAULT or a check never made
 #     trap a_interrupted INT TERM          # after a_init: a run stopped by a signal records a FAIL ("run interrupted") and ends in VERDICT FAIL
 #
 # Reading the games (both are driven through the dev channel, see env.sh):
@@ -49,7 +53,7 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 section() {  # section <title>
 	[ -z "$A_RIG_STOPPED" ] && [ -n "$A_RESULTS" ] && [ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && _rig_stop "$(_rig_last_signal)"
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"
-	A_SECTION="$1${A_ROUND:+ (round $A_ROUND)}"; A_SEC_T0=$SECONDS; echo; echo "=== $A_SECTION ($(date +%T))"   # A_ROUND: smoke.sh --soak's round
+	A_SECTION="$1${A_ROUND:+ (round $A_ROUND)}${A_AGAIN:+ (again, after a rig fault)}"; A_SEC_T0=$SECONDS; echo; echo "=== $A_SECTION ($(date +%T))"   # A_ROUND: smoke.sh --soak's round
 }
 
 record() {  # record <PASS|FAIL|WARN> <name> <reason>
@@ -66,10 +70,11 @@ warn() { record WARN "$1" "$2"; }
 # like any other, and RIG_BREAK_AT of them (2) end the run at once as FAIL "run stopped: rig broken (<signal>)": the rest
 # would measure the rig (2026-11-01: a VM whose mouse never came up made 18 failures that proved nothing). A failure of the
 # mod is a plain fail and never trips it. They are counted in results.tsv, so one made in a subshell counts too; section()
-# looks again, for a trip made where an exit can't end the run.
+# looks again, for a trip made where an exit can't end the run. A rig-broken failure that smoke.sh's re-run set aside (VOID,
+# "[was FAIL] rig broken (...)") still counts: two rig-broken events stop the run, set aside or not.
 RIG_BREAK_AT=${RIG_BREAK_AT:-2}
-_rig_last_signal() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {s=substr($4, 13); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
-_rig_broken_count() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
+_rig_last_signal() { awk -F'\t' '($1=="FAIL" && index($4, "rig broken (") == 1) || ($1=="VOID" && index($4, "[was FAIL] rig broken (") == 1) || ($1=="RIGFAULT" && index($4, "rig fault (") == 1) {s=substr($4, index($4, "(") + 1); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
+_rig_broken_count() { awk -F'\t' '($1=="FAIL" && index($4, "rig broken (") == 1) || ($1=="VOID" && index($4, "[was FAIL] rig broken (") == 1) || $1=="RIGFAULT" {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
 _rig_stop() {  # _rig_stop <signal> [why]: the run ends here, its verdict FAIL. why: a stop for a reason that isn't the rig's
 	A_RIG_STOPPED=1
 	if [ -n "$2" ]; then
@@ -91,8 +96,56 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 # host, or a time service set a clock between a reading and the trace). It is recorded RIG, not FAIL: no verdict on the mod
 # either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
 # passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
-rig_fault() {  # rig_fault <signal: clock> <check name> <reason>
+rig_fault() {  # rig_fault <signal: clock|walk|input|state> <check name> <reason>
 	record RIG "$2" "rig fault ($1): $3"
+}
+
+# --- the rig's faults healed, and a step made again ------------------------------------------------------------
+# A soak FAIL must mean the mod's: a rig problem is found, healed with real actions and the check made again, never left
+# to fail product checks (2026-11-07: the VM left in power armor by one climb-out that missed made 9 of the 0.14.0-rc1
+# soak's 20 failures). Three more kinds of line, beside PASS, FAIL, WARN and RIG:
+#   HEAL      the rig was found in a wrong state (a menu open, a player in power armor or down, a walk stuck) and put right
+#             (healed <what> <how>). Listed in the summary; no verdict either way.
+#   VOID      a check made in an attempt at a step after it met a rig fault (a RIG line of a walk, a press or a state, or a
+#             FAIL that says "rig broken"): the step is healed and run again, and what the attempt recorded from that line on
+#             is set aside (its kind kept in the reason, "[was FAIL] ..."), so a failure that followed from the rig's fault
+#             never stands as the mod's. A heal or a re-run never erases evidence of the mod's failure: the lines before the
+#             rig line stand (the rig was still sound when they were made); a clock fault sets nothing aside (it is the one
+#             check a stepped clock spoils, and its RIG line already says "not made"); a check that fails in both attempts
+#             stays a FAIL, rig line or not; and a PASS verdict names the failures it set aside, to be read.
+#   RIGFAULT  a rig fault that could not be healed: a wrong state that stayed, or a step that met a rig fault in both of its
+#             attempts. Its checks were not made, so a run with one is never a PASS (VERDICT: RIG). RIG_BREAK_AT of them (2),
+#             with the rig-broken failures, end the run as the breaker always has.
+healed() {  # healed <what> <how>
+	record HEAL "$1" "$2"
+}
+rig_unhealed() {  # rig_unhealed <signal> <what> <reason>
+	record RIGFAULT "$2" "rig fault ($1), not healed: $3"
+	[ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop "$1"
+	return 0
+}
+# An attempt at a step: a_attempt_mark before it, then a_attempt_rig says whether it met a rig fault (prints the signals), and
+# a_attempt_void sets its lines aside. Lines are counted in results.tsv, so a check made in a subshell is seen too.
+a_attempt_mark() { A_ATTEMPT_LINE=$(wc -l < "$A_RESULTS" 2>/dev/null || echo 0); }
+a_attempt_rig() {
+	awk -F'\t' -v s="$A_ATTEMPT_LINE" 'NR > s && ($1 == "RIG" || ($1 == "FAIL" && index($4, "rig broken (") == 1)) { printf "%s%s: %s", (n++ ? "; " : ""), $3, substr($4, 1, 160) } END { exit !n }' "$A_RESULTS"
+}
+# a_attempt_void [first]: the attempt's lines from its first rig line on (a RIG line other than a clock's, or a rig-broken
+# FAIL) set aside as VOID; the lines before it, clock RIG lines, HEAL and RIGFAULT lines stand. first: the results line the
+# step's first attempt began at, given for its second: a FAIL (not a rig-broken one) of a check whose failure the first
+# attempt had set aside is the check failing in both attempts, and stands ("in both attempts: ...").
+a_attempt_void() {
+	local t; t=$(mktemp)
+	awk -F'\t' -v OFS='\t' -v s="$A_ATTEMPT_LINE" -v first="${1:-}" '
+		function rigline() { return ($1 == "RIG" && index($4, "rig fault (clock)") != 1) || ($1 == "FAIL" && index($4, "rig broken (") == 1) }
+		FNR == NR { if (first != "" && FNR > first && FNR <= s && $1 == "VOID" && index($4, "[was FAIL] ") == 1 && index($4, "[was FAIL] rig broken (") != 1) was[$3] = 1; next }
+		FNR > s && !on && rigline() { on = 1 }
+		on && $1 != "VOID" && $1 != "HEAL" && $1 != "RIGFAULT" && !($1 == "RIG" && index($4, "rig fault (clock)") == 1) {
+			if ($1 == "FAIL" && !rigline() && ($3 in was)) $4 = "in both attempts: " $4
+			else { $4 = "[was " $1 "] " $4; $1 = "VOID" }
+		}
+		{ print }' "$A_RESULTS" "$A_RESULTS" > "$t" && cat "$t" > "$A_RESULTS"
+	rm -f "$t"
 }
 # rig_ssh_up <label>: the VM answers ssh
 rig_ssh_up() { if [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ]; then pass "$1" "ssh to the VM answers"; return 0; fi; rig_broken ssh "$1" "ssh to the VM does not answer"; return 1; }
@@ -114,7 +167,8 @@ rig_up() {
 	pass "$1" "$a, both joined"; return 0
 }
 # rig_input_ready <who> [seconds]: before an input probe, that game is brought to the front and its player left free to act:
-# nothing open but the HUD (dev `menus`). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
+# nothing open but the HUD (dev `menus`; the power armor HUD counts as the HUD: it stays listed after a climb-out, and every
+# probe after the first power armor step waited 30 s for it, 2026-11-07). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
 # a container (Tab), the pause menu (Esc), the console (~). Anything else is waited out, up to <seconds> (default 30): a loading
 # screen, a fade, or the engine's level-up prompt (PromptMenu, its input layer up for about 20 s), which a game shows once,
 # half a minute after its first load (2026-11-01: a hits run started right after a deploy and join met it). INPUT_READY says
@@ -126,7 +180,7 @@ rig_input_ready() {
 	dc "$w" focus >/dev/null
 	while :; do
 		m=$(dc "$w" menus | grep -oE 'open=[^ ]*'); [ -n "$m" ] || break
-		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|none' | tr '\n' ' '); open=${open% }
+		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|PowerArmorHUDMenu|none' | tr '\n' ' '); open=${open% }
 		[ -z "$open" ] && break
 		if [ $((SECONDS - t0)) -ge "$limit" ]; then INPUT_READY="${did:+closed$did; }${waited:+waited for$waited; }still open after $limit s: $open"; return 1; fi
 		dc "$w" focus >/dev/null
@@ -279,24 +333,32 @@ log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta o
 # --- the verdict ---------------------------------------------------------------------------------------------
 a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary.txt, exits non-zero on a FAIL
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"; A_SECTION=""
-	local np nf nw nr nu total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS"); nr=$(grep -c '^RIG' "$A_RESULTS")
+	local np nf nw nr nu nx nh nv nvf vnote total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS"); nr=$(grep -c $'^RIG\t' "$A_RESULTS")
+	nx=$(grep -c '^RIGFAULT' "$A_RESULTS"); nh=$(grep -c '^HEAL' "$A_RESULTS"); nv=$(grep -c '^VOID' "$A_RESULTS")
+	# failures a re-run set aside after a rig fault: no verdict on the mod, but never out of sight (a PASS names them)
+	nvf=$(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 && index($4, "[was FAIL] rig broken (") != 1 {n++} END{print n+0}' "$A_RESULTS")
+	vnote=""; [ "$nvf" -gt 0 ] && vnote="; $nvf failure(s) set aside after a rig fault: read them under \"set aside\""
 	# rig faults whose check never passed in this run (by name; a soak's rounds repeat each name): those were never made
 	nu=$(awk -F'\t' '$1=="PASS"{p[$3]=1} $1=="RIG"{r[$3]=1} END{n=0; for (k in r) if (!(k in p)) n++; print n}' "$A_RESULTS")
 	total=$((SECONDS - A_T0)); mins=$(awk -v s=$total 'BEGIN{printf "%.1f", s/60}')
 	{
 		echo; echo "================ $A_NAME summary ================"
-		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings$([ "$nr" -gt 0 ] && echo ", $nr rig fault(s)")"
+		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings$([ "$nr" -gt 0 ] && echo ", $nr rig fault(s)")$([ "$nx" -gt 0 ] && echo ", $nx RIG FAULT(S) NOT HEALED")$([ "$nh" -gt 0 ] && echo ", $nh healed")$([ "$nv" -gt 0 ] && echo ", $nv set aside")"
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
-		if [ "$nf" -gt 0 ]; then echo "FAILED:"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
-		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,230)}' "$A_RESULTS"; fi
+		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nv" -gt 0 ]; then echo "set aside (an attempt that met a rig fault; the step was healed and run again): $nv line(s), $(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {n++} END{print n+0}' "$A_RESULTS") of them failures:"; awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nw" -gt 0 ]; then echo "warnings:"; awk -F'\t' '$1=="WARN"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
-		if [ "$nf" -gt 0 ]; then echo "VERDICT: FAIL ($A_NAME: $nf failed check(s))"
-		elif [ "$nu" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed; $nu check(s) the rig never made, listed under rig faults: run them again)"
-		elif [ "$nr" -gt 0 ]; then echo "VERDICT: PASS ($A_NAME; $nr rig fault(s), each check made and passed in another round)"
-		else echo "VERDICT: PASS ($A_NAME)"; fi
+		if [ "$nf" -gt 0 ]; then echo "VERDICT: FAIL ($A_NAME: $nf failed check(s)$([ "$nx" -gt 0 ] && echo "; and $nx rig fault(s) not healed"))"
+		elif [ "$nx" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed, but $nx rig fault(s) were not healed and their checks were not made: fix the rig and run again$vnote)"
+		elif [ "$nu" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed; $nu check(s) the rig never made, listed under rig faults: run them again$vnote)"
+		elif [ "$nr" -gt 0 ]; then echo "VERDICT: PASS ($A_NAME; $nr rig fault(s), each check made and passed in another round$vnote)"
+		else echo "VERDICT: PASS ($A_NAME$([ "$nh" -gt 0 ] && echo "; $nh rig state(s) healed, every check made")$vnote)"; fi
 		echo "details: $A_OUT"
 	} | tee "$A_OUT/summary.txt"
-	nf=$((nf + nu)); [ "$nf" -gt 125 ] && nf=125
+	nf=$((nf + nu + nx)); [ "$nf" -gt 125 ] && nf=125
 	exit "$nf"
 }
 
@@ -391,6 +453,40 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "rig_fault: never made is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"; [ "${o%%|*}" = 1 ] && echo "ok   rig_fault: ... exit 1" || { echo "FAIL rig_fault: never made exits 1: [${o%%|*}]"; bad=1; }
 	o=$(brk 'rig_fault clock "pa distance" "x" >/dev/null; fail "hp" "differs" >/dev/null')
 	has "rig_fault: a FAIL still makes it FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	# the state guard's records and smoke.sh's re-run after a rig fault: HEAL is no failure, a set-aside (VOID) FAIL is not the
+	# mod's, a RIGFAULT (not healed) is never a PASS and counts toward the breaker
+	o=$(brk 'healed "state before x: vm was in power armor" "climbed out" >/dev/null; pass "c" ok >/dev/null')
+	has "healed: listed" "$o" "vm was in power armor"; has "healed: a PASS" "$o" "VERDICT: PASS"; [ "${o%%|*}" = 0 ] && echo "ok   healed: ... exit 0" || { echo "FAIL healed: exit 0: [${o%%|*}]"; bad=1; }
+	# a heal or a re-run never erases a failure of the mod: a FAIL made before the rig line stands, even when the re-run passes
+	o=$(brk 'a_attempt_mark; fail "trail" "3 of 6" >/dev/null; rig_fault walk "walk" "stuck" >/dev/null; a_attempt_rig >/dev/null && echo SAW-RIG; a_attempt_void; a_attempt_mark; pass "trail" "6 of 6" >/dev/null; pass "walk" ok >/dev/null')
+	has "attempt: a rig fault since the mark is seen" "$o" SAW-RIG
+	hasnt "attempt: a FAIL before the rig line is not set aside" "$o" "[was FAIL] 3 of 6"; has "attempt: ... it stands" "$o" "trail: 3 of 6"
+	has "attempt: ... and the run is a FAIL" "$o" "VERDICT: FAIL"; [ "${o%%|*}" = 1 ] && echo "ok   attempt: ... exit 1" || { echo "FAIL attempt: exit 1: [${o%%|*}]"; bad=1; }
+	# a FAIL after the rig line is set aside; made again and passed, the run passes and its verdict names what it set aside
+	o=$(brk 'a_attempt_mark; rig_fault walk "walk back" "stuck" >/dev/null; fail "give back" "got it back" >/dev/null; a_attempt_void; a_attempt_mark; pass "walk back" ok >/dev/null; pass "give back" ok >/dev/null')
+	has "attempt: a FAIL after the rig line is set aside" "$o" "[was FAIL] got it back"; has "attempt: ... made again, a PASS" "$o" "VERDICT: PASS"
+	has "attempt: ... the PASS names the set-aside failure" "$o" "1 failure(s) set aside after a rig fault"; [ "${o%%|*}" = 0 ] && echo "ok   attempt: ... exit 0" || { echo "FAIL attempt: exit 0: [${o%%|*}]"; bad=1; }
+	# a clock fault spoils only the clock's check: the step's other failures stand, the RIG line stays RIG
+	o=$(brk 'a_attempt_mark; rig_fault clock "moving" "cannot line up" >/dev/null; fail "settled" "90 u" >/dev/null; a_attempt_void; a_attempt_mark; pass "moving" ok >/dev/null; pass "settled" ok >/dev/null')
+	hasnt "attempt: a clock fault sets nothing aside" "$o" "[was FAIL] 90 u"; has "attempt: ... the FAIL after it stands" "$o" "VERDICT: FAIL"
+	has "attempt: ... the clock line stays a rig fault" "$o" "rig fault (clock): cannot line up"
+	# the second attempt: a check that failed in both attempts stays a FAIL, rig lines or not
+	o=$(brk 'a_attempt_mark; f1=$A_ATTEMPT_LINE; rig_fault walk "w" "y" >/dev/null; fail "take" "no claim" >/dev/null; a_attempt_void; a_attempt_mark; rig_fault walk "w" "y" >/dev/null; fail "take" "no claim" >/dev/null; a_attempt_void "$f1"; rig_unhealed walk "drops: both attempts" "w" >/dev/null')
+	has "attempt: a FAIL in both attempts stands" "$o" "in both attempts: no claim"; has "attempt: ... the run is a FAIL" "$o" "VERDICT: FAIL"
+	o=$(brk 'a_attempt_mark; f1=$A_ATTEMPT_LINE; rig_fault walk "w" "y" >/dev/null; fail "x" "one" >/dev/null; a_attempt_void; a_attempt_mark; rig_fault walk "w" "y" >/dev/null; fail "z" "two" >/dev/null; a_attempt_void "$f1"; rig_unhealed walk "s: both attempts" "w" >/dev/null')
+	has "attempt: second attempt, a FAIL after its rig line set aside" "$o" "[was FAIL] two"; has "attempt: ... the run is RIG" "$o" "VERDICT: RIG"
+	o=$(brk 'pass "a" ok >/dev/null; a_attempt_mark; fail "b" "real" >/dev/null; a_attempt_rig >/dev/null || echo NO-RIG')
+	has "attempt: a FAIL alone is no rig fault" "$o" NO-RIG; has "attempt: ... and stays a FAIL" "$o" "VERDICT: FAIL"
+	# the breaker counts a rig-broken failure that a re-run set aside: two rig-broken events still stop the run
+	o=$(brk 'a_attempt_mark; rig_broken input "c1" "no shots" >/dev/null; a_attempt_void; a_attempt_mark; rig_broken input "c1" "no shots"; section b2')
+	hasnt "breaker: a set-aside rig-broken failure counts" "$o" REACHED; has "breaker: ... the stop names it" "$o" "STOP: rig broken (input)"
+	o=$(brk 'rig_unhealed state "state before pa_vm" "vm: in power armor" >/dev/null; pass "c" ok >/dev/null')
+	has "rig_unhealed: listed" "$o" "rig fault (state), not healed: vm: in power armor"; has "rig_unhealed: VERDICT RIG" "$o" "VERDICT: RIG"
+	[ "${o%%|*}" -ge 1 ] 2>/dev/null && echo "ok   rig_unhealed: exits non-zero" || { echo "FAIL rig_unhealed: exits non-zero: [${o%%|*}]"; bad=1; }
+	o=$(brk 'rig_unhealed state "s1" "x" >/dev/null; rig_unhealed state "s2" "y" >/dev/null; section b2')
+	hasnt "rig_unhealed: two stop the run" "$o" REACHED
+	o=$(brk 'rig_unhealed state "s1" "x" >/dev/null; fail "hp" "differs" >/dev/null')
+	has "rig_unhealed: with a FAIL the verdict is FAIL" "$o" "VERDICT: FAIL"
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	rm -rf "$d" "$F4MP_CHECKS"; exit $bad
 fi
