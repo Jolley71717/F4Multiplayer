@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T03:29:30+00:00",
+ "updated": "2026-11-08T03:34:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -942,7 +942,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 3,
-   "note": "Reviewed; rig test queued behind the 0.14.0 soak; ships in 0.15.0 (new protocol)",
+   "note": "Rig test: copies, outcome and loading pass; double roll leaves actors, ended encounters still block. Fixing.",
    "pr": 337
   },
   {
@@ -1052,6 +1052,14 @@
    "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
    "pr": 157,
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
+  },
+  {
+   "id": "huu7",
+   "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "hwbu",
@@ -1241,6 +1249,14 @@
    "desc": "Sometimes a friend's grenade or Molotov stayed visible in their hand after the throw. We found why nothing ever hid it again, but not what makes it show in the first place. The next release hides a grenade left in the hand between throws, and the log records when it happens so the cause can be found."
   },
   {
+   "id": "kswk",
+   "title": "Calm encounters: stopping a double-rolled run leaves its actors alive",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ktmu",
    "title": "The host sees joiners' movement jitter",
    "kind": "bug",
@@ -1341,6 +1357,14 @@
    "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
    "kind": "feature",
    "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "mokv",
+   "title": "Shared encounter lines: accusor's lines show as text with no voice",
+   "kind": "bug",
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
@@ -1945,6 +1969,14 @@
    "title": "A max-health difference between games makes an enemy die early",
    "kind": "bug",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "vzel",
+   "title": "Calm encounters: an ended encounter's leftover actor still counts as running",
+   "kind": "bug",
+   "priority": 1,
    "stage": 0,
    "note": ""
   },
