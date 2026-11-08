@@ -68,6 +68,10 @@ namespace Spawns
 	// stands in for it (Spawns::LocalOf names it). Never ours to run: what our player hits is a copy, no NPC of ours.
 	[[nodiscard]] bool IsAbsent(std::uint32_t a_id);
 
+	// Whether a friend's spawn a_id is known here, alive and still theirs, so a copy of it is placed or may be about to
+	// be (Conversations holds its line for the copy a moment). False for one over, or none known.
+	[[nodiscard]] bool Expects(std::uint32_t a_id);
+
 	// A friend's frame was given back from a loan (kFrameReturned with a place: FrameLoan::ChoosePlace), or our player
 	// gives one back (FrameLoans, as the return goes): it stands where its borrower got out of it from now on, in every
 	// game, and our copy is placed there, not where the owner's frame stood as it was lent (SpawnBook::RETURN_HOLD).

@@ -640,7 +640,8 @@ namespace Spawns
 					running.push_back(quest->GetFormID());
 				} else if (quest->data.questType == Encounters::QUEST_TYPE_MISC) {
 					// The system's bookkeeping (REFactionShared), running from the game's start: named like one, no encounter.
-					REX::INFO("Encounters: {:08X} '{}' runs, named like an encounter, but no story event starts it: not one", quest->GetFormID(), name);
+					// What the game holds for "no event" is logged, so the rule (Encounters::IsStoryEvent) can be checked against it.
+					REX::INFO("Encounters: {:08X} '{}' runs, named like an encounter, but no story event starts it (its event reads {:08X}): not one", quest->GetFormID(), name, quest->eventID);
 				}
 			}
 			encounters.Settle(running, a_now);
@@ -1384,6 +1385,12 @@ namespace Spawns
 	bool IsAbsent(std::uint32_t a_id)
 	{
 		return !Protocol::IsSpawnRef(a_id) && theirs.Knows(a_id);
+	}
+
+	bool Expects(std::uint32_t a_id)
+	{
+		const auto copy = theirs.Find(a_id);
+		return copy && !copy->dead && !copy->gone;
 	}
 
 	bool GivenBack(const Protocol::FrameReturn& a_return)

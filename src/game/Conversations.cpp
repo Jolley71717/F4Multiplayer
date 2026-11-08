@@ -7,6 +7,7 @@
 #include "game/Hud.h"
 #include "game/LineSounds.h"
 #include "game/NpcSync.h"
+#include "game/QuestActors.h"
 #include "game/RemotePlayers.h"
 #include "game/Spawns.h"
 #include "game/SubtitleTime.h"
@@ -61,6 +62,18 @@ namespace Conversations
 		std::uint32_t                               cutCrowded = 0;  // ... still sounding when LineSounds::MAX_PLAYING newer ones came
 		std::uint32_t                               cutUnlogged = 0;  // ... of them, not logged (CUT_LOG_EVERY) since the last cut logged
 		std::optional<Clock::time_point>            cutLoggedAt;      // when a cut was last logged
+
+		// Friends' lines held for a copy of their speaker about to be placed (Apply, HeldLinesFrame): a spawn's first line
+		// came 0.3 s before the copies stood on the rig (0.14.0), and nobody was there to say it.
+		struct Held
+		{
+			Protocol::Line    line;
+			Clock::time_point since{};
+		};
+		constexpr auto        HOLD_FOR = 2s;
+		constexpr std::size_t MAX_HELD = 16;
+		std::vector<Held>     heldLines;
+		std::uint32_t         held = 0, heldDropped = 0;  // lines held; of them, let go unsaid (no copy came in time)
 
 		// The sounds of friends' lines, keyed like Shown (a speaker says one line at a time), each with a hard end.
 		using Sounds = LineSounds<RE::BSSoundHandle>;
@@ -255,6 +268,13 @@ namespace Conversations
 			}
 			if (a_isPlayer) {
 				return 0u;
+			}
+			// A creature (a race our player can't talk to: a feral dog, a stingwing, a mutant hound) has no recorded lines:
+			// its growls are sound descriptors named in its dialogue's responses, with no voice file (Fallout4.esm: the
+			// feral dog's 0004335A names the descriptor 0004335D, and the Voices archive holds nothing for it), so the hearers
+			// found no file for every one (the rig, 0.14.0) and the text was noise. Not shared; their copies growl on their own.
+			if (a_actor->race && (static_cast<std::uint32_t>(a_actor->race->data.flags) & QuestActors::RACE_ALLOWS_DIALOGUE) == 0) {
+				return std::nullopt;
 			}
 			const auto id = a_actor->GetFormID();
 			if (Protocol::IsShareableRef(id) && (NpcSync::RunsLocally(id) || NpcSync::TalkingTo() == id)) {
@@ -716,6 +736,32 @@ namespace Conversations
 			}
 			subtitlesUp.clear();
 		}
+
+		// A friend's line whose speaker, a spawn of theirs, had no copy here yet as it came (Apply): said now if the copy
+		// stands (one line held at most HOLD_FOR: a copy that takes longer is far, or not to be placed), else let go.
+		void HeldLinesFrame()
+		{
+			if (heldLines.empty()) {
+				return;
+			}
+			const auto now = Clock::now();
+			std::vector<Protocol::Line> due;
+			for (auto it = heldLines.begin(); it != heldLines.end();) {
+				if (Spawns::LocalOf(it->line.speaker) != 0) {
+					due.push_back(it->line);
+					it = heldLines.erase(it);
+				} else if (now - it->since >= HOLD_FOR || !Spawns::Expects(it->line.speaker)) {
+					++heldDropped;
+					it = heldLines.erase(it);
+				} else {
+					++it;
+				}
+			}
+			for (const auto& line : due) {
+				--received;  // counted once, as it came
+				Apply(line);
+			}
+		}
 	}
 
 	void Frame(bool a_connected)
@@ -723,6 +769,7 @@ namespace Conversations
 		Dialogue::Frame();  // a conversation left without its speaker is ended
 		SubtitlesFrame();   // friends' lines in the subtitle area: checked once, taken down when their time is up
 		lineSounds.EndDue(Clock::now(), EndSound);  // friends' lines' sounds at their hard end
+		HeldLinesFrame();   // a line held for a copy about to be placed is said once it stands, or let go
 
 		std::unordered_map<std::uint32_t, Speaking> now;
 		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
@@ -747,6 +794,13 @@ namespace Conversations
 	{
 		++received;
 		const auto player = RE::PlayerCharacter::GetSingleton();
+		// A friend's spawn whose copy is not placed here yet (one just shared: the copy follows in a moment) says its
+		// line before anyone is here to say it: held for a little, and said once the copy stands (Frame).
+		if (Protocol::IsSpawnRef(a_line.speaker) && Spawns::LocalOf(a_line.speaker) == 0 && Spawns::Expects(a_line.speaker) && heldLines.size() < MAX_HELD) {
+			heldLines.push_back({ a_line, Clock::now() });
+			++held;
+			return;
+		}
 		const auto [actor, name] = FindSpeaker(a_line);
 		if (!player || !actor || !SameSpace(player, actor) ||
 			actor->data.location.GetDistance(player->data.location) > HEAR_RANGE) {
@@ -805,13 +859,14 @@ namespace Conversations
 		lineSounds.EndAll([](Sounds::Entry& a_entry) { a_entry.handle.FadeOutAndRelease(VOICE_CUT_MS); });
 		cutLoggedAt.reset();
 		cutUnlogged = 0;
+		heldLines.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("conversations: heard={} reported={} placed={} received={} shown={} voiced={} unplaced={} missing={} unplayed={} subtitled={} timed={} noticed={} dropped={} up={} sounds={} cutLong={} cutCrowded={} {}",
+		return std::format("conversations: heard={} reported={} placed={} received={} shown={} voiced={} unplaced={} missing={} unplayed={} subtitled={} timed={} noticed={} dropped={} up={} sounds={} cutLong={} cutCrowded={} held={}/{} {}",
 			heard, reported, placed, received, displayed, voiced, unplaced, missing, unplayed, subtitled, timed, noticed, dropped, subtitlesUp.size(), lineSounds.Kept(), cutLong,
-			cutCrowded, Dialogue::Describe());
+			cutCrowded, held, heldDropped, Dialogue::Describe());
 	}
 
 	std::string DescribeLine(RE::Actor* a_actor)

@@ -152,6 +152,19 @@ TEST("encounters: the game's random-encounter quests are told by their name, typ
 	CHECK(!IsEncounter(MISC, 0, "REFactionShared"));
 	CHECK(!IsEncounter(MISC, 0, "RETreasureHuntSC01_Reward"));
 	CHECK(!IsEncounter(MISC, 0, "RESceneLC01"));  // the rule, not the name: an encounter quest always has one
+	// What the running game holds for a quest no event starts is its own (REFactionShared read as not 0 on the rig): an
+	// event is a word of four capitals or digits, and not the editor's "NONE".
+	using Encounters::IsStoryEvent;
+	constexpr std::uint32_t NONE = 0x454E4F4E;  // "NONE"
+	for (const auto event : { SCPT, OAAT, 0x434F4C43u /* CLOC */, 0x4C4C494Bu /* KILL */, 0x30304C41u /* AL00 */ }) {
+		CHECK(IsStoryEvent(event));
+	}
+	for (const auto none : { 0u, 0xFFFFFFFFu, NONE, 0x00504353u /* three letters */, 0x74706373u /* lower case */, 0x20504353u /* a space */ }) {
+		CHECK(!IsStoryEvent(none));
+	}
+	CHECK(!IsEncounter(MISC, NONE, "REFactionShared"));
+	CHECK(!IsEncounter(MISC, 0xFFFFFFFFu, "RETreasureHuntSC01_Reward"));
+	CHECK(IsEncounter(MISC, SCPT, "REFactionShared"));  // the event decides, not the name
 }
 
 TEST("encounters: a spawn says its kind on the wire, and a plain one names no quest")
