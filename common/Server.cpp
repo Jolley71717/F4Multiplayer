@@ -604,6 +604,17 @@ void Server::Run()
 	// that only went down, which the host's game can undo (see handleClaims). Saved, so a death seen in any run since
 	// is never one, however many times the server restarts.
 	std::unordered_set<std::uint32_t>                     healable;
+	// The deaths among deadActors the host's own game reported: a kill seen there, or an NPC found dead in its world. Never
+	// sent back to that game in a world state (sendWorldState), as no player gets their own pickups: its save is the truth
+	// about its own kills. A save from after the kill has the corpse anyway; one from before it (a quickload, a restart
+	// into an older save) has the NPC alive, and its game, told nothing, offers to run it, which brings it back for
+	// everyone (handleClaims' cameBack). Before, every load killed it again, forever, and a cell reset's NPCs died on
+	// entry once the host had loaded a save since. A death a friend's game reported is still sent to the host's game:
+	// that kill may be in no save of the host's (a cell it never loaded). Only a hosted session has these (the host's
+	// game is Player::local, by its identity, whatever player id it has); on a dedicated server no game is the host's and
+	// the session's list is the only world, so every death goes to everyone as before. Saved (layout 44); deaths from an
+	// older file have no reporter known and go to everyone too.
+	std::unordered_set<std::uint32_t>                     hostDeaths;
 
 	// A full table stops that kind of sharing for everyone (until the session file goes), so the log says
 	// when one gets near, once at 80% and once full.
@@ -639,6 +650,11 @@ void Server::Run()
 			for (const auto id : saved->healable) {
 				if (deadActors.contains(id)) {
 					healable.insert(id);
+				}
+			}
+			for (const auto id : saved->hostDeaths) {
+				if (deadActors.contains(id)) {
+					hostDeaths.insert(id);
 				}
 			}
 			containerChanges = saved->containerChanges;
@@ -697,8 +713,8 @@ void Server::Run()
 			}
 			sessionLevel = saved->npcLevel;
 			sessionLegendary = saved->legendaryMult;
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
-				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
+			log(std::format("server: loaded the saved session ({} dead ({} by the host's game), {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
+				deadActors.size(), hostDeaths.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -730,6 +746,7 @@ void Server::Run()
 		}
 		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
 		snapshot.healable.assign(healable.begin(), healable.end());
+		snapshot.hostDeaths.assign(hostDeaths.begin(), hostDeaths.end());
 		snapshot.containerChanges = containerChanges;
 		for (const auto& [ref, picker] : pickedUp) {
 			snapshot.pickedUp.push_back(ref);
@@ -785,6 +802,7 @@ void Server::Run()
 	const auto resetWorld = [&] {
 		deadActors.clear();
 		healable.clear();
+		hostDeaths.clear();
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
@@ -1080,21 +1098,34 @@ void Server::Run()
 		if (!spent.traps.empty()) {
 			send(a_to, Protocol::Encode(spent), true);
 		}
+		// Not the host's own game's deaths to that game (hostDeaths): its save has each one dead, or, from before the kill,
+		// alive, and then it is alive for the session again.
+		const auto receiver = players.find(a_to);
+		const auto receiverId = receiver != players.end() ? receiver->second.id : 0;
+		const bool toHost = receiver != players.end() && receiver->second.local;
+		const auto sent = [&](std::uint32_t a_ref) { return !toHost || !hostDeaths.contains(a_ref); };
 		// Deaths with a known place go first, one by one with the place; the list that follows then finds
 		// them already dead, so each copy lies where the killer saw it fall.
 		std::size_t placed = 0;
 		for (const auto& [refId, at] : deathPositions) {
+			if (!sent(refId)) {
+				continue;
+			}
 			if (placed++ >= MAX_DEATH_POSITIONS_SENT) {
 				break;
 			}
 			send(a_to, Protocol::Encode(Protocol::ActorDeath{ refId, 0, false, at[0], at[1], at[2] }, Protocol::MessageType::kActorDied), true);
 		}
-		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
+		std::vector<std::uint32_t> dead;
+		dead.reserve(deadActors.size());
+		for (const auto ref : deadActors) {
+			if (sent(ref)) {
+				dead.push_back(ref);
+			}
+		}
 		// Not the receiver's own pickups: their game has those already, in an inventory or dropped again where they lie now
 		// (as the same reference, for a plugin's persistent item), and would take a dropped one away as a friend's pickup.
 		// A save from before they picked one up has it lying where it was placed: theirs to pick up again.
-		const auto                 receiver = players.find(a_to);
-		const auto                 receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::vector<std::uint32_t> picked;
 		picked.reserve(pickedUp.size());
 		for (const auto& [ref, picker] : pickedUp) {
@@ -2027,6 +2058,9 @@ void Server::Run()
 			}
 		}
 		deadActors.insert(death->refId);
+		if (a_player.local) {
+			hostDeaths.insert(death->refId);  // the host's world's own: never sent back to it (sendWorldState)
+		}
 		++budgetOf(a_player).added[kDeaths];
 		noteFill(kDeaths, deadActors.size());
 		touched();
@@ -2784,6 +2818,7 @@ void Server::Run()
 				}
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
+				hostDeaths.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				restFrom.erase(claim.refId);
 				diedAt.erase(claim.refId);
@@ -2802,6 +2837,7 @@ void Server::Run()
 				}
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
+				hostDeaths.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				restFrom.erase(claim.refId);
 				if (died != diedAt.end()) {

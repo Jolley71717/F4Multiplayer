@@ -64,7 +64,11 @@ namespace SessionFile
 	// fields: Protocol::EncodeKeptWorldState), so a restarted server still sends no player their own pickups (a plugin's item
 	// they picked up and dropped again lies in their world as that same reference). A session with none known is written as
 	// before (42, 41, 40, 38 or 36); a file before 43 reads as one with none known: its pickups go to everyone.
-	inline constexpr std::uint16_t FORMAT = 43;
+	// 44 adds to 43 the deaths the host's own game reported (Snapshot::hostDeaths, a count and the ids after healable), which
+	// the server leaves out of the world state it sends that game: its save is the truth about its own kills. A session with
+	// none is written as before (43 or older); a file before 44 reads as one with none: every death goes to every game.
+	inline constexpr std::uint16_t FORMAT = 44;
+	inline constexpr std::uint16_t HOST_DEATHS = 44;
 	inline constexpr std::uint16_t PICKERS = 43;
 	inline constexpr std::uint16_t WORKSHOP_CHARACTERS = 42;
 	inline constexpr std::uint16_t ROLLS = 41;
@@ -84,7 +88,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 44 (35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 45 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -102,13 +106,20 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasRolls(std::uint16_t a_format) { return a_format >= ROLLS; }
 	[[nodiscard]] constexpr bool HasWorkshopCharacters(std::uint16_t a_format) { return a_format >= WORKSHOP_CHARACTERS; }
 	[[nodiscard]] constexpr bool HasPickers(std::uint16_t a_format) { return a_format >= PICKERS; }
+	[[nodiscard]] constexpr bool HasHostDeaths(std::uint16_t a_format) { return a_format >= HOST_DEATHS; }
 
-	// The layout a snapshot is written in: the oldest that holds it, so a session without known pickers (a_pickers),
-	// workshop characters or lost pieces (a_workshop), NPC rolls (a_rolls), gifts or drops with known characters
-	// (a_characters) or shared storage is still one an older build reads.
-	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false, bool a_pickers = false)
+	// The layout a snapshot is written in: the oldest that holds it, so a session without deaths the host's game reported
+	// (a_hostDeaths), known pickers (a_pickers), workshop characters or lost pieces (a_workshop), NPC rolls (a_rolls), gifts
+	// or drops with known characters (a_characters) or shared storage is still one an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false, bool a_pickers = false, bool a_hostDeaths = false)
 	{
-		return a_pickers ? PICKERS : a_workshop ? WORKSHOP_CHARACTERS : a_rolls ? ROLLS : a_characters ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
+		return a_hostDeaths ? HOST_DEATHS :
+		       a_pickers    ? PICKERS :
+		       a_workshop   ? WORKSHOP_CHARACTERS :
+		       a_rolls      ? ROLLS :
+		       a_characters ? CHARACTERS :
+		       a_storage    ? STORAGE :
+		                      OBJECT_PLACES;
 	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
@@ -129,6 +140,10 @@ namespace SessionFile
 		// going down (Dogmeat) for dead. The host's game can undo one of these (Server's handleClaims), never a
 		// death saved since. Every death of an older layout's file is one, until undone or reported again.
 		std::vector<std::uint32_t>                          healable;
+		// The deaths among deadActors the host's own game reported (its kill, or found dead in its world), never sent back to
+		// that game (Server's sendWorldState): a save of its from before the kill has the NPC alive, and its offer to run it
+		// brings it back for everyone. Empty in a file before layout 44: those deaths go to every game, as they did.
+		std::vector<std::uint32_t>                          hostDeaths;
 		std::vector<Protocol::IndexedContainerChange>       containerChanges;  // in index order
 		std::vector<std::uint32_t>                          pickedUp;
 		// Who picked up each of pickedUp (same order; 0: not known). Empty: none known (a file before layout 43).
@@ -195,7 +210,8 @@ namespace SessionFile
 		});
 		const bool pickers = std::ranges::any_of(a_snapshot.pickers, [](std::uint32_t a_id) { return a_id != 0; });
 		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
-			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop, pickers);
+			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop, pickers,
+			!a_snapshot.hostDeaths.empty());
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -208,6 +224,12 @@ namespace SessionFile
 		put(static_cast<std::uint32_t>(a_snapshot.healable.size()));
 		for (const auto id : a_snapshot.healable) {
 			put(id);
+		}
+		if (HasHostDeaths(layout)) {
+			put(static_cast<std::uint32_t>(a_snapshot.hostDeaths.size()));
+			for (const auto id : a_snapshot.hostDeaths) {
+				put(id);
+			}
 		}
 
 		if (!a_snapshot.plugins.empty()) {
@@ -319,6 +341,16 @@ namespace SessionFile
 			}
 			snapshot.healable.resize(healableCount);
 			for (auto& id : snapshot.healable) {
+				take(id);
+			}
+		}
+		if (HasHostDeaths(version)) {
+			std::uint32_t hostDeathCount = 0;
+			if (!take(hostDeathCount) || hostDeathCount > (a_data.size() - offset) / sizeof(std::uint32_t)) {
+				return std::nullopt;
+			}
+			snapshot.hostDeaths.resize(hostDeathCount);
+			for (auto& id : snapshot.hostDeaths) {
 				take(id);
 			}
 		}

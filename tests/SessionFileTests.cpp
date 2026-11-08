@@ -500,7 +500,8 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 
 	auto bare = MakeSnapshot();
 	bare.workshopItems.clear();
-	for (std::uint16_t layout = 29; layout <= SessionFile::FORMAT; ++layout) {
+	// Up to 43: from 44 on the header holds the host's own deaths, which a body written as an older layout lacks.
+	for (std::uint16_t layout = 29; layout < SessionFile::HOST_DEATHS; ++layout) {
 		if (layout == SessionFile::DESTRUCTIBLES_TEST || layout == SessionFile::STORAGE_TEST) {
 			continue;  // no build reads it
 		}
@@ -725,6 +726,75 @@ TEST("session file: who picked up each item survives the file, and a session wit
 	bad.insert(bad.end(), reinterpret_cast<const std::uint8_t*>(&one), reinterpret_cast<const std::uint8_t*>(&one) + sizeof(one));
 	bad.insert(bad.end(), 4, 0);
 	CHECK(!Protocol::DecodeKeptWorldState(bad));
+}
+
+// Layout 44 adds the deaths the host's own game reported (the server never sends those back to it: its save is the truth
+// about its own kills). A session with none is written as before; a 43 file reads as one with none: its deaths go to every
+// game, as they did.
+TEST("session file: the host's own deaths survive the file, and a session with none, or a 43 file, has every death as before")
+{
+	const auto layoutOf = [](const std::vector<std::uint8_t>& a_bytes) {
+		std::uint16_t version = 0;
+		std::memcpy(&version, a_bytes.data() + 4, sizeof(version));
+		return version;
+	};
+	auto in = MakeSnapshot();
+	in.pickers = { 1 };  // a 43 session
+	in.healable = { 0x0001D41F };
+	in.hostDeaths = { 0x0004B2BA };
+	const auto bytes = SessionFile::Encode(in);
+	CHECK(layoutOf(bytes) == SessionFile::HOST_DEATHS);
+	CHECK(SessionFile::Readable(SessionFile::HOST_DEATHS));
+	auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->hostDeaths == in.hostDeaths);
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->healable == in.healable);
+	CHECK(out->pickers == in.pickers);
+	CHECK(out->questStages.size() == in.questStages.size());
+	CHECK(SessionFile::Encode(*out) == bytes);
+
+	// None: the layout an older build reads, byte for byte what 43 wrote (pickers known) and read with none, its deaths kept.
+	auto none = in;
+	none.hostDeaths.clear();
+	const auto noneBytes = SessionFile::Encode(none);
+	CHECK(layoutOf(noneBytes) == SessionFile::PICKERS);
+	out = SessionFile::Decode(noneBytes);
+	REQUIRE(out);
+	CHECK(out->hostDeaths.empty());
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->healable == in.healable);
+	CHECK(out->pickers == in.pickers);
+	auto older = in;
+	older.hostDeaths.clear();
+	older.pickers.clear();
+	const auto olderOut = SessionFile::Decode(SessionFile::Encode(older));
+	REQUIRE(olderOut);
+	CHECK(olderOut->hostDeaths.empty());
+	CHECK(olderOut->deadActors == in.deadActors);
+
+	// A count past the file's end is damage, and so is a file cut inside the count or the list.
+	constexpr std::size_t COUNT_AT = 4 + 2 + 4 + 8 + 4 + 2 + 2 * 12 + 4 + 4;  // after the header, two identities and one healable
+	std::uint32_t         count = 0;
+	std::memcpy(&count, bytes.data() + COUNT_AT, sizeof(count));
+	REQUIRE(count == 1);
+	auto tooMany = bytes;
+	const std::uint32_t huge = 0x10000000;
+	std::memcpy(tooMany.data() + COUNT_AT, &huge, sizeof(huge));
+	CHECK(!SessionFile::Decode(tooMany));
+	CHECK(!SessionFile::Decode(std::span{ bytes }.first(COUNT_AT + 2)));
+	CHECK(!SessionFile::Decode(std::span{ bytes }.first(COUNT_AT + 6)));
+
+	// Many, past a world state's chunk: all kept.
+	auto many = MakeSnapshot();
+	for (std::uint32_t i = 0; i < Protocol::WORLD_STATE_CHUNK + 10; ++i) {
+		many.deadActors.push_back(0x00030000 + i);
+		many.hostDeaths.push_back(0x00030000 + i);
+	}
+	out = SessionFile::Decode(SessionFile::Encode(many));
+	REQUIRE(out);
+	CHECK(out->deadActors == many.deadActors);
+	CHECK(out->hostDeaths == many.hostDeaths);
 }
 
 // Layout 42, as 0.12.0 wrote it (SessionFile::Encode at that release, built from its own headers): two pickups and a
