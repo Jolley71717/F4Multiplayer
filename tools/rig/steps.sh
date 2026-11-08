@@ -362,15 +362,19 @@ _loot() {
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
 _useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$who" >/dev/null; sleep 1; }   # a blind second Tab opened the Pip-Boy when the first closed the terminal
 # _safe_term <who> <terminal>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s; the activate tried
-# twice), picks the unlock entry and closes it. 1 = the terminal's menu never opened (SAFE_DIAG says what the game showed): no
-# press of the unlock entry was made, so a safe still locked after it says nothing of the mod.
+# twice), picks the unlock entry and closes it. 1 = the terminal's menu never opened (SAFE_DIAG says what the game showed; SAFE_RIG
+# names a rig cause seen at an activate: another menu open, or the player in power armor). With the guard before the step a
+# terminal that never opens on the game's own activate points at the game or the mod (a terminal sync holding a stale lock),
+# so it is a rig fault only with SAFE_RIG, and the mod's failure otherwise.
 _safe_term() {
 	local i
-	SAFE_DIAG=""
+	SAFE_DIAG=""; SAFE_RIG=""
 	for i in 1 2; do
 		clear_menus "$1" >/dev/null; dc "$1" focus >/dev/null; sleep 1; dc "$1" "console $2.activate player" >/dev/null
 		menu_open "$1" TerminalMenu 10 && break
 		SAFE_DIAG="$SAFE_DIAG activate $i: no terminal menu in 10 s (menus $(dc "$1" menus | grep -oE 'open=[^ ]*' | cut -c1-80); $(dc "$1" pa | cut -c1-60));"
+		local o; o=$(st_open "$1"); [ -n "$o" ] && [ "$o" != "?" ] && SAFE_RIG="${SAFE_RIG:+$SAFE_RIG, }$o open at activate $i"
+		pa_in "$1" && SAFE_RIG="${SAFE_RIG:+$SAFE_RIG, }in power armor at activate $i"
 		[ $i = 2 ] && return 1
 	done
 	sleep 2
@@ -389,9 +393,14 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	a_a=$(dcf "$actor" "refinfo $safe" locked)
 	# Once more if the actor's own game still has it locked: 2026-11-06 the VM stalled 5 s through the key presses and the unlock
 	# entry was never picked (both games agreed it was locked). A second miss still fails, unless the terminal never opened in
-	# either: then the unlock was never asked for (a rig fault, the step healed and run again).
+	# either: then the unlock was never asked for, a rig fault (healed and run again) only when SAFE_RIG names the rig's
+	# state in the way, otherwise the mod's failure.
 	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term && opened=1; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
-	if [ "$a_a" != no ] && [ $opened = 0 ]; then rig_fault input "safe ($actor unlocks): unlocked in the actor's game" "the storage terminal's menu never opened for $actor (two tries of two activates):$SAFE_DIAG"; return; fi
+	if [ "$a_a" != no ] && [ $opened = 0 ]; then
+		if [ -n "$SAFE_RIG" ]; then rig_fault input "safe ($actor unlocks): unlocked in the actor's game" "the storage terminal's menu never opened for $actor (two tries of two activates), the rig's state in the way ($SAFE_RIG):$SAFE_DIAG"
+		else fail "safe ($actor unlocks): the storage terminal opens" "the game's own activate (two tries of two) never opened the terminal's menu for $actor, nothing else open and out of power armor:$SAFE_DIAG"; fi
+		return
+	fi
 	a_o=$(dcf "$other" "refinfo $safe" locked)
 	expect_eq "safe ($actor unlocks): unlocked in the actor's game" "$a_a" no
 	expect_eq "safe ($actor unlocks): the other game sees it unlocked" "$a_o" no
@@ -681,21 +690,20 @@ step_pa() {
 		else fail "$pa_moving" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
 	fi
 	expect_le "power armor ($d): stand-in distance after stopping" "$settled" "$T_PA_SETTLED" u
-	# The climb-out: the keyboard's E, then the pad's A (state.sh pa_climb_out), each read for whether
-	# it reached the game. 2026-11-06 (host) and 2026-11-07 (the VM, 0.14.0-rc1) the E alone, up to five times, left the player in the
-	# suit, and the VM spent a whole round in it, failing four later steps. Out by any press is a pass of the climb-out (each is a
-	# player's way out); out only by the pad also warns, saying whether the E reached the game's window (it didn't: the
-	# rig's input; it did and the game did nothing: worth a look). Out by none is the mod's failure (or the game's), with what the
-	# game said; the player is then taken out by the console, said so, so the stand-in's check and the steps after are still made.
+	# The climb-out: the keyboard's E, and the pad's A only when no E was seen to reach the game (state.sh pa_climb_out).
+	# 2026-11-06 (host) and 2026-11-07 (the VM, 0.14.0-rc1) the E alone, up to five times, left the player in the suit, and the VM
+	# spent a whole round in it, failing four later steps. An E that reached the game's window (nothing open, in front, its key
+	# count up) and left the player in is the climb-out's failure: a regression that eats a keyboard player's way out is the
+	# mod's (or the game's), and no other press may pass it. Out by the pad after Es that never reached the game passes with a
+	# WARN (the rig's input). Out by none fails, with what the game said; the player is then taken out by the console, said so,
+	# so the stand-in's check and the steps after are still made.
 	clear_menus $d >/dev/null
 	if pa_climb_out $d 3; then
 		pass "power armor ($d): climbed out" "$PA_HOW"
-		case "$PA_HOW" in "E held"*) ;; *)
-			if [ -n "$PA_REACHED" ]; then warn "power armor ($d): the keyboard's E climbs out" "the E reached the game's window and the player stayed in; out by $PA_HOW;$PA_DIAG"
-			else warn "power armor ($d): the keyboard's E climbs out" "the E never reached the game's window (the rig's input); out by $PA_HOW;$PA_DIAG"; fi;;
-		esac
+		case "$PA_HOW" in "E held"*) ;; *) warn "power armor ($d): the keyboard's E climbs out" "the E never reached the game's window (the rig's input); out by $PA_HOW;$PA_DIAG";; esac
 	else
-		fail "power armor ($d): climbed out" "still in after the keyboard's E (3 tries) and the pad's A:$PA_DIAG"
+		if [ -n "$PA_REACHED" ]; then fail "power armor ($d): climbed out" "the keyboard's E reached the game's window and left the player in (3 tries):$PA_DIAG"
+		else fail "power armor ($d): climbed out" "still in after the keyboard's E (3 tries, none seen to reach the game) and the pad's A:$PA_DIAG"; fi
 		if pa_force_out $d; then healed "power armor ($d): out of the suit for the next checks" "taken out by the console (Actor.SwitchToPowerArmor none): not a player's action"
 		else rig_unhealed state "power armor ($d): out of the suit for the next checks" "the console did not take the player out either"; fi
 	fi
@@ -728,6 +736,7 @@ SANCT_BENCH=000250FE; LINK_BENCH=0006F5C5; LINK_LOCATION=0006B4D0; CODSWORTH=000
 MARKER_SPOT="-80300 89550"   # just past Sanctuary's coc marker, on the road: the walks below start or pass here
 PARK_SPOT="-79600 88900"     # on the road about 1000 u from the marker: out of a helper's reach, out of the way of a crosshair
 DROP_ASIDE=${DROP_ASIDE:-"-79400 88700"}   # 280 u on from PARK_SPOT along the road: where a giver stands while the taker comes for the drop
+DROP_CLEAR=${DROP_CLEAR:-100}   # a giver closer than this to the copy may stand in the way of the taker's press (a rig fault, not the mod's)
 
 # wait_for <seconds> <command...>: runs the command every 0.5 s until it succeeds or the time is up
 wait_for() { local end=$((SECONDS + $1)); shift; while :; do "$@" && return 0; [ $SECONDS -ge "$end" ] && return 1; sleep 0.5; done; }
@@ -740,7 +749,10 @@ is_int() { [[ $1 =~ ^-?[0-9]+$ ]]; }
 # A walk that sticks (no headway for 8 s) is freed the way a player frees one before the next try: the other player, standing
 # within WALK_CROWD u, steps away from them (2026-11-07, the 0.14.0-rc1 soak: the taker of a drop walked up to the copy at the
 # giver's feet, into the giver's stand-in, and pushed the stick for 20 s without moving an inch until the giver walked off);
-# otherwise the walker backs off and steps to the side. A walk freed that way is recorded HEAL. One that never arrives is a rig
+# otherwise the walker backs off and steps to the side. The other player is never asked to step aside when the walk is to them
+# (the target is their stand-in: the helper's walk to a downed friend sticks on the friend) or when they are down (a downed
+# player standing up to walk would change what the step tests): then the walker backs off. One who stepped aside walks back to
+# where they stood once the walk is over, as the step left them. A walk freed that way is recorded HEAL. One that never arrives is a rig
 # fault under the name (RIG: the set-up of the step's checks failed, not the mod; smoke.sh heals and runs the step again), with
 # what held the player: the other player's distance, and the game's input layers (a layer of the mod's holding movement off
 # would be the mod's, and is there to be read). WALK_LAST: how the last walk ended. 0 = arrived.
@@ -748,23 +760,33 @@ WALK_CROWD=${WALK_CROWD:-220}
 _xy_of() { local p; p=$(dc "$1" pos); echo "$(field "$p" x) $(field "$p" y)"; }
 _dist_xy() { awk -v a="$1" -v b="$2" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") {print ""; exit} printf "%d", sqrt((q[1]-p[1])^2+(q[2]-p[2])^2)}'; }
 walk() {
-	local who=$1 label=$2 sp=$3 r=$4 try other me them d to heal="" why; shift 4
+	local who=$1 label=$2 sp=$3 r=$4 try other me them d to heal="" why orig="" nomove=""; shift 4
 	other=$(other_game "$who")
+	# the target is the other player (their stand-in in the walker's game), or they are down: they stay where they are
+	if [ $# = 1 ] && dc "$who" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | grep -qx "puppet=$1"; then nomove="the walk is to them"
+	elif declare -F st_down >/dev/null && st_down "$other"; then nomove="they are down"; fi   # st_down: state.sh (smoke.sh sources it)
+	_walk_back() {  # the other player who stepped aside walks back to where they stood
+		[ -n "$orig" ] || return 0
+		if bash "$RIG/walkto.sh" "$other" $orig 1 100 30 2>&1 | tail -1 | grep -q ': arrived '; then heal="$heal $other walked back;"; else heal="$heal $other's walk back did not arrive;"; fi
+		dc "$other" "pad unplug" >/dev/null
+	}
 	for try in 1 2 3; do
 		WALK_LAST=$(bash "$RIG/walkto.sh" "$who" "$@" "$sp" "$r" 60 2>&1 | tail -1)
-		case "$WALK_LAST" in *": arrived "*) [ -n "$heal" ] && healed "$label" "$who's walk stuck, freed:$heal; arrived on try $try"; return 0;; esac
+		case "$WALK_LAST" in *": arrived "*) _walk_back; [ -n "$heal" ] && healed "$label" "$who's walk stuck, freed:$heal; arrived on try $try"; return 0;; esac
 		case "$WALK_LAST" in *" stuck "*) ;; *) sleep 1; continue;; esac
 		me=$(_xy_of "$who"); them=$(_xy_of "$other"); d=$(_dist_xy "$me" "$them")
-		if is_int "$d" && [ "$d" -lt "$WALK_CROWD" ]; then
-			# the other player steps 300 u straight away from the walker (a real walk), and comes back for the step after
+		if is_int "$d" && [ "$d" -lt "$WALK_CROWD" ] && [ -z "$nomove" ]; then
+			# the other player steps 300 u straight away from the walker (a real walk), and walks back once the walk is over
+			[ -n "$orig" ] || orig=$them
 			to=$(awk -v a="$me" -v b="$them" 'BEGIN{split(a,p," "); split(b,q," "); dx=q[1]-p[1]; dy=q[2]-p[2]; l=sqrt(dx*dx+dy*dy); if (l<1) {dx=1; dy=0; l=1} printf "%d %d", q[1]+dx/l*300, q[2]+dy/l*300}')
 			bash "$RIG/walkto.sh" "$other" $to 1 100 30 >/dev/null 2>&1; dc "$other" "pad unplug" >/dev/null
 			heal="$heal the other player ($other) stood $d u away and stepped aside;"
 		else
 			dc "$who" "pad stick l 0 -1 900" >/dev/null; sleep 1.2; dc "$who" "pad stick l 1 0 700" >/dev/null; sleep 1
-			heal="$heal backed off and stepped to the side (the other player ${d:-?} u away);"
+			heal="$heal backed off and stepped to the side (the other player ${d:-?} u away${nomove:+, not asked to move: $nomove});"
 		fi
 	done
+	_walk_back
 	why="at ($(_xy_of "$who")), the other player $(_dist_xy "$(_xy_of "$who")" "$(_xy_of "$other")") u away; input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)"
 	rig_fault walk "$label" "$who's walk to $* did not arrive in 3 tries: $WALK_LAST${heal:+ (tried:$heal)}; $why"; dc "$who" "pad unplug" >/dev/null; return 1
 }
@@ -776,14 +798,21 @@ pitch_to() {
 }
 # press_a <who> <ref> <check> [pitch...]: that player faces the reference (turnto; "auto" is turnto's own pitch, at a standing body's
 # chest) at each pitch in turn and presses the pad's A, until the check (a command line, run after each press) succeeds. PRESSES
-# says how many it took. 0 = the check passed.
+# says how many it took. 0 = the check passed. The pad is plugged in with a neutral stick first: a press that is the pad's first
+# input is lost while the game takes it on as the controller (2026-11-07, state.sh pa_climb_out). PRESS_REACHED is set when a
+# press was seen read by the game (the pad's status after it: gameSeesPad=true and its answered count up), PRESS_PAD has the
+# last status read.
 press_a() {
-	local who=$1 ref=$2 check=$3 p n=0; shift 3
+	local who=$1 ref=$2 check=$3 p n=0 s a0 a1; shift 3
+	PRESS_REACHED=""; PRESS_PAD=""
+	dc "$who" "pad stick l 0 0 300" >/dev/null; sleep 1.5
 	for p in "${@:-auto}"; do
 		n=$((n + 1)); PRESSES=$n
 		if [ "$p" = auto ]; then dc "$who" "turnto $ref 300" >/dev/null; else dc "$who" "turnto $ref 300 $p" >/dev/null; fi
-		sleep 0.8; dc "$who" "pad button a" >/dev/null
+		sleep 0.8; a0=$(field "$(dc "$who" pad)" answered); dc "$who" "pad button a" >/dev/null
 		eval "$check" && return 0
+		s=$(dc "$who" pad); a1=$(field "$s" answered); PRESS_PAD=$(cut -c1-200 <<<"$s")
+		[ "$(field "$s" gameSeesPad)" = true ] && is_int "$a0" && is_int "$a1" && [ "$a1" -gt "$a0" ] && PRESS_REACHED=1
 	done
 	return 1
 }
@@ -1311,19 +1340,23 @@ step_drops() {
 		pass "drop ($giver gives): the other game lists it and placed a copy" "drop $id, copy $copy"
 		if wait_for 8 _shown $taker "$copy"; then pass "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]* y=[^ ]* z=[^ ]*')"
 		else fail "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | cut -c1-200)"; fi
-		# The giver steps aside first (a real walk, not checked): the copy lies at the giver's feet, and a taker walking up to it
-		# walked into the giver's stand-in and stuck there for 20 s (2026-11-07, the 0.14.0-rc1 soak), a walk that never arrived.
-		bash "$RIG/walkto.sh" $giver $DROP_ASIDE 1 100 30 >/dev/null 2>&1; dc $giver "pad unplug" >/dev/null
+		# The giver steps aside first (a real walk, checked): the copy lies at the giver's feet, and a taker walking up to it
+		# walked into the giver's stand-in and stuck there for 20 s (2026-11-07, the 0.14.0-rc1 soak), a walk that never arrived;
+		# and with the stand-in on or next to the copy no press took it (the stand-in, not the copy, under the crosshair).
+		walk $giver "drop ($giver gives): set-up: the giver steps aside" 1 100 $DROP_ASIDE; dc $giver "pad unplug" >/dev/null
 		if walk $taker "drop ($giver gives): set-up: the other player walks to the copy" 0.6 70 "$copy"; then
 			p=$(pitch_to $taker "$copy"); is_int "$p" || p=50
 			# Whether a press reached the copy is read from the taker's own claims (`net status` drops: claimed=, a press on a
 			# copy asks the server for it; takeFailed=, a grant the engine's pickup then lost). 2026-11-07: the host's five presses
 			# on the VM's drop took nothing (0.14.0-rc1, the soak's round 2 and a rerun) and nothing in either log said whether
 			# one had landed. A press that claimed it and got nothing is the mod's failure. No claim at all means no press
-			# activated the copy: the game's own activate of it (dev `activate`, the engine's ActivateRef, not a player's press)
-			# then tells a working copy, which makes this the rig's aim or press (a rig fault: the step is healed and run again,
-			# so the real press is still checked), from a copy nothing can take (the mod's failure).
-			local c0 c1 tf0 tf1 st
+			# activated the copy. That is the rig's (a rig fault: the step is healed and run again, so the real press is still
+			# checked) only on a shown rig cause: the giver still within DROP_CLEAR u of the copy (the step-aside didn't take
+			# them away), or no press seen read by the game (press_a's PRESS_REACHED). Otherwise it is the mod's failure, and the
+			# game's own activate of the copy (dev `activate`, the engine's ActivateRef, not a player's press) says which: a copy
+			# it takes is a player's press on a copy that does nothing (a broken player-activate path), one it can't take is a
+			# copy nothing can take.
+			local c0 c1 tf0 tf1 st gd
 			st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c0=$(field "$st" claimed); tf0=$(field "$st" takeFailed)
 			if press_a $taker "$copy" "wait_for 4 _count_is $taker $((tb + DROP_N))" "$p" $((p + 10)) $((p - 10)) 50 60; then
 				pass "drop ($giver gives): the other player takes it with a press" "$tb -> $((tb + DROP_N)) after $PRESSES press(es)"
@@ -1331,9 +1364,13 @@ step_drops() {
 				st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c1=$(field "$st" claimed); tf1=$(field "$st" takeFailed)
 				local why="count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses; claims $c0 -> $c1, failed takes $tf0 -> $tf1; the taker at ($(_xy_of $taker)), the giver at ($(_xy_of $giver)) (copy: $(dc $taker "refinfo $copy" | cut -c1-120))"
 				if is_int "$c0" && is_int "$c1" && [ "$c1" -eq "$c0" ]; then
+					gd=$(_dist_xy "$(_xy_of $giver)" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]*' | cut -d= -f2) $(dc $taker "refinfo $copy" | grep -oE ' y=[^ ]*' | cut -d= -f2)")
 					local act; act=$(dc $taker "activate $copy"); sleep 0.5
-					if wait_for 6 _count_is $taker $((tb + DROP_N)); then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made), and the game's own activate of it took it ($act): the aim or the press never landed; $why"
-					else fail "drop ($giver gives): the other player takes it with a press" "no press activated the copy, and the game's own activate of it took nothing either ($act): $why"; fi
+					local took=""; wait_for 6 _count_is $taker $((tb + DROP_N)) && took=1
+					if [ -z "$took" ]; then fail "drop ($giver gives): the other player takes it with a press" "no press activated the copy, and the game's own activate of it took nothing either ($act): $why"
+					elif is_int "$gd" && [ "$gd" -lt "$DROP_CLEAR" ]; then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made) with the giver still $gd u from it (the step-aside didn't take them $DROP_CLEAR u away), and the game's own activate took it ($act); $why"
+					elif [ -z "$PRESS_REACHED" ]; then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made), and no press was seen read by the game (pad: $PRESS_PAD); the game's own activate took it ($act); $why"
+					else fail "drop ($giver gives): the other player takes it with a press" "the pad's presses reached the game and none activated the copy (no claim made), with the giver $gd u away, while the game's own activate of it took it ($act): $why"; fi
 				else fail "drop ($giver gives): the other player takes it with a press" "a press claimed the copy and the take never came: $why"; fi
 			fi
 			if wait_for 8 _drop_gone $taker "$id" && wait_for 4 _drop_gone $giver "$id"; then pass "drop ($giver gives): neither game lists it after the take" "drop $id"

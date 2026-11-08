@@ -75,10 +75,16 @@ non-zero exit, to be run again. A set-up walk that never arrives, or a press see
 rig fault the same way. Before each loop step a state guard (`tools/rig/state.sh`) checks both players: out of power
 armor, up, nothing open, a normal camera, god mode on. It puts a wrong state right the way a player would (keys, the
 pad's buttons, a friend's walk to help a downed player up) and lists each fix as HEAL; getting a player out of power armor
-by the console, when no press does, is the one fix that is not a player's action, and it says so. A step that met a rig
-fault has its results set aside (listed as VOID with what they were), the guard runs again and the step runs once more,
-so its checks are still made. A state the guard can't put right, or a rig fault in both attempts, is a RIGFAULT: those
-checks were not made, and the run ends `VERDICT: RIG`, never PASS. So a FAIL is the mod's. The steps for what players do together (bench, loot, doors, drops,
+by the console, when no press does, is the one fix that is not a player's action, and it says so. A state only the mod
+could have caused is never healed quietly: a player found down through god mode or dead, or an E that reached the game
+and left a player in power armor, is a FAIL, and a message box found open is a WARN. A step that met a rig fault has its
+results from that fault on set aside (listed as VOID with what they were), the guard runs again and the step runs once
+more, so its checks are still made. A heal or a re-run never erases evidence of a failure of the mod: what the step
+recorded before the fault stands, a clock fault sets nothing else aside, a check that fails in both attempts stays a
+FAIL, and a PASS verdict names any failures it set aside. A press or a walk counts as the rig's only on a shown rig
+cause (the press never reached the game, a menu was open, the other player stood in the way). A state the guard can't
+put right, or a rig fault in both attempts, is a RIGFAULT: those checks were not made, and the run ends `VERDICT: RIG`,
+never PASS. So a FAIL is the mod's. The steps for what players do together (bench, loot, doors, drops,
 downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
 its buttons for the takes, the door and the Pip-Boy; entering workshop mode, building and dropping an item use dev commands
 (`workshop enter`, `storage build`, `dropitem`), not a player's keys; the console only

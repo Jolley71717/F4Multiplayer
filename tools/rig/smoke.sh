@@ -7,8 +7,9 @@
 # the clocks could not line a trace up: an offset unread over ssh, or a clock set outside the trace; recorded RIG, not FAIL, and
 # VERDICT: RIG when no round made that check). About 30 minutes.
 # Each loop step starts behind the state guard (state.sh, run() below): a wrong rig state is healed (HEAL) or, when it can't be,
-# the step is not run (RIGFAULT); a step that met a rig fault has its lines set aside (VOID) and runs once more. A RIGFAULT
-# never ends in PASS: a FAIL is the mod's, a rig that stayed broken is VERDICT: RIG.
+# the step is not run (RIGFAULT); a step that met a rig fault has its lines from that fault on set aside (VOID) and runs once
+# more. A heal or a re-run never erases evidence of the mod's failure (a FAIL before the fault, or in both attempts, stands; a
+# PASS names what was set aside). A RIGFAULT never ends in PASS: a FAIL is the mod's, a rig that stayed broken is VERDICT: RIG.
 #
 # --soak MINUTES is the rc soak (docs/RELEASING.md): after preflight and cleanup it runs the loop steps (movement to churn,
 # each with its checks, both ways where a step has two) round after round until the time is up, then the end steps
@@ -52,29 +53,32 @@ tunnel
 # run <step> <function...>: one step. A loop step starts behind the state guard (state.sh: both players out of power armor, up,
 # nothing open, a normal camera, god mode on; a wrong state is healed, one that stays is a RIGFAULT and the step is not run).
 # An attempt that meets a rig fault (a RIG line: a clock that couldn't line a trace up, a set-up walk that never arrived, a press
-# that never reached the game; or a FAIL saying "rig broken") is set aside (VOID), the guard runs again and the step is run once
-# more, so its checks are still made and a failure that followed from the rig's fault never stands as the mod's. A second
-# attempt that meets one too is a RIGFAULT (its own failures set aside): the rig was broken, the run is not a PASS.
+# that never reached the game; or a FAIL saying "rig broken") has its lines from that rig line on set aside (VOID; assert.sh
+# a_attempt_void: what was recorded before it stands, and a clock fault sets nothing aside), the guard runs again and the step
+# is run once more, so its checks are still made and a failure that followed from the rig's fault never stands as the mod's. A
+# second attempt that meets one too is a RIGFAULT (its lines from its rig line on set aside, but a check that failed in both
+# attempts stays a FAIL): the rig was broken, the run is not a PASS.
 run() {
 	case " $skip " in *" $1 "*) return;; esac; case " $steps " in *" $1 "*) ;; *) return;; esac
-	local loop="" sig
+	local loop="" sig first
 	case " $LOOP " in *" $1 "*) loop=1;; esac
-	if [ -n "$loop" ] && ! rig_state_guard "$1"; then return 0; fi
-	a_attempt_mark; "${@:2}"
+	if [ -n "$loop" ] && ! rig_state_guard "$1"; then ST_PREV=$1; return 0; fi
+	a_attempt_mark; first=$A_ATTEMPT_LINE; "${@:2}"
 	if [ -n "$loop" ] && [ -z "$A_RIG_STOPPED" ] && sig=$(a_attempt_rig); then
 		a_attempt_void
-		echo "RIG: $1 met a rig fault ($sig): its lines are set aside; healed and run again"
+		echo "RIG: $1 met a rig fault ($sig): its lines from there on are set aside; healed and run again"
 		healed "$1${A_ROUND:+ (round $A_ROUND)}: run again after a rig fault" "$sig"
+		ST_PREV=$1
 		if rig_state_guard "$1"; then
 			A_AGAIN=1; a_attempt_mark; "${@:2}"; A_AGAIN=""
 			if [ -z "$A_RIG_STOPPED" ] && sig=$(a_attempt_rig); then
-				a_attempt_void FAIL
+				a_attempt_void "$first"
 				local s; s=$(sed -nE 's/.*rig (fault|broken) \(([a-z]+)\).*/\2/p' <<<"$sig" | head -1)
 				rig_unhealed "${s:-rig}" "$1${A_ROUND:+ (round $A_ROUND)}: a rig fault in both attempts" "$sig"
 			fi
 		fi
 	fi
-	[ -n "$loop" ] && perf_phase "$1"
+	[ -n "$loop" ] && { ST_PREV=$1; perf_phase "$1"; }
 	[ "$1" = combat ] && [ -z "$WS_MARKED" ] && { ws_mark; WS_MARKED=1; }   # the working set's growth is read from the first combat on
 	[ "$1" = churn ] && ws_check; return 0
 }
