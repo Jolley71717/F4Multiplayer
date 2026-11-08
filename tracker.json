@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T11:31:04+00:00",
+ "updated": "2026-11-08T12:43:00+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1084,8 +1084,8 @@
    "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "",
+   "stage": 1,
+   "note": "Rig re-test: still counted as an encounter",
    "pr": 337
   },
   {
@@ -1801,6 +1801,14 @@
    "stage": 7,
    "note": "Every hit now gets an answer, so none can be silently undone. Merged; in 0.10.1-rc1, soaking now.",
    "pr": 231
+  },
+  {
+   "id": "scoj",
+   "title": "Shared creature lines are never voiced in a friend's game (no voice file)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "se4h",
