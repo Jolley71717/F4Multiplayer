@@ -19,6 +19,11 @@ menus (seen so far under CrossOver only). What is still to check, and the plan, 
 Labels are text keys like every player-facing string (`mainmenu.entry`, `mpmenu.*`): every language file needs every
 key, or `text:` tests fail.
 
+Key names on the Controls page: `UiKeyNames::Name` (game-free) gives a letter, digit, F-key or symbol as it is, and a worded key
+(Space, Left Shift, Mouse 4, the arrows) as a `key.*` text id; `UiKeyNames::Display` looks the id up in the current language
+(the number pad's `key.num` takes its digit as `{n}`). A new worded key needs its `key.*` text in every language file. The command
+bar's key word ("Esc)") comes from the plugin too: `SetLook`'s last argument.
+
 ## Toolchain
 
 The game's menus are Flash movies played by Scaleform GFx 4. Ours are ActionScript 3 compiled with Apache Flex's

@@ -1,8 +1,11 @@
 #pragma once
 
+#include "Text.h"
+
 #include <cstdint>
 #include <format>
 #include <string>
+#include <string_view>
 
 // The keys a player can bind in the multiplayer menu: what each is called, and which can't be had. Windows virtual keys, as
 // the ini holds them and Hotkeys reads them. Kept free of the game so it can be tested.
@@ -14,6 +17,20 @@ namespace UiKeyNames
 	inline constexpr std::uint32_t ESCAPE = 0x1B;
 	inline constexpr std::uint32_t DELETE_KEY = 0x2E;
 
+	// What a key is called: the text itself for a letter, digit, F-key or symbol, or the id of a worded name in the language
+	// files ("key.space"), which the page looks up (UiPages.cpp) so each language has its own. IsId tells them apart; the
+	// number pad's id takes its digit as {n} (Number).
+	[[nodiscard]] inline bool IsId(std::string_view a_name)
+	{
+		return a_name.starts_with("key.");
+	}
+
+	// The digit of a number pad key, for the {n} of its text; -1 for any other key.
+	[[nodiscard]] constexpr int Number(std::uint32_t a_vk)
+	{
+		return a_vk >= 0x60 && a_vk <= 0x69 ? static_cast<int>(a_vk - 0x60) : -1;
+	}
+
 	[[nodiscard]] inline std::string Name(std::uint32_t a_vk)
 	{
 		if ((a_vk >= 'A' && a_vk <= 'Z') || (a_vk >= '0' && a_vk <= '9')) {
@@ -23,27 +40,31 @@ namespace UiKeyNames
 			return std::format("F{}", a_vk - 0x6F);
 		}
 		if (a_vk >= 0x60 && a_vk <= 0x69) {
-			return std::format("Num {}", a_vk - 0x60);
+			return "key.num";
 		}
 		switch (a_vk) {
-		case 0x04: return "Mouse 3";
-		case 0x05: return "Mouse 4";
-		case 0x06: return "Mouse 5";
-		case 0x08: return "Backspace";
-		case 0x10: return "Shift";
-		case 0x14: return "Caps Lock";
-		case 0x20: return "Space";
-		case 0x21: return "Page Up";
-		case 0x22: return "Page Down";
-		case 0x23: return "End";
-		case 0x24: return "Home";
-		case 0x25: return "Left";
-		case 0x26: return "Up";
-		case 0x27: return "Right";
-		case 0x28: return "Down";
-		case 0x2D: return "Insert";
-		case 0xA0: return "Left Shift";
-		case 0xA1: return "Right Shift";
+		case 0x04: return "key.mouse3";
+		case 0x05: return "key.mouse4";
+		case 0x06: return "key.mouse5";
+		case 0x08: return "key.backspace";
+		case 0x09: return "key.tab";
+		case 0x0D: return "key.enter";
+		case 0x1B: return "key.esc";
+		case 0x10: return "key.shift";
+		case 0x14: return "key.capslock";
+		case 0x20: return "key.space";
+		case 0x21: return "key.pageup";
+		case 0x22: return "key.pagedown";
+		case 0x23: return "key.end";
+		case 0x24: return "key.home";
+		case 0x25: return "key.left";
+		case 0x26: return "key.up";
+		case 0x27: return "key.right";
+		case 0x28: return "key.down";
+		case 0x2D: return "key.insert";
+		case 0x2E: return "key.delete";
+		case 0xA0: return "key.lshift";
+		case 0xA1: return "key.rshift";
 		case 0xBA: return ";";
 		case 0xBB: return "=";
 		case 0xBC: return ",";
@@ -57,6 +78,13 @@ namespace UiKeyNames
 		case 0xDE: return "'";
 		default: return std::format("Key {:02X}", a_vk);
 		}
+	}
+
+	// Name as the player reads it: the worded names in the current language (the English where a language lacks one).
+	[[nodiscard]] inline std::string Display(std::uint32_t a_vk)
+	{
+		auto name = Name(a_vk);
+		return IsId(name) ? Text::Format(name, { { "n", Number(a_vk) } }) : name;
 	}
 
 	// Keys a bind may not take: leaving menus (Esc, Tab), choosing in them (Enter), the game's quicksave and quickload (F5, F9:

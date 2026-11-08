@@ -104,6 +104,7 @@ package
 		private var playersShown:Number = 0;
 		private var gamepad:Boolean = false;
 		private var backWord:String = "";
+		private var backKey:String = "Esc)";  // the way back's key as the plugin names it in the player's language
 
 		private static const REPEAT_DELAY:int = 350;  // ms held before Up or Down repeats
 		private static const REPEAT_EVERY:int = 80;   // ms between repeats
@@ -139,12 +140,13 @@ package
 		}
 
 		// From the plugin, once: the main panel's box on the stage (this movie's stage has the same size and
-		// scale mode as the main menu's); the HUD color; the mod's version and the way back's word.
+		// scale mode as the main menu's); the HUD color; the mod's version and the way back's word and key.
 		// a_centered: the box gives only the size, and the panel goes in the middle of the stage.
-		public function SetLook(a_left:Number, a_top:Number, a_right:Number, a_bottom:Number, a_color:uint, a_version:String, a_back:String, a_centered:Boolean):void
+		public function SetLook(a_left:Number, a_top:Number, a_right:Number, a_bottom:Number, a_color:uint, a_version:String, a_back:String, a_centered:Boolean, a_backKey:String):void
 		{
 			color = a_color;
 			backWord = a_back;
+			backKey = a_backKey;
 			scale = (a_bottom - a_top) / REF_HEIGHT;
 			modVersion = a_version;
 			centered = a_centered;
@@ -159,7 +161,7 @@ package
 		// The command bar: at the bottom of the screen beside the main menu, just under the panel in the middle of the screen.
 		private function ShowCommandBar():void
 		{
-			commandBar.Show(backWord, gamepad, color, scale);
+			commandBar.Show(backWord, backKey, gamepad, color, scale);
 			if (centered) {
 				commandBar.y = Math.round(panel.y + panelHeight + COMMAND_BAR_BELOW * scale + commandBar.height);
 			} else {
