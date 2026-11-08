@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T21:41:33+00:00",
+ "updated": "2026-11-08T23:03:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -265,6 +265,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "3zgj",
+   "title": "Reloading a save from before an NPC's death: the session file kills the NPC again on every load",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "From a Nexus report: being looked into"
   },
   {
    "id": "4c0",
@@ -850,6 +858,14 @@
    "stage": 7,
    "note": "",
    "pr": 282
+  },
+  {
+   "id": "e9yk",
+   "title": "Radiant clear-out quests: enemies at an already-cleared location die the moment you enter",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "From a Nexus report: being looked into"
   },
   {
    "id": "eals",
@@ -1802,6 +1818,15 @@
    "stage": 7,
    "note": "Every hit now gets an answer, so none can be silently undone. Merged; in 0.10.1-rc1, soaking now.",
    "pr": 231
+  },
+  {
+   "id": "s9dy",
+   "title": "Multiplayer menu: key names in Controls (Space, Shift, Mouse 4, Esc...) are English in every language",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 3,
+   "note": "Reviewed; for 0.15.1",
+   "pr": 346
   },
   {
    "id": "scoj",
