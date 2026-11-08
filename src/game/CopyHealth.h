@@ -161,10 +161,29 @@ namespace CopyHealth
 		bool          shareable = false;     // a reference every game has (Protocol::IsShareableRef)
 		std::uint32_t owner = 0;             // the player whose game runs it (NpcSync::Owner; 0: nobody, or not shareable)
 		bool          ourCompanion = false;  // it follows our player (NpcSync::IsOurCompanion)
-		// An NPC our game made at runtime and shares as a spawn, granted to us and run by our game (Spawns::OwnIdOf, and
-		// NpcSync::Owner of that id is us), and no workshop's (not linked to a workbench: no turret or robot built there).
+		// An NPC our game made at runtime and shares as a spawn, run by our game, and no workshop's (OurSpawn).
 		bool          ourSpawn = false;
 	};
+
+	// What our game knows of an actor it made at runtime, to tell whether it is a spawn of ours that hits for us
+	// (Cause::ourSpawn), as CopyWatch::CauseOf reads it.
+	struct SpawnFacts
+	{
+		std::uint32_t spawn = 0;              // its id as a spawn, once the server granted it to us (Spawns::OwnIdOf; 0: none)
+		std::uint32_t owner = 0;              // the player whose game runs that spawn (NpcSync::Owner)
+		bool          linkedToBench = false;  // linked to a workbench (WorkshopItemKeyword): a turret or robot built there, or a
+		                                      // settler recruited at runtime (a beacon's), assigned there
+		bool          workshopCopy = false;   // WorkshopSync's copy of a friend's piece (WorkshopSync::IsCopyMarked), even one
+		                                      // its Detach took off our workbench
+	};
+
+	// A spawn of ours, granted to us and run by our game, and no workshop's: not a turret or robot built in workshop mode
+	// nor WorkshopSync's copy of a friend's (each fires for real in every game, so counted here too it would count twice),
+	// nor a settler recruited at runtime (its hits on copies are nobody's, as before spawns hit for us).
+	constexpr bool OurSpawn(const SpawnFacts& a_facts, std::uint32_t a_local)
+	{
+		return a_facts.spawn != 0 && a_local != 0 && a_facts.owner == a_local && !a_facts.linkedToBench && !a_facts.workshopCopy;
+	}
 
 	enum class Hitter : std::uint8_t
 	{
@@ -188,9 +207,10 @@ namespace CopyHealth
 	// A quest's fight split so whenever each game's run made its own of the quest's people and its creatures paired
 	// across games (QuestActors.h): in a 0.14.0-rc1 soak our game's Rotten Landfill scavenger (DN119Fight) shot dead our
 	// molerats mirrored from the friend's, which fought on in the friend's game. Not the turrets
-	// and robots built in workshop mode either: WorkshopSync places a copy of each in every friend's game, a live one in
-	// the player's faction, so it fires there too, at the NPCs that game runs, and those hits are real there; ours
-	// counted here as well would count every turret twice, as would a friend's copy here. Stand-ins (their player's game
+	// and robots built in workshop mode either (OurSpawn): WorkshopSync places a copy of each in every friend's game, a
+	// live one in the player's faction, so it fires there too, at the NPCs that game runs, and those hits are real there;
+	// ours counted here as well would count every turret twice, as would a friend's copy here. Nor a settler recruited at
+	// runtime, linked to its workbench: its hits on copies stay nobody's, as before. Stand-ins (their player's game
 	// reports their hits), hazards and nothing at all are nobody's.
 	constexpr Hitter Judge(const Cause& a_cause, std::uint32_t a_local)
 	{

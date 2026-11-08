@@ -9,6 +9,7 @@
 #include "game/SessionDeaths.h"
 #include "game/Spawns.h"
 #include "game/WeaponFire.h"
+#include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
 #include "Protocol.h"
@@ -223,7 +224,8 @@ namespace CopyWatch
 	}
 
 	// Whether a reference is linked to a workbench as one of its settlement's items (WorkshopItemKeyword, as WorkshopSync
-	// and NpcSync read it): a turret or a robot built there, or WorkshopSync's copy of a friend's.
+	// and NpcSync read it): a turret or a robot built there, WorkshopSync's copy of a friend's (unless its Detach took it
+	// off: WorkshopSync::IsCopyMarked tells those), or a settler assigned there, one recruited at runtime among them.
 	static bool LinkedToWorkshop(const RE::TESObjectREFR& a_ref)
 	{
 		constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
@@ -249,11 +251,13 @@ namespace CopyWatch
 		cause.owner = cause.shareable ? NpcSync::Owner(a_refId) : 0;
 		cause.ourCompanion = NpcSync::IsOurCompanion(actor);
 		// A runtime NPC of ours shared as a spawn and run by our game (CopyHealth::Judge): its copies in friends' games only
-		// play its shots. Not one of a workshop's (WorkshopSync's turrets and robots fire for real in every game).
+		// play its shots. Not one of a workshop's (WorkshopSync's turrets and robots fire for real in every game, a
+		// friend's copy here too), nor a settler recruited at runtime (CopyHealth::OurSpawn).
 		if (!cause.shareable && !cause.player && !cause.standIn) {
 			const auto spawn = Spawns::OwnIdOf(a_refId);
-			const auto local = NpcSync::LocalPlayer();
-			cause.ourSpawn = spawn != 0 && local != 0 && NpcSync::Owner(spawn) == local && !LinkedToWorkshop(*actor);
+			cause.ourSpawn = CopyHealth::OurSpawn({ .spawn = spawn, .owner = spawn != 0 ? NpcSync::Owner(spawn) : 0, .linkedToBench = LinkedToWorkshop(*actor),
+													  .workshopCopy = WorkshopSync::IsCopyMarked(*actor) },
+				NpcSync::LocalPlayer());
 		}
 		return cause;
 	}

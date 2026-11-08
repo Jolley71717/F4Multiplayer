@@ -67,6 +67,8 @@ namespace
 		std::set<std::uint32_t>        standIns;    // friends' stand-ins here
 		std::set<std::uint32_t>        companions;  // they follow our player here
 		std::set<std::uint32_t>        spawns;      // ... of those made here, the ones shared as spawns (Spawns::OwnIdOf, once granted)
+		std::set<std::uint32_t>        benchLinked; // ... linked to a workbench (a turret or robot built here, a settler recruited at runtime)
+		std::set<std::uint32_t>        workshopCopies;  // ... WorkshopSync's copies of friends' pieces (WorkshopSync::IsCopyMarked)
 		bool                           spawnsOurs = true;   // a spawn our game runs hits for us (false: up to 0.14.0-rc1, for nobody)
 		bool                           onlyPlayer = false;  // as before: only our player's blows were ours
 		bool                           claimKills = true;   // a killing blow by another actor of ours claims its NPC
@@ -97,7 +99,10 @@ namespace
 			cause.shareable = Protocol::IsShareableRef(a_id);
 			cause.owner = cause.shareable ? client.OwnerOf(a_id) : 0;
 			cause.ourCompanion = companions.contains(a_id);
-			cause.ourSpawn = spawnsOurs && !cause.shareable && !cause.standIn && spawns.contains(a_id) && client.OwnerOf(a_id) == client.Id();
+			cause.ourSpawn = spawnsOurs && !cause.shareable && !cause.standIn &&
+			                 CopyHealth::OurSpawn({ .spawn = spawns.contains(a_id) ? a_id : 0u, .owner = client.OwnerOf(a_id), .linkedToBench = benchLinked.contains(a_id),
+			                                        .workshopCopy = workshopCopies.contains(a_id) },
+			                     client.Id());
 			return cause;
 		}
 
@@ -494,6 +499,16 @@ TEST("copy hits: a spawn our game shares and runs that fights a friend's spawn c
 	CHECK(f.bobGame.givenBack == 0.0f);
 	CHECK(Near(f.hostGame.npcs[SCAVENGER].health, 96.0f));
 
+	// Bob's copy of the scavenger hits Bob's copy of the host's raider: given back there (the host's game, where the
+	// scavenger runs, plays that blow for real), and nothing reaches the host's raider.
+	const auto bobReports = f.bobGame.reportsSent;  // the molerat's bite above went
+	f.bobGame.Strike(SCAVENGER, RAIDER_1, 6.0f);
+	f.Pass();
+	CHECK(f.bobGame.givenBack == 6.0f);
+	CHECK(f.bobGame.reportsSent == bobReports);
+	CHECK(f.bobGame.npcs[RAIDER_1].health == 100.0f);
+	CHECK(f.hostGame.npcs[RAIDER_1].health == 100.0f);
+
 	// A shot that kills the molerat at once in the host's game: it dies in Bob's too, nobody's kill, and nothing dropped.
 	f.hostGame.Strike(SCAVENGER, MOLERAT, 25.0f);
 	f.Pass();
@@ -525,6 +540,37 @@ TEST("copy hits: up to 0.14.0-rc1 a spawn our game runs hit a friend's spawn for
 	CHECK(f.SpawnDeathDropped(MOLERAT));
 	CHECK(!f.bobGame.npcs[MOLERAT].dead);
 	CHECK(f.bob.OwnerOf(MOLERAT) == f.bob.Id());
+}
+
+TEST("copy hits: a spawn of ours linked to a workbench (a turret or robot built there, a settler recruited at runtime) or a workshop copy of a friend's hits a friend's spawn for nobody, as before")
+{
+	for (const bool copy : { false, true }) {
+		SplitFight f;
+		(copy ? f.hostGame.workshopCopies : f.hostGame.benchLinked).insert(SCAVENGER);  // a copy: even one Detach took off our workbench
+
+		f.hostGame.Strike(SCAVENGER, MOLERAT, 5.0f);
+		f.Pass();
+		CHECK(f.hostGame.givenBack == 5.0f);
+		CHECK(f.hostGame.reportsSent == 0);
+		CHECK(f.bobGame.npcs[MOLERAT].health == MOLERAT_HEALTH);
+		CHECK(f.hostGame.npcs[MOLERAT].health == MOLERAT_HEALTH);
+	}
+}
+
+TEST("copy hits: a spawn hits for us only when granted to us, run by our game, in a session, and no workshop's")
+{
+	using CopyHealth::OurSpawn;
+	using CopyHealth::SpawnFacts;
+	constexpr std::uint32_t US = 2, FRIEND = 3, SPAWN = 0xFF001234;
+
+	CHECK(OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US }, US));
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US }, 0));                               // out of a session
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = 0, .owner = US }, US));                                  // not shared, or not granted yet
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = FRIEND }, US));                          // a friend's
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = 0 }, US));                               // nobody's now
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US, .linkedToBench = true }, US));       // a turret, robot or settler
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US, .workshopCopy = true }, US));        // a friend's piece, copied
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US, .linkedToBench = true, .workshopCopy = true }, US));
 }
 
 TEST("copy hits: whose a hit is, what follows it, and whose kill it is")
