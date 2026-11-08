@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T00:08:02+00:00",
+ "updated": "2026-11-08T00:37:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -31,8 +31,8 @@
    "title": "Quests: 'go with your friend' prompt for stages that move the player (step L)",
    "kind": "feature",
    "priority": 1,
-   "stage": 5,
-   "note": "",
+   "stage": 6,
+   "note": "In 0.14.0-rc1, soaking now",
    "pr": 333
   },
   {
@@ -405,8 +405,8 @@
    "title": "Share more quests: a host setting adding every quest an automatic safety rule passes",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 6,
+   "note": "In 0.14.0-rc1, soaking now",
    "pr": 287
   },
   {
@@ -1598,8 +1598,8 @@
    "title": "Quest sharing: generic creature pairing (roadmap PR C) would pair vertibirds and could drop a seated player; exclude vehicles first",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 6,
+   "note": "In 0.14.0-rc1, soaking now",
    "pr": 324
   },
   {
