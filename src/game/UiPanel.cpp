@@ -144,14 +144,20 @@ namespace UiPanel
 			} else if (controls->blockPlayerInput) {
 				controls->blockPlayerInput = before;
 			}
-			// It doesn't stop activating what's under the crosshair, nor does the activate handler's own switch: a layer does, of
-			// that alone, which leaves the weapon and the HUD be. The key then comes to the menu as DISABLED (OnButtonEvent).
+			// It doesn't stop activating what's under the crosshair, nor does the activate handler's own switch, nor VATS (Q) or the
+			// favourites (F), which open under the panel: a layer does, of those alone, which leaves the weapon and the HUD be. The
+			// keys then come to the menu as DISABLED (OnButtonEvent).
 			static RE::BSTSmartPointer<RE::BSInputEnableLayer> layer;
 			const auto manager = RE::BSInputEnableManager::GetSingleton();
 			if (manager && (layer || manager->AllocateNewLayer(layer, "F4Multiplayer menu")) && layer) {
-				manager->EnableUserEvent(layer->layerID, RE::UserEvents::USER_EVENT_FLAG::kActivate, a_on, RE::UserEvents::SENDER_ID::kScript);
+				using User = RE::UserEvents::USER_EVENT_FLAG;
+				using Other = RE::OtherInputEvents::OTHER_EVENT_FLAG;
+				constexpr auto user = static_cast<User>(std::to_underlying(User::kActivate) | std::to_underlying(User::kVATS));
+				constexpr auto other = static_cast<Other>(std::to_underlying(Other::kVATS) | std::to_underlying(Other::kFavorites));
+				manager->EnableUserEvent(layer->layerID, user, a_on, RE::UserEvents::SENDER_ID::kScript);
+				manager->EnableOtherEvent(layer->layerID, other, a_on, RE::UserEvents::SENDER_ID::kScript);
 			} else {
-				REX::WARN("UiPanel: no input layer: the activate key still works in the world under the menu");
+				REX::WARN("UiPanel: no input layer: activate, VATS and the favourites still work in the world under the menu");
 			}
 			off = !a_on;
 		}
