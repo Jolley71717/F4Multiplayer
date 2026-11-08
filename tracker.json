@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-07T23:28:50+00:00",
+ "updated": "2026-11-08T00:04:08+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -912,12 +912,21 @@
    "note": ""
   },
   {
+   "id": "fx08",
+   "title": "Diamond City's synth accusation (FFDiamondCity12) plays in each game over its own Kyle and Riley; a friend arriving later finds them dead",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "fywn",
    "title": "Random encounters that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) show in one player's game only",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Fable is looking into it and building it"
+   "stage": 2,
+   "note": "Random encounters shared even when calm; PR up, in review; Diamond City's accusation is a separate item",
+   "pr": 337
   },
   {
    "id": "g6s5",
