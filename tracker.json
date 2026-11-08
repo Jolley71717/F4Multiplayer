@@ -6,7 +6,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T01:38:47+00:00",
+ "updated": "2026-11-08T02:21:35+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -239,6 +239,22 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; we haven't yet seen Dogmeat run in a real game to confirm it.",
    "desc": "On the joiner's screen the host's Dogmeat squatted along instead of running. His copy was given a walk while the real dog moved at a run's pace. 0.9.0 makes the copy follow the real dog's speed. Walking looked right in testing; we still need to watch him follow a sprinting host."
+  },
+  {
+   "id": "3ukw",
+   "title": "Weapon switch in power armor: the owner reports both weapons worn; the friend's stand-in redresses in a loop and shot trails use the wrong gun",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "3w7m",
+   "title": "Downed in power armor: a fourth back-to-back down was never helped up (helper beside the stand-in), bled out",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "4c0",
@@ -1325,6 +1341,14 @@
    "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
    "kind": "feature",
    "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "mu7m",
+   "title": "A friend's inert laser beam registers (0-damage) hits on a player in power armor",
+   "kind": "bug",
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
