@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T12:43:00+00:00",
+ "updated": "2026-11-08T14:58:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -967,8 +967,8 @@
    "title": "Random encounters that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) show in one player's game only",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
-   "note": "Rig-test fixes reviewed at 45e94a2c; two-game re-test after the rig fix",
+   "stage": 5,
+   "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
   {
@@ -1084,8 +1084,8 @@
    "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Rig re-test: still counted as an encounter",
+   "stage": 5,
+   "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
   {
@@ -1289,8 +1289,8 @@
    "title": "Calm encounters: stopping a double-rolled run leaves its actors alive",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "",
+   "stage": 5,
+   "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
   {
@@ -1410,8 +1410,8 @@
    "title": "Shared encounter lines: accusor's lines show as text with no voice",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "",
+   "stage": 5,
+   "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
   {
@@ -1807,14 +1807,22 @@
    "title": "Shared creature lines are never voiced in a friend's game (no voice file)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged to main (PR 337) for 0.15.0"
   },
   {
    "id": "se4h",
    "title": "Shared bench: a refused build the guest can't pay for stands short",
    "kind": "bug",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "sn44",
+   "title": "Calm encounters: the first line of a scene is lost when it arrives just before the copy is placed",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -2039,8 +2047,8 @@
    "title": "Calm encounters: an ended encounter's leftover actor still counts as running",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "",
+   "stage": 5,
+   "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
   {
