@@ -63,7 +63,12 @@ namespace Protocol
 	// supply lines link to each of its workbenches (kReportBenchLinks), the server tells the others (kBenchLinks, a joiner
 	// each after the owner table), and their workshop mode and crafting menus view those workbenches with the host's
 	// (src/game/SupplyLines.h). The robot workbench's menu views the host's workbench too. 61 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 62;
+	// 63: a spawn says what kind it is (Spawn::kind): a random encounter's actor is shared calm (a man held at gunpoint,
+	// travellers), named with its encounter quest, and the twin refusal above is for quest actors alone, as an encounter
+	// is each game's own run (src/game/Encounters.h); a line's speaker may be a spawn id, so an encounter actor's lines
+	// reach the friends (Line::speaker). A spawn its owner reports again under its id, plain, says its encounter is over:
+	// the server passes it on (kSpawned again) and the copies stay. 62 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 63;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -181,7 +186,7 @@ namespace Protocol
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
 		kReportActivation = 30,    // the sender pressed a button, switch or lever
-		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
+		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id (again, plain, once its encounter is over)
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportDestruction = 34,   // destructible objects (a car, a barrel) the sender's game damaged past a stage (Destructions)
@@ -1589,6 +1594,19 @@ namespace Protocol
 		std::uint32_t playerId = 0;  // 0 = nobody
 	};
 
+	// What a spawn is, for what the server and the receivers make of its quest and alias (Spawn::kind).
+	enum class SpawnKind : std::uint8_t
+	{
+		kPlain = 0,       // an NPC its game made that names no quest: a copy is placed of it, as of any spawn
+		kQuestActor = 1,  // a shared quest's alias created it in every game's run of that quest (src/game/QuestActors.h): a friend's
+		                  // game pairs its own from the alias with it, and the server refuses a second game's report of the alias
+		kEncounter = 2,   // a random encounter's actor (src/game/Encounters.h): shared calm or fighting, named with its encounter
+		                  // quest, which is its owner's game's own run (no twin refusal); a game that rolls its own encounter
+		                  // where a friend's already runs stops its own. Once the encounter is over (its quest stopped) its
+		                  // owner reports the actor again under its id as plain: the server takes the new kind and sends the
+		                  // spawn again (kSpawned) to the others, whose copies stay
+	};
+
 	// An NPC the sender's game made at runtime (see IsSpawnRef), as it was when shared: what to place a copy from, and
 	// where. playerId is its owner (ignored client -> server; the server sets it). Its owner's states move the copies on.
 	struct Spawn
@@ -1600,11 +1618,14 @@ namespace Protocol
 		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
 		float         x = 0, y = 0, z = 0;
 		float         heading = 0;
-		// The quest alias that made it, when one created it in its owner's game (src/game/QuestActors.h): the quest's form
-		// ID (0: none) and the alias's ID in it. Every game's run of that quest creates its own; a friend's game pairs
-		// that one with this spawn instead of placing a copy beside it.
+		// The quest alias that made it, when one created it in its owner's game: the quest's form ID (0: none) and the
+		// alias's ID in it. For a quest actor (src/game/QuestActors.h) every game's run of that quest creates its own, and
+		// a friend's game pairs that one with this spawn instead of placing a copy beside it; for an encounter's actor
+		// (src/game/Encounters.h) the quest is the encounter its owner's game rolled, which a friend's game stops its own
+		// run of where the two meet. The kind says which; plain names no quest.
 		std::uint32_t quest = 0;
 		std::uint16_t alias = 0;
+		SpawnKind     kind = SpawnKind::kPlain;
 
 		bool operator==(const Spawn&) const = default;
 	};
@@ -1918,7 +1939,8 @@ namespace Protocol
 		std::string   name;
 	};
 
-	// A line of dialogue. speaker: the NPC who said it, or 0 for the player (playerId) themselves.
+	// A line of dialogue. speaker: the NPC who said it (a plugin's reference, or the spawn id of an NPC the sender's game
+	// made and shares: IsActorRef), or 0 for the player (playerId) themselves.
 	// playerId is ignored client -> server. info and response name the recorded line (its voice file)
 	// and voiceType the voice it is said in: the hearer plays that file at its copy of the speaker. All
 	// three are 0 when the speaker's game couldn't place the line; it is then shown as text only.
@@ -3156,6 +3178,7 @@ namespace Protocol
 		w.F32(a_msg.heading);
 		w.U32(a_msg.quest);
 		w.U16(a_msg.alias);
+		w.U8(static_cast<std::uint8_t>(a_msg.kind));
 		return w.Data();
 	}
 
@@ -3177,8 +3200,13 @@ namespace Protocol
 		msg.heading = r.F32();
 		msg.quest = r.U32();
 		msg.alias = r.U16();
+		msg.kind = static_cast<SpawnKind>(r.U8());
 		if (!r.Ok() || !r.AtEnd() || !IsSpawnRef(msg.refId) || !IsShareableRef(msg.base) || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) ||
 			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0) || (msg.quest == 0 ? msg.alias != 0 : !IsShareableRef(msg.quest))) {
+			return std::nullopt;
+		}
+		// A plain spawn names no quest; a quest actor's and an encounter's name theirs.
+		if (msg.kind > SpawnKind::kEncounter || (msg.kind == SpawnKind::kPlain) != (msg.quest == 0)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -4959,7 +4987,8 @@ namespace Protocol
 		msg.info = r.U32();
 		msg.response = r.U8();
 		msg.voiceType = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.text.empty() || (msg.speaker != 0 && !IsShareableRef(msg.speaker))) {
+		// The speaker is a plugin's NPC, or a spawn (an encounter's actor, under its spawn id); 0 is the sender's own line.
+		if (!r.Ok() || !r.AtEnd() || msg.text.empty() || (msg.speaker != 0 && !IsActorRef(msg.speaker))) {
 			return std::nullopt;
 		}
 		// A voiced line names its info and its response together, and a voice type only with them.

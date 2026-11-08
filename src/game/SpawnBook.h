@@ -447,6 +447,21 @@ namespace SpawnBook
 			return true;
 		}
 
+		// Its owner's game shared it again under its id as a spawn of another kind (an encounter's actor whose encounter is
+		// over, shared on plain: src/game/Encounters.h): the record takes the new kind, quest and alias, and our copy, if
+		// one is placed, stays as it is. False when we know no such spawn.
+		bool Rekind(std::uint32_t a_id, const Protocol::Spawn& a_spawn)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return false;
+			}
+			it->second.spawn.kind = a_spawn.kind;
+			it->second.spawn.quest = a_spawn.quest;
+			it->second.spawn.alias = a_spawn.alias;
+			return true;
+		}
+
 		// It died. Our copy to kill (0: none placed, or it was known dead already).
 		std::uint32_t Died(std::uint32_t a_id)
 		{

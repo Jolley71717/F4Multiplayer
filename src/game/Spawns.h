@@ -15,8 +15,10 @@
 namespace Spawns
 {
 	// NpcSync's scan found a runtime NPC loaded (alive or dead): the spawn id our game shares it under (0: none). One our
-	// game made that is ours to share (fighting, or hostile to our player) and not shared yet is reported (TakeOutgoing).
-	// Our copies of friends' spawns are not ours: 0.
+	// game made that is ours to share (fighting, or hostile to our player; a random encounter's actor calm or not,
+	// Encounters.h) and not shared yet is reported (TakeOutgoing). Our run of an encounter that started where a friend's
+	// already ran is stopped here instead, as its first actor is seen, and its actors are removed (Frame). Our copies of
+	// friends' spawns are not ours: 0.
 	std::uint32_t Share(RE::Actor* a_actor);
 
 	// NpcSync's walk found a power armor frame our game made (a_share: FrameShare::SharesMade says it is ours to share
@@ -65,6 +67,10 @@ namespace Spawns
 	// Whether a_id, a plugin's reference, is a friend's NPC our game has no reference of, booked by Absent: our copy of it
 	// stands in for it (Spawns::LocalOf names it). Never ours to run: what our player hits is a copy, no NPC of ours.
 	[[nodiscard]] bool IsAbsent(std::uint32_t a_id);
+
+	// Whether a friend's spawn a_id is known here, alive and still theirs, so a copy of it is placed or may be about to
+	// be (Conversations holds its line for the copy a moment). False for one over, or none known.
+	[[nodiscard]] bool Expects(std::uint32_t a_id);
 
 	// A friend's frame was given back from a loan (kFrameReturned with a place: FrameLoan::ChoosePlace), or our player
 	// gives one back (FrameLoans, as the return goes): it stands where its borrower got out of it from now on, in every

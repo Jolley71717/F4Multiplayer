@@ -589,9 +589,10 @@ namespace FormTranslate
 		case MessageType::kSpawned:
 			// The spawn id is the session's own (runtime range): only what to place, and where.
 			Apply<Spawn>(a_packet, ctx, DecodeSpawn, [&](Spawn& m) {
-				// A quest the other side lacks names no alias there: none (the spawn is copied as any other).
+				// A quest the other side lacks names no alias there: none (the spawn is copied as any other, a plain one).
 				if (!ctx.Detail(m.quest)) {
 					m.alias = 0;
+					m.kind = SpawnKind::kPlain;
 				}
 				return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace);
 			}, typed);

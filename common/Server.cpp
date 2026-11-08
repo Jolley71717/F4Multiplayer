@@ -3250,13 +3250,23 @@ void Server::Run()
 		}
 		spawn->playerId = a_player.id;
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
+			// Its owner shares an encounter's actor on plain, under its id: its encounter is over (protocol 63,
+			// src/game/Encounters.h). The record takes the new kind, and the others hear it again (their copies stay). Any
+			// other report of a held id is answered with its owner alone.
+			if (it->second.playerId == a_player.id && it->second.kind == Protocol::SpawnKind::kEncounter && spawn->kind == Protocol::SpawnKind::kPlain) {
+				log(std::format("server: spawn {:08X} of player {} is shared on plain: its encounter {:08X} is over", spawn->refId, a_player.id, it->second.quest));
+				it->second = *spawn;
+				broadcast(Protocol::Encode(*spawn, Protocol::MessageType::kSpawned), true, a_player.key);
+			}
 			sendOwners({ { spawn->refId, it->second.playerId } }, a_player.key);
 			return;
 		}
 		// A quest alias's creature another game shares already (protocol 61): each game's run of the quest created its own,
 		// and the sender's pairs with that one (src/game/QuestActors.h). Refused, naming nobody (the id is free): their
-		// game asks again later, and by then holds the other's spawn and asks no more.
-		if (spawn->quest != 0) {
+		// game asks again later, and by then holds the other's spawn and asks no more. Not an encounter's actor (protocol
+		// 63, src/game/Encounters.h): an encounter quest is repeatable and each game's run of it is its own, so two games
+		// running the same one at two ends of the map both share theirs, and where they meet the games settle it.
+		if (spawn->quest != 0 && spawn->kind == Protocol::SpawnKind::kQuestActor) {
 			const auto twin = std::ranges::find_if(spawns, [&](const auto& a_entry) {
 				return a_entry.second.playerId != a_player.id && a_entry.second.quest == spawn->quest && a_entry.second.alias == spawn->alias;
 			});
@@ -3856,6 +3866,14 @@ void Server::Run()
 		auto line = Protocol::DecodeLine(a_data);
 		if (!line) {
 			return;
+		}
+		// A spawn's line comes from the game that shares it (protocol 63, src/game/Encounters.h): one naming another
+		// player's spawn, or one the server doesn't hold, is dropped, so no game is made to play a line at an NPC of its own.
+		if (Protocol::IsSpawnRef(line->speaker)) {
+			const auto spawn = spawns.find(line->speaker);
+			if (spawn == spawns.end() || spawn->second.playerId != a_player.id) {
+				return;
+			}
 		}
 		budgetOf(a_player).lastLine = now;
 		line->playerId = a_player.id;

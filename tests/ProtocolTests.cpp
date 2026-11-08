@@ -946,7 +946,9 @@ TEST("protocol: Line rejects empty text and speakers that aren't shared")
 	CHECK(!DecodeLine(Encode(Line{ 1, 0, "" }, MT::kReportLine)));
 	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "" }, MT::kLineSpoken)));
 	CHECK(!DecodeLine(Encode(Line{ 1, PLAYER_REF_ID, "hi" }, MT::kReportLine)));
-	CHECK(!DecodeLine(Encode(Line{ 1, RUNTIME_REF, "hi" }, MT::kReportLine)));
+	// A spawn id names an NPC the sender's game made and shares (protocol 63); the one runtime id no spawn has does not.
+	CHECK(DecodeLine(Encode(Line{ 1, RUNTIME_REF, "hi" }, MT::kReportLine)));
+	CHECK(!DecodeLine(Encode(Line{ 1, 0xFF000000, "hi" }, MT::kReportLine)));
 }
 
 TEST("protocol: Line names its recording whole or not at all")
