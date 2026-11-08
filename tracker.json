@@ -1,12 +1,13 @@
 {
- "release": "0.13.2",
+ "release": "0.14.0",
  "known_issues": [
+  "Random events that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) still play out in one player's game only. Sharing them is being built.",
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
   "A workbench is shared only at settlements the host owns.",
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T09:54:24+00:00",
+ "updated": "2026-11-08T11:31:04+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -31,8 +32,8 @@
    "title": "Quests: 'go with your friend' prompt for stages that move the player (step L)",
    "kind": "feature",
    "priority": 1,
-   "stage": 6,
-   "note": "In 0.14.0-rc2, soaking now",
+   "stage": 7,
+   "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 333
   },
   {
@@ -68,8 +69,8 @@
    "title": "Quest creatures not paired when the joiner's game starts the quest itself (both players at the scene): deaths don't match",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In 0.14.0-rc2, soaking now",
+   "stage": 7,
+   "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 340
   },
   {
@@ -430,8 +431,8 @@
    "title": "Share more quests: a host setting adding every quest an automatic safety rule passes",
    "kind": "feature",
    "priority": 2,
-   "stage": 6,
-   "note": "In 0.14.0-rc2, soaking now",
+   "stage": 7,
+   "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 287
   },
   {
@@ -457,8 +458,8 @@
    "title": "A built piece reported just before a character switch while joined can be tagged with the new world and removed for good",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 300
   },
   {
@@ -1501,8 +1502,8 @@
    "title": "A plugin-placed item picked up and dropped again may vanish from the dropper's own world on a rejoin or catch-up",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 300
   },
   {
@@ -1699,8 +1700,8 @@
    "title": "Quest sharing: generic creature pairing (roadmap PR C) would pair vertibirds and could drop a seated player; exclude vehicles first",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In 0.14.0-rc2, soaking now",
+   "stage": 7,
+   "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 324
   },
   {
