@@ -470,8 +470,6 @@ namespace Spawns
 		std::unordered_set<std::uint32_t> storyQuests;
 		bool                              storyQuestsGathered = false;
 
-		// Whether the story manager starts a_quest: a quest node lists it. The positive test beside the event's shape
-		// (Encounters::IsStoryEvent): true as well when no node could be read, so the event alone decides then.
 		void GatherStoryQuests()
 		{
 			if (storyQuestsGathered) {
@@ -492,17 +490,22 @@ namespace Spawns
 			}
 		}
 
-		bool StoryStarts(const RE::TESQuest* a_quest)
+		// Whether the story manager starts a_quest: a quest node lists it, which decides. Nothing when no node could be
+		// read: the event's shape decides then (Encounters::IsStoryEvent).
+		std::optional<bool> StoryStarts(const RE::TESQuest* a_quest)
 		{
 			GatherStoryQuests();
-			return storyQuests.empty() || storyQuests.contains(a_quest->GetFormID());
+			if (storyQuests.empty()) {
+				return std::nullopt;
+			}
+			return storyQuests.contains(a_quest->GetFormID());
 		}
 
-		// Whether a quest is a random encounter here (Encounters::IsEncounter, and a story manager quest node lists it).
+		// Whether a quest is a random encounter here (Encounters::IsEncounter: misc, named so, and the story manager starts it).
 		bool IsEncounterQuest(const RE::TESQuest* a_quest)
 		{
 			const char* name = a_quest->formEditorID.c_str();
-			return name && Encounters::IsEncounter(a_quest->data.questType, a_quest->eventID, name) && StoryStarts(a_quest);
+			return name && Encounters::IsEncounter(a_quest->data.questType, StoryStarts(a_quest), a_quest->eventID, name);
 		}
 
 		// The encounter quest whose alias created our NPC (IsEncounterQuest), running here or not (the caller asks:
@@ -680,8 +683,8 @@ namespace Spawns
 					running.push_back(quest->GetFormID());
 				} else if (quest->data.questType == Encounters::QUEST_TYPE_MISC) {
 					// The system's bookkeeping (REFactionShared), running from the game's start: named like one, no encounter.
-					// What the game holds for "no event", and whether a story node lists it, are logged, so the rule can be
-					// checked against them (a real encounter's event is a word such as SCPT, and a node lists it).
+					// Whether a story node lists it, and what the game holds in its event field, are logged, so the rule and its
+					// fallback can be checked against them (a node lists a real encounter, whose event is a word such as SCPT).
 					REX::INFO("Encounters: {:08X} '{}' runs, named like an encounter, but the story manager does not start it (its event reads {:08X}, a story node {} it): not one", quest->GetFormID(), name,
 						quest->eventID, storyQuests.contains(quest->GetFormID()) ? "lists" : "does not list");
 				}

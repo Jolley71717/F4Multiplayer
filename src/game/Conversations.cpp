@@ -306,8 +306,9 @@ namespace Conversations
 				const auto recording = speaker ? RecordingOf(a_actor, a_isPlayer, text) : Recording{};
 				// A creature's line goes only with a recording our game has (one archive lookup, for creatures' lines alone).
 				const bool creature = speaker && !a_isPlayer && IsCreature(a_actor);
-				const bool goes = speaker && LineShare::Reported(a_actor->IsInCombat(), a_isPlayer, true, creature, creature && HasRecording(recording));
-				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, goes ? " (reported)" : (creature && !a_actor->IsInCombat() ? " (a creature's, no recording: not reported)" : ""));
+				const bool inCombat = a_actor->IsInCombat();
+				const bool goes = speaker && LineShare::Reported(inCombat, a_isPlayer, true, creature, creature && !inCombat && HasRecording(recording));  // no lookup for a combat bark
+				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, goes ? " (reported)" : (creature && !inCombat ? " (a creature's, no recording: not reported)" : ""));
 				if (goes && a_connected) {
 					outgoing.push_back(Protocol::Encode(Protocol::Line{ 0, *speaker, Fit(text), recording.info, recording.response, recording.voiceType },
 						Protocol::MessageType::kReportLine));

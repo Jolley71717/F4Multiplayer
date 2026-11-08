@@ -165,6 +165,17 @@ TEST("encounters: the game's random-encounter quests are told by their name, typ
 	CHECK(!IsEncounter(MISC, NONE, "REFactionShared"));
 	CHECK(!IsEncounter(MISC, 0xFFFFFFFFu, "RETreasureHuntSC01_Reward"));
 	CHECK(IsEncounter(MISC, SCPT, "REFactionShared"));  // the event decides, not the name
+	// The story manager's own word comes first: a quest node lists every encounter and none of the bookkeeping, whatever
+	// the event field reads; the event's shape decides only when no node could be read.
+	CHECK(IsEncounter(MISC, true, NONE, "RESceneLC01"));
+	CHECK(IsEncounter(MISC, true, 0, "RESceneLC01"));
+	CHECK(!IsEncounter(MISC, false, SCPT, "REFactionShared"));
+	CHECK(!IsEncounter(MISC, false, 0, "RETreasureHuntSC01_Reward"));
+	CHECK(!IsEncounter(MISC, true, SCPT, "ReconScopeQuest"));  // listed, but not named so: the name rule still holds
+	CHECK(!IsEncounter(7, true, SCPT, "RECheckpointBoSWon01_Init"));  // listed, but a side quest
+	CHECK(IsEncounter(MISC, std::nullopt, SCPT, "RESceneLC01"));
+	CHECK(!IsEncounter(MISC, std::nullopt, NONE, "REFactionShared"));
+	CHECK(!IsEncounter(MISC, std::nullopt, 0, "RESceneLC01"));
 }
 
 TEST("encounters: a spawn says its kind on the wire, and a plain one names no quest")

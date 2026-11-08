@@ -112,6 +112,18 @@ namespace Encounters
 		return a_type == QUEST_TYPE_MISC && IsStoryEvent(a_event) && IsEncounterName(a_editorId);
 	}
 
+	// The same, told first by the story manager's own word: a_listed says whether one of its quest nodes lists the quest
+	// (BGSStoryManagerQuestNode::children, which the game reads once), which is what "a story event starts it" means;
+	// the event's shape decides only when no node could be read (a_listed empty), so a quest's event field the running
+	// game fills in some other way cannot switch every encounter off.
+	inline bool IsEncounter(std::int8_t a_type, std::optional<bool> a_listed, std::uint32_t a_event, std::string_view a_editorId)
+	{
+		if (a_listed) {
+			return a_type == QUEST_TYPE_MISC && *a_listed && IsEncounterName(a_editorId);
+		}
+		return IsEncounter(a_type, a_event, a_editorId);
+	}
+
 	// A friend's encounter spawn, as the book sees it (Spawns builds these from its copies).
 	struct Theirs
 	{
