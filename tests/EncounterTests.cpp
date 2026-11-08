@@ -6,8 +6,10 @@
 #include "ServerFixture.h"
 
 #include "game/Encounters.h"
+#include "game/SpawnBook.h"
 
 #include <array>
+#include <vector>
 
 using namespace TestServer;
 using namespace std::chrono_literals;
@@ -115,32 +117,41 @@ namespace
 	};
 }
 
-TEST("encounters: the game's random-encounter quests are told by their name and type")
+TEST("encounters: the game's random-encounter quests are told by their name, type and story event")
 {
 	using Encounters::IsEncounter;
 	using Encounters::IsEncounterName;
-	constexpr std::int8_t MISC = Encounters::QUEST_TYPE_MISC;
+	constexpr std::int8_t   MISC = Encounters::QUEST_TYPE_MISC;
+	constexpr std::uint32_t SCPT = 0x54504353;  // the script event the triggers send (ENAM 'SCPT'), as the engine holds it
+	constexpr std::uint32_t OAAT = 0x54414141;  // REActorAttach01's and 02's
 	// Fallout4.esm's, of every kind the RE system has.
 	for (const auto name : { "RESceneLC01", "RETravelKMK01", "REObjectKMK02", "RECampLC01", "REChokepointSC01", "REAssaultSC06", "RECheckpoint02_SynthAttackers", "REScene_VertibirdKMK01", "RESceneKMK_MS09Jack" }) {
 		CHECK(IsEncounterName(name));
-		CHECK(IsEncounter(MISC, name));
+		CHECK(IsEncounter(MISC, SCPT, name));
 	}
+	CHECK(IsEncounter(MISC, OAAT, "REActorAttach01"));
 	// The add-ons', after their prefix.
 	for (const auto name : { "DLC03RESceneKMK01", "DLC04RETravelCT01", "DLC01RESceneKMK02", "DLC03_REObjectKMK01" }) {
 		CHECK(IsEncounterName(name));
-		CHECK(IsEncounter(MISC, name));
+		CHECK(IsEncounter(MISC, SCPT, name));
 	}
 	// Other quests that happen to begin with the letters, and quests of other kinds.
 	for (const auto name : { "ReconScopeQuest", "RelayTowerQuest", "Reunions", "RE", "R", "", "FFDiamondCity12", "DialogueDiamondCity", "DLC03Reunite" }) {
 		CHECK(!IsEncounterName(name));
-		CHECK(!IsEncounter(MISC, name));
+		CHECK(!IsEncounter(MISC, SCPT, name));
 	}
-	// The encounter system's own bookkeeping is of type none or a side quest: no encounter.
-	CHECK(!IsEncounter(0, "REParent"));
-	CHECK(!IsEncounter(0, "RECorpseSwarmCreator"));
-	CHECK(!IsEncounter(7, "RECheckpointBoSWon01_Init"));
-	CHECK(!IsEncounter(7, "REAssault_VertibirdKMK01"));
-	CHECK(!IsEncounter(1, "RESceneLC01"));
+	// The encounter system's own bookkeeping is no encounter, however it is named: of type none or a side quest, or misc
+	// with no story event to start it (REFactionShared runs from the game's start, the treasure hunts' reward quests are
+	// set going by a stage; Fallout4.esm's 212 RE-named misc quests have 207 with an event, these 5 without).
+	CHECK(!IsEncounter(0, 0, "REParent"));
+	CHECK(!IsEncounter(0, OAAT, "RECorpseSwarmCreator"));
+	CHECK(!IsEncounter(7, SCPT, "RECheckpointBoSWon01_Init"));
+	CHECK(!IsEncounter(7, SCPT, "REAssault_VertibirdKMK01"));
+	CHECK(!IsEncounter(1, SCPT, "RESceneLC01"));
+	CHECK(IsEncounterName("REFactionShared"));
+	CHECK(!IsEncounter(MISC, 0, "REFactionShared"));
+	CHECK(!IsEncounter(MISC, 0, "RETreasureHuntSC01_Reward"));
+	CHECK(!IsEncounter(MISC, 0, "RESceneLC01"));  // the rule, not the name: an encounter quest always has one
 }
 
 TEST("encounters: a spawn says its kind on the wire, and a plain one names no quest")
@@ -450,18 +461,21 @@ TEST("encounters: the nearest of several rivals, and a run's actors are kept to 
 	REQUIRE(earlier);
 	CHECK(earlier->spawnId == SPAWN2);
 
-	// Actors past MAX_ACTORS are not kept, so a crowd doesn't grow the book; a known actor's spot is moved.
+	// Actors past MAX_ACTORS are not kept, so a crowd doesn't grow the book; a known actor's spot stays where it first
+	// stood (the run's markers), wherever it walks to: a travelling group two cells on still holds its trigger.
 	Book crowd;
 	crowd.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);
 	const auto spread = [](std::uint32_t a_i) { return At(100000.0f + static_cast<float>(a_i) * 2.0f * Encounters::COLLIDE_RANGE); };  // each out of the others' range
 	for (std::uint32_t i = 0; i < Encounters::MAX_ACTORS + 8; ++i) {
-		crowd.OursSeen(KMK01, 0xFF020000 + i, spread(i), now);
+		CHECK(crowd.OursSeen(KMK01, 0xFF020000 + i, spread(i), now));
 	}
-	crowd.OursSeen(KMK01, 0xFF020000, At(1000.0f), now);  // the first actor walked here
-	const std::array nearFirst{ Friends(SPAWN, LC01, At(1200.0f), 1) };
-	const auto       moved = crowd.RivalOf(KMK01, nearFirst, now + 1s);
-	REQUIRE(moved);
-	CHECK(moved->distance > 199.0f && moved->distance < 201.0f);
+	CHECK(crowd.OursSeen(KMK01, 0xFF020000, At(1000.0f), now + 5s));  // the first actor walked here
+	const std::array nearWalked{ Friends(SPAWN, LC01, At(1200.0f), 1) };
+	CHECK(!crowd.RivalOf(KMK01, nearWalked, now + 6s));  // no run of ours at the spot it walked to
+	const std::array nearFirst{ Friends(SPAWN, LC01, At(spread(0).x + 200.0f), 1) };
+	const auto       stayed = crowd.RivalOf(KMK01, nearFirst, now + 6s);
+	REQUIRE(stayed);
+	CHECK(stayed->distance > 199.0f && stayed->distance < 201.0f);
 	const std::array nearKept{ Friends(SPAWN, LC01, spread(Encounters::MAX_ACTORS - 1), 1) };
 	CHECK(crowd.RivalOf(KMK01, nearKept, now + 1s));  // the last actor within the limit was noted
 	const std::array nearLast{ Friends(SPAWN, LC01, spread(Encounters::MAX_ACTORS + 7), 1) };
@@ -470,4 +484,123 @@ TEST("encounters: the nearest of several rivals, and a run's actors are kept to 
 	std::ranges::sort(quests);
 	const std::vector<std::uint32_t> both{ KMK01, DN083 };  // sorted: KMK01 is the lower form ID
 	CHECK(quests == both);
+}
+
+TEST("encounters: no stop while our player talks, nor before the world's runs are settled; the window runs on meanwhile")
+{
+	using Encounters::Holds;
+	Book       book;
+	const auto now = Encounters::Clock::now();
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away
+	book.OursSeen(LC01, OURS, At(1000.0f), now);
+	const std::array theirs{ Friends(SPAWN, KMK01, At(1200.0f), 1) };
+	// Our player is in a conversation or a scene (with the accusor, say): a stop would take the speaker out from under
+	// them, so ours stays while they talk, and is judged again as soon as they are done.
+	CHECK(!book.MayStop(LC01, now + 1s, Holds{ .talking = true }));
+	CHECK(!book.RivalOf(LC01, theirs, now + 1s, Holds{ .talking = true }));
+	CHECK(book.MayStop(LC01, now + 1s, Holds{}));
+	CHECK(book.RivalOf(LC01, theirs, now + 2s, Holds{ .talking = false }));
+	CHECK(book.RivalOf(LC01, theirs, now + 2s));
+	// A talk that lasts the window out leaves ours standing for good: its player was in it.
+	CHECK(!book.RivalOf(LC01, theirs, now + Encounters::STOP_WINDOW - 1s, Holds{ .talking = true }));
+	CHECK(!book.RivalOf(LC01, theirs, now + Encounters::STOP_WINDOW + 1s, Holds{}));
+	CHECK(book.Knows(LC01));
+	CHECK(!book.IsStopped(LC01, now + Encounters::STOP_WINDOW + 1s));
+	// Before Spawns has settled the world's runs (its first in-world frame) nothing is stopped either.
+	Book fresh;
+	fresh.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);
+	fresh.OursSeen(LC01, OURS, At(1000.0f), now);
+	CHECK(!fresh.MayStop(LC01, now + 1s, Holds{ .unsettled = true }));
+	CHECK(!fresh.RivalOf(LC01, theirs, now + 1s, Holds{ .unsettled = true, .talking = false }));
+	fresh.Settle(std::array{ KMK01 }, now + 1s);  // what ran before the book looked; ours is fresh
+	CHECK(fresh.RivalOf(LC01, theirs, now + 2s, Holds{}));
+}
+
+TEST("encounters: a stopped run's actors are the game's to remove, the ones seen before the stop and the ones seen after")
+{
+	using Encounters::Book;
+	using Doomed = Book::Doomed;
+	Book       book;
+	const auto now = Encounters::Clock::now();
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away: not touched
+	CHECK(book.OursSeen(LC01, OURS, At(1000.0f), now));
+	CHECK(book.OursSeen(LC01, OURS2, At(1100.0f), now));
+	CHECK(book.TakeDoomed().empty());  // a live run's actors are nobody's to remove
+	// Stopped: the two seen so far are to be removed (the quest's own stop leaves some standing), each once.
+	book.Stopped(LC01, now + 1s);
+	const std::vector<Doomed> seen{ { OURS, LC01 }, { OURS2, LC01 } };
+	CHECK(book.TakeDoomed() == seen);
+	CHECK(book.TakeDoomed().empty());
+	// A third actor of the run, first seen after the stop (its aliases still name the quest): no new run, to be removed.
+	constexpr std::uint32_t OURS3 = 0xFF010003;
+	CHECK(!book.OursSeen(LC01, OURS3, At(1200.0f), now + 2s));
+	CHECK(!book.Knows(LC01));
+	CHECK(!book.OursSeen(LC01, OURS3, At(1200.0f), now + 3s));  // seen again: still once
+	const std::vector<Doomed> later{ { OURS3, LC01 } };
+	CHECK(book.TakeDoomed() == later);
+	CHECK(book.TakeDoomed().empty());
+	// An actor of the other run, and of the same quest once the stop is forgotten (a new run): a run's, not removed.
+	CHECK(book.OursSeen(DN083, 0xFF0FFFFE, At(-90000.0f), now + 3s));
+	CHECK(book.OursSeen(LC01, 0xFF010004, At(1000.0f), now + 1s + Encounters::STOPPED_FOR));
+	CHECK(book.Knows(LC01));
+	CHECK(book.TakeDoomed().empty());
+	// Cleared (a load): nothing left to remove of the world left behind.
+	book.Stopped(LC01, now + 2min);
+	book.Clear();
+	CHECK(book.TakeDoomed().empty());
+}
+
+TEST("encounters: an encounter's actor shared on plain under its id once its encounter is over; the copies stay")
+{
+	// The owner's game: its run ended (the quest stopped, the radstag lives on), so the spawn is reported again, plain.
+	// The server takes the new kind and sends the spawn again to the others, whose records take it (Theirs::Rekind) and
+	// whose copies stay; a joiner hears it plain. For the books that judge "one encounter per spot", it is no encounter
+	// spawn any more: a radstag of an ended encounter once made a friend's game stop five new runs near it.
+	Fixture    f;
+	const auto first = JoinAs(f, 1, "Player One");
+	const auto second = JoinAs(f, 2, "Player Two");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Report(Actor(SPAWN, LC01, 3, SpawnKind::kEncounter)));
+	const auto shared = Spawned(Received(f, 2));
+	REQUIRE(shared.size() == 1);
+	CHECK(shared[0].kind == SpawnKind::kEncounter);
+	Clear(f, { 1 });
+
+	// The friend's book: a copy placed of it, an encounter spawn at its spot.
+	SpawnBook::Theirs book;
+	REQUIRE(book.Add(shared[0], second));
+	book.Placed(SPAWN, 0xFF200001, SpawnBook::Clock::now());
+	CHECK(book.Find(SPAWN)->spawn.kind == SpawnKind::kEncounter);
+
+	// Shared on plain: the others hear it again under its id, plain and with no quest; the owner is answered as its owner.
+	f.fake->Deliver(1, Report(Actor(SPAWN, 0, 0, SpawnKind::kPlain, ACTOR_BASE, 1300.0f)));
+	const auto again = Spawned(Received(f, 2));
+	REQUIRE(again.size() == 1);
+	CHECK(again[0].refId == SPAWN && again[0].kind == SpawnKind::kPlain && again[0].quest == 0 && again[0].alias == 0 && again[0].playerId == first);
+	CHECK(HasOwner(Owners(Received(f, 1)), SPAWN, first));
+	CHECK(book.Rekind(SPAWN, again[0]));
+	CHECK(book.Find(SPAWN)->spawn.kind == SpawnKind::kPlain && book.Find(SPAWN)->spawn.quest == 0);
+	CHECK(book.Find(SPAWN)->local == 0xFF200001);  // the copy stays
+	CHECK(book.LocalOf(SPAWN) == 0xFF200001);
+	CHECK(!book.Rekind(SPAWN2, again[0]));
+
+	// Any other report of a held id is answered with its owner, and nobody else hears of it: the owner's plain spawn
+	// reported again, another player's report of the id, or a plain spawn said to be an encounter's.
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Report(Actor(SPAWN, 0, 0, SpawnKind::kPlain, ACTOR_BASE, 1300.0f)));
+	CHECK(HasOwner(Owners(Received(f, 1)), SPAWN, first));
+	CHECK(Spawned(Received(f, 2)).empty());
+	f.fake->Deliver(2, Report(Actor(SPAWN, 0, 0, SpawnKind::kPlain)));
+	CHECK(HasOwner(Owners(Received(f, 2)), SPAWN, first));
+	CHECK(Spawned(Received(f, 1)).empty());
+	f.fake->Deliver(1, Report(Actor(SPAWN, LC01, 3, SpawnKind::kEncounter)));
+	CHECK(HasOwner(Owners(Received(f, 1)), SPAWN, first));
+	CHECK(Spawned(Received(f, 2)).empty());
+
+	// A joiner hears it as it is now: plain.
+	Sync(f, 1);
+	JoinAs(f, 3, "Player Three");
+	const auto toThird = Spawned(Received(f, 3));
+	REQUIRE(toThird.size() == 1);
+	CHECK(toThird[0].refId == SPAWN && toThird[0].kind == SpawnKind::kPlain && toThird[0].quest == 0);
 }

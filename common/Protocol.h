@@ -66,7 +66,8 @@ namespace Protocol
 	// 63: a spawn says what kind it is (Spawn::kind): a random encounter's actor is shared calm (a man held at gunpoint,
 	// travellers), named with its encounter quest, and the twin refusal above is for quest actors alone, as an encounter
 	// is each game's own run (src/game/Encounters.h); a line's speaker may be a spawn id, so an encounter actor's lines
-	// reach the friends (Line::speaker). 62 is refused at the hello.
+	// reach the friends (Line::speaker). A spawn its owner reports again under its id, plain, says its encounter is over:
+	// the server passes it on (kSpawned again) and the copies stay. 62 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 63;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -185,7 +186,7 @@ namespace Protocol
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
 		kReportActivation = 30,    // the sender pressed a button, switch or lever
-		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
+		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id (again, plain, once its encounter is over)
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportDestruction = 34,   // destructible objects (a car, a barrel) the sender's game damaged past a stage (Destructions)
@@ -1601,7 +1602,9 @@ namespace Protocol
 		                  // game pairs its own from the alias with it, and the server refuses a second game's report of the alias
 		kEncounter = 2,   // a random encounter's actor (src/game/Encounters.h): shared calm or fighting, named with its encounter
 		                  // quest, which is its owner's game's own run (no twin refusal); a game that rolls its own encounter
-		                  // where a friend's already runs stops its own
+		                  // where a friend's already runs stops its own. Once the encounter is over (its quest stopped) its
+		                  // owner reports the actor again under its id as plain: the server takes the new kind and sends the
+		                  // spawn again (kSpawned) to the others, whose copies stay
 	};
 
 	// An NPC the sender's game made at runtime (see IsSpawnRef), as it was when shared: what to place a copy from, and

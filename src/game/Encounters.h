@@ -19,30 +19,36 @@
 // stand (a man held at gunpoint and called a synth, travellers, a trader), the others mirror them, and a game that rolls
 // its own encounter where a friend's already runs stops its own.
 //
-// An encounter is a quest of the misc type whose editor id starts RE (RESceneLC01, RETravelKMK01, REObjectKMK02,
-// RECampLC01, REChokepointSC01, REAssaultSC06, RECheckpoint02_SynthAttackers; the add-ons' after their prefix:
-// DLC03RESceneKMK01, DLC04RETravelCT01, DLC01RESceneKMK02). Every actor of one is made at runtime by an alias of the quest
-// as it starts (Fallout4.esm: 780 created NPC bases over 236 such quests), so each game's run makes its own, under ids
-// that are that game's own (0xFF......): the usual spawn. Spawns shared one only once it was in combat or hostile to its
-// player, so a calm scene stood in one game alone (a Nexus report on 0.13.2: the accusation of RESceneLC01, "Art and
-// Art", whose accusor only aims). Now one of our runtime NPCs that an alias of a running encounter quest created is ours
-// to share calm or not; the server tells it apart from a shared quest's paired creature (QuestActors.h) by the spawn's
-// kind (Protocol::SpawnKind::kEncounter): an encounter quest is repeatable and every game's run is its own, so two
-// games running RETravelKMK01 at two ends of the map both share theirs, and no twin refusal applies. A receiver takes a
-// friend's word for the kind only when the quest named is an encounter in its own game's files.
+// An encounter is a quest of the misc type, started by a story manager event, whose editor id starts RE (RESceneLC01,
+// RETravelKMK01, REObjectKMK02, RECampLC01, REChokepointSC01, REAssaultSC06, RECheckpoint02_SynthAttackers; the add-ons'
+// after their prefix: DLC03RESceneKMK01, DLC04RETravelCT01, DLC01RESceneKMK02). Every actor of one is made at runtime by
+// an alias of the quest as it starts (Fallout4.esm: 780 created NPC bases over 236 such quests), so each game's run makes
+// its own, under ids that are that game's own (0xFF......): the usual spawn. Spawns shared one only once it was in combat
+// or hostile to its player, so a calm scene stood in one game alone (a Nexus report on 0.13.2: the accusation of
+// RESceneLC01, "Art and Art", whose accusor only aims). Now one of our runtime NPCs that an alias of a running encounter
+// quest created is ours to share calm or not; the server tells it apart from a shared quest's paired creature
+// (QuestActors.h) by the spawn's kind (Protocol::SpawnKind::kEncounter): an encounter quest is repeatable and every
+// game's run is its own, so two games running RETravelKMK01 at two ends of the map both share theirs, and no twin
+// refusal applies. A receiver takes a friend's word for the kind only when the quest named is an encounter in its own
+// game's files. An encounter's run ends when its quest stops (REScript's own stop, once its player is far); an actor of
+// it still standing then (a radstag, the surviving Art) is shared on, plain (reported again under its id, which the
+// server passes on): no encounter runs at its spot any more.
 //
 // Each game rolls encounters for its own player: the trigger references (RETriggerScene, RETriggerTravel, ...) send a
 // story event on the player's entering them (RETriggerScript), and the story manager picks one quest for it. Two players
 // crossing one trigger together usually roll two different encounters at the same markers, sometimes the same one. So
 // where a friend's encounter already runs, ours is stopped (through the quest's own stop, which REScript itself calls on
-// REParent's cleanup and which deletes its created actors), and our copies of theirs are placed: one encounter per spot.
-// Who was first is the server's order: every spawn message that arrives (a friend's kSpawned, our own grant in
-// kActorOwners) is numbered as it comes, the same order in every game since the server sends them in the order it took
-// them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW): past that
-// its player is in it. The encounter quests already running on the first in-world frame of a session, or after a load,
-// are settled (Settle): the book can't tell when they began, and a long-running encounter must never be stopped partway
-// for a friend's that came to stand beside it; every run first seen after that is fresh. Two encounters both met so run
-// side by side until one ends on its own. Kept free of the game so it can be tested (tests/EncounterTests.cpp).
+// REParent's cleanup) and its actors removed (the quest's stop leaves some standing: a travelling group's dogs, a
+// corpse), and our copies of theirs are placed: one encounter per spot. A spot is where an encounter's actors first
+// stood, its markers, not where they have walked to since: a travelling merchant two cells on still holds the trigger
+// he was rolled at. Who was first is the server's order: every spawn message that arrives (a friend's kSpawned, our own
+// grant in kActorOwners) is numbered as it comes, the same order in every game since the server sends them in the order
+// it took them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW):
+// past that its player is in it. The encounter quests already running on the first in-world frame of a session, or
+// after a load, are settled (Settle): the book can't tell when they began, and a long-running encounter must never be
+// stopped partway for a friend's that came to stand beside it; every run first seen after that is fresh. Two
+// encounters both met so run side by side until one ends on its own. Kept free of the game so it can be tested
+// (tests/EncounterTests.cpp).
 namespace Encounters
 {
 	using Clock = std::chrono::steady_clock;
@@ -52,12 +58,13 @@ namespace Encounters
 	// parents and bookkeeping are of type none, and one vertibird fight is a side quest; none of those makes a calm actor).
 	inline constexpr std::int8_t QUEST_TYPE_MISC = 6;
 
-	// A friend's encounter this close to one of our encounter's actors runs at the same spot (an encounter's markers lie
-	// within about a thousand units of its trigger; two triggers are seldom closer than this).
+	// A friend's encounter this close to where one of our encounter's actors first stood runs at the same spot (an
+	// encounter's markers lie within about a thousand units of its trigger; two triggers are seldom closer than this).
 	inline constexpr float COLLIDE_RANGE = 3000.0f;
 	// Our encounter is stopped for a friend's only this soon after our game started it: past that its player is in it.
 	inline constexpr auto STOP_WINDOW = std::chrono::seconds(20);
-	// A quest we stopped is left alone this long: the engine winds it down and deletes its actors meanwhile.
+	// A quest we stopped is left alone this long: the engine winds it down meanwhile, and its actors still seen are
+	// removed, not offered.
 	inline constexpr auto STOPPED_FOR = std::chrono::seconds(60);
 	// Actors of one encounter whose spots are kept (a travelling group is three to eight).
 	inline constexpr std::size_t MAX_ACTORS = 16;
@@ -75,11 +82,15 @@ namespace Encounters
 		return name.size() > 2 && name[0] == 'R' && name[1] == 'E' && (name[2] == '_' || std::isupper(static_cast<unsigned char>(name[2])));
 	}
 
-	// An encounter quest: a misc quest named so. REParent and RECorpseSwarmCreator (type none) and the RECheckpoint*_Init
-	// side quests are not; nor is REAssault_VertibirdKMK01 (a side quest), whose vertibird fight is shared as any fight.
-	inline bool IsEncounter(std::int8_t a_type, std::string_view a_editorId)
+	// An encounter quest: a misc quest named so that a story manager event starts (TESQuest::eventID, the record's ENAM:
+	// 'SCPT' for the 205 of Fallout4.esm's a trigger's RETriggerScript sends, 'OAAT' for REActorAttach01 and 02). The
+	// system's bookkeeping is no encounter, whatever its name: REFactionShared and the RETreasureHuntSCnn_Reward quests
+	// (misc, but nothing starts them: they run from the game's start or are set going by a stage), REParent and
+	// RECorpseSwarmCreator (type none), the RECheckpoint*_Init side quests; nor is REAssault_VertibirdKMK01 (a side
+	// quest), whose vertibird fight is shared as any fight.
+	inline bool IsEncounter(std::int8_t a_type, std::uint32_t a_event, std::string_view a_editorId)
 	{
-		return a_type == QUEST_TYPE_MISC && IsEncounterName(a_editorId);
+		return a_type == QUEST_TYPE_MISC && a_event != 0 && IsEncounterName(a_editorId);
 	}
 
 	// A friend's encounter spawn, as the book sees it (Spawns builds these from its copies).
@@ -88,9 +99,9 @@ namespace Encounters
 		std::uint32_t spawnId = 0;
 		std::uint32_t quest = 0;   // the encounter quest their game rolled
 		std::uint32_t player = 0;  // whose
-		Spot          at;          // where their game has it now
+		Spot          at;          // where their game had it as it was shared: its encounter's spot (not where it has walked to)
 		std::uint64_t seq = 0;     // its number in the server's order (Book::Next as it arrived)
-		bool          over = false;  // it died, or their game let it go
+		bool          over = false;  // it died, or their game let it go (its encounter over, it is shared on plain: not an encounter spawn any more)
 	};
 
 	// The friend's encounter ours gives way to.
@@ -100,6 +111,16 @@ namespace Encounters
 		std::uint32_t quest = 0;
 		std::uint32_t player = 0;
 		float         distance = 0.0f;  // from the nearest of ours
+	};
+
+	// What holds every stop of ours for the moment, whichever run it is: the world's runs are not settled yet (Settle is
+	// to come, on Spawns' first in-world frame), or our player is in a conversation or a scene (a stop removes every
+	// actor of the run, the speaker among them, whichever of them the scan is looking at). Ours stays meanwhile, judged
+	// again next time it is seen while the window lasts; past the window it stays for good.
+	struct Holds
+	{
+		bool unsettled = false;
+		bool talking = false;
 	};
 
 	class Book
@@ -119,19 +140,20 @@ namespace Encounters
 
 		// One of our encounter actors (a_local, of quest a_quest) was seen in the scan, standing at a_at. The first sighting
 		// of a quest's actor is when our run of it started, as far as the book can tell (one running before the book looked
-		// was settled by Settle). Nothing for a quest we stopped lately (IsStopped): its actors still standing make no new
-		// run.
-		void OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now)
+		// was settled by Settle), and where the actor first stood is where it stays for the book: the run's spot is its
+		// markers, wherever its actors walk to. True when it is a run's; false for an actor of a quest we stopped lately
+		// (IsStopped), which makes no new run and is the game's to remove (Doomed), as the run's others were.
+		bool OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now)
 		{
 			if (IsStopped(a_quest, a_now)) {
-				return;
+				Doom(a_quest, a_local);
+				return false;
 			}
 			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now }).first->second;
-			if (const auto it = std::ranges::find(run.actors, a_local, &Actor::local); it != run.actors.end()) {
-				it->at = a_at;
-			} else if (run.actors.size() < MAX_ACTORS) {
+			if (!std::ranges::contains(run.actors, a_local, &Actor::local) && run.actors.size() < MAX_ACTORS) {
 				run.actors.push_back({ a_local, a_at });
 			}
+			return true;
 		}
 
 		// The server granted one of our encounter actors of a_quest its spawn id, the a_seq-th spawn message to arrive. The
@@ -150,11 +172,32 @@ namespace Encounters
 			ours.erase(a_quest);
 		}
 
-		// We stopped our run of a_quest: left alone for STOPPED_FOR, and its actors not offered meanwhile.
+		// We stopped our run of a_quest: left alone for STOPPED_FOR, and its actors, the ones seen so far and any seen
+		// meanwhile (OursSeen), are the game's to remove (Doomed): the quest's own stop leaves some standing.
 		void Stopped(std::uint32_t a_quest, Clock::time_point a_now)
 		{
 			stopped[a_quest] = a_now;
-			ours.erase(a_quest);
+			if (const auto it = ours.find(a_quest); it != ours.end()) {
+				for (const auto& actor : it->second.actors) {
+					Doom(a_quest, actor.local);
+				}
+				ours.erase(it);
+			}
+		}
+
+		// An actor of a run we stopped, for the game to remove.
+		struct Doomed
+		{
+			std::uint32_t local = 0;
+			std::uint32_t quest = 0;
+
+			bool operator==(const Doomed&) const = default;
+		};
+
+		// The actors of runs we stopped that the game is to remove, each once (Stopped, and OursSeen while stopped).
+		std::vector<Doomed> TakeDoomed()
+		{
+			return std::exchange(doomed, {});
 		}
 
 		[[nodiscard]] bool IsStopped(std::uint32_t a_quest, Clock::time_point a_now) const
@@ -163,20 +206,24 @@ namespace Encounters
 			return it != stopped.end() && a_now - it->second < STOPPED_FOR;
 		}
 
-		// Whether our run of a_quest could still give way to a friend's: known, not settled, within STOP_WINDOW of its start
-		// and not stopped already. RivalOf says to which, if any; what it needs of theirs is gathered only when this holds.
-		[[nodiscard]] bool MayStop(std::uint32_t a_quest, Clock::time_point a_now) const
+		// Whether our run of a_quest could give way to a friend's now: known, not settled, within STOP_WINDOW of its start,
+		// not stopped already, and nothing holding every stop (a_holds). RivalOf says to which, if any; what it needs of
+		// theirs is gathered only when this holds.
+		[[nodiscard]] bool MayStop(std::uint32_t a_quest, Clock::time_point a_now, Holds a_holds = {}) const
 		{
+			if (a_holds.unsettled || a_holds.talking) {
+				return false;
+			}
 			const auto it = ours.find(a_quest);
 			return it != ours.end() && !it->second.settled && !IsStopped(a_quest, a_now) && a_now - it->second.firstSeen < STOP_WINDOW;
 		}
 
-		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs within
-		// COLLIDE_RANGE of one of our run's actors, whose number in the server's order is below our run's first grant (or
-		// our run has none yet). The nearest when several.
-		[[nodiscard]] std::optional<Rival> RivalOf(std::uint32_t a_quest, std::span<const Theirs> a_theirs, Clock::time_point a_now) const
+		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs whose spot is
+		// within COLLIDE_RANGE of where one of our run's actors first stood, whose number in the server's order is below our
+		// run's first grant (or our run has none yet). The nearest when several.
+		[[nodiscard]] std::optional<Rival> RivalOf(std::uint32_t a_quest, std::span<const Theirs> a_theirs, Clock::time_point a_now, Holds a_holds = {}) const
 		{
-			if (!MayStop(a_quest, a_now)) {
+			if (!MayStop(a_quest, a_now, a_holds)) {
 				return std::nullopt;
 			}
 			const auto&          run = ours.at(a_quest);
@@ -236,13 +283,21 @@ namespace Encounters
 		{
 			ours.clear();
 			stopped.clear();
+			doomed.clear();
 		}
 
 	private:
+		void Doom(std::uint32_t a_quest, std::uint32_t a_local)
+		{
+			if (!std::ranges::contains(doomed, a_local, &Doomed::local)) {
+				doomed.push_back({ a_local, a_quest });
+			}
+		}
+
 		struct Actor
 		{
 			std::uint32_t local = 0;
-			Spot          at;
+			Spot          at;  // where it first stood
 		};
 		struct Run
 		{
@@ -253,6 +308,7 @@ namespace Encounters
 		};
 		std::unordered_map<std::uint32_t, Run>               ours;     // our encounter runs, by quest
 		std::unordered_map<std::uint32_t, Clock::time_point> stopped;  // quests we stopped, and when
+		std::vector<Doomed>                                  doomed;   // actors of stopped runs for the game to remove (TakeDoomed)
 		std::uint64_t                                        seq = 0;
 	};
 }

@@ -3243,6 +3243,14 @@ void Server::Run()
 		}
 		spawn->playerId = a_player.id;
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
+			// Its owner shares an encounter's actor on plain, under its id: its encounter is over (protocol 63,
+			// src/game/Encounters.h). The record takes the new kind, and the others hear it again (their copies stay). Any
+			// other report of a held id is answered with its owner alone.
+			if (it->second.playerId == a_player.id && it->second.kind == Protocol::SpawnKind::kEncounter && spawn->kind == Protocol::SpawnKind::kPlain) {
+				log(std::format("server: spawn {:08X} of player {} is shared on plain: its encounter {:08X} is over", spawn->refId, a_player.id, it->second.quest));
+				it->second = *spawn;
+				broadcast(Protocol::Encode(*spawn, Protocol::MessageType::kSpawned), true, a_player.key);
+			}
 			sendOwners({ { spawn->refId, it->second.playerId } }, a_player.key);
 			return;
 		}

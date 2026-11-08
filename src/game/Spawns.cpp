@@ -86,6 +86,9 @@ namespace Spawns
 		Clock::time_point          runsChecked{};  // when our runs' quests were last checked to be running still
 		constexpr auto             RUNS_CHECK = std::chrono::seconds(1);
 		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
+		// Runs of ours that ended (their quest stopped) and their actors shared on plain; actors of runs we stopped that we
+		// removed; friends' encounters heard to be over.
+		std::uint32_t encountersOver = 0, sharedOn = 0, actorsRemoved = 0, theirsOver = 0;
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
 		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
@@ -449,8 +452,9 @@ namespace Spawns
 
 		// ---- Random encounters (Encounters.h) ----------------------------------------------------------------------------
 
-		// The encounter quest whose alias created our NPC (Encounters::IsEncounter; running here), and that alias. Quest 0
-		// when it is no encounter's: an alias that found an NPC of ours rather than making it (a settler) names nothing.
+		// The encounter quest whose alias created our NPC (Encounters::IsEncounter), running here or not (the caller asks:
+		// QuestRunningHere), and that alias. Quest 0 when it is no encounter's: an alias that found an NPC of ours rather
+		// than making it (a settler) names nothing.
 		AliasKey EncounterOf(RE::Actor* a_actor)
 		{
 			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
@@ -460,19 +464,20 @@ namespace Spawns
 			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 			for (const auto& entry : aliases->aliasArray) {
 				if (!entry.quest || !entry.alias || entry.alias->owningQuest != entry.quest || static_cast<std::uint16_t>(entry.alias->fillType) != QuestActors::FILL_CREATED ||
-					(entry.quest->data.flags & QuestActors::QUEST_RUNNING) == 0 || entry.alias->aliasID > 0xFFFF) {
+					entry.alias->aliasID > 0xFFFF) {
 					continue;
 				}
 				const char* name = entry.quest->formEditorID.c_str();
-				if (name && Encounters::IsEncounter(entry.quest->data.questType, name)) {
+				if (name && Encounters::IsEncounter(entry.quest->data.questType, entry.quest->eventID, name)) {
 					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
 				}
 			}
 			return {};
 		}
 
-		// Friends' encounter spawns as the book judges them: where their game has each now, its number in the server's
-		// order, and whether it is over.
+		// Friends' encounter spawns as the book judges them: where their game had each as it was shared (its encounter's
+		// spot, not where it has walked to), its number in the server's order, and whether it is over. One whose
+		// encounter ended is shared on plain (Add), and is no encounter spawn here any more.
 		std::vector<Encounters::Theirs> TheirEncounters()
 		{
 			std::vector<Encounters::Theirs> out;
@@ -481,8 +486,10 @@ namespace Spawns
 				if (!copy || copy->spawn.kind != Protocol::SpawnKind::kEncounter) {
 					continue;
 				}
-				const auto seq = theirSeq.find(id);
-				out.push_back({ id, copy->spawn.quest, copy->spawn.playerId, copy->at, seq != theirSeq.end() ? seq->second : 0, copy->dead || copy->gone });
+				const auto&             spawn = copy->spawn;
+				const RemoteEdits::Spot spot{ spawn.cell, spawn.worldspace, spawn.x, spawn.y, spawn.z };
+				const auto              seq = theirSeq.find(id);
+				out.push_back({ id, spawn.quest, spawn.playerId, spot, seq != theirSeq.end() ? seq->second : 0, copy->dead || copy->gone });
 			}
 			return out;
 		}
@@ -500,7 +507,7 @@ namespace Spawns
 		{
 			const auto  quest = a_quest != 0 ? RE::TESForm::GetFormByID<RE::TESQuest>(a_quest) : nullptr;
 			const char* name = quest ? quest->formEditorID.c_str() : nullptr;
-			return name && Encounters::IsEncounter(quest->data.questType, name) ? quest : nullptr;
+			return name && Encounters::IsEncounter(quest->data.questType, quest->eventID, name) ? quest : nullptr;
 		}
 
 		// Whether our own game runs that quest now.
@@ -519,8 +526,8 @@ namespace Spawns
 		}
 
 		// Our run of an encounter gives way to a friend's that was first at the spot: stopped through the quest's own stop
-		// (what REScript does on REParent's cleanup), which deletes its created actors; our copies of theirs are placed.
-		// Booked here, done in Frame (StopPending), outside the actor scan that found it.
+		// (what REScript does on REParent's cleanup), its actors removed, and our copies of theirs are placed. Booked here,
+		// done in Frame (StopPending), outside the actor scan that found it.
 		void StopEncounter(std::uint32_t a_quest, const Encounters::Rival& a_rival, Clock::time_point a_now)
 		{
 			encounters.Stopped(a_quest, a_now);
@@ -532,13 +539,57 @@ namespace Spawns
 				a_rival.quest, QuestName(a_rival.quest), a_rival.spawnId, a_rival.distance);
 		}
 
+		// An actor of a run of ours we stopped (a_quest, for the log) is removed: disabled now and deleted a moment later
+		// (RemotePlayers' graveyard, as our copies go), never offered meanwhile (Leaving); one shared already is released as
+		// the scan stops seeing it, and the friends' copies go. The quest's own stop deletes what its aliases created only
+		// as REScript's cleanup runs with the player far away: stopped at the spot it left a travelling group's three dogs
+		// alive and a corpse standing (the rig, 0.14.0), which were then shared as a fight's spawns beside the friend's
+		// encounter that had won the spot, so both games showed two sets.
+		void RemoveActor(RE::Actor* a_actor, std::uint32_t a_quest)
+		{
+			const auto local = a_actor->GetFormID();
+			if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || a_actor->IsDeleted() || Leaving(local) || NpcSync::IsOurCompanion(a_actor)) {
+				return;
+			}
+			if (leaving.size() >= MAX_LEAVING) {
+				std::erase_if(leaving, [](const auto& a_entry) { return !a_entry.second.get(); });
+			}
+			if (leaving.size() < MAX_LEAVING) {
+				leaving[local] = a_actor->GetHandle();
+			}
+			RemotePlayers::Discard(a_actor->GetHandle(), Clock::now());
+			++actorsRemoved;
+			if (actorsRemoved <= LOGGED) {
+				const auto name = a_actor->GetDisplayFullName();
+				REX::INFO("Encounters: {:08X} '{}', {}an actor of our stopped {:08X} '{}', is removed{}", local, name ? name : "", a_actor->IsDead(false) ? "the corpse of " : "", a_quest, QuestName(a_quest),
+					ours.Shares(local) ? "; its spawn is released as it goes" : "");
+			}
+		}
+
+		// The runs booked for a stop are stopped: their actors first, every loaded one the quest's aliases still name,
+		// alive or dead (the stop may clear the aliases), then the quest; and the actors of stopped runs the book has
+		// (seen before the stop, or since) go too.
 		void StopPending()
 		{
+			const auto lists = RE::ProcessLists::GetSingleton();
 			for (const auto quest : pendingStops) {
+				if (lists) {
+					for (const auto& handle : lists->highActorHandles) {
+						const auto ptr = handle.get();
+						if (const auto actor = ptr.get(); actor && EncounterOf(actor).quest == quest) {
+							RemoveActor(actor, quest);
+						}
+					}
+				}
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", quest).c_str());
 				NpcSync::CountCommands(1);
 			}
 			pendingStops.clear();
+			for (const auto& doomed : encounters.TakeDoomed()) {
+				if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(doomed.local)) {
+					RemoveActor(actor, doomed.quest);
+				}
+			}
 		}
 
 		// The encounter quests running here as the session's first in-world frame comes, or the first after a load: settled
@@ -553,8 +604,14 @@ namespace Spawns
 			std::vector<std::uint32_t> running;
 			for (const auto quest : handler->GetFormArray<RE::TESQuest>()) {
 				const char* name = quest ? quest->formEditorID.c_str() : nullptr;
-				if (name && (quest->data.flags & QuestActors::QUEST_RUNNING) != 0 && Encounters::IsEncounter(quest->data.questType, name)) {
+				if (!name || (quest->data.flags & QuestActors::QUEST_RUNNING) == 0 || !Encounters::IsEncounterName(name)) {
+					continue;
+				}
+				if (Encounters::IsEncounter(quest->data.questType, quest->eventID, name)) {
 					running.push_back(quest->GetFormID());
+				} else if (quest->data.questType == Encounters::QUEST_TYPE_MISC) {
+					// The system's bookkeeping (REFactionShared), running from the game's start: named like one, no encounter.
+					REX::INFO("Encounters: {:08X} '{}' runs, named like an encounter, but no story event starts it: not one", quest->GetFormID(), name);
 				}
 			}
 			encounters.Settle(running, a_now);
@@ -567,7 +624,11 @@ namespace Spawns
 			}
 		}
 
-		// Our runs whose quest no longer runs here (it stopped, by its own script or ours) are over for the book.
+		// Our runs whose quest no longer runs here (it stopped, by its own script or ours) are over for the book, and the
+		// actors of an ended run still standing and shared are shared on plain: reported again under their ids with no
+		// quest (Protocol::SpawnKind::kPlain), which the server passes on and the friends' copies take as they stand, so
+		// no game counts an encounter as running at their spot (a radstag whose encounter had ended made a friend's game
+		// stop five runs near it: the rig, 0.14.0). Not those of a run we stopped: removed (StopPending), not shared on.
 		void CheckRuns(Clock::time_point a_now)
 		{
 			if (a_now - runsChecked < RUNS_CHECK) {
@@ -577,9 +638,36 @@ namespace Spawns
 			for (const auto quest : encounters.Quests()) {
 				if (!QuestRunningHere(quest)) {
 					encounters.OursOver(quest);
+					++encountersOver;
+					if (encountersOver <= LOGGED) {
+						REX::INFO("Encounters: our {:08X} '{}' is over: its quest no longer runs; its actors still standing are shared on as plain spawns", quest, QuestName(quest));
+					}
 				}
 			}
 			encounters.Expire(a_now);
+			for (auto it = offeredEncounter.begin(); it != offeredEncounter.end();) {
+				const auto [id, quest] = *it;
+				const auto local = ours.LocalOf(id);  // 0 until granted: looked at again once it is
+				if (local == 0 || QuestRunningHere(quest) || encounters.IsStopped(quest, a_now)) {
+					++it;
+					continue;
+				}
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local);
+				if (actor && !actor->IsDead(false) && !actor->IsDeleted() && !actor->IsDisabled() && actor->GetParentCell()) {
+					const auto base = BaseToPlace(actor);
+					const auto at = SpotOf(actor);
+					if (base != 0 && (at.cell == 0) != (at.worldspace == 0)) {
+						outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, id, base, at.cell, at.worldspace, at.x, at.y, at.z, actor->data.angle.z, 0, 0, Protocol::SpawnKind::kPlain },
+							Protocol::MessageType::kReportSpawn));
+						++sharedOn;
+						if (sharedOn <= LOGGED) {
+							REX::INFO("Encounters: {:08X}, shared as {:08X}, is shared on plain: its encounter {:08X} '{}' is over", local, id, quest, QuestName(quest));
+						}
+					}
+				}
+				calmOffered.erase(id);
+				it = offeredEncounter.erase(it);
+			}
 			std::erase_if(calmOffered, [&](std::uint32_t a_id) { return !offeredEncounter.contains(a_id); });
 		}
 
@@ -941,18 +1029,26 @@ namespace Spawns
 		const auto at = SpotOf(a_actor);
 		// A random encounter's actor (Encounters.h) is ours to share calm or fighting, from the moment it stands: unless a
 		// friend's encounter already ran at the spot when ours started, in which case ours is stopped (and none of its
-		// actors offered). Looked at before the grant below too: a friend's spawn that came in after we offered ours, but
-		// ahead of our grant in the server's order, was first. Never while our player is talking to the actor (a stop
-		// would take the speaker out from under them): ours stays, and theirs is placed beside it or withheld (oursThere).
-		// Never our companion (an encounter's actor recruited while its quest still runs is the companion handling's).
-		const auto encounter = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) ? EncounterOf(a_actor) : AliasKey{};
+		// actors offered: those seen are removed, Frame). Looked at before the grant below too: a friend's spawn that came
+		// in after we offered ours, but ahead of our grant in the server's order, was first. Never while our player is in
+		// a conversation or a scene (a stop would take the speaker out from under them: Encounters::Holds), nor before the
+		// world's runs are settled (Frame): ours stays, and theirs is placed beside it or withheld (oursThere). Never our
+		// companion (an encounter's actor recruited while its quest still runs is the companion handling's). An actor of
+		// an encounter that ended (its quest stopped, by its own script) is an NPC as any: one shared already is shared on
+		// plain (CheckRuns), one not shared yet goes as a fight's spawn would, hostile or fighting.
+		auto encounter = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) ? EncounterOf(a_actor) : AliasKey{};
+		if (encounter.quest != 0 && encounters.IsStopped(encounter.quest, now)) {
+			encounters.OursSeen(encounter.quest, local, at, now);  // a stopped run's: booked for removal (Frame), never offered
+			return 0;
+		}
+		if (encounter.quest != 0 && !QuestRunningHere(encounter.quest)) {
+			encounter = {};
+		}
 		if (encounter.quest != 0) {
-			if (encounters.IsStopped(encounter.quest, now)) {
-				return 0;
-			}
 			encounters.OursSeen(encounter.quest, local, at, now);
-			if (!settleRuns && encounters.MayStop(encounter.quest, now) && !PlayerInTalk()) {  // not before the world's runs are settled (Frame)
-				if (const auto rival = encounters.RivalOf(encounter.quest, TheirEncounters(), now)) {
+			if (encounters.MayStop(encounter.quest, now, { .unsettled = settleRuns })) {
+				const Encounters::Holds holds{ .unsettled = settleRuns, .talking = PlayerInTalk() };
+				if (const auto rival = encounters.RivalOf(encounter.quest, TheirEncounters(), now, holds)) {
 					StopEncounter(encounter.quest, *rival, now);
 					return 0;
 				}
@@ -1113,6 +1209,18 @@ namespace Spawns
 			a_spawn.kind = Protocol::SpawnKind::kPlain;
 			a_spawn.quest = 0;
 			a_spawn.alias = 0;
+		}
+		// An encounter's actor its owner shares on plain, under its id, as its encounter ends (Encounters.h): the record
+		// takes the kind, our copy stays as it is, and no encounter runs at its spot any more for our book.
+		if (const auto known = theirs.Find(a_spawn.refId);
+			known && known->spawn.playerId == a_spawn.playerId && known->spawn.kind == Protocol::SpawnKind::kEncounter && a_spawn.kind == Protocol::SpawnKind::kPlain && known->spawn.base == a_spawn.base) {
+			const auto quest = known->spawn.quest;
+			theirs.Rekind(a_spawn.refId, a_spawn);
+			++theirsOver;
+			if (theirsOver <= LOGGED) {
+				REX::INFO("Encounters: player {}'s {:08X} is shared on plain: their encounter {:08X} '{}' is over; our copy {:08X} stays", a_spawn.playerId, a_spawn.refId, quest, QuestName(quest), known->local);
+			}
+			return;
 		}
 		if (const auto known = theirs.Find(a_spawn.refId); known && known->local != 0) {
 			REX::INFO("Spawns: player {} shared {:08X} again; our copy {:08X} of it goes", a_spawn.playerId, a_spawn.refId, known->local);
@@ -1569,7 +1677,8 @@ namespace Spawns
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} kindsVetoed={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld, encountersReceived, encountersStopped, kindsVetoed) +
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed) +
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

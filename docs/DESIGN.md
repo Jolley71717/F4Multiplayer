@@ -647,12 +647,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and its actors are shared as spawns from the moment they stand, calm or not: a man held at gunpoint and called a
   synth (RESceneLC01, whose accusor only aims), travellers, a trader, a settler asking for help. Up to 0.13.2 a
   runtime NPC was shared only once in combat or hostile to its player, so a calm scene stood in one game alone (a
-  Nexus report on 0.13.2). An encounter is a misc quest (type 6) whose editor id, after an add-on's `DLCnn`/`DLCnn_`
-  prefix, is `RE` and a capital or an underscore (`RESceneLC01`, `RETravelKMK01`, `DLC03RESceneKMK01`; not
-  `ReconScopeQuest`, nor `REParent` and the checkpoint bookkeeping, which are of other types): Fallout4.esm has 236,
-  every actor of theirs created by an alias of the quest as it starts (780 created NPC bases, 13 of them unique), so
-  one of our runtime NPCs whose alias array holds a "create reference" alias of a running encounter quest is ours to
-  share (`Spawns::EncounterOf`; an alias that found an NPC of ours rather than making it, a settler, names nothing).
+  Nexus report on 0.13.2). An encounter is a misc quest (type 6) that a story manager event starts (`TESQuest::eventID`,
+  the record's ENAM: the triggers' script event) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
+  and a capital or an underscore (`RESceneLC01`, `RETravelKMK01`, `DLC03RESceneKMK01`; not `ReconScopeQuest`, nor
+  `REParent` and the checkpoint bookkeeping, which are of other types, nor `REFactionShared` and the treasure hunts'
+  reward quests, misc but started by no event): Fallout4.esm has 236 RE-named quests, 207 of them encounters, every
+  actor of theirs created by an alias of the quest as it starts (780 created NPC bases, 13 of them unique), so one of
+  our runtime NPCs whose alias array holds a "create reference" alias of a running encounter quest is ours to share
+  (`Spawns::EncounterOf`; an alias that found an NPC of ours rather than making it, a settler, names nothing).
   The spawn names the encounter quest and the alias with its kind (`Protocol::SpawnKind::kEncounter`), which the
   server tells from a paired quest actor's (`kQuestActor`, protocol 61): an encounter quest is repeatable and every
   game's run of it is its own, so two games running `RETravelKMK01` at two ends of the map both share theirs, and
@@ -662,31 +664,45 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   (the named characters encounters create exist here only through our own run of that encounter), and it is never
   paired as a quest actor. Its lines travel too: Conversations reports a line of an NPC our game shares as a spawn
   under its spawn id (`Line::speaker`, `IsActorRef`), and the hearers resolve it to their copy (`Spawns::LocalOf`)
-  and play the recording there as for any NPC a friend runs. Each game rolls encounters for its own player (the
+  and play the recording there as for any NPC a friend runs; the recording is found by the line's info id and its
+  plugin even when the engine has no form for the info here (a quest's dialogue is in memory as that quest needs it:
+  RESceneLC01's accusor came as text alone on the rig, his files in the archives all the while). Each game rolls encounters for its own player (the
   `RETrigger*` references send a story event as the player enters them; `REScript` stops the quest itself on
   `REParent`'s cleanup once the player is far, which deletes its created actors), so two players crossing one trigger
   together usually roll two different encounters at the same markers, sometimes the same one. So where a friend's
-  encounter already runs, ours is stopped (`stopquest`, the quest's own stop, as RadiantSync stops a radiant) and
-  our copies of theirs are placed: one encounter per spot (`Encounters::Book`, game-free and tested). Who was first
+  encounter already runs, ours is stopped (`stopquest`, the quest's own stop, as RadiantSync stops a radiant), its
+  actors are removed (`Spawns::RemoveActor`: every loaded one the quest's aliases name, alive or dead, disabled and
+  deleted as our copies go and never offered; the quest's own stop deletes them only as `REScript`'s cleanup runs with
+  the player far, and stopped at the spot it left a travelling group's dogs alive and a corpse standing, which were
+  then shared as a fight's spawns beside the encounter that had won) and our copies of theirs are placed: one
+  encounter per spot (`Encounters::Book`, game-free and tested). Who was first
   is the server's order: every spawn message that arrives (a friend's `kSpawned`, our own grant in `kActorOwners`)
   is numbered as it comes, the same order in every game since the server sends them in the order it took them. A
-  friend's live encounter spawn within `COLLIDE_RANGE` (3000 units) of one of our run's actors, of a run that started
-  within `STOP_WINDOW` (20 s, from its first actor seen in the scan), whose number is below our run's first grant (or
-  our run has none yet), means theirs was first: ours is booked for a stop as its actor is seen, before it is offered,
-  and stopped from Spawns' frame, outside the actor scan; both games decide alike, so exactly one stops. Never while our
-  player is in a conversation or a scene (`Spawns::PlayerInTalk`: a stop deletes every actor of the run, the speaker
-  among them, whichever the scan is looking at). Past the window ours stays (its player is in it), `OwnMadeNpcAt`
+  friend's live encounter spawn whose spot (where it stood as it was shared) is within `COLLIDE_RANGE` (3000 units) of
+  where one of our run's actors first stood, of a run that started within `STOP_WINDOW` (20 s, from its first actor
+  seen in the scan), whose number is below our run's first grant (or our run has none yet), means theirs was first:
+  ours is booked for a stop as its actor is seen, before it is offered, and stopped from Spawns' frame, outside the
+  actor scan; both games decide alike, so exactly one stops. An encounter's spot is its markers, not where its actors
+  walk to: a travelling merchant two cells on still holds the trigger he was rolled at. Never while our player is in a
+  conversation or a scene, nor before the world's runs are settled (`Encounters::Holds`, from `Spawns::PlayerInTalk`:
+  a stop removes every actor of the run, the speaker among them, whichever the scan is looking at; ours is judged
+  again once they are done, while the window lasts). Past the window ours stays (its player is in it), `OwnMadeNpcAt`
   keeps covering the same-encounter case, and the encounter quests already running on the session's first in-world
   frame, or the first after a load, are settled, never stopped (`Spawns::SettleRunning` lists them from the data
   handler, `Book::Settle`; every run seen after is fresh): they began before the book could know when, and a
   long-running encounter is not stopped partway for a friend's that came to stand beside it. A run is kept until its
-  quest stops running here (checked once a second, `OursOver`), not for a time; a stopped quest is left alone for
-  `STOPPED_FOR` (60 s) while the engine winds it down. A receiver takes a friend's word for the kind only when the quest named is an encounter in its own files
+  quest stops running here (checked once a second, `OursOver`), not for a time, and its actors still standing and
+  shared are then shared on plain: reported again under their ids with no quest, which the server takes and sends
+  again to the others (`kSpawned`), whose copies stay as they are (`Theirs::Rekind`); so no game counts an encounter
+  as running at their spot (a radstag of an ended encounter once made a friend's game stop five new runs near it). A
+  stopped quest is left alone for `STOPPED_FOR` (60 s) while the engine winds it down, and its actors seen meanwhile
+  are removed, not offered. A receiver takes a friend's word for the kind only when the quest named is an encounter in its own files
   (`kindsVetoed=`; else the spawn is plain here: the twin rule and the unique bases as for any), and a named character's
   copy is withheld while our own game runs that encounter. Calm actors take at most `MAX_CALM` (16) of our 32 spawns, so
   a fight's raiders are never refused for a crowd of bystanders (`calmHeld=`; one that turns hostile or joins a fight
   goes as any fight's spawn); our companion is never one. The server relays a spawn's line from the game that shares it
-  alone. `net status`: `encounters: runs= shared= calm= calmHeld= received= stopped= kindsVetoed=`.
+  alone. `net status`: `encounters: runs= shared= calm= calmHeld= received= stopped= removed= over= sharedOn= theirsOver=
+  kindsVetoed=`.
 - Not yet (random encounters): two encounters both already running as the world came up (a load, a session's start)
   are both settled and run side by side until one ends on its own, their actors shared both ways; idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
   pointed gun's pose are not played; `AIProcess::PlayIdle` would, given a hook on the owner's `SetupSpecialIdle`);

@@ -368,21 +368,50 @@ namespace Conversations
 			std::string             path;            // its voice file, "" if the game has none
 		};
 
+		// The plugin a form id belongs to, by its load index (a light plugin's by its FE index), or null when none loaded
+		// here has it.
+		const RE::TESFile* FileOfId(std::uint32_t a_formId)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return nullptr;
+			}
+			if ((a_formId >> 24) == 0xFE) {
+				return handler->LookupLoadedLightModByIndex(static_cast<std::uint16_t>((a_formId >> 12) & 0xFFF));
+			}
+			return handler->LookupLoadedModByIndex(static_cast<std::uint8_t>(a_formId >> 24));
+		}
+
 		// The voice file of a friend's line, resolved by us from what the line names: only the game's
 		// own infos and voice types (Official.h), as for everything said or set from a friend's game.
+		// The recording is named by the info's id and its plugin, so it is found even when the engine
+		// has no form for the info here: a quest's dialogue is in memory as that quest needs it, and the
+		// lines of a random encounter only a friend's game runs came as text alone, their files in the
+		// archives all the while (the rig, 0.14.0: RESceneLC01's accusor, voice MaleEvenToned). The
+		// plugin is then the id's, and official by name as the form would be by its file.
 		Resolved Resolve(const Protocol::Line& a_line)
 		{
 			const auto info = RE::TESForm::GetFormByID<RE::TESTopicInfo>(a_line.info);
 			const auto voice = RE::TESForm::GetFormByID<RE::BGSVoiceType>(a_line.voiceType);
-			if (!info || !voice || !Official::IsOfficialForm(info) || !Official::IsOfficialForm(voice)) {
+			if (!voice || !Official::IsOfficialForm(voice) || (info && !Official::IsOfficialForm(info))) {
 				return {};
 			}
-			for (const RE::TESTopicInfo* candidate : { info, info->dataInfo }) {
-				if (candidate && Official::IsOfficialForm(candidate)) {
-					if (auto path = FileOf(candidate, voice, a_line.response); !path.empty() && Exists(path)) {
-						return { candidate, std::move(path) };
+			if (info) {
+				for (const RE::TESTopicInfo* candidate : { info, info->dataInfo }) {
+					if (candidate && Official::IsOfficialForm(candidate)) {
+						if (auto path = FileOf(candidate, voice, a_line.response); !path.empty() && Exists(path)) {
+							return { candidate, std::move(path) };
+						}
 					}
 				}
+			}
+			const auto  file = FileOfId(a_line.info);
+			const char* voiceName = voice->formEditorID.c_str();
+			if (!file || !voiceName || !Official::IsOfficialFile(file)) {
+				return { info, {} };
+			}
+			if (auto path = VoicePath::Build(file->GetFilename(), voiceName, VoicePath::LocalId(a_line.info, file->IsLight()), a_line.response); !path.empty() && Exists(path)) {
+				return { info, std::move(path) };
 			}
 			return { info, {} };
 		}
@@ -529,7 +558,8 @@ namespace Conversations
 			const auto& file = a_file;
 			if (file.path.empty()) {
 				++missing;
-				REX::DEBUG("Conversations: no voice file for {:08X} response {} voice {:08X}", a_line.info, a_line.response, a_line.voiceType);
+				REX::DEBUG("Conversations: no voice file for {:08X} response {} voice {:08X}{}", a_line.info, a_line.response, a_line.voiceType,
+					RE::TESForm::GetFormByID<RE::TESTopicInfo>(a_line.info) ? "" : " (the info is no form here)");
 				return;
 			}
 			if (!Play(a_actor, file.path, a_key, a_seconds)) {
