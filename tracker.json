@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T16:15:11+00:00",
+ "updated": "2026-11-08T21:41:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1013,8 +1013,9 @@
    "title": "A Multiplayer menu in the game's main and pause menus (outside PR 255, Flash)",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 6,
+   "note": "In the 0.15.0 release candidate's soak",
+   "pr": 255
   },
   {
    "id": "grij",
