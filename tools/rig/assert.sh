@@ -326,9 +326,9 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings$([ "$nr" -gt 0 ] && echo ", $nr rig fault(s)")$([ "$nx" -gt 0 ] && echo ", $nx RIG FAULT(S) NOT HEALED")$([ "$nh" -gt 0 ] && echo ", $nh healed")$([ "$nv" -gt 0 ] && echo ", $nv set aside")"
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
 		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
-		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,230)}' "$A_RESULTS"; fi
+		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,230)}' "$A_RESULTS"; fi
 		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
-		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nv" -gt 0 ]; then echo "set aside (an attempt that met a rig fault; the step was healed and run again): $nv line(s), $(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {n++} END{print n+0}' "$A_RESULTS") of them failures:"; awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nw" -gt 0 ]; then echo "warnings:"; awk -F'\t' '$1=="WARN"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nf" -gt 0 ]; then echo "VERDICT: FAIL ($A_NAME: $nf failed check(s)$([ "$nx" -gt 0 ] && echo "; and $nx rig fault(s) not healed"))"

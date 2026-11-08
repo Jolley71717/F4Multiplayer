@@ -668,10 +668,10 @@ step_pa() {
 		else fail "$pa_moving" "too few stand-in samples over the driver's path ('$tr'): the trace did not cover the drive"; fi
 	fi
 	expect_le "power armor ($d): stand-in distance after stopping" "$settled" "$T_PA_SETTLED" u
-	# The climb-out: the keyboard's E, then the pad's A, then the game's own Activate (state.sh pa_climb_out), each read for whether
+	# The climb-out: the keyboard's E, then the pad's A (state.sh pa_climb_out), each read for whether
 	# it reached the game. 2026-11-06 (host) and 2026-11-07 (the VM, 0.14.0-rc1) the E alone, up to five times, left the player in the
 	# suit, and the VM spent a whole round in it, failing four later steps. Out by any press is a pass of the climb-out (each is a
-	# player's way out); out only by the pad or Activate also warns, saying whether the E reached the game's window (it didn't: the
+	# player's way out); out only by the pad also warns, saying whether the E reached the game's window (it didn't: the
 	# rig's input; it did and the game did nothing: worth a look). Out by none is the mod's failure (or the game's), with what the
 	# game said; the player is then taken out by the console, said so, so the stand-in's check and the steps after are still made.
 	clear_menus $d >/dev/null
@@ -682,7 +682,7 @@ step_pa() {
 			else warn "power armor ($d): the keyboard's E climbs out" "the E never reached the game's window (the rig's input); out by $PA_HOW;$PA_DIAG"; fi;;
 		esac
 	else
-		fail "power armor ($d): climbed out" "still in after the keyboard's E (3 tries), the pad's A and the game's own Activate:$PA_DIAG"
+		fail "power armor ($d): climbed out" "still in after the keyboard's E (3 tries) and the pad's A:$PA_DIAG"
 		if pa_force_out $d; then healed "power armor ($d): out of the suit for the next checks" "taken out by the console (Actor.SwitchToPowerArmor none): not a player's action"
 		else rig_unhealed state "power armor ($d): out of the suit for the next checks" "the console did not take the player out either"; fi
 	fi

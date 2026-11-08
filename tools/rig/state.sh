@@ -9,7 +9,7 @@
 # the suit). rig_state_guard <step> looks at both games before a step and puts each wrong state right the way a player
 # would (real keys and pad buttons; a friend's real walk to help a downed player up), recording each fix as HEAL. One it
 # can't put right is a RIGFAULT (assert.sh): that step is not run in this round, its checks are not made, and the run can't
-# end in PASS. Getting a player out of power armor by the console, when no key, pad press or the game's own Activate does,
+# end in PASS. Getting a player out of power armor by the console, when neither the keyboard nor the pad does,
 # is the one heal that is not a player's action: it is said so in the HEAL line, and the climb-out check of step_pa that
 # met it has already failed.
 
@@ -50,12 +50,14 @@ pa_out() { [ "$(dcf "$1" pa extraPA)" = false ]; }
 # pa_climb_out <who> [keyboard tries]: that player climbs out of power armor. In turn, each until the player is out:
 #   1. the keyboard's E held 1.5 s, the camera looking down first (a crosshair on something it could use takes the press as a
 #      use), the game in front with nothing open (rig_input_ready), KEYBOARD_TRIES times (default 3);
-#   2. the virtual pad's A held 1.5 s (a gamepad's own climb-out; it needs no window in front);
-#   3. the game's own Activate held 1.5 s (dev `input`: the button event the game's input code makes, after Windows and the
-#      control map; a game that ignores this ignores a press that got there).
+#   2. the virtual pad's A held 2 s (a gamepad's own climb-out; it needs no window in front). The pad is plugged in with a
+#      neutral stick 1.5 s before: a press that is the pad's first input is lost while the game takes it on as the controller
+#      (2026-11-07, on the rig: A held at once left the player in, A after a neutral stick got them out).
+# The dev channel's `input Activate` (the button event after Windows and the control map) is no route: held 1.5 s or 3 s it
+# never got a player out of the suit on the rig (2026-11-07), so it would only say "still in".
 # PA_HOW says which got the player out (empty when none did); PA_REACHED says whether a keyboard press was seen to reach the
 # game's window (its raw keyboard messages rose: `mousedev` keys=) on a try that left the player in; PA_DIAG has each try's
-# reading (window in front, keys before and after, the reply) and, when none worked, what the game said of its menus, the
+# reading (window in front, keys before and after, the input tally) and, when none worked, what the game said of its menus, the
 # player's power armor, its input layers and where it stood. 0 = out.
 pa_climb_out() {
 	local w=$1 n=${2:-3} i k0 k1 r f
@@ -70,12 +72,9 @@ pa_climb_out() {
 		pa_out "$w" && { PA_HOW="E held, try $i"; return 0; }
 		is_int "$k0" && is_int "$k1" && [ "$k1" -gt "$k0" ] && PA_REACHED=1
 	done
-	dc "$w" "pad button a 1500" >/dev/null; sleep 6; dc "$w" "pad unplug" >/dev/null
+	dc "$w" "pad stick l 0 0 300" >/dev/null; sleep 1.5; dc "$w" "pad button a 2000" >/dev/null; sleep 6; dc "$w" "pad unplug" >/dev/null
 	pa_out "$w" && { PA_HOW="the pad's A held (the keyboard's E did not get the player out in $n tries)"; return 0; }
-	PA_DIAG="$PA_DIAG pad A held: still in;"
-	r=$(dc "$w" "input Activate hold=1500"); sleep 6
-	pa_out "$w" && { PA_HOW="the game's own Activate held (dev input; neither the keyboard's E nor the pad's A got the player out)"; return 0; }
-	PA_DIAG="$PA_DIAG input Activate held: ${r:0:90}, still in; menus $(dc "$w" menus | grep -oE 'open=[^ ]*' | cut -c1-90); pa: $(dc "$w" pa); layers: $(dc "$w" controls | grep -oE 'layers=[^|]*' | cut -c1-200); at $(dc "$w" pos | cut -c1-60)"
+	PA_DIAG="$PA_DIAG pad A held: still in; menus $(dc "$w" menus | grep -oE 'open=[^ ]*' | cut -c1-90); pa: $(dc "$w" pa); layers: $(dc "$w" controls | grep -oE 'layers=[^|]*' | cut -c1-200); at $(dc "$w" pos | cut -c1-60)"
 	return 1
 }
 # pa_force_out <who>: the console takes the player out of the suit (the frame's Papyrus SwitchToPowerArmor with none). Not a
