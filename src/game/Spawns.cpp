@@ -80,6 +80,9 @@ namespace Spawns
 		std::unordered_set<std::uint32_t> calmHeldNoted;
 		// Runs of ours to stop for a friend's (StopEncounter): stopped from Frame, never from inside the actor scan.
 		std::vector<std::uint32_t> pendingStops;
+		// The encounter quests running on the first in-world frame of a session, or after a load, are settled in the book
+		// (never stopped): the book can't tell when they began. Set until that frame has been.
+		bool                       settleRuns = true;
 		Clock::time_point          runsChecked{};  // when our runs' quests were last checked to be running still
 		constexpr auto             RUNS_CHECK = std::chrono::seconds(1);
 		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
@@ -538,6 +541,32 @@ namespace Spawns
 			pendingStops.clear();
 		}
 
+		// The encounter quests running here as the session's first in-world frame comes, or the first after a load: settled
+		// in the book, never stopped for a friend's (Encounters::Book::Settle). Every run seen after this is fresh.
+		void SettleRunning(Clock::time_point a_now)
+		{
+			settleRuns = false;
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return;
+			}
+			std::vector<std::uint32_t> running;
+			for (const auto quest : handler->GetFormArray<RE::TESQuest>()) {
+				const char* name = quest ? quest->formEditorID.c_str() : nullptr;
+				if (name && (quest->data.flags & QuestActors::QUEST_RUNNING) != 0 && Encounters::IsEncounter(quest->data.questType, name)) {
+					running.push_back(quest->GetFormID());
+				}
+			}
+			encounters.Settle(running, a_now);
+			if (!running.empty()) {
+				std::string names;
+				for (const auto quest : running) {
+					names += std::format("{}{:08X} '{}'", names.empty() ? "" : ", ", quest, QuestName(quest));
+				}
+				REX::INFO("Encounters: {} already running as the session's world came up, settled (never stopped for a friend's): {}", running.size(), names);
+			}
+		}
+
 		// Our runs whose quest no longer runs here (it stopped, by its own script or ours) are over for the book.
 		void CheckRuns(Clock::time_point a_now)
 		{
@@ -922,7 +951,7 @@ namespace Spawns
 				return 0;
 			}
 			encounters.OursSeen(encounter.quest, local, at, now);
-			if (encounters.MayStop(encounter.quest, now) && !PlayerInTalk()) {
+			if (!settleRuns && encounters.MayStop(encounter.quest, now) && !PlayerInTalk()) {  // not before the world's runs are settled (Frame)
 				if (const auto rival = encounters.RivalOf(encounter.quest, TheirEncounters(), now)) {
 					StopEncounter(encounter.quest, *rival, now);
 					return 0;
@@ -1261,7 +1290,10 @@ namespace Spawns
 	{
 		// Our encounters first: runs booked for a stop are stopped here, outside the actor scan that found them, and runs
 		// whose quest no longer runs are over.
-		if (WorldSync::InWorld()) {
+		if (WorldSync::InWorld() && LocalPlayer() != 0) {
+			if (settleRuns) {
+				SettleRunning(Clock::now());
+			}
 			StopPending();
 			CheckRuns(Clock::now());
 		}
@@ -1477,7 +1509,8 @@ namespace Spawns
 		unplacedWhy.clear();
 		oursThere.clear();  // the loaded world's frames are looked at afresh
 		keptClear.clear();
-		encounters.Clear();  // the loaded world's encounters are its own runs, met under way: settled
+		encounters.Clear();  // the loaded world's encounters are its own runs, settled as its first frame comes (Frame)
+		settleRuns = true;
 		offeredEncounter.clear();
 		calmOffered.clear();
 		calmHeldNoted.clear();
@@ -1526,6 +1559,7 @@ namespace Spawns
 		calmOffered.clear();
 		calmHeldNoted.clear();
 		pendingStops.clear();
+		settleRuns = true;  // the next session's world is settled as it comes up
 		outgoing.clear();
 	}
 

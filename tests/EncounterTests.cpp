@@ -252,11 +252,12 @@ TEST("encounters: a friend's encounter that was first at the spot stops our run 
 {
 	Book       book;
 	const auto now = Encounters::Clock::now();
-	// The book met nothing before: its first run is settled (met under way, as after a load). The runs begun once the
-	// grace is past are judged; below, every run of ours begins past it.
-	book.OursSeen(KMK01, OURS, At(50000.0f), now - Encounters::SETTLE_GRACE);
+	// The encounter running as the world came up is settled (Spawns lists those on the first in-world frame); the runs
+	// seen after are fresh, our run of RESceneLC01 among them: its two actors seen, no grant yet.
+	book.Settle(std::array{ KMK01 }, now - 1min);
 	CHECK(book.Settled(KMK01));
-	// Our run of RESceneLC01: its two actors seen, no grant yet.
+	book.OursSeen(KMK01, OURS, At(50000.0f), now);
+	CHECK(book.Settled(KMK01));
 	book.OursSeen(LC01, OURS, At(1000.0f), now);
 	book.OursSeen(LC01, OURS2, At(1100.0f), now);
 	CHECK(book.Knows(LC01));
@@ -297,7 +298,7 @@ TEST("encounters: a friend's encounter that was first at the spot stops our run 
 TEST("encounters: the server's order decides, so two games decide alike")
 {
 	// What the server did: granted game A's actor first (its kActorOwners to both, kSpawned to B), then game B's.
-	// Game A: its own grant arrives first, then B's spawn. (Each book's first sighting is long before the runs here.)
+	// Game A: its own grant arrives first, then B's spawn. (Each book also knows another run of ours, far away.)
 	const auto now = Encounters::Clock::now();
 	const auto Begun = [&](Book& a_book) { a_book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min); };
 	Book a;
@@ -345,7 +346,7 @@ TEST("encounters: two games fed the real server's messages in arrival order deci
 	Game a{ .id = first };
 	Game b{ .id = second };
 	for (auto* game : { &a, &b }) {
-		game->book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // the book's first sighting, long before
+		game->book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away
 	}
 	a.book.OursSeen(LC01, OURS, At(1000.0f), now);
 	b.book.OursSeen(KMK01, OURS2, At(1300.0f), now);
@@ -366,7 +367,7 @@ TEST("encounters: past the window ours stays, a stopped run is left alone, and a
 {
 	Book       book;
 	const auto now = Encounters::Clock::now();
-	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // the book's first sighting, long before
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away
 	book.OursSeen(LC01, OURS, At(1000.0f), now);
 	const std::array theirs{ Friends(SPAWN, KMK01, At(1200.0f), 1) };
 	CHECK(book.RivalOf(LC01, theirs, now + Encounters::STOP_WINDOW - 1s));
@@ -402,35 +403,40 @@ TEST("encounters: past the window ours stays, a stopped run is left alone, and a
 	CHECK(over.Knows(LC01));
 	CHECK(over.RivalOf(LC01, theirs, now + 5min + 1s));
 
-	// Met under way: a run first seen within SETTLE_GRACE of the book's first sighting since it was cleared (a load, a
-	// session's start) began before the book could know when, and is never stopped, whatever stands beside it. One a
-	// friend's older encounter stands beside, say ours ran long and we came back to it after a load, stays.
+	// Met under way: the encounter quests running as the world came up (a load, a session's start) are settled, never
+	// stopped, whatever stands beside them. One a friend's older encounter stands beside, say ours ran long and we came
+	// back to it after a load, stays; its actors seen later, even long after another run's, keep it settled.
 	Book loaded;
-	loaded.OursSeen(LC01, OURS, At(1000.0f), now);
-	loaded.OursSeen(KMK01, OURS2, At(5000.0f), now + Encounters::SETTLE_GRACE - 1s);
+	loaded.Settle(std::array{ LC01, KMK01 }, now);
 	CHECK(loaded.Settled(LC01));
 	CHECK(loaded.Settled(KMK01));
-	CHECK(!loaded.MayStop(LC01, now + 1s));
-	CHECK(!loaded.RivalOf(LC01, theirs, now + 1s));
+	loaded.OursSeen(KMK01, OURS2, At(5000.0f), now + 1s);
+	loaded.OursSeen(LC01, OURS, At(1000.0f), now + 1min);
+	CHECK(loaded.Settled(LC01));
+	CHECK(!loaded.MayStop(LC01, now + 1min + 1s));
+	CHECK(!loaded.RivalOf(LC01, theirs, now + 1min + 1s));
 	const std::array olderBeside{ Friends(SPAWN, KMK01, At(1200.0f), 1) };
-	CHECK(!loaded.RivalOf(LC01, olderBeside, now + 1s));
-	// A run begun once the grace is past is judged as any.
-	loaded.OursSeen(DN083, 0xFF0FFFFE, At(1000.0f), now + Encounters::SETTLE_GRACE);
+	CHECK(!loaded.RivalOf(LC01, olderBeside, now + 1min + 1s));
+	// The first fresh roll after the world came up is judged as any, however soon it comes.
+	loaded.OursSeen(DN083, 0xFF0FFFFE, At(1000.0f), now + 2s);
 	CHECK(!loaded.Settled(DN083));
-	CHECK(loaded.RivalOf(DN083, olderBeside, now + Encounters::SETTLE_GRACE + 1s));
-	// Cleared (a load): what it meets next is settled again.
+	CHECK(loaded.RivalOf(DN083, olderBeside, now + 3s));
+	// Cleared (a load): nothing is settled until Spawns says what runs; a run seen before that is settled by it then.
 	loaded.Clear();
 	CHECK(loaded.Size() == 0);
 	loaded.OursSeen(DN083, 0xFF0FFFFE, At(1000.0f), now + 1h);
+	CHECK(!loaded.Settled(DN083));
+	loaded.Settle(std::array{ DN083 }, now + 1h);
 	CHECK(loaded.Settled(DN083));
 	CHECK(!loaded.RivalOf(DN083, olderBeside, now + 1h + 1s));
+	CHECK(loaded.Size() == 1);
 }
 
 TEST("encounters: the nearest of several rivals, and a run's actors are kept to a limit")
 {
 	Book       book;
 	const auto now = Encounters::Clock::now();
-	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // the book's first sighting, long before
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away
 	book.OursSeen(LC01, OURS, At(1000.0f), now);
 	const std::array theirs{ Friends(SPAWN, KMK01, At(2500.0f), 1), Friends(SPAWN2, DN083, At(1800.0f), 2), Friends(SPAWN3, KMK01, At(1200.0f), 3) };
 	const auto       rival = book.RivalOf(LC01, theirs, now + 1s);

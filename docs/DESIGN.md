@@ -676,18 +676,19 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and stopped from Spawns' frame, outside the actor scan; both games decide alike, so exactly one stops. Never while our
   player is in a conversation or a scene (`Spawns::PlayerInTalk`: a stop deletes every actor of the run, the speaker
   among them, whichever the scan is looking at). Past the window ours stays (its player is in it), `OwnMadeNpcAt`
-  keeps covering the same-encounter case, and a run the book meets already under way is settled from the start, never
-  stopped: a run first seen within `SETTLE_GRACE` (10 s) of the book's first sighting since it was cleared (a load, a
-  session's end) began before the book could know when (`Book::Settled`), so a long-running encounter is not stopped
-  partway for a friend's that came to stand beside it. A run is kept until its quest stops running here (checked once
-  a second, `OursOver`), not for a time; a stopped quest is left alone for `STOPPED_FOR` (60 s) while the engine winds
-  it down. A receiver takes a friend's word for the kind only when the quest named is an encounter in its own files
+  keeps covering the same-encounter case, and the encounter quests already running on the session's first in-world
+  frame, or the first after a load, are settled, never stopped (`Spawns::SettleRunning` lists them from the data
+  handler, `Book::Settle`; every run seen after is fresh): they began before the book could know when, and a
+  long-running encounter is not stopped partway for a friend's that came to stand beside it. A run is kept until its
+  quest stops running here (checked once a second, `OursOver`), not for a time; a stopped quest is left alone for
+  `STOPPED_FOR` (60 s) while the engine winds it down. A receiver takes a friend's word for the kind only when the quest named is an encounter in its own files
   (`kindsVetoed=`; else the spawn is plain here: the twin rule and the unique bases as for any), and a named character's
   copy is withheld while our own game runs that encounter. Calm actors take at most `MAX_CALM` (16) of our 32 spawns, so
   a fight's raiders are never refused for a crowd of bystanders (`calmHeld=`; one that turns hostile or joins a fight
   goes as any fight's spawn); our companion is never one. The server relays a spawn's line from the game that shares it
   alone. `net status`: `encounters: runs= shared= calm= calmHeld= received= stopped= kindsVetoed=`.
-- Not yet (random encounters): idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
+- Not yet (random encounters): two encounters both already running as the world came up (a load, a session's start)
+  are both settled and run side by side until one ends on its own, their actors shared both ways; idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
   pointed gun's pose are not played; `AIProcess::PlayIdle` would, given a hook on the owner's `SetupSpecialIdle`);
   only the owner can take part in the encounter's dialogue (the friend sees and hears it; talking to a copy gives
   the NPC's plain greeting); XP and karma are the owner's. Diamond City's accusation (FFDiamondCity12: Kyle and

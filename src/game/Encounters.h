@@ -39,10 +39,10 @@
 // Who was first is the server's order: every spawn message that arrives (a friend's kSpawned, our own grant in
 // kActorOwners) is numbered as it comes, the same order in every game since the server sends them in the order it took
 // them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW): past that
-// its player is in it. A run the book meets already under way (the first scan after a load, a session's start, a book
-// cleared) is settled from the start: the book can't tell when it began, and a long-running encounter must never be
-// stopped partway for a friend's that came to stand beside it. Kept free of the game so it can be tested
-// (tests/EncounterTests.cpp).
+// its player is in it. The encounter quests already running on the first in-world frame of a session, or after a load,
+// are settled (Settle): the book can't tell when they began, and a long-running encounter must never be stopped partway
+// for a friend's that came to stand beside it; every run first seen after that is fresh. Two encounters both met so run
+// side by side until one ends on its own. Kept free of the game so it can be tested (tests/EncounterTests.cpp).
 namespace Encounters
 {
 	using Clock = std::chrono::steady_clock;
@@ -59,9 +59,6 @@ namespace Encounters
 	inline constexpr auto STOP_WINDOW = std::chrono::seconds(20);
 	// A quest we stopped is left alone this long: the engine winds it down and deletes its actors meanwhile.
 	inline constexpr auto STOPPED_FOR = std::chrono::seconds(60);
-	// Runs first seen this soon after the book's first sighting since it was cleared (a load, a session's start) were
-	// under way before the book could know when they began: settled, never stopped.
-	inline constexpr auto SETTLE_GRACE = std::chrono::seconds(10);
 	// Actors of one encounter whose spots are kept (a travelling group is three to eight).
 	inline constexpr std::size_t MAX_ACTORS = 16;
 	// Calm encounter actors one game shares at once: half its spawns (Protocol::MAX_SPAWNS_PER_PLAYER), a camp and a
@@ -111,19 +108,25 @@ namespace Encounters
 		// The next number in the server's order: given to every spawn message as it arrives, a friend's spawn or our grant.
 		std::uint64_t Next() { return ++seq; }
 
+		// The encounter quests running already as the book first looks (the first in-world frame of a session, or after a
+		// load): settled, never stopped, whatever comes to stand beside them. A run the book knows of one is settled too.
+		void Settle(std::span<const std::uint32_t> a_quests, Clock::time_point a_now)
+		{
+			for (const auto quest : a_quests) {
+				ours.try_emplace(quest, Run{ .firstSeen = a_now }).first->second.settled = true;
+			}
+		}
+
 		// One of our encounter actors (a_local, of quest a_quest) was seen in the scan, standing at a_at. The first sighting
-		// of a quest's actor is when our run of it started, as far as the book can tell; one first seen within SETTLE_GRACE
-		// of the book's first sighting since it was cleared was under way before, and is settled. Nothing for a quest we
-		// stopped lately (IsStopped): its actors still standing make no new run.
+		// of a quest's actor is when our run of it started, as far as the book can tell (one running before the book looked
+		// was settled by Settle). Nothing for a quest we stopped lately (IsStopped): its actors still standing make no new
+		// run.
 		void OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now)
 		{
 			if (IsStopped(a_quest, a_now)) {
 				return;
 			}
-			if (!firstSighting) {
-				firstSighting = a_now;
-			}
-			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now, .settled = a_now - *firstSighting < SETTLE_GRACE }).first->second;
+			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now }).first->second;
 			if (const auto it = std::ranges::find(run.actors, a_local, &Actor::local); it != run.actors.end()) {
 				it->at = a_at;
 			} else if (run.actors.size() < MAX_ACTORS) {
@@ -228,12 +231,11 @@ namespace Encounters
 
 		[[nodiscard]] std::size_t Size() const { return ours.size(); }
 
-		// A load, a session's end: what the book knew is of another world. The runs it meets next are settled.
+		// A load, a session's end: what the book knew is of another world (Spawns settles what runs as it next looks).
 		void Clear()
 		{
 			ours.clear();
 			stopped.clear();
-			firstSighting.reset();
 		}
 
 	private:
@@ -251,7 +253,6 @@ namespace Encounters
 		};
 		std::unordered_map<std::uint32_t, Run>               ours;     // our encounter runs, by quest
 		std::unordered_map<std::uint32_t, Clock::time_point> stopped;  // quests we stopped, and when
-		std::optional<Clock::time_point>                     firstSighting;  // the first OursSeen since the book was cleared
 		std::uint64_t                                        seq = 0;
 	};
 }
