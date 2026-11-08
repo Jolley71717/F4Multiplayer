@@ -142,7 +142,7 @@ package
 		// From the plugin, once: the main panel's box on the stage (this movie's stage has the same size and
 		// scale mode as the main menu's); the HUD color; the mod's version and the way back's word and key.
 		// a_centered: the box gives only the size, and the panel goes in the middle of the stage.
-		public function SetLook(a_left:Number, a_top:Number, a_right:Number, a_bottom:Number, a_color:uint, a_version:String, a_back:String, a_centered:Boolean, a_backKey:String):void
+		public function SetLook(a_left:Number, a_top:Number, a_right:Number, a_bottom:Number, a_color:uint, a_version:String, a_back:String, a_centered:Boolean, a_backKey:String = "Esc)"):void
 		{
 			color = a_color;
 			backWord = a_back;
