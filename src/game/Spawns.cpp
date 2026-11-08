@@ -1,5 +1,7 @@
 #include "game/Spawns.h"
 
+#include "game/Dialogue.h"
+#include "game/Encounters.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/FrameLoan.h"
@@ -64,6 +66,14 @@ namespace Spawns
 		std::uint32_t                               pairs = 0, unpairs = 0, keyedReported = 0, twinsHeld = 0, rollsRestored = 0;
 		std::unordered_map<std::uint32_t, Protocol::NpcIdentity> pairedOwn;  // by spawn id: ours as our game made it, before pairing
 		std::unordered_set<std::uint32_t>           twinsNoted;  // our NPCs held back as twins, each counted once
+
+		// Random encounters (Encounters.h): our runs and their actors, friends' encounter spawns in the server's order, and
+		// the runs of ours we stopped for a friend's. By spawn id, the number each friend's spawn arrived as (Book::Next);
+		// by spawn id, the encounter quest each of our offered actors is of, so its grant can take its number.
+		Encounters::Book                                 encounters;
+		std::unordered_map<std::uint32_t, std::uint64_t> theirSeq;
+		std::unordered_map<std::uint32_t, std::uint32_t> offeredEncounter;
+		std::uint32_t                                    encountersShared = 0, encountersReceived = 0, encountersStopped = 0;
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
 		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
@@ -239,7 +249,7 @@ namespace Spawns
 			return out;
 		}
 
-		void NoteBlocked(RE::Actor* a_actor, std::uint32_t a_local, SpawnBook::Block a_block)
+		void NoteBlocked(RE::Actor* a_actor, std::uint32_t a_local, SpawnBook::Block a_block, std::string_view a_why)
 		{
 			if (blockedNoted.size() >= MAX_BLOCKED_NOTED) {
 				blockedNoted.clear();
@@ -253,7 +263,7 @@ namespace Spawns
 			}
 			++blockedLogged;
 			const auto name = a_actor->GetDisplayFullName();
-			REX::INFO("Spawns: {:08X} '{}' (race {:08X}) is hostile to our player or fighting, but not shared (so far): {}; friends' games do not see it ({})", a_local, name ? name : "", a_actor->race ? a_actor->race->GetFormID() : 0,
+			REX::INFO("Spawns: {:08X} '{}' (race {:08X}) is {}, but not shared (so far): {}; friends' games do not see it ({})", a_local, name ? name : "", a_actor->race ? a_actor->race->GetFormID() : 0, a_why,
 				SpawnBook::BlockName(a_block), DescribeBase(a_actor));
 		}
 
@@ -423,6 +433,65 @@ namespace Spawns
 				}
 			}
 			return false;
+		}
+
+		// ---- Random encounters (Encounters.h) ----------------------------------------------------------------------------
+
+		// The encounter quest whose alias created our NPC (Encounters::IsEncounter; running here), and that alias. Quest 0
+		// when it is no encounter's: an alias that found an NPC of ours rather than making it (a settler) names nothing.
+		AliasKey EncounterOf(RE::Actor* a_actor)
+		{
+			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return {};
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				if (!entry.quest || !entry.alias || entry.alias->owningQuest != entry.quest || static_cast<std::uint16_t>(entry.alias->fillType) != QuestActors::FILL_CREATED ||
+					(entry.quest->data.flags & QuestActors::QUEST_RUNNING) == 0 || entry.alias->aliasID > 0xFFFF) {
+					continue;
+				}
+				const char* name = entry.quest->formEditorID.c_str();
+				if (name && Encounters::IsEncounter(entry.quest->data.questType, name)) {
+					return { entry.quest->GetFormID(), static_cast<std::uint16_t>(entry.alias->aliasID) };
+				}
+			}
+			return {};
+		}
+
+		// Friends' encounter spawns as the book judges them: where their game has each now, its number in the server's
+		// order, and whether it is over.
+		std::vector<Encounters::Theirs> TheirEncounters()
+		{
+			std::vector<Encounters::Theirs> out;
+			for (const auto id : theirs.Ids()) {
+				const auto copy = theirs.Find(id);
+				if (!copy || copy->spawn.kind != Protocol::SpawnKind::kEncounter) {
+					continue;
+				}
+				const auto seq = theirSeq.find(id);
+				out.push_back({ id, copy->spawn.quest, copy->spawn.playerId, copy->at, seq != theirSeq.end() ? seq->second : 0, copy->dead || copy->gone });
+			}
+			return out;
+		}
+
+		const char* QuestName(std::uint32_t a_quest)
+		{
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+			const char* name = quest ? quest->formEditorID.c_str() : nullptr;
+			return name ? name : "";
+		}
+
+		// Our run of an encounter gives way to a friend's that was first at the spot: stopped through the quest's own stop
+		// (what REScript does on REParent's cleanup), which deletes its created actors; our copies of theirs are placed.
+		void StopEncounter(std::uint32_t a_quest, const Encounters::Rival& a_rival, Clock::time_point a_now)
+		{
+			encounters.Stopped(a_quest, a_now);
+			RE::Console::ExecuteCommand(std::format("stopquest {:08X}", a_quest).c_str());
+			NpcSync::CountCommands(1);
+			++encountersStopped;
+			REX::INFO("Encounters: our {:08X} '{}' is stopped: player {}'s encounter {:08X} '{}' (their {:08X}) already runs {:.0f} units from it, and was first", a_quest, QuestName(a_quest), a_rival.player,
+				a_rival.quest, QuestName(a_rival.quest), a_rival.spawnId, a_rival.distance);
 		}
 
 		// What our run of the quest a friend's spawn names holds in that alias, and whether it is ours to pair with it now.
@@ -627,10 +696,13 @@ namespace Spawns
 		}
 
 		// A base we place copies from: an NPC, and not a unique one (a second of a named character) or a stand-in's.
-		bool BaseOk(std::uint32_t a_base)
+		// A unique one is allowed for an encounter's actor (a_uniqueOk): the named characters random encounters create (a
+		// trader, an impersonator, an escaped synth) are in our world only through our own run of that encounter, which
+		// Encounters stops, or OwnMadeNpcAt stands for.
+		bool BaseOk(std::uint32_t a_base, bool a_uniqueOk)
 		{
 			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
-			return npc && !npc->IsUnique() && !RemotePlayers::IsStandInBase(a_base);
+			return npc && (a_uniqueOk || !npc->IsUnique()) && !RemotePlayers::IsStandInBase(a_base);
 		}
 
 		// Somebody here is in our copy of a friend's frame (our player, getting in or in it, or anyone else of ours), or it
@@ -776,42 +848,74 @@ namespace Spawns
 		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || LocalPlayer() == 0 || Leaving(local)) {
 			return 0;
 		}
+		const auto now = Clock::now();
+		const auto at = SpotOf(a_actor);
+		// A random encounter's actor (Encounters.h) is ours to share calm or fighting, from the moment it stands: unless a
+		// friend's encounter already ran at the spot when ours started, in which case ours is stopped (and none of its
+		// actors offered). Looked at before the grant below too: a friend's spawn that came in after we offered ours, but
+		// ahead of our grant in the server's order, was first. Never while our player is talking to the actor (a stop
+		// would take the speaker out from under them): ours stays, and theirs is placed beside it or withheld (oursThere).
+		const auto encounter = !a_actor->IsDead(false) ? EncounterOf(a_actor) : AliasKey{};
+		if (encounter.quest != 0) {
+			encounters.OursSeen(encounter.quest, local, at, now);
+			if (encounters.IsStopped(encounter.quest, now)) {
+				return 0;
+			}
+			if (!Dialogue::Holds(a_actor) && NpcSync::TalkingTo() != local) {
+				if (const auto rival = encounters.RivalOf(encounter.quest, TheirEncounters(), now)) {
+					StopEncounter(encounter.quest, *rival, now);
+					return 0;
+				}
+			}
+		}
 		if (const auto id = ours.IdOf(local)) {
 			return id;  // dead or alive: ours until the server has its death
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!player || !OursToShare(a_actor, player)) {
+		if (!player || (encounter.quest == 0 && !OursToShare(a_actor, player))) {
 			return 0;
 		}
 		const auto base = BaseToPlace(a_actor);
-		const auto at = SpotOf(a_actor);
 		if (const auto block = SpawnBook::ShareBlock(base, (at.cell == 0) != (at.worldspace == 0)); block != SpawnBook::Block::kNone) {
-			NoteBlocked(a_actor, local, block);
+			NoteBlocked(a_actor, local, block, encounter.quest != 0 ? "a random encounter's" : "hostile to our player or fighting");
 			return 0;
 		}
 		// A quest alias's creature (QuestActors.h): named with its alias. One a friend's game shares already is not
-		// reported (the server would refuse it): ours pairs with theirs (Frame).
-		const auto key = KeyOf(a_actor);
-		if (HasTwin(key)) {
-			if (twinsNoted.size() >= MAX_BLOCKED_NOTED) {
-				twinsNoted.clear();
+		// reported (the server would refuse it): ours pairs with theirs (Frame). An encounter's actor names its encounter
+		// quest instead, with no twin: each game's run is its own.
+		auto key = encounter;
+		auto kind = Protocol::SpawnKind::kEncounter;
+		if (encounter.quest == 0) {
+			key = KeyOf(a_actor);
+			kind = key.quest != 0 ? Protocol::SpawnKind::kQuestActor : Protocol::SpawnKind::kPlain;
+			if (HasTwin(key)) {
+				if (twinsNoted.size() >= MAX_BLOCKED_NOTED) {
+					twinsNoted.clear();
+				}
+				if (twinsNoted.insert(local).second) {
+					++twinsHeld;
+					REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is not shared: a friend's game shares theirs from the alias, and ours pairs with it", local, key.quest, key.alias);
+				}
+				return 0;
 			}
-			if (twinsNoted.insert(local).second) {
-				++twinsHeld;
-				REX::INFO("Spawns: {:08X}, our quest {:08X}'s creature from alias {}, is not shared: a friend's game shares theirs from the alias, and ours pairs with it", local, key.quest, key.alias);
-			}
-			return 0;
 		}
-		const auto id = ours.Offer(local, Clock::now(), [](std::uint32_t a_id) { return theirs.Knows(a_id); });
+		const auto id = ours.Offer(local, now, [](std::uint32_t a_id) { return theirs.Knows(a_id); });
 		if (!id) {
 			return 0;
 		}
-		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias }, Protocol::MessageType::kReportSpawn));
+		if (kind == Protocol::SpawnKind::kEncounter) {
+			offeredEncounter[*id] = key.quest;
+			++encountersShared;
+		}
+		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias, kind }, Protocol::MessageType::kReportSpawn));
 		++reported;
-		keyedReported += key.quest != 0;
-		if (logged < LOGGED || (key.quest != 0 && keyedReported <= LOGGED)) {
+		keyedReported += kind == Protocol::SpawnKind::kQuestActor;
+		if (logged < LOGGED || (kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED))) {
 			++logged;
-			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}{}", local, base, *id, key.quest != 0 ? std::format(", our quest {:08X}'s creature from alias {}", key.quest, key.alias) : std::string{});
+			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}{}", local, base, *id,
+				kind == Protocol::SpawnKind::kQuestActor ? std::format(", our quest {:08X}'s creature from alias {}", key.quest, key.alias) :
+				kind == Protocol::SpawnKind::kEncounter  ? std::format(", our encounter {:08X} '{}' alias {}{}", key.quest, QuestName(key.quest), key.alias, OursToShare(a_actor, player) ? "" : " (calm)") :
+				                                           std::string{});
 		}
 		return 0;  // not until the server grants it
 	}
@@ -897,10 +1001,15 @@ namespace Spawns
 		}
 		if (theirs.Add(a_spawn, LocalPlayer())) {
 			++received;
-			if (logged < LOGGED) {
+			// Its number in the server's order (Encounters.h): the same in every game, so two games that rolled encounters at
+			// one spot agree on which was first.
+			theirSeq[a_spawn.refId] = encounters.Next();
+			const bool encounter = a_spawn.kind == Protocol::SpawnKind::kEncounter;
+			encountersReceived += encounter;
+			if (logged < LOGGED || (encounter && encountersReceived <= LOGGED)) {
 				++logged;
-				REX::INFO("Spawns: player {} shares {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) cell {:08X} ws {:08X}", a_spawn.playerId, a_spawn.refId, a_spawn.base, a_spawn.x,
-					a_spawn.y, a_spawn.z, a_spawn.cell, a_spawn.worldspace);
+				REX::INFO("Spawns: player {} shares {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) cell {:08X} ws {:08X}{}", a_spawn.playerId, a_spawn.refId, a_spawn.base, a_spawn.x,
+					a_spawn.y, a_spawn.z, a_spawn.cell, a_spawn.worldspace, encounter ? std::format(", their encounter {:08X} '{}' alias {}", a_spawn.quest, QuestName(a_spawn.quest), a_spawn.alias) : std::string{});
 			}
 		}
 	}
@@ -922,6 +1031,18 @@ namespace Spawns
 				ours.Answered(owner.refId, owner.playerId, LocalPlayer(), now);
 				if (!wasConfirmed) {
 					owner.playerId == LocalPlayer() ? ++granted : ++refused;
+					// Our grant's number in the server's order (Encounters.h), taken by the encounter run whose actor it is.
+					const auto seq = encounters.Next();
+					if (const auto offered = offeredEncounter.find(owner.refId); offered != offeredEncounter.end()) {
+						if (owner.playerId == LocalPlayer()) {
+							encounters.OursGranted(offered->second, seq);
+						} else {
+							offeredEncounter.erase(offered);
+						}
+					}
+				}
+				if (!ours.Holds(owner.refId)) {
+					offeredEncounter.erase(owner.refId);  // refused, or let go of
 				}
 				continue;
 			}
@@ -1086,7 +1207,7 @@ namespace Spawns
 				UpdatePaired(id, *copy, us);
 				continue;
 			}
-			if (copy->spawn.quest != 0 && !copy->dead && !copy->gone && PairOrHold(id, *copy, us, now)) {
+			if (copy->spawn.kind == Protocol::SpawnKind::kQuestActor && copy->spawn.quest != 0 && !copy->dead && !copy->gone && PairOrHold(id, *copy, us, now)) {
 				continue;
 			}
 			SpawnBook::Facts facts{ .player = us };
@@ -1103,7 +1224,7 @@ namespace Spawns
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
 			} else {
-				facts.baseOk = BaseOk(from);
+				facts.baseOk = BaseOk(from, copy->spawn.kind == Protocol::SpawnKind::kEncounter);
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
@@ -1187,6 +1308,9 @@ namespace Spawns
 		std::erase_if(paired, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 		std::erase_if(pairedOwn, [&](const auto& a_entry) { return !paired.contains(a_entry.first); });
 		std::erase_if(keptClear, [&](std::uint32_t a_id) { return !theirs.Find(a_id); });
+		std::erase_if(theirSeq, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
+		std::erase_if(offeredEncounter, [&](const auto& a_entry) { return !ours.Holds(a_entry.first); });
+		encounters.Expire(now);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -1257,6 +1381,8 @@ namespace Spawns
 		unplacedWhy.clear();
 		oursThere.clear();  // the loaded world's frames are looked at afresh
 		keptClear.clear();
+		encounters.Clear();  // the loaded world's encounters are its own runs
+		offeredEncounter.clear();
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
 		const auto released = ours.Ids();
@@ -1295,6 +1421,9 @@ namespace Spawns
 		oursThere.clear();
 		keptClear.clear();
 		killedHere.clear();
+		encounters.Clear();
+		theirSeq.clear();
+		offeredEncounter.clear();
 		outgoing.clear();
 	}
 
@@ -1303,6 +1432,7 @@ namespace Spawns
 		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
-			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) + Unplaced() + " " + FrameLoans::Describe();
+			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
+		       std::format(" encounters: runs={} shared={} received={} stopped={}", encounters.Size(), encountersShared, encountersReceived, encountersStopped) + Unplaced() + " " + FrameLoans::Describe();
 	}
 }

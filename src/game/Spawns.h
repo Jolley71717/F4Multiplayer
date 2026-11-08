@@ -15,8 +15,9 @@
 namespace Spawns
 {
 	// NpcSync's scan found a runtime NPC loaded (alive or dead): the spawn id our game shares it under (0: none). One our
-	// game made that is ours to share (fighting, or hostile to our player) and not shared yet is reported (TakeOutgoing).
-	// Our copies of friends' spawns are not ours: 0.
+	// game made that is ours to share (fighting, or hostile to our player; a random encounter's actor calm or not,
+	// Encounters.h) and not shared yet is reported (TakeOutgoing). Our run of an encounter that started where a friend's
+	// already ran is stopped here instead, as its first actor is seen. Our copies of friends' spawns are not ours: 0.
 	std::uint32_t Share(RE::Actor* a_actor);
 
 	// NpcSync's walk found a power armor frame our game made (a_share: FrameShare::SharesMade says it is ours to share

@@ -482,8 +482,8 @@ the host saw mongrels where the joiner saw ghouls, and the joiner's follower fou
 game had. So each one is shared as a spawn, run by the game that made it for good:
 
 - The owner's NpcSync scan finds one of its runtime NPCs loaded, alive, in combat or hostile to its player (never
-  a stand-in, a copy, the player or its companion), and reports `kReportSpawn {spawn id, base, cell or
-  worldspace, position, heading}`. The spawn id is the NPC's own id first; one another game's spawn has is
+  a stand-in, a copy, the player or its companion), or a random encounter's actor calm or not (Encounters, below),
+  and reports `kReportSpawn {spawn id, base, cell or worldspace, position, heading, quest, alias, kind}`. The spawn id is the NPC's own id first; one another game's spawn has is
   refused naming that game, and the next one asked for is spread over the runtime range (`CandidateId`). Spawn
   ids keep the 0xFF prefix (0xFE is light plugins' range), so every check of `IsShareableRef` still turns them
   away; only the messages about NPCs take them (`IsActorRef`), and each game looks its own NPC up under one.
@@ -643,6 +643,46 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   the player sits in it, and pairing would mirror it to the owner's bird while its own flight scene still moves it, so
   a seated player could be dropped. Gun Run's stages are shared only with the host's `sQuests = safe` (DN083_Barney is
   in QuestFilter SAFE), so with `sQuests = story` its mirelurks are each game's own again. `net status`: spawns questActors: paired= pairs= unpairs= keyed= twinsHeld= restored=.
+- *Random encounters shared calm (src/game/Encounters.h, protocol 63).* The game that rolled a random encounter owns it,
+  and its actors are shared as spawns from the moment they stand, calm or not: a man held at gunpoint and called a
+  synth (RESceneLC01, whose accusor only aims), travellers, a trader, a settler asking for help. Up to 0.13.2 a
+  runtime NPC was shared only once in combat or hostile to its player, so a calm scene stood in one game alone (a
+  Nexus report on 0.13.2). An encounter is a misc quest (type 6) whose editor id, after an add-on's `DLCnn`/`DLCnn_`
+  prefix, is `RE` and a capital or an underscore (`RESceneLC01`, `RETravelKMK01`, `DLC03RESceneKMK01`; not
+  `ReconScopeQuest`, nor `REParent` and the checkpoint bookkeeping, which are of other types): Fallout4.esm has 236,
+  every actor of theirs created by an alias of the quest as it starts (780 created NPC bases, 13 of them unique), so
+  one of our runtime NPCs whose alias array holds a "create reference" alias of a running encounter quest is ours to
+  share (`Spawns::EncounterOf`; an alias that found an NPC of ours rather than making it, a settler, names nothing).
+  The spawn names the encounter quest and the alias with its kind (`Protocol::SpawnKind::kEncounter`), which the
+  server tells from a paired quest actor's (`kQuestActor`, protocol 61): an encounter quest is repeatable and every
+  game's run of it is its own, so two games running `RETravelKMK01` at two ends of the map both share theirs, and
+  the twin refusal is for quest actors alone. A friend's encounter spawn gets a copy as any spawn does, placed,
+  mirrored (position, heading, gait, weapon drawn and aim pitch, gear, health), shot and killed with it (the accused
+  killed by the quest's script dies in the owner's game, the death is the session's); its base may be a unique NPC
+  (the named characters encounters create exist here only through our own run of that encounter), and it is never
+  paired as a quest actor. Its lines travel too: Conversations reports a line of an NPC our game shares as a spawn
+  under its spawn id (`Line::speaker`, `IsActorRef`), and the hearers resolve it to their copy (`Spawns::LocalOf`)
+  and play the recording there as for any NPC a friend runs. Each game rolls encounters for its own player (the
+  `RETrigger*` references send a story event as the player enters them; `REScript` stops the quest itself on
+  `REParent`'s cleanup once the player is far, which deletes its created actors), so two players crossing one trigger
+  together usually roll two different encounters at the same markers, sometimes the same one. So where a friend's
+  encounter already runs, ours is stopped (`stopquest`, the quest's own stop, as RadiantSync stops a radiant) and
+  our copies of theirs are placed: one encounter per spot (`Encounters::Book`, game-free and tested). Who was first
+  is the server's order: every spawn message that arrives (a friend's `kSpawned`, our own grant in `kActorOwners`)
+  is numbered as it comes, the same order in every game since the server sends them in the order it took them. A
+  friend's live encounter spawn within `COLLIDE_RANGE` (3000 units) of one of our run's actors, of a run that started
+  within `STOP_WINDOW` (20 s, from its first actor seen in the scan), whose number is below our run's first grant (or
+  our run has none yet), means theirs was first: ours is stopped as its actor is seen, before it is offered, and both
+  games decide alike, so exactly one stops. Not while our player is talking to the actor; past the window ours stays
+  (its player is in it) and `OwnMadeNpcAt` keeps covering the same-encounter case; a stopped quest is left alone for
+  `STOPPED_FOR` (60 s) while the engine winds it down. `net status`: `encounters: runs= shared= received= stopped=`.
+- Not yet (random encounters): idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
+  pointed gun's pose are not played; `AIProcess::PlayIdle` would, given a hook on the owner's `SetupSpecialIdle`);
+  only the owner can take part in the encounter's dialogue (the friend sees and hears it; talking to a copy gives
+  the NPC's plain greeting); XP and karma are the owner's. Diamond City's accusation (FFDiamondCity12: Kyle and
+  Riley are placed unique NPCs, two guards created, started by MQ104's stage fragment in every game with a shared
+  story, so its scenes run in each game over that game's own copies, killed by script at its 25 and 30) is another
+  mechanism, a scene of placed actors a shared stage starts everywhere, and is not covered here.
 - Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
   while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
   dead) places a live copy of it: that fight is fought again. Paired, ours takes the owner's roll and factions until it

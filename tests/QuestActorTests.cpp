@@ -40,7 +40,7 @@ namespace
 
 	Protocol::Spawn Mirelurk(std::uint32_t a_id, std::uint16_t a_alias, std::uint32_t a_quest = DN083)
 	{
-		return { 0, a_id, MIRELURK, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f, a_quest, a_alias };
+		return { 0, a_id, MIRELURK, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f, a_quest, a_alias, a_quest != 0 ? Protocol::SpawnKind::kQuestActor : Protocol::SpawnKind::kPlain };
 	}
 
 	auto Report(const Protocol::Spawn& a_spawn)
@@ -226,6 +226,8 @@ TEST("quest actors: a spawn carries its quest alias, and one naming an alias of 
 	bad.quest = 0;  // an alias of no quest
 	CHECK(!Protocol::DecodeSpawn(Report(bad)));
 	bad.alias = 0;
+	CHECK(!Protocol::DecodeSpawn(Report(bad)));  // a quest actor with no quest named
+	bad.kind = Protocol::SpawnKind::kPlain;
 	CHECK(Protocol::DecodeSpawn(Report(bad)));  // no alias named: a spawn like any other
 	bad = spawn;
 	bad.quest = 0xFF000801;  // a quest made at runtime: no other game has it

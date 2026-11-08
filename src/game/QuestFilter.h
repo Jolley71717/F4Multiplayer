@@ -39,10 +39,9 @@ namespace QuestFilter
 		return a_quest.type == 0 && std::ranges::find(STORY_FINALES, a_quest.formId) != STORY_FINALES.end();
 	}
 
-	// Whether this is a name the game gives its dialogue quests: Dialogue<Place> (DialogueDiamondCity,
-	// DialogueGoodneighbor, DialogueDiamondCityEntrance), after the add-on's prefix in an add-on's files
-	// (DLC03DialogueFarHarbor, DLC04_DialogueNukaTown).
-	inline bool IsDialogueName(std::string_view a_editorId)
+	// An editor id without the add-on's prefix an add-on's files give theirs: DLCnn or DLCnn_ (DLC03DialogueFarHarbor,
+	// DLC04_DialogueNukaTown, DLC01RESceneKMK02). One with no such prefix as it is.
+	inline std::string_view WithoutAddOnPrefix(std::string_view a_editorId)
 	{
 		if (a_editorId.starts_with("DLC")) {
 			auto        rest = a_editorId.substr(3);
@@ -55,10 +54,18 @@ namespace QuestFilter
 				if (rest.starts_with("_")) {
 					rest.remove_prefix(1);
 				}
-				a_editorId = rest;
+				return rest;
 			}
 		}
-		return a_editorId.starts_with("Dialogue");
+		return a_editorId;
+	}
+
+	// Whether this is a name the game gives its dialogue quests: Dialogue<Place> (DialogueDiamondCity,
+	// DialogueGoodneighbor, DialogueDiamondCityEntrance), after the add-on's prefix in an add-on's files
+	// (DLC03DialogueFarHarbor, DLC04_DialogueNukaTown).
+	inline bool IsDialogueName(std::string_view a_editorId)
+	{
+		return WithoutAddOnPrefix(a_editorId).starts_with("Dialogue");
 	}
 
 	// A dialogue quest: what a place's people say and the scenes they play, which the game files under no

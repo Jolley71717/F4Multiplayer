@@ -3248,8 +3248,10 @@ void Server::Run()
 		}
 		// A quest alias's creature another game shares already (protocol 61): each game's run of the quest created its own,
 		// and the sender's pairs with that one (src/game/QuestActors.h). Refused, naming nobody (the id is free): their
-		// game asks again later, and by then holds the other's spawn and asks no more.
-		if (spawn->quest != 0) {
+		// game asks again later, and by then holds the other's spawn and asks no more. Not an encounter's actor (protocol
+		// 63, src/game/Encounters.h): an encounter quest is repeatable and each game's run of it is its own, so two games
+		// running the same one at two ends of the map both share theirs, and where they meet the games settle it.
+		if (spawn->quest != 0 && spawn->kind == Protocol::SpawnKind::kQuestActor) {
 			const auto twin = std::ranges::find_if(spawns, [&](const auto& a_entry) {
 				return a_entry.second.playerId != a_player.id && a_entry.second.quest == spawn->quest && a_entry.second.alias == spawn->alias;
 			});

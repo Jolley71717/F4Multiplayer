@@ -8,6 +8,7 @@
 #include "game/LineSounds.h"
 #include "game/NpcSync.h"
 #include "game/RemotePlayers.h"
+#include "game/Spawns.h"
 #include "game/SubtitleTime.h"
 #include "game/VoicePath.h"
 
@@ -259,6 +260,13 @@ namespace Conversations
 			if (Protocol::IsShareableRef(id) && (NpcSync::RunsLocally(id) || NpcSync::TalkingTo() == id)) {
 				return id;
 			}
+			// An NPC our game made and shares as a spawn (a random encounter's actor, Encounters.h): under its spawn id, which
+			// the hearers resolve to their copy of it. A copy of a friend's spawn is theirs to report.
+			if (Protocol::IsSpawnRef(id)) {
+				if (const auto spawn = Spawns::OwnIdOf(id)) {
+					return spawn;
+				}
+			}
 			return std::nullopt;
 		}
 
@@ -311,7 +319,9 @@ namespace Conversations
 				}
 				return { nullptr, {} };
 			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_line.speaker);
+			// A spawn id names our copy of the friend's NPC (Spawns); a plugin's reference is the same here.
+			const auto local = Protocol::IsSpawnRef(a_line.speaker) ? Spawns::LocalOf(a_line.speaker) : a_line.speaker;
+			const auto actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
 			if (!actor || !actor->Get3D() || actor->IsDead(false)) {
 				return { nullptr, {} };
 			}
@@ -713,7 +723,7 @@ namespace Conversations
 			return;
 		}
 		// Our own copy is saying it too (or we're in this conversation ourselves): we hear it already.
-		if (a_line.speaker != 0 && (actor->IsTalking() || NpcSync::TalkingTo() == a_line.speaker)) {
+		if (a_line.speaker != 0 && (actor->IsTalking() || NpcSync::TalkingTo() == actor->GetFormID())) {
 			return;
 		}
 		const auto key = (static_cast<std::uint64_t>(a_line.playerId) << 32) | a_line.speaker;
