@@ -563,6 +563,46 @@ TEST("workshop power: a copy shown powered is shown unpowered for a save and pow
 	CHECK(game.shown.at(lit));
 }
 
+TEST("workshop power: a save's hush leaves alone a copy drawn anew since its show (a travel's autosave, before any frame)")
+{
+	Mirror     mirror;
+	FriendGame game;
+	const Key  key{ BUILDER, GENERATOR };
+	const Key  other{ BUILDER, PYLON };
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { GENERATOR, true });
+	mirror.Set(BUILDER, { PYLON, true });
+	game.drawn[key] = 0x1000;
+	game.drawn[other] = 0x2000;
+	CHECK(mirror.Refresh(game, t) == 2);
+	// The player leaves the settlement and comes back: the copy's cell comes in with a new 3D, and the travel's autosave
+	// comes before any frame has looked at it. The other copy kept its 3D (still the one shown).
+	game.drawn.erase(key);
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);
+	game.drawn[key] = 0x3000;
+	game.shown.clear();
+	CHECK(mirror.Hush(game, t) == 1);  // the other one only
+	CHECK(!game.shown.contains(key));  // nothing called on the new 3D
+	CHECK(!game.shown.at(other));
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 2);  // the new 3D shown as any is, and the hushed one powered again
+	CHECK(game.shown.at(key));
+	CHECK(game.shown.at(other));
+	// Once shown, the new 3D is hushed by the next save like any.
+	CHECK(mirror.Hush(game, t) == 2);
+	CHECK(!game.shown.at(key));
+	// The same for a copy drawn anew without leaving (its 3D made again) between a show and the save.
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 2);
+	game.drawn[key] = 0x4000;
+	game.shown.clear();
+	CHECK(mirror.Hush(game, t) == 1);
+	CHECK(!game.shown.contains(key));
+}
+
 TEST("workshop power: a copy hushed for a save is shown again after HUSH_LIMIT if nothing says the save is over")
 {
 	Mirror     mirror;
