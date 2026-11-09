@@ -176,9 +176,11 @@ namespace QuestSync
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
-		// Stages logged as never done in time, once each while the game runs: some never read as done here at all (a
-		// dialogue quest's stage 0 a friend's game set, 000190BC each load in the 0.10.0 rc soak); gaveUp counts the rest.
+		// Stages logged as never done in time, once each while the game runs; gaveUp counts the rest. A stage that was to
+		// start its quest, which didn't start (000190BC's 0, Diamond City's entrance scene, at each load away from Diamond
+		// City), is logged as that instead (StageLog::Queue::FailedStarts), once per quest.
 		std::unordered_set<std::uint64_t>                gaveUpLogged;
+		std::unordered_set<std::uint32_t>                startFailedLogged;  // quests a friend's stage didn't start here, logged once each
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -1237,8 +1239,28 @@ namespace QuestSync
 			Game game{ now };
 			const bool paused = Paused();
 			CheckReleased(a_inSession);
-			for (const auto& stage : waiting.Poll(now, game, paused)) {
+			const auto gaveUpNow = waiting.Poll(now, game, paused);
+			// A stage that was to start its quest, and the quest still isn't running here: the game didn't start it (some
+			// start only where their place is loaded: Rotten Landfill's fight, Diamond City's entrance scene). The rest of
+			// its stages were dropped (StageLog::Queue); the next catch-up (a load, a rejoin) or a friend's live stage of
+			// it tries again. It wasn't started here for the session after all.
+			const auto& failedStarts = waiting.FailedStarts();
+			for (const auto& failed : failedStarts) {
+				startedHere.erase(failed.quest);
+				catchingUp.erase(failed.quest);
+				if (startFailedLogged.insert(failed.quest).second) {
+					const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(failed.quest);
+					const char* name = quest ? quest->GetFullName() : nullptr;
+					REX::INFO("QuestSync: {:08X} '{}' didn't start here when a friend's stage {} was set (still not running {} s later; the game starts some quests "
+							  "only where their place is loaded); {} more stage(s) of it not set, tried again at the next catch-up (logged once per quest)",
+						failed.quest, name ? name : "", failed.stage, std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count(), failed.dropped);
+				}
+			}
+			for (const auto& stage : gaveUpNow) {
 				++gaveUp;
+				if (std::ranges::any_of(failedStarts, [&](const auto& a_failed) { return a_failed.quest == stage.quest && a_failed.stage == stage.stage; })) {
+					continue;  // logged above
+				}
 				if (gaveUpLogged.insert(Key(stage.quest, stage.stage)).second) {
 					REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next (logged once; gaveUp counts each)", stage.quest, stage.stage,
 						std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());

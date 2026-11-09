@@ -43,6 +43,7 @@ namespace
 		std::function<void(std::uint32_t, std::uint16_t)>              onStage;
 		bool                                                           busy = false;
 		std::set<std::uint32_t>                                        startable;  // not running, and a friend's stage starts them (Quest::kStart)
+		std::set<std::uint32_t>                                        wontStart;  // ... but setting a stage here doesn't start it (its place isn't loaded)
 		std::map<std::pair<std::uint32_t, std::uint16_t>, StageLog::Set> verdicts;  // kSet if not here
 		std::map<std::pair<std::uint32_t, std::uint16_t>, Clock::duration> holds;
 		std::set<std::pair<std::uint32_t, std::uint16_t>>              setsAnother;  // stages whose script sets another quest's
@@ -52,7 +53,7 @@ namespace
 		void SetStage(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			auto& quest = quests[a_quest];
-			if (!(quest.flags & StageLog::QUEST_RUNNING) && startable.contains(a_quest)) {
+			if (!(quest.flags & StageLog::QUEST_RUNNING) && startable.contains(a_quest) && !wontStart.contains(a_quest)) {
 				quest.flags |= StageLog::QUEST_RUNNING;  // SetStage starts a quest that isn't running
 			}
 			if (!(quest.flags & StageLog::QUEST_RUNNING) || quest.missing.contains(a_stage) || quest.done.contains(a_stage)) {
@@ -1073,6 +1074,84 @@ TEST("stage queue: a quest not started here isn't started while the player is bu
 	game.Run(queue, now, 10);
 	CHECK((game.set == std::vector<Stage>{ { MQ207, 10 } }));
 	CHECK(game.Running(MQ207));
+}
+
+TEST("stage queue: a quest whose start didn't take has the rest of its stages dropped, not each tried for TIMEOUT, and a later catch-up tries again")
+{
+	// A friend rejoins away from Rotten Landfill: the landfill's fight (a quest the game starts only as its place
+	// loads) doesn't start from there. Six stages of it came with the catch-up, and a quest after it (SIDE) waits
+	// its turn.
+	constexpr std::uint32_t FIGHT = 0x000BACBC;
+	FakeGame game;
+	game.quests[FIGHT].flags = 0;
+	game.quests[SIDE].flags = 0;
+	game.startable = { FIGHT, SIDE };
+	game.wontStart = { FIGHT };
+	StageLog::Queue queue;
+	for (const auto stage : { 10, 20, 30, 40, 200, 255 }) {
+		queue.Add(FIGHT, static_cast<std::uint16_t>(stage));
+	}
+	queue.Add(SIDE, 10);
+	queue.Add(SIDE, 20);
+
+	auto now = Start();
+	game.Poll(queue, now);
+	game.Tick();
+	CHECK((game.set == std::vector<Stage>{ { FIGHT, 10 } }));
+	CHECK(queue.FailedStarts().empty());
+	// Its 10 never reads done and the quest isn't running: given up on, and its other five go with it.
+	CHECK(game.Poll(queue, now + 4500ms).empty());
+	const auto gaveUp = game.Poll(queue, now + StageLog::Queue::TIMEOUT);
+	CHECK((gaveUp == std::vector<Stage>{ { FIGHT, 10 } }));
+	CHECK((queue.FailedStarts() == std::vector<StageLog::Queue::FailedStart>{ { FIGHT, 10, 5 } }));
+	CHECK(queue.Waiting(FIGHT).empty());
+	CHECK(!queue.Contains(FIGHT));
+	// The next poll forgets it.
+	now += StageLog::Queue::TIMEOUT + 500ms;
+	game.Poll(queue, now);
+	CHECK(queue.FailedStarts().empty());
+	// SIDE goes on at once, not 25 s later.
+	game.Tick();
+	game.Run(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { FIGHT, 10 }, { SIDE, 10 }, { SIDE, 20 } }));
+	CHECK(queue.Size() == 0);
+	CHECK(game.quests[SIDE].current == 20);
+
+	// The next catch-up (a load, a rejoin) sends them again: tried once more. Here the player stands at the landfill
+	// now, and it takes.
+	game.wontStart.clear();
+	for (const auto stage : { 10, 20, 30, 40, 200, 255 }) {
+		queue.Add(FIGHT, static_cast<std::uint16_t>(stage));
+	}
+	game.Run(queue, now);
+	CHECK(queue.Size() == 0);
+	CHECK(game.Running(FIGHT));
+	CHECK((game.quests[FIGHT].done == std::set<std::uint16_t>{ 10, 20, 30, 40, 200, 255 }));
+}
+
+TEST("stage queue: a stage that never reads done is given up on alone when its quest did start (or was running), the rest of it goes on")
+{
+	// Started by its 10, which isn't one this quest reads done (missing): the quest runs, so its 20 goes on.
+	FakeGame game;
+	game.quests[MQ207].flags = 0;
+	game.quests[MQ207].missing = { 10 };
+	game.startable = { MQ207 };
+	StageLog::Queue queue;
+	queue.Add(MQ207, 10);
+	queue.Add(MQ207, 20);
+
+	const auto start = Start();
+	game.Poll(queue, start);
+	game.Tick();
+	CHECK(game.Running(MQ207));
+	const auto gaveUp = game.Poll(queue, start + StageLog::Queue::TIMEOUT);
+	CHECK((gaveUp == std::vector<Stage>{ { MQ207, 10 } }));
+	CHECK(queue.FailedStarts().empty());
+	CHECK((game.set == std::vector<Stage>{ { MQ207, 10 }, { MQ207, 20 } }));
+	game.Tick();
+	game.Poll(queue, start + StageLog::Queue::TIMEOUT + 500ms);
+	CHECK(queue.Size() == 0);
+	CHECK(game.quests[MQ207].current == 20);
 }
 
 TEST("stage log: a stage kept for an unstarted quest is reported until exactly WINDOW after it, not at it")
