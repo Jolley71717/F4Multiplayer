@@ -1,13 +1,14 @@
 {
- "release": "0.14.0",
+ "release": "0.15.0",
  "known_issues": [
-  "Random events that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) still play out in one player's game only. Sharing them is being built.",
+  "Key names in Controls are in English in every language.",
+  "Random events that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) still play out in one player's game only. Sharing them comes in the next version.",
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
   "A workbench is shared only at settlements the host owns.",
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T00:48:37+00:00",
+ "updated": "2026-11-09T02:21:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1031,8 +1032,8 @@
    "title": "A Multiplayer menu in the game's main and pause menus (outside PR 255, Flash)",
    "kind": "feature",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.15.0 release candidate's soak",
+   "stage": 7,
+   "note": "Shipped in 0.15.0",
    "pr": 255
   },
   {
