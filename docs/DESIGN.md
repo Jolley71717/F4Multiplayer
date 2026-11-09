@@ -2415,7 +2415,13 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   camera left by the ground and the Pip-Boy shut until a load. On the ground or up and not yet settled,
   a transition on the return stack is replaced by where it was going (the view the first down left), and
   a transition going to itself is sent to the last first- or third-person view (`DownRules::Camera`,
-  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). If they went down sneaking and
+  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). The loop is the
+  engine's: every start of a camera state over the current one (the bleed-out camera's, a knock-down's ragdoll's,
+  VATS's, which a death plays in) pushes the current state through one push (ID 2248443), and only the tween is
+  special-cased, so a down at once on a help-up, or the death camera as a bleed-out's kill ends the down, pushed the
+  transition. `Downed::Install` hooks the ten calls to that push (each checked at load, tools/addrcheck.ps1 too): a
+  transition pushed goes as the view it was going to (`DownRules::Camera::Pushed`, tested), so the way back never
+  loops; the fixes above stay as the net under it. If they went down sneaking and
   are still sneaking (the stance survives a down), it stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left
   alone: one who went down standing and pressed the sneak key while down, or who sneaks once up.

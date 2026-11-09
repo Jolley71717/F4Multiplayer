@@ -9,6 +9,11 @@
 // Main thread only.
 namespace Downed
 {
+	// At load: the player camera's push of its current state onto its return stack keeps where a transition goes, not the
+	// transition itself (DownRules::Camera::Pushed): a down, a knock-down or the death camera started in the camera's way
+	// back from a down looped it. False when no call to the push was hooked (the way back's net still undoes a loop).
+	bool Install();
+
 	// The session's rules (HostRules): out of a session (a_session 0), the defaults. The revive count is the session's: kept
 	// through a welcome back into the same one (DownRules::Self::SetRules).
 	void SetRules(const Protocol::SessionRules& a_rules, std::uint64_t a_session);

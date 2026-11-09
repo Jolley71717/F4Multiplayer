@@ -1090,9 +1090,10 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 276 of 320 bytes used: ten 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 290 of 320 bytes used: eleven 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// CombatReactions::Install's one, Storage::InstallGather's two share one, VatsTargets::Install's four share one), HavokGuard::Install's
+	// CombatReactions::Install's one, Storage::InstallGather's two share one, VatsTargets::Install's four share one,
+	// Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
@@ -1126,6 +1127,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	WeaponFire::SetShotTrails(Config::Get().friendShotTrails);  // a friend's plain bullet or beam flies inert (AttackKind::ShotReplay)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 	VatsTargets::Install();  // VATS never targets a friend's stand-in (bVatsSkipsFriends; VatsTargetRules.h)
+	Downed::Install();       // the camera's way back from a down never loops on its own transition (DownRules::Camera::Pushed)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
 	Equipment::InstallFrameGate();  // and its Transfer
