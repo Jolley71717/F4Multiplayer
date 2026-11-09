@@ -1,13 +1,16 @@
 {
- "release": "0.15.1",
+ "release": "0.16.0",
  "known_issues": [
-  "Random events that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) still play out in one player's game only. Sharing them comes in the next version.",
+  "Your friend's shots from a gun with an armor-piercing receiver, a recon scope, or a Bloodied or Nocturnal legendary show no tracer on your screen, only the muzzle flash and the sound. This was in 0.15 too; the fix comes in the next update.",
+  "The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).",
+  "Diamond City's synth accusation still plays out in each game on its own.",
+  "If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.",
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
   "A workbench is shared only at settlements the host owns.",
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T16:52:04+00:00",
+ "updated": "2026-11-09T19:12:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -271,8 +274,8 @@
    "title": "Reloading a save from before an NPC's death: the session file kills the NPC again on every load",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "In the 0.16.0-rc1 test build",
+   "stage": 7,
+   "note": "Shipped in 0.16.0",
    "pr": 347
   },
   {
@@ -504,6 +507,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "8c9z",
+   "title": "Trails: a friend's shots from a gun with a wielder-only enchantment (armor-piercing receiver, recon scope, Bloodied, Nocturnal) show no tracer",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 2,
+   "note": "Cause found; fix in a PR, for 0.16.1"
   },
   {
    "id": "8mp",
@@ -873,8 +884,8 @@
    "title": "Radiant clear-out quests: enemies at an already-cleared location die the moment you enter",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.0-rc1 test build",
+   "stage": 7,
+   "note": "Shipped in 0.16.0",
    "pr": 347
   },
   {
@@ -993,8 +1004,8 @@
    "title": "Random encounters that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) show in one player's game only",
    "kind": "feature",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.0-rc1 test build",
+   "stage": 7,
+   "note": "Shipped in 0.16.0",
    "pr": 337
   },
   {
@@ -1324,8 +1335,8 @@
    "title": "Calm encounters: stopping a double-rolled run leaves its actors alive",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "In the 0.16.0-rc1 test build",
+   "stage": 7,
+   "note": "Shipped in 0.16.0",
    "pr": 337
   },
   {
@@ -1867,8 +1878,8 @@
    "title": "Calm encounters: the first line of a scene is lost when it arrives just before the copy is placed",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.0-rc1 test build",
+   "stage": 7,
+   "note": "Shipped in 0.16.0",
    "pr": 343
   },
   {
@@ -2092,8 +2103,8 @@
    "title": "Calm encounters: an ended encounter's leftover actor still counts as running",
    "kind": "bug",
    "priority": 1,
-   "stage": 6,
-   "note": "In the 0.16.0-rc1 test build",
+   "stage": 7,
+   "note": "Shipped in 0.16.0",
    "pr": 337
   },
   {
