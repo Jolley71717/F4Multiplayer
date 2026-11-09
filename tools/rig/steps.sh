@@ -548,7 +548,12 @@ step_trails() {
 	enter_both SanctuaryExt 14
 	crash_snapshot
 	place host -80650 89300 7784 270; place vm -80350 89300 7784 90   # 300 u apart, each facing away from the other
+	# Each player's own copies of the two guns go first: a legendary one picked up in play (a Two Shot 10mm, 2026-11-08)
+	# is what `equipitem` takes, and a gun with any enchantment is held by design (AttackKind::ShotReplay), so its shots
+	# launched no trail and the step measured the save, not the build. A plain copy of each is then given.
 	for who in host vm; do
+		for gun in "$TRAIL_PISTOL" "$TRAIL_LASER"; do dc "$who" "console player.removeitem $gun 99" >/dev/null; done
+		sleep 1
 		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
 	done
 	sleep 4
