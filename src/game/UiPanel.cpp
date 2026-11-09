@@ -486,9 +486,10 @@ namespace UiPanel
 					version.resize(version.size() - 2);  // 0.10.1.0: 0.10.1
 				}
 				const auto back = Text::Get("mpmenu.back");
-				const std::array<GValue, 8> args{ GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
+				const auto backKey = UiKeyNames::Display(UiKeyNames::ESCAPE) + ")";
+				const std::array<GValue, 9> args{ GValue(static_cast<double>(boxLeft.load())), GValue(static_cast<double>(boxTop.load())),
 					GValue(static_cast<double>(boxRight.load())), GValue(static_cast<double>(boxBottom.load())),
-					GValue(static_cast<double>(lookColor.load())), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()) };
+					GValue(static_cast<double>(lookColor.load())), GValue(version.c_str()), GValue(back.c_str()), GValue(centered.load()), GValue(backKey.c_str()) };
 				if (!menuObj.Invoke("SetLook", nullptr, args.data(), args.size())) {
 					REX::WARN("UiPanel: the movie has no SetLook");
 				}
