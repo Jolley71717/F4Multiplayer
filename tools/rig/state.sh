@@ -116,8 +116,12 @@ st_help_up() {
 rig_state_guard() {
 	local step=$1 w g c v r what="state before $1" bad="" dead=""
 	local since="the run's start"; [ -n "$ST_PREV" ] && since="the $ST_PREV step"
+	# A VM that reads DOWN while its game runs (the tunnel's ssh ended in a VM stall, 2026-11-09) is reached again by dcfast.sh
+	# on the way (a HEAL); one last try here, past its 30 s spacing, says why when it can't be
 	for w in host vm; do
-		wait_ingame "$w" 30 || { rig_broken game "$what: $w in the game" "$(alive): $w not in the game after 60 s"; return 1; }
+		wait_ingame "$w" 30 && continue
+		r=""; [ "$w" = vm ] && { r=$(vm_reach) && wait_ingame vm 15 && continue; }
+		rig_broken game "$what: $w in the game" "$(alive): $w not in the game after 60 s${r:+; $r}"; return 1
 	done
 	pads_off
 	for w in host vm; do

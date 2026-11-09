@@ -47,7 +47,22 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 	A_NAME=$1; A_T0=$SECONDS; A_START=$(date +%T)
 	A_OUT=${A_OUT:-$CHECKS/$1-$(date +%Y%m%d-%H%M%S)}; mkdir -p "$A_OUT"
 	A_RESULTS=$A_OUT/results.tsv; : > "$A_RESULTS"; A_SECLOG=$A_OUT/sections.tsv; : > "$A_SECLOG"
+	_reach_count > "$A_OUT/reach.mark"
 	echo "$1 run folder: $A_OUT"
+}
+# The VM's dev channel made reachable again by dcfast.sh (env.sh vm_reach: a tunnel or token made again while the VM's game
+# ran) is a HEAL of this run: each one in $STAGE/vm-reach.log since a_init is recorded before the next line (the mark is a
+# file, so a heal seen in a subshell is not recorded twice).
+_reach_count() { if [ -s "$STAGE/vm-reach.log" ]; then wc -l < "$STAGE/vm-reach.log"; else echo 0; fi; }
+_reach_flush() {
+	local m n t what
+	[ -n "$A_OUT" ] && [ -f "$A_OUT/reach.mark" ] || return 0
+	m=$(cat "$A_OUT/reach.mark"); n=$(_reach_count); [ "$n" -gt "$m" ] 2>/dev/null || return 0
+	echo "$n" > "$A_OUT/reach.mark"
+	sed -n "$((m + 1)),${n}p" "$STAGE/vm-reach.log" | while IFS=$'\t' read -r _ t what; do
+		printf 'HEAL\t%s\t%s\t%s\n' "$A_SECTION" "the VM's dev channel reached again ($t)" "$what" >> "$A_RESULTS"
+		printf 'HEAL %s: %s\n' "the VM's dev channel reached again ($t)" "$what"
+	done
 }
 
 section() {  # section <title>
@@ -57,6 +72,7 @@ section() {  # section <title>
 }
 
 record() {  # record <PASS|FAIL|WARN> <name> <reason>
+	_reach_flush
 	printf '%s\t%s\t%s\t%s\n' "$1" "$A_SECTION" "$2" "$3" >> "$A_RESULTS"
 	printf '%-4s %s%s\n' "$1" "$2" "${3:+: $3}"
 }
@@ -340,6 +356,7 @@ log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta o
 
 # --- the verdict ---------------------------------------------------------------------------------------------
 a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary.txt, exits non-zero on a FAIL
+	_reach_flush
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"; A_SECTION=""
 	local np nf nw nr nu nx nh nv nvf vnote total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS"); nr=$(grep -c $'^RIG\t' "$A_RESULTS")
 	nx=$(grep -c '^RIGFAULT' "$A_RESULTS"); nh=$(grep -c '^HEAL' "$A_RESULTS"); nv=$(grep -c '^VOID' "$A_RESULTS")
@@ -495,6 +512,16 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	hasnt "rig_unhealed: two stop the run" "$o" REACHED
 	o=$(brk 'rig_unhealed state "s1" "x" >/dev/null; fail "hp" "differs" >/dev/null')
 	has "rig_unhealed: with a FAIL the verdict is FAIL" "$o" "VERDICT: FAIL"
+	# the VM's channel reached again (env.sh vm_reach): only heals logged after a_init, each once, even when seen in a subshell
+	o=$( ( sd=$(mktemp -d); STAGE=$(mktemp -d); A_OUT=$sd; A_SECTION=""
+		printf '1\t09:00:00\tan old heal\n' > "$STAGE/vm-reach.log"; a_init reach >/dev/null; section r1 >/dev/null
+		printf '2\t15:14:40\tnothing listened on 7792; tunnel made again\n' >> "$STAGE/vm-reach.log"
+		( pass "in a subshell" ok >/dev/null ); pass "after" ok >/dev/null
+		a_summary; rm -rf "$sd" "$STAGE" ) 2>&1 ); r=$?
+	has "reach: a heal after the start is a HEAL" "$o" "the VM's dev channel reached again (15:14:40): nothing listened on 7792"
+	hasnt "reach: a heal before the start is not" "$o" "an old heal"
+	t "reach: recorded once" "$(grep -c "reached again (15:14:40)" <<<"$o")" 1   # the summary's line (the subshell's own was not shown)
+	has "reach: the verdict is a PASS" "$o" "VERDICT: PASS"; t "reach: exit 0" "$r" 0
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	rm -rf "$d" "$F4MP_CHECKS"; exit $bad
 fi
