@@ -956,7 +956,7 @@ namespace UiPages
 		} };
 		std::string KeyText(std::uint32_t a_vk)
 		{
-			return a_vk == 0 ? Text::Get("menu.key_off") : UiKeyNames::Name(a_vk) + ")";  // W), as the game's Controls page has it
+			return a_vk == 0 ? Text::Get("menu.key_off") : UiKeyNames::Display(a_vk) + ")";  // W), as the game's Controls page has it
 		}
 
 		// a_listening: the row waiting for a key, or -1. a_said: what happened to the last key, in the status line.
@@ -1065,13 +1065,13 @@ namespace UiPages
 		if (vk == 0 || vk == UiKeyNames::ESCAPE) {
 			// nothing to do: a button of no use, or the way out
 		} else if (UiKeyNames::Reserved(vk)) {
-			said = Text::Format("menu.key_reserved", { { "key", UiKeyNames::Name(vk) } });
+			said = Text::Format("menu.key_reserved", { { "key", UiKeyNames::Display(vk) } });
 		} else {
 			auto&      settings = Config::Mutable();
 			const auto next = vk == UiKeyNames::DELETE_KEY ? 0u : vk;
 			const auto taken = next == 0 ? KEYBINDS.end() : std::ranges::find_if(KEYBINDS, [&](const Keybind& a_other) { return &a_other != &bind && settings.*a_other.value == next; });
 			if (taken != KEYBINDS.end()) {
-				said = Text::Format("menu.key_taken", { { "key", UiKeyNames::Name(next) }, { "name", Text::Get(taken->name) } });
+				said = Text::Format("menu.key_taken", { { "key", UiKeyNames::Display(next) }, { "name", Text::Get(taken->name) } });
 			} else {
 				settings.*bind.value = next;
 				Config::Write(bind.key, std::format("{:02X}", next));
