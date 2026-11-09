@@ -604,6 +604,18 @@ void Server::Run()
 	// that only went down, which the host's game can undo (see handleClaims). Saved, so a death seen in any run since
 	// is never one, however many times the server restarts.
 	std::unordered_set<std::uint32_t>                     healable;
+	// The deaths among deadActors the host's own game reported with no friend near (friendNear): a kill seen there, or an
+	// NPC found dead in its world. A death a friend may have seen is a shared event, replayed to the host's game too. Never
+	// sent back to that game in a world state (sendWorldState), as no player gets their own pickups: its save is the truth
+	// about its own kills. A save from after the kill has the corpse anyway; one from before it (a quickload, a restart
+	// into an older save) has the NPC alive, and its game, told nothing, offers to run it, which brings it back for
+	// everyone (handleClaims' cameBack). Before, every load killed it again, forever, and a cell reset's NPCs died on
+	// entry once the host had loaded a save since. A death a friend's game reported is still sent to the host's game:
+	// that kill may be in no save of the host's (a cell it never loaded). Only a hosted session has these (the host's
+	// game is Player::local, by its identity, whatever player id it has); on a dedicated server no game is the host's and
+	// the session's list is the only world, so every death goes to everyone as before. Saved (layout 44); deaths from an
+	// older file have no reporter known and go to everyone too.
+	std::unordered_set<std::uint32_t>                     hostDeaths;
 
 	// A full table stops that kind of sharing for everyone (until the session file goes), so the log says
 	// when one gets near, once at 80% and once full.
@@ -639,6 +651,11 @@ void Server::Run()
 			for (const auto id : saved->healable) {
 				if (deadActors.contains(id)) {
 					healable.insert(id);
+				}
+			}
+			for (const auto id : saved->hostDeaths) {
+				if (deadActors.contains(id)) {
+					hostDeaths.insert(id);
 				}
 			}
 			containerChanges = saved->containerChanges;
@@ -697,8 +714,8 @@ void Server::Run()
 			}
 			sessionLevel = saved->npcLevel;
 			sessionLegendary = saved->legendaryMult;
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
-				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
+			log(std::format("server: loaded the saved session ({} dead ({} by the host's game), {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
+				deadActors.size(), hostDeaths.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -730,6 +747,11 @@ void Server::Run()
 		}
 		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
 		snapshot.healable.assign(healable.begin(), healable.end());
+		snapshot.hostDeaths.assign(hostDeaths.begin(), hostDeaths.end());
+		// The same session, the same file.
+		std::ranges::sort(snapshot.deadActors);
+		std::ranges::sort(snapshot.healable);
+		std::ranges::sort(snapshot.hostDeaths);
 		snapshot.containerChanges = containerChanges;
 		for (const auto& [ref, picker] : pickedUp) {
 			snapshot.pickedUp.push_back(ref);
@@ -785,6 +807,7 @@ void Server::Run()
 	const auto resetWorld = [&] {
 		deadActors.clear();
 		healable.clear();
+		hostDeaths.clear();
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
@@ -1080,21 +1103,34 @@ void Server::Run()
 		if (!spent.traps.empty()) {
 			send(a_to, Protocol::Encode(spent), true);
 		}
+		// Not the host's own game's deaths to that game (hostDeaths): its save has each one dead, or, from before the kill,
+		// alive, and then it is alive for the session again.
+		const auto receiver = players.find(a_to);
+		const auto receiverId = receiver != players.end() ? receiver->second.id : 0;
+		const bool toHost = receiver != players.end() && receiver->second.local;
+		const auto sent = [&](std::uint32_t a_ref) { return !toHost || !hostDeaths.contains(a_ref); };
 		// Deaths with a known place go first, one by one with the place; the list that follows then finds
 		// them already dead, so each copy lies where the killer saw it fall.
 		std::size_t placed = 0;
 		for (const auto& [refId, at] : deathPositions) {
+			if (!sent(refId)) {
+				continue;
+			}
 			if (placed++ >= MAX_DEATH_POSITIONS_SENT) {
 				break;
 			}
 			send(a_to, Protocol::Encode(Protocol::ActorDeath{ refId, 0, false, at[0], at[1], at[2] }, Protocol::MessageType::kActorDied), true);
 		}
-		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
+		std::vector<std::uint32_t> dead;
+		dead.reserve(deadActors.size());
+		for (const auto ref : deadActors) {
+			if (sent(ref)) {
+				dead.push_back(ref);
+			}
+		}
 		// Not the receiver's own pickups: their game has those already, in an inventory or dropped again where they lie now
 		// (as the same reference, for a plugin's persistent item), and would take a dropped one away as a friend's pickup.
 		// A save from before they picked one up has it lying where it was placed: theirs to pick up again.
-		const auto                 receiver = players.find(a_to);
-		const auto                 receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::vector<std::uint32_t> picked;
 		picked.reserve(pickedUp.size());
 		for (const auto& [ref, picker] : pickedUp) {
@@ -1845,6 +1881,8 @@ void Server::Run()
 	// reported about the NPC for Options::aliveAgainGrace, the time the host's game is given to bring one back, with the
 	// NPC still dead; then every Options::remindDeadEvery while it keeps reporting. A silence of aliveAgainGrace ends
 	// the run: its next report starts the wait again (its cell reset once more, days later).
+	// How near a player must be to an NPC to have it loaded in their game, outdoors (an interior is loaded whole).
+	constexpr float REVIVE_REACH = 8192.0f;
 	const auto remindDead = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
 		if (a_player.local || !a_player.welcomed) {
 			return;
@@ -1870,7 +1908,6 @@ void Server::Run()
 		// as before reminders, and the host's arrival revives it for everyone. On a dedicated server the player who
 		// stands for the host (hostPlayer) is the one whose game is waited for. The reporter itself, when it is that
 		// player, has no one to wait for.
-		constexpr float REVIVE_REACH = 8192.0f;
 		const auto      host = hostPlayer();
 		const bool      hostHere = host && host != &a_player;
 		bool            hostNear = false;
@@ -1935,6 +1972,35 @@ void Server::Run()
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
 		sendOwners({ { a_death.refId, 0 } }, 0);
 		endLoansOfGoneSpawns();
+	};
+
+	// Whether a friend may have seen this death of the host's game's: a welcomed player other than the host's game in the
+	// same interior cell, or outdoors in the same worldspace within REVIVE_REACH of where it fell (of the host when that
+	// isn't known: a found-dead report, a death with no 3D), so their game had it loaded and saw it die. Such a death is
+	// a shared event, not the host's world's own (hostDeaths): the host dying mid-fight and loading the newest save, from
+	// before it, would otherwise bring the raiders back alive for the friend, whose copies lie as corpses that still shoot
+	// (a revival never raises a corpse). With nothing known of where it fell nor of where the host stands, any friend here
+	// counts, as does one whose game hasn't said where it is yet.
+	const auto friendNear = [&](const Player& a_host, const Protocol::ActorDeath& a_death) {
+		const bool placed = a_death.x != 0.0f || a_death.y != 0.0f || a_death.z != 0.0f;
+		if (!placed && !a_host.hasState) {
+			return std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && !a_entry.second.local; });
+		}
+		const float x = placed ? a_death.x : a_host.state.x, y = placed ? a_death.y : a_host.state.y, z = placed ? a_death.z : a_host.state.z;
+		return std::ranges::any_of(players, [&](const auto& a_entry) {
+			const auto& other = a_entry.second;
+			if (!other.welcomed || other.local) {
+				return false;
+			}
+			if (!other.hasState || !a_host.hasState) {
+				return true;
+			}
+			if (other.state.cell != a_host.state.cell || other.state.worldspace != a_host.state.worldspace) {
+				return false;
+			}
+			const float dx = other.state.x - x, dy = other.state.y - y, dz = other.state.z - z;
+			return other.state.cell != 0 || dx * dx + dy * dy + dz * dz <= REVIVE_REACH * REVIVE_REACH;
+		});
 	};
 
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -2027,6 +2093,9 @@ void Server::Run()
 			}
 		}
 		deadActors.insert(death->refId);
+		if (a_player.local && !friendNear(a_player, *death)) {
+			hostDeaths.insert(death->refId);  // the host's world's own, seen by no friend: never sent back to it (sendWorldState)
+		}
 		++budgetOf(a_player).added[kDeaths];
 		noteFill(kDeaths, deadActors.size());
 		touched();
@@ -2777,13 +2846,16 @@ void Server::Run()
 			// host's game, whose world is the session's, offering to run it (not a hit or a press), with the claim granted:
 			// the owner it gets tells every game it lives (WorldSync::OnActorOwners). A death seen in any run of this layout
 			// stays: a quest's script kills even an essential NPC, and a friend's game can still keep it essential for a while.
-			if (deadActors.contains(claim.refId) && claim.essential) {
+			// Not a death the host's world made itself (hostDeaths): its game, never told it, has the NPC alive from a save from
+			// before it (a quest's script killed it there), and that comes back as any other below.
+			if (deadActors.contains(claim.refId) && claim.essential && !(a_player.local && hostDeaths.contains(claim.refId))) {
 				// With no room to grant it, it stays dead until the host's game offers it again.
 				if (!a_player.local || claim.reason == Reason::kInteract || !healable.contains(claim.refId) || !roomFor(claim.reason)) {
 					continue;
 				}
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
+				hostDeaths.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				restFrom.erase(claim.refId);
 				diedAt.erase(claim.refId);
@@ -2802,6 +2874,7 @@ void Server::Run()
 				}
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
+				hostDeaths.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				restFrom.erase(claim.refId);
 				if (died != diedAt.end()) {

@@ -117,6 +117,7 @@ namespace
 		std::unordered_map<std::uint32_t, std::uint32_t> owners;
 		std::unordered_map<std::uint32_t, Npc>           world;
 		std::unordered_set<std::uint32_t>                pending;  // deaths waiting for the NPC to load, or held while it is essential (WorldSync's)
+		std::uint32_t                                    stateSequence = 0;  // of its player's last state (StandAt)
 
 		// Joins (as the host's own game, or not) and takes the welcome's world state.
 		Game(Fixture& a_f, PeerId a_peer, std::string a_name, bool a_host = false) :
@@ -247,6 +248,25 @@ namespace
 			deaths.SawDead(a_ref);
 			deaths.Reported(a_ref);
 			f.fake->Deliver(peer, Kill(a_ref, a_x));
+		}
+
+		// Where the players stand: this game's at the origin, a_other's far off (outdoors, in the same worldspace), so a
+		// death in one game was seen by no one in the other.
+		void Apart(Game& a_other)
+		{
+			f.fake->Deliver(peer, StandAt(++stateSequence, 0.0f));
+			a_other.f.fake->Deliver(a_other.peer, StandAt(++a_other.stateSequence, 100000.0f));
+			Pump();
+			a_other.Pump();
+		}
+
+		// Both stand at the origin: what dies there dies in both games' loaded world.
+		void Beside(Game& a_other)
+		{
+			f.fake->Deliver(peer, StandAt(++stateSequence, 0.0f));
+			a_other.f.fake->Deliver(a_other.peer, StandAt(++a_other.stateSequence, 500.0f));
+			Pump();
+			a_other.Pump();
 		}
 
 		// A save was loaded, with these NPCs loaded and alive in it: WorldSync::Reset, and the request for the
@@ -737,7 +757,7 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 		Game    bob{ f, 2, "Bob" };
 		CHECK(!bob.deaths.Contains(RAIDER));
 		CHECK(bob.deaths.Contains(RAIDER2));
-		CHECK(host.deaths.Contains(RAIDER2));
+		CHECK(!host.deaths.Contains(RAIDER2));  // the host's own kill: its save has the corpse, and isn't told it
 
 		// The other raider's corpse is still there in the host's game; its cell resets later. A death from the saved
 		// session is old enough at once, the host's hello is what is waited for.
@@ -747,11 +767,159 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 		f.Advance(GRACE + 50ms);
 		const auto later = Clock::now() + DAYS_LATER;
 		host.Unloads(RAIDER2);
-		REQUIRE(host.Loads(RAIDER2, true, later));
+		CHECK(!host.Loads(RAIDER2, true, later));  // nothing to forget: its game never had the death from the session
 		REQUIRE(host.Scan(RAIDER2, later));
 		CHECK(HasOwner(Owners(bob.Pump()), RAIDER2, host.id));
 	}
 	std::filesystem::remove(path);
+}
+
+TEST("alive again: the host loading a save from before its own kill has the raider alive, and its offer brings it back for Bob too")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Apart(bob);
+	host.Loads(RAIDER, true, Clock::now());
+	host.Kills(RAIDER, 40.0f);
+	bob.Pump();
+	host.Pump();
+	CHECK(bob.pending.contains(RAIDER));  // far away, Bob's game kills its copy once it loads
+	f.Advance(GRACE + 50ms);
+
+	// The host quickloads a save from before the kill: its game is not told of its own kill, so the raider lives there.
+	host.LoadsASave({ RAIDER });
+	const auto toHost = host.Pump();
+	CHECK(!std::ranges::contains(WorldDead(toHost), RAIDER));
+	CHECK(Count(toHost, MT::kActorDied) == 0);
+	CHECK(!host.deaths.Contains(RAIDER));
+	CHECK(host.Alive(RAIDER));
+
+	// Its game offers to run it; a grace after its request for the world, that brings it back for everyone. Bob's game
+	// forgets the death (his copy's corpse lies until its cell resets: a revival never raises a corpse).
+	f.Advance(GRACE + 50ms);
+	const auto later = Clock::now();
+	REQUIRE(host.Scan(RAIDER, later));
+	CHECK(HasOwner(Owners(host.Pump()), RAIDER, host.id));
+	CHECK(HasOwner(Owners(bob.Pump()), RAIDER, host.id));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", RAIDER)));
+	CHECK(!bob.deaths.Contains(RAIDER));
+	CHECK(bob.deaths.Corrected() == 1);
+	CHECK(!bob.pending.contains(RAIDER));
+	Game carol{ f, 3, "Carol" };
+	CHECK(!carol.deaths.Contains(RAIDER));
+
+	// The host loads that save again: the raider stays alive, and stays the host's game's.
+	host.LoadsASave({ RAIDER });
+	host.Pump();
+	CHECK(host.Alive(RAIDER));
+	CHECK(!host.deaths.Contains(RAIDER));
+}
+
+TEST("alive again: the host bleeding out mid-fight beside Bob and loading a save from before it doesn't bring the raiders back")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Beside(bob);
+	host.Loads(RAIDER, true, Clock::now());
+	bob.Loads(RAIDER, true, Clock::now());
+	host.Loads(RAIDER2, true, Clock::now());
+	bob.Loads(RAIDER2, true, Clock::now());
+	host.Kills(RAIDER, 40.0f);
+	bob.Kills(RAIDER2, 60.0f);
+	bob.Pump();
+	host.Pump();
+	CHECK(!bob.Alive(RAIDER));
+	CHECK(!host.Alive(RAIDER2));
+	f.Advance(GRACE + 50ms);
+
+	// Its game loads the newest save, from before the fight: the raider the host killed with Bob there is told dead again,
+	// as Bob's kill is, so both games still agree. Before the friend check its game would have brought it back, and Bob's
+	// copy, a corpse, would have shot at him.
+	host.LoadsASave({ RAIDER, RAIDER2 });
+	const auto toHost = host.Pump();
+	CHECK(std::ranges::contains(WorldDead(toHost), RAIDER));
+	CHECK(std::ranges::contains(WorldDead(toHost), RAIDER2));
+	CHECK(!host.Alive(RAIDER));
+	CHECK(!host.Alive(RAIDER2));
+	f.Advance(GRACE + 50ms);
+	CHECK(!host.Scan(RAIDER, Clock::now()));
+	CHECK(Owners(bob.Pump()).empty());
+	CHECK(!f.Logged("alive again"));
+	CHECK(bob.deaths.Contains(RAIDER));
+}
+
+TEST("alive again: Bob's kill holds when the host loads a save made after it, and its own kill in that save stays dead there")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Apart(bob);
+	host.Loads(RAIDER, true, Clock::now());
+	host.Loads(RAIDER2, true, Clock::now());
+	bob.Kills(RAIDER);
+	host.Kills(RAIDER2);
+	host.Pump();
+	bob.Pump();
+	f.Advance(GRACE + 50ms);
+
+	// A save from after both kills has both corpses. Bob's kill comes with the world state; the host's own lies in its save.
+	host.LoadsASave({});
+	host.Loads(RAIDER, false, Clock::now());
+	host.Loads(RAIDER2, false, Clock::now());
+	const auto toHost = host.Pump();
+	CHECK(std::ranges::contains(WorldDead(toHost), RAIDER));
+	CHECK(!std::ranges::contains(WorldDead(toHost), RAIDER2));
+	CHECK(host.deaths.Contains(RAIDER));
+	CHECK(!host.Alive(RAIDER2));
+	CHECK(!host.Scan(RAIDER2, Clock::now() + DAYS_LATER));  // a corpse is never offered
+	f.Advance(GRACE + 50ms);
+	CHECK(!f.Logged("alive again"));
+
+	// A save from before both: Bob's kill is still told and kills the host's copy; its own kill is undone.
+	host.LoadsASave({ RAIDER, RAIDER2 });
+	host.Pump();
+	CHECK(!host.Alive(RAIDER));
+	CHECK(host.Alive(RAIDER2));
+	f.Advance(GRACE + 50ms);
+	CHECK(!host.Scan(RAIDER, Clock::now()));
+	REQUIRE(host.Scan(RAIDER2, Clock::now()));
+	CHECK(HasOwner(Owners(bob.Pump()), RAIDER2, host.id));
+	Game carol{ f, 3, "Carol" };
+	CHECK(carol.deaths.Contains(RAIDER));
+	CHECK(!carol.deaths.Contains(RAIDER2));
+}
+
+TEST("alive again: the host's kill undone by a save from before it after its game and the server restart")
+{
+	const TempSessionFile file;
+	auto                  options = HostedOptions();
+	options.sessionFile = file.path.string();
+	{
+		Fixture f{ options };
+		Game    host{ f, 1, "Host", true };
+		Game    bob{ f, 2, "Bob" };
+		host.Apart(bob);
+		host.Loads(RAIDER, true, Clock::now());
+		host.Loads(RAIDER2, true, Clock::now());
+		host.Kills(RAIDER);
+		bob.Kills(RAIDER2);
+		host.Pump();
+		bob.Pump();
+	}  // the host quits without saving its game: stopping saves the session
+
+	Fixture f{ options };
+	Game    host{ f, 1, "Host", true };  // its save from before both kills
+	Game    bob{ f, 2, "Bob" };
+	CHECK(!host.deaths.Contains(RAIDER));
+	CHECK(host.deaths.Contains(RAIDER2));
+	CHECK(bob.deaths.Contains(RAIDER));
+	host.Loads(RAIDER, true, Clock::now());
+	f.Advance(GRACE + 50ms);
+	REQUIRE(host.Scan(RAIDER, Clock::now()));
+	CHECK(HasOwner(Owners(bob.Pump()), RAIDER, host.id));
+	CHECK(!bob.deaths.Contains(RAIDER));
 }
 
 // --- essential NPCs taken for dead ------------------------------------------------------------

@@ -2402,6 +2402,383 @@ namespace
 	}
 }
 
+// The host's save is the truth about its own kills: the world state sent to the host's game leaves out the deaths that game
+// reported (Server's hostDeaths), as no player gets their own pickups. A save of the host's from before the kill has the NPC
+// alive, and its offer to run it brings it back for everyone; a friend's kill still goes to the host's game.
+namespace
+{
+	// Whether the world state in a_packets lists a_ref dead.
+	bool ListsDead(const Packets& a_packets, std::uint32_t a_ref)
+	{
+		return std::ranges::any_of(WorldStates(a_packets), [&](const Protocol::WorldState& a_state) { return std::ranges::contains(a_state.deadActors, a_ref); });
+	}
+
+	// Whether a_packets tell a_ref's death one by one (with where it fell, ahead of the world state, or relayed).
+	bool ToldDeath(const Packets& a_packets, std::uint32_t a_ref)
+	{
+		return std::ranges::any_of(Decoded(a_packets, MT::kActorDied, Protocol::DecodeActorDeath), [&](const Protocol::ActorDeath& a_death) { return a_death.refId == a_ref; });
+	}
+
+	std::vector<std::uint8_t> LoadRequest()
+	{
+		return Protocol::Encode(Protocol::WorldRequest{ 0, 0, Protocol::WorldRequest::kLoad });
+	}
+
+	// Far enough from the host (outdoors, at the origin) that a friend's game doesn't have what dies there loaded.
+	constexpr float FAR_AWAY = 100000.0f;
+}
+
+TEST("server world: the host's game isn't sent its own deaths after a load or a rejoin; friends' games are, and a friend's death goes to the host's game")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->SetLocal(4);
+	JoinAs(f, 4, "Bot", 0x2222);  // on the server's machine, but not the host's game
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));  // nobody else near: what the host's game kills is its world's own
+	f.fake->Deliver(4, StateAt(1, -FAR_AWAY, 0.0f));
+	Clear(f, { 1, 2, 4 });
+
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));  // the host kills one, its corpse at a known place
+	f.fake->Deliver(1, FoundDeadReport(NPC3));       // and finds one dead in its world
+	f.fake->Deliver(2, DeathAt(NPC2, true, 50.0f));  // Bob kills another
+	f.fake->Deliver(1, FoundDeadReport(NPC2));       // the host's game finding Bob's kill dead later doesn't make it the host's
+	f.fake->Deliver(2, Death(NPC));                  // nor Bob's report of the host's kill make it Bob's
+	Clear(f, { 1, 2, 4 });
+
+	// The host loads a save: Bob's kill, not its own, neither in the list nor ahead of it with a place.
+	f.fake->Deliver(1, LoadRequest());
+	auto toHost = Received(f, 1);
+	REQUIRE(!WorldStates(toHost).empty());
+	CHECK(ListsDead(toHost, NPC2));
+	CHECK(ToldDeath(toHost, NPC2));
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(!ToldDeath(toHost, NPC));
+	CHECK(!ListsDead(toHost, NPC3));
+
+	// Bob loads a save: all three.
+	f.fake->Deliver(2, LoadRequest());
+	const auto toBob = Received(f, 2);
+	CHECK(ListsDead(toBob, NPC));
+	CHECK(ToldDeath(toBob, NPC));
+	CHECK(ListsDead(toBob, NPC2));
+	CHECK(ListsDead(toBob, NPC3));
+	// So does another game on the host's machine, and a newcomer.
+	f.fake->Deliver(4, LoadRequest());
+	const auto toBot = Received(f, 4);
+	CHECK(ListsDead(toBot, NPC));
+	CHECK(ListsDead(toBot, NPC3));
+	JoinAs(f, 3, "Carol", 0xCA7);
+	const auto toCarol = Received(f, 3);
+	CHECK(ListsDead(toCarol, NPC));
+	CHECK(ListsDead(toCarol, NPC2));
+	CHECK(ListsDead(toCarol, NPC3));
+
+	// The host's game drops out and comes back on a new connection: the same.
+	f.fake->Drop(1);
+	f.fake->SetLocal(5);
+	REQUIRE(f.Join(5, Fixture::MakeHello("Host", HOST_IDENTITY)));
+	toHost = Received(f, 5);
+	REQUIRE(!WorldStates(toHost).empty());
+	CHECK(ListsDead(toHost, NPC2));
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(!ListsDead(toHost, NPC3));
+}
+
+TEST("server world: the host's game offering its own kill alive again, from a save before it, brings it back for everyone; a friend's kill stays")
+{
+	auto options = HostedOptions();
+	options.aliveAgainGrace = 300s;  // long, so a busy PC can't end it early; Fixture::Advance crosses it
+	Fixture    f{ options };
+	const auto host = JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	f.fake->Deliver(2, DeathAt(NPC2, true, FAR_AWAY + 50.0f));
+	CHECK(ToldDeath(Received(f, 2), NPC));
+	CHECK(ToldDeath(Received(f, 1), NPC2));
+	f.Advance(300s + 50ms);
+
+	// The host quickloads a save from before its kill. Its game, told nothing of it, offers the raider it has alive: not
+	// believed while its world may still be catching up...
+	f.fake->Deliver(1, LoadRequest());
+	const auto toHost = Received(f, 1);
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(ListsDead(toHost, NPC2));
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(Owners(Received(f, 1)).empty());
+	CHECK(!f.Logged("alive again"));
+
+	// ...then, a grace after its request, it is the host's world's own: alive again for everyone, run by the host's game.
+	f.Advance(300s + 50ms);
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, host));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, host));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", NPC)));
+	f.fake->Deliver(2, LoadRequest());
+	const auto toBob = Received(f, 2);
+	CHECK(!ListsDead(toBob, NPC));
+	CHECK(!ToldDeath(toBob, NPC));
+	CHECK(ListsDead(toBob, NPC2));
+	JoinAs(f, 3, "Carol", 0xCA7);
+	CHECK(!ListsDead(Received(f, 3), NPC));
+
+	// It can die again, and this time Bob kills it: his kill goes to the host's game, after a load too.
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	f.fake->Deliver(2, Death(NPC));
+	CHECK(ToldDeath(Received(f, 1), NPC));
+	f.fake->Deliver(1, LoadRequest());
+	CHECK(ListsDead(Received(f, 1), NPC));
+}
+
+TEST("server world: the host's own deaths stay its own after the server restarts, whatever player id its game has then; an older file's go to it")
+{
+	const TempSessionFile file;
+	auto                  options = HostedOptions();
+	options.sessionFile = file.path.string();
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		JoinAs(f, 2, "Bob", 0xB0B);
+		f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+		f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+		f.fake->Deliver(2, Death(NPC2));
+		Clear(f, { 1, 2 });
+	}  // stopping saves
+	auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->hostDeaths == std::vector<std::uint32_t>{ NPC });
+	CHECK(saved->deadActors.size() == 2);
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		const auto toHost = Received(f, 1);
+		CHECK(!ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+		CHECK(f.Logged("2 dead (1 by the host's game)"));
+		JoinAs(f, 2, "Bob", 0xB0B);
+		CHECK(ListsDead(Received(f, 2), NPC));
+	}
+
+	// The host's game under another player id (its identity unknown to the file): still the host's game.
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	saved->identities.clear();
+	saved->nextId = 7;
+	REQUIRE(SessionFile::Save(file.path, *saved));
+	{
+		Fixture    f{ options };
+		const auto host = JoinAsHost(f, 1);
+		CHECK(host == 7);
+		const auto toHost = Received(f, 1);
+		CHECK(!ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+	}
+
+	// A file before layout 44 knows no reporter: its deaths go to the host's game as they did, and the host's kills since
+	// are its own.
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	saved->hostDeaths.clear();
+	REQUIRE(SessionFile::Save(file.path, *saved));
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		const auto toHost = Received(f, 1);
+		CHECK(ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+		f.fake->Deliver(1, Death(NPC3));
+		f.fake->Deliver(1, LoadRequest());
+		const auto again = Received(f, 1);
+		CHECK(ListsDead(again, NPC));
+		CHECK(!ListsDead(again, NPC3));
+	}
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->hostDeaths == std::vector<std::uint32_t>{ NPC3 });
+}
+
+TEST("server world: a host's kill a friend may have seen is a shared event, replayed to the host's game after a load as before")
+{
+	constexpr std::uint32_t VAULT = 0x0001A001;  // an interior cell
+	constexpr std::uint32_t OTHER_VAULT = 0x0001A002;
+	constexpr std::uint32_t NPC4 = 0x0001F004;
+	constexpr std::uint32_t NPC5 = 0x0001F005;
+	auto                    options = HostedOptions();
+	options.aliveAgainGrace = 300s;
+	Fixture f{ options };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 2000.0f, 0.0f));  // beside the host outdoors: the raiders are loaded in his game too
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	f.fake->Deliver(1, FoundDeadReport(NPC2));  // found dead with no place: where the host stands counts
+	Clear(f, { 1, 2 });
+
+	// The host bleeds out mid-fight and its game loads the newest save, from before the fight: both deaths are told again,
+	// so its game kills its copies and both games agree.
+	f.Advance(300s + 50ms);
+	f.fake->Deliver(1, LoadRequest());
+	auto toHost = Received(f, 1);
+	CHECK(ListsDead(toHost, NPC));
+	CHECK(ToldDeath(toHost, NPC));
+	CHECK(ListsDead(toHost, NPC2));
+
+	// Indoors, anywhere in the same cell is near; another cell is not, however close its numbers.
+	f.fake->Deliver(1, StateAt(2, 0.0f, 0.0f, 0.0f, VAULT));
+	f.fake->Deliver(2, StateAt(2, 50000.0f, 0.0f, 0.0f, VAULT));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC3, true, 10.0f));
+	f.fake->Deliver(2, StateAt(3, 10.0f, 0.0f, 0.0f, OTHER_VAULT));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC4, true, 10.0f));
+	// Outdoors, a friend far from where it fell but near the host is not near the death.
+	f.fake->Deliver(1, StateAt(3, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(4, -4000.0f, 0.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC5, true, 9000.0f));
+	f.fake->Deliver(1, LoadRequest());
+	toHost = Received(f, 1);
+	CHECK(ListsDead(toHost, NPC3));
+	CHECK(!ListsDead(toHost, NPC4));
+	CHECK(!ListsDead(toHost, NPC5));
+}
+
+TEST("server world: a friend whose game hasn't said where it is counts as near; with no friend here the host's kill is its own")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	JoinAs(f, 2, "Bob", 0xB0B);  // no state yet
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Drop(2);
+	Clear(f, { 1 });
+	f.fake->Deliver(1, DeathAt(NPC2, true, 100.0f));  // alone now
+	f.fake->Deliver(1, LoadRequest());
+	const auto toHost = Received(f, 1);
+	CHECK(ListsDead(toHost, NPC));
+	CHECK(!ListsDead(toHost, NPC2));
+}
+
+TEST("server world: the host's kill of an NPC a far friend's game runs, believed as it fought it, is its own; with the friend near it is shared")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));  // alive in Bob's game, which runs them
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));  // the host hits it: a takeover, refused, and the fight noted
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	CHECK(ToldDeath(Received(f, 2), NPC));  // believed
+	f.fake->Deliver(2, StateAt(2, 500.0f, 0.0f));  // Bob comes over
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Claim(NPC2, Reason::kInteract));
+	f.fake->Deliver(1, DeathAt(NPC2, true, 100.0f));
+	CHECK(ToldDeath(Received(f, 2), NPC2));
+
+	f.fake->Deliver(1, LoadRequest());
+	const auto toHost = Received(f, 1);
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(ListsDead(toHost, NPC2));
+}
+
+TEST("server world: an essential NPC the host's world killed comes back when the host's game, from a save before it, offers it")
+{
+	auto options = HostedOptions();
+	options.aliveAgainGrace = 300s;
+	Fixture    f{ options };
+	const auto host = JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));  // a quest's script kills it in the host's game
+	f.fake->Deliver(2, DeathAt(NPC2, true, FAR_AWAY));
+	Clear(f, { 1, 2 });
+	f.Advance(300s + 50ms);
+	f.fake->Deliver(1, LoadRequest());
+	Clear(f, { 1 });
+	f.Advance(300s + 50ms);
+
+	// Its game, never told, has it alive and essential: its offer is the revival, as for any other.
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned, true } }));
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, host));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", NPC)));
+	// Bob's kill of one it keeps essential is no such thing: it stays dead (the host's game holds that death).
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC2, Reason::kUnowned, true } }));
+	CHECK(!HasOwner(Owners(Received(f, 2)), NPC2, host));
+	JoinAs(f, 3, "Carol", 0xCA7);
+	const auto toCarol = Received(f, 3);
+	CHECK(!ListsDead(toCarol, NPC));
+	CHECK(ListsDead(toCarol, NPC2));
+}
+
+TEST("server world: a saved host's death no longer dead is dropped at load, and a new session for another load order has none")
+{
+	const TempSessionFile file;
+	auto                  options = HostedOptions();
+	options.sessionFile = file.path.string();
+	SessionFile::Snapshot snapshot;
+	snapshot.contentHash = 0x1234;  // Fixture::MakeHello's
+	snapshot.sessionId = 0x5E55;
+	snapshot.nextId = 2;
+	snapshot.identities = { { HOST_IDENTITY, 1 } };
+	snapshot.deadActors = { NPC, NPC2 };
+	snapshot.hostDeaths = { NPC, NPC3 };  // NPC3 isn't dead in the file
+	REQUIRE(SessionFile::Save(file.path, snapshot));
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		const auto toHost = Received(f, 1);
+		CHECK(f.Logged("2 dead (1 by the host's game)"));
+		CHECK(!ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+	}
+	auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->hostDeaths == std::vector<std::uint32_t>{ NPC });
+	CHECK((saved->deadActors == std::vector<std::uint32_t>{ NPC, NPC2 }));  // sorted: the same session, the same file
+
+	// Another load order: a new session, with nothing of the old one's deaths.
+	{
+		Fixture f{ options };
+		auto    hello = Fixture::MakeHello("Host", HOST_IDENTITY);
+		hello.contentHash = 0x9999;
+		f.fake->SetLocal(1);
+		REQUIRE(f.Join(1, hello));
+		CHECK(f.Logged("starting a new session"));
+		f.fake->Deliver(1, LoadRequest());
+		CHECK(!ListsDead(Received(f, 1), NPC2));
+	}
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->deadActors.empty());
+	CHECK(saved->hostDeaths.empty());
+}
+
+TEST("server world: on a dedicated server no game is the host's: every death goes to every game, the player here longest's too")
+{
+	Fixture f;  // no host's identity
+	JoinAs(f, 1, "Alice", 0xA11CE);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, LoadRequest());
+	CHECK(ListsDead(Received(f, 1), NPC));
+}
+
 TEST("server trust: the host's game is believed about an NPC dead in its save that another player runs")
 {
 	Fixture    f{ HostedOptions() };
