@@ -34,7 +34,9 @@ namespace MuzzleFlash
 	// game's legendaries does (Wounding, Instigating and the like are plain effects; Explosive swaps the projectile for
 	// one that names its explosion, GunProjectile), so a legendary's shot is held only when its projectile goes off.
 	[[nodiscard]] bool GunEnchantmentExplodes(RE::Actor* a_actor);
-	// Whether the gun the actor holds carries any enchantment at all (a legendary's effect: Wounding, Freezing, Poisoner's).
+	// Whether the gun the actor holds carries an enchantment that lands on what its shot hits (AttackKind::EnchantmentOnHit:
+	// a legendary's Wounding, Freezing, Poisoner's). One that acts only on the one holding it (an armor-piercing receiver,
+	// a recon scope) does not count.
 	[[nodiscard]] bool GunEnchanted(RE::Actor* a_actor);
 	// Makes the actor's equipped gun able to fire a_rounds: ammunition it takes given when it has none (a stand-in has its
 	// player's gun, not their ammunition), and the gun loaded when empty (ammunition given after the gun was equipped is

@@ -1,4 +1,5 @@
 #include "game/MuzzleFlash.h"
+#include "game/AttackKind.h"
 
 #include "game/MuzzleFlashBook.h"
 
@@ -328,7 +329,7 @@ namespace MuzzleFlash
 			return false;
 		}
 		for (const auto enchantment : *instance->enchantments) {
-			if (enchantment) {
+			if (enchantment && AttackKind::EnchantmentOnHit(enchantment->data.castingType.underlying(), enchantment->data.delivery.underlying())) {
 				return true;
 			}
 		}

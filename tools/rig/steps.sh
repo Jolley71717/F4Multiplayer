@@ -544,11 +544,13 @@ _trail_burst() {
 	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
 	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
 	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
-	# A shot held for its gun (trailsHeldGun: the gun carries an enchantment) is by design (AttackKind::ShotReplay): the shooter is
-	# holding a legendary copy the save gave it, which even the removeitem above has not always taken away (2026-11-08,
-	# the host's 10mm, 12 mods). That measures the save, not the build: a rig fault, and the trail checks are not made.
+	# A shot held for its gun (trailsHeldGun: an enchantment of the gun lands on a hit) is by design (AttackKind::ShotReplay,
+	# EnchantmentOnHit): `additem` rolls the gun's object template, and the laser rolls a fire-setting receiver at times.
+	# That measures the roll, not the build: a rig fault, and the trail checks are not made. (The 10mm's rolls of this kind,
+	# 0.15.0 to 0.16.0-rc1, "12 mods": an armor-piercing automatic receiver, a constant effect on the wielder, which
+	# builds up to 0.16.0 held too; not a legendary, and not a copy removeitem left behind.)
 	if [ "$mode" = on ] && [ "$((a[10] - b[10]))" -gt 0 ]; then
-		rig_fault state "$label: the shooter's gun is a plain one" "$((a[10] - b[10])) of $shots shot(s) held for the gun in the watcher's game (trailsHeldGun): the shooter holds an enchanted copy"
+		rig_fault state "$label: the shooter's gun has no on-hit enchantment" "$((a[10] - b[10])) of $shots shot(s) held for the gun in the watcher's game (trailsHeldGun): the shooter's rolled copy carries one"
 		return
 	fi
 	if [ "$mode" = on ]; then
@@ -570,9 +572,9 @@ step_trails() {
 	enter_both SanctuaryExt 14
 	crash_snapshot
 	place host -80650 89300 7784 270; place vm -80350 89300 7784 90   # 300 u apart, each facing away from the other
-	# Each player's own copies of the two guns go first: a legendary one picked up in play (a Two Shot 10mm, 2026-11-08)
-	# is what `equipitem` takes, and a gun with any enchantment is held by design (AttackKind::ShotReplay), so its shots
-	# launched no trail and the step measured the save, not the build. A plain copy of each is then given.
+	# Each player's own copies of the two guns go first, so `equipitem` takes the one given here: a copy picked up in play
+	# may carry a legendary whose effect lands on a hit, held by design (AttackKind::ShotReplay), and the step would
+	# measure the save, not the build. A fresh copy of each is then given (its object template rolled, as any `additem`).
 	for who in host vm; do
 		for gun in "$TRAIL_PISTOL" "$TRAIL_LASER"; do _tr_strip "$who" "$gun"; done
 		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
