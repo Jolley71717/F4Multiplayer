@@ -504,8 +504,8 @@ step_grenades() {
 TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
 TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
 T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
-# _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots trailTracers puppetHits", one `net status`
-_tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots) $(field "$s" trailTracers) $(field "$s" puppetHits)"; }
+# _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots trailTracers puppetHits trailsHeldGun", one `net status`
+_tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots) $(field "$s" trailTracers) $(field "$s" puppetHits) $(field "$s" trailsHeldGun)"; }
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
 # _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
 # on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
@@ -521,7 +521,7 @@ _trail_burst() {
 	a=($(_tr_snap "$watcher")); s1=$(field "$(dc "$shooter" 'net status')" shots)
 	dc "$watcher" "trails on" >/dev/null
 	for v in "${b[@]}" "${a[@]}" "$s0" "$s1"; do is_int "$v" || ok=0; done
-	[ ${#b[@]} = 10 ] && [ ${#a[@]} = 10 ] || ok=0
+	[ ${#b[@]} = 11 ] && [ ${#a[@]} = 11 ] || ok=0
 	[ $ok = 1 ] || { fail "$label: counters read" "before '${b[*]}' after '${a[*]}' shooter's shots '$s0' '$s1'"; return; }
 	shots=$((s1 - s0))
 	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
@@ -529,6 +529,13 @@ _trail_burst() {
 	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
 	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
 	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
+	# A shot held for its gun (trailsHeldGun: the gun carries an enchantment) is by design (AttackKind::ShotReplay): the shooter is
+	# holding a legendary copy the save gave it, which even the removeitem above has not always taken away (2026-11-08,
+	# the host's 10mm, 12 mods). That measures the save, not the build: a rig fault, and the trail checks are not made.
+	if [ "$mode" = on ] && [ "$((a[10] - b[10]))" -gt 0 ]; then
+		rig_fault state "$label: the shooter's gun is a plain one" "$((a[10] - b[10])) of $shots shot(s) held for the gun in the watcher's game (trailsHeldGun): the shooter holds an enchanted copy"
+		return
+	fi
 	if [ "$mode" = on ]; then
 		expect_ge "$label: trails launched inert in the watcher's game (of $shots shots)" "$((a[2] - b[2]))" "$need"
 		expect_ge "$label: firesInert rose with them" "$((a[0] - b[0]))" "$need"
