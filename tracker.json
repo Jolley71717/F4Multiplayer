@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T06:00:30+00:00",
+ "updated": "2026-11-09T07:14:58+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1307,8 +1307,8 @@
    "title": "A stale equipped flag re-dresses a friend's stand-in after a gun switch; about 9 s of shots don't show",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Fix reviewed; rig test next"
+   "stage": 6,
+   "note": "In 0.15.1-rc2; soaking"
   },
   {
    "id": "krne",
