@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T09:59:45+00:00",
+ "updated": "2026-11-09T16:52:04+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -271,8 +271,8 @@
    "title": "Reloading a save from before an NPC's death: the session file kills the NPC again on every load",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Merged for 0.16.0 (PR 347); rig items 1-5 pass",
+   "stage": 6,
+   "note": "In the 0.16.0-rc1 test build",
    "pr": 347
   },
   {
@@ -873,8 +873,8 @@
    "title": "Radiant clear-out quests: enemies at an already-cleared location die the moment you enter",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged for 0.16.0 (PR 347); rig items 1-5 pass",
+   "stage": 6,
+   "note": "In the 0.16.0-rc1 test build",
    "pr": 347
   },
   {
@@ -993,8 +993,8 @@
    "title": "Random encounters that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) show in one player's game only",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged to main (PR 337) for 0.15.0",
+   "stage": 6,
+   "note": "In the 0.16.0-rc1 test build",
    "pr": 337
   },
   {
@@ -1324,8 +1324,8 @@
    "title": "Calm encounters: stopping a double-rolled run leaves its actors alive",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Merged to main (PR 337) for 0.15.0",
+   "stage": 6,
+   "note": "In the 0.16.0-rc1 test build",
    "pr": 337
   },
   {
@@ -1867,8 +1867,8 @@
    "title": "Calm encounters: the first line of a scene is lost when it arrives just before the copy is placed",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged to main for 0.15.0",
+   "stage": 6,
+   "note": "In the 0.16.0-rc1 test build",
    "pr": 343
   },
   {
@@ -2092,8 +2092,8 @@
    "title": "Calm encounters: an ended encounter's leftover actor still counts as running",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Merged to main (PR 337) for 0.15.0",
+   "stage": 6,
+   "note": "In the 0.16.0-rc1 test build",
    "pr": 337
   },
   {
