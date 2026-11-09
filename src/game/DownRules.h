@@ -147,6 +147,7 @@ namespace DownRules
 	struct Camera
 	{
 		static constexpr int FIRST_PERSON = 0;
+		static constexpr int VATS = 2;  // VATS, and the camera the player's death plays in
 		static constexpr int TRANSITION = 5;
 		static constexpr int TWEEN = 6;
 		static constexpr int THIRD_PERSON = 8;
@@ -166,20 +167,39 @@ namespace DownRules
 			return View(transitionTo) ? transitionTo : a_down ? BLEEDOUT : a_lastView;
 		}
 
+		// What the engine's push of the current state onto the return stack (1.11.240: +102BCC0, which every start of a
+		// camera state over the current one calls: the bleed-out camera's, VATS's and the others, Downed.cpp's PUSH_SITES)
+		// keeps for a_current, the state pushed, with the transition state going to a_transitionTo. The engine pushes the
+		// transition state itself when the camera is in one, and an end that goes back by a transition to what it pops (the
+		// bleed-out camera's) then makes a transition to itself, which never ends: the loop below. Downed.cpp's hook on the
+		// push keeps where the transition goes instead, when that is the first or the third person: the start's switch to
+		// its own state is about to cut the transition short anyway (TESCamera's SetState ends it), and the way back then
+		// goes to the view it was heading for. Only those two: a transition going anywhere else is pushed as the engine
+		// would (the net undoes a loop it makes). The animated camera's start (+1028720) points the transition at the
+		// animated camera before it pushes, so keeping the target there would put the animated camera itself on the stack,
+		// which nothing looks for, and the way back could go into it and stay; VATS, the furniture, the dialogue, the iron
+		// sights or the tween as a way back are no better. Anything else pushed is unchanged.
+		[[nodiscard]] static constexpr int Pushed(int a_current, int a_transitionTo)
+		{
+			return a_current == TRANSITION && (a_transitionTo == FIRST_PERSON || a_transitionTo == THIRD_PERSON) ? a_transitionTo : a_current;
+		}
+
 		// The way back loops on the transition: a start made while a transition ran pushed the transition state itself, and
-		// the end after it makes a transition to itself, which never ends (DownRules::Self's fixCamera).
+		// the end after it makes a transition to itself, which never ends (DownRules::Self's fixCamera; with Downed.cpp's
+		// hook on the push, see Pushed, only a push the hook could not make right).
 		[[nodiscard]] bool Loops() const
 		{
 			return (current == TRANSITION && transitionTo == TRANSITION) || std::ranges::find(returns, TRANSITION) != returns.end();
 		}
 
-		// That loop undone: the transition on the return stack is where it was going (the view the last down left), or
-		// a_lastView when that is no view; a current transition to itself goes to a_lastView, as its time runs out. One to
-		// the bleed-out camera is no loop: a down begun in a tween goes there, and its end is FinishDown's.
+		// That loop undone: the transition on the return stack is where it was going when that is the first or the third
+		// person (the view the last down left), otherwise a_lastView (the animated camera's start points the transition at
+		// itself, which is no way back: see Pushed); a current transition to itself goes to a_lastView, as its time runs out.
+		// One to the bleed-out camera is no loop: a down begun in a tween goes there, and its end is FinishDown's.
 		[[nodiscard]] Camera Unlooped(int a_lastView) const
 		{
 			Camera     fixed = *this;
-			const int  view = View(transitionTo) ? transitionTo : a_lastView;
+			const int  view = transitionTo == FIRST_PERSON || transitionTo == THIRD_PERSON ? transitionTo : a_lastView;
 			std::ranges::replace(fixed.returns, TRANSITION, view);
 			if (current == TRANSITION && transitionTo == TRANSITION) {
 				fixed.transitionTo = a_lastView;
@@ -285,6 +305,14 @@ namespace DownRules
 	// and again every STRAY_RETRY while it is still seen. Last, whatever the cause: the camera's transition state on for
 	// TRANSITION_STUCK while the game runs (the game's own last half a second or one at most, and a loop restarts it for good)
 	// is ended there (endTransition), again every TRANSITION_RETRY while it is still on.
+	//
+	// The loop itself is the engine's: every start of a camera state over the current one pushes the current state on the
+	// return stack, the transition state included (only the tween is special-cased), so any start in the half second of a
+	// help-up's way back (downed again at once, a knock-down's ragdoll) or of a bleed-out's (the death camera, which is
+	// VATS's, as the kill ends the down) pushed the transition. Downed.cpp hooks that push and keeps where the transition goes
+	// instead (Camera::Pushed): the soak's downs at once on each help-up and every death made one before (0.16.0's soak: 9
+	// fixes on the downs, one per death). fixCamera, finishDown and endTransition stay as the net under it, for a push the
+	// hook is not on (another plugin's patch at one of its calls) and whatever else may leave a loop.
 	class Self
 	{
 	public:

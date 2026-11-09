@@ -355,6 +355,24 @@ if ($null -ne $cameraStart) {
 if ($null -ne $transitionSetUp) {
 	Report ((HexMatches (BytesAt ($transitionSetUp + 0x45) 4) '48 89 43 38') -and (HexMatches (BytesAt ($transitionSetUp + 0x77) 4) '48 89 43 40')) 'the camera transition''s set-up keeps its states at +0x38 (from) and +0x40 (to)'
 }
+# The player camera's push of a state onto its return stack (Downed.cpp's PushHook, DownRules::Camera::Pushed): the
+# return stack's push (+102BCC0) and the ten calls to it Downed::Install hooks, each in the camera's code pushing its
+# current state (+28) on its return stack (+68). The plugin checks each call itself at load and hooks those that match.
+$cameraPush = Resolve 2248443
+Report ($cameraPush -eq 0x102BCC0) ('the camera''s push 2248443 is +{0:X}' -f $cameraPush)
+if ($null -ne $cameraPush) {
+	foreach ($site in @(@(2248345, 0x44), @(2248360, 0xAD), @(2248365, 0xDD), @(2248370, 0x5E), @(2248373, 0xBC), @(2248380, 0x53), @(2248411, 0x4BF), @(2248411, 0x51E),
+			@(2248422, 0x4A), @(2248423, 0x1F))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('camera push site {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $cameraPush) ('{0}+0x{1:X} (+{2:X}) calls the camera''s push' -f $site[0], $site[1], $at)
+	}
+}
 # The camera's SetState (Downed.cpp EndTransition): the current state (+28) told its End (vtable +50), then the new one
 # stored there, as a transition's own end does it.
 $setState = Resolve 2214742

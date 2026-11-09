@@ -10,8 +10,13 @@
 #include "game/OpenMenus.h"
 #include "game/RemotePlayers.h"
 #include "game/SneakKey.h"
+#include "game/TextureFlush.h"
 #include "game/WorldSync.h"
 #include "Text.h"
+
+#include <array>
+#include <atomic>
+#include <cstring>
 
 namespace Downed
 {
@@ -218,6 +223,60 @@ namespace Downed
 				return true;
 			}
 			return std::ranges::any_of(camera->tempReturnStates, [&](const auto& a_state) { return a_state.get() == transition; });
+		}
+
+		// The engine's push of a state onto the player camera's return stack (1.11.240: +102BCC0, ID 2248443): the return
+		// stack's push of a smart pointer (taking a reference), which answers the slot. Every start of a camera state over
+		// the current one pushes the current state with it, then switches to its own (DownRules::Camera::Pushed).
+		using PushFn = std::uint32_t (*)(void*, const RE::BSTSmartPointer<RE::TESCameraState>*);
+		constexpr REL::ID     CAMERA_PUSH{ 2248443 };
+		constexpr std::size_t CALL_STUB = 14;  // what a write_call<5> takes of the trampoline (the ten calls share it)
+
+		// Each call to the push in 1.11.240 (every E8 call and E9 jump to it in the game's code was looked for: these ten,
+		// all in the player camera's own code, each pushing its current state, +28, on its return stack, +68): the function
+		// it is in and its offset there. tools/addrcheck.ps1 checks them.
+		struct PushSite
+		{
+			REL::ID        function;
+			std::uintptr_t offset;
+		};
+		constexpr std::array<PushSite, 10> PUSH_SITES{ {
+			{ REL::ID{ 2248345 }, 0x44 },   // +1026C80: a start of the third-person camera (+1026CC4)
+			{ REL::ID{ 2248360 }, 0xAD },   // +10273D0: VATS's camera, which a death plays in too (+102747D)
+			{ REL::ID{ 2248365 }, 0xDD },   // +10275B0: VATS's camera, the other start (+102768D)
+			{ REL::ID{ 2248370 }, 0x5E },   // +1027AB0: the iron sights (+1027B0E)
+			{ REL::ID{ 2248373 }, 0xBC },   // +1027C20: another start of the third-person camera (+1027CDC)
+			{ REL::ID{ 2248380 }, 0x53 },   // +1028580: the bleed-out camera's, a down's or a knock-down's ragdoll's (+10285D3)
+			{ REL::ID{ 2248411 }, 0x4BF },  // +102A520: the camera's save, its restore after writing (in the auto vanity or the tween) (+102A9DF)
+			{ REL::ID{ 2248411 }, 0x51E },  // +102A520: the camera's save, the restore's other path (+102AA3E)
+			{ REL::ID{ 2248422 }, 0x4A },   // +102B630: a start of any state by its number (+102B67A)
+			{ REL::ID{ 2248423 }, 0x1F },   // +102B6A0: the same without ending the current one (+102B6BF)
+		} };
+
+		PushFn                     originalPush = nullptr;
+		std::atomic<std::uint32_t> pushSites{ 0 };   // calls hooked (Install)
+		std::atomic<std::uint32_t> pushesKept{ 0 };  // transitions pushed as where they go
+
+		// The push, as the engine asks it: the player camera's transition state pushed on its return stack goes as where
+		// it goes (DownRules::Camera::Pushed), anything else as asked. The camera's own code runs on the main thread; nothing
+		// here may throw.
+		std::uint32_t PushHook(void* a_stack, const RE::BSTSmartPointer<RE::TESCameraState>* a_state)
+		{
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const auto transition = camera ? camera->cameraStates[RE::CameraStates::kPCTransition].get() : nullptr;
+			if (transition && a_state && a_state->get() == transition && a_stack == static_cast<void*>(&camera->tempReturnStates)) {
+				const int to = StateNumber(camera, TransitionTarget(transition).get());
+				const int kept = DownRules::Camera::Pushed(DownRules::Camera::TRANSITION, to);
+				if (kept != DownRules::Camera::TRANSITION && kept >= 0 && kept < RE::CameraStates::kTotal && camera->cameraStates[kept]) {
+					const RE::BSTSmartPointer<RE::TESCameraState> view = camera->cameraStates[kept];
+					const auto                                    n = pushesKept.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (n <= 10 || n % 100 == 0) {
+						REX::INFO("Downed: a camera state started in the camera's transition; its way back is the view the transition went to, {} ({} so far)", kept, n);
+					}
+					return originalPush(a_stack, &view);
+				}
+			}
+			return originalPush(a_stack, a_state);
 		}
 
 		// The player camera in its transition state.
@@ -727,6 +786,37 @@ namespace Downed
 		}
 	}
 
+	bool Install()
+	{
+		if (pushSites.load() != 0) {
+			return true;
+		}
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < CALL_STUB) {
+			REX::WARN("Downed: no room for the camera's push hook ({} bytes free); a down started in the camera's way back is undone after it", trampoline.free_size());
+			return false;
+		}
+		// Each call where 1.11.240 has it: one another plugin patched is left to it (the way back's net still undoes a
+		// loop), the rest are hooked. Each is whole on its own: the hook changes only what that call pushes.
+		const auto push = CAMERA_PUSH.address();
+		originalPush = reinterpret_cast<PushFn>(push);
+		std::uint32_t hooked = 0;
+		for (const auto& site : PUSH_SITES) {
+			const auto                  at = site.function.address() + site.offset;
+			std::array<std::uint8_t, 5> bytes{};
+			std::memcpy(bytes.data(), reinterpret_cast<const void*>(at), bytes.size());
+			if (TextureFlush::CallTarget(bytes, at) != push) {
+				REX::WARN("Downed: the camera's push at +{:X} is not the call 1.11.240 has there (another plugin's patch?); left alone", site.function.offset() + site.offset);
+				continue;
+			}
+			trampoline.write_call<5>(at, &PushHook);
+			++hooked;
+		}
+		pushSites = hooked;
+		REX::INFO("Downed: the camera's push (+{:X}) keeps where a transition goes, not the transition, at {} of its {} calls", CAMERA_PUSH.offset(), hooked, PUSH_SITES.size());
+		return hooked != 0;
+	}
+
 	void Frame(bool a_withFriends)
 	{
 		const auto player = Player();
@@ -920,8 +1010,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} strayEnds={} cameraFixes={} transitionEnds={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {} | {}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, self.downFinishes, self.strayEnds, self.cameraFixes, self.transitionEnds, helper.helped,
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} strayEnds={} cameraFixes={} transitionEnds={} pushesKept={} pushSites={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {} | {}",
+			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, self.downFinishes, self.strayEnds, self.cameraFixes, self.transitionEnds, pushesKept.load(std::memory_order_relaxed), pushSites.load(std::memory_order_relaxed), helper.helped,
 			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
 			crawl.distance, InputFacts(), CameraFacts(Player()));
 	}

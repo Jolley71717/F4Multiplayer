@@ -1509,7 +1509,8 @@ step_downed() {
 # get-up), half a second on, or 0.3 s after a grenade's explosion at their feet (which on the rig does not knock the player over), and
 # one round takes a second hit while still down. Asserted after the last help-up: the camera a first- or third-person view (not a
 # transition or the bleed-out camera), still so a few seconds on, alive; the camera near the player (dev `rules`: away, where the build
-# has it) before and after the down player walks off; the Pip-Boy opens and closes. The log's camera fixes are counted, never failed.
+# has it) before and after the down player walks off; the Pip-Boy opens and closes; no loop of the camera's way back in the log (the
+# camera's push keeps the view, Downed::Install). The log's other camera fixes are counted, never failed.
 _view() { local c; c=$(dc "$1" controls); echo "camera=$(grep -oE 'camera=[0-9-]+' <<<"$c" | cut -d= -f2) life=$(grep -oE 'life=[0-9]+' <<<"$c" | cut -d= -f2)"; }
 _away() { dc "$1" rules | grep -oE 'away [0-9?]+' | tail -1 | cut -d' ' -f2; }
 step_downed_repeat() {
@@ -1548,7 +1549,8 @@ step_downed_repeat() {
 	f=$(win_read rep "$down")
 	if [ -s "$f" ]; then
 		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($down): its log has the help-ups" "$n" "$rounds"
-		pass "repeat ($down): camera fixes in its log (counted only)" "loops $(grep -c "looped" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
+		n=$(grep -c "way back looped" "$f"); expect_zero "repeat ($down): the camera's way back never looped (the push keeps the view)" "$n"
+		pass "repeat ($down): other camera fixes in its log (counted only)" "pushes kept $(grep -c "its way back is the view" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
 	else fail "repeat ($down): its log window read" "no new lines"; fi
 	walk "$down" "repeat: set-up: back to the marker" 1 100 $MARKER_SPOT; walk "$helper" "repeat: set-up: the helper back to the marker" 1 100 $MARKER_SPOT
 	pads_off
