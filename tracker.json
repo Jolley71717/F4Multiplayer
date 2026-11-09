@@ -10,7 +10,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T19:12:22+00:00",
+ "updated": "2026-11-09T19:17:42+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -285,6 +285,14 @@
    "priority": 3,
    "stage": 0,
    "note": "Found in a rig test; existing behaviour"
+  },
+  {
+   "id": "42bf",
+   "title": "Container changes dropped after a rejoin: 'WorldSync: the server's log ends at #N; let go of 6 waiting container changes numbered past it' in every soak, both games",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Found in every soak; being looked into"
   },
   {
    "id": "4c0",
@@ -998,6 +1006,14 @@
    "priority": 2,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "fx87",
+   "title": "Repeating HUD sound: ClickWatch 'hud happened 7 times in under 10 s' once per soak round (host, during the repeated-downs step)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Found in every soak; being fixed"
   },
   {
    "id": "fywn",
@@ -2108,6 +2124,14 @@
    "pr": 337
   },
   {
+   "id": "w0qg",
+   "title": "Rejoin catch-up: quest stages replayed to a rejoining joiner never complete (QuestSync 'still not done 5 s after setting it' x6-7 in every soak)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Found in every soak; being looked into"
+  },
+  {
    "id": "w310",
    "title": "Gates and objects with several scripts could be judged wrongly",
    "kind": "bug",
@@ -2229,6 +2253,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0, tested on two real games.",
    "desc": "A player reported that harvesting plants was not synced. Picking a plant moves nothing into the inventory the usual way, so the mod never saw it. 0.9.0 shares it: a plant a friend picks is picked in your game too, and two players picking the same plant harvest it once."
+  },
+  {
+   "id": "y8wv",
+   "title": "Downed: the camera's way back loops on its transition (x9 per soak on the VM, and on every death); the watchdog puts it right",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Found in every soak; being fixed"
   },
   {
    "id": "ybqf",
