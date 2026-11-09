@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-08T23:03:23+00:00",
+ "updated": "2026-11-09T00:03:46+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -271,8 +271,9 @@
    "title": "Reloading a save from before an NPC's death: the session file kills the NPC again on every load",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "From a Nexus report: being looked into"
+   "stage": 3,
+   "note": "Fix reviewed; rig test next; ships in 0.16.0",
+   "pr": 347
   },
   {
    "id": "4c0",
@@ -864,8 +865,9 @@
    "title": "Radiant clear-out quests: enemies at an already-cleared location die the moment you enter",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "From a Nexus report: being looked into"
+   "stage": 3,
+   "note": "Host-cleared places fixed in review (0.16.0); friend-cleared ones need a second fix",
+   "pr": 347
   },
   {
    "id": "eals",
