@@ -745,6 +745,7 @@ TEST("session file: the host's own deaths survive the file, and a session with n
 	const auto bytes = SessionFile::Encode(in);
 	CHECK(layoutOf(bytes) == SessionFile::HOST_DEATHS);
 	CHECK(SessionFile::Readable(SessionFile::HOST_DEATHS));
+	CHECK(!SessionFile::Readable(SessionFile::HOST_DEATHS + 1));  // a later build's
 	auto out = SessionFile::Decode(bytes);
 	REQUIRE(out);
 	CHECK(out->hostDeaths == in.hostDeaths);

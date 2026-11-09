@@ -117,6 +117,7 @@ namespace
 		std::unordered_map<std::uint32_t, std::uint32_t> owners;
 		std::unordered_map<std::uint32_t, Npc>           world;
 		std::unordered_set<std::uint32_t>                pending;  // deaths waiting for the NPC to load, or held while it is essential (WorldSync's)
+		std::uint32_t                                    stateSequence = 0;  // of its player's last state (StandAt)
 
 		// Joins (as the host's own game, or not) and takes the welcome's world state.
 		Game(Fixture& a_f, PeerId a_peer, std::string a_name, bool a_host = false) :
@@ -247,6 +248,25 @@ namespace
 			deaths.SawDead(a_ref);
 			deaths.Reported(a_ref);
 			f.fake->Deliver(peer, Kill(a_ref, a_x));
+		}
+
+		// Where the players stand: this game's at the origin, a_other's far off (outdoors, in the same worldspace), so a
+		// death in one game was seen by no one in the other.
+		void Apart(Game& a_other)
+		{
+			f.fake->Deliver(peer, StandAt(++stateSequence, 0.0f));
+			a_other.f.fake->Deliver(a_other.peer, StandAt(++a_other.stateSequence, 100000.0f));
+			Pump();
+			a_other.Pump();
+		}
+
+		// Both stand at the origin: what dies there dies in both games' loaded world.
+		void Beside(Game& a_other)
+		{
+			f.fake->Deliver(peer, StandAt(++stateSequence, 0.0f));
+			a_other.f.fake->Deliver(a_other.peer, StandAt(++a_other.stateSequence, 500.0f));
+			Pump();
+			a_other.Pump();
 		}
 
 		// A save was loaded, with these NPCs loaded and alive in it: WorldSync::Reset, and the request for the
@@ -759,12 +779,12 @@ TEST("alive again: the host loading a save from before its own kill has the raid
 	Fixture f{ HostedOptions() };
 	Game    host{ f, 1, "Host", true };
 	Game    bob{ f, 2, "Bob" };
+	host.Apart(bob);
 	host.Loads(RAIDER, true, Clock::now());
-	bob.Loads(RAIDER, true, Clock::now());
 	host.Kills(RAIDER, 40.0f);
 	bob.Pump();
 	host.Pump();
-	CHECK(!bob.Alive(RAIDER));  // Bob's copy dies with the host's kill
+	CHECK(bob.pending.contains(RAIDER));  // far away, Bob's game kills its copy once it loads
 	f.Advance(GRACE + 50ms);
 
 	// The host quickloads a save from before the kill: its game is not told of its own kill, so the raider lives there.
@@ -785,6 +805,7 @@ TEST("alive again: the host loading a save from before its own kill has the raid
 	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", RAIDER)));
 	CHECK(!bob.deaths.Contains(RAIDER));
 	CHECK(bob.deaths.Corrected() == 1);
+	CHECK(!bob.pending.contains(RAIDER));
 	Game carol{ f, 3, "Carol" };
 	CHECK(!carol.deaths.Contains(RAIDER));
 
@@ -795,11 +816,46 @@ TEST("alive again: the host loading a save from before its own kill has the raid
 	CHECK(!host.deaths.Contains(RAIDER));
 }
 
+TEST("alive again: the host bleeding out mid-fight beside Bob and loading a save from before it doesn't bring the raiders back")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Beside(bob);
+	host.Loads(RAIDER, true, Clock::now());
+	bob.Loads(RAIDER, true, Clock::now());
+	host.Loads(RAIDER2, true, Clock::now());
+	bob.Loads(RAIDER2, true, Clock::now());
+	host.Kills(RAIDER, 40.0f);
+	bob.Kills(RAIDER2, 60.0f);
+	bob.Pump();
+	host.Pump();
+	CHECK(!bob.Alive(RAIDER));
+	CHECK(!host.Alive(RAIDER2));
+	f.Advance(GRACE + 50ms);
+
+	// Its game loads the newest save, from before the fight: the raider the host killed with Bob there is told dead again,
+	// as Bob's kill is, so both games still agree. Before the friend check its game would have brought it back, and Bob's
+	// copy, a corpse, would have shot at him.
+	host.LoadsASave({ RAIDER, RAIDER2 });
+	const auto toHost = host.Pump();
+	CHECK(std::ranges::contains(WorldDead(toHost), RAIDER));
+	CHECK(std::ranges::contains(WorldDead(toHost), RAIDER2));
+	CHECK(!host.Alive(RAIDER));
+	CHECK(!host.Alive(RAIDER2));
+	f.Advance(GRACE + 50ms);
+	CHECK(!host.Scan(RAIDER, Clock::now()));
+	CHECK(Owners(bob.Pump()).empty());
+	CHECK(!f.Logged("alive again"));
+	CHECK(bob.deaths.Contains(RAIDER));
+}
+
 TEST("alive again: Bob's kill holds when the host loads a save made after it, and its own kill in that save stays dead there")
 {
 	Fixture f{ HostedOptions() };
 	Game    host{ f, 1, "Host", true };
 	Game    bob{ f, 2, "Bob" };
+	host.Apart(bob);
 	host.Loads(RAIDER, true, Clock::now());
 	host.Loads(RAIDER2, true, Clock::now());
 	bob.Kills(RAIDER);
@@ -844,6 +900,7 @@ TEST("alive again: the host's kill undone by a save from before it after its gam
 		Fixture f{ options };
 		Game    host{ f, 1, "Host", true };
 		Game    bob{ f, 2, "Bob" };
+		host.Apart(bob);
 		host.Loads(RAIDER, true, Clock::now());
 		host.Loads(RAIDER2, true, Clock::now());
 		host.Kills(RAIDER);

@@ -1823,8 +1823,8 @@ burst of loads): its game may have the NPC alive only in the save it loaded, so 
 it answers (the next load) before believing it again.
 
 The host's save is the truth about the host's own kills (0.16.0, session file layout 44). The server keeps which
-deaths the host's own game reported (its kill, or an NPC found dead in its world; `hostDeaths` in common/Server.cpp)
-and leaves them out of every world state it sends that game, after a hello or a load, as it leaves out a player's own
+deaths the host's own game reported with no friend near (its kill, or an NPC found dead in its world; `hostDeaths` in
+common/Server.cpp) and leaves them out of every world state it sends that game, after a hello or a load, as it leaves out a player's own
 pickups; the corpse-position deaths sent ahead of the list skip them too. A save from after the kill has the corpse
 anyway (the host's found-dead check reports it again, which changes nothing). A save from before it, a quickload or a
 restart into an older save, has the NPC alive: nothing tells the host's game otherwise, it offers to run it, and the
@@ -1834,13 +1834,23 @@ undone by a quickload was made again on every load, forever, and a cleared camp 
 radiant quest days later) had its raiders killed on entry: the death was learned anew with each load, so the game
 never took the reset for one. A death a friend's game reported still goes to the host's game, since that kill may be
 in no save of the host's (a cell it never loaded); a later report of it from the host's game doesn't make it the
-host's, nor does a friend's report make the host's kill a friend's. The host's game is known by its identity and the
+host's, nor does a friend's report make the host's kill a friend's. A death a friend may have seen is a shared event
+and is replayed to the host's game as before (`friendNear`): a friend in the same interior cell, or outdoors in the
+same worldspace within 8192 units of where it fell (of the host, for a found-dead report), or one whose game hasn't
+said where it is yet. Without that, the host bleeding out mid-fight and loading the newest save, from before the
+fight, brought the raiders back for everyone while the friend's copies lay as corpses that still shot at them. An
+essential NPC the host's world killed (a quest's script) comes back the same way: its game's claim marks it essential,
+which for any other death only undoes an older build's mistake. The host's game is known by its identity and the
 local connection (`Player::local`), not its player id, so a host who rejoins under another id is still the host. Kept
 in the session file as a list after the older build's deaths (`Snapshot::hostDeaths`); a session with none is still
 written as layout 43 or older. A file before 44 knows no reporter, so its deaths go to every game as before (and
 are still replayed after each of the host's loads, as they were). A dedicated server has no host's
 game, so it keeps no such deaths: every death goes to every game, the player here longest's too. Joiners get every
 death, as before: the host's world is the session's. No protocol change: nothing new on the wire.
+Known limits: a quest stage the host's kill set (a radiant "kill the target") is still sent to the host's game after
+the load that revives the target; a friend's loot taken from a revived NPC waits for its next death in the host's
+game; and a cleared camp the friend's game cleared still has its NPCs killed on entry after a reset and a load of the
+host's (that needs the reset seen in the game, not only the server's record).
 
 ### The opening (src/game/Story.cpp)
 
