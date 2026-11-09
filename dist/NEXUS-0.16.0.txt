@@ -1,0 +1,6 @@
+Random events that aren't fights are shared: whichever game started one, its people stand, move and speak in your friend's game too
+A host who reloads an older save no longer has people killed again on load; a kill your friend was near enough to see stays shared
+The first line said in a shared scene is heard in your friend's game
+New protocol (63): everyone in the session needs 0.16.0
+A session file saved by 0.16.0 can't be read by 0.15 or older
+Full notes on GitHub
