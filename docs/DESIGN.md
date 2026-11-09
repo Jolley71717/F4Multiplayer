@@ -678,19 +678,23 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   `REParent`'s cleanup once the player is far, which deletes its created actors), so two players crossing one trigger
   together usually roll two different encounters at the same markers, sometimes the same one. So where a friend's
   encounter already runs, ours is stopped (`stopquest`, the quest's own stop, as RadiantSync stops a radiant), its
-  actors are removed (`Spawns::RemoveActor`: every loaded one the quest's aliases name, alive or dead, disabled and
+  actors are removed (`Spawns::RemoveActor`: every one the quest's created aliases hold, loaded or not, and every
+  loaded one whose alias array names the quest, alive or dead, disabled and
   deleted as our copies go and never offered; the quest's own stop deletes them only as `REScript`'s cleanup runs with
   the player far, and stopped at the spot it left a travelling group's dogs alive and a corpse standing, which were
   then shared as a fight's spawns beside the encounter that had won) and our copies of theirs are placed: one
   encounter per spot (`Encounters::Book`, game-free and tested). Who was first
   is the server's order: every spawn message that arrives (a friend's `kSpawned`, our own grant in `kActorOwners`)
   is numbered as it comes, the same order in every game since the server sends them in the order it took them. A
-  friend's live encounter spawn whose spot (where it stood as it was shared) is within `COLLIDE_RANGE` (3000 units) of
+  friend's live encounter spawn whose spot (where it stood as it was shared), or the place it stands now, is within
+  `COLLIDE_RANGE` (3000 units) of
   where one of our run's actors first stood, of a run that started within `STOP_WINDOW` (20 s, from its first actor
   seen in the scan), whose number is below our run's first grant (or our run has none yet), means theirs was first:
   ours is booked for a stop as its actor is seen, before it is offered, and stopped from Spawns' frame, outside the
-  actor scan; both games decide alike, so exactly one stops. An encounter's spot is its markers, not where its actors
-  walk to: a travelling merchant two cells on still holds the trigger he was rolled at. Never while our player is in a
+  actor scan; both games decide alike, so exactly one stops (only the later run ever gives way, whatever each game
+  sees of the other's positions). An encounter's spot is its markers, and a friend's also holds where its actors walk
+  to: a travelling merchant two cells on still holds the trigger he was rolled at, and the road he is on, so a second
+  merchant is not rolled beside him. Never while our player is in a
   conversation or a scene, nor before the world's runs are settled (`Encounters::Holds`, from `Spawns::PlayerInTalk`:
   a stop removes every actor of the run, the speaker among them, whichever the scan is looking at; ours is judged
   again once they are done, while the window lasts). Past the window ours stays (its player is in it), `OwnMadeNpcAt`

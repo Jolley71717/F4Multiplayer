@@ -2,6 +2,7 @@
 
 #include "game/QuestFilter.h"
 #include "game/RemoteEdits.h"
+#include "game/SpawnBook.h"
 
 #include <algorithm>
 #include <cctype>
@@ -40,10 +41,10 @@
 // where a friend's encounter already runs, ours is stopped (through the quest's own stop, which REScript itself calls on
 // REParent's cleanup) and its actors removed (the quest's stop leaves some standing: a travelling group's dogs, a
 // corpse), and our copies of theirs are placed: one encounter per spot. A spot is where an encounter's actors first
-// stood, its markers, not where they have walked to since: a travelling merchant two cells on still holds the trigger
-// he was rolled at. Who was first is the server's order: every spawn message that arrives (a friend's kSpawned, our own
-// grant in kActorOwners) is numbered as it comes, the same order in every game since the server sends them in the order
-// it took them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW):
+// stood, its markers, and a friend's encounter also holds where its actors stand now: a travelling merchant two cells
+// on still holds the trigger he was rolled at, and the road he is on. Who was first is the server's order: every spawn
+// message that arrives (a friend's kSpawned, our own grant in kActorOwners) is numbered as it comes, the same order in
+// every game since the server sends them in the order it took them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW):
 // past that its player is in it. The encounter quests already running on the first in-world frame of a session, or
 // after a load, are settled (Settle): the book can't tell when they began, and a long-running encounter must never be
 // stopped partway for a friend's that came to stand beside it; every run first seen after that is fresh. Two
@@ -133,7 +134,27 @@ namespace Encounters
 		Spot          at;          // where their game had it as it was shared: its encounter's spot (not where it has walked to)
 		std::uint64_t seq = 0;     // its number in the server's order (Book::Next as it arrived)
 		bool          over = false;  // it died, or their game let it go (its encounter over, it is shared on plain: not an encounter spawn any more)
+		std::optional<Spot> now;   // where it stands now (its states), if known: a travelling group counts where it is as well as where it began
 	};
+
+	// Friends' encounter spawns as the book judges them, from our records of friends' spawns (Spawns' SpawnBook::Theirs)
+	// and the number each arrived as (a_seq, by spawn id): only those still of the encounter kind (one whose encounter
+	// ended was shared on plain by its owner and taken so, Theirs::Rekind: no encounter runs at its spot any more), over
+	// once dead or let go of, at the spot it was shared at and where its owner's game has it now.
+	inline std::vector<Theirs> TheirsOf(const SpawnBook::Theirs& a_book, const std::unordered_map<std::uint32_t, std::uint64_t>& a_seq)
+	{
+		std::vector<Theirs> out;
+		for (const auto id : a_book.Ids()) {
+			const auto copy = a_book.Find(id);
+			if (!copy || copy->spawn.kind != Protocol::SpawnKind::kEncounter) {
+				continue;
+			}
+			const auto& spawn = copy->spawn;
+			const auto  seq = a_seq.find(id);
+			out.push_back({ id, spawn.quest, spawn.playerId, Spot{ spawn.cell, spawn.worldspace, spawn.x, spawn.y, spawn.z }, seq != a_seq.end() ? seq->second : 0, copy->dead || copy->gone, copy->at });
+		}
+		return out;
+	}
 
 	// The friend's encounter ours gives way to.
 	struct Rival
@@ -249,9 +270,12 @@ namespace Encounters
 			return it != ours.end() && !it->second.settled && !IsStopped(a_quest, a_now) && a_now - it->second.firstSeen < STOP_WINDOW;
 		}
 
-		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs whose spot is
-		// within COLLIDE_RANGE of where one of our run's actors first stood, whose number in the server's order is below our
-		// run's first grant (or our run has none yet). The nearest when several.
+		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs whose spot, or
+		// the place it stands now, is within COLLIDE_RANGE of where one of our run's actors first stood, whose number in the
+		// server's order is below our run's first grant (or our run has none yet). The nearest when several. Where theirs
+		// stands now counts too: a travelling merchant two cells on holds his trigger and the road he is on, so a second
+		// merchant is not rolled beside him (the rig, PR 337). Only the later run ever gives way, whatever each game sees of
+		// the other's positions, so the two games never both stop.
 		[[nodiscard]] std::optional<Rival> RivalOf(std::uint32_t a_quest, std::span<const Theirs> a_theirs, Clock::time_point a_now, Holds a_holds = {}) const
 		{
 			if (!MayStop(a_quest, a_now, a_holds)) {
@@ -263,10 +287,16 @@ namespace Encounters
 				if (theirs.over || theirs.quest == 0 || (run.grant && theirs.seq >= *run.grant)) {
 					continue;
 				}
-				for (const auto& actor : run.actors) {
-					const float distance = RemoteEdits::Distance(actor.at, theirs.at);  // NaN in another place
+				const auto consider = [&](const Spot& a_ours, const Spot& a_theirs) {
+					const float distance = RemoteEdits::Distance(a_ours, a_theirs);  // NaN in another place
 					if (RemoteEdits::Within(distance, COLLIDE_RANGE) && (!best || distance < best->distance)) {
 						best = Rival{ theirs.spawnId, theirs.quest, theirs.player, distance };
+					}
+				};
+				for (const auto& actor : run.actors) {
+					consider(actor.at, theirs.at);
+					if (theirs.now) {
+						consider(actor.at, *theirs.now);
 					}
 				}
 			}
