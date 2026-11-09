@@ -10,7 +10,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T22:50:05+00:00",
+ "updated": "2026-11-09T23:28:09+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1815,8 +1815,8 @@
    "title": "Menu check on 0.16.1-rc1: W doesn't move the player after the F1 panel closes (0-7 u), and a death doesn't reload, on both games",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Re-running on a fresh rig to see if it's the mod's."
+   "stage": 7,
+   "note": "Not the mod's: a fresh-rig re-run passed."
   },
   {
    "id": "rnae",
@@ -1937,8 +1937,8 @@
    "title": "Rig: after the VM game recovers from a freeze the soak can't reach it again (dev channel tunnel), so the run stops as rig-broken",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being fixed in the rig scripts."
+   "stage": 7,
+   "note": "Rig scripts fixed (merged)."
   },
   {
    "id": "svjl",
