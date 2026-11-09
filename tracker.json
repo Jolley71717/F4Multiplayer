@@ -10,7 +10,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T19:17:42+00:00",
+ "updated": "2026-11-09T19:51:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -290,9 +290,9 @@
    "id": "42bf",
    "title": "Container changes dropped after a rejoin: 'WorldSync: the server's log ends at #N; let go of 6 waiting container changes numbered past it' in every soak, both games",
    "kind": "bug",
-   "priority": 2,
+   "priority": 3,
    "stage": 1,
-   "note": "Found in every soak; being looked into"
+   "note": "Explained: the soak's own test data; rig script change to come"
   },
   {
    "id": "4c0",
@@ -522,7 +522,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 2,
-   "note": "Cause found; fix in a PR, for 0.16.1"
+   "note": "Fix in a PR, under review, for 0.16.1"
   },
   {
    "id": "8mp",
@@ -1011,9 +1011,9 @@
    "id": "fx87",
    "title": "Repeating HUD sound: ClickWatch 'hud happened 7 times in under 10 s' once per soak round (host, during the repeated-downs step)",
    "kind": "bug",
-   "priority": 1,
-   "stage": 1,
-   "note": "Found in every soak; being fixed"
+   "priority": 2,
+   "stage": 2,
+   "note": "Fix in a PR, under review, for 0.16.1"
   },
   {
    "id": "fywn",
@@ -2128,8 +2128,8 @@
    "title": "Rejoin catch-up: quest stages replayed to a rejoining joiner never complete (QuestSync 'still not done 5 s after setting it' x6-7 in every soak)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Found in every soak; being looked into"
+   "stage": 2,
+   "note": "Fix in a PR, under review, for 0.16.1"
   },
   {
    "id": "w310",
@@ -2259,8 +2259,8 @@
    "title": "Downed: the camera's way back loops on its transition (x9 per soak on the VM, and on every death); the watchdog puts it right",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Found in every soak; being fixed"
+   "stage": 2,
+   "note": "Fix in a PR, under review, for 0.16.1"
   },
   {
    "id": "ybqf",
@@ -2295,6 +2295,14 @@
    "stage": 7,
    "note": "",
    "pr": 216
+  },
+  {
+   "id": "yhpo",
+   "title": "Downed: the camera reads ~34,000 units from the player for a frame on a re-down ('away 33734')",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found reading soak logs"
   },
   {
    "id": "yqm3",
@@ -2341,6 +2349,14 @@
    "note": "Shipped in 0.9.2 and tested for most cases; picking up mines and a bear trap closing on a player weren't tested.",
    "partial": "0.9.2",
    "desc": "Players asked for world traps to go off the same way for everyone. Since 0.9.2, mines, tripwires, bear traps and grenade bouquets go off once in every game, including for a friend who arrives later. Picking up a mine and a bear trap closing on a player have not been tested yet."
+  },
+  {
+   "id": "zzf5",
+   "title": "Join catch-up: The Museum of Freedom stage 1 (0001D806) and When Freedom Calls stage 20 (001A001C) wait forever on a joiner, every join since 2026-11-06",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found reading soak logs"
   }
  ]
 }
