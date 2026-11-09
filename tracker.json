@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T09:18:29+00:00",
+ "updated": "2026-11-09T09:36:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -683,11 +683,11 @@
   },
   {
    "id": "br7k",
-   "title": "After a player bleeds out, their game may go to the main menu instead of loading the newest save (host too, most menu checks)",
+   "title": "Bleed-out goes to the main menu when this game has no usable save of its own (engine; rig coc starts and console-named saves)",
    "kind": "bug",
-   "priority": 1,
-   "stage": 0,
-   "note": "Seen on the host in most menu checks; P1"
+   "priority": 3,
+   "stage": 1,
+   "note": "Cause found: an engine save choice; rig check fixed"
   },
   {
    "id": "briz",
