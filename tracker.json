@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T05:51:02+00:00",
+ "updated": "2026-11-09T06:00:30+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -275,6 +275,14 @@
    "stage": 3,
    "note": "Fix reviewed; rig test next; ships in 0.16.0",
    "pr": 347
+  },
+  {
+   "id": "3zre",
+   "title": "A friend's copy of an NPC stays a corpse after the host reloads to before its death",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found in a rig test; existing behaviour"
   },
   {
    "id": "4c0",
