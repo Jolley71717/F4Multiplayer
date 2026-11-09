@@ -10,7 +10,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T21:59:02+00:00",
+ "updated": "2026-11-09T22:50:05+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1811,6 +1811,14 @@
    "pr": 226
   },
   {
+   "id": "rk49",
+   "title": "Menu check on 0.16.1-rc1: W doesn't move the player after the F1 panel closes (0-7 u), and a death doesn't reload, on both games",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Re-running on a fresh rig to see if it's the mod's."
+  },
+  {
    "id": "rnae",
    "title": "Stand-in gear: Equipment::Apply and SwitchIntoPowerArmor empty with console removeallitems then add in the same frame; if the console call runs later it may take the gear just given",
    "kind": "bug",
@@ -1923,6 +1931,14 @@
    "priority": 2,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "svbw",
+   "title": "Rig: after the VM game recovers from a freeze the soak can't reach it again (dev channel tunnel), so the run stops as rig-broken",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being fixed in the rig scripts."
   },
   {
    "id": "svjl",
@@ -2355,8 +2371,8 @@
    "title": "Join catch-up: The Museum of Freedom stage 1 (0001D806) and When Freedom Calls stage 20 (001A001C) wait forever on a joiner, every join since 2026-11-06",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Found reading soak logs"
+   "stage": 3,
+   "note": "Not a stall: both stages are done within seconds of a join; only the log never said so. Log fix reviewed."
   }
  ]
 }
