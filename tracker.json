@@ -7,7 +7,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T00:03:46+00:00",
+ "updated": "2026-11-09T00:48:37+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2150,6 +2150,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "xmiy",
+   "title": "Quest creature dead in the host's game, alive in the joiner's (quest 000BACBC, alias 22), with no injected damage",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found in the 0.15.0 soak; the same code shipped in 0.14.0"
   },
   {
    "id": "xr9k",
