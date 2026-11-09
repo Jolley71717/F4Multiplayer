@@ -17,6 +17,7 @@ Changed:
 
 Known issues:
 
+- Your friend's shots from a gun with an armor-piercing receiver, a recon scope, or a Bloodied or Nocturnal legendary show no tracer on your screen, only the muzzle flash and the sound. This was in 0.15 too; the fix comes in the next update.
 - The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).
 - Diamond City's synth accusation still plays out in each game on its own.
 - If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.
