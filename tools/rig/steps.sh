@@ -506,6 +506,21 @@ TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000
 T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
 # _tr_snap <who>: that game's "firesInert firesHeld trails trailsHeld puppetHitsOnUs inertLive inertRefusedFull shots trailTracers puppetHits trailsHeldGun", one `net status`
 _tr_snap() { local s; s=$(dc "$1" 'net status'); echo "$(field "$s" firesInert) $(field "$s" firesHeld) $(field "$s" trails) $(field "$s" trailsHeld) $(field "$s" puppetHitsOnUs) $(field "$s" inertLive) $(field "$s" inertRefusedFull) $(field "$s" shots) $(field "$s" trailTracers) $(field "$s" puppetHits) $(field "$s" trailsHeldGun)"; }
+# _tr_strip <who> <gun>: every copy of that gun out of the player's inventory. One `removeitem <gun> 99` did not always
+# take them all (2026-11-08: the host kept an unequipped modded, enchanted 10mm, which `equipitem` then took), so it is
+# repeated until the player's count of it reads 0; a rig fault if it never does. The counts are printed to the log.
+_tr_strip() {
+	local i n first
+	first=$(dc "$1" "count 00000014 $2")
+	for i in 1 2 3 4 5; do
+		n=$(dc "$1" "count 00000014 $2")
+		[ "$n" = 0 ] && break
+		dc "$1" "console player.removeitem $2 99" >/dev/null; sleep 1
+	done
+	n=$(dc "$1" "count 00000014 $2")
+	echo "  $1: $2 copies before ${first:-?}, after ${n:-?}"
+	[ "$n" = 0 ] || rig_fault state "trails: $1's copies of $2 removed" "still '$n' after 5 removeitem tries (before '$first')"
+}
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
 # _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
 # on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
@@ -559,8 +574,7 @@ step_trails() {
 	# is what `equipitem` takes, and a gun with any enchantment is held by design (AttackKind::ShotReplay), so its shots
 	# launched no trail and the step measured the save, not the build. A plain copy of each is then given.
 	for who in host vm; do
-		for gun in "$TRAIL_PISTOL" "$TRAIL_LASER"; do dc "$who" "console player.removeitem $gun 99" >/dev/null; done
-		sleep 1
+		for gun in "$TRAIL_PISTOL" "$TRAIL_LASER"; do _tr_strip "$who" "$gun"; done
 		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
 	done
 	sleep 4
