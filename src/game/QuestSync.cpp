@@ -1266,6 +1266,28 @@ namespace QuestSync
 						std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
 				}
 			}
+			// Stages logged as waiting for their quest that a stage set before them did meanwhile (Out of Time's catch-up starts
+			// the Museum of Freedom at its 1 and When Freedom Calls at its 20), or the player did: dropped, never set from here.
+			// Said, or the log has them waiting for good; and a later wait of the quest is logged again.
+			const auto& alreadyDone = waiting.AlreadyDone();
+			for (auto it = alreadyDone.begin(); it != alreadyDone.end();) {
+				const auto id = it->quest;
+				const auto first = it->stage;
+				const auto end = std::find_if(it, alreadyDone.end(), [&](const auto& a_stage) { return a_stage.quest != id; });
+				const auto dropped = static_cast<std::size_t>(std::distance(it, end));
+				it = end;
+				if (!waited.contains(id)) {
+					continue;
+				}
+				const bool more = waiting.Contains(id);
+				if (!more) {
+					waitLogged.erase(id);
+				}
+				const auto  quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				const char* name = quest ? quest->GetFullName() : nullptr;
+				REX::INFO("QuestSync: {} stage(s) of {:08X} '{}' from friends no longer wait (the first {}): already done here, by a stage set before them or by the player{}",
+					dropped, id, name ? name : "", first, more ? "; the rest still wait" : "");
+			}
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 			std::erase_if(catchingUp, [](std::uint32_t a_quest) {
 				if (waiting.Contains(a_quest)) {

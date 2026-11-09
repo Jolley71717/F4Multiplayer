@@ -412,7 +412,7 @@ namespace StageLog
 		// more here (done, or the quest is already past it); Set(quest, stage) -> Set; Hold(quest,
 		// stage) -> Clock::duration: how long its script may run on once it reads done; SetsAnother(quest, stage): its
 		// script sets a stage of another quest (StageRules::SetsAnother). A ready quest's
-		// settled stages are dropped, and all of a quest that is gone. Returns the stages given up on:
+		// settled stages are dropped (AlreadyDone), and all of a quest that is gone. Returns the stages given up on:
 		// set, but not done TIMEOUT later. While the game is paused nothing is set, and the time since
 		// the last poll doesn't count against any hold or timeout, nor the lock's.
 		template <class Game>
@@ -421,6 +421,7 @@ namespace StageLog
 			const auto sinceLast = lastPoll ? a_now - *lastPoll : Clock::duration::zero();
 			lastPoll = a_now;
 			failedStarts.clear();
+			alreadyDone.clear();
 			if (a_paused) {
 				for (auto& [id, entry] : quests) {
 					entry.since += sinceLast;
@@ -472,7 +473,13 @@ namespace StageLog
 				}
 				const bool goesOn = state == Quest::kReady || state == Quest::kStart;
 				if (goesOn && !entry.setting) {
-					count -= std::erase_if(entry.stages, [&](const auto& a_stage) { return a_game.Settled(id, a_stage.first); });
+					count -= std::erase_if(entry.stages, [&](const auto& a_stage) {
+						if (!a_game.Settled(id, a_stage.first)) {
+							return false;
+						}
+						alreadyDone.push_back({ id, a_stage.first });
+						return true;
+					});
 				}
 				if (entry.stages.empty() && !holding) {
 					it = quests.erase(it);
@@ -595,6 +602,11 @@ namespace StageLog
 		// The starts given up on at the last poll, the rest of their quests' stages dropped (FailedStart).
 		[[nodiscard]] const std::vector<FailedStart>& FailedStarts() const { return failedStarts; }
 
+		// The stages dropped at the last poll because they read done here before their turn came, ascending per quest: a
+		// stage set before them did them (Out of Time's catch-up starts the Museum of Freedom at its 1 and When Freedom
+		// Calls at its 20), or the player did. Not the one being set, which reads done as it should.
+		[[nodiscard]] const std::vector<Stage>& AlreadyDone() const { return alreadyDone; }
+
 		// Stages set and not yet done.
 		[[nodiscard]] std::size_t Setting() const
 		{
@@ -669,5 +681,6 @@ namespace StageLog
 		std::optional<LockState>         lock;
 		Clock::time_point                lastSettled{};  // when a stage set here last read done
 		std::vector<FailedStart>         failedStarts;   // at the last poll
+		std::vector<Stage>               alreadyDone;    // at the last poll
 	};
 }
