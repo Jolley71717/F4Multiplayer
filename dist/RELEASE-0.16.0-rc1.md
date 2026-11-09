@@ -17,7 +17,6 @@ Changed:
 
 Known issues:
 
-- If both players start the same random event at about the same moment, one game's copy of it is meant to give way, but its people can stay, so you see two sets. An event that has ended can also stop a new one from starting nearby for your friend.
 - The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).
 - Diamond City's synth accusation still plays out in each game on its own.
 - If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.
