@@ -1645,6 +1645,17 @@ step_fuzz() {
 		sleep 2
 	done
 	expect_match "fuzz: both games up after" "$(alive)" '^host=ingame=true vm=ingame=true$'
+	# The fuzz's made-up container changes are numbered 0-999 (DevCommands Fuzz); those past the server's last one are
+	# waited for, asked of the server about 15 s later, and let go of when it answers that its log ends before them
+	# (ContainerLedger OnChunk). That one WorldSync [W] line is this step's own doing, so it is asserted here (at most one
+	# per game) and left out of the end check's warning count (FUZZ_LEDGER_LINE).
+	sleep 20
+	for who in host vm; do
+		local n; n=$(grep -cE "$FUZZ_LEDGER_LINE" "$(log_delta_file $who)")
+		if [ "$n" -le 1 ]; then pass "fuzz on $who: its made-up container changes let go of, once at most" "$n line(s)"
+		else fail "fuzz on $who: its made-up container changes let go of, once at most" "$n lines: more than the fuzz explains"; fi
+	done
+	FUZZ_RAN=1
 }
 
 # ---- the end of a run --------------------------------------------------------------------------------------------------------------------
