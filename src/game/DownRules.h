@@ -172,13 +172,16 @@ namespace DownRules
 		// keeps for a_current, the state pushed, with the transition state going to a_transitionTo. The engine pushes the
 		// transition state itself when the camera is in one, and an end that goes back by a transition to what it pops (the
 		// bleed-out camera's) then makes a transition to itself, which never ends: the loop below. Downed.cpp's hook on the
-		// push keeps where the transition goes instead, when that is a view: the start's switch to its own state is about
-		// to cut the transition short anyway (TESCamera's SetState ends it), and the way back then goes to the view it was
-		// heading for. A transition going nowhere a view (none, itself, the bleed-out camera) is pushed as the engine
-		// would, and anything else unchanged.
+		// push keeps where the transition goes instead, when that is the first or the third person: the start's switch to
+		// its own state is about to cut the transition short anyway (TESCamera's SetState ends it), and the way back then
+		// goes to the view it was heading for. Only those two: a transition going anywhere else is pushed as the engine
+		// would (the net undoes a loop it makes). The animated camera's start (+1028720) points the transition at the
+		// animated camera before it pushes, so keeping the target there would put the animated camera itself on the stack,
+		// which nothing looks for, and the way back could go into it and stay; VATS, the furniture, the dialogue, the iron
+		// sights or the tween as a way back are no better. Anything else pushed is unchanged.
 		[[nodiscard]] static constexpr int Pushed(int a_current, int a_transitionTo)
 		{
-			return a_current == TRANSITION && View(a_transitionTo) ? a_transitionTo : a_current;
+			return a_current == TRANSITION && (a_transitionTo == FIRST_PERSON || a_transitionTo == THIRD_PERSON) ? a_transitionTo : a_current;
 		}
 
 		// The way back loops on the transition: a start made while a transition ran pushed the transition state itself, and
@@ -189,13 +192,14 @@ namespace DownRules
 			return (current == TRANSITION && transitionTo == TRANSITION) || std::ranges::find(returns, TRANSITION) != returns.end();
 		}
 
-		// That loop undone: the transition on the return stack is where it was going (the view the last down left), or
-		// a_lastView when that is no view; a current transition to itself goes to a_lastView, as its time runs out. One to
-		// the bleed-out camera is no loop: a down begun in a tween goes there, and its end is FinishDown's.
+		// That loop undone: the transition on the return stack is where it was going when that is the first or the third
+		// person (the view the last down left), otherwise a_lastView (the animated camera's start points the transition at
+		// itself, which is no way back: see Pushed); a current transition to itself goes to a_lastView, as its time runs out.
+		// One to the bleed-out camera is no loop: a down begun in a tween goes there, and its end is FinishDown's.
 		[[nodiscard]] Camera Unlooped(int a_lastView) const
 		{
 			Camera     fixed = *this;
-			const int  view = View(transitionTo) ? transitionTo : a_lastView;
+			const int  view = transitionTo == FIRST_PERSON || transitionTo == THIRD_PERSON ? transitionTo : a_lastView;
 			std::ranges::replace(fixed.returns, TRANSITION, view);
 			if (current == TRANSITION && transitionTo == TRANSITION) {
 				fixed.transitionTo = a_lastView;

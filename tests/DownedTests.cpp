@@ -2678,6 +2678,10 @@ TEST("downed camera: the loop is read and undone by the camera's own rules")
 	CHECK(itself.returns == std::vector<int>{ Camera::FIRST_PERSON });
 	CHECK(itself.transitionTo == Camera::FIRST_PERSON);
 	CHECK(!itself.Loops());
+	// A transition pointed anywhere but the first or third person (the animated camera's start points it at itself) is
+	// no way back: the last view.
+	const auto animated = Camera{ .current = 7, .transitionTo = 7, .returns = { Camera::TRANSITION } }.Unlooped(Camera::THIRD_PERSON);
+	CHECK(animated.returns == std::vector<int>{ Camera::THIRD_PERSON });
 }
 
 TEST("downed camera: downed again and again within moments of each stand-up, and once more while getting up, the camera ends in the view")
@@ -2905,15 +2909,21 @@ TEST("downed camera: downs, help-ups, ragdolls and their ends in any order and t
 	}
 }
 
-TEST("downed camera: a push of the camera's transition keeps where it goes, when that is a view; anything else as the engine has it")
+TEST("downed camera: a push of the camera's transition keeps where it goes, when that is the first or third person; anything else as the engine has it")
 {
 	using DownRules::Camera;
 	CHECK(Camera::Pushed(Camera::TRANSITION, Camera::FIRST_PERSON) == Camera::FIRST_PERSON);
 	CHECK(Camera::Pushed(Camera::TRANSITION, Camera::THIRD_PERSON) == Camera::THIRD_PERSON);
-	// Going nowhere a view: none, itself, the bleed-out camera. Pushed as the engine does; the net undoes any loop.
-	CHECK(Camera::Pushed(Camera::TRANSITION, -1) == Camera::TRANSITION);
-	CHECK(Camera::Pushed(Camera::TRANSITION, Camera::TRANSITION) == Camera::TRANSITION);
-	CHECK(Camera::Pushed(Camera::TRANSITION, Camera::BLEEDOUT) == Camera::TRANSITION);
+	// Going anywhere but the first or third person: pushed as the engine does; the net undoes any loop. Nowhere, itself,
+	// the bleed-out camera; and the other states, never a way back: the animated camera (its start points the transition
+	// at itself before it pushes), VATS, the furniture, the dialogue, the iron sights, the tween.
+	constexpr int ANIMATED = 7;
+	constexpr int IRON_SIGHTS = 4;
+	constexpr int FURNITURE = 9;
+	constexpr int DIALOGUE = 12;
+	for (const int target : { -1, Camera::TRANSITION, Camera::BLEEDOUT, ANIMATED, Camera::VATS, FURNITURE, DIALOGUE, IRON_SIGHTS, Camera::TWEEN }) {
+		CHECK(Camera::Pushed(Camera::TRANSITION, target) == Camera::TRANSITION);
+	}
 	// Any other state, whatever the transition's target: as asked.
 	for (const int state : { Camera::FIRST_PERSON, Camera::VATS, Camera::TWEEN, Camera::THIRD_PERSON, Camera::BLEEDOUT }) {
 		CHECK(Camera::Pushed(state, Camera::FIRST_PERSON) == state);
@@ -2977,4 +2987,32 @@ TEST("downed camera: a bleed-out's death camera, started in the down's way back,
 		CHECK(game.body.camera.returns == std::vector<int>{ DownRules::Camera::THIRD_PERSON });
 		CHECK(game.self.cameraFixes == (hooked ? 0u : 1u));
 	}
+}
+
+TEST("downed camera: the animated camera started in a help-up's way back is never pushed as its own way back")
+{
+	// The animated camera's start (+1028720) points the transition at the animated camera, then pushes the current state:
+	// in a help-up's way back that is the transition. The hook leaves that push as the engine has it (keeping the target
+	// would put the animated camera on the stack, which nothing looks for), and the net sends it to the view.
+	constexpr int ANIMATED = 7;
+	Game game;
+	auto now = Start();
+	game.body.pushHook = true;
+	game.body.camera.current = DownRules::Camera::FIRST_PERSON;
+	game.body.transitionFrames = 5;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	REQUIRE(game.Revived(now));
+	game.Frame(now);
+	now += FRAME;
+	REQUIRE(game.body.camera.current == DownRules::Camera::TRANSITION);
+	game.body.camera.transitionTo = ANIMATED;
+	game.body.Push();
+	game.body.camera.current = ANIMATED;
+	CHECK(game.body.camera.returns == std::vector<int>{ DownRules::Camera::TRANSITION });
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.self.cameraFixes == 1);
+	CHECK(game.body.camera.returns == std::vector<int>{ DownRules::Camera::FIRST_PERSON });
 }

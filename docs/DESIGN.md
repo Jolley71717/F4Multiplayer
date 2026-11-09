@@ -2420,7 +2420,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   VATS's, which a death plays in) pushes the current state through one push (ID 2248443), and only the tween is
   special-cased, so a down at once on a help-up, or the death camera as a bleed-out's kill ends the down, pushed the
   transition. `Downed::Install` hooks the ten calls to that push (each checked at load, tools/addrcheck.ps1 too): a
-  transition pushed goes as the view it was going to (`DownRules::Camera::Pushed`, tested), so the way back never
+  transition pushed goes as the view it was going to when that is the first or third person (`DownRules::Camera::Pushed`,
+  tested; any other target, such as the animated camera's, is pushed as the engine does), so the way back never
   loops; the fixes above stay as the net under it. If they went down sneaking and
   are still sneaking (the stance survives a down), it stands them as they get up, and again 2 s later only
   if that did not take (`DownRules::Self` gotUp/settled, tested). A sneak the player chose is left

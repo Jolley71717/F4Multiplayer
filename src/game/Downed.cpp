@@ -247,8 +247,8 @@ namespace Downed
 			{ REL::ID{ 2248370 }, 0x5E },   // +1027AB0: the iron sights (+1027B0E)
 			{ REL::ID{ 2248373 }, 0xBC },   // +1027C20: another start of the third-person camera (+1027CDC)
 			{ REL::ID{ 2248380 }, 0x53 },   // +1028580: the bleed-out camera's, a down's or a knock-down's ragdoll's (+10285D3)
-			{ REL::ID{ 2248411 }, 0x4BF },  // +102A520: the auto vanity or the tween (+102A9DF)
-			{ REL::ID{ 2248411 }, 0x51E },  // +102A520: the same, its other path (+102AA3E)
+			{ REL::ID{ 2248411 }, 0x4BF },  // +102A520: the camera's save, its restore after writing (in the auto vanity or the tween) (+102A9DF)
+			{ REL::ID{ 2248411 }, 0x51E },  // +102A520: the camera's save, the restore's other path (+102AA3E)
 			{ REL::ID{ 2248422 }, 0x4A },   // +102B630: a start of any state by its number (+102B67A)
 			{ REL::ID{ 2248423 }, 0x1F },   // +102B6A0: the same without ending the current one (+102B6BF)
 		} };
