@@ -4,6 +4,7 @@
 #include "Protocol.h"
 #include "game/ClickWatch.h"
 #include "game/GearPlan.h"
+#include "game/GearReport.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
@@ -91,6 +92,70 @@ namespace Equipment
 
 		constexpr std::uint32_t PIP_BOY = 0x00021B3B;  // Fallout4.esm: the Pip-Boy (armor)
 		constexpr std::uint32_t CAPS = 0x0000000F;     // Caps001
+
+		bool IsThrowable(const RE::TESForm* a_form)
+		{
+			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
+			if (!weapon) {
+				return false;
+			}
+			const auto type = weapon->weaponData.type.get();
+			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
+		}
+
+		// A weapon held in the hand: a gun or a melee weapon, not a grenade or mine (GearReport::HandsAsHeld).
+		bool InHand(std::uint32_t a_item)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			return form && form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(form);
+		}
+
+		bool IsOurPlayer(const RE::Actor* a_actor)
+		{
+			return a_actor && (a_actor->IsPlayerRef() || a_actor == RE::PlayerCharacter::GetSingleton());
+		}
+
+		// A weapon in the engine's own equipped list of an actor: its base form, and its instance data (only compared
+		// with a stack's, never read through).
+		struct EngineWeapon
+		{
+			std::uint32_t item = 0;
+			const void*   instance = nullptr;
+		};
+
+		// The weapons the engine's equipped list holds (the actor's middle-high process, as MuzzleFlash's EquippedGun and
+		// EngineHolds below read it), or nullopt when the actor has no such process. Read on its own, with no other lock
+		// held.
+		std::optional<std::vector<EngineWeapon>> EngineWeapons(RE::Actor* a_actor)
+		{
+			const auto process = a_actor ? a_actor->currentProcess : nullptr;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return std::nullopt;
+			}
+			std::vector<EngineWeapon> out;
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				const auto object = equipped.item.object;
+				if (object && object->GetFormType() == RE::ENUM_FORM_ID::kWEAP) {
+					out.push_back({ object->GetFormID(), equipped.item.instanceData.get() });
+				}
+			}
+			return out;
+		}
+
+		// The base forms of those, for GearReport::HandsAsHeld.
+		std::optional<std::vector<std::uint32_t>> HeldItems(const std::optional<std::vector<EngineWeapon>>& a_weapons)
+		{
+			if (!a_weapons) {
+				return std::nullopt;
+			}
+			std::vector<std::uint32_t> out;
+			for (const auto& weapon : *a_weapons) {
+				out.push_back(weapon.item);
+			}
+			return out;
+		}
 	}
 
 	// What the engine says of the reference, for OwnGear::Judge.
@@ -240,6 +305,10 @@ namespace Equipment
 		if (!list) {
 			return items;
 		}
+		// Our player's hand weapons are said as the engine holds them (GearReport::HandsAsHeld): a stale equipped flag on
+		// a stack of a gun they no longer hold must not reach their friends. Read before the inventory's lock is taken.
+		const bool own = IsOurPlayer(a_actor);
+		const auto held = own ? HeldItems(EngineWeapons(a_actor)) : std::nullopt;
 		{
 			RE::BSAutoReadLock l{ list->rwLock };
 			for (auto& item : list->data) {
@@ -258,6 +327,9 @@ namespace Equipment
 		}
 		std::ranges::sort(items);
 		items.erase(std::unique(items.begin(), items.end()), items.end());
+		if (own) {
+			items = GearReport::HandsAsHeld(std::move(items), held, InHand);
+		}
 		if (items.size() > Protocol::MAX_EQUIPMENT) {
 			items.resize(Protocol::MAX_EQUIPMENT);
 		}
@@ -287,6 +359,13 @@ namespace Equipment
 		{
 			return a_stack.extra ? a_stack.extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
 		}
+
+		// The stack's instance data (its ExtraInstanceData), or nullptr; only compared with the engine's, never read.
+		const void* InstanceDataOf(const RE::BGSInventoryItem::Stack& a_stack)
+		{
+			const auto extra = a_stack.extra ? a_stack.extra->GetByType<RE::ExtraInstanceData>() : nullptr;
+			return extra ? extra->data.get() : nullptr;
+		}
 	}
 
 	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor)
@@ -297,22 +376,36 @@ namespace Equipment
 		if (!list || items.empty()) {
 			return out;
 		}
+		// Our player's copy in hand is the one whose mods are said, when more than one copy of the gun is flagged equipped
+		// (GearReport::StackToRead). Read before the inventory's lock is taken.
+		const auto held = IsOurPlayer(a_actor) ? EngineWeapons(a_actor) : std::nullopt;
 		RE::BSAutoReadLock l{ list->rwLock };
 		for (auto& item : list->data) {
 			if (!item.object || !std::ranges::binary_search(items, item.object->GetFormID()) || StandInGear::ModsOf(out, item.object->GetFormID())) {
 				continue;
 			}
+			std::vector<const RE::BGSInventoryItem::Stack*> flagged;
+			std::vector<const void*>                        instances;
 			for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
-				if (!stack->IsEquipped()) {
-					continue;
+				if (stack->IsEquipped()) {
+					flagged.push_back(stack);
+					instances.push_back(InstanceDataOf(*stack));
 				}
-				if (const auto instance = InstanceOf(*stack); instance && instance->values) {
-					out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
-				} else if (const auto armor = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? item.object->As<RE::TESObjectARMO>() : nullptr; armor && !armor->objectTemplate.items.empty()) {
-					// A worn piece with combinations but no mods is said plain: said nothing, the other game rolls its own.
-					out.push_back({ item.object->GetFormID(), StandInGear::NO_TEMPLATE, {} });
-				}
-				break;
+			}
+			if (flagged.empty()) {
+				continue;
+			}
+			const void* heldInstance = nullptr;
+			if (held) {
+				const auto found = std::ranges::find(*held, item.object->GetFormID(), &EngineWeapon::item);
+				heldInstance = found != held->end() ? found->instance : nullptr;
+			}
+			const auto& stack = *flagged[GearReport::StackToRead(instances, heldInstance)];
+			if (const auto instance = InstanceOf(stack); instance && instance->values) {
+				out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
+			} else if (const auto armor = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? item.object->As<RE::TESObjectARMO>() : nullptr; armor && !armor->objectTemplate.items.empty()) {
+				// A worn piece with combinations but no mods is said plain: said nothing, the other game rolls its own.
+				out.push_back({ item.object->GetFormID(), StandInGear::NO_TEMPLATE, {} });
 			}
 		}
 		return out;
@@ -336,16 +429,6 @@ namespace Equipment
 
 	namespace
 	{
-		bool IsThrowable(const RE::TESForm* a_form)
-		{
-			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
-			if (!weapon) {
-				return false;
-			}
-			const auto type = weapon->weaponData.type.get();
-			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
-		}
-
 		GearPlan::Slots SlotsOf(std::uint32_t a_item)
 		{
 			const auto form = RE::TESForm::GetFormByID(a_item);

@@ -212,6 +212,35 @@ namespace StandInGear
 		return out;
 	}
 
+	// Whether a stand-in showing a_shown wears a_wanted, what it was dressed in (both as an NPC's inventory shows worn
+	// items, sorted). The same list, or, when a_wanted names more than one weapon in the hand, which no one can hold:
+	// everything else, and one of those weapons. Such a list came from a game that reported a stale equipped flag beside
+	// the gun its player held (fixed in the sender since, GearReport; an older game still sends it). Dressing the stand-in
+	// again could never do better, and put its gun away each time: the check found it "not wearing their gear" three times
+	// over after every change of theirs, and their shots showed no trail meanwhile.
+	template <class InHand>
+	bool Wears(const std::vector<std::uint32_t>& a_shown, const std::vector<std::uint32_t>& a_wanted, InHand&& a_inHand)
+	{
+		if (a_shown == a_wanted) {
+			return true;
+		}
+		const auto wantedHands = HandWeapons(a_wanted, a_inHand);
+		if (wantedHands.size() < 2) {
+			return false;
+		}
+		const auto shownHands = HandWeapons(a_shown, a_inHand);
+		if (shownHands.size() != 1 || !std::ranges::binary_search(wantedHands, shownHands.front())) {
+			return false;
+		}
+		const auto rest = [&](const std::vector<std::uint32_t>& a_items) {
+			std::vector<std::uint32_t> out;
+			std::ranges::copy_if(a_items, std::back_inserter(out), [&](std::uint32_t a_item) { return !a_inHand(a_item); });
+			std::ranges::sort(out);
+			return out;
+		};
+		return rest(a_shown) == rest(a_wanted);
+	}
+
 	// The step done. Whether the stand-in puts its gun away and draws it again (Puppets::RedrawWeapon): always when
 	// dressed afresh (its weapon was taken off it), and after a change only when the weapons in hand changed, or the mods
 	// on one of them (its copy is replaced by one built with the new mods; mods no longer on record leave its copy as it is).
