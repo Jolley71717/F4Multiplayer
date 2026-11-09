@@ -311,14 +311,22 @@ log_delta_file() {  # log_delta_file <who>: fetches the log now and writes the d
 _prefixes() {  # _prefixes <file> <level>: "Prefix xN" per distinct prefix, most first (never the message text)
 	grep -E "^\[[^]]*\] \[[^]]*\] \[$2\] " "$1" | sed -E "s/^\[[^]]*\] \[[^]]*\] \[$2\] ([A-Za-z0-9_ .-]+):.*/\1/;t;s/^.*\] \[$2\] (.{0,24}).*/\1/" | sort | uniq -c | sort -rn | awk '{c=$1; $1=""; sub(/^ /,""); printf "%s x%d; ", $0, c}'
 }
+FUZZ_LEDGER_LINE="\] \[W\] WorldSync: the server's log ends at #[0-9]+; let go of [0-9]+ waiting container changes numbered past it"
 log_check() {  # log_check <who> <label>
-	local f e w a; f=$(log_delta_file "$1")
+	local f e w a wf x=0 xs=""; f=$(log_delta_file "$1")
 	if [ ! -s "$f" ]; then fail "$2 plugin log" "no new lines since the mark: the log was not read (or the game wrote nothing)"; return; fi
-	e=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[E\] ' "$f"); w=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[W\] ' "$f")
+	e=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[E\] ' "$f")
 	a=$(grep -ciE 'assert(ion)? (failed|failure)|ASSERT:|assertion failed' "$f")
+	# Warnings: the fuzz step's own WorldSync line (asserted there) is left out once that step has run; nothing else is.
+	wf=$f
+	if [ -n "${FUZZ_RAN:-}" ]; then
+		x=$(grep -cE "$FUZZ_LEDGER_LINE" "$f"); [ "$x" -gt 1 ] && x=1
+		if [ "$x" -gt 0 ]; then wf="$f.warn"; RE="$FUZZ_LEDGER_LINE" awk 'n==0 && $0 ~ ENVIRON["RE"] {n=1; next} {print}' "$f" > "$wf"; xs=" (the fuzz step's own container line left out)"; fi
+	fi
+	w=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[W\] ' "$wf")
 	if [ "$e" -gt 0 ]; then fail "$2 plugin log errors" "$e new [E] line(s): $(_prefixes "$f" E)(text in $f)"; else pass "$2 plugin log errors" "none in $(wc -l < "$f") new lines"; fi
 	if [ "$a" -gt 0 ]; then fail "$2 plugin log asserts" "$a line(s) with assertion text (in $f)"; else pass "$2 plugin log asserts" "none"; fi
-	if [ "$w" -gt 0 ]; then warn "$2 plugin log warnings" "$w new [W] line(s): $(_prefixes "$f" W)"; else pass "$2 plugin log warnings" "none"; fi
+	if [ "$w" -gt 0 ]; then warn "$2 plugin log warnings" "$w new [W] line(s): $(_prefixes "$wf" W)$xs"; else pass "$2 plugin log warnings" "none$xs"; fi
 }
 log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta only; counts, never the matching text
 	local f p s i pf="${F4MP_PRIVATE_PATTERNS:-$HOME/.f4mp-private-patterns}"; f=$A_OUT/logdelta-$1.txt
