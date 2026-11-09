@@ -1,14 +1,13 @@
 {
- "release": "0.15.0",
+ "release": "0.15.1",
  "known_issues": [
-  "Key names in Controls are in English in every language.",
   "Random events that aren't fights (a synth held at gunpoint, the Diamond City synth accusation) still play out in one player's game only. Sharing them comes in the next version.",
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
   "A workbench is shared only at settlements the host owns.",
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T07:14:58+00:00",
+ "updated": "2026-11-09T09:18:29+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -684,11 +683,11 @@
   },
   {
    "id": "br7k",
-   "title": "After a joiner bleeds out, their game may fail to load the newest save (main menu on 0.13.1, loading screen hung 4+ min on the PR 322 build)",
+   "title": "After a player bleeds out, their game may go to the main menu instead of loading the newest save (host too, most menu checks)",
    "kind": "bug",
-   "priority": 2,
+   "priority": 1,
    "stage": 0,
-   "note": ""
+   "note": "Seen on the host in most menu checks; P1"
   },
   {
    "id": "briz",
@@ -1307,8 +1306,8 @@
    "title": "A stale equipped flag re-dresses a friend's stand-in after a gun switch; about 9 s of shots don't show",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In 0.15.1-rc2; soaking"
+   "stage": 7,
+   "note": "Shipped in 0.15.1"
   },
   {
    "id": "krne",
