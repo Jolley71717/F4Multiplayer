@@ -31,7 +31,9 @@ namespace ClickRates
 		kShotSound,      // a friend's gunshot played from their stand-in or a mirrored NPC, as a new sound
 		kVoiceStart,     // a friend's voice started from an empty device (a new sentence, or after an underrun)
 		kVoiceUnderrun,  // ... of them, a piece that came after the last one ran out
-		kHud,            // a message shown at the HUD's top left
+		// Not the HUD's top-left notices: they play no sound (Hud.cpp's NOTICE_SOUND, guarded by a test). Counted, they
+		// said "repeating sound" every time a friend was downed and helped up a few times in a row, about notices that
+		// make no sound, and that report took the minute's one line from any real repeat in the same minute.
 		kCount,
 	};
 
@@ -48,7 +50,6 @@ namespace ClickRates
 		{ "shotSounds", 60 },
 		{ "voiceStarts", 30 },
 		{ "voiceUnderruns", 8 },
-		{ "hud", 6 },
 	} };
 
 	constexpr const Info& InfoOf(Source a_source)
@@ -95,7 +96,7 @@ namespace ClickRates
 			return entry.repeats + (entry.inWindow > InfoOf(a_source).limit ? 1 : 0);
 		}
 
-		// "clicks: drawAsks=3(peak 3/12) hud=1(peak 1/6) repeats=0", sources that did nothing left out.
+		// "clicks: drawAsks=3(peak 3/12) emotes=1(peak 1/8) repeats=0", sources that did nothing left out.
 		[[nodiscard]] std::string Describe() const
 		{
 			std::string out = "clicks:";

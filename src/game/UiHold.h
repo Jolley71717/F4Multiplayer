@@ -208,7 +208,15 @@ namespace UiHold
 			}
 			auto message = std::move(queued.front());
 			queued.pop_front();
+			++shown;
 			return message;
+		}
+
+		// Messages handed to the HUD so far.
+		[[nodiscard]] std::uint32_t Shown() const
+		{
+			std::scoped_lock l{ lock };
+			return shown;
 		}
 
 		[[nodiscard]] std::size_t Size() const
@@ -232,12 +240,13 @@ namespace UiHold
 		[[nodiscard]] std::string Describe() const
 		{
 			std::scoped_lock l{ lock };
-			return std::format("queued={} held={} dropped={}", queued.size(), held, dropped);
+			return std::format("shown={} queued={} held={} dropped={}", shown, queued.size(), held, dropped);
 		}
 
 	private:
 		mutable std::mutex      lock;
 		std::deque<std::string> queued;
+		std::uint32_t           shown = 0;    // messages handed to the HUD
 		std::uint32_t           held = 0;     // messages that arrived while the UI was held
 		std::uint32_t           dropped = 0;  // messages past MAX_QUEUED
 	};

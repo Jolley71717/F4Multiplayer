@@ -236,7 +236,8 @@ TEST("ui hold: the queue keeps a few messages and drops the rest, counted")
 	CHECK(queue.Dropped() == 3u);
 	CHECK(queue.Held() == Queue::MAX_QUEUED + 3);
 	CHECK(queue.Pop(true).value_or("") == "0");  // the oldest first
-	CHECK(queue.Describe() == std::format("queued={} held={} dropped=3", Queue::MAX_QUEUED - 1, Queue::MAX_QUEUED + 3));
+	CHECK(queue.Shown() == 1u);
+	CHECK(queue.Describe() == std::format("shown=1 queued={} held={} dropped=3", Queue::MAX_QUEUED - 1, Queue::MAX_QUEUED + 3));
 }
 
 TEST("ui hold: markup and control characters from other players are kept out of a message")

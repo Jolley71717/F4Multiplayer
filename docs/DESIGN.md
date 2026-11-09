@@ -96,6 +96,11 @@
   name is never looked up, but `""` was (hash 0), and matched any sound record whose editor ID was set
   empty in the player's load order. That sound played on the player and was never stopped: a looping one
   (a generator's hum, rushing water) stacked with every notice until a load (two players' reports, 0.11.2).
+  With the null name a notice is silent: the HUD's update (HUDMessages) hands the name to `PlayMenuSound`
+  unchecked, which returns at once for null, and the message's clip in `HUDMenu.swf` plays nothing. So
+  ClickWatch (`src/game/ClickRates.h`) doesn't count notices among the sounds: a friend downed and helped
+  up a few times in a row shows several in a few seconds, which it read as a repeating sound.
+  `tests/NoticeSoundTests.cpp` keeps every notice on Hud.cpp's null name and every menu sound on a press.
 - **Log:** `src/Log.cpp`. CommonLib's `F4SE::Init` opens `F4Multiplayer.log` and empties it; just
   before, `LogRotation::Rotate` (`src/LogRotation.h`, unit tested on real files) moves the last three
   launches' logs to `.1.log`..`.3.log` with `std::filesystem::rename` and error codes, so nothing can
