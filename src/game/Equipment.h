@@ -33,11 +33,14 @@ namespace Equipment
 	// stack (form and count), the Pip-Boy and the caps, and what is equipped.
 	std::string DescribeInventory(RE::Actor* a_actor);
 
-	// Base forms of the armor and weapons the actor has equipped, sorted, without duplicates.
+	// Base forms of the armor and weapons the actor has equipped, sorted, without duplicates: the inventory's equipped
+	// flags. For our player (the gear report friends get), a gun or melee weapon flagged equipped that the engine doesn't
+	// hold is left out when it holds another one (a stale flag; GearReport::HandsAsHeld).
 	std::vector<std::uint32_t> Read(RE::Actor* a_actor);
 
 	// The mods on the actor's copies of those items (their BGSObjectInstanceExtra), for the items whose copy carries
-	// one: what a friend's stand-in of the actor is given its copies built with.
+	// one: what a friend's stand-in of the actor is given its copies built with. Of two copies flagged equipped, our
+	// player's is the one the engine holds (GearReport::StackToRead).
 	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor);
 
 	// Replaces everything the puppet carries with these items and equips them, each built with its mods in a_mods (or the

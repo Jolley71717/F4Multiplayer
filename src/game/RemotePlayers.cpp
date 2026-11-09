@@ -3546,7 +3546,7 @@ namespace RemotePlayers
 			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, playedNow));
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
 			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr, now, HandWeapon,
-				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown()) == Wearable(Kept(a_worn, dress)); });
+				[&](const std::vector<std::uint32_t>& a_worn) { return StandInGear::Wears(Wearable(shown()), Wearable(Kept(a_worn, dress)), HandWeapon); });
 			switch (dressing.put) {
 			case StandInGear::Put::kApply:
 				Equipment::Apply(actor, Outfit(remote, dress), remote.gear.mods);
