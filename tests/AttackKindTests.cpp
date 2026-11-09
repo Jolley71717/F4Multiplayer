@@ -152,3 +152,31 @@ TEST("attack kind: a stand-in's plain bullet or beam from an enchanted gun or of
 	// A stream or a harpoon from an enchanted gun: fired as before.
 	CHECK(ShotReplay(standIn, known, 0x80000, false, false, enchanted, inert, trails) == Fire::kFired);
 }
+
+TEST("attack kind: an enchantment that acts on the wielder (an armor-piercing receiver, a recon scope) holds no trail; one that lands on a hit does")
+{
+	using AttackKind::EnchantmentOnHit;
+	using AttackKind::Fire;
+	using AttackKind::ShotReplay;
+	// The engine's casting types (constant, fire and forget, concentration, scroll) and deliveries (self, touch, aimed,
+	// target actor, target location), as Fallout4.esm's enchantment records give them.
+	constexpr std::int32_t constant = 0, fireAndForget = 1, concentration = 2, scroll = 3;
+	constexpr std::int32_t self = 0, touch = 1, aimed = 2, targetActor = 3, targetLocation = 4;
+	// enchModArmorPenetration (the 10mm's, the assault rifle's and the combat shotgun's armor-piercing receivers),
+	// EnchReconScopeEquipped, a Bloodied or Nocturnal legendary: constant, self. They act on the one holding the gun.
+	CHECK(!EnchantmentOnHit(constant, self));
+	// A legendary's bleed, poison or cryo, a melee mod's shock, a laser receiver's fire: fire and forget, by touch.
+	CHECK(EnchantmentOnHit(fireAndForget, touch));
+	// Anything else is taken to reach what the shot hits, as before.
+	for (const std::int32_t delivery : { touch, aimed, targetActor, targetLocation }) {
+		CHECK(EnchantmentOnHit(constant, delivery));
+	}
+	for (const std::int32_t cast : { fireAndForget, concentration, scroll }) {
+		CHECK(EnchantmentOnHit(cast, self));
+	}
+	// The trails step's 10mm with an armor-piercing automatic receiver (its bullet 0x40A0C): its gun counts as having no
+	// enchantment that lands on a hit, so its shot flies inert as a trail instead of being held.
+	constexpr bool standIn = true, known = true, inert = true, trails = true;
+	CHECK(ShotReplay(standIn, known, 0x40A0C, false, false, EnchantmentOnHit(constant, self), inert, trails) == Fire::kInert);
+	CHECK(ShotReplay(standIn, known, 0x40A0C, false, false, EnchantmentOnHit(fireAndForget, touch), inert, trails) == Fire::kHeld);
+}

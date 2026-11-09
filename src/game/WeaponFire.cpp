@@ -186,7 +186,7 @@ namespace WeaponFire
 				if (hasEnchantment || !AttackKind::IsPlainTrail(projectile->data.flags)) {
 					if (trailsHeldGun++ < 10) {
 						REX::INFO("WeaponFire: {:08X}'s plain shot ({:08X}, flags {:X}) held, no trail: {}", a_actor->GetFormID(), projectile->GetFormID(), projectile->data.flags,
-							hasEnchantment ? "its gun is enchanted" : "its record is hitscan");
+							hasEnchantment ? "its gun's enchantment lands on a hit" : "its record is hitscan");
 					}
 				}
 			}
