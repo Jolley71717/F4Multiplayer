@@ -8,7 +8,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T02:21:33+00:00",
+ "updated": "2026-11-09T04:56:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1293,6 +1293,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "kphv",
+   "title": "Some of the joiner's laser shots never replay in the host's game (3 of 6, neither inert nor held)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Found in the 0.15.x soaks"
   },
   {
    "id": "krne",
