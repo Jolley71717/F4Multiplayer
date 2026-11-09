@@ -10,7 +10,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T19:51:47+00:00",
+ "updated": "2026-11-09T21:33:04+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -521,8 +521,8 @@
    "title": "Trails: a friend's shots from a gun with a wielder-only enchantment (armor-piercing receiver, recon scope, Bloodied, Nocturnal) show no tracer",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in a PR, under review, for 0.16.1"
+   "stage": 5,
+   "note": "Merged to main (rig-tested on two games); ships in 0.16.1."
   },
   {
    "id": "8mp",
@@ -1012,8 +1012,8 @@
    "title": "Repeating HUD sound: ClickWatch 'hud happened 7 times in under 10 s' once per soak round (host, during the repeated-downs step)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in a PR, under review, for 0.16.1"
+   "stage": 5,
+   "note": "Merged to main (rig-tested on two games); ships in 0.16.1."
   },
   {
    "id": "fywn",
@@ -2128,8 +2128,8 @@
    "title": "Rejoin catch-up: quest stages replayed to a rejoining joiner never complete (QuestSync 'still not done 5 s after setting it' x6-7 in every soak)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in a PR, under review, for 0.16.1"
+   "stage": 5,
+   "note": "Merged to main (rig-tested on two games); ships in 0.16.1."
   },
   {
    "id": "w310",
@@ -2259,8 +2259,8 @@
    "title": "Downed: the camera's way back loops on its transition (x9 per soak on the VM, and on every death); the watchdog puts it right",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in a PR, under review, for 0.16.1"
+   "stage": 5,
+   "note": "Merged to main (rig-tested on two games); ships in 0.16.1."
   },
   {
    "id": "ybqf",
