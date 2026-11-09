@@ -531,22 +531,11 @@ namespace Spawns
 		}
 
 		// Friends' encounter spawns as the book judges them: where their game had each as it was shared (its encounter's
-		// spot, not where it has walked to), its number in the server's order, and whether it is over. One whose
-		// encounter ended is shared on plain (Add), and is no encounter spawn here any more.
+		// spot) and where their game has it now (its states), its number in the server's order, and whether it is over.
+		// One whose encounter ended is shared on plain (Add), and is no encounter spawn here any more (Encounters::TheirsOf).
 		std::vector<Encounters::Theirs> TheirEncounters()
 		{
-			std::vector<Encounters::Theirs> out;
-			for (const auto id : theirs.Ids()) {
-				const auto copy = theirs.Find(id);
-				if (!copy || copy->spawn.kind != Protocol::SpawnKind::kEncounter) {
-					continue;
-				}
-				const auto&             spawn = copy->spawn;
-				const RemoteEdits::Spot spot{ spawn.cell, spawn.worldspace, spawn.x, spawn.y, spawn.z };
-				const auto              seq = theirSeq.find(id);
-				out.push_back({ id, spawn.quest, spawn.playerId, spot, seq != theirSeq.end() ? seq->second : 0, copy->dead || copy->gone });
-			}
-			return out;
+			return Encounters::TheirsOf(theirs, theirSeq);
 		}
 
 		const char* QuestName(std::uint32_t a_quest)
@@ -620,17 +609,35 @@ namespace Spawns
 			}
 		}
 
-		// The runs booked for a stop are stopped: their actors first, every loaded one the quest's aliases still name,
-		// alive or dead (the stop may clear the aliases), gathered before any is touched (a removal must not change the
-		// list under the walk), then the quest. The book's actors of the run (seen before the stop) go too, each by the
-		// handle the scan saw it under (its id alone could name another NPC by now), and so do the actors of stopped runs
-		// the scan saw since, while their quest did not run (pendingRemovals: a fresh roll of the same quest within
-		// STOPPED_FOR runs again, and its actors are nobody's to remove).
+		// The runs booked for a stop are stopped: their actors first, gathered before any is touched (a removal must not
+		// change a list under its walk), then the quest. Every actor the quest's created aliases hold, loaded or not (one
+		// out of the high process list is in no walk of the loaded ones, and once the stop clears the aliases nothing
+		// tells it from any NPC: hostile, it would be shared as a fight's spawn beside the friend's encounter); every
+		// loaded one whose alias array still names the quest, alive or dead. The book's actors of the run (seen before the
+		// stop) go too, each by the handle the scan saw it under (its id alone could name another NPC by now), and so do
+		// the actors of stopped runs the scan saw since, while their quest did not run (pendingRemovals: a fresh roll of
+		// the same quest within STOPPED_FOR runs again, and its actors are nobody's to remove). RemoveActor leaves a
+		// friend's copy and our companion alone, whatever holds them.
 		void StopPending()
 		{
 			std::vector<Removal> removals;
 			const auto           lists = RE::ProcessLists::GetSingleton();
 			for (const auto quest : pendingStops) {
+				if (const auto form = RE::TESForm::GetFormByID<RE::TESQuest>(quest)) {
+					for (const auto alias : form->aliases) {
+						if (!alias || alias->fillType != QuestActors::FILL_CREATED) {
+							continue;
+						}
+						const char* type = alias->QType().c_str();
+						if (!type || std::string_view{ type } != RE::BGSRefAlias::TYPE) {
+							continue;
+						}
+						const auto ref = form->GetAliasedRef(alias->aliasID).get();
+						if (const auto actor = ref ? ref->As<RE::Actor>() : nullptr) {
+							removals.push_back({ actor->GetHandle(), quest });
+						}
+					}
+				}
 				if (lists) {
 					for (const auto& handle : lists->highActorHandles) {
 						const auto ptr = handle.get();

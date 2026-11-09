@@ -627,3 +627,122 @@ TEST("encounters: an encounter's actor shared on plain under its id once its enc
 	REQUIRE(toThird.size() == 1);
 	CHECK(toThird[0].refId == SPAWN && toThird[0].kind == SpawnKind::kPlain && toThird[0].quest == 0);
 }
+
+TEST("encounters: a friend's travelling encounter holds its spot and where its actors stand now")
+{
+	// The rig (PR 337): the friend's merchant walked about 4000 units from the trigger he was rolled at, and a second
+	// merchant was rolled beside him. Theirs counts at the spot it was shared at and where its owner's game has it now.
+	const auto now = Encounters::Clock::now();
+	Book       book;
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away
+	book.OursSeen(LC01, OURS, At(10000.0f), now);
+	const auto Walked = [](const Spot& a_now, std::uint64_t a_seq = 1, bool a_over = false) {
+		Theirs theirs = Friends(SPAWN, KMK01, At(1000.0f), a_seq, a_over);  // rolled 9000 units from ours
+		theirs.now = a_now;
+		return theirs;
+	};
+	const std::array atSpot{ Friends(SPAWN, KMK01, At(1000.0f), 1) };
+	CHECK(!book.RivalOf(LC01, atSpot, now + 1s));  // standing where it began: far from ours
+	const std::array walkedHere{ Walked(At(10500.0f)) };
+	const auto       rival = book.RivalOf(LC01, walkedHere, now + 1s);
+	REQUIRE(rival);
+	CHECK(rival->spawnId == SPAWN && rival->quest == KMK01);
+	CHECK(rival->distance > 499.0f && rival->distance < 501.0f);
+	// Walked off: its spot still holds (the nearer of the two counts).
+	Book atTrigger;
+	atTrigger.OursSeen(LC01, OURS, At(1300.0f), now);
+	const std::array walkedOff{ Walked(At(40000.0f)) };
+	const auto       stillThere = atTrigger.RivalOf(LC01, walkedOff, now + 1s);
+	REQUIRE(stillThere);
+	CHECK(stillThere->distance > 299.0f && stillThere->distance < 301.0f);
+	const std::array walkedNearer{ Walked(At(1400.0f)) };
+	const auto       nearer = atTrigger.RivalOf(LC01, walkedNearer, now + 1s);
+	REQUIRE(nearer);
+	CHECK(nearer->distance > 99.0f && nearer->distance < 101.0f);
+	// Where it stands now in another place counts for nothing there; over (dead, let go of), or later in the server's
+	// order than ours, it is no rival wherever it stands.
+	const std::array inside{ Walked(Spot{ CELL, 0, 10000.0f, 2000.0f, 100.0f }) };
+	CHECK(!book.RivalOf(LC01, inside, now + 1s));
+	const std::array overHere{ Walked(At(10500.0f), 1, true) };
+	CHECK(!book.RivalOf(LC01, overHere, now + 1s));
+	book.OursGranted(LC01, 2);
+	const std::array laterHere{ Walked(At(10500.0f), 3) };
+	CHECK(!book.RivalOf(LC01, laterHere, now + 1s));
+	CHECK(book.RivalOf(LC01, walkedHere, now + 1s));  // number 1: first, still
+
+	// Two games: A's run was first; B's travelling group walks onto A's spot. A never gives way to it (B's came later),
+	// and B gives way to A's only within its own window: where each stands never makes both stop.
+	Book a;
+	a.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);
+	a.OursSeen(LC01, OURS, At(1000.0f), now);
+	a.OursGranted(LC01, a.Next());                                                    // 1
+	Theirs bOnA = Friends(SPAWN2, KMK01, At(20000.0f), a.Next());                    // 2
+	bOnA.now = At(1100.0f);
+	CHECK(!a.RivalOf(LC01, std::array{ bOnA }, now + 1s));
+}
+
+TEST("encounters: an ended encounter's actor no longer holds its spot in a friend's book, whoever was first")
+{
+	// The rig (PR 337): a host radstag whose encounter had ended (its quest stopped) was still shared as an encounter's
+	// actor, and made the friend's game stop five new runs near it. Its owner shares it on plain under its id as the
+	// quest stops; the friend's record takes the kind, and the book no longer counts it. Dead, or let go of, the same.
+	Fixture    f;
+	const auto host = JoinAs(f, 1, "Player One");
+	const auto friendId = JoinAs(f, 2, "Player Two");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Report(Actor(SPAWN, LC01, 3, SpawnKind::kEncounter, ACTOR_BASE, 1000.0f)));
+	f.fake->Deliver(1, Report(Actor(SPAWN3, LC01, 4, SpawnKind::kEncounter, ACTOR_BASE, 1050.0f)));
+	const auto shared = Spawned(Received(f, 2));
+	REQUIRE(shared.size() == 2);
+
+	// The friend's records (Spawns::Add) with the number each arrived as, and a fresh roll of its own beside them.
+	SpawnBook::Theirs                                records;
+	std::unordered_map<std::uint32_t, std::uint64_t> seqs;
+	Book                                             book;
+	const auto                                       now = Encounters::Clock::now();
+	book.OursSeen(DN083, 0xFF0FFFFF, At(-90000.0f), now - 1min);  // another run of ours, far away
+	for (const auto& spawn : shared) {
+		REQUIRE(records.Add(spawn, friendId));
+		seqs[spawn.refId] = book.Next();
+	}
+	book.OursSeen(KMK01, OURS, At(1200.0f), now);
+	auto theirs = Encounters::TheirsOf(records, seqs);
+	REQUIRE(theirs.size() == 2);
+	CHECK(theirs[0].player == host && !theirs[0].over && theirs[0].now.has_value());
+	CHECK(book.RivalOf(KMK01, theirs, now + 1s));  // the host's encounter runs there, and was first
+
+	// The host's quest stops with both actors standing: each is shared on plain, and the friend takes the kind.
+	Clear(f, { 1, 2 });
+	for (const auto id : { SPAWN, SPAWN3 }) {
+		f.fake->Deliver(1, Report(Actor(id, 0, 0, SpawnKind::kPlain, ACTOR_BASE, 1000.0f)));
+	}
+	for (const auto& again : Spawned(Received(f, 2))) {
+		CHECK(again.kind == SpawnKind::kPlain);
+		CHECK(records.Rekind(again.refId, again));
+	}
+	CHECK(Encounters::TheirsOf(records, seqs).empty());
+	CHECK(!book.RivalOf(KMK01, Encounters::TheirsOf(records, seqs), now + 2s));
+	CHECK(records.Find(SPAWN)->spawn.kind == SpawnKind::kPlain);  // the records, and so the copies, stay
+
+	// An encounter's actor dead, or let go of (unloaded in its owner's game: the server ends it and names nobody): over.
+	SpawnBook::Theirs other;
+	REQUIRE(other.Add(shared[0], friendId));
+	REQUIRE(other.Add(shared[1], friendId));
+	CHECK(book.RivalOf(KMK01, Encounters::TheirsOf(other, seqs), now + 2s));
+	other.Died(shared[0].refId);
+	other.Gone(shared[1].refId);
+	const auto ended = Encounters::TheirsOf(other, seqs);
+	REQUIRE(ended.size() == 2);
+	CHECK(ended[0].over && ended[1].over);
+	CHECK(!book.RivalOf(KMK01, ended, now + 2s));
+
+	// Its states move where it stands now; its spot stays where it was shared.
+	SpawnBook::Theirs moving;
+	REQUIRE(moving.Add(shared[0], friendId));
+	moving.Moved(shared[0].refId, At(30000.0f), 0.0f, SpawnBook::Clock::now());
+	const auto moved = Encounters::TheirsOf(moving, seqs);
+	REQUIRE(moved.size() == 1);
+	CHECK(moved[0].at.x == shared[0].x);
+	REQUIRE(moved[0].now);
+	CHECK(moved[0].now->x == 30000.0f);
+}
