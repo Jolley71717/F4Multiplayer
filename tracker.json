@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T21:32:30+00:00",
+ "updated": "2026-11-10T22:07:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1251,6 +1251,14 @@
    "stage": 7,
    "note": "",
    "pr": 297
+  },
+  {
+   "id": "iubr",
+   "title": "Rig: a console-recruited Dogmeat never follows the host, so the companions step can't check that the friend's copy follows in sync",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Rig limitation found while testing shared companions"
   },
   {
    "id": "iwoy",
