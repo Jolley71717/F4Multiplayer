@@ -88,7 +88,7 @@
   nothing in the log. Two stops it re-arms itself, once a second: the F4SE task not running (it posts
   the frame message in its place) and the window procedure never getting the message (it hooks the
   game's window again should the engine have made a new one). The judgement is
-  `src/game/FrameWatch.h`, unit tested. The loading-screen gate, the one gate with no end of its own,
+  `src/game/FrameWatch.h`, unit tested; a loading screen the plugin has heard open is diagnosed before the F4SE task is looked at, since the task does not run through a load either. The loading-screen gate, the one gate with no end of its own,
   counts a loading screen as up for at most five minutes (`UiHold::Guard`, `src/game/UiHold.h`). A
   notice goes to the HUD (`SendHUDMessage::ShowHUDMessage`) with no sound name, a null one, as the game's
   own notices (Papyrus `Debug.Notification`, the XP and quest lines) send it. The HUD hands the name to
