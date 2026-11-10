@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T15:05:45+00:00",
+ "updated": "2026-11-10T15:30:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1837,8 +1837,8 @@
    "title": "Host crashes at shutdown when quitting in workshop mode (also on v0.12.1)",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Cause found and fixed; needs a game test"
+   "stage": 5,
+   "note": "Fixed; ships in the next release"
   },
   {
    "id": "rhq6",
