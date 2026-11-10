@@ -225,6 +225,12 @@
   hands the victim's to `AIProcess::EnterCombat` unchecked, and `TESObjectREFR::Disable` deletes an actor's process at once:
   a stand-in replaced in a fight crashed the game there. `CombatReactions` (src/game/CombatReaction.h) hooks the task's call
   and skips a victim that is disabled, deleted or has no process (`reactionsSkipped=` in `net status`).
+- Quitting from workshop mode crashed at the end of `Main::Shutdown`, vanilla too (once past the music check `ExitMusic`
+  mends): `HandleManager::KillSDM` destroys the references still alive, among them the workshop menu's cell-less display
+  copy of the workbench (CONT 000C1AEB), and `~BGSInventoryList` (2194154, at +0x87) calls
+  `BGSInventoryInterface::RemoveAllAgents` with the interface's singleton (4796586), which the shutdown has deleted by
+  then: a read of the agent array through null. `ExitInventory` (src/game/ExitInventory.h) hooks that one call and skips
+  it while the singleton is null (`listsAfterInterface=` in `net status`).
 - The `ActorState` constructor (140CEB250) clears only bits 0-7 and 9-19 of its second flags word: bits 21-31 keep
   whatever the memory held. On some runs the player starts with `inSyncAnim` (bit 21) on, and while it is on,
   `PlayerControls::PerformInputProcessing` (140DDBE50) hands no input to the player's handlers: no walking,
