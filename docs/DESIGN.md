@@ -750,9 +750,11 @@ after the owner table. A game told its recruit is another's dismisses its copy t
 dismissal (FollowersScript.DismissCompanion(actor, ShowLocationAssignmentListIfAvailable=false, SuppressDismissMessage=
 true), or DismissDogmeatCompanion(false, true), which takes no actor: with the list off and the message suppressed the
 script runs only its ClearCompanion / ClearDogmeatCompanion, clearing the alias and the teammate flag, no scene), a second
-after the word and once the player is out of the NPC's dialogue, not across a loading screen nor while the copy is dead or
-down, again every 10 s while the aliases still hold it, three times, then leaves it with a warning; the HUD says "{npc}
-is {player}'s companion". No script object is made for the actor (that has crashed the game on a mirrored NPC). The
+after the word and once the player is out of the NPC's dialogue, not while the copy is dead or down, again every 10 s
+while the aliases still hold it, three times, then leaves it with a warning; the HUD says "{npc} is {player}'s
+companion". Nothing is read, reported or dismissed unless the game is settled (Hud::IsSettled: no save or load on, no
+loading screen, settled after a load) and our player is in a cell: the aliases read in those windows can be empty for a
+moment, a let-go the owner never made, which would free the companion for a friend's waiting copy. No script object is made for the actor (that has crashed the game on a mirrored NPC). The
 owner's dismissal in their own dialogue (the alias empties) frees the companion for everyone, and so does a save of theirs
 loaded without it: an NPC the server says is ours that the aliases don't hold at the next look is reported let go. An
 owner who leaves or drops has it held for CompanionBook::HOLD (5 min) under the hello identity, so a rejoin finds it

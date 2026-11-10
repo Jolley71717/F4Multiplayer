@@ -218,6 +218,61 @@ TEST("companion rules: a refused copy whose owner lets the NPC go before our dis
 	CHECK(done.Look({}, T0 + 5s).empty());
 }
 
+TEST("companion rules: a look while the game isn't settled (a save or load, a loading screen, no cell) reports nothing, whatever the aliases read")
+{
+	// Ours, held; then a load starts: the aliases read empty for a while. No let-go, no change; the first settled look
+	// with the save's aliases says it all.
+	Book book;
+	(void)book.Look({ { DOGMEAT, Slot::kDogmeat }, { PIPER, Slot::kCompanion } }, T0);
+	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0).verdict == Verdict::kOurs);
+	CHECK(book.OnOwner(Owner(PIPER, US), US, T0).verdict == Verdict::kOurs);
+	for (int i = 1; i <= 20; ++i) {
+		CHECK(book.Look({}, T0 + i * 500ms, false).empty());
+	}
+	CHECK(book.Recruited() == 2);
+	CHECK(book.IsOurs(DOGMEAT) && book.IsOurs(PIPER));
+	// Settled, the aliases hold both again: nothing new.
+	CHECK(book.Look({ { DOGMEAT, Slot::kDogmeat }, { PIPER, Slot::kCompanion } }, T0 + 11s, true).empty());
+	CHECK(book.Describe().find("letGo=0") != std::string::npos);
+	// A load whose save holds Dogmeat alone: Piper is let go once settled, not before.
+	CHECK(book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0 + 12s, false).empty());
+	book.Reload();
+	CHECK(book.Look({}, T0 + 13s, false).empty());
+	const auto reports = book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0 + 14s, true);
+	REQUIRE(reports.size() == 2);
+	const auto dog = std::ranges::find_if(reports, [](const auto& a_r) { return a_r.refId == DOGMEAT; });
+	const auto piper = std::ranges::find_if(reports, [](const auto& a_r) { return a_r.refId == PIPER; });
+	REQUIRE(dog != reports.end() && piper != reports.end());
+	CHECK(dog->recruited && !piper->recruited);
+	// A pending dismissal is not advanced by an unsettled look either (the game skips it; the book just answers nothing).
+	Book refused;
+	(void)refused.Look({ { DOGMEAT, Slot::kDogmeat } }, T0);
+	REQUIRE(refused.OnOwner(Owner(DOGMEAT, THEM), US, T0).verdict == Verdict::kRefused);
+	CHECK(refused.Look({}, T0 + 5s, false).empty());
+	CHECK(refused.Recruited() == 1);
+	CHECK(refused.DueDismissal(T0 + 5s));
+}
+
+TEST("companion rules: a copy given up on after three dismissals is reported again once the companion is freed")
+{
+	Book book;
+	(void)book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0);
+	REQUIRE(book.OnOwner(Owner(DOGMEAT, THEM), US, T0).verdict == Verdict::kRefused);
+	for (int i = 0; i < CompanionRules::DISMISS_TRIES; ++i) {
+		book.Dismissing(DOGMEAT, T0 + 2s + i * CompanionRules::DISMISS_RETRY);
+	}
+	CHECK(book.GivenUp(T0 + 1h).size() == 1);
+	CHECK(book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0 + 1h).empty());
+	CHECK(book.OnOwner({ DOGMEAT, 0, State::kFree }, US, T0 + 1h + 1s).verdict == Verdict::kFree);
+	const auto reports = book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0 + 1h + 2s);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == DOGMEAT && reports[0].recruited);
+	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0 + 1h + 3s).verdict == Verdict::kOurs);
+	CHECK(book.IsOurs(DOGMEAT));
+	CHECK(!book.DueDismissal(T0 + 2h));
+	CHECK(book.Describe().find("reclaimed=1") != std::string::npos);
+}
+
 TEST("companion rules: an owner that was ours and is refused later (the server's book changed under a load) is dismissed")
 {
 	Book book;

@@ -74,10 +74,15 @@ namespace CompanionRules
 	class Book
 	{
 	public:
-		// Each look: what the aliases hold now. The reports to send (recruited, or let go).
-		[[nodiscard]] std::vector<Protocol::CompanionReport> Look(const std::vector<Held>& a_held, Clock::time_point a_now)
+		// Each look: what the aliases hold now. The reports to send (recruited, or let go). Not settled (a save or load
+		// on, a loading screen up, the game settling after a load, our player in no cell): the aliases read then can be
+		// empty for a moment, no let-go the owner made, so nothing is reported or changed, whatever a_held says.
+		[[nodiscard]] std::vector<Protocol::CompanionReport> Look(const std::vector<Held>& a_held, Clock::time_point a_now, bool a_settled = true)
 		{
 			std::vector<Protocol::CompanionReport> reports;
+			if (!a_settled) {
+				return reports;
+			}
 			for (const auto& held : a_held) {
 				auto& entry = recruited[held.id];
 				entry.slot = held.slot;
@@ -137,9 +142,9 @@ namespace CompanionRules
 				}
 				return { Verdict::kFull };
 			case State::kFree:
-				// Its owner let it go while our dismissal of a refused copy waited: ours to recruit after all, so the aliases'
-				// hold on it is reported again instead of dismissed.
-				if (entry && entry->refused && !entry->gaveUp) {
+				// Its owner let it go while our dismissal of a refused copy waited, or after the dismissals were given up on
+				// and the aliases still hold it: ours to recruit after all, so the aliases' hold on it is reported again.
+				if (entry && entry->refused) {
 					*entry = { entry->slot };
 					++reclaimed;
 				}

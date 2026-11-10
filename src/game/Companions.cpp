@@ -44,6 +44,7 @@ namespace Companions
 		std::optional<std::uint32_t> dogmeatAlias;
 		bool                         questMissingLogged = false;
 		std::uint32_t                dismissCallsRefused = 0;  // calls the VM wouldn't queue
+		std::uint32_t                unsettledLooks = 0;       // looks skipped: a save or load on, a loading screen, settling after a load, no cell
 
 		RE::TESQuest* FollowersQuest()
 		{
@@ -189,9 +190,7 @@ namespace Companions
 	void Frame()
 	{
 		const auto now = Clock::now();
-		// Not across a loading screen: the aliases read mid-load could come back empty (a let-go the owner never made),
-		// and a call queued then runs against the state before the load.
-		if (now - lastLook < LOOK_INTERVAL || Story::InOpening() || Hud::LoadingScreenUp() || !FindAliases()) {
+		if (now - lastLook < LOOK_INTERVAL || Story::InOpening() || !FindAliases()) {
 			return;
 		}
 		lastLook = now;
@@ -199,7 +198,19 @@ namespace Companions
 		if (!quest) {
 			return;
 		}
-		for (const auto& report : book.Look(HeldNow(quest), now)) {
+		// Not while a save or load is on, a loading screen is up, or the game is settling after a load (Hud::IsSettled
+		// covers the whole hold, from F4SE's pre-load message on), nor while our player is in no cell (the main menu with
+		// the session still up): the aliases read then can come back empty, a let-go the owner never made, which the
+		// server would act on (the companion freed, a friend's waiting copy granted first, the owner's refused after the
+		// load). A dismissal queued then would run against the state before the load.
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		const bool settled = Hud::IsSettled() && !Hud::LoadingScreenUp() && player && player->GetParentCell();
+		if (!settled) {
+			++unsettledLooks;
+			(void)book.Look({}, now, false);  // nothing is read, reported or changed; the next settled look says it all
+			return;
+		}
+		for (const auto& report : book.Look(HeldNow(quest), now, true)) {
 			REX::INFO("Companions: our {} {:08X} ({}); reported", report.recruited ? "aliases hold" : "aliases let go of", report.refId, NameOf(report.refId));
 			outgoing.push_back(Protocol::Encode(report));
 		}
@@ -272,7 +283,7 @@ namespace Companions
 
 	std::string Describe()
 	{
-		return book.Describe() + std::format(" callsRefused={}", dismissCallsRefused);
+		return book.Describe() + std::format(" callsRefused={} unsettledLooks={}", dismissCallsRefused, unsettledLooks);
 	}
 
 	std::string List()
