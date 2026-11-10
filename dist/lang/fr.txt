@@ -94,6 +94,7 @@ party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [dans un menu]
 party.killed = {killer} a tué {victim}
 party.xp = +{xp} XP des éliminations de votre groupe
+party.catchup_xp = +{xp} XP pour rattraper votre groupe
 party.no_teleport_target = Multijoueur : personne vers qui se téléporter
 party.teleport_prompt = Se téléporter vers {player} ? Maintenez {key}
 party.teleport_choose = Appuyez sur {key} pour choisir qui rejoindre

@@ -13,7 +13,9 @@
 // --npc-level average|highest|host|own (sNpcLevel: the level every game rolls leveled NPCs at, docs/SHARED-ROLLS.md),
 // --legendary-difficulty average|host|own (sLegendaryDifficulty: whose difficulty's legendary chance they roll with;
 // with no host game, host is the average), --safe-quests (sQuests = safe: with the story shared, more quests are shared,
-// src/game/QuestFilter.h SAFE).
+// src/game/QuestFilter.h SAFE), --catch-up-xp PERCENT (iCatchUpXp: a player below the players' average level earns
+// that much more kill XP per level behind, common/CatchUpXp.h; 10 unless given), --group-difficulty PERCENT
+// (iGroupDifficulty: enemies that much tougher per player beyond the first, common/GroupDifficulty.h; 0 unless given).
 // --ban-file: where the bans are kept, so they outlive the server; without it they last until it stops.
 // While it runs, the console takes the host controls (Server::Console): help, players, kick <n>, ban <n>, bans,
 // unban <n | ~alias | all>, password <text> (password - removes it), lock and unlock. The answers go to the output,
@@ -129,6 +131,12 @@ int main(int argc, char* argv[])
 			++i;
 		} else if (arg == "--safe-quests") {
 			options.rules.quests = Protocol::QuestRule::kSafe;
+		} else if (unsigned percent = 0; arg == "--catch-up-xp" && hasValue && ParseNumber(argv[i + 1], percent) && percent <= Protocol::SessionRules::MAX_CATCH_UP_XP) {
+			options.rules.catchUpXp = static_cast<std::uint8_t>(percent);
+			++i;
+		} else if (unsigned percent = 0; arg == "--group-difficulty" && hasValue && ParseNumber(argv[i + 1], percent) && percent <= Protocol::SessionRules::MAX_GROUP_DIFFICULTY) {
+			options.rules.groupDifficulty = static_cast<std::uint8_t>(percent);
+			++i;
 		} else if (arg == "--ban-file" && hasValue) {
 			options.banFile = argv[++i];
 		} else if (arg == "--session-file" && hasValue) {
@@ -145,7 +153,8 @@ int main(int argc, char* argv[])
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
 						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
 						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--downed-crawl] [--slow-vats]\n"
-						 "                  [--share-guest-builds] [--container-gifts] [--save-on-down] [--npc-level RULE] [--legendary-difficulty RULE] [--safe-quests]\n";
+						 "                  [--share-guest-builds] [--container-gifts] [--save-on-down] [--npc-level RULE] [--legendary-difficulty RULE] [--safe-quests]\n"
+						 "                  [--catch-up-xp PERCENT] [--group-difficulty PERCENT]\n";
 			return 2;
 		}
 	}

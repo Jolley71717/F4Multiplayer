@@ -268,7 +268,9 @@ namespace Session
 			static constexpr std::array<const char*, 7> DIFFICULTY{ "fDiffMultHPToPCVE", "fDiffMultHPToPCE", "fDiffMultHPToPCN", "fDiffMultHPToPCH",
 				"fDiffMultHPToPCVH", "fDiffMultHPToPCSV", "fDiffMultHPToPCTSV" };
 			float mult = 1.0f;
-			// Friendly fire was already scaled by the shooter's difficulty.
+			// Friendly fire is applied as the shooter's hit event gave it: that number comes before the shooter's
+			// difficulty multipliers of damage to NPCs (fDiffMultHPByPC*: on the rig, 2026-11-10, dividing them by 3
+			// for group difficulty changed a hit on a stand-in not at all), and the taker's are for NPCs' hits.
 			if (!a_byPlayer) {
 				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
 				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);

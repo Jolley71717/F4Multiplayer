@@ -101,6 +101,7 @@ party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [メニュー中]
 party.killed = {killer}が{victim}を倒しました
 party.xp = パーティのキルで+{xp} XP
+party.catchup_xp = パーティに追いつくため+{xp} XP
 
 # --- Teleporting to a friend ---
 party.no_teleport_target = マルチプレイ：テレポート先がいません

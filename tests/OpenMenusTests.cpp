@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <initializer_list>
 #include <map>
@@ -226,4 +227,36 @@ TEST("open menus: the main menu is kept on its own, open or not and how often it
 	CHECK(book.MainMenus() == 2u);
 	book.Seen("MainMenuX", true);  // another name
 	CHECK(book.MainMenus() == 2u);
+}
+
+TEST("open menus: each menu's last opening and closing are kept with its events' times, never before its first, and a menu not listed changes none")
+{
+	using namespace std::chrono_literals;
+	const OpenMenus::Clock::time_point t0{ 500s };
+	const OpenMenus::Clock::time_point never{};
+	Book                               book;
+	auto                               times = book.TimesOf(kTerminal);
+	CHECK(!times.open);
+	CHECK(times.openedAt == never);
+	CHECK(times.closedAt == never);
+	book.Seen("TerminalMenu", true, t0);
+	times = book.TimesOf(kTerminal);
+	CHECK(times.open);
+	CHECK(times.openedAt == t0);
+	CHECK(times.closedAt == never);
+	book.Seen("terminalmenu", false, t0 + 3s);  // case-blind, as the game's strings are
+	times = book.TimesOf(kTerminal);
+	CHECK(!times.open);
+	CHECK(times.openedAt == t0);
+	CHECK(times.closedAt == t0 + 3s);
+	book.Seen("TerminalMenu", true, t0 + 10s);  // opened again: the last opening, the last closing kept
+	times = book.TimesOf(kTerminal);
+	CHECK(times.open);
+	CHECK(times.openedAt == t0 + 10s);
+	CHECK(times.closedAt == t0 + 3s);
+	book.Seen("TerminalMenuButtons", false, t0 + 11s);  // another name: nothing of the terminal's changes
+	book.Seen("LockpickingMenu", true, t0 + 12s);
+	CHECK(book.TimesOf(kTerminal).closedAt == t0 + 3s);
+	CHECK(book.TimesOf(kLockpicking).openedAt == t0 + 12s);
+	CHECK(book.TimesOf(kExamine).openedAt == never);
 }

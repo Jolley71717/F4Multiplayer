@@ -90,6 +90,7 @@ party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [en un menú]
 party.killed = {killer} ha matado a {victim}
 party.xp = +{xp} PX por las bajas de tu grupo
+party.catchup_xp = +{xp} PX para alcanzar a tu grupo
 party.no_teleport_target = Multijugador: nadie a quien teletransportarse
 party.teleport_prompt = ¿Teletransportarte hasta {player}? Mantén {key}
 party.teleport_choose = Pulsa {key} para elegir a quién teletransportarte

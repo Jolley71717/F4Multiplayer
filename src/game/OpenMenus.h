@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -78,12 +79,23 @@ namespace OpenMenus
 		return true;
 	}
 
+	using Clock = std::chrono::steady_clock;
+
+	// When a menu was last opened and last closed (its events' times), and whether it is open now: for a decision about
+	// a window of time that needs no poll to have caught the menu open (CatchUpXp::MenuEarnedXp).
+	struct Times
+	{
+		bool              open = false;
+		Clock::time_point openedAt{};  // never: the epoch
+		Clock::time_point closedAt{};
+	};
+
 	// The open menus, one bit each. Events come on the UI's thread while any thread asks.
 	class Book
 	{
 	public:
-		// A menu opened or closed (its event). A menu not in the list is no business of the book's.
-		void Seen(std::string_view a_name, bool a_opening)
+		// A menu opened or closed (its event, at a_now). A menu not in the list is no business of the book's.
+		void Seen(std::string_view a_name, bool a_opening, Clock::time_point a_now = Clock::now())
 		{
 			if (SameName(a_name, MAIN_MENU)) {
 				if (a_opening) {
@@ -95,6 +107,7 @@ namespace OpenMenus
 			for (std::size_t i = 0; i < NAMES.size(); ++i) {
 				if (SameName(a_name, NAMES[i])) {
 					const auto bit = 1u << i;
+					(a_opening ? openedAt : closedAt)[i].store(a_now.time_since_epoch().count());
 					if (a_opening) {
 						bits.fetch_or(bit);
 					} else {
@@ -108,6 +121,12 @@ namespace OpenMenus
 		[[nodiscard]] bool Open(Menu a_menu) const
 		{
 			return (bits.load() & Bit(a_menu)) != 0;
+		}
+
+		[[nodiscard]] Times TimesOf(Menu a_menu) const
+		{
+			const auto i = static_cast<std::size_t>(a_menu);
+			return Times{ Open(a_menu), Clock::time_point{ Clock::duration{ openedAt[i].load() } }, Clock::time_point{ Clock::duration{ closedAt[i].load() } } };
 		}
 
 		[[nodiscard]] bool AnyOpen(std::initializer_list<Menu> a_menus) const
@@ -129,6 +148,9 @@ namespace OpenMenus
 		std::atomic<std::uint32_t> bits{ 0 };
 		std::atomic<bool>          mainMenu{ false };
 		std::atomic<std::uint32_t> mainMenus{ 0 };
+		// The events' times, as the clock's ticks (0: never).
+		std::array<std::atomic<Clock::rep>, static_cast<std::size_t>(Menu::kCount)> openedAt{};
+		std::array<std::atomic<Clock::rep>, static_cast<std::size_t>(Menu::kCount)> closedAt{};
 	};
 
 	static_assert(static_cast<std::size_t>(Menu::kCount) <= 32);
@@ -144,6 +166,9 @@ namespace OpenMenus
 
 	// Whether any of a_menus is open. Any thread.
 	[[nodiscard]] bool AnyOpen(std::initializer_list<Menu> a_menus);
+
+	// Book::TimesOf. Any thread.
+	[[nodiscard]] Times TimesOf(Menu a_menu);
 
 	// Book::MainMenuOpen and Book::MainMenus. Any thread.
 	[[nodiscard]] bool          MainMenuOpen();

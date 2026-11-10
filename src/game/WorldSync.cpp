@@ -3044,6 +3044,9 @@ namespace WorldSync
 				}
 			}
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
+				// Our own hit on their stand-in comes to the hit event before the shooter's difficulty multipliers (the
+				// ones group difficulty divides, GroupHits): sent as it is, friendly fire is as the game makes it
+				// whatever the rule (seen on the rig, 2026-11-10: a back-multiplier here made it three times stronger).
 				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
