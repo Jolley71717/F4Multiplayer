@@ -6,7 +6,10 @@
 #include "CatchUpXp.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <initializer_list>
+#include <span>
 #include <vector>
 
 using CatchUpXp::Factors;
@@ -139,4 +142,45 @@ TEST("catch-up xp: a symmetric gap gives a symmetric cut, so two players' factor
 		CHECK(Near(below.share, 1.0f));
 		CHECK(Near(above.ownGain, 1.0f));
 	}
+}
+
+TEST("catch-up xp: the top-up is withheld when a menu that earns XP was open at any point from 1 s before the held XP's first gain to the flush, by the menu's own open and close times")
+{
+	using namespace std::chrono_literals;
+	using CatchUpXp::MenuEarnedXp;
+	using CatchUpXp::MenuSeen;
+	using Time = CatchUpXp::Clock::time_point;
+	const Time never{};
+	const Time xp{ 1000s };              // the kill's XP gained: the hold's first gain (heldSince)
+	const auto flush = xp + 2500ms;      // XP_HOLD later, the poll that judges it
+	const auto judge = [&](std::initializer_list<MenuSeen> a_menus, Time a_flush) { return MenuEarnedXp(std::span<const MenuSeen>{ a_menus.begin(), a_menus.size() }, xp, a_flush); };
+	CHECK(CatchUpXp::MENU_LOOKBACK == 1s);
+
+	// No XP menu ever: the top-up stands.
+	CHECK(!judge({ MenuSeen{}, MenuSeen{} }, flush));
+	// A terminal opened 0.9 s after the kill's XP and still open at the flush: withheld.
+	CHECK(judge({ MenuSeen{ .open = true, .openedAt = xp + 900ms, .closedAt = never } }, flush));
+	// A lock picked inside the window (opened 1.3 s after, closed at 2 s, its XP held with the kill's): withheld.
+	CHECK(judge({ MenuSeen{ .open = false, .openedAt = xp + 1300ms, .closedAt = xp + 2s } }, flush));
+	// A workbench shut 0.5 s before the kill's XP (its XP landed then, unclaimed with the kill's): withheld. Shut 1.5 s
+	// before, it is outside the window and the top-up stands.
+	CHECK(judge({ MenuSeen{ .open = false, .openedAt = xp - 30s, .closedAt = xp - 500ms } }, flush));
+	CHECK(!judge({ MenuSeen{ .open = false, .openedAt = xp - 30s, .closedAt = xp - 1500ms } }, flush));
+	// Open since long before and still open: withheld, by being open.
+	CHECK(judge({ MenuSeen{ .open = true, .openedAt = xp - 10s, .closedAt = xp - 20s } }, flush));
+	// The rig's runs: the console's activate brought the terminal up about 2 to 3 s after it was sent, so it opened
+	// after the flush. A menu that opens after the flush is no business of this hold's: the top-up stands. One that opened a
+	// moment before the flush is in the window.
+	CHECK(!judge({ MenuSeen{ .open = false, .openedAt = never, .closedAt = never } }, flush));
+	CHECK(judge({ MenuSeen{ .open = true, .openedAt = flush - 1ms, .closedAt = never } }, flush));
+	CHECK(!judge({ MenuSeen{ .open = false, .openedAt = flush + 1s, .closedAt = flush + 5s } }, flush));
+	// A menu that stops the game during the victim's fall holds the kill's death event back, so its XP waits unclaimed
+	// and is held only once that event comes, after the close, and flushed at once (its first gain is over XP_HOLD old):
+	// the close is in the window, withheld. (Past UNCLAIMED_XP_WINDOW the XP is dropped before any hold: nothing to judge.)
+	const auto deathAfterClose = xp + 4s;
+	CHECK(judge({ MenuSeen{ .open = false, .openedAt = xp + 900ms, .closedAt = deathAfterClose - 50ms } }, deathAfterClose));
+	// Opened and closed long before: the top-up stands.
+	CHECK(!judge({ MenuSeen{ .open = false, .openedAt = xp - 60s, .closedAt = xp - 50s } }, flush));
+	// Several menus: any one of them decides.
+	CHECK(judge({ MenuSeen{}, MenuSeen{ .open = false, .openedAt = xp - 60s, .closedAt = xp - 50s }, MenuSeen{ .open = false, .openedAt = xp + 1s, .closedAt = xp + 2s } }, flush));
 }

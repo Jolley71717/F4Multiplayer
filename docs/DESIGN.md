@@ -2371,7 +2371,16 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   double. Kills only: the extra is given with `player.modav experience` when held XP is judged a kill's (the end of the
   2.5 s hold above, where a quest stage or a discovery in the window withholds it), and credited as a share is, so it is
   neither reported as kill XP nor topped up again, and not at all when a menu that earns XP (a lock, a terminal, a
-  workbench, the workshop) was open in the hold's window, as that XP is held with the kill's (`catchUp= withheld=`).
+  workbench, the workshop) was open at any point of the hold's window, as that XP is held with the kill's
+  (`catchUp= withheld=`). The window runs from 1 s before the held XP's first gain (a menu's XP lands as it closes) to
+  the flush, and is judged by the menus' own open and close times (`OpenMenus::TimesOf`, `CatchUpXp::MenuEarnedXp`,
+  game-free and tested with timestamps): open at the flush, or opened or closed in the window. A menu opened after the
+  flush is no business of that hold's (on the rig, 2026-11-10, a terminal opened by the console's `activate` came up
+  about 2 to 3 s after it was sent, after the flush, so the top-up stood, as it should). A withheld top-up is logged; with
+  `sLogLevel=debug` so is every other catch-up flush, with its times and the XP menus of the last minute, and XP dropped
+  unclaimed. A menu that stops the game during the victim's fall holds back the kill's death event (it comes at the end
+  of the fall), so the kill's XP waits as unclaimed XP, 5 s of steady time (`UNCLAIMED_XP_WINDOW`), and past that is
+  dropped: neither shared nor topped up. That limit of the share is older than catch-up XP, which follows it.
   Ahead of the average, our own XP is as the game gives it and our
   share of friends' kills (`ApplyXp`) shrinks by the same percent per level, to nothing at the most: the gap closes from
   both sides. The factors are made every poll from the statuses (`UpdateCatchUp`), logged once per whole percent, and

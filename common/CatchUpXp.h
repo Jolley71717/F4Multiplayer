@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -76,6 +77,40 @@ namespace CatchUpXp
 			return 0;
 		}
 		return static_cast<std::uint32_t>(a_gain * (a_factors.ownGain - 1.0f) + 0.5f);
+	}
+
+	// A menu whose use earns XP (a lock picked, a terminal hacked, something crafted or built), as its own open and close
+	// events timed it: whether it is open now, and when it last opened and last closed (the epoch: never).
+	using Clock = std::chrono::steady_clock;
+
+	struct MenuSeen
+	{
+		bool              open = false;
+		Clock::time_point openedAt{};
+		Clock::time_point closedAt{};
+	};
+
+	// How long before the held XP's first gain the window starts: a menu's XP lands as it closes, so XP from one shut
+	// just before the kill's XP waits unclaimed with it and is held in the same batch.
+	inline constexpr Clock::duration MENU_LOOKBACK = std::chrono::seconds(1);
+
+	// Whether any of a_menus was open at some point of the hold's window, from MENU_LOOKBACK before a_heldSince (the
+	// held XP's first gain) to a_flushAt (the poll that judges it): open now, or opened or closed in the window. Only
+	// the last opening and closing are kept, and that is enough: an earlier stretch that reached into the window was
+	// followed by an opening inside it. Then the kill XP held over it gets no top-up, as the menu's XP sits in the
+	// hold with the kill's and can't be told apart by amount. A menu that opens after the flush is no business of this
+	// hold's: its XP comes after and is judged with whatever it is held with.
+	[[nodiscard]] inline bool MenuEarnedXp(std::span<const MenuSeen> a_menus, Clock::time_point a_heldSince, Clock::time_point a_flushAt)
+	{
+		constexpr Clock::time_point never{};
+		const auto                  from = a_heldSince - MENU_LOOKBACK;
+		const auto                  within = [&](Clock::time_point a_at) { return a_at != never && a_at >= from && a_at <= a_flushAt; };
+		for (const auto& menu : a_menus) {
+			if (menu.open || within(menu.openedAt) || within(menu.closedAt)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// The percent the factors amount to, for the log: +80 for a gain factor of 1.8, -50 for a share factor of 0.5, 0.
