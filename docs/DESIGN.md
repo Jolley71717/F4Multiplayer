@@ -3029,15 +3029,18 @@ settler assigned to a bed or a crop, the workshop's counts), which a save would 
 adoption notifies the destroyed event (`Workshop::QSource<ItemDestroyedEvent>()` 2195286, what `FinishDestroyItem` notifies),
 which the workshop scripts answer as for a scrap (the assignment cleared, the counts down); our own sink sees a copy by then
 and reports nothing. The cost: Papyrus runs its destroy handler once per adopted piece. A piece the player is holding in
-workshop mode when the answer comes (the placement item 4797235) is adopted once put down (the engine's drop would link it to
-the bench and count it again), and a grab of a pending piece is refused with a notice. Refused: the piece is reported as the
+workshop mode when the answer comes (the placement item 4797235 with the active-edit byte 4797147 set: grabbed, not merely
+highlighted) is adopted once put down (the engine's drop would link it to the bench and count it again), and a grab of a pending
+piece is refused with a notice. Refused: the piece is reported as the
 friend's own, as before the rule, with a notice saying why (`workshop.shared.*`); no answer in 15 s counts as refused ("didn't
 answer in time", not "no host"). A friend's piece whose answer is still pending is not reported moved or scrapped meanwhile,
 and goes when the session ends: *nothing a friend built at a host-owned settlement stays in their save* (the maintainer's
 call), neither as a copy nor as a pending piece. Nor in a save made mid-way: before every save (`kPreSaveGame`) the host
 finishes the pieces it has made whose 3D is there (unless it holds a piece of its own: those are refused as busy) and deletes
-and refuses the rest, and a friend's pending pieces go, with the destroyed event, as on leaving (an "applied" after that finds
-ours gone and lets the host's copy come on its own). The budget is taken out only for what the engine counted in: an adopted
+and refuses the rest, and a friend's pending pieces go, with the destroyed event, as on leaving. Their requests stay open,
+marked dropped (`Requests::DropBuilds`; `wsmode` counts them as `dropped=`, not `pending=`), so the host's late answer is still
+matched: an "applied" finds ours dropped and lets the host's copy come on its own, and a dropped piece is never adopted or
+reported (its runtime id may name another reference by then). The budget is taken out only for what the engine counted in: an adopted
 build and a detached wire (`Budget::RemoveObject` 2195108), never a copy a wire's end was linked to (the engine's wire
 placement counts the wire alone and only links the ends). And the budget's totals are workshop mode's globals, loaded from a
 workbench only when workshop mode is entered there (`Workshop::Budget::Initialize` 2195106 reads the bench's maximum and
@@ -3045,21 +3048,29 @@ current triangles and draws into 4797248, 4797252, 4797162 and 4797163), and wri
 `AddObject` and `RemoveObject`: so every add or remove outside workshop mode at that bench runs in a `BudgetScope`, which saves
 the four globals, loads them from the bench, sets the bench current, and restores them after (with workshop mode open at that
 very bench the live totals are used as they are). A wire the host made for a friend is counted once its spline is drawn, as
-the engine counts a placed wire's drawn 3D (counting it bare would put 0 in and take the real count out at a scrap). Mods
+the engine counts a placed wire's drawn 3D (counting it bare would put 0 in and take the real count out at a scrap): counted
+only when `AddObject` added to the totals (its walk counts the 3D's drawn geometry), tried again each frame until 10 s, then
+let be with a warning that describes the 3D (`wiresUncounted`). Mods
 that listen for `WorkshopObjectDestroyed` (Workshop Framework, Sim Settlements) hear an adopted or dropped piece of a friend's
 as scrapped; it does go from the friend's workshop, so that reading is right, and the host's piece is a placement there.
 
-**A wire (phase 1).** Workshop mode's picks are hooked (`WorkshopSync::InstallPicks`, seven `write_call<5>` sites, each byte-checked
+**A wire (phase 1).** Workshop mode's picks are hooked (`WorkshopSync::InstallPicks`, nine `write_call<5>` sites, each byte-checked
 first, none patched unless all are as 1.11.240 has them): the general pick (2195314) and the wire pick (2195312) ask
 `Workshop::IsInteractionBlocked` 2195179 at +0x4FA (the reference in rcx), and the hook answers "not blocked" for our copy of a
 friend's piece at a workbench not refused as not the host's, while the rule is on here; so a copy can be the first end of a wire
-(the general pick's reference: `SetPowerConnectionItem` then `CreateNewReference`) and its second end (the wire pick). The other
-actions on a copy are refused at their own gates: `Workshop::CanStoreRef` 2195195 as `CanStorePlacementItem` (+0x80, the Store
-button) and `RequestStorePlacementItem` (+0x8E) ask it, `Workshop::WorkshopCanScrapRef` 2194959 as `CanScrapPlacementRef` (+0x188)
-and `RequestScrapPlacementItem` (+0x85) ask it, and the grab (`Workshop::SetSelectedEditItem` 2195119, the handle by pointer) where
-the menu handler's lambda 2195499 calls it at +0x1B, which selects a piece without a check a copy would fail: the hook refuses
-with a notice. The general filter's own call of `WorkshopCanScrapRef` is left alone, so the copy passes the general pick. The snap
-magnet (2195313) is not hooked: a copy is never snapped to.
+(the general pick's reference: `SetPowerConnectionItem` then `CreateNewReference`) and its second end (the wire pick). The general
+pick then highlights the copy as any piece (`Workshop::SetSelectedEditItem` 2195119, called every frame for whatever the crosshair
+is on: the highlight, not the grab; workshop mode's placement item 4797235 is that piece at idle). The other actions on a copy
+are refused at their own gates, silently where the menu's button hints ask every frame and with a notice and a count where a key
+asks once: `Workshop::CanStoreRef` 2195195 as `CanStorePlacementItem` (+0x80) and `RequestStorePlacementItem` (+0x8E) ask it
+(silent), and the Store key is the workshop menu's user event handler (2224981) asking `CanStorePlacementItem` 2194963 at +0xA5B
+on Cancel (counted when the selected piece is a copy, said when it could be stored were it ours); `Workshop::WorkshopCanScrapRef`
+2194959 as `CanScrapPlacementRef` (+0x188, silent) and `RequestScrapPlacementItem` (+0x85, the XButton's only path: counted and
+said) ask it; and the grab is the same handler asking `Workshop::WorkshopCanSelectRef` 2194958 of the highlighted piece at
++0x148D on Accept, before it repairs the piece or picks it up (`UpdateActiveEdit`, the ItemGrabbedEvent): refused with a notice
+(and a pending piece of ours too), while `CanSelectPlacementRef` (2194964 +0x80, the Move hint) is refused silently. The general
+filter's own call of `WorkshopCanScrapRef` is left alone, so the copy passes the general pick. The snap magnet (2195313) is not
+hooked: a copy is never snapped to.
 
 The engine then strings the wire on the friend's bench (`ConnectSpline`, `AddPowerLink`, `AddConnection`: the one moment the
 engine adds something of the session to a friend's grid), and its placed event, in the same frame on the main thread, takes it off
@@ -3096,7 +3107,9 @@ when the session ends.
 
 **Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
 game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
-pending window); `workshop` shows what workshop mode holds (`held=`, `heldBase=`, `newItem=`); `controls workshop` lists workshop mode's
+pending window); `workshop` shows what workshop mode holds (`held=`, `heldBase=`: a new piece's ghost or a grabbed piece, 0
+otherwise; `newItem=`, `editing=`), what it highlights (`selected=`) and whether the ghost may be put down (`canPlace=`);
+`turnto <ref> <ms> aim [dz]` points the camera at the middle of a reference's 3D, as the pick casts its ray; `controls workshop` lists workshop mode's
 keyboard bindings as `event=vk` (the engine's keyboard mappings hold the virtual key; the events are the pad's names: Cancel
 stores, XButton scraps, YButton strings a wire, Accept grabs, repairs or assigns); `wsfinish <ref> <bench>` runs
 the finish steps on a console-placed piece of ours (the host's probe); `wsgrid`, `wsinfo` and `wspower` as before. The rig check

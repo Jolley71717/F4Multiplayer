@@ -104,6 +104,45 @@ TEST("shared workshop: requests are numbered from 1, answered once by number, ex
 	CHECK(*requests.Open(Op::kBuild, OTHER, BENCH, t0) == 3);
 }
 
+TEST("shared workshop: a build dropped before a save no longer waits, and its late answer is still matched")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	const auto build = requests.Open(Op::kBuild, PIECE, BENCH, t0);
+	const auto wire = requests.Open(Op::kWire, 0, BENCH, t0);
+	REQUIRE(build && wire);
+	CHECK(requests.Waiting() == 2);
+	CHECK(requests.Dropped() == 0);
+
+	const auto dropped = requests.DropBuilds();
+	REQUIRE(dropped.size() == 1);  // the build's piece goes; the wire had none
+	CHECK(dropped[0].piece == PIECE);
+	CHECK(dropped[0].bench == BENCH);
+	CHECK(dropped[0].dropped);
+	CHECK(requests.DropBuilds().empty());  // once
+	CHECK(requests.Waiting() == 1);        // the wire still waits
+	CHECK(requests.Dropped() == 1);
+	CHECK(requests.Size() == 2);           // both still open
+	CHECK(!requests.IsPending(PIECE));     // gone: nothing of ours waits on it
+	CHECK(requests.Pieces().empty());
+	CHECK(requests.Builds().empty());      // not dropped twice (leaving, another save)
+
+	const auto answered = requests.Take(*build);  // the host built it after all: the answer is ours, matched
+	REQUIRE(answered);
+	CHECK(answered->dropped);
+	CHECK(answered->piece == PIECE);
+	CHECK(requests.Dropped() == 0);
+	CHECK(requests.Waiting() == 1);
+
+	// a dropped build that is never answered expires as any other
+	requests.Open(Op::kBuild, OTHER, BENCH, t0);
+	CHECK(requests.DropBuilds().size() == 1);
+	const auto late = requests.Expire(t0 + ANSWER_WAIT);
+	CHECK(late.size() == 2);
+	CHECK(requests.Size() == 0);
+	CHECK(requests.Waiting() == 0);
+}
+
 TEST("shared workshop: no more than MAX_PENDING requests wait at once")
 {
 	Requests requests;

@@ -261,8 +261,11 @@ namespace DevCommands
 			return DescribeRef(RE::PlayerCharacter::GetSingleton());
 		}
 
-		// turnto <refHex> <ms> [pitchDeg]: turns the player to face a reference over a time, like a hand on
-		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame().
+		// turnto <refHex> <ms> [pitchDeg | aim [dz]]: turns the player to face a reference over a time, like a hand on
+		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame(). With "aim", the
+		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it): yaw and pitch
+		// from the camera, not the feet, which is what workshop mode's pick casts its ray from (600 units long: the reply
+		// says the distance and whether it is inside that).
 		struct Turn
 		{
 			float startYaw = 0.0f, endYaw = 0.0f, startPitch = 0.0f, endPitch = 0.0f;
@@ -277,11 +280,27 @@ namespace DevCommands
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			if (!player || !ref || args.size() < 2) {
-				return "error: usage: turnto <refHex> <ms> [pitchDeg]";
+				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz]]";
 			}
-			const auto& me = player->data.location;
-			const auto& to = ref->data.location;
 			constexpr float DEG = 180.0f / std::numbers::pi_v<float>;
+			constexpr float PICK_REACH = 600.0f;  // workshop mode's general pick ray (1.11.240: the constant at +2483E54)
+			const bool      aim = args.size() > 2 && args[2] == "aim";
+			RE::NiPoint3    me = player->data.location;
+			RE::NiPoint3    to = ref->data.location;
+			std::string     aimed;
+			if (aim) {
+				const auto camera = RE::PlayerCamera::GetSingleton();
+				const bool fromCamera = camera && camera->cameraRoot;
+				me = fromCamera ? camera->cameraRoot->world.translate : RE::NiPoint3{ me.x, me.y, me.z + 120.0f };
+				const auto root = ref->Get3D();
+				to = root ? root->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
+				if (args.size() > 3) {
+					to.z += std::stof(std::string{ args[3] });
+				}
+				const float dist = std::sqrt((to.x - me.x) * (to.x - me.x) + (to.y - me.y) * (to.y - me.y) + (to.z - me.z) * (to.z - me.z));
+				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromCamera ? "camera" : "feet+120", root ? "bound" : "origin+60",
+					root ? root->worldBound.fRadius : 0.0f, dist, dist <= PICK_REACH);
+			}
 			float yaw = std::atan2(to.x - me.x, to.y - me.y) * DEG;
 			if (yaw < 0.0f) {
 				yaw += 360.0f;
@@ -294,18 +313,21 @@ namespace DevCommands
 			turn.startYaw = startYaw;
 			turn.endYaw = startYaw + delta;
 			turn.startPitch = player->data.angle.x * DEG;
-			// Pitch: given in degrees, or toward the target's chest from the player's eyes (down is positive).
-			if (args.size() > 2) {
+			// Pitch: given in degrees, at the 3D's middle from the camera (aim), or toward the target's chest from the player's
+			// eyes (down is positive).
+			const float flat = (std::max)(std::hypot(to.x - me.x, to.y - me.y), 1.0f);
+			if (aim) {
+				turn.endPitch = -std::atan2(to.z - me.z, flat) * DEG;
+			} else if (args.size() > 2) {
 				turn.endPitch = std::stof(std::string{ args[2] });
 			} else {
 				const float dz = (to.z + 60.0f) - (me.z + 120.0f);  // measured: shots at a standing raider 240 away land from 6 to 18 degrees down, auto was 5
-				const float flat = std::hypot(to.x - me.x, to.y - me.y);
-				turn.endPitch = -std::atan2(dz, (std::max)(flat, 1.0f)) * DEG;
+				turn.endPitch = -std::atan2(dz, flat) * DEG;
 			}
 			turn.start = std::chrono::steady_clock::now();
 			turn.end = turn.start + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			turn.active = true;
-			return std::format("turning {:.1f} -> {:.1f} over {} ms", startYaw, turn.endYaw, args[1]);
+			return std::format("turning {:.1f} -> {:.1f} over {} ms (pitch {:.1f}){}", startYaw, turn.endYaw, args[1], turn.endPitch, aimed);
 		}
 
 		// key <vk> <holdMs>: presses a key inside the game process (down now, up after holdMs, stepped by

@@ -3,6 +3,7 @@
 #include "Protocol.h"
 #include "game/WorkshopPower.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -96,6 +97,7 @@ namespace SharedWorkshop
 		std::uint32_t     piece = 0;  // a build: our own piece as workshop mode placed it (a wire: 0, it is gone already)
 		std::uint32_t     bench = 0;
 		Clock::time_point sentAt{};
+		bool              dropped = false;  // a build whose piece went before its answer came (a save): kept open, so the answer is matched
 	};
 
 	class Requests
@@ -139,14 +141,15 @@ namespace SharedWorkshop
 			return late;
 		}
 
-		// Whether this piece of ours waits for an answer (its moves and scraps are not reported meanwhile).
+		// Whether this piece of ours waits for an answer (its moves and scraps are not reported meanwhile). A dropped build's
+		// piece is gone: it waits for nothing.
 		[[nodiscard]] bool IsPending(std::uint32_t a_piece) const
 		{
 			if (a_piece == 0) {
 				return false;
 			}
 			for (const auto& [seq, request] : pending) {
-				if (request.piece == a_piece) {
+				if (request.piece == a_piece && !request.dropped) {
 					return true;
 				}
 			}
@@ -158,7 +161,7 @@ namespace SharedWorkshop
 		{
 			std::vector<std::uint32_t> pieces;
 			for (const auto& [seq, request] : pending) {
-				if (request.piece != 0) {
+				if (request.piece != 0 && !request.dropped) {
 					pieces.push_back(request.piece);
 				}
 			}
@@ -170,12 +173,34 @@ namespace SharedWorkshop
 		{
 			std::vector<Pending> builds;
 			for (const auto& [seq, request] : pending) {
-				if (request.piece != 0) {
+				if (request.piece != 0 && !request.dropped) {
 					builds.push_back(request);
 				}
 			}
 			return builds;
 		}
+
+		// The builds still waiting, each marked dropped (its piece goes now: a save) and returned for the caller to delete. The
+		// requests stay open: the host may have built them already, and its answer is matched when it comes (the host's copy
+		// then comes on its own); they no longer count as waiting.
+		std::vector<Pending> DropBuilds()
+		{
+			std::vector<Pending> dropped;
+			for (auto& [seq, request] : pending) {
+				if (request.piece != 0 && !request.dropped) {
+					request.dropped = true;
+					dropped.push_back(request);
+				}
+			}
+			return dropped;
+		}
+
+		// Requests whose answer we wait for with something of ours waiting on it: every wire, and the builds not dropped.
+		[[nodiscard]] std::size_t Waiting() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(pending, [](const auto& a_entry) { return !a_entry.second.dropped; }));
+		}
+		[[nodiscard]] std::size_t Dropped() const { return pending.size() - Waiting(); }
 
 		[[nodiscard]] std::size_t   Size() const { return pending.size(); }
 		[[nodiscard]] std::uint32_t Last() const { return last; }

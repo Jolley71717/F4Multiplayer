@@ -1886,35 +1886,39 @@ _sws_radiator() {  # _sws_radiator <the host's generator> <its copy on the VM>
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference"
 	return 0
 }
-# The real hooks, not the dev commands: workshop mode on the VM, its picks aimed at copies by turnto, its keys pressed. Attach
+# The real hooks, not the dev commands: workshop mode on the VM, its camera aimed at the middle of a copy's 3D (turnto ... aim),
+# a key pressed only once workshop mode highlights that copy (dev workshop selected=; the wire's second end: the pick test admitted
+# a copy), its keys pressed. Attach
 # Wire from the generator's copy to the light's copy five times; each wire is taken off the VM's grid the frame it is strung and
 # asked of the host (the VM's log), and the VM's bench budget (wsres av: the WorkshopCurrentTriangles/Draws values) is the same
 # before and after (a copy end is never taken out of the budget). Then grab, Scrap, Repair, Assign and Store on a copy: refused
 # (the wsmode counters move) and no crash on either machine.
-# The keys are the game's own bindings, read from the VM's control map at the start of the step (dev `controls workshop`: the
+# The keys are the game's own bindings, read from each game's control map at the start of the step (dev `controls workshop`: the
 # Workshop and WorkshopAddendum contexts as event=vk). Workshop mode's events are the pad's names, and its menu handler
 # (WorkshopMenu's user event handler, 1.11.240) acts on them so: Cancel stores the highlighted piece (when it can be stored: the
 # store test is hooked), XButton scraps it (on release), YButton starts a wire at a power connection and, pressed again on the
 # other end, strings it, and Accept (or Activate) grabs the highlighted piece, repairs it when it is damaged, and assigns it while
 # a settler is commanded: one key for select, repair and assign, the engine choosing by what is highlighted. Each action is
-# matched to its event by the exact name; an event with no keyboard binding fails the step. WS_KEY_* set in the environment
-# override the map (said in the report).
+# matched to its event by the exact name; an event with no keyboard binding fails the step. WS_KEY_* (the VM's) and HWS_KEY_* (the
+# host's) set in the environment override the maps (said in the report).
 SWS_BED=${SWS_BED:-00118F57}       # the workshop sleeping bag
 SWS_SETTLER=${SWS_SETTLER:-00020593}   # a settler (LvlWorkshopNPC), made in the VM's game for the bed control
 SWS_ACTIONS="SELECT:Accept SCRAP:XButton STORE:Cancel WIRE:YButton REPAIR:Accept ASSIGN:Accept"   # action:event, as the menu handler acts
 _sws_key_of() {  # _sws_key_of <event> <map>: that event's virtual key (the number after "event="; an older build's "event=vk/x" too), or ""
 	grep -oE "(^| )$1=[0-9A-F]+" <<<"$2" | head -1 | sed 's/.*=//'
 }
-_sws_keys() {  # _sws_keys <who>: WS_KEY_* from that game's workshop control map; false (and a FAIL naming the event) when one is missing
-	local m k v ev over=""; m=$(dc "$1" "controls workshop"); SWS_KEYMAP=$m
+_sws_keys() {  # _sws_keys <who> [prefix]: <prefix>* (WS_KEY_* by default) from that game's workshop control map; false (and a FAIL naming the event) when one is missing
+	local m k v ev var pre=${2:-WS_KEY_} over="" got=""; m=$(dc "$1" "controls workshop"); [ "$pre" = WS_KEY_ ] && SWS_KEYMAP=$m
 	for k in $SWS_ACTIONS; do
-		ev=${k#*:}
-		if eval "[ -n \"\$WS_KEY_${k%%:*}\" ]"; then over+=" ${k%%:*}"; continue; fi
-		v=$(_sws_key_of "$ev" "$m")
-		if [ -z "$v" ]; then fail "sharedws: set-up: workshop mode's ${k%%:*} key (event $ev) is in the $1's control map" "no keyboard binding for $ev: $(grep -oE '[A-Za-z]+=[0-9A-F]+' <<<"$m" | tr '\n' ' ' | cut -c1-400)"; return 1; fi
-		eval "WS_KEY_${k%%:*}=0x$v"
+		ev=${k#*:}; var=$pre${k%%:*}
+		if [ -n "${!var}" ]; then over+=" ${k%%:*}"; else
+			v=$(_sws_key_of "$ev" "$m")
+			if [ -z "$v" ]; then fail "sharedws: set-up: workshop mode's ${k%%:*} key (event $ev) is in the $1's control map" "no keyboard binding for $ev: $(grep -oE '[A-Za-z]+=[0-9A-F]+' <<<"$m" | tr '\n' ' ' | cut -c1-400)"; return 1; fi
+			printf -v "$var" '0x%s' "$v"
+		fi
+		got+="$(tr '[:upper:]' '[:lower:]' <<<"${k%%:*}")=${!var} "
 	done
-	pass "sharedws: set-up: workshop mode's keys read from the $1's control map" "select=$WS_KEY_SELECT scrap=$WS_KEY_SCRAP store=$WS_KEY_STORE wire=$WS_KEY_WIRE repair=$WS_KEY_REPAIR assign=$WS_KEY_ASSIGN${over:+ (set in the environment:$over)}"
+	pass "sharedws: set-up: workshop mode's keys read from the $1's control map" "$got${over:+(set in the environment:$over)}"
 }
 _sws_budget() { dc "$1" "wsres av $SANCT_BENCH" | grep -oE '(^|; )(triangles|draws)\[[^]]*\]=[^;]*' | sed 's/^; //; s/\[[^]]*\]//' | tr '\n' ' '; }   # "triangles=<values> draws=<values> " of that game's Sanctuary bench
 _sws_budget_gt() {  # _sws_budget_gt <after> <before>: the current triangles value grew (the first number after "triangles=")
@@ -1967,21 +1971,43 @@ _sws_host_budget_cases() {
 	if [ -z "$vg" ] || [ -z "$vl" ]; then fail "$label (wire): the VM has copies of the generator and the last light" "generator '$vg' light '$vl' (the host's light '$hl')"; return 1; fi
 	h0=$(_sws_budget host); wc0=$(_sws_counter host wiresCounted); win_mark sws host
 	vm "wswire $vg $vl" >/dev/null
-	if wait_for 20 _sws_wait_counted "$wc0"; then pass "$label (wire): the host's wire for the VM was counted once drawn" "wiresCounted $wc0 -> $(_sws_counter host wiresCounted)"; else fail "$label (wire): the host's wire for the VM was counted once drawn" "wiresCounted stayed $wc0"; return 1; fi
+	if wait_for 20 _sws_wait_counted "$wc0"; then pass "$label (wire): the host's wire for the VM was counted once drawn (the budget's AddObject added to the totals)" "wiresCounted $wc0 -> $(_sws_counter host wiresCounted); $(grep -oE 'WorkshopSync: our wire [0-9A-F]{8} for a friend counted[^;]*' "$(win_read sws host)" | tail -1 | cut -c1-220)"
+	else fail "$label (wire): the host's wire for the VM was counted once drawn (the budget's AddObject added to the totals)" "wiresCounted stayed $wc0, wiresUncounted=$(_sws_counter host wiresUncounted); $(grep -oE 'WorkshopSync: our wire [0-9A-F]{8} for a friend (added nothing|has no 3D)[^;]*' "$(win_read sws host)" | tail -1 | cut -c1-260)"; return 1; fi
 	w=$(grep -oE 'request [0-9]+ \(wire\)[^;]*made [0-9A-F]{8}' "$(win_read sws host)" | grep -oE '[0-9A-F]{8}$' | head -1)
 	[ -z "$w" ] && { fail "$label (wire): the host's log names the wire it made" "$(grep -E 'request .*wire' "$A_OUT/windelta-sws-host.txt" | tail -1)"; return 1; }
 	h1=$(_sws_budget host)
 	_sws_budget_gt "$h1" "$h0" && pass "$label (wire): the wire added to the host's budget" "$h0 -> $h1" || fail "$label (wire): the wire added to the host's budget" "$h0 -> $h1"
 	if ! _ws_enter host; then fail "$label (wire): set-up: the host enters workshop mode to scrap the wire" "$(host workshop)"; return 1; fi
-	_sws_aim_press host "$w" "$WS_KEY_SCRAP"; sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
+	_sws_aim_press host "$w" "$HWS_KEY_SCRAP" select "$label (wire)"; sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
 	expect_eq "$label (wire): scrapped by the host, the wire is gone" "$(field "$(host "refinfo $w")" deleted)" true
 	expect_eq "$label (wire): after the host scrapped the wire, its budget is back where it started" "$(_sws_budget host)" "$h0"
 }
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
-_sws_aim_press() {  # _sws_aim_press <who> <ref> <vk>: face the reference in workshop mode (turnto <ref> <ms>) and press the key; a turn the game refused is a loud failure
-	local t; t=$(dc "$1" "turnto $2 600")
-	case "$t" in error*|"") fail "sharedws (real hooks): set-up: $1 turns to $2" "turnto said '$t'"; return 1;; esac
-	sleep 1.2; dc "$1" "key $3 80" >/dev/null; sleep 1.5
+# _sws_aim_press <who> <ref> <vk> [select|pick] [label]: points that game's camera at the middle of the reference's 3D (turnto <ref>
+# <ms> aim <dz>: from the camera, as workshop mode's pick casts its ray, a few heights tried) until workshop mode has it, then presses
+# the key. "select" (the default): workshop mode's highlighted piece (dev workshop's selected=) is the reference. "pick": the pick
+# test is admitting a copy now, at rest after the turn (wsmode picksAdmitted, which counts every frame the crosshair is on one,
+# grows over a second: the wire's second end, which the wire pick takes and the highlight does not). Never pressed on whatever
+# happens to be under the crosshair: a turn the game refused, or a reference never reached, is a loud set-up failure (with the
+# distance turnto measured: the pick reaches 600 units), and false.
+_sws_aim_press() {
+	local who=$1 ref=$2 vk=$3 how=${4:-select} label=${5:-sharedws (real hooks)} t dz w p0 p1 ok=""
+	for dz in 0 -12 12 -25 25; do
+		t=$(dc "$who" "turnto $ref 500 aim $dz")
+		case "$t" in error*|"") fail "$label: set-up: $who aims at $ref" "turnto said '$t'"; return 1;; esac
+		sleep 1.2
+		if [ "$how" = pick ]; then
+			p0=$(_sws_counter "$who" picksAdmitted); sleep 1; p1=$(_sws_counter "$who" picksAdmitted)
+			is_int "$p0" && is_int "$p1" && [ "$p1" -gt "$p0" ] && { ok=1; break; }
+		else
+			w=$(dc "$who" workshop); [ "$(field "$w" selected)" = "$ref" ] && { ok=1; break; }
+		fi
+	done
+	if [ -z "$ok" ]; then
+		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never: last turnto '$(grep -oE 'aim .*' <<<"$t")'; $(dc "$who" workshop | grep -oE '(selected|held|newItem|editing)=[^ ]*' | tr '\n' ' ')picksAdmitted=$(_sws_counter "$who" picksAdmitted)"
+		return 1
+	fi
+	dc "$who" "key $vk 80" >/dev/null; sleep 1.5
 }
 # _sws_build_vm <base> [label]: a VM build the engine's way, short of the menu: the reference made (wsreport place ... quiet) and
 # placed with the engine's own steps (wsfinish: linked, counted in the budget, its scripts started, the placed event), whose event
@@ -2001,8 +2027,8 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	b0=$(_sws_budget vm); asked0=$(_sws_counter vm wiresAsked)
 	win_mark sws vm; win_mark sws host
 	for i in 1 2 3 4 5; do
-		_sws_aim_press vm "$vg" "$WS_KEY_WIRE"   # the first end: the general pick admits the copy
-		_sws_aim_press vm "$vl" "$WS_KEY_WIRE"   # the second end: the wire pick admits it; the wire is placed, taken off and asked
+		_sws_aim_press vm "$vg" "$WS_KEY_WIRE" select   # the first end: the general pick admits the copy, highlighted
+		_sws_aim_press vm "$vl" "$WS_KEY_WIRE" pick     # the second end: the wire pick admits it; the wire is placed, taken off and asked
 		sleep 2
 	done
 	asked1=$(_sws_counter vm wiresAsked)
@@ -2014,16 +2040,20 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	# about): said loudly, apart from the keys.
 	if [ "$(_sws_counter vm picksAdmitted)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(_sws_counter vm picksAdmitted)"
 	else fail "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(_sws_counter vm picksAdmitted): no copy was ever highlighted, so no key below can act on one; $(vm "wsinfo $vl" | grep -oE 'blocked=[a-z]+|builder=[0-9]+' | tr '\n' ' ')$(vm wsmode | grep -oE 'handsOver=[a-z]+')"; fi
+	# Each key below is pressed only with the copy highlighted (dev workshop's selected=), and each refusal counts one press (the
+	# menu's own call for Accept and Store, the scrap request for Scrap: the button hints' every-frame tests count nothing)
 	g0=$(_sws_counter vm grabsRefused); s0=$(_sws_counter vm storesRefused); c0=$(_sws_counter vm scrapsRefused)
-	_sws_aim_press vm "$vl" "$WS_KEY_SELECT"
-	expect_eq "$label: Accept (grab) on a copy is refused (no held ghost)" "$(( $(_sws_counter vm grabsRefused) - g0 ))" 1
-	expect_eq "$label: after the refused grab workshop mode holds nothing" "$(field "$(vm workshop)" held)" 00000000
-	_sws_aim_press vm "$vl" "$WS_KEY_SCRAP"
-	if [ "$(( $(_sws_counter vm scrapsRefused) - c0 ))" -ge 1 ]; then pass "$label: Scrap (XButton) on a copy is refused" "scrapsRefused +$(( $(_sws_counter vm scrapsRefused) - c0 ))"; else fail "$label: Scrap (XButton) on a copy is refused" "scrapsRefused did not move with key $WS_KEY_SCRAP (map: $(cut -c1-160 <<<"$SWS_KEYMAP"))"; fi
+	if _sws_aim_press vm "$vl" "$WS_KEY_SELECT" select "$label (grab)"; then
+		expect_eq "$label: Accept (grab) on a copy is refused, once for one press" "$(( $(_sws_counter vm grabsRefused) - g0 ))" 1
+		expect_eq "$label: after the refused grab workshop mode holds nothing (held=, not the highlight)" "$(field "$(vm workshop)" held)" 00000000
+	fi
+	if _sws_aim_press vm "$vl" "$WS_KEY_SCRAP" select "$label (scrap)"; then
+		expect_eq "$label: Scrap (XButton) on a copy is refused, once for one press" "$(( $(_sws_counter vm scrapsRefused) - c0 ))" 1
+	fi
 	# Repair and Assign are Accept's own path (an undamaged copy with no settler commanded comes to the grab, refused): no crash
-	_sws_aim_press vm "$vl" "$WS_KEY_REPAIR"; _sws_aim_press vm "$vl" "$WS_KEY_ASSIGN"; sleep 3
+	_sws_aim_press vm "$vl" "$WS_KEY_REPAIR" select "$label (repair)"; _sws_aim_press vm "$vl" "$WS_KEY_ASSIGN" select "$label (assign)"; sleep 3
 	# Store last: Cancel with nothing the store test lets go of is workshop mode's own Cancel (it may leave the menu)
-	_sws_aim_press vm "$vl" "$WS_KEY_STORE"
+	_sws_aim_press vm "$vl" "$WS_KEY_STORE" select "$label (store)"
 	if [ "$(( $(_sws_counter vm storesRefused) - s0 ))" -ge 1 ]; then pass "$label: Store (Cancel) on a copy is refused" "storesRefused +$(( $(_sws_counter vm storesRefused) - s0 ))"; else fail "$label: Store (Cancel) on a copy is refused" "storesRefused did not move with key $WS_KEY_STORE (map: $(cut -c1-160 <<<"$SWS_KEYMAP"))"; fi
 	expect_eq "$label: the copy still stands after Scrap and Store" "$(field "$(vm "wsinfo $vl")" deleted)" false
 	wait_for 8 _no_msgbox vm; _ws_exit vm
@@ -2038,7 +2068,11 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 # Accept with a piece highlighted grabs that piece instead (newItem=false), and the next Accept would put it down elsewhere: so the
 # host looks up at the sky first (turnto the bench at 70 degrees up, nothing to highlight), and an Accept that leaves a piece of
 # the scene held (not a new item, or one of the step's own bases) stops the loop and fails the set-up rather than pressing on.
-# Once the ghost is held the host looks level again (toward the bench), so the ghost stands on the ground to be put down.
+# Once the ghost is held the host looks level again (toward the bench), so the ghost stands on the ground to be put down, and turns
+# (mouse) until workshop mode says it may be put down there (dev workshop canPlace=, Workshop::CanPlaceItem: the ghost green): a
+# ghost that is red before the VM's build proves nothing about the build. After the build the same ghost must still be placeable
+# (canPlace=true) and Accept must put it down; the host's log says what the finish saw of its workshop mode ("finished while our
+# workshop mode is open: its placement item unchanged/CHANGED ...").
 _sws_host_ghost() { local w; w=$(dc host workshop); [ "$(field "$w" newItem)" = true ] && [ -n "$(field "$w" held)" ] && [ "$(field "$w" held)" != 00000000 ]; }
 _sws_host_grabbed() {  # _sws_host_grabbed: the host's workshop mode holds a piece that isn't a new one from the build menu (a grab of the scene)
 	local w h b; w=$(dc host workshop); h=$(field "$w" held); b=$(field "$w" heldBase)
@@ -2058,12 +2092,19 @@ _sws_host_busy() {
 			fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"
 			_ws_exit host; return 1
 		fi
-		dc host "key $WS_KEY_SELECT 80" >/dev/null; sleep 1.5
+		dc host "key $HWS_KEY_SELECT 80" >/dev/null; sleep 1.5
 	done
 	if _sws_host_grabbed; then fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
 	w=$(host workshop); ghost=$(field "$w" held)
 	if _sws_host_ghost; then pass "$label: set-up: the host holds a new piece's ghost from its build menu" "held=$ghost base=$(field "$w" heldBase)"
 		dc host "turnto $SANCT_BENCH 600 0" >/dev/null; sleep 1   # level again: the ghost on the ground, where Accept can put it down
+		for i in 1 2 3 4 5 6; do
+			[ "$(field "$(dc host workshop)" canPlace)" = true ] && break
+			dc host "mouse 300 0" >/dev/null; sleep 1   # a red ghost (into the bench, off the build area): turned away a little
+		done
+		w=$(host workshop)
+		if [ "$(field "$w" canPlace)" = true ]; then pass "$label: set-up: the host's ghost may be put down where it stands before the VM's build" "canPlace=true held=$(field "$w" held)"
+		else fail "$label: set-up: the host's ghost may be put down where it stands before the VM's build" "never green after six turns: $(cut -c1-200 <<<"$w")"; ghost=""; fi
 	else fail "$label: set-up: the host holds a new piece's ghost from its build menu" "after 5 Accepts: $(cut -c1-200 <<<"$w") (the first item's components?)"; ghost=""; fi
 	win_mark sws host; win_mark sws vm
 	l=$(_sws_build_vm "$SWS_LIGHT" "$label")
@@ -2074,7 +2115,10 @@ _sws_host_busy() {
 		w=$(host workshop)
 		if [ "$(field "$w" held)" = "$ghost" ] && [ "$(field "$w" newItem)" = true ]; then pass "$label: the host's ghost survived the VM's build (the same reference, still a new piece)" "held=$ghost"
 		else fail "$label: the host's ghost survived the VM's build (the same reference, still a new piece)" "before held=$ghost; after: $(cut -c1-200 <<<"$w")"; fi
-		dc host "key $WS_KEY_SELECT 80" >/dev/null; sleep 2
+		local fin; fin=$(grep -oE 'WorkshopSync: [0-9A-F]{8} finished while our workshop mode is open[^;]*' "$(win_read sws host)" | tail -1 | cut -c1-240)
+		if [ "$(field "$w" canPlace)" = true ]; then pass "$label: the host's ghost may still be put down after the VM's build (canPlace)" "canPlace=true; ${fin:-no finish line in the host log}"
+		else fail "$label: the host's ghost may still be put down after the VM's build (canPlace)" "it was green before the build: $(cut -c1-200 <<<"$w"); ${fin:-no finish line in the host log}"; fi
+		dc host "key $HWS_KEY_SELECT 80" >/dev/null; sleep 2
 		w=$(host workshop); out=$(host "refinfo $ghost")
 		if [ "$(field "$w" held)" != "$ghost" ] && [ "$(field "$out" deleted)" = false ]; then pass "$label: the host's ghost can still be placed (Accept put it down; workshop mode holds another)" "placed $ghost; now $(grep -oE 'held=[0-9A-F]+' <<<"$w")"; _sws_placed host "$ghost"
 		else fail "$label: the host's ghost can still be placed (Accept put it down; workshop mode holds another)" "ghost $ghost: $(cut -c1-120 <<<"$out") | $(cut -c1-160 <<<"$w")"; fi
@@ -2083,7 +2127,9 @@ _sws_host_busy() {
 }
 # A bed from the VM with a settler assigned to it in the VM's game before the host takes it over (the adoption fires the
 # destroyed event so the assignment goes), then a save during the pending window and a load alone: nothing of the session on
-# the VM's grids, no pending piece, no owner on the bed's copy. Both windows are made by console, said so: the control's
+# the VM's grids, no pending piece, the settler no longer the owner of the bed's copy (unassigned, WorkshopObjectScript gives a
+# piece with bDefaultPlayerOwnership, as the bed has, back to the player: owner=00000007, the Player's NPC; or no owner at all).
+# Both windows are made by console, said so: the control's
 # settler is made in the VM's game (wsreport place ... quiet), added to Sanctuary as the bench step adds Codsworth and assigned
 # to the bed by WorkshopParentScript.AssignActorToObjectPUBLIC; the pending window is the host's answers held (dev wsmode hold)
 # from before the VM's piece until after its save, then served.
@@ -2118,12 +2164,15 @@ _sws_bed_and_pending_save() {
 	_sws_placed host "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)"
 	wait_for 15 _sws_answered vm; sleep 5
 	bc=$(_sws_copy_of vm "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)")
-	if [ -n "$bc" ] && ! grep -q ' owner=' <<<"$(vm "wsinfo $bc")"; then pass "$label: after the adoption the VM's copy of the bed has no settler assigned (the destroyed event undid it)" "$(vm "wsinfo $bc" | cut -c1-120)"
-	else fail "$label: after the adoption the VM's copy of the bed has no settler assigned (the destroyed event undid it)" "copy '$bc': $(vm "wsinfo ${bc:-0}" | grep -oE 'owner=[0-9A-F]+')"; fi
+	local after; after=$(vm "wsinfo ${bc:-0}" | grep -oE 'owner=[0-9A-F]+')
+	if [ -n "$bc" ] && { [ -z "$after" ] || [ "$after" = owner=00000007 ]; } && [ "$after" != "$before" ]; then pass "$label: after the adoption the VM's copy of the bed has no settler assigned (the destroyed event undid it: no owner, or the player's)" "before $before, after ${after:-no owner}"
+	else fail "$label: after the adoption the VM's copy of the bed has no settler assigned (the destroyed event undid it: no owner, or the player's)" "copy '$bc': before $before (settler $settler), after ${after:-no owner}"; fi
 	expect_eq "$label: the VM's bench budget is back to what it was before the bed (counted by the finish, taken out by the adoption)" "$(_sws_budget vm)" "$b0"
-	# the save in the pending window: the host's answers held, so the VM's piece is pending for as long as the check needs (well
-	# inside SharedWorkshop::ANSWER_WAIT); the pending piece goes before the save (BeforeSave, with the destroyed event) and the
-	# host's copy comes on its own once the host serves again
+	# the save in the pending window: the host's answers held, so the VM's piece is pending while the save is made. The hold must
+	# end inside SharedWorkshop::ANSWER_WAIT (15 s from the request) or the VM takes the request as unanswered: the save and its
+	# checks take about 8 s. The pending piece goes before the save (BeforeSave, with the destroyed event); its request stays
+	# open, dropped (wsmode pending=0 dropped=1), so the host's late answer is matched ("dropped before a save") and the host's copy
+	# comes on its own once the host serves again
 	host "wsmode hold" >/dev/null
 	if [ "$(field "$(host wsmode)" held)" != true ]; then fail "$label: set-up: the host's answers are held (dev wsmode hold)" "$(host wsmode | grep -oE 'host: .*' | cut -c1-160)"; host "wsmode serve" >/dev/null; return 1; fi
 	win_mark sws host
@@ -2133,10 +2182,20 @@ _sws_bed_and_pending_save() {
 	if wait_for 5 _sws_pending; then pass "$label: one piece of the VM's is pending when the save is asked for (the host's answer held)" "pending=$(_sws_counter vm pending)"
 	else fail "$label: one piece of the VM's is pending when the save is asked for (the host's answer held)" "wsmode said pending='$(_sws_counter vm pending)': the save would prove nothing; $(vm wsmode | cut -c1-160)"; host "wsmode serve" >/dev/null; return 1; fi
 	vm "console save ${SWS_SAVE}_pending" >/dev/null
-	sleep 10; wait_ingame vm 30
-	expect_eq "$label: after a save in the pending window no piece of the VM's still waits" "$(_sws_counter vm pending)" 0
+	sleep 4; wait_ingame vm 30
+	local wsm; wsm=$(vm wsmode)
+	expect_eq "$label: after a save in the pending window no piece of the VM's still waits" "$(field "$wsm" pending)" 0
+	expect_eq "$label: ...its request stays open, dropped, for the host's late answer" "$(field "$wsm" dropped)" 1
 	host "wsmode serve" >/dev/null
-	if wait_for 20 _sws_built host "$SWS_LIGHT"; then _sws_placed host "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | tail -1 | cut -d' ' -f2)"; fi
+	local hp=""
+	if wait_for 20 _sws_built host "$SWS_LIGHT"; then hp=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | tail -1 | cut -d' ' -f2); _sws_placed host "$hp"; fi
+	_sws_late_matched() { grep -qE "WorkshopSync: the host built our [0-9A-F]{8} as its [0-9A-F]{8}, but ours is gone \(dropped before a save" "$(win_read sws vm)"; }
+	if wait_for 15 _sws_late_matched; then pass "$label: the host's late answer is matched to the dropped request (not adopted, not unknown)" "$(grep -oE 'WorkshopSync: the host built our [^;]*dropped before a save[^;]*' "$A_OUT/windelta-sws-vm.txt" | tail -1 | cut -c1-200)"
+	else fail "$label: the host's late answer is matched to the dropped request (not adopted, not unknown)" "$(grep -E 'WorkshopSync: (request|the host built|our)' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|' | cut -c1-300); $(vm wsmode | grep -oE '(pending|dropped|answersUnknown|answersLate)=[0-9]+' | tr '\n' ' ')"; fi
+	expect_eq "$label: once answered, no request of the VM's is open" "$(field "$(vm wsmode)" dropped)/$(field "$(vm wsmode)" pending)" 0/0
+	_sws_has_copy_vm() { [ -n "$(_sws_copy_of vm "$1")" ]; }
+	if [ -n "$hp" ] && wait_for 15 _sws_has_copy_vm "$hp"; then pass "$label: the host's piece for the dropped request comes to the VM on its own, as a copy" "the VM's copy $(_sws_copy_of vm "$hp") of the host's $hp"
+	else fail "$label: the host's piece for the dropped request comes to the VM on its own, as a copy" "host piece '$hp': no copy on the VM"; fi
 	_sws_grid_clean vm "$label: after that save, the VM's grids name no copy and no runtime reference"
 	vm "net leave" >/dev/null; sleep 4
 	vm "console load ${SWS_SAVE}_pending" >/dev/null; sleep 20; wait_ingame vm 60
@@ -2158,6 +2217,7 @@ step_sharedws_power() {
 	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "sharedws: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
 	vm "wsmode host" >/dev/null
 	_sws_keys vm || return
+	_sws_keys host HWS_KEY_ || return   # the host's own keys for its own workshop mode (its ghost, its scrap of the VM's wire)
 	walk host "sharedws: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
 	walk vm "sharedws: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
 	pads_off

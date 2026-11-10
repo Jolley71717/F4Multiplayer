@@ -30,10 +30,11 @@ namespace WorkshopSync
 	void InstallLights();
 
 	// Patches workshop mode's pick tests and gates for the shared workshop (SharedWorkshop.h): at a settlement the host owns,
-	// our copy of one of the host's pieces may be picked, to wire it (the pick test, 2195179, at the general and the wire
-	// pick), and never grabbed (Workshop::SetSelectedEditItem), stored (Workshop::CanStoreRef) or scrapped
-	// (Workshop::WorkshopCanScrapRef). At plugin load (it takes trampoline call stubs); no-op after. Each site's bytes are
-	// checked first: none patched unless all are as 1.11.240 has them.
+	// our copy of one of the host's pieces may be picked and highlighted, to wire it (the pick test, 2195179, at the general and
+	// the wire pick), and never grabbed or repaired (Workshop::WorkshopCanSelectRef, where the menu's Accept asks it), stored
+	// (Workshop::CanStoreRef) or scrapped (Workshop::WorkshopCanScrapRef); a key's refusal is counted and said, a button hint's
+	// is silent. At plugin load (it takes trampoline call stubs); no-op after. Each site's bytes are checked first: none
+	// patched unless all are as 1.11.240 has them.
 	void InstallPicks();
 
 	// ---- The shared workshop (SharedWorkshop.h) ----------------------------------------------------------
@@ -63,8 +64,9 @@ namespace WorkshopSync
 	void                      SetSharedModeForDev(std::optional<bool> a_on);
 	// Dev, the host's game: friends' requests taken but not made or answered while held (wsmode hold), then served (wsmode serve).
 	void                      HoldAnswersForDev(bool a_hold);
-	// Dev: what workshop mode holds (its placement item: a new piece's ghost or a grabbed piece), as "held=<ref> heldBase=<base>
-	// newItem=<bool>" (held=00000000: nothing), for the workshop dev command.
+	// Dev: what workshop mode holds and highlights, for the workshop dev command: "held=<ref> heldBase=<base> newItem=<bool>
+	// selected=<ref> editing=<bool> canPlace=<bool>". held is a new piece's ghost or a grabbed piece (00000000: nothing held);
+	// selected is the placement item whatever it is (the highlighted piece at idle); canPlace is Workshop::CanPlaceItem.
 	[[nodiscard]] std::string HeldForDev();
 	[[nodiscard]] std::string DescribeShared();
 

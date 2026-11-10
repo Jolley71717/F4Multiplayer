@@ -1094,14 +1094,15 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 360 of 384 bytes used: sixteen 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 402 of 512 bytes used: nineteen 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// WorkshopSync::InstallPicks' seven calls share four (one hook each for the pick test, the store gate, the scrap gate
-	// and the grab), CombatReactions::Install's one, ExitInventory::Install's one, Storage::InstallGather's two share one,
+	// WorkshopSync::InstallPicks' nine calls share seven (the pick test, the store test, the store key, the scrap button,
+	// the scrap key, the move button and the menu's Accept), CombatReactions::Install's one, ExitInventory::Install's one,
+	// Storage::InstallGather's two share one,
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 384 });
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 512 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
