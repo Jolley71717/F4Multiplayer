@@ -239,6 +239,8 @@ namespace Config
 				ParseInt(value, settings.hangSeconds);
 			} else if (key == "bHangDump") {
 				settings.hangDump = ParseBool(value);
+			} else if (key == "bCrashReport") {
+				settings.crashReport = ParseBool(value);
 			} else if (key == "sLogLevel") {
 				settings.logLevel = value;
 			} else if (key == "bDevChannel") {

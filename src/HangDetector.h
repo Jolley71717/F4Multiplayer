@@ -345,14 +345,14 @@ namespace HangWatch
 	}
 
 	// Whether a_name is a name HangFileName makes with a_suffix (and not, say, a note of the player's
-	// that happens to start the same way).
-	inline bool IsHangFile(std::string_view a_name, std::string_view a_suffix)
+	// that happens to start the same way). a_prefix: the crash report's files are named the same way (CrashReport.h).
+	inline bool IsHangFile(std::string_view a_name, std::string_view a_suffix, std::string_view a_prefix = FILE_PREFIX)
 	{
 		constexpr std::string_view TIME = "0000-00-00_00-00-00";
-		if (a_name.size() != FILE_PREFIX.size() + TIME.size() + a_suffix.size() || !a_name.starts_with(FILE_PREFIX) || !a_name.ends_with(a_suffix)) {
+		if (a_name.size() != a_prefix.size() + TIME.size() + a_suffix.size() || !a_name.starts_with(a_prefix) || !a_name.ends_with(a_suffix)) {
 			return false;
 		}
-		const auto time = a_name.substr(FILE_PREFIX.size(), TIME.size());
+		const auto time = a_name.substr(a_prefix.size(), TIME.size());
 		for (std::size_t i = 0; i < TIME.size(); ++i) {
 			if (TIME[i] == '0' ? (time[i] < '0' || time[i] > '9') : time[i] != TIME[i]) {
 				return false;
@@ -363,10 +363,10 @@ namespace HangWatch
 
 	// Which of a_names (the files in the log folder) to delete so that only the newest a_keep reports
 	// and the newest a_keep dumps stay. A file left half-written (the game was closed while it was
-	// written) always goes.
-	inline std::vector<std::string> HangFilesToRemove(std::vector<std::string> a_names, std::size_t a_keep)
+	// written) always goes. With a_prefix, the crash report's files instead (CrashReport.h).
+	inline std::vector<std::string> HangFilesToRemove(std::vector<std::string> a_names, std::size_t a_keep, std::string_view a_prefix = FILE_PREFIX)
 	{
-		const auto ours = [](std::string_view a_name) { return IsHangFile(a_name, REPORT_SUFFIX) || IsHangFile(a_name, DUMP_SUFFIX); };
+		const auto ours = [&](std::string_view a_name) { return IsHangFile(a_name, REPORT_SUFFIX, a_prefix) || IsHangFile(a_name, DUMP_SUFFIX, a_prefix); };
 		std::vector<std::string> remove;
 		std::vector<std::string> reports;
 		std::vector<std::string> dumps;
@@ -374,9 +374,9 @@ namespace HangWatch
 			const std::string_view view{ name };
 			if (view.ends_with(PARTIAL_SUFFIX) && ours(view.substr(0, view.size() - PARTIAL_SUFFIX.size()))) {
 				remove.push_back(std::move(name));
-			} else if (IsHangFile(view, REPORT_SUFFIX)) {
+			} else if (IsHangFile(view, REPORT_SUFFIX, a_prefix)) {
 				reports.push_back(std::move(name));
-			} else if (IsHangFile(view, DUMP_SUFFIX)) {
+			} else if (IsHangFile(view, DUMP_SUFFIX, a_prefix)) {
 				dumps.push_back(std::move(name));
 			}
 		}

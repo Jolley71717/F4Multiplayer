@@ -196,6 +196,10 @@ namespace Config
 		// freeze the game would come out of into a permanent one, and it holds paths and the Windows user name.
 		bool hangDump = false;
 
+		// A crash to desktop is written up before the game closes (CrashReport.h): what the exception was and where,
+		// module+offset only, to F4Multiplayer-crash-<date>_<time>.txt next to the log and to the log (bCrashReport).
+		bool crashReport = true;
+
 		// What the log holds (sLogLevel): "info" (the default) or "debug", which adds the friend scans (by
 		// alias) and the lines characters say. HUD messages name players and are never logged. Applied by
 		// Load.

@@ -16,6 +16,7 @@
 #include "game/CharacterBinding.h"
 #include "game/ClickWatch.h"
 #include "game/CombatReactions.h"
+#include "CrashWatch.h"
 #include "game/Compass.h"
 #include "game/ExitInventory.h"
 #include "game/FadeWatch.h"
@@ -1332,6 +1333,13 @@ namespace Session
 			return;
 		}
 		const auto now = Clock::now();
+		// For the crash report: what the session is, once a second (CrashWatch::SetSession).
+		if (static Clock::time_point noted{}; now - noted >= std::chrono::seconds(1)) {
+			noted = now;
+			const bool hosting = hostedServer && hostedServer->Running();
+			CrashWatch::SetSession(hosting ? CrashReport::Session::kHosting : welcomed ? CrashReport::Session::kJoined : CrashReport::Session::kNone,
+				static_cast<std::uint32_t>(RemotePlayers::List().size() + 1));
+		}
 		// Each stretch below is a part of the dev channel's `perf`, the packets it sends included.
 		Perf::Stretches perf;
 		PERF_NEXT(perf, "Story");

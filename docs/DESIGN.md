@@ -74,6 +74,36 @@
   maintainer privately, never for a public issue. The one game value the watch reads is `Main`'s
   quit flag: once the game is quitting (its shutdown reads no messages for a while) the watch stops.
   The judgement is `src/HangDetector.h`, unit tested.
+- **Crash report:** `src/CrashWatch.cpp`, an unhandled-exception filter put in at plugin load (`bCrashReport`), in
+  front of whatever filter was there (a crash logger that loaded before the plugin) and handing the exception on to
+  it, or to Windows, after. Most players have no crash logger, and a crash left nothing but a log that stops. The
+  filter runs on the thread that crashed, whose heap and locks may be the broken thing, so it allocates nothing and
+  takes no lock: every buffer, the folder, the log's path and the version were set aside at install, the text is
+  built in a fixed buffer (`src/CrashReport.h`, unit tested), modules are named by `VirtualQuery` and the image's
+  mapped file name as the hang watch does, and the files are written with `CreateFile`/`WriteFile` (the log through
+  a handle of its own; its sink shares the file and flushes every line). The report says the exception and where
+  (module+offset), what an access violation read or wrote, the thread (the main one or not), the phase (the hang
+  watch's: play, a loading screen, a save, a load), the session (hosting or joined, how many players), how long
+  the plugin had been loaded, and the return addresses the hang watch's scan finds on the copied stack. It goes to
+  `F4Multiplayer-crash-<time>.txt` next to the log (the newest 3 kept) and to the log's end; never a path. A stack
+  overflow gets the report without the stack scan (the thread has next to no stack left to run on). A fault inside
+  the report itself is caught (`__try`) and the exception goes on as it would have; one report per game. The
+  filters are named by module+offset only (at plugin load the one there is `Fallout4.exe+0x22BFFB4`; once the
+  game's data is loaded the game has put `Fallout4.exe+0xC3AFC0` in front). `OnDataReady` then reads which crash
+  logger's DLL is in (Buffout 4, Addictol, Trainwreck) and, if something put a filter in front of ours, puts ours
+  back in front so that one (the displaced filter) still gets the exception after the report. A displaced filter
+  may chain back to what it found at its install, ours: that re-entry (a thread-local depth) gets no report and
+  never the displaced filter again, only the install-time filter; and should that one come back too (the system's
+  `UnhandledExceptionFilter` calls the current filter), the third entry goes to Windows, so the chain ends whatever
+  the filters do (`CrashReport::HandOn`, unit tested with fake filters). A second thread that crashes while the
+  first writes the report waits up to 5 s for it before handing on. `SetThreadStackGuarantee` keeps 64 KB of the
+  main thread's stack for the report after a stack overflow. **With a crash logger loaded the report may not be
+  written:** Addictol's vectored handler runs before any filter and ends the process itself (rig, every `crashtest`
+  variant: its `crash-*.log`, our WARN, nothing after; the game exits in ~2 s); Buffout 4 is not tested and may do
+  the same. The plugin doesn't fight that (a vectored handler of ours couldn't tell a handled exception from an
+  unhandled one); the data-ready line says the logger's crash log is to be sent too, with `F4Multiplayer.log`. The
+  report is for the players without one, which is most of them (the dev channel's `crashtest` crashes the game on
+  purpose to test it).
 - **Frame watch:** `src/main.cpp` (`RunFrameWatch`), one thread, the hang watch's complement: the
   main thread answers its window, yet no frame of ours runs. The frame chain (the F4SE task posts a
   frame message once a drawn frame, the window procedure takes it on the main thread, a frame's game
