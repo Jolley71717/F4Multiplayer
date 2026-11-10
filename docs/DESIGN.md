@@ -74,6 +74,20 @@
   maintainer privately, never for a public issue. The one game value the watch reads is `Main`'s
   quit flag: once the game is quitting (its shutdown reads no messages for a while) the watch stops.
   The judgement is `src/HangDetector.h`, unit tested.
+- **Crash report:** `src/CrashWatch.cpp`, an unhandled-exception filter put in at plugin load (`bCrashReport`), in
+  front of whatever filter was there (a crash logger that loaded before the plugin) and handing the exception on to
+  it, or to Windows, after. Most players have no crash logger, and a crash left nothing but a log that stops. The
+  filter runs on the thread that crashed, whose heap and locks may be the broken thing, so it allocates nothing and
+  takes no lock: every buffer, the folder, the log's path and the version were set aside at install, the text is
+  built in a fixed buffer (`src/CrashReport.h`, unit tested), modules are named by `VirtualQuery` and the image's
+  mapped file name as the hang watch does, and the files are written with `CreateFile`/`WriteFile` (the log through
+  a handle of its own; its sink shares the file and flushes every line). The report says the exception and where
+  (module+offset), what an access violation read or wrote, the thread (the main one or not), the phase (the hang
+  watch's: play, a loading screen, a save, a load), the session (hosting or joined, how many players), how long
+  the plugin had been loaded, and the return addresses the hang watch's scan finds on the copied stack. It goes to
+  `F4Multiplayer-crash-<time>.txt` next to the log (the newest 3 kept) and to the log's end; never a path. A stack
+  overflow gets the report without the stack scan (the thread has next to no stack left to run on). A fault inside
+  the report itself is caught (`__try`) and the exception goes on as it would have; one report per game.
 - **Frame watch:** `src/main.cpp` (`RunFrameWatch`), one thread, the hang watch's complement: the
   main thread answers its window, yet no frame of ours runs. The frame chain (the F4SE task posts a
   frame message once a drawn frame, the window procedure takes it on the main thread, a frame's game

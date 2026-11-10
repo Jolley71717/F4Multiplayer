@@ -32,6 +32,7 @@
 #include "game/RealTime.h"
 #include "game/RemotePlayers.h"
 #include "game/RollHook.h"
+#include "CrashWatch.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -1112,6 +1113,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Platform::LogStartup();  // Windows or Wine, and how the game was started (Steam, its overlay)
 
 	Config::Load();
+	CrashWatch::Install();  // a crash to desktop is written up before the game closes (CrashReport.h; bCrashReport)
 	Text::Load();
 	Perf::StartTracy();  // a developer build with Tracy only (Perf.h)
 
