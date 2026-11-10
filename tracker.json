@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T22:07:47+00:00",
+ "updated": "2026-11-10T23:22:05+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -630,8 +630,8 @@
    "title": "Two players can recruit the same companion or Dogmeat; no session rule decides whose companion it is",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; rig test queued"
+   "stage": 5,
+   "note": "Merged: first to recruit keeps the companion; ships in the next feature release"
   },
   {
    "id": "af5k",
@@ -2390,6 +2390,14 @@
    "priority": 3,
    "stage": 5,
    "note": "Logging merged; the fix itself is a separate item"
+  },
+  {
+   "id": "yo28",
+   "title": "Host made no Steam lobby once after a deploy (lobby=0, no 'Steam: hosting lobby' line); a redeploy fixed it",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Seen once on the rig; watching for repeats"
   },
   {
    "id": "yqm3",
