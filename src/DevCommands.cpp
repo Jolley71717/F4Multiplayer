@@ -2271,6 +2271,11 @@ namespace DevCommands
 			if (!from || !to || from == to) {
 				return "error: usage: wswire <fromHex> <toHex>";
 			}
+			// Under the shared workshop's rule, a wire between two copies of the host's pieces is asked of the host, as workshop
+			// mode's wiring is (SharedWorkshop.h): no wire of ours.
+			if (const auto asked = WorkshopSync::RequestWireForDev(from, to)) {
+				return *asked;
+			}
 			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
 			const auto bench = keyword ? from->GetLinkedRef(keyword) : nullptr;
 			const auto data = bench && bench->extraList ? bench->extraList->GetByType<RE::Workshop::ExtraData>() : nullptr;
@@ -2416,6 +2421,34 @@ namespace DevCommands
 				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
 			}
 			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
+		}
+
+		// wsfinish <refHex> <benchHex>: the shared workshop's finish (SharedWorkshop::FINISH_STEPS, the engine's own placement steps)
+		// run now on a reference of ours (a console-placed piece) as one of the workbench's pieces: linked, budgeted, static,
+		// snapped, wireless, terminals, navmesh, power and resources recounted, and the placed event (our sink reports it). For the
+		// rig's probe of the host's side without a friend's request.
+		std::string WsFinish(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto bench = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!ref || !bench || !WorkshopSync::IsWorkbenchAnchor(bench)) {
+				return "error: usage: wsfinish <refHex> <benchHex> (a workbench)";
+			}
+			return WorkshopSync::FinishForDev(ref, bench);
+		}
+
+		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
+		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught).
+		std::string WsMode(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 1 && (args[0] == "on" || args[0] == "off" || args[0] == "host")) {
+				WorkshopSync::SetSharedModeForDev(args[0] == "host" ? std::nullopt : std::optional{ args[0] == "on" });
+			} else if (!args.empty()) {
+				return "error: usage: wsmode [on|off|host]";
+			}
+			return WorkshopSync::DescribeShared();
 		}
 
 		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
@@ -4396,6 +4429,8 @@ namespace DevCommands
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },
+			Entry{ "wsfinish", WsFinish },
+			Entry{ "wsmode", WsMode },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },

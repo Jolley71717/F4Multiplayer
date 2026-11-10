@@ -288,10 +288,17 @@ if ($null -ne $usesPreprocessed) {
 # player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.
 # And WorkshopSync's: the crafting menus' gather asking Workshop::GetWorkshop (CraftingWorkshop.h), and the light maker
 # asking Workshop::IsPowered (InstallLights). And Storage::InstallGather's: the two calls to Workshop::AddOtherContainers
-# (the host's supply lines, SupplyLines.h).
+# (the host's supply lines, SupplyLines.h). And WorkshopSync::InstallPicks' seven (SharedWorkshop.h): the general and the
+# wire pick asking Workshop::IsInteractionBlocked, the store button and the store request asking Workshop::CanStoreRef, the
+# scrap button and the scrap request asking Workshop::WorkshopCanScrapRef, and the grab's lambda calling
+# Workshop::SetSelectedEditItem.
 foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
 		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'),
-		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'))) {
+		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'),
+		@(2195314, 0x4FA, 2195179, 'the general pick asks Workshop::IsInteractionBlocked'), @(2195312, 0x4FA, 2195179, 'the wire pick asks Workshop::IsInteractionBlocked'),
+		@(2194963, 0x80, 2195195, 'Workshop::CanStorePlacementItem asks Workshop::CanStoreRef'), @(4477212, 0x8E, 2195195, 'Workshop::RequestStorePlacementItem asks Workshop::CanStoreRef'),
+		@(2195192, 0x188, 2194959, 'Workshop::CanScrapPlacementRef asks Workshop::WorkshopCanScrapRef'), @(2194966, 0x85, 2194959, 'Workshop::RequestScrapPlacementItem asks Workshop::WorkshopCanScrapRef'),
+		@(2195499, 0x1B, 2195119, 'the grab''s lambda calls Workshop::SetSelectedEditItem'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {

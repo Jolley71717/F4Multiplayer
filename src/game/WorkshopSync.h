@@ -29,6 +29,33 @@ namespace WorkshopSync
 	// no-op after.
 	void InstallLights();
 
+	// Patches workshop mode's pick tests and gates for the shared workshop (SharedWorkshop.h): at a settlement the host owns,
+	// our copy of one of the host's pieces may be picked, to wire it (the pick test, 2195179, at the general and the wire
+	// pick), and never grabbed (Workshop::SetSelectedEditItem), stored (Workshop::CanStoreRef) or scrapped
+	// (Workshop::WorkshopCanScrapRef). At plugin load (it takes trampoline call stubs); no-op after. Each site's bytes are
+	// checked first: none patched unless all are as 1.11.240 has them.
+	void InstallPicks();
+
+	// ---- The shared workshop (SharedWorkshop.h) ----------------------------------------------------------
+	//
+	// A friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own pieces.
+
+	// The host's game: a friend asks for a build or a wire (kWorkshopRequest). Checked, made and finished over the next frames
+	// (Frame), and answered.
+	void OnRequest(const Protocol::WorkshopRequest& a_request);
+
+	// A friend's game: the host's game (or the server) answered one of our requests (kWorkshopAnswer).
+	void OnAnswer(const Protocol::WorkshopAnswer& a_answer);
+
+	// Dev: a wire between two of our copies of one friend's pieces asked of the host, as workshop mode's wiring is under the rule
+	// (wswire takes this path first); what was asked, or none when the rule doesn't apply or the ends aren't such copies.
+	[[nodiscard]] std::optional<std::string> RequestWireForDev(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to);
+	// Dev: the finish steps run now on a reference of ours, as one of the workbench's pieces (wsfinish); what each did.
+	[[nodiscard]] std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
+	// Dev: the shared workshop forced on or off for this game (none: the host's rule), and its state (wsmode).
+	void                      SetSharedModeForDev(std::optional<bool> a_on);
+	[[nodiscard]] std::string DescribeShared();
+
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.

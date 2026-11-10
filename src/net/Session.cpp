@@ -852,6 +852,16 @@ namespace Session
 					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
+			case MessageType::kWorkshopRequest:
+				if (const auto msg = Protocol::DecodeWorkshopRequest(a_data)) {
+					WorkshopSync::OnRequest(*msg);
+				}
+				break;
+			case MessageType::kWorkshopAnswer:
+				if (const auto msg = Protocol::DecodeWorkshopAnswer(a_data)) {
+					WorkshopSync::OnAnswer(*msg);
+				}
+				break;
 			case MessageType::kWorkshopResources:
 				if (const auto msg = Protocol::DecodeResourceStates(a_data)) {
 					WorkshopSync::ApplyResources(*msg);
