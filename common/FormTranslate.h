@@ -630,6 +630,16 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportWorkshopRequest:
+		case MessageType::kWorkshopRequest:
+			// A build's object, its workbench, and a wire's ends: what the other side lacks drops the request (the host's game
+			// could make nothing of it, and the friend's piece stays their own, as before the rule).
+			Apply<WorkshopRequest>(a_packet, ctx, DecodeWorkshopRequest, [&](WorkshopRequest& m) { return ctx.Key(m.workshop) && ctx.Key(m.base) && ctx.Key(m.wireFrom) && ctx.Key(m.wireTo); }, typed);
+			break;
+		case MessageType::kReportWorkshopAnswer:
+		case MessageType::kWorkshopAnswer:
+			Apply<WorkshopAnswer>(a_packet, ctx, DecodeWorkshopAnswer, [&](WorkshopAnswer& m) { return ctx.Key(m.workshop) && ctx.Key(m.refId); }, typed);
+			break;
 		case MessageType::kReportWorkshopResources:
 		case MessageType::kWorkshopResources:
 			Apply<ResourceStates>(a_packet, ctx, DecodeResourceStates, [&](ResourceStates& m) {

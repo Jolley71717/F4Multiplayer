@@ -4054,3 +4054,92 @@ TEST("host authority: a friend who asks to look like any NPC but a settler is sh
 	watch(1);
 	CHECK(placed.at({ 1, bob->playerId }) == 0);
 }
+
+TEST("shared workshop: a friend's request goes to the host's own game alone and the host's answer back to the asker alone; the server refuses with no host's game, the host's own, or the rule off")
+{
+	using Why = Protocol::WorkshopAnswer::Why;
+	namespace Op = Protocol::WorkshopRequestOp;
+	constexpr std::uint32_t BENCH = 0x000250FE;
+	constexpr std::uint32_t LAMP = 0x000560DF;
+	constexpr std::uint32_t MADE = 0xFF000123;
+	const auto requests = [](const Packets& a_packets) { return Decoded(a_packets, MT::kWorkshopRequest, Protocol::DecodeWorkshopRequest); };
+	const auto answers = [](const Packets& a_packets) { return Decoded(a_packets, MT::kWorkshopAnswer, Protocol::DecodeWorkshopAnswer); };
+	const auto build = [&](std::uint32_t a_seq) {
+		return Protocol::Encode(Protocol::WorkshopRequest{ 0, a_seq, Op::kBuild, BENCH, LAMP, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 }, MT::kReportWorkshopRequest);
+	};
+	{
+		Server::Options options;
+		options.hostIdentity = 0x4242;
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		const auto host = JoinAs(f, 1, "Host", 0x4242);
+		const auto alice = JoinAs(f, 2, "Alice");
+		JoinAs(f, 3, "Carol");
+		Clear(f, { 1, 2, 3 });
+
+		// Alice's request reaches the host's game alone, named as hers; nobody else hears it, and she gets no answer yet.
+		f.fake->Deliver(2, build(5));
+		const auto heard = requests(Received(f, 1));
+		REQUIRE(heard.size() == 1);
+		CHECK(heard[0].playerId == alice);
+		CHECK(heard[0].seq == 5);
+		CHECK(heard[0].workshop == BENCH);
+		CHECK(heard[0].base == LAMP);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		CHECK(Count(Received(f, 2), MT::kWorkshopRequest) == 0);
+		CHECK(answers(Received(f, 2)).empty());
+
+		// The host's answer goes to Alice alone, named as the host's; Carol's "answer" (not the host's game) goes nowhere.
+		f.fake->Deliver(3, Protocol::Encode(Protocol::WorkshopAnswer{ 5, alice, Op::kBuild, Why::kApplied, BENCH, MADE }, MT::kReportWorkshopAnswer));
+		Sync(f, 3);
+		CHECK(answers(Received(f, 2)).empty());
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 5, alice, Op::kBuild, Why::kApplied, BENCH, MADE }, MT::kReportWorkshopAnswer));
+		const auto answered = answers(Received(f, 2));
+		REQUIRE(answered.size() == 1);
+		CHECK(answered[0].seq == 5);
+		CHECK(answered[0].playerId == host);
+		CHECK(answered[0].why == Why::kApplied);
+		CHECK(answered[0].refId == MADE);
+		CHECK(answered[0].workshop == BENCH);
+		CHECK(Count(Received(f, 3), MT::kWorkshopAnswer) == 0);
+		CHECK(Count(Received(f, 1), MT::kWorkshopAnswer) == 0);
+
+		// The host's own game asking is refused by the server (its pieces are its own already).
+		f.fake->Deliver(1, build(6));
+		const auto own = answers(Received(f, 1));
+		REQUIRE(own.size() == 1);
+		CHECK(own[0].seq == 6);
+		CHECK(own[0].why == Why::kHostAway);
+		CHECK(own[0].playerId == 0);
+	}
+	{
+		// No host's game in the session (a dedicated server): refused at once, and the friend's piece stays their own.
+		Fixture    f;
+		JoinAs(f, 1, "Alice");
+		JoinAs(f, 2, "Bob");
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, build(7));
+		const auto refused = answers(Received(f, 1));
+		REQUIRE(refused.size() == 1);
+		CHECK(refused[0].seq == 7);
+		CHECK(refused[0].why == Why::kHostAway);
+		CHECK(refused[0].refId == 0);
+		CHECK(Count(Received(f, 2), MT::kWorkshopRequest) == 0);
+	}
+	{
+		// The host's rule off: refused as such, even with the host's game there.
+		Server::Options options;
+		options.hostIdentity = 0x4242;
+		options.rules.sharedWorkshop = false;
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		JoinAs(f, 1, "Host", 0x4242);
+		JoinAs(f, 2, "Alice");
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(2, build(8));
+		const auto refused = answers(Received(f, 2));
+		REQUIRE(refused.size() == 1);
+		CHECK(refused[0].why == Why::kOff);
+		CHECK(Count(Received(f, 1), MT::kWorkshopRequest) == 0);
+	}
+}
