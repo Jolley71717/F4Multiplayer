@@ -1746,6 +1746,125 @@ _rad_inv() { dc "$1" inventory | grep -o ' items=[0-9]*' | sed 's/ items=//'; }
 _rad_spawns() { dc "$1" 'net status' | grep -o 'spawns: ours=[0-9]* theirs=[0-9]* copies=[0-9]* reported=[0-9]* granted=[0-9]* refused=[0-9]* received=[0-9]* placed=[0-9]*'; }
 _rad_here() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ Ref [0-9]+ (Workshop|EventWorkshop|FoundWorkshop) " | grep -o 'here=[0-9A-F]*' | sort | tr '\n' ' '; }
 _rad_is_running() { [ "$(_rad_run "$1" "$2")" = running=true ]; }
+# ---- the shared workshop: a friend's build and wire at the host's settlement, as the host's pieces (opt-in: smoke.sh --only sharedws-power) ------
+# With the host's bSharedWorkshop on (the default; src/game/SharedWorkshop.h, docs/DESIGN.md "Shared workshop"), a VM piece placed at
+# Sanctuary becomes a request the host's game builds as its own and finishes with the engine's placement steps, and the VM's piece
+# is adopted as its copy; a VM wire between two of the host's copies is taken off the VM's grid in the same frame and strung by the
+# host's game instead. Set-up by console, said so in the report: both games coc to SanctuaryExt, Sanctuary made the host's
+# (WorkshopScript.SetOwnedByPlayer, as the bench step does), then both walk to the workbench (real movement). The pieces go
+# through the dev commands' request path (wsreport place and wswire hand over under the rule, as workshop mode does): the host places
+# a generator (wsreport place + wsfinish: the host's own finish, probe P1), the VM places a light (a request: "built for player N"
+# on the host) and wires the generator's copy to the light's copy (a request). Asserted: the host's grid holds generator, wire and
+# light; the host's light is powered; the VM's copy of the light shows blocked, the host's, powered and lit; the VM's grids name no copy
+# and no runtime reference, and its audit finds nothing, before and after an in-session save; the VM leaves and loads that save
+# alone: grids clean, no copy with power links, the generator's copy hushed. Then the reverse: the VM places the generator (a
+# request), the host the light and the wire (its own). Saves are throwaway (backup.sh before, restore after). The bases: the
+# small generator and the light bulb (env SWS_GENERATOR, SWS_LIGHT; verify with dev `edid` on a new game version).
+SWS_GENERATOR=${SWS_GENERATOR:-0010A2A2}; SWS_LIGHT=${SWS_LIGHT:-000560DF}; SWS_SAVE=${SWS_SAVE:-f4mp_sharedws}
+_sws_grid_clean() {  # _sws_grid_clean <who> <label>: that game's grids at Sanctuary name no copy and no runtime reference
+	local g; g=$(dc "$1" "wsgrid $SANCT_BENCH")
+	if [ "$(field "$g" copies)" = "named=0" ] || grep -q "copies named=0" <<<"$g"; then
+		if grep -qE ' [ne]FF[0-9A-F]{6}' <<<"$g"; then fail "$2" "a grid names a runtime reference: $(cut -c1-200 <<<"$g")"; return 1; fi
+		pass "$2" "$(cut -c1-120 <<<"$g")"; return 0
+	fi
+	fail "$2" "$(cut -c1-200 <<<"$g")"; return 1
+}
+_sws_audit_clean() { local p; p=$(dc "$1" wspower); if [ "$(field "$p" found)" = 0 ]; then pass "$2" "found=0 strays=$(field "$(dc "$1" wsmode)" strays)"; else fail "$2" "$(cut -c1-160 <<<"$p")"; fi; }
+_sws_copy_of() {  # _sws_copy_of <who> <builder's ref>: that game's copy of the other game's piece, by its key, or ""
+	dc "$1" "wspower copies" | grep -oE "[0-9A-F]{8}(\s\(not loaded\))?=[0-9]+:$2" | grep -oE '^[0-9A-F]{8}' | head -1
+}
+_sws_built() { grep -qE "WorkshopSync: [0-9A-F]{8} \(base $2\) built for player [0-9]+ at workbench" "$(win_read sws "$1")"; }
+_sws_answered() { grep -qE "WorkshopSync: request [0-9]+ \((build|wire)\) at workbench [0-9A-F]{8}: applied" "$(win_read sws "$1")"; }
+_sws_lit() { local i; i=$(dc "$1" "wsinfo $2"); [ "$(field "$i" theirPower)" = on ] && [ "$(field "$i" lit)" = yes ]; }
+_sws_grid_has() { local g i; g=$(dc "$1" "wsgrid $SANCT_BENCH"); for i in "${@:2}"; do grep -qE "[ne]$i" <<<"$g" || return 1; done; return 0; }
+_sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generator placed by the first, the light and the wire by the second (the VM's go through requests)
+	local gen=$1 lit=$2 out g l w gc lc r label="sharedws ($gen generator, $lit light)"
+	win_mark sws host; win_mark sws vm
+	out=$(dc "$gen" "wsreport place $SWS_GENERATOR $SANCT_BENCH"); g=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$g" ]; then fail "$label: the generator is placed" "$out"; return 1; fi
+	echo "$g" >> "$A_OUT/ws-placed.txt"
+	if [ "$gen" = host ]; then
+		sleep 2; out=$(host "wsfinish $g $SANCT_BENCH")
+		case "$out" in finished*) pass "$label: the host's finish ran its steps on the generator" "$(cut -c1-160 <<<"$out")";; *) fail "$label: the host's finish ran its steps on the generator" "$out"; return 1;; esac
+	else
+		if wait_for 20 _sws_built host "$SWS_GENERATOR"; then pass "$label: the host built the VM's generator for it" "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built for player [0-9]+[^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-160)"
+		else fail "$label: the host built the VM's generator for it" "$(grep -E 'WorkshopSync: (player|request|our)' "$A_OUT/windelta-sws-host.txt" "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|')"; return 1; fi
+		g=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)  # the host's piece
+	fi
+	sleep 3
+	out=$(dc "$lit" "wsreport place $SWS_LIGHT $SANCT_BENCH"); l=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$l" ]; then fail "$label: the light is placed" "$out"; return 1; fi
+	echo "$l" >> "$A_OUT/ws-placed.txt"
+	if [ "$lit" = host ]; then
+		sleep 2; host "wsfinish $l $SANCT_BENCH" >/dev/null
+		gc=$g; lc=$l
+	else
+		if wait_for 20 _sws_built host "$SWS_LIGHT"; then pass "$label: the host built the VM's light for it" "host log: built for player"; else fail "$label: the host built the VM's light for it" "no 'built for player' line for base $SWS_LIGHT on the host"; return 1; fi
+		if wait_for 10 _sws_answered vm; then pass "$label: the VM's request was answered applied and its light adopted as the host's copy" "$(grep -oE 'WorkshopSync: our [0-9A-F]{8} .* is the host.s piece now[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-160)"
+		else fail "$label: the VM's request was answered applied and its light adopted as the host's copy" "$(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|')"; return 1; fi
+		lc=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)  # the host's light
+		gc=$g
+	fi
+	sleep 3
+	# the wire: from the generator to the light, by whoever placed the light (the VM wires copy to copy: a request)
+	if [ "$lit" = host ]; then out=$(host "wswire $gc $lc"); else
+		local vg vl; vg=$(_sws_copy_of vm "$gc"); vl=$(_sws_copy_of vm "$lc")
+		if [ -z "$vg" ] || [ -z "$vl" ]; then fail "$label: the VM has copies of both the host's pieces" "generator copy '$vg' light copy '$vl'; $(vm 'wspower copies' | cut -c1-160)"; return 1; fi
+		win_mark sws host; win_mark sws vm
+		out=$(vm "wswire $vg $vl")
+	fi
+	case "$out" in wire*|requested*) pass "$label: the wire is strung" "$out";; *) fail "$label: the wire is strung" "$out"; return 1;; esac
+	if [ "$lit" = vm ]; then
+		if wait_for 15 _sws_answered vm; then pass "$label: the host strung the VM's wire between its pieces" "$(grep -oE 'WorkshopSync: request [0-9]+ \(wire\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+		else fail "$label: the host strung the VM's wire between its pieces" "$(grep -E 'WorkshopSync: (request|player)' "$A_OUT/windelta-sws-host.txt" "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|')"; return 1; fi
+	fi
+	sleep 5
+	w=$(host "wsinfo $lc" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
+	if _sws_grid_has host "$gc" "$lc" ${w:+"$w"}; then pass "$label: the host's grid holds the generator, the light and the wire" "$(host "wsgrid $SANCT_BENCH" | cut -c1-160)"
+	else fail "$label: the host's grid holds the generator, the light and the wire" "generator $gc light $lc wire '$w': $(host "wsgrid $SANCT_BENCH" | cut -c1-200)"; fi
+	expect_eq "$label: the host's light is powered" "$(field "$(host "wsinfo $lc")" powered)" yes
+	local vl2; vl2=$(_sws_copy_of vm "$lc")
+	if [ -n "$vl2" ] && wait_for 10 _sws_lit vm "$vl2"; then pass "$label: the VM's copy of the light shows the host's power and is lit" "$(vm "wsinfo $vl2" | grep -oE 'blocked=[a-z]+|builder=[0-9]+|theirPower=[a-z]+|lit=[a-z]+' | tr '\n' ' ')"
+	else fail "$label: the VM's copy of the light shows the host's power and is lit" "copy '$vl2': $(vm "wsinfo ${vl2:-0}" | cut -c1-200)"; fi
+	expect_eq "$label: the VM's copy of the light is out of workshop mode's reach (blocked)" "$(field "$(vm "wsinfo ${vl2:-0}")" blocked)" true
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference"
+	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in"
+	return 0
+}
+step_sharedws_power() {
+	section "shared workshop (a friend builds and wires at the host's settlement; console placement, SetOwnedByPlayer and throwaway saves on both)"
+	local r
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "sharedws: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	if [ "$(field "$(vm wsmode)" hooks)" != true ]; then fail "sharedws: set-up: the VM's pick hooks are installed" "$(vm wsmode | cut -c1-160)"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "sharedws: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	walk host "sharedws: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "sharedws: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	_sws_one_way host vm || return
+	# an in-session save on the VM, and the same after it
+	vm "console save $SWS_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	_sws_grid_clean vm "sharedws: after an in-session save, the VM's grids still name no copy and no runtime reference"
+	_sws_audit_clean vm "sharedws: after an in-session save, the VM's audit finds nothing tied in"
+	# the VM leaves and loads that save alone: nothing of the session on its grids, and nothing humming
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
+	_sws_grid_clean vm "sharedws: loaded alone, the VM's grids name no copy and no runtime reference"
+	_sws_audit_clean vm "sharedws: loaded alone, the VM's audit finds no copy with power links"
+	local lit; lit=$(vm 'wsgrid' | grep -c 'COPY'); expect_eq "sharedws: loaded alone, no grid names a copy" "$lit" 0
+	# back into the session for the reverse
+	_vm_restart_rejoin
+	enter_both SanctuaryExt 14
+	walk host "sharedws: set-up: the host walks back to the workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "sharedws: set-up: the VM walks back to the workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	_sws_one_way vm host || return
+	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed.txt" >> "$A_OUT/cleanup.log" 2>&1
+}
+
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
 _rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* joined=[^ ]* declined=[^ ]* sent=[^ ]* taken=[0-9]*" | sed "s/.*taken=//"; }
 _rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }

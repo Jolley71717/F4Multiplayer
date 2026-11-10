@@ -122,6 +122,7 @@ if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
 fi
 run radiants  step_radiants
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
+run sharedws-power step_sharedws_power  # opt-in (--only sharedws-power): the shared workshop's build and wire hand-over, with in-session saves (throwaway saves)
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {
