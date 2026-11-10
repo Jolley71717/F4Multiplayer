@@ -146,6 +146,9 @@ namespace Text
 		{ "down.helping", "Helping {player} up..." },
 		{ "down.helped", "You helped {player} up" },
 		{ "down.helped_you", "{player} helped you up" },
+		// --- Companions: one owner each ---
+		{ "companion.theirs", "{npc} is {player}'s companion" },
+		{ "companion.someone", "another player" },
 		{ "down.revives_left", "Revives left: {n}" },
 		{ "down.last_revive", "That was your last revive for now: the next lethal hit kills you" },
 		{ "down.revives_back", "Your revives are back: a friend can help you up again" },

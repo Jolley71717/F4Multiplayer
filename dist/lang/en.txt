@@ -343,3 +343,7 @@ mods.extra = Only in your game (disable these):
 mods.order = In another place in your load order (no need to change these):
 mods.light_here = {name} (light in your game, full in the host's)
 mods.full_here = {name} (full in your game, light in the host's)
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} is {player}'s companion
+companion.someone = another player

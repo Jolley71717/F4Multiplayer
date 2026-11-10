@@ -1278,6 +1278,51 @@ TEST("protocol: lists over their limit are truncated on encode and rejected on t
 	CHECK(p->players.size() == 255);
 }
 
+TEST("protocol: a companion report and an owner's word round trip, and bad ones are refused")
+{
+	for (const bool recruited : { true, false }) {
+		const auto report = DecodeCompanionReport(Encode(CompanionReport{ REF_A, recruited }));
+		REQUIRE(report);
+		CHECK(report->refId == REF_A);
+		CHECK(report->recruited == recruited);
+	}
+	// A spawn can be a companion on the wire (a friend's runtime NPC is named by its spawn id); the player and 0 can't.
+	CHECK(DecodeCompanionReport(Encode(CompanionReport{ 0xFF000123, true })));
+	CHECK(!DecodeCompanionReport(Encode(CompanionReport{ PLAYER_REF_ID, true })));
+	CHECK(!DecodeCompanionReport(Encode(CompanionReport{ 0, true })));
+	{
+		Writer w{ MT::kReportCompanion };
+		w.U32(REF_A);
+		w.U8(2);  // recruited is 0 or 1
+		CHECK(!DecodeCompanionReport(w.Data()));
+		Writer shorter{ MT::kReportCompanion };
+		shorter.U32(REF_A);
+		CHECK(!DecodeCompanionReport(shorter.Data()));
+	}
+
+	for (const auto& owner : { CompanionOwner{ REF_A, 2, CompanionState::kOwner }, CompanionOwner{ REF_A, 7, CompanionState::kHeld }, CompanionOwner{ REF_B, 0, CompanionState::kFree },
+			 CompanionOwner{ REF_B, 0, CompanionState::kFull } }) {
+		const auto back = DecodeCompanionOwner(Encode(owner));
+		REQUIRE(back);
+		CHECK(back->refId == owner.refId);
+		CHECK(back->playerId == owner.playerId);
+		CHECK(back->state == owner.state);
+	}
+	// An owner's and a held one's name a player; nobody's and a full one's name none.
+	CHECK(!DecodeCompanionOwner(Encode(CompanionOwner{ REF_A, 0, CompanionState::kOwner })));
+	CHECK(!DecodeCompanionOwner(Encode(CompanionOwner{ REF_A, 0, CompanionState::kHeld })));
+	CHECK(!DecodeCompanionOwner(Encode(CompanionOwner{ REF_A, 2, CompanionState::kFree })));
+	CHECK(!DecodeCompanionOwner(Encode(CompanionOwner{ REF_A, 2, CompanionState::kFull })));
+	CHECK(!DecodeCompanionOwner(Encode(CompanionOwner{ 0, 2, CompanionState::kOwner })));
+	{
+		Writer w{ MT::kCompanionOwner };
+		w.U32(REF_A);
+		w.U32(2);
+		w.U8(std::to_underlying(CompanionState::kFull) + 1);
+		CHECK(!DecodeCompanionOwner(w.Data()));
+	}
+}
+
 TEST("protocol: claims with an unknown reason are rejected")
 {
 	Writer w{ MT::kClaimActors };

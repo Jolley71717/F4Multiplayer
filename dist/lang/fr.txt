@@ -325,3 +325,7 @@ mods.extra = Présents uniquement dans votre jeu (désactivez-les) :
 mods.order = À une autre place dans votre ordre de chargement (inutile de les changer) :
 mods.light_here = {name} (plugin léger chez vous, complet chez l'hôte)
 mods.full_here = {name} (plugin complet chez vous, léger chez l'hôte)
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} est le compagnon de {player}
+companion.someone = un autre joueur

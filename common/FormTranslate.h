@@ -465,6 +465,12 @@ namespace FormTranslate
 				return true;
 			}, plain);
 			break;
+		case MessageType::kReportCompanion:
+			Apply<CompanionReport>(a_packet, ctx, DecodeCompanionReport, [&](CompanionReport& m) { return ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kCompanionOwner:
+			Apply<CompanionOwner>(a_packet, ctx, DecodeCompanionOwner, [&](CompanionOwner& m) { return ctx.Key(m.refId); }, typed);
+			break;
 		case MessageType::kActorStates:
 		case MessageType::kActorStatesRelay:
 			Apply<std::vector<ActorState>>(a_packet, ctx, DecodeActorStates, [&](std::vector<ActorState>& m) {

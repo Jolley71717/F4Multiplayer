@@ -346,3 +346,7 @@ mods.extra = Есть только в вашей игре (отключите):
 mods.order = На другом месте в вашем порядке загрузки (менять не нужно):
 mods.light_here = {name} (у вас лёгкий плагин, у хоста полный)
 mods.full_here = {name} (у вас полный плагин, у хоста лёгкий)
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} — напарник игрока {player}
+companion.someone = другого игрока

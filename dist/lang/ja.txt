@@ -340,3 +340,7 @@ mods.extra = 自分のゲームにだけあるMOD（無効にしてください�
 mods.order = ロードオーダーの位置が違うMOD（変更の必要はありません）：
 mods.light_here = {name}（自分はライトプラグイン、ホストは通常プラグイン）
 mods.full_here = {name}（自分は通常プラグイン、ホストはライトプラグイン）
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc}は{player}の仲間です
+companion.someone = 別のプレイヤー
