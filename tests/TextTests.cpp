@@ -361,6 +361,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "workshop.shared.no_grab", {}, "That's the host's piece: you can wire it here, not move, store or scrap it" },
 		{ "workshop.shared.no_answer", {}, "The host's game didn't answer in time: the piece is your own" },
 		{ "workshop.shared.pending", {}, "The host's game is building this: wait a moment before moving it" },
+		{ "workshop.shared.bench_unopened", {}, "The host hasn't opened this settlement's workshop yet: the piece is your own" },
+		{ "workshop.shared.host_open_bench", {}, "A friend tried to build at your settlement: open its workshop once so they can" },
 		{ "drops.container_hint", {}, "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", {}, "Friends can't pick this item up: it stays on the ground in your game only" },
 		{ "drops.taken_first", {}, "A friend picked it up first" },

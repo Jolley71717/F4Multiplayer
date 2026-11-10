@@ -2915,10 +2915,15 @@ storage is shared). Its placed event, under the rule, becomes a numbered request
 host's own game alone (`kWorkshopRequest`, the asker's id on it; against the asker's event budget). The host's game checks it in
 order (`SharedWorkshop::Refusal`: the workbench is a workbench of a settlement the host owns, its cell at the spot is loaded,
 the object is one workshop mode builds and the spot within the bench's reach), makes the reference where the friend's stands
-(`TESDataHandler::CreateReferenceAtLocation`, the scale set), and once its 3D is there and the host isn't holding a grabbed
-piece of its own (the engine's "moving an existing item" byte 2661518, which `MakeReferenceStatic` reads: ours would be put
-back as a moved piece, its scripts never started; the host building in workshop mode is the point and holds nothing off;
-`SharedWorkshop::Ready`: a piece held longer than 10 s, or no 3D in 10 s: refused, the reference deleted) finishes it
+(`TESDataHandler::CreateReferenceAtLocation`, the scale set), and once its 3D is there (`SharedWorkshop::Ready`; no 3D in
+10 s: refused, the reference deleted; nothing of the host's workshop mode holds a finish off, building together is the point)
+finishes it with the engine's "new item mode" byte 2661518 set to 0 for the steps and put back after (`NewItemScope`: the
+byte is 0 only while a new piece is being placed and 1 otherwise, at idle and after a load too, as `QNewItemMode`'s "byte
+== 0" and the rig's reads say; `MakeReferenceStatic` reads it at +0x133 and +0x162 and, with 0, starts the piece's scripts,
+sends its loaded event and sets its power's initial state, as for any new piece). A workbench without workshop data (the
+engine makes `Workshop::ExtraData` when the workshop is first opened and saves it with the bench; a settlement taken by
+console has none) refuses the request as such (`kBenchUnopened`): the friend's piece stays their own, and the host is told
+once per bench to open the workshop. Made by us it would be a struct of the engine's we never saw made. Then the finish runs
 with the engine's own placement steps, each a plain function with explicit arguments, in the engine's order
 (`SharedWorkshop::FINISH_STEPS`, `Finish`; what `Workshop::PlaceCurrentReference` 2195155 does after the ghost is confirmed,
 read in 1.11.240): `Workshop::SetIsWorkshopItem(piece, true, bench)` 2194972 (the bench link, the location's special ref);

@@ -222,6 +222,9 @@ namespace SharedWorkshop
 		case Why::kHostBusy:
 			verdict.notice = "workshop.shared.host_busy";
 			break;
+		case Why::kBenchUnopened:
+			verdict.notice = "workshop.shared.bench_unopened";
+			break;
 		case Why::kHostAway:
 		case Why::kOff:
 			verdict.notice = "workshop.shared.no_host";
@@ -264,6 +267,7 @@ namespace SharedWorkshop
 		bool benchKnown = false;   // the workbench is a workbench here
 		bool hostOwned = false;    // ...of a settlement the host owns (the player's NPC or faction owns the workbench)
 		bool benchLoaded = false;  // ...whose cell at the spot is loaded here
+		bool benchOpened = false;  // ...with its workshop data (the engine makes it when its workshop is first opened: grids, deleted items)
 		bool inWorkshopMode = false;
 		bool objectKnown = false;  // a build: the object is in this game
 		bool buildable = false;    // ...and one workshop mode builds
@@ -280,6 +284,9 @@ namespace SharedWorkshop
 		}
 		if (!a_facts.benchLoaded) {
 			return Why::kBenchNotLoaded;
+		}
+		if (!a_facts.benchOpened) {
+			return Why::kBenchUnopened;  // no workshop data to add the piece to: the host opens the workshop once (it is made then)
 		}
 		if (a_op == Protocol::WorkshopRequestOp::kWire) {
 			if (!a_facts.endsKnown || !a_facts.endsAtBench) {
@@ -298,9 +305,12 @@ namespace SharedWorkshop
 
 	// A piece made for a request is finished once its 3D is there and the host isn't holding a piece of its own in workshop mode
 	// (a grabbed piece sets the engine's "moving an existing item" byte, which MakeReferenceStatic reads: ours would be put
-	// back as a moved piece, its scripts never started); building together is the point, so workshop mode itself is no
-	// reason to wait. One that waits too long is refused.
-	inline constexpr auto HOST_WAIT = 10s;   // the host holding a piece longer than this: kHostBusy
+	// back as a moved piece, its scripts never started). The byte is 0 only while a new piece is being placed and 1 otherwise,
+	// at idle too (read in 1.11.240: QNewItemMode is "byte == 0"), so no state of the host's hands is read from it: the
+	// finish sets it to 0 for its own steps and puts it back (NewItemScope), and nothing of the host's workshop mode holds a
+	// finish off (building together is the point); a_hostHoldsPiece stays for a game with a reason to wait. One that waits
+	// too long is refused.
+	inline constexpr auto HOST_WAIT = 10s;   // held off longer than this: kHostBusy
 	inline constexpr auto MODEL_WAIT = 10s;  // the piece's 3D not there in this long: kFailed
 
 	enum class Readiness : std::uint8_t

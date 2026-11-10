@@ -2804,8 +2804,11 @@ namespace WorkshopSync
 		// Workshop mode's current workbench (an ObjectRefHandle; null outside workshop mode): the budget, MakeReferenceStatic and
 		// the snapped-power check read it. Set to the piece's workbench for the finish, and put back after (BenchScope).
 		constexpr REL::ID CURRENT_WORKSHOP{ 4797241 };
-		// Workshop mode's "moving an existing item" byte (0: a new piece; else the player holds a grabbed piece of their own):
-		// MakeReferenceStatic reads it, so a piece of ours is finished only while it is 0 (SharedWorkshop::Ready).
+		// Workshop mode's "new item mode" byte (+2EDEF38; Workshop::QNewItemMode is "byte == 0"): 0 only while a new piece is
+		// being placed, 1 otherwise, at idle and after a load too (the rig read it so). MakeReferenceStatic reads it twice
+		// (+0x133, +0x162): with 0 the piece gets InitScripts, the loaded event and its power's initial state (a new piece);
+		// with 1 it is put back as a moved one. So the finish sets it to 0 for its steps and puts it back (NewItemScope); it
+		// says nothing about what the host holds.
 		constexpr REL::ID MOVING_ITEM{ 2661518 };
 		// Workshop mode's placement item (an ObjectRefHandle; the ghost, or the grabbed piece): a pending piece of ours held
 		// in the player's hands is not adopted until it is put down.
@@ -2882,6 +2885,7 @@ namespace WorkshopSync
 		std::vector<WireToCount> wiresToCount;
 		std::uint32_t            wiresCounted = 0;
 		constexpr auto           WIRE_COUNT_GIVE_UP = std::chrono::seconds(10);
+		std::set<std::uint32_t>  unopenedTold;  // workbenches the host was told to open once (a notice each)
 
 		bool RuleOn()
 		{
@@ -3118,6 +3122,28 @@ namespace WorkshopSync
 
 			BudgetScope(const BudgetScope&) = delete;
 			BudgetScope& operator=(const BudgetScope&) = delete;
+		};
+
+		// Workshop mode's "new item mode" byte set to 0 (a new piece being placed) for the finish of a piece of ours, as the
+		// engine has it while a ghost is confirmed, and put back after: MakeReferenceStatic then starts the piece's scripts,
+		// sends its loaded event and sets its power's initial state, as for any new piece.
+		struct NewItemScope
+		{
+			std::uint8_t* byte;
+			std::uint8_t  before;
+
+			NewItemScope()
+			{
+				static REL::Relocation<std::uint8_t*> moving{ MOVING_ITEM };
+				byte = moving.get();
+				before = *byte;
+				*byte = 0;
+			}
+
+			~NewItemScope() { *byte = before; }
+
+			NewItemScope(const NewItemScope&) = delete;
+			NewItemScope& operator=(const NewItemScope&) = delete;
 		};
 
 		// Takes a piece off our workshop: off every grid that names it, its power links, its workbench and, a_budgeted, its
@@ -3496,6 +3522,7 @@ namespace WorkshopSync
 		std::string FinishPiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench)
 		{
 			FinishEngine engine{ a_ref, a_bench };
+			NewItemScope newItem;  // a new piece: its scripts started, its loaded event sent, its power's initial state set
 			const auto   done = SharedWorkshop::Finish(engine);
 			finishSteps += static_cast<std::uint32_t>(done);
 			++finishedHere;
@@ -3537,7 +3564,8 @@ namespace WorkshopSync
 				return nullptr;
 			}
 			{
-				BenchScope scope{ a_bench };
+				BenchScope   scope{ a_bench };
+				NewItemScope newItem;  // a new piece for MakeReferenceStatic
 				link(*wire, true, &a_bench);  // as the engine's wiring links a wire: the bench link and the location's special ref
 				RE::SplineUtils::ConnectSpline(&a_from, 0, &a_to, 0, wire.get());
 				addConnection(data, a_from, a_to, wire.get());
@@ -3568,6 +3596,7 @@ namespace WorkshopSync
 			const auto            bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
 			facts.benchKnown = IsWorkbenchAnchor(bench);
 			facts.hostOwned = facts.benchKnown && OwnBench(bench);
+			facts.benchOpened = facts.benchKnown && WorkshopDataOf(bench) != nullptr;  // made by the engine when the workshop is first opened; saved with the bench
 			facts.inWorkshopMode = MenuWatch::IsOpen("WorkshopMenu"sv);
 			Protocol::WorkshopItem spot;
 			spot.workshop = a_request.workshop;
@@ -3601,10 +3630,9 @@ namespace WorkshopSync
 			if (making.empty()) {
 				return;
 			}
-			// The host building in workshop mode is the point: only a piece of the host's held in its hands (the engine's
-			// "moving an existing item" byte, which MakeReferenceStatic reads) holds the finish off.
-			static REL::Relocation<std::uint8_t*> moving{ MOVING_ITEM };
-			const bool                            inWorkshopMode = *moving != 0;
+			// The host building in workshop mode is the point: nothing of its workshop mode holds a finish off (the finish sets
+			// the engine's new-item byte itself: NewItemScope).
+			const bool inWorkshopMode = false;
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
 				const bool  wire = request.op == Protocol::WorkshopRequestOp::kWire;
@@ -3674,8 +3702,11 @@ namespace WorkshopSync
 				if (!wire->Get3D()) {
 					return a_now - a_wire.since >= WIRE_COUNT_GIVE_UP;
 				}
-				BudgetScope totals{ *bench };
-				budget(*wire);
+				{
+					BudgetScope totals{ *bench };
+					budget(*wire);
+				}
+				RecountBench(*bench);  // the power rating once more with the wire drawn (the rig saw the light powered late)
 				++wiresCounted;
 				return true;
 			});
@@ -3792,8 +3823,7 @@ namespace WorkshopSync
 		// rarely more than nothing.
 		void SharedBeforeSave()
 		{
-			static REL::Relocation<std::uint8_t*> moving{ MOVING_ITEM };
-			const bool                            holding = *moving != 0;  // a piece of the host's in its hands: not finished now (as MakeRequests)
+			const bool holding = false;  // nothing of the host's workshop mode holds a finish off (as MakeRequests)
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
 				const auto  ref = a_making.ref.get();
@@ -3885,6 +3915,12 @@ namespace WorkshopSync
 		}
 		const auto facts = FactsOf(a_request);
 		if (const auto why = SharedWorkshop::Refusal(a_request.op, facts)) {
+			if (*why == Protocol::WorkshopAnswer::Why::kBenchUnopened && unopenedTold.insert(a_request.workshop).second) {
+				// The engine makes a workbench's workshop data (its grids, its stored items) when its workshop is first opened,
+				// and saves it with the bench; a settlement the host took by console (or never built at) has none. Made by
+				// us it would be a struct of the engine's we never saw made: the host opens the workshop once instead.
+				Hud::Notify(Text::Get("workshop.shared.host_open_bench"));
+			}
 			Answer(a_request, *why, 0);
 			return;
 		}
@@ -3936,6 +3972,27 @@ namespace WorkshopSync
 		if (a_hostId == 0) {
 			REX::INFO("WorkshopSync: no host's game in the session (a dedicated server): the shared workshop asks nothing");
 		}
+	}
+
+	std::string ScrapForDev(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->IsDeleted()) {
+			return "error: no such reference, or deleted already";
+		}
+		if (IsCopy(a_ref)) {
+			return "error: a copy of a friend's piece: its builder's game scraps it";
+		}
+		const auto bench = BenchOf(*a_ref);
+		const auto id = a_ref->GetFormID();
+		// What the engine's scrap does, short of the yield: told to the workbench's scripts, off the grids and the links,
+		// out of the budget, unlinked, reported scrapped for the friends' copies, disabled and deleted.
+		NotifyDestroyed(bench, *a_ref);
+		Unbuild(*a_ref, bench, true);
+		ReportRef(a_ref, bench, Protocol::WorkshopOp::kScrapped);
+		a_ref->Disable();
+		a_ref->SetDelete(true);
+		gridNamedFrame = ~0ull;
+		return std::format("scrapped {:08X} (workbench {:08X}): off the grids, the budget and the workbench, reported, deleted", id, bench ? bench->GetFormID() : 0);
 	}
 
 	std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench)

@@ -1441,6 +1441,7 @@ namespace Protocol
 			kOverBudget,       // the server: the sender's event budget was spent
 			kOutOfReach,       // the host's game: the spot is too far from the workbench
 			kFailed,           // the host's game: the engine made no piece
+			kBenchUnopened,    // the host's game: that workbench has no workshop data yet (the host never opened its workshop in this game)
 			kNoAnswer,         // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
 		};
 		static constexpr Why LAST_WHY = Why::kNoAnswer;
@@ -1480,6 +1481,8 @@ namespace Protocol
 			return "too far from the workbench";
 		case WorkshopAnswer::Why::kFailed:
 			return "the engine made no piece";
+		case WorkshopAnswer::Why::kBenchUnopened:
+			return "the host hasn't opened that workshop yet";
 		case WorkshopAnswer::Why::kNoAnswer:
 			return "no answer in time";
 		}

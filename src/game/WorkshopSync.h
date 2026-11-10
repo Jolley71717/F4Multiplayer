@@ -54,6 +54,9 @@ namespace WorkshopSync
 	// Dev: a wire between two of our copies of one friend's pieces asked of the host, as workshop mode's wiring is under the rule
 	// (wswire takes this path first); what was asked, or none when the rule doesn't apply or the ends aren't such copies.
 	[[nodiscard]] std::optional<std::string> RequestWireForDev(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to);
+	// Dev: a piece of ours scrapped as the engine's scrap does, short of the yield (wsscrap: the rig's cleanup, so no grid names a
+	// deleted reference): told to the workbench's scripts, off the grids, links, budget and workbench, reported, deleted.
+	[[nodiscard]] std::string ScrapForDev(RE::TESObjectREFR* a_ref);
 	// Dev: the finish steps run now on a reference of ours, as one of the workbench's pieces (wsfinish); what each did.
 	[[nodiscard]] std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
 	// Dev: the shared workshop forced on or off for this game (none: the host's rule), and its state (wsmode).

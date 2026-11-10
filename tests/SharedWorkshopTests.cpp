@@ -124,7 +124,7 @@ TEST("shared workshop: the answer's verdict: a build applied is adopted, refused
 	CHECK(notOwned.benchNotOwned);
 	CHECK(std::string{ notOwned.notice } == "workshop.shared.not_owned");
 
-	for (const auto why : { Why::kBenchNotLoaded, Why::kHostBusy, Why::kHostAway, Why::kOff, Why::kNotWorkshopItem, Why::kOverBudget, Why::kOutOfReach, Why::kFailed, Why::kNoAnswer }) {
+	for (const auto why : { Why::kBenchNotLoaded, Why::kHostBusy, Why::kHostAway, Why::kOff, Why::kNotWorkshopItem, Why::kOverBudget, Why::kOutOfReach, Why::kFailed, Why::kNoAnswer, Why::kBenchUnopened }) {
 		const auto verdict = Judge(Op::kBuild, why);
 		CHECK(verdict.outcome == Outcome::kKeepOwn);
 		CHECK(!verdict.benchNotOwned);
@@ -135,6 +135,7 @@ TEST("shared workshop: the answer's verdict: a build applied is adopted, refused
 	CHECK(std::string{ Judge(Op::kBuild, Why::kHostAway).notice } == "workshop.shared.no_host");
 	CHECK(std::string{ Judge(Op::kBuild, Why::kFailed).notice } == "workshop.shared.refused");
 	CHECK(std::string{ Judge(Op::kBuild, Why::kNoAnswer).notice } == "workshop.shared.no_answer");  // no answer in time: not "no host"
+	CHECK(std::string{ Judge(Op::kBuild, Why::kBenchUnopened).notice } == "workshop.shared.bench_unopened");
 
 	const auto wired = Judge(Op::kWire, Why::kApplied);
 	CHECK(wired.outcome == Outcome::kNothing);
@@ -183,6 +184,9 @@ TEST("shared workshop: the host's game refuses in the order it looks: the settle
 	facts.hostOwned = true;
 	CHECK(Refusal(Op::kBuild, facts) == Why::kBenchNotLoaded);
 	facts.benchLoaded = true;
+	CHECK(Refusal(Op::kBuild, facts) == Why::kBenchUnopened);  // no workshop data yet: the host opens the workshop once
+	CHECK(Refusal(Op::kWire, facts) == Why::kBenchUnopened);
+	facts.benchOpened = true;
 	CHECK(Refusal(Op::kBuild, facts) == Why::kNotWorkshopItem);
 	facts.objectKnown = true;
 	CHECK(Refusal(Op::kBuild, facts) == Why::kNotWorkshopItem);

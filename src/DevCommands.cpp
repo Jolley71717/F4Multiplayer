@@ -2444,6 +2444,14 @@ namespace DevCommands
 			return WorkshopSync::FinishForDev(ref, bench);
 		}
 
+		// wsscrap <refHex>: a piece of ours scrapped as the engine's scrap does, short of the yield (the rig's cleanup of test
+		// pieces: off the grids, links, budget and workbench, told to the workshop scripts, reported for the friends' copies, deleted).
+		std::string WsScrap(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? WorkshopSync::ScrapForDev(ref) : "error: usage: wsscrap <refHex>";
+		}
+
 		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
 		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught).
 		std::string WsMode(std::string_view a_args)
@@ -3923,6 +3931,22 @@ namespace DevCommands
 				return "error: no control map";
 			}
 			auto out = std::format("stack={}", ContextStack());
+			if (a_args == "workshop") {
+				// controls workshop: workshop mode's keyboard bindings (the Workshop and WorkshopAddendum input contexts), as
+				// "event=scan/vk" (the engine's keyboard scan code and the virtual key it maps to, in hex: `key` takes the
+				// virtual key), for the rig to press the real keys.
+				for (const auto context : { RE::UserEvents::INPUT_CONTEXT_ID::kWorkshop, RE::UserEvents::INPUT_CONTEXT_ID::kWorkshopAddendum }) {
+					const auto mappings = map->controlMaps[std::to_underlying(context)];
+					if (!mappings) {
+						continue;
+					}
+					for (const auto& mapping : mappings->deviceMappings[std::to_underlying(RE::INPUT_DEVICE::kKeyboard)]) {
+						const auto scan = static_cast<std::uint32_t>(mapping.inputKey);
+						out += std::format(" {}={:X}/{:X}", mapping.eventID.c_str(), scan, scan < 0x100 ? MapVirtualKeyA(scan, 1) : 0u);  // 1: MAPVK_VSC_TO_VK
+					}
+				}
+				return out;
+			}
 			if (a_args.empty()) {
 				// The input enable layers (scripts' DisablePlayerControls, a conversation's, the game's own)
 				// in use, by debug name, with each one's user event and other event flags.
@@ -4437,6 +4461,7 @@ namespace DevCommands
 			Entry{ "wspower", WsPower },
 			Entry{ "wsfinish", WsFinish },
 			Entry{ "wsmode", WsMode },
+			Entry{ "wsscrap", WsScrap },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },
