@@ -2094,16 +2094,41 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
-	// The byte after legendary's, the welcome's last.
+	// The byte after legendary's (the welcome's last up to 63; 64's catch-up XP follows it).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
-	CHECK(bytes.back() == static_cast<std::uint8_t>(QuestRule::kSafe));
-	bytes.back() = QUEST_RULES;
+	auto& questsByte = bytes[bytes.size() - 2];
+	CHECK(questsByte == static_cast<std::uint8_t>(QuestRule::kSafe));
+	questsByte = QUEST_RULES;
 	const auto odd = DecodeWelcome(bytes);
 	REQUIRE(odd);
 	CHECK(odd->rules.quests == QuestRule::kStory);
 	CHECK(odd->rules.legendary == LegendaryRule::kHost);
 	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
-	// A welcome of 57's, without it, is short.
+	// A welcome of 57's, without it (nor 64's byte), is short.
+	bytes.pop_back();
+	bytes.pop_back();
+	CHECK(!DecodeWelcome(bytes));
+}
+
+TEST("protocol: the welcome carries the host's iCatchUpXp (protocol 64), brought within its limit; a welcome without it is short")
+{
+	static_assert(VERSION >= 64);  // iCatchUpXp came in 64
+	CHECK(SessionRules{}.catchUpXp == 0);  // off unless the host says
+	for (const std::uint8_t percent : std::array<std::uint8_t, 3>{ 0, 10, 100 }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = QuestRule::kSafe, .catchUpXp = percent } }));
+		REQUIRE(out);
+		CHECK(out->rules.catchUpXp == percent);
+		CHECK(out->rules.quests == QuestRule::kSafe);
+	}
+	// The byte after quests', the welcome's last; past 100 it is 100 (a level behind doubles the XP already).
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10 } });
+	CHECK(bytes.back() == 10);
+	bytes.back() = 250;
+	const auto wild = DecodeWelcome(bytes);
+	REQUIRE(wild);
+	CHECK(wild->rules.catchUpXp == SessionRules::MAX_CATCH_UP_XP);
+	CHECK(SessionRules{ .catchUpXp = 101 }.Clamped().catchUpXp == 100);
+	// A welcome of 63's, without it, is short.
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
 }

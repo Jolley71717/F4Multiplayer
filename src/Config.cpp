@@ -169,6 +169,8 @@ namespace Config
 				} else {
 					REX::WARN("Config: sLegendaryDifficulty = '{}' is none of average, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::LegendaryRule>(settings.legendary)));
 				}
+			} else if (key == "iCatchUpXp") {
+				ParseInt(value, settings.catchUpXp);  // past 100 is brought to 100 by the rules (SessionRules::Clamped)
 			} else if (key == "bSharedRolls") {
 				settings.sharedRolls = ParseBool(value);
 			} else if (key == "bHideTutorials") {

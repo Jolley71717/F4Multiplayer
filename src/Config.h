@@ -172,6 +172,9 @@ namespace Config
 		// Whose difficulty's legendary chance every game rolls them with (sLegendaryDifficulty, Protocol::LegendaryRule):
 		// 1 average (of the games there now), 2 host, 0 own.
 		std::uint8_t legendary = 1;
+		// Catch-up XP (iCatchUpXp, common/CatchUpXp.h): the percent of extra XP a player earns for each level they are
+		// below the players' average level, and the percent less of friends' kill XP for each level above. 0: off.
+		std::uint8_t catchUpXp = 0;
 
 		// Not a host's rule: leveled NPCs are made with the session's roll (docs/SHARED-ROLLS.md). Off only to rule the
 		// hooks out when something goes wrong (bSharedRolls).

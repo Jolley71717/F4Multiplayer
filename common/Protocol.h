@@ -68,7 +68,10 @@ namespace Protocol
 	// is each game's own run (src/game/Encounters.h); a line's speaker may be a spawn id, so an encounter actor's lines
 	// reach the friends (Line::speaker). A spawn its owner reports again under its id, plain, says its encounter is over:
 	// the server passes it on (kSpawned again) and the copies stay. 62 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 63;
+	// 64: the host's iCatchUpXp in the welcome (SessionRules::catchUpXp, a byte after quests): a player below the players'
+	// average level earns that percent more XP per level behind, and one above it gets that much less of friends' kill
+	// XP (common/CatchUpXp.h). No message changes, and the server never applies XP. 63 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 64;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -481,12 +484,18 @@ namespace Protocol
 		// legendary).
 		QuestRule quests = QuestRule::kStory;
 
+		// Catch-up XP (common/CatchUpXp.h): the percent of extra XP a player gets for each level they are below the
+		// players' average level (at most doubling it), and the percent less of friends' kill XP for each level above
+		// (iCatchUpXp; protocol 64, the byte after quests). 0: off, every game's XP as the game gives it.
+		std::uint8_t catchUpXp = 0;
+
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
 		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
 		static constexpr std::uint8_t  MIN_REVIVE_HEALTH = 1, MAX_REVIVE_HEALTH = 100;
 		static constexpr std::uint16_t MAX_REVIVE_WINDOW = 600;
 		static constexpr std::uint16_t MAX_DOWN_COOLDOWN = 3600;
+		static constexpr std::uint8_t  MAX_CATCH_UP_XP = 100;  // one level behind doubles the XP already
 
 		[[nodiscard]] SessionRules Clamped() const
 		{
@@ -505,6 +514,7 @@ namespace Protocol
 			if (static_cast<std::uint8_t>(quests) >= QUEST_RULES) {
 				out.quests = QuestRule::kStory;
 			}
+			out.catchUpXp = (std::min)(catchUpXp, MAX_CATCH_UP_XP);
 			return out;
 		}
 
@@ -2587,6 +2597,7 @@ namespace Protocol
 		w.U8(static_cast<std::uint8_t>(rules.npcLevel));  // protocol 57
 		w.U8(static_cast<std::uint8_t>(rules.legendary));
 		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
+		w.U8(rules.catchUpXp);                           // protocol 64
 		return w.Data();
 	}
 
@@ -2621,12 +2632,14 @@ namespace Protocol
 			const auto npcLevel = r.U8();  // protocol 57
 			const auto legendary = r.U8();
 			const auto quests = r.U8();  // protocol 58
+			const auto catchUpXp = r.U8();  // protocol 64
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
 			rules.npcLevel = static_cast<NpcLevelRule>(npcLevel);
 			rules.legendary = static_cast<LegendaryRule>(legendary);
 			rules.quests = static_cast<QuestRule>(quests);
+			rules.catchUpXp = catchUpXp;
 			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}
 		return msg;

@@ -3,6 +3,7 @@
 
 #include "game/WeaponFire.h"
 
+#include "CatchUpXp.h"
 #include "Config.h"
 #include "game/AutoSave.h"
 #include "game/AutoSaveRules.h"
@@ -13,6 +14,7 @@
 #include "game/FadeWatch.h"
 #include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
+#include "game/HostRules.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
@@ -29,6 +31,9 @@
 #include "game/Story.h"
 #include "game/WorldSync.h"
 #include "Text.h"
+
+#include <array>
+#include <span>
 
 namespace Party
 {
@@ -106,6 +111,13 @@ namespace Party
 		std::uint32_t        xpWithheld = 0;
 		float                xpNotice = 0.0f;
 		Clock::time_point    xpNoticeAt{};
+		// Catch-up XP (common/CatchUpXp.h, the host's iCatchUpXp): our factors from our level among the players', the
+		// percent last logged (a change is logged once), the extra given so far, and the notice waiting as xpNotice does.
+		CatchUpXp::Factors catchUp;
+		std::optional<std::int32_t> catchUpLogged;
+		float                catchUpGiven = 0.0f;
+		float                catchUpNotice = 0.0f;
+		Clock::time_point    catchUpNoticeAt{};
 
 		std::uint32_t                  teleportTarget = 0;
 		std::optional<PendingTeleport> pendingTeleport;
@@ -679,6 +691,33 @@ namespace Party
 			return values ? values->experience : nullptr;
 		}
 
+		// Our catch-up factors from the host's rule, our level and the levels of the players here (not those still in
+		// the opening, nor any not heard from): CatchUpXp::Of. Off, or alone, they are 1. A change of a whole percent
+		// is logged once.
+		void UpdateCatchUp(RE::PlayerCharacter* a_player)
+		{
+			const auto percent = HostRules::Get().catchUpXp;
+			if (percent == 0 || localId == 0) {
+				catchUp = {};
+				return;
+			}
+			const auto ownLevel = static_cast<std::uint16_t>((std::max)(a_player->GetLevel(), std::int16_t{ 0 }));
+			// Every frame, so no allocation: the levels in a fixed buffer (a session holds far fewer players).
+			std::array<std::uint16_t, 64> levels{ ownLevel };
+			std::size_t                   count = 1;
+			for (const auto& [id, entry] : known) {
+				if (id != localId && entry.hasStatus && !entry.status.opening && count < levels.size()) {
+					levels[count++] = entry.status.level;
+				}
+			}
+			catchUp = CatchUpXp::Of(percent, ownLevel, std::span<const std::uint16_t>{ levels.data(), count });
+			const auto now = CatchUpXp::Percent(catchUp);
+			if (!catchUpLogged || *catchUpLogged != now) {
+				catchUpLogged = now;
+				REX::INFO("Party: catch-up XP: level {}, the players' average {}: {:+}% on our own XP, x{:.2f} on our share of friends' kills", ownLevel, catchUp.average, (std::max)(now, 0), catchUp.share);
+			}
+		}
+
 		// Reports XP we got for kills, so the others get their share.
 		void TrackXp(Clock::time_point a_now)
 		{
@@ -687,6 +726,7 @@ namespace Party
 			if (!player || !info) {
 				return;
 			}
+			UpdateCatchUp(player);
 			// The kill (death event) and its XP can come in either order: the death event waits
 			// for the victim's next AI update.
 			const auto hold = [&](float a_xp, Clock::time_point a_since) {
@@ -711,6 +751,17 @@ namespace Party
 				const float credited = (std::min)(gain, xpCredit);
 				xpCredit -= credited;
 				gain -= credited;
+				// Behind the players' average level, the game's own XP (a kill, a quest, a discovery) is topped up at
+				// once. The extra is credited so the next poll neither reports it as a kill's nor tops it up again.
+				if (const auto bonus = CatchUpXp::Bonus(catchUp, gain); bonus > 0 && gain >= 1.0f && !player->IsDead(false) && !Story::InOpening()) {
+					RE::Console::ExecuteCommand(std::format("player.modav experience {}", bonus).c_str());
+					xpCredit += static_cast<float>(bonus);
+					catchUpGiven += static_cast<float>(bonus);
+					if (catchUpNotice < 1.0f) {
+						catchUpNoticeAt = a_now + XP_NOTICE_DELAY;
+					}
+					catchUpNotice += static_cast<float>(bonus);
+				}
 				if (gain >= 1.0f && a_now < killWindowEnd) {
 					hold(gain, a_now);
 				} else if (gain >= 1.0f) {
@@ -737,6 +788,10 @@ namespace Party
 			if (xpNotice >= 1.0f && a_now >= xpNoticeAt) {
 				Hud::Notify(Text::Format("party.xp", { { "xp", std::format("{:.0f}", xpNotice) } }));
 				xpNotice = 0.0f;
+			}
+			if (catchUpNotice >= 1.0f && a_now >= catchUpNoticeAt) {
+				Hud::Notify(Text::Format("party.catchup_xp", { { "xp", std::format("{:.0f}", catchUpNotice) } }));
+				catchUpNotice = 0.0f;
 			}
 		}
 
@@ -1014,7 +1069,8 @@ namespace Party
 	void ApplyXp(const Protocol::XpGain& a_gain)
 	{
 		const auto player = Player();
-		const float share = a_gain.xp * Config::Get().xpShare;
+		// Ahead of the players' average level, less of a friend's kill (catch-up XP): CatchUpXp::Factors::share.
+		const float share = a_gain.xp * Config::Get().xpShare * catchUp.share;
 		if (!player || player->IsDead(false) || share < 1.0f || !WorldSync::InWorld() || Story::InOpening()) {
 			return;
 		}
@@ -1377,7 +1433,8 @@ namespace Party
 
 	std::string Describe()
 	{
-		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld);
+		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={} catchUp={:+}%/x{:.2f} avg={} given={:.0f}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld,
+			(std::max)(CatchUpXp::Percent(catchUp), 0), catchUp.share, catchUp.average, catchUpGiven);
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
 		}

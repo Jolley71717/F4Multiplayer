@@ -78,8 +78,11 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	settings.shareGuestBuilds = true;
 	settings.sharedStorage = true;
 	settings.containerGifts = true;
+	settings.catchUpXp = 25;
 	const auto rules = HostRules::FromSettings(settings);
 	CHECK(!rules.revive);
+	CHECK(rules.catchUpXp == 25);
+	CHECK(HostRules::Describe(rules).find("catchUpXp=25%") != std::string::npos);
 	CHECK(rules.bleedOutSeconds == 120);
 	CHECK(rules.helpTenths == 35);
 	CHECK(rules.reviveHealth == 50);
