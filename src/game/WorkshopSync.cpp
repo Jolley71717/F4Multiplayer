@@ -2799,7 +2799,6 @@ namespace WorkshopSync
 		constexpr REL::ID CALCULATE_POWER_RATING{ 2194985 };   // Workshop::CalculatePowerRating(TESObjectREFR& bench)
 		constexpr REL::ID RECALCULATE_RESOURCES{ 2194984 };    // Workshop::RecalculateResources(TESObjectREFR& bench)
 		constexpr REL::ID PLACED_EVENT_SOURCE{ 2195289 };      // Workshop::QSource<Workshop::ItemPlacedEvent>()
-		constexpr REL::ID UPDATE_MOVING_WIRELESS{ 2195088 };   // PowerUtils::UpdateMovingWirelessItem(TESObjectREFR&, Workshop::ExtraData&)
 		constexpr REL::ID ADD_CONNECTION{ 2194998 };           // Workshop::ExtraData::AddConnection(TESObjectREFR&, TESObjectREFR&, TESObjectREFR* wire)
 		// Workshop mode's current workbench (an ObjectRefHandle; null outside workshop mode): the budget, MakeReferenceStatic and
 		// the snapped-power check read it. Set to the piece's workbench for the finish, and put back after (BenchScope).
@@ -2866,6 +2865,7 @@ namespace WorkshopSync
 		std::uint32_t       finishedHere = 0;
 		std::uint32_t       wiresMadeHere = 0;
 		std::uint32_t       finishSteps = 0;
+		bool                answersHeld = false;  // wsmode hold (dev): requests taken, not made or answered until wsmode serve
 		// The host's own game's player id, from the welcome (0: none, a dedicated server: nothing is handed over). The copies a
 		// friend may wire are the host's alone, and a wire's ends are the host's references: another friend's copies, or two
 		// builders' pieces whose runtime ids collide, are never asked.
@@ -3529,25 +3529,78 @@ namespace WorkshopSync
 			return engine.log;
 		}
 
-		// A wire between two of our pieces, as wswire strings one (SplineUtils::ConnectSpline, Workshop::ExtraData::AddConnection, the
-		// bench link, the spline rebuilt), plus what the engine's own wiring adds after: the wire static, its ends' wireless
-		// state updated, and the placed event. Its shape is reported once drawn (the moved-wire check), as a moved piece's
-		// wires are.
+		// A wire between two of our pieces, strung with SharedWorkshop::StringWire's steps: as wswire strings one (SplineUtils::
+		// ConnectSpline, Workshop::ExtraData::AddConnection, the bench link, the spline rebuilt), plus the wire static, the bench's
+		// totals and the placed event. Nothing after the connection decides an end's power again (SharedWorkshop.h, WireStep): an
+		// earlier version ran PowerUtils::UpdateMovingWirelessItem on both ends there, which took the light out of its grid's
+		// powered set and off its generator. Its shape is reported once drawn (the moved-wire check), as a moved piece's wires are.
+		struct WireEngine
+		{
+			RE::TESObjectREFR&       from;
+			RE::TESObjectREFR&       to;
+			RE::TESObjectREFR&       bench;
+			RE::TESObjectREFR&       wire;
+			RE::Workshop::ExtraData& data;
+			std::string              log;
+
+			BenchScope Bench() { return BenchScope{ bench }; }
+
+			void Do(SharedWorkshop::WireStep a_step)
+			{
+				using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&, RE::TESObjectREFR&, RE::TESObjectREFR*);
+				using ref_t = void (*)(RE::TESObjectREFR&);
+				using link_t = void (*)(RE::TESObjectREFR&, bool, RE::TESObjectREFR*);
+				using source_t = RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>* (*)();
+				static REL::Relocation<add_t>    addConnection{ ADD_CONNECTION };
+				static REL::Relocation<ref_t>    makeStatic{ MAKE_REFERENCE_STATIC };
+				static REL::Relocation<link_t>   link{ SET_IS_WORKSHOP_ITEM };
+				static REL::Relocation<source_t> source{ PLACED_EVENT_SOURCE };
+				log += std::format("{}{}", log.empty() ? "" : " ", SharedWorkshop::Name(a_step));
+				switch (a_step) {
+				case SharedWorkshop::WireStep::kLink:
+					link(wire, true, &bench);  // as the engine's wiring links a wire: the bench link and the location's special ref
+					break;
+				case SharedWorkshop::WireStep::kSpline:
+					RE::SplineUtils::ConnectSpline(&from, 0, &to, 0, &wire);
+					break;
+				case SharedWorkshop::WireStep::kConnect:
+					addConnection(&data, from, to, &wire);  // the grids merged and evaluated: the ends' power decided here
+					break;
+				case SharedWorkshop::WireStep::kCount:
+					// Counted in the budget once its spline is drawn (CountWiresLater): the engine counts a placed wire's drawn 3D, and
+					// ours has none yet (a count of 0 now, the real count off at a later scrap, would drift the budget down).
+					wiresToCount.push_back({ wire.GetHandle(), bench.GetFormID(), Clock::now() });
+					break;
+				case SharedWorkshop::WireStep::kRebuild:
+					if (const auto tasks = RE::TaskQueueInterface::GetSingleton()) {
+						tasks->QueueRebuildBendableSpline(wire, false, nullptr);
+					}
+					break;
+				case SharedWorkshop::WireStep::kStatic:
+					makeStatic(wire);
+					break;
+				case SharedWorkshop::WireStep::kResources:
+					RecountBench(bench);
+					break;
+				case SharedWorkshop::WireStep::kEvent:
+					if (const auto events = source()) {
+						RE::Workshop::ItemPlacedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ &bench }, RE::NiPointer<RE::TESObjectREFR>{ &wire } };
+						events->Notify(event);
+					} else {
+						log += "(no event source)";
+					}
+					break;
+				case SharedWorkshop::WireStep::kEndWireless:
+					break;  // never in WIRE_STEPS: it would undo the power the connection gave the ends
+				}
+			}
+		};
+
 		RE::TESObjectREFR* MakeWire(RE::TESObjectREFR& a_from, RE::TESObjectREFR& a_to, RE::TESObjectREFR& a_bench)
 		{
-			using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&, RE::TESObjectREFR&, RE::TESObjectREFR*);
-			using ref_t = void (*)(RE::TESObjectREFR&);
-			using link_t = void (*)(RE::TESObjectREFR&, bool, RE::TESObjectREFR*);
-			using wireless_t = void (*)(RE::TESObjectREFR&, RE::Workshop::ExtraData&);
-			using source_t = RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>* (*)();
-			static REL::Relocation<add_t>      addConnection{ ADD_CONNECTION };
-			static REL::Relocation<ref_t>      makeStatic{ MAKE_REFERENCE_STATIC };
-			static REL::Relocation<link_t>     link{ SET_IS_WORKSHOP_ITEM };
-			static REL::Relocation<wireless_t> wireless{ UPDATE_MOVING_WIRELESS };
-			static REL::Relocation<source_t>   source{ PLACED_EVENT_SOURCE };
-			const auto                         data = WorkshopDataOf(&a_bench);
-			const auto                         spline = RE::TESForm::GetFormByID<RE::TESBoundObject>(WIRE_BASE);
-			const auto                         cell = a_from.GetParentCell();
+			const auto data = WorkshopDataOf(&a_bench);
+			const auto spline = RE::TESForm::GetFormByID<RE::TESBoundObject>(WIRE_BASE);
+			const auto cell = a_from.GetParentCell();
 			if (!data || !spline || !cell) {
 				return nullptr;
 			}
@@ -3564,25 +3617,9 @@ namespace WorkshopSync
 				return nullptr;
 			}
 			{
-				BenchScope   scope{ a_bench };
 				NewItemScope newItem;  // a new piece for MakeReferenceStatic
-				link(*wire, true, &a_bench);  // as the engine's wiring links a wire: the bench link and the location's special ref
-				RE::SplineUtils::ConnectSpline(&a_from, 0, &a_to, 0, wire.get());
-				addConnection(data, a_from, a_to, wire.get());
-				// Counted in the budget once its spline is drawn (CountWiresLater): the engine counts a placed wire's drawn 3D, and
-				// ours has none yet (a count of 0 now, the real count off at a later scrap, would drift the budget down).
-				wiresToCount.push_back({ wire->GetHandle(), a_bench.GetFormID(), Clock::now() });
-				if (const auto tasks = RE::TaskQueueInterface::GetSingleton()) {
-					tasks->QueueRebuildBendableSpline(*wire, false, nullptr);
-				}
-				makeStatic(*wire);
-				wireless(a_from, *data);
-				wireless(a_to, *data);
-				RecountBench(a_bench);
-				if (const auto events = source()) {
-					RE::Workshop::ItemPlacedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ &a_bench }, RE::NiPointer<RE::TESObjectREFR>{ wire.get() } };
-					events->Notify(event);
-				}
+				WireEngine   engine{ a_from, a_to, a_bench, *wire, *data, {} };
+				SharedWorkshop::StringWire(engine);  // the bench set as workshop mode's current one for every step
 			}
 			CheckWiresLater(&a_from, &a_bench);  // reported again with its shape once drawn
 			++wiresMadeHere;
@@ -3627,7 +3664,7 @@ namespace WorkshopSync
 		// when it may be, refused when it waited too long.
 		void MakeRequests(Clock::time_point a_now)
 		{
-			if (making.empty()) {
+			if (making.empty() || answersHeld) {  // wsmode hold: taken, not made or answered yet
 				return;
 			}
 			// The host building in workshop mode is the point: nothing of its workshop mode holds a finish off (the finish sets
@@ -4020,12 +4057,26 @@ namespace WorkshopSync
 		admitsCopies.store(HandsOver());
 	}
 
+	void HoldAnswersForDev(bool a_hold)
+	{
+		answersHeld = a_hold;
+	}
+
+	std::string HeldForDev()
+	{
+		static REL::Relocation<RE::ObjectRefHandle*> placement{ PLACEMENT_ITEM };
+		static REL::Relocation<std::uint8_t*>        moving{ MOVING_ITEM };
+		const auto                                   ref = placement->get();
+		const auto                                   base = ref ? ref->GetObjectReference() : nullptr;
+		return std::format("held={:08X} heldBase={:08X} newItem={}", ref ? ref->GetFormID() : 0, base ? base->GetFormID() : 0, *moving == 0);
+	}
+
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} picksAdmitted={} grabsRefused={} storesRefused={} scrapsRefused={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} finished={} steps={} wiresMade={} wiresCounted={}",
+		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} picksAdmitted={} grabsRefused={} storesRefused={} scrapsRefused={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={}",
 			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, picksAdmitted.load(), grabsRefused.load(),
 			storesRefused.load(), scrapsRefused.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Size(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
-			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), finishedHere, finishSteps, wiresMadeHere, wiresCounted);
+			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted);
 	}
 
 	void InstallLights()

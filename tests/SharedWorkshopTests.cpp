@@ -1,7 +1,10 @@
 #include "Test.h"
 #include "game/SharedWorkshop.h"
 
+#include <algorithm>
+#include <array>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -242,6 +245,111 @@ TEST("shared workshop: the finish runs the engine's eleven placement steps in th
 	CHECK(threw);
 	CHECK(throwing.done.size() == 4);
 	CHECK(!throwing.benchSet);
+}
+
+namespace
+{
+	// The host's grid as StringWire drives it, after the engine (1.11.240): the connection merges the generator's grid with the
+	// light's and evaluates it (the light powered); UpdateMovingWirelessItem on a wired end no radiator reaches takes it out of
+	// the powered set and off its first neighbour (kEndWireless).
+	struct FakeWireEngine
+	{
+		std::vector<WireStep> done;
+		bool                  benchSet = false;
+		bool                  benchWasSetForEach = true;
+		bool                  splined = false;
+		bool                  connected = false;
+		bool                  lightPowered = false;
+
+		struct Scope
+		{
+			FakeWireEngine& engine;
+			explicit Scope(FakeWireEngine& a_engine) :
+				engine(a_engine)
+			{
+				engine.benchSet = true;
+			}
+			~Scope() { engine.benchSet = false; }
+		};
+
+		Scope Bench() { return Scope{ *this }; }
+
+		void Do(WireStep a_step)
+		{
+			benchWasSetForEach = benchWasSetForEach && benchSet;
+			done.push_back(a_step);
+			switch (a_step) {
+			case WireStep::kSpline:
+				splined = true;
+				break;
+			case WireStep::kConnect:
+				connected = splined;
+				lightPowered = connected;
+				break;
+			case WireStep::kEndWireless:
+				if (connected) {
+					connected = false;
+					lightPowered = false;
+				}
+				break;
+			default:
+				break;
+			}
+		}
+
+		// The steps in this order, as StringWire runs WIRE_STEPS.
+		void Run(std::span<const WireStep> a_steps)
+		{
+			[[maybe_unused]] const auto scope = Bench();
+			for (const auto step : a_steps) {
+				Do(step);
+			}
+		}
+	};
+}
+
+TEST("shared workshop: the host strings a friend's wire with the connection last to decide its ends' power, so the light it wires stays powered")
+{
+	FakeWireEngine engine;
+	CHECK(StringWire(engine) == WIRE_STEPS.size());
+	CHECK(engine.done == std::vector<WireStep>(WIRE_STEPS.begin(), WIRE_STEPS.end()));
+	CHECK(engine.benchWasSetForEach);
+	CHECK(!engine.benchSet);
+	CHECK(engine.connected);
+	CHECK(engine.lightPowered);
+	CHECK(KeepsEndPower(WIRE_STEPS));
+	CHECK(std::ranges::find(WIRE_STEPS, WireStep::kEndWireless) == WIRE_STEPS.end());
+	CHECK(WIRE_STEPS.front() == WireStep::kLink);
+	CHECK(WIRE_STEPS.back() == WireStep::kEvent);
+	for (const auto step : WIRE_STEPS) {
+		CHECK(std::string{ Name(step) } != "?");
+		CHECK(!DecidesEndPower(step));
+	}
+
+	// The first version's order: both ends' wireless state updated after the connection. The light went dark.
+	constexpr std::array<WireStep, 10> FIRST{ WireStep::kLink, WireStep::kSpline, WireStep::kConnect, WireStep::kCount, WireStep::kRebuild, WireStep::kStatic,
+		WireStep::kEndWireless, WireStep::kEndWireless, WireStep::kResources, WireStep::kEvent };
+	CHECK(!KeepsEndPower(FIRST));
+	FakeWireEngine first;
+	first.Run(FIRST);
+	CHECK(!first.lightPowered);
+	CHECK(!first.connected);
+
+	// Other orders that can't keep it: no connection, the connection before the spline or twice, the totals or the event
+	// before the connection.
+	constexpr std::array<WireStep, 3> UNCONNECTED{ WireStep::kLink, WireStep::kSpline, WireStep::kEvent };
+	constexpr std::array<WireStep, 3> BEFORE_SPLINE{ WireStep::kLink, WireStep::kConnect, WireStep::kSpline };
+	constexpr std::array<WireStep, 3> TWICE{ WireStep::kSpline, WireStep::kConnect, WireStep::kConnect };
+	constexpr std::array<WireStep, 3> EVENT_FIRST{ WireStep::kSpline, WireStep::kEvent, WireStep::kConnect };
+	constexpr std::array<WireStep, 3> TOTALS_FIRST{ WireStep::kSpline, WireStep::kResources, WireStep::kConnect };
+	CHECK(!KeepsEndPower(UNCONNECTED));
+	CHECK(!KeepsEndPower(BEFORE_SPLINE));
+	CHECK(!KeepsEndPower(TWICE));
+	CHECK(!KeepsEndPower(EVENT_FIRST));
+	CHECK(!KeepsEndPower(TOTALS_FIRST));
+	// An end's wireless state updated before the connection is undone by it (the connection decides last): kept.
+	constexpr std::array<WireStep, 3> WIRELESS_FIRST{ WireStep::kSpline, WireStep::kEndWireless, WireStep::kConnect };
+	CHECK(KeepsEndPower(WIRELESS_FIRST));
 }
 
 TEST("shared workshop: the budget's totals are live only with workshop mode open at the very bench the engine holds current; a bench our own scope set there, another bench, or no menu loads them")

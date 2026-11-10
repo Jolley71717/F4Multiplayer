@@ -394,6 +394,101 @@ namespace SharedWorkshop
 		return done;
 	}
 
+	// ---- The host's wire for a friend -----------------------------------------------------------------------
+
+	// The host's game strings a wire a friend asked for between two of its pieces: the rig-proven wswire path (the spline, the
+	// grid connection, the bench link, the spline's 3D) plus what the engine's own wiring adds that changes nothing of the
+	// grid (the wire static, the bench's power and resources, the placed event). The connection decides the ends' power:
+	// Workshop::ExtraData::AddConnection merges the two grids and evaluates them at once, so the light is lit by it. No step
+	// after it may decide an end's power again: PowerUtils::UpdateMovingWirelessItem on an end (kEndWireless, which an earlier
+	// order ran on both ends after the connection) takes a wired receiver out of its grid's powered set, removes its
+	// connection to its first neighbour and fires its unpowered event when no radiator reaches it (1.11.240), so the light a
+	// friend wired stayed dark on the host and on the friend's copy.
+	enum class WireStep : std::uint8_t
+	{
+		kLink,         // Workshop::SetIsWorkshopItem(wire, true, bench): the bench link, a special ref of its location
+		kSpline,       // SplineUtils::ConnectSpline(from, to, wire): the wire's ends
+		kConnect,      // Workshop::ExtraData::AddConnection(from, to, wire): the grids merged and their power evaluated
+		kCount,        // its budget counted once its spline is drawn (WorkshopSync's CountWiresLater: no 3D yet)
+		kRebuild,      // the spline's 3D rebuilt (queued)
+		kStatic,       // Workshop::MakeReferenceStatic(wire)
+		kResources,    // Workshop::CalculatePowerRating and RecalculateResources(bench): the totals recounted (no grid evaluated)
+		kEvent,        // ItemPlacedEvent{bench, wire}
+		kEndWireless,  // PowerUtils::UpdateMovingWirelessItem on an end: decides that end's power again (never in WIRE_STEPS)
+	};
+
+	inline constexpr std::array<WireStep, 8> WIRE_STEPS{ WireStep::kLink, WireStep::kSpline, WireStep::kConnect, WireStep::kCount, WireStep::kRebuild,
+		WireStep::kStatic, WireStep::kResources, WireStep::kEvent };
+
+	[[nodiscard]] constexpr const char* Name(WireStep a_step)
+	{
+		switch (a_step) {
+		case WireStep::kLink:
+			return "link";
+		case WireStep::kSpline:
+			return "spline";
+		case WireStep::kConnect:
+			return "connect";
+		case WireStep::kCount:
+			return "count";
+		case WireStep::kRebuild:
+			return "rebuild";
+		case WireStep::kStatic:
+			return "static";
+		case WireStep::kResources:
+			return "resources";
+		case WireStep::kEvent:
+			return "event";
+		case WireStep::kEndWireless:
+			return "endWireless";
+		}
+		return "?";
+	}
+
+	// Whether a step decides an end's power on its own (after the connection, it undoes what the connection decided).
+	[[nodiscard]] constexpr bool DecidesEndPower(WireStep a_step)
+	{
+		return a_step == WireStep::kEndWireless;
+	}
+
+	// Whether an order strings a wire that keeps the power the connection gave its ends: the spline before the connection, the
+	// connection once, and nothing after it that decides an end's power; the totals and the event after the connection.
+	[[nodiscard]] constexpr bool KeepsEndPower(std::span<const WireStep> a_steps)
+	{
+		bool spline = false;
+		bool connected = false;
+		for (const auto step : a_steps) {
+			if (step == WireStep::kSpline) {
+				spline = true;
+			} else if (step == WireStep::kConnect) {
+				if (connected || !spline) {
+					return false;
+				}
+				connected = true;
+			} else if ((step == WireStep::kResources || step == WireStep::kEvent) && !connected) {
+				return false;
+			} else if (DecidesEndPower(step) && connected) {
+				return false;
+			}
+		}
+		return connected;
+	}
+
+	// Strings the wire: WIRE_STEPS in order, with the workbench set as workshop mode's current one for all of them and put
+	// back after (the Engine as for Finish, its Do taking a WireStep). How many steps ran.
+	template <class Engine>
+	std::size_t StringWire(Engine& a_engine)
+	{
+		static_assert(KeepsEndPower(WIRE_STEPS));
+		std::size_t done = 0;
+		[[maybe_unused]] const auto scope = a_engine.Bench();
+		for (const auto step : WIRE_STEPS) {
+			a_engine.Do(step);
+			++done;
+		}
+		return done;
+	}
+
 	// ---- The budget's totals -----------------------------------------------------------------------------
 
 	// Whether the engine's budget totals are the workbench's own right now, so an add or remove may use them as they are:

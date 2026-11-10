@@ -61,6 +61,11 @@ namespace WorkshopSync
 	[[nodiscard]] std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
 	// Dev: the shared workshop forced on or off for this game (none: the host's rule), and its state (wsmode).
 	void                      SetSharedModeForDev(std::optional<bool> a_on);
+	// Dev, the host's game: friends' requests taken but not made or answered while held (wsmode hold), then served (wsmode serve).
+	void                      HoldAnswersForDev(bool a_hold);
+	// Dev: what workshop mode holds (its placement item: a new piece's ghost or a grabbed piece), as "held=<ref> heldBase=<base>
+	// newItem=<bool>" (held=00000000: nothing), for the workshop dev command.
+	[[nodiscard]] std::string HeldForDev();
 	[[nodiscard]] std::string DescribeShared();
 
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on

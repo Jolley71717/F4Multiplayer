@@ -2453,14 +2453,19 @@ namespace DevCommands
 		}
 
 		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
-		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught).
+		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught). wsmode hold|serve, on the
+		// host's game: its friends' requests are taken but not made or answered until serve (the rig's save in the pending
+		// window: the friend's piece pending for as long as the check needs; a friend's request unanswered for
+		// SharedWorkshop::ANSWER_WAIT is taken as refused there).
 		std::string WsMode(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (args.size() == 1 && (args[0] == "on" || args[0] == "off" || args[0] == "host")) {
 				WorkshopSync::SetSharedModeForDev(args[0] == "host" ? std::nullopt : std::optional{ args[0] == "on" });
+			} else if (args.size() == 1 && (args[0] == "hold" || args[0] == "serve")) {
+				WorkshopSync::HoldAnswersForDev(args[0] == "hold");
 			} else if (!args.empty()) {
-				return "error: usage: wsmode [on|off|host]";
+				return "error: usage: wsmode [on|off|host|hold|serve]";
 			}
 			return WorkshopSync::DescribeShared();
 		}
@@ -3933,16 +3938,17 @@ namespace DevCommands
 			auto out = std::format("stack={}", ContextStack());
 			if (a_args == "workshop") {
 				// controls workshop: workshop mode's keyboard bindings (the Workshop and WorkshopAddendum input contexts), as
-				// "event=scan/vk" (the engine's keyboard scan code and the virtual key it maps to, in hex: `key` takes the
-				// virtual key), for the rig to press the real keys.
+				// "event=vk" in hex: the engine's keyboard mappings hold the virtual key itself (Tab is 9, Enter D, R 52), which
+				// is what `key` takes, for the rig to press the real keys. The events are the pad's names: workshop mode's menu
+				// handler (1.11.240) stores on Cancel, scraps on XButton, strings a wire on YButton, and grabs, repairs or assigns
+				// on Accept (or Activate), by what is highlighted.
 				for (const auto context : { RE::UserEvents::INPUT_CONTEXT_ID::kWorkshop, RE::UserEvents::INPUT_CONTEXT_ID::kWorkshopAddendum }) {
 					const auto mappings = map->controlMaps[std::to_underlying(context)];
 					if (!mappings) {
 						continue;
 					}
 					for (const auto& mapping : mappings->deviceMappings[std::to_underlying(RE::INPUT_DEVICE::kKeyboard)]) {
-						const auto scan = static_cast<std::uint32_t>(mapping.inputKey);
-						out += std::format(" {}={:X}/{:X}", mapping.eventID.c_str(), scan, scan < 0x100 ? MapVirtualKeyA(scan, 1) : 0u);  // 1: MAPVK_VSC_TO_VK
+						out += std::format(" {}={:X}", mapping.eventID.c_str(), static_cast<std::uint32_t>(mapping.inputKey));
 					}
 				}
 				return out;
@@ -4000,9 +4006,9 @@ namespace DevCommands
 			const auto args = SplitArgs(a_args);
 			const auto bench = RE::Workshop::FindNearestValidWorkshop(*player);
 			const auto mode = [&] {
-				return std::format("menu={} for={:.1f} bench={:08X} inArea={}", MenuWatch::IsOpen("WorkshopMenu"sv),
+				return std::format("menu={} for={:.1f} bench={:08X} inArea={} {}", MenuWatch::IsOpen("WorkshopMenu"sv),
 					std::chrono::duration<float>(MenuWatch::OpenFor("WorkshopMenu"sv)).count(), bench ? bench->GetFormID() : 0,
-					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location));
+					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location), WorkshopSync::HeldForDev());
 			};
 			if (args.empty()) {
 				return mode();
