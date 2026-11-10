@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T06:01:48+00:00",
+ "updated": "2026-11-10T06:11:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -641,6 +641,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0 and tested on two real games.",
    "desc": "A friend in power armor appeared to slide along without a walk cycle, or showed up without their armor at all. The armor's walking animation was not being set up for the friend's character. 0.9.0 sets it up, and in testing both players walked in power armor correctly."
+  },
+  {
+   "id": "ahut",
+   "title": "Crash reports: the plugin writes its own crash log (most players have no crash logger)",
+   "kind": "feature",
+   "priority": 1,
+   "stage": 3,
+   "note": "Reviewed; needs a game test"
   },
   {
    "id": "atg2",
@@ -1686,7 +1694,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 7,
-   "note": "Fixed in 0.7.3 and hardened in 0.9.0; no crash log came with the report, so we can't confirm it.",
+   "note": "Fixed in 0.7.3 and 0.9.0",
    "desc": "A player reported crashes when picking up from some containers and when using terminals such as the Red Rocket one, with no crash log. This was one bug in builds before 0.7.3 that affected containers with linked objects and terminals alike. We fixed it in 0.7.3 and hardened it further in 0.9.0, and could not make a current build crash. If it still happens, please update and send a crash log from Buffout 4 or Addictol."
   },
   {
@@ -1712,8 +1720,8 @@
    "title": "Nexus: frequent CTDs on the host at one fixed place in 0.10.1, also with every other mod off (more than 0.10.0 by the reporter's account)",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Likely the save-time power hush at Sanctuary; needs a crash log"
   },
   {
    "id": "q89a",
@@ -1746,8 +1754,8 @@
    "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus report)",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "",
+   "stage": 1,
+   "note": "Likely the same as the fixed-place host crash",
    "pr": 291
   },
   {
@@ -1829,8 +1837,8 @@
    "title": "Host crashes at shutdown when quitting in workshop mode (also on v0.12.1)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "Cause found and fixed; needs a game test"
   },
   {
    "id": "rhq6",
