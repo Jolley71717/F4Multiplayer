@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T15:30:59+00:00",
+ "updated": "2026-11-10T17:08:02+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -630,8 +630,8 @@
    "title": "Two players can recruit the same companion or Dogmeat; no session rule decides whose companion it is",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Reviewed; rig test queued"
   },
   {
    "id": "af5k",
@@ -647,8 +647,8 @@
    "title": "Crash reports: the plugin writes its own crash log (most players have no crash logger)",
    "kind": "feature",
    "priority": 1,
-   "stage": 3,
-   "note": "Reviewed; needs a game test"
+   "stage": 5,
+   "note": "Merged; ships in the next release"
   },
   {
    "id": "atg2",
@@ -728,8 +728,8 @@
    "title": "Catch-up XP for lower-level players",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": "Feature request: lower players earn more XP until levels even out"
+   "stage": 3,
+   "note": "Reviewed; a friendly-fire fix found on the rig is in progress"
   },
   {
    "id": "bv79",
@@ -1205,8 +1205,8 @@
    "title": "Shared workshop: wire to, use and move a friend's workshop pieces (e.g. hook up to their generator, build one Contraptions machine together)",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": "Asked for by two players on Nexus"
+   "stage": 3,
+   "note": "Reviewed; rig test running"
   },
   {
    "id": "ikwn",
