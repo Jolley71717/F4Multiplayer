@@ -21,7 +21,6 @@ namespace Papyrus
 		using Callback = RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>;
 
 		// Slots from the game's IVirtualMachine vtable.
-		constexpr std::size_t OBJECT_TYPE_BY_ID_SLOT = 0x09;      // GetScriptObjectType(typeID, out): the slot the game's own packing of a form calls
 		constexpr std::size_t CREATE_OBJECT_SLOT = 0x17;          // CreateObject(name, out)
 		constexpr std::size_t CREATE_STRUCT_SLOT = 0x18;          // CreateStruct(name, out)
 		constexpr std::size_t DISPATCH_STATIC_SLOT = 0x2C;         // DispatchStaticCall(script, function, ...)
@@ -30,12 +29,6 @@ namespace Papyrus
 		inline std::uintptr_t Slot(void* a_object, std::size_t a_index)
 		{
 			return (*reinterpret_cast<std::uintptr_t**>(a_object))[a_index];
-		}
-
-		inline bool ObjectTypeById(RE::BSScript::IVirtualMachine* a_vm, std::uint32_t a_typeID, RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo>& a_out)
-		{
-			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, std::uint32_t, RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo>&);
-			return reinterpret_cast<fn_t>(Slot(a_vm, OBJECT_TYPE_BY_ID_SLOT))(a_vm, a_typeID, a_out);
 		}
 
 		inline bool CreateObject(RE::BSScript::IVirtualMachine* a_vm, const RE::BSFixedString& a_name, RE::BSTSmartPointer<RE::BSScript::Object>& a_out)
@@ -98,38 +91,6 @@ namespace Papyrus
 			vm->GetObjectBindPolicy().BindObject(object, handle);
 		}
 		return object;
-	}
-
-	// a_object's bound script object packed into a_out as the game's own packing of a form packs it: the object found by
-	// T's script type (Actor for an actor), and the Variable typed as T's script type. Variable's operator= types it with
-	// the object's own script instead (CompanionActorScript for a companion), and a script's == between object values typed
-	// apart is most likely false (FollowersScript.DismissCompanion's actor test never passed for an actor packed that way;
-	// the VM's == itself is not read off the exe), so an argument a script compares with an object it read is packed this
-	// way. Read off Fallout4.exe 1.11.240 (a native function's return of a form,
-	// NativeFunction0<Actor,TESPackage*>::MarshallAndDispatch): GetScriptObjectType(typeID) (vtable slot 09), the handle,
-	// FindBoundObject by that type's name, then the Variable's type set to that type info (the pointer itself, bit 0 clear:
-	// not an array) and its value to the object. A Variable's type is its first 8 bytes (BSScript_Variable.h, varType at
-	// 00; TypeInfo is a plain pointer, no reference held, as the game's own is). No script object is made (a_create off:
-	// see BoundObject). False, a_out None, when the VM, the type or a bound object is missing.
-	template <class T>
-	bool PackTyped(RE::BSScript::Variable& a_out, T* a_object)
-	{
-		static_assert(sizeof(RE::BSScript::TypeInfo) == 8 && sizeof(RE::BSScript::Variable) == 0x10);
-		a_out = nullptr;
-		const auto game = RE::GameVM::GetSingleton();
-		const auto vm = game ? game->GetVM() : nullptr;
-		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> type;
-		if (!vm || !a_object || !detail::ObjectTypeById(vm.get(), RE::BSScript::GetVMTypeID<T>(), type) || !type) {
-			return false;
-		}
-		const auto object = BoundObject(a_object, std::string_view{ type->name.c_str() }, false);
-		if (!object) {
-			return false;
-		}
-		a_out = object;
-		const RE::BSScript::TypeInfo typed{ static_cast<RE::BSScript::IComplexType*>(type.get()) };
-		std::memcpy(static_cast<void*>(std::addressof(a_out)), std::addressof(typed), sizeof(typed));
-		return a_out.GetType().GetObjectTypeInfo() == type.get();
 	}
 
 	// A new struct of a script's (a_name as "Script#Struct"), its fields at their defaults; null if the VM has no such

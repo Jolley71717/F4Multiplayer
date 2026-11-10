@@ -785,12 +785,15 @@ the answer (kCompanionOwner) names the owner to the reporter, every change to ev
 after the owner table. A game told its recruit is another's dismisses its copy through the Followers script's own quiet
 dismissal (FollowersScript.DismissDogmeatCompanion(ShowLocationAssignmentListIfAvailable=false, SuppressDismissMessage=true),
 which with the list off and the message suppressed runs only ClearDogmeatCompanion; for the Companion slot
-DismissCompanion(actor, false, true), which runs only ClearCompanion once its own test, alias actor == argument, passes
-in the VM: the actor is packed as the game's own packing of a form packs it, typed Actor (Papyrus::PackTyped), since an
-argument typed with the companion's own script never passed that test though the same call by console did; should it
-still run and leave the copy held, the slot falls back to ClearCompanion for the rest of the game's run; either clears
-the alias and the teammate flag, no scene; each call is made only while the alias is read to hold our copy, and the VM's
-answer to each is logged with what the alias holds then), a second
+ClearCompanion itself, all that DismissCompanion(actor, false, true) runs after its own test, alias actor == argument:
+that test fails for the actor the plugin passes, whether typed with the companion's own script or typed Actor as the
+game packs a form, for a reason not yet found, while the same call by console (`cqf Followers
+"FollowersScript.DismissCompanion" 0001CA7D 0 1`) clears the alias at once, so a future look starts at how our call's
+argument differs from the console's; either clears the alias and the teammate flag, no scene; each call is made only
+while the alias is read, on the main thread just before the call is queued, to hold our copy, and the VM's answer to
+each is logged with what the alias holds then; neither call takes an argument to check by, so a companion recruited
+between that read and the queued call would be the one let go: a narrow window, and recoverable, since that companion
+is reported let go and can be recruited again), a second
 after the word and once the player is out of the NPC's dialogue, not while the copy is dead or down, again every 10 s
 while the aliases still hold it, three times, then leaves it with a warning; the HUD says "{npc} is {player}'s
 companion". Nothing is read, reported or dismissed unless the game is settled (Hud::IsSettled: no save or load on, no

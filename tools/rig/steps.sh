@@ -1966,7 +1966,7 @@ step_companions() {
 }
 
 # ---- companions_human: the Companion slot (a human companion) (opt-in: smoke.sh --only companions_human) ------------------------------
-# The same refusal through the Followers quest's Companion alias (DismissCompanion's path, not Dogmeat's): Codsworth at
+# The same refusal through the Followers quest's Companion alias (ClearCompanion's path, not Dogmeat's): Codsworth at
 # Sanctuary, both games there by console (set-up, said so). The script's SetCompanion, read off FollowersScript.pex, is
 # SetCompanion(Actor ActorToMakeCompanion, Bool SetCompanion, Bool FillCompanionAlias, Bool SuppressDismissMessage): the console
 # call must give all four (a one-argument call is dropped by the VM and fills nothing, which is what an earlier run met), and the
@@ -2003,25 +2003,24 @@ step_companions_human() {
 	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is player $hid's"; then pass "companions_human: the VM hears whose he is" "ok"
 	else fail "companions_human: the VM hears whose he is" "$(_c_tail vm)"; fi
 
-	# 2. The VM recruits him too: refused, dismissed by DismissCompanion (its actor packed typed Actor, as the game packs it) on the
-	# first try (the VM says it ran it, the alias empty then; no fallback to ClearCompanion), the alias let go, no "going home" message.
+	# 2. The VM recruits him too: refused, dismissed by ClearCompanion on the first try (the VM says it ran it, the alias empty
+	# then), the alias let go, no second try, no "going home" message.
 	win_mark companions vm
 	_ch_recruit vm
 	if wait_for 10 _ch_filled_or_let_go vm; then pass "companions_human: SetCompanion by console fills the VM's Companion alias" "ok"
 	else fail "companions_human: SetCompanion by console fills the VM's Companion alias" "alias '$(_ch_held vm)'"; return; fi
 	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is player $hid's; our recruit is refused: dismissing our copy"; then pass "companions_human: the VM's recruit is refused" "ok"
 	else fail "companions_human: the VM's recruit is refused" "$(_c_tail vm)"; fi
-	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: dismissing $COMPANION_HUMAN .*FollowersScript.DismissCompanion \(try 1 of 3\)"; then pass "companions_human: the VM dismisses its copy by DismissCompanion" "ok"
-	else fail "companions_human: the VM dismisses its copy by DismissCompanion" "$(_c_tail vm)"; fi
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: dismissing $COMPANION_HUMAN .*FollowersScript.ClearCompanion \(try 1 of 3\)"; then pass "companions_human: the VM dismisses its copy by ClearCompanion" "ok"
+	else fail "companions_human: the VM dismisses its copy by ClearCompanion" "$(_c_tail vm)"; fi
 	# The VM's own answer to the call (src/game/Companions.cpp logs it with what the alias holds then): ran and empty is the
-	# pass (the script's own actor test passed for the argument as packed); ran with him still held (the test failed: the
-	# plugin falls back to ClearCompanion, a WARN), cancelled, or no answer at all each say a different thing went wrong.
-	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: the VM (ran|cancelled) FollowersScript.DismissCompanion for $COMPANION_HUMAN"; then
-		n=$(grep -oE "Companions: the VM (ran|cancelled) FollowersScript.DismissCompanion for $COMPANION_HUMAN.*" "$(win_read companions vm)" | head -1)
-		expect_match "companions_human: the VM ran DismissCompanion and the alias was empty after it (its actor test passed)" "$n" "the VM ran .*Companion alias holds nothing"
-	else fail "companions_human: the VM ran DismissCompanion and the alias was empty after it (its actor test passed)" "no answer from the VM to the queued call; $(_c_tail vm)"; fi
-	if _c_log_has vm "its actor test failed for our argument"; then fail "companions_human: no fallback to ClearCompanion" "$(grep -oE 'Companions: .*its actor test failed.*' "$(win_read companions vm)" | head -1)"
-	else pass "companions_human: no fallback to ClearCompanion" "no such line"; fi
+	# pass; ran with him still held, cancelled, or no answer at all each say a different thing went wrong.
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: the VM (ran|cancelled) FollowersScript.ClearCompanion for $COMPANION_HUMAN"; then
+		n=$(grep -oE "Companions: the VM (ran|cancelled) FollowersScript.ClearCompanion for $COMPANION_HUMAN.*" "$(win_read companions vm)" | head -1)
+		expect_match "companions_human: the VM ran ClearCompanion and the alias was empty after it" "$n" "the VM ran .*Companion alias holds nothing"
+	else fail "companions_human: the VM ran ClearCompanion and the alias was empty after it" "no answer from the VM to the queued call; $(_c_tail vm)"; fi
+	if _c_log_has vm "\[W\] Companions: "; then fail "companions_human: no companion WARN in the VM's log" "$(grep -oE '\[W\] Companions: .*' "$(win_read companions vm)" | head -1)"
+	else pass "companions_human: no companion WARN in the VM's log" "none"; fi
 	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: our aliases let go of $COMPANION_HUMAN"; then pass "companions_human: the VM's Companion alias is empty again on the first try" "alias '$(_ch_held vm)'"
 	else fail "companions_human: the VM's Companion alias is empty again on the first try" "alias '$(_ch_held vm)'; $(_c_tail vm)"; fi
 	if _c_log_has vm "Companions: dismissing $COMPANION_HUMAN .*\(try 2 of 3\)"; then fail "companions_human: one dismissal was enough" "a second try went"; else pass "companions_human: one dismissal was enough" "no second try"; fi

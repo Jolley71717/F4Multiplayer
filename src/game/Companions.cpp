@@ -33,8 +33,7 @@ namespace Companions
 		constexpr std::string_view DOGMEAT_ALIAS = "DogmeatCompanion";
 		constexpr std::string_view SCRIPT = "FollowersScript";
 		// The script's quiet dismissal: the companion (or Dogmeat), no message, no settlement menu (they go home).
-		constexpr std::string_view DISMISS_COMPANION = "DismissCompanion";
-		constexpr std::string_view CLEAR_COMPANION = "ClearCompanion";  // the Companion slot's fallback (see Dismiss)
+		constexpr std::string_view CLEAR_COMPANION = "ClearCompanion";  // the Companion slot's (see Dismiss)
 		constexpr std::string_view DISMISS_DOGMEAT = "DismissDogmeatCompanion";
 
 		constexpr auto LOOK_INTERVAL = std::chrono::milliseconds(500);
@@ -50,19 +49,15 @@ namespace Companions
 		std::uint32_t                   dismissCallsRefused = 0;  // calls the VM wouldn't queue
 		std::uint32_t                   dismissCallsQueued = 0;   // calls queued; the VM's answers to them below
 		std::uint32_t                   unsettledLooks = 0;       // looks skipped: a save or load on, a loading screen, settling after a load, no cell
-		// Set once a DismissCompanion the VM ran left our copy in the alias (its actor test failed for the argument packed
-		// here): the Companion slot is dismissed by ClearCompanion from then on, for the rest of the game's run.
-		bool                            clearCompanionInstead = false;
 
 		// What the VM said of a dismissal it was given, on one of its threads: it ran the function (returned), or cancelled
 		// the call. Frame logs each with what the alias holds then, so a dismissal that runs and still leaves the companion
 		// in the alias says so in the log, as one that never runs does by its missing answer (queued above the answers).
 		struct DismissAnswer
 		{
-			std::uint32_t    id = 0;
-			Slot             slot = Slot::kCompanion;
-			std::string_view function;  // one of the constants above
-			bool             ran = false;
+			std::uint32_t id = 0;
+			Slot          slot = Slot::kCompanion;
+			bool          ran = false;
 		};
 		std::mutex                  answersLock;
 		std::vector<DismissAnswer>  answers;
@@ -74,8 +69,8 @@ namespace Companions
 			public RE::BSScript::IStackCallbackFunctor
 		{
 		public:
-			DismissDone(std::uint32_t a_id, Slot a_slot, std::string_view a_function) :
-				answer{ a_id, a_slot, a_function, false }
+			DismissDone(std::uint32_t a_id, Slot a_slot) :
+				answer{ a_id, a_slot, false }
 			{}
 
 			void CallQueued() override {}
@@ -189,40 +184,34 @@ namespace Companions
 
 		constexpr std::string_view SlotName(Slot a_slot) { return a_slot == Slot::kDogmeat ? DOGMEAT_ALIAS : COMPANION_ALIAS; }
 
-		// The function a dismissal of that slot's copy calls now (see Dismiss).
-		std::string_view DismissFunction(Slot a_slot)
-		{
-			return a_slot == Slot::kDogmeat ? DISMISS_DOGMEAT : clearCompanionInstead ? CLEAR_COMPANION : DISMISS_COMPANION;
-		}
+		// The function a dismissal of that slot's copy calls (see Dismiss).
+		constexpr std::string_view DismissFunction(Slot a_slot) { return a_slot == Slot::kDogmeat ? DISMISS_DOGMEAT : CLEAR_COMPANION; }
 
 		// The script's quiet dismissal, queued to the script VM (it runs a frame or more later), as the game's own
 		// FollowersScript has it (read off the game's scripts, FollowersScript.pex):
-		//   DismissCompanion(Actor CompanionToDismiss, Bool ShowLocationAssignmentListIfAvailable, Bool SuppressDismissMessage):
-		//   first tests `Companion.GetActorReference() as CompanionActorScript as Actor == CompanionToDismiss` and does
-		//   nothing on a miss; with no list and the message suppressed it then runs only ClearCompanion. The test runs in
-		//   the VM, under the Followers script object's lock, when the call runs: a different companion recruited between
-		//   our look and the call is left alone.
-		//   ClearCompanion(): whoever the Companion alias holds; DismissCompanion(actor, False, True)'s whole effect.
 		//   DismissDogmeatCompanion(Bool ShowLocationAssignmentListIfAvailable, Bool SuppressDismissMessage): whoever the
 		//   DogmeatCompanion alias holds. With no list and the message suppressed it runs only ClearDogmeatCompanion.
-		// DismissCompanion's test never passed for the actor as this plugin packed it before (the rig, 2026-11-10: three
-		// calls queued, the alias held all along; the same call by console, whose argument the game packs itself, cleared
-		// it at once): Variable's operator= types the value with the bound object's own script (CompanionActorScript), where
-		// the game's packing types it Actor (read off Fallout4.exe: Papyrus::PackTyped), as the script's casts do; most
-		// likely the VM's == on objects typed apart is false (not read off the exe). The actor is now packed as the game
-		// packs it, the same object and the same type. Should a DismissCompanion still run
-		// and leave our copy in the alias, Frame sets clearCompanionInstead (a WARN), and the Companion slot calls
-		// ClearCompanion from the next try on.
-		// What is left: ClearCompanion and DismissDogmeatCompanion clear whoever their alias holds when they run. The alias
-		// is read here to hold our copy, on the main thread, and the call runs a frame or more later in the VM (neither takes
-		// an argument to check by), so a different companion recruited in those frames (the player picking a recruit topic
-		// in another NPC's dialogue right after the refusal notice, or a backlogged VM) is the one let go. Accepted: rare, and
-		// recoverable (that companion stands where they are, our next look reports the let-go, the player can recruit them
-		// again). For the Companion slot it is only open after the fallback.
+		//   ClearCompanion(): whoever the Companion alias holds. It is all DismissCompanion(actor, False, True) runs, after
+		//   its first test, `Companion.GetActorReference() as CompanionActorScript as Actor == CompanionToDismiss` (two
+		//   reviews of the script's disassembly agree: with the message suppressed and no list, nothing else).
+		// Why the Companion slot calls ClearCompanion and not DismissCompanion: DismissCompanion's actor test fails for the
+		// actor this plugin passes, for a reason not yet found. The rig, 2026-11-10: with the argument as Variable's operator=
+		// types it (the actor's own script, CompanionActorScript) three calls ran and the alias held all along; packed as the
+		// game's own packing of a form packs it, typed Actor, the VM ran the call and the alias still held him. The same call by
+		// console (`cqf Followers "FollowersScript.DismissCompanion" <ref> 0 1`, whose argument the game packs itself) clears
+		// it at once, so the cause most likely lies in how our call's argument reaches the script, not in the script. So the
+		// Companion slot runs DismissCompanion's whole effect itself, with no actor to pack, as the Dogmeat slot's call has
+		// none; the alias is read here, on the main thread just before the call is queued, to hold our copy: the test
+		// DismissCompanion would have made, made a frame or more early.
+		// What is left: ClearCompanion and DismissDogmeatCompanion clear whoever their alias holds when they run, and neither
+		// takes an argument to check by, so a different companion recruited between our read and the call (the player picking
+		// a recruit topic in another NPC's dialogue right after the refusal notice, or a backlogged VM) is the one let go. A
+		// narrow window, accepted: rare, and recoverable (that companion stands where they are, our next look reports the
+		// let-go, the player can recruit them again).
 		// The clear turns the alias and the teammate flag off and sends the CompanionChange event; no scene is started (the
-		// dismissal scene is reached from dialogue alone). False when it couldn't be queued: no script object, the alias no
-		// longer holds the copy, or the actor couldn't be packed.
-		bool Dismiss(RE::TESQuest* a_quest, RE::Actor* a_actor, Slot a_slot, std::string_view a_function)
+		// dismissal scene is reached from dialogue alone). False when it couldn't be queued: no script object, or the alias
+		// no longer holds the copy.
+		bool Dismiss(RE::TESQuest* a_quest, RE::Actor* a_actor, Slot a_slot)
 		{
 			const auto self = Papyrus::BoundObject(a_quest, SCRIPT, false);
 			if (!self) {
@@ -235,29 +224,16 @@ namespace Companions
 				REX::INFO("Companions: the {} alias no longer holds {:08X}; nothing to dismiss this try", SlotName(a_slot), a_actor->GetFormID());
 				return false;
 			}
-			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new DismissDone(a_actor->GetFormID(), a_slot, a_function) };
-			if (a_function == DISMISS_DOGMEAT) {
+			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new DismissDone(a_actor->GetFormID(), a_slot) };
+			if (a_slot == Slot::kDogmeat) {
 				return Papyrus::CallOn(self, DISMISS_DOGMEAT, [](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
 					a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
 					a_out[0] = false;  // ShowLocationAssignmentListIfAvailable
 					a_out[1] = true;   // SuppressDismissMessage
 				}, done);
 			}
-			if (a_function == CLEAR_COMPANION) {
-				return Papyrus::CallOn(self, CLEAR_COMPANION, [](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-					a_out = RE::BSScrapArray<RE::BSScript::Variable>{};
-				}, done);
-			}
-			RE::BSScript::Variable actor;
-			if (!Papyrus::PackTyped(actor, a_actor)) {
-				REX::WARN("Companions: {:08X} couldn't be packed as an Actor (no script object bound?); not dismissed this try", a_actor->GetFormID());
-				return false;
-			}
-			return Papyrus::CallOn(self, DISMISS_COMPANION, [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 3 };
-				a_out[0] = actor;  // CompanionToDismiss, typed Actor
-				a_out[1] = false;  // ShowLocationAssignmentListIfAvailable
-				a_out[2] = true;   // SuppressDismissMessage
+			return Papyrus::CallOn(self, CLEAR_COMPANION, [](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{};
 			}, done);
 		}
 
@@ -304,16 +280,13 @@ namespace Companions
 			const std::string holds = held ? std::format("{:08X}", held->GetFormID()) : std::string{ "nothing" };
 			if (!answer.ran) {
 				++dismissCallsCancelled;
-				REX::WARN("Companions: the VM cancelled {}.{} for {:08X} ({}); the {} alias holds {}", SCRIPT, answer.function, answer.id, NameOf(answer.id), SlotName(answer.slot), holds);
+				REX::WARN("Companions: the VM cancelled {}.{} for {:08X} ({}); the {} alias holds {}", SCRIPT, DismissFunction(answer.slot), answer.id, NameOf(answer.id),
+					SlotName(answer.slot), holds);
 				continue;
 			}
 			++dismissCallsRan;
-			REX::INFO("Companions: the VM ran {}.{} for {:08X} ({}); the {} alias holds {}", SCRIPT, answer.function, answer.id, NameOf(answer.id), SlotName(answer.slot), holds);
-			if (answer.function == DISMISS_COMPANION && held && held->GetFormID() == answer.id && !clearCompanionInstead) {
-				clearCompanionInstead = true;
-				REX::WARN("Companions: {}.{} ran and the {} alias still holds {:08X}: its actor test failed for our argument; the {} slot is dismissed by {}.{} from now on", SCRIPT,
-					DISMISS_COMPANION, COMPANION_ALIAS, answer.id, COMPANION_ALIAS, SCRIPT, CLEAR_COMPANION);
-			}
+			REX::INFO("Companions: the VM ran {}.{} for {:08X} ({}); the {} alias holds {}", SCRIPT, DismissFunction(answer.slot), answer.id, NameOf(answer.id), SlotName(answer.slot),
+				holds);
 		}
 		for (const auto& report : book.Look(HeldNow(quest), now, true)) {
 			REX::INFO("Companions: our {} {:08X} ({}); reported", report.recruited ? "aliases hold" : "aliases let go of", report.refId, NameOf(report.refId));
@@ -328,11 +301,10 @@ namespace Companions
 				return;  // after the pause, the conversation, or once the copy is up again
 			}
 			// An NPC the aliases hold but the game can't find counts as a try: the aliases say otherwise next look, or it is given up on.
-			const auto function = DismissFunction(due->slot);
-			if (actor && Dismiss(quest, actor, due->slot, function)) {
+			if (actor && Dismiss(quest, actor, due->slot)) {
 				++dismissCallsQueued;
-				REX::INFO("Companions: dismissing {:08X} ({}) by {}.{} (try {} of {}): player {}'s companion, not ours", due->id, NameOf(due->id), SCRIPT, function, due->attempt,
-					CompanionRules::DISMISS_TRIES, book.OwnerOf(due->id).value_or(0));
+				REX::INFO("Companions: dismissing {:08X} ({}) by {}.{} (try {} of {}): player {}'s companion, not ours", due->id, NameOf(due->id), SCRIPT, DismissFunction(due->slot),
+					due->attempt, CompanionRules::DISMISS_TRIES, book.OwnerOf(due->id).value_or(0));
 			} else {
 				++dismissCallsRefused;
 			}
@@ -392,8 +364,8 @@ namespace Companions
 
 	std::string Describe()
 	{
-		return book.Describe() + std::format(" callsQueued={} callsRan={} callsCancelled={} callsRefused={} companionCall={} unsettledLooks={}", dismissCallsQueued, dismissCallsRan,
-			dismissCallsCancelled, dismissCallsRefused, DismissFunction(Slot::kCompanion), unsettledLooks);
+		return book.Describe() + std::format(" callsQueued={} callsRan={} callsCancelled={} callsRefused={} unsettledLooks={}", dismissCallsQueued, dismissCallsRan, dismissCallsCancelled,
+			dismissCallsRefused, unsettledLooks);
 	}
 
 	std::string List()
