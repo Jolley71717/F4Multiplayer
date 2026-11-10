@@ -1784,20 +1784,20 @@ _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generato
 	if [ "$gen" = host ]; then
 		out=$(host "wsreport place $SWS_GENERATOR $SANCT_BENCH"); g=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
 		if [ -z "$g" ]; then fail "$label: the generator is placed" "$out"; return 1; fi
-		echo "$g" >> "$A_OUT/ws-placed.txt"
+		_sws_placed host "$g"
 		sleep 2; out=$(host "wsfinish $g $SANCT_BENCH")
 		case "$out" in finished*) pass "$label: the host's finish ran its steps on the generator" "$(cut -c1-160 <<<"$out")";; *) fail "$label: the host's finish ran its steps on the generator" "$out"; return 1;; esac
 	else
 		g=$(_sws_build_vm "$SWS_GENERATOR" "$label"); [ -z "$g" ] && return 1
 		if wait_for 20 _sws_built host "$SWS_GENERATOR"; then pass "$label: the host built the VM's generator for it" "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built for player [0-9]+[^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-160)"
 		else fail "$label: the host built the VM's generator for it" "$(grep -E 'WorkshopSync: (player|request|our)' "$A_OUT/windelta-sws-host.txt" "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|')"; return 1; fi
-		g=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)  # the host's piece
+		g=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2); _sws_placed host "$g"  # the host's piece
 	fi
 	sleep 3
 	if [ "$lit" = host ]; then
 		out=$(host "wsreport place $SWS_LIGHT $SANCT_BENCH"); l=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
 		if [ -z "$l" ]; then fail "$label: the light is placed" "$out"; return 1; fi
-		echo "$l" >> "$A_OUT/ws-placed.txt"
+		_sws_placed host "$l"
 		sleep 2; host "wsfinish $l $SANCT_BENCH" >/dev/null
 		gc=$g; lc=$l
 	else
@@ -1805,7 +1805,7 @@ _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generato
 		if wait_for 20 _sws_built host "$SWS_LIGHT"; then pass "$label: the host built the VM's light for it" "host log: built for player"; else fail "$label: the host built the VM's light for it" "no 'built for player' line for base $SWS_LIGHT on the host"; return 1; fi
 		if wait_for 10 _sws_answered vm; then pass "$label: the VM's request was answered applied and its light adopted as the host's copy" "$(grep -oE 'WorkshopSync: our [0-9A-F]{8} .* is the host.s piece now[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-160)"
 		else fail "$label: the VM's request was answered applied and its light adopted as the host's copy" "$(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|')"; return 1; fi
-		lc=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)  # the host's light
+		lc=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2); _sws_placed host "$lc"  # the host's light
 		gc=$g
 	fi
 	sleep 3
@@ -1929,7 +1929,7 @@ _sws_aim_press() {  # _sws_aim_press <who> <ref> <vk>: face the reference in wor
 _sws_build_vm() {
 	local out r; out=$(vm "wsreport place $1 $SANCT_BENCH quiet"); r=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
 	[ -z "$r" ] && { echo ""; return 1; }
-	echo "$r" >> "$A_OUT/ws-placed.txt"
+	_sws_placed vm "$r"
 	sleep 1.5; out=$(vm "wsfinish $r $SANCT_BENCH")
 	case "$out" in finished*) ;; *) fail "${2:-sharedws}: the VM's finish ran on its piece" "$out"; echo ""; return 1;; esac
 	echo "$r"
@@ -1971,7 +1971,7 @@ _sws_host_busy() {
 	l=$(_sws_build_vm "$SWS_LIGHT" "$label")
 	if wait_for 20 _sws_built host "$SWS_LIGHT"; then pass "$label: the host built the VM's light while in workshop mode" "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built for player [0-9]+[^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-140)"
 	else fail "$label: the host built the VM's light while in workshop mode" "$(grep -E 'WorkshopSync: (player|request)' "$A_OUT/windelta-sws-host.txt" "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|')"; fi
-	grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2 >> "$A_OUT/ws-placed.txt"
+	_sws_placed host "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)"
 	_ws_exit host
 }
 # A bed from the VM (Papyrus assigns a settler to it in the VM's game before the host takes it over: the adoption fires the
@@ -1997,7 +1997,7 @@ _sws_bed_and_pending_save() {
 	vm "wsmode host" >/dev/null; sleep 1
 	vm "wsreport $b $SANCT_BENCH" >/dev/null
 	if wait_for 20 _sws_built host "$SWS_BED"; then pass "$label: the host built the VM's bed" "ok"; else fail "$label: the host built the VM's bed" "$(grep -E 'WorkshopSync: (player|request)' "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|')"; return 1; fi
-	grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2 >> "$A_OUT/ws-placed.txt"
+	_sws_placed host "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)"
 	wait_for 15 _sws_answered vm; sleep 5
 	bc=$(_sws_copy_of vm "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)")
 	[ -z "$before" ] && warn "$label: a settler was assigned to the VM's bed before the answer (the control)" "none assigned (no settler without a bed in Sanctuary?): the check below proves less"
@@ -2007,7 +2007,7 @@ _sws_bed_and_pending_save() {
 	expect_eq "$label: the VM's bench budget is back to what it was before the bed (counted by the finish, taken out by the adoption)" "$(_sws_budget vm)" "$b0"
 	# the save right behind a placement: the pending piece goes before the save (BeforeSave, with the destroyed event) and the host's
 	# copy comes on its own
-	out=$(vm "wsreport place $SWS_LIGHT $SANCT_BENCH quiet"); b=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1); [ -n "$b" ] && echo "$b" >> "$A_OUT/ws-placed.txt"
+	out=$(vm "wsreport place $SWS_LIGHT $SANCT_BENCH quiet"); b=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1); [ -n "$b" ] && _sws_placed vm "$b"
 	# the finish hands the piece over, wsmode must then show it pending (else the save tests nothing), and the save follows at once
 	# (three calls back to back: dcfast takes one command a connection; each is a few ms)
 	vm "wsfinish $b $SANCT_BENCH" >/dev/null; out=$(vm wsmode); vm "console save ${SWS_SAVE}_pending" >/dev/null
@@ -2052,7 +2052,7 @@ step_sharedws_power() {
 	if _ws_enter host; then sleep 3; _ws_exit host; pass "sharedws: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "sharedws: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
 	# a settler without a bed, for the bed control (made by the host at its feet, added to Sanctuary as the bench step adds Codsworth)
 	local settler; settler=$(host "wsreport place $SWS_SETTLER $SANCT_BENCH quiet" | grep -o "[0-9A-F]\{8\}" | head -1)
-	if [ -n "$settler" ]; then echo "$settler" >> "$A_OUT/ws-placed.txt"; host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $settler $SANCT_BENCH" >/dev/null; sleep 3
+	if [ -n "$settler" ]; then _sws_placed host "$settler"; host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $settler $SANCT_BENCH" >/dev/null; sleep 3
 		pass "sharedws: set-up: a settler without a bed is Sanctuary's (the bed control)" "$settler: $(host "scriptvars $settler WorkshopNPCScript workshopID" | cut -c1-80)"
 	else fail "sharedws: set-up: a settler without a bed is Sanctuary's (the bed control)" "no settler made of base $SWS_SETTLER"; fi
 	_sws_one_way host vm || return
@@ -2082,9 +2082,10 @@ step_sharedws_power() {
 }
 # The pieces this step placed scrapped as the engine scraps (dev wsscrap: off the grids, links, budget and workbench, told to the
 # scripts, reported, deleted) by whichever game owns each, so no grid names a deleted reference; cleanup.sh then removes what is left.
+_sws_placed() { echo "$2" >> "$A_OUT/ws-placed.txt"; echo "$2" >> "$A_OUT/ws-placed-$1.txt"; }   # _sws_placed <who> <ref>: a piece that game made (runtime ids are each game's own: scrapped there alone)
 _sws_cleanup() {
-	local r
-	for r in $(sort -u "$A_OUT/ws-placed.txt" 2>/dev/null); do host "wsscrap $r" >/dev/null; vm "wsscrap $r" >/dev/null; done
+	local r who
+	for who in host vm; do for r in $(sort -u "$A_OUT/ws-placed-$who.txt" 2>/dev/null); do dc "$who" "wsscrap $r" >/dev/null; done; done
 	sleep 3
 	local g; g=$(host "wsgrid $SANCT_BENCH")
 	if grep -q "gone named=0" <<<"$g"; then pass "sharedws: cleanup: the host's grids name no deleted reference" "$(grep -oE 'copies named=[0-9]+ gone named=[0-9]+' <<<"$g")"; else fail "sharedws: cleanup: the host's grids name no deleted reference" "$(cut -c1-200 <<<"$g")"; fi

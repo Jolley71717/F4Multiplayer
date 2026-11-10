@@ -3632,7 +3632,6 @@ namespace WorkshopSync
 			}
 			// The host building in workshop mode is the point: nothing of its workshop mode holds a finish off (the finish sets
 			// the engine's new-item byte itself: NewItemScope).
-			const bool inWorkshopMode = false;
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
 				const bool  wire = request.op == Protocol::WorkshopRequestOp::kWire;
@@ -3641,16 +3640,15 @@ namespace WorkshopSync
 					Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
 					return true;
 				}
-				switch (SharedWorkshop::Ready(inWorkshopMode, wire || ref->Get3D() != nullptr, a_now - a_making.since)) {
+				switch (SharedWorkshop::Ready(wire || ref->Get3D() != nullptr, a_now - a_making.since)) {
 				case SharedWorkshop::Readiness::kWait:
 					return false;
-				case SharedWorkshop::Readiness::kBusy:
 				case SharedWorkshop::Readiness::kNoModel:
 					if (ref) {
 						ref->Disable();
 						ref->SetDelete(true);
 					}
-					Answer(request, inWorkshopMode ? Protocol::WorkshopAnswer::Why::kHostBusy : Protocol::WorkshopAnswer::Why::kFailed, 0);
+					Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
 					return true;
 				case SharedWorkshop::Readiness::kReady:
 					break;
@@ -3801,6 +3799,7 @@ namespace WorkshopSync
 				}
 			}
 			making.clear();
+			unopenedTold.clear();
 			hostGone = false;
 			hostId.store(0);
 			admitsCopies.store(false);
@@ -3823,12 +3822,11 @@ namespace WorkshopSync
 		// rarely more than nothing.
 		void SharedBeforeSave()
 		{
-			const bool holding = false;  // nothing of the host's workshop mode holds a finish off (as MakeRequests)
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
 				const auto  ref = a_making.ref.get();
 				const auto  bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.workshop);
-				if (request.op == Protocol::WorkshopRequestOp::kBuild && ref && bench && ref->Get3D() && !holding) {
+				if (request.op == Protocol::WorkshopRequestOp::kBuild && ref && bench && ref->Get3D()) {
 					const auto steps = FinishPiece(*ref, *bench);
 					REX::INFO("WorkshopSync: save: {:08X} built for player {} finished before it: {}", ref->GetFormID(), request.playerId, steps);
 					Answer(request, Protocol::WorkshopAnswer::Why::kApplied, ref->GetFormID());
@@ -3838,7 +3836,7 @@ namespace WorkshopSync
 					ref->Disable();
 					ref->SetDelete(true);
 				}
-				Answer(request, holding ? Protocol::WorkshopAnswer::Why::kHostBusy : Protocol::WorkshopAnswer::Why::kFailed, 0);
+				Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
 				return true;
 			});
 			for (const auto& build : requests.Builds()) {
@@ -3984,6 +3982,12 @@ namespace WorkshopSync
 		}
 		const auto bench = BenchOf(*a_ref);
 		const auto id = a_ref->GetFormID();
+		if (!bench) {
+			// Runtime ids are each game's own: on another machine the same id names something else (an NPC, a stand-in, a
+			// dropped item), which must not be reported scrapped and deleted. Only a piece linked to a workbench is a piece.
+			REX::INFO("WorkshopSync: wsscrap {:08X} refused: not a workshop piece linked to a workbench", id);
+			return std::format("error: {:08X} is no workshop piece linked to a workbench: not scrapped", id);
+		}
 		// What the engine's scrap does, short of the yield: told to the workbench's scripts, off the grids and the links,
 		// out of the budget, unlinked, reported scrapped for the friends' copies, disabled and deleted.
 		NotifyDestroyed(bench, *a_ref);

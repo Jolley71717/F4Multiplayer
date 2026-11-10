@@ -204,15 +204,13 @@ TEST("shared workshop: the host's game refuses in the order it looks: the settle
 	CHECK(Refusal(Op::kWire, facts) == Why::kNotHostOwned);
 }
 
-TEST("shared workshop: a piece is finished once the host isn't holding a piece and its 3D is there (workshop mode itself is no reason to wait); waiting too long for either refuses it")
+TEST("shared workshop: a piece is finished once its 3D is there (nothing of the host's workshop mode holds it off); one whose 3D never comes is refused")
 {
-	CHECK(Ready(false, true, 0s) == Readiness::kReady);
-	CHECK(Ready(true, true, 0s) == Readiness::kWait);
-	CHECK(Ready(true, true, HOST_WAIT - 1ms) == Readiness::kWait);
-	CHECK(Ready(true, true, HOST_WAIT) == Readiness::kBusy);
-	CHECK(Ready(false, false, 0s) == Readiness::kWait);
-	CHECK(Ready(false, false, MODEL_WAIT) == Readiness::kNoModel);
-	CHECK(Ready(true, false, HOST_WAIT) == Readiness::kBusy);  // the held piece first: the 3D may well be waiting on it
+	CHECK(Ready(true, 0s) == Readiness::kReady);
+	CHECK(Ready(true, MODEL_WAIT) == Readiness::kReady);
+	CHECK(Ready(false, 0s) == Readiness::kWait);
+	CHECK(Ready(false, MODEL_WAIT - 1ms) == Readiness::kWait);
+	CHECK(Ready(false, MODEL_WAIT) == Readiness::kNoModel);
 }
 
 TEST("shared workshop: the finish runs the engine's eleven placement steps in the engine's order, the workbench set for every one, and restored even when a step throws")

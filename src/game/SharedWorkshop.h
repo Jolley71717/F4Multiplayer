@@ -303,29 +303,22 @@ namespace SharedWorkshop
 		return std::nullopt;
 	}
 
-	// A piece made for a request is finished once its 3D is there and the host isn't holding a piece of its own in workshop mode
-	// (a grabbed piece sets the engine's "moving an existing item" byte, which MakeReferenceStatic reads: ours would be put
-	// back as a moved piece, its scripts never started). The byte is 0 only while a new piece is being placed and 1 otherwise,
-	// at idle too (read in 1.11.240: QNewItemMode is "byte == 0"), so no state of the host's hands is read from it: the
-	// finish sets it to 0 for its own steps and puts it back (NewItemScope), and nothing of the host's workshop mode holds a
-	// finish off (building together is the point); a_hostHoldsPiece stays for a game with a reason to wait. One that waits
-	// too long is refused.
-	inline constexpr auto HOST_WAIT = 10s;   // held off longer than this: kHostBusy
+	// A piece made for a request is finished once its 3D is there. Nothing of the host's workshop mode holds a finish off
+	// (building together is the point): the engine's "new item mode" byte, which MakeReferenceStatic reads, is 0 only while
+	// a new piece is being placed and 1 otherwise, at idle too (read in 1.11.240: QNewItemMode is "byte == 0"), so it says
+	// nothing about the host's hands, and the finish sets it to 0 for its own steps and puts it back (NewItemScope). One
+	// whose 3D never comes is refused.
 	inline constexpr auto MODEL_WAIT = 10s;  // the piece's 3D not there in this long: kFailed
 
 	enum class Readiness : std::uint8_t
 	{
 		kReady,
 		kWait,
-		kBusy,     // refused: the host kept holding a piece
 		kNoModel,  // refused: the piece never got its 3D
 	};
 
-	[[nodiscard]] constexpr Readiness Ready(bool a_hostHoldsPiece, bool a_hasModel, Clock::duration a_waited)
+	[[nodiscard]] constexpr Readiness Ready(bool a_hasModel, Clock::duration a_waited)
 	{
-		if (a_hostHoldsPiece) {
-			return a_waited >= HOST_WAIT ? Readiness::kBusy : Readiness::kWait;
-		}
 		if (!a_hasModel) {
 			return a_waited >= MODEL_WAIT ? Readiness::kNoModel : Readiness::kWait;
 		}
