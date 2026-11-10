@@ -1,0 +1,6 @@
+A friend's shots show their tracer again with an armor-piercing receiver, a recon scope, or a Bloodied or Nocturnal legendary
+Getting up after being downed no longer leaves the camera stuck by the ground
+Rejoining away from a quest's place no longer holds up the other quests' catch-up
+A random event that rolled in both games at once is cleared fully, its out-of-sight people too
+Same protocol (63) as 0.16.0: a friend on 0.16.0 can join
+Full notes on GitHub
