@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T05:09:23+00:00",
+ "updated": "2026-11-10T06:01:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -177,8 +177,8 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 7,
-   "note": "Fix in PR: notices no longer ask the game for a sound",
+   "stage": 3,
+   "note": "Last stuck-sound path: fix reviewed, needs a game test",
    "pr": 301
   },
   {
@@ -257,8 +257,8 @@
    "title": "Weapon switch in power armor: the owner reports both weapons worn; the friend's stand-in redresses in a loop and shot trails use the wrong gun",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed in 0.15.1"
   },
   {
    "id": "3w7m",
@@ -494,8 +494,8 @@
    "title": "Frame watch warns 'no game work for 15 s' on ordinary loading screens (false positive)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Cause found: the watchdog doesn't see the loading screen"
+   "stage": 5,
+   "note": "Merged; ships in the next release"
   },
   {
    "id": "7gi3",
@@ -845,8 +845,8 @@
    "title": "Stand-in re-dressed every 3 s when the wanted gear holds two weapons (10mm and laser rifle)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Found in the 0.14.0 soak: a friend's stand-in is re-dressed every few seconds"
+   "stage": 7,
+   "note": "Fixed in 0.15.1"
   },
   {
    "id": "dta6",
@@ -1190,7 +1190,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 1,
-   "note": "Log read: the reporter was on 0.10.0; 0.10.1's fixes cover it, one oddity left"
+   "note": "Looks fixed by the 0.11.0 health rework; waiting on the reporter"
   },
   {
    "id": "ihhm",
@@ -2348,8 +2348,8 @@
    "title": "Downed: the camera reads ~34,000 units from the player for a frame on a re-down ('away 33734')",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Logging and a soak warning in review; the engine fix is filed separately"
+   "stage": 5,
+   "note": "Logging merged; the fix itself is a separate item"
   },
   {
    "id": "yqm3",
