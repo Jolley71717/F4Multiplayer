@@ -121,7 +121,7 @@ TEST("shared workshop: the answer's verdict: a build applied is adopted, refused
 	CHECK(notOwned.benchNotOwned);
 	CHECK(std::string{ notOwned.notice } == "workshop.shared.not_owned");
 
-	for (const auto why : { Why::kBenchNotLoaded, Why::kHostBusy, Why::kHostAway, Why::kOff, Why::kNotWorkshopItem, Why::kOverBudget, Why::kOutOfReach, Why::kFailed }) {
+	for (const auto why : { Why::kBenchNotLoaded, Why::kHostBusy, Why::kHostAway, Why::kOff, Why::kNotWorkshopItem, Why::kOverBudget, Why::kOutOfReach, Why::kFailed, Why::kNoAnswer }) {
 		const auto verdict = Judge(Op::kBuild, why);
 		CHECK(verdict.outcome == Outcome::kKeepOwn);
 		CHECK(!verdict.benchNotOwned);
@@ -131,6 +131,7 @@ TEST("shared workshop: the answer's verdict: a build applied is adopted, refused
 	CHECK(std::string{ Judge(Op::kBuild, Why::kHostBusy).notice } == "workshop.shared.host_busy");
 	CHECK(std::string{ Judge(Op::kBuild, Why::kHostAway).notice } == "workshop.shared.no_host");
 	CHECK(std::string{ Judge(Op::kBuild, Why::kFailed).notice } == "workshop.shared.refused");
+	CHECK(std::string{ Judge(Op::kBuild, Why::kNoAnswer).notice } == "workshop.shared.no_answer");  // no answer in time: not "no host"
 
 	const auto wired = Judge(Op::kWire, Why::kApplied);
 	CHECK(wired.outcome == Outcome::kNothing);
@@ -196,7 +197,7 @@ TEST("shared workshop: the host's game refuses in the order it looks: the settle
 	CHECK(Refusal(Op::kWire, facts) == Why::kNotHostOwned);
 }
 
-TEST("shared workshop: a piece is finished once the host is out of workshop mode and its 3D is there; waiting too long for either refuses it")
+TEST("shared workshop: a piece is finished once the host isn't holding a piece and its 3D is there (workshop mode itself is no reason to wait); waiting too long for either refuses it")
 {
 	CHECK(Ready(false, true, 0s) == Readiness::kReady);
 	CHECK(Ready(true, true, 0s) == Readiness::kWait);
@@ -204,7 +205,7 @@ TEST("shared workshop: a piece is finished once the host is out of workshop mode
 	CHECK(Ready(true, true, HOST_WAIT) == Readiness::kBusy);
 	CHECK(Ready(false, false, 0s) == Readiness::kWait);
 	CHECK(Ready(false, false, MODEL_WAIT) == Readiness::kNoModel);
-	CHECK(Ready(true, false, HOST_WAIT) == Readiness::kBusy);  // workshop mode first: the 3D may well be waiting on it
+	CHECK(Ready(true, false, HOST_WAIT) == Readiness::kBusy);  // the held piece first: the 3D may well be waiting on it
 }
 
 TEST("shared workshop: the finish runs the engine's eleven placement steps in the engine's order, the workbench set for every one, and restored even when a step throws")

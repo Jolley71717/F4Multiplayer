@@ -40,6 +40,10 @@ namespace WorkshopSync
 	//
 	// A friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own pieces.
 
+	// Welcomed: the host's own game's player id (0: none, a dedicated server: no game hands over), whose pieces a friend may wire
+	// and whose game takes the requests.
+	void OnWelcome(std::uint32_t a_hostId);
+
 	// The host's game: a friend asks for a build or a wire (kWorkshopRequest). Checked, made and finished over the next frames
 	// (Frame), and answered.
 	void OnRequest(const Protocol::WorkshopRequest& a_request);

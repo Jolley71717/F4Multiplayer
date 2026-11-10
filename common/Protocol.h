@@ -624,6 +624,9 @@ namespace Protocol
 		bool          friendlyFire = false;  // players can hurt each other
 		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 		SessionRules  rules;
+		// The host's own game's player id (protocol 64, after the session id on the wire): whose pieces the shared workshop
+		// wires, and whose game takes its requests. 0: none in the session (a dedicated server), so no game hands over.
+		std::uint32_t hostId = 0;
 	};
 
 	struct Reject
@@ -1438,8 +1441,9 @@ namespace Protocol
 			kOverBudget,       // the server: the sender's event budget was spent
 			kOutOfReach,       // the host's game: the spot is too far from the workbench
 			kFailed,           // the host's game: the engine made no piece
+			kNoAnswer,         // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
 		};
-		static constexpr Why LAST_WHY = Why::kFailed;
+		static constexpr Why LAST_WHY = Why::kNoAnswer;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
@@ -1476,6 +1480,8 @@ namespace Protocol
 			return "too far from the workbench";
 		case WorkshopAnswer::Why::kFailed:
 			return "the engine made no piece";
+		case WorkshopAnswer::Why::kNoAnswer:
+			return "no answer in time";
 		}
 		return "unknown";
 	}
@@ -2673,6 +2679,7 @@ namespace Protocol
 		Writer w{ MessageType::kWelcome };
 		w.U32(a_msg.playerId);
 		w.U64(a_msg.sessionId);
+		w.U32(a_msg.hostId);  // protocol 64
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
@@ -2699,6 +2706,7 @@ namespace Protocol
 		Welcome msg;
 		msg.playerId = r.U32();
 		msg.sessionId = r.U64();
+		msg.hostId = r.U32();  // protocol 64
 		msg.friendlyFire = r.U8() != 0;
 		msg.sharedStory = r.U8() != 0;
 		// The rules (protocol 49; a welcome only answers a hello of the same version). Trailing bytes after them are

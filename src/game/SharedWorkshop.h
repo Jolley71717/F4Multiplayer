@@ -214,6 +214,9 @@ namespace SharedWorkshop
 		case Why::kOff:
 			verdict.notice = "workshop.shared.no_host";
 			break;
+		case Why::kNoAnswer:
+			verdict.notice = "workshop.shared.no_answer";
+			break;
 		default:
 			verdict.notice = "workshop.shared.refused";
 			break;
@@ -281,22 +284,24 @@ namespace SharedWorkshop
 		return std::nullopt;
 	}
 
-	// A piece made for a request is finished once its 3D is there and the host is out of workshop mode (the engine's placement
-	// steps read workshop mode's statics); one that waits too long is refused.
-	inline constexpr auto HOST_WAIT = 10s;   // in workshop mode longer than this: kHostBusy
+	// A piece made for a request is finished once its 3D is there and the host isn't holding a piece of its own in workshop mode
+	// (a grabbed piece sets the engine's "moving an existing item" byte, which MakeReferenceStatic reads: ours would be put
+	// back as a moved piece, its scripts never started); building together is the point, so workshop mode itself is no
+	// reason to wait. One that waits too long is refused.
+	inline constexpr auto HOST_WAIT = 10s;   // the host holding a piece longer than this: kHostBusy
 	inline constexpr auto MODEL_WAIT = 10s;  // the piece's 3D not there in this long: kFailed
 
 	enum class Readiness : std::uint8_t
 	{
 		kReady,
 		kWait,
-		kBusy,     // refused: the host stayed in workshop mode
+		kBusy,     // refused: the host kept holding a piece
 		kNoModel,  // refused: the piece never got its 3D
 	};
 
-	[[nodiscard]] constexpr Readiness Ready(bool a_inWorkshopMode, bool a_hasModel, Clock::duration a_waited)
+	[[nodiscard]] constexpr Readiness Ready(bool a_hostHoldsPiece, bool a_hasModel, Clock::duration a_waited)
 	{
-		if (a_inWorkshopMode) {
+		if (a_hostHoldsPiece) {
 			return a_waited >= HOST_WAIT ? Readiness::kBusy : Readiness::kWait;
 		}
 		if (!a_hasModel) {

@@ -1662,7 +1662,15 @@ void Server::Run()
 		closeOwnViews(a_player);
 		a_player.worldAsked = 1;
 		a_player.storageSettled = !options.rules.sharedStorage;
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
+		// The host's own game's id (the game this server runs in, welcomed first; none on a dedicated server): whose game the
+		// shared workshop asks, and whose pieces it wires.
+		std::uint32_t hostId = local ? a_player.id : 0;
+		for (const auto& [key, other] : players) {
+			if (hostId == 0 && other.welcomed && other.local) {
+				hostId = other.id;
+			}
+		}
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped(), hostId }), true);
 		// The level and legendary chance the session's NPCs are rolled at, before any of them (none with the rule "own").
 		{
 			const auto rules = options.rules.Clamped();

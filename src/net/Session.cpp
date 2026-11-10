@@ -495,6 +495,7 @@ namespace Session
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
+					WorkshopSync::OnWelcome(msg->hostId);  // whose game the shared workshop asks (none on a dedicated server)
 					RollHook::OnWelcome(msg->sessionId, msg->rules.npcLevel);  // its level follows (kSessionWorld)
 					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr, msg->sessionId);
 					refusals.Clear();

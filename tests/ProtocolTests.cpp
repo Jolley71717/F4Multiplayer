@@ -2178,6 +2178,14 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
+	// The host's own game's id after the session id (protocol 64): 0 on a dedicated server.
+	for (const std::uint32_t hostId : { 0u, 1u, 7u }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{}, hostId }));
+		REQUIRE(out);
+		CHECK(out->hostId == hostId);
+		CHECK(out->playerId == 3);
+		CHECK(out->sessionId == 4);
+	}
 	// The byte after legendary's, before the shared workshop's (protocol 64), the welcome's last.
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
 	CHECK(bytes[bytes.size() - 2] == static_cast<std::uint8_t>(QuestRule::kSafe));
