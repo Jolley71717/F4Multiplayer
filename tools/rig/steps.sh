@@ -1808,7 +1808,7 @@ _c_log_has() { grep -qE "$2" "$(win_read companions "$1")"; }   # _c_log_has <wh
 _c_held() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8}" | cut -d= -f2; }   # the ref the game's Dogmeat alias holds ("" when none)
 _c_owner() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8} '[^']*' owner=[0-9]+" | grep -oE "owner=[0-9]+" | cut -d= -f2; }
 _c_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetDogmeatCompanion\" $COMPANION_DOGMEAT" >/dev/null; }
-_c_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissDogmeatCompanion\" $COMPANION_DOGMEAT 0 0" >/dev/null; }
+_c_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissDogmeatCompanion\" 0 1" >/dev/null; }   # (ShowLocationAssignmentListIfAvailable, SuppressDismissMessage): the quiet path, no actor argument
 _c_free_both() {  # both games with Dogmeat out of their aliases (set-up: dismissed by console where he is held)
 	local w; for w in host vm; do
 		if [ -n "$(_c_held "$w")" ]; then _c_dismiss "$w"; sleep 4; fi
@@ -1886,12 +1886,18 @@ step_companions() {
 	else fail "companions: the host's recruit while held is refused" "$(_c_tail host)"; fi
 	wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: our aliases let go of $COMPANION_DOGMEAT" >/dev/null
 	expect_eq "companions: the host's copy is dismissed while Dogmeat is held" "$(_c_held host)" ""
+	# The VM's game comes back from its save, which does not hold Dogmeat (recruited by console, never saved): the server
+	# hands him back at the welcome (held for this identity), the VM's first look finds its aliases without him and lets
+	# him go, and he is free for everyone. (A save that holds him keeps him the VM's: the hand test in the PR.)
 	_vm_restart_rejoin companions
 	if ! wait_ingame vm 180; then rig_broken game "companions: the VM's game is back in the session" "not in game after the restart"; return; fi
-	if wait_for 90 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is player [0-9]+'s\$"; then pass "companions: the rejoined VM has Dogmeat again (under its new id)" "$(grep -oE "Companions: $COMPANION_DOGMEAT.*is player [0-9]+'s$" "$A_OUT/windelta-companions-host.txt" | tail -1)"
-	else fail "companions: the rejoined VM has Dogmeat again (under its new id)" "$(_c_tail host)"; fi
+	if wait_for 90 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is player [0-9]+'s\$"; then pass "companions: the rejoin hands Dogmeat back to the VM (under its id)" "$(grep -oE "Companions: $COMPANION_DOGMEAT.*is player [0-9]+'s$" "$A_OUT/windelta-companions-host.txt" | tail -1)"
+	else fail "companions: the rejoin hands Dogmeat back to the VM (under its id)" "$(_c_tail host)"; fi
+	if wait_for 60 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is free"; then pass "companions: the VM's save without Dogmeat lets him go, and he is free again" "VM alias '$(_c_held vm)'"
+	else fail "companions: the VM's save without Dogmeat lets him go, and he is free again" "VM alias '$(_c_held vm)'; $(_c_tail host)"; fi
 	vid=$(_c_player_id vm)
 	if [ "$COMPANION_WAIT_HOLD" = 1 ]; then
+		_c_recruit vm; sleep 4   # the VM's again, for the hold to run on
 		# The hold runs out: the VM's game is killed again, and 5 min later Dogmeat is free; the host recruits him.
 		win_mark companions host
 		vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1
@@ -1902,10 +1908,9 @@ step_companions() {
 		_c_dismiss host; sleep 4
 		_vm_restart_rejoin companions-2
 		wait_ingame vm 180 >/dev/null
-	else
-		# Put things back: the VM lets him go.
-		_c_dismiss vm; sleep 4
 	fi
 	crash_verdict "companions"
 	expect_eq "companions: Dogmeat is free in both games at the end" "$(_c_held host)$(_c_held vm)" ""
+	# ... and the server's book is empty: no game knows an owner (known=0 in both games' companions line).
+	expect_eq "companions: the server's book is empty at the end" "$(dc host companions | grep -oE 'known=[0-9]+')/$(dc vm companions | grep -oE 'known=[0-9]+')" "known=0/known=0"
 }

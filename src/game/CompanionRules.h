@@ -97,7 +97,21 @@ namespace CompanionRules
 					++dismissed;  // the dismissal took (or the player let them go themselves): either way our aliases are free of it
 				}
 				reports.push_back({ it->first, false });
+				owners.erase(it->first);  // said let go: the server's word that it is ours is spent (its "free" follows)
 				it = recruited.erase(it);
+			}
+			// One the server says is ours that the aliases don't hold (a save loaded without it; one let go while we were
+			// out of the session, which the rejoin handed back): let go, so the server frees it. Said once; the server's
+			// word (free) follows, and a repeat of its word says it again.
+			for (auto it = owners.begin(); it != owners.end();) {
+				const bool held = std::ranges::any_of(a_held, [&](const Held& a_h) { return a_h.id == it->first; });
+				if (it->second.playerId == localId && !it->second.held && !held && !recruited.contains(it->first)) {
+					reports.push_back({ it->first, false });
+					++letGo;
+					it = owners.erase(it);
+				} else {
+					++it;
+				}
 			}
 			return reports;
 		}
@@ -105,6 +119,7 @@ namespace CompanionRules
 		// The server's word (kCompanionOwner): what it means for us.
 		[[nodiscard]] Word OnOwner(const Protocol::CompanionOwner& a_word, std::uint32_t a_localId, Clock::time_point a_now)
 		{
+			localId = a_localId;
 			if (a_word.state == State::kFree) {
 				owners.erase(a_word.refId);
 			} else if (a_word.state != State::kFull) {
@@ -122,6 +137,12 @@ namespace CompanionRules
 				}
 				return { Verdict::kFull };
 			case State::kFree:
+				// Its owner let it go while our dismissal of a refused copy waited: ours to recruit after all, so the aliases'
+				// hold on it is reported again instead of dismissed.
+				if (entry && entry->refused && !entry->gaveUp) {
+					*entry = { entry->slot };
+					++reclaimed;
+				}
 				return { Verdict::kFree };
 			case State::kOwner:
 			case State::kHeld:
@@ -214,7 +235,8 @@ namespace CompanionRules
 
 		[[nodiscard]] std::string Describe() const
 		{
-			return std::format("companions: held={} known={} ours={} refused={} dismissals={} dismissed={} gaveUp={}", recruited.size(), owners.size(), ours, refusals, dismissals, dismissed, gaveUp);
+			return std::format("companions: held={} known={} ours={} refused={} dismissals={} dismissed={} gaveUp={} letGo={} reclaimed={}", recruited.size(), owners.size(), ours, refusals, dismissals, dismissed, gaveUp, letGo,
+				reclaimed);
 		}
 
 	private:
@@ -239,10 +261,13 @@ namespace CompanionRules
 
 		std::unordered_map<std::uint32_t, Entry> recruited;  // what our aliases hold, as reported
 		std::unordered_map<std::uint32_t, Owner> owners;     // whose the server says each NPC is
+		std::uint32_t                            localId = 0;  // our player id, as the last word was judged by
 		std::uint32_t                            ours = 0;
 		std::uint32_t                            refusals = 0;
 		std::uint32_t                            dismissals = 0;  // dismissal calls made
 		std::uint32_t                            dismissed = 0;   // ... after which the aliases let the NPC go
 		std::uint32_t                            gaveUp = 0;
+		std::uint32_t                            letGo = 0;      // ones the server said were ours that the aliases didn't hold: reported let go
+		std::uint32_t                            reclaimed = 0;  // refused copies their owner let go of before our dismissal: reported again
 	};
 }

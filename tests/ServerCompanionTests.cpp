@@ -321,6 +321,36 @@ TEST("server companions: a bad report is dropped, and a report before the welcom
 	f.fake->Deliver(1, Recruit(DOGMEAT));
 	const auto word = LastWord(f, 1, DOGMEAT);
 	REQUIRE(word);
-	CHECK(word->playerId == 1 || word->state == State::kOwner);
+	CHECK(word->playerId == 1 && word->state == State::kOwner);
 	CHECK(f.LogLines("refused").empty());
+}
+
+TEST("server companions: a rejoin hands a held companion back, and the owner's game letting it go (its save doesn't hold it) frees it for everyone")
+{
+	// The game's side of it: a word that an NPC is ours that the aliases don't hold is reported let go (CompanionRules);
+	// the server frees it, and the next to recruit gets it.
+	Fixture    f;
+	const auto host = JoinAs(f, 1, "Host", 0x11);
+	const auto bob = JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, Recruit(DOGMEAT));
+	Clear(f, { 1, 2 });
+	f.fake->Disconnect(2);
+	CHECK(f.LoggedSoon(std::format("server: player {} left", bob)));
+	Clear(f, { 1 });
+
+	const auto bobAgain = JoinAs(f, 3, "Bob", 0x22);
+	CHECK(LastWord(f, 3, DOGMEAT)->playerId == bobAgain);
+	CHECK(LastWord(f, 1, DOGMEAT)->playerId == bobAgain);
+	f.fake->Deliver(3, LetGo(DOGMEAT));
+	for (const PeerId peer : { 1, 3 }) {
+		const auto word = LastWord(f, peer, DOGMEAT);
+		REQUIRE(word);
+		CHECK(word->state == State::kFree);
+	}
+	CHECK(f.LoggedSoon(std::format("server: player {} let {:08X} go", bobAgain, DOGMEAT)));
+	f.fake->Deliver(1, Recruit(DOGMEAT));
+	const auto word = LastWord(f, 1, DOGMEAT);
+	REQUIRE(word);
+	CHECK(word->playerId == host && word->state == State::kOwner);
 }

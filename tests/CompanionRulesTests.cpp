@@ -5,6 +5,8 @@
 
 #include "game/CompanionRules.h"
 
+#include <algorithm>
+
 using namespace std::chrono_literals;
 using CompanionRules::Book;
 using CompanionRules::Held;
@@ -153,6 +155,67 @@ TEST("companion rules: full is nothing to do, and a load reports the aliases aga
 	CHECK(book.DueDismissal(T0 + 1h + 4s));
 	book.Reset();
 	CHECK(book.Recruited() == 0 && book.Known() == 0);
+}
+
+TEST("companion rules: one the server says is ours that the aliases don't hold is reported let go: a save loaded without it, or a rejoin's hand-back")
+{
+	// A save loaded without the companion: the server still has it as ours; the next look says we let it go, once.
+	Book book;
+	(void)book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0);
+	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0).verdict == Verdict::kOurs);
+	book.Reload();
+	auto reports = book.Look({}, T0 + 1s);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == DOGMEAT && !reports[0].recruited);
+	CHECK(book.Look({}, T0 + 2s).empty());  // said once
+	CHECK(book.Describe().find("letGo=1") != std::string::npos);
+	// The server's word follows: free. And a repeat of its word that it is ours says it again.
+	CHECK(book.OnOwner({ DOGMEAT, 0, State::kFree }, US, T0 + 3s).verdict == Verdict::kFree);
+	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0 + 4s).verdict == Verdict::kOurs);
+	reports = book.Look({}, T0 + 5s);
+	REQUIRE(reports.size() == 1);
+	CHECK(!reports[0].recruited);
+
+	// A rejoin's welcome lists the companion as ours (held through the drop); the save loaded holds it: reported recruited,
+	// nothing let go. One it doesn't hold: let go.
+	Book rejoined;
+	CHECK(rejoined.OnOwner(Owner(DOGMEAT, US), US, T0).verdict == Verdict::kOurs);
+	CHECK(rejoined.OnOwner(Owner(PIPER, US), US, T0).verdict == Verdict::kOurs);
+	reports = rejoined.Look({ { DOGMEAT, Slot::kDogmeat } }, T0 + 1s);
+	REQUIRE(reports.size() == 2);
+	const auto dog = std::ranges::find_if(reports, [](const auto& a_r) { return a_r.refId == DOGMEAT; });
+	const auto piper = std::ranges::find_if(reports, [](const auto& a_r) { return a_r.refId == PIPER; });
+	REQUIRE(dog != reports.end() && piper != reports.end());
+	CHECK(dog->recruited);
+	CHECK(!piper->recruited);
+	// Another's, or one held for another, is never ours to let go.
+	Book other;
+	CHECK(other.OnOwner(Owner(DOGMEAT, THEM), US, T0).verdict == Verdict::kTheirs);
+	CHECK(other.OnOwner({ PIPER, THEM, State::kHeld }, US, T0).verdict == Verdict::kHeld);
+	CHECK(other.Look({}, T0 + 1s).empty());
+}
+
+TEST("companion rules: a refused copy whose owner lets the NPC go before our dismissal is reported again, not dismissed")
+{
+	Book book;
+	(void)book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0);
+	REQUIRE(book.OnOwner(Owner(DOGMEAT, THEM), US, T0).verdict == Verdict::kRefused);
+	CHECK(book.OnOwner({ DOGMEAT, 0, State::kFree }, US, T0 + 500ms).verdict == Verdict::kFree);
+	CHECK(!book.DueDismissal(T0 + 1h));
+	const auto reports = book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0 + 1s);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == DOGMEAT && reports[0].recruited);
+	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0 + 2s).verdict == Verdict::kOurs);
+	CHECK(book.IsOurs(DOGMEAT));
+	CHECK(book.Describe().find("reclaimed=1") != std::string::npos);
+	// Free after a dismissal that took (the aliases are empty) is nothing to reclaim.
+	Book done;
+	(void)done.Look({ { PIPER, Slot::kCompanion } }, T0);
+	REQUIRE(done.OnOwner(Owner(PIPER, THEM), US, T0).verdict == Verdict::kRefused);
+	done.Dismissing(PIPER, T0 + 2s);
+	(void)done.Look({}, T0 + 3s);
+	CHECK(done.OnOwner({ PIPER, 0, State::kFree }, US, T0 + 4s).verdict == Verdict::kFree);
+	CHECK(done.Look({}, T0 + 5s).empty());
 }
 
 TEST("companion rules: an owner that was ours and is refused later (the server's book changed under a load) is dismissed")

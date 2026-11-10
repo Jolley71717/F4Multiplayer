@@ -747,12 +747,18 @@ book of whose companion each NPC is (CompanionBook): each game reads the two ali
 they hold (kReportCompanion, recruited) or let go of (not recruited); the first to report recruiting an NPC owns it, and
 the answer (kCompanionOwner) names the owner to the reporter, every change to everyone, and the whole list to a joiner
 after the owner table. A game told its recruit is another's dismisses its copy through the Followers script's own quiet
-dismissal (FollowersScript.DismissCompanion or DismissDogmeatCompanion with no message and no settlement menu, so they go
-to their own home), a second after the word and once the player is out of the NPC's dialogue, again every 10 s while
-the aliases still hold it, three times, then leaves it with a warning; the HUD says "{npc} is {player}'s companion". The
-owner's dismissal in their own dialogue (the alias empties) frees the companion for everyone; an owner who leaves or
-drops has it held for CompanionBook::HOLD (5 min) under the hello identity, so a rejoin finds it theirs again, and it is
-free after. Nobody overrides an owner, the host included. The AI claims follow the book: the owner's companion claim
+dismissal (FollowersScript.DismissCompanion(actor, ShowLocationAssignmentListIfAvailable=false, SuppressDismissMessage=
+true), or DismissDogmeatCompanion(false, true), which takes no actor: with the list off and the message suppressed the
+script runs only its ClearCompanion / ClearDogmeatCompanion, clearing the alias and the teammate flag, no scene), a second
+after the word and once the player is out of the NPC's dialogue, not across a loading screen nor while the copy is dead or
+down, again every 10 s while the aliases still hold it, three times, then leaves it with a warning; the HUD says "{npc}
+is {player}'s companion". No script object is made for the actor (that has crashed the game on a mirrored NPC). The
+owner's dismissal in their own dialogue (the alias empties) frees the companion for everyone, and so does a save of theirs
+loaded without it: an NPC the server says is ours that the aliases don't hold at the next look is reported let go. An
+owner who leaves or drops has it held for CompanionBook::HOLD (5 min) under the hello identity, so a rejoin finds it
+theirs again (from a save that doesn't hold it, the same let-go frees it), and it is free after. A refused copy whose
+owner lets the NPC go before the dismissal ran reports its recruit again instead. Nobody overrides an owner, the host
+included. The AI claims follow the book: the owner's companion claim
 takes the NPC over from whoever runs it, and another game's companion claim for an NPC with an owner is a plain offer
 (its save from before the dismissal, or its copy's scripts, say "it follows me"; it runs the AI only while nobody else
 does). Nothing of the session is written to a save: a dismissed companion is dismissed by the game's own script, and a

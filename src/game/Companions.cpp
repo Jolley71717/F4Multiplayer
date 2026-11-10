@@ -8,6 +8,7 @@
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/RemotePlayers.h"
+#include "game/SessionDeaths.h"
 #include "game/Story.h"
 
 #include <chrono>
@@ -135,8 +136,18 @@ namespace Companions
 			return Dialogue::Holds(a_actor) || NpcSync::TalkingTo() == a_actor->GetFormID();
 		}
 
-		// FollowersScript.DismissCompanion(akActor, false, false), or Dogmeat's: queued to the script VM, which runs it a
-		// frame or more later. False when it couldn't be queued (no script object).
+		// The script's quiet dismissal, queued to the script VM (it runs a frame or more later), as the game's own
+		// FollowersScript has it (read off the game's scripts, FollowersScript.pex):
+		//   DismissCompanion(Actor CompanionToDismiss, Bool ShowLocationAssignmentListIfAvailable, Bool SuppressDismissMessage)
+		//   DismissDogmeatCompanion(Bool ShowLocationAssignmentListIfAvailable, Bool SuppressDismissMessage): whoever the
+		//   DogmeatCompanion alias holds.
+		// With no list and the message suppressed the script skips the settlement menu, the home and the message and runs
+		// only its ClearCompanion / ClearDogmeatCompanion: the alias is cleared, the teammate flag turned off, the
+		// CompanionChange event sent, and no scene started (the dismissal scene is reached from dialogue alone).
+		// DismissCompanion does nothing unless the Companion alias holds the actor passed, so a stale call is safe. False
+		// when it couldn't be queued: no script object (one is never made here: creating one in the VM has crashed the
+		// game on a mirrored NPC, and a refused game's copy is a mirror of the owner's; a companion the script recruited
+		// has its CompanionActorScript bound, which the lookup finds).
 		bool Dismiss(RE::TESQuest* a_quest, RE::Actor* a_actor, Slot a_slot)
 		{
 			const auto self = Papyrus::BoundObject(a_quest, SCRIPT, false);
@@ -144,22 +155,32 @@ namespace Companions
 				REX::WARN("Companions: the Followers quest has no {} object bound; can't dismiss {:08X}", SCRIPT, a_actor->GetFormID());
 				return false;
 			}
-			// A plugin's NPC the script recruited has an Actor object already (the script passed it around); one without
-			// gets one, as a stand-in does for its seat (Puppets).
-			auto actor = Papyrus::BoundObject(a_actor, "Actor", false);
-			if (!actor) {
-				actor = Papyrus::BoundObject(a_actor, "Actor", true);
+			if (a_slot == Slot::kDogmeat) {
+				return Papyrus::CallOn(self, DISMISS_DOGMEAT, [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+					a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+					a_out[0] = false;  // ShowLocationAssignmentListIfAvailable
+					a_out[1] = true;   // SuppressDismissMessage
+				});
 			}
+			const auto actor = Papyrus::BoundObject(a_actor, "Actor", false);
 			if (!actor) {
+				REX::WARN("Companions: {:08X} has no script object bound; can't dismiss it this try", a_actor->GetFormID());
 				return false;
 			}
-			const auto function = a_slot == Slot::kDogmeat ? DISMISS_DOGMEAT : DISMISS_COMPANION;
-			return Papyrus::CallOn(self, function, [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+			return Papyrus::CallOn(self, DISMISS_COMPANION, [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
 				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 3 };
 				a_out[0] = actor;
-				a_out[1] = false;  // abShowMessage
-				a_out[2] = false;  // abShowSettlementMenu: they go to their own home
+				a_out[1] = false;  // ShowLocationAssignmentListIfAvailable
+				a_out[2] = true;   // SuppressDismissMessage
 			});
+		}
+
+		// Whether the copy is alive and on its feet: a dead or downed one's alias is left alone until it is up (or the
+		// aliases let it go on their own).
+		bool Up(RE::Actor* a_actor)
+		{
+			const auto lifeState = static_cast<std::int32_t>(static_cast<RE::ActorState&>(*a_actor).lifeState);
+			return !a_actor->IsDead(false) && lifeState != SessionDeaths::LIFE_DYING && lifeState != SessionDeaths::LIFE_DEAD && !SessionDeaths::GetsUp(lifeState, false);
 		}
 
 		constexpr std::string_view SlotName(Slot a_slot) { return a_slot == Slot::kDogmeat ? DOGMEAT_ALIAS : COMPANION_ALIAS; }
@@ -168,7 +189,9 @@ namespace Companions
 	void Frame()
 	{
 		const auto now = Clock::now();
-		if (now - lastLook < LOOK_INTERVAL || Story::InOpening() || !FindAliases()) {
+		// Not across a loading screen: the aliases read mid-load could come back empty (a let-go the owner never made),
+		// and a call queued then runs against the state before the load.
+		if (now - lastLook < LOOK_INTERVAL || Story::InOpening() || Hud::LoadingScreenUp() || !FindAliases()) {
 			return;
 		}
 		lastLook = now;
@@ -185,8 +208,8 @@ namespace Companions
 		}
 		if (const auto due = book.DueDismissal(now)) {
 			const auto actor = LoadedActor(due->id);
-			if (GameStop::Now() || (actor && Busy(actor))) {
-				return;  // after the pause, or the conversation
+			if (GameStop::Now() || (actor && (Busy(actor) || !Up(actor)))) {
+				return;  // after the pause, the conversation, or once the copy is up again
 			}
 			// An NPC the aliases hold but the game can't find counts as a try: the aliases say otherwise next look, or it is given up on.
 			if (actor && Dismiss(quest, actor, due->slot)) {
