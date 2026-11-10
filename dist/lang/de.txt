@@ -336,3 +336,7 @@ mods.extra = Nur in deinem Spiel (deaktiviere sie):
 mods.order = An anderer Stelle in deiner Ladereihenfolge (das musst du nicht ändern):
 mods.light_here = {name} (bei dir Light-Plugin, beim Host volles Plugin)
 mods.full_here = {name} (bei dir volles Plugin, beim Host Light-Plugin)
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} ist der Begleiter von {player}
+companion.someone = einem anderen Spieler

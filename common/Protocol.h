@@ -72,13 +72,17 @@ namespace Protocol
 	// average level earns that percent more kill XP per level behind, and one above it gets that much less of friends'
 	// kill XP (common/CatchUpXp.h); and iGroupDifficulty (SessionRules::groupDifficulty, the byte after): enemies that
 	// much tougher per player beyond the first (common/GroupDifficulty.h). No message changes, and the server applies
-	// neither.
-	// 65: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
+	// neither. 63 is refused at the hello.
+	// 65: one owner per companion (common/CompanionBook.h, src/game/Companions.cpp): a game reports an NPC its Followers
+	// aliases hold, or let go of (kReportCompanion: CompanionReport), and the server names the companion's owner to the
+	// reporter and to everyone (kCompanionOwner: CompanionOwner), first to recruit keeps them; a joiner gets the list after
+	// the owner table. No welcome bytes. 64 is refused at the hello.
+	// 66: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
 	// the byte after 64's groupDifficulty), then the host's own game's id (Welcome::hostId, the welcome's last four bytes);
 	// a friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own
 	// pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
-	// kWorkshopAnswer: WorkshopAnswer). 64 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 65;
+	// kWorkshopAnswer: WorkshopAnswer). 65 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 66;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -223,8 +227,9 @@ namespace Protocol
 		kReportWorkshopResources = 77,  // what each of the sender's own workshop pieces counts for in their settlement now: food, water, defense, beds, power (ResourceStates)
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
-		kReportWorkshopRequest = 80,  // the sender built or wired something at a settlement the host owns: the host's game is asked to make it its own (WorkshopRequest)
-		kReportWorkshopAnswer = 81,   // the host's game answers one of those: made, or refused and why (WorkshopAnswer)
+		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
+		kReportWorkshopRequest = 81,  // the sender built or wired something at a settlement the host owns: the host's game is asked to make it its own (WorkshopRequest)
+		kReportWorkshopAnswer = 82,   // the host's game answers one of those: made, or refused and why (WorkshopAnswer)
 
 		// server -> client
 		kWelcome = 101,
@@ -295,8 +300,9 @@ namespace Protocol
 		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
-		kWorkshopRequest = 184,   // to the host's game alone: a friend asks for a build or a wire at one of the host's settlements (WorkshopRequest, playerId the friend)
-		kWorkshopAnswer = 185,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
+		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
+		kWorkshopRequest = 185,   // to the host's game alone: a friend asks for a build or a wire at one of the host's settlements (WorkshopRequest, playerId the friend)
+		kWorkshopAnswer = 186,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -506,7 +512,7 @@ namespace Protocol
 		std::uint8_t groupDifficulty = 0;
 		// The shared workshop (src/game/SharedWorkshop.h): at a settlement the host owns, a friend's build or wire is made by the
 		// host's game as the host's own piece, and the friend sees a copy, as of any of the host's pieces (bSharedWorkshop; on
-		// by default; protocol 65, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
+		// by default; protocol 66, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
 		bool sharedWorkshop = true;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
@@ -643,7 +649,7 @@ namespace Protocol
 		bool          friendlyFire = false;  // players can hurt each other
 		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 		SessionRules  rules;
-		// The host's own game's player id (protocol 65, the welcome's last four bytes, after the rules): whose pieces the
+		// The host's own game's player id (protocol 66, the welcome's last four bytes, after the rules): whose pieces the
 		// shared workshop wires, and whose game takes its requests. 0: none in the session (a dedicated server), so no game
 		// hands over.
 		std::uint32_t hostId = 0;
@@ -2719,7 +2725,7 @@ namespace Protocol
 		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
 		w.U8(rules.catchUpXp);  // protocol 64
 		w.U8(rules.groupDifficulty);
-		w.U8(rules.sharedWorkshop ? 1 : 0);  // protocol 65
+		w.U8(rules.sharedWorkshop ? 1 : 0);  // protocol 66
 		w.U32(a_msg.hostId);
 		return w.Data();
 	}
@@ -2757,7 +2763,7 @@ namespace Protocol
 			const auto quests = r.U8();  // protocol 58
 			const auto catchUpXp = r.U8();  // protocol 64
 			const auto groupDifficulty = r.U8();
-			const auto sharedWorkshop = r.U8();  // protocol 65
+			const auto sharedWorkshop = r.U8();  // protocol 66
 			msg.hostId = r.U32();
 			if (!r.Ok()) {
 				return std::nullopt;
@@ -4930,6 +4936,82 @@ namespace Protocol
 	inline auto DecodeOwners(std::span<const std::uint8_t> a_data)
 	{
 		return DecodeList<ActorOwner>(a_data, [](Reader& r) { ActorOwner a; a.refId = r.U32(); a.playerId = r.U32(); return a; });
+	}
+
+	// Companions (protocol 65): one owner per companion, the first to recruit them. The sender's game reports an NPC its
+	// Followers quest's aliases (Companion, DogmeatCompanion) hold now, or no longer hold (kReportCompanion), and the server
+	// keeps the book (common/CompanionBook.h): the first to recruit an NPC is its owner until their game lets it go, or they
+	// leave (a crashed or disconnected owner's companion is held for them for a while, then free). The answer names the
+	// owner (kCompanionOwner); a game whose recruit was refused dismisses its copy (src/game/Companions.cpp).
+	struct CompanionReport
+	{
+		std::uint32_t refId = 0;
+		bool          recruited = false;  // the aliases hold it now; false: they let it go (a dismissal, a load without it)
+	};
+
+	enum class CompanionState : std::uint8_t
+	{
+		kFree = 0,   // nobody's (playerId 0)
+		kOwner = 1,  // playerId's companion, and they are here
+		kHeld = 2,   // playerId's, and they left: kept for them until the hold is up, then free
+		kFull = 3,   // to the reporter alone: refused, they have as many companions as the server keeps for one player
+	};
+
+	struct CompanionOwner
+	{
+		std::uint32_t  refId = 0;
+		std::uint32_t  playerId = 0;  // the owner (0 with kFree and kFull)
+		CompanionState state = CompanionState::kFree;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const CompanionReport& a_msg, MessageType a_type = MessageType::kReportCompanion)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.U8(a_msg.recruited ? 1 : 0);
+		return w.Data();
+	}
+
+	inline std::optional<CompanionReport> DecodeCompanionReport(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		CompanionReport msg;
+		msg.refId = r.U32();
+		const auto recruited = r.U8();
+		if (!r.Ok() || !r.AtEnd() || recruited > 1 || !IsActorRef(msg.refId)) {
+			return std::nullopt;
+		}
+		msg.recruited = recruited != 0;
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const CompanionOwner& a_msg, MessageType a_type = MessageType::kCompanionOwner)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.U32(a_msg.playerId);
+		w.U8(std::to_underlying(a_msg.state));
+		return w.Data();
+	}
+
+	inline std::optional<CompanionOwner> DecodeCompanionOwner(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		CompanionOwner msg;
+		msg.refId = r.U32();
+		msg.playerId = r.U32();
+		const auto state = r.U8();
+		if (!r.Ok() || !r.AtEnd() || state > std::to_underlying(CompanionState::kFull) || !IsActorRef(msg.refId)) {
+			return std::nullopt;
+		}
+		msg.state = static_cast<CompanionState>(state);
+		// Nobody's and a full reporter's name no owner; an owner's and a held one's name one.
+		if ((msg.state == CompanionState::kFree || msg.state == CompanionState::kFull) != (msg.playerId == 0)) {
+			return std::nullopt;
+		}
+		return msg;
 	}
 
 	// kActorStates (client -> server) or kActorStatesRelay (server -> client).

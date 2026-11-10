@@ -336,3 +336,7 @@ mods.extra = 只有你的游戏里有（请禁用）：
 mods.order = 在你的加载顺序里位置不同（不需要改）：
 mods.light_here = {name}（你这里是轻量插件，主机那里是完整插件）
 mods.full_here = {name}（你这里是完整插件，主机那里是轻量插件）
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} 是 {player} 的同伴
+companion.someone = 另一位玩家
