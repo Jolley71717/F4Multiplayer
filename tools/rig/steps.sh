@@ -2052,7 +2052,7 @@ step_sharedws_power() {
 	if _ws_enter host; then sleep 3; _ws_exit host; pass "sharedws: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "sharedws: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
 	# a settler without a bed, for the bed control (made by the host at its feet, added to Sanctuary as the bench step adds Codsworth)
 	local settler; settler=$(host "wsreport place $SWS_SETTLER $SANCT_BENCH quiet" | grep -o "[0-9A-F]\{8\}" | head -1)
-	if [ -n "$settler" ]; then _sws_placed host "$settler"; host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $settler $SANCT_BENCH" >/dev/null; sleep 3
+	if [ -n "$settler" ]; then SWS_SETTLER_REF=$settler; host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $settler $SANCT_BENCH" >/dev/null; sleep 3
 		pass "sharedws: set-up: a settler without a bed is Sanctuary's (the bed control)" "$settler: $(host "scriptvars $settler WorkshopNPCScript workshopID" | cut -c1-80)"
 	else fail "sharedws: set-up: a settler without a bed is Sanctuary's (the bed control)" "no settler made of base $SWS_SETTLER"; fi
 	_sws_one_way host vm || return
@@ -2089,7 +2089,11 @@ _sws_cleanup() {
 	sleep 3
 	local g; g=$(host "wsgrid $SANCT_BENCH")
 	if grep -q "gone named=0" <<<"$g"; then pass "sharedws: cleanup: the host's grids name no deleted reference" "$(grep -oE 'copies named=[0-9]+ gone named=[0-9]+' <<<"$g")"; else fail "sharedws: cleanup: the host's grids name no deleted reference" "$(cut -c1-200 <<<"$g")"; fi
-	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed.txt" >> "$A_OUT/cleanup.log" 2>&1
+	# the bed control's settler is linked to the bench (not a piece: wsscrap would take it off the budget): a plain remove
+	[ -n "$SWS_SETTLER_REF" ] && host "remove $SWS_SETTLER_REF" >/dev/null
+	# cleanup.sh applies the list on the host alone: the host-made ids only (a VM-made id can name something else there); the VM's own
+	# pieces went through its wsscrap above, and cleanup.sh's scan of the VM needs no list
+	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed-host.txt" >> "$A_OUT/cleanup.log" 2>&1
 }
 
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
