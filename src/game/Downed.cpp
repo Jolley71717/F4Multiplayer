@@ -256,12 +256,16 @@ namespace Downed
 		PushFn                     originalPush = nullptr;
 		std::atomic<std::uint32_t> pushSites{ 0 };   // calls hooked (Install)
 		std::atomic<std::uint32_t> pushesKept{ 0 };  // transitions pushed as where they go
+		std::atomic<std::int64_t>  lastPushMs{ 0 };      // the push's last call, steady-clock ms (0 = none yet); read by the log's camera facts only
+		std::atomic<std::uint32_t> lastPushThread{ 0 };  // the thread of that call
 
 		// The push, as the engine asks it: the player camera's transition state pushed on its return stack goes as where
 		// it goes (DownRules::Camera::Pushed), anything else as asked. The camera's own code runs on the main thread; nothing
 		// here may throw.
 		std::uint32_t PushHook(void* a_stack, const RE::BSTSmartPointer<RE::TESCameraState>* a_state)
 		{
+			lastPushMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
+			lastPushThread.store(REX::W32::GetCurrentThreadId(), std::memory_order_relaxed);
 			const auto camera = RE::PlayerCamera::GetSingleton();
 			const auto transition = camera ? camera->cameraStates[RE::CameraStates::kPCTransition].get() : nullptr;
 			if (transition && a_state && a_state->get() == transition && a_stack == static_cast<void*>(&camera->tempReturnStates)) {
@@ -300,10 +304,21 @@ namespace Downed
 				returns += std::format("{}{}", returns.empty() ? "" : ",", state);
 			}
 			std::string away = "?";
+			std::string where = "root ? player ?";
 			if (const auto root = camera->cameraRoot.get(); root && a_player) {
-				away = std::format("{:.0f}", root->world.translate.GetDistance(a_player->data.location));
+				const auto& at = root->world.translate;
+				const auto& me = a_player->data.location;
+				away = std::format("{:.0f}", at.GetDistance(me));
+				where = std::format("root {:.0f},{:.0f},{:.0f} player {:.0f},{:.0f},{:.0f}", at.x, at.y, at.z, me.x, me.y, me.z);
 			}
-			return std::format("camera {} to {} returns [{}] away {}", read->current, read->transitionTo, returns, away);
+			// The camera push's last call (any caller): how long ago and on which thread (a transition the engine starts off
+			// the main thread can leave the root far off for a frame).
+			std::string push = "push none";
+			if (const auto last = lastPushMs.load(std::memory_order_relaxed); last != 0) {
+				const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+				push = std::format("push {} ms ago thread {}", now - last, lastPushThread.load(std::memory_order_relaxed));
+			}
+			return std::format("camera {} to {} returns [{}] away {} ({}; {})", read->current, read->transitionTo, returns, away, where, push);
 		}
 
 		// The debug name of the input layer the engine's start of a down puts on the player (activate, jump and the view

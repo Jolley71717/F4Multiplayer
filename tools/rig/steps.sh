@@ -1541,6 +1541,8 @@ step_downed() {
 # camera's push keeps the view, Downed::Install). The log's other camera fixes are counted, never failed.
 _view() { local c; c=$(dc "$1" controls); echo "camera=$(grep -oE 'camera=[0-9-]+' <<<"$c" | cut -d= -f2) life=$(grep -oE 'life=[0-9]+' <<<"$c" | cut -d= -f2)"; }
 _away() { dc "$1" rules | grep -oE 'away [0-9?]+' | tail -1 | cut -d' ' -f2; }
+# The Downed lines of a log window whose camera root was far from the player (away over 1000): the down line's own read (the first frame; the known one-frame engine flash, PR 364 notes) and every later read. Prints "first later".
+_far_reads() { awk '/Downed: .*camera .* away [0-9]+/ { match($0, /away [0-9]+/); v = substr($0, RSTART + 5, RLENGTH - 5) + 0; if (v > 1000) { if ($0 ~ /Downed: down;/) a++; else b++ } } END { print a + 0, b + 0 }' "$1"; }
 step_downed_repeat() {
 	local down=${1:-vm} rounds=${2:-5} helper puppet g v a0 a1 f n out hits=0
 	helper=$(other_game "$down")
@@ -1551,6 +1553,7 @@ step_downed_repeat() {
 	walk "$helper" "repeat ($down): set-up: the helper walks to the stand-in" 0.8 100 "$puppet" || return
 	dc "$helper" "pad unplug" >/dev/null
 	win_mark rep "$down"
+	win_mark rep "$helper"
 	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($down): set-up: god mode off" "$g"; return; }
 	# the rounds run on the down player's own machine (tools/rig/downrepeat.ps1): over the tunnel a command is too slow for a get-up
 	if [ "$down" = vm ]; then
@@ -1579,6 +1582,14 @@ step_downed_repeat() {
 		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($down): its log has the help-ups" "$n" "$rounds"
 		n=$(grep -c "way back looped" "$f"); expect_zero "repeat ($down): the camera's way back never looped (the push keeps the view)" "$n"
 		pass "repeat ($down): other camera fixes in its log (counted only)" "pushes kept $(grep -c "its way back is the view" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
+		local who lf first later
+		for who in "$down" "$helper"; do
+			if [ "$who" = "$down" ]; then lf=$f; else lf=$(win_read rep "$who"); fi
+			[ -s "$lf" ] || continue
+			read -r first later <<<"$(_far_reads "$lf")"
+			if [ "$later" -gt 0 ]; then warn "repeat ($who's log): the camera far from the player (away over 1000) after the first down frame" "$later read(s)"; else pass "repeat ($who's log): no far camera read after the first down frame" "ok"; fi
+			if [ "$first" -gt 0 ]; then warn "repeat ($who's log): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s)"; fi
+		done
 	else fail "repeat ($down): its log window read" "no new lines"; fi
 	walk "$down" "repeat: set-up: back to the marker" 1 100 $MARKER_SPOT; walk "$helper" "repeat: set-up: the helper back to the marker" 1 100 $MARKER_SPOT
 	pads_off
