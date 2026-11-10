@@ -55,6 +55,7 @@ namespace FrameWatch
 		std::uint32_t     drawn = 0;  // the renderer's frame count
 		bool              quitting = false;
 		bool              hooked = false;
+		bool              loading = false;  // the plugin knows a loading screen is up (Hud::LoadingScreenUp)
 		Clock::time_point task{};        // when the F4SE task last ran
 		Clock::time_point dispatched{};  // when the window procedure last got a frame message
 		Clock::time_point worked{};      // when a frame's game work last ran
@@ -72,6 +73,11 @@ namespace FrameWatch
 		}
 		if (!a_sample.hooked) {
 			return Stop::kNoWindow;
+		}
+		// A loading screen is known as one before the task is looked at: the F4SE task does not run through
+		// a load either, and that is no fault of the task.
+		if (a_sample.loading) {
+			return Stop::kLoadingScreen;
 		}
 		if (!lately(a_sample.task)) {
 			return Stop::kNoTask;

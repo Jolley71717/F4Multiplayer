@@ -193,6 +193,39 @@ TEST("frame watch: a loading screen, a save or a load hold frames by design and 
 	}
 }
 
+TEST("frame watch: a loading screen is known as one even when the F4SE task has stopped, and gets the long limit")
+{
+	auto sample = Healthy(START, 100);
+	sample.task = START - 5s;
+	sample.worked = START - 5s;
+	sample.loading = true;
+	CHECK(FrameWatch::Diagnose(sample, 3s) == Stop::kLoadingScreen);
+	CHECK(FrameWatch::ByDesign(Stop::kLoadingScreen));
+	sample.loading = false;
+	CHECK(FrameWatch::Diagnose(sample, 3s) == Stop::kNoTask);
+
+	// Through the watch: the load is reported at the long limit, the same stop without one at the short limit.
+	for (const bool loading : { true, false }) {
+		Watch watch{ LIMITS };
+		CHECK(watch.Tick(Healthy(START, 0)).event == Event::kNone);
+		Watch::Result result;
+		int           reportedAt = 0;
+		for (int s = 1; s <= 130; ++s) {
+			auto stuck = Healthy(START + s * 1s, static_cast<std::uint32_t>(s * 60));
+			stuck.task = START;
+			stuck.worked = START;
+			stuck.loading = loading;
+			result = watch.Tick(stuck);
+			if (result.event == Event::kStalled && reportedAt == 0) {
+				reportedAt = s;
+			}
+		}
+		CHECK(result.stop == (loading ? Stop::kLoadingScreen : Stop::kNoTask));
+		// A load is known from the first tick; without it the task is called dead only once it is not "lately" (3 s).
+		CHECK(reportedAt == (loading ? 120 : 17));
+	}
+}
+
 TEST("frame watch: a game that neither draws nor runs the task is idle, not stopped, and the count waits")
 {
 	Watch watch{ LIMITS };

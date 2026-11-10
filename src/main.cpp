@@ -974,6 +974,7 @@ namespace
 				.drawn = state ? state->frameCount : 0u,
 				.quitting = false,
 				.hooked = gameWindow.load() != nullptr,
+				.loading = Hud::LoadingScreenUp(),  // under a lock (UiHold::Guard): safe from this thread
 				.task = taskAt.load(),
 				.dispatched = dispatchedAt.load(),
 				.worked = workedAt.load(),
