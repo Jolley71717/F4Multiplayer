@@ -43,6 +43,7 @@
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
 #include "game/CombatReactions.h"
+#include "game/ExitInventory.h"
 #include "game/VatsTargets.h"
 #include "game/HavokGuard.h"
 #include "game/InertShots.h"
@@ -1091,10 +1092,10 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 290 of 320 bytes used: eleven 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 304 of 320 bytes used: twelve 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// CombatReactions::Install's one, Storage::InstallGather's two share one, VatsTargets::Install's four share one,
-	// Downed::Install's ten share one), HavokGuard::Install's
+	// CombatReactions::Install's one, ExitInventory::Install's one, Storage::InstallGather's two share one,
+	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
@@ -1124,6 +1125,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
 	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
+	ExitInventory::Install();    // quitting from workshop mode crashed at the shutdown's end in an inventory list's destructor (ExitInventory.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	WeaponFire::SetShotTrails(Config::Get().friendShotTrails);  // a friend's plain bullet or beam flies inert (AttackKind::ShotReplay)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
