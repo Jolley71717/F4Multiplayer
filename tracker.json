@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T05:03:22+00:00",
+ "updated": "2026-11-10T05:08:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -488,6 +488,14 @@
    "stage": 7,
    "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 300
+  },
+  {
+   "id": "78ri",
+   "title": "Frame watch warns 'no game work for 15 s' on ordinary loading screens (false positive)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Cause found: the watchdog doesn't see the loading screen"
   },
   {
    "id": "7gi3",
@@ -1650,8 +1658,8 @@
    "title": "VM game's main thread stopped reading window messages for 69 s during the soak's combat step",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "The VM's graphics driver, not the mod"
   },
   {
    "id": "paue",
