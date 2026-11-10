@@ -249,9 +249,11 @@ TEST("shared workshop: the finish runs the engine's eleven placement steps in th
 
 namespace
 {
-	// The host's grid as StringWire drives it, after the engine (1.11.240): the connection merges the generator's grid with the
-	// light's and evaluates it (the light powered); UpdateMovingWirelessItem on a wired end no radiator reaches takes it out of
-	// the powered set and off its first neighbour (kEndWireless).
+	// The host's grid as StringWire drives it, outside workshop mode (1.11.240): the connection merges the generator's grid
+	// with the light's and evaluates it (the light powered). UpdateMovingWirelessItem on a wired end no radiator reaches
+	// (kEndWireless) takes it out of the powered set and fires its PowerOff; the wired edge stays. The engine makes that call
+	// too, after its own connection, but in workshop mode, where a wired light still ends up lit; nothing powers it again on
+	// this path, so the light stays dark (seen on the rig). The fake encodes that reading: it guards the order, not the engine.
 	struct FakeWireEngine
 	{
 		std::vector<WireStep> done;
@@ -287,10 +289,7 @@ namespace
 				lightPowered = connected;
 				break;
 			case WireStep::kEndWireless:
-				if (connected) {
-					connected = false;
-					lightPowered = false;
-				}
+				lightPowered = false;  // out of the powered set, PowerOff fired; the edge stays
 				break;
 			default:
 				break;
@@ -326,14 +325,16 @@ TEST("shared workshop: the host strings a friend's wire with the connection last
 		CHECK(!DecidesEndPower(step));
 	}
 
-	// The first version's order: both ends' wireless state updated after the connection. The light went dark.
+	// The first version's order, the engine's own in workshop mode: both ends' wireless state updated after the connection.
+	// Outside workshop mode nothing powers the light again: it went dark on the rig, with its edge still in the grid. Don't
+	// add kEndWireless back to WIRE_STEPS for parity with the engine.
 	constexpr std::array<WireStep, 10> FIRST{ WireStep::kLink, WireStep::kSpline, WireStep::kConnect, WireStep::kCount, WireStep::kRebuild, WireStep::kStatic,
 		WireStep::kEndWireless, WireStep::kEndWireless, WireStep::kResources, WireStep::kEvent };
 	CHECK(!KeepsEndPower(FIRST));
 	FakeWireEngine first;
 	first.Run(FIRST);
 	CHECK(!first.lightPowered);
-	CHECK(!first.connected);
+	CHECK(first.connected);  // the wired edge stays; only the light's power is lost
 
 	// Other orders that can't keep it: no connection, the connection before the spline or twice, the totals or the event
 	// before the connection.

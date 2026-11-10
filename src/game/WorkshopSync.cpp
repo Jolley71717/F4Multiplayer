@@ -3599,9 +3599,12 @@ namespace WorkshopSync
 
 		// A wire between two of our pieces, strung with SharedWorkshop::StringWire's steps: as wswire strings one (SplineUtils::
 		// ConnectSpline, Workshop::ExtraData::AddConnection, the bench link, the spline rebuilt), plus the wire static, the bench's
-		// totals and the placed event. Nothing after the connection decides an end's power again (SharedWorkshop.h, WireStep): an
-		// earlier version ran PowerUtils::UpdateMovingWirelessItem on both ends there, which took the light out of its grid's
-		// powered set and off its generator. Its shape is reported once drawn (the moved-wire check), as a moved piece's wires are.
+		// totals and the placed event. Nothing after the connection decides an end's power again (SharedWorkshop.h, WireStep).
+		// The engine's own wiring (Workshop::PlaceCurrentReference) does run PowerUtils::UpdateMovingWirelessItem on both ends
+		// after AddConnection, but inside workshop mode; this path runs outside it, where nothing re-evaluates the light
+		// afterwards. The first version made that call here, and on the rig it unpowered the light the friend wired (out of the
+		// grid's powered set, PowerOff fired, the wired edge kept): don't add it back for parity. Its shape is reported once
+		// drawn (the moved-wire check), as a moved piece's wires are.
 		struct WireEngine
 		{
 			RE::TESObjectREFR&       from;
@@ -3850,8 +3853,8 @@ namespace WorkshopSync
 				return;
 			}
 			PowerEngine engine;
-			const auto  strays = SharedWorkshop::Strays(engine.Grids(), madeHere);
-			for (const auto id : strays) {
+			const auto  named = SharedWorkshop::Strays(engine.Grids(), madeHere);
+			for (const auto id : named) {
 				++straysFound;
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
 				REX::WARN("WorkshopSync: {}: a grid of ours still names {:08X}, our piece the host's game took over (or our wire taken off): taken off again{}", a_when, id,
@@ -3905,6 +3908,12 @@ namespace WorkshopSync
 			}
 			making.clear();
 			unopenedTold.clear();
+			// The dev hold (wsmode hold) ends with the session: a run aborted while holding must not leave this game taking
+			// every friend's request in the next session and letting it time out as refused.
+			if (answersHeld) {
+				REX::INFO("WorkshopSync: leaving the session: the held answers (wsmode hold) are served again");
+				answersHeld = false;
+			}
 			hostGone = false;
 			hostId.store(0);
 			admitsCopies.store(false);

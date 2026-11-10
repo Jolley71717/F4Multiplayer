@@ -3068,14 +3068,21 @@ end, the bench links cleared, `Disable` and `SetDelete`) and sends a wire reques
 (the copies' keys). No save can fall between (saves run on the main thread, and `kPreSaveGame` runs the audits first). A wire with
 one end the friend's own piece and one a copy is taken off and refused (`KindOfWire`: nothing can string it in one game); one
 between the friend's own pieces is theirs as ever. The host's game strings its wire as `wswire` does (`SplineUtils::ConnectSpline`,
-`Workshop::ExtraData::AddConnection` 2194998, `QueueRebuildBendableSpline`; rig-proven to power) plus what the engine does for
-a wire on the same path that leaves its grid alone: `Workshop::SetIsWorkshopItem` for the bench link, the budget counted once the
+`Workshop::ExtraData::AddConnection` 2194998, `QueueRebuildBendableSpline`; rig-proven to power) plus the steps of the engine's
+own wiring that leave its grid alone: `Workshop::SetIsWorkshopItem` for the bench link, the budget counted once the
 spline is drawn (so a later scrap takes out what was put in), `MakeReferenceStatic` on the wire, the bench recounted and the placed
 event (`SharedWorkshop::StringWire`, `WIRE_STEPS`). `AddConnection` decides the ends' power (it merges the grids and evaluates
-them at once), and no step after it may decide it again: `PowerUtils::UpdateMovingWirelessItem` (2195088) on an end, which the
-first version ran on both ends after the connection, takes a wired light that no radiator reaches out of its grid's powered set,
-removes its connection to its first neighbour and fires its unpowered event (read in 1.11.240), so the light a friend wired stayed
-dark on the host and on the friend's copy (`KeepsEndPower` holds the order to that). The wire is reported again with its shape
+them at once), and no step after it may decide it again. The engine's own wiring has one more step: `Workshop::PlaceCurrentReference`
+(1.11.240), for a placed spline, runs `PowerUtils::UpdateMovingWirelessItem` (2195088) on both ends right after `AddConnection`,
+then the totals. It does that inside workshop mode, where a wired light still ends up lit. The host strings a friend's
+wire outside workshop mode: there, on a wired light no radiator reaches, the call takes it out of its grid's powered set and
+fires its PowerOff (the wired edge stays), and nothing turns the light back on. The first version copied the
+engine's order, and on the rig the light a friend wired stayed dark on the host and on the friend's copy while the host's grid
+kept both edges and said powered. So the call is left out, and adding it back "for parity with the engine" unpowers the light on
+this path (`KeepsEndPower` holds the order to that; its test's fake engine encodes this reading, so it guards the order, not the
+engine). A radiator end (a conduit or pylon) should lose nothing by it: `MakeReferenceStatic` already runs the same call on each
+piece as it is placed, which connects a radiator's receivers in range, and `AddConnection` carries those connections along when
+it merges the grids (the sharedws-power rig step's pylon check, `_sws_radiator`, is there to prove it; not yet run). The wire is reported again with its shape
 once drawn (the moved-wire check), and comes back to the friend as a copy drawn from its `WireShape`, unconnected, as wire copies
 are today.
 
@@ -3088,8 +3095,8 @@ next session); a request in flight is never answered. The host crashing: its sav
 when the session ends.
 
 **Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
-game takes friends' requests without making or answering them until served (the rig's save in the pending window);
-`workshop` shows what workshop mode holds (`held=`, `heldBase=`, `newItem=`); `controls workshop` lists workshop mode's
+game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
+pending window); `workshop` shows what workshop mode holds (`held=`, `heldBase=`, `newItem=`); `controls workshop` lists workshop mode's
 keyboard bindings as `event=vk` (the engine's keyboard mappings hold the virtual key; the events are the pad's names: Cancel
 stores, XButton scraps, YButton strings a wire, Accept grabs, repairs or assigns); `wsfinish <ref> <bench>` runs
 the finish steps on a console-placed piece of ours (the host's probe); `wsgrid`, `wsinfo` and `wspower` as before. The rig check

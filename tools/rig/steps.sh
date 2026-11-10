@@ -1777,6 +1777,7 @@ _sws_copy_of() {  # _sws_copy_of <who> <builder's ref>: that game's copy of the 
 _sws_built() { grep -qE "WorkshopSync: [0-9A-F]{8} \(base $2\) built for player [0-9]+ at workbench" "$(win_read sws "$1")"; }
 _sws_answered() { grep -qE "WorkshopSync: request [0-9]+ \((build|wire)\) at workbench [0-9A-F]{8}: applied" "$(win_read sws "$1")"; }
 _sws_lit() { local i; i=$(dc "$1" "wsinfo $2"); [ "$(field "$i" theirPower)" = on ] && [ "$(field "$i" lit)" = yes ]; }
+_sws_host_powered() { [ "$(field "$(host "wsinfo $1")" powered)" = yes ]; }
 _sws_grid_has() { local g i; g=$(dc "$1" "wsgrid $SANCT_BENCH"); for i in "${@:2}"; do grep -qE "[ne>/]$i" <<<"$g" || return 1; done; return 0; }   # a node (nID), an edge's ends (eA>B) or its connector (/wire)
 _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generator placed by the first, the light and the wire by the second (the VM's go through requests)
 	local gen=$1 lit=$2 out g l w gc lc r label
@@ -1826,15 +1827,63 @@ _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generato
 	w=$(host "wsinfo $lc" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
 	if _sws_grid_has host "$gc" "$lc" ${w:+"$w"}; then pass "$label: the host's grid holds the generator, the light and the wire" "$(host "wsgrid $SANCT_BENCH" | cut -c1-160)"
 	else fail "$label: the host's grid holds the generator, the light and the wire" "generator $gc light $lc wire '$w': $(host "wsgrid $SANCT_BENCH" | cut -c1-200)"; fi
-	_sws_host_powered() { [ "$(field "$(host "wsinfo $1")" powered)" = yes ]; }
 	if wait_for 20 _sws_host_powered "$lc"; then pass "$label: the host's light is powered (within 20 s of the wire)" "powered=yes"; else fail "$label: the host's light is powered (within 20 s of the wire)" "$(host "wsinfo $lc" | cut -c1-160)"; fi
 	local vl2; vl2=$(_sws_copy_of vm "$lc")
-	SWS_VG=$(_sws_copy_of vm "$gc"); SWS_VL=$vl2   # the VM's copies, for the real-hook checks after
+	SWS_VG=$(_sws_copy_of vm "$gc"); SWS_VL=$vl2; SWS_HG=$gc   # the VM's copies, for the real-hook checks after, and the host's generator (the radiator check)
 	if [ -n "$vl2" ] && wait_for 10 _sws_lit vm "$vl2"; then pass "$label: the VM's copy of the light shows the host's power and is lit" "$(vm "wsinfo $vl2" | grep -oE 'blocked=[a-z]+|builder=[0-9]+|theirPower=[a-z]+|lit=[a-z]+' | tr '\n' ' ')"
 	else fail "$label: the VM's copy of the light shows the host's power and is lit" "copy '$vl2': $(vm "wsinfo ${vl2:-0}" | cut -c1-200)"; fi
 	expect_eq "$label: the VM's copy of the light is out of workshop mode's reach (blocked)" "$(field "$(vm "wsinfo ${vl2:-0}")" blocked)" true
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference"
 	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in"
+	return 0
+}
+# A friend's wire to a radiator with an unwired light already in its range: the light powered on both games. The host's game
+# strings a friend's wire without PowerUtils::UpdateMovingWirelessItem on its ends (SharedWorkshop.h, WireStep), whose radiator
+# half connects a radiator's receivers in range; this holds that nothing is lost without it (MakeReferenceStatic connects them
+# as each piece is placed, and AddConnection carries them into the merged grid). If it fails, the fix is that call on radiator
+# ends alone, never on receivers. Set-up by console, said so: the host's pylon and light are made where wsreport place puts
+# them, moved by setpos (the pylon 300 units to the side of the step's generator, so it can't snap to it; the light 100 units
+# from the pylon, well inside its 500-unit PowerRadiation, read from Fallout4.esm), then reported and placed with the engine's
+# steps (wsfinish), the pylon first. The control: before the wire the host's light is unpowered (no other power reaches that
+# spot). Then the VM wires the generator's copy to the pylon's copy (a request the host strings). Asserted: the host's light is
+# powered within 20 s, and the VM's copy of it shows the host's power and is lit.
+SWS_RADIATOR=${SWS_RADIATOR:-0015D76F}   # WorkshopPowerPylon01 (PowerRadiation 500); 000C01C6 is the wall conduit (WorkshopPowerConnectorWall01)
+_sws_host_piece_at() {  # _sws_host_piece_at <base> <x> <y> <z> <label>: a host piece made, moved there, reported and finished; prints its reference (a FAIL goes to stderr, out of the caller's $(...))
+	local out r; out=$(host "wsreport place $1 $SANCT_BENCH quiet"); r=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	[ -z "$r" ] && { fail "$5: set-up: the host makes a piece of base $1" "$out" >&2; echo ""; return 1; }
+	_sws_placed host "$r"
+	out=$(host "setpos $r $2 $3 $4"); case "$out" in error*) fail "$5: set-up: the host's $r is moved beside the generator" "$out" >&2; echo ""; return 1;; esac
+	host "wsreport $r $SANCT_BENCH" >/dev/null; sleep 2
+	out=$(host "wsfinish $r $SANCT_BENCH")
+	case "$out" in finished*) ;; *) fail "$5: set-up: the host's finish ran on its $r" "$out" >&2; echo ""; return 1;; esac
+	echo "$r"
+}
+_sws_radiator() {  # _sws_radiator <the host's generator> <its copy on the VM>
+	local gen=$1 vg=$2 label="sharedws (VM wire to a pylon, light in its range)" i x y z p l vp vl out
+	if [ -z "$gen" ] || [ -z "$vg" ]; then fail "$label: set-up: the host's generator and its VM copy are known" "generator '$gen' copy '$vg'"; return 1; fi
+	i=$(host "refinfo $gen"); x=$(field "$i" x); y=$(field "$i" y); z=$(field "$i" z)
+	if [ -z "$x" ] || [ -z "$y" ] || [ -z "$z" ]; then fail "$label: set-up: the generator's position" "$(cut -c1-160 <<<"$i")"; return 1; fi
+	win_mark sws host; win_mark sws vm
+	p=$(_sws_host_piece_at "$SWS_RADIATOR" "$(awk -v a="$x" 'BEGIN{printf "%.1f", a + 300}')" "$y" "$z" "$label"); [ -z "$p" ] && return 1
+	sleep 2
+	l=$(_sws_host_piece_at "$SWS_LIGHT" "$(awk -v a="$x" 'BEGIN{printf "%.1f", a + 300}')" "$(awk -v a="$y" 'BEGIN{printf "%.1f", a + 100}')" "$z" "$label"); [ -z "$l" ] && return 1
+	sleep 3
+	if _sws_host_powered "$l"; then fail "$label: the control: before the wire the host's light by the pylon is unpowered" "$(host "wsinfo $l" | cut -c1-160) (another radiator reaches that spot?)"; return 1; fi
+	pass "$label: the control: before the wire the host's light by the pylon is unpowered" "pylon $p, light $l: powered=$(field "$(host "wsinfo $l")" powered)"
+	_sws_has_copy() { [ -n "$(_sws_copy_of vm "$1")" ]; }
+	wait_for 15 _sws_has_copy "$p"; wait_for 15 _sws_has_copy "$l"
+	vp=$(_sws_copy_of vm "$p"); vl=$(_sws_copy_of vm "$l")
+	if [ -z "$vp" ] || [ -z "$vl" ]; then fail "$label: the VM has copies of the host's pylon and light" "pylon copy '$vp' light copy '$vl'; $(vm 'wspower copies' | cut -c1-160)"; return 1; fi
+	win_mark sws host; win_mark sws vm
+	out=$(vm "wswire $vg $vp")
+	case "$out" in requested*) pass "$label: the VM's wire from the generator's copy to the pylon's copy is asked of the host" "$out";; *) fail "$label: the VM's wire from the generator's copy to the pylon's copy is asked of the host" "$out"; return 1;; esac
+	if wait_for 15 _sws_answered vm; then pass "$label: the host strung the VM's wire to its pylon" "$(grep -oE 'WorkshopSync: request [0-9]+ \(wire\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+	else fail "$label: the host strung the VM's wire to its pylon" "$(grep -E 'WorkshopSync: (request|player)' "$A_OUT/windelta-sws-host.txt" "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|')"; return 1; fi
+	if wait_for 20 _sws_host_powered "$l"; then pass "$label: the host's unwired light in the pylon's range is powered (within 20 s of the wire)" "$(host "wsinfo $l" | grep -oE 'powered=[a-z]+|power=[0-9A-F]+' | tr '\n' ' ')"
+	else fail "$label: the host's unwired light in the pylon's range is powered (within 20 s of the wire)" "$(host "wsinfo $l" | cut -c1-160) | $(host "wsgrid $SANCT_BENCH" | cut -c1-200)"; fi
+	if wait_for 10 _sws_lit vm "$vl"; then pass "$label: the VM's copy of that light shows the host's power and is lit" "$(vm "wsinfo $vl" | grep -oE 'theirPower=[a-z]+|lit=[a-z]+' | tr '\n' ' ')"
+	else fail "$label: the VM's copy of that light shows the host's power and is lit" "copy $vl: $(vm "wsinfo $vl" | cut -c1-200)"; fi
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference"
 	return 0
 }
 # The real hooks, not the dev commands: workshop mode on the VM, its picks aimed at copies by turnto, its keys pressed. Attach
@@ -1936,13 +1985,13 @@ _sws_aim_press() {  # _sws_aim_press <who> <ref> <vk>: face the reference in wor
 }
 # _sws_build_vm <base> [label]: a VM build the engine's way, short of the menu: the reference made (wsreport place ... quiet) and
 # placed with the engine's own steps (wsfinish: linked, counted in the budget, its scripts started, the placed event), whose event
-# hands it over to the host as workshop mode's own placement would. Prints the VM's reference.
+# hands it over to the host as workshop mode's own placement would. Prints the VM's reference (a FAIL goes to stderr, out of the caller's $(...)).
 _sws_build_vm() {
 	local out r; out=$(vm "wsreport place $1 $SANCT_BENCH quiet"); r=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
 	[ -z "$r" ] && { echo ""; return 1; }
 	_sws_placed vm "$r"
 	sleep 1.5; out=$(vm "wsfinish $r $SANCT_BENCH")
-	case "$out" in finished*) ;; *) fail "${2:-sharedws}: the VM's finish ran on its piece" "$out"; echo ""; return 1;; esac
+	case "$out" in finished*) ;; *) fail "${2:-sharedws}: the VM's finish ran on its piece" "$out" >&2; echo ""; return 1;; esac
 	echo "$r"
 }
 _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on the VM>
@@ -1986,16 +2035,35 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 # Accept on the build menu (from its first category down to its first item) until workshop mode holds a new piece (dev
 # `workshop`: held=, newItem=true); then the VM's build; then the same ghost still held, and Accept puts it down (the reference
 # then a placed piece, not deleted, and workshop mode's next ghost another reference). The host needs the first item's components.
+# Accept with a piece highlighted grabs that piece instead (newItem=false), and the next Accept would put it down elsewhere: so the
+# host looks up at the sky first (turnto the bench at 70 degrees up, nothing to highlight), and an Accept that leaves a piece of
+# the scene held (not a new item, or one of the step's own bases) stops the loop and fails the set-up rather than pressing on.
+# Once the ghost is held the host looks level again (toward the bench), so the ghost stands on the ground to be put down.
 _sws_host_ghost() { local w; w=$(dc host workshop); [ "$(field "$w" newItem)" = true ] && [ -n "$(field "$w" held)" ] && [ "$(field "$w" held)" != 00000000 ]; }
+_sws_host_grabbed() {  # _sws_host_grabbed: the host's workshop mode holds a piece that isn't a new one from the build menu (a grab of the scene)
+	local w h b; w=$(dc host workshop); h=$(field "$w" held); b=$(field "$w" heldBase)
+	[ -z "$h" ] || [ "$h" = 00000000 ] && return 1
+	[ "$(field "$w" newItem)" != true ] && return 0
+	case " $SWS_GENERATOR $SWS_LIGHT $SWS_BED $SWS_RADIATOR " in *" $b "*) return 0;; esac
+	return 1
+}
 _sws_host_busy() {
-	local out l i w ghost label="sharedws (host in workshop mode)"
+	local out l i w ghost t label="sharedws (host in workshop mode)"
 	if ! _ws_enter host; then fail "$label: the host enters workshop mode" "$(host workshop)"; return 1; fi
+	t=$(dc host "turnto $SANCT_BENCH 600 -70"); sleep 1
+	case "$t" in error*|"") fail "$label: set-up: the host looks up, away from the scene's pieces" "turnto said '$t'"; _ws_exit host; return 1;; esac
 	for i in 1 2 3 4 5; do
 		_sws_host_ghost && break
+		if _sws_host_grabbed; then
+			fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"
+			_ws_exit host; return 1
+		fi
 		dc host "key $WS_KEY_SELECT 80" >/dev/null; sleep 1.5
 	done
+	if _sws_host_grabbed; then fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
 	w=$(host workshop); ghost=$(field "$w" held)
 	if _sws_host_ghost; then pass "$label: set-up: the host holds a new piece's ghost from its build menu" "held=$ghost base=$(field "$w" heldBase)"
+		dc host "turnto $SANCT_BENCH 600 0" >/dev/null; sleep 1   # level again: the ghost on the ground, where Accept can put it down
 	else fail "$label: set-up: the host holds a new piece's ghost from its build menu" "after 5 Accepts: $(cut -c1-200 <<<"$w") (the first item's components?)"; ghost=""; fi
 	win_mark sws host; win_mark sws vm
 	l=$(_sws_build_vm "$SWS_LIGHT" "$label")
@@ -2105,6 +2173,7 @@ step_sharedws_power() {
 	[ -n "$unopened" ] && vm "wsscrap $unopened" >/dev/null
 	if _ws_enter host; then sleep 3; _ws_exit host; pass "sharedws: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "sharedws: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
 	_sws_one_way host vm || return
+	_sws_radiator "$SWS_HG" "$SWS_VG"
 	# the real hooks (workshop mode's own keys), the host in workshop mode, a bed, and a save in the pending window
 	if [ -n "$SWS_VG" ] && [ -n "$SWS_VL" ]; then _sws_real_hooks "$SWS_VG" "$SWS_VL"; else fail "sharedws (real hooks): the VM has copies of both the host's pieces" "generator '$SWS_VG' light '$SWS_VL'"; fi
 	_sws_host_busy

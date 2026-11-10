@@ -399,11 +399,16 @@ namespace SharedWorkshop
 	// The host's game strings a wire a friend asked for between two of its pieces: the rig-proven wswire path (the spline, the
 	// grid connection, the bench link, the spline's 3D) plus what the engine's own wiring adds that changes nothing of the
 	// grid (the wire static, the bench's power and resources, the placed event). The connection decides the ends' power:
-	// Workshop::ExtraData::AddConnection merges the two grids and evaluates them at once, so the light is lit by it. No step
-	// after it may decide an end's power again: PowerUtils::UpdateMovingWirelessItem on an end (kEndWireless, which an earlier
-	// order ran on both ends after the connection) takes a wired receiver out of its grid's powered set, removes its
-	// connection to its first neighbour and fires its unpowered event when no radiator reaches it (1.11.240), so the light a
-	// friend wired stayed dark on the host and on the friend's copy.
+	// Workshop::ExtraData::AddConnection merges the two grids and evaluates them at once, so the light is lit by it.
+	//
+	// The engine's own wiring does one more thing: Workshop::PlaceCurrentReference (1.11.240), for a placed spline, runs
+	// PowerUtils::UpdateMovingWirelessItem on both ends right after AddConnection (kEndWireless), then the totals. It does
+	// that inside workshop mode, where a wired light still ends up lit. The host strings a friend's
+	// wire outside workshop mode, where nothing powers it again. On a receiver end no radiator reaches, the call takes the
+	// end out of its grid's powered set and fires its PowerOff (the wired edge itself stays: the rig's grid kept both
+	// edges), and nothing turns the light back on: the light a friend wired stayed dark on the host and on the friend's
+	// copy, with the grid saying powered (seen on the rig with the first version, which copied the engine's order). So
+	// kEndWireless is never in WIRE_STEPS: adding it back for parity with the engine unpowers the light on this path.
 	enum class WireStep : std::uint8_t
 	{
 		kLink,         // Workshop::SetIsWorkshopItem(wire, true, bench): the bench link, a special ref of its location
@@ -414,7 +419,7 @@ namespace SharedWorkshop
 		kStatic,       // Workshop::MakeReferenceStatic(wire)
 		kResources,    // Workshop::CalculatePowerRating and RecalculateResources(bench): the totals recounted (no grid evaluated)
 		kEvent,        // ItemPlacedEvent{bench, wire}
-		kEndWireless,  // PowerUtils::UpdateMovingWirelessItem on an end: decides that end's power again (never in WIRE_STEPS)
+		kEndWireless,  // PowerUtils::UpdateMovingWirelessItem on an end: the engine's next step in workshop mode; here it unpowers the light (never in WIRE_STEPS)
 	};
 
 	inline constexpr std::array<WireStep, 8> WIRE_STEPS{ WireStep::kLink, WireStep::kSpline, WireStep::kConnect, WireStep::kCount, WireStep::kRebuild,

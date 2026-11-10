@@ -2457,7 +2457,7 @@ namespace DevCommands
 		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught). wsmode hold|serve, on the
 		// host's game: its friends' requests are taken but not made or answered until serve (the rig's save in the pending
 		// window: the friend's piece pending for as long as the check needs; a friend's request unanswered for
-		// SharedWorkshop::ANSWER_WAIT is taken as refused there).
+		// SharedWorkshop::ANSWER_WAIT is taken as refused there). Leaving the session serves again.
 		std::string WsMode(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
