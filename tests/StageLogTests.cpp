@@ -1129,6 +1129,81 @@ TEST("stage queue: a quest whose start didn't take has the rest of its stages dr
 	CHECK((game.quests[FIGHT].done == std::set<std::uint16_t>{ 10, 20, 30, 40, 200, 255 }));
 }
 
+TEST("stage queue: stages waiting for their quest to start that a stage set before them did are dropped as already done, said once, and hold nothing up")
+{
+	// A friend joins from a save at Out of Time's 20; the session has it at 115, the Museum of Freedom's 1 and When
+	// Freedom Calls' 20. Neither quest is started here, so their stages wait for Out of Time's to be set first, whose
+	// scripts start both (55 the museum's at its 1, 115 When Freedom Calls at its 20): nothing is left to set of them.
+	constexpr std::uint32_t MUSEUM = 0x0001D806;
+	constexpr std::uint32_t FREEDOM = 0x001A001C;
+	FakeGame game;
+	game.quests[MQ102].current = 20;
+	game.quests[MQ102].done = { 20 };
+	game.quests[MUSEUM].flags = 0;
+	game.quests[FREEDOM].flags = 0;
+	game.startable = { MUSEUM, FREEDOM };
+	game.onStage = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		if (a_quest == MQ102 && a_stage == 55) {
+			game.quests[MUSEUM].flags = StageLog::QUEST_RUNNING;
+			game.SetStage(MUSEUM, 1);
+		} else if (a_quest == MQ102 && a_stage == 115) {
+			game.quests[FREEDOM].flags = StageLog::QUEST_RUNNING;
+			game.SetStage(FREEDOM, 20);
+		}
+	};
+	StageLog::Queue queue;
+	for (const auto stage : { 32, 34, 55, 115 }) {
+		queue.Add(MQ102, static_cast<std::uint16_t>(stage));
+	}
+	queue.Add(MUSEUM, 1);
+	queue.Add(FREEDOM, 20);
+
+	auto now = Start();
+	game.Poll(queue, now);
+	CHECK(queue.AlreadyDone().empty());
+	CHECK((queue.Waiting(MUSEUM) == StageLog::Stages{ 1 }));
+	CHECK((queue.Waiting(FREEDOM) == StageLog::Stages{ 20 }));
+	std::vector<Stage> alreadyDone;
+	for (int i = 0; i < 50 && queue.Size() > 0; ++i) {
+		game.Tick();
+		now += 500ms;
+		game.Poll(queue, now);
+		alreadyDone.insert(alreadyDone.end(), queue.AlreadyDone().begin(), queue.AlreadyDone().end());
+	}
+	CHECK(queue.Size() == 0);
+	CHECK((game.set == std::vector<Stage>{ { MQ102, 32 }, { MQ102, 34 }, { MQ102, 55 }, { MQ102, 115 } }));
+	CHECK((alreadyDone == std::vector<Stage>{ { MUSEUM, 1 }, { FREEDOM, 20 } }));
+	CHECK((game.quests[MUSEUM].done == std::set<std::uint16_t>{ 1 }));
+	CHECK((game.quests[FREEDOM].done == std::set<std::uint16_t>{ 20 }));
+	// The next poll has nothing more to say.
+	game.Poll(queue, now + 500ms);
+	CHECK(queue.AlreadyDone().empty());
+
+	// A friend's live stage of a quest not started here, after them, starts it: nothing of theirs holds it up.
+	game.quests[SIDE].flags = 0;
+	game.startable.insert(SIDE);
+	queue.Add(SIDE, 10);
+	now += StageLog::Queue::START_GRACE;
+	game.Run(queue, now);
+	CHECK((game.set.back() == Stage{ SIDE, 10 }));
+	CHECK(game.Running(SIDE));
+}
+
+TEST("stage queue: a stage being set reads done as it should, and isn't counted as already done")
+{
+	FakeGame game;
+	game.quests[SIDE];
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	auto now = Start();
+	game.Poll(queue, now);
+	game.Tick();
+	game.Poll(queue, now + 500ms);
+	CHECK(queue.Size() == 0);
+	CHECK(queue.AlreadyDone().empty());
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
+}
+
 TEST("stage queue: a stage that never reads done is given up on alone when its quest did start (or was running), the rest of it goes on")
 {
 	// Started by its 10, which isn't one this quest reads done (missing): the quest runs, so its 20 goes on.
