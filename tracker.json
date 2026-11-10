@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T20:47:23+00:00",
+ "updated": "2026-11-10T21:32:30+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -728,8 +728,8 @@
    "title": "Catch-up XP for lower-level players",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; a friendly-fire fix found on the rig is in progress"
+   "stage": 5,
+   "note": "Merged; ships in the next feature release"
   },
   {
    "id": "bv79",
@@ -2372,8 +2372,8 @@
    "title": "Explosion mixed with gunfire on a friend's NPC can double-count damage: our recorded hit figures are pre-multiplier, so more of the blast is counted as ours",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix in the catch-up XP and group difficulty PR"
+   "stage": 5,
+   "note": "Fixed and merged"
   },
   {
    "id": "yhpo",
