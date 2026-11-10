@@ -39,34 +39,23 @@ namespace Companions
 		CompanionRules::Book                   book;
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		Clock::time_point                      lastLook{};
-		// The aliases' ids, found by name once (nullopt: not looked yet; 0: not there).
-		std::optional<std::uint32_t> companionAlias;
-		std::optional<std::uint32_t> dogmeatAlias;
-		bool                         questMissingLogged = false;
-		std::uint32_t                dismissCallsRefused = 0;  // calls the VM wouldn't queue
-		std::uint32_t                unsettledLooks = 0;       // looks skipped: a save or load on, a loading screen, settling after a load, no cell
+		// The aliases' ids, found by name once (aliasesFound: looked). An id is any value, 0 among them (the Companion
+		// alias is 0); an alias not in the quest is nullopt.
+		bool                            aliasesFound = false;
+		CompanionRules::FollowerAliases aliasIds;
+		bool                            questMissingLogged = false;
+		std::uint32_t                   dismissCallsRefused = 0;  // calls the VM wouldn't queue
+		std::uint32_t                   unsettledLooks = 0;       // looks skipped: a save or load on, a loading screen, settling after a load, no cell
 
 		RE::TESQuest* FollowersQuest()
 		{
 			return RE::TESForm::GetFormByID<RE::TESQuest>(FOLLOWERS_QUEST);
 		}
 
-		// The alias of the quest named so (0: none).
-		std::uint32_t AliasNamed(RE::TESQuest* a_quest, std::string_view a_name)
-		{
-			for (const auto alias : a_quest->aliases) {
-				const auto name = alias ? alias->aliasName.c_str() : nullptr;
-				if (name && _stricmp(name, a_name.data()) == 0) {
-					return alias->aliasID;
-				}
-			}
-			return 0;
-		}
-
 		bool FindAliases()
 		{
-			if (companionAlias && dogmeatAlias) {
-				return *companionAlias != 0 || *dogmeatAlias != 0;
+			if (aliasesFound) {
+				return aliasIds.Any();
 			}
 			const auto quest = FollowersQuest();
 			if (!quest) {
@@ -76,23 +65,30 @@ namespace Companions
 				}
 				return false;
 			}
-			companionAlias = AliasNamed(quest, COMPANION_ALIAS);
-			dogmeatAlias = AliasNamed(quest, DOGMEAT_ALIAS);
-			if (*companionAlias == 0 && *dogmeatAlias == 0) {
+			std::vector<CompanionRules::AliasEntry> entries;
+			for (const auto alias : quest->aliases) {
+				if (alias) {
+					entries.push_back({ alias->aliasName.c_str(), alias->aliasID });
+				}
+			}
+			aliasIds = CompanionRules::FindFollowerAliases(entries, COMPANION_ALIAS, DOGMEAT_ALIAS);
+			aliasesFound = true;
+			if (!aliasIds.Any()) {
 				REX::WARN("Companions: the Followers quest has no {} or {} alias; companions are not shared", COMPANION_ALIAS, DOGMEAT_ALIAS);
 				return false;
 			}
-			REX::INFO("Companions: the Followers quest's aliases: {} = {}, {} = {}", COMPANION_ALIAS, *companionAlias, DOGMEAT_ALIAS, *dogmeatAlias);
+			REX::INFO("Companions: the Followers quest's aliases: {} = {}, {} = {}", COMPANION_ALIAS, CompanionRules::AliasText(aliasIds.companion), DOGMEAT_ALIAS,
+				CompanionRules::AliasText(aliasIds.dogmeat));
 			return true;
 		}
 
-		// The actor an alias holds, if any.
-		RE::Actor* Aliased(RE::TESQuest* a_quest, std::uint32_t a_alias)
+		// The actor an alias holds, if any (nullopt: no such alias in this game's quest; an id of 0 is a real alias).
+		RE::Actor* Aliased(RE::TESQuest* a_quest, const std::optional<std::uint32_t>& a_alias)
 		{
-			if (a_alias == 0) {
+			if (!a_alias) {
 				return nullptr;
 			}
-			const auto ref = a_quest->GetAliasedRef(a_alias).get();
+			const auto ref = a_quest->GetAliasedRef(*a_alias).get();
 			return ref ? ref->As<RE::Actor>() : nullptr;
 		}
 
@@ -106,8 +102,8 @@ namespace Companions
 					held.push_back({ a_actor->GetFormID(), a_slot });
 				}
 			};
-			add(Aliased(a_quest, *companionAlias), Slot::kCompanion);
-			add(Aliased(a_quest, *dogmeatAlias), Slot::kDogmeat);
+			add(Aliased(a_quest, aliasIds.companion), Slot::kCompanion);
+			add(Aliased(a_quest, aliasIds.dogmeat), Slot::kDogmeat);
 			return held;
 		}
 

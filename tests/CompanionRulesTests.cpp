@@ -305,3 +305,33 @@ TEST("companion rules: an owner that was ours and is refused later (the server's
 	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0 + 2s).verdict == Verdict::kOurs);
 	CHECK(!book.DueDismissal(T0 + 1h));
 }
+
+TEST("companion rules: an alias is found by name with its id, 0 among them; one not in the quest is none, never 0")
+{
+	using CompanionRules::AliasEntry;
+	// The Followers quest as the game has it: Companion is alias 0, DogmeatCompanion 5.
+	const std::vector<AliasEntry> followers{ { "Companion", 0 }, { "Unused", 1 }, { nullptr, 2 }, { "DogmeatCompanion", 5 } };
+	auto found = CompanionRules::FindFollowerAliases(followers, "Companion", "DogmeatCompanion");
+	REQUIRE(found.companion.has_value());
+	CHECK(*found.companion == 0);
+	REQUIRE(found.dogmeat.has_value());
+	CHECK(*found.dogmeat == 5);
+	CHECK(found.Any());
+	CHECK(CompanionRules::AliasText(found.companion) == "0");
+
+	// The name as the game compares it (case ignored); a name that only starts the same is another alias.
+	CHECK(CompanionRules::AliasNamed(followers, "companion") == std::optional<std::uint32_t>{ 0 });
+	CHECK(CompanionRules::AliasNamed(followers, "Compan") == std::nullopt);
+	CHECK(CompanionRules::AliasNamed(followers, "CompanionX") == std::nullopt);
+
+	// A quest with only the Dogmeat alias: the companion one is none, not 0; with neither, nothing at all.
+	found = CompanionRules::FindFollowerAliases({ { "DogmeatCompanion", 0 } }, "Companion", "DogmeatCompanion");
+	CHECK(!found.companion.has_value());
+	CHECK(found.dogmeat == std::optional<std::uint32_t>{ 0 });
+	CHECK(found.Any());
+	found = CompanionRules::FindFollowerAliases({ { "Other", 0 }, { "Companion", CompanionRules::NO_ALIAS } }, "Companion", "DogmeatCompanion");
+	CHECK(!found.companion.has_value());
+	CHECK(!found.dogmeat.has_value());
+	CHECK(!found.Any());
+	CHECK(CompanionRules::AliasText(found.companion) == "none");
+}

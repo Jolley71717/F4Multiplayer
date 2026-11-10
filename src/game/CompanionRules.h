@@ -3,11 +3,13 @@
 #include "Protocol.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -44,6 +46,53 @@ namespace CompanionRules
 		std::uint32_t id = 0;
 		Slot          slot = Slot::kCompanion;
 	};
+
+	// BGSBaseAlias::aliasID of an alias that has none.
+	constexpr std::uint32_t NO_ALIAS = 0xFFFFFFFF;
+
+	// An alias of a quest as the lookup sees it: its name (null: none) and its id.
+	struct AliasEntry
+	{
+		const char*   name = nullptr;
+		std::uint32_t id = NO_ALIAS;
+	};
+
+	// The id of the alias named a_name (case as the game ignores it), or nullopt when there is none. Alias ids start at 0
+	// (the Followers quest's Companion alias is 0), so "not there" is never 0.
+	[[nodiscard]] inline std::optional<std::uint32_t> AliasNamed(const std::vector<AliasEntry>& a_aliases, std::string_view a_name)
+	{
+		const auto lower = [](char a_c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(a_c))); };
+		for (const auto& alias : a_aliases) {
+			if (!alias.name || alias.id == NO_ALIAS) {
+				continue;
+			}
+			const std::string_view name{ alias.name };
+			if (std::ranges::equal(name, a_name, {}, lower, lower)) {
+				return alias.id;
+			}
+		}
+		return std::nullopt;
+	}
+
+	// The Followers quest's two aliases, found by name once: each an id (0 among them) or nullopt (not in this game's quest).
+	struct FollowerAliases
+	{
+		std::optional<std::uint32_t> companion;
+		std::optional<std::uint32_t> dogmeat;
+
+		[[nodiscard]] bool Any() const { return companion.has_value() || dogmeat.has_value(); }
+	};
+
+	[[nodiscard]] inline FollowerAliases FindFollowerAliases(const std::vector<AliasEntry>& a_aliases, std::string_view a_companion, std::string_view a_dogmeat)
+	{
+		return { AliasNamed(a_aliases, a_companion), AliasNamed(a_aliases, a_dogmeat) };
+	}
+
+	// An alias id for the log: the id, or "none".
+	[[nodiscard]] inline std::string AliasText(const std::optional<std::uint32_t>& a_alias)
+	{
+		return a_alias ? std::to_string(*a_alias) : std::string{ "none" };
+	}
 
 	// What the server's word on an NPC means here.
 	enum class Verdict : std::uint8_t

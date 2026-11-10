@@ -1795,13 +1795,18 @@ step_radiants() {
 # bench step assigns settlers): what is under test is the session's book, the refused game's dismissal and the hold, not the
 # dialogue. The refused recruit is the VM's own doing through the script too; a real talk to the copy is the same path (the copy's
 # dialogue runs the VM's own Followers script), and is left to a hand test.
-# Real movement: the host walks COMPANION_WALK_DX/DY from where it stands with Dogmeat at heel (walkto.sh's pad), and the VM's
-# copy is asserted beside the host's stand-in at the end of the walk (within COMPANION_FOLLOW u; no teleport, no injected
-# movement). Saves: the games' standing rig saves have Dogmeat free at Red Rocket; a game with Dogmeat already recruited is set
-# up by dismissing him first (said so).
+# Real movement: the host walks COMPANION_WALK_DX/DY from where it stands (walkto.sh's pad; no teleport, no injected movement)
+# while the VM's copy of Dogmeat is read against the host's own Dogmeat once a second: the copy stands where the dog stands
+# (within COMPANION_SYNC u). The dog following the host at heel is a hand check, not this step's: a console recruit never makes
+# him follow (SetDogmeatCompanion then evp, or setav WaitingForPlayer 0, leave him standing; 0.16.1 the same), only the
+# dialogue's recruit does. The drop case kills and restarts the VM's game alone and rejoins it through its dev channel
+# (_vm_restart_rejoin_only): the host's game is never reloaded, so the server and its book stay as they are. Saves: the games'
+# standing rig saves have Dogmeat free at Red Rocket; a game with Dogmeat already recruited is set up by dismissing him first
+# (said so).
 COMPANION_DOGMEAT=${COMPANION_DOGMEAT:-0001D162}; COMPANION_CELL=${COMPANION_CELL:-RedRocketExt}
-COMPANION_WALK_DX=${COMPANION_WALK_DX:-1200}; COMPANION_WALK_DY=${COMPANION_WALK_DY:-0}  # the walk with the dog at heel: from where the host stands after the coc, this far along x and y (the forecourt is open eastward); COMPANION_WALK_TO="x y" overrides
-COMPANION_FOLLOW=${COMPANION_FOLLOW:-600}            # u, the VM's copy of the dog from the host's position after the walk
+COMPANION_WALK_DX=${COMPANION_WALK_DX:-1200}; COMPANION_WALK_DY=${COMPANION_WALK_DY:-0}  # the host's walk: from where it stands after the coc, this far along x and y (the forecourt is open eastward); COMPANION_WALK_TO="x y" overrides
+COMPANION_SYNC=${COMPANION_SYNC:-150}                # u, the VM's copy of the dog from the host's own dog, at every read during the walk
+COMPANION_SYNC_S=${COMPANION_SYNC_S:-10}             # reads (one a second) during the host's walk
 COMPANION_SETTLE=${COMPANION_SETTLE:-25}             # s, for a report, its answer and a dismissal to show in the logs
 COMPANION_WAIT_HOLD=${COMPANION_WAIT_HOLD:-0}        # 1: also wait the 5-minute hold out after the VM's game is killed (adds ~7 min)
 _c_log_has() { grep -qE "$2" "$(win_read companions "$1")"; }   # _c_log_has <who> <regex>: the game's log since win_mark has it
@@ -1816,14 +1821,36 @@ _c_free_both() {  # both games with Dogmeat out of their aliases (set-up: dismis
 	done
 }
 _c_player_id() { field "$(dc "$1" 'net status')" id; }   # that game's player id in the session
-_c_dog_from_host() {  # the VM's copy of the dog from the host's position (the host's own pos, the dog as the VM has it), in u
-	local r p; r=$(dc vm "refinfo $COMPANION_DOGMEAT"); p=$(dc host pos)
-	_dist_xy "$(field "$r" x) $(field "$r" y)" "$(field "$p" x) $(field "$p" y)"
+_c_sync_read() {  # "<u> <x> <y>": the VM's copy of the dog from the host's own dog (both read at once), and where the host's dog is
+	local p1 p2 h v
+	dc host "refinfo $COMPANION_DOGMEAT" > "$A_OUT/companions-sync-host.txt" & p1=$!
+	dc vm "refinfo $COMPANION_DOGMEAT" > "$A_OUT/companions-sync-vm.txt" & p2=$!
+	wait "$p1" "$p2"
+	h=$(<"$A_OUT/companions-sync-host.txt"); v=$(<"$A_OUT/companions-sync-vm.txt")
+	echo "$(_dist_xy "$(field "$h" x) $(field "$h" y)" "$(field "$v" x) $(field "$v" y)") $(field "$h" x) $(field "$h" y)"
+}
+# _vm_restart_rejoin_only <log name>: the VM's game alone is stopped, started again by its own start script, loaded into
+# COMPANION_CELL and joined to the host's lobby through its dev channel (`steam join <lobby>`). The host's game is left as it
+# is: rig.sh join loads the host too, whose input can die on that load, and the rig then restarts the host's game, the
+# server and its book with it (2026-11-10). 0 once the VM's game says joined.
+_vm_restart_rejoin_only() {
+	local lobby i
+	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$1-vm.log" 2>&1
+	vm_token_fetch >> "$A_OUT/$1-vm.log" 2>&1
+	for i in 1 2 3 4 5; do vm focus >/dev/null; sleep 1; grep -q '^front=yes' <<<"$(vm focus)" && break; done   # in front for its first load (rig.sh's front)
+	vm "console coc $COMPANION_CELL" >/dev/null
+	wait_ingame vm 90 || { echo "the VM's game is not in the game after its coc" >> "$A_OUT/$1-vm.log"; return 1; }
+	vm "god on" >/dev/null
+	lobby=$(field "$(host 'net status')" lobby)
+	if ! is_num "$lobby" || [ "$lobby" = 0 ]; then echo "the host hosts no lobby ('$lobby')" >> "$A_OUT/$1-vm.log"; return 1; fi
+	echo "steam join: $(vm "steam join $lobby")" >> "$A_OUT/$1-vm.log"
+	for i in $(seq 1 30); do vm 'net status' | grep -q 'status=joined' && { sleep 3; return 0; }; sleep 3; done
+	echo "the VM's game never said joined: $(vm 'net status' | cut -c1-120)" >> "$A_OUT/$1-vm.log"; return 1
 }
 _c_tail() { grep -E 'Companions:' "$A_OUT/windelta-companions-$1.txt" | tail -3 | tr '\n' '|'; }   # the last Companions lines of that game's window
 step_companions() {
 	section "companions (one owner per companion: Dogmeat at Red Rocket; console placement, console recruits for set-up)"
-	local hid vid n
+	local hid vid n wp i r worst reads x0 y0 x1 y1 moved
 	enter_both "$COMPANION_CELL" 14
 	hid=$(_c_player_id host); vid=$(_c_player_id vm)
 	if ! is_num "$hid" || ! is_num "$vid"; then fail "companions: set-up: both games are in the session" "host id '$hid', VM id '$vid'"; return; fi
@@ -1839,16 +1866,26 @@ step_companions() {
 	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_DOGMEAT \(.*\) is player $hid's"; then pass "companions: the VM hears Dogmeat is player $hid's" "owner=$(_c_owner vm)"
 	else fail "companions: the VM hears Dogmeat is player $hid's" "$(_c_tail vm)"; fi
 
-	# 2. Real movement: the host walks with the dog at heel; the VM's copy ends up beside the host's stand-in.
+	# 2. Sync while the host walks (real movement): the VM's copy of Dogmeat stands where the host's own Dogmeat stands, read
+	# once a second. (The dog following at heel is a hand check: a console recruit never makes him follow.)
 	if [ -z "$COMPANION_WALK_TO" ]; then n=$(dc host pos); COMPANION_WALK_TO="$(awk -v x="$(field "$n" x)" -v y="$(field "$n" y)" -v dx="$COMPANION_WALK_DX" -v dy="$COMPANION_WALK_DY" 'BEGIN{printf "%d %d", x+dx, y+dy}')"; fi
-	if bash "$RIG/walkto.sh" host $COMPANION_WALK_TO 0.6 150 90 > "$A_OUT/companions-walk.log" 2>&1; then
-		sleep 8
-		n=$(_c_dog_from_host)
-		if is_num "$n"; then expect_le "companions: after the host's walk the VM's copy of Dogmeat is beside the host (real movement)" "$n" "$COMPANION_FOLLOW" u
-		else fail "companions: after the host's walk the VM's copy of Dogmeat is beside the host (real movement)" "no position read"; fi
-	else
-		rig_fault walk "companions: the host's walk with Dogmeat arrived" "$(tail -1 "$A_OUT/companions-walk.log")"
-	fi
+	bash "$RIG/walkto.sh" host $COMPANION_WALK_TO 0.6 150 90 > "$A_OUT/companions-walk.log" 2>&1 & wp=$!
+	sleep 1
+	worst=0; reads=0; x0=""; y0=""; x1=""; y1=""
+	for i in $(seq 1 "$COMPANION_SYNC_S"); do
+		r=$(_c_sync_read); n=${r%% *}
+		if is_num "$n"; then
+			reads=$((reads + 1)); _cmp "$n" '>' "$worst" && worst=$n
+			x1=$(cut -d' ' -f2 <<<"$r"); y1=$(cut -d' ' -f3 <<<"$r"); [ -z "$x0" ] && { x0=$x1; y0=$y1; }
+		fi
+		sleep 1
+	done
+	moved=$(_dist_xy "$x0 $y0" "$x1 $y1")
+	if [ "$reads" -lt "$COMPANION_SYNC_S" ]; then fail "companions: while the host walks the VM's copy of Dogmeat stands where the host's Dogmeat is (sync)" "$reads of $COMPANION_SYNC_S reads had both positions (the copy or the dog not loaded?)"
+	elif _cmp "$worst" '<=' "$COMPANION_SYNC"; then pass "companions: while the host walks the VM's copy of Dogmeat stands where the host's Dogmeat is (sync)" "worst $worst u over $reads reads (at most $COMPANION_SYNC); the host's dog moved ${moved:-?} u meanwhile"
+	else fail "companions: while the host walks the VM's copy of Dogmeat stands where the host's Dogmeat is (sync)" "worst $worst u over $reads reads, want at most $COMPANION_SYNC; the host's dog moved ${moved:-?} u meanwhile"; fi
+	if wait "$wp"; then pass "companions: the host's walk arrived (real movement)" "$(tail -1 "$A_OUT/companions-walk.log")"
+	else rig_fault walk "companions: the host's walk arrived (real movement)" "$(tail -1 "$A_OUT/companions-walk.log")"; fi
 
 	# 3. The VM recruits the host's companion: refused, its copy dismissed, the notice shown.
 	win_mark companions vm; win_mark companions host
@@ -1887,11 +1924,12 @@ step_companions() {
 	else fail "companions: the host's recruit while held is refused" "$(_c_tail host)"; fi
 	wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: our aliases let go of $COMPANION_DOGMEAT" >/dev/null
 	expect_eq "companions: the host's copy is dismissed while Dogmeat is held" "$(_c_held host)" ""
-	# The VM's game comes back from its save, which does not hold Dogmeat (recruited by console, never saved): the server
-	# hands him back at the welcome (held for this identity), the VM's first look finds its aliases without him and lets
-	# him go, and he is free for everyone. (A save that holds him keeps him the VM's: the hand test in the PR.)
-	_vm_restart_rejoin companions
-	if ! wait_ingame vm 180; then rig_broken game "companions: the VM's game is back in the session" "not in game after the restart"; return; fi
+	# The VM's game alone comes back (the host's is not reloaded: the server's hold must outlive the VM's game, not the
+	# host's), loaded into the cell from its main menu, which does not hold Dogmeat (recruited by console, never saved): the
+	# server hands him back at the welcome (held for this identity), the VM's first look finds its aliases without him and
+	# lets him go, and he is free for everyone. (A save that holds him keeps him the VM's: the hand test in the PR.)
+	if ! _vm_restart_rejoin_only companions; then rig_broken game "companions: the VM's game alone is restarted and rejoins the host's session" "$(tail -1 "$A_OUT/companions-vm.log")"; return; fi
+	pass "companions: the VM's game alone is restarted and rejoins the host's session" "$(field "$(vm 'net status')" status); the host's game not reloaded"
 	if wait_for 90 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is player [0-9]+'s\$"; then pass "companions: the rejoin hands Dogmeat back to the VM (under its id)" "$(grep -oE "Companions: $COMPANION_DOGMEAT.*is player [0-9]+'s$" "$A_OUT/windelta-companions-host.txt" | tail -1)"
 	else fail "companions: the rejoin hands Dogmeat back to the VM (under its id)" "$(_c_tail host)"; fi
 	if wait_for 60 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is free"; then pass "companions: the VM's save without Dogmeat lets him go, and he is free again" "VM alias '$(_c_held vm)'"
@@ -1907,8 +1945,7 @@ step_companions() {
 		_c_recruit host
 		if wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is ours"; then pass "companions: the host recruits him once free" "ok"; else fail "companions: the host recruits him once free" "host alias '$(_c_held host)'"; fi
 		_c_dismiss host; sleep 4
-		_vm_restart_rejoin companions-2
-		wait_ingame vm 180 >/dev/null
+		_vm_restart_rejoin_only companions-2 || rig_broken game "companions: the VM's game rejoins after the hold" "$(tail -1 "$A_OUT/companions-2-vm.log")"
 	fi
 	crash_verdict "companions"
 	expect_eq "companions: Dogmeat is free in both games at the end" "$(_c_held host)$(_c_held vm)" ""
