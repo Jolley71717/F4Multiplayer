@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T04:54:11+00:00",
+ "updated": "2026-11-10T05:03:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1183,6 +1183,14 @@
    "priority": 1,
    "stage": 1,
    "note": "Log read: the reporter was on 0.10.0; 0.10.1's fixes cover it, one oddity left"
+  },
+  {
+   "id": "ihhm",
+   "title": "Shared workshop: wire to, use and move a friend's workshop pieces (e.g. hook up to their generator, build one Contraptions machine together)",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": "Asked for by two players on Nexus"
   },
   {
    "id": "ikwn",
