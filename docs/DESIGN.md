@@ -2384,9 +2384,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   memory, never in a save) by the toughness while that many players are here (those in the opening left out), written
   only when the multiplier changes and put back when the session ends (`Party::Reset`). A hit's damage is computed in
   the shooter's game before it is sent as a number (docs/HEALTH-SYNC.md), so every game meets the same tougher enemy;
-  what enemies do to players is unchanged, and so is friendly fire: the engine scales our hit on a stand-in by the same
-  multipliers, so WorldSync multiplies it back by the toughness before sending it (`GroupDifficulty::FriendlyFireMult`).
-  A setting found changed under us (a mod, `setgs`) is taken as the new original and scaled from there. Every player in
+  what enemies do to players is unchanged, and so is friendly fire: our hit on a stand-in reaches the hit event before
+  the shooter's multipliers (the rig, 2026-11-10: a back-multiplier made it three times stronger; the hit is sent as it
+  is). A setting found changed under us (a mod, `setgs`) is taken as the new original and scaled from there. Every player in
   the session counts, however far; companions' and turrets' damage is not scaled. `net status`: `group=x players=
   writes= rereads=`. Not tested in a game yet.
 - Time and weather: everyone reports `Calendar::gameHour`, `gameDaysPassed` and

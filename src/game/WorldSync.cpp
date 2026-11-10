@@ -3,7 +3,6 @@
 #include "MainThread.h"
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
-#include "game/GroupHits.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
 #include "game/EnableParents.h"
@@ -3045,10 +3044,10 @@ namespace WorldSync
 				}
 			}
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
-				// Our own hit on their stand-in was scaled by the engine with the multipliers group difficulty divides
-				// (GroupHits): multiplied back, so friendly fire is as the game makes it, whatever the rule.
-				const float damage = hit.byPlayer ? hit.damage * GroupHits::FriendlyFireMult() : hit.damage;
-				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
+				// Our own hit on their stand-in comes to the hit event before the shooter's difficulty multipliers (the
+				// ones group difficulty divides, GroupHits): sent as it is, friendly fire is as the game makes it
+				// whatever the rule (seen on the rig, 2026-11-10: a back-multiplier here made it three times stronger).
+				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 

@@ -78,11 +78,6 @@ namespace GroupHits
 		}
 	}
 
-	float FriendlyFireMult()
-	{
-		return mult > 0.0f ? 1.0f / mult : 1.0f;
-	}
-
 	std::string Describe()
 	{
 		return std::format("group=x{:.2f} players={} writes={} rereads={}", mult, players, writes, rereads);

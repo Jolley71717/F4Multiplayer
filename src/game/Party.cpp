@@ -118,7 +118,8 @@ namespace Party
 		std::optional<std::int32_t> catchUpLogged;
 		float                catchUpGiven = 0.0f;
 		std::uint32_t        catchUpWithheld = 0;  // top-ups not given: a menu that earns XP was open in the window
-		Clock::time_point    menuXpAt{};           // when such a menu was last seen open
+		Clock::time_point    menuXpAt{};           // when such a menu was last seen open (or just closed)
+		bool                 menuXpWasOpen = false;
 		float                catchUpNotice = 0.0f;
 		Clock::time_point    catchUpNoticeAt{};
 
@@ -732,11 +733,14 @@ namespace Party
 			UpdateCatchUp(player);
 			// A menu whose use earns XP (a lock picked, a terminal hacked, something crafted or built): kill XP held
 			// over it gets no top-up (below).
-			if (OpenMenus::Open(OpenMenus::Menu::kLockpicking) || OpenMenus::Open(OpenMenus::Menu::kTerminal) || OpenMenus::Open(OpenMenus::Menu::kTerminalHolotape) ||
-				OpenMenus::Open(OpenMenus::Menu::kExamine) || OpenMenus::Open(OpenMenus::Menu::kCooking) || OpenMenus::Open(OpenMenus::Menu::kWorkshop) ||
-				OpenMenus::Open(OpenMenus::Menu::kPowerArmorMod) || OpenMenus::Open(OpenMenus::Menu::kRobotMod)) {
+			// Read every poll while it is open, and once more on the frame it closes (the XP it gave lands then).
+			const bool menuOpen = OpenMenus::Open(OpenMenus::Menu::kLockpicking) || OpenMenus::Open(OpenMenus::Menu::kTerminal) || OpenMenus::Open(OpenMenus::Menu::kTerminalHolotape) ||
+			                      OpenMenus::Open(OpenMenus::Menu::kExamine) || OpenMenus::Open(OpenMenus::Menu::kCooking) || OpenMenus::Open(OpenMenus::Menu::kWorkshop) ||
+			                      OpenMenus::Open(OpenMenus::Menu::kPowerArmorMod) || OpenMenus::Open(OpenMenus::Menu::kRobotMod);
+			if (menuOpen || menuXpWasOpen) {
 				menuXpAt = a_now;
 			}
+			menuXpWasOpen = menuOpen;
 			// The kill (death event) and its XP can come in either order: the death event waits
 			// for the victim's next AI update.
 			const auto hold = [&](float a_xp, Clock::time_point a_since) {
@@ -788,6 +792,8 @@ namespace Party
 					const auto bonus = CatchUpXp::Bonus(catchUp, heldXp);
 					if (bonus > 0 && menuXpAt >= from) {
 						++catchUpWithheld;
+						REX::INFO("Party: catch-up XP: {:.0f} kill XP held while a menu that earns XP was open {:.1f} s ago: no top-up ({} withheld)", heldXp,
+							std::chrono::duration<float>(a_now - menuXpAt).count(), catchUpWithheld);
 					} else if (bonus > 0 && !player->IsDead(false) && !Story::InOpening() && WorldSync::InWorld()) {
 						RE::Console::ExecuteCommand(std::format("player.modav experience {}", bonus).c_str());
 						xpCredit += static_cast<float>(bonus);
