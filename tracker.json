@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T06:11:21+00:00",
+ "updated": "2026-11-10T15:05:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -177,8 +177,8 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Last stuck-sound path: fix reviewed, needs a game test",
+   "stage": 5,
+   "note": "Last stuck-sound path fixed; ships in the next release",
    "pr": 301
   },
   {
