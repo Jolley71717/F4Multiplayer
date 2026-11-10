@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T17:11:09+00:00",
+ "updated": "2026-11-10T20:47:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -863,6 +863,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "dyqb",
+   "title": "Kill XP is lost (not shared, no catch-up top-up) when a menu that stops the game opens during the victim's fall",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found on the rig; older than the current work"
   },
   {
    "id": "e0xc",
@@ -2364,8 +2372,8 @@
    "title": "Explosion mixed with gunfire on a friend's NPC can double-count damage: our recorded hit figures are pre-multiplier, so more of the blast is counted as ours",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being fixed alongside group difficulty"
+   "stage": 2,
+   "note": "Fix in the catch-up XP and group difficulty PR"
   },
   {
    "id": "yhpo",
