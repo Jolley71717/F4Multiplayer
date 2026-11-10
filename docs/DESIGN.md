@@ -2387,8 +2387,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   what enemies do to players is unchanged, and so is friendly fire: our hit on a stand-in reaches the hit event before
   the shooter's multipliers (the rig, 2026-11-10: a back-multiplier made it three times stronger; the hit is sent as it
   is). A setting found changed under us (a mod, `setgs`) is taken as the new original and scaled from there. Every player in
-  the session counts, however far; companions' and turrets' damage is not scaled. `net status`: `group=x players=
-  writes= rereads=`. Not tested in a game yet.
+  the session counts, however far; companions' and turrets' damage is not scaled. Our hit's figure on a copy (the hit
+  event's, before the multiplier) is recorded times the multiplier in effect (`CopyHealth::FigureDealt`,
+  `GroupHits::PlayerHitMult`), so with the owner's blast in the same window only what the hit took off is put down to
+  us, and the NPC never takes part of the blast twice (an older double-count, up to 8 times worse with the rule).
+  `net status`: `group=x players= writes= rereads=`. Rig-tested 2026-11-10 (damage, restore), the rest not in a game.
 - Time and weather: everyone reports `Calendar::gameHour`, `gameDaysPassed` and
   `Sky::currentWeather` every 5 s; the server passes on only the host's (a player on its machine,
   else the one there longest). The game keeps GameDaysPassed at midnights passed + hour / 24, so

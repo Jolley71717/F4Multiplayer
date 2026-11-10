@@ -2,6 +2,7 @@
 
 #include "GroupDifficulty.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <format>
@@ -76,6 +77,17 @@ namespace GroupHits
 			Write(1.0f);
 			REX::INFO("GroupHits: the damage multipliers are the game's own again");
 		}
+	}
+
+	float PlayerHitMult()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return 1.0f;
+		}
+		const auto level = std::clamp(static_cast<int>(player->GetDifficultyLevel()), 0, static_cast<int>(SETTINGS.size()) - 1);
+		const auto setting = Find(SETTINGS[static_cast<std::size_t>(level)]);
+		return setting ? setting->GetFloat() : 1.0f;
 	}
 
 	std::string Describe()

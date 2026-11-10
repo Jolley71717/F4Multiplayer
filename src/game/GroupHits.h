@@ -17,6 +17,10 @@ namespace GroupHits
 	// The session ended: the settings as the game had them.
 	void Restore();
 
+	// The engine's multiplier of our player's damage to NPCs in effect now, at our difficulty (divided while the rule
+	// is on): what a hit's figure is multiplied by as it comes off (CopyHealth::FigureDealt). 1 when it can't be read.
+	[[nodiscard]] float PlayerHitMult();
+
 	// For net status: "group=x0.50 players=3 writes=2".
 	[[nodiscard]] std::string Describe();
 }

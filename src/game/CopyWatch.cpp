@@ -1,6 +1,7 @@
 #include "game/CopyWatch.h"
 
 #include "game/CopyHealth.h"
+#include "game/GroupHits.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -488,7 +489,10 @@ namespace CopyWatch
 				book.OwnersBlow(wire, hit.at);
 			}
 			if (hitter != CopyHealth::Hitter::kNotOurs) {
-				book.OurHit(wire, hit.at, hit.usesHitData && hit.damage > 0.0f ? std::optional{ hit.damage } : std::nullopt);
+				// Our player's figure times the multiplier in effect (the difficulty's, divided by group difficulty): what
+				// the hit took off, so a drop beside the owner's blast puts no more than that down to us.
+				const auto figure = hit.usesHitData && hit.damage > 0.0f ? std::optional{ hit.damage } : std::nullopt;
+				book.OurHit(wire, hit.at, CopyHealth::FigureDealt(figure, hit.byPlayer, hit.byPlayer ? GroupHits::PlayerHitMult() : 1.0f));
 				// An enchantment's or a spell's hit of ours puts an effect on the copy whose ticks follow with no event:
 				// ours for a while (CopyHealth::EFFECT_WINDOW), not something else's to give back.
 				if (hit.blow.enchantment || hit.blow.spellAlone) {
