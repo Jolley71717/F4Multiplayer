@@ -3073,7 +3073,7 @@ namespace WorkshopSync
 				static REL::Relocation<std::uint32_t*> maxTriangles{ BUDGET_MAX_TRIANGLES };
 				static REL::Relocation<std::uint32_t*> maxDraws{ BUDGET_MAX_DRAWS };
 				static REL::Relocation<init_t>         initialize{ BUDGET_INITIALIZE };
-				live = MenuWatch::IsOpen("WorkshopMenu"sv) && *current != 0 && *current == a_bench.GetHandle().get_handle();
+				live = *current != 0 && *current == a_bench.GetHandle().get_handle();  // the engine's own word: workshop mode is open at this very bench (null outside it)
 				if (live) {
 					return;
 				}
@@ -3939,10 +3939,10 @@ namespace WorkshopSync
 
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} picksAdmitted={} grabsRefused={} storesRefused={} scrapsRefused={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} finished={} steps={} wiresMade={}",
+		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} picksAdmitted={} grabsRefused={} storesRefused={} scrapsRefused={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} finished={} steps={} wiresMade={} wiresCounted={}",
 			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, picksAdmitted.load(), grabsRefused.load(),
 			storesRefused.load(), scrapsRefused.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Size(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
-			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), finishedHere, finishSteps, wiresMadeHere);
+			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), finishedHere, finishSteps, wiresMadeHere, wiresCounted);
 	}
 
 	void InstallLights()

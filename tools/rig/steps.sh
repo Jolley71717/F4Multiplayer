@@ -1843,7 +1843,65 @@ _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generato
 WS_KEY_SELECT=${WS_KEY_SELECT:-0x45}; WS_KEY_WIRE=${WS_KEY_WIRE:-0x20}; WS_KEY_STORE=${WS_KEY_STORE:-0x52}; WS_KEY_SCRAP=${WS_KEY_SCRAP:-0x52}
 WS_KEY_REPAIR=${WS_KEY_REPAIR:-0x54}; WS_KEY_ASSIGN=${WS_KEY_ASSIGN:-0x43}   # E, Space, R, R (Store and Scrap share R with a modifier in some layouts), T, C
 SWS_BED=${SWS_BED:-0002A9E7}   # a sleeping bag (verify with dev `edid`)
-_sws_budget() { dc "$1" "wsres av $SANCT_BENCH" | grep -oE 'WorkshopCurrent(Triangles|Draws)[^ ;|]*' | tr '\n' ' '; }
+_sws_budget() { dc "$1" "wsres av $SANCT_BENCH" | grep -oE '(^|; )(triangles|draws)\[[^]]*\]=[^;]*' | sed 's/^; //; s/\[[^]]*\]//' | tr '\n' ' '; }   # "triangles=<values> draws=<values> " of that game's Sanctuary bench
+_sws_budget_gt() {  # _sws_budget_gt <after> <before>: the current triangles value grew (the first number after "triangles=")
+	local a b; a=$(grep -oE 'triangles=[^ ]*' <<<"$1" | grep -oE '[0-9]+' | head -1); b=$(grep -oE 'triangles=[^ ]*' <<<"$2" | grep -oE '[0-9]+' | head -1)
+	is_int "$a" && is_int "$b" && [ "$a" -gt "$b" ]
+}
+# The host's Sanctuary budget (the bug the budget scope fixes): a VM build must add exactly the piece to the host's bench totals
+# whatever the host's workshop mode holds: (a) right after the host loaded a save (workshop mode's totals 0), (b) after the host
+# built at another settlement (its totals), (c) in workshop mode at Sanctuary (the live totals). The three deltas must agree (one
+# base, one count) and be above 0. Then a VM wire, counted once drawn (wsmode wiresCounted), and the host scraps it in workshop
+# mode with the real key: the host's budget back where it started. Set-up by console, said so: the host's save/load and its coc
+# to Red Rocket and back.
+_sws_wait_counted() { [ "$(_sws_counter host wiresCounted)" -gt "$1" ]; }
+_sws_host_budget_cases() {
+	local label="sharedws (host budget)" h0 h1 d1 d2 d3 l w wc0 vg vl
+	# (a) right after a load
+	host "console save ${SWS_SAVE}_host" >/dev/null; sleep 8; wait_ingame host 30
+	host "console load ${SWS_SAVE}_host" >/dev/null; sleep 20; wait_ingame host 60; sleep 5
+	h0=$(_sws_budget host); win_mark sws host
+	l=$(_sws_build_vm "$SWS_LIGHT" "$label (after a load)"); [ -z "$l" ] && return 1
+	wait_for 20 _sws_built host "$SWS_LIGHT" || { fail "$label (after a load): the host built the VM's light" "no 'built for player' line"; return 1; }
+	sleep 3; h1=$(_sws_budget host)
+	if _sws_budget_gt "$h1" "$h0"; then pass "$label: after the host loaded a save, a VM build adds to the host's Sanctuary budget (not 0 plus the piece)" "$h0 -> $h1"; else fail "$label: after the host loaded a save, a VM build adds to the host's Sanctuary budget" "$h0 -> $h1"; fi
+	d1=$(( $(grep -oE 'triangles=[0-9]+' <<<"$h1" | grep -oE '[0-9]+') - $(grep -oE 'triangles=[0-9]+' <<<"$h0" | grep -oE '[0-9]+') )) 2>/dev/null
+	# (b) after building at another settlement: the host's workshop mode at Red Rocket (console placement to get there and back, said here)
+	host "console coc RedRocketExt" >/dev/null; sleep 14; wait_ingame host 30
+	if _ws_enter host; then sleep 3; _ws_exit host; else warn "$label (another settlement): set-up: the host's workshop mode at Red Rocket" "$(host workshop)"; fi
+	host "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame host 30
+	walk host "$label: set-up: the host walks back to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return 1; }; pads_off
+	h0=$(_sws_budget host); win_mark sws host
+	l=$(_sws_build_vm "$SWS_LIGHT" "$label (another settlement)"); [ -z "$l" ] && return 1
+	wait_for 20 _sws_built host "$SWS_LIGHT" || { fail "$label (another settlement): the host built the VM's light" "no 'built for player' line"; return 1; }
+	sleep 3; h1=$(_sws_budget host)
+	if _sws_budget_gt "$h1" "$h0"; then pass "$label: after building at Red Rocket, a VM build adds to the host's Sanctuary budget (not Red Rocket's totals)" "$h0 -> $h1"; else fail "$label: after building at Red Rocket, a VM build adds to the host's Sanctuary budget" "$h0 -> $h1"; fi
+	d2=$(( $(grep -oE 'triangles=[0-9]+' <<<"$h1" | grep -oE '[0-9]+') - $(grep -oE 'triangles=[0-9]+' <<<"$h0" | grep -oE '[0-9]+') )) 2>/dev/null
+	# (c) in workshop mode at Sanctuary
+	if ! _ws_enter host; then fail "$label (in workshop mode): set-up: the host enters workshop mode at Sanctuary" "$(host workshop)"; return 1; fi
+	h0=$(_sws_budget host); win_mark sws host
+	l=$(_sws_build_vm "$SWS_LIGHT" "$label (in workshop mode)"); [ -z "$l" ] && { _ws_exit host; return 1; }
+	wait_for 20 _sws_built host "$SWS_LIGHT" || { fail "$label (in workshop mode): the host built the VM's light" "no 'built for player' line"; _ws_exit host; return 1; }
+	sleep 3; h1=$(_sws_budget host); _ws_exit host
+	if _sws_budget_gt "$h1" "$h0"; then pass "$label: in workshop mode at Sanctuary, a VM build adds to the host's live budget" "$h0 -> $h1"; else fail "$label: in workshop mode at Sanctuary, a VM build adds to the host's live budget" "$h0 -> $h1"; fi
+	d3=$(( $(grep -oE 'triangles=[0-9]+' <<<"$h1" | grep -oE '[0-9]+') - $(grep -oE 'triangles=[0-9]+' <<<"$h0" | grep -oE '[0-9]+') )) 2>/dev/null
+	if is_int "$d1" && [ "$d1" -gt 0 ] && [ "$d1" = "$d2" ] && [ "$d2" = "$d3" ]; then pass "$label: the three builds added the same count to the host's budget" "triangles +$d1 each"; else fail "$label: the three builds added the same count to the host's budget" "deltas $d1 / $d2 / $d3"; fi
+	# a VM wire between the host's copies, counted once drawn, then scrapped by the host with the real key: the budget back
+	vg=$(_sws_copy_of vm "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built" "$A_OUT/windelta-sws-host.txt" "$A_OUT"/winmark-sws-host/0.log 2>/dev/null | head -1 | cut -d' ' -f2)")
+	[ -z "$vg" ] && vg=$SWS_VG; vl=$(_sws_copy_of vm "$l")
+	if [ -z "$vg" ] || [ -z "$vl" ]; then fail "$label (wire): the VM has copies of the generator and the last light" "generator '$vg' light '$vl'"; return 1; fi
+	h0=$(_sws_budget host); wc0=$(_sws_counter host wiresCounted); win_mark sws host
+	vm "wswire $vg $vl" >/dev/null
+	if wait_for 20 _sws_wait_counted "$wc0"; then pass "$label (wire): the host's wire for the VM was counted once drawn" "wiresCounted $wc0 -> $(_sws_counter host wiresCounted)"; else fail "$label (wire): the host's wire for the VM was counted once drawn" "wiresCounted stayed $wc0"; return 1; fi
+	w=$(grep -oE 'request [0-9]+ \(wire\)[^;]*made [0-9A-F]{8}' "$(win_read sws host)" | grep -oE '[0-9A-F]{8}$' | head -1)
+	[ -z "$w" ] && { fail "$label (wire): the host's log names the wire it made" "$(grep -E 'request .*wire' "$A_OUT/windelta-sws-host.txt" | tail -1)"; return 1; }
+	h1=$(_sws_budget host)
+	_sws_budget_gt "$h1" "$h0" && pass "$label (wire): the wire added to the host's budget" "$h0 -> $h1" || fail "$label (wire): the wire added to the host's budget" "$h0 -> $h1"
+	if ! _ws_enter host; then fail "$label (wire): set-up: the host enters workshop mode to scrap the wire" "$(host workshop)"; return 1; fi
+	_sws_aim_press host "$w" "$WS_KEY_SCRAP"; sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
+	expect_eq "$label (wire): scrapped by the host, the wire is gone" "$(field "$(host "refinfo $w")" deleted)" true
+	expect_eq "$label (wire): after the host scrapped the wire, its budget is back where it started" "$(_sws_budget host)" "$h0"
+}
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
 _sws_aim_press() {  # _sws_aim_press <who> <ref> <vk>: face the reference in workshop mode (turnto <ref> <ms>) and press the key; a turn the game refused is a loud failure
 	local t; t=$(dc "$1" "turnto $2 600")
@@ -1908,10 +1966,15 @@ _sws_bed_and_pending_save() {
 	local out b bc b0 before label="sharedws (bed, save in the pending window)"
 	win_mark sws host; win_mark sws vm
 	b0=$(_sws_budget vm)
-	# the bed the engine's way (wsfinish runs its scripts and the placed event: WorkshopParent assigns a settler without a bed to it, if
-	# Sanctuary has one), read right behind the finish, before the host's answer can come
-	b=$(_sws_build_vm "$SWS_BED" "$label"); [ -z "$b" ] && return 1
-	before=$(vm "wsinfo $b" | grep -oE 'owner=[0-9A-F]+')
+	# the bed the engine's way, with the rule held off (wsmode off) so the finish's scripts and placed event run for the piece as the
+	# VM's own and WorkshopParent has time to assign a settler without a bed to it (bounded wait); then the rule back (wsmode host)
+	# and the piece handed over (wsreport: the request path), so the adoption's destroyed event has an assignment to undo
+	vm "wsmode off" >/dev/null
+	b=$(_sws_build_vm "$SWS_BED" "$label"); [ -z "$b" ] && { vm "wsmode host" >/dev/null; return 1; }
+	_sws_owned() { grep -q ' owner=' <<<"$(vm "wsinfo $1")"; }
+	wait_for 25 _sws_owned "$b"; before=$(vm "wsinfo $b" | grep -oE 'owner=[0-9A-F]+')
+	vm "wsmode host" >/dev/null; sleep 1
+	vm "wsreport $b $SANCT_BENCH" >/dev/null
 	if wait_for 20 _sws_built host "$SWS_BED"; then pass "$label: the host built the VM's bed" "ok"; else fail "$label: the host built the VM's bed" "$(grep -E 'WorkshopSync: (player|request)' "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|')"; return 1; fi
 	grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2 >> "$A_OUT/ws-placed.txt"
 	wait_for 15 _sws_answered vm; sleep 5
@@ -1924,7 +1987,11 @@ _sws_bed_and_pending_save() {
 	# the save right behind a placement: the pending piece goes before the save (BeforeSave, with the destroyed event) and the host's
 	# copy comes on its own
 	out=$(vm "wsreport place $SWS_LIGHT $SANCT_BENCH quiet"); b=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1); [ -n "$b" ] && echo "$b" >> "$A_OUT/ws-placed.txt"
-	bash "$RIG/dcfast.sh" vm "wsfinish $b $SANCT_BENCH" "console save ${SWS_SAVE}_pending" >/dev/null 2>&1; sleep 10; wait_ingame vm 30
+	# the finish hands the piece over, wsmode must then show it pending (else the save tests nothing), and the save follows at once
+	out=$(bash "$RIG/dcfast.sh" vm "wsfinish $b $SANCT_BENCH" "wsmode" "console save ${SWS_SAVE}_pending" 2>/dev/null)
+	local pend; pend=$(grep -oE 'pending=[0-9]+' <<<"$out" | head -1 | cut -d= -f2)
+	if is_int "$pend" && [ "$pend" -ge 1 ]; then pass "$label: one piece of the VM's was pending when the save was asked for" "pending=$pend"; else fail "$label: one piece of the VM's was pending when the save was asked for" "wsmode said pending='$pend' (the answer came first? the save proves nothing): $(cut -c1-160 <<<"$out")"; fi
+	sleep 10; wait_ingame vm 30
 	expect_eq "$label: after a save in the pending window no piece of the VM's still waits" "$(_sws_counter vm pending)" 0
 	_sws_grid_clean vm "$label: after that save, the VM's grids name no copy and no runtime reference"
 	vm "net leave" >/dev/null; sleep 4
@@ -1953,6 +2020,7 @@ step_sharedws_power() {
 	# the real hooks (workshop mode's own keys), the host in workshop mode, a bed, and a save in the pending window
 	if [ -n "$SWS_VG" ] && [ -n "$SWS_VL" ]; then _sws_real_hooks "$SWS_VG" "$SWS_VL"; else fail "sharedws (real hooks): the VM has copies of both the host's pieces" "generator '$SWS_VG' light '$SWS_VL'"; fi
 	_sws_host_busy
+	_sws_host_budget_cases
 	_sws_bed_and_pending_save || return
 	# an in-session save on the VM, and the same after it
 	vm "console save $SWS_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
