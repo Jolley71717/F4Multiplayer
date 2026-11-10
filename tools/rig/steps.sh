@@ -1929,6 +1929,9 @@ _ch_held() { dc "$1" companions | grep -oE "(^| )Companion=[0-9A-F]{8}" | grep -
 _ch_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetCompanion\" $COMPANION_HUMAN 1 1 1" >/dev/null; sleep 1; dc "$1" "console $COMPANION_HUMAN.evp" >/dev/null; }
 _ch_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissCompanion\" $COMPANION_HUMAN 0 1" >/dev/null; }   # (actor, ShowLocationAssignmentListIfAvailable, SuppressDismissMessage)
 _ch_free_both() { local w; for w in host vm; do if [ -n "$(_ch_held "$w")" ]; then _ch_dismiss "$w"; sleep 4; fi; [ -z "$(_ch_held "$w")" ] || return 1; done; }
+# Read afresh on each retry of wait_for (a $(...) in wait_for's arguments expands once, before the wait).
+_ch_holds() { [ "$(_ch_held "$1")" = "$COMPANION_HUMAN" ]; }   # _ch_holds <who>: that game's Companion alias holds him now
+_ch_filled_or_let_go() { _ch_holds "$1" || _c_log_has "$1" "Companions: our aliases let go of $COMPANION_HUMAN"; }   # ... or it filled and let go again already (a refusal's dismissal)
 step_companions_human() {
 	section "companions_human (the Companion slot: Codsworth at Sanctuary; console placement, console recruits for set-up)"
 	local hid vid
@@ -1936,12 +1939,15 @@ step_companions_human() {
 	hid=$(_c_player_id host); vid=$(_c_player_id vm)
 	if ! is_num "$hid" || ! is_num "$vid"; then fail "companions_human: set-up: both games are in the session" "host id '$hid', VM id '$vid'"; return; fi
 	if ! wait_for 20 _ch_free_both; then fail "companions_human: set-up: the Companion alias empty in both games" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
+	# Dogmeat out of both games' aliases first: SetCompanion dismisses a held Dogmeat with the settlement list on (its own
+	# DismissDogmeatCompanion(True, False)), a menu a scripted run can't answer.
+	if ! wait_for 20 _c_free_both; then fail "companions_human: set-up: Dogmeat out of both games' aliases (SetCompanion would dismiss him with the settlement list up)" "host '$(_c_held host)', VM '$(_c_held vm)'"; return; fi
 	if [ "$(dc host "refinfo $COMPANION_HUMAN" | grep -c 'ref=')" != 1 ]; then fail "companions_human: set-up: the host has $COMPANION_HUMAN loaded" "$(dc host "refinfo $COMPANION_HUMAN" | cut -c1-120)"; return; fi
 
 	# 1. The host recruits by the script's SetCompanion (all four arguments): the alias must fill, or nothing below means anything.
 	win_mark companions host; win_mark companions vm
 	_ch_recruit host
-	if wait_for 10 [ "$(_ch_held host)" = "$COMPANION_HUMAN" ]; then pass "companions_human: SetCompanion($COMPANION_HUMAN, 1, 1, 1) by console fills the host's Companion alias" "ok"
+	if wait_for 10 _ch_holds host; then pass "companions_human: SetCompanion($COMPANION_HUMAN, 1, 1, 1) by console fills the host's Companion alias" "ok"
 	else fail "companions_human: SetCompanion($COMPANION_HUMAN, 1, 1, 1) by console fills the host's Companion alias" "alias '$(_ch_held host)': the console call did not take (its arity, or the actor); nothing below is meaningful"; return; fi
 	if wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: $COMPANION_HUMAN \(.*\) is ours"; then pass "companions_human: the host's recruit is granted" "ok"
 	else fail "companions_human: the host's recruit is granted" "$(_c_tail host)"; return; fi
@@ -1951,7 +1957,7 @@ step_companions_human() {
 	# 2. The VM recruits him too: refused, dismissed by DismissCompanion on the first try, the alias let go, no "going home" message.
 	win_mark companions vm
 	_ch_recruit vm
-	if wait_for 10 [ "$(_ch_held vm)" = "$COMPANION_HUMAN" ] || _c_log_has vm "Companions: our aliases let go of $COMPANION_HUMAN"; then pass "companions_human: SetCompanion by console fills the VM's Companion alias" "ok"
+	if wait_for 10 _ch_filled_or_let_go vm; then pass "companions_human: SetCompanion by console fills the VM's Companion alias" "ok"
 	else fail "companions_human: SetCompanion by console fills the VM's Companion alias" "alias '$(_ch_held vm)'"; return; fi
 	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is player $hid's; our recruit is refused: dismissing our copy"; then pass "companions_human: the VM's recruit is refused" "ok"
 	else fail "companions_human: the VM's recruit is refused" "$(_c_tail vm)"; fi
