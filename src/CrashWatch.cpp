@@ -12,7 +12,9 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <cstdlib>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,9 @@ namespace CrashWatch
 		std::array<wchar_t, PATH>    folder{};   // the log's folder with its trailing separator; empty: no report file
 		std::array<wchar_t, PATH>    logPath{};  // the log, which gets the report appended; empty: none
 		std::array<char, 32>         version{};
+		std::array<char, 64>         previousName{};  // the previous filter's module, for the report (Name at install)
+		CrashReport::Where           previousWhere{};
+		std::array<char, 64>         loggerName{};    // a crash logger's DLL found loaded (OnDataReady); empty: none
 		std::atomic<std::uint8_t>    session{ 0 };
 		std::atomic<std::uint32_t>   players{ 0 };
 		std::atomic<bool>            reporting{ false };  // one report per game: a second crash goes straight on
@@ -147,7 +152,8 @@ namespace CrashWatch
 			facts.session = static_cast<CrashReport::Session>(session.load(std::memory_order_relaxed));
 			facts.players = players.load(std::memory_order_relaxed);
 			facts.uptimeSeconds = (GetTickCount64() - loadedAt) / 1000;
-			facts.handedOn = previous != nullptr;
+			facts.previous = { previousWhere.module, previousWhere.offset, previousWhere.address };
+			facts.logger = std::string_view{ loggerName.data() };
 
 			// The committed stack above the stack pointer is one region up to the stack's base; read, not dereferenced.
 			// A stack overflow's is left alone: the thread has next to no stack to run this on, and the copy is 64 KB of
@@ -227,6 +233,21 @@ namespace CrashWatch
 			return previous ? previous(a_info) : EXCEPTION_CONTINUE_SEARCH;
 		}
 
+		// The previous filter named, into previousName, for the report and the log.
+		void NotePrevious()
+		{
+			previousWhere = previous ? Name(reinterpret_cast<std::uintptr_t>(previous), previousName) : CrashReport::Where{};
+		}
+
+		std::string PreviousText()
+		{
+			if (!previous) {
+				return "to Windows (no other exception filter was there)";
+			}
+			const auto where = previousWhere.module.empty() ? std::format("0x{:X}", previousWhere.address) : std::format("{}+0x{:X}", previousWhere.module, previousWhere.offset);
+			return std::format("handed to the exception filter that was there before, at {}{}", where, previousWhere.module == "Fallout4.exe" ? " (the game's own)" : "");
+		}
+
 		void CopyPath(const std::wstring& a_from, std::array<wchar_t, PATH>& a_to)
 		{
 			const auto n = (std::min)(a_from.size(), a_to.size() - 1);
@@ -282,17 +303,86 @@ namespace CrashWatch
 
 		previous = SetUnhandledExceptionFilter(&Filter);
 		installed = true;
-		std::array<char, MODULE_NAME> name{};
-		const auto                    before = previous ? Name(reinterpret_cast<std::uintptr_t>(previous), name) : CrashReport::Where{};
-		REX::INFO("Crash report: a crash to desktop is written to F4Multiplayer-crash-<date>_<time>.txt next to this log (the newest {} are kept) and to this log{}{}",
-			CrashReport::KEEP_FILES, folder[0] == L'\0' ? " (no folder: to the log alone)" : "",
-			previous ? std::format(", then handed to the handler installed before, at {}", before.module.empty() ? std::format("0x{:X}", before.address) : std::format("{}+0x{:X}", before.module, before.offset)) :
-			           std::string{ "; no other handler was installed before" });
+		NotePrevious();
+		REX::INFO("Crash report: a crash to desktop is written to F4Multiplayer-crash-<date>_<time>.txt next to this log (the newest {} are kept) and to this log{}, then {}",
+			CrashReport::KEEP_FILES, folder[0] == L'\0' ? " (no folder: to the log alone)" : "", PreviousText());
+	}
+
+	void OnDataReady()
+	{
+		if (!installed) {
+			return;
+		}
+		// Which crash logger is in (any of them may load before or after us). The module list is read here, at a quiet
+		// moment, never at the crash: GetModuleHandle takes the loader lock.
+		for (const wchar_t* dll : { L"Buffout4.dll", L"AddictolCrashLogger.dll", L"Trainwreck.dll", L"CrashLogger.dll" }) {
+			if (GetModuleHandleW(dll)) {
+				CrashReport::ModuleNameInto(dll, loggerName);
+				break;
+			}
+		}
+		// A plugin that loaded after ours may have put its filter in without chaining to ours: ours goes back in front,
+		// and that one gets the exception after the report, as the game's own would.
+		const auto current = SetUnhandledExceptionFilter(&Filter);
+		if (current != &Filter) {
+			previous = current;
+			NotePrevious();
+			REX::INFO("Crash report: another plugin put its exception filter in after the mod's; the mod's is in front again, then {}", PreviousText());
+		}
+		REX::INFO("Crash report: {}", loggerName[0] ? std::format("the crash logger {} is loaded; its own log comes beside the mod's report", loggerName.data()) :
+		                                            "no crash logger (Buffout 4, Addictol) is loaded: the mod's report is all a crash leaves");
 	}
 
 	void SetSession(CrashReport::Session a_session, std::uint32_t a_players)
 	{
 		session.store(static_cast<std::uint8_t>(a_session), std::memory_order_relaxed);
 		players.store(a_players, std::memory_order_relaxed);
+	}
+
+	namespace
+	{
+		// Each crash is made with volatile reads and writes, so the compiler keeps them (and the recursion is through a
+		// volatile pointer, so it isn't seen as the endless recursion it is).
+		std::size_t Overflow(std::size_t a_depth)
+		{
+			static std::size_t (*volatile next)(std::size_t) = &Overflow;
+			volatile char pad[2048];
+			pad[0] = static_cast<char>(a_depth);
+			return next(a_depth + 1) + static_cast<std::size_t>(pad[0]);
+		}
+
+		DWORD WINAPI CrashThread(LPVOID a_kind)
+		{
+			CrashNow(static_cast<Kind>(reinterpret_cast<std::uintptr_t>(a_kind)));
+		}
+	}
+
+	void CrashNow(Kind a_kind)
+	{
+		REX::WARN("Crash report: crashing the game on purpose ({}), as the dev channel asked", static_cast<int>(a_kind));
+		Log::Flush();
+		volatile std::uint32_t* const nowhere = reinterpret_cast<volatile std::uint32_t*>(static_cast<std::uintptr_t>(0x10));
+		switch (a_kind) {
+		case Kind::kWrite:
+			*nowhere = 1;
+			break;
+		case Kind::kCpp:
+			throw std::runtime_error("crashtest: a C++ exception nothing catches");
+		case Kind::kStack:
+			Overflow(0);
+			break;
+		default:
+			(void)*nowhere;
+			break;
+		}
+		// Only if the crash somehow didn't happen (the write to 0x10 would need that page mapped).
+		std::abort();
+	}
+
+	void CrashOnNewThread(Kind a_kind)
+	{
+		if (const auto thread = CreateThread(nullptr, 0, &CrashThread, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(a_kind)), 0, nullptr)) {
+			CloseHandle(thread);
+		}
 	}
 }

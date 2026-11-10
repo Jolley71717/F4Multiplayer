@@ -499,6 +499,7 @@ namespace
 					REX::ERROR("Session: shutting down: {}", e.what());
 				}
 			});
+			CrashWatch::OnDataReady();  // every plugin is in now: which crash logger is loaded, and whether one took the filter
 			RollHook::OnDataReady();  // before any session: the plugins' names key every roll
 			EnableParents::OnDataReady();  // before any save: which references are off as their plugins have them
 			Session::Initialize();

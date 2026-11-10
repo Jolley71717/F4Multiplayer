@@ -15,6 +15,25 @@ namespace CrashWatch
 	// and removes old report files (the newest CrashReport::KEEP_FILES stay). Logs what it did.
 	void Install();
 
+	// Once the game's data is loaded, so every plugin is in: notes which crash logger's DLL is loaded (for the report), and
+	// if a plugin loaded after ours took the filter, puts ours back in front of it, so that one gets the exception after
+	// the report. Logged.
+	void OnDataReady();
+
 	// What the session is, for the report: from Session::Frame. Any thread.
 	void SetSession(CrashReport::Session a_session, std::uint32_t a_players);
+
+	// The dev channel's `crashtest` (docs/DEV-CHANNEL.md): crashes the game on purpose, so the rig can test the report.
+	// Never reached by players (the dev channel is off for them).
+	enum class Kind
+	{
+		kRead,   // an access violation reading a null pointer's field
+		kWrite,  // ... writing one
+		kCpp,    // a C++ exception nothing catches
+		kStack,  // a stack overflow
+	};
+	// On this thread, never returns.
+	[[noreturn]] void CrashNow(Kind a_kind);
+	// On a thread made for it (a plain Windows thread: no handler of the runtime's or ours above the crash).
+	void CrashOnNewThread(Kind a_kind);
 }

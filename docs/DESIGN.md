@@ -87,7 +87,13 @@
   the plugin had been loaded, and the return addresses the hang watch's scan finds on the copied stack. It goes to
   `F4Multiplayer-crash-<time>.txt` next to the log (the newest 3 kept) and to the log's end; never a path. A stack
   overflow gets the report without the stack scan (the thread has next to no stack left to run on). A fault inside
-  the report itself is caught (`__try`) and the exception goes on as it would have; one report per game.
+  the report itself is caught (`__try`) and the exception goes on as it would have; one report per game. The
+  filter found there before ours is the game's own (`Fallout4.exe+0x22BFFB4`, the runtime's: it ends a C++
+  exception nothing caught) unless a plugin put one in; once the game's data is loaded `OnDataReady` reads which
+  crash logger's DLL is in (Buffout 4, Addictol, Trainwreck: for the report's last line) and, if a plugin that
+  loaded after ours took the filter, puts ours back in front so that one still gets the exception after the
+  report. Addictol also uses a vectored handler, which runs before any filter; whether ours still runs after it is
+  the rig test's question (the dev channel's `crashtest` crashes the game on purpose for it).
 - **Frame watch:** `src/main.cpp` (`RunFrameWatch`), one thread, the hang watch's complement: the
   main thread answers its window, yet no frame of ours runs. The frame chain (the F4SE task posts a
   frame message once a drawn frame, the window procedure takes it on the main thread, a frame's game

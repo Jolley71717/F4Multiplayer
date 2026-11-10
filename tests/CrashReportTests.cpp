@@ -23,7 +23,6 @@ namespace
 		facts.session = CrashReport::Session::kHosting;
 		facts.players = 2;
 		facts.uptimeSeconds = 1286;
-		facts.handedOn = false;
 		return facts;
 	}
 
@@ -78,7 +77,8 @@ TEST("crash report: the report says what, where, which thread, the phase, the se
 	CHECK(text.find("EXCEPTION_ACCESS_VIOLATION (0xC0000005) at Fallout4.exe+0x3486C7, reading 0xC8 (a null pointer, or a field of one), on thread 1234 (the main thread).") != std::string::npos);
 	CHECK(text.find("The game was while saving; the session: hosting, 2 players; the plugin had been loaded for 1286 s.") != std::string::npos);
 	CHECK(text.find("  Fallout4.exe+0x34D7BC\n  KERNEL32.DLL+0x2DDA7\n") != std::string::npos);
-	CHECK(text.find("none was installed before the mod") != std::string::npos);
+	CHECK(text.find("No other exception filter was there; the exception goes on to Windows.") != std::string::npos);
+	CHECK(text.find("No crash logger (Buffout 4, Addictol) is loaded") != std::string::npos);
 	CHECK(text.find('\\') == std::string::npos);
 	CHECK(text.find('/') == std::string::npos);
 
@@ -88,14 +88,20 @@ TEST("crash report: the report says what, where, which thread, the phase, the se
 	facts.mainThread = false;
 	facts.session = CrashReport::Session::kJoined;
 	facts.players = 1;
-	facts.handedOn = true;
+	facts.previous = { "Fallout4.exe", 0x22BFFB4, 0x7FF68211FFB4 };
+	facts.logger = "AddictolCrashLogger.dll";
 	facts.phase = HangWatch::Phase::kPlay;
 	const auto other = Report(facts);
 	CHECK(other.find(", writing 0x2243892B878, on thread 1234 (not the main thread).") != std::string::npos);
 	CHECK(other.find("null pointer") == std::string::npos);
 	CHECK(other.find("in play or a menu; the session: joined a friend's game, 1 player;") != std::string::npos);
 	CHECK(other.find("No return address was found") != std::string::npos);
-	CHECK(other.find("handed on to the crash logger installed before the mod") != std::string::npos);
+	CHECK(other.find("goes on to the exception filter that was there before the mod's, at Fallout4.exe+0x22BFFB4 (the game's own).") != std::string::npos);
+	CHECK(other.find("A crash logger is loaded (AddictolCrashLogger.dll)") != std::string::npos);
+	CHECK(other.find("No crash logger") == std::string::npos);
+
+	facts.previous = { "Buffout4.dll", 0x1234, 0x7FFA00001234 };
+	CHECK(Report(facts).find("at Buffout4.dll+0x1234.\n") != std::string::npos);
 
 	facts.session = CrashReport::Session::kNone;
 	facts.access = CrashReport::Access::kNone;

@@ -132,8 +132,16 @@ namespace CrashReport
 		Session            session = Session::kNone;
 		std::uint32_t      players = 0;          // in the session, counting us
 		std::uint64_t      uptimeSeconds = 0;    // since the plugin loaded
-		bool               handedOn = false;     // another handler (a crash logger) gets the exception after this report
 		bool               stackCopied = true;   // the thread's stack could be read for the return addresses
+		// The exception filter that was there before ours (the game's own, or a plugin's), which gets the exception after
+		// this report; address 0: none, so Windows gets it.
+		struct Previous
+		{
+			std::string_view module;
+			std::uint64_t    offset = 0;
+			std::uint64_t    address = 0;
+		} previous;
+		std::string_view logger;  // a crash logger's DLL found loaded (Buffout 4, Addictol, Trainwreck); "" when none
 	};
 
 	constexpr std::string_view ExceptionName(std::uint32_t a_code)
@@ -256,9 +264,21 @@ namespace CrashReport
 				a_text.Append("\n");
 			}
 		}
-		a_text.Append("Modules are named, never their paths: this report is safe to post with a bug report. ");
-		a_text.Append(a_facts.handedOn ? "The exception was handed on to the crash logger installed before the mod; its crash log in this folder says more.\n" :
-		                                 "A crash logger (Buffout 4 or Addictol) would say more; none was installed before the mod.\n");
+		a_text.Append("Modules are named, never their paths: this report is safe to post with a bug report.\n");
+		if (a_facts.previous.address != 0) {
+			a_text.Append("The exception goes on to the exception filter that was there before the mod's, at ");
+			AppendWhere(a_text, { a_facts.previous.module, a_facts.previous.offset, a_facts.previous.address });
+			a_text.Append(a_facts.previous.module == "Fallout4.exe" ? " (the game's own).\n" : ".\n");
+		} else {
+			a_text.Append("No other exception filter was there; the exception goes on to Windows.\n");
+		}
+		if (!a_facts.logger.empty()) {
+			a_text.Append("A crash logger is loaded (");
+			a_text.Append(a_facts.logger);
+			a_text.Append("): its own crash log in this folder, when it wrote one, says more.\n");
+		} else {
+			a_text.Append("No crash logger (Buffout 4, Addictol) is loaded; one would say more.\n");
+		}
 	}
 
 	// --- the files ---
