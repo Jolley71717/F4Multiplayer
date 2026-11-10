@@ -45,6 +45,7 @@
 #include "game/InertShots.h"
 #include "game/LooksMenu.h"
 #include "game/MuzzleFlash.h"
+#include "game/Companions.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
@@ -2106,6 +2107,12 @@ namespace DevCommands
 				}
 			}
 			return Puppets::Describe(actor);
+		}
+
+		// companions: what the Followers quest's aliases hold, whose the server says each is, and what waits (Companions.cpp).
+		std::string CompanionsCommand(std::string_view)
+		{
+			return Companions::List();
 		}
 
 		// papyrus <refHex> <Script> <Function> [bool...]: calls a Papyrus method with bool args.
@@ -4328,6 +4335,7 @@ namespace DevCommands
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
 			Entry{ "papyrus", CallPapyrus },
+			Entry{ "companions", CompanionsCommand },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "log", LogCommand },

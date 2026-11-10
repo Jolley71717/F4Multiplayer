@@ -6,6 +6,7 @@
 #include "FormIds.h"
 #include "NpcHealths.h"
 #include "Name.h"
+#include "CompanionBook.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
@@ -503,6 +504,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
+	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 64; not saved: a game's aliases say again after a load)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -817,6 +819,7 @@ void Server::Run()
 		refStates.clear();
 		traps.clear();
 		actorOwners.clear();
+		companionBook.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
 		spawns.clear();
@@ -1308,6 +1311,27 @@ void Server::Run()
 		sendOwners(released, 0);
 	};
 
+	// Whose companion an NPC is now (CompanionBook): each change to everyone (a_except: a key that was told already, 0:
+	// nobody), and in the log.
+	const auto tellCompanions = [&](const std::vector<CompanionBook::Change>& a_changes, ConnectionKey a_except) {
+		for (const auto& change : a_changes) {
+			switch (change.state) {
+			case Protocol::CompanionState::kOwner:
+				log(std::format("server: {:08X} is player {}'s companion", change.refId, change.playerId));
+				break;
+			case Protocol::CompanionState::kHeld:
+				log(std::format("server: {:08X} is held for player {}, who left, for {} min", change.refId, change.playerId, std::chrono::duration_cast<std::chrono::minutes>(CompanionBook::HOLD).count()));
+				break;
+			case Protocol::CompanionState::kFree:
+				log(std::format("server: {:08X} is nobody's companion now", change.refId));
+				break;
+			case Protocol::CompanionState::kFull:
+				break;
+			}
+			broadcast(Protocol::Encode(change), true, a_except);
+		}
+	};
+
 	// Shared storage (common/StorageBook.h): friends whose view of a container closed (its keeper's world reloaded, or they
 	// left) are told so, and their game closes its menu.
 	const auto tellViewsClosed = [&](const std::vector<StorageBook::Closed>& a_closed) {
@@ -1470,6 +1494,13 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
+		{
+			// Their companions are held for a rejoin under the identity they said hello with (the game's, kept through a
+			// crash), then free (CompanionBook::HOLD; the tick frees them).
+			std::vector<CompanionBook::Change> changes;
+			companionBook.Leave(a_player.id, Clock::now(), changes);
+			tellCompanions(changes, a_player.key);
+		}
 		answerRoutedTo(a_player.id);
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
@@ -1731,6 +1762,16 @@ void Server::Run()
 			owners.push_back({ ref, owner.playerId });
 		}
 		sendOwners(owners, a_player.key);
+		// ... and whose companion each NPC is (protocol 64): one held for this identity (their game crashed, or dropped, and
+		// is back) is theirs again under their new id, which everyone hears; the newcomer gets the whole list.
+		{
+			std::vector<CompanionBook::Change> changes;
+			companionBook.Rejoin(a_player.helloId, a_player.id, changes);
+			tellCompanions(changes, a_player.key);
+			for (const auto& entry : companionBook.All()) {
+				send(a_player.key, Protocol::Encode(entry), true);
+			}
+		}
 		// ... and what those NPCs are wearing, as their owners reported it.
 		for (const auto& [ref, items] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
@@ -2889,24 +2930,31 @@ void Server::Run()
 			} else {
 				noteFighting(a_player, claim.refId, now);  // granted or not: a refused takeover is the kill handleDeath must not lose
 			}
+			// Whose companion the book says it is (protocol 64): its owner's game runs it, whoever runs it now (their claim
+			// takes it over, as a companion claim takes over a plain runner), and another game's "it follows me" is a plain
+			// offer to run it (a save of theirs from before their copy was dismissed, or their copy's scripts still
+			// marking it): it runs their AI only while nobody else does, and never keeps the owner from it.
+			const auto holder = companionBook.HolderOf(claim.refId);
+			const bool owns = holder && holder->playerId == a_player.id && !holder->gone;
+			const auto reason = claim.reason == Reason::kCompanion && holder && !owns ? Reason::kUnowned : claim.reason;
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
 			if (it == actorOwners.end()) {
-				grant = roomFor(claim.reason);
+				grant = roomFor(reason);
 			} else if (it->second.playerId == a_player.id) {
-				if (companions && it->second.reason != Reason::kCompanion && claim.reason == Reason::kCompanion) {
+				if (companions && it->second.reason != Reason::kCompanion && reason == Reason::kCompanion) {
 					++*companions;
 				}
-				it->second.reason = (std::max)(it->second.reason, claim.reason);
+				it->second.reason = (std::max)(it->second.reason, reason);
 				// The owner talking to it, or hitting it (NpcSync::OnLocalInteraction claims it again with each hit, 2 s
 				// apart at most): nobody takes it over mid-conversation, nor mid-fight while its runner keeps hitting it.
-				if (claim.reason == Reason::kInteract) {
+				if (reason == Reason::kInteract) {
 					it->second.since = now;
 				}
 				continue;
-			} else if (claim.reason == Reason::kCompanion) {
-				grant = it->second.reason != Reason::kCompanion;
-			} else if (claim.reason == Reason::kInteract) {
+			} else if (reason == Reason::kCompanion) {
+				grant = it->second.reason != Reason::kCompanion || owns;
+			} else if (reason == Reason::kInteract) {
 				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= options.takeoverCooldown;
 			}
 			if (grant) {
@@ -2914,11 +2962,11 @@ void Server::Run()
 					npcEquipment.erase(claim.refId);  // the old runner's gear report; the new one reports its own
 					noteRan(it->second.playerId, claim.refId, now);
 				}
-				actorOwners[claim.refId] = { a_player.id, claim.reason, now };
+				actorOwners[claim.refId] = { a_player.id, reason, now };
 				changed.push_back({ claim.refId, a_player.id });
 				if (owned) {
 					++*owned;
-					*companions += claim.reason == Reason::kCompanion;
+					*companions += reason == Reason::kCompanion;
 				}
 			} else if (it != actorOwners.end()) {
 				current.push_back({ claim.refId, it->second.playerId });
@@ -3306,6 +3354,33 @@ void Server::Run()
 		}
 		sendOwners(released, 0);
 		endLoansOfGoneSpawns();
+	};
+
+	// The player's game reports its Followers aliases hold an NPC (recruited), or no longer do (protocol 64): the book
+	// grants the first to recruit one and refuses the rest with the owner's name, and the reporter hears the answer
+	// first, then everyone the change (CompanionBook). A dismissal frees it only from its owner.
+	const auto handleCompanion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeCompanionReport(a_data);
+		if (!report) {
+			return;
+		}
+		std::vector<CompanionBook::Change> changes;
+		if (report->recruited) {
+			const auto answer = companionBook.Recruit(report->refId, a_player.id, a_player.helloId, Clock::now(), changes);
+			if (answer.state == Protocol::CompanionState::kFull) {
+				log(std::format("server: player {} recruited {:08X}: refused, they have {} companions already", a_player.id, report->refId, CompanionBook::MAX_PER_PLAYER));
+			} else if (answer.playerId != a_player.id) {
+				log(std::format("server: player {} recruited {:08X}: refused, it is player {}'s companion{}", a_player.id, report->refId, answer.playerId,
+					answer.state == Protocol::CompanionState::kHeld ? " (held for them while they are away)" : ""));
+			}
+			send(a_player.key, Protocol::Encode(answer), true);
+		} else if (companionBook.Dismiss(report->refId, a_player.id, changes)) {
+			log(std::format("server: player {} let {:08X} go", a_player.id, report->refId));
+		}
+		tellCompanions(changes, report->recruited ? a_player.key : 0);  // a recruit's reporter had its answer; a dismissal's hears it free with everyone
 	};
 
 	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
@@ -4506,6 +4581,9 @@ void Server::Run()
 		case MessageType::kReleaseActors:
 			handleRelease(a_player, a_data);
 			break;
+		case MessageType::kReportCompanion:
+			handleCompanion(a_player, a_data);
+			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
 			break;
@@ -4709,6 +4787,12 @@ void Server::Run()
 		}
 		nextTick = now + TICK_INTERVAL;
 		++tick;
+		{
+			// Companions held for players gone CompanionBook::HOLD are free (a second's lateness is nothing to a 5-minute hold).
+			std::vector<CompanionBook::Change> freed;
+			companionBook.Expire(now, freed);
+			tellCompanions(freed, 0);
+		}
 		if (tick % 64 == 0) {
 			objectMovers.Prune(now);  // moves over (about once a second)
 		}

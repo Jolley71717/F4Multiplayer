@@ -318,6 +318,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "down.helping", { { "player", "Sam" } }, "Helping Sam up..." },
 		{ "down.helped", { { "player", "Sam" } }, "You helped Sam up" },
 		{ "down.helped_you", { { "player", "Sam" } }, "Sam helped you up" },
+		{ "companion.theirs", { { "player", "Sam" }, { "npc", "Dogmeat" } }, "Dogmeat is Sam's companion" },
+		{ "companion.someone", {}, "another player" },
 		{ "down.revives_left", { { "n", 2 } }, "Revives left: 2" },
 		{ "down.last_revive", {}, "That was your last revive for now: the next lethal hit kills you" },
 		{ "down.revives_back", {}, "Your revives are back: a friend can help you up again" },

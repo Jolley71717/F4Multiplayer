@@ -321,3 +321,7 @@ mods.extra = Solo nel tuo gioco (disattivale):
 mods.order = In un altro punto del tuo ordine di caricamento (non serve cambiarle):
 mods.light_here = {name} (plugin light nel tuo gioco, completo in quello dell'host)
 mods.full_here = {name} (plugin completo nel tuo gioco, light in quello dell'host)
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} è il compagno di {player}
+companion.someone = un altro giocatore

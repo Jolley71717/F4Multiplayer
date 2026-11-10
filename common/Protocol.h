@@ -68,7 +68,11 @@ namespace Protocol
 	// is each game's own run (src/game/Encounters.h); a line's speaker may be a spawn id, so an encounter actor's lines
 	// reach the friends (Line::speaker). A spawn its owner reports again under its id, plain, says its encounter is over:
 	// the server passes it on (kSpawned again) and the copies stay. 62 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 63;
+	// 64: one owner per companion (common/CompanionBook.h, src/game/Companions.cpp): a game reports an NPC its Followers
+	// aliases hold, or let go of (kReportCompanion: CompanionReport), and the server names the companion's owner to the
+	// reporter and to everyone (kCompanionOwner: CompanionOwner), first to recruit keeps them; a joiner gets the list after
+	// the owner table. 63 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 64;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -213,6 +217,7 @@ namespace Protocol
 		kReportWorkshopResources = 77,  // what each of the sender's own workshop pieces counts for in their settlement now: food, water, defense, beds, power (ResourceStates)
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
+		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
 
 		// server -> client
 		kWelcome = 101,
@@ -283,6 +288,7 @@ namespace Protocol
 		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
+		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
 	};
 
 	enum StateFlags : std::uint8_t
@@ -4684,6 +4690,82 @@ namespace Protocol
 	inline auto DecodeOwners(std::span<const std::uint8_t> a_data)
 	{
 		return DecodeList<ActorOwner>(a_data, [](Reader& r) { ActorOwner a; a.refId = r.U32(); a.playerId = r.U32(); return a; });
+	}
+
+	// Companions (protocol 64): one owner per companion, the first to recruit them. The sender's game reports an NPC its
+	// Followers quest's aliases (Companion, DogmeatCompanion) hold now, or no longer hold (kReportCompanion), and the server
+	// keeps the book (common/CompanionBook.h): the first to recruit an NPC is its owner until their game lets it go, or they
+	// leave (a crashed or disconnected owner's companion is held for them for a while, then free). The answer names the
+	// owner (kCompanionOwner); a game whose recruit was refused dismisses its copy (src/game/Companions.cpp).
+	struct CompanionReport
+	{
+		std::uint32_t refId = 0;
+		bool          recruited = false;  // the aliases hold it now; false: they let it go (a dismissal, a load without it)
+	};
+
+	enum class CompanionState : std::uint8_t
+	{
+		kFree = 0,   // nobody's (playerId 0)
+		kOwner = 1,  // playerId's companion, and they are here
+		kHeld = 2,   // playerId's, and they left: kept for them until the hold is up, then free
+		kFull = 3,   // to the reporter alone: refused, they have as many companions as the server keeps for one player
+	};
+
+	struct CompanionOwner
+	{
+		std::uint32_t  refId = 0;
+		std::uint32_t  playerId = 0;  // the owner (0 with kFree and kFull)
+		CompanionState state = CompanionState::kFree;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const CompanionReport& a_msg, MessageType a_type = MessageType::kReportCompanion)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.U8(a_msg.recruited ? 1 : 0);
+		return w.Data();
+	}
+
+	inline std::optional<CompanionReport> DecodeCompanionReport(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		CompanionReport msg;
+		msg.refId = r.U32();
+		const auto recruited = r.U8();
+		if (!r.Ok() || !r.AtEnd() || recruited > 1 || !IsActorRef(msg.refId)) {
+			return std::nullopt;
+		}
+		msg.recruited = recruited != 0;
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const CompanionOwner& a_msg, MessageType a_type = MessageType::kCompanionOwner)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.U32(a_msg.playerId);
+		w.U8(std::to_underlying(a_msg.state));
+		return w.Data();
+	}
+
+	inline std::optional<CompanionOwner> DecodeCompanionOwner(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		CompanionOwner msg;
+		msg.refId = r.U32();
+		msg.playerId = r.U32();
+		const auto state = r.U8();
+		if (!r.Ok() || !r.AtEnd() || state > std::to_underlying(CompanionState::kFull) || !IsActorRef(msg.refId)) {
+			return std::nullopt;
+		}
+		msg.state = static_cast<CompanionState>(state);
+		// Nobody's and a full reporter's name no owner; an owner's and a held one's name one.
+		if ((msg.state == CompanionState::kFree || msg.state == CompanionState::kFull) != (msg.playerId == 0)) {
+			return std::nullopt;
+		}
+		return msg;
 	}
 
 	// kActorStates (client -> server) or kActorStatesRelay (server -> client).

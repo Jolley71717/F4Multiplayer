@@ -322,3 +322,7 @@ mods.extra = Są tylko w twojej grze (wyłącz je):
 mods.order = W innym miejscu twojej kolejności wczytywania (nie trzeba ich zmieniać):
 mods.light_here = {name} (u ciebie lekka wtyczka, u hosta pełna)
 mods.full_here = {name} (u ciebie pełna wtyczka, u hosta lekka)
+
+# --- Companions: one owner each (the first to recruit one keeps them) ---
+companion.theirs = {npc} to towarzysz gracza {player}
+companion.someone = innego gracza

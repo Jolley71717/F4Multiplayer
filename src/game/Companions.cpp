@@ -1,0 +1,276 @@
+#include "game/Companions.h"
+
+#include "Text.h"
+#include "game/CompanionRules.h"
+#include "game/Dialogue.h"
+#include "game/GameStop.h"
+#include "game/Hud.h"
+#include "game/NpcSync.h"
+#include "game/Papyrus.h"
+#include "game/RemotePlayers.h"
+#include "game/Story.h"
+
+#include <chrono>
+#include <format>
+#include <optional>
+#include <string_view>
+#include <utility>
+
+namespace Companions
+{
+	namespace
+	{
+		using Clock = CompanionRules::Clock;
+		using Slot = CompanionRules::Slot;
+
+		// The game's Followers quest (Fallout4.esm), whose aliases hold the player's companion and Dogmeat, and whose
+		// FollowersScript recruits and dismisses them.
+		constexpr std::uint32_t FOLLOWERS_QUEST = 0x000289E4;
+		constexpr std::string_view COMPANION_ALIAS = "Companion";
+		constexpr std::string_view DOGMEAT_ALIAS = "DogmeatCompanion";
+		constexpr std::string_view SCRIPT = "FollowersScript";
+		// The script's quiet dismissal: the companion (or Dogmeat), no message, no settlement menu (they go home).
+		constexpr std::string_view DISMISS_COMPANION = "DismissCompanion";
+		constexpr std::string_view DISMISS_DOGMEAT = "DismissDogmeatCompanion";
+
+		constexpr auto LOOK_INTERVAL = std::chrono::milliseconds(500);
+
+		CompanionRules::Book                   book;
+		std::vector<std::vector<std::uint8_t>> outgoing;
+		Clock::time_point                      lastLook{};
+		// The aliases' ids, found by name once (nullopt: not looked yet; 0: not there).
+		std::optional<std::uint32_t> companionAlias;
+		std::optional<std::uint32_t> dogmeatAlias;
+		bool                         questMissingLogged = false;
+		std::uint32_t                dismissCallsRefused = 0;  // calls the VM wouldn't queue
+
+		RE::TESQuest* FollowersQuest()
+		{
+			return RE::TESForm::GetFormByID<RE::TESQuest>(FOLLOWERS_QUEST);
+		}
+
+		// The alias of the quest named so (0: none).
+		std::uint32_t AliasNamed(RE::TESQuest* a_quest, std::string_view a_name)
+		{
+			for (const auto alias : a_quest->aliases) {
+				const auto name = alias ? alias->aliasName.c_str() : nullptr;
+				if (name && _stricmp(name, a_name.data()) == 0) {
+					return alias->aliasID;
+				}
+			}
+			return 0;
+		}
+
+		bool FindAliases()
+		{
+			if (companionAlias && dogmeatAlias) {
+				return *companionAlias != 0 || *dogmeatAlias != 0;
+			}
+			const auto quest = FollowersQuest();
+			if (!quest) {
+				if (!questMissingLogged) {
+					questMissingLogged = true;
+					REX::WARN("Companions: the Followers quest ({:08X}) is not in this game; companions are not shared", FOLLOWERS_QUEST);
+				}
+				return false;
+			}
+			companionAlias = AliasNamed(quest, COMPANION_ALIAS);
+			dogmeatAlias = AliasNamed(quest, DOGMEAT_ALIAS);
+			if (*companionAlias == 0 && *dogmeatAlias == 0) {
+				REX::WARN("Companions: the Followers quest has no {} or {} alias; companions are not shared", COMPANION_ALIAS, DOGMEAT_ALIAS);
+				return false;
+			}
+			REX::INFO("Companions: the Followers quest's aliases: {} = {}, {} = {}", COMPANION_ALIAS, *companionAlias, DOGMEAT_ALIAS, *dogmeatAlias);
+			return true;
+		}
+
+		// The actor an alias holds, if any.
+		RE::Actor* Aliased(RE::TESQuest* a_quest, std::uint32_t a_alias)
+		{
+			if (a_alias == 0) {
+				return nullptr;
+			}
+			const auto ref = a_quest->GetAliasedRef(a_alias).get();
+			return ref ? ref->As<RE::Actor>() : nullptr;
+		}
+
+		// What the aliases hold now: plugins' NPCs alone (a robot built at a workbench is a runtime reference of this game
+		// alone, its builder's by construction).
+		std::vector<CompanionRules::Held> HeldNow(RE::TESQuest* a_quest)
+		{
+			std::vector<CompanionRules::Held> held;
+			const auto add = [&](RE::Actor* a_actor, Slot a_slot) {
+				if (a_actor && Protocol::IsShareableRef(a_actor->GetFormID()) && !a_actor->IsDeleted()) {
+					held.push_back({ a_actor->GetFormID(), a_slot });
+				}
+			};
+			add(Aliased(a_quest, *companionAlias), Slot::kCompanion);
+			add(Aliased(a_quest, *dogmeatAlias), Slot::kDogmeat);
+			return held;
+		}
+
+		RE::Actor* LoadedActor(std::uint32_t a_id)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_id);
+			return form ? form->As<RE::Actor>() : nullptr;
+		}
+
+		std::string NameOf(std::uint32_t a_id)
+		{
+			const auto actor = LoadedActor(a_id);
+			const auto name = actor ? actor->GetDisplayFullName() : nullptr;
+			return name && *name ? std::string{ name } : std::string{ "?" };
+		}
+
+		std::string PlayerName(std::uint32_t a_playerId)
+		{
+			const auto name = RemotePlayers::NameOf(a_playerId);
+			return name.empty() ? Text::Get("companion.someone") : name;
+		}
+
+		// Whether our player is in the NPC's conversation (a dismissal then would leave the menu open on an NPC whose
+		// scripts are busy): the recruit's own dialogue, first of all.
+		bool Busy(RE::Actor* a_actor)
+		{
+			return Dialogue::Holds(a_actor) || NpcSync::TalkingTo() == a_actor->GetFormID();
+		}
+
+		// FollowersScript.DismissCompanion(akActor, false, false), or Dogmeat's: queued to the script VM, which runs it a
+		// frame or more later. False when it couldn't be queued (no script object).
+		bool Dismiss(RE::TESQuest* a_quest, RE::Actor* a_actor, Slot a_slot)
+		{
+			const auto self = Papyrus::BoundObject(a_quest, SCRIPT, false);
+			if (!self) {
+				REX::WARN("Companions: the Followers quest has no {} object bound; can't dismiss {:08X}", SCRIPT, a_actor->GetFormID());
+				return false;
+			}
+			// A plugin's NPC the script recruited has an Actor object already (the script passed it around); one without
+			// gets one, as a stand-in does for its seat (Puppets).
+			auto actor = Papyrus::BoundObject(a_actor, "Actor", false);
+			if (!actor) {
+				actor = Papyrus::BoundObject(a_actor, "Actor", true);
+			}
+			if (!actor) {
+				return false;
+			}
+			const auto function = a_slot == Slot::kDogmeat ? DISMISS_DOGMEAT : DISMISS_COMPANION;
+			return Papyrus::CallOn(self, function, [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 3 };
+				a_out[0] = actor;
+				a_out[1] = false;  // abShowMessage
+				a_out[2] = false;  // abShowSettlementMenu: they go to their own home
+			});
+		}
+
+		constexpr std::string_view SlotName(Slot a_slot) { return a_slot == Slot::kDogmeat ? DOGMEAT_ALIAS : COMPANION_ALIAS; }
+	}
+
+	void Frame()
+	{
+		const auto now = Clock::now();
+		if (now - lastLook < LOOK_INTERVAL || Story::InOpening() || !FindAliases()) {
+			return;
+		}
+		lastLook = now;
+		const auto quest = FollowersQuest();
+		if (!quest) {
+			return;
+		}
+		for (const auto& report : book.Look(HeldNow(quest), now)) {
+			REX::INFO("Companions: our {} {:08X} ({}); reported", report.recruited ? "aliases hold" : "aliases let go of", report.refId, NameOf(report.refId));
+			outgoing.push_back(Protocol::Encode(report));
+		}
+		for (const auto id : book.GivenUp(now)) {
+			REX::WARN("Companions: {:08X} ({}) is still in our aliases after {} dismissals; left as it is", id, NameOf(id), CompanionRules::DISMISS_TRIES);
+		}
+		if (const auto due = book.DueDismissal(now)) {
+			const auto actor = LoadedActor(due->id);
+			if (GameStop::Now() || (actor && Busy(actor))) {
+				return;  // after the pause, or the conversation
+			}
+			// An NPC the aliases hold but the game can't find counts as a try: the aliases say otherwise next look, or it is given up on.
+			if (actor && Dismiss(quest, actor, due->slot)) {
+				REX::INFO("Companions: dismissing {:08X} ({}) by {}.{} (try {} of {}): player {}'s companion, not ours", due->id, NameOf(due->id), SCRIPT,
+					due->slot == Slot::kDogmeat ? DISMISS_DOGMEAT : DISMISS_COMPANION, due->attempt, CompanionRules::DISMISS_TRIES, book.OwnerOf(due->id).value_or(0));
+			} else {
+				++dismissCallsRefused;
+			}
+			book.Dismissing(due->id, now);  // a call that couldn't be queued counts as a try: nothing is gained by repeating it at once
+		}
+	}
+
+	void OnOwner(const Protocol::CompanionOwner& a_owner)
+	{
+		const auto now = Clock::now();
+		const auto word = book.OnOwner(a_owner, NpcSync::LocalPlayer(), now);
+		const auto name = NameOf(a_owner.refId);
+		switch (word.verdict) {
+		case CompanionRules::Verdict::kNone:
+			break;
+		case CompanionRules::Verdict::kOurs:
+			REX::INFO("Companions: {:08X} ({}) is ours", a_owner.refId, name);
+			break;
+		case CompanionRules::Verdict::kRefused:
+			REX::INFO("Companions: {:08X} ({}) is player {}'s{}; our recruit is refused: dismissing our copy", a_owner.refId, name, word.playerId, word.held ? ", held while they are away" : "");
+			Hud::Notify(Text::Format("companion.theirs", { { "player", PlayerName(word.playerId) }, { "npc", name } }));
+			break;
+		case CompanionRules::Verdict::kTheirs:
+			REX::INFO("Companions: {:08X} ({}) is player {}'s", a_owner.refId, name, word.playerId);
+			break;
+		case CompanionRules::Verdict::kHeld:
+			REX::INFO("Companions: {:08X} ({}) is held for player {}, who left", a_owner.refId, name, word.playerId);
+			break;
+		case CompanionRules::Verdict::kFree:
+			REX::INFO("Companions: {:08X} ({}) is free", a_owner.refId, name);
+			break;
+		case CompanionRules::Verdict::kFull:
+			REX::WARN("Companions: the server keeps no more companions for us; {:08X} ({}) is left as it is", a_owner.refId, name);
+			break;
+		}
+	}
+
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
+	{
+		return std::exchange(outgoing, {});
+	}
+
+	void OnGameLoaded()
+	{
+		book.Reload();
+		lastLook = {};
+	}
+
+	void Reset()
+	{
+		book.Reset();
+		outgoing.clear();
+		lastLook = {};
+	}
+
+	std::string Describe()
+	{
+		return book.Describe() + std::format(" callsRefused={}", dismissCallsRefused);
+	}
+
+	std::string List()
+	{
+		if (!FindAliases()) {
+			return "no Followers quest or aliases";
+		}
+		const auto quest = FollowersQuest();
+		if (!quest) {
+			return "no Followers quest";
+		}
+		std::string out;
+		for (const auto& held : HeldNow(quest)) {
+			const auto owner = book.OwnerOf(held.id);
+			out += std::format("{}={:08X} '{}' owner={} ours={} ", SlotName(held.slot), held.id, NameOf(held.id), owner.value_or(0), book.IsOurs(held.id));
+		}
+		if (out.empty()) {
+			out = "aliases empty ";
+		}
+		const auto due = book.DueDismissal(Clock::now());
+		out += std::format("dismissDue={:08X} ", due ? due->id : 0);
+		return out + book.Describe();
+	}
+}
