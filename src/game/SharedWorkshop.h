@@ -165,6 +165,18 @@ namespace SharedWorkshop
 			return pieces;
 		}
 
+		// The builds still waiting, with their workbenches (a save, or leaving: each piece goes, told to its workbench's scripts).
+		[[nodiscard]] std::vector<Pending> Builds() const
+		{
+			std::vector<Pending> builds;
+			for (const auto& [seq, request] : pending) {
+				if (request.piece != 0) {
+					builds.push_back(request);
+				}
+			}
+			return builds;
+		}
+
 		[[nodiscard]] std::size_t   Size() const { return pending.size(); }
 		[[nodiscard]] std::uint32_t Last() const { return last; }
 		void                        Clear() { pending.clear(); }

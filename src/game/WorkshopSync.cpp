@@ -2778,6 +2778,17 @@ namespace WorkshopSync
 		constexpr REL::ID SET_IS_WORKSHOP_ITEM{ 2194972 };     // Workshop::SetIsWorkshopItem(TESObjectREFR&, bool, TESObjectREFR* bench)
 		constexpr REL::ID BUDGET_ADD_OBJECT{ 2195107 };        // Workshop::Budget::AddObject(TESObjectREFR&)
 		constexpr REL::ID BUDGET_REMOVE_OBJECT{ 2195108 };     // Workshop::Budget::RemoveObject(TESObjectREFR&) (an adopted piece off our budget)
+		// The budget's running totals are workshop mode's globals, loaded from a workbench's actor values when workshop mode
+		// is entered there (Workshop::Budget::Initialize(TESObjectREFR& bench), 2195106, +390330: the maximum triangles and draws
+		// into 4797248 and 4797252, the current ones into 4797162 and 4797163, each a 32-bit integer; read in 1.11.240). AddObject
+		// and RemoveObject add to the current totals and, with the current workbench set, write them to that workbench. So
+		// outside workshop mode at the bench the totals are loaded first and put back after (BudgetScope), or a stale figure
+		// (another settlement's, or 0 after a load) would be written onto the bench, into the host's save.
+		constexpr REL::ID BUDGET_INITIALIZE{ 2195106 };
+		constexpr REL::ID BUDGET_TRIANGLES{ 4797162 };
+		constexpr REL::ID BUDGET_DRAWS{ 4797163 };
+		constexpr REL::ID BUDGET_MAX_TRIANGLES{ 4797248 };
+		constexpr REL::ID BUDGET_MAX_DRAWS{ 4797252 };
 		constexpr REL::ID MAKE_REFERENCE_STATIC{ 2195055 };    // Workshop::MakeReferenceStatic(TESObjectREFR&)
 		constexpr REL::ID SET_FURNITURE_USED{ 2195158 };       // Workshop::SetFurnitureUsed(TESObjectREFR&, bool)
 		constexpr REL::ID CHECK_SNAPPED_POWER{ 2195213 };      // Workshop::CheckSnappedPowerConnections(ContextData&, TESObjectREFR&, PlacementItemData&)
@@ -2861,6 +2872,16 @@ namespace WorkshopSync
 		// once it is put down (the engine's drop links a held piece to the bench and adds it again).
 		std::vector<std::pair<SharedWorkshop::Pending, Key>> adoptLater;
 		std::uint32_t                                        adoptsDeferred = 0;
+		// The host's wires made for friends, counted in the budget once drawn (MakeWire, CountWiresLater).
+		struct WireToCount
+		{
+			RE::ObjectRefHandle wire;
+			std::uint32_t       bench;
+			Clock::time_point   since;
+		};
+		std::vector<WireToCount> wiresToCount;
+		std::uint32_t            wiresCounted = 0;
+		constexpr auto           WIRE_COUNT_GIVE_UP = std::chrono::seconds(10);
 
 		bool RuleOn()
 		{
@@ -3032,6 +3053,51 @@ namespace WorkshopSync
 			BenchScope& operator=(const BenchScope&) = delete;
 		};
 
+		// The budget's totals made the workbench's for an AddObject or RemoveObject on one of its pieces, and put back after:
+		// live as they are when workshop mode is open at this very workbench (the engine loaded them there); otherwise the
+		// four globals saved, loaded from the workbench (Budget::Initialize, as workshop mode's entry does), and restored,
+		// with the current workbench set meanwhile so the result is written to the bench.
+		struct BudgetScope
+		{
+			bool                                  live;
+			std::array<std::uint32_t*, 4>         globals{};
+			std::array<std::uint32_t, 4>          saved{};
+			std::optional<BenchScope>             bench;
+
+			explicit BudgetScope(RE::TESObjectREFR& a_bench)
+			{
+				using init_t = void (*)(RE::TESObjectREFR&);
+				static REL::Relocation<std::uint32_t*> current{ CURRENT_WORKSHOP };
+				static REL::Relocation<std::uint32_t*> triangles{ BUDGET_TRIANGLES };
+				static REL::Relocation<std::uint32_t*> draws{ BUDGET_DRAWS };
+				static REL::Relocation<std::uint32_t*> maxTriangles{ BUDGET_MAX_TRIANGLES };
+				static REL::Relocation<std::uint32_t*> maxDraws{ BUDGET_MAX_DRAWS };
+				static REL::Relocation<init_t>         initialize{ BUDGET_INITIALIZE };
+				live = MenuWatch::IsOpen("WorkshopMenu"sv) && *current != 0 && *current == a_bench.GetHandle().get_handle();
+				if (live) {
+					return;
+				}
+				globals = { triangles.get(), draws.get(), maxTriangles.get(), maxDraws.get() };
+				for (std::size_t i = 0; i < globals.size(); ++i) {
+					saved[i] = *globals[i];
+				}
+				bench.emplace(a_bench);
+				initialize(a_bench);
+			}
+
+			~BudgetScope()
+			{
+				if (!live) {
+					for (std::size_t i = 0; i < globals.size(); ++i) {
+						*globals[i] = saved[i];
+					}
+				}
+			}
+
+			BudgetScope(const BudgetScope&) = delete;
+			BudgetScope& operator=(const BudgetScope&) = delete;
+		};
+
 		// Takes a piece off our workshop: off every grid that names it, its power links, its workbench and, a_budgeted, its
 		// budget. For a piece of ours adopted as the host's copy, and for a wire of ours taken off the moment it was strung
 		// (both counted in the budget by the engine's placement: taken out again), and for a copy the engine's wiring tied in
@@ -3058,8 +3124,8 @@ namespace WorkshopSync
 				}
 			}
 			if (a_budgeted && a_bench && a_ref.Get3D()) {
-				BenchScope scope{ *a_bench };
-				budgetRemove(a_ref);  // the budget reads workshop mode's current workbench
+				BudgetScope scope{ *a_bench };  // the bench's own totals, less this piece, written to the bench
+				budgetRemove(a_ref);
 			}
 			if (const auto keyword = WorkshopItemKeyword(); keyword && BenchOf(a_ref)) {
 				a_ref.SetLinkedRef(nullptr, keyword);
@@ -3099,6 +3165,24 @@ namespace WorkshopSync
 		// Our piece becomes our copy of the host's (the answer named it): off our workshop, blocked from workshop mode and kept
 		// under the host's key, as any copy. The host's own report of it (its placed event) finds the copy kept, or found
 		// ours standing at the spot already and made none.
+		// The destroyed event for a piece of ours that stops being ours (adopted as the host's, or deleted before a save or on
+		// leaving): what Workshop::FinishDestroyItem notifies for a scrap, which the workshop scripts answer with
+		// OnWorkshopObjectDestroyed, undoing what the placed event did for the piece as ours (a settler's assignment to a bed
+		// or a crop, the workshop's counts). Without it a save keeps the assignment for a reference that is the host's, or
+		// gone. Mods listening for WorkshopObjectDestroyed hear it as a scrap (docs/DESIGN.md).
+		void NotifyDestroyed(RE::TESObjectREFR* a_bench, RE::TESObjectREFR& a_ref)
+		{
+			if (!a_bench) {
+				return;
+			}
+			using source_t = RE::BSTEventSource<RE::Workshop::ItemDestroyedEvent>* (*)();
+			static REL::Relocation<source_t> source{ DESTROYED_EVENT_SOURCE };
+			if (const auto events = source()) {
+				RE::Workshop::ItemDestroyedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ a_bench }, RE::NiPointer<RE::TESObjectREFR>{ &a_ref } };
+				events->Notify(event);
+			}
+		}
+
 		// False if it has to wait: the player holds the piece in workshop mode (the engine's drop would link it to our bench and
 		// count it again), so it is adopted once put down (adoptLater, SharedFrame).
 		bool Adopt(const SharedWorkshop::Pending& a_pending, const Key& a_key)
@@ -3133,20 +3217,9 @@ namespace WorkshopSync
 			madeHere.insert(a_piece);
 			++adoptedHere;
 			++counts.adopted;
-			// The engine's own placed event already ran Papyrus for the piece as ours (OnWorkshopObjectPlaced: a settler assigned
-			// to a bed or a crop, the workshop's counts), and a save would keep that for a reference that is the host's now.
-			// Undone the way a scrap undoes it: the destroyed event (what Workshop::FinishDestroyItem notifies), which the
-			// workshop scripts answer with OnWorkshopObjectDestroyed (the assignment cleared, the counts down). Our own sink
-			// sees a copy by then and reports nothing. The copy's own scripts are left as the engine made them (a copy of the
-			// host's has none of ours running: the power handler never runs for copies).
-			if (bench) {
-				using source_t = RE::BSTEventSource<RE::Workshop::ItemDestroyedEvent>* (*)();
-				static REL::Relocation<source_t> source{ DESTROYED_EVENT_SOURCE };
-				if (const auto events = source()) {
-					RE::Workshop::ItemDestroyedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ bench }, ref };
-					events->Notify(event);
-				}
-			}
+			// The engine's own placed event already ran Papyrus for the piece as ours, and a save would keep that for a reference
+			// that is the host's now: undone as a scrap undoes it. Our own sink sees a copy by then and reports nothing.
+			NotifyDestroyed(bench, *ref);
 			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) is the host's piece now: adopted as our copy of player {}'s {:08X} at workbench {:08X}", a_piece, copy.base, a_key.first,
 				a_key.second, a_pending.bench);
 			return true;
@@ -3254,6 +3327,9 @@ namespace WorkshopSync
 			if (taught.IsNotOwned(benchId)) {
 				return false;  // the host's game said this settlement isn't its own: ours, as before
 			}
+			if (IsPendingPiece(a_item->GetFormID())) {
+				return true;  // asked already (its placed event after wsreport's hand-over): one request, not two
+			}
 			const auto seq = requests.Open(Protocol::WorkshopRequestOp::kBuild, a_item->GetFormID(), benchId, Clock::now());
 			if (!seq) {
 				return false;
@@ -3277,7 +3353,10 @@ namespace WorkshopSync
 
 		bool IsPendingPiece(std::uint32_t a_id)
 		{
-			return requests.IsPending(a_id);
+			if (requests.IsPending(a_id)) {
+				return true;
+			}
+			return std::ranges::any_of(adoptLater, [&](const auto& a_later) { return a_later.first.piece == a_id; });  // answered, not yet ours to adopt: still not ours to report
 		}
 
 		// ---- The host's side ------------------------------------------------------------------------------
@@ -3326,9 +3405,11 @@ namespace WorkshopSync
 				case SharedWorkshop::Step::kLink:
 					link(ref, true, &bench);
 					break;
-				case SharedWorkshop::Step::kBudget:
+				case SharedWorkshop::Step::kBudget: {
+					BudgetScope totals{ bench };  // the bench's own totals (not another settlement's, nor 0 after a load), plus this piece
 					budget(ref);
 					break;
+				}
 				case SharedWorkshop::Step::kStatic:
 					makeStatic(ref);
 					break;
@@ -3413,7 +3494,6 @@ namespace WorkshopSync
 			static REL::Relocation<add_t>      addConnection{ ADD_CONNECTION };
 			static REL::Relocation<ref_t>      makeStatic{ MAKE_REFERENCE_STATIC };
 			static REL::Relocation<link_t>     link{ SET_IS_WORKSHOP_ITEM };
-			static REL::Relocation<ref_t>      budget{ BUDGET_ADD_OBJECT };
 			static REL::Relocation<wireless_t> wireless{ UPDATE_MOVING_WIRELESS };
 			static REL::Relocation<source_t>   source{ PLACED_EVENT_SOURCE };
 			const auto                         data = WorkshopDataOf(&a_bench);
@@ -3439,7 +3519,9 @@ namespace WorkshopSync
 				link(*wire, true, &a_bench);  // as the engine's wiring links a wire: the bench link and the location's special ref
 				RE::SplineUtils::ConnectSpline(&a_from, 0, &a_to, 0, wire.get());
 				addConnection(data, a_from, a_to, wire.get());
-				budget(*wire);  // counted, as the engine counts a placed wire: a later scrap takes it out again
+				// Counted in the budget once its spline is drawn (CountWiresLater): the engine counts a placed wire's drawn 3D, and
+				// ours has none yet (a count of 0 now, the real count off at a later scrap, would drift the budget down).
+				wiresToCount.push_back({ wire->GetHandle(), a_bench.GetFormID(), Clock::now() });
 				if (const auto tasks = RE::TaskQueueInterface::GetSingleton()) {
 					tasks->QueueRebuildBendableSpline(*wire, false, nullptr);
 				}
@@ -3549,6 +3631,34 @@ namespace WorkshopSync
 			});
 		}
 
+		// The host's wires made for friends, counted in the budget once their spline is drawn (WIRE_SETTLE after they were
+		// made, as the moved-wire check waits); one never drawn is let be.
+		void CountWiresLater(Clock::time_point a_now)
+		{
+			if (wiresToCount.empty()) {
+				return;
+			}
+			using ref_t = void (*)(RE::TESObjectREFR&);
+			static REL::Relocation<ref_t> budget{ BUDGET_ADD_OBJECT };
+			std::erase_if(wiresToCount, [&](const WireToCount& a_wire) {
+				if (a_now - a_wire.since < WIRE_SETTLE) {
+					return false;
+				}
+				const auto wire = a_wire.wire.get();
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_wire.bench);
+				if (!wire || wire->IsDeleted() || !bench) {
+					return true;
+				}
+				if (!wire->Get3D()) {
+					return a_now - a_wire.since >= WIRE_COUNT_GIVE_UP;
+				}
+				BudgetScope totals{ *bench };
+				budget(*wire);
+				++wiresCounted;
+				return true;
+			});
+		}
+
 		// Every frame, in a session: the host's requests made, ours expired.
 		void SharedFrame(Clock::time_point a_now, bool a_host)
 		{
@@ -3556,6 +3666,7 @@ namespace WorkshopSync
 			admitsCopies.store(HandsOver());
 			if (Serves()) {
 				MakeRequests(a_now);
+				CountWiresLater(a_now);
 			} else if (!making.empty()) {
 				for (auto& item : making) {
 					if (const auto ref = item.ref.get()) {
@@ -3595,26 +3706,34 @@ namespace WorkshopSync
 			}
 		}
 
+		// A piece of ours still waiting for the host's answer goes (a save, or leaving): told to its workbench's scripts as a
+		// scrap (its settler freed), off our workshop and budget, and deleted.
+		void DropPending(const SharedWorkshop::Pending& a_pending, const char* a_when)
+		{
+			const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.piece) };
+			if (!ref || ref->IsDeleted() || IsCopy(ref.get())) {
+				return;
+			}
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.bench);
+			NotifyDestroyed(bench ? bench : BenchOf(*ref), *ref);
+			Unbuild(*ref, bench ? bench : BenchOf(*ref), true);
+			ref->Disable();
+			ref->SetDelete(true);
+			REX::INFO("WorkshopSync: {}: our {:08X}, still waiting for the host's answer, goes (the host's copy comes if it was built)", a_when, a_pending.piece);
+		}
+
 		// Leaving the session: our pieces still waiting for an answer go (nothing we built at the host's settlements stays in
 		// our game), and the host's unfinished pieces for friends go too.
 		void ResetShared()
 		{
-			for (const auto id : requests.Pieces()) {
-				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id); ref && !ref->IsDeleted()) {
-					Unbuild(*ref, BenchOf(*ref), true);
-					ref->Disable();
-					ref->SetDelete(true);
-					REX::INFO("WorkshopSync: leaving: our {:08X}, still waiting for the host's answer, goes", id);
-				}
+			for (const auto& build : requests.Builds()) {
+				DropPending(build, "leaving");
 			}
 			for (const auto& later : adoptLater) {
-				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(later.first.piece); ref && !ref->IsDeleted() && !IsCopy(ref)) {
-					Unbuild(*ref, BenchOf(*ref), true);
-					ref->Disable();
-					ref->SetDelete(true);
-				}
+				DropPending(later.first, "leaving");
 			}
 			adoptLater.clear();
+			wiresToCount.clear();
 			requests.Clear();
 			taught.Clear();
 			{
@@ -3651,11 +3770,13 @@ namespace WorkshopSync
 		// rarely more than nothing.
 		void SharedBeforeSave()
 		{
+			static REL::Relocation<std::uint8_t*> moving{ MOVING_ITEM };
+			const bool                            holding = *moving != 0;  // a piece of the host's in its hands: not finished now (as MakeRequests)
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
 				const auto  ref = a_making.ref.get();
 				const auto  bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.workshop);
-				if (request.op == Protocol::WorkshopRequestOp::kBuild && ref && bench && ref->Get3D()) {
+				if (request.op == Protocol::WorkshopRequestOp::kBuild && ref && bench && ref->Get3D() && !holding) {
 					const auto steps = FinishPiece(*ref, *bench);
 					REX::INFO("WorkshopSync: save: {:08X} built for player {} finished before it: {}", ref->GetFormID(), request.playerId, steps);
 					Answer(request, Protocol::WorkshopAnswer::Why::kApplied, ref->GetFormID());
@@ -3665,18 +3786,17 @@ namespace WorkshopSync
 					ref->Disable();
 					ref->SetDelete(true);
 				}
-				Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
+				Answer(request, holding ? Protocol::WorkshopAnswer::Why::kHostBusy : Protocol::WorkshopAnswer::Why::kFailed, 0);
 				return true;
 			});
-			for (const auto id : requests.Pieces()) {
-				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id); ref && !ref->IsDeleted()) {
-					Unbuild(*ref, BenchOf(*ref), true);
-					ref->Disable();
-					ref->SetDelete(true);
-					REX::INFO("WorkshopSync: save: our {:08X}, still waiting for the host's answer, goes before it (the host's copy comes if it was built)", id);
-				}
+			for (const auto& build : requests.Builds()) {
+				DropPending(build, "save");
 			}
 			std::erase_if(adoptLater, [&](const auto& a_later) { return Adopt(a_later.first, a_later.second); });
+			for (const auto& later : adoptLater) {
+				DropPending(later.first, "save");  // still held: gone rather than saved half ours
+			}
+			adoptLater.clear();
 		}
 	}
 
@@ -3776,9 +3896,10 @@ namespace WorkshopSync
 			++answersUnknown;
 			return;
 		}
-		if (a_answer.why == Protocol::WorkshopAnswer::Why::kHostAway || a_answer.why == Protocol::WorkshopAnswer::Why::kOff) {
-			// The server has no host's game to ask (or the rule is off there): nothing more is asked this session, so no build
-			// waits a round trip for the same answer.
+		if (a_answer.why == Protocol::WorkshopAnswer::Why::kOff) {
+			// The rule is off at the server: nothing more is asked this session, so no build waits a round trip for the same
+			// answer. (A "no host's game" is not held against the session: the server also says it in the moments the host's
+			// game isn't welcomed, and the welcome's host id already keeps a dedicated server from being asked at all.)
 			if (!std::exchange(hostGone, true)) {
 				REX::INFO("WorkshopSync: the server answered '{}': nothing more is asked of the host this session", Protocol::Name(a_answer.why));
 			}

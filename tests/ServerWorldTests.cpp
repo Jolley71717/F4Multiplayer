@@ -4143,3 +4143,26 @@ TEST("shared workshop: a friend's request goes to the host's own game alone and 
 		CHECK(Count(Received(f, 1), MT::kWorkshopRequest) == 0);
 	}
 }
+
+TEST("shared workshop: the welcome names the host's own game: the host gets its own id, a friend the host's, and a dedicated server sends none")
+{
+	{
+		Server::Options options;
+		options.hostIdentity = 0x4242;
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		const auto hostWelcome = f.Join(1, Fixture::MakeHello("Host", 0x4242));
+		REQUIRE(hostWelcome);
+		CHECK(hostWelcome->hostId == hostWelcome->playerId);
+		const auto friendWelcome = f.Join(2, Fixture::MakeHello("Alice"));
+		REQUIRE(friendWelcome);
+		CHECK(friendWelcome->hostId == hostWelcome->playerId);
+		CHECK(friendWelcome->hostId != friendWelcome->playerId);
+	}
+	{
+		Fixture    f;  // a dedicated server: no host's game
+		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
+		REQUIRE(welcome);
+		CHECK(welcome->hostId == 0);
+	}
+}

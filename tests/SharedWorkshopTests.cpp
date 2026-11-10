@@ -76,6 +76,9 @@ TEST("shared workshop: requests are numbered from 1, answered once by number, ex
 	CHECK(!requests.IsPending(OTHER));
 	CHECK(!requests.IsPending(0));  // a wire's "piece" is none, never pending
 	CHECK(requests.Pieces() == std::vector<std::uint32_t>{ PIECE });
+	REQUIRE(requests.Builds().size() == 1);  // the builds with their workbenches (a wire has no piece to drop)
+	CHECK(requests.Builds()[0].piece == PIECE);
+	CHECK(requests.Builds()[0].bench == BENCH);
 
 	const auto answered = requests.Take(1);
 	REQUIRE(answered);

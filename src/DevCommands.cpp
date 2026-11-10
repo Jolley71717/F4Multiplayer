@@ -2215,13 +2215,16 @@ namespace DevCommands
 			return std::format("friend light form {:08X}", *id);
 		}
 
-		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]: reports a reference (or a
+		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap|quiet]: reports a reference (or a
 		// new one of that base, put a step in front of the player) as if just placed (or scrapped) in workshop mode.
-		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there.
+		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there. "quiet" only
+		// makes the reference and prints it, for wsfinish to place it with the engine's own steps (the rig's stand-in for a
+		// build in workshop mode: the budget, the scripts and the placed event as the engine does them).
 		std::string WsReport(std::string_view a_args)
 		{
 			auto args = SplitArgs(a_args);
 			RE::TESObjectREFR* ref = nullptr;
+			const bool quiet = args.size() >= 4 && args[0] == "place" && args[3] == "quiet";
 			if (args.size() >= 2 && args[0] == "place") {
 				const auto baseId = ParseHex(args[1]);
 				const auto base = baseId ? RE::TESForm::GetFormByID<RE::TESBoundObject>(*baseId) : nullptr;
@@ -2250,7 +2253,10 @@ namespace DevCommands
 				}
 			}
 			if (!ref) {
-				return "error: usage: wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]";
+				return "error: usage: wsreport <refHex> [workshopHex] [scrap|quiet] | place <baseHex> <workshopHex> [scrap|quiet]";
+			}
+			if (quiet) {
+				return std::format("placed {:08X} (not reported)", ref->GetFormID());
 			}
 			const auto workshop = !args.empty() && args[0] != "scrap" ? LookupRef(args[0]) : nullptr;
 			const bool scrap = !args.empty() && args.back() == "scrap";
