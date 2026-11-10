@@ -1795,19 +1795,19 @@ step_radiants() {
 # bench step assigns settlers): what is under test is the session's book, the refused game's dismissal and the hold, not the
 # dialogue. The refused recruit is the VM's own doing through the script too; a real talk to the copy is the same path (the copy's
 # dialogue runs the VM's own Followers script), and is left to a hand test.
-# Real movement: the host walks from where it stands to COMPANION_WALK_TO with Dogmeat at heel (walkto.sh's pad), and the VM's
+# Real movement: the host walks COMPANION_WALK_DX/DY from where it stands with Dogmeat at heel (walkto.sh's pad), and the VM's
 # copy is asserted beside the host's stand-in at the end of the walk (within COMPANION_FOLLOW u; no teleport, no injected
 # movement). Saves: the games' standing rig saves have Dogmeat free at Red Rocket; a game with Dogmeat already recruited is set
 # up by dismissing him first (said so).
 COMPANION_DOGMEAT=${COMPANION_DOGMEAT:-0001D162}; COMPANION_CELL=${COMPANION_CELL:-RedRocketExt}
-COMPANION_WALK_TO=${COMPANION_WALK_TO:-"-56000 46500"}  # where the host walks to with the dog at heel (Red Rocket's forecourt to its north side; override per rig)
+COMPANION_WALK_DX=${COMPANION_WALK_DX:-1200}; COMPANION_WALK_DY=${COMPANION_WALK_DY:-0}  # the walk with the dog at heel: from where the host stands after the coc, this far along x and y (the forecourt is open eastward); COMPANION_WALK_TO="x y" overrides
 COMPANION_FOLLOW=${COMPANION_FOLLOW:-600}            # u, the VM's copy of the dog from the host's position after the walk
 COMPANION_SETTLE=${COMPANION_SETTLE:-25}             # s, for a report, its answer and a dismissal to show in the logs
 COMPANION_WAIT_HOLD=${COMPANION_WAIT_HOLD:-0}        # 1: also wait the 5-minute hold out after the VM's game is killed (adds ~7 min)
 _c_log_has() { grep -qE "$2" "$(win_read companions "$1")"; }   # _c_log_has <who> <regex>: the game's log since win_mark has it
 _c_held() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8}" | cut -d= -f2; }   # the ref the game's Dogmeat alias holds ("" when none)
 _c_owner() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8} '[^']*' owner=[0-9]+" | grep -oE "owner=[0-9]+" | cut -d= -f2; }
-_c_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetDogmeatCompanion\" $COMPANION_DOGMEAT" >/dev/null; }
+_c_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetDogmeatCompanion\" $COMPANION_DOGMEAT" >/dev/null; sleep 1; dc "$1" "console $COMPANION_DOGMEAT.evp" >/dev/null; }   # SetDogmeatCompanion(Actor) fills the alias and sets the follow values; the alias package is evaluated by the dialogue's end in the real recruit, so evp here (a console-recruited Dogmeat stood still before)
 _c_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissDogmeatCompanion\" 0 1" >/dev/null; }   # (ShowLocationAssignmentListIfAvailable, SuppressDismissMessage): the quiet path, no actor argument
 _c_free_both() {  # both games with Dogmeat out of their aliases (set-up: dismissed by console where he is held)
 	local w; for w in host vm; do
@@ -1840,6 +1840,7 @@ step_companions() {
 	else fail "companions: the VM hears Dogmeat is player $hid's" "$(_c_tail vm)"; fi
 
 	# 2. Real movement: the host walks with the dog at heel; the VM's copy ends up beside the host's stand-in.
+	if [ -z "$COMPANION_WALK_TO" ]; then n=$(dc host pos); COMPANION_WALK_TO="$(awk -v x="$(field "$n" x)" -v y="$(field "$n" y)" -v dx="$COMPANION_WALK_DX" -v dy="$COMPANION_WALK_DY" 'BEGIN{printf "%d %d", x+dx, y+dy}')"; fi
 	if bash "$RIG/walkto.sh" host $COMPANION_WALK_TO 0.6 150 90 > "$A_OUT/companions-walk.log" 2>&1; then
 		sleep 8
 		n=$(_c_dog_from_host)
@@ -1913,4 +1914,64 @@ step_companions() {
 	expect_eq "companions: Dogmeat is free in both games at the end" "$(_c_held host)$(_c_held vm)" ""
 	# ... and the server's book is empty: no game knows an owner (known=0 in both games' companions line).
 	expect_eq "companions: the server's book is empty at the end" "$(dc host companions | grep -oE 'known=[0-9]+')/$(dc vm companions | grep -oE 'known=[0-9]+')" "known=0/known=0"
+}
+
+# ---- companions_human: the Companion slot (a human companion) (opt-in: smoke.sh --only companions_human) ------------------------------
+# The same refusal through the Followers quest's Companion alias (DismissCompanion's path, not Dogmeat's): Codsworth at
+# Sanctuary, both games there by console (set-up, said so). The script's SetCompanion, read off FollowersScript.pex, is
+# SetCompanion(Actor ActorToMakeCompanion, Bool SetCompanion, Bool FillCompanionAlias, Bool SuppressDismissMessage): the console
+# call must give all four (a one-argument call is dropped by the VM and fills nothing, which is what an earlier run met), and the
+# alias is checked filled before anything else (a loud FAIL otherwise). Codsworth is a robot of the plugin, a plugin NPC with a
+# base (not one built at a workbench), so he is shared like any NPC. After a console recruit the alias package is evaluated (evp),
+# as the dialogue's end would.
+COMPANION_HUMAN=${COMPANION_HUMAN:-$CODSWORTH}; COMPANION_HUMAN_CELL=${COMPANION_HUMAN_CELL:-SanctuaryExt}
+_ch_held() { dc "$1" companions | grep -oE "(^| )Companion=[0-9A-F]{8}" | grep -oE "[0-9A-F]{8}$"; }   # the ref the game's Companion alias holds ("" when none)
+_ch_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetCompanion\" $COMPANION_HUMAN 1 1 1" >/dev/null; sleep 1; dc "$1" "console $COMPANION_HUMAN.evp" >/dev/null; }
+_ch_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissCompanion\" $COMPANION_HUMAN 0 1" >/dev/null; }   # (actor, ShowLocationAssignmentListIfAvailable, SuppressDismissMessage)
+_ch_free_both() { local w; for w in host vm; do if [ -n "$(_ch_held "$w")" ]; then _ch_dismiss "$w"; sleep 4; fi; [ -z "$(_ch_held "$w")" ] || return 1; done; }
+step_companions_human() {
+	section "companions_human (the Companion slot: Codsworth at Sanctuary; console placement, console recruits for set-up)"
+	local hid vid
+	enter_both "$COMPANION_HUMAN_CELL" 14
+	hid=$(_c_player_id host); vid=$(_c_player_id vm)
+	if ! is_num "$hid" || ! is_num "$vid"; then fail "companions_human: set-up: both games are in the session" "host id '$hid', VM id '$vid'"; return; fi
+	if ! wait_for 20 _ch_free_both; then fail "companions_human: set-up: the Companion alias empty in both games" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
+	if [ "$(dc host "refinfo $COMPANION_HUMAN" | grep -c 'ref=')" != 1 ]; then fail "companions_human: set-up: the host has $COMPANION_HUMAN loaded" "$(dc host "refinfo $COMPANION_HUMAN" | cut -c1-120)"; return; fi
+
+	# 1. The host recruits by the script's SetCompanion (all four arguments): the alias must fill, or nothing below means anything.
+	win_mark companions host; win_mark companions vm
+	_ch_recruit host
+	if wait_for 10 [ "$(_ch_held host)" = "$COMPANION_HUMAN" ]; then pass "companions_human: SetCompanion($COMPANION_HUMAN, 1, 1, 1) by console fills the host's Companion alias" "ok"
+	else fail "companions_human: SetCompanion($COMPANION_HUMAN, 1, 1, 1) by console fills the host's Companion alias" "alias '$(_ch_held host)': the console call did not take (its arity, or the actor); nothing below is meaningful"; return; fi
+	if wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: $COMPANION_HUMAN \(.*\) is ours"; then pass "companions_human: the host's recruit is granted" "ok"
+	else fail "companions_human: the host's recruit is granted" "$(_c_tail host)"; return; fi
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is player $hid's"; then pass "companions_human: the VM hears whose he is" "ok"
+	else fail "companions_human: the VM hears whose he is" "$(_c_tail vm)"; fi
+
+	# 2. The VM recruits him too: refused, dismissed by DismissCompanion on the first try, the alias let go, no "going home" message.
+	win_mark companions vm
+	_ch_recruit vm
+	if wait_for 10 [ "$(_ch_held vm)" = "$COMPANION_HUMAN" ] || _c_log_has vm "Companions: our aliases let go of $COMPANION_HUMAN"; then pass "companions_human: SetCompanion by console fills the VM's Companion alias" "ok"
+	else fail "companions_human: SetCompanion by console fills the VM's Companion alias" "alias '$(_ch_held vm)'"; return; fi
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is player $hid's; our recruit is refused: dismissing our copy"; then pass "companions_human: the VM's recruit is refused" "ok"
+	else fail "companions_human: the VM's recruit is refused" "$(_c_tail vm)"; fi
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: dismissing $COMPANION_HUMAN .*FollowersScript.DismissCompanion \(try 1 of 3\)"; then pass "companions_human: the VM dismisses its copy by DismissCompanion" "ok"
+	else fail "companions_human: the VM dismisses its copy by DismissCompanion" "$(_c_tail vm)"; fi
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: our aliases let go of $COMPANION_HUMAN"; then pass "companions_human: the VM's Companion alias is empty again on the first try" "alias '$(_ch_held vm)'"
+	else fail "companions_human: the VM's Companion alias is empty again on the first try" "alias '$(_ch_held vm)'; $(_c_tail vm)"; fi
+	if _c_log_has vm "Companions: dismissing $COMPANION_HUMAN .*\(try 2 of 3\)"; then fail "companions_human: one dismissal was enough" "a second try went"; else pass "companions_human: one dismissal was enough" "no second try"; fi
+	expect_eq "companions_human: the host still has him" "$(_ch_held host)" "$COMPANION_HUMAN"
+	expect_eq "companions_human: the VM still knows the owner after its let-go" "$(dc vm companions | grep -oE 'known=[0-9]+')" "known=1"
+
+	# 3. The host lets him go; the VM recruits him; put back.
+	win_mark companions vm; win_mark companions host
+	_ch_dismiss host
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is free"; then pass "companions_human: the host's dismissal frees him" "ok"
+	else fail "companions_human: the host's dismissal frees him" "host alias '$(_ch_held host)'; $(_c_tail vm)"; fi
+	_ch_recruit vm
+	if wait_for "$COMPANION_SETTLE" _c_log_has vm "Companions: $COMPANION_HUMAN \(.*\) is ours"; then pass "companions_human: the VM's recruit after the host's dismissal is granted" "ok"
+	else fail "companions_human: the VM's recruit after the host's dismissal is granted" "$(_c_tail vm)"; fi
+	_ch_dismiss vm; sleep 4
+	expect_eq "companions_human: the Companion alias is empty in both games at the end" "$(_ch_held host)$(_ch_held vm)" ""
+	expect_eq "companions_human: the server's book is empty at the end" "$(dc host companions | grep -oE 'known=[0-9]+')/$(dc vm companions | grep -oE 'known=[0-9]+')" "known=0/known=0"
 }

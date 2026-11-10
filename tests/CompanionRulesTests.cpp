@@ -253,6 +253,26 @@ TEST("companion rules: a look while the game isn't settled (a save or load, a lo
 	CHECK(refused.DueDismissal(T0 + 5s));
 }
 
+TEST("companion rules: a refused copy let go still knows the owner; only our own spent word is forgotten")
+{
+	// The rig saw the refused game's known drop to 0 after its let-go while the owner still held the companion.
+	Book book;
+	(void)book.Look({ { DOGMEAT, Slot::kDogmeat } }, T0);
+	REQUIRE(book.OnOwner(Owner(DOGMEAT, THEM), US, T0).verdict == Verdict::kRefused);
+	book.Dismissing(DOGMEAT, T0 + 2s);
+	const auto reports = book.Look({}, T0 + 3s);
+	REQUIRE(reports.size() == 1);
+	CHECK(!reports[0].recruited);
+	CHECK(book.Known() == 1);
+	CHECK(book.OwnerOf(DOGMEAT) == THEM);
+	// Ours let go: the word is spent, known drops, and the server's free follows.
+	Book ours;
+	(void)ours.Look({ { PIPER, Slot::kCompanion } }, T0);
+	REQUIRE(ours.OnOwner(Owner(PIPER, US), US, T0).verdict == Verdict::kOurs);
+	CHECK(ours.Look({}, T0 + 1s).size() == 1);
+	CHECK(ours.Known() == 0);
+}
+
 TEST("companion rules: a copy given up on after three dismissals is reported again once the companion is freed")
 {
 	Book book;

@@ -102,7 +102,11 @@ namespace CompanionRules
 					++dismissed;  // the dismissal took (or the player let them go themselves): either way our aliases are free of it
 				}
 				reports.push_back({ it->first, false });
-				owners.erase(it->first);  // said let go: the server's word that it is ours is spent (its "free" follows)
+				// Said let go: the server's word that it is ours is spent (its "free" follows). Another's word stays: a refused
+				// copy let go is still the owner's (the rig saw known drop to 0 while the owner held the companion).
+				if (const auto owner = owners.find(it->first); owner != owners.end() && owner->second.playerId == localId && !owner->second.held) {
+					owners.erase(owner);
+				}
 				it = recruited.erase(it);
 			}
 			// One the server says is ours that the aliases don't hold (a save loaded without it; one let go while we were
