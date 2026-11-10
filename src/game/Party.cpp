@@ -117,6 +117,8 @@ namespace Party
 		CatchUpXp::Factors catchUp;
 		std::optional<std::int32_t> catchUpLogged;
 		float                catchUpGiven = 0.0f;
+		std::uint32_t        catchUpWithheld = 0;  // top-ups not given: a menu that earns XP was open in the window
+		Clock::time_point    menuXpAt{};           // when such a menu was last seen open
 		float                catchUpNotice = 0.0f;
 		Clock::time_point    catchUpNoticeAt{};
 
@@ -728,6 +730,13 @@ namespace Party
 				return;
 			}
 			UpdateCatchUp(player);
+			// A menu whose use earns XP (a lock picked, a terminal hacked, something crafted or built): kill XP held
+			// over it gets no top-up (below).
+			if (OpenMenus::Open(OpenMenus::Menu::kLockpicking) || OpenMenus::Open(OpenMenus::Menu::kTerminal) || OpenMenus::Open(OpenMenus::Menu::kTerminalHolotape) ||
+				OpenMenus::Open(OpenMenus::Menu::kExamine) || OpenMenus::Open(OpenMenus::Menu::kCooking) || OpenMenus::Open(OpenMenus::Menu::kWorkshop) ||
+				OpenMenus::Open(OpenMenus::Menu::kPowerArmorMod) || OpenMenus::Open(OpenMenus::Menu::kRobotMod)) {
+				menuXpAt = a_now;
+			}
 			// The kill (death event) and its XP can come in either order: the death event waits
 			// for the victim's next AI update.
 			const auto hold = [&](float a_xp, Clock::time_point a_since) {
@@ -772,9 +781,14 @@ namespace Party
 				} else if (heldXp >= 1.0f) {
 					outgoing.push_back(Protocol::Encode(Protocol::XpGain{ 0, (std::min)(heldXp, Protocol::MAX_XP_SHARE) }, Protocol::MessageType::kReportXp));
 					// Behind the players' average level, our kill XP is topped up here, once it is known to be a kill's
-					// (quest and discovery XP are never: kills only). The extra is credited so the next poll neither
-					// reports it as a kill's nor tops it up again.
-					if (const auto bonus = CatchUpXp::Bonus(catchUp, heldXp); bonus > 0 && !player->IsDead(false) && !Story::InOpening()) {
+					// (quest and discovery XP are never: kills only). Not when a menu that earns XP (a lock, a terminal,
+					// a workbench, the workshop) was open in the window: that XP is in the hold with the kill's and would
+					// be farmed at up to twice. The extra is credited so the next poll neither reports it as a kill's
+					// nor tops it up again.
+					const auto bonus = CatchUpXp::Bonus(catchUp, heldXp);
+					if (bonus > 0 && menuXpAt >= from) {
+						++catchUpWithheld;
+					} else if (bonus > 0 && !player->IsDead(false) && !Story::InOpening() && WorldSync::InWorld()) {
 						RE::Console::ExecuteCommand(std::format("player.modav experience {}", bonus).c_str());
 						xpCredit += static_cast<float>(bonus);
 						catchUpGiven += static_cast<float>(bonus);
@@ -1004,6 +1018,7 @@ namespace Party
 		// Not in the opening: no friend could get there to help.
 		Downed::Frame(localId != 0 && !RemotePlayers::List().empty() && !Story::InOpening());
 		if (localId == 0) {
+			GroupHits::Restore();  // out of a session (nothing when already the game's own)
 			return;
 		}
 		SendStatus(now);
@@ -1445,8 +1460,8 @@ namespace Party
 
 	std::string Describe()
 	{
-		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={} catchUp={:+}%/x{:.2f} avg={} given={:.0f}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld,
-			(std::max)(CatchUpXp::Percent(catchUp), 0), catchUp.share, catchUp.average, catchUpGiven);
+		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={} catchUp={:+}%/x{:.2f} avg={} given={:.0f} withheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld,
+			(std::max)(CatchUpXp::Percent(catchUp), 0), catchUp.share, catchUp.average, catchUpGiven, catchUpWithheld);
 		out += " " + GroupHits::Describe();
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");

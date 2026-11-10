@@ -33,6 +33,18 @@ TEST("group difficulty: each player beyond the first adds the percent, and the p
 	CHECK(Near(GroupDifficulty::DamageMult(25, 5), 0.5f));
 }
 
+TEST("group difficulty: friendly fire is multiplied back by the toughness, so a hit on a friend is as the game makes it")
+{
+	for (const std::uint8_t percent : { std::uint8_t{ 0 }, std::uint8_t{ 50 }, std::uint8_t{ 200 } }) {
+		for (std::size_t players = 1; players <= 8; ++players) {
+			const float engine = 40.0f * GroupDifficulty::DamageMult(percent, players);  // what the engine's divided multipliers made of a 40-point hit
+			CHECK(Near(engine * GroupDifficulty::FriendlyFireMult(percent, players), 40.0f));
+		}
+	}
+	CHECK(Near(GroupDifficulty::FriendlyFireMult(200, 4), 7.0f));
+	CHECK(Near(GroupDifficulty::FriendlyFireMult(0, 4), 1.0f));
+}
+
 TEST("group difficulty: the toughness never passes its cap, however many players or whatever percent")
 {
 	CHECK(Near(GroupDifficulty::Toughness(200, 5), 8.0f));  // 1 + 2 * 4 = 9, capped

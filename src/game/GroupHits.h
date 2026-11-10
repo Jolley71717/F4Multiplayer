@@ -17,6 +17,10 @@ namespace GroupHits
 	// The session ended: the settings as the game had them.
 	void Restore();
 
+	// What a hit on a friend's stand-in is multiplied back by before it is sent (GroupDifficulty::FriendlyFireMult
+	// for the rule and count in force): 1 when nothing is changed.
+	[[nodiscard]] float FriendlyFireMult();
+
 	// For net status: "group=x0.50 players=3 writes=2".
 	[[nodiscard]] std::string Describe();
 }

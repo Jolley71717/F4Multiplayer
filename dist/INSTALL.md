@@ -202,8 +202,9 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   At 10, five levels behind means half as much again. The dedicated server takes it as `--catch-up-xp`.
 - `iGroupDifficulty` (0): enemies are this percent tougher for each player in the session beyond the first: everyone's
   hits take that much less off them, and what enemies do to you is unchanged. At 50, two players meet enemies half as
-  tough again, four players enemies two and a half times as tough. The dedicated server takes it as
-  `--group-difficulty`.
+  tough again, four players enemies two and a half times as tough. Every player in the session counts, however far
+  away they are; companions' and turrets' damage is not scaled, nor is friendly fire. The dedicated server takes it
+  as `--group-difficulty`.
 - `sLegendaryDifficulty` (average): whose difficulty sets the chance of a legendary enemy. `average` uses the average
   of the players in the session now, `host` the host's, and `own` each game's own (one of you may then see a
   legendary where another sees a plain one). Your own difficulty still sets the damage you deal and take. The

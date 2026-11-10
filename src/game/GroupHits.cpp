@@ -15,10 +15,17 @@ namespace GroupHits
 		constexpr std::array<const char*, 7> SETTINGS{ "fDiffMultHPByPCVE", "fDiffMultHPByPCE", "fDiffMultHPByPCN", "fDiffMultHPByPCH",
 			"fDiffMultHPByPCVH", "fDiffMultHPByPCSV", "fDiffMultHPByPCTSV" };
 
-		std::array<std::optional<float>, 7> originals;  // read the first time a change is made
-		float                               mult = 1.0f;  // what the settings hold now, of their originals
-		std::size_t                         players = 1;
-		std::uint32_t                       writes = 0;
+		struct Held
+		{
+			std::optional<float> original;  // the game's own, read before our first write and again whenever the value isn't ours
+			std::optional<float> written;   // the last value we wrote
+		};
+
+		std::array<Held, 7> held;
+		float               mult = 1.0f;  // what the settings hold now, of their originals
+		std::size_t         players = 1;
+		std::uint32_t       writes = 0;
+		std::uint32_t       rereads = 0;  // originals read again: a mod or setgs changed one under us
 
 		RE::Setting* Find(const char* a_name)
 		{
@@ -34,10 +41,17 @@ namespace GroupHits
 				if (!setting) {
 					continue;
 				}
-				if (!originals[i]) {
-					originals[i] = setting->GetFloat();
+				auto&       slot = held[i];
+				const float now = setting->GetFloat();
+				// The value is the game's own (never written, or changed since by a mod or the console's setgs): that
+				// is the original from here on, so a changed setting is scaled, not overwritten with a stale one.
+				if (!slot.original || !slot.written || std::fabs(now - *slot.written) > 0.0001f) {
+					rereads += slot.original.has_value();
+					slot.original = now;
 				}
-				setting->SetFloat(*originals[i] * a_mult);
+				const float value = a_mult == 1.0f ? *slot.original : *slot.original * a_mult;
+				setting->SetFloat(value);
+				slot.written = value;
 			}
 			mult = a_mult;
 			++writes;
@@ -64,8 +78,13 @@ namespace GroupHits
 		}
 	}
 
+	float FriendlyFireMult()
+	{
+		return mult > 0.0f ? 1.0f / mult : 1.0f;
+	}
+
 	std::string Describe()
 	{
-		return std::format("group=x{:.2f} players={} writes={}", mult, players, writes);
+		return std::format("group=x{:.2f} players={} writes={} rereads={}", mult, players, writes, rereads);
 	}
 }

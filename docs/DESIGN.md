@@ -2370,7 +2370,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   of the players here, those in the opening left out) earns `iCatchUpXp` percent more kill XP per level behind, at most
   double. Kills only: the extra is given with `player.modav experience` when held XP is judged a kill's (the end of the
   2.5 s hold above, where a quest stage or a discovery in the window withholds it), and credited as a share is, so it is
-  neither reported as kill XP nor topped up again. Ahead of the average, our own XP is as the game gives it and our
+  neither reported as kill XP nor topped up again, and not at all when a menu that earns XP (a lock, a terminal, a
+  workbench, the workshop) was open in the hold's window, as that XP is held with the kill's (`catchUp= withheld=`).
+  Ahead of the average, our own XP is as the game gives it and our
   share of friends' kills (`ApplyXp`) shrinks by the same percent per level, to nothing at the most: the gap closes from
   both sides. The factors are made every poll from the statuses (`UpdateCatchUp`), logged once per whole percent, and
   shown as `catchUp=` in the party's status; the extra shows as "+N XP catching up with your party" batched as the share
@@ -2382,7 +2384,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   memory, never in a save) by the toughness while that many players are here (those in the opening left out), written
   only when the multiplier changes and put back when the session ends (`Party::Reset`). A hit's damage is computed in
   the shooter's game before it is sent as a number (docs/HEALTH-SYNC.md), so every game meets the same tougher enemy;
-  what enemies do to players is unchanged. `net status`: `group=x players= writes=`. Not tested in a game yet.
+  what enemies do to players is unchanged, and so is friendly fire: the engine scales our hit on a stand-in by the same
+  multipliers, so WorldSync multiplies it back by the toughness before sending it (`GroupDifficulty::FriendlyFireMult`).
+  A setting found changed under us (a mod, `setgs`) is taken as the new original and scaled from there. Every player in
+  the session counts, however far; companions' and turrets' damage is not scaled. `net status`: `group=x players=
+  writes= rereads=`. Not tested in a game yet.
 - Time and weather: everyone reports `Calendar::gameHour`, `gameDaysPassed` and
   `Sky::currentWeather` every 5 s; the server passes on only the host's (a player on its machine,
   else the one there longest). The game keeps GameDaysPassed at midnights passed + hour / 24, so

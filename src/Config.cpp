@@ -41,6 +41,19 @@ namespace Config
 				a_out = value;
 			}
 		}
+
+		// A percent key with a ceiling (iCatchUpXp, iGroupDifficulty): past it the ceiling, said in the log; not a number,
+		// the value it had.
+		std::uint8_t ParsePercent(std::string_view a_key, std::string_view a_value, std::uint8_t a_max, std::uint8_t a_current)
+		{
+			std::uint32_t parsed = a_current;
+			ParseInt(a_value, parsed);
+			if (parsed > a_max) {
+				REX::WARN("Config: {} = {} is past {}; it is {}", a_key, parsed, a_max, a_max);
+				return a_max;
+			}
+			return static_cast<std::uint8_t>(parsed);
+		}
 	}
 
 	void Load()
@@ -170,9 +183,9 @@ namespace Config
 					REX::WARN("Config: sLegendaryDifficulty = '{}' is none of average, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::LegendaryRule>(settings.legendary)));
 				}
 			} else if (key == "iCatchUpXp") {
-				ParseInt(value, settings.catchUpXp);  // past 100 is brought to 100 by the rules (SessionRules::Clamped)
+				settings.catchUpXp = ParsePercent(key, value, Protocol::SessionRules::MAX_CATCH_UP_XP, settings.catchUpXp);
 			} else if (key == "iGroupDifficulty") {
-				ParseInt(value, settings.groupDifficulty);  // past 200 is brought to 200 the same way
+				settings.groupDifficulty = ParsePercent(key, value, Protocol::SessionRules::MAX_GROUP_DIFFICULTY, settings.groupDifficulty);
 			} else if (key == "bSharedRolls") {
 				settings.sharedRolls = ParseBool(value);
 			} else if (key == "bHideTutorials") {

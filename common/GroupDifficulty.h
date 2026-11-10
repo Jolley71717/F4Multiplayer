@@ -9,9 +9,10 @@
 // toughness for each player beyond the first: with 50, two players meet enemies half as tough again, four players
 // enemies two and a half times as tough. Every game applies it to its own player's hits: the engine's difficulty
 // multipliers of the damage the player deals to NPCs (fDiffMultHPByPC*) are divided by the toughness while that many
-// players are here (src/game/GroupDifficulty.cpp), so a hit's number, computed in the shooter's game before it is
-// sent, is the same tougher enemy for everyone. Enemies' damage to players is untouched. Kept free of the game so it
-// can be tested (tests/GroupDifficultyTests.cpp).
+// players are here (src/game/GroupHits.cpp), so a hit's number, computed in the shooter's game before it is sent, is
+// the same tougher enemy for everyone. Enemies' damage to players is untouched, and so is friendly fire: the engine
+// scales a player's hit on a stand-in by the same multipliers, so WorldSync multiplies it back by the toughness
+// (FriendlyFireMult) before sending it. Kept free of the game so it can be tested (tests/GroupDifficultyTests.cpp).
 namespace GroupDifficulty
 {
 	// The most percent per extra player the host may ask for, and the most an enemy can be toughened however many
@@ -33,5 +34,12 @@ namespace GroupDifficulty
 	[[nodiscard]] inline float DamageMult(std::uint8_t a_percent, std::size_t a_players)
 	{
 		return 1.0f / Toughness(a_percent, a_players);
+	}
+
+	// What a hit on a friend's stand-in, which the engine computed with the divided multipliers, is multiplied back by
+	// so friendly fire is as the game makes it: the toughness, the inverse of DamageMult.
+	[[nodiscard]] inline float FriendlyFireMult(std::uint8_t a_percent, std::size_t a_players)
+	{
+		return Toughness(a_percent, a_players);
 	}
 }
