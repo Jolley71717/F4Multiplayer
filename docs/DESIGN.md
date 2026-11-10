@@ -2860,8 +2860,13 @@ never stops: show a copy on, save, `net leave`, load: the sound is there and not
 shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
 shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
 `HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
-`wspower`. Not done: a copy a save from before this holds running (or one nobody reports any more: its piece is gone from the
-friend's game) stays so in a game that has it; the session's reports show the ones it names, the others stay.
+`wspower`. A copy the save holds that no session keeps (a *stray*: one a save from before this wrote running, or one nobody
+reports any more because its piece is gone from the friend's game, so no report adopts it) would show whatever the save kept,
+in a session or out of one. So every `STRAY_SWEEP` (5 s) the loaded cells near the player are looked through
+(`WorkshopPower::Strays`, `StrayEngine`) for marked references (the block keyword) made at runtime that are no copy we keep,
+no piece of ours, no actor and no drop's copy, with power to show; each is shown unpowered once its 3D has been there a whole
+sweep (never one the game is still setting up), and again when it is drawn anew. One a report adopts since is a copy, and the
+mirror's. `strays=`, `strayHushed=` in `wspower`.
 
 Trade-offs:
 

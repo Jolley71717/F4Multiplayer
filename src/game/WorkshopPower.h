@@ -704,4 +704,86 @@ namespace WorkshopPower
 		bool                saveDone = false;  // the save a hush was for is over (SaveDone)
 		Clock::time_point   nextRefresh{};
 	};
+
+	// ---- Strays: copies no session of ours keeps -------------------------------------------------------
+
+	// A stray is a friend's copy our save holds that no session keeps: one a save from before the hush (0.10.1) wrote
+	// running, or one nobody reports any more (its piece is gone from the friend's game, so no report adopts it). It shows
+	// whatever the save kept, and nothing of ours would ever show it otherwise: a generator ran its engine in a game with no
+	// friend in it, and a copy can't be scrapped. So the loaded cells are looked through every STRAY_SWEEP for the marked
+	// references that are no copy we keep (and no piece of ours), and each is shown unpowered once its 3D has been there a
+	// whole sweep (a 3D the game is still setting up is never touched), and again whenever it is drawn anew. One a report
+	// adopts meanwhile is a copy from then on, and Mirror's.
+	inline constexpr auto STRAY_SWEEP = 5s;
+
+	class Strays
+	{
+	public:
+		// Shows the strays found that don't show unpowered yet; how many it showed. The Engine gives:
+		//
+		//   std::vector<std::uint32_t> Found()              the marked references in the loaded cells that no session keeps
+		//   std::uintptr_t             Drawn(std::uint32_t) its 3D (any value that changes when it is drawn anew); 0 if none
+		//   bool                       Show(std::uint32_t)  shown unpowered; false if the game didn't take it (try again)
+		template <class Engine>
+		std::size_t Sweep(Engine& a_engine, Clock::time_point a_now)
+		{
+			if (a_now < nextSweep) {
+				return 0;
+			}
+			nextSweep = a_now + STRAY_SWEEP;
+			const auto found = a_engine.Found();
+			std::erase_if(strays, [&](const auto& a_stray) { return !std::ranges::contains(found, a_stray.first); });  // adopted, deleted, or its cell unloaded
+			std::size_t shown = 0;
+			for (const auto id : found) {
+				auto&      stray = strays[id];
+				const auto drawn = a_engine.Drawn(id);
+				if (drawn == 0) {
+					stray.drawn = 0;
+					continue;
+				}
+				if (stray.drawn != drawn) {
+					stray.drawn = drawn;  // seen first (or anew): shown at the next sweep, once it has settled
+					stray.shown = false;
+					stray.tries = 0;
+					continue;
+				}
+				if (stray.shown) {
+					continue;
+				}
+				if (a_engine.Show(id)) {
+					stray.shown = true;
+					++shown;
+				} else if (++stray.tries >= MAX_TRIES) {
+					stray.shown = true;  // the game won't take it: let be until it is drawn anew
+					++givenUp;
+				}
+			}
+			hushedTotal += shown;
+			return shown;
+		}
+
+		// A load: the world's references are new.
+		void Clear()
+		{
+			strays.clear();
+			nextSweep = {};
+		}
+
+		[[nodiscard]] std::size_t Size() const { return strays.size(); }
+		[[nodiscard]] std::size_t Hushed() const { return hushedTotal; }
+		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
+
+	private:
+		struct Stray
+		{
+			std::uintptr_t drawn = 0;
+			bool           shown = false;
+			std::uint8_t   tries = 0;
+		};
+
+		std::map<std::uint32_t, Stray> strays;
+		std::size_t                    hushedTotal = 0;
+		std::size_t                    givenUp = 0;
+		Clock::time_point              nextSweep{};
+	};
 }
