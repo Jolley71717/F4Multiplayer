@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T17:08:02+00:00",
+ "updated": "2026-11-10T17:11:09+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2343,6 +2343,14 @@
    "pr": 215
   },
   {
+   "id": "yf75",
+   "title": "Friendly fire ignores the shooter's difficulty: player-on-player hits are sent before fDiffMultHPByPC* and the victim's game applies none",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found in review; older than the current work"
+  },
+  {
    "id": "ygna",
    "title": "Travel autosave: read bSaveOnTravel from the Prefs collection's bare key before the ini file",
    "kind": "feature",
@@ -2350,6 +2358,14 @@
    "stage": 7,
    "note": "",
    "pr": 216
+  },
+  {
+   "id": "ygp4",
+   "title": "Explosion mixed with gunfire on a friend's NPC can double-count damage: our recorded hit figures are pre-multiplier, so more of the blast is counted as ours",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being fixed alongside group difficulty"
   },
   {
    "id": "yhpo",
