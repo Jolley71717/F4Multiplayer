@@ -38,6 +38,7 @@ namespace HostRules
 		rules.realTimeVats = a_settings.realTimeVats;
 		rules.shareGuestBuilds = a_settings.shareGuestBuilds;
 		rules.sharedStorage = a_settings.sharedStorage;
+		rules.sharedWorkshop = a_settings.sharedWorkshop;
 		rules.containerGifts = a_settings.containerGifts;
 		rules.saveOnDown = a_settings.saveOnDown;
 		rules.npcLevel = static_cast<Protocol::NpcLevelRule>(a_settings.npcLevel);
@@ -49,10 +50,10 @@ namespace HostRules
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} containerGifts={} saveOnDown={} npcLevel={} legendary={} quests={}",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} sharedWorkshop={} containerGifts={} saveOnDown={} npcLevel={} legendary={} quests={}",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
-			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage, a_rules.containerGifts, a_rules.saveOnDown, SessionLevel::Name(a_rules.npcLevel), SessionLevel::Name(a_rules.legendary),
+			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage, a_rules.sharedWorkshop, a_rules.containerGifts, a_rules.saveOnDown, SessionLevel::Name(a_rules.npcLevel), SessionLevel::Name(a_rules.legendary),
 			a_rules.quests == Protocol::QuestRule::kSafe ? "safe" : "story");
 	}
 
