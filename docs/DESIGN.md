@@ -785,10 +785,12 @@ the answer (kCompanionOwner) names the owner to the reporter, every change to ev
 after the owner table. A game told its recruit is another's dismisses its copy through the Followers script's own quiet
 dismissal (FollowersScript.DismissDogmeatCompanion(ShowLocationAssignmentListIfAvailable=false, SuppressDismissMessage=true),
 which with the list off and the message suppressed runs only ClearDogmeatCompanion; for the Companion slot
-ClearCompanion itself, what DismissCompanion(actor, false, true) runs, once the alias is read to hold our copy that
-frame: DismissCompanion's own test, alias actor == argument, never passed for an actor the plugin packed, though the
-same call by console did; either clears the alias and the teammate flag, no scene; the VM's answer to each call is logged
-with what the alias holds then), a second
+DismissCompanion(actor, false, true), which runs only ClearCompanion once its own test, alias actor == argument, passes
+in the VM: the actor is packed as the game's own packing of a form packs it, typed Actor (Papyrus::PackTyped), since an
+argument typed with the companion's own script never passed that test though the same call by console did; should it
+still run and leave the copy held, the slot falls back to ClearCompanion for the rest of the game's run; either clears
+the alias and the teammate flag, no scene; each call is made only while the alias is read to hold our copy, and the VM's
+answer to each is logged with what the alias holds then), a second
 after the word and once the player is out of the NPC's dialogue, not while the copy is dead or down, again every 10 s
 while the aliases still hold it, three times, then leaves it with a warning; the HUD says "{npc} is {player}'s
 companion". Nothing is read, reported or dismissed unless the game is settled (Hud::IsSettled: no save or load on, no
