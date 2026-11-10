@@ -1,7 +1,6 @@
 {
- "release": "0.16.0",
+ "release": "0.16.1",
  "known_issues": [
-  "Your friend's shots from a gun with an armor-piercing receiver, a recon scope, or a Bloodied or Nocturnal legendary show no tracer on your screen, only the muzzle flash and the sound. This was in 0.15 too; the fix comes in the next update.",
   "The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).",
   "Diamond City's synth accusation still plays out in each game on its own.",
   "If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.",
@@ -10,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-09T23:28:09+00:00",
+ "updated": "2026-11-10T01:10:00+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -521,8 +520,8 @@
    "title": "Trails: a friend's shots from a gun with a wielder-only enchantment (armor-piercing receiver, recon scope, Bloodied, Nocturnal) show no tracer",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.1-rc1 test build; soak running."
+   "stage": 7,
+   "note": "Shipped in 0.16.1."
   },
   {
    "id": "8mp",
@@ -950,6 +949,14 @@
    "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
   },
   {
+   "id": "esyh",
+   "title": "Rig check: quest actors compares creatures read before the fight, but the landfill fight refills its aliases (false FAIL)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 3,
+   "note": "Not the mod's: the soak check compared a creature the fight had replaced. Check fix reviewed."
+  },
+  {
    "id": "etlo",
    "title": "Pre-rc review fixes: server and session",
    "kind": "bug",
@@ -1012,8 +1019,8 @@
    "title": "Repeating HUD sound: ClickWatch 'hud happened 7 times in under 10 s' once per soak round (host, during the repeated-downs step)",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.1-rc1 test build; soak running."
+   "stage": 7,
+   "note": "Shipped in 0.16.1."
   },
   {
    "id": "fywn",
@@ -2144,8 +2151,8 @@
    "title": "Rejoin catch-up: quest stages replayed to a rejoining joiner never complete (QuestSync 'still not done 5 s after setting it' x6-7 in every soak)",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.1-rc1 test build; soak running."
+   "stage": 7,
+   "note": "Shipped in 0.16.1."
   },
   {
    "id": "w310",
@@ -2275,8 +2282,8 @@
    "title": "Downed: the camera's way back loops on its transition (x9 per soak on the VM, and on every death); the watchdog puts it right",
    "kind": "bug",
    "priority": 2,
-   "stage": 6,
-   "note": "In the 0.16.1-rc1 test build; soak running."
+   "stage": 7,
+   "note": "Shipped in 0.16.1."
   },
   {
    "id": "ybqf",
