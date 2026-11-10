@@ -2953,10 +2953,19 @@ friend's own, as before the rule, with a notice saying why (`workshop.shared.*`)
 answer in time", not "no host"). A friend's piece whose answer is still pending is not reported moved or scrapped meanwhile,
 and goes when the session ends: *nothing a friend built at a host-owned settlement stays in their save* (the maintainer's
 call), neither as a copy nor as a pending piece. Nor in a save made mid-way: before every save (`kPreSaveGame`) the host
-finishes the pieces it has made whose 3D is there and deletes and refuses the rest, and a friend's pending pieces go (an
-"applied" after that finds ours gone and lets the host's copy come on its own). The budget is taken out only for what the
-engine counted in: an adopted build and a detached wire (`Budget::RemoveObject` 2195108), never a copy a wire's end was
-linked to (the engine's wire placement counts the wire alone and only links the ends).
+finishes the pieces it has made whose 3D is there (unless it holds a piece of its own: those are refused as busy) and deletes
+and refuses the rest, and a friend's pending pieces go, with the destroyed event, as on leaving (an "applied" after that finds
+ours gone and lets the host's copy come on its own). The budget is taken out only for what the engine counted in: an adopted
+build and a detached wire (`Budget::RemoveObject` 2195108), never a copy a wire's end was linked to (the engine's wire
+placement counts the wire alone and only links the ends). And the budget's totals are workshop mode's globals, loaded from a
+workbench only when workshop mode is entered there (`Workshop::Budget::Initialize` 2195106 reads the bench's maximum and
+current triangles and draws into 4797248, 4797252, 4797162 and 4797163), and written back to the current workbench by
+`AddObject` and `RemoveObject`: so every add or remove outside workshop mode at that bench runs in a `BudgetScope`, which saves
+the four globals, loads them from the bench, sets the bench current, and restores them after (with workshop mode open at that
+very bench the live totals are used as they are). A wire the host made for a friend is counted once its spline is drawn, as
+the engine counts a placed wire's drawn 3D (counting it bare would put 0 in and take the real count out at a scrap). Mods
+that listen for `WorkshopObjectDestroyed` (Workshop Framework, Sim Settlements) hear an adopted or dropped piece of a friend's
+as scrapped; it does go from the friend's workshop, so that reading is right, and the host's piece is a placement there.
 
 **A wire (phase 1).** Workshop mode's picks are hooked (`WorkshopSync::InstallPicks`, seven `write_call<5>` sites, each byte-checked
 first, none patched unless all are as 1.11.240 has them): the general pick (2195314) and the wire pick (2195312) ask
