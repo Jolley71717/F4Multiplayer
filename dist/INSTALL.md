@@ -196,10 +196,14 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   players join, leave and level up), `highest` is the highest level anyone in the session has reached, `host` is the
   host's, and `own` lets each game use its own player's level, as before (you may then see different enemies). An
   enemy keeps the level it was built at, in your save too. The dedicated server takes it as `--npc-level`.
-- `iCatchUpXp` (0): catch-up XP. A player below the average level of the players in the session earns this percent
-  more XP for each level they are behind (at most double) from their own kills, quests and discoveries, until the
-  levels meet; a player above it gets this percent less of friends' kill XP for each level ahead, never less of their
-  own. 0 is off; 10 is a good start (five levels behind means half as much again).
+- `iCatchUpXp` (10): catch-up XP. A player below the average level of the players in the session earns this percent
+  more XP for each of their own kills for each level they are behind (at most double), until the levels meet; a
+  player above it gets this percent less of friends' kill XP for each level ahead, never less of their own. 0 is off.
+  At 10, five levels behind means half as much again. The dedicated server takes it as `--catch-up-xp`.
+- `iGroupDifficulty` (0): enemies are this percent tougher for each player in the session beyond the first: everyone's
+  hits take that much less off them, and what enemies do to you is unchanged. At 50, two players meet enemies half as
+  tough again, four players enemies two and a half times as tough. The dedicated server takes it as
+  `--group-difficulty`.
 - `sLegendaryDifficulty` (average): whose difficulty sets the chance of a legendary enemy. `average` uses the average
   of the players in the session now, `host` the host's, and `own` each game's own (one of you may then see a
   legendary where another sees a plain one). Your own difficulty still sets the damage you deal and take. The

@@ -14,6 +14,7 @@
 #include "game/FadeWatch.h"
 #include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
+#include "game/GroupHits.h"
 #include "game/HostRules.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
@@ -751,17 +752,6 @@ namespace Party
 				const float credited = (std::min)(gain, xpCredit);
 				xpCredit -= credited;
 				gain -= credited;
-				// Behind the players' average level, the game's own XP (a kill, a quest, a discovery) is topped up at
-				// once. The extra is credited so the next poll neither reports it as a kill's nor tops it up again.
-				if (const auto bonus = CatchUpXp::Bonus(catchUp, gain); bonus > 0 && gain >= 1.0f && !player->IsDead(false) && !Story::InOpening()) {
-					RE::Console::ExecuteCommand(std::format("player.modav experience {}", bonus).c_str());
-					xpCredit += static_cast<float>(bonus);
-					catchUpGiven += static_cast<float>(bonus);
-					if (catchUpNotice < 1.0f) {
-						catchUpNoticeAt = a_now + XP_NOTICE_DELAY;
-					}
-					catchUpNotice += static_cast<float>(bonus);
-				}
 				if (gain >= 1.0f && a_now < killWindowEnd) {
 					hold(gain, a_now);
 				} else if (gain >= 1.0f) {
@@ -781,6 +771,18 @@ namespace Party
 					++xpWithheld;
 				} else if (heldXp >= 1.0f) {
 					outgoing.push_back(Protocol::Encode(Protocol::XpGain{ 0, (std::min)(heldXp, Protocol::MAX_XP_SHARE) }, Protocol::MessageType::kReportXp));
+					// Behind the players' average level, our kill XP is topped up here, once it is known to be a kill's
+					// (quest and discovery XP are never: kills only). The extra is credited so the next poll neither
+					// reports it as a kill's nor tops it up again.
+					if (const auto bonus = CatchUpXp::Bonus(catchUp, heldXp); bonus > 0 && !player->IsDead(false) && !Story::InOpening()) {
+						RE::Console::ExecuteCommand(std::format("player.modav experience {}", bonus).c_str());
+						xpCredit += static_cast<float>(bonus);
+						catchUpGiven += static_cast<float>(bonus);
+						if (catchUpNotice < 1.0f) {
+							catchUpNoticeAt = a_now + XP_NOTICE_DELAY;
+						}
+						catchUpNotice += static_cast<float>(bonus);
+					}
 				}
 				heldXp = 0.0f;
 			}
@@ -1007,6 +1009,13 @@ namespace Party
 		SendStatus(now);
 		Heartbeat(now);
 		TrackXp(now);
+		// Group difficulty (the host's iGroupDifficulty): our player's hits take less off NPCs the more players are
+		// here (those in the opening left out), put back as they leave.
+		std::size_t players = 1;
+		for (const auto& [id, entry] : known) {
+			players += id != localId && entry.hasStatus && !entry.status.opening;
+		}
+		GroupHits::Update(HostRules::Get().groupDifficulty, players);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -1414,6 +1423,9 @@ namespace Party
 	{
 		localId = 0;
 		known.clear();
+		GroupHits::Restore();  // out of the session our hits are the game's own again
+		catchUp = {};
+		catchUpLogged.reset();
 		outgoing.clear();
 		sentStatus.reset();
 		heartbeatsSent.clear();
@@ -1435,6 +1447,7 @@ namespace Party
 	{
 		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={} catchUp={:+}%/x{:.2f} avg={} given={:.0f}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld,
 			(std::max)(CatchUpXp::Percent(catchUp), 0), catchUp.share, catchUp.average, catchUpGiven);
+		out += " " + GroupHits::Describe();
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
 		}

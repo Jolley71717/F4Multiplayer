@@ -9,8 +9,8 @@
 // XP until the levels meet, so a friend who joins at level 8 beside a level-30 host can fight the enemies the session
 // rolls for both (sNpcLevel = average). The rule is one number, the percent of extra XP per level behind the average,
 // and it never takes anything away:
-// - behind by g levels, every rise of the player's own XP (kills, quests, discoveries) is topped up by g * percent of
-//   it, at most doubled (MAX_BONUS);
+// - behind by g levels, the player's own kill XP (kills only: quest and discovery XP are the same for everyone) is
+//   topped up by g * percent of it, at most doubled (MAX_BONUS_PERCENT);
 // - ahead by g levels, the player's own XP is as the game gives it, and their share of friends' kill XP (fXpShare,
 //   Party::ApplyXp) shrinks by g * percent of it, to nothing at the most: the gap closes from both sides.
 // The average is the mean of the levels of the players in the session now, the player's own among them, those not

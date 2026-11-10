@@ -44,17 +44,18 @@ namespace HostRules
 		rules.legendary = static_cast<Protocol::LegendaryRule>(a_settings.legendary);
 		rules.quests = a_settings.safeQuests ? Protocol::QuestRule::kSafe : Protocol::QuestRule::kStory;
 		rules.catchUpXp = a_settings.catchUpXp;
+		rules.groupDifficulty = a_settings.groupDifficulty;
 		return rules.Clamped();
 	}
 
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} containerGifts={} saveOnDown={} npcLevel={} legendary={} quests={} catchUpXp={}%",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={} sharedStorage={} containerGifts={} saveOnDown={} npcLevel={} legendary={} quests={} catchUpXp={}% groupDifficulty={}%",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
 			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds, a_rules.sharedStorage, a_rules.containerGifts, a_rules.saveOnDown, SessionLevel::Name(a_rules.npcLevel), SessionLevel::Name(a_rules.legendary),
-			a_rules.quests == Protocol::QuestRule::kSafe ? "safe" : "story", a_rules.catchUpXp);
+			a_rules.quests == Protocol::QuestRule::kSafe ? "safe" : "story", a_rules.catchUpXp, a_rules.groupDifficulty);
 	}
 
 	// What a player reads of the rules for being down, in their language: "Host's rules: 3 revives per fight, 30 s to bleed

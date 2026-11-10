@@ -2094,9 +2094,9 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
-	// The byte after legendary's (the welcome's last up to 63; 64's catch-up XP follows it).
+	// The byte after legendary's (the welcome's last up to 63; 64's two bytes follow it).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
-	auto& questsByte = bytes[bytes.size() - 2];
+	auto& questsByte = bytes[bytes.size() - 3];
 	CHECK(questsByte == static_cast<std::uint8_t>(QuestRule::kSafe));
 	questsByte = QUEST_RULES;
 	const auto odd = DecodeWelcome(bytes);
@@ -2104,31 +2104,39 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 	CHECK(odd->rules.quests == QuestRule::kStory);
 	CHECK(odd->rules.legendary == LegendaryRule::kHost);
 	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
-	// A welcome of 57's, without it (nor 64's byte), is short.
-	bytes.pop_back();
-	bytes.pop_back();
+	// A welcome of 57's, without it (nor 64's bytes), is short.
+	bytes.resize(bytes.size() - 3);
 	CHECK(!DecodeWelcome(bytes));
 }
 
-TEST("protocol: the welcome carries the host's iCatchUpXp (protocol 64), brought within its limit; a welcome without it is short")
+TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (protocol 64), each within its limit; a welcome without them is short")
 {
-	static_assert(VERSION >= 64);  // iCatchUpXp came in 64
-	CHECK(SessionRules{}.catchUpXp == 0);  // off unless the host says
+	static_assert(VERSION >= 64);  // both came in 64
+	CHECK(SessionRules{}.catchUpXp == 10);     // on, modestly, unless the host says otherwise
+	CHECK(SessionRules{}.groupDifficulty == 0);  // off unless the host says
 	for (const std::uint8_t percent : std::array<std::uint8_t, 3>{ 0, 10, 100 }) {
-		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = QuestRule::kSafe, .catchUpXp = percent } }));
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = QuestRule::kSafe, .catchUpXp = percent, .groupDifficulty = static_cast<std::uint8_t>(percent * 2) } }));
 		REQUIRE(out);
 		CHECK(out->rules.catchUpXp == percent);
+		CHECK(out->rules.groupDifficulty == percent * 2);
 		CHECK(out->rules.quests == QuestRule::kSafe);
 	}
-	// The byte after quests', the welcome's last; past 100 it is 100 (a level behind doubles the XP already).
-	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10 } });
-	CHECK(bytes.back() == 10);
-	bytes.back() = 250;
+	// The two bytes after quests', the welcome's last; past their limits they are their limits (a level behind doubles
+	// the XP already; two players thrice as tough is enough).
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10, .groupDifficulty = 50 } });
+	CHECK(bytes[bytes.size() - 2] == 10);
+	CHECK(bytes.back() == 50);
+	bytes[bytes.size() - 2] = 250;
+	bytes.back() = 255;
 	const auto wild = DecodeWelcome(bytes);
 	REQUIRE(wild);
 	CHECK(wild->rules.catchUpXp == SessionRules::MAX_CATCH_UP_XP);
+	CHECK(wild->rules.groupDifficulty == SessionRules::MAX_GROUP_DIFFICULTY);
 	CHECK(SessionRules{ .catchUpXp = 101 }.Clamped().catchUpXp == 100);
-	// A welcome of 63's, without it, is short.
+	CHECK(SessionRules{ .groupDifficulty = 201 }.Clamped().groupDifficulty == 200);
+	// A welcome of 63's, without them, is short.
+	bytes.pop_back();
+	CHECK(!DecodeWelcome(bytes));
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
 }

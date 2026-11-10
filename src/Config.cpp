@@ -171,6 +171,8 @@ namespace Config
 				}
 			} else if (key == "iCatchUpXp") {
 				ParseInt(value, settings.catchUpXp);  // past 100 is brought to 100 by the rules (SessionRules::Clamped)
+			} else if (key == "iGroupDifficulty") {
+				ParseInt(value, settings.groupDifficulty);  // past 200 is brought to 200 the same way
 			} else if (key == "bSharedRolls") {
 				settings.sharedRolls = ParseBool(value);
 			} else if (key == "bHideTutorials") {
