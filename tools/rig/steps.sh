@@ -1252,6 +1252,24 @@ _qa_place_near() {
 _qa_have_both() { hl=$(_qa_aliases host $QA_QUEST "$QA_RE" 4); vl=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4); [ -n "$hl" ] && [ -n "$vl" ]; }
 # _qa_have_vm: the VM's game has the creatures in its aliases (vl)
 _qa_have_vm() { vl=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4); [ -n "$vl" ]; }
+# _qa_steady: both games' creatures read again from the quest's aliases into QA_H and QA_V, the same in two reads QA_STEADY s apart. DN119Fight
+# refills an alias as its molerat dies (its waves), each game on its own, one up to ~3 s after the other (16:53:35 and 16:53:38 in the
+# 0.16.1-rc1 soak's run 2): reads that hold still for longer hold one generation in both games.
+QA_STEADY=${QA_STEADY:-4}
+_qa_steady() {
+	local h v; h=$(_qa_aliases host $QA_QUEST "$QA_RE" 4); v=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4); sleep "$QA_STEADY"
+	QA_H=$(_qa_aliases host $QA_QUEST "$QA_RE" 4); QA_V=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4)
+	[ -n "$QA_H" ] && [ -n "$QA_V" ] && [ "$h" = "$QA_H" ] && [ "$v" = "$QA_V" ]
+}
+# _qa_refilled <first host lines> <first VM lines>: the aliases whose creature in either game is another than at the first read (QA_H, QA_V)
+_qa_refilled() {
+	local a r out=""
+	while read -r a r; do
+		[ -z "$a" ] && continue
+		[ "$(awk -v a="$a" '$1 == a { print $2 }' <<<"$1")" = "$r" ] && [ "$(awk -v a="$a" '$1 == a { print $2 }' <<<"$2")" = "$(awk -v a="$a" '$1 == a { print $2 }' <<<"$QA_V")" ] || out="$out $a"
+	done <<<"$QA_H"
+	echo "${out# }"
+}
 # _qa_paired_since: a pairing made since the caller read p0 (VM) and h0 (host): the pairs counts went up (a creature dead and let go is no
 # longer paired=)
 _qa_paired_since() { local a b; a=$(_qa_paired vm pairs); b=$(_qa_paired host pairs); { is_int "$a" && is_int "$p0" && [ "$a" -gt "$p0" ]; } || { is_int "$b" && is_int "$h0" && [ "$b" -gt "$h0" ]; }; }
@@ -1340,7 +1358,17 @@ _qa_silent() {
 	if wait_for 15 _qa_paired_since; then QA_PAIRED=1; pass "quest actors ($QA_QUEST): a creature paired" "VM pairs $p0 -> $(_qa_paired vm pairs) paired=$(_qa_paired vm paired) keyed=$(_qa_paired vm keyed); host pairs $h0 -> $(_qa_paired host pairs) paired=$(_qa_paired host paired) keyed=$(_qa_paired host keyed)"
 	else fail "quest actors ($QA_QUEST): a creature paired" "VM: $(dc vm 'net status' | grep -oE 'questActors: [^|;]*' | cut -c1-120); host: $(dc host 'net status' | grep -oE 'questActors: [^|;]*' | cut -c1-120)"; fi
 	_qa_shoot "$hl" "$vl" 45 && who="all dead" || who="not all dead"; who="$who; injected on alias(es):${QA_INJECTED:- none}${QA_LEFT:+; left alone (run by the VM game):$QA_LEFT}"
-	sleep 10; _qa_compare "quest actors ($QA_QUEST): each creature alike in both games 10 s after the shots ($who in the host's game)" "$hl" "$vl"
+	# Compared are the aliases' creatures as they are after the shots, read again: the first read can be stale in one game and not the
+	# other. 0.15.0-rc1 soak run 2, alias 22: the host's first creature (dead, the VM's paired one killed) against the VM's next one
+	# (alive); 0.16.1-rc1 soak run 2, alias 3: the host's first creature dead, the VM's paired one died and refilled before the shots,
+	# then gone from its game. The mod's pairs and deaths were right both times; the snapshot was not. At least 10 s after the shots.
+	sleep $((10 - QA_STEADY > 0 ? 10 - QA_STEADY : 0)); QA_H=""; QA_V=""
+	wait_for 20 _qa_steady || echo "quest actors ($QA_QUEST): its aliases still changing after 20 s; compared as last read"
+	if [ -n "$QA_H" ] && [ -n "$QA_V" ]; then
+		f=$(_qa_refilled "$hl" "$vl"); [ -n "$f" ] && echo "quest actors ($QA_QUEST): refilled since the first read (compared as they are now): alias(es) $f"
+		hl=$QA_H; vl=$QA_V
+	fi
+	_qa_compare "quest actors ($QA_QUEST): each creature alike in both games 10 s after the shots ($who in the host's game)" "$hl" "$vl"
 }
 step_questactors() {
 	section "quest actors (a shared quest's created creatures paired across games: Gun Run, then $QA_QUEST)"
