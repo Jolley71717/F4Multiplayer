@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T01:10:00+00:00",
+ "updated": "2026-11-10T04:51:51+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -953,8 +953,8 @@
    "title": "Rig check: quest actors compares creatures read before the fight, but the landfill fight refills its aliases (false FAIL)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Not the mod's: the soak check compared a creature the fight had replaced. Check fix reviewed."
+   "stage": 7,
+   "note": "The soak check is fixed"
   },
   {
    "id": "etlo",
@@ -2378,8 +2378,8 @@
    "title": "Join catch-up: The Museum of Freedom stage 1 (0001D806) and When Freedom Calls stage 20 (001A001C) wait forever on a joiner, every join since 2026-11-06",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Not a stall: both stages are done within seconds of a join; only the log never said so. Log fix reviewed."
+   "stage": 5,
+   "note": "Merged; ships in the next release"
   }
  ]
 }
