@@ -2424,7 +2424,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   camera left by the ground and the Pip-Boy shut until a load. On the ground or up and not yet settled,
   a transition on the return stack is replaced by where it was going (the view the first down left), and
   a transition going to itself is sent to the last first- or third-person view (`DownRules::Camera`,
-  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). The loop is the
+  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). A re-down within about 0.3 s of a help-up can show the camera far from the player for one frame (12,000 to 71,000 units instead of about 120 to 255): the engine starts the bleed-out camera from a worker thread while the help-up's transition back to first person still runs, and that frame the camera root lies on the line toward the world origin. The "Downed" log lines give the camera root's and the player's positions (`away`, `root`, `player`) and the time and thread of the camera push's last call (`push`), and the rig's repeated-downs step warns on a far read. Hooking the engine's transition is future work. The loop is the
   engine's: every start of a camera state over the current one (the bleed-out camera's, a knock-down's ragdoll's,
   VATS's, which a death plays in) pushes the current state through one push (ID 2248443), and only the tween is
   special-cased, so a down at once on a help-up, or the death camera as a bleed-out's kill ends the down, pushed the
