@@ -288,9 +288,11 @@ namespace CrashReport
 	// Two filters may be known: the one found at our install (the game's own, or a plugin's that loaded before us), and
 	// one a plugin that loaded after us put in front of ours, which OnDataReady displaced to put ours back in front. A
 	// displaced filter typically chains to what it found at its own install, which is ours: so ours is entered again
-	// on the same thread. That re-entry gets nothing more from us (no report, never the displaced filter again): it goes
-	// straight to the install-time filter, or to Windows, and the chain ends there. Without that, two filters would
-	// call each other until the stack ran out and every log was lost.
+	// on the same thread. That re-entry (a_depth 1) gets nothing more from us (no report, never the displaced filter
+	// again): it goes straight to the install-time filter, or to Windows. An install-time filter that itself calls the
+	// system's UnhandledExceptionFilter comes back to ours once more (a_depth 2): that goes to Windows, so the chain
+	// ends whatever the filters do. Without that, two filters would call each other until the stack ran out and every
+	// log was lost.
 	enum class Next : std::uint8_t
 	{
 		kDisplaced,    // the filter we displaced at OnDataReady: it then chains back to us, and the re-entry ends it
@@ -298,12 +300,16 @@ namespace CrashReport
 		kSearch,       // Windows (EXCEPTION_CONTINUE_SEARCH): no filter is left
 	};
 
-	constexpr Next HandOn(bool a_reentered, bool a_hasDisplaced, bool a_hasInstallTime)
+	// a_depth: how many times this thread was inside our filter already when it was entered (0: the first time).
+	constexpr Next HandOn(int a_depth, bool a_hasDisplaced, bool a_hasInstallTime)
 	{
-		if (!a_reentered && a_hasDisplaced) {
+		if (a_depth == 0 && a_hasDisplaced) {
 			return Next::kDisplaced;
 		}
-		return a_hasInstallTime ? Next::kInstallTime : Next::kSearch;
+		if (a_depth <= 1 && a_hasInstallTime) {
+			return Next::kInstallTime;
+		}
+		return Next::kSearch;
 	}
 
 	// --- the files ---

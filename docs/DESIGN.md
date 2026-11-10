@@ -92,16 +92,18 @@
   game's data is loaded the game has put `Fallout4.exe+0xC3AFC0` in front). `OnDataReady` then reads which crash
   logger's DLL is in (Buffout 4, Addictol, Trainwreck) and, if something put a filter in front of ours, puts ours
   back in front so that one (the displaced filter) still gets the exception after the report. A displaced filter
-  may chain back to what it found at its install, ours: that re-entry (a thread-local flag) gets no report and
-  never the displaced filter again, only the install-time filter or Windows, so the chain ends
-  (`CrashReport::HandOn`, unit tested with fake filters). A second thread that crashes while the first writes the
-  report waits up to 5 s for it before handing on. `SetThreadStackGuarantee` keeps 64 KB of the main thread's
-  stack for the report after a stack overflow. **With a crash logger loaded the report is not written:** Addictol's
-  vectored handler runs before any filter and ends the process itself (rig, every `crashtest` variant: its
-  `crash-*.log`, our WARN, nothing after; the game exits in ~2 s). The plugin doesn't fight that (a vectored handler
-  of ours couldn't tell a handled exception from an unhandled one); the data-ready line says the logger writes the
-  crash log and players send that with `F4Multiplayer.log`. The report is for the players without one, which is
-  most of them (the dev channel's `crashtest` crashes the game on purpose to test it).
+  may chain back to what it found at its install, ours: that re-entry (a thread-local depth) gets no report and
+  never the displaced filter again, only the install-time filter; and should that one come back too (the system's
+  `UnhandledExceptionFilter` calls the current filter), the third entry goes to Windows, so the chain ends whatever
+  the filters do (`CrashReport::HandOn`, unit tested with fake filters). A second thread that crashes while the
+  first writes the report waits up to 5 s for it before handing on. `SetThreadStackGuarantee` keeps 64 KB of the
+  main thread's stack for the report after a stack overflow. **With a crash logger loaded the report may not be
+  written:** Addictol's vectored handler runs before any filter and ends the process itself (rig, every `crashtest`
+  variant: its `crash-*.log`, our WARN, nothing after; the game exits in ~2 s); Buffout 4 is not tested and may do
+  the same. The plugin doesn't fight that (a vectored handler of ours couldn't tell a handled exception from an
+  unhandled one); the data-ready line says the logger's crash log is to be sent too, with `F4Multiplayer.log`. The
+  report is for the players without one, which is most of them (the dev channel's `crashtest` crashes the game on
+  purpose to test it).
 - **Frame watch:** `src/main.cpp` (`RunFrameWatch`), one thread, the hang watch's complement: the
   main thread answers its window, yet no frame of ours runs. The frame chain (the F4SE task posts a
   frame message once a drawn frame, the window procedure takes it on the main thread, a frame's game

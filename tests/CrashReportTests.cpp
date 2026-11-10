@@ -120,50 +120,53 @@ TEST("crash report: a displaced filter that chains back to ours ends at the inst
 {
 	using CrashReport::HandOn;
 	using CrashReport::Next;
-	CHECK(HandOn(false, true, true) == Next::kDisplaced);
-	CHECK(HandOn(false, false, true) == Next::kInstallTime);
-	CHECK(HandOn(false, false, false) == Next::kSearch);
-	CHECK(HandOn(true, true, true) == Next::kInstallTime);  // re-entered: never the displaced one again
-	CHECK(HandOn(true, true, false) == Next::kSearch);
-	CHECK(HandOn(true, false, true) == Next::kInstallTime);
+	CHECK(HandOn(0, true, true) == Next::kDisplaced);
+	CHECK(HandOn(0, false, true) == Next::kInstallTime);
+	CHECK(HandOn(0, false, false) == Next::kSearch);
+	CHECK(HandOn(1, true, true) == Next::kInstallTime);  // re-entered: never the displaced one again
+	CHECK(HandOn(1, true, false) == Next::kSearch);
+	CHECK(HandOn(1, false, true) == Next::kInstallTime);
+	CHECK(HandOn(2, true, true) == Next::kSearch);  // entered a third time: the install-time filter came back too
+	CHECK(HandOn(3, true, true) == Next::kSearch);
 
-	// Fake filters, called as Windows calls them, each chaining to what it found at its install: the game's own
-	// (install-time), ours, then a plugin's that found ours and was displaced. One crash: ours, the plugin's, ours
-	// again (re-entered), the game's own; then every call returns.
+	// Fake filters, called as Windows calls them, each chaining to what it found at its install: the install-time one
+	// (which, like the system's UnhandledExceptionFilter, calls the current filter: ours), ours, then a plugin's that
+	// found ours and was displaced. One crash: ours, the plugin's, ours again, the install-time one, ours a third time,
+	// Windows; then every call returns.
 	constexpr int SEARCH = 0;
 	std::vector<std::string> calls;
-	bool                     inOurs = false;
+	int                      inOurs = 0;
 	int                      depth = 0;
-	std::function<int()>     game = [&] { calls.push_back("game"); return SEARCH; };
 	std::function<int()>     ours;
+	std::function<int()>     installTime = [&] { calls.push_back("install-time"); return ours(); };
 	std::function<int()>     plugin = [&] { calls.push_back("plugin"); return ours(); };
 	ours = [&] {
 		REQUIRE(++depth < 10);  // the loop the rule prevents
-		const bool reentered = inOurs;
-		inOurs = true;
-		calls.push_back(reentered ? "ours again" : "ours");
+		const int level = inOurs++;
+		calls.push_back(level == 0 ? "ours" : level == 1 ? "ours again" : "ours a third time");
 		int verdict = SEARCH;
-		switch (HandOn(reentered, true, true)) {
+		switch (HandOn(level, true, true)) {
 		case Next::kDisplaced:
 			verdict = plugin();
 			break;
 		case Next::kInstallTime:
-			verdict = game();
+			verdict = installTime();
 			break;
 		default:
 			break;
 		}
-		inOurs = reentered;
+		--inOurs;
 		--depth;
 		return verdict;
 	};
 	CHECK(ours() == SEARCH);
-	const std::vector<std::string> expected{ "ours", "plugin", "ours again", "game" };
+	const std::vector<std::string> expected{ "ours", "plugin", "ours again", "install-time", "ours a third time" };
 	CHECK(calls == expected);
-	CHECK(!inOurs);
+	CHECK(inOurs == 0);
 	calls.clear();
 	CHECK(ours() == SEARCH);  // a second time (a filter that let the thread go on): the same, not a re-entry
 	CHECK(calls.front() == "ours");
+	CHECK(calls.size() == expected.size());
 }
 
 TEST("crash report: an address in no module is given as it is")

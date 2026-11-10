@@ -46,7 +46,7 @@ namespace CrashWatch
 		std::atomic<std::uint32_t>   players{ 0 };
 		std::atomic<bool>            reporting{ false };   // one report per game: a second crash goes straight on
 		std::atomic<bool>            reportDone{ false };  // ... after waiting for the first to be written (REPORT_WAIT)
-		thread_local bool            inFilter = false;     // this thread is inside our filter already (CrashReport::HandOn)
+		thread_local int             inFilter = 0;         // how deep this thread is inside our filter already (CrashReport::HandOn)
 		constexpr DWORD              REPORT_WAIT = 5000;   // ms a second crashing thread waits for the first's report
 		constexpr ULONG              STACK_GUARANTEE = 64 * 1024;  // of the main thread's stack kept for the report after a stack overflow
 
@@ -239,10 +239,9 @@ namespace CrashWatch
 
 		LONG WINAPI Filter(EXCEPTION_POINTERS* a_info)
 		{
-			// Entered again on this thread: the displaced filter chained back to ours. Nothing more from us (CrashReport::HandOn).
-			const bool reentered = inFilter;
-			inFilter = true;
-			if (!reentered && a_info) {
+			// Entered again on this thread: a filter we handed on to chained back to ours. Nothing more from us (CrashReport::HandOn).
+			const int depth = inFilter++;
+			if (depth == 0 && a_info) {
 				if (!reporting.exchange(true)) {
 					ReportGuarded(a_info);
 					reportDone = true;
@@ -255,7 +254,7 @@ namespace CrashWatch
 				}
 			}
 			LONG verdict = EXCEPTION_CONTINUE_SEARCH;
-			switch (CrashReport::HandOn(reentered, displaced != nullptr, installTime != nullptr)) {
+			switch (CrashReport::HandOn(depth, displaced != nullptr, installTime != nullptr)) {
 			case CrashReport::Next::kDisplaced:
 				verdict = displaced(a_info);
 				break;
@@ -265,7 +264,7 @@ namespace CrashWatch
 			default:
 				break;
 			}
-			inFilter = reentered;  // a filter that let the thread go on (EXCEPTION_CONTINUE_EXECUTION) leaves it as it found it
+			--inFilter;  // a filter that let the thread go on (EXCEPTION_CONTINUE_EXECUTION) leaves it as it found it
 			return verdict;
 		}
 
@@ -377,12 +376,14 @@ namespace CrashWatch
 		if (current != &Filter && current != nullptr) {
 			displaced = current;
 			NotePrevious();
-			REX::INFO("Crash report: another plugin put its exception filter in after the mod's; the mod's is in front again, then {}", PreviousText());
+			REX::INFO("Crash report: {} put an exception filter in after the mod's; the mod's is in front again, then {}",
+				previousWhere.module == "Fallout4.exe" ? std::string{ "the game" } : previousWhere.module.empty() ? std::string{ "something" } : std::format("a plugin ({})", previousWhere.module),
+				PreviousText());
 		}
-		// A crash logger's vectored handler runs before any filter and ends the process itself (Addictol does, on the rig:
-		// its crash-*.log, our WARN, nothing after), so with one loaded no report of ours is written.
+		// A crash logger's vectored handler may run before any filter and end the process itself (Addictol does, on the
+		// rig: its crash-*.log, our WARN, nothing after), so with one loaded the mod's report may not be written.
 		if (loggerName[0]) {
-			REX::INFO("Crash report: the crash logger {} is loaded and writes the crash log itself (crash-<date>.log next to this log); the mod's report is then not written. With a crash, send that log together with F4Multiplayer.log",
+			REX::INFO("Crash report: the crash logger {} is loaded and writes its own crash log; the mod's report may then not be written. With a crash, send that logger's crash log too, with F4Multiplayer.log",
 				loggerName.data());
 		} else {
 			REX::INFO("Crash report: no crash logger (Buffout 4, Addictol) is loaded: the mod's report is all a crash leaves");
