@@ -504,7 +504,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
-	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 64; not saved: a game's aliases say again after a load)
+	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -1762,7 +1762,7 @@ void Server::Run()
 			owners.push_back({ ref, owner.playerId });
 		}
 		sendOwners(owners, a_player.key);
-		// ... and whose companion each NPC is (protocol 64): one held for this identity (their game crashed, or dropped, and
+		// ... and whose companion each NPC is (protocol 65): one held for this identity (their game crashed, or dropped, and
 		// is back) is theirs again under their new id, which everyone hears; the newcomer gets the whole list.
 		{
 			std::vector<CompanionBook::Change> changes;
@@ -2930,7 +2930,7 @@ void Server::Run()
 			} else {
 				noteFighting(a_player, claim.refId, now);  // granted or not: a refused takeover is the kill handleDeath must not lose
 			}
-			// Whose companion the book says it is (protocol 64): its owner's game runs it, whoever runs it now (their claim
+			// Whose companion the book says it is (protocol 65): its owner's game runs it, whoever runs it now (their claim
 			// takes it over, as a companion claim takes over a plain runner), and another game's "it follows me" is a plain
 			// offer to run it (a save of theirs from before their copy was dismissed, or their copy's scripts still
 			// marking it): it runs their AI only while nobody else does, and never keeps the owner from it.
@@ -3356,7 +3356,7 @@ void Server::Run()
 		endLoansOfGoneSpawns();
 	};
 
-	// The player's game reports its Followers aliases hold an NPC (recruited), or no longer do (protocol 64): the book
+	// The player's game reports its Followers aliases hold an NPC (recruited), or no longer do (protocol 65): the book
 	// grants the first to recruit one and refuses the rest with the owner's name, and the reporter hears the answer
 	// first, then everyone the change (CompanionBook). A dismissal frees it only from its owner.
 	const auto handleCompanion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {

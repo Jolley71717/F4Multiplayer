@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-// One owner per companion (protocol 64; the rules in CompanionRules.h). Reads the Followers quest's aliases (Companion,
+// One owner per companion (protocol 65; the rules in CompanionRules.h). Reads the Followers quest's aliases (Companion,
 // DogmeatCompanion) a few times a second, reports what they hold to the server, and, when the server says the NPC is
 // another player's, dismisses our copy through the Followers script's quiet dismissal (no message, no settlement menu)
 // once our player is out of its dialogue, with a notice naming whose it is. Main thread only.

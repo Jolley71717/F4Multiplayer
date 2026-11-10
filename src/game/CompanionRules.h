@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-// What our game says and does about companions (protocol 64), kept free of the game so it can be tested
+// What our game says and does about companions (protocol 65), kept free of the game so it can be tested
 // (tests/CompanionRulesTests.cpp); Companions.cpp reads the Followers quest's aliases and runs the dismissal.
 //
 // Each look, the aliases' contents (Companion, DogmeatCompanion) are compared with what was reported: an NPC they hold

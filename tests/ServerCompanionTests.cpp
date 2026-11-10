@@ -1,4 +1,4 @@
-// One owner per companion, played against a real server (common/CompanionBook.h in Server.cpp, protocol 64): the first
+// One owner per companion, played against a real server (common/CompanionBook.h in Server.cpp, protocol 65): the first
 // game to report recruiting an NPC keeps it, the second is told whose it is, a dismissal frees it, an owner who leaves
 // has it held for a rejoin, and the AI claims follow the book (the owner's game runs its companion).
 

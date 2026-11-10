@@ -16,7 +16,9 @@
 #include "game/CharacterBinding.h"
 #include "game/ClickWatch.h"
 #include "game/CombatReactions.h"
+#include "CrashWatch.h"
 #include "game/Compass.h"
+#include "game/ExitInventory.h"
 #include "game/FadeWatch.h"
 #include "game/FrameLoans.h"
 #include "game/MenuIcons.h"
@@ -267,7 +269,9 @@ namespace Session
 			static constexpr std::array<const char*, 7> DIFFICULTY{ "fDiffMultHPToPCVE", "fDiffMultHPToPCE", "fDiffMultHPToPCN", "fDiffMultHPToPCH",
 				"fDiffMultHPToPCVH", "fDiffMultHPToPCSV", "fDiffMultHPToPCTSV" };
 			float mult = 1.0f;
-			// Friendly fire was already scaled by the shooter's difficulty.
+			// Friendly fire is applied as the shooter's hit event gave it: that number comes before the shooter's
+			// difficulty multipliers of damage to NPCs (fDiffMultHPByPC*: on the rig, 2026-11-10, dividing them by 3
+			// for group difficulty changed a hit on a stand-in not at all), and the taker's are for NPCs' hits.
 			if (!a_byPlayer) {
 				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
 				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);
@@ -1338,6 +1342,13 @@ namespace Session
 			return;
 		}
 		const auto now = Clock::now();
+		// For the crash report: what the session is, once a second (CrashWatch::SetSession).
+		if (static Clock::time_point noted{}; now - noted >= std::chrono::seconds(1)) {
+			noted = now;
+			const bool hosting = hostedServer && hostedServer->Running();
+			CrashWatch::SetSession(hosting ? CrashReport::Session::kHosting : welcomed ? CrashReport::Session::kJoined : CrashReport::Session::kNone,
+				static_cast<std::uint32_t>(RemotePlayers::List().size() + 1));
+		}
 		// Each stretch below is a part of the dev channel's `perf`, the packets it sends included.
 		Perf::Stretches perf;
 		PERF_NEXT(perf, "Story");
@@ -1875,7 +1886,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

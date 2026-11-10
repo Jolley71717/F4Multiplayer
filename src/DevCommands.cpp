@@ -1,6 +1,7 @@
 ﻿#include "DevCommands.h"
 
 #include "Config.h"
+#include "CrashWatch.h"
 #include "DevChannel.h"
 #include "Log.h"
 #include "net/Session.h"
@@ -4207,6 +4208,36 @@ namespace DevCommands
 			return Gifts::Command(joined);
 		}
 
+		// crashtest <read|write|cpp|stack> [thread]: crashes the game on purpose, for the crash report's rig test (CrashReport.h).
+		// On the main thread (this handler runs there; the channel then times out waiting for it), or with `thread` on a
+		// plain thread made for it. cpp always takes a thread of its own: the channel's and the frame's guards would catch a
+		// throw here. Dev channel only, as every command here.
+		std::string CrashTest(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			std::optional<CrashWatch::Kind> kind;
+			if (!args.empty()) {
+				if (args[0] == "read") {
+					kind = CrashWatch::Kind::kRead;
+				} else if (args[0] == "write") {
+					kind = CrashWatch::Kind::kWrite;
+				} else if (args[0] == "cpp") {
+					kind = CrashWatch::Kind::kCpp;
+				} else if (args[0] == "stack") {
+					kind = CrashWatch::Kind::kStack;
+				}
+			}
+			if (!kind) {
+				return "error: crashtest <read|write|cpp|stack> [thread]";
+			}
+			const bool ownThread = args.size() > 1 && args[1] == "thread";
+			if (*kind == CrashWatch::Kind::kCpp || ownThread) {
+				CrashWatch::CrashOnNewThread(*kind);
+				return "ok: crashing on a thread of its own";
+			}
+			CrashWatch::CrashNow(*kind);
+		}
+
 		// storage: shared storage (Storage.h): status; owners; keeper <ref>; view <ref> / close (what the container menu's show and close do);
 		// count <ref> <item>; take / put <ref> <item> [count] (a transfer between our player and the container, as the menu makes one).
 		std::string StorageCommand(std::string_view a_args)
@@ -4414,6 +4445,7 @@ namespace DevCommands
 			Entry{ "destruct", DestructCommand },
 			Entry{ "gifts", GiftsCommand },
 			Entry{ "storage", StorageCommand },
+			Entry{ "crashtest", CrashTest },
 		};
 	}
 

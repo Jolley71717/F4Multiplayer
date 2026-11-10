@@ -68,11 +68,16 @@ namespace Protocol
 	// is each game's own run (src/game/Encounters.h); a line's speaker may be a spawn id, so an encounter actor's lines
 	// reach the friends (Line::speaker). A spawn its owner reports again under its id, plain, says its encounter is over:
 	// the server passes it on (kSpawned again) and the copies stay. 62 is refused at the hello.
-	// 64: one owner per companion (common/CompanionBook.h, src/game/Companions.cpp): a game reports an NPC its Followers
+	// 64: the host's iCatchUpXp in the welcome (SessionRules::catchUpXp, a byte after quests): a player below the players'
+	// average level earns that percent more kill XP per level behind, and one above it gets that much less of friends'
+	// kill XP (common/CatchUpXp.h); and iGroupDifficulty (SessionRules::groupDifficulty, the byte after): enemies that
+	// much tougher per player beyond the first (common/GroupDifficulty.h). No message changes, and the server applies
+	// neither. 63 is refused at the hello.
+	// 65: one owner per companion (common/CompanionBook.h, src/game/Companions.cpp): a game reports an NPC its Followers
 	// aliases hold, or let go of (kReportCompanion: CompanionReport), and the server names the companion's owner to the
 	// reporter and to everyone (kCompanionOwner: CompanionOwner), first to recruit keeps them; a joiner gets the list after
-	// the owner table. 63 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 64;
+	// the owner table. No welcome bytes. 64 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 65;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -487,12 +492,24 @@ namespace Protocol
 		// legendary).
 		QuestRule quests = QuestRule::kStory;
 
+		// Catch-up XP (common/CatchUpXp.h): the percent of extra kill XP a player gets for each level they are below the
+		// players' average level (at most doubling it), and the percent less of friends' kill XP for each level above
+		// (iCatchUpXp; protocol 64, the byte after quests). 0: off, every game's XP as the game gives it. On at 10 unless
+		// the host says otherwise.
+		std::uint8_t catchUpXp = 10;
+		// Group difficulty (common/GroupDifficulty.h): the percent tougher enemies are for each player in the session
+		// beyond the first, as every game's hits taking that much less off NPCs (iGroupDifficulty; protocol 64, the byte
+		// after catchUpXp). 0: off.
+		std::uint8_t groupDifficulty = 0;
+
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
 		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
 		static constexpr std::uint8_t  MIN_REVIVE_HEALTH = 1, MAX_REVIVE_HEALTH = 100;
 		static constexpr std::uint16_t MAX_REVIVE_WINDOW = 600;
 		static constexpr std::uint16_t MAX_DOWN_COOLDOWN = 3600;
+		static constexpr std::uint8_t  MAX_CATCH_UP_XP = 100;        // one level behind doubles the XP already
+		static constexpr std::uint8_t  MAX_GROUP_DIFFICULTY = 200;  // GroupDifficulty::MAX_PERCENT: two players, thrice as tough
 
 		[[nodiscard]] SessionRules Clamped() const
 		{
@@ -511,6 +528,8 @@ namespace Protocol
 			if (static_cast<std::uint8_t>(quests) >= QUEST_RULES) {
 				out.quests = QuestRule::kStory;
 			}
+			out.catchUpXp = (std::min)(catchUpXp, MAX_CATCH_UP_XP);
+			out.groupDifficulty = (std::min)(groupDifficulty, MAX_GROUP_DIFFICULTY);
 			return out;
 		}
 
@@ -2593,6 +2612,8 @@ namespace Protocol
 		w.U8(static_cast<std::uint8_t>(rules.npcLevel));  // protocol 57
 		w.U8(static_cast<std::uint8_t>(rules.legendary));
 		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
+		w.U8(rules.catchUpXp);  // protocol 64
+		w.U8(rules.groupDifficulty);
 		return w.Data();
 	}
 
@@ -2627,12 +2648,16 @@ namespace Protocol
 			const auto npcLevel = r.U8();  // protocol 57
 			const auto legendary = r.U8();
 			const auto quests = r.U8();  // protocol 58
+			const auto catchUpXp = r.U8();  // protocol 64
+			const auto groupDifficulty = r.U8();
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
 			rules.npcLevel = static_cast<NpcLevelRule>(npcLevel);
 			rules.legendary = static_cast<LegendaryRule>(legendary);
 			rules.quests = static_cast<QuestRule>(quests);
+			rules.catchUpXp = catchUpXp;
+			rules.groupDifficulty = groupDifficulty;
 			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}
 		return msg;
@@ -4692,7 +4717,7 @@ namespace Protocol
 		return DecodeList<ActorOwner>(a_data, [](Reader& r) { ActorOwner a; a.refId = r.U32(); a.playerId = r.U32(); return a; });
 	}
 
-	// Companions (protocol 64): one owner per companion, the first to recruit them. The sender's game reports an NPC its
+	// Companions (protocol 65): one owner per companion, the first to recruit them. The sender's game reports an NPC its
 	// Followers quest's aliases (Companion, DogmeatCompanion) hold now, or no longer hold (kReportCompanion), and the server
 	// keeps the book (common/CompanionBook.h): the first to recruit an NPC is its owner until their game lets it go, or they
 	// leave (a crashed or disconnected owner's companion is held for them for a while, then free). The answer names the

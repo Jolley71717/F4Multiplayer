@@ -43,6 +43,8 @@ namespace HangWatch
 		std::atomic<bool>              loadingScreen{ false };
 		std::atomic<Phase>             saveOrLoad{ Phase::kPlay };
 		std::atomic<Clock::time_point> saveOrLoadSince{};
+		// The long limit as Start set it (its default until then), for PhaseNow.
+		std::atomic<Clock::duration::rep> longLimitNow{ std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(15 * LONG_FACTOR)).count() };
 
 		struct Watch
 		{
@@ -455,6 +457,7 @@ namespace HangWatch
 		watch.folder = folder.value_or(std::filesystem::path{});
 		const auto limit = std::chrono::seconds(seconds);
 		watch.longLimit = limit * LONG_FACTOR;
+		longLimitNow = std::chrono::duration_cast<Clock::duration>(watch.longLimit).count();
 		const bool dump = watch.writeDump != nullptr;
 
 		try {
@@ -478,6 +481,12 @@ namespace HangWatch
 			saveOrLoadSince = Clock::now();
 		}
 		saveOrLoad = a_what;
+	}
+
+	Phase PhaseNow()
+	{
+		const Phase saveOrLoadNow = saveOrLoad;  // read before its start time, as the watch does
+		return CurrentPhase(loadingScreen, saveOrLoadNow, Clock::now() - saveOrLoadSince.load(), Clock::duration{ longLimitNow.load() });
 	}
 
 	std::string DescribeMainThread(void* a_window)

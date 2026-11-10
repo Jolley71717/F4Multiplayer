@@ -78,8 +78,17 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	settings.shareGuestBuilds = true;
 	settings.sharedStorage = true;
 	settings.containerGifts = true;
+	settings.catchUpXp = 25;
+	settings.groupDifficulty = 50;
 	const auto rules = HostRules::FromSettings(settings);
 	CHECK(!rules.revive);
+	CHECK(rules.catchUpXp == 25);
+	CHECK(rules.groupDifficulty == 50);
+	CHECK(HostRules::Describe(rules).find("catchUpXp=25%") != std::string::npos);
+	CHECK(HostRules::Describe(rules).find("groupDifficulty=50%") != std::string::npos);
+	// The defaults: catch-up on, modestly; group difficulty off.
+	CHECK(HostRules::FromSettings(Config::Settings{}).catchUpXp == 10);
+	CHECK(HostRules::FromSettings(Config::Settings{}).groupDifficulty == 0);
 	CHECK(rules.bleedOutSeconds == 120);
 	CHECK(rules.helpTenths == 35);
 	CHECK(rules.reviveHealth == 50);

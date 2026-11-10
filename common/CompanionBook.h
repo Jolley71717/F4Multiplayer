@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Whose companion each NPC is: the server's book (protocol 64). Two games can recruit the same companion, Dogmeat
+// Whose companion each NPC is: the server's book (protocol 65). Two games can recruit the same companion, Dogmeat
 // first of all: each game's Followers quest fills its own alias. On the wire the companion is one NPC, so the first game
 // to report recruiting them keeps them, and a second game's report is refused with the owner's name (that game
 // dismisses its copy: src/game/Companions.cpp). A companion is free again when its owner's game reports letting them go

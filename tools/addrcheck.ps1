@@ -344,6 +344,24 @@ if ($null -ne $react -and $null -ne $enterCombat) {
 	}
 }
 
+# The inventory list's destructor, whose one call of RemoveAllAgents ExitInventory::Install guards (src/game/ExitInventory.h):
+# at +0x7C it loads the inventory interface's singleton (mov rcx,[rip+disp32]) and at +0x87 calls RemoveAllAgents with
+# it; RemoveAllAgents takes its lock and then reads the agent array's size through this (+0xC8) at +0x27, where the
+# shutdown crashed with the singleton null (the plugin checks the load and the call itself at load).
+$listDestructor = Resolve 2194154
+$removeAgents = Resolve 2194033
+$inventoryInterface = Resolve 4796586
+Report ($listDestructor -eq 0x34D730) ('~BGSInventoryList ID 2194154 is +{0:X}' -f $listDestructor)
+Report ($removeAgents -eq 0x3486A0) ('BGSInventoryInterface::RemoveAllAgents ID 2194033 is +{0:X}' -f $removeAgents)
+Report ($inventoryInterface -eq 0x30EC470) ('the inventory interface''s singleton ID 4796586 is +{0:X}' -f $inventoryInterface)
+if ($null -ne $listDestructor -and $null -ne $removeAgents -and $null -ne $inventoryInterface) {
+	$load = BytesAt ($listDestructor + 0x7C) 7
+	Report ((HexMatches $load[0..2] '48 8B 0D') -and ($listDestructor + 0x83 + [BitConverter]::ToInt32($load, 3)) -eq $inventoryInterface) 'the inventory list''s destructor loads the inventory interface at +0x7C'
+	$call = BytesAt ($listDestructor + 0x87) 5
+	Report ((HexMatches (BytesAt ($listDestructor + 0x83) 4) '89 44 24 60') -and $call[0] -eq 0xE8 -and ($listDestructor + 0x8C + [BitConverter]::ToInt32($call, 1)) -eq $removeAgents) 'the inventory list''s destructor calls RemoveAllAgents with it at +0x87'
+	Report ((HexMatches (BytesAt $removeAgents 16) '48 89 5C 24 18 55 56 41 56 48 83 EC 30 48 8B E9') -and (HexMatches (BytesAt ($removeAgents + 0x20) 9) '48 8D B5 C8 00 00 00 8B 1E')) 'RemoveAllAgents keeps this in rbp and reads its agent array''s size (+0xC8) at +0x27'
+}
+
 # The player camera's bleed-out start and its transition, as Downed.cpp reads them (DownRules::Camera): the start
 # compares the current state with the bleed-out camera (+138) and the tween (+110); the transition's set-up keeps
 # where it comes from at +0x38 and where it goes at +0x40.

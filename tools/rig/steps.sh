@@ -1788,7 +1788,7 @@ step_radiants() {
 }
 
 # ---- companions: one owner per companion (opt-in: smoke.sh --only companions) ----------------------------------------------------
-# The first game to recruit a companion keeps them (src/game/Companions.cpp, common/CompanionBook.h, protocol 64): the other's
+# The first game to recruit a companion keeps them (src/game/Companions.cpp, common/CompanionBook.h, protocol 65): the other's
 # recruit is refused, its copy dismissed with a notice; the owner letting them go, or leaving, frees them (a dropped owner's are
 # held 5 min for a rejoin). Dogmeat at Red Rocket, both games there by console (set-up, said so). The set-up recruits and the
 # dismissal in the owner's game go through the game's own Followers script by console (`cqf Followers "FollowersScript.…"`, as the

@@ -92,6 +92,7 @@ party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [w menu]
 party.killed = {killer} zabija: {victim}
 party.xp = +{xp} PD za zabójstwa drużyny
+party.catchup_xp = +{xp} PD za doganianie drużyny
 party.no_teleport_target = Multiplayer: nie ma do kogo się teleportować
 party.teleport_prompt = Teleport do gracza {player}? Przytrzymaj {key}
 party.teleport_choose = Naciśnij {key}, by wybrać cel teleportu
