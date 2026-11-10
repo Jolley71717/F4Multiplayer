@@ -330,6 +330,20 @@ namespace CopyHealth
 	// them itself, and the NPC took them twice. So with a blow left to the owner (OwnersBlow) around the drop, only what our
 	// hits said they took (their HitData figure) is ours; the rest is the owner's, given back. Without one, or with hits of
 	// ours none of whose events had a figure, the whole drop is ours as before (a figure short of what a hit took must not lose it).
+	//
+	// Our player's figure comes before the engine's multiplier of the player's damage to NPCs (the difficulty's
+	// fDiffMultHPByPC*, which group difficulty divides, src/game/GroupHits.cpp): what the hit took off is the figure
+	// times the multiplier in effect. Recorded as the figure alone, a divided multiplier (up to 8 times) would have more
+	// of a drop beside the owner's blast put down to us, and the NPC take that much of the blast twice. An NPC's hit (one
+	// we run, on a copy) is not the player's and is not scaled.
+	[[nodiscard]] inline std::optional<float> FigureDealt(std::optional<float> a_figure, bool a_byPlayer, float a_playerMult)
+	{
+		if (!a_figure || !a_byPlayer || !(a_playerMult > 0.0f)) {
+			return a_figure;
+		}
+		return *a_figure * a_playerMult;
+	}
+
 	class Book
 	{
 	public:

@@ -1179,3 +1179,136 @@ TEST("workshop power: a friend's running conveyor is stopped for a save and runs
 	CHECK(mirror.Refresh(game, t) == 1);
 	CHECK(game.runs.at(belt));
 }
+
+// ---- Strays: copies no session of ours keeps ---------------------------------------------------------
+
+namespace
+{
+	constexpr std::uint32_t OLD_GENERATOR = 0xFF000C01;  // a friend's generator an older save kept running
+	constexpr std::uint32_t OLD_LIGHT = 0xFF000C02;      // a copy whose piece the friend's game no longer has
+
+	// The loaded cells as the game has them: the marked references no session keeps, each with its 3D.
+	struct StrayWorld
+	{
+		std::map<std::uint32_t, std::uintptr_t> strays;  // found, with its 3D (0: not drawn)
+		std::vector<std::uint32_t>              hushed;  // shown unpowered, in order
+		bool                                    graphReady = true;
+
+		std::vector<std::uint32_t> Found() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& [id, drawn] : strays) {
+				out.push_back(id);
+			}
+			return out;
+		}
+
+		std::uintptr_t Drawn(std::uint32_t a_id) const
+		{
+			const auto it = strays.find(a_id);
+			return it == strays.end() ? 0 : it->second;
+		}
+
+		bool Show(std::uint32_t a_id)
+		{
+			if (!graphReady) {
+				return false;
+			}
+			hushed.push_back(a_id);
+			return true;
+		}
+	};
+}
+
+TEST("workshop power: a stray copy a save kept running is shown unpowered once its 3D has been there a whole sweep, once")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_GENERATOR] = 0x1000;
+	CHECK(strays.Sweep(world, t) == 0);  // seen first: its 3D may still be setting up
+	CHECK(strays.Size() == 1);
+	t += 1s;
+	CHECK(strays.Sweep(world, t) == 0);  // not due
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);  // there a whole sweep: hushed
+	CHECK(world.hushed == std::vector<std::uint32_t>{ OLD_GENERATOR });
+	CHECK(strays.Hushed() == 1);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // and no more
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	CHECK(world.hushed.size() == 1);
+}
+
+TEST("workshop power: a stray drawn anew (its cell loaded again) is shown unpowered again; one not drawn waits")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_GENERATOR] = 0;  // in a loaded cell, its 3D not in yet
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // still nothing to show it on
+	world.strays[OLD_GENERATOR] = 0x1000;
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // drawn: settles first
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);
+	world.strays[OLD_GENERATOR] = 0x2000;  // drawn anew: a new graph starts as the save kept it
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);
+	CHECK(world.hushed.size() == 2);
+}
+
+TEST("workshop power: a stray whose game won't take it is tried a few times and let be, until it is drawn anew")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_LIGHT] = 0x1000;
+	world.graphReady = false;
+	CHECK(strays.Sweep(world, t) == 0);
+	for (std::uint8_t i = 0; i < MAX_TRIES; ++i) {
+		t += STRAY_SWEEP;
+		CHECK(strays.Sweep(world, t) == 0);
+	}
+	CHECK(strays.GivenUp() == 1);
+	world.graphReady = true;
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // let be
+	world.strays[OLD_LIGHT] = 0x2000;
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);  // drawn anew: tried again, and taken
+}
+
+TEST("workshop power: a stray a report adopts (or whose cell unloads) is forgotten, and one found again is looked at afresh; a load forgets them all")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_GENERATOR] = 0x1000;
+	world.strays[OLD_LIGHT] = 0x1100;
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 2);
+	world.strays.erase(OLD_GENERATOR);  // adopted by a friend's report: a copy now, Mirror's
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	CHECK(strays.Size() == 1);
+	world.strays[OLD_GENERATOR] = 0x1000;  // the session ended, and the copy it let go is a stray again
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // afresh: settles first
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);
+	strays.Clear();  // a load
+	CHECK(strays.Size() == 0);
+	CHECK(strays.Sweep(world, t) == 0);  // at once (the sweep is due again), both seen first
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 2);
+	CHECK(strays.Hushed() == 5);
+}

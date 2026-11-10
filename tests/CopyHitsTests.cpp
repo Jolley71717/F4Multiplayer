@@ -1074,3 +1074,31 @@ TEST("copy hits: a copy killed here for another game's word is no fall of ours, 
 	CHECK(ours.FellToUs(RAIDER_1));
 	CHECK(Near(Took(ours, RAIDER_1, t0 + 2 * FRAME), 30.0f));
 }
+
+TEST("copy hits: our player's hit figure is scaled by the multiplier in effect before it is recorded, an NPC's not")
+{
+	// Normal difficulty's multiplier of the player's damage to NPCs is 1; Survival's 0.75; group difficulty divides
+	// them further (x0.33 with 200% and two players).
+	CHECK(CopyHealth::FigureDealt(30.0f, true, 1.0f) == 30.0f);
+	CHECK(CopyHealth::FigureDealt(40.0f, true, 0.75f) == 30.0f);
+	CHECK(CopyHealth::FigureDealt(90.0f, true, 1.0f / 3.0f) > 29.9f);
+	CHECK(CopyHealth::FigureDealt(90.0f, true, 1.0f / 3.0f) < 30.1f);
+	// An NPC we run hitting a copy: its figure is not the player's and stays.
+	CHECK(CopyHealth::FigureDealt(40.0f, false, 0.5f) == 40.0f);
+	// No figure stays none; a multiplier that isn't a number (unknown, 0) leaves the figure as it is.
+	CHECK(!CopyHealth::FigureDealt(std::nullopt, true, 0.5f));
+	CHECK(CopyHealth::FigureDealt(40.0f, true, 0.0f) == 40.0f);
+	CHECK(CopyHealth::FigureDealt(40.0f, true, -1.0f) == 40.0f);
+	// With the figure scaled, a drop beside the owner's blast puts only what the hit took down to us: a 90-point figure
+	// at x0.33 is 30 of a 100 drop, the other 70 the blast's, where the raw figure would have claimed 90.
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 500.0f);
+	book.OurHit(RAIDER_1, t0, CopyHealth::FigureDealt(90.0f, true, 1.0f / 3.0f));
+	book.OtherHit(RAIDER_1, t0 + milliseconds{ 20 });
+	book.OwnersBlow(RAIDER_1, t0 + milliseconds{ 20 });
+	CHECK(book.Check(RAIDER_1, 400.0f, t0 + FRAME) == 0.0f);
+	const float refund = book.Check(RAIDER_1, 400.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER);
+	CHECK(refund > 69.9f && refund < 70.1f);
+}

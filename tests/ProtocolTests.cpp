@@ -2178,28 +2178,85 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
-	// The host's own game's id after the session id (protocol 64): 0 on a dedicated server.
-	for (const std::uint32_t hostId : { 0u, 1u, 7u }) {
-		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{}, hostId }));
-		REQUIRE(out);
-		CHECK(out->hostId == hostId);
-		CHECK(out->playerId == 3);
-		CHECK(out->sessionId == 4);
-	}
-	// The byte after legendary's, before the shared workshop's (protocol 64), the welcome's last.
+	// The byte after legendary's, before 64's two bytes and 65's (the shared workshop's byte and the host's id).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
-	CHECK(bytes[bytes.size() - 2] == static_cast<std::uint8_t>(QuestRule::kSafe));
-	CHECK(bytes.back() == 1);  // sharedWorkshop, on by default
-	bytes[bytes.size() - 2] = QUEST_RULES;
+	auto& questsByte = bytes[bytes.size() - 8];
+	CHECK(questsByte == static_cast<std::uint8_t>(QuestRule::kSafe));
+	questsByte = QUEST_RULES;
 	const auto odd = DecodeWelcome(bytes);
 	REQUIRE(odd);
 	CHECK(odd->rules.quests == QuestRule::kStory);
 	CHECK(odd->rules.legendary == LegendaryRule::kHost);
 	CHECK(odd->rules.sharedWorkshop);
 	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
-	// A welcome of 63's, without the shared workshop's byte, is short; so is 57's, without quests'.
+	// A welcome of 57's, without it (nor 64's and 65's bytes), is short.
+	bytes.resize(bytes.size() - 8);
+	CHECK(!DecodeWelcome(bytes));
+}
+
+TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (protocol 64), each within its limit; a welcome without them is short")
+{
+	static_assert(VERSION >= 64);  // both came in 64
+	CHECK(SessionRules{}.catchUpXp == 10);     // on, modestly, unless the host says otherwise
+	CHECK(SessionRules{}.groupDifficulty == 0);  // off unless the host says
+	for (const std::uint8_t percent : std::array<std::uint8_t, 3>{ 0, 10, 100 }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .quests = QuestRule::kSafe, .catchUpXp = percent, .groupDifficulty = static_cast<std::uint8_t>(percent * 2) } }));
+		REQUIRE(out);
+		CHECK(out->rules.catchUpXp == percent);
+		CHECK(out->rules.groupDifficulty == percent * 2);
+		CHECK(out->rules.quests == QuestRule::kSafe);
+	}
+	// The two bytes after quests', before 65's (the shared workshop's byte and the host's four); past their limits they
+	// are their limits (a level behind doubles the XP already; two players thrice as tough is enough).
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10, .groupDifficulty = 50 } });
+	auto& catchUpByte = bytes[bytes.size() - 7];
+	auto& difficultyByte = bytes[bytes.size() - 6];
+	CHECK(catchUpByte == 10);
+	CHECK(difficultyByte == 50);
+	catchUpByte = 250;
+	difficultyByte = 255;
+	const auto wild = DecodeWelcome(bytes);
+	REQUIRE(wild);
+	CHECK(wild->rules.catchUpXp == SessionRules::MAX_CATCH_UP_XP);
+	CHECK(wild->rules.groupDifficulty == SessionRules::MAX_GROUP_DIFFICULTY);
+	CHECK(SessionRules{ .catchUpXp = 101 }.Clamped().catchUpXp == 100);
+	CHECK(SessionRules{ .groupDifficulty = 201 }.Clamped().groupDifficulty == 200);
+	// A welcome of 63's, without them (nor 65's bytes), is short; so is one cut between them.
+	bytes.resize(bytes.size() - 5);
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
+}
+
+TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's own game's id (protocol 65), last; a welcome without them is short")
+{
+	static_assert(VERSION >= 65);  // both came in 65
+	CHECK(SessionRules{}.sharedWorkshop);  // on unless the host says otherwise
+	// The host's own game's id: 0 on a dedicated server.
+	for (const std::uint32_t hostId : { 0u, 1u, 7u, 0xA1B2C3D4u }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 20, .groupDifficulty = 30 }, hostId }));
+		REQUIRE(out);
+		CHECK(out->hostId == hostId);
+		CHECK(out->playerId == 3);
+		CHECK(out->sessionId == 4);
+		CHECK(out->rules.catchUpXp == 20);  // 64's bytes still before 65's
+		CHECK(out->rules.groupDifficulty == 30);
+	}
+	for (const bool on : { false, true }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .sharedWorkshop = on } }));
+		REQUIRE(out);
+		CHECK(out->rules.sharedWorkshop == on);
+	}
+	// The shared workshop's byte after 64's groupDifficulty, then the host's id, little-endian, the welcome's last four.
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .groupDifficulty = 50, .sharedWorkshop = true }, 0x01020304u });
+	CHECK(bytes[bytes.size() - 6] == 50);
+	CHECK(bytes[bytes.size() - 5] == 1);
+	CHECK(bytes[bytes.size() - 4] == 0x04);
+	CHECK(bytes.back() == 0x01);
+	// A welcome of 64's, without them, is short; so is one cut anywhere in the host's id.
+	for (int i = 0; i < 5; ++i) {
+		bytes.pop_back();
+		CHECK(!DecodeWelcome(bytes));
+	}
 }

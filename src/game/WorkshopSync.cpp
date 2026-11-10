@@ -2045,6 +2045,7 @@ namespace WorkshopSync
 
 		WorkshopPower::Reporter reporter;  // our pieces with power
 		WorkshopPower::Mirror   mirror;    // what friends' games say of theirs
+		WorkshopPower::Strays   strays;    // friends' copies our save holds that no session keeps, shown unpowered
 		Clock::time_point       nextPowerAudit{};
 		std::uint32_t           powerSent = 0;     // entries sent
 		std::uint32_t           powerReceived = 0;  // entries received
@@ -2318,6 +2319,21 @@ namespace WorkshopSync
 			return WorkshopPower::ShowCounts(ShowPoweredHow(a_copy, a_on));
 		}
 
+		// A copy's 3D as shows of its power go by it (WorkshopPower::Drawing): see MirrorEngine::Drawn.
+		std::uintptr_t DrawingOf(RE::TESObjectREFR& a_ref)
+		{
+			const auto model = a_ref.Get3D();
+			if (!model) {
+				return 0;
+			}
+			const bool namesGraph = !IsLightBase(a_ref) && NamesGraph(*model);
+			const auto graph = LoadedGraph(a_ref);
+			if (model->parent && namesGraph && graph == 0) {
+				++graphWaits;
+			}
+			return WorkshopPower::Drawing(reinterpret_cast<std::uintptr_t>(model), model->parent != nullptr, namesGraph, graph);
+		}
+
 		struct MirrorEngine
 		{
 			bool forSave = false;  // shows for a save's hush (ShowPoweredHow: a light's light is let be)
@@ -2339,16 +2355,7 @@ namespace WorkshopSync
 			std::uintptr_t Drawn(const WorkshopPower::Key& a_key)
 			{
 				const auto ref = CopyOf(a_key);
-				const auto model = ref ? ref->Get3D() : nullptr;
-				if (!model) {
-					return 0;
-				}
-				const bool namesGraph = !IsLightBase(*ref) && NamesGraph(*model);
-				const auto graph = LoadedGraph(*ref);
-				if (model->parent && namesGraph && graph == 0) {
-					++graphWaits;
-				}
-				return WorkshopPower::Drawing(reinterpret_cast<std::uintptr_t>(model), model->parent != nullptr, namesGraph, graph);
+				return ref ? DrawingOf(*ref) : 0;
 			}
 
 			// A light's light there while it is shown on, and gone while shown off; a conveyor belt running while shown on,
@@ -2388,6 +2395,66 @@ namespace WorkshopSync
 			}
 		};
 
+		// A friend's copy our save holds that no session keeps (WorkshopPower::Strays): marked as every copy is (the block
+		// keyword, saved with it), made at runtime, no copy we keep or wait to delete, no piece of ours (linked to a workbench,
+		// or a workbench), no actor (a turret) and no drop's copy, and one with power to show: a generator, a light, a pylon.
+		// Within STRAY_RANGE of the player: a sound is heard from no further.
+		constexpr float STRAY_RANGE = 8192.0f;
+
+		struct StrayEngine
+		{
+			std::vector<std::uint32_t> Found()
+			{
+				std::vector<std::uint32_t> found;
+				const auto                 tes = RE::TES::GetSingleton();
+				const auto                 player = RE::PlayerCharacter::GetSingleton();
+				if (!tes || !player) {
+					return found;
+				}
+				tes->ForEachReferenceInRange(player->data.location, STRAY_RANGE, [&](RE::TESObjectREFR* a_ref) {
+					if (a_ref && Protocol::IsRuntimeRef(a_ref->GetFormID()) && !a_ref->IsDisabled() && !a_ref->IsDeleted() && !a_ref->As<RE::Actor>() && !IsCopy(a_ref) &&
+						!InGraveyard(a_ref) && !Drops::IsCopyRef(a_ref->GetFormID()) && Blocked(*a_ref) && !IsWorkshopObject(a_ref) && IsPowerPiece(*a_ref)) {
+						found.push_back(a_ref->GetFormID());
+					}
+					return RE::BSContainer::ForEachResult::kContinue;
+				});
+				std::ranges::sort(found);
+				return found;
+			}
+
+			std::uintptr_t Drawn(std::uint32_t a_id)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+				return ref ? DrawingOf(*ref) : 0;
+			}
+
+			bool Show(std::uint32_t a_id)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+				if (!ref) {
+					return false;
+				}
+				const auto took = ShowPoweredHow(*ref, false);
+				if (!WorkshopPower::ShowCounts(took)) {
+					return false;
+				}
+				const auto base = ref->GetObjectReference();
+				REX::INFO("WorkshopSync: stray copy {:08X} (base {:08X}) that no session keeps shown unpowered (an older save's, or a piece its builder no longer has): {}", a_id,
+					base ? base->GetFormID() : 0, took == WorkshopPower::Took::kDark ? "dark already" : "took it");
+				return true;
+			}
+		};
+
+		// In a session and out of one: a stray is the save's, whoever is here.
+		void HushStrays(Clock::time_point a_now)
+		{
+			if (!AuditSettled()) {
+				return;
+			}
+			StrayEngine engine;
+			strays.Sweep(engine, a_now);
+		}
+
 		void PowerFrame(Clock::time_point a_now)
 		{
 			if (a_now >= nextPowerAudit) {
@@ -2398,6 +2465,7 @@ namespace WorkshopSync
 			SendPower(a_now);
 			MirrorEngine engine;
 			mirror.Refresh(engine, a_now);
+			HushStrays(a_now);
 		}
 
 		// ---- Resources: what pieces count for in a settlement, across games (ResourceMirror.h) ------------
@@ -4349,6 +4417,8 @@ namespace WorkshopSync
 
 	void Sweep()
 	{
+		const auto now = Clock::now();
+		HushStrays(now);  // a copy the save holds that no session keeps is shown unpowered, with or without a session
 		if (graveyard.empty()) {
 			return;
 		}
@@ -4356,7 +4426,7 @@ namespace WorkshopSync
 		if (!player || !player->GetParentCell() || Hud::LoadingScreenUp()) {
 			return;  // in the world, not between worlds (a load lets the graveyard go)
 		}
-		SweepGraveyard(Clock::now());
+		SweepGraveyard(now);
 	}
 
 	void BeforeLoad()
@@ -4393,6 +4463,7 @@ namespace WorkshopSync
 		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
 		ForgetShared();  // what waited for the host's answer, or for its 3D, was the old world's
 		copies.clear();
+		strays.Clear();  // the loaded world's are looked for afresh
 		twins.clear();  // the session's building sent again twins them again with the copies found
 		graveyard.clear();
 		unbuiltWires.clear();
@@ -4436,6 +4507,7 @@ namespace WorkshopSync
 		ClearAudit();
 		ForgetShared();
 		copies.clear();
+		strays.Clear();
 		twins.clear();
 		graveyard.clear();
 		unbuiltWires.clear();
@@ -4622,9 +4694,10 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips,
+			strays.Size(), strays.Hushed(), strays.GivenUp(), static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeResources()

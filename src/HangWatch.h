@@ -26,6 +26,10 @@ namespace HangWatch
 	// messages before and after it.
 	void SetSaveOrLoad(Phase a_what);
 
+	// What the game is busy with now, as the watch judges it (CurrentPhase): for the crash report. Any thread, and
+	// nothing is allocated or locked (it runs on a thread that crashed).
+	[[nodiscard]] Phase PhaseNow();
+
 	// Where the main thread (the one that made a_window) is at this moment, as the hang report puts it
 	// ("at Fallout4.exe+0x1A2B3C; return addresses on its stack: ..."), for the frame watch's report of a
 	// main thread that answers its window but runs no frame of ours. The thread is stopped for the look,

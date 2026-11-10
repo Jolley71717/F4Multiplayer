@@ -118,6 +118,7 @@ namespace Text
 		{ "party.tag_menu", "{name} [in a menu]" },
 		{ "party.killed", "{killer} killed {victim}" },
 		{ "party.xp", "+{xp} XP from your party's kills" },
+		{ "party.catchup_xp", "+{xp} XP catching up with your party" },
 
 		// --- Teleporting to a friend ---
 		{ "party.no_teleport_target", "Multiplayer: nobody to teleport to" },

@@ -68,11 +68,17 @@ namespace Protocol
 	// is each game's own run (src/game/Encounters.h); a line's speaker may be a spawn id, so an encounter actor's lines
 	// reach the friends (Line::speaker). A spawn its owner reports again under its id, plain, says its encounter is over:
 	// the server passes it on (kSpawned again) and the copies stay. 62 is refused at the hello.
-	// 64: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
-	// a byte after quests); a friend's build or wire at a settlement the host owns is a numbered request the host's game performs
-	// on its own pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
-	// kWorkshopAnswer: WorkshopAnswer). 63 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 64;
+	// 64: the host's iCatchUpXp in the welcome (SessionRules::catchUpXp, a byte after quests): a player below the players'
+	// average level earns that percent more kill XP per level behind, and one above it gets that much less of friends'
+	// kill XP (common/CatchUpXp.h); and iGroupDifficulty (SessionRules::groupDifficulty, the byte after): enemies that
+	// much tougher per player beyond the first (common/GroupDifficulty.h). No message changes, and the server applies
+	// neither.
+	// 65: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
+	// the byte after 64's groupDifficulty), then the host's own game's id (Welcome::hostId, the welcome's last four bytes);
+	// a friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own
+	// pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
+	// kWorkshopAnswer: WorkshopAnswer). 64 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 65;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -489,9 +495,18 @@ namespace Protocol
 		// legendary).
 		QuestRule quests = QuestRule::kStory;
 
+		// Catch-up XP (common/CatchUpXp.h): the percent of extra kill XP a player gets for each level they are below the
+		// players' average level (at most doubling it), and the percent less of friends' kill XP for each level above
+		// (iCatchUpXp; protocol 64, the byte after quests). 0: off, every game's XP as the game gives it. On at 10 unless
+		// the host says otherwise.
+		std::uint8_t catchUpXp = 10;
+		// Group difficulty (common/GroupDifficulty.h): the percent tougher enemies are for each player in the session
+		// beyond the first, as every game's hits taking that much less off NPCs (iGroupDifficulty; protocol 64, the byte
+		// after catchUpXp). 0: off.
+		std::uint8_t groupDifficulty = 0;
 		// The shared workshop (src/game/SharedWorkshop.h): at a settlement the host owns, a friend's build or wire is made by the
 		// host's game as the host's own piece, and the friend sees a copy, as of any of the host's pieces (bSharedWorkshop; on
-		// by default; protocol 64, the byte after quests). Off: a friend's piece there stays their own, as before.
+		// by default; protocol 65, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
 		bool sharedWorkshop = true;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
@@ -500,6 +515,8 @@ namespace Protocol
 		static constexpr std::uint8_t  MIN_REVIVE_HEALTH = 1, MAX_REVIVE_HEALTH = 100;
 		static constexpr std::uint16_t MAX_REVIVE_WINDOW = 600;
 		static constexpr std::uint16_t MAX_DOWN_COOLDOWN = 3600;
+		static constexpr std::uint8_t  MAX_CATCH_UP_XP = 100;        // one level behind doubles the XP already
+		static constexpr std::uint8_t  MAX_GROUP_DIFFICULTY = 200;  // GroupDifficulty::MAX_PERCENT: two players, thrice as tough
 
 		[[nodiscard]] SessionRules Clamped() const
 		{
@@ -518,6 +535,8 @@ namespace Protocol
 			if (static_cast<std::uint8_t>(quests) >= QUEST_RULES) {
 				out.quests = QuestRule::kStory;
 			}
+			out.catchUpXp = (std::min)(catchUpXp, MAX_CATCH_UP_XP);
+			out.groupDifficulty = (std::min)(groupDifficulty, MAX_GROUP_DIFFICULTY);
 			return out;
 		}
 
@@ -624,8 +643,9 @@ namespace Protocol
 		bool          friendlyFire = false;  // players can hurt each other
 		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 		SessionRules  rules;
-		// The host's own game's player id (protocol 64, after the session id on the wire): whose pieces the shared workshop
-		// wires, and whose game takes its requests. 0: none in the session (a dedicated server), so no game hands over.
+		// The host's own game's player id (protocol 65, the welcome's last four bytes, after the rules): whose pieces the
+		// shared workshop wires, and whose game takes its requests. 0: none in the session (a dedicated server), so no game
+		// hands over.
 		std::uint32_t hostId = 0;
 	};
 
@@ -2682,7 +2702,6 @@ namespace Protocol
 		Writer w{ MessageType::kWelcome };
 		w.U32(a_msg.playerId);
 		w.U64(a_msg.sessionId);
-		w.U32(a_msg.hostId);  // protocol 64
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
@@ -2698,7 +2717,10 @@ namespace Protocol
 		w.U8(static_cast<std::uint8_t>(rules.npcLevel));  // protocol 57
 		w.U8(static_cast<std::uint8_t>(rules.legendary));
 		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
-		w.U8(rules.sharedWorkshop ? 1 : 0);              // protocol 64
+		w.U8(rules.catchUpXp);  // protocol 64
+		w.U8(rules.groupDifficulty);
+		w.U8(rules.sharedWorkshop ? 1 : 0);  // protocol 65
+		w.U32(a_msg.hostId);
 		return w.Data();
 	}
 
@@ -2709,7 +2731,6 @@ namespace Protocol
 		Welcome msg;
 		msg.playerId = r.U32();
 		msg.sessionId = r.U64();
-		msg.hostId = r.U32();  // protocol 64
 		msg.friendlyFire = r.U8() != 0;
 		msg.sharedStory = r.U8() != 0;
 		// The rules (protocol 49; a welcome only answers a hello of the same version). Trailing bytes after them are
@@ -2734,13 +2755,18 @@ namespace Protocol
 			const auto npcLevel = r.U8();  // protocol 57
 			const auto legendary = r.U8();
 			const auto quests = r.U8();  // protocol 58
-			const auto sharedWorkshop = r.U8();  // protocol 64
+			const auto catchUpXp = r.U8();  // protocol 64
+			const auto groupDifficulty = r.U8();
+			const auto sharedWorkshop = r.U8();  // protocol 65
+			msg.hostId = r.U32();
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
 			rules.npcLevel = static_cast<NpcLevelRule>(npcLevel);
 			rules.legendary = static_cast<LegendaryRule>(legendary);
 			rules.quests = static_cast<QuestRule>(quests);
+			rules.catchUpXp = catchUpXp;
+			rules.groupDifficulty = groupDifficulty;
 			rules.sharedWorkshop = sharedWorkshop != 0;
 			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}

@@ -295,6 +295,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.tag_menu", { { "name", "Sam" } }, "Sam [in a menu]" },
 		{ "party.killed", { { "killer", "Sam" }, { "victim", "Raider" } }, "Sam killed Raider" },
 		{ "party.xp", { { "xp", "25" } }, "+25 XP from your party's kills" },
+		{ "party.catchup_xp", { { "xp", "40" } }, "+40 XP catching up with your party" },
 		{ "party.no_teleport_target", {}, "Multiplayer: nobody to teleport to" },
 		{ "party.teleport_prompt", { { "player", "Sam [a]" }, { "key", "F7" } }, "Teleport to Sam [a]? Hold F7 to go" },
 		{ "party.teleport_choose", { { "key", "F7" } }, "Tap F7 to choose who to teleport to" },

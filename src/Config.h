@@ -176,6 +176,12 @@ namespace Config
 		// Whose difficulty's legendary chance every game rolls them with (sLegendaryDifficulty, Protocol::LegendaryRule):
 		// 1 average (of the games there now), 2 host, 0 own.
 		std::uint8_t legendary = 1;
+		// Catch-up XP (iCatchUpXp, common/CatchUpXp.h): the percent of extra kill XP a player earns for each level they
+		// are below the players' average level, and the percent less of friends' kill XP for each level above. 0: off.
+		std::uint8_t catchUpXp = 10;
+		// Group difficulty (iGroupDifficulty, common/GroupDifficulty.h): the percent tougher enemies are for each player
+		// in the session beyond the first. 0: off.
+		std::uint8_t groupDifficulty = 0;
 
 		// Not a host's rule: leveled NPCs are made with the session's roll (docs/SHARED-ROLLS.md). Off only to rule the
 		// hooks out when something goes wrong (bSharedRolls).
@@ -199,6 +205,10 @@ namespace Config
 		// Also write a minidump of every thread with each report. Off by default: writing it can turn a
 		// freeze the game would come out of into a permanent one, and it holds paths and the Windows user name.
 		bool hangDump = false;
+
+		// A crash to desktop is written up before the game closes (CrashReport.h): what the exception was and where,
+		// module+offset only, to F4Multiplayer-crash-<date>_<time>.txt next to the log and to the log (bCrashReport).
+		bool crashReport = true;
 
 		// What the log holds (sLogLevel): "info" (the default) or "debug", which adds the friend scans (by
 		// alias) and the lines characters say. HUD messages name players and are never logged. Applied by

@@ -105,6 +105,7 @@ party.tag_pipboy = {name} [Пип-Бой]
 party.tag_menu = {name} [в меню]
 party.killed = {killer} убил: {victim}
 party.xp = +{xp} опыта за убийства вашей группы
+party.catchup_xp = +{xp} опыта, чтобы догнать вашу группу
 
 # --- Teleporting to a friend ---
 party.no_teleport_target = Мультиплеер: не к кому телепортироваться

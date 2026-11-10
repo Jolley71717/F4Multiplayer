@@ -90,6 +90,7 @@ party.tag_pipboy = {name} [嗶嗶小子]
 party.tag_menu = {name} [選單中]
 party.killed = {killer} 擊殺了 {victim}
 party.xp = 隊伍擊殺 +{xp} 經驗值
+party.catchup_xp = 追趕隊伍 +{xp} 經驗值
 party.no_teleport_target = 多人連線：沒有可傳送的目標
 party.teleport_prompt = 傳送到 {player} 那裡？按住 {key} 前往
 party.teleport_choose = 按 {key} 選擇傳送目標
