@@ -1868,7 +1868,7 @@ _sws_host_budget_cases() {
 	d1=$(( $(grep -oE 'triangles=[0-9]+' <<<"$h1" | grep -oE '[0-9]+') - $(grep -oE 'triangles=[0-9]+' <<<"$h0" | grep -oE '[0-9]+') )) 2>/dev/null
 	# (b) after building at another settlement: the host's workshop mode at Red Rocket (console placement to get there and back, said here)
 	host "console coc RedRocketExt" >/dev/null; sleep 14; wait_ingame host 30
-	if _ws_enter host; then sleep 3; _ws_exit host; else warn "$label (another settlement): set-up: the host's workshop mode at Red Rocket" "$(host workshop)"; fi
+	if _ws_enter host; then sleep 3; _ws_exit host; else fail "$label (another settlement): set-up: the host's workshop mode at Red Rocket (the case needs its totals loaded there)" "$(host workshop) | $(host menus | grep -oE 'open=[^ ]*' | cut -c1-100)"; host "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame host 30; return 1; fi
 	host "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame host 30
 	walk host "$label: set-up: the host walks back to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return 1; }; pads_off
 	h0=$(_sws_budget host); win_mark sws host
@@ -1973,6 +1973,12 @@ _sws_bed_and_pending_save() {
 	b=$(_sws_build_vm "$SWS_BED" "$label"); [ -z "$b" ] && { vm "wsmode host" >/dev/null; return 1; }
 	_sws_owned() { grep -q ' owner=' <<<"$(vm "wsinfo $1")"; }
 	wait_for 25 _sws_owned "$b"; before=$(vm "wsinfo $b" | grep -oE 'owner=[0-9A-F]+')
+	# with the rule off the finish's placed event reported the bed as the VM's own (the host made a copy, the server keeps it):
+	# reported scrapped before the hand-over, so no stray copy stays on the host or in the server's rejoin list
+	_sws_host_copyless() { [ -z "$(_sws_copy_of host "$1")" ]; }
+	vm "wsreport $b $SANCT_BENCH scrap" >/dev/null
+	if wait_for 15 _sws_host_copyless "$b"; then pass "$label: the bed reported as the VM's own while the rule was off is scrapped for the session before the hand-over (no copy on the host)" "host copies of $b: none"
+	else fail "$label: the bed reported as the VM's own while the rule was off is scrapped for the session before the hand-over (no copy on the host)" "host copy '$(_sws_copy_of host "$b")' of the VM's $b"; fi
 	vm "wsmode host" >/dev/null; sleep 1
 	vm "wsreport $b $SANCT_BENCH" >/dev/null
 	if wait_for 20 _sws_built host "$SWS_BED"; then pass "$label: the host built the VM's bed" "ok"; else fail "$label: the host built the VM's bed" "$(grep -E 'WorkshopSync: (player|request)' "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|')"; return 1; fi

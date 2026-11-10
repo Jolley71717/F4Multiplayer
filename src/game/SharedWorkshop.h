@@ -391,6 +391,17 @@ namespace SharedWorkshop
 		return done;
 	}
 
+	// ---- The budget's totals -----------------------------------------------------------------------------
+
+	// Whether the engine's budget totals are the workbench's own right now, so an add or remove may use them as they are:
+	// workshop mode is open, and the workbench the engine itself holds as current (a_engineBench: what it had before any
+	// scope of ours set the piece's bench there; 0 outside workshop mode) is this one. Otherwise the totals are another
+	// settlement's, or 0 after a load, and must be loaded from the bench first (WorkshopSync's BudgetScope).
+	[[nodiscard]] constexpr bool BudgetLive(std::uint32_t a_engineBench, std::uint32_t a_bench, bool a_menuOpen)
+	{
+		return a_menuOpen && a_engineBench != 0 && a_engineBench == a_bench;
+	}
+
 	// ---- The friend's grids -------------------------------------------------------------------------------
 
 	// The in-session pieces of ours (adopted as copies, or wires taken off) that the grids still name: none may. Sorted, each

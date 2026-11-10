@@ -3034,6 +3034,12 @@ namespace WorkshopSync
 		}
 
 		// Workshop mode's current workbench set to a_bench while this lives, and put back after (the engine's finish reads it).
+		// How many of our BenchScopes are open, and what the engine itself held as current before the outermost one set the
+		// piece's bench there: the budget's "live" decision must read the engine's own value, never ours (a finish runs inside
+		// a BenchScope, so the static always names the piece's bench then).
+		std::uint32_t benchScopes = 0;
+		std::uint32_t engineBench = 0;
+
 		struct BenchScope
 		{
 			std::uint32_t* current;
@@ -3044,14 +3050,28 @@ namespace WorkshopSync
 				static REL::Relocation<std::uint32_t*> handle{ CURRENT_WORKSHOP };
 				current = handle.get();
 				before = *current;
+				if (benchScopes++ == 0) {
+					engineBench = before;
+				}
 				*current = a_bench.GetHandle().get_handle();
 			}
 
-			~BenchScope() { *current = before; }
+			~BenchScope()
+			{
+				*current = before;
+				--benchScopes;
+			}
 
 			BenchScope(const BenchScope&) = delete;
 			BenchScope& operator=(const BenchScope&) = delete;
 		};
+
+		// The workbench the engine itself holds as current: the static, unless one of our scopes has set it (then what it was before).
+		std::uint32_t EngineBench()
+		{
+			static REL::Relocation<std::uint32_t*> current{ CURRENT_WORKSHOP };
+			return benchScopes > 0 ? engineBench : *current;
+		}
 
 		// The budget's totals made the workbench's for an AddObject or RemoveObject on one of its pieces, and put back after:
 		// live as they are when workshop mode is open at this very workbench (the engine loaded them there); otherwise the
@@ -3073,7 +3093,9 @@ namespace WorkshopSync
 				static REL::Relocation<std::uint32_t*> maxTriangles{ BUDGET_MAX_TRIANGLES };
 				static REL::Relocation<std::uint32_t*> maxDraws{ BUDGET_MAX_DRAWS };
 				static REL::Relocation<init_t>         initialize{ BUDGET_INITIALIZE };
-				live = *current != 0 && *current == a_bench.GetHandle().get_handle();  // the engine's own word: workshop mode is open at this very bench (null outside it)
+				// The engine's own current workbench (what it had before any scope of ours, which a finish runs inside), and the menu
+				// open: then the totals are this bench's, live (SharedWorkshop::BudgetLive).
+				live = SharedWorkshop::BudgetLive(EngineBench(), a_bench.GetHandle().get_handle(), MenuWatch::IsOpen("WorkshopMenu"sv));
 				if (live) {
 					return;
 				}

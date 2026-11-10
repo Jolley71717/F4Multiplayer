@@ -242,6 +242,20 @@ TEST("shared workshop: the finish runs the engine's eleven placement steps in th
 	CHECK(!throwing.benchSet);
 }
 
+TEST("shared workshop: the budget's totals are live only with workshop mode open at the very bench the engine holds current; a bench our own scope set there, another bench, or no menu loads them")
+{
+	constexpr std::uint32_t HANDLE = 0x00A01234;
+	constexpr std::uint32_t OTHER_HANDLE = 0x00A05678;
+	CHECK(BudgetLive(HANDLE, HANDLE, true));
+	CHECK(!BudgetLive(HANDLE, HANDLE, false));      // the menu closed: the statics are whatever was left
+	CHECK(!BudgetLive(OTHER_HANDLE, HANDLE, true));  // workshop mode at another settlement: its totals
+	CHECK(!BudgetLive(0, HANDLE, true));             // the engine holds none (not in workshop mode, whatever the menu says)
+	CHECK(!BudgetLive(0, HANDLE, false));            // out of workshop mode after a load: 0s
+	// What our own BenchScope sets as current must not count as the engine's: the decision takes the engine's value from
+	// before the scope, so a finish inside the scope still loads the bench's totals.
+	CHECK(!BudgetLive(0, HANDLE, true));
+}
+
 TEST("shared workshop: the friend's grids may name none of the in-session pieces adopted or taken off")
 {
 	WorkshopPower::Grid grid;
