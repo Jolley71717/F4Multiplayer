@@ -268,17 +268,42 @@ namespace CrashReport
 		if (a_facts.previous.address != 0) {
 			a_text.Append("The exception goes on to the exception filter that was there before the mod's, at ");
 			AppendWhere(a_text, { a_facts.previous.module, a_facts.previous.offset, a_facts.previous.address });
-			a_text.Append(a_facts.previous.module == "Fallout4.exe" ? " (the game's own).\n" : ".\n");
+			a_text.Append(".\n");
 		} else {
 			a_text.Append("No other exception filter was there; the exception goes on to Windows.\n");
 		}
 		if (!a_facts.logger.empty()) {
+			// Seen only when the logger let the exception reach the filters (Addictol ends the process from its vectored
+			// handler first, so with it no report of ours is written at all).
 			a_text.Append("A crash logger is loaded (");
 			a_text.Append(a_facts.logger);
 			a_text.Append("): its own crash log in this folder, when it wrote one, says more.\n");
 		} else {
 			a_text.Append("No crash logger (Buffout 4, Addictol) is loaded; one would say more.\n");
 		}
+	}
+
+	// --- handing the exception on ---
+
+	// Two filters may be known: the one found at our install (the game's own, or a plugin's that loaded before us), and
+	// one a plugin that loaded after us put in front of ours, which OnDataReady displaced to put ours back in front. A
+	// displaced filter typically chains to what it found at its own install, which is ours: so ours is entered again
+	// on the same thread. That re-entry gets nothing more from us (no report, never the displaced filter again): it goes
+	// straight to the install-time filter, or to Windows, and the chain ends there. Without that, two filters would
+	// call each other until the stack ran out and every log was lost.
+	enum class Next : std::uint8_t
+	{
+		kDisplaced,    // the filter we displaced at OnDataReady: it then chains back to us, and the re-entry ends it
+		kInstallTime,  // the filter found at our install
+		kSearch,       // Windows (EXCEPTION_CONTINUE_SEARCH): no filter is left
+	};
+
+	constexpr Next HandOn(bool a_reentered, bool a_hasDisplaced, bool a_hasInstallTime)
+	{
+		if (!a_reentered && a_hasDisplaced) {
+			return Next::kDisplaced;
+		}
+		return a_hasInstallTime ? Next::kInstallTime : Next::kSearch;
 	}
 
 	// --- the files ---

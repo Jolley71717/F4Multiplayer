@@ -3,6 +3,7 @@
 #include "CrashReport.h"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -96,7 +97,8 @@ TEST("crash report: the report says what, where, which thread, the phase, the se
 	CHECK(other.find("null pointer") == std::string::npos);
 	CHECK(other.find("in play or a menu; the session: joined a friend's game, 1 player;") != std::string::npos);
 	CHECK(other.find("No return address was found") != std::string::npos);
-	CHECK(other.find("goes on to the exception filter that was there before the mod's, at Fallout4.exe+0x22BFFB4 (the game's own).") != std::string::npos);
+	CHECK(other.find("goes on to the exception filter that was there before the mod's, at Fallout4.exe+0x22BFFB4.") != std::string::npos);
+	CHECK(other.find("game's own") == std::string::npos);  // an address in the game is named, not explained
 	CHECK(other.find("A crash logger is loaded (AddictolCrashLogger.dll)") != std::string::npos);
 	CHECK(other.find("No crash logger") == std::string::npos);
 
@@ -112,6 +114,56 @@ TEST("crash report: the report says what, where, which thread, the phase, the se
 	CHECK(overflow.find("the session: no session;") != std::string::npos);
 	CHECK(overflow.find(" player") == std::string::npos);  // "F4Multiplayer" holds the word
 	CHECK(overflow.find("The thread's stack couldn't be read") != std::string::npos);
+}
+
+TEST("crash report: a displaced filter that chains back to ours ends at the install-time filter, never in a loop")
+{
+	using CrashReport::HandOn;
+	using CrashReport::Next;
+	CHECK(HandOn(false, true, true) == Next::kDisplaced);
+	CHECK(HandOn(false, false, true) == Next::kInstallTime);
+	CHECK(HandOn(false, false, false) == Next::kSearch);
+	CHECK(HandOn(true, true, true) == Next::kInstallTime);  // re-entered: never the displaced one again
+	CHECK(HandOn(true, true, false) == Next::kSearch);
+	CHECK(HandOn(true, false, true) == Next::kInstallTime);
+
+	// Fake filters, called as Windows calls them, each chaining to what it found at its install: the game's own
+	// (install-time), ours, then a plugin's that found ours and was displaced. One crash: ours, the plugin's, ours
+	// again (re-entered), the game's own; then every call returns.
+	constexpr int SEARCH = 0;
+	std::vector<std::string> calls;
+	bool                     inOurs = false;
+	int                      depth = 0;
+	std::function<int()>     game = [&] { calls.push_back("game"); return SEARCH; };
+	std::function<int()>     ours;
+	std::function<int()>     plugin = [&] { calls.push_back("plugin"); return ours(); };
+	ours = [&] {
+		REQUIRE(++depth < 10);  // the loop the rule prevents
+		const bool reentered = inOurs;
+		inOurs = true;
+		calls.push_back(reentered ? "ours again" : "ours");
+		int verdict = SEARCH;
+		switch (HandOn(reentered, true, true)) {
+		case Next::kDisplaced:
+			verdict = plugin();
+			break;
+		case Next::kInstallTime:
+			verdict = game();
+			break;
+		default:
+			break;
+		}
+		inOurs = reentered;
+		--depth;
+		return verdict;
+	};
+	CHECK(ours() == SEARCH);
+	const std::vector<std::string> expected{ "ours", "plugin", "ours again", "game" };
+	CHECK(calls == expected);
+	CHECK(!inOurs);
+	calls.clear();
+	CHECK(ours() == SEARCH);  // a second time (a filter that let the thread go on): the same, not a re-entry
+	CHECK(calls.front() == "ours");
 }
 
 TEST("crash report: an address in no module is given as it is")

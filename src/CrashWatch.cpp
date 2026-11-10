@@ -30,8 +30,9 @@ namespace CrashWatch
 		constexpr std::size_t MODULE_NAME = 64;
 		constexpr std::size_t PATH = 1024;
 
-		// Set at Install, only read at the crash.
-		LPTOP_LEVEL_EXCEPTION_FILTER previous = nullptr;
+		// Set at Install (and OnDataReady), only read at the crash.
+		LPTOP_LEVEL_EXCEPTION_FILTER installTime = nullptr;  // the filter found at our install (the game's own, or a plugin's)
+		LPTOP_LEVEL_EXCEPTION_FILTER displaced = nullptr;    // a later plugin's filter OnDataReady displaced (CrashReport::HandOn)
 		bool                         installed = false;
 		DWORD                        mainThreadId = 0;
 		ULONGLONG                    loadedAt = 0;
@@ -43,7 +44,11 @@ namespace CrashWatch
 		std::array<char, 64>         loggerName{};    // a crash logger's DLL found loaded (OnDataReady); empty: none
 		std::atomic<std::uint8_t>    session{ 0 };
 		std::atomic<std::uint32_t>   players{ 0 };
-		std::atomic<bool>            reporting{ false };  // one report per game: a second crash goes straight on
+		std::atomic<bool>            reporting{ false };   // one report per game: a second crash goes straight on
+		std::atomic<bool>            reportDone{ false };  // ... after waiting for the first to be written (REPORT_WAIT)
+		thread_local bool            inFilter = false;     // this thread is inside our filter already (CrashReport::HandOn)
+		constexpr DWORD              REPORT_WAIT = 5000;   // ms a second crashing thread waits for the first's report
+		constexpr ULONG              STACK_GUARANTEE = 64 * 1024;  // of the main thread's stack kept for the report after a stack overflow
 
 		// What the crash fills in: static, so neither the crashing thread's stack (a stack overflow has next to none left)
 		// nor the heap is used.
@@ -52,6 +57,7 @@ namespace CrashWatch
 		std::array<CrashReport::Where, MAX_CALLERS>              callers{};
 		std::array<std::array<char, MODULE_NAME>, MAX_CALLERS + 1> names{};  // what the Wheres' module views point into
 		std::array<wchar_t, PATH>                                filePath{};
+		std::array<wchar_t, 4096>                                mappedPath{};  // a module's mapped path (Name); one report at a time
 
 		// The loaded image a_address is in (its base), and whether that is executable code. System calls only.
 		struct Image
@@ -82,9 +88,13 @@ namespace CrashWatch
 			if (image.base == 0) {
 				return where;
 			}
-			wchar_t    path[MAX_PATH]{};
-			const auto length = GetMappedFileNameW(GetCurrentProcess(), reinterpret_cast<void*>(image.base), path, MAX_PATH);
-			const auto n = CrashReport::ModuleNameInto({ path, length }, a_name);
+			// A path longer than the buffer comes back cut (its end, the file's name, lost): then the module stays
+			// unnamed rather than named after a folder.
+			const auto length = GetMappedFileNameW(GetCurrentProcess(), reinterpret_cast<void*>(image.base), mappedPath.data(), static_cast<DWORD>(mappedPath.size()));
+			if (length == 0 || length >= mappedPath.size() - 1) {
+				return where;
+			}
+			const auto n = CrashReport::ModuleNameInto({ mappedPath.data(), length }, a_name);
 			if (n == 0) {
 				return where;
 			}
@@ -115,7 +125,9 @@ namespace CrashWatch
 			return found;
 		}
 
-		// The whole of a_text to the file at a_path. The Windows error, 0 when written.
+		// The whole of a_text to the file at a_path. The Windows error, 0 when written. CreateFileW itself takes from the
+		// process heap (for the name it hands the kernel): with the heap the broken thing it faults or waits, and the
+		// fault ends under ReportGuarded's handler; this is why the files come last, after the text is built.
 		DWORD WriteWhole(const wchar_t* a_path, DWORD a_access, DWORD a_creation, std::string_view a_text)
 		{
 			const auto file = CreateFileW(a_path, a_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, a_creation, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -152,7 +164,7 @@ namespace CrashWatch
 			facts.session = static_cast<CrashReport::Session>(session.load(std::memory_order_relaxed));
 			facts.players = players.load(std::memory_order_relaxed);
 			facts.uptimeSeconds = (GetTickCount64() - loadedAt) / 1000;
-			facts.previous = { previousWhere.module, previousWhere.offset, previousWhere.address };
+			facts.previous = { previousWhere.module, previousWhere.offset, previousWhere.address };  // the one HandOn picks first
 			facts.logger = std::string_view{ loggerName.data() };
 
 			// The committed stack above the stack pointer is one region up to the stack's base; read, not dereferenced.
@@ -227,25 +239,51 @@ namespace CrashWatch
 
 		LONG WINAPI Filter(EXCEPTION_POINTERS* a_info)
 		{
-			if (a_info && !reporting.exchange(true)) {
-				ReportGuarded(a_info);
+			// Entered again on this thread: the displaced filter chained back to ours. Nothing more from us (CrashReport::HandOn).
+			const bool reentered = inFilter;
+			inFilter = true;
+			if (!reentered && a_info) {
+				if (!reporting.exchange(true)) {
+					ReportGuarded(a_info);
+					reportDone = true;
+				} else {
+					// Another thread is writing the report (or wrote it): this one waits for it, briefly, so the file and the
+					// log are whole before anything ends the process.
+					for (DWORD waited = 0; !reportDone && waited < REPORT_WAIT; waited += 50) {
+						Sleep(50);
+					}
+				}
 			}
-			return previous ? previous(a_info) : EXCEPTION_CONTINUE_SEARCH;
+			LONG verdict = EXCEPTION_CONTINUE_SEARCH;
+			switch (CrashReport::HandOn(reentered, displaced != nullptr, installTime != nullptr)) {
+			case CrashReport::Next::kDisplaced:
+				verdict = displaced(a_info);
+				break;
+			case CrashReport::Next::kInstallTime:
+				verdict = installTime(a_info);
+				break;
+			default:
+				break;
+			}
+			inFilter = reentered;  // a filter that let the thread go on (EXCEPTION_CONTINUE_EXECUTION) leaves it as it found it
+			return verdict;
 		}
 
-		// The previous filter named, into previousName, for the report and the log.
+		// The filter the exception goes to first (HandOn: the displaced one, else the install-time one) named, into
+		// previousName, for the report and the log.
 		void NotePrevious()
 		{
-			previousWhere = previous ? Name(reinterpret_cast<std::uintptr_t>(previous), previousName) : CrashReport::Where{};
+			const auto first = displaced ? displaced : installTime;
+			previousWhere = first ? Name(reinterpret_cast<std::uintptr_t>(first), previousName) : CrashReport::Where{};
 		}
 
 		std::string PreviousText()
 		{
-			if (!previous) {
+			if (!displaced && !installTime) {
 				return "to Windows (no other exception filter was there)";
 			}
 			const auto where = previousWhere.module.empty() ? std::format("0x{:X}", previousWhere.address) : std::format("{}+0x{:X}", previousWhere.module, previousWhere.offset);
-			return std::format("handed to the exception filter that was there before, at {}{}", where, previousWhere.module == "Fallout4.exe" ? " (the game's own)" : "");
+			return std::format("handed to the exception filter that was there before, at {}", where);
 		}
 
 		void CopyPath(const std::wstring& a_from, std::array<wchar_t, PATH>& a_to)
@@ -260,10 +298,15 @@ namespace CrashWatch
 			std::vector<std::string> found;
 			std::error_code          ec;
 			for (std::filesystem::directory_iterator it{ a_folder, ec }, end; !ec && it != end; it.increment(ec)) {
-				// Only our own names are turned into narrow strings: another file's may not convert.
+				// Narrowed by hand, never through the locale (a name that doesn't convert would throw at plugin load): a
+				// character outside ASCII becomes '?', which no name of ours holds, so FilesToRemove leaves that file alone.
 				const auto name = it->path().filename().wstring();
 				if (name.starts_with(L"F4Multiplayer-crash-")) {
-					found.push_back(it->path().filename().string());
+					std::string narrow;
+					for (const auto c : name) {
+						narrow.push_back(c >= 0x20 && c < 0x7F ? static_cast<char>(c) : '?');
+					}
+					found.push_back(std::move(narrow));
 				}
 			}
 			for (const auto& name : CrashReport::FilesToRemove(std::move(found), CrashReport::KEEP_FILES)) {
@@ -301,7 +344,13 @@ namespace CrashWatch
 			PruneFiles(parent);
 		}
 
-		previous = SetUnhandledExceptionFilter(&Filter);
+		// Room on the main thread's stack for the report after a stack overflow (Windows keeps this much below the guard
+		// page for the filter). Other threads keep Windows' default; their report runs under ReportGuarded either way.
+		ULONG guarantee = STACK_GUARANTEE;
+		if (!SetThreadStackGuarantee(&guarantee)) {
+			REX::WARN("Crash report: no stack guarantee for the main thread (error 0x{:x}); a stack overflow there may close the game with no report", GetLastError());
+		}
+		installTime = SetUnhandledExceptionFilter(&Filter);
 		installed = true;
 		NotePrevious();
 		REX::INFO("Crash report: a crash to desktop is written to F4Multiplayer-crash-<date>_<time>.txt next to this log (the newest {} are kept) and to this log{}, then {}",
@@ -321,16 +370,23 @@ namespace CrashWatch
 				break;
 			}
 		}
-		// A plugin that loaded after ours may have put its filter in without chaining to ours: ours goes back in front,
-		// and that one gets the exception after the report, as the game's own would.
+		// A plugin that loaded after ours may have put its filter in front of ours: ours goes back in front, and that one
+		// gets the exception after the report. It most likely chains back to ours (what it found at its install), which
+		// Filter sees as a re-entry and ends the chain at the install-time filter (CrashReport::HandOn).
 		const auto current = SetUnhandledExceptionFilter(&Filter);
-		if (current != &Filter) {
-			previous = current;
+		if (current != &Filter && current != nullptr) {
+			displaced = current;
 			NotePrevious();
 			REX::INFO("Crash report: another plugin put its exception filter in after the mod's; the mod's is in front again, then {}", PreviousText());
 		}
-		REX::INFO("Crash report: {}", loggerName[0] ? std::format("the crash logger {} is loaded; its own log comes beside the mod's report", loggerName.data()) :
-		                                            "no crash logger (Buffout 4, Addictol) is loaded: the mod's report is all a crash leaves");
+		// A crash logger's vectored handler runs before any filter and ends the process itself (Addictol does, on the rig:
+		// its crash-*.log, our WARN, nothing after), so with one loaded no report of ours is written.
+		if (loggerName[0]) {
+			REX::INFO("Crash report: the crash logger {} is loaded and writes the crash log itself (crash-<date>.log next to this log); the mod's report is then not written. With a crash, send that log together with F4Multiplayer.log",
+				loggerName.data());
+		} else {
+			REX::INFO("Crash report: no crash logger (Buffout 4, Addictol) is loaded: the mod's report is all a crash leaves");
+		}
 	}
 
 	void SetSession(CrashReport::Session a_session, std::uint32_t a_players)

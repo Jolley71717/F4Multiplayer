@@ -88,12 +88,20 @@
   `F4Multiplayer-crash-<time>.txt` next to the log (the newest 3 kept) and to the log's end; never a path. A stack
   overflow gets the report without the stack scan (the thread has next to no stack left to run on). A fault inside
   the report itself is caught (`__try`) and the exception goes on as it would have; one report per game. The
-  filter found there before ours is the game's own (`Fallout4.exe+0x22BFFB4`, the runtime's: it ends a C++
-  exception nothing caught) unless a plugin put one in; once the game's data is loaded `OnDataReady` reads which
-  crash logger's DLL is in (Buffout 4, Addictol, Trainwreck: for the report's last line) and, if a plugin that
-  loaded after ours took the filter, puts ours back in front so that one still gets the exception after the
-  report. Addictol also uses a vectored handler, which runs before any filter; whether ours still runs after it is
-  the rig test's question (the dev channel's `crashtest` crashes the game on purpose for it).
+  filters are named by module+offset only (at plugin load the one there is `Fallout4.exe+0x22BFFB4`; once the
+  game's data is loaded the game has put `Fallout4.exe+0xC3AFC0` in front). `OnDataReady` then reads which crash
+  logger's DLL is in (Buffout 4, Addictol, Trainwreck) and, if something put a filter in front of ours, puts ours
+  back in front so that one (the displaced filter) still gets the exception after the report. A displaced filter
+  may chain back to what it found at its install, ours: that re-entry (a thread-local flag) gets no report and
+  never the displaced filter again, only the install-time filter or Windows, so the chain ends
+  (`CrashReport::HandOn`, unit tested with fake filters). A second thread that crashes while the first writes the
+  report waits up to 5 s for it before handing on. `SetThreadStackGuarantee` keeps 64 KB of the main thread's
+  stack for the report after a stack overflow. **With a crash logger loaded the report is not written:** Addictol's
+  vectored handler runs before any filter and ends the process itself (rig, every `crashtest` variant: its
+  `crash-*.log`, our WARN, nothing after; the game exits in ~2 s). The plugin doesn't fight that (a vectored handler
+  of ours couldn't tell a handled exception from an unhandled one); the data-ready line says the logger writes the
+  crash log and players send that with `F4Multiplayer.log`. The report is for the players without one, which is
+  most of them (the dev channel's `crashtest` crashes the game on purpose to test it).
 - **Frame watch:** `src/main.cpp` (`RunFrameWatch`), one thread, the hang watch's complement: the
   main thread answers its window, yet no frame of ours runs. The frame chain (the F4SE task posts a
   frame message once a drawn frame, the window procedure takes it on the main thread, a frame's game
