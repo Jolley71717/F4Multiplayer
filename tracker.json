@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T05:08:10+00:00",
+ "updated": "2026-11-10T05:09:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2348,8 +2348,8 @@
    "title": "Downed: the camera reads ~34,000 units from the player for a frame on a re-down ('away 33734')",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Cause found: a one-frame camera flash on a quick re-down"
+   "stage": 3,
+   "note": "Logging and a soak warning in review; the engine fix is filed separately"
   },
   {
    "id": "yqm3",
