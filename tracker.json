@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T04:51:51+00:00",
+ "updated": "2026-11-10T04:54:11+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1248,6 +1248,14 @@
    "note": ""
   },
   {
+   "id": "jd55",
+   "title": "Downed: stop the one-frame far camera flash on a re-down within ~0.3 s of a help-up (engine camera transition)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found in the camera investigation"
+  },
+  {
    "id": "jdnq",
    "title": "Downed players can crawl toward their friend",
    "kind": "feature",
@@ -2324,8 +2332,8 @@
    "title": "Downed: the camera reads ~34,000 units from the player for a frame on a re-down ('away 33734')",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found reading soak logs"
+   "stage": 1,
+   "note": "Cause found: a one-frame camera flash on a quick re-down"
   },
   {
    "id": "yqm3",
