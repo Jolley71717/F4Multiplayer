@@ -1123,28 +1123,39 @@ namespace RadiantRules
 	// are removed as they come (RadiantSync, Spawns). A run is followed from the moment it is shared here until its
 	// quest stops here, its owner leaves or loads a save (their copies go with them: nothing of theirs stands here any
 	// more; the run stays shared, so their send of the same run when they are back is followed again), or the session
-	// ends. A run's fills are the owner's as last sent (sent again as an actor of theirs is shared).
+	// ends. A run's fills are the owner's as last sent (sent again as an actor of theirs is shared). The quests whose
+	// runs were followed here once are remembered (Once) until each stops here: only such a quest is ever run again as
+	// this game's own when it is left hollow (HollowClock); a player's own run never is.
 	class Followed
 	{
 	public:
+		using Time = std::chrono::steady_clock::time_point;
+
 		struct Entry
 		{
 			Run                                run;
 			std::vector<Protocol::RadiantFill> fills;
+			Time                               at{};  // when the run was last sent (followed, or followed again)
 		};
 
 		// The run is shared here with these fills (its start, or a newer send of it): followed from now on. True when it
 		// is new here (another run of the quest, or none, was followed before): what was forced for the old one is forgotten.
-		bool Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
+		bool Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills, Time a_now = {})
 		{
 			auto&      entry = quests[a_quest];
 			const bool fresh = entry.run != a_run;
 			entry.run = a_run;
 			entry.fills.assign(a_fills.begin(), a_fills.end());
+			entry.at = a_now;
+			once.insert(a_quest);
 			return fresh;
 		}
 
 		[[nodiscard]] bool Follows(std::uint32_t a_quest) const { return quests.contains(a_quest); }
+
+		// Whether a friend's run of the quest was followed here once, and the quest hasn't stopped here since (whether or
+		// not it is followed now: the owner may be gone, or the session over).
+		[[nodiscard]] bool Once(std::uint32_t a_quest) const { return once.contains(a_quest); }
 
 		[[nodiscard]] const Entry* Find(std::uint32_t a_quest) const
 		{
@@ -1154,12 +1165,15 @@ namespace RadiantRules
 
 		[[nodiscard]] const std::map<std::uint32_t, Entry>& Entries() const { return quests; }
 
-		// The player a_origin left the session or loaded a save: their runs are followed no more. The quests of those.
-		std::vector<std::uint32_t> OwnerGone(std::uint32_t a_origin)
+		// The player a_origin left the session or loaded a save: their runs are followed no more, but for one they sent
+		// again within a_grace of now (their send came after the load the word is of: the server holds the word of a
+		// second load within RELOAD_TOLD_EVERY of the first, and the owner's send from that load can come first; the run
+		// is one they still have). The quests of those followed no more.
+		std::vector<std::uint32_t> OwnerGone(std::uint32_t a_origin, Time a_now = {}, std::chrono::steady_clock::duration a_grace = {})
 		{
 			std::vector<std::uint32_t> out;
 			for (auto it = quests.begin(); it != quests.end();) {
-				if (it->second.run.origin == a_origin) {
+				if (it->second.run.origin == a_origin && !(a_grace > std::chrono::steady_clock::duration{} && a_now - it->second.at < a_grace)) {
 					out.push_back(it->first);
 					it = quests.erase(it);
 				} else {
@@ -1169,15 +1183,36 @@ namespace RadiantRules
 			return out;
 		}
 
-		// The quest stopped here, or was run again as this game's own.
-		void Ended(std::uint32_t a_quest) { quests.erase(a_quest); }
+		// The quest stopped here, or was run again as this game's own: its run, and that one was followed, are forgotten.
+		void Ended(std::uint32_t a_quest)
+		{
+			quests.erase(a_quest);
+			once.erase(a_quest);
+		}
 
-		void                      Clear() { quests.clear(); }
+		// Nothing is followed any more (the session over, or another server): what was followed once stays known, as the
+		// quests go on here.
+		void Clear() { quests.clear(); }
+
+		// Another world was loaded: nothing of this one's is known (its record says what was shared there).
+		void Reset()
+		{
+			quests.clear();
+			once.clear();
+		}
+
 		[[nodiscard]] std::size_t Size() const { return quests.size(); }
 
 	private:
 		std::map<std::uint32_t, Entry> quests;
+		std::set<std::uint32_t>        once;
 	};
+
+	// The server tells the others of a player's load at most this often (Server::Options::reloadToldEvery), holding the
+	// word of a sooner one until it is up: the owner's send of their runs from that load can come before the word of it.
+	inline constexpr auto RELOAD_TOLD_EVERY = std::chrono::seconds(2);
+	// A run its owner sent again within this of the word of their load is one they still have (Followed::OwnerGone).
+	inline constexpr auto RELOAD_GRACE = RELOAD_TOLD_EVERY + std::chrono::seconds(1);
 
 	// A run's start sent again (its fills changed: an actor of the owner's shared since names itself by its spawn id)
 	// while an earlier send of it waits its turn here, or is being started: the newer fills replace the older, and the
@@ -1202,13 +1237,38 @@ namespace RadiantRules
 	// is followed again instead, and nothing is lost.
 	inline constexpr auto HOLLOW_JOB_WAIT = std::chrono::minutes(5);
 
+	// What a target of an objective says of the job (ObjectiveHere): nothing when its alias isn't a reference alias of
+	// the quest (a keyword, or none) or holds something that isn't an actor (a place's marker, filled by the start and
+	// standing whatever became of the actors: it is the actors the job is about); else the alias is a target, standing
+	// when its actor is here (enabled, not deleted; alive or dead), gone when it holds nothing or one that isn't.
+	enum class Target : std::uint8_t
+	{
+		kNone,
+		kGone,
+		kStanding,
+	};
+
+	inline Target TargetOf(bool a_refAlias, bool a_held, bool a_actor, bool a_stands)
+	{
+		if (!a_refAlias || (a_held && !a_actor)) {
+			return Target::kNone;
+		}
+		return a_held && a_stands ? Target::kStanding : Target::kGone;
+	}
+
 	// An objective of the quest as it is here (HollowJob): whether it is shown to the player and not done, and of the
-	// aliases it points at, how many there are and how many hold a reference that stands (enabled, not deleted).
+	// aliases it points at, how many are targets (TargetOf) and how many of those stand.
 	struct ObjectiveHere
 	{
 		bool        shown = false;
 		std::size_t targets = 0;
 		std::size_t standing = 0;
+
+		void Add(Target a_target)
+		{
+			targets += a_target != Target::kNone ? 1 : 0;
+			standing += a_target == Target::kStanding ? 1 : 0;
+		}
 	};
 
 	// BGSQuestObjective::state: displayed (1), with completed (2) or failed (4) set once done. Open: shown and not done.
@@ -1230,14 +1290,46 @@ namespace RadiantRules
 		return !a_createdStanding && std::ranges::any_of(a_objectives, [](const ObjectiveHere& a_objective) { return a_objective.shown && a_objective.targets > 0 && a_objective.standing == 0; });
 	}
 
-	// Whether our run of such a quest, hollow (HollowJob) for a_hollowFor, is to be run again now as this game's own
-	// (the quest stopped and started again: its start picks a place and makes its actors afresh, on offer at the giver as
-	// a fresh job): not while a friend's run of it is followed here (a_followed: their actors are what stands) or a
-	// friend's start of it waits its turn or is under way (a_starting: it fills the aliases itself), and only once the
-	// job has been hollow for HOLLOW_JOB_WAIT (the owner coming back, or loading a save from inside the run, sends the
-	// run again within it).
-	inline bool RunsAgain(bool a_hollow, bool a_followed, bool a_starting, std::chrono::steady_clock::duration a_hollowFor)
+	// The jobs with actors made at runtime that are hollow here (HollowJob), and since when nothing has stood in for
+	// each. A job's clock runs only while it is hollow with no friend's run of it followed (their actors are what
+	// stands, and a followed job is often hollow: our own actors go as they come, and our copy of the owner's stands only
+	// while their game has it loaded) and no friend's start of it waiting its turn or under way (it fills the aliases
+	// itself), and starts over whenever one does. So a brief absence of the owner (a drop, a load, the session ending
+	// and coming back) never counts the time before it: the wait is a wait for the owner's return. Our run is to be run
+	// again as this game's own (the quest stopped and started again: its start picks a place and makes its actors afresh,
+	// on offer at the giver as a fresh job) once a_friends (a friend's run of it was followed here: a player's own run
+	// never is, whatever it looks like) and the clock reaches HOLLOW_JOB_WAIT.
+	class HollowClock
 	{
-		return a_hollow && !a_followed && !a_starting && a_hollowFor >= HOLLOW_JOB_WAIT;
-	}
+	public:
+		using Time = std::chrono::steady_clock::time_point;
+
+		// The quest polled: hollow or not, with a friend's run standing in or not (followed, or starting), a friend's or
+		// not. True when it is to be run again now.
+		bool Poll(std::uint32_t a_quest, bool a_hollow, bool a_standsIn, bool a_friends, Time a_now)
+		{
+			if (!a_hollow || a_standsIn || !a_friends) {
+				since.erase(a_quest);
+				return false;
+			}
+			const auto start = since.try_emplace(a_quest, a_now).first->second;
+			return a_now - start >= HOLLOW_JOB_WAIT;
+		}
+
+		// How long the quest has been hollow with nothing standing in (none: it isn't, or it is still followed).
+		[[nodiscard]] std::optional<std::chrono::steady_clock::duration> HollowFor(std::uint32_t a_quest, Time a_now) const
+		{
+			const auto it = since.find(a_quest);
+			return it != since.end() ? std::optional{ a_now - it->second } : std::nullopt;
+		}
+
+		// The quest was run again (or stopped): counted from the start if it is ever hollow again.
+		void Forget(std::uint32_t a_quest) { since.erase(a_quest); }
+
+		// Another world was loaded: counted from the load.
+		void Clear() { since.clear(); }
+
+	private:
+		std::map<std::uint32_t, Time> since;
+	};
 }

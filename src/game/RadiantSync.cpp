@@ -1,8 +1,10 @@
 #include "game/RadiantSync.h"
 
 #include "Config.h"
+#include "Text.h"
 #include "game/EncounterRunBook.h"
 #include "game/GameStop.h"
+#include "game/Hud.h"
 #include "game/Official.h"
 #include "game/Papyrus.h"
 #include "game/QuestActors.h"
@@ -66,18 +68,18 @@ namespace RadiantSync
 		// and the aliases of each forced onto our copies of those (Encounters::RefillsOf, Refill; forgotten with the run).
 		// Our runs of such quests: their fills as last sent, sent again when they change (ResendChangedFills). Our run of
 		// one left hollow (RadiantRules::HollowJob: a followed run's once the owner's copies are gone, with the session, the
-		// owner or a save) and since when (SweepHollow).
+		// owner or a save) and since when nothing stands in for it (SweepHollow).
 		RadiantRules::Followed                                             followed;
 		std::map<std::uint32_t, std::vector<Encounters::AliasForce>>       forced;
 		std::map<std::uint32_t, std::vector<Protocol::RadiantFill>>        sentFills;
-		std::map<std::uint32_t, Clock::time_point>                         hollowSince;
+		RadiantRules::HollowClock                                          hollow;
 		constexpr std::uint32_t                                            LOGGED = 20;
 		std::uint32_t                                                      refilled = 0, refillsFailed = 0, resentFills = 0, unfollowed = 0, hollowRestarted = 0;
 
 		// A friend's run of such a quest shared here: followed with its fills from now on (a newer send of it keeps the newest).
 		void Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
 		{
-			if (followed.Follow(a_quest, a_run, a_fills)) {
+			if (followed.Follow(a_quest, a_run, a_fills, Clock::now())) {
 				forced.erase(a_quest);
 			}
 		}
@@ -553,45 +555,55 @@ namespace RadiantSync
 			return true;
 		}
 
-		// This game's own run, stopped for a friend's that then didn't start here, or stopped as hollow (SweepHollow):
-		// started again, once it has stopped, with its own fills (the giver hands it out as before).
+		// This game's own runs, each stopped for a friend's that then didn't start here, or stopped as hollow (SweepHollow):
+		// started again, once each has stopped, with its own fills (the giver hands it out as before). Several at once
+		// (two hollow jobs whose waits end together), one quest once; one started a frame (a start runs scripts).
 		struct Restart
 		{
 			std::uint32_t     quest = 0;
 			Clock::time_point since{};
 			std::string       why;
 		};
-		std::optional<Restart> restart;
-		std::uint32_t          restarted = 0;
+		std::vector<Restart> restarts;
+		std::uint32_t        restarted = 0;
+
+		bool Restarting(std::uint32_t a_quest)
+		{
+			return std::ranges::contains(restarts, a_quest, &Restart::quest);
+		}
 
 		void RestartOwn(std::uint32_t a_quest, std::string a_why = "the friend's run didn't start here")
 		{
-			restart = Restart{ a_quest, Clock::now(), std::move(a_why) };
+			if (!Restarting(a_quest)) {
+				restarts.push_back(Restart{ a_quest, Clock::now(), std::move(a_why) });
+			}
 		}
 
 		void RestartFrame()
 		{
-			if (!restart) {
-				return;
-			}
-			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(restart->quest);
-			if (!quest) {
-				restart.reset();
-				return;
-			}
-			if (quest->data.flags & QUEST_RUNNING) {
-				// Still stopping (a stopquest of theirs a moment ago), or already started again by its own scripts.
-				if (Clock::now() - restart->since >= START_TIMEOUT) {
-					restart.reset();
+			const auto now = Clock::now();
+			for (auto it = restarts.begin(); it != restarts.end(); ++it) {
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(it->quest);
+				if (!quest) {
+					restarts.erase(it);
+					return;
 				}
+				if (quest->data.flags & QUEST_RUNNING) {
+					// Still stopping (a stopquest of theirs a moment ago), or already started again by its own scripts.
+					if (now - it->since >= START_TIMEOUT) {
+						restarts.erase(it);
+						return;
+					}
+					continue;
+				}
+				const auto id = it->quest;
+				const auto why = std::move(it->why);
+				restarts.erase(it);
+				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
+				++restarted;
+				REX::INFO("RadiantSync: {:08X} '{}': {}, so this game's own run was started again", id, QuestName(quest), why);
 				return;
 			}
-			const auto id = restart->quest;
-			const auto why = std::move(restart->why);
-			restart.reset();
-			RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
-			++restarted;
-			REX::INFO("RadiantSync: {:08X} '{}': {}, so this game's own run was started again", id, QuestName(quest), why);
 		}
 
 		// A friend's stages of a run shared here: each set once (Book::Accept), in order, by QuestSync's queue.
@@ -944,8 +956,21 @@ namespace RadiantSync
 			}
 		}
 
+		// The quest's reference alias with this id (none: a keyword target, or one with no alias, NO_ALIAS).
+		RE::BGSRefAlias* RefAliasOf(RE::TESQuest* a_quest, std::uint32_t a_alias)
+		{
+			for (const auto entry : a_quest->aliases) {
+				if (entry && entry->aliasID == a_alias) {
+					return AsRef(entry);
+				}
+			}
+			return nullptr;
+		}
+
 		// The quest's objectives as they are here, for RadiantRules::HollowJob: each open or not, and of the aliases it
-		// points at (BGSQuestObjective's targets, each by its alias), how many hold a reference that stands.
+		// points at (BGSQuestObjective's targets, each by its alias), how many are targets and how many of those stand
+		// (RadiantRules::TargetOf: an alias that isn't a reference alias of the quest, or holds a marker of the place
+		// rather than an actor, says nothing).
 		std::vector<RadiantRules::ObjectiveHere> ObjectivesOf(RE::TESQuest* a_quest)
 		{
 			std::vector<RadiantRules::ObjectiveHere> out;
@@ -959,13 +984,35 @@ namespace RadiantSync
 					if (!target) {
 						continue;
 					}
-					++here.targets;
-					const auto ref = a_quest->GetAliasedRef(target->targetAlias).get();
-					here.standing += ref && !ref->IsDeleted() && !ref->IsDisabled() ? 1 : 0;
+					const auto alias = RefAliasOf(a_quest, target->targetAlias);
+					const auto ref = alias ? a_quest->GetAliasedRef(alias->aliasID).get() : nullptr;
+					here.Add(RadiantRules::TargetOf(alias != nullptr, ref != nullptr, ref && ref->As<RE::Actor>(), ref && !ref->IsDeleted() && !ref->IsDisabled()));
 				}
 				out.push_back(here);
 			}
 			return out;
+		}
+
+		// Whether a friend's run of the quest is known here: followed once and not over since (the owner gone, or the
+		// session), shared in the book, or held for its session (a save from inside it loaded). Only such a run is ever
+		// run again as this game's own when it is left hollow; a player's own run never is. Out of a session after the
+		// game restarted, the record alone can't say whose a run was (self is unknown until a welcome): known again once
+		// the player is in a session.
+		bool FriendsRun(std::uint32_t a_quest)
+		{
+			if (followed.Once(a_quest)) {
+				return true;
+			}
+			if (self == 0) {
+				return false;
+			}
+			const auto theirs = [&](const Run& a_run) { return a_run.origin != self; };
+			for (const auto& [id, run] : book.Shared()) {
+				if (id == a_quest && theirs(run)) {
+					return true;
+				}
+			}
+			return held && std::ranges::any_of(held->shared, [&](const RadiantRules::Saved::Quest& a_saved) { return a_saved.quest == a_quest && std::ranges::any_of(a_saved.runs, theirs); });
 		}
 
 		// Whether an alias the quest's own start creates holds an enabled reference (RadiantRules::HollowJob's a_createdStanding).
@@ -1107,12 +1154,13 @@ namespace RadiantSync
 
 		// Our runs of quests whose actors are made at runtime that are hollow (RadiantRules::HollowJob: the player has an
 		// objective and nothing stands to do it to): a followed run's once the owner's copies are gone, with the session,
-		// the owner (left, or loaded a save from before the run) or our own save loaded alone (no copy is saved). One hollow
-		// for HOLLOW_JOB_WAIT with no friend's run of it followed, waiting its turn or starting (the owner back, or their save
-		// loaded from inside the run, sends it again, and it is followed again) is run again as this game's own: the quest
-		// stopped (its run over here: the owner's later send of it is ignored, as a finished run's) and started again
-		// (RestartOwn), so its start picks a place and makes its actors afresh, and the giver offers the job as a fresh
-		// one. In a session or out of one.
+		// the owner (left, or loaded a save from before the run) or our own save loaded alone (no copy is saved). One that
+		// was a friend's (FriendsRun: never a player's own) and hollow for HOLLOW_JOB_WAIT with no friend's run of it
+		// followed, waiting its turn or starting all the while (RadiantRules::HollowClock: the owner back, or their save
+		// loaded from inside the run, sends it again, it is followed again and the clock starts over) is run again as this
+		// game's own: the quest stopped (its run over here: the owner's later send of it is ignored, as a finished run's)
+		// and started again (RestartOwn), so its start picks a place and makes its actors afresh, and the giver offers the
+		// job as a fresh one; the player is told. In a session or out of one.
 		void SweepHollow(Clock::time_point a_now)
 		{
 			ResolveRadiants();
@@ -1122,21 +1170,22 @@ namespace RadiantSync
 					continue;
 				}
 				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
-				if (!quest || !(quest->data.flags & QUEST_RUNNING) || !RadiantRules::HollowJob(ObjectivesOf(quest), CreatedStanding(quest))) {
-					hollowSince.erase(id);
+				const bool running = quest && (quest->data.flags & QUEST_RUNNING);
+				const bool standsIn = followed.Follows(id) || (starting && starting->quest == id) || book.IsStarting(id) || Restarting(id) ||
+				                      std::ranges::any_of(pending, [&](const Protocol::RadiantStart& a_start) { return a_start.quest == id; });
+				if (!running && !standsIn) {
+					followed.Ended(id);  // stopped out of a session (the book saw nothing): a later run of it is this game's own
+				}
+				const bool isHollow = running && RadiantRules::HollowJob(ObjectivesOf(quest), CreatedStanding(quest));
+				if (!hollow.Poll(id, isHollow, standsIn, isHollow && !standsIn && FriendsRun(id), a_now) || Paused()) {
 					continue;
 				}
-				const auto since = hollowSince.try_emplace(id, a_now).first->second;
-				const bool startingHere = (starting && starting->quest == id) || book.IsStarting(id) || (restart && restart->quest == id) ||
-				                          std::ranges::any_of(pending, [&](const Protocol::RadiantStart& a_start) { return a_start.quest == id; });
-				if (!RadiantRules::RunsAgain(true, followed.Follows(id), startingHere, a_now - since) || Paused()) {
-					continue;
-				}
-				hollowSince.erase(id);
+				const auto hollowFor = hollow.HollowFor(id, a_now).value_or(Clock::duration{});
+				hollow.Forget(id);
 				const auto runs = book.Shared();
 				const auto run = std::ranges::find(runs, id, &std::pair<std::uint32_t, Run>::first);
-				REX::INFO("RadiantSync: our {:08X} '{}' has been hollow {} s (an objective shown, nothing standing to do it to, none of the actors its start made){}: stopped, to be run again as this game's own",
-					id, QuestName(quest), std::chrono::duration_cast<std::chrono::seconds>(a_now - since).count(),
+				REX::INFO("RadiantSync: our {:08X} '{}' has been hollow {} s with nothing standing in (an objective shown, nothing standing to do it to, none of the actors its start made){}: stopped, to be run again as this game's own",
+					id, QuestName(quest), std::chrono::duration_cast<std::chrono::seconds>(hollowFor).count(),
 					run != runs.end() ? std::format("; player {}'s run {} of it is over here", run->second.origin, run->second.serial) : std::string{});
 				book.Ended(id, a_now);  // over here: never started here again (the owner's send of it is ignored from now on)
 				Unfollow(id);
@@ -1145,6 +1194,8 @@ namespace RadiantSync
 				++hollowRestarted;
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", id).c_str());
 				RestartOwn(id, "it was left hollow (nothing stands for its objective)");
+				const char* name = QuestName(quest);
+				Hud::Notify(Text::Format("radiant.job_back", { { "quest", name && *name ? std::string{ name } : Text::Get("quest.a_quest") } }));
 			}
 		}
 	}
@@ -1315,10 +1366,12 @@ namespace RadiantSync
 	{
 		// A friend left, or loaded a save: their copies here go with them, so their runs with actors made at runtime are
 		// followed no more (the runs stay shared: their send of the same run when they are back, or from a save inside it,
-		// is followed again, Answer::kTake). A quest of theirs left hollow here is run again as our own after a while (SweepHollow).
-		void OwnerGone(std::uint32_t a_playerId, std::string_view a_what)
+		// is followed again, Answer::kTake). A quest of theirs left hollow here is run again as our own after a while
+		// (SweepHollow). The word of a load can come after their send of a run from that load (RadiantRules::RELOAD_GRACE:
+		// the server holds the word of a second load within two seconds of the first): such a run is one they still have.
+		void OwnerGone(std::uint32_t a_playerId, std::string_view a_what, std::chrono::steady_clock::duration a_grace = {})
 		{
-			for (const auto id : followed.OwnerGone(a_playerId)) {
+			for (const auto id : followed.OwnerGone(a_playerId, Clock::now(), a_grace)) {
 				forced.erase(id);
 				++unfollowed;
 				REX::INFO("RadiantSync: player {} {}; their run of {:08X} '{}' is followed no more (their actors' copies go with them): run again as this game's own if it is left hollow",
@@ -1337,7 +1390,7 @@ namespace RadiantSync
 		if (!Enabled() || self == 0 || a_playerId == self) {
 			return;
 		}
-		OwnerGone(a_playerId, "loaded a save");
+		OwnerGone(a_playerId, "loaded a save", RadiantRules::RELOAD_GRACE);
 		if (const auto shared = book.Shared(); !shared.empty()) {
 			REX::INFO("RadiantSync: player {} loaded a save; our runs going and the stages done here of the {} run(s) shared are sent again", a_playerId, shared.size());
 		}
@@ -1561,13 +1614,13 @@ namespace RadiantSync
 	void Rebaseline()
 	{
 		AbortStart();
-		restart.reset();  // the loaded world has its own runs
+		restarts.clear();  // the loaded world has its own runs
 		pending.clear();
 		book.Reloaded();
-		followed.Clear();  // a friend's run the save shares again is followed again when their game sends it (kTake)
+		followed.Reset();  // a friend's run the save shares again is followed again when their game sends it (kTake)
 		forced.clear();
 		sentFills.clear();
-		hollowSince.clear();  // counted from the load
+		hollow.Clear();  // counted from the load
 		stopped.clear();
 		outgoing.clear();
 		{
