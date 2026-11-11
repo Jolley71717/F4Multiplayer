@@ -1733,13 +1733,20 @@ ws_check() {
 # Run on demand (`smoke.sh --only radiants --skip cleanup`), never in the loop: both quests run once, so a game takes this step once per
 # fresh start (a game that has run one skips it with a WARN). RadiantRules shares them by their run (PR 320): both players arrive at the
 # place (console player.moveto its map marker: placement to reach the scene, no movement stands in for anything), where the story manager
-# hands each game the same quest with the same settlement; each shows its objective, which starts the sharing. The game's forced start of
-# a friend's run was refused for these two by the game in a VM that stood elsewhere (its log: "the game didn't start it with their fills"; the
-# cause was not found), so the runs are joined by their same targets (RadiantSync: "it runs here with the same targets"). Asserted: the run is shared in both games with the
+# hands each game the same quest with the same settlement; each shows its objective, which starts the sharing. With both games there
+# the runs are joined by their same targets (RadiantSync: "it runs here with the same targets"); a VM that stands elsewhere is RAD_AWAY's
+# case, below (it used to be refused: the console's startquest starts no quest of the story manager's). Asserted: the run is shared in both games with the
 # same settlement, a stage the host sets is set once in each game, the reward stage gives the player an item in each game, and neither
 # game makes or places a spawn for it.
+# RAD_AWAY="<edid> ..." runs those cases with the VM left where it stands (Sanctuary), so its story manager never hands it the quest:
+# only the host arrives and shows the objective, and the VM's game starts the host's run itself with the host's fills (RadiantSync's
+# StartHere, through the game's own start: game/QuestStart). Asserted then: the VM's quest isn't running before, its log says the run
+# is shared "started here with their fills", and the rest as above.
 # case: <edid> <quest id> <map marker to arrive at> <objective to show> <a middle stage> <reward stage> <end stage>
 RAD_CASES=${RAD_CASES:-"DN121 00026340 0002C07B 1 100 900 1000;DN151 000482CD 0002B889 5 100 400 500"}
+RAD_AWAY=${RAD_AWAY:-}
+_rad_log_has() { grep -qE "$2" "$(win_read radiants "$1")"; }
+_rad_tail() { grep -E 'RadiantSync:|QuestStart:' "$A_OUT/windelta-radiants-$1.txt" 2>/dev/null | tail -4 | tr '\n' '|' | cut -c1-600; }
 _rad_run() { dc "$1" "quests edid:$2" | tr ';' '\n' | grep -E " $2 " | grep -o 'running=[a-z0-9]*' | head -1; }
 _rad_done() { dc "$1" "stages $2" | grep -o 'done([0-9]*)=[0-9a-z,]*' | sed 's/^done([0-9]*)=//'; }
 _rad_inv() { dc "$1" inventory | grep -o ' items=[0-9]*' | sed 's/ items=//'; }
@@ -1751,7 +1758,7 @@ _rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* 
 _rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }
 step_radiants() {
 	section "radiants (story-manager runs shared by their run, both ways)"
-	local entry edid id marker obj mid reward end who other h0 v0 d0 s0 st
+	local entry edid id marker obj mid reward end who other h0 v0 d0 s0 st away
 	enter_both SanctuaryExt 14
 	IFS=';' read -ra cases <<<"$RAD_CASES"
 	for entry in "${cases[@]}"; do
@@ -1760,12 +1767,26 @@ step_radiants() {
 			warn "radiants ($edid): not run: a game has run it already (it runs once: restart both games)" "host $(_rad_run host "$edid") vm $(_rad_run vm "$edid")"; continue
 		fi
 		h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"
-		for who in host vm; do dc "$who" "console player.moveto $marker" >/dev/null; wait_ingame "$who" 40; done
-		for who in host vm; do
-			if ! wait_for 30 _rad_is_running "$who" "$edid"; then fail "radiants ($edid): the story manager hands the quest to $who" "$(_rad_run "$who" "$edid")"; continue 2; fi
-		done
-		pass "radiants ($edid): both games run it" "arrived at $marker"
-		for who in host vm; do dc "$who" "console setobjectivedisplayed $edid $obj 1" >/dev/null; done
+		away=0; [[ " $RAD_AWAY " == *" $edid "* ]] && away=1
+		if [ "$away" = 1 ]; then
+			# The VM stays where it is: the host's run is started in its game with the host's fills.
+			win_mark radiants vm
+			dc host "console player.moveto $marker" >/dev/null; wait_ingame host 40
+			if ! wait_for 30 _rad_is_running host "$edid"; then fail "radiants ($edid, VM away): the story manager hands the quest to host" "$(_rad_run host "$edid")"; continue; fi
+			expect_eq "radiants ($edid, VM away): the VM's game doesn't run it before the host's run is shared" "$(_rad_run vm "$edid")" "running=false"
+			dc host "console setobjectivedisplayed $edid $obj 1" >/dev/null
+			if wait_for 30 _rad_log_has vm "RadiantSync: sharing player [0-9]+'s run [0-9]+ of $id '.*' \(started here with their fills\)"; then
+				pass "radiants ($edid, VM away): the VM's game starts the host's run here with the host's fills" "started here: $(grep -cE "RadiantSync: sharing .* of $id .*started here with their fills" "$A_OUT/windelta-radiants-vm.txt"); $(dc vm 'net status' | grep -oE 'quest starts: [^|]*' | head -1)"
+			else fail "radiants ($edid, VM away): the VM's game starts the host's run here with the host's fills" "$(_rad_tail vm)"; continue; fi
+			expect_eq "radiants ($edid, VM away): the VM's quest runs" "$(_rad_run vm "$edid")" "running=true"
+		else
+			for who in host vm; do dc "$who" "console player.moveto $marker" >/dev/null; wait_ingame "$who" 40; done
+			for who in host vm; do
+				if ! wait_for 30 _rad_is_running "$who" "$edid"; then fail "radiants ($edid): the story manager hands the quest to $who" "$(_rad_run "$who" "$edid")"; continue 2; fi
+			done
+			pass "radiants ($edid): both games run it" "arrived at $marker"
+			for who in host vm; do dc "$who" "console setobjectivedisplayed $edid $obj 1" >/dev/null; done
+		fi
 		if wait_for 20 _rad_shared host "$id" && wait_for 20 _rad_shared vm "$id"; then pass "radiants ($edid): the run is shared in both games" "$(_rad_here host "$id")"
 		else fail "radiants ($edid): the run is shared in both games" "host '$(dc host "stages $id" | cut -c1-90)' vm '$(dc vm "stages $id" | cut -c1-90)'"; continue; fi
 		expect_eq "radiants ($edid): the same settlement in both games" "$(_rad_here vm "$id")" "$(_rad_here host "$id")"
