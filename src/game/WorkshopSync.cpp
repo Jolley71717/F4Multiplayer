@@ -2879,11 +2879,14 @@ namespace WorkshopSync
 		constexpr std::size_t PICK_HIT_CALL = 0x469;
 		constexpr REL::ID     GENERAL_FILTER{ 2195585 };
 		constexpr std::size_t PICK_FILTER_CALL = 0x511;
-		// The wire pick's run (1.11.240): the job calls it at +0xCC (the same lambda, context and flag, the flag 0) instead of
-		// the general pick while workshop mode holds a wire (the placement item a BendableSpline, 2200790). Its loop is the
-		// general pick's, with its own filter at +0x511: Workshop's wire filter (2195584, +3BF4B0) passes a reference with the
-		// workshopPowerConnection actor value (the base's own counts, so a copy has it) or the power keyword (4797192, read
-		// below), passes the wire's first end, and refuses only a reference the bench's grids already connect to the first end.
+		// The wire pick's run (1.11.240): the job calls it at +0xCC (the same lambda and context, the flag 0) every frame the
+		// placement item is a wire (TESObjectREFR::IsSpline): one held, and also one only highlighted at idle, when the general
+		// pick has run first in the same frame (the job runs the general pick only with nothing selected or its byte 430f6ee8
+		// 0, at idle; a held wire runs the wire pick alone). Its loop is the general pick's, with its own filter at +0x511:
+		// Workshop's wire filter (2195584, +3BF4B0) passes a reference with the workshopPowerConnection actor value or the
+		// power keyword (4797192, read below; both the base's, so a copy of a piece that has one has it too), passes the
+		// wire's first end, and refuses a reference the bench's grids already connect to the first end. A piece with neither
+		// (a light bulb, 000560DF) is no wire end in any game: the filter refuses it, copy or not.
 		// It asks nothing of owners, workbenches or the build area. What it passes is the wire's target (SetWireTarget,
 		// 2195498, at +0x5C1: its handle in WIRE_TARGET), and the placement update's spline status (2195059) says whether the
 		// wire may go there: CAN_PLACE below is that status (SharedWorkshop::WireStatusName). Watched only: a copy needs nothing
@@ -2900,6 +2903,8 @@ namespace WorkshopSync
 		// The keyword WorkshopCanScrapRef refuses a reference for. Short of it, for a reference that is no actor and no
 		// inventory item (a wire), the test reads only its base: inGameFormFlags bit 0, or a MISC with components.
 		constexpr REL::ID SCRAP_BLOCK_KEYWORD{ 4797212 };
+		// TESContainer::ContainerCanHoldForm(TESBoundObject*) (+30E570): WorkshopCanScrapRef's "a thing one carries" test.
+		constexpr REL::ID CONTAINER_CAN_HOLD_FORM{ 2193008 };
 		// The cast's hits, read for the pick watch once sorted: the collector (hknpAllHitsCollector) holds them at +0x20 and
 		// their count at +0x28; each is a hknpCollisionResult of 0x60 bytes: the hit's position in havok units at +0x00, the
 		// fraction of the cast at +0x20, the body id at +0x40 and its shape's collision filter info at +0x4C (the layer in its
@@ -3039,9 +3044,10 @@ namespace WorkshopSync
 		std::mutex                 pickLock;
 		PickRecord                 generalPick;            // under pickLock
 		PickRecord                 wirePick;               // under pickLock
-		std::atomic<std::uint32_t> wirePickRuns{ 0 };      // the wire pick's calls (each frame a wire is held)
+		std::atomic<std::uint32_t> wirePickRuns{ 0 };      // the wire pick's calls (each frame the placement item is a wire)
 		std::atomic<std::uint32_t> wireTargets{ 0 };       // ... that found a second end the wire filter passed
-		std::atomic<std::uint32_t> wireFilterCopyNo{ 0 };  // copies the wire filter refused (the first few logged, with why)
+		std::atomic<std::uint32_t> wireFilterCopyNo{ 0 };   // copies the wire filter refused (the first few logged, with why)
+		std::atomic<std::uint32_t> wireFilterCopyYes{ 0 };  // ... and admitted, each frame one is the target (the first few logged)
 		std::atomic<std::uint32_t> scrapKeys{ 0 };         // the Scrap key's scrap test asked (the gate before it open)
 		std::atomic<std::uint32_t> scrapKeyNo{ 0 };        // ... and the engine's test said no
 		std::atomic<std::uint32_t> pickWatch{ 0 };     // wsmode pick <ref>: that reference watched, its runs logged
@@ -3472,27 +3478,37 @@ namespace WorkshopSync
 			pickRuns.fetch_add(1);
 		}
 
-		// The wire pick (each frame a wire is held): what it reached for the wire's second end, and what it took (picked: the
-		// wire filter passed it, the target).
+		// The wire pick (each frame the placement item is a wire: one held, or one highlighted at idle): what it reached for the
+		// wire's second end, and what it took (picked: the wire filter passed it, the target).
 		void WirePickHook(void* a_lambda, RE::Workshop::ContextData& a_context, bool a_general)
 		{
 			WatchPick(originalWirePick, a_lambda, a_context, a_general, wirePick, "wire pick");
 			wirePickRuns.fetch_add(1);
 		}
 
-		// Why the wire filter could refuse this reference, for the log: each of its tests as the engine reads them.
-		std::string WhyWireRefused(const RE::TESObjectREFR& a_ref)
+		// The wire filter's tests of this reference as the engine reads them, and so why it refused it: no wire end for anyone
+		// (neither test passes: the base can't take a wire, in any game, copy or not), or one the bench's grids already connect
+		// to the wire's first end.
+		std::string WireEndParts(const RE::TESObjectREFR& a_ref, bool a_refused)
 		{
 			static REL::Relocation<RE::BGSKeyword**>     keyword{ POWER_KEYWORD };
 			static REL::Relocation<RE::ObjectRefHandle*> firstEnd{ WIRE_FIRST_END };
 			const auto                                   values = RE::ActorValue::GetSingleton();
 			const auto                                   info = values ? values->workshopPowerConnection : nullptr;
 			const auto                                   from = firstEnd->get();
-			return std::format("powerConnection={} powerKeyword={} firstEnd={:08X} (refused with either: the bench's grids connect it to the first end already)",
-				info ? std::format("{:.0f}", a_ref.GetActorValue(*info)) : "?", *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword), from ? from->GetFormID() : 0);
+			const auto                                   base = a_ref.GetObjectReference();
+			const float                                  connection = info ? a_ref.GetActorValue(*info) : 0.0f;
+			const bool                                   powerKeyword = *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword);
+			const char* why = !a_refused                     ? "a wire end"
+			                  : connection == 0 && !powerKeyword ? "no wire end in any game: its base has neither the workshopPowerConnection value nor the power keyword"
+			                                                     : "the bench's grids connect it to the first end already";
+			return std::format("{} (base={:08X} powerConnection={} powerKeyword={} firstEnd={:08X})", why, base ? base->GetFormID() : 0, info ? std::format("{:.0f}", connection) : "?",
+				powerKeyword, from ? from.get()->GetFormID() : 0);
 		}
 
-		// The wire filter, at the wire pick's call: watched (its verdict on each hit, the target), never changed.
+		// The wire filter, at the wire pick's call: watched (its verdict on each hit, the target), never changed. A copy is
+		// judged by the engine's own rule, as the host's own piece would be: one that can take a wire passes (counted, the
+		// first few logged as admitted), one that can't is refused (counted, the first few logged with why).
 		bool WireFilterHook(void* a_lambda, RE::TESObjectREFR& a_ref)
 		{
 			const bool pass = originalWireFilter(a_lambda, a_ref);
@@ -3504,8 +3520,11 @@ namespace WorkshopSync
 					currentPick->picked = a_ref.GetFormID();
 				}
 				wireTargets.fetch_add(1);
+				if (IsCopy(&a_ref) && wireFilterCopyYes.fetch_add(1) < 5) {
+					REX::INFO("WorkshopSync: workshop mode's wire filter admitted copy {:08X} as the wire's second end: {}", a_ref.GetFormID(), WireEndParts(a_ref, false));
+				}
 			} else if (IsCopy(&a_ref) && wireFilterCopyNo.fetch_add(1) < 5) {
-				REX::INFO("WorkshopSync: workshop mode's wire filter refused copy {:08X} as the wire's second end: {}", a_ref.GetFormID(), WhyWireRefused(a_ref));
+				REX::INFO("WorkshopSync: workshop mode's wire filter refused copy {:08X} as the wire's second end: {}", a_ref.GetFormID(), WireEndParts(a_ref, true));
 			}
 			return pass;
 		}
@@ -3568,15 +3587,32 @@ namespace WorkshopSync
 			return may;
 		}
 
-		// WorkshopCanScrapRef's parts for this reference, as the engine reads them (CAN_SCRAP_REF, SCRAP_BLOCK_KEYWORD).
-		std::string ScrapParts(const RE::TESObjectREFR& a_ref)
+		// WorkshopCanScrapRef's parts for this reference, as the engine reads them (CAN_SCRAP_REF, SCRAP_BLOCK_KEYWORD,
+		// CONTAINER_CAN_HOLD_FORM), and the test that refused it (SharedWorkshop::ScrapRefusal, its order the engine's): for
+		// a_flag as the caller asks it (the Scrap key and the Scrap button ask false). A wire fails at recipe=false in any
+		// game: no recipe makes BlackWireSpline01, so the engine never marks its base (inGameFormFlags bit 0).
+		std::string ScrapParts(const RE::TESObjectREFR& a_ref, bool a_flag = false)
 		{
 			static REL::Relocation<RE::BGSKeyword**> keyword{ SCRAP_BLOCK_KEYWORD };
 			static REL::Relocation<std::uint8_t*>    gate{ SCRAP_GATE };
-			const auto                               base = a_ref.GetObjectReference();
-			return std::format("base={:08X} baseType={:02X} baseFlag={} blockKeyword={} actor={} gate={}", base ? base->GetFormID() : 0, base ? std::to_underlying(base->GetFormType()) : 0,
-				base ? (base->inGameFormFlags & 1) != 0 : false, *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword), a_ref.GetFormType() == RE::ENUM_FORM_ID::kACHR,
-				*gate);
+			using hold_t = bool (*)(RE::TESBoundObject*);
+			static REL::Relocation<hold_t> canHold{ CONTAINER_CAN_HOLD_FORM };
+			const auto                     base = a_ref.GetObjectReference();
+			SharedWorkshop::ScrapFacts     facts;
+			facts.base = base != nullptr;
+			facts.blockKeyword = *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword);
+			if (base) {
+				const auto type = base->GetFormType();
+				facts.inventoryType = type == RE::ENUM_FORM_ID::kARMO || type == RE::ENUM_FORM_ID::kMISC || type == RE::ENUM_FORM_ID::kWEAP;
+				facts.loose = a_ref.IsProjectile() == nullptr && canHold(base);
+				facts.recipe = (base->inGameFormFlags & 1) != 0;  // an actor's is its actor base's: close enough for a log
+				facts.miscComponents = type == RE::ENUM_FORM_ID::kMISC && static_cast<const RE::TESObjectMISC*>(base)->componentData != nullptr;
+			}
+			facts.objectInstance = a_ref.extraList && a_ref.extraList->HasType(RE::EXTRA_DATA_TYPE::kObjectInstance);
+			const auto fail = SharedWorkshop::ScrapRefusal(facts, a_flag);
+			return std::format("failed={} (base={:08X} baseType={:02X} blockKeyword={} inventoryType={} loose={} recipe={} miscComponents={} objectInstance={} actor={} gate={})",
+				SharedWorkshop::ScrapFailName(fail), base ? base->GetFormID() : 0, base ? std::to_underlying(base->GetFormType()) : 0, facts.blockKeyword, facts.inventoryType, facts.loose,
+				facts.recipe, facts.miscComponents, facts.objectInstance, a_ref.GetFormType() == RE::ENUM_FORM_ID::kACHR, *gate);
 		}
 
 		// The Scrap key (Workshop::RequestScrapPlacementItem, only the menu's XButton calls it, and only past its gate,
@@ -3594,7 +3630,7 @@ namespace WorkshopSync
 				scrapKeyNo.fetch_add(1);
 			}
 			REX::INFO("WorkshopSync: workshop mode's Scrap key on {:08X}: the engine's scrap test said {} ({})", a_ref.GetFormID(), may ? "yes (its confirmation opens)" : "no",
-				ScrapParts(a_ref));
+				ScrapParts(a_ref, a_flag));
 			return may;
 		}
 
@@ -3825,6 +3861,11 @@ namespace WorkshopSync
 			}
 			a_wire.Disable();
 			a_wire.SetDelete(true);
+			// Our bench's power rating and resources once more without it (as Adopt does): the engine's placement counted the
+			// copy ends as powered through the wire, which our grid no longer holds.
+			if (a_bench) {
+				RecountBench(*a_bench);
+			}
 			madeHere.insert(a_wire.GetFormID());
 			++wiresDetached;
 		}
@@ -4940,9 +4981,9 @@ namespace WorkshopSync
 		} else {
 			out += " | no run yet (workshop mode not up, idle and unhooked?)";
 		}
-		// The wire pick's last run (it runs instead of the general pick while a wire is held): picked is the wire's target.
+		// The wire pick's last run (it runs each frame the placement item is a wire): picked is the wire's target.
 		const bool wireRan = wire.at != std::chrono::steady_clock::time_point{};
-		out += std::format(" | wire pick runs={} targets={} copyNo={}", wirePickRuns.load(), wireTargets.load(), wireFilterCopyNo.load());
+		out += std::format(" | wire pick runs={} targets={} copyYes={} copyNo={}", wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load());
 		if (wireRan) {
 			const auto ago = std::chrono::duration_cast<std::chrono::milliseconds>(now - wire.at).count();
 			out += std::format(": wire run {} ms ago: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}); {}; target={:08X}; {}", ago, wire.from.x, wire.from.y, wire.from.z,
@@ -4973,8 +5014,8 @@ namespace WorkshopSync
 
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={}",
-			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyNo.load(), grabsRefused.load(),
+		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={}",
+			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load(), grabsRefused.load(),
 			storesRefused.load(), scrapsRefused.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
 			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted);
 	}

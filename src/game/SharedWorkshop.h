@@ -541,6 +541,71 @@ namespace SharedWorkshop
 		}
 	}
 
+	// ---- The engine's scrap test -------------------------------------------------------------------------
+
+	// WorkshopCanScrapRef (1.11.240: 2194959, +384910) as the engine reads it, for the logs and `wsmode scraptest`: what it
+	// finds of the reference, and which test refused it. Read in full with cdb; the order below is the engine's.
+	struct ScrapFacts
+	{
+		bool base = false;            // the reference has a base object
+		bool blockKeyword = false;    // ...the scrap block keyword (the engine's [430f7400]): never scrapped
+		bool inventoryType = false;   // the base is an armor, a misc item or a weapon
+		bool loose = false;           // not a projectile, and TESContainer::ContainerCanHoldForm(base): a thing one carries
+		bool recipe = false;          // the base's inGameFormFlags bit 0 (an actor's: its actor base's). The only setter is
+		                              // BGSConstructibleObject::InitItemImpl: a recipe makes it (or a form list one makes)
+		bool miscComponents = false;  // a misc item with components
+		bool objectInstance = false;  // the reference's extra data has an object instance (kObjectInstance, 0x35)
+	};
+
+	enum class ScrapFail : std::uint8_t
+	{
+		kNone,          // scrapped: the engine's confirmation opens
+		kNoBase,
+		kBlockKeyword,
+		kLoose,         // asked with the flag: a thing one carries is never scrapped that way
+		kLooseNotItem,  // asked without it: a thing one carries that is no armor, misc item or weapon
+		kNoRecipe,      // nothing makes the base (no recipe, no components, no object instance): every wire's case, in any game
+	};
+
+	[[nodiscard]] constexpr ScrapFail ScrapRefusal(const ScrapFacts& a_facts, bool a_flag)
+	{
+		if (!a_facts.base) {
+			return ScrapFail::kNoBase;
+		}
+		if (a_facts.blockKeyword) {
+			return ScrapFail::kBlockKeyword;
+		}
+		if (a_flag ? a_facts.loose : (a_facts.loose && !a_facts.inventoryType)) {
+			return a_flag ? ScrapFail::kLoose : ScrapFail::kLooseNotItem;
+		}
+		if (a_facts.recipe || a_facts.miscComponents) {
+			return ScrapFail::kNone;
+		}
+		if (a_facts.loose && !a_flag && a_facts.objectInstance) {
+			return ScrapFail::kNone;
+		}
+		return ScrapFail::kNoRecipe;
+	}
+
+	[[nodiscard]] constexpr const char* ScrapFailName(ScrapFail a_fail)
+	{
+		switch (a_fail) {
+		case ScrapFail::kNone:
+			return "none";
+		case ScrapFail::kNoBase:
+			return "base";
+		case ScrapFail::kBlockKeyword:
+			return "blockKeyword";
+		case ScrapFail::kLoose:
+			return "loose";
+		case ScrapFail::kLooseNotItem:
+			return "looseNotItem";
+		case ScrapFail::kNoRecipe:
+			return "recipe";
+		}
+		return "?";
+	}
+
 	// ---- The budget's totals -----------------------------------------------------------------------------
 
 	// Whether the engine's budget totals are the workbench's own right now, so an add or remove may use them as they are:

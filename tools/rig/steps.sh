@@ -1762,6 +1762,9 @@ _rad_is_running() { [ "$(_rad_run "$1" "$2")" = running=true ]; }
 # small generator (00030386, "Generator - Small") and the light bulb (env SWS_GENERATOR, SWS_LIGHT; verify with dev `edid` on a
 # new game version).
 SWS_GENERATOR=${SWS_GENERATOR:-00030386}; SWS_LIGHT=${SWS_LIGHT:-000560DF}; SWS_SAVE=${SWS_SAVE:-f4mp_sharedws}
+# A light a wire can end on (WorkshopConstructionLight01: the WorkshopPowerConnection keyword, no power radius). The light bulb
+# above takes no wire in any game: the engine's wire filter refuses it as an end (the dev wswire path asks nothing of it).
+SWS_WIRED_LIGHT=${SWS_WIRED_LIGHT:-000D38D4}
 _sws_grid_clean() {  # _sws_grid_clean <who> <label>: that game's grids at Sanctuary name no copy and no runtime reference
 	local g; g=$(dc "$1" "wsgrid $SANCT_BENCH")
 	if [ "$(field "$g" copies)" = "named=0" ] || grep -q "copies named=0" <<<"$g"; then
@@ -1774,6 +1777,9 @@ _sws_audit_clean() { local p; p=$(dc "$1" wspower); if [ "$(field "$p" found)" =
 _sws_copy_of() {  # _sws_copy_of <who> <builder's ref>: that game's copy of the other game's piece, by its key, or ""
 	dc "$1" "wspower copies" | grep -oE "[0-9A-F]{8}(\s\(not loaded\))?=[0-9]+:$2" | grep -oE '^[0-9A-F]{8}' | head -1
 }
+_sws_has_copy() { [ -n "$(_sws_copy_of "$1" "$2")" ]; }
+_sws_no_copy() { ! _sws_has_copy "$@"; }
+_sws_wire_answered() { grep -qE "WorkshopSync: request [0-9]+ \(wire\) at workbench [0-9A-F]{8}: applied" "$(win_read sws "$1")"; }
 _sws_built() { grep -qE "WorkshopSync: [0-9A-F]{8} \(base $2\) built for player [0-9]+ at workbench" "$(win_read sws "$1")"; }
 _sws_answered() { grep -qE "WorkshopSync: request [0-9]+ \((build|wire)\) at workbench [0-9A-F]{8}: applied" "$(win_read sws "$1")"; }
 _sws_lit() { local i; i=$(dc "$1" "wsinfo $2"); [ "$(field "$i" theirPower)" = on ] && [ "$(field "$i" lit)" = yes ]; }
@@ -1890,8 +1896,10 @@ _sws_radiator() {  # _sws_radiator <the host's generator> <its copy on the VM>
 # a key pressed only once workshop mode highlights that copy with nothing held (dev workshop selected=; the wire's second end: with
 # the wire held, once the engine says it may be put down there, canPlace=true), its keys pressed. Workshop mode holds nothing before
 # the keys (Cancel put away whatever it held). Attach
-# Wire from the generator's copy to the light's copy up to five times; each wire is taken off the VM's grid the frame it is strung and
-# asked of the host (the VM's log), and the VM's bench budget (wsres av: the WorkshopCurrentTriangles/Draws values) is the same
+# Wire from the generator's copy to the copy of a construction light the VM built (a light bulb takes no wire in any game), up to
+# five tries until one is asked: the engine's wire filter admits the copy (the VM's "admitted copy" line), the wire is taken off the
+# VM's grid the frame it is strung and asked of the host (the VM's log), the host strings it (answered applied, the light on its
+# grid), and the VM's bench budget (wsres av: the WorkshopCurrentTriangles/Draws values) is the same
 # before and after (a copy end is never taken out of the budget). Then grab, Scrap, Repair, Assign and Store on a copy: refused
 # (the wsmode counters move) and no crash on either machine.
 # The keys are the game's own bindings, read from each game's control map at the start of the step (dev `controls workshop`: the
@@ -1929,8 +1937,9 @@ _sws_budget_gt() {  # _sws_budget_gt <after> <before>: the current triangles val
 # The host's Sanctuary budget (the bug the budget scope fixes): a VM build must add exactly the piece to the host's bench totals
 # whatever the host's workshop mode holds: (a) right after the host loaded a save (workshop mode's totals 0), (b) after the host
 # built at another settlement (its totals), (c) in workshop mode at Sanctuary (the live totals). The three deltas must agree (one
-# base, one count) and be above 0. Then a VM wire, counted once drawn (wsmode wiresCounted), and the host scraps it in workshop
-# mode with the real key: the host's budget back where it started. Set-up by console, said so: the host's save/load and its coc
+# base, one count) and be above 0. Then a VM wire, counted once drawn (wsmode wiresCounted); the engine's scrap test refuses it as
+# it refuses every wire (failed=recipe), to wsmode scraptest and to the real Scrap key, so the host scraps its end (the light) with
+# the real key: the wire goes with it in both games, and the host's budget falls below what it was with the wire. Set-up by console, said so: the host's save/load and its coc
 # to Red Rocket and back.
 _sws_wait_counted() { [ "$(_sws_counter host wiresCounted)" -gt "$1" ]; }
 _sws_host_budget_cases() {
@@ -1964,7 +1973,7 @@ _sws_host_budget_cases() {
 	if _sws_budget_gt "$h1" "$h0"; then pass "$label: in workshop mode at Sanctuary, a VM build adds to the host's live budget" "$h0 -> $h1"; else fail "$label: in workshop mode at Sanctuary, a VM build adds to the host's live budget" "$h0 -> $h1"; fi
 	d3=$(( $(grep -oE 'triangles=[0-9]+' <<<"$h1" | grep -oE '[0-9]+') - $(grep -oE 'triangles=[0-9]+' <<<"$h0" | grep -oE '[0-9]+') )) 2>/dev/null
 	if is_int "$d1" && [ "$d1" -gt 0 ] && [ "$d1" = "$d2" ] && [ "$d2" = "$d3" ]; then pass "$label: the three builds added the same count to the host's budget" "triangles +$d1 each"; else fail "$label: the three builds added the same count to the host's budget" "deltas $d1 / $d2 / $d3"; fi
-	# a VM wire between the host's copies, counted once drawn, then scrapped by the host with the real key: the budget back
+	# a VM wire between the host's copies, counted once drawn; the engine refuses to scrap it (no wire is scrapped by itself), so it goes with its end
 	vg=$(_sws_copy_of vm "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built" "$A_OUT/windelta-sws-host.txt" "$A_OUT"/winmark-sws-host/0.log 2>/dev/null | head -1 | cut -d' ' -f2)")
 	[ -z "$vg" ] && vg=$SWS_VG
 	# the VM's light was adopted as its copy of the host's piece: found by the host's id (the "built for player" line), not the VM's own
@@ -1982,32 +1991,54 @@ _sws_host_budget_cases() {
 	# workshop mode may come back holding a new piece's ghost (the build menu's last item, as the host-busy step left it): the pick
 	# never runs while one is held, so Cancel puts it away first
 	if ! _sws_put_away host "$label (wire)"; then _ws_exit host; return 1; fi
-	# The engine's Scrap only asks: Workshop::RequestScrapRef (1.11.240) opens ExamineConfirmMenu with what the scrap gives back,
-	# and the scrap is that menu's confirm. So Scrap on the highlighted wire, then Accept in the confirmation. Before the press, the
-	# engine's own scrap test of the wire (wsmode scraptest: its answer and what it reads); the press itself counts in scrapKeys
-	# only if it got past Workshop::RequestScrapPlacementItem's gate (scrapGate= must be 0) to the test, and the host logs the
-	# test's answer ("Scrap key on <ref>").
-	local st sk0 sk1
+	# No wire is scrapped by itself in any game: WorkshopCanScrapRef (1.11.240, read whole) passes a piece whose base a recipe makes
+	# (inGameFormFlags bit 0, set only by BGSConstructibleObject::InitItemImpl), and no recipe makes the wire (BlackWireSpline01), a
+	# player's own wire included. So the host's wire for the VM is refused by that test at that field (wsmode scraptest:
+	# failed=recipe), and the real Scrap key reaches the test (past Workshop::RequestScrapPlacementItem's gate, scrapKeys +1) and is
+	# refused there: no ExamineConfirmMenu, the host's "Scrap key on" line says failed=recipe. The wire then goes the way a player's
+	# does, with an end: the host scraps its light (the wire's end) with the real key and confirms; the wire must go with it, in the
+	# host's game and the VM's, and the host's budget fall below what it was with the wire.
+	local st sk0 sk1 vw0 h2
 	st=$(dc host "wsmode scraptest $w"); sk0=$(_sws_counter host scrapKeys)
+	if grep -q 'engine=false' <<<"$st" && grep -q 'failed=recipe' <<<"$st"; then pass "$label (wire): the engine's scrap test refuses the host's wire for want of a recipe, as it refuses every wire" "$st"
+	else fail "$label (wire): the engine's scrap test refuses the host's wire for want of a recipe, as it refuses every wire" "$st"; fi
 	if _sws_aim_press host "$w" "$HWS_KEY_SCRAP" select "$label (wire)"; then
+		sleep 1; sk1=$(_sws_counter host scrapKeys)
+		if _menu_open host ExamineConfirmMenu; then
+			fail "$label (wire): the host's real Scrap key on its wire is refused by the engine's scrap test (failed=recipe, no confirmation)" "the confirmation opened: pressed with $SWS_LAST_PRESS; cancelled"
+			dc host "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
+		elif [ "${sk1:-0}" -gt "${sk0:-0}" ] 2>/dev/null && grep -qE "Scrap key on $w: the engine's scrap test said no \(failed=recipe" "$(win_read sws host)"; then
+			pass "$label (wire): the host's real Scrap key on its wire is refused by the engine's scrap test (failed=recipe, no confirmation)" "scrapKeys $sk0 -> $sk1; $(grep -oE "WorkshopSync: workshop mode's Scrap key on $w[^;]*" "$(win_read sws host)" | tail -1 | cut -c1-260)"
+		else
+			fail "$label (wire): the host's real Scrap key on its wire is refused by the engine's scrap test (failed=recipe, no confirmation)" "scrapKeys $sk0 -> $sk1 ($( [ "${sk1:-0}" -gt "${sk0:-0}" ] 2>/dev/null && echo "reached the test: $(grep -oE "WorkshopSync: workshop mode's Scrap key on $w[^;]*" "$(win_read sws host)" | tail -1 | cut -c1-260)" || echo "never reached the test: the gate, the menu, or the key"); pressed with $SWS_LAST_PRESS"
+		fi
+	fi
+	# the vanilla way: the wire's end scrapped, with the real key and the confirmation's Accept (or E)
+	vw0=$(_sws_copy_of vm "$w")
+	if ! _sws_put_away host "$label (wire's end)"; then _ws_exit host; return 1; fi
+	if _sws_aim_press host "$hl" "$HWS_KEY_SCRAP" select "$label (wire's end)"; then
 		if wait_for 6 _menu_open host ExamineConfirmMenu; then
-			pass "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS; $st"
+			pass "$label (wire's end): the host's Scrap on its light, the wire's end, asks to confirm (ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS"
 			local how=Accept kr
 			kr=$(dc host "key $HWS_KEY_SELECT 80"); sleep 1
 			if ! wait_for 5 _menu_closed host ExamineConfirmMenu; then
 				how=Activate; kr="$kr; then $(dc host "key 45 80")"   # E, the other confirm key, pressed only while the confirmation is still up
 				wait_for 5 _menu_closed host ExamineConfirmMenu
 			fi
-			if _menu_open host ExamineConfirmMenu; then fail "$label (wire): set-up: the host confirms its scrap" "the confirmation stayed open after Accept ($HWS_KEY_SELECT) and E: $kr; $(host menus | grep -oE 'open=[^ ]*')"; dc host "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
-			else pass "$label (wire): set-up: the host confirms its scrap" "with $how: $kr"; fi
+			if _menu_open host ExamineConfirmMenu; then fail "$label (wire's end): set-up: the host confirms its scrap" "the confirmation stayed open after Accept ($HWS_KEY_SELECT) and E: $kr; $(host menus | grep -oE 'open=[^ ]*')"; dc host "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
+			else pass "$label (wire's end): set-up: the host confirms its scrap" "with $how: $kr"; fi
 		else
-			sk1=$(_sws_counter host scrapKeys)
-			fail "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; now $(host menus | grep -oE 'open=[^ ]*'); $(host workshop | grep -oE '(held|selected|newItem|editing|scrapGate)=[^ ]*' | tr '\n' ' ')| before the press: $st | scrapKeys $sk0 -> $sk1 ($( [ "${sk1:-0}" -gt "${sk0:-0}" ] 2>/dev/null && echo "the press reached the engine's scrap test: $(grep -oE "WorkshopSync: workshop mode's Scrap key on $w[^;]*" "$(win_read sws host)" | tail -1 | cut -c1-260)" || echo "the press never reached the scrap test: the gate (scrapGate=1 above), the menu, or the key (front= above)"))"
+			fail "$label (wire's end): the host's Scrap on its light, the wire's end, asks to confirm (ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; now $(host menus | grep -oE 'open=[^ ]*'); $(grep -oE "WorkshopSync: workshop mode's Scrap key on $hl[^;]*" "$(win_read sws host)" | tail -1 | cut -c1-260)"
 		fi
 	fi
 	sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
-	expect_eq "$label (wire): scrapped by the host, the wire is gone" "$(field "$(host "refinfo $w")" deleted)" true
-	expect_eq "$label (wire): after the host scrapped the wire, its budget is back where it started" "$(_sws_budget host)" "$h0"
+	expect_eq "$label (wire): its end scrapped by the host, the wire is gone with it" "$(field "$(host "refinfo $w")" deleted)" true
+	if [ -n "$vw0" ]; then
+		if wait_for 10 _sws_no_copy vm "$w"; then pass "$label (wire): ... and the VM's copy of the wire with it" "the VM's $vw0 no longer a copy of $w"; else fail "$label (wire): ... and the VM's copy of the wire with it" "the VM still holds $vw0 as the copy of $w: $(vm "refinfo $vw0" | cut -c1-160)"; fi
+	fi
+	h2=$(_sws_budget host)
+	if _sws_budget_gt "$h1" "$h2"; then pass "$label (wire): with the wire and its end scrapped, the host's budget is below what it was with the wire" "$h1 -> $h2"; else fail "$label (wire): with the wire and its end scrapped, the host's budget is below what it was with the wire" "$h1 -> $h2"; fi
+	_sws_grid_clean vm "$label (wire): after the host scrapped the wire's end, the VM's grids name no copy and no runtime reference"
 }
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
 SWS_WIRE=${SWS_WIRE:-0001D971}   # the workshop's power wire (what Attach Wire strings)
@@ -2110,8 +2141,20 @@ _sws_build_vm() {
 	echo "$r"
 }
 _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on the VM>
-	local vg=$1 vl=$2 i b0 b1 asked0 asked1 g0 s0 c0 a0 w misses=0 label="sharedws (real hooks)"
+	local vg=$1 vl=$2 i b0 b1 asked0 asked1 g0 s0 c0 a0 w misses=0 label="sharedws (real hooks)" we wh vw
 	crash_snapshot
+	# The wire's second end must be a piece that takes a wire in any game: the engine's wire filter passes only a reference with the
+	# workshopPowerConnection value or the WorkshopPowerConnection keyword, copy or not, and the light bulb ($vl) has neither (no
+	# player strings a wire to one). So the VM builds a construction light (WorkshopConstructionLight01, which has the keyword and
+	# radiates no power, so nothing connects it to the generator before the wire), a request the host builds; its copy is the
+	# second end. The light bulb's copy stays the piece the keys are tried on.
+	win_mark sws host; win_mark sws vm
+	we=$(_sws_build_vm "$SWS_WIRED_LIGHT" "$label"); [ -z "$we" ] && return 1
+	if ! wait_for 20 _sws_built host "$SWS_WIRED_LIGHT"; then fail "$label: set-up: the host built the VM's construction light" "no 'built for player' line for base $SWS_WIRED_LIGHT on the host"; return 1; fi
+	wh=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_WIRED_LIGHT\) built" "$(win_read sws host)" | tail -1 | cut -d' ' -f2)
+	wait_for 15 _sws_has_copy vm "$wh"; vw=$(_sws_copy_of vm "$wh")
+	if [ -z "$vw" ]; then fail "$label: set-up: the VM has its copy of the host's construction light" "the host's '$wh'; $(vm 'wspower copies' | cut -c1-200)"; return 1; fi
+	_sws_placed host "$wh"
 	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return 1; fi
 	# Workshop mode may open holding a new piece (the build menu's item, or a wire left from before): every check below needs the
 	# general pick, which runs only with nothing held, so it is put away first, loudly.
@@ -2119,9 +2162,10 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	b0=$(_sws_budget vm); asked0=$(_sws_counter vm wiresAsked)
 	win_mark sws vm; win_mark sws host
 	# Attach Wire as a player does: the generator's copy highlighted, the key (the wire starts there and is held: heldBase= the
-	# wire, newItem=true); then the light's copy aimed at until the engine says the wire may go there (canPlace), the key again
-	# (the wire placed, taken off and asked of the host: wiresAsked +1). A wire left in hand is put away before the next try; two
-	# failed tries in a row end the loop (the reason is in their FAILs).
+	# wire, newItem=true); then the construction light's copy aimed at until the engine says the wire may go there (canPlace), the
+	# key again (the wire placed, taken off and asked of the host: wiresAsked +1). The first wire asked ends the loop (a second
+	# between the same ends would be one the host strings twice); a wire left in hand is put away before the next try, and two
+	# failed tries in a row end it too (the reason is in their FAILs).
 	for i in 1 2 3 4 5; do
 		_sws_put_away vm "$label (wire $i)" || break
 		if ! _sws_aim_press vm "$vg" "$WS_KEY_WIRE" select "$label (wire $i, first end)"; then misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue; fi
@@ -2131,11 +2175,11 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 			misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue
 		fi
 		a0=$(_sws_counter vm wiresAsked)
-		if ! _sws_aim_press vm "$vl" "$WS_KEY_WIRE" wire "$label (wire $i, second end)"; then misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue; fi
+		if ! _sws_aim_press vm "$vw" "$WS_KEY_WIRE" wire "$label (wire $i, second end)"; then misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue; fi
 		sleep 1
-		if [ "$(_sws_counter vm wiresAsked)" -gt "$a0" ] 2>/dev/null; then misses=0
+		if [ "$(_sws_counter vm wiresAsked)" -gt "$a0" ] 2>/dev/null; then break
 		else
-			fail "$label (wire $i): the wire, placeable on the light's copy, is strung and asked of the host" "wiresAsked $a0 -> $(_sws_counter vm wiresAsked); now $(_sws_fields "$(vm workshop)")| pressed with $SWS_LAST_PRESS; $(grep -E 'WorkshopSync: wire ' "$(win_read sws vm)" | tail -1 | cut -c1-200)"
+			fail "$label (wire $i): the wire, placeable on the construction light's copy, is strung and asked of the host" "wiresAsked $a0 -> $(_sws_counter vm wiresAsked); now $(_sws_fields "$(vm workshop)")| pressed with $SWS_LAST_PRESS; $(grep -E 'WorkshopSync: wire ' "$(win_read sws vm)" | tail -1 | cut -c1-200)"
 			misses=$((misses + 1)); [ "$misses" -ge 2 ] && break
 		fi
 		sleep 1
@@ -2144,6 +2188,15 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	asked1=$(_sws_counter vm wiresAsked)
 	if [ "$((asked1 - asked0))" -ge 1 ]; then pass "$label: Attach Wire between two of the host's copies is taken off and asked of the host ($((asked1 - asked0)) of $i tries)" "$(grep -oE 'WorkshopSync: wire [0-9A-F]{8} between copies[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-160)"
 	else fail "$label: Attach Wire between two of the host's copies is taken off and asked of the host" "wiresAsked $asked0 -> $asked1 over $i tries (each try's FAIL above says where it stopped); picksAdmitted=$(_sws_counter vm picksAdmitted); $(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120)"; fi
+	# the wire filter took the copy as the second end by the engine's own rule (its "admitted copy" line), and the host strung the wire
+	if grep -qE "wire filter admitted copy $vw " "$(win_read sws vm)"; then pass "$label: the engine's wire filter admitted the construction light's copy as the second end" "$(grep -oE "WorkshopSync: workshop mode.s wire filter admitted copy $vw [^;]*" "$(win_read sws vm)" | head -1 | cut -c1-260)"
+	else fail "$label: the engine's wire filter admitted the construction light's copy as the second end" "no 'admitted copy $vw' line; wsmode: $(vm wsmode | grep -oE 'wire(PickRuns|Targets|FilterCopyYes|FilterCopyNo)=[0-9]+' | tr '\n' ' ')$(grep -oE "WorkshopSync: workshop mode.s wire filter refused copy $vw [^;]*" "$(win_read sws vm)" | head -1 | cut -c1-260)"; fi
+	if [ "$((asked1 - asked0))" -ge 1 ]; then
+		if wait_for 15 _sws_wire_answered vm; then pass "$label: the host strung the VM's real wire and answered it applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(wire\)[^;]*' "$(win_read sws vm)" | tail -1 | cut -c1-200)"
+		else fail "$label: the host strung the VM's real wire and answered it applied" "$(grep -E 'WorkshopSync: (request|player)' "$(win_read sws host)" "$(win_read sws vm)" | grep -i wire | tail -3 | cut -c1-200 | tr '\n' '|')"; fi
+		if wait_for 10 _sws_grid_has host "$wh"; then pass "$label: the host's grid holds its construction light, wired" "$(host "wsgrid $SANCT_BENCH" | cut -c1-160)"; else fail "$label: the host's grid holds its construction light, wired" "$(host "wsgrid $SANCT_BENCH" | cut -c1-200)"; fi
+	fi
+	# the friend's own grid: the wire it strung is gone from it (taken off in the same frame), its copies on none of its grids
 	expect_eq "$label: the VM's bench budget is the same after the wires (no copy end taken out of it)" "$(_sws_budget vm)" "$b0"
 	_sws_grid_clean vm "$label: after real wiring, the VM's grids name no copy and no runtime reference"
 	# Nothing below means anything unless workshop mode's pick reached the copies (the pick hook admits a copy it is asked

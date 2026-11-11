@@ -72,7 +72,8 @@ namespace WorkshopSync
 	// scrapGate: the byte the Scrap key needs 0 in before the engine's scrap test is asked.
 	[[nodiscard]] std::string HeldForDev();
 	// Dev (wsmode scraptest <ref>): the engine's scrap test of the reference (WorkshopCanScrapRef, as the Scrap key asks it)
-	// and what it reads: the base, its flag, the keyword that refuses, the gate before it.
+	// and what it reads: "failed=<field>" first, the test that refused it (SharedWorkshop::ScrapFailName: none, base,
+	// blockKeyword, loose, looseNotItem, recipe; a wire is always recipe), then each part, and the gate before it.
 	[[nodiscard]] std::string ScrapTestForDev(RE::TESObjectREFR* a_ref);
 	[[nodiscard]] std::string DescribeShared();
 	// Dev: workshop mode's general pick watched (wsmode pick): a_watch set, a reference to watch (each run whose search reaches
@@ -80,7 +81,7 @@ namespace WorkshopSync
 	// pick's counts, its last run (the ray, each hit the search reached near to far with what the pick made of it, what it
 	// picked, and every hit of the cast: body, reference, layer, distance) and where the watched piece (or with null, the one
 	// that was watched) stands from that ray (miss: how far its bound's center is off the ray, against its radius), with its
-	// own bodies and whether the cast hit one (inCast). Then the wire pick's (it runs instead while a wire is held): its counts,
+	// own bodies and whether the cast hit one (inCast). Then the wire pick's (it runs each frame the placement item is a wire, held or highlighted): its counts,
 	// last run and target (what its filter passed), and where the watched piece stands from its ray ("| wire <ref>: ...").
 	[[nodiscard]] std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch);
 

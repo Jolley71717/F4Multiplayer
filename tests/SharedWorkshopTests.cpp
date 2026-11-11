@@ -436,3 +436,28 @@ TEST("shared workshop: a held wire's status is named as the engine's spline stat
 	CHECK(std::string_view{ WireStatusName(0) } == "other");  // never set by it: no wire held, or another piece's verdict
 	CHECK(std::string_view{ WireStatusName(4) } == "other");
 }
+
+TEST("shared workshop: the engine's scrap test refuses in its own order, and refuses every wire for want of a recipe")
+{
+	// A wire (BlackWireSpline01, a BendableSpline): a base, nothing one carries, and no recipe makes it, in any game.
+	constexpr ScrapFacts wire{ .base = true };
+	CHECK(ScrapRefusal(wire, false) == ScrapFail::kNoRecipe);
+	CHECK(ScrapRefusal(wire, true) == ScrapFail::kNoRecipe);
+	CHECK(std::string_view{ ScrapFailName(ScrapRefusal(wire, false)) } == "recipe");
+
+	// A built piece: its base marked by the recipe that makes it.
+	constexpr ScrapFacts built{ .base = true, .recipe = true };
+	CHECK(ScrapRefusal(built, false) == ScrapFail::kNone);
+	CHECK(ScrapRefusal(ScrapFacts{}, false) == ScrapFail::kNoBase);
+	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .blockKeyword = true, .recipe = true }, false) == ScrapFail::kBlockKeyword);
+
+	// A thing one carries: never with the flag; without it, only an armor, misc item or weapon, then by recipe, components or
+	// an object instance.
+	constexpr ScrapFacts junk{ .base = true, .inventoryType = true, .loose = true, .miscComponents = true };
+	CHECK(ScrapRefusal(junk, true) == ScrapFail::kLoose);
+	CHECK(ScrapRefusal(junk, false) == ScrapFail::kNone);
+	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .loose = true, .recipe = true }, false) == ScrapFail::kLooseNotItem);
+	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .inventoryType = true, .loose = true, .objectInstance = true }, false) == ScrapFail::kNone);
+	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .inventoryType = true, .loose = true }, false) == ScrapFail::kNoRecipe);
+	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .objectInstance = true }, false) == ScrapFail::kNoRecipe);  // not loose
+}
