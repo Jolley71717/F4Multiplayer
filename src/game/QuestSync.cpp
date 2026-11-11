@@ -246,6 +246,7 @@ namespace QuestSync
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
 		std::uint32_t                                    debugDropped = 0;    // a developer's quickstart's, never shared (StageRules::IsDebug)
+		std::uint32_t                                    quickstartSet = 0;   // set by a quickstart done in this game, not reported (StageRules::QUICKSTART_SETS)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -645,6 +646,22 @@ namespace QuestSync
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
 			return file && StageRules::IsDebug(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage);
+		}
+
+		// A stage that a developer's quickstart done in this game sets (StageRules::QUICKSTART_SETS: its script, the stages it
+		// sets and the quests it starts, as far down as the scan follows them). A console quickstart is the typing player's own,
+		// and so is what it did: such a stage is not reported, live or in the host's baseline, while the quickstart is done in
+		// this game (the save keeps that, so a later session from it leaves the stage out as well). Whichever of a quickstart's
+		// stages the poll sees, the quickstart reads done by then: a stage reads done as it is set, before its script runs
+		// and sets the others (StageLog.h).
+		bool SetByQuickstart(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file && StageRules::SetByQuickstart(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [](StageRules::File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+				const auto handler = RE::TESDataHandler::GetSingleton();
+				const auto by = handler ? handler->LookupForm<RE::TESQuest>(a_byQuest, StageRules::FileName(a_by)) : nullptr;
+				return by && QuestStageLayout::IsStageDone(by, a_byStage);
+			});
 		}
 
 		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
@@ -1478,6 +1495,7 @@ namespace QuestSync
 			baseline.clear();
 			std::size_t quests = 0;
 			std::size_t left = 0;
+			std::size_t byQuickstart = 0;
 			for (const auto quest : AllQuests()) {
 				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared()) || (IsSafe(quest) && !SafeShared())) {
 					continue;
@@ -1497,6 +1515,10 @@ namespace QuestSync
 					if (IsDebugStage(quest, stage)) {
 						continue;  // a quickstart set at the console: this game's only
 					}
+					if (SetByQuickstart(quest, stage)) {
+						++byQuickstart;
+						continue;  // ... and so is what its script set: the save has the quickstart done, whenever it was typed
+					}
 					if (DoorsStage(quest, stage)) {
 						continue;  // ScriptDoors'
 					}
@@ -1507,8 +1529,9 @@ namespace QuestSync
 					}
 				}
 			}
-			REX::INFO("QuestSync: the session starts from this game's story: {} stages of {} quests{}", baseline.size(), quests,
-				left ? std::format(" ({} more left out)", left) : std::string());
+			REX::INFO("QuestSync: the session starts from this game's story: {} stages of {} quests{}{}", baseline.size(), quests,
+				left ? std::format(" ({} more left out)", left) : std::string(),
+				byQuickstart ? std::format(" ({} not shared: a developer's quickstart set at this game's console set them)", byQuickstart) : std::string());
 		}
 	}
 
@@ -1808,7 +1831,9 @@ namespace QuestSync
 				const auto remote = remoteStageAt.find(id);
 				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
 				const char* name = quest->GetFullName();
-				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !Unordered(quest)) {
+				// Not one that a console quickstart finished here (its current stage is one the quickstart's script set): that is
+				// this game's only, as the stage is, and the friends get no "completed" line for it.
+				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !Unordered(quest) && !SetByQuickstart(quest, quest->currentStage)) {
 					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, IsSafe(quest));
 					++completed;
 				}
@@ -1875,6 +1900,13 @@ namespace QuestSync
 				}
 				if (IsDebugStage(quest, stage)) {
 					continue;  // a quickstart set at the console is this game's only: the friends aren't jumped through the quest with it
+				}
+				if (SetByQuickstart(quest, stage)) {
+					// ... nor is what its script set there their progress: a kick-out nobody played for stays in this game.
+					if (quickstartSet++ == 0) {
+						REX::INFO("QuestSync: not reporting {:08X} stage {}: a developer's quickstart set at this game's console set it (and any more like it)", id, stage);
+					}
+					continue;
 				}
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
@@ -2003,8 +2035,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
-			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, unknown, refused, completed, repaired, released,
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, quickstartSet, unknown, refused, completed, repaired, released,
 			waivedPrices, waiver.On() ? " (one waived now)" : "", hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +

@@ -266,7 +266,7 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 		{ 0, 0x142FD3, 20 },                                        // RR304: the Brotherhood
 		{ 0, 0x15BD39, 30 },                                        // InstMassFusion: the Brotherhood's kick-out
 		{ 0, 0x16D036, 100 },                                       // InstKickOut: the Institute
-		{ 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },  // Inst307Fight: its 1 (Inst307 35 moves the player), the Brotherhood's kick-out, and its quickstarts, never shared (kDebug)
+		{ 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },  // Inst307Fight: its quickstarts, never shared (kDebug); its 1, which its 2 to 8 go through, runs the Brotherhood's kick-out
 		{ 3, 0x03684F, 6 },                                         // Kiddie Kingdom's quickstart: the hostile ghouls
 	};
 	CHECK(movers == known);
@@ -289,7 +289,7 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 		CHECK(!HostileOf(static_cast<File>(row.file), row.quest, row.stage).empty());
 		CHECK(KickOutOf(static_cast<File>(row.file), row.quest, row.stage) == &row);
 	}
-	// The Brotherhood's kick-out, BoSKickOut 20, for InstMassFusion 30, RR304 20 and Inst307Fight 1; the Institute's is its quest's start-up.
+	// The Brotherhood's kick-out, BoSKickOut 20, for InstMassFusion 30 and RR304 20; the Institute's is its quest's start-up.
 	const auto massFusion = KickOutOf(File::kFallout4, 0x15BD39, 30);
 	REQUIRE(massFusion != nullptr);
 	CHECK(massFusion->kickQuest == 0x16FF04 && massFusion->kickStage == 20);
@@ -299,15 +299,12 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 	const auto institute = KickOutOf(File::kFallout4, 0x16D036, 100);
 	REQUIRE(institute != nullptr);
 	CHECK(institute->kickQuest == 0x16D036 && institute->kickStage == 0);
-	const auto airport = KickOutOf(File::kFallout4, 0x174029, 1);
-	REQUIRE(airport != nullptr);
-	CHECK(airport->kickQuest == 0x16FF04 && airport->kickStage == 20);
-	// The developers' quickstarts that reach a kick-out (Mass Fusion's DN084 1 to 9, the airport battle's Inst307Fight 2
+	// The developers' quickstarts that reach a kick-out (Mass Fusion's DN084 1 to 9, the airport battle's Inst307Fight 0
 	// to 8) have no row: a stage only the console sets runs no kick-out in a friend's game.
 	for (std::uint16_t stage = 1; stage <= 9; ++stage) {
 		CHECK(!KickOutOf(File::kFallout4, 0x06D646, stage));
 	}
-	for (std::uint16_t stage = 2; stage <= 8; ++stage) {
+	for (std::uint16_t stage = 0; stage <= 8; ++stage) {
 		CHECK(!KickOutOf(File::kFallout4, 0x174029, stage));
 	}
 	// The Brotherhood's kick-out through InstMassFusion 30 is a SetPlayerEnemy row: with the kick-out run here, no mover a
@@ -332,13 +329,13 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 	CHECK(!KickOutOf(File::kFallout4, 0x022A08, 470));
 	CHECK(!KickOutOf(File::kFallout4, 0x04402C, 2));
 	CHECK(!KickOutOf(File::kNukaWorld, 0x03684F, 6));
-	CHECK(std::size(KICKOUTS) == 4);  // the three of the hold's review and Inst307Fight 1
+	CHECK(std::size(KICKOUTS) == 3);  // the three of the hold's review; the airport battle's 1 is a quickstart
 }
 
 TEST("hostile hold: a developer's quickstart is never shared: skipped whatever the situation, with no kick-out and no faction turned (kDebug)")
 {
 	using namespace StageRules;
-	// The 16 by hand in the scan (RuleScan's DEBUG): Mass Fusion's 1 to 9 and the airport battle's 2 to 8.
+	// The 18 by hand in the scan (RuleScan's DEBUG): Mass Fusion's 1 to 9 and the airport battle's 0 to 8.
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> debug;
 	for (const auto& rule : RULES) {
 		if (rule.flags & kDebug) {
@@ -347,7 +344,7 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 	}
 	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> known{
 		{ 0, 0x06D646, 1 }, { 0, 0x06D646, 2 }, { 0, 0x06D646, 3 }, { 0, 0x06D646, 4 }, { 0, 0x06D646, 5 }, { 0, 0x06D646, 6 }, { 0, 0x06D646, 7 }, { 0, 0x06D646, 8 }, { 0, 0x06D646, 9 },
-		{ 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },
+		{ 0, 0x174029, 0 }, { 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },
 	};
 	CHECK(debug == known);
 	// Each is skipped in every situation a friend's stage can meet: next to the friend or far, live or caught up, the
@@ -375,11 +372,10 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 			CHECK(Judge(rule, now) == Verdict::kSkip);
 		}
 	}
-	// The stages of the same quests that play sets are not: Mass Fusion's 10 on, the airport battle's 1 (the kick-out) and 10.
+	// The stages of the same quests that play sets are not: Mass Fusion's 0 and 10 on, the airport battle's 10 on.
 	CHECK(!IsDebug(File::kFallout4, 0x06D646, 0));
 	CHECK(!IsDebug(File::kFallout4, 0x06D646, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x06D646, 225));
-	CHECK(!IsDebug(File::kFallout4, 0x174029, 1));
 	CHECK(!IsDebug(File::kFallout4, 0x174029, 10));
 	// Only Fallout4.esm's rows: the same form IDs in another file are other quests.
 	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
@@ -396,7 +392,7 @@ TEST("hostile hold: the base game's kick-outs and faction outcomes are HOSTILE's
 		return std::ranges::any_of(rows, [&](const Hostile& a_row) { return a_row.factionFile == 0 && a_row.faction == a_faction; });
 	};
 	constexpr std::uint32_t BROTHERHOOD = 0x05DE41, RAILROAD = 0x0994F6, INSTITUTE = 0x05E558;
-	// The Brotherhood's kick-out (BoSKickOut 20, and 30 for Mass Fusion's), and what sets it: Inst307Fight 1 (the airport battle),
+	// The Brotherhood's kick-out (BoSKickOut 20, and 30 for Mass Fusion's), and what sets it: the airport battle's quickstart Inst307Fight 1 (never shared),
 	// InstMassFusion 30, Mass Fusion's quickstart DN084 2 (never shared); the Railroad's (RRKickOut 100) and BoS302B 30, which sets it.
 	CHECK(has(File::kFallout4, 0x16FF04, 20, BROTHERHOOD));
 	CHECK(has(File::kFallout4, 0x16FF04, 30, BROTHERHOOD));
@@ -439,7 +435,7 @@ TEST("hostile hold: the base game's kick-outs and faction outcomes are HOSTILE's
 	CHECK(dismisses(File::kFallout4, 0x16FF04, 30, COM_DANSE));   // BoSKickOut 30
 	CHECK(dismisses(File::kFallout4, 0x16C207, 100, COM_DEACON));  // RRKickOut 100
 	CHECK(dismisses(File::kFallout4, 0x16D036, 0, COM_X688));     // InstKickOut 0
-	CHECK(dismisses(File::kFallout4, 0x174029, 1, COM_DANSE));    // Inst307Fight 1 (BoSKickOut 20)
+	CHECK(dismisses(File::kFallout4, 0x174029, 1, COM_DANSE));    // Inst307Fight 1 (BoSKickOut 20): a quickstart, never shared, so its row is never used
 	CHECK(dismisses(File::kFallout4, 0x15BD39, 30, COM_DANSE));   // InstMassFusion 30 (BoSKickOut 20)
 	CHECK(dismisses(File::kFallout4, 0x06D646, 2, COM_DANSE));    // DN084 2 (BoSKickOut 30): a quickstart, never shared, so its row is never used
 	CHECK(dismisses(File::kFallout4, 0x107A1C, 30, COM_DEACON));  // BoS302B 30 (RRKickOut 100)

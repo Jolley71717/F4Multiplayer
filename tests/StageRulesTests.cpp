@@ -3,6 +3,7 @@
 #include "game/QuestFilter.h"
 #include "game/StageRules.h"
 
+#include <algorithm>
 #include <chrono>
 #include <iterator>
 #include <tuple>
@@ -337,23 +338,22 @@ TEST("stage rules: the opening's stages (Vault 111) are every player's own, neve
 	CHECK(!IsOpening(File::kFallout4, 0x01F25E, 0));  // MQ104
 }
 
-TEST("stage rules: a developer's quickstart (Mass Fusion's 1 to 9, the airport battle's 2 to 8) is never shared, whatever else its row says")
+TEST("stage rules: a developer's quickstart (Mass Fusion's 1 to 9, the airport battle's 0 to 8) is never shared, whatever else its row says")
 {
 	using namespace StageRules;
 	for (std::uint16_t stage = 1; stage <= 9; ++stage) {
 		CHECK(IsDebug(File::kFallout4, 0x06D646, stage));  // DN084
 		CHECK(FlagsOf(0x06D646, stage) == (kMoves | kDebug));
 	}
-	for (std::uint16_t stage = 2; stage <= 8; ++stage) {
+	for (std::uint16_t stage = 0; stage <= 8; ++stage) {  // its 0 and 1 are the ones the others go through; play starts the battle at its 10
 		CHECK(IsDebug(File::kFallout4, 0x174029, stage));  // Inst307Fight
 		CHECK(FlagsOf(0x174029, stage) == (kMoves | kDebug));
 	}
-	// What play sets of the two quests is not: Mass Fusion from its 10 on, the airport battle's 1 (set by the story's own
-	// stage) and its 10 on.
+	// What play sets of the two quests is not: Mass Fusion's 0 and from its 10 on, the airport battle from its 10 on (the
+	// story's own stage, Inst307 30, starts it there).
 	CHECK(!IsDebug(File::kFallout4, 0x06D646, 0));
 	CHECK(!IsDebug(File::kFallout4, 0x06D646, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x06D646, 225));
-	CHECK(!IsDebug(File::kFallout4, 0x174029, 1));
 	CHECK(!IsDebug(File::kFallout4, 0x174029, 10));
 	// Only those rows of Fallout4.esm: no other file's, no stage without a row.
 	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
@@ -369,6 +369,97 @@ TEST("stage rules: a developer's quickstart (Mass Fusion's 1 to 9, the airport b
 	// A row of the flag alone is skipped too: the flag decides, not the move.
 	const StageRules::Rule debug{ 0, 0x000001, 1, kDebug, 0 };
 	CHECK(Judge(&debug, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+}
+
+namespace
+{
+	using Pairs = std::initializer_list<std::pair<std::uint32_t, std::uint16_t>>;
+
+	// StageRules::SetByQuickstart in a game where these stages of Fallout4.esm's quests are done.
+	bool SetByQuickstartWith(std::uint32_t a_quest, std::uint16_t a_stage, Pairs a_done, File a_file = File::kFallout4)
+	{
+		return StageRules::SetByQuickstart(a_file, a_quest, a_stage, [&](File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+			return a_by == File::kFallout4 && std::ranges::find(a_done, std::pair{ a_byQuest, a_byStage }) != a_done.end();
+		});
+	}
+}
+
+TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are sorted for the lookup, name only quickstarts, hold no quickstart, and every quickstart has some")
+{
+	using namespace StageRules;
+	const auto key = [](const QuickstartSet& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.byFile, a_row.byQuest }; };
+	CHECK(std::ranges::is_sorted(QUICKSTART_SETS, {}, key));
+	CHECK(std::ranges::adjacent_find(QUICKSTART_SETS, {}, key) == std::end(QUICKSTART_SETS));  // one row for a stage and a quickstart's quest
+	for (const auto& row : QUICKSTART_SETS) {
+		CHECK(row.byStages != 0);
+		for (std::uint16_t stage = 0; stage < 16; ++stage) {
+			if (row.byStages & (1u << stage)) {
+				CHECK(IsDebug(static_cast<File>(row.byFile), row.byQuest, stage));
+			}
+		}
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.stage));  // a quickstart is never reported as it is (IsDebug)
+	}
+	std::size_t quickstarts = 0;
+	for (const auto& rule : RULES) {
+		if (rule.flags & kDebug) {
+			++quickstarts;
+			REQUIRE(rule.stage < 16);  // the rows name them by a bit
+			CHECK(std::ranges::any_of(QUICKSTART_SETS, [&](const QuickstartSet& a_row) {
+				return a_row.byFile == rule.file && a_row.byQuest == rule.quest && (a_row.byStages & (1u << rule.stage));
+			}));
+		}
+	}
+	CHECK(quickstarts == 18);  // Mass Fusion's 1 to 9, the airport battle's 0 to 8
+}
+
+TEST("stage rules: a stage is a quickstart's while a quickstart that sets it is done in that game (the kick-outs of Mass Fusion's 2 and 1 and of the airport battle's), and not when play reached it")
+{
+	constexpr std::uint32_t DN084 = 0x06D646;
+	constexpr std::uint32_t INST307FIGHT = 0x174029;
+	constexpr std::uint32_t INSTMASSFUSION = 0x15BD39;
+	constexpr std::uint32_t BOSKICKOUT = 0x16FF04;
+	constexpr std::uint32_t BOS303 = 0x0FDC8C;
+	constexpr std::uint32_t INSTKICKOUT = 0x16D036;
+	// Mass Fusion's 2 (the Institute's side): InstMassFusion 30, the Brotherhood's kick-out (it sets BoSKickOut 20), and BoSKickOut 30.
+	CHECK(SetByQuickstartWith(INSTMASSFUSION, 30, { { DN084, 2 } }));
+	CHECK(SetByQuickstartWith(BOSKICKOUT, 20, { { DN084, 2 } }));
+	CHECK(SetByQuickstartWith(BOSKICKOUT, 30, { { DN084, 2 } }));
+	// Mass Fusion's 1 (the Brotherhood's side): BoS303 30, and the Institute's kick-out that starts for a player who is in the Institute.
+	CHECK(SetByQuickstartWith(BOS303, 30, { { DN084, 1 } }));
+	CHECK(SetByQuickstartWith(INSTKICKOUT, 0, { { DN084, 1 } }));
+	// The airport battle's 2 to 8 set its 1, which sets BoSKickOut 20; its 0 and its 1 typed themselves do too.
+	for (std::uint16_t stage = 0; stage <= 8; ++stage) {
+		CHECK(SetByQuickstartWith(BOSKICKOUT, 20, { { INST307FIGHT, stage } }));
+	}
+	// The same stages reached in play, no quickstart done in that game: reported.
+	CHECK(!SetByQuickstartWith(INSTMASSFUSION, 30, {}));
+	CHECK(!SetByQuickstartWith(BOSKICKOUT, 20, {}));
+	CHECK(!SetByQuickstartWith(BOSKICKOUT, 30, {}));
+	CHECK(!SetByQuickstartWith(BOS303, 30, {}));
+	CHECK(!SetByQuickstartWith(INSTKICKOUT, 0, {}));
+	// The two quests' stages that are no quickstarts don't count, nor does the stage that sets the kick-out in play.
+	CHECK(!SetByQuickstartWith(BOSKICKOUT, 20, { { DN084, 10 }, { DN084, 50 }, { INST307FIGHT, 10 }, { INSTMASSFUSION, 30 } }));
+	// Only a quickstart whose script sets that stage: Mass Fusion's 1 runs no kick-out of the Brotherhood's, its 4 goes past
+	// InstMassFusion 30 (and still sets BoSKickOut 30), its 2 and the airport battle's set nothing of BoS303's side.
+	CHECK(!SetByQuickstartWith(BOSKICKOUT, 20, { { DN084, 1 } }));
+	CHECK(!SetByQuickstartWith(BOSKICKOUT, 30, { { DN084, 1 } }));
+	CHECK(!SetByQuickstartWith(INSTMASSFUSION, 30, { { DN084, 4 } }));
+	CHECK(SetByQuickstartWith(BOSKICKOUT, 30, { { DN084, 4 } }));
+	CHECK(!SetByQuickstartWith(BOS303, 30, { { DN084, 2 } }));
+	CHECK(!SetByQuickstartWith(BOS303, 30, { { INST307FIGHT, 2 } }));
+	// Any one of the done quickstarts is enough.
+	CHECK(SetByQuickstartWith(BOS303, 30, { { DN084, 2 }, { INST307FIGHT, 5 }, { DN084, 3 } }));
+	// What the quickstart's script doesn't set is reported after it: the stages played on from there.
+	CHECK(!SetByQuickstartWith(INSTMASSFUSION, 50, { { DN084, 2 } }));
+	CHECK(!SetByQuickstartWith(DN084, 50, { { DN084, 1 }, { DN084, 2 }, { DN084, 9 } }));
+	CHECK(!SetByQuickstartWith(INST307FIGHT, 395, { { INST307FIGHT, 0 }, { INST307FIGHT, 8 } }));
+	// Both sides of a branch in the script count, whichever the game took: Mass Fusion's 3 has the Institute's quest's 50
+	// beside the Brotherhood's.
+	CHECK(SetByQuickstartWith(INSTMASSFUSION, 50, { { DN084, 3 } }));
+	CHECK(SetByQuickstartWith(BOS303, 50, { { DN084, 3 } }));
+	// A quickstart itself has no row (IsDebug is what keeps it home), and only Fallout4.esm's quests have any.
+	CHECK(!SetByQuickstartWith(INST307FIGHT, 1, { { INST307FIGHT, 2 } }));
+	CHECK(!SetByQuickstartWith(BOSKICKOUT, 20, { { DN084, 2 } }, File::kCoast));
 }
 
 TEST("stage rules: the fades and the endings' slides move the player")
@@ -511,15 +602,15 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
 	// The base game's kick-outs and faction outcomes (SILENT's since the hostile hold): Mass Fusion's quickstarts (its 2
 	// among them: it sets InstMassFusion 30) move the player and are never shared (kDebug), its fragments' waits; the
-	// airport battle's 1 (Inst307 35 moves the player) and its quickstarts, the same. The kick-outs themselves have no
-	// RULES row: what they do is HOSTILE's and DISMISSES'.
+	// airport battle's 0 to 8 the same (its 0 moves the player to the airport, its 1 through Inst307 35; play enters at
+	// its 10). The kick-outs themselves have no RULES row: what they do is HOSTILE's and DISMISSES'.
 	CHECK(FlagsOf(0x06D646, 1) == (kMoves | kDebug));  // DN084
 	CHECK(FlagsOf(0x06D646, 2) == (kMoves | kDebug));
 	REQUIRE(Find(0x06D646, 225));
 	CHECK(Find(0x06D646, 225)->wait == 45);
-	CHECK(FlagsOf(0x174029, 1) == kMoves);  // Inst307Fight
+	CHECK(FlagsOf(0x174029, 1) == (kMoves | kDebug));  // Inst307Fight
 	CHECK(FlagsOf(0x174029, 8) == (kMoves | kDebug));
-	CHECK(!Find(0x174029, 0));  // its 0 is no start-up stage
+	CHECK(FlagsOf(0x174029, 0) == (kMoves | kDebug));  // its 0 is no start-up stage: a quickstart
 	CHECK(!Find(0x16FF04, 20));  // BoSKickOut
 	CHECK(!Find(0x16C207, 100));  // RRKickOut
 	CHECK(!Find(0x082615, 10));   // DN117

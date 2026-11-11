@@ -2109,8 +2109,8 @@ teleport's own refusals stand (a conversation, a scene, furniture, Survival, a p
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
 
 A stage that turns a faction on the player is not offered but held (next section); one that moves the player too (a
-kMoves row that is HOSTILE's as well, 19 of them a friend's game can send, no bridge: the Covenant's MS17 465/467/470, the
-Brotherhood's kick-out through InstMassFusion 30 and the airport battle's Inst307Fight 1, InstKickOut 100, RR304 20, the
+kMoves row that is HOSTILE's as well, 18 of them a friend's game can send, no bridge: the Covenant's MS17 465/467/470, the
+Brotherhood's kick-out through InstMassFusion 30, InstKickOut 100, RR304 20, the
 airport's ghouls in BoSM02 2-9 and BoSM04 2-4, Kiddie Kingdom's 6) is offered worded as a fight, "<friend> is fighting in
 <quest>: hold <key> to join them", once the hold has let it
 through, and set beside the friend; not gone with (the offer run out, nobody to follow, or caught up from the session)
@@ -2119,20 +2119,18 @@ the same (Verdict::kHostileOnly: the same Papyrus call the stage's script makes,
 Faction.SetPlayerEnemy(), from the HOSTILE row's HostileCall, queued on the game's VM; the log says "not setting ... the
 faction it turns on the player is turned on them here all the same"; a call the VM wouldn't queue, a load on, is tried
 again at the next poll, the quest waiting, up to HostileHold::CALL_TRIES, and one made here this session isn't made twice).
-The four of them that are a faction's kick-out run the kick-out itself instead (StageRules::KICKOUTS, read off the game's
-scripts: BoSKickOut 20 for InstMassFusion 30, RR304 20 and Inst307Fight 1, whose BoSKickOutScript.KickOut moves nobody and tests nothing
+The three of them that are a faction's kick-out run the kick-out itself instead (StageRules::KICKOUTS, read off the game's
+scripts: BoSKickOut 20 for InstMassFusion 30 and RR304 20, whose BoSKickOutScript.KickOut moves nobody and tests nothing
 about where the player is, and the start of InstKickOut for InstKickOut 100, whose start-up stage is the kick-out and judges
 this player's place itself, inside or out, while 100 is the teleport out for a player inside): the faction's quests
 failed, the player out of the faction, its companion dismissed (Danse by COMDanse 91, X6-88 by ComX688 91), its base's
 fast travel refused, as the stage's script would; a kick-out that ran here already (BoSKickOut 20 through RR304 1, a bridge
 set here itself) is not run again. What else the other 15 do (the Covenant's fight scene, the airport's set-up) is the
 stage's, not made here. The developers' quickstarts among such stages (Mass Fusion's DN084 1 to 9, the airport battle's
-Inst307Fight 2 to 8: stages only a console's setstage sets, each of which jumps into the quest and runs a faction's
-kick-out on the way) are never shared at all: RULES' kDebug (StageRules::IsDebug; the scan's DEBUG list in
-tools/questscan.cs), not reported, not sent with a game's progress, and one that arrives all the same (an older
-version's report, a session file from one) is dropped on receipt with one INFO line, never set, never its faction
-turned, nothing waiting behind it. Before, a quickstart typed at one player's console ran a kick-out in every friend's
-game. A stage whose hostility holds here already, by the game's own reading (the faction's and
+Inst307Fight 0 to 8: stages only a console's setstage sets, each of which jumps into the quest and runs a faction's
+kick-out on the way) are never shared at all, and neither are the stages their scripts set in the game where they were
+typed: "A console quickstart is the typing player's own", below. A stage whose hostility holds here already, by the
+game's own reading (the faction's and
 PlayerFaction's reactions list each other as enemies, or the faction's player-enemy flag: a rejoin's catch-up, a load of a
 save past it, a stage behind one that turned the faction already), neither holds nor calls, and no HUD line says it
 turned. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
@@ -2181,8 +2179,8 @@ BoSKickOutSoft (their quests failed or set past, no faction turned: up to 0.16.1
 too", which its script does not do), the Railroad's RRKickOut (100: the player its enemy, its people made mortal, 300 its
 quests failed), Mass Fusion's DN084 (from its 10 on: its 1 to 9 are quickstarts, never shared; its followers' descent
 packages, DN084_Overrides, start in each game: the scan's ALLOW_STARTS) and its two final battles, the Institute's
-airport battle Inst307Fight (its 1 sets BoSKickOut 20; its 0 moves the player: kMoves; its 2 to 8 are quickstarts, never
-shared), Danse's exile BoSDansePostGame,
+airport battle Inst307Fight (from its 10 on, which Inst307 30 sets in play: its 0 to 8 are quickstarts, never shared;
+its 1, which the others go through, sets BoSKickOut 20), Danse's exile BoSDansePostGame,
 Eddie Winter's MS07cEddiePostQuestLines, the D.B. Technical boss room's DN028 and Spectacle Island's DN117 (a settlement
 given). Their stages that turn a faction on the player are HOSTILE rows (245 now), so a far friend's kick-out waits
 until none of the faction is near, and their moves and waits are RULES rows, their cross-quest stages SETS_ANOTHER's,
@@ -2205,11 +2203,86 @@ quest.hostile_companion_unnamed), never an empty name. A row whose dismissal the
 scan's CONDITIONAL: 25 rows, all X6-88's, through MinutemenCentralScript.CheckForMQAdvance, which kicks the player out
 of the Institute only when the Minutemen's story has got that far) gives no line and uses up nothing: the line said a
 companion was leaving who then stayed, and spent the one warning the real kick-out had (StageRules::DismissalWarnings
-holds who was warned). The airport battle's 1 is a KICKOUTS mover too: far from the friend, the Brotherhood's kick-out
-itself is run here (BoSKickOut 20), as for InstMassFusion 30. The rig's step_kickout (opt-in) sets the Brotherhood's
+holds who was warned). The airport battle's 1 is a quickstart as its 0 and 2 to 8 are (only they set it: play enters the
+battle at its 10), never shared, so its HOSTILE and DISMISSES rows are never used and it has no KICKOUTS row. The rig's step_kickout (opt-in) sets the Brotherhood's
 kick-out with the VM at the police station, far from the host: the stage waits (a game that gives no answer is the
 rig's failure, not a pass), the VM walks away (real movement, walk_away), its Brotherhood turns once it is clear of them,
 and a companion of another faction at the VM's side is left alone (a Brotherhood one would be taken, with the line).
+
+### A console quickstart is the typing player's own (StageRules::kDebug, QUICKSTART_SETS, QuestSync.cpp)
+
+Mass Fusion's DN084 1 to 9 and the airport battle's Inst307Fight 0 to 8 are the developers' quickstarts: stages only a
+console's setstage sets (play enters DN084 at its start-up stage 10 and the battle at its 10, which Inst307 30 sets),
+each of which jumps into the quest and runs a faction's kick-out on the way. DN084 2, 4, 6 and 8 set BoSKickOut 30, and 2
+also InstMassFusion 30, whose script sets BoSKickOut 20; DN084 1, 3, 5, 7 and 9 set BoS303 30, which makes the Institute
+the player's enemy and starts its kick-out for a player who is in it; Inst307Fight 0 and 2 to 8 set its 1, which sets
+BoSKickOut 20. Before, one typed at a player's console ran the kick-out in every friend's game. The rule now: what a
+console quickstart does is the typing player's own, and none of it is shared as quest progress. Two tables keep it,
+both generated by the scan from the game's scripts:
+
+- The quickstarts themselves are RULES' kDebug rows (StageRules::IsDebug; the scan's DEBUG list in tools/questscan.cs, by
+  hand, 18 stages). One is never reported, never sent with a game's progress, and one that arrives all the same (an
+  older version's report, a session file from one) is dropped on receipt with one INFO line: never set, never its
+  faction turned, no kick-out run, nothing waiting behind it.
+- What their scripts set is StageRules::QUICKSTART_SETS (224 rows, tools/questscan.ps1 -Quickstarts): for each
+  quickstart, every (quest, stage) its script sets, itself or through the stages it sets, the functions it calls and
+  the quests it starts (their start-up stages), as far down as the scan can follow. While a quickstart is done in a
+  game, that game reports none of the stages its rows name: not live, not with the host's progress at the start of a
+  session (QuestSync's SetByQuickstart, in the report loop and in QueueBaseline), and it sends no "quest completed" line
+  for a quest whose current stage is one of them. The log says so for the first of them ("not reporting ... a
+  developer's quickstart set at this game's console set it"), the baseline's line counts them, and the quests' status
+  line has quickstartSet=.
+
+It goes by the quickstart's stage being done in that game, which the save keeps, not by a timer or a list kept for the
+session: a stage reads done before its script has run (src/game/StageLog.h), so the first poll after the console
+command already knows, however long the script takes, and a host who loads that save a week later still leaves the
+same stages out of the progress the session starts from. A later joiner therefore gets none of them either: the
+session only ever holds what was reported. What the session held before the quickstart was typed stays in it.
+
+What that does and does not cover, exactly:
+
+- The rows are every stage the quickstart's script can set, both sides of each branch the game's state decides, so
+  more than one run sets (DN084 3 to 9 have InstMassFusion's 40 to 70 beside BoS303's; BoS303 30 starts InstKickOut only
+  for a player in the Institute). And since it goes by the save, a stage of the rows that play set in that game, before
+  the console did or after, is not reported from it either. A game with a quickstart done reports less than it played,
+  never a stage nobody played.
+- Only what the scan follows: a SetStage with a literal stage, or a Start, on a quest it can name. Not followed, and so
+  reported as any stage when the game sets it: a stage that is no literal (the companions' affinity thresholds, under
+  both kick-outs), and whatever is set later by something the script only starts or waits for (a scene, a timer, an
+  event, a line of dialogue, a terminal). The scan lists each call it did not follow.
+- Only quest stages and the "completed" line. What the script did to the world of the game that ran it (who it killed,
+  enabled or moved; the typing player's own place and faction) is that game's state, and the other sync systems carry
+  what they carry of any game's.
+- Only these two quests' quickstarts. Other quests' developer stages are not marked kDebug by this and are shared as
+  before.
+- What is played on from there is play, and is reported: after DN084 2 at the console, the building fought through
+  sends DN084's and InstMassFusion's later stages as it would in any game.
+
+What the friends' games do with those later stages (read off the scripts; not tested in a game). A friend's game sets
+them without the ones left out, by the paths any stage takes: a quest it never began is started first (DN084's
+start-up 10; InstMassFusion's 5; Inst307Fight's 10, the airport's set-up for the battle: the
+Brotherhood's defences enabled, its guards disabled, the vertibirds' quest started; BoS303 and Inst307 have no start-up
+stage), then the stage is set. None of that is a kick-out and no later stage of these quests makes one: the kick-outs
+are in BoSKickOut 20 and 30, InstKickOut's start-up, BoS303 30 and Inst307Fight 1, all left out or never shared, and in
+InstMassFusion 30, which of the quickstarts only DN084 2 sets. So the friend stays in the faction the typing player was thrown out of, and
+the two saves differ there until play makes them agree: the host who typed Inst307Fight 3 fights the Brotherhood at the
+airport while the friend beside them is still its member, and its soldiers are not the friend's enemies by any quest
+stage. Two ways a real stage still turns the faction on the friend, both the game's own and shared as in any session:
+InstMassFusion 30 reached in play after DN084 4, 6 or 8 (which skip it) runs the Brotherhood's kick-out in the friend's
+game, as that stage does in any session; and BoS303 250, which has a HOSTILE row for the Institute through the
+Minutemen's chain, waits and lands as any HOSTILE stage does, and its script turns the Institute only where that
+chain's own conditions hold in the friend's game.
+
+One known wrong turn. Mass Fusion's real stages choose the Brotherhood's or the Institute's side by DN084 11 and 12,
+which play sets through BoS303 30 and InstMassFusion 30 and a quickstart sets itself: left out with the rest. A friend's
+game has neither, so where a fragment tests "11, else" (DN084 20, 270, 315, 350, 410, 420, 450) it takes the Institute's
+side even when the typing player took the Brotherhood's (DN084 1, 3, 5, 7, 9): it sets InstMassFusion 40, 140, 180 and 190
+there, starting the Institute's Mass Fusion quest beside the Brotherhood's, and that game can report them as its own
+progress (a script's stage of another quest is outside the reaction window, which is per quest), so the others can get
+that quest too; where a fragment tests "11, else if 12" (DN084 50, 200, 210) it does
+neither side's part. No kick-out is in any of those branches (InstMassFusion 30 is not among them). After an
+Institute-side quickstart (DN084 2, 4, 6, 8) the "else" is the right side. Not fixed here: sharing the two side markers
+would be the first thing a quickstart causes that is shared.
 
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 

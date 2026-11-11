@@ -529,55 +529,227 @@ TEST("sim quests: a friend's stage that turns a faction on the player (the robot
 
 namespace
 {
-	constexpr std::uint32_t DN084 = 0x0006D646;         // Mass Fusion: its 1 to 9 are the developers' quickstarts, each of which runs a faction's kick-out
-	constexpr std::uint32_t INST307FIGHT = 0x00174029;  // the airport battle: its 2 to 8 are
+	constexpr std::uint32_t DN084 = 0x0006D646;           // Mass Fusion: its 1 to 9 are the developers' quickstarts, each of which runs a faction's kick-out
+	constexpr std::uint32_t INST307FIGHT = 0x00174029;    // the airport battle: its 0 to 8 are
+	constexpr std::uint32_t INSTMASSFUSION = 0x0015BD39;  // the Institute's side of Mass Fusion: its 30 is the Brotherhood's kick-out (it sets BoSKickOut 20)
+	constexpr std::uint32_t BOSKICKOUT = 0x0016FF04;      // the Brotherhood's kick-out: its 20 and its 30
+	constexpr std::uint32_t BOS303 = 0x000FDC8C;          // the Brotherhood's side of Mass Fusion: its 30 makes the Institute the player's enemy
 
-	// Mass Fusion and the airport battle, shared with the story; a_done: Mass Fusion's stages done in this game already.
-	void GiveQuickstartQuests(Client& a_player, Stages a_done = {})
+	// Mass Fusion, the airport battle and the quests their quickstarts reach, shared with the story, with the scripts
+	// that set another quest's stage on the way; a_done: the stages done in this game already.
+	void GiveQuickstartQuests(Client& a_player, const std::map<std::uint32_t, Stages>& a_done = {})
 	{
-		auto massFusion = Started({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 30 });
-		massFusion.story = true;
-		for (const auto stage : a_done) {
-			massFusion.done.insert(stage);
-			massFusion.current = (std::max)(massFusion.current, stage);
+		const auto give = [&](std::uint32_t a_id, Quest a_quest) {
+			a_quest.story = true;
+			if (const auto done = a_done.find(a_id); done != a_done.end()) {
+				for (const auto stage : done->second) {
+					a_quest.done.insert(stage);
+					a_quest.current = (std::max)(a_quest.current, stage);
+				}
+			}
+			a_player.GiveQuest(a_id, std::move(a_quest));
+		};
+		give(DN084, Started({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 50 }));
+		auto battle = Started({ 1, 2, 3, 4, 5, 6, 7, 8, 15 });
+		battle.starts = { { 2, { INST307FIGHT, 1 } }, { 1, { BOSKICKOUT, 20 } } };  // its 2 to 8 all go through its 1, which runs the kick-out
+		give(INST307FIGHT, std::move(battle));
+		auto institute = Started({ 5, 10, 30, 40, 50 });
+		institute.starts = { { 30, { BOSKICKOUT, 20 } } };
+		give(INSTMASSFUSION, std::move(institute));
+		give(BOSKICKOUT, Started({ 20, 30 }));
+		give(BOS303, Started({ 30, 40, 200 }));
+	}
+
+	// A quickstart typed at this player's console, and the stages its script sets in that game (the quickstart reads done
+	// first, as in the game).
+	void Quickstart(Client& a_player, std::uint32_t a_quest, std::uint16_t a_stage, std::initializer_list<std::pair<std::uint32_t, std::uint16_t>> a_sets = {})
+	{
+		a_player.Stage(a_quest, a_stage);
+		for (const auto& [quest, stage] : a_sets) {
+			a_player.Stage(quest, stage);
 		}
-		a_player.GiveQuest(DN084, std::move(massFusion));
-		auto battle = Started({ 2, 3, 4, 5, 6, 7, 8, 15 });
-		battle.story = true;
-		a_player.GiveQuest(INST307FIGHT, std::move(battle));
+	}
+
+	// Nothing of a quickstart reached this game: nothing set, dropped, skipped, kept waiting or shown.
+	void CheckUntouched(const Client& a_player)
+	{
+		for (const auto quest : { DN084, INST307FIGHT, INSTMASSFUSION, BOSKICKOUT, BOS303 }) {
+			CHECK(Done(a_player, quest).empty());
+		}
+		CHECK(a_player.Quests().debugDropped == 0);
+		CHECK(a_player.Quests().Skipped().empty());
+		CHECK(a_player.Quests().WaitingCount() == 0);
+		CHECK(a_player.Quests().Notices().empty());
 	}
 }
 
-TEST("sim quests: a developer's quickstart set at a player's console is never sent, with the host's progress or live; the stages play sets around it are")
+TEST("sim quests: a developer's quickstart set at a player's console is never sent, with the host's progress or live; a stage play sets after it is")
 {
 	Session s{ SharedStory() };
 	auto&   host = s.Host();
 	auto&   bob = s.Player("Bob");
-	// Before hosting, the host jumped into Mass Fusion with a quickstart at the console (its 2) and played on to its 10.
-	GiveQuickstartQuests(host, { 2, 10 });
+	// Before hosting, the host jumped into Mass Fusion with a quickstart at the console (its 2) and played on to its 50.
+	GiveQuickstartQuests(host, { { DN084, { 2, 50 } } });
 	GiveQuickstartQuests(bob);
 	REQUIRE(host.Join());
 	REQUIRE(bob.Join());
 	s.PlayFor(10s);
-	CHECK(host.Quests().baselined == 1);  // its 10; not the quickstart
-	CHECK((Done(bob, DN084) == Stages{ 10 }));
+	CHECK(host.Quests().baselined == 1);  // its 50; not the quickstart
+	CHECK((Done(bob, DN084) == Stages{ 50 }));
 
 	// In the session the host sets more of them at the console, and plays a stage.
 	host.Stage(DN084, 4);
 	host.Stage(INST307FIGHT, 5);
-	host.Stage(DN084, 30);
+	host.Stage(INST307FIGHT, 15);
 	s.PlayFor(10s);
-	CHECK(host.Quests().reported == 1);  // the 30
-	CHECK((Done(bob, DN084) == Stages{ 10, 30 }));
-	CHECK(Done(bob, INST307FIGHT).empty());
+	CHECK(host.Quests().reported == 1);  // the battle's 15
+	CHECK((Done(bob, DN084) == Stages{ 50 }));
+	CHECK((Done(bob, INST307FIGHT) == Stages{ 15 }));
 	// Nothing of them ever left the host's game: Bob's has nothing to drop, skip or keep waiting.
 	CHECK(bob.Quests().debugDropped == 0);
 	CHECK(bob.Quests().Skipped().empty());
 	CHECK(bob.Quests().WaitingCount() == 0);
 	CHECK(bob.Quests().Notices().empty());
 	// The host's own game keeps what its console set.
-	CHECK((Done(host, DN084) == Stages{ 2, 4, 10, 30 }));
-	CHECK((Done(host, INST307FIGHT) == Stages{ 5 }));
+	CHECK((Done(host, DN084) == Stages{ 2, 4, 50 }));
+	CHECK((Done(host, INST307FIGHT) == Stages{ 5, 15 }));
+}
+
+TEST("sim quests: the stages a quickstart's script sets in the game whose console set it (the kick-outs of Mass Fusion's 2 and 1 and of the airport battle's 2) are never sent, from the host or a friend, live or to a later joiner; what is played on from there is")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	auto&   dave = s.Player("Dave");
+	for (const auto player : { &host, &bob, &carol, &dave }) {
+		GiveQuickstartQuests(*player);
+	}
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	Settled(s);
+
+	// The host types Mass Fusion's 2: its script sets Mass Fusion's 10 and 12, the Institute's quest up to its 30 (the
+	// Brotherhood's kick-out, which sets BoSKickOut 20) and 40, and BoSKickOut 30.
+	Quickstart(host, DN084, 2, { { DN084, 10 }, { DN084, 12 }, { INSTMASSFUSION, 5 }, { INSTMASSFUSION, 10 }, { INSTMASSFUSION, 30 }, { BOSKICKOUT, 30 }, { INSTMASSFUSION, 40 } });
+	s.PlayFor(10s);
+	CHECK((Done(host, INSTMASSFUSION) == Stages{ 5, 10, 30, 40 }));
+	CHECK((Done(host, BOSKICKOUT) == Stages{ 20, 30 }));
+	CHECK(host.Quests().reported == 0);
+	CHECK(host.Quests().quickstartSet == 8);  // all of them, and BoSKickOut 20
+	CheckUntouched(bob);
+	CheckUntouched(carol);
+
+	// Bob types Mass Fusion's 1: its script sets BoS303 30, which makes the Institute his enemy.
+	Quickstart(bob, DN084, 1, { { DN084, 10 }, { BOS303, 30 } });
+	s.PlayFor(10s);
+	CHECK(bob.Quests().reported == 0);
+	CHECK(bob.Quests().quickstartSet == 2);
+	CHECK(Done(host, BOS303).empty());
+	CheckUntouched(carol);
+
+	// Carol types the airport battle's 2: it sets the battle's 1 (a quickstart too), which sets BoSKickOut 20.
+	Quickstart(carol, INST307FIGHT, 2);
+	s.PlayFor(10s);
+	CHECK((Done(carol, INST307FIGHT) == Stages{ 1, 2 }));
+	CHECK((Done(carol, BOSKICKOUT) == Stages{ 20 }));
+	CHECK(carol.Quests().reported == 0);
+	CHECK(carol.Quests().quickstartSet == 1);  // BoSKickOut 20; the battle's 1 is a quickstart itself
+	CHECK(Done(host, INST307FIGHT).empty());
+	CHECK(Done(bob, INST307FIGHT).empty());
+	CHECK(Done(bob, BOSKICKOUT).empty());  // not the host's two, not Carol's
+
+	// Dave joins later: the session holds none of it.
+	REQUIRE(dave.Join());
+	s.PlayFor(10s);
+	CheckUntouched(dave);
+
+	// The host plays on: the Institute's quest's 50 is no quickstart's of Mass Fusion's 2, and goes to everyone.
+	host.Stage(INSTMASSFUSION, 50);
+	s.PlayFor(10s);
+	CHECK(host.Quests().reported == 1);
+	for (const auto player : { &bob, &carol, &dave }) {
+		CHECK((Done(*player, INSTMASSFUSION) == Stages{ 50 }));
+		CHECK(player->Quests().Skipped().empty());
+		CHECK(player->Quests().WaitingCount() == 0);
+	}
+	// Still nothing of the host's kick-out anywhere else.
+	CHECK(Done(bob, BOSKICKOUT).empty());
+	CHECK(Done(dave, BOSKICKOUT).empty());
+}
+
+TEST("sim quests: a host whose save has a quickstart done reports neither it nor what its script set with its progress, on any later session; what was played after it goes")
+{
+	// Before hosting, the host typed Mass Fusion's 2 (as above) and played on to the Institute's quest's 50 and Mass Fusion's 50.
+	const std::map<std::uint32_t, Stages> save{ { DN084, { 2, 10, 12, 50 } }, { INSTMASSFUSION, { 5, 10, 30, 40, 50 } }, { BOSKICKOUT, { 20, 30 } } };
+	for (int session = 0; session < 2; ++session) {  // the progress is read again from the game each time it hosts
+		Session s{ SharedStory() };
+		auto&   host = s.Host();
+		auto&   bob = s.Player("Bob");
+		auto&   carol = s.Player("Carol");
+		GiveQuickstartQuests(host, save);
+		GiveQuickstartQuests(bob);
+		GiveQuickstartQuests(carol);
+		REQUIRE(host.Join());
+		REQUIRE(bob.Join());
+		s.PlayFor(10s);
+		CHECK(host.Quests().baselined == 2);  // the two 50s
+		CHECK((Done(bob, DN084) == Stages{ 50 }));
+		CHECK((Done(bob, INSTMASSFUSION) == Stages{ 50 }));
+		CHECK(Done(bob, BOSKICKOUT).empty());
+		CHECK(bob.Quests().debugDropped == 0);
+		CHECK(bob.Quests().WaitingCount() == 0);
+		CHECK(bob.Quests().Notices().empty());
+
+		REQUIRE(carol.Join());
+		s.PlayFor(10s);
+		CHECK((Done(carol, DN084) == Stages{ 50 }));
+		CHECK((Done(carol, INSTMASSFUSION) == Stages{ 50 }));
+		CHECK(Done(carol, BOSKICKOUT).empty());
+		CHECK(carol.Quests().WaitingCount() == 0);
+	}
+}
+
+TEST("sim quests: the same kick-out stages reached in play, with no quickstart done in that game, are sent and reach the friends")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	for (const auto player : { &host, &bob, &carol }) {
+		GiveQuickstartQuests(*player);
+	}
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(1000.0f, 1000.0f);
+	bob.Move(1200.0f, 1000.0f);
+	Settled(s);
+
+	// The host sides with the Institute in play: the Institute's quest's 30 (its script sets BoSKickOut 20), then BoSKickOut 30.
+	Reach(host, INSTMASSFUSION, { 5, 10, 30 });
+	host.Stage(BOSKICKOUT, 30);
+	s.PlayFor(10s);
+	CHECK(host.Quests().reported == 5);
+	CHECK(host.Quests().quickstartSet == 0);
+	CHECK((Done(bob, INSTMASSFUSION) == Stages{ 5, 10, 30 }));
+	CHECK((Done(bob, BOSKICKOUT) == Stages{ 20, 30 }));
+
+	// Bob reaches the Brotherhood's side's 30 in play.
+	bob.Stage(BOS303, 30);
+	s.PlayFor(10s);
+	CHECK(bob.Quests().reported == 1);
+	CHECK((Done(host, BOS303) == Stages{ 30 }));
+
+	// A quickstart done in ANOTHER game changes nothing for this one: Carol typed the airport battle's 2 at home, joins,
+	// and the host's kick-out stages reach her from the session all the same.
+	Quickstart(carol, INST307FIGHT, 2);
+	REQUIRE(carol.Join());
+	s.PlayFor(15s);
+	CHECK((Done(carol, BOSKICKOUT) == Stages{ 20, 30 }));
+	CHECK((Done(carol, BOS303) == Stages{ 30 }));
+	CHECK((Done(host, BOSKICKOUT) == Stages{ 20, 30 }));
+	CHECK(Done(host, INST307FIGHT).empty());
 }
 
 TEST("sim quests: a quickstart that reaches a friend's game all the same (an older version's report) is never set there, live or caught up from the session, and holds nothing up")

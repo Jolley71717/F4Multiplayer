@@ -40,6 +40,7 @@ public static class GearScan
     public class Quest
     {
         public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>();
+        public List<int> StageIds = new List<int>();  // each stage's index (INDX), in the record's order
         public List<int> ObjectiveIds = new List<int>();  // each objective's index (QOBJ), in the record's order
         public string Event = "";  // the story manager event that starts it (ENAM), if any
         public List<string> Scripts = new List<string>();  // the scripts attached to the quest itself (its VMAD), not its stage fragments' or aliases'
@@ -201,7 +202,7 @@ public static class GearScan
                                 if (st == "EDID") q.Edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                                 if (st == "DNAM" && ss >= 12) { q.Flags = BitConverter.ToUInt16(body, d); q.Type = body[d + 8]; }
                                 if (st == "ENAM" && ss >= 4) q.Event = Encoding.ASCII.GetString(body, d, 4);
-                                if (st == "INDX") { q.Stages++; if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
+                                if (st == "INDX") { q.Stages++; if (ss >= 2) q.StageIds.Add(BitConverter.ToUInt16(body, d)); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
                                 if (st == "QOBJ") { q.Objectives++; if (ss >= 2) q.ObjectiveIds.Add(BitConverter.ToUInt16(body, d)); }
                                 if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); }
                             }
@@ -640,6 +641,19 @@ public static class MoveScan
         return null;
     }
 
+    // The quest a property of a quest's scripts holds (its VMAD: the form itself, not a guess from the name), or null:
+    // BoSKickOutScript's BoSDialogue is BoSDialoguePrydwen.
+    static Tuple<GearScan.Quest, int> QuestOfProp(Tuple<GearScan.Quest, int> a_owner, string a_var)
+    {
+        if (a_owner == null) return null;
+        var n = Bare(a_var);
+        List<uint> ids;
+        if (!a_owner.Item1.Props.TryGetValue(n, out ids) || ids.Count != 1) return null;
+        int file = (int)(ids[0] >> 24);
+        GearScan.Quest q;
+        return file < perFile.Count && perFile[file].TryGetValue(ids[0] & 0xFFFFFF, out q) ? Tuple.Create(q, file) : null;
+    }
+
     // The quest with this editor ID (and its file), or null.
     public static Tuple<GearScan.Quest, int> QuestByEdid(string a_edid)
     {
@@ -864,6 +878,79 @@ public static class MoveScan
     {
         Dictionary<int, List<GearScan.Func>> stages;
         return fragments.TryGetValue(Tuple.Create(a_file, a_quest & 0xFFFFFF), out stages) ? stages : new Dictionary<int, List<GearScan.Func>>();
+    }
+
+    // A stage that a stage's script sets: its quest (and file), the stage, and the stage whose fragment (or a function
+    // it calls) sets it ("InstMassFusion 30").
+    public class Reached { public int File; public GearScan.Quest Quest; public int Stage; public string By; }
+
+    // Every stage that setting a stage sets, as deep as it goes (all of them, not the first found as Walk: each function
+    // and each stage is walked once, breadth first): by its fragment and the script functions it calls (as Walk reads
+    // them: the instructions a call can reach with its literal arguments, the quest's own script through kmyQuest or
+    // self, any script a property or local is typed with), a SetStage on its own quest or on any other (the quest the
+    // property holds in the VMAD of the quest whose script it is, else matched by the property's name, or by the
+    // variable's type when that script is on one quest only), and the stages those set in
+    // turn. A SetStage or Start of another quest that the game doesn't start by itself (not Start Game Enabled) starts
+    // it if it isn't running: its start-up stages are set too, and so are a_quest's own when a_starts (a console's
+    // setstage starts the quest). Every branch is taken that a literal argument doesn't decide: what a stage sets only
+    // on a condition of the game it runs in is in the set. a_unresolved gets each SetStage or Start it could not follow
+    // (on a variable that names no quest, or with a stage that is no literal). What it does not see is what Walk does
+    // not: a scene, a timer or event a script waits for, a call through a variable whose type has no script.
+    public static List<Reached> Sets(int a_file, GearScan.Quest a_quest, int a_stage, bool a_starts, List<string> a_unresolved)
+    {
+        var found = new HashSet<string>();
+        var order = new List<Reached>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var todo = new Queue<Tuple<GearScan.Func, string[], Tuple<GearScan.Quest, int>, string>>();
+        Action<int, GearScan.Quest, int, string> add = (file, quest, stage, by) =>
+        {
+            if (!found.Add(file + ":" + (quest.Id & 0xFFFFFF) + ":" + stage)) return;
+            if (by != null) order.Add(new Reached { File = file, Quest = quest, Stage = stage, By = by });
+            Dictionary<int, List<GearScan.Func>> all;
+            List<GearScan.Func> list;
+            if (fragments.TryGetValue(Tuple.Create(file, quest.Id & 0xFFFFFF), out all) && all.TryGetValue(stage, out list))
+                foreach (var f in list) todo.Enqueue(Tuple.Create(f, (string[])null, Tuple.Create(quest, file), quest.Edid + " " + stage));
+        };
+        add(a_file, a_quest, a_stage, null);
+        if (a_starts && (a_quest.Flags & 1) == 0) foreach (var s in a_quest.Startup) add(a_file, a_quest, s, a_quest.Edid + " " + a_stage + ", starting the quest");
+        while (todo.Count > 0)
+        {
+            var item = todo.Dequeue();
+            var f = item.Item1; var quest = item.Item3; var by = item.Item4;
+            var key = f.Obj + "." + f.State + "." + f.Name + "(" + (item.Item2 == null ? "" : string.Join(",", item.Item2.Select(a => a ?? "?").ToArray())) + ")@" + (quest == null ? "" : quest.Item2 + ":" + quest.Item1.Id);
+            if (!seen.Add(key)) continue;
+            foreach (var i in Reachable(f, item.Item2))
+            {
+                if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
+                if (i.Op == 23 && (Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start")))
+                {
+                    var own = Own(i.Args[1]);
+                    var target = own ? quest : QuestOfProp(quest, i.Args[1]) ?? QuestOf(i.Args[1]) ?? QuestOfScript(TypeOf(f, i.Args[1]));
+                    if (target == null) { if (a_unresolved != null) a_unresolved.Add(by + ": " + f.Obj + "." + f.Name + ": " + i.Args[0] + " on " + i.Args[1] + (i.Args.Count > 3 ? " " + i.Args[3] : "")); continue; }
+                    if (Is(i.Args[0], "SetStage"))
+                    {
+                        int s;
+                        if (i.Args.Count > 3 && int.TryParse(i.Args[3], out s)) add(target.Item2, target.Item1, s, by);
+                        else if (a_unresolved != null) a_unresolved.Add(by + ": " + f.Obj + "." + f.Name + ": SetStage on " + target.Item1.Edid + " with " + (i.Args.Count > 3 ? i.Args[3] : "?"));
+                    }
+                    bool same = own || (quest != null && target.Item1 == quest.Item1);
+                    if (!same && (target.Item1.Flags & 1) == 0) foreach (var s in target.Item1.Startup) add(target.Item2, target.Item1, s, by + ", starting " + target.Item1.Edid);
+                    continue;
+                }
+                string type, name;
+                if (i.Op == 25) { type = i.Args[0]; name = i.Args[1]; }
+                else if (i.Op == 24) { Script sc; type = scripts.TryGetValue(f.Obj, out sc) ? sc.Obj.Parent : null; name = i.Args[0]; }
+                else { type = TypeOf(f, i.Args[1]); name = i.Args[0]; }
+                if (type == null) continue;
+                string owner;
+                var g = Find(type, name, out owner);
+                if (g == null) continue;
+                var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? quest : i.Op == 23 ? QuestOfScript(type) : null;
+                int first = i.Op == 24 ? 2 : 3;
+                todo.Enqueue(Tuple.Create(g, i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray(), q, by));
+            }
+        }
+        return order;
     }
 
     // Reads every master's quests and scripts (once).
@@ -1730,7 +1817,8 @@ public static class ParentScan
 // player in it. A take is flagged kPays, but whether its item is an ordinary one (caps, armor) or the quest's own (MS11's
 // cables, read from a property too) is checked by hand: a quest item stays unflagged. A stage 0 that isn't its quest's
 // start-up stage is left out (listed at the end): a developer's shortcut, never set in a game played through, by which
-// StageRules::Starting judges every stage that starts the quest (as MQ203's and MQ204's 0). Bridges (kBridge) and the
+// StageRules::Starting judges every stage that starts the quest (as MQ203's and MQ204's 0); one that DEBUG names has
+// its kDebug row all the same. Bridges (kBridge) and the
 // story (kStory) are not decided here; a developer's quickstart is, by hand (DEBUG: kDebug). The Automatron and
 // Nuka-World rows were made with it; the older rows of Fallout4.esm and DLCCoast.esm were made before it, their payments
 // traced by hand, and differ from its output in their waits.
@@ -1738,18 +1826,20 @@ public static class RuleScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
 
-    // The developers' quickstarts among the shared quests' numbered stages: stages only a console's setstage sets (no
-    // fragment, script or other quest sets them from play: -SetsOther finds no setter but each other), each of which
-    // puts the player at a point of the quest and sets the story up to it, a faction's kick-out included. Read by hand
-    // in the fragments; the stage 0s of this kind are left out by the start-up rule above. Their rows get kDebug
-    // (StageRules.h: never shared, neither reported nor set from a friend's), and a row even when the stage neither
-    // moves, takes nor waits. Each prints with "[a quickstart]".
+    // The developers' quickstarts among the shared quests' stages: stages only a console's setstage sets (no fragment,
+    // script or other quest sets them from play: -SetsOther finds no setter but each other), each of which puts the
+    // player at a point of the quest and sets the story up to it, a faction's kick-out included. Read by hand in the
+    // fragments. Their rows get kDebug (StageRules.h: never shared, neither reported nor set from a friend's), and a
+    // row even when the stage neither moves, takes nor waits, or is a stage 0 that is no start-up stage (the other
+    // quests' stage 0s of this kind are left out by the start-up rule above: no row). Each prints with "[a
+    // quickstart]". What each sets in the game it is typed in is QuickstartScan's (-Quickstarts: QUICKSTART_SETS), so
+    // that isn't sent either. A quickstart's stage is below 16 (QUICKSTART_SETS keeps them as bits).
     class Debug { public string Quest; public int From; public int To; public string Why; }
     static readonly Debug[] DEBUG = {
         new Debug { Quest = "DN084", From = 1, To = 9, Why = "Mass Fusion's quickstarts: each moves the player to a DN084_...QuickstartMarker (the lobby, the descent, the reactor, the battle, on the Brotherhood's path or the Institute's) and sets that path's stages up to it: 2, 4, 6 and 8 InstMassFusion's or BoSKickOut 30 (the Brotherhood's kick-out), 1, 3, 5, 7 and 9 BoS303's, its 30 the Institute's kick-out. In play the quest starts at 10" },
-        new Debug { Quest = "Inst307Fight", From = 2, To = 8, Why = "the airport battle's quickstarts: each sets its 1 (the Institute's faction, BoSKickOut 20, Inst307's stages) and moves the player to a point of the battle. In play the battle starts at 10, set by Inst307 30" },
+        new Debug { Quest = "Inst307Fight", From = 0, To = 8, Why = "the airport battle's quickstarts: 1 sets what play would have set before the battle (the player in the Institute's faction and out of the Brotherhood's, BoSKickOut 20 the Brotherhood's kick-out, Inst307 10 to 35, its own 10); 0 and 2 to 8 set 1 and move the player to a point of the battle (6 and 7 set its phases' stages too). Nothing else sets 0 or 1: in play the battle starts at 10, set by Inst307 30" },
     };
-    static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
+    public static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
 
     static double Waits(GearScan.Func f)
     {
@@ -1793,7 +1883,7 @@ public static class RuleScan
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
                     bool debug = IsDebug(quest.Edid, stage);
                     if (moves == null && takes.Count == 0 && wait == 0 && !debug) continue;
-                    if (stage == 0 && !quest.Startup.Contains(0))
+                    if (stage == 0 && !quest.Startup.Contains(0) && !debug)
                     {
                         left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
                         continue;
@@ -1822,6 +1912,66 @@ public static class RuleScan
         {
             sb.AppendLine("# left out, a stage 0 that is not its quest's start-up stage:");
             foreach (var l in left) sb.AppendLine(l);
+        }
+        return sb.ToString();
+    }
+}
+
+// The rows of src/game/StageRules.h's QUICKSTART_SETS: for each developer's quickstart (RuleScan's DEBUG: a kDebug row)
+// every stage that setting it at the console sets, as deep as it goes (MoveScan.Sets: its fragment, the script functions
+// it calls, the stages it sets or starts of any quest, shared or not, and what those set in turn; the quest's own
+// start-up stages too, since a console's setstage starts it). One row per stage set and quickstart quest, with a bit
+// for each of that quest's quickstarts that sets it (bit n: its stage n; a quickstart's stage is below 16), sorted by
+// the stage set. Only the stages of quests a friend's stage is set on have a row (shared by type, a finale, a dialogue
+// quest, QuestFilter.h's SAFE and SILENT; the others are walked through but never sent anyway), and a stage that is a
+// quickstart itself has none (never sent as it is). A stage the quest's record doesn't have is left out (SetStage does
+// nothing). Listed after the rows: what each quickstart sets, by count, and each SetStage or Start on the way that
+// could not be followed (a scene's Start is no quest's; a stage that is no literal is not known).
+public static class QuickstartScan
+{
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var rows = new SortedDictionary<Tuple<int, uint, int, int, uint>, Tuple<int, string, string>>();
+        var unresolved = new SortedSet<string>();
+        var counts = new List<string>();
+        int notShared = 0, quickstarts = 0, missing = 0;
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                foreach (var stage in quest.StageIds.Distinct().OrderBy(s => s))
+                {
+                    if (!RuleScan.IsDebug(quest.Edid, stage)) continue;
+                    if (stage > 15) throw new InvalidOperationException(quest.Edid + " " + stage + ": a quickstart's stage must be below 16 (QUICKSTART_SETS keeps them as bits)");
+                    var open = new List<string>();
+                    int n = 0;
+                    foreach (var set in MoveScan.Sets(file, quest, stage, true, open))
+                    {
+                        if (RuleScan.IsDebug(set.Quest.Edid, set.Stage)) { quickstarts++; continue; }
+                        if (!set.Quest.StageIds.Contains(set.Stage)) { missing++; continue; }
+                        if (QuestScan.Shared(set.Quest, set.File) == "not shared" || !QuestScan.ReachesFriend(set.Quest, set.File)) { notShared++; continue; }
+                        var key = Tuple.Create(set.File, set.Quest.Id & 0xFFFFFF, set.Stage, file, quest.Id & 0xFFFFFF);
+                        Tuple<int, string, string> row;
+                        if (!rows.TryGetValue(key, out row)) row = Tuple.Create(0, set.Quest.Edid + " " + set.Stage + " <- " + quest.Edid, "");
+                        rows[key] = Tuple.Create(row.Item1 | 1 << stage, row.Item2, row.Item3 + (row.Item3.Length > 0 ? ", " : " ") + stage);
+                        n++;
+                    }
+                    counts.Add(string.Format("#   {0} {1}: {2}", quest.Edid, stage, n));
+                    foreach (var o in open) unresolved.Add(o);
+                }
+            }
+        }
+        var sb = new StringBuilder();
+        foreach (var r in rows)
+            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, 0x{5:X4} }},  // {6}{7}", r.Key.Item1, r.Key.Item2, r.Key.Item3, r.Key.Item4, r.Key.Item5, r.Value.Item1, r.Value.Item2, r.Value.Item3));
+        sb.AppendLine(string.Format("# {0} rows; left out (counted once per quickstart): {1} of quests no friend's stage is set on, {2} that are quickstarts themselves, {3} the quest's record doesn't have", rows.Count, notShared, quickstarts, missing));
+        sb.AppendLine("# stages set, by quickstart:");
+        foreach (var c in counts) sb.AppendLine(c);
+        if (unresolved.Count > 0)
+        {
+            sb.AppendLine("# not followed (the stage whose script it is: the function: the call):");
+            foreach (var u in unresolved) sb.AppendLine("#   " + u);
         }
         return sb.ToString();
     }

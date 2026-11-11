@@ -273,7 +273,7 @@ namespace Sim
 				for (const auto& [id, quest] : quests) {
 					if (Shared(quest) && (Started(quest) || quest.completed)) {
 						for (const auto stage : quest.done) {
-							if (!Opening(id, stage) && !Debug(id, stage)) {  // every player's own; a quickstart set at the console is this game's only
+							if (!Opening(id, stage) && !Debug(id, stage) && !SetByQuickstart(id, stage)) {  // every player's own; a quickstart set at the console, and what it set, is this game's only
 								baseline.push_back({ id, stage, quest.story });
 							}
 						}
@@ -311,6 +311,10 @@ namespace Sim
 					}
 					if (Debug(id, stage)) {
 						continue;  // a quickstart set at the console is this game's only
+					}
+					if (SetByQuickstart(id, stage)) {
+						++quickstartSet;
+						continue;  // and so is what its script set
 					}
 					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story);
 					++reported;
@@ -397,6 +401,7 @@ namespace Sim
 		std::size_t released = 0;  // controls given back by the lock's timeout
 		std::size_t openingDropped = 0;  // friends' stages of the opening, never set (StageRules::IsOpening)
 		std::size_t debugDropped = 0;    // friends' developer quickstarts, never set (StageRules::IsDebug)
+		std::size_t quickstartSet = 0;   // stages a quickstart done in this game set, not reported (StageRules::QUICKSTART_SETS)
 		std::size_t baselined = 0;  // stages of this game's progress so far reported when it hosts (QueueBaseline)
 		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
 		std::size_t followed = 0;  // stages set after a follow offer, once the player was beside the friend
@@ -467,10 +472,20 @@ namespace Sim
 			return (a_quest >> 24) == 0 && StageRules::IsOpening(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage);
 		}
 
-		// QuestSync's IsDebugStage: a developer's quickstart (Mass Fusion's 1 to 9, the airport battle's 2 to 8), Fallout4.esm's.
+		// QuestSync's IsDebugStage: a developer's quickstart (Mass Fusion's 1 to 9, the airport battle's 0 to 8), Fallout4.esm's.
 		static bool Debug(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			return (a_quest >> 24) == 0 && StageRules::IsDebug(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage);
+		}
+
+		// QuestSync's SetByQuickstart: a stage that a quickstart done in this game sets (StageRules::QUICKSTART_SETS), Fallout4.esm's.
+		bool SetByQuickstart(std::uint32_t a_quest, std::uint16_t a_stage) const
+		{
+			return (a_quest >> 24) == 0 &&
+			       StageRules::SetByQuickstart(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage, [&](StageRules::File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+					   const auto by = a_by == StageRules::File::kFallout4 ? quests.find(a_byQuest) : quests.end();
+					   return by != quests.end() && by->second.done.contains(a_byStage);
+				   });
 		}
 
 		// QuestSync's SessionStarted: an objective shown, or a dialogue quest running or with stages done.
