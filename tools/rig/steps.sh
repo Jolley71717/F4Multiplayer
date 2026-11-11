@@ -1765,6 +1765,7 @@ SWS_GENERATOR=${SWS_GENERATOR:-00030386}; SWS_LIGHT=${SWS_LIGHT:-000560DF}; SWS_
 # A light a wire can end on (WorkshopConstructionLight01: the WorkshopPowerConnection keyword, no power radius). The light bulb
 # above takes no wire in any game: the engine's wire filter refuses it as an end (the dev wswire path asks nothing of it).
 SWS_WIRED_LIGHT=${SWS_WIRED_LIGHT:-000D38D4}
+SWS_MG_TURRET=${SWS_MG_TURRET:-000B3036}   # Machinegun Turret: a templated NPC, whose placed actor gets a runtime base (sharedws-prereq)
 _sws_grid_clean() {  # _sws_grid_clean <who> <label>: that game's grids at Sanctuary name no copy and no runtime reference
 	local g; g=$(dc "$1" "wsgrid $SANCT_BENCH")
 	if [ "$(field "$g" copies)" = "named=0" ] || grep -q "copies named=0" <<<"$g"; then
@@ -2537,6 +2538,66 @@ _sws_cleanup() {
 	# cleanup.sh applies the list on the host alone: the host-made ids only (a VM-made id can name something else there); the VM's own
 	# pieces went through its wsscrap above, and cleanup.sh's scan of the VM needs no list
 	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed-host.txt" >> "$A_OUT/cleanup.log" 2>&1
+}
+
+# ---- the shared workshop's phase-2 prerequisites (opt-in: smoke.sh --only sharedws-prereq) -------------------------------------
+# A deleted copy stays deleted across its cell's unload and load, an in-session save and a solo load (WorkshopSync's Bury: the
+# record of changes dropped with the delete; a friend's generator copy once came back alive after a trip away), and a
+# machinegun turret (a templated NPC, whose actor gets a runtime base) is shared under its original base. Console placement
+# on the host (wsreport place + wsfinish, as sharedws-power's host side), the host's scrap by dev wsscrap (the engine's scrap
+# short of the yield: reported scrapped, as a real one is); the VM's trips by console coc (said here: no movement is under test).
+# Throwaway saves on the VM; the host's pieces scrapped at the end and cleanup.sh run.
+_sws_ref_gone() {  # _sws_ref_gone <who> <ref>: that game has no live reference under the id (none, or one deleted); a dead channel is no evidence
+	local i; i=$(dc "$1" "wsinfo $2")
+	case "$i" in "") return 1;; error*|*"no such"*) return 0;; esac
+	[ "$(field "$i" deleted)" = true ]
+}
+step_sharedws_prereq() {
+	section "shared workshop prerequisites (a deleted copy stays deleted; machinegun turrets are shared; console placement, coc trips and throwaway saves on the VM)"
+	local r g vgc t out before after
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "sharedws-prereq: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if _ws_enter host; then sleep 3; _ws_exit host; else fail "sharedws-prereq: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	win_mark swp host; win_mark swp vm
+	# a generator of the host's, its copy on the VM, scrapped by the host: the VM's copy goes
+	out=$(host "wsreport place $SWS_GENERATOR $SANCT_BENCH"); g=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$g" ]; then fail "sharedws-prereq: the host's generator is placed" "$out"; return; fi
+	_sws_placed host "$g"; sleep 2; host "wsfinish $g $SANCT_BENCH" >/dev/null
+	if wait_for 20 _sws_has_copy vm "$g"; then vgc=$(_sws_copy_of vm "$g"); pass "sharedws-prereq: the VM has a copy of the host's generator" "copy $vgc of $g"
+	else fail "sharedws-prereq: the VM has a copy of the host's generator" "$(vm 'wspower copies' | cut -c1-160)"; return; fi
+	before=$(field "$(vm wspower)" buried)
+	host "wsscrap $g" >/dev/null
+	if wait_for 20 _sws_no_copy vm "$g" && wait_for 10 _sws_ref_gone vm "$vgc"; then pass "sharedws-prereq: the host's scrap takes the VM's copy away (deleted)" "$(vm "wsinfo $vgc" | cut -c1-120)"
+	else fail "sharedws-prereq: the host's scrap takes the VM's copy away (deleted)" "$(vm "wsinfo $vgc" | cut -c1-200)"; return; fi
+	after=$(field "$(vm wspower)" buried)
+	expect_ge "sharedws-prereq: the copy went with its record of changes dropped (wspower buried)" "$(( ${after:-0} - ${before:-0} ))" 1 reference
+	if grep -q "still holds its record of changes" "$(win_read swp vm)"; then warn "sharedws-prereq: the engine kept a deleted reference's record" "$(grep -m1 'still holds its record' "$A_OUT/windelta-swp-vm.txt" | cut -c1-160)"; fi
+	# the VM's cell unloads and loads again (a trip to Red Rocket and back): nothing stands under the copy's id
+	vm "console coc RedRocketExt" >/dev/null; sleep 12; wait_ingame vm 40
+	vm "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame vm 40
+	if _sws_ref_gone vm "$vgc"; then pass "sharedws-prereq: after its cell unloaded and loaded again, the deleted copy is not back" "$(vm "wsinfo $vgc" | cut -c1-120)"
+	else fail "sharedws-prereq: after its cell unloaded and loaded again, the deleted copy is not back" "$(vm "wsinfo $vgc" | cut -c1-200)"; fi
+	expect_eq "sharedws-prereq: no stray generator stands at the spot (the VM's copies list names none of it)" "$(_sws_copy_of vm "$g")" ""
+	# an in-session save on the VM, then the save loaded alone: still nothing under the id, grids clean
+	vm "console save $SWS_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
+	if _sws_ref_gone vm "$vgc"; then pass "sharedws-prereq: loaded alone, the deleted copy is not in the save" "$(vm "wsinfo $vgc" | cut -c1-120)"
+	else fail "sharedws-prereq: loaded alone, the deleted copy is not in the save" "$(vm "wsinfo $vgc" | cut -c1-200)"; fi
+	_sws_grid_clean vm "sharedws-prereq: loaded alone, the VM's grids name no copy and no runtime reference"
+	_vm_restart_rejoin
+	enter_both SanctuaryExt 14
+	# a machinegun turret of the host's: its actor's base is made at runtime here, and it is shared under its original all the same
+	win_mark swp host; win_mark swp vm
+	out=$(host "wsreport place $SWS_MG_TURRET $SANCT_BENCH"); t=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$t" ]; then fail "sharedws-prereq: the host's machinegun turret is placed" "$out"; _sws_cleanup; return; fi
+	_sws_placed host "$t"; sleep 2; host "wsfinish $t $SANCT_BENCH" >/dev/null
+	local tb; tb=$(field "$(host "wsinfo $t")" base)
+	if wait_for 25 _sws_has_copy vm "$t"; then pass "sharedws-prereq: the host's machinegun turret has a copy on the VM (its base here $tb, reported under the original)" "copy $(_sws_copy_of vm "$t") of $t"
+	else fail "sharedws-prereq: the host's machinegun turret has a copy on the VM (its base here $tb)" "$(vm 'wspower copies' | cut -c1-160); host: $(host "wsinfo $t" | cut -c1-160)"; fi
+	_sws_cleanup
 }
 
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }

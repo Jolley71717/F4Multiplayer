@@ -2827,6 +2827,16 @@ classic corrupt-grid save. Three layers, outermost first:
    it is tied in, and if the game still ties it in after that, it is switched off and kept, never deleted, so
    the grid's ID still names it and nothing else. Copies waiting in the graveyard count as copies for the
    audit.
+4. *Buried, not just deleted.* A reference of ours that goes (a copy, a wire we strung, a piece of ours the host took
+   over or never built) is switched off, marked deleted and has its record of changes dropped (`Bury`,
+   `WorkshopApply::DropsRecord`, `SaveGuard::ExcludeOurs`). The engine's own delete (`TESObjectREFR::SetDelete`) drops a
+   created reference's record only while it has not been written out to the cell's buffer (`BGSSaveLoadGame::RemoveChanges`
+   skips a record with a buffer); one written out already, by a persistence demotion or an earlier unload of the cell, is
+   left as it is, the cell's unload does not write it again, and the cell's next load makes the piece again from it: alive,
+   unblocked, unlinked, under the same id. That is how a friend's deleted generator copy came back as a plain generator after
+   a trip to Red Rocket and back (and piled up, one per scrap, in their save). `ClearChanges` frees a record buffered or not.
+   Only for references made at runtime: a piece of the world a friend scrapped is switched off here, a change the save keeps.
+   `wspower` counts them (`buried`, `buriedNoRecord`, `recordsKept`); a record the engine kept all the same is a WARN.
 
 **Our own pieces are never taken for copies.** A copy an earlier session left in the save (a crash) is adopted at
 its builder's piece's spot (`FindExisting`): the same object, made at runtime, within 4 units. Two saves that share
@@ -3214,6 +3224,24 @@ off (`madeHere`); one that does is a WARN and taken off again. The host's game n
 grids never name one (unchanged). A friend who crashes mid-session leaves what any crash leaves (copies adopted or cleaned at the
 next session); a request in flight is never answered. The host crashing: its save holds its own pieces; the friend's copies go
 when the session ends.
+
+**Prerequisites of phase 2 (removals become routine).** Three things read in the engine (1.11.240) before phase 2's scrap, store
+and move requests:
+- *A deleted copy stays deleted.* Every removal of a reference of ours buries it (Settlement power, net 4): the engine's delete
+  alone left a friend's deleted generator copy to come back alive with its cell, which phase 2 would turn from a rare rig find
+  into one stray per host scrap in the friend's save.
+- *A store is a destroy.* `Workshop::RequestStorePlacementItem` asks yes/no, then `Workshop::DestroyItem` adds the base to the
+  bench's stored list (`ExtraData::AddDeletedItem`), notifies `ItemDestroyedEvent` (our `DestroyedSink`: reported scrapped, as
+  a scrap is), takes it out of the budget and deletes it. So a host's store of a runtime piece reaches the friend as a scrap
+  does, and a store of a pre-placed piece (a vanilla crop, bed or pump) reaches the friend's `TryScrapWorldRef`, which leaves
+  a scripted piece standing (`HasScripts`: a crop's WorkshopObjectScript counts it in that game's workshop scripts, which a
+  bare disable would not tell), now said in the log with its reason. Phase 2j (pre-placed pieces at host-owned benches, by
+  form id, through the host's world) is where the friend's game stops keeping them.
+- *Turrets.* An actor placed from a templated NPC (a Machinegun Turret, 000B3036; a Heavy one, 001167A8) gets a base the
+  engine makes at runtime, with `ExtraLeveledCreature` naming the original; a Laser Turret keeps its own. A piece is reported
+  and known by `WorkshopApply::ReportedBase`: its own base, or the original when the engine's is a runtime one, so a friend's
+  machinegun turret has a copy (an actor copy, in the player's faction) and counts in the host's defense like a laser one.
+  Hand-over of turrets (built on the host from the recipe) stays out of phase 1.
 
 **Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
 game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the

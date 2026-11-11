@@ -73,6 +73,51 @@ namespace WorkshopApply
 		return (a_id >> 24) == 0xFF && a_base != 0 && a_baseNow == a_base && !a_deleted;
 	}
 
+	// A reference of ours that goes (a copy, a wire we strung, a piece of ours the host took over or never built) is deleted
+	// with its record of changes dropped. The engine's own delete (TESObjectREFR::SetDelete) drops the record of a created
+	// reference only while it has not been written out to the cell's buffer; one written out already (BGSSaveLoadGame::UnloadForm,
+	// run by a persistence demotion or an earlier unload of the cell) is left as it is, the cell's unload does not write it
+	// again, and the cell's next load makes the piece again from it: alive, unblocked, unlinked, under the same id (a friend's
+	// generator copy on the rig, deleted, back as a plain generator after a trip away). BGSSaveLoadGame::ClearChanges frees a
+	// record buffered or not. Only for a reference made at runtime: a piece of the world switched off (a friend's scrap of a
+	// plugin reference) is a change the save must keep.
+	constexpr bool DropsRecord(std::uint32_t a_id)
+	{
+		return (a_id >> 24) == 0xFF;
+	}
+
+	// What dropping the record did, for the count and the log.
+	enum class RecordDrop
+	{
+		kNotOurs,  // a plugin reference: its record is the game's
+		kNone,     // it had no record to drop (deleted before any change, or dropped already)
+		kDropped,
+		kKept,     // the engine still holds a record after the drop: the piece may come back with its cell (said in the log)
+	};
+
+	constexpr RecordDrop DropOf(std::uint32_t a_id, bool a_hadRecord, bool a_hasRecordNow)
+	{
+		if (!DropsRecord(a_id)) {
+			return RecordDrop::kNotOurs;
+		}
+		if (a_hasRecordNow) {
+			return RecordDrop::kKept;
+		}
+		return a_hadRecord ? RecordDrop::kDropped : RecordDrop::kNone;
+	}
+
+	// The base a piece is reported and kept under. An actor placed from a templated NPC (a Machinegun Turret) gets a base
+	// the engine makes at runtime (ExtraLeveledCreature names the original); that base exists in this game alone, so the
+	// report names the original, and the copy, whose own game makes it a runtime base of its own, is known by the original
+	// too. A piece whose base is the game's own is reported as it is. Zero: nothing to report (a runtime base with no original).
+	constexpr std::uint32_t ReportedBase(std::uint32_t a_base, std::uint32_t a_original)
+	{
+		if ((a_base >> 24) != 0xFF) {
+			return a_base;
+		}
+		return (a_original >> 24) == 0xFF ? 0 : a_original;
+	}
+
 	// A save may hold copies that doubled what stood at the spot: an older version placed a piece once its workbench was
 	// in our worldspace, its own cell loaded or not, and so over what stood there unseen (the save's copy,
 	// after a load away from the settlement, or a piece of ours). Two at one spot flicker. All but the one kept go.
