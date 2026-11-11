@@ -23,6 +23,7 @@
 #include <format>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 namespace QuestRewards
 {
@@ -46,7 +47,20 @@ namespace QuestRewards
 
 		// RewardLines' rows by the line's form ID in this game (built once the game's files are loaded).
 		std::unordered_map<std::uint32_t, LineInfo> lines;
+		// RewardLines::TURN_INS' ends (kCompletes, kStops) by the quest's form ID in this game << 16 | the stage.
+		std::unordered_map<std::uint64_t, std::uint8_t> turnIns;
 		bool                                         linesBuilt = false;
+
+		std::uint64_t TurnInKey(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			return (std::uint64_t{ a_quest } << 16) | a_stage;
+		}
+
+		std::uint8_t EndsOf(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			const auto found = turnIns.find(TurnInKey(a_quest, a_stage));
+			return found != turnIns.end() ? found->second : 0;
+		}
 
 		RewardBook::Capture  capture;
 		RewardBook::Receiver receiver;
@@ -96,7 +110,12 @@ namespace QuestRewards
 				line.quest = quest;
 				line.wants.push_back({ item, row.count });
 			}
-			REX::INFO("QuestRewards: {} dialogue lines that give a reward ({} rows not in this game's files)", lines.size(), missing);
+			for (const auto& row : RewardLines::TURN_INS) {
+				if (const auto quest = handler->LookupFormID(row.quest, StageRules::FileName(static_cast<StageRules::File>(row.file)))) {
+					turnIns[TurnInKey(quest, row.stage)] = row.ends;
+				}
+			}
+			REX::INFO("QuestRewards: {} dialogue lines that give a reward ({} rows not in this game's files), {} turn-in stages", lines.size(), missing, turnIns.size());
 		}
 
 		// Menus whose items come from nowhere and are no quest's: crafting, cooking, building, trading, a container's.
@@ -262,6 +281,26 @@ namespace QuestRewards
 			return out;
 		}
 
+		// A form a player can carry: never a leveled list, nor a bound object that is no item (a static, an activator, an
+		// NPC), which our own claims never hold but another game's report might.
+		bool InventoryItem(const RE::TESForm* a_form)
+		{
+			switch (a_form->GetFormType()) {
+			case RE::ENUM_FORM_ID::kMISC:
+			case RE::ENUM_FORM_ID::kALCH:
+			case RE::ENUM_FORM_ID::kAMMO:
+			case RE::ENUM_FORM_ID::kBOOK:
+			case RE::ENUM_FORM_ID::kWEAP:
+			case RE::ENUM_FORM_ID::kARMO:
+			case RE::ENUM_FORM_ID::kNOTE:
+			case RE::ENUM_FORM_ID::kKEYM:
+			case RE::ENUM_FORM_ID::kINGR:
+				return true;
+			default:
+				return false;
+			}
+		}
+
 		void Give(const Protocol::QuestReward& a_reward)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_reward.quest);
@@ -280,8 +319,9 @@ namespace QuestRewards
 			++applying;
 			for (const auto& item : a_reward.items) {
 				const auto object = RE::TESForm::GetFormByID<RE::TESBoundObject>(item.form);
-				if (!object) {
-					REX::WARN("QuestRewards: reward {}'s item {:08X} is no item here; left out", a_reward.id, item.form);
+				if (!object || !InventoryItem(object)) {
+					REX::WARN("QuestRewards: reward {}'s item {:08X} is no inventory item here{}; left out", a_reward.id, item.form,
+						object ? std::format(" (form type {})", std::to_underlying(object->GetFormType())) : std::string{});
 					continue;
 				}
 				player->AddObjectToContainer(object, nullptr, item.count, nullptr, RE::ITEM_REMOVE_REASON::kNone);
@@ -295,6 +335,12 @@ namespace QuestRewards
 			++given;
 			REX::INFO("QuestRewards: player {}'s reward {} ({:08X} {} {}) given here: {} item(s), {} XP", a_reward.playerId, a_reward.id, a_reward.quest, kind,
 				a_reward.source, items, a_reward.xp);
+			// A turn-in stage's: closed here as the stage would close it, so our player can't turn the same in and get it again.
+			if (quest && a_reward.kind == RewardBook::Kind::kStage) {
+				const auto stage = static_cast<std::uint16_t>(a_reward.source);
+				const auto ends = EndsOf(a_reward.quest, stage);
+				QuestSync::CloseTurnIn(quest, stage, (ends & RewardLines::kCompletes) != 0, (ends & RewardLines::kStops) != 0);
+			}
 			const auto what = WhatOf(a_reward);
 			if (!what.empty()) {
 				const auto name = RemotePlayers::NameOf(a_reward.playerId);
@@ -312,11 +358,19 @@ namespace QuestRewards
 			if (!player || player->IsDead(false)) {
 				return;
 			}
+			// One our player is turning in now too (their own line or stage still settling) waits for it: their report, if
+			// any, comes first and makes it a twin (RewardBook::Capture::IsOpen). The rest go in order.
+			std::deque<Protocol::QuestReward> waiting;
 			while (!pending.empty()) {
-				const auto reward = std::move(pending.front());
+				auto reward = std::move(pending.front());
 				pending.pop_front();
+				if (capture.IsOpen(reward.kind, reward.quest, reward.source)) {
+					waiting.push_back(std::move(reward));
+					continue;
+				}
 				Give(reward);
 			}
+			pending = std::move(waiting);
 		}
 	}
 
@@ -355,7 +409,8 @@ namespace QuestRewards
 		if ((a_ruleFlags & StageRules::kPays) == 0) {
 			return;
 		}
-		capture.Stage(a_quest, a_stage, Clock::now());
+		BuildLines();
+		capture.Stage(a_quest, a_stage, (EndsOf(a_quest, a_stage) & RewardLines::kCompletes) != 0, Clock::now());
 	}
 
 	void OnOwnXp(float a_xp)

@@ -5,7 +5,10 @@
 #include "Test.h"
 
 #include "RewardBook.h"
+#include "game/RewardLines.h"
+#include "game/StageRules.h"
 
+#include <algorithm>
 #include <string_view>
 
 using namespace std::chrono_literals;
@@ -51,9 +54,9 @@ namespace
 		return out;
 	}
 
-	Protocol::QuestReward Reward(std::uint32_t a_id, Kind a_kind, std::uint32_t a_quest, std::uint32_t a_source)
+	Protocol::QuestReward Reward(std::uint32_t a_id, Kind a_kind, std::uint32_t a_quest, std::uint32_t a_source, std::uint32_t a_run = 9)
 	{
-		return Protocol::QuestReward{ a_id, 2, a_kind, a_quest, a_source, 0, { { CAPS, 100 } } };
+		return Protocol::QuestReward{ a_id, 2, a_kind, a_quest, a_source, 0, { { CAPS, 100 } }, a_run };
 	}
 }
 
@@ -119,12 +122,12 @@ TEST("reward capture: a line that gave nothing (another branch) reports nothing;
 	CHECK(PollUntil(capture, T0 + 20s, T0 + 30s).empty());
 }
 
-TEST("reward capture: a stage claims what came in its window and the player's own XP gains")
+TEST("reward capture: a stage that completes its quest claims what came in its window and the player's own XP gains")
 {
 	Capture capture;
 	capture.Gain(CAPS, 50, T0);
 	capture.Xp(150.0f, T0 + 200ms);
-	capture.Stage(QUEST, 30, T0 + 500ms);
+	capture.Stage(QUEST, 30, true, T0 + 500ms);
 	capture.Gain(STIMPAK, 2, T0 + 1s);
 	capture.Xp(0.4f, T0 + 1s);
 	const auto claimed = PollUntil(capture, T0, T0 + 5s);
@@ -140,10 +143,10 @@ TEST("reward capture: a stage claims what came in its window and the player's ow
 TEST("reward capture: a stage that gave nothing reports nothing; one that gave XP only reports it")
 {
 	Capture capture;
-	capture.Stage(QUEST, 30, T0);
+	capture.Stage(QUEST, 30, true, T0);
 	CHECK(PollUntil(capture, T0, T0 + 5s).empty());
 
-	capture.Stage(QUEST, 40, T0 + 10s);
+	capture.Stage(QUEST, 40, true, T0 + 10s);
 	capture.Xp(300.0f, T0 + 10s + 200ms);
 	const auto claimed = PollUntil(capture, T0 + 10s, T0 + 15s);
 	REQUIRE(claimed.size() == 1);
@@ -159,7 +162,7 @@ TEST("reward capture: a line and the stage it sets share a window: the line's it
 	capture.Gain(STIMPAK, 3, T0 + 100ms);
 	capture.Xp(200.0f, T0 + 100ms);
 	capture.Line(QUEST, INFO, wants, T0 + 200ms);
-	capture.Stage(QUEST, 400, T0 + 300ms);
+	capture.Stage(QUEST, 400, true, T0 + 300ms);
 	capture.Line(QUEST, INFO, wants, T0 + 4s);  // the line is still being said after the stage's settle: the stage waits
 	const auto claimed = PollUntil(capture, T0, T0 + 10s);
 	REQUIRE(claimed.size() == 2);
@@ -182,8 +185,8 @@ TEST("reward capture: an item made in this game (a runtime form) is never claime
 	CHECK(capture.Kept() == 0);
 
 	capture.Gain(CAPS, 100, T0);
-	capture.Stage(QUEST, 30, T0 + 100ms);
-	capture.Stage(OTHER_QUEST, 10, T0 + 200ms);
+	capture.Stage(QUEST, 30, true, T0 + 100ms);
+	capture.Stage(OTHER_QUEST, 10, true, T0 + 200ms);
 	const auto claimed = PollUntil(capture, T0, T0 + 5s);
 	REQUIRE(claimed.size() == 1);  // the second stage found the caps taken
 	CHECK(claimed[0].quest == QUEST);
@@ -301,4 +304,127 @@ TEST("reward receiver: a stage done here gave its own; a line of a quest finishe
 	for (const auto verdict : { Verdict::kGive, Verdict::kHad, Verdict::kOwnTurnIn, Verdict::kStageDone, Verdict::kFinished }) {
 		CHECK(std::string_view{ RewardBook::Why(verdict) }.size() > 0);
 	}
+}
+
+TEST("reward capture: a turn-in stage that doesn't complete its quest claims its items, not the XP of the stages it sets")
+{
+	// MinRecruit02 90 (the ransom paid) sets 400, which sets 450, which completes the quest: the quest XP lands in 90's
+	// window, but 400 and 450 are set in the friend's game too and give it there.
+	Capture capture;
+	capture.Gain(CAPS, 120, T0 + 200ms);
+	capture.Stage(QUEST, 90, false, T0);
+	capture.Xp(450.0f, T0 + 300ms);
+	const auto claimed = PollUntil(capture, T0, T0 + 5s);
+	REQUIRE(claimed.size() == 1);
+	CHECK(claimed[0].source == 90);
+	CHECK(CountOf(claimed[0], CAPS) == 120);
+	CHECK(claimed[0].xp == 0);
+
+	// One that gives XP only, not completing: nothing to report.
+	capture.Stage(QUEST, 91, false, T0 + 10s);
+	capture.Xp(300.0f, T0 + 10s + 200ms);
+	CHECK(PollUntil(capture, T0 + 10s, T0 + 15s).empty());
+}
+
+TEST("reward capture: a line or stage is open while our own game is claiming it")
+{
+	Capture    capture;
+	const Want wants[] = { { CAPS, 500 } };
+	capture.Line(QUEST, INFO, wants, T0);
+	capture.Stage(QUEST, 30, true, T0);
+	CHECK(capture.IsOpen(Kind::kLine, QUEST, INFO));
+	CHECK(capture.IsOpen(Kind::kStage, QUEST, 30));
+	CHECK(!capture.IsOpen(Kind::kLine, QUEST, OTHER_INFO));
+	CHECK(!capture.IsOpen(Kind::kStage, QUEST, INFO));
+	CHECK(!capture.IsOpen(Kind::kLine, OTHER_QUEST, INFO));
+	PollUntil(capture, T0, T0 + 5s);
+	CHECK(!capture.IsOpen(Kind::kLine, QUEST, INFO));
+	CHECK(!capture.IsOpen(Kind::kStage, QUEST, 30));
+}
+
+TEST("reward receiver: two players hearing the same line a moment apart: the friend's waits for our claim, and is then a twin")
+{
+	// A's line closed and its reward reached B while B's own line was still settling. B's game holds it (IsOpen) until its
+	// own claim closes and is reported; then it is B's own turn-in, not given again.
+	Capture    capture;
+	Receiver   receiver;
+	const Want wants[] = { { CAPS, 500 } };
+	capture.Gain(CAPS, 500, T0);
+	capture.Line(QUEST, INFO, wants, T0 + 100ms);
+	const auto friends = Reward(1, Kind::kLine, QUEST, INFO);
+	CHECK(capture.IsOpen(friends.kind, friends.quest, friends.source));  // held
+	const auto claimed = PollUntil(capture, T0, T0 + 5s);
+	REQUIRE(claimed.size() == 1);
+	receiver.Reported(claimed[0], T0 + 5s);
+	CHECK(!capture.IsOpen(friends.kind, friends.quest, friends.source));
+	CHECK(receiver.Judge(friends, false, false, T0 + 5s) == Verdict::kOwnTurnIn);
+}
+
+TEST("reward ledger: each run of the server has its own id, never 0")
+{
+	CHECK(Ledger{ 0x1234 }.Run() == 0x1234);
+	CHECK(Ledger{ 0 }.Run() != 0);
+	const Ledger first;
+	const Ledger second;
+	CHECK(first.Run() != 0);
+	CHECK(second.Run() != 0);
+	CHECK(RewardBook::NewRun() != 0);
+}
+
+TEST("reward receiver: a server restarted at the same address (another run): its ids are new, and given")
+{
+	// A Steam host's address doesn't change when they host again: the old run's reward 1 must not hide the new run's.
+	Receiver receiver;
+	CHECK(receiver.Judge(Reward(1, Kind::kLine, QUEST, INFO, 0xA), false, false, T0) == Verdict::kGive);
+	CHECK(receiver.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO, 0xA), false, false, T0) == Verdict::kGive);
+	CHECK(receiver.Judge(Reward(1, Kind::kLine, QUEST, INFO, 0xA), false, false, T0 + 1s) == Verdict::kHad);
+	// The new run numbers from 1 again.
+	CHECK(receiver.Judge(Reward(1, Kind::kStage, OTHER_QUEST, 30, 0xB), false, false, T0 + 2s) == Verdict::kGive);
+	CHECK(receiver.Judge(Reward(2, Kind::kStage, OTHER_QUEST, 40, 0xB), false, false, T0 + 2s) == Verdict::kGive);
+	CHECK(receiver.Judge(Reward(1, Kind::kStage, OTHER_QUEST, 30, 0xB), false, false, T0 + 3s) == Verdict::kHad);
+	// The same run sent again after a reconnect: had.
+	CHECK(receiver.Judge(Reward(2, Kind::kStage, OTHER_QUEST, 40, 0xB), false, false, T0 + 4s) == Verdict::kHad);
+}
+
+TEST("reward receiver: a friend's turn-in reward before our own: given once, then the turn-in is closed here")
+{
+	// FFDiamondCity03 30: the friend handed in the fern flower first. Our game gives their reward and closes our own turn-in
+	// as the stage would: the stage marked done (its script, which would give it all again, never runs; the engine doesn't
+	// run a stage done already again, so our player's own turn-in later gives nothing), the quest completed and stopped.
+	Receiver receiver;
+	CHECK(receiver.Judge(Reward(1, Kind::kStage, QUEST, 30), false, false, T0) == Verdict::kGive);
+	CHECK(RewardBook::CloseTurnIn(true, true, false, false, true) == (RewardBook::Closing{ true, true, true }));
+	// Closed, the stage reads done here: another friend's reward of it later (past the same-time window) is not given.
+	CHECK(receiver.Judge(Reward(2, Kind::kStage, QUEST, 30), true, false, T0 + RewardBook::SAME_TURN_IN + 1s) == Verdict::kStageDone);
+
+	// A turn-in that doesn't end its quest (V81_03 3, a sale): only its stage is marked.
+	CHECK(RewardBook::CloseTurnIn(false, false, false, false, true) == (RewardBook::Closing{ true, false, false }));
+	// Nothing already so is done again: the stage done, the quest completed or stopped already.
+	CHECK(RewardBook::CloseTurnIn(true, true, true, true, false) == (RewardBook::Closing{ false, false, false }));
+	CHECK(RewardBook::CloseTurnIn(true, true, false, true, true) == (RewardBook::Closing{ true, false, true }));
+}
+
+TEST("reward turn-ins: every StageRules kPays row is in RewardLines::TURN_INS, and the scan read their ends")
+{
+	// tools/rewardscan.ps1 writes TURN_INS from StageRules' kPays rows: a row added there without running it again is caught here.
+	for (const auto& rule : StageRules::RULES) {
+		if ((rule.flags & StageRules::kPays) == 0) {
+			continue;
+		}
+		const bool listed = std::ranges::any_of(RewardLines::TURN_INS, [&](const RewardLines::TurnIn& a_turnIn) {
+			return a_turnIn.file == rule.file && a_turnIn.quest == rule.quest && a_turnIn.stage == rule.stage;
+		});
+		CHECK(listed);
+	}
+	const auto ends = [](std::uint32_t a_quest, std::uint16_t a_stage) -> int {
+		for (const auto& turnIn : RewardLines::TURN_INS) {
+			if (turnIn.file == 0 && turnIn.quest == a_quest && turnIn.stage == a_stage) {
+				return turnIn.ends;
+			}
+		}
+		return -1;
+	};
+	CHECK(ends(0x02125F, 30) == (RewardLines::kCompletes | RewardLines::kStops));  // FFDiamondCity03: the fern flower; completes, Stop()
+	CHECK(ends(0x099848, 90) == 0);  // MinRecruit02: the ransom; its 450, set in turn, completes the quest
+	CHECK(ends(0x033527, 3) == 0);   // V81_03: a Jet sold
 }

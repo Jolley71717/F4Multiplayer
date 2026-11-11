@@ -5,7 +5,7 @@
 // CommonLibF4 only declares TESQuestStage; this mirror has the engine's layout (1.11.240), read from
 // TESQuest::IsStageDone (+66B700), which finds a stage in TESQuest::stages (+100) by the index at +18
 // and tests bit 0 of the flags at +1A, and TESQuestStage::SetDone (+683340), which sets that bit and
-// walks the log entries at +00. Only read, never written.
+// walks the log entries at +00. Read, and written only by MarkDone.
 namespace QuestStageLayout
 {
 	struct Mirror
@@ -60,6 +60,29 @@ namespace QuestStageLayout
 		return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) {
 			return a_entry && Of(a_entry)->data.index == a_stage && IsDone(*Of(a_entry));
 		});
+	}
+
+	// Marks the quest's stage done without setting it: the done bit alone, as IsStageDone and the save read it (the quest's
+	// stages are marked changed for the save), not SetDone's walk of the log entries (a Complete Quest entry would complete
+	// the quest through the engine, with its quest XP) nor SetStage's script. For a friend's turn-in whose reward was given
+	// here (QuestSync::CloseTurnIn). False if the quest has no such stage or it is done already. Main thread only.
+	inline bool MarkDone(RE::TESQuest* a_quest, std::uint16_t a_stage)
+	{
+		bool marked = false;
+		for (const auto stage : a_quest->stages) {
+			if (!stage) {
+				continue;
+			}
+			auto& mirror = *reinterpret_cast<Mirror*>(stage);
+			if (mirror.data.index == a_stage && !IsDone(mirror)) {
+				mirror.data.flags.set(RE::QUEST_STAGE_DATA::Flags::kDone);
+				marked = true;
+			}
+		}
+		if (marked) {
+			a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+		}
+		return marked;
 	}
 
 	// Whether the quest has this stage at all (setting one it doesn't have does nothing: TESQuest::SetStage

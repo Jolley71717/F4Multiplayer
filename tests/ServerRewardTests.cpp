@@ -17,6 +17,7 @@ namespace
 	constexpr std::uint32_t CAPS = 0x0000000F;
 	constexpr std::uint32_t QUEST = 0x000A8258;
 	constexpr std::uint32_t INFO = 0x000D60BB;
+	constexpr std::uint32_t OTHER_INFO = 0x000D60BC;
 
 	std::vector<std::uint8_t> Report(RewardKind a_kind, std::uint32_t a_source, std::int32_t a_caps, std::uint32_t a_xp = 0)
 	{
@@ -126,4 +127,45 @@ TEST("server rewards: a bad report is dropped, and nothing is sent")
 	f.fake->Deliver(1, Protocol::Encode(QuestReward{ 0, 0, RewardKind::kStage, QUEST, 0x10000, 10, {} }));  // no such stage
 	f.fake->Deliver(1, Protocol::Encode(QuestReward{ 0, 0, RewardKind::kLine, 0, INFO, 10, {} }));  // no quest
 	CHECK(Rewards(f, 2).empty());
+}
+
+TEST("server rewards: each run of the server sends its own run id, so a game that stayed up knows a restart's ids from the old ones")
+{
+	// A Steam host's address is the same when the server starts again: its ids start at 1 again, its run id doesn't.
+	std::uint32_t firstRun = 0;
+	std::uint32_t firstId = 0;
+	{
+		Fixture f;
+		JoinAs(f, 1, "Host", 0x11);
+		JoinAs(f, 2, "Bob", 0x22);
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, Report(RewardKind::kLine, INFO, 500));
+		f.fake->Deliver(1, Report(RewardKind::kStage, 30, 50, 150));
+		const auto got = Rewards(f, 2);
+		REQUIRE(got.size() == 2);
+		CHECK(got[0].run != 0);
+		CHECK(got[0].run == got[1].run);  // one run
+		CHECK(got[0].id != got[1].id);
+		firstRun = got[0].run;
+		firstId = got[0].id;
+	}
+	Fixture f;
+	JoinAs(f, 1, "Host", 0x11);
+	JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Report(RewardKind::kLine, OTHER_INFO, 200));
+	const auto got = Rewards(f, 2);
+	REQUIRE(got.size() == 1);
+	CHECK(got[0].id == firstId);  // numbered from the start again ...
+	CHECK(got[0].run != 0);
+	CHECK(got[0].run != firstRun);  // ... in another run
+
+	// Bob's game, up through the restart, gives the new run's reward 1 though it had the old run's.
+	RewardBook::Receiver receiver;
+	auto old = got[0];
+	old.run = firstRun;
+	old.source = INFO;
+	CHECK(receiver.Judge(old, false, false, RewardBook::Clock::now()) == RewardBook::Verdict::kGive);
+	CHECK(receiver.Judge(got[0], false, false, RewardBook::Clock::now()) == RewardBook::Verdict::kGive);
+	CHECK(receiver.Judge(got[0], false, false, RewardBook::Clock::now()) == RewardBook::Verdict::kHad);
 }

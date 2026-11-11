@@ -10,10 +10,16 @@
 # count). A leveled list of caps (its EditorID holds "Caps") is listed as caps (Caps001) with any count; another leveled
 # list, and an item of a file not among the four masters, is left out (the rolled item can't be told from others).
 #
-#   powershell -File tools/rewardscan.ps1 [-Data "<Fallout 4>\Data"] [-Out src/game/RewardLines.h]
+# It also writes RewardLines::TURN_INS: for each turn-in stage (a kPays row of src/game/StageRules.h, read from that file),
+# whether it completes its quest (a Complete Quest log entry, QSDT flag 0x01, in the quest record; or CompleteQuest in its
+# fragment) and whether its fragment stops the quest (Stop on itself). A turn-in's reward claims quest XP only when its stage
+# completes the quest, and a friend's game that gives it closes the turn-in as the stage would.
+#
+#   powershell -File tools/rewardscan.ps1 [-Data "<Fallout 4>\Data"] [-Out src/game/RewardLines.h] [-Rules src/game/StageRules.h]
 param(
 	[string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data',
-	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\RewardLines.h')
+	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\RewardLines.h'),
+	[string]$Rules = (Join-Path $PSScriptRoot '..\src\game\StageRules.h')
 )
 $ErrorActionPreference = 'Stop'
 $questscan = Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')
@@ -79,6 +85,9 @@ public static class RewardScan
     public static readonly System.Collections.Generic.Dictionary<string, Info> infos = new System.Collections.Generic.Dictionary<string, Info>(System.StringComparer.OrdinalIgnoreCase);  // by fragment script name
     public static readonly System.Collections.Generic.List<string> errors = new System.Collections.Generic.List<string>();
     public static readonly System.Collections.Generic.Dictionary<ulong, Form> forms = new System.Collections.Generic.Dictionary<ulong, Form>();  // (file << 32 | id): record type and EditorID
+    public static readonly System.Collections.Generic.HashSet<string> completing = new System.Collections.Generic.HashSet<string>();  // StageKey: a stage with a Complete Quest log entry
+
+    static string StageKey(int a_file, uint a_quest, int a_stage) { return a_file + ":" + a_quest.ToString("X6") + ":" + a_stage; }
 
     static int FileIndex(string a_name)
     {
@@ -130,7 +139,7 @@ public static class RewardScan
                 body = GearScan.Inflate(all, pos + 28, (int)size - 4, dsize); bo = 0; bl = dsize;
             }
             else { body = all; bo = pos + 24; bl = (int)size; }
-            string edid = ""; int vmadAt = -1, vmadSize = 0; uint qnam = 0; int big = -1;
+            string edid = ""; int vmadAt = -1, vmadSize = 0; uint qnam = 0; int big = -1; int stage = -1;
             for (int s = bo; s < bo + bl;)
             {
                 string st = System.Text.Encoding.ASCII.GetString(body, s, 4);
@@ -138,6 +147,9 @@ public static class RewardScan
                 if (big >= 0) { ss = big; big = -1; }
                 if (st == "XXXX") { big = (int)System.BitConverter.ToUInt32(body, s + 6); s += 10; continue; }
                 int d = s + 6;
+                // a quest's stage (INDX) and its log entries (QSDT: their flags, 0x01 Complete Quest)
+                if (type == "QUST" && st == "INDX" && ss >= 2) stage = System.BitConverter.ToUInt16(body, d);
+                else if (type == "QUST" && st == "QSDT" && ss >= 1 && stage >= 0 && (body[d] & 0x01) != 0 && key.Item1 >= 0) completing.Add(StageKey(key.Item1, key.Item2, stage));
                 if (st == "EDID") edid = System.Text.Encoding.ASCII.GetString(body, d, System.Math.Max(0, ss - 1));
                 else if (st == "VMAD") { vmadAt = d; vmadSize = ss; }
                 else if (st == "QNAM" && type == "DIAL" && ss >= 4) qnam = System.BitConverter.ToUInt32(body, d);
@@ -200,15 +212,77 @@ public static class RewardScan
         return f;
     }
 
+    // What a quest fragment script's stages do to their own quest: stop it (Stop on self, or on kmyQuest, self cast to the
+    // quest's script) or complete it (CompleteQuest), by stage.
+    public static void QuestEnds(System.Collections.Generic.List<GearScan.Func> a_funcs, System.Collections.Generic.Dictionary<int, int> a_ends)
+    {
+        foreach (var fn in a_funcs)
+        {
+            int stage;
+            if (!fn.Name.StartsWith("Fragment_Stage_", System.StringComparison.OrdinalIgnoreCase) || !int.TryParse(fn.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+            var self = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase) { "self" };
+            foreach (var ins in fn.Code)
+            {
+                var op = GearScan.OPS[ins.Op]; var a = ins.Args;
+                if ((op == "cast" || op == "assign") && a.Count >= 2 && self.Contains(a[1])) self.Add(a[0]);
+                if (op != "callmethod" || a.Count < 2 || !self.Contains(a[1])) continue;
+                int had; a_ends.TryGetValue(stage, out had);
+                if (string.Equals(a[0], "Stop", System.StringComparison.OrdinalIgnoreCase)) a_ends[stage] = had | 2;
+                else if (string.Equals(a[0], "CompleteQuest", System.StringComparison.OrdinalIgnoreCase)) a_ends[stage] = had | 1;
+            }
+        }
+    }
+
+    // The turn-in stages (src/game/StageRules.h's kPays rows): whether each completes its quest (a Complete Quest log entry, or
+    // CompleteQuest in its fragment) and whether its fragment stops it.
+    public static System.Collections.Generic.List<string> TurnIns(string a_data, string a_rules)
+    {
+        var text = System.IO.File.ReadAllText(a_rules);
+        int from = text.IndexOf("RULES[] = {"); int to = from >= 0 ? text.IndexOf("\n\t};", from) : -1;
+        if (from < 0 || to < 0) throw new System.Exception("no RULES in " + a_rules);
+        var rows = System.Text.RegularExpressions.Regex.Matches(text.Substring(from, to - from), @"\{\s*(\d+)\s*,\s*0x([0-9A-Fa-f]+)\s*,\s*(\d+)\s*,\s*([^,}]+),[^\n]*?(//[^\n]*)?\n");
+        var ends = new System.Collections.Generic.Dictionary<string, int>();  // StageKey: 1 completes, 2 stops (from the fragments)
+        for (int file = 0; file < GearScan.MASTERS.Length; file++)
+        {
+            var scripts = GearScan.Ba2(System.IO.Path.Combine(a_data, GearScan.MASTERS[file].Ba2), n => n.IndexOf(@"\fragments\quests\", System.StringComparison.OrdinalIgnoreCase) >= 0 && n.EndsWith(".pex", System.StringComparison.OrdinalIgnoreCase));
+            foreach (var kv in scripts)
+            {
+                var name = System.IO.Path.GetFileNameWithoutExtension(kv.Key);
+                uint id;
+                if (!uint.TryParse(name.Substring(name.LastIndexOf('_') + 1), System.Globalization.NumberStyles.HexNumber, null, out id)) continue;
+                System.Collections.Generic.List<GearScan.Func> funcs;
+                try { funcs = GearScan.Pex(kv.Value); } catch (System.Exception) { continue; }
+                var byStage = new System.Collections.Generic.Dictionary<int, int>();
+                QuestEnds(funcs, byStage);
+                foreach (var e in byStage) { var k = StageKey(file, id & 0xFFFFFF, e.Key); int had; ends.TryGetValue(k, out had); ends[k] = had | e.Value; }
+            }
+        }
+        var outRows = new System.Collections.Generic.List<string>();
+        foreach (System.Text.RegularExpressions.Match m in rows)
+        {
+            if (m.Groups[4].Value.IndexOf("kPays") < 0) continue;
+            int file = int.Parse(m.Groups[1].Value); uint quest = System.Convert.ToUInt32(m.Groups[2].Value, 16); int stage = int.Parse(m.Groups[3].Value);
+            var k = StageKey(file, quest, stage);
+            int script; ends.TryGetValue(k, out script);
+            bool completes = completing.Contains(k) || (script & 1) != 0;
+            bool stops = (script & 2) != 0;
+            var flags = completes && stops ? "kCompletes | kStops" : completes ? "kCompletes" : stops ? "kStops" : "0";
+            var note = (completing.Contains(k) ? "a Complete Quest log entry" : (script & 1) != 0 ? "CompleteQuest" : "") + (stops ? ((completes ? ", " : "") + "Stop") : "");
+            outRows.Add(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3} }},{4}", file, quest, stage, flags, note.Length > 0 ? "  // " + note : ""));
+        }
+        return outRows;
+    }
+
     static string PropName(string a_var)
     {
         var m = System.Text.RegularExpressions.Regex.Match(a_var, "^::(\\w+)_var$");
         return m.Success ? m.Groups[1].Value : null;
     }
 
-    public static string Run(string a_data)
+    public static string Run(string a_data, string a_rules)
     {
         foreach (var m in GearScan.MASTERS) Esm(System.IO.Path.Combine(a_data, m.Esm));
+        var turnIns = TurnIns(a_data, a_rules);
         var rows = new System.Collections.Generic.List<string>();
         var skipped = new System.Collections.Generic.List<string>();
         int lines = 0;
@@ -282,6 +356,26 @@ public static class RewardScan
         sb.AppendLine("\tinline constexpr Row ROWS[] = {");
         foreach (var r in rows) sb.AppendLine(r);
         sb.AppendLine("\t};");
+        sb.AppendLine();
+        sb.AppendLine("\t// The turn-in stages (StageRules kPays rows: a friend's game never sets them), from the quest records' stage log entries");
+        sb.AppendLine("\t// and the quest fragment scripts: whether each completes its quest (a Complete Quest log entry, or CompleteQuest in its");
+        sb.AppendLine("\t// fragment) and whether its fragment stops it. A turn-in's reward claims quest XP only when its stage completes the quest");
+        sb.AppendLine("\t// (the XP of a stage it sets in turn is the friends' own: that stage is set in their games and gives it there), and a");
+        sb.AppendLine("\t// friend's game that gives the reward closes the turn-in as its stage would (QuestSync::CloseTurnIn).");
+        sb.AppendLine("\tinline constexpr std::uint8_t kCompletes = 1 << 0;");
+        sb.AppendLine("\tinline constexpr std::uint8_t kStops = 1 << 1;");
+        sb.AppendLine();
+        sb.AppendLine("\tstruct TurnIn");
+        sb.AppendLine("\t{");
+        sb.AppendLine("\t\tstd::uint8_t  file;");
+        sb.AppendLine("\t\tstd::uint32_t quest;");
+        sb.AppendLine("\t\tstd::uint16_t stage;");
+        sb.AppendLine("\t\tstd::uint8_t  ends;  // kCompletes, kStops");
+        sb.AppendLine("\t};");
+        sb.AppendLine();
+        sb.AppendLine("\tinline constexpr TurnIn TURN_INS[] = {");
+        foreach (var r in turnIns) sb.AppendLine(r);
+        sb.AppendLine("\t};");
         sb.AppendLine("}");
         return sb.ToString();
     }
@@ -306,6 +400,6 @@ public static class RewardScan
 }
 '@
 Add-Type -TypeDefinition ($questscan + "`n" + $rewardscan) -ReferencedAssemblies System.Core -Language CSharp
-$text = [RewardScan]::Run($Data)
+$text = [RewardScan]::Run($Data, [IO.Path]::GetFullPath($Rules))
 [IO.File]::WriteAllText([IO.Path]::GetFullPath($Out), $text.Replace("`r`n", "`n"))
 "wrote $Out"

@@ -115,4 +115,53 @@ namespace RewardLines
 		{ 1, 0x005BD7, 1, 0x005C29, 0, 0x0366C3, 1 },  // TIF_DLC03DialogueFarHarbor_01005C29: Vodka
 		{ 3, 0x000806, 3, 0x013A13, 0, 0x04835D, 1 },  // TIF_DLC04MS01_01013A13: NukaCola
 	};
+
+	// The turn-in stages (StageRules kPays rows: a friend's game never sets them), from the quest records' stage log entries
+	// and the quest fragment scripts: whether each completes its quest (a Complete Quest log entry, or CompleteQuest in its
+	// fragment) and whether its fragment stops it. A turn-in's reward claims quest XP only when its stage completes the quest
+	// (the XP of a stage it sets in turn is the friends' own: that stage is set in their games and gives it there), and a
+	// friend's game that gives the reward closes the turn-in as its stage would (QuestSync::CloseTurnIn).
+	inline constexpr std::uint8_t kCompletes = 1 << 0;
+	inline constexpr std::uint8_t kStops = 1 << 1;
+
+	struct TurnIn
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		std::uint8_t  ends;  // kCompletes, kStops
+	};
+
+	inline constexpr TurnIn TURN_INS[] = {
+		{ 0, 0x003648, 70, 0 },
+		{ 0, 0x019955, 210, 0 },
+		{ 0, 0x02125F, 30, kCompletes | kStops },  // a Complete Quest log entry, Stop
+		{ 0, 0x0229E6, 177, 0 },
+		{ 0, 0x022A04, 805, 0 },
+		{ 0, 0x033527, 3, 0 },
+		{ 0, 0x033527, 550, 0 },
+		{ 0, 0x03E0C1, 90, 0 },
+		{ 0, 0x03F244, 5, 0 },
+		{ 0, 0x03F244, 645, 0 },
+		{ 0, 0x04542B, 711, 0 },
+		{ 0, 0x0498B5, 35, 0 },
+		{ 0, 0x084E40, 400, 0 },
+		{ 0, 0x0986C7, 35, 0 },
+		{ 0, 0x099848, 90, 0 },
+		{ 0, 0x0B8464, 400, 0 },
+		{ 0, 0x0BA4F2, 150, 0 },
+		{ 0, 0x0BA4F2, 200, kStops },  // Stop
+		{ 0, 0x0C3309, 91, 0 },
+		{ 0, 0x0C3309, 500, 0 },
+		{ 0, 0x1764DF, 40, 0 },
+		{ 1, 0x001B40, 480, 0 },
+		{ 1, 0x005BD7, 90, 0 },
+		{ 3, 0x000806, 75, 0 },
+		{ 3, 0x000807, 500, 0 },
+		{ 3, 0x000808, 100, 0 },
+		{ 3, 0x000808, 120, 0 },
+		{ 3, 0x014352, 90, 0 },
+		{ 3, 0x019088, 90, 0 },
+		{ 3, 0x01AABF, 110, 0 },
+	};
 }

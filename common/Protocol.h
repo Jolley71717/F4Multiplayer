@@ -4820,8 +4820,8 @@ namespace Protocol
 	inline constexpr std::size_t   MAX_REWARD_ITEMS = 16;
 	inline constexpr std::uint32_t MAX_REWARD_XP = 100'000;
 
-	// kReportQuestReward (client -> server: id and playerId 0, ignored) or kQuestReward (server -> client: the ledger's id
-	// and the player who turned it in).
+	// kReportQuestReward (client -> server: id, playerId and run 0, ignored) or kQuestReward (server -> client: the ledger's
+	// id, the player who turned it in, and the server's run).
 	struct QuestReward
 	{
 		std::uint32_t           id = 0;
@@ -4831,6 +4831,10 @@ namespace Protocol
 		std::uint32_t           source = 0;  // the line's INFO (kLine) or the stage (kStage)
 		std::uint32_t           xp = 0;
 		std::vector<RewardItem> items;
+		// The server's run (RewardBook::Ledger: random, non-zero, new each time the server starts): ids are numbered within
+		// a run, so a game that stays up through a server's restart (a Steam host's address doesn't change) knows the new
+		// run's ids from the old one's.
+		std::uint32_t run = 0;
 
 		bool operator==(const QuestReward&) const = default;
 	};
@@ -4840,6 +4844,7 @@ namespace Protocol
 		Writer w{ a_type };
 		w.U32(a_msg.id);
 		w.U32(a_msg.playerId);
+		w.U32(a_msg.run);
 		w.U8(std::to_underlying(a_msg.kind));
 		w.U32(a_msg.quest);
 		w.U32(a_msg.source);
@@ -4855,7 +4860,7 @@ namespace Protocol
 
 	// A reward of something: at least one item or some XP, each item a plugin's form and a count a container change may
 	// move, the XP within MAX_REWARD_XP; a line's source an INFO of a plugin, a stage's a stage number. From the server, an
-	// id and the player who turned it in.
+	// id, the player who turned it in and the server's run.
 	inline std::optional<QuestReward> DecodeQuestReward(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
@@ -4863,6 +4868,7 @@ namespace Protocol
 		QuestReward msg;
 		msg.id = r.U32();
 		msg.playerId = r.U32();
+		msg.run = r.U32();
 		const auto kind = r.U8();
 		msg.quest = r.U32();
 		msg.source = r.U32();
@@ -4888,7 +4894,7 @@ namespace Protocol
 		if (msg.kind == RewardKind::kLine ? !IsShareableRef(msg.source) : msg.source > 0xFFFF) {
 			return std::nullopt;
 		}
-		if (type == MessageType::kQuestReward && (msg.id == 0 || msg.playerId == 0)) {
+		if (type == MessageType::kQuestReward && (msg.id == 0 || msg.playerId == 0 || msg.run == 0)) {
 			return std::nullopt;
 		}
 		return msg;

@@ -2190,7 +2190,7 @@ TEST("protocol: a quest reward round trips, and a bad one is refused")
 {
 	const QuestReward line{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, { { 0x0000000F, 500 }, { 0x00033778, 2 } } };
 	CHECK(DecodeQuestReward(Encode(line)) == line);
-	const QuestReward stage{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {} };
+	const QuestReward stage{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {}, 0x5EED0001 };
 	CHECK(DecodeQuestReward(Encode(stage, MT::kQuestReward)) == stage);
 
 	// Nothing in it; no quest; a line with no line, a stage past a stage's range; too much XP.
@@ -2204,11 +2204,13 @@ TEST("protocol: a quest reward round trips, and a bad one is refused")
 			 RewardItem{ 0x0000000F, -5 }, RewardItem{ 0x0000000F, MAX_ITEM_COUNT + 1 } }) {
 		CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 30, 0, { bad } })));
 	}
-	// The server's names the reward and who turned it in.
-	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 2, RewardKind::kStage, REF_A, 30, 150, {} }, MT::kQuestReward)));
-	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 0, RewardKind::kStage, REF_A, 30, 150, {} }, MT::kQuestReward)));
+	// The server's names the reward, who turned it in and the server's run.
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 2, RewardKind::kStage, REF_A, 30, 150, {}, 9 }, MT::kQuestReward)));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 0, RewardKind::kStage, REF_A, 30, 150, {}, 9 }, MT::kQuestReward)));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {}, 0 }, MT::kQuestReward)));
 	{
 		Writer w{ MT::kReportQuestReward };
+		w.U32(0);
 		w.U32(0);
 		w.U32(0);
 		w.U8(2);  // no such kind
@@ -2220,6 +2222,7 @@ TEST("protocol: a quest reward round trips, and a bad one is refused")
 	}
 	{
 		Writer w{ MT::kReportQuestReward };
+		w.U32(0);
 		w.U32(0);
 		w.U32(0);
 		w.U8(1);

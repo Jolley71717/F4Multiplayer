@@ -2114,10 +2114,19 @@ near, give items only in debug quickstarts.) What never reaches a friend's game:
 menu is open) and the player's own XP gains outside a kill's window (`Party::TrackXp`). A line is seen while our player
 or who they talk to says it (`high->greetTopic->info`, a RewardLines row of a quest `QuestSync::SharesHere`); it claims
 only its row's items, up to their counts, from 1 s before it was first seen to 3 s after it was last. A kPays stage of
-our own claims what is left from 1.5 s before it was seen done to 3 s after, and the XP (a stage a line sets waits for
-that line to close first, so neither takes the other's). The claim goes to the server as kReportQuestReward (35); the
-server numbers it, keeps it for its run (`RewardBook::Ledger`, not in the session file: its layout is unchanged) and
-sends it as kQuestReward (146) to every other welcomed game. Items cross load orders by FormTranslate; an item made at
+our own claims what is left from 1.5 s before it was seen done to 3 s after (a stage a line sets waits for that line to
+close first, so neither takes the other's), and the XP only if the stage itself completes its quest. Which turn-in
+stages complete their quest, and which stop it, is in RewardLines::TURN_INS, written by tools/rewardscan.ps1 for every
+kPays row from the quest records' stage log entries (QSDT flag 0x01, Complete Quest) and the stage fragments (`Stop`,
+`CompleteQuest` on the quest itself): FFDiamondCity03 30 completes and stops; MinRecruit02 90 (the ransom paid) does
+neither, but sets 400, which sets 450, which completes the quest. Those are no kPays stages, so QuestSync sets them in
+the friend's game too, where the engine gives the quest XP: claimed with 90 as well, it would come twice. The claim goes
+to the server as kReportQuestReward (35); the server numbers it within its run, keeps it for that run
+(`RewardBook::Ledger`, not in the session file: its layout is unchanged) and sends it as kQuestReward (146) to every
+other welcomed game, with the run's id: random and non-zero, new each time the server starts. A Steam host's address
+is the same when they host again, or when the server restarts from its session file, so a game that stayed up would
+otherwise take the new run's rewards 1..N for the ones it had; its Receiver forgets the ids it judged when the run
+changes. Items cross load orders by FormTranslate; an item made at
 runtime is never claimed. Each friend's game gives it once its player is in the world and alive (`AddObjectToContainer`
 under its own flag, so it is not claimed back; XP by `Party::GiveQuestXp`), and says so on the HUD (`quest.reward`).
 
@@ -2126,7 +2135,22 @@ gave its own) and the same player's repeat. A friend's game skips (`RewardBook::
 an id it judged already; the same line or stage it reported itself within 60 s; a stage reward whose stage is done here
 (our game ran it: a friend's kPays stage is never set here, so done means our own); a line reward of a quest our player
 completed before any friend's stage of it was set here (`QuestSync::FriendMoved`: they finished it on their own and got
-the line's reward then). Stage fragments are not mirrored at all, so they cannot double.
+the line's reward then). Stage fragments are not mirrored at all, so they cannot double. A friend's reward of a line or
+stage our own game is still claiming (our player heard the same line a moment after the friend) waits until our claim
+closes, so our report, if any, comes first and makes it a twin.
+
+*Closed once given.* A friend's game that gives a turn-in stage's reward closes that turn-in, or its player could hand in
+their own fern flower later and get it all again from their own stage (the maintainer's choice, 2026-11-10: every
+player gets the full reward once). `QuestSync::CloseTurnIn` marks the stage done without setting it: the done bit
+alone (`QuestStageLayout::MarkDone`, the quest's stages marked changed for the save), so its fragment, which would give
+the reward again and take the delivery, never runs, and the engine, which doesn't run a stage done already again,
+then refuses the player's own turn-in. Not `TESQuestStage::SetDone`, whose walk of the log entries would complete the
+quest through the engine, with its quest XP, which the reward has already. Where the stage completes the quest
+(TURN_INS) the completed flag is set directly, and where its fragment stops it, the quest is stopped (`stopquest`), so
+its dialogue goes. A quest whose stages are in order also gets the stage as its current one, so a friend's earlier
+stage still to come is known as passed. All of it is known as a friend's: not reported back, nor as our completion.
+The other way round (taking back what a later own turn-in gives twice) was not chosen: a stage's script takes and
+gives in one go, and its items can't be told from others' afterwards.
 
 *Away or not yet here.* The ledger knows which identities' games have each reward (the giver, everyone it was sent to);
 one joining or coming back later is sent what it lacks with its welcome, once. Not covered: a player away for the

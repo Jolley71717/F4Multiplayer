@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
 #include <unordered_set>
@@ -70,7 +71,7 @@ namespace RewardBook
 	// player's own XP gains, with the moments that may have given them, paired up as the moments close. A line claims only
 	// its own items (the table's), up to their counts; a stage what is left in its window when every line open with it has
 	// closed (a stage a line sets gives in the same window: the line's items are the line's, the rest the stage's), and its
-	// XP. A gain is claimed once.
+	// XP if the stage completes its quest. A gain is claimed once.
 	class Capture
 	{
 	public:
@@ -108,8 +109,10 @@ namespace RewardBook
 			moments.push_back(std::move(moment));
 		}
 
-		// A turn-in stage done here, seen now.
-		void Stage(std::uint32_t a_quest, std::uint16_t a_stage, Clock::time_point a_now)
+		// A turn-in stage done here, seen now. a_completes: the stage itself completes its quest (RewardLines::TURN_INS), so
+		// the quest XP in its window is its own; a stage it sets in turn that completes the quest is set in the friends'
+		// games too and gives them their XP there, so a stage that doesn't complete it claims items only.
+		void Stage(std::uint32_t a_quest, std::uint16_t a_stage, bool a_completes, Clock::time_point a_now)
 		{
 			Moment moment;
 			moment.kind = Kind::kStage;
@@ -117,7 +120,17 @@ namespace RewardBook
 			moment.source = a_stage;
 			moment.first = a_now;
 			moment.last = a_now;
+			moment.completes = a_completes;
 			moments.push_back(std::move(moment));
+		}
+
+		// Whether a moment of this line or stage is still open here (our player is turning the same in now): a friend's
+		// reward of it waits until it closes, so our own report, if any, is known first (Receiver::Reported).
+		[[nodiscard]] bool IsOpen(Kind a_kind, std::uint32_t a_quest, std::uint32_t a_source) const
+		{
+			return std::ranges::any_of(moments, [&](const Moment& a_moment) {
+				return !a_moment.closed && a_moment.kind == a_kind && a_moment.quest == a_quest && a_moment.source == a_source;
+			});
 		}
 
 		// The turn-ins whose windows are over, with what they claimed (one that claimed nothing gave nothing here: its script
@@ -189,6 +202,7 @@ namespace RewardBook
 			Clock::time_point first{};
 			Clock::time_point last{};
 			std::vector<Want> wants;
+			bool              completes = false;  // a stage that completes its quest: claims the XP in its window
 			bool              closed = false;
 		};
 
@@ -264,7 +278,7 @@ namespace RewardBook
 			}
 			float xp = 0.0f;
 			for (auto& gained : xps) {
-				if (gained.left > 0.0f && gained.at >= from && gained.at <= until) {
+				if (a_moment.completes && gained.left > 0.0f && gained.at >= from && gained.at <= until) {
 					xp += gained.left;
 					gained.left = 0.0f;
 				}
@@ -293,12 +307,30 @@ namespace RewardBook
 		return a_helloId != 0 ? a_helloId : (std::uint64_t{ 1 } << 63) | a_playerId;
 	}
 
+	// A server run's id: random and non-zero, so a game that stays up through a restart of the server (the same address) knows
+	// the new run's rewards, numbered from 1 again, from the old run's it was given (Receiver).
+	[[nodiscard]] inline std::uint32_t NewRun()
+	{
+		std::random_device random;
+		std::uint32_t      run = 0;
+		while (run == 0) {
+			run = static_cast<std::uint32_t>(random());
+		}
+		return run;
+	}
+
 	// The rewards of the server's run, each with the players whose games have it (who turned it in, and everyone it was sent
 	// to). Not in the session file: a reward a player missed for the whole run of a server is not given later (the session
 	// file's layout stays as it is).
 	class Ledger
 	{
 	public:
+		explicit Ledger(std::uint32_t a_run = NewRun()) :
+			run(a_run != 0 ? a_run : 1)
+		{}
+
+		[[nodiscard]] std::uint32_t Run() const { return run; }
+
 		struct Entry
 		{
 			std::uint32_t                     id = 0;
@@ -367,6 +399,7 @@ namespace RewardBook
 
 	private:
 		std::deque<Entry> entries;
+		std::uint32_t     run = 0;
 		std::uint32_t     lastId = 0;
 	};
 
@@ -375,7 +408,7 @@ namespace RewardBook
 	enum class Verdict : std::uint8_t
 	{
 		kGive,
-		kHad,        // this id was given here already (sent again after a reconnect)
+		kHad,        // this id of this server run was given here already (sent again after a reconnect)
 		kOwnTurnIn,  // our game turned the same line or stage in within SAME_TURN_IN: our player got their own
 		kStageDone,  // a turn-in stage done here: our own game ran it (a friend's is never set here), so it gave its own
 		kFinished,   // a line of a quest our player had finished before any friend's stage of it was set here: they got
@@ -397,6 +430,11 @@ namespace RewardBook
 		// friend's stage of it was set here.
 		Verdict Judge(const Protocol::QuestReward& a_reward, bool a_stageDone, bool a_finishedOnOwn, Clock::time_point a_now)
 		{
+			// Another run of the server (restarted, the same address): its ids are new.
+			if (a_reward.run != run) {
+				given.clear();
+				run = a_reward.run;
+			}
 			if (given.contains(a_reward.id)) {
 				return Verdict::kHad;
 			}
@@ -420,6 +458,7 @@ namespace RewardBook
 		{
 			own.clear();
 			given.clear();
+			run = 0;
 		}
 
 	private:
@@ -432,8 +471,28 @@ namespace RewardBook
 		};
 
 		std::vector<Own>                  own;
-		std::unordered_set<std::uint32_t> given;
+		std::unordered_set<std::uint32_t> given;  // ids of the run below judged here
+		std::uint32_t                     run = 0;
 	};
+
+	// What a friend's game does to its own quest once it gave a friend's turn-in stage's reward, so that its player can't
+	// turn the same in again and get it all twice: the stage marked done without running its script (the script would give
+	// the reward again, and take the delivery; the engine doesn't run a stage done already again, so the player's own
+	// turn-in, which sets it, then gives nothing: the rig's rewards step checks it), and the quest completed and stopped
+	// where the stage would (RewardLines::TURN_INS), so its dialogue goes. Nothing already so is done again.
+	struct Closing
+	{
+		bool mark = false;      // mark the stage done
+		bool complete = false;  // set the quest's completed flag (not through the engine's completion: no quest XP, the reward had it)
+		bool stop = false;      // stop the quest
+
+		bool operator==(const Closing&) const = default;
+	};
+
+	[[nodiscard]] inline Closing CloseTurnIn(bool a_completes, bool a_stops, bool a_stageDone, bool a_completed, bool a_running)
+	{
+		return { !a_stageDone, a_completes && !a_completed, a_stops && a_running };
+	}
 
 	[[nodiscard]] inline const char* Why(Verdict a_verdict)
 	{

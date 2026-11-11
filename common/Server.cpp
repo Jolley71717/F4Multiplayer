@@ -506,7 +506,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
-	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run, and whose games have each (not saved)
+	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -1782,7 +1782,7 @@ void Server::Run()
 				continue;
 			}
 			const auto& reward = entry->reward;
-			send(a_player.key, Protocol::Encode(Protocol::QuestReward{ entry->id, entry->playerId, reward.kind, reward.quest, reward.source, reward.xp, reward.items },
+			send(a_player.key, Protocol::Encode(Protocol::QuestReward{ entry->id, entry->playerId, reward.kind, reward.quest, reward.source, reward.xp, reward.items, rewardLedger.Run() },
 				Protocol::MessageType::kQuestReward), true);
 			log(std::format("server: player {} is sent reward {} ({:08X} {} {}), turned in while they were away", a_player.id, entry->id, reward.quest,
 				reward.kind == Protocol::RewardKind::kLine ? "line" : "stage", reward.source));
@@ -4162,7 +4162,7 @@ void Server::Run()
 		}
 		log(std::format("server: player {} turned in {:08X} ({} {}): reward {}, {} item(s), {} XP", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
 			report->source, entry->id, report->items.size(), report->xp));
-		const auto packet = Protocol::Encode(Protocol::QuestReward{ entry->id, a_player.id, report->kind, report->quest, report->source, report->xp, report->items },
+		const auto packet = Protocol::Encode(Protocol::QuestReward{ entry->id, a_player.id, report->kind, report->quest, report->source, report->xp, report->items, rewardLedger.Run() },
 			Protocol::MessageType::kQuestReward);
 		const auto id = entry->id;
 		for (const auto& [key, other] : players) {

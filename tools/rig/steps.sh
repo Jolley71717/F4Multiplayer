@@ -2045,7 +2045,9 @@ step_companions_human() {
 # game that set it; QuestRewards (common/RewardBook.h) claims what that player got and the server sends it to the others once. The
 # host's console sets REWARD_QUEST's REWARD_START (set-up: the quest started, shared) and then its turn-in REWARD_STAGE (set-up by console,
 # said so: the walk to the quest giver and the talk are not under test). Asserted: the host's game claims a reward for the stage; the
-# VM's game gives it once ("given here"), its caps go up by the caps the host's claim names, and the stage itself is not set there.
+# VM's game gives it once ("given here"), its caps go up by the caps the host's claim names, and it closes its own turn-in: the stage
+# marked done without its script, the quest completed and stopped (FFDiamondCity03 30 does both); then the VM's own turn-in (its
+# console sets the same stage, as its dialogue would) gives no caps, changes no stage and is claimed as no turn-in of its own.
 # With REWARD_AWAY=1 also: the VM's game is killed, the host turns in REWARD_AWAY_QUEST's REWARD_AWAY_STAGE meanwhile, and the VM's
 # game, rejoining, is sent it with its welcome and gives it. Dialogue lines' rewards (RewardLines.h) need a real conversation: a hand
 # test. Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after). A game that has the turn-in
@@ -2060,6 +2062,7 @@ _r_claimed_caps() {  # the caps the host's claim for <quest> stage <stage> names
 	grep -oE "QuestRewards: our player turned in $1 \(stage $2\): [^;]*" "$A_OUT/windelta-rewards-host.txt" | head -1 | grep -oE "0000000F x[0-9]+" | grep -oE "[0-9]+$" || echo 0
 }
 _r_tail() { grep -E 'QuestRewards:' "$A_OUT/windelta-rewards-$1.txt" | tail -3 | tr '\n' '|'; }
+_r_flags() { dc "$1" "stages $2" | sed -nE 's/.* flags=([0-9A-Fa-f]+) .*/\1/p'; }   # the quest's flags (0x1 running, 0x2 completed)
 _r_whole_log_has() { dc "$1" "log flush" >/dev/null; _log_fetch "$1" "$A_OUT/rewards-whole-$1"; grep -qE "$2" "$A_OUT/rewards-whole-$1/0.log"; }   # the game's whole current log (a restarted game's is new)
 _r_setup() {  # _r_setup <quest> <start> <stage>: shared on the host, the turn-in not done in either game, then started on both
 	local kind; kind=$(field "$(dc host "stages $1")" shared)
@@ -2070,7 +2073,7 @@ _r_setup() {  # _r_setup <quest> <start> <stage>: shared on the host, the turn-i
 }
 step_rewards() {
 	section "rewards (a turn-in stage's reward mirrored to the friend; console placement and setstage on the host)"
-	local caps0 caps1 claimed n
+	local caps0 caps1 caps2 caps3 claimed n flags done2
 	enter_both "$REWARD_CELL" 14
 	_r_setup "$REWARD_QUEST" "$REWARD_START" "$REWARD_STAGE" || return
 	win_mark rewards host; win_mark rewards vm
@@ -2090,11 +2093,34 @@ step_rewards() {
 	claimed=$(_r_claimed_caps "$REWARD_QUEST" "$REWARD_STAGE"); caps1=$(_r_caps vm)
 	if is_num "$caps0" && is_num "$caps1"; then expect_eq "rewards: the VM's caps go up by the caps the host's claim names" "$((caps1 - caps0))" "$claimed"
 	else fail "rewards: the VM's caps go up by the caps the host's claim names" "caps not read: before '$caps0', after '$caps1'"; fi
-	if _f_has vm "$REWARD_QUEST" "$REWARD_STAGE"; then fail "rewards: the turn-in stage itself is not set in the VM's game (kPays)" "done $(_f_done vm "$REWARD_QUEST")"
-	else pass "rewards: the turn-in stage itself is not set in the VM's game (kPays)" "VM done $(_f_done vm "$REWARD_QUEST")"; fi
-	sleep 15; win_read rewards vm >/dev/null
+	# Closed in the VM's game once given (QuestSync::CloseTurnIn): the stage marked done without its script, and FFDiamondCity03's
+	# quest completed and stopped (its 30 does both: RewardLines::TURN_INS), so the VM's player can't turn the same in again.
+	if _r_log_has vm "QuestSync: $REWARD_QUEST '[^']*' stage $REWARD_STAGE is a friend's turn-in whose reward was given here: marked done"; then
+		pass "rewards: the VM's game closes its own turn-in once the reward is given (the stage marked done, its script not run)" "$(grep -oE "QuestSync: $REWARD_QUEST '[^']*' stage $REWARD_STAGE is a friend's turn-in[^;]*" "$A_OUT/windelta-rewards-vm.txt" | head -1)"
+	else
+		fail "rewards: the VM's game closes its own turn-in once the reward is given (the stage marked done, its script not run)" "$(grep -E 'QuestSync: .*turn-in' "$A_OUT/windelta-rewards-vm.txt" | tail -2 | tr '\n' '|')"
+	fi
+	if _f_has vm "$REWARD_QUEST" "$REWARD_STAGE"; then pass "rewards: the turn-in stage reads done in the VM's game" "VM done $(_f_done vm "$REWARD_QUEST")"
+	else fail "rewards: the turn-in stage reads done in the VM's game" "VM done $(_f_done vm "$REWARD_QUEST")"; fi
+	flags=$(_r_flags vm "$REWARD_QUEST")
+	if [ -n "$flags" ] && (( (16#$flags & 2) != 0 && (16#$flags & 1) == 0 )); then pass "rewards: the VM's quest is completed and stopped, as the turn-in leaves it" "flags=$flags"
+	else fail "rewards: the VM's quest is completed and stopped, as the turn-in leaves it" "flags='$flags' (0x2 completed, 0x1 running)"; fi
+	sleep 5; win_read rewards vm >/dev/null
 	n=$(grep -cE "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_QUEST stage $REWARD_STAGE\) given here" "$A_OUT/windelta-rewards-vm.txt")
 	expect_eq "rewards: given once in the VM's game" "$n" 1
+	# The VM's own turn-in after the mirror (its dialogue would set the same stage): nothing more is given.
+	caps2=$(_r_caps vm); done2=$(_f_done vm "$REWARD_QUEST"); win_mark rewards vm
+	dc vm "console setstage $REWARD_QUEST $REWARD_STAGE" >/dev/null
+	sleep 10; win_read rewards vm >/dev/null; caps3=$(_r_caps vm)
+	if is_num "$caps2" && is_num "$caps3"; then expect_eq "rewards: the VM's own turn-in after the mirror gives no caps again" "$((caps3 - caps2))" 0
+	else fail "rewards: the VM's own turn-in after the mirror gives no caps again" "caps not read: before '$caps2', after '$caps3'"; fi
+	expect_eq "rewards: the VM's own turn-in after the mirror changes no stage" "$(_f_done vm "$REWARD_QUEST")" "$done2"
+	if grep -qE "QuestRewards: our player turned in $REWARD_QUEST \(stage $REWARD_STAGE\)" "$A_OUT/windelta-rewards-vm.txt"; then
+		fail "rewards: the VM's game claims no turn-in of its own after the mirror" "$(_r_tail vm)"
+	else pass "rewards: the VM's game claims no turn-in of its own after the mirror" "ok"; fi
+	sleep 5; win_read rewards vm >/dev/null
+	n=$(grep -cE "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_QUEST stage $REWARD_STAGE\) given here" "$A_OUT/windelta-rewards-vm.txt")
+	expect_eq "rewards: given no more in the VM's game" "$n" 0
 
 	[ "$REWARD_AWAY" = 1 ] || return
 	# Away: the VM's game is gone while the host turns in; its rejoin's welcome brings the reward.
@@ -2109,6 +2135,8 @@ step_rewards() {
 	if ! _vm_restart_rejoin_only rewards-rejoin; then fail "rewards (away): set-up: the VM's game restarts and rejoins" "$(tail -2 "$A_OUT/rewards-rejoin-vm.log" | tr '\n' '|')"; return; fi
 	if wait_for 60 _r_whole_log_has vm "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_AWAY_QUEST stage $REWARD_AWAY_STAGE\) given here"; then
 		pass "rewards (away): the VM's game, rejoining, gives the reward turned in while it was gone" "ok"
+		if _f_has vm "$REWARD_AWAY_QUEST" "$REWARD_AWAY_STAGE"; then pass "rewards (away): the turn-in stage reads done in the VM's game (closed)" "VM done $(_f_done vm "$REWARD_AWAY_QUEST")"
+		else fail "rewards (away): the turn-in stage reads done in the VM's game (closed)" "VM done $(_f_done vm "$REWARD_AWAY_QUEST")"; fi
 	else
 		fail "rewards (away): the VM's game, rejoining, gives the reward turned in while it was gone" "$(_r_tail vm)"
 	fi
