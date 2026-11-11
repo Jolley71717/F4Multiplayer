@@ -731,6 +731,104 @@ TEST("radiants: a friend's run taken back from our save takes the stages their g
 	CHECK((alice.OnStart(MIN_RECRUIT01, theirs, false, fills) == Answer::kIgnore));
 }
 
+TEST("radiants: a friend's run with actors made at runtime is followed with their newest fills until its owner leaves or loads a save")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const Run               bobsNext{ 2, 41 };
+	const Run               carols{ 3, 7 };
+	const std::vector<RadiantFill> first{ { 2, 1, CORVEGA }, { 5, 0, RUNTIME_NPC } };  // the courser not shared yet
+	const std::vector<RadiantFill> shared{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };       // shared since: its spawn id
+	Followed                       followed;
+
+	// Bob's Variable Removal shared here: followed with its fills; sent again with the courser's spawn id, the newest kept.
+	CHECK(followed.Follow(RRR07, bobs, first));
+	REQUIRE(followed.Follows(RRR07));
+	REQUIRE(followed.Find(RRR07) != nullptr);
+	CHECK((followed.Find(RRR07)->fills == first));
+	CHECK(!followed.Follow(RRR07, bobs, shared));  // the same run: what was forced for it stands
+	CHECK((followed.Find(RRR07)->fills == shared));
+	CHECK(followed.Find(RRR07)->run == bobs);
+	// Another run of the quest (Bob loaded a save from before it and rolled it again): a fresh entry.
+	CHECK(followed.Follow(RRR07, bobsNext, first));
+	CHECK(followed.Find(RRR07)->run == bobsNext);
+	CHECK(followed.Follow(RRR09, carols, first));
+	CHECK(followed.Size() == 2);
+
+	// Bob leaves (or loads a save): his runs are followed no more; Carol's goes on. His send of the run when he is back
+	// follows it again.
+	CHECK((followed.OwnerGone(2) == std::vector<std::uint32_t>{ RRR07 }));
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Follows(RRR09));
+	CHECK(followed.OwnerGone(2).empty());
+	CHECK(followed.Follow(RRR07, bobsNext, shared));
+	// The quest stops here: over. The session ends: all over.
+	followed.Ended(RRR07);
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Follows(RRR09));
+	followed.Clear();
+	CHECK(followed.Size() == 0);
+	CHECK(!followed.Follows(RRR09));
+}
+
+TEST("radiants: a run's start sent again while its first waits its turn keeps the newer fills and every stage")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	Protocol::RadiantStart  waiting{ 2, RRR07, 40, { { 2, 1, CORVEGA }, { 5, 0, RUNTIME_NPC } }, { 10, 50 } };
+	waiting.stages.push_back(100);  // a stage packet that came meanwhile, kept with it
+	const Protocol::RadiantStart newer{ 2, RRR07, 40, { { 2, 1, CORVEGA }, { 5, 0, SPAWN } }, { 10, 50, 100, 200 } };
+	REQUIRE(Supersedes(waiting, newer));
+	CHECK((waiting.fills == newer.fills));
+	CHECK((waiting.stages == std::vector<std::uint16_t>{ 10, 50, 100, 200 }));  // each once, in the order they came
+	// Another run of the quest, another player's, or another quest: not this one's; nothing changes.
+	const auto before = waiting;
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, RRR07, 41, {}, { 300 } }));
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 3, RRR07, 40, {}, { 300 } }));
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, RRR03, 40, {}, { 300 } }));
+	CHECK((waiting == before));
+}
+
+TEST("radiants: a Railroad job whose target is gone for good is run again as this game's own, after a wait, unless a friend's run of it stands in")
+{
+	using namespace std::chrono_literals;
+	using Objectives = std::vector<ObjectiveHere>;
+	// BGSQuestObjective::state: shown and not done is open; done (completed or failed), or not shown yet, is not.
+	CHECK(ObjectiveOpen(1));
+	CHECK(!ObjectiveOpen(0));
+	CHECK(!ObjectiveOpen(2));
+	CHECK(!ObjectiveOpen(3));
+	CHECK(!ObjectiveOpen(4));
+	CHECK(!ObjectiveOpen(5));
+
+	// On offer (no objective shown yet), with its courser made: never hollow. Taken, the courser standing in the alias the
+	// objective points at: not hollow, whether the target alias is forced yet (the created one holds it either way).
+	CHECK(!HollowJob(Objectives{ { false, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { true, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { true, 1, 0 } }, true));
+	// Followed, then the owner's copy gone (the session over, the owner gone, our save loaded alone): the objective points
+	// at nothing, and our own courser was removed: hollow.
+	CHECK(HollowJob(Objectives{ { true, 1, 0 } }, false));
+	// The courser killed: that objective is done, its corpse in the alias or cleaned up since; the next points at the
+	// giver, who stands. Never hollow.
+	CHECK(!HollowJob(Objectives{ { false, 1, 0 }, { true, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { false, 1, 0 }, { true, 1, 1 } }, false));
+	// An objective shown with no target at all (a text one) says nothing.
+	CHECK(!HollowJob(Objectives{ { true, 0, 0 } }, false));
+	// A patrol of three, one still standing: not hollow.
+	CHECK(!HollowJob(Objectives{ { true, 3, 1 } }, false));
+	CHECK(HollowJob(Objectives{ { true, 3, 0 } }, false));
+	CHECK(!HollowJob(Objectives{}, false));
+
+	// Run again once hollow for HOLLOW_JOB_WAIT, unless a friend's run of it is followed (their actors stand in) or a
+	// friend's start of it waits its turn or is under way (it fills the aliases itself).
+	CHECK(!RunsAgain(true, false, false, HOLLOW_JOB_WAIT - 1s));
+	CHECK(RunsAgain(true, false, false, HOLLOW_JOB_WAIT));
+	CHECK(!RunsAgain(false, false, false, 1h));
+	CHECK(!RunsAgain(true, true, false, 1h));
+	CHECK(!RunsAgain(true, false, true, 1h));
+}
+
 TEST("radiants: a run of a session the player is not in (or where radiants aren't shared) is kept while it runs, and finished in its session once over")
 {
 	constexpr std::uint64_t        FIRST = 77;

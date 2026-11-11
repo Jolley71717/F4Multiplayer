@@ -1115,4 +1115,129 @@ namespace RadiantRules
 		std::map<std::uint32_t, std::vector<Done>>                               done;  // the targets of runs finished here, by quest
 		std::uint32_t                                                            serial = 0;
 	};
+
+	// ---- Runs whose actors are the owner's (Entry::spawned) ------------------------------------------
+
+	// The friends' runs of quests whose actors are made at runtime, shared here and followed: the owner's actors stand
+	// here through our copies of them, forced into the run's aliases as they are placed, and our own actors of the quest
+	// are removed as they come (RadiantSync, Spawns). A run is followed from the moment it is shared here until its
+	// quest stops here, its owner leaves or loads a save (their copies go with them: nothing of theirs stands here any
+	// more; the run stays shared, so their send of the same run when they are back is followed again), or the session
+	// ends. A run's fills are the owner's as last sent (sent again as an actor of theirs is shared).
+	class Followed
+	{
+	public:
+		struct Entry
+		{
+			Run                                run;
+			std::vector<Protocol::RadiantFill> fills;
+		};
+
+		// The run is shared here with these fills (its start, or a newer send of it): followed from now on. True when it
+		// is new here (another run of the quest, or none, was followed before): what was forced for the old one is forgotten.
+		bool Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
+		{
+			auto&      entry = quests[a_quest];
+			const bool fresh = entry.run != a_run;
+			entry.run = a_run;
+			entry.fills.assign(a_fills.begin(), a_fills.end());
+			return fresh;
+		}
+
+		[[nodiscard]] bool Follows(std::uint32_t a_quest) const { return quests.contains(a_quest); }
+
+		[[nodiscard]] const Entry* Find(std::uint32_t a_quest) const
+		{
+			const auto it = quests.find(a_quest);
+			return it != quests.end() ? &it->second : nullptr;
+		}
+
+		[[nodiscard]] const std::map<std::uint32_t, Entry>& Entries() const { return quests; }
+
+		// The player a_origin left the session or loaded a save: their runs are followed no more. The quests of those.
+		std::vector<std::uint32_t> OwnerGone(std::uint32_t a_origin)
+		{
+			std::vector<std::uint32_t> out;
+			for (auto it = quests.begin(); it != quests.end();) {
+				if (it->second.run.origin == a_origin) {
+					out.push_back(it->first);
+					it = quests.erase(it);
+				} else {
+					++it;
+				}
+			}
+			return out;
+		}
+
+		// The quest stopped here, or was run again as this game's own.
+		void Ended(std::uint32_t a_quest) { quests.erase(a_quest); }
+
+		void                      Clear() { quests.clear(); }
+		[[nodiscard]] std::size_t Size() const { return quests.size(); }
+
+	private:
+		std::map<std::uint32_t, Entry> quests;
+	};
+
+	// A run's start sent again (its fills changed: an actor of the owner's shared since names itself by its spawn id)
+	// while an earlier send of it waits its turn here, or is being started: the newer fills replace the older, and the
+	// stages it brings join those that came meanwhile (each is set once anyway, Book::Accept). True when it is the same
+	// run (otherwise nothing is changed).
+	inline bool Supersedes(Protocol::RadiantStart& a_pending, const Protocol::RadiantStart& a_newer)
+	{
+		if (a_pending.quest != a_newer.quest || a_pending.playerId != a_newer.playerId || a_pending.serial != a_newer.serial) {
+			return false;
+		}
+		a_pending.fills = a_newer.fills;
+		for (const auto stage : a_newer.stages) {
+			if (std::ranges::find(a_pending.stages, stage) == a_pending.stages.end()) {
+				a_pending.stages.push_back(stage);
+			}
+		}
+		return true;
+	}
+
+	// A job whose target is gone for good (hollow, below) is run again as this game's own once it has been so this long:
+	// a friend's run of it heard meanwhile (the owner back in the session, or their save loaded from inside the run)
+	// is followed again instead, and nothing is lost.
+	inline constexpr auto HOLLOW_JOB_WAIT = std::chrono::minutes(5);
+
+	// An objective of the quest as it is here (HollowJob): whether it is shown to the player and not done, and of the
+	// aliases it points at, how many there are and how many hold a reference that stands (enabled, not deleted).
+	struct ObjectiveHere
+	{
+		bool        shown = false;
+		std::size_t targets = 0;
+		std::size_t standing = 0;
+	};
+
+	// BGSQuestObjective::state: displayed (1), with completed (2) or failed (4) set once done. Open: shown and not done.
+	inline bool ObjectiveOpen(std::int32_t a_state)
+	{
+		return (a_state & 1) != 0 && (a_state & 6) == 0;
+	}
+
+	// Whether a job with actors made at runtime is hollow here, its player left with an objective and nothing to do it
+	// to: an open objective points at nothing that stands, and none of the actors the quest's own start made stands
+	// either (a_createdStanding: an enabled one, alive or dead, in an alias the start created). Only a run that was
+	// followed looks so: its own actors were removed as they came and its target alias was forced onto the owner's copy,
+	// which no save keeps and which goes with the owner or the session. A job on offer shows no objective; one whose
+	// target was killed has that objective done and the corpse in the alias while the next points at the giver; a run
+	// of this game's own has its actor in the alias its start created, whether or not the target alias is forced yet
+	// (To the Mattresses makes seven bosses and keeps the six it didn't pick disabled: those count for nothing).
+	inline bool HollowJob(std::span<const ObjectiveHere> a_objectives, bool a_createdStanding)
+	{
+		return !a_createdStanding && std::ranges::any_of(a_objectives, [](const ObjectiveHere& a_objective) { return a_objective.shown && a_objective.targets > 0 && a_objective.standing == 0; });
+	}
+
+	// Whether our run of such a quest, hollow (HollowJob) for a_hollowFor, is to be run again now as this game's own
+	// (the quest stopped and started again: its start picks a place and makes its actors afresh, on offer at the giver as
+	// a fresh job): not while a friend's run of it is followed here (a_followed: their actors are what stands) or a
+	// friend's start of it waits its turn or is under way (a_starting: it fills the aliases itself), and only once the
+	// job has been hollow for HOLLOW_JOB_WAIT (the owner coming back, or loading a save from inside the run, sends the
+	// run again within it).
+	inline bool RunsAgain(bool a_hollow, bool a_followed, bool a_starting, std::chrono::steady_clock::duration a_hollowFor)
+	{
+		return a_hollow && !a_followed && !a_starting && a_hollowFor >= HOLLOW_JOB_WAIT;
+	}
 }

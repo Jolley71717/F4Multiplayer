@@ -813,11 +813,24 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   otherwise its start makes its own actor for the alias), and from then on forces its copy of each of the owner's
   actors into that alias as the copy is placed (`ReferenceAlias.ForceRefTo`, the same `Encounters::RefillsOf` and
   retries as an encounter's run, `refilled=`), removing its own actor of the quest first (`Spawns::RemoveFollowedActor`)
-  and any other it made for the quest as it loads (`Spawns::FollowedRadiantOf`, `followRemoved=`): the owner's
-  courser is the one courser in both games, killed once, its death shared as any spawn's. A friend who goes alone
-  finds nobody there until the owner's game has the actor loaded; the quest completes for both by the owner's stages
-  either way. High Ground (RRR11) stays each player's own: its vertibird and crew are flown by a scene. `net status`:
-  `radiants: ... followedActors= refilled= refillsFailed= resentFills=`.
+  and any other it made for the quest as it loads (`Spawns::FollowedRadiantOf`, `followRemoved=`; only an actor the
+  quest's own start made, never one its conditions filled an alias with, `followKept=`): the owner's courser is the
+  one courser in both games, killed once, its death shared as any spawn's. A run sent again while its first send
+  still waits its turn, or is being started, keeps the newest fills (`RadiantRules::Supersedes`) and its stages.
+  A friend who goes alone finds nobody there until the owner's game has the actor loaded; the quest completes for
+  both by the owner's stages either way. A run is followed until its quest stops here, its owner leaves or loads a
+  save (their copies go with them, `unfollowed=`; the run stays shared, so the same run sent again when they are
+  back, or from a save inside it, is followed again) or the session ends. A job that leaves hollow (an objective
+  shown that points at nothing standing, and nothing standing in an alias its start created: its own actors were
+  removed and the owner's copy is gone, which no save keeps either; `RadiantRules::HollowJob`, read off the quest's
+  objectives and created aliases) is run again as this game's own once it has been so for `HOLLOW_JOB_WAIT` (5 min)
+  with no friend's run of it followed, waiting or starting, in a session or out of one: the run is over here (the
+  owner's later send of it is ignored, as a finished run's), the quest is stopped and started again, so its own
+  start picks a place and makes its actors afresh and the giver offers it as a fresh job (`hollowRestarted=`; the
+  player takes it again at HQ). A job on offer shows no objective and keeps its actors, and a job whose target was
+  killed has that objective done, so neither is ever hollow. High Ground (RRR11) stays each player's own: its
+  vertibird and crew are flown by a scene. `net status`: `radiants: ... followedActors= unfollowed= refilled=
+  refillsFailed= resentFills= hollowRestarted=`.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the Minutemen's
   defences, the Brotherhood's and the Institute's escorts, the add-ons'); High Ground's vertibird; To the Mattresses
   shows each game its own objective text (its `RRR08DisplayNumber`, which boss this is, is each game's, though the

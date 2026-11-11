@@ -111,7 +111,7 @@ namespace Spawns
 		std::vector<std::uint32_t> hitsOnUs;
 		constexpr std::size_t      MAX_HITS_ON_US = 64;
 		std::vector<Removal>       followRemovals;
-		std::uint32_t              runsHurt = 0, followRemoved = 0;
+		std::uint32_t              runsHurt = 0, followRemoved = 0, followKept = 0;
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
 		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
@@ -541,25 +541,44 @@ namespace Spawns
 			return {};
 		}
 
+		// The quests whose own start made our NPC (an alias of theirs that creates its reference holds it), to a_fn(quest
+		// id). An alias the quest's script forced onto it, or that its conditions filled with it, doesn't count: the NPC
+		// is some other quest's, or a settler's, and that quest's stop never deletes it.
+		template <class Fn>
+		void ForCreators(RE::Actor* a_actor, Fn&& a_fn)
+		{
+			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return;
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest && static_cast<std::uint16_t>(entry.alias->fillType) == QuestActors::FILL_CREATED) {
+					a_fn(entry.quest->GetFormID());
+				}
+			}
+		}
+
+		// Whether the quest's own start made our NPC (ForCreators).
+		bool CreatedBy(RE::Actor* a_actor, std::uint32_t a_quest)
+		{
+			bool created = false;
+			ForCreators(a_actor, [&](std::uint32_t a_creator) { created = created || a_creator == a_quest; });
+			return created;
+		}
+
 		// The radiant quest whose alias created our NPC, when our game follows a friend's run of it whose actors are theirs
 		// (RadiantSync::FollowsActors: a courser, a patrol made at runtime in each game): ours of it is not what stands there,
 		// and is removed as it comes (Share). 0 otherwise.
 		std::uint32_t FollowedRadiantOf(RE::Actor* a_actor)
 		{
-			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
-			if (!aliases) {
-				return 0;
-			}
-			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
-			for (const auto& entry : aliases->aliasArray) {
-				if (!entry.quest || !entry.alias || entry.alias->owningQuest != entry.quest || static_cast<std::uint16_t>(entry.alias->fillType) != QuestActors::FILL_CREATED) {
-					continue;
+			std::uint32_t out = 0;
+			ForCreators(a_actor, [&](std::uint32_t a_creator) {
+				if (out == 0 && RadiantSync::FollowsActors(a_creator)) {
+					out = a_creator;
 				}
-				if (const auto id = entry.quest->GetFormID(); RadiantSync::FollowsActors(id)) {
-					return id;
-				}
-			}
-			return 0;
+			});
+			return out;
 		}
 
 		// Friends' encounter spawns as the book judges them: where their game had each as it was shared (its encounter's
@@ -1443,6 +1462,16 @@ namespace Spawns
 		if (!actor || actor->IsDeleted() || !Protocol::IsSpawnRef(a_local) || theirs.IdOf(a_local) != 0 || NpcSync::IsOurCompanion(actor) || Leaving(a_local)) {
 			return;
 		}
+		if (!CreatedBy(actor, a_quest)) {
+			// The alias holds an NPC the quest's start didn't make (its conditions filled it with another quest's actor, or a
+			// settler): the alias is forced away from it, and it stays as it is.
+			++followKept;
+			if (followKept <= LOGGED) {
+				REX::INFO("Encounters: {:08X}, held by an alias of {:08X} '{}' that is forced onto our copy of the owner's actor, stays: the quest's start didn't make it", a_local, a_quest,
+					QuestName(a_quest));
+			}
+			return;
+		}
 		++followRemoved;
 		if (followRemoved <= LOGGED) {
 			REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', goes: its alias is forced onto our copy of the owner's actor", a_local, a_quest, QuestName(a_quest));
@@ -1954,8 +1983,8 @@ namespace Spawns
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
-			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved) +
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept) +
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

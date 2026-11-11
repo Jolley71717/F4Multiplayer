@@ -61,8 +61,13 @@ namespace RadiantSync
 
 	// Whether the run of this radiant shared here is a friend's whose actors are made at runtime and theirs
 	// (RadiantRules::Entry::spawned): our game's own actors made for the quest are not what stands there (Spawns removes
-	// them as they come), and our copies of theirs are forced into its aliases as they are placed (Frame).
+	// them as they come), and our copies of theirs are forced into its aliases as they are placed (Frame). Followed until
+	// the quest stops here, the owner leaves or loads a save, or the session ends; a quest left hollow by that (an
+	// objective shown, nothing standing to do it to) is run again as our own after a while (RadiantRules::HollowJob).
 	[[nodiscard]] bool FollowsActors(std::uint32_t a_quest);
+
+	// A friend left the session: their runs we follow with their actors are followed no more (their copies go with them).
+	void OnPlayerLeft(std::uint32_t a_playerId);
 
 	// Forces our reference a_local into the quest's reference alias a_alias (ReferenceAlias.ForceRefTo, run by the script
 	// VM a frame or so later). False when it could not be asked. For a followed run's aliases (here, and EncounterRuns).
