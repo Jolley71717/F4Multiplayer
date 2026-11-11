@@ -10,10 +10,12 @@
 #include "game/MoveSync.h"
 #include "game/PackageRelease.h"
 #include "game/Papyrus.h"
+#include "game/StandInTime.h"
 
 #include "Protocol.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -23,6 +25,8 @@ namespace Puppets
 	{
 		// Actor::Update vtable slot (see RE/A/Actor.h).
 		constexpr std::size_t UPDATE_INDEX = 0xCF;
+		// TESObjectREFR::UpdateAnimation(float), Actor's override in the same vtable (RE/T/TESObjectREFR.h).
+		constexpr std::size_t UPDATE_ANIMATION_INDEX = 0x9F;
 
 		// The engine periodically re-evaluates AI packages, so the idle package is re-applied.
 		constexpr auto IDLE_REFRESH = 2s;
@@ -77,6 +81,14 @@ namespace Puppets
 		using UpdateFn = void (*)(RE::Actor*, float);
 		std::uintptr_t hookedVtable = 0;
 		UpdateFn       originalUpdate = nullptr;
+		UpdateFn       originalUpdateAnimation = nullptr;  // Actor::UpdateAnimation (UpdateAnimationHook)
+
+		// Dev: the stand-in animation steps scaled to real time (UpdateAnimationHook), across all puppets.
+		std::atomic<std::uint32_t> scaledSteps{ 0 };
+		std::atomic<float>         lastScale{ 1.0f };
+		std::atomic<float>         lastStep{ 0.0f };
+		std::atomic<float>         loggedScale{ 1.0f };  // the scale last logged; back to 1 at full speed
+		std::atomic<std::uint32_t> scaleChanges{ 0 };
 
 		constexpr auto SUPPRESSED_BEHAVIOR =
 			std::to_underlying(RE::Actor::BOOL_FLAGS::kMovementBlocked) |
@@ -767,6 +779,60 @@ namespace Puppets
 			}
 		}
 
+		// The engine's per-actor job (on its job threads, not the main thread) steps every actor's animation through this
+		// slot with the world's frame time: BSTimer's delta, which has the game's time multiplier in it. A stand-in is placed
+		// on real time, so while our game alone runs slowed its legs cycled slowly under a body that moved at full speed, and
+		// it glided. A live puppet's step is scaled back to real time (StandInTime.h); every other actor, a dead mirrored NPC
+		// (it ragdolls) and a puppet the AI drives for a while (AllowAI: getting into power armor) get the engine's step.
+		// Puppets::UpdateHook's UpdateNoAI never stepped the graph: slot 0xD0 is Actor::UpdateActor3DPosition, the float unused.
+		void UpdateAnimationHook(RE::Actor* a_this, float a_delta)
+		{
+			if (puppetCount.load(std::memory_order_relaxed) == 0) {
+				originalUpdateAnimation(a_this, a_delta);
+				return;
+			}
+			// Our game at full speed (no puppet's step changes then): no lookup. The friend's own rate is taken as 1, so
+			// this holds until it is known here (StandInTime.h).
+			const auto timer = FrameClock::Read();
+			const float scale = timer.read ? StandInTime::Scale(timer.delta, timer.realDelta) : 1.0f;
+			if (scale == 1.0f) {
+				if (loggedScale.load(std::memory_order_relaxed) != 1.0f) {
+					loggedScale.store(1.0f, std::memory_order_relaxed);
+				}
+				originalUpdateAnimation(a_this, a_delta);
+				return;
+			}
+
+			bool          live = false;
+			std::uint32_t formId = 0;
+			{
+				std::scoped_lock l{ lock };
+				if (const auto entry = Find(a_this)) {
+					live = std::chrono::steady_clock::now() >= entry->aiUntil;
+					formId = entry->formId;
+				}
+			}
+			if (!live || a_this->IsDead(false)) {
+				originalUpdateAnimation(a_this, a_delta);
+				return;
+			}
+
+			const float step = StandInTime::Step(a_delta, timer.delta, timer.realDelta);
+			const auto  steps = scaledSteps.fetch_add(1, std::memory_order_relaxed) + 1;
+			lastScale.store(scale, std::memory_order_relaxed);
+			lastStep.store(step, std::memory_order_relaxed);
+			const float logged = loggedScale.load(std::memory_order_relaxed);
+			if (std::abs(scale - logged) > 0.05f * logged) {
+				loggedScale.store(scale, std::memory_order_relaxed);
+				const auto changes = scaleChanges.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (MoveSync::Loggable(changes)) {
+					REX::INFO("Puppets: our game runs at x{:.2f}: {:08X}'s animation is stepped x{:.2f} ({:.4f} s for the engine's {:.4f}; {} steps scaled, change {})",
+						timer.delta / timer.realDelta, formId, scale, step, a_delta, steps, changes);
+				}
+			}
+			originalUpdateAnimation(a_this, step);
+		}
+
 		void InstallHook(RE::Actor* a_actor)
 		{
 			const auto vtable = *reinterpret_cast<std::uintptr_t*>(a_actor);
@@ -782,9 +848,15 @@ namespace Puppets
 			const auto slot = vtable + sizeof(void*) * UPDATE_INDEX;
 			originalUpdate = *reinterpret_cast<UpdateFn*>(slot);
 			const auto hook = reinterpret_cast<std::uintptr_t>(&UpdateHook);
+			// The animation update's slot is read before either is written, so neither original is ever our own hook.
+			const auto animationSlot = vtable + sizeof(void*) * UPDATE_ANIMATION_INDEX;
+			originalUpdateAnimation = *reinterpret_cast<UpdateFn*>(animationSlot);
 			REL::WriteSafeData(slot, hook);
+			REL::WriteSafeData(animationSlot, reinterpret_cast<std::uintptr_t>(&UpdateAnimationHook));
 			hookedVtable = vtable;
-			REX::INFO("Puppets: hooked actor update (vtable {:X})", vtable);
+			const auto base = REL::Module::get().base();
+			REX::INFO("Puppets: hooked actor update (vtable {:X}) and its animation update (+{:X})", vtable,
+				reinterpret_cast<std::uintptr_t>(originalUpdateAnimation) - base);
 		}
 
 		// Activation (pressing E) is handled by the base form. Puppets must not start the
@@ -1261,6 +1333,9 @@ namespace Puppets
 				out += std::format(" {}={:.0f}", name, f);
 			}
 		}
+		// The animation steps scaled to real time while our game ran slowed (all puppets), the last scale and step.
+		out += std::format(" animScaled={} x{:.2f} step={:.4f}", scaledSteps.load(std::memory_order_relaxed), lastScale.load(std::memory_order_relaxed),
+			lastStep.load(std::memory_order_relaxed));
 		return out + " " + DescribeAim(a_actor);
 	}
 
