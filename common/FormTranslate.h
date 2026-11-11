@@ -488,6 +488,18 @@ namespace FormTranslate
 		case MessageType::kSettlementOwner:
 			Apply<SettlementOwner>(a_packet, ctx, DecodeSettlementOwner, [&](SettlementOwner& m) { return ctx.Key(m.workshop); }, typed);
 			break;
+		case MessageType::kReportQuestReward:
+		case MessageType::kQuestReward:
+			// The quest and a line's INFO, or nothing; an item the other side lacks is left out (a reward of nothing then
+			// is refused by its reader: a game gives nothing it can't name).
+			Apply<QuestReward>(a_packet, ctx, DecodeQuestReward, [&](QuestReward& m) {
+				if (!ctx.Key(m.quest) || (m.kind == RewardKind::kLine && !ctx.Key(m.source))) {
+					return false;
+				}
+				ctx.Entries(m.items, [&](RewardItem& a_item) { return ctx.Key(a_item.form); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kActorStates:
 		case MessageType::kActorStatesRelay:
 			Apply<std::vector<ActorState>>(a_packet, ctx, DecodeActorStates, [&](std::vector<ActorState>& m) {

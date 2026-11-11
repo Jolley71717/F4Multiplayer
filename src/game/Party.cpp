@@ -25,6 +25,7 @@
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/PingRules.h"
+#include "game/QuestRewards.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/RollHook.h"
@@ -798,6 +799,9 @@ namespace Party
 				const float credited = (std::min)(gain, xpCredit);
 				xpCredit -= credited;
 				gain -= credited;
+				if (gain >= 1.0f && a_now >= killWindowEnd) {
+					QuestRewards::OnOwnXp(gain);  // no kill's: a turn-in stage's quest XP is claimed from these (QuestRewards)
+				}
 				if (gain >= 1.0f && a_now < killWindowEnd) {
 					hold(gain, a_now);
 				} else if (gain >= 1.0f) {
@@ -1160,6 +1164,16 @@ namespace Party
 			xpNoticeAt = Clock::now() + XP_NOTICE_DELAY;
 		}
 		xpNotice += static_cast<float>(amount);
+	}
+
+	void GiveQuestXp(std::uint32_t a_xp)
+	{
+		const auto player = Player();
+		if (!player || a_xp == 0) {
+			return;
+		}
+		RE::Console::ExecuteCommand(std::format("player.modav experience {}", a_xp).c_str());
+		xpCredit += static_cast<float>(a_xp);  // ours to give, not a kill of ours
 	}
 
 	void ApplyHeartbeatAck(const Protocol::Heartbeat& a_beat)

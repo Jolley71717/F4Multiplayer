@@ -2396,3 +2396,55 @@ TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's ow
 		CHECK(!DecodeWelcome(bytes));
 	}
 }
+
+TEST("protocol: a quest reward round trips, and a bad one is refused")
+{
+	const QuestReward line{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, { { 0x0000000F, 500 }, { 0x00033778, 2 } } };
+	CHECK(DecodeQuestReward(Encode(line)) == line);
+	const QuestReward stage{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {}, 0x5EED0001 };
+	CHECK(DecodeQuestReward(Encode(stage, MT::kQuestReward)) == stage);
+
+	// Nothing in it; no quest; a line with no line, a stage past a stage's range; too much XP.
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kLine, 0, REF_B, 10, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, 0, 10, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 0x10000, 10, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 30, MAX_REWARD_XP + 1, {} })));
+	// An item that is the player, a runtime form or none, or a count of none or too many.
+	for (const RewardItem bad : { RewardItem{ PLAYER_REF_ID, 1 }, RewardItem{ 0xFF000001, 1 }, RewardItem{ 0, 1 }, RewardItem{ 0x0000000F, 0 },
+			 RewardItem{ 0x0000000F, -5 }, RewardItem{ 0x0000000F, MAX_ITEM_COUNT + 1 } }) {
+		CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 30, 0, { bad } })));
+	}
+	// The server's names the reward, who turned it in and the server's run.
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 2, RewardKind::kStage, REF_A, 30, 150, {}, 9 }, MT::kQuestReward)));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 0, RewardKind::kStage, REF_A, 30, 150, {}, 9 }, MT::kQuestReward)));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {}, 0 }, MT::kQuestReward)));
+	{
+		Writer w{ MT::kReportQuestReward };
+		w.U32(0);
+		w.U32(0);
+		w.U32(0);
+		w.U8(2);  // no such kind
+		w.U32(REF_A);
+		w.U32(30);
+		w.U32(10);
+		w.U8(0);
+		CHECK(!DecodeQuestReward(w.Data()));
+	}
+	{
+		Writer w{ MT::kReportQuestReward };
+		w.U32(0);
+		w.U32(0);
+		w.U32(0);
+		w.U8(1);
+		w.U32(REF_A);
+		w.U32(30);
+		w.U32(10);
+		w.U8(static_cast<std::uint8_t>(MAX_REWARD_ITEMS + 1));  // more items than a reward holds
+		for (std::size_t i = 0; i <= MAX_REWARD_ITEMS; ++i) {
+			w.U32(0x0000000F);
+			w.U32(1);
+		}
+		CHECK(!DecodeQuestReward(w.Data()));
+	}
+}

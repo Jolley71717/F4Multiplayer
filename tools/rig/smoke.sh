@@ -137,6 +137,7 @@ run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the ad
 run quests_outcomes step_quests_outcomes  # opt-in (--only quests_outcomes): the add-ons' endings set for good, on throwaway saves (QOUT_SWAP=1 the other way)
 run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
 run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quests_2): Cait's quest, Nick's after the Memory Den and MS07c 305 then MS07cPostQuest 20 by console setstage, on throwaway saves
+run rewards   step_rewards    # opt-in (--only rewards): it sets quest stages for good, on throwaway saves; REWARD_AWAY=1 turns the second (the sale) in with the VM's game killed, then restarts it
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

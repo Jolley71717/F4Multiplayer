@@ -184,6 +184,8 @@ namespace Text
 		{ "quest.stuck", "Your main story was stuck; it goes on with {quest}" },
 		{ "quest.next", "the next quest" },
 		{ "quest.completed", "{player} completed {quest}" },
+		{ "quest.reward", "{player} turned in a quest: you got {what} too" },
+		{ "quest.reward_xp", "{n} XP" },
 		{ "quest.follow_offer", "{player} is going into {quest}: hold {key} within {n} s to go with them" },
 		{ "quest.follow_fight", "{player} is fighting in {quest}: hold {key} within {n} s to join them" },
 		{ "radiant.job_back", "Nothing was left of your friend's {quest}; it went back to the giver, who offers a fresh one" },

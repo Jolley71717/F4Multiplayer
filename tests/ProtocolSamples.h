@@ -397,6 +397,9 @@ namespace ProtocolSamples
 		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScales", Encode(TimeScales{ 0.3f, { { 2, kTimeVats | kTimeSlowed, 0.3f }, { 3, kTimeSlowed, 0.3f } } }), D(DecodeTimeScales) });
 		s.push_back({ "TimeScales(off, empty)", Encode(TimeScales{ 0.0f, {} }), D(DecodeTimeScales) });
+		s.push_back({ "QuestReward(line)", Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, { { 0x0000000F, 200 }, { 0x00033778, 4 } } }), D(DecodeQuestReward) });
+		s.push_back({ "QuestReward(stage)", Encode(QuestReward{ 7, 2, RewardKind::kStage, REF_A, 30, 150, { { 0x0000000F, 50 } }, 0x5EED0001 }, MT::kQuestReward), D(DecodeQuestReward) });
+		s.push_back({ "QuestReward(xp only)", Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 1000, 300, {} }), D(DecodeQuestReward) });
 		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
 		s.push_back({ "StorageSettle", Encode(StorageSettle{ 3, 120, 40, { 41, 57 }, { { REF_A, 0x0000000F, -3 }, { REF_B, 0x0004835D, 2 } } }), D(DecodeStorageSettle) });
 		s.push_back({ "StorageSettle(nothing)", Encode(StorageSettle{ 1, 0, 0, {}, {} }), D(DecodeStorageSettle) });
@@ -571,6 +574,8 @@ namespace ProtocolSamples
 		case MT::kSettlementOwner:
 		case MT::kReportTimeScale:
 		case MT::kTimeScales:
+		case MT::kReportQuestReward:
+		case MT::kQuestReward:
 		case MT::kLoanAsked:
 		case MT::kFrameLent:
 		case MT::kFrameReturned:

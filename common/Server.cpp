@@ -9,6 +9,7 @@
 #include "AttackBook.h"
 #include "CompanionBook.h"
 #include "TimeScaleBook.h"
+#include "RewardBook.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
@@ -514,6 +515,7 @@ void Server::Run()
 	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
 	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
 	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
+	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -832,6 +834,7 @@ void Server::Run()
 		actorOwners.clear();
 		companionBook.Clear();
 		attackBook.Clear();
+		rewardLedger.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
 		spawns.clear();
@@ -1814,6 +1817,18 @@ void Server::Run()
 		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
 		// speed before anyone is in VATS, so its own VATS is slowed at once).
 		send(a_player.key, Protocol::Encode(timeScales.Table(groupVatsSpeed)), true);
+		// ... and the shared quest rewards others turned in this run that this player's game hasn't had (away or not yet
+		// here then): once each, by the identity they said hello with (RewardBook::Ledger).
+		for (const auto* entry : rewardLedger.Owed(RewardBook::Who(a_player.helloId, a_player.id))) {
+			if (entry->giver == RewardBook::Who(a_player.helloId, a_player.id)) {
+				continue;
+			}
+			const auto& reward = entry->reward;
+			send(a_player.key, Protocol::Encode(Protocol::QuestReward{ entry->id, entry->playerId, reward.kind, reward.quest, reward.source, reward.xp, reward.items, rewardLedger.Run() },
+				Protocol::MessageType::kQuestReward), true);
+			log(std::format("server: player {} is sent reward {} ({:08X} {} {}), turned in while they were away", a_player.id, entry->id, reward.quest,
+				reward.kind == Protocol::RewardKind::kLine ? "line" : "stage", reward.source));
+		}
 		// ... and what those NPCs are wearing, as their owners reported it.
 		for (const auto& [ref, items] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
@@ -4331,6 +4346,37 @@ void Server::Run()
 		broadcast(Protocol::Encode(*done, Protocol::MessageType::kQuestDone), true, a_player.key);
 	};
 
+	// A shared quest reward our player's game claimed (RewardBook): kept for the run and sent to everyone else here now, once;
+	// one who joins later gets it with their welcome. The same line or stage from another player within
+	// RewardBook::SAME_TURN_IN is refused: both turned it in at once, and each game gave its own.
+	const auto handleQuestReward = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeQuestReward(a_data);
+		if (!report) {
+			return;
+		}
+		RewardBook::Claimed reward{ report->kind, report->quest, report->source, report->xp, report->items };
+		const auto [entry, refusal] = rewardLedger.Add(a_player.id, RewardBook::Who(a_player.helloId, a_player.id), std::move(reward), Clock::now());
+		if (!entry) {
+			log(std::format("server: player {}'s reward ({:08X} {} {}) refused: {}", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
+				report->source, refusal == RewardBook::Ledger::Refusal::kRepeat ? "they reported it already" : "another player turned the same in just before"));
+			return;
+		}
+		log(std::format("server: player {} turned in {:08X} ({} {}): reward {}, {} item(s), {} XP", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
+			report->source, entry->id, report->items.size(), report->xp));
+		const auto packet = Protocol::Encode(Protocol::QuestReward{ entry->id, a_player.id, report->kind, report->quest, report->source, report->xp, report->items, rewardLedger.Run() },
+			Protocol::MessageType::kQuestReward);
+		const auto id = entry->id;
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && key != a_player.key) {
+				send(key, packet, true);
+				rewardLedger.Sent(id, RewardBook::Who(other.helloId, other.id));
+			}
+		}
+	};
+
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -4927,6 +4973,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportQuestDone:
 			handleQuestDone(a_player, a_data);
+			break;
+		case MessageType::kReportQuestReward:
+			handleQuestReward(a_player, a_data);
 			break;
 		case MessageType::kRevive:
 			handleRevive(a_player, a_data);

@@ -34,6 +34,14 @@ namespace QuestSync
 	// creatures pair across games.
 	[[nodiscard]] bool SharesHere(const RE::TESQuest* a_quest);
 
+	// A friend's stage of this quest was set here this session (a quest completed here without one was finished on our own).
+	[[nodiscard]] bool FriendMoved(std::uint32_t a_quest);
+
+	// A friend's turn-in stage whose reward was given here (QuestRewards): closed as the stage would close it, without its
+	// script (RewardBook::CloseTurnIn: the stage marked done, the quest completed and stopped where the stage does), and
+	// known as a friend's (not reported as ours, nor its completion). Main thread only.
+	void CloseTurnIn(RE::TESQuest* a_quest, std::uint16_t a_stage, bool a_completes, bool a_stops);
+
 	// Why a session can share this quest: "side", "story", "finale" or "dialogue" (see QuestFilter), or "no"
 	// (misc, internal, or from a mod). For the developer's quest commands.
 	[[nodiscard]] const char* Kind(const RE::TESQuest* a_quest);
