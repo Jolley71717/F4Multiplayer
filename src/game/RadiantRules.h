@@ -386,14 +386,64 @@ namespace RadiantRules
 	inline constexpr std::uint16_t    ATTACK_ARRIVED = 70;           // MinRadiantOwned01Script.CheckLocation
 	inline constexpr std::uint16_t    ATTACK_DEFENDED = 120;         // the settlement's defences built
 	inline constexpr std::uint16_t    ATTACK_STARTED = 130;          // WorkshopAttackScript's attackStartStage, in all six
+	inline constexpr std::uint16_t    ATTACK_WON = 200;              // the attackers dead
+	inline constexpr std::uint16_t    ATTACK_SETTLERS_DEAD = 290;
+	inline constexpr std::uint16_t    ATTACK_RESOLVED = 300;         // the settlement's damage rolled (CheckResolveAttack)
+	inline constexpr std::uint16_t    ATTACK_FAILED = 310;
+
+	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
+	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
+	// failed).
+	inline bool AttackBegun(std::span<const std::uint16_t> a_done)
+	{
+		return std::ranges::any_of(a_done, [](std::uint16_t a_stage) {
+			return a_stage == ATTACK_STARTED || a_stage == ATTACK_WON || a_stage == ATTACK_SETTLERS_DEAD || a_stage == ATTACK_RESOLVED || a_stage == ATTACK_FAILED;
+		});
+	}
 
 	// Whether a held attack's clock starts again as the hold ends (the session over, the quest still running here, now
 	// the player's own): when it would be running in a game of one, the player arrived or the settlement's defences built,
-	// and the attack not begun. Otherwise the game starts it as it would (the player arriving).
+	// and the attack neither begun nor over. Otherwise the game starts it as it would (the player arriving), and one the
+	// host already defended or lost (its 200, 290 or 310 taken here, the session over before the turn-in) is never fought
+	// again here.
 	inline bool ResumesAttackClock(std::span<const std::uint16_t> a_done)
 	{
 		const auto done = [&](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); };
-		return (done(ATTACK_ARRIVED) || done(ATTACK_DEFENDED)) && !done(ATTACK_STARTED);
+		return (done(ATTACK_ARRIVED) || done(ATTACK_DEFENDED)) && !AttackBegun(a_done);
+	}
+
+	// What becomes of the attack's timer as an attack is let go (RadiantSync's LetAttackGo).
+	enum class AttackClock : std::uint8_t
+	{
+		kLeft,       // not a held attack: nothing is touched
+		kResumed,    // started again for ATTACK_TIMER_RESUMED
+		kCancelled,  // cancelled (the script's CancelTimerGameTime)
+	};
+
+	// An attack no longer held (its run no longer shared here, its quest stopped, or a loaded world's): a_held, this game
+	// held it until now; a_waiting, its script's PlayerIsWaiting is set; a_running, the quest runs; a_done, its stages.
+	// One this game held is let go whatever PlayerIsWaiting says (a wait that just ended cleared it, the hold's timer
+	// still pending); a loaded world's only where PlayerIsWaiting is set, which only a hold leaves in a save (none is
+	// made during a wait). The hold's timer (ATTACK_TIMER_HELD, pushed out while it was held, in a game whose player never
+	// arrived too) is never left running: started again for an hour where the clock resumes, cancelled everywhere else.
+	// Left pending it would fire up to 48 game hours later with PlayerIsWaiting clear and set the attack's 130: on a job
+	// turned in since (a SetStage on a stopped quest starts it again), on one the host already ended, or before the
+	// player ever arrived; and a save would carry it.
+	inline AttackClock LetGo(bool a_held, bool a_waiting, bool a_running, std::span<const std::uint16_t> a_done)
+	{
+		if (!a_held && !a_waiting) {
+			return AttackClock::kLeft;
+		}
+		return a_running && ResumesAttackClock(a_done) ? AttackClock::kResumed : AttackClock::kCancelled;
+	}
+
+	// Whether the host's run of a quest that runs here already with the same targets is shared here (a_done: this game's
+	// stages of it): not an attack this game's own has begun. Its 130 is never taken from a friend (UNTAKEN), so one done
+	// here is this game's own start: its attackers are out, the hold would hold nothing, and the host's copies would be a
+	// second wave at the same settlement. Each player's own then, as every attack was before.
+	inline bool JoinsRunning(const Entry& a_entry, std::span<const std::uint16_t> a_done)
+	{
+		return !a_entry.attack || std::ranges::find(a_done, ATTACK_STARTED) == a_done.end();
 	}
 
 	// ---- The Railroad's jobs on offer ---------------------------------------------------------------

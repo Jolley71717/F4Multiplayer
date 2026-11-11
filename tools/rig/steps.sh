@@ -1926,9 +1926,39 @@ step_radiant_inst() {
 # which rolls the settlement's damage, is never done. On a 200 the host's console sets 400 (the turn-in to the settlement: set-up): the
 # job is over in both games, and the VM lets its hold go. Quest stages are for good in a save: throwaway saves only (backup.sh before,
 # restore after). Neither game may run the job already (a WARN, not run).
+# Every "never" is read from the game's answer (_mr_never): a game that gives none (dead, or not answering) is a broken rig and a FAIL,
+# never a pass. MIN_FAIL=1 ends the attack the other way: the host's console sets 290 (the settlers dead: set-up, said so) once both are
+# at the settlement, and the host's game fails the job (its 300 and 310). Either way the step logs, judging nothing, what the end did in
+# the VM's game (_mr_300: its stages, whether its own 300 and 310 are done, whether its quest still runs, and the settlement's values
+# before and after), which is what a rig run has to show of the host's 290 there: whether the VM's own fragment sets 300, and whether
+# that 300 rolls any damage in the VM's game.
 MIN_QUEST=${MIN_QUEST:-000A1412}; MIN_EDID=${MIN_EDID:-MinRadiantOwned01}; MIN_WORKSHOP=${MIN_WORKSHOP:-000250FE}; MIN_WORKSHOP_ALIAS=${MIN_WORKSHOP_ALIAS:-9}
 MIN_NEAR_CELL=${MIN_NEAR_CELL:-SanctuaryExt}; MIN_AWAY_CELL=${MIN_AWAY_CELL:-CorvegaAssemblyPlantExt03}; MIN_HOLD_WAIT=${MIN_HOLD_WAIT:-40}; MIN_END_WAIT=${MIN_END_WAIT:-180}
+MIN_FAIL=${MIN_FAIL:-0}
+_mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
+	local who=$1 name=$2 got st; shift 2
+	got=$(_rad_done "$who" "$MIN_QUEST")
+	if [ -z "$got" ]; then rig_broken game "$name" "the $who's game gave no answer to 'stages $MIN_QUEST': nothing read, so nothing shown"; return 1; fi
+	for st; do
+		if [[ ",$got," == *",$st,"* ]]; then fail "$name" "its $st is done; $who done $got"; return 1; fi
+	done
+	pass "$name" "$who done $got"
+}
+_mr_values() { dc vm "wsres sum $MIN_WORKSHOP" | sed 's/; .*//' | cut -c1-900; }   # the settlement's values in the VM's game (its pieces left out)
+_mr_300() {  # _mr_300 <when> [values before]: what the VM's game holds of the attack's end; a log for the reader, no verdict
+	local got values
+	got=$(_rad_done vm "$MIN_QUEST"); values=$(_mr_values)
+	echo "radiant-min: (300) $1: vm done '${got:-no answer}', its own 300 $([[ ",$got," == *",300,"* ]] && echo done || echo 'not done'), 310 $([[ ",$got," == *",310,"* ]] && echo done || echo 'not done'), ${MIN_EDID} $(_rad_run vm "$MIN_EDID")"
+	echo "radiant-min: (300) $1: the VM's settlement: ${values:-no answer}"
+	if [ $# -ge 2 ]; then
+		if [ -z "$values" ] || [ -z "$2" ]; then echo "radiant-min: (300) the VM's settlement values could not be read both times: nothing to compare"
+		elif [ "$values" = "$2" ]; then echo "radiant-min: (300) the VM's settlement values are the same after the end as before it"
+		else echo "radiant-min: (300) the VM's settlement values CHANGED over the end; before: $2"; fi
+		grep -E "$MIN_QUEST" "$(_rr_log vm)" | tail -4 | cut -c1-220 | sed "s/^/radiant-min: (300) the VM's log: /"
+	fi
+}
 _mr_held() { field "$(dc "$1" 'net status')" attacksHeld; }
+_mr_cancelled() { field "$(dc "$1" 'net status')" attackTimersCancelled; }
 _mr_held_is() { [ "$(_mr_held "$1")" = "$2" ]; }
 _mr_ended() { _rad_stage_once "$1" "$MIN_QUEST" 200 || _rad_stage_once "$1" "$MIN_QUEST" 310; }
 _mr_own_attack() { _rad_stage_once vm "$MIN_QUEST" 130 || _rad_stage_once vm "$MIN_QUEST" 300; }   # the VM's own attack began, or rolled its damage
@@ -1936,13 +1966,14 @@ _mr_go() { dc "$1" "console coc $2" >/dev/null; sleep 14; wait_ingame "$1" 30; }
 _mr_but_attack() { _rad_done "$1" "$MIN_QUEST" | tr ',' '\n' | grep -vxE '130|300' | paste -sd, -; }   # its stages done, but 130 and 300
 step_radiant_min() {
 	section "radiant-min (Preston's settlement attack: the host's run shared, the VM's own attack held back; console start, stages and placement as set-up)"
-	local who end
+	local who end before vmdone hostdone c0
 	for who in host vm; do
 		if [ "$(_rad_run "$who" "$MIN_EDID")" != running=false ]; then warn "radiant-min: not run: the $who's game runs $MIN_EDID already ($(_rad_run "$who" "$MIN_EDID"))" "throwaway saves without it"; return; fi
 	done
 	_mr_go host "$MIN_AWAY_CELL"; _mr_go vm "$MIN_AWAY_CELL"
 	echo "radiant-min: both at $MIN_AWAY_CELL by console coc (set-up)"
 	win_mark rr host; win_mark rr vm
+	c0=$(_mr_cancelled vm)
 	dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP" >/dev/null
 	if ! wait_for 20 _rad_is_running host "$MIN_EDID"; then fail "radiant-min: the host's game runs $MIN_EDID at $MIN_WORKSHOP" "$(_rad_run host "$MIN_EDID"); $(_rr_last host "RadiantSync")"; return; fi
 	dc host "console setstage $MIN_QUEST 100" >/dev/null
@@ -1962,8 +1993,7 @@ step_radiant_min() {
 	if wait_for 20 _rad_stage_once vm "$MIN_QUEST" 70; then pass "radiant-min: the VM's arrival sets its own 70" "done $(_rad_done vm "$MIN_QUEST")"
 	else warn "radiant-min: the VM's arrival sets its own 70 (CheckLocation: a coc may not change the location as walking in does)" "done $(_rad_done vm "$MIN_QUEST")"; fi
 	sleep 5
-	if _rad_stage_once host "$MIN_QUEST" 70; then fail "radiant-min: the VM's arrival never starts the host's attack clock (the host's 70 not done)" "host done $(_rad_done host "$MIN_QUEST")"
-	else pass "radiant-min: the VM's arrival never starts the host's attack clock (the host's 70 not done)" "host done $(_rad_done host "$MIN_QUEST")"; fi
+	_mr_never host "radiant-min: the VM's arrival never starts the host's attack clock (the host's 70 not done)" 70
 
 	# The host's defences built: its attack starts in its game, never in the VM's.
 	dc host "console setstage $MIN_QUEST 120" >/dev/null
@@ -1972,14 +2002,14 @@ step_radiant_min() {
 	else fail "radiant-min: the host's 120 is set in the VM's game" "vm done $(_rad_done vm "$MIN_QUEST")"; fi
 	if wait_for 20 _rad_stage_once host "$MIN_QUEST" 130; then pass "radiant-min: the host's attack starts in its game (130)" "done $(_rad_done host "$MIN_QUEST")"
 	else warn "radiant-min: the host's attack starts in its game (130; a night attack waits for the night)" "done $(_rad_done host "$MIN_QUEST")"; fi
-	if wait_for "$MIN_HOLD_WAIT" _mr_own_attack; then fail "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" "vm done $(_rad_done vm "$MIN_QUEST")"
-	else pass "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" "$MIN_HOLD_WAIT s; vm done $(_rad_done vm "$MIN_QUEST")"; fi
+	wait_for "$MIN_HOLD_WAIT" _mr_own_attack   # stages stay done: the read after the wait shows the whole of it, if the game answers
+	_mr_never vm "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" 130 300
 
 	# The VM away: still nothing of its own (no clean-up, no damage roll); the quest runs there until the host's game ends it.
 	_mr_go vm "$MIN_AWAY_CELL"
 	echo "radiant-min: the VM's player back at $MIN_AWAY_CELL by console coc (set-up)"
-	if wait_for "$MIN_HOLD_WAIT" _mr_own_attack; then fail "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" "vm done $(_rad_done vm "$MIN_QUEST")"
-	else pass "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" "$MIN_HOLD_WAIT s; vm done $(_rad_done vm "$MIN_QUEST")"; fi
+	wait_for "$MIN_HOLD_WAIT" _mr_own_attack
+	_mr_never vm "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" 130 300
 	if ! _mr_ended host; then
 		expect_eq "radiant-min: the VM's quest still runs away from the settlement (no clean-up of its own)" "$(_rad_run vm "$MIN_EDID")" running=true
 	fi
@@ -1987,26 +2017,38 @@ step_radiant_min() {
 	# Both at the settlement: the attack ends by the host's game.
 	_mr_go host "$MIN_NEAR_CELL"; _mr_go vm "$MIN_NEAR_CELL"
 	echo "radiant-min: both players at $MIN_NEAR_CELL by console coc (set-up)"
-	if ! wait_for "$MIN_END_WAIT" _mr_ended host; then
+	before=$(_mr_values); _mr_300 "before the attack's end"
+	if [ "$MIN_FAIL" = 1 ] && ! _mr_ended host; then
+		dc host "console setstage $MIN_QUEST 290" >/dev/null
+		echo "radiant-min: MIN_FAIL=1: the host's console set 290 (the settlers dead: set-up); its game fails the job (its 300 and 310)"
+		if ! wait_for 30 _rad_stage_once host "$MIN_QUEST" 310; then
+			echo "radiant-min: the host's game didn't fail the job by itself in 30 s (host done $(_rad_done host "$MIN_QUEST")); its console set 310 (the job failed: set-up)"
+			dc host "console setstage $MIN_QUEST 310" >/dev/null
+		fi
+	elif ! wait_for "$MIN_END_WAIT" _mr_ended host; then
 		dc host "console setstage $MIN_QUEST 200" >/dev/null
 		echo "radiant-min: the host's attack didn't end in $MIN_END_WAIT s; its console set 200 (the attackers dead: set-up)"
 	fi
 	end=200; _rad_stage_once host "$MIN_QUEST" 200 || end=310
 	if wait_for 30 _rad_stage_once vm "$MIN_QUEST" "$end"; then pass "radiant-min: the host's end of the attack ($end) is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
 	else fail "radiant-min: the host's end of the attack ($end) is set in the VM's game" "host $(_rad_done host "$MIN_QUEST") vm $(_rad_done vm "$MIN_QUEST")"; fi
-	# (On a failure the host's 290, the settlers dead, sets the VM's own 300 by its fragment, which then rolls nothing: only 130 counts.)
-	if _rad_stage_once vm "$MIN_QUEST" 130 || { [ "$end" = 200 ] && _rad_stage_once vm "$MIN_QUEST" 300; }; then
-		fail "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" "vm done $(_rad_done vm "$MIN_QUEST")"
-	else pass "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" "vm done $(_rad_done vm "$MIN_QUEST")"; fi
+	sleep 5; _mr_300 "after the host's $end" "$before"; echo "radiant-min: (300) the host done '$(_rad_done host "$MIN_QUEST")'"
+	# On a failure the host's 290 (the settlers dead) is set in the VM's game too, where the quest's own fragment may set its 300: only
+	# 130 is judged then, and what that 300 did there is in the (300) lines above, for the reader.
+	if [ "$end" = 200 ]; then _mr_never vm "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" 130 300
+	else _mr_never vm "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" 130; fi
 	if [ "$end" = 200 ] && ! _rad_stage_once host "$MIN_QUEST" 400; then
 		dc host "console setstage $MIN_QUEST 400" >/dev/null
 		echo "radiant-min: the host's console set 400 (the turn-in to the settlement: set-up)"
 	fi
 	if wait_for 30 _rr_stopped host "$MIN_EDID" && wait_for 30 _rr_stopped vm "$MIN_EDID"; then pass "radiant-min: the job is over in both games" "host done $(_rad_done host "$MIN_QUEST")"
 	else fail "radiant-min: the job is over in both games" "host $(_rad_run host "$MIN_EDID") vm $(_rad_run vm "$MIN_EDID") (vm done $(_rad_done vm "$MIN_QUEST"))"; fi
-	expect_eq "radiant-min: the same stages are done in both games, but the host's 130 and 300" "$(_mr_but_attack vm)" "$(_mr_but_attack host)"
+	vmdone=$(_mr_but_attack vm); hostdone=$(_mr_but_attack host)
+	if [ -z "$vmdone" ] || [ -z "$hostdone" ]; then rig_broken game "radiant-min: the same stages are done in both games, but the host's 130 and 300" "no answer to 'stages $MIN_QUEST' (vm '$vmdone', host '$hostdone'): nothing read, so nothing shown"
+	else expect_eq "radiant-min: the same stages are done in both games, but the host's 130 and 300" "$vmdone" "$hostdone"; fi
 	if wait_for 10 _mr_held_is vm 0; then pass "radiant-min: the VM lets its hold go as the job ends" "$(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its own attack is let go")"
 	else fail "radiant-min: the VM lets its hold go as the job ends" "attacksHeld=$(_mr_held vm)"; fi
+	expect_ge "radiant-min: the VM cancels its hold's timer as the job ends (none is left to start its attack later)" "$(( $(_mr_cancelled vm) - c0 ))" 1 cancelled
 }
 
 # ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --

@@ -79,12 +79,12 @@ namespace RadiantSync
 		// Preston's attacks (RadiantRules::Entry::attack). Whether this game hosts the session (only the host's attack is
 		// shared), the attacks of the host's runs held back here (RadiantRules::HoldsAttack), when their timers were last
 		// pushed out, and whether a loaded world's are still to be let go (a save made while one was held keeps its
-		// PlayerIsWaiting set: no save is made while the player waits, so set then, it is ours).
+		// PlayerIsWaiting set, and the hold's timer: no save is made while the player waits, so set then, it is ours).
 		bool                    hosting = false;
 		std::set<std::uint32_t> attacksHeld;
 		Clock::time_point       attackPushed{};
 		bool                    attacksLoaded = false;
-		std::uint32_t           attackHolds = 0, attacksLet = 0, attacksResumed = 0;
+		std::uint32_t           attackHolds = 0, attacksLet = 0, attacksResumed = 0, attackTimersCancelled = 0;
 
 		// A friend's run of such a quest shared here: followed with its fills from now on (a newer send of it keeps the newest).
 		void Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
@@ -541,26 +541,47 @@ namespace RadiantSync
 			}
 		}
 
-		// A held attack let go (the host's run no longer shared here, or a loaded world's): the script told the player isn't
-		// waiting, and the attack's clock started again where it would be running in a game of one
-		// (RadiantRules::ResumesAttackClock). The quest is then the player's own, as any after its session.
-		void LetAttackGo(RE::TESQuest* a_quest)
+		// The attack's timer (ID 0) cancelled (the script's CancelTimerGameTime; one that isn't running is left as it is).
+		void CancelAttackTimer(const RE::BSTSmartPointer<RE::BSScript::Object>& a_script)
+		{
+			Papyrus::CallOn(a_script, "CancelTimerGameTime", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
+				a_out[0] = RadiantRules::ATTACK_TIMER;
+			});
+		}
+
+		// A held attack let go (the host's run no longer shared here, the quest stopped, or a loaded world's): the script
+		// told the player isn't waiting, and the hold's timer never left running (RadiantRules::LetGo): started again for
+		// an hour where the attack's clock would be running in a game of one, cancelled everywhere else (a quest that
+		// stopped among them: its script stays bound, and its timer would start it again). a_held: this game held it until
+		// now, so it is let go whatever PlayerIsWaiting says; a loaded world's only where that is set. The quest is then the
+		// player's own, as any after its session.
+		void LetAttackGo(RE::TESQuest* a_quest, bool a_held)
 		{
 			const auto script = AttackScriptOf(a_quest);
 			const auto waiting = script ? VariableOf(*script, RadiantRules::ATTACK_WAITING) : nullptr;
-			if (!waiting || !waiting->is<bool>() || !RE::BSScript::get<bool>(*waiting)) {
+			if (!waiting || !waiting->is<bool>()) {
 				return;
 			}
-			*waiting = false;
-			++attacksLet;
+			const bool set = RE::BSScript::get<bool>(*waiting);
 			const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
-			const bool resumes = running && RadiantRules::ResumesAttackClock(QuestStageLayout::Done(a_quest));
-			if (resumes) {
+			const auto clock = RadiantRules::LetGo(a_held, set, running, QuestStageLayout::Done(a_quest));
+			if (clock == RadiantRules::AttackClock::kLeft) {
+				return;
+			}
+			if (set) {
+				*waiting = false;
+			}
+			++attacksLet;
+			if (clock == RadiantRules::AttackClock::kResumed) {
 				StartAttackTimer(script, RadiantRules::ATTACK_TIMER_RESUMED);
 				++attacksResumed;
+			} else {
+				CancelAttackTimer(script);
+				++attackTimersCancelled;
 			}
-			REX::INFO("RadiantSync: {:08X} '{}': its own attack is let go{}", a_quest->GetFormID(), QuestName(a_quest),
-				resumes ? ", its clock started again (an hour)" : running ? "" : " (it isn't running)");
+			REX::INFO("RadiantSync: {:08X} '{}': its own attack is let go, its clock {}{}", a_quest->GetFormID(), QuestName(a_quest),
+				clock == RadiantRules::AttackClock::kResumed ? "started again (an hour)" : "cancelled", running ? "" : " (it isn't running)");
 		}
 
 		void Restore(std::vector<Saved>& a_saved)
@@ -964,7 +985,8 @@ namespace RadiantSync
 			if (!quest || !Official::IsOfficialForm(quest)) {
 				return;
 			}
-			if (const auto entry = RadiantSync::EntryOf(quest); entry && !RadiantRules::Joins(*entry, hosting)) {
+			const auto entry = RadiantSync::EntryOf(quest);
+			if (entry && !RadiantRules::Joins(*entry, hosting)) {
 				Decline(a_start.quest, run, "a settlement attack is the host's to share, and this game hosts");
 				return;
 			}
@@ -990,7 +1012,10 @@ namespace RadiantSync
 				{
 					const auto aliases = AliasesOf(quest);  // the mismatches name its aliases: kept while they are
 					const auto mismatches = CompareHere(quest, aliases, a_start.fills);
-					if (RadiantRules::SameTargets(mismatches)) {
+					if (RadiantRules::SameTargets(mismatches) && entry && !RadiantRules::JoinsRunning(*entry, QuestStageLayout::Done(quest))) {
+						// Our own attack of it has started (its attackers stand here): joined, the host's would be a second wave.
+						Decline(a_start.quest, run, "this game's own attack of it has started already");
+					} else if (RadiantRules::SameTargets(mismatches)) {
 						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets", a_start.fills);
 					} else if (RadiantRules::Replaces(a_start.quest, book.Knows(a_start.quest), QuestSync::PlayerStarted(quest), (quest->data.flags & QUEST_RUN_ONCE) != 0)) {
 						Replace(quest, a_start, run, FirstDecisive(mismatches));
@@ -1316,7 +1341,7 @@ namespace RadiantSync
 					HoldAttack(quest, push);
 					holding.insert(id);
 				} else if (attacksHeld.contains(id) || attacksLoaded) {
-					LetAttackGo(quest);
+					LetAttackGo(quest, attacksHeld.contains(id));
 				}
 			}
 			if (push) {
@@ -1778,6 +1803,14 @@ namespace RadiantSync
 		}
 	}
 
+	void FrameUnsynced()
+	{
+		if (!WorldSync::InWorld() || (attacksHeld.empty() && !attacksLoaded)) {
+			return;
+		}
+		HoldAttacks(Clock::now());  // nothing is shared with quest sync off (Enabled), so every one held is let go
+	}
+
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
 	{
 		return std::exchange(outgoing, {});
@@ -1892,9 +1925,9 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={}{}",
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={}{}",
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, resentFills,
-			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, starting ? " starting" : "");
+			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, starting ? " starting" : "");
 	}
 
 	std::vector<std::uint8_t> SaveRecord()

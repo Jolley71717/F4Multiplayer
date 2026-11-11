@@ -886,11 +886,21 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   host's, copies there, are the attack, and their deaths come back as the host's 200. The friend's arrival (70, which
   starts the attack's clock), its own dead counts (200, 290) and its failure (310) are never reported
   (`OWNER_STAGES`): the host's attack starts when the host gets there and ends by the host's count. The reward (400)
-  is either player's turn-in. Out of the session (the run no longer shared) the hold is let go, `PlayerIsWaiting`
-  cleared and the clock started again for an hour where it would be running in a game of one (the player there or the
-  defences built, the attack not begun: `ResumesAttackClock`); a loaded world's held attack is let go the same way
-  (no save is made during a wait, so a set `PlayerIsWaiting` there is the hold's). `net status`: `radiants: ...
-  attacksHeld= attackHolds= attacksLet= attacksResumed=`. *How this fits the settlement attacks the host books for
+  is either player's turn-in. Out of the session (the run no longer shared), or the quest stopped (the job turned
+  in or failed), the hold is let go (`RadiantRules::LetGo`): `PlayerIsWaiting` cleared, and the hold's timer never
+  left running. It is started again for an hour where the clock would be running in a game of one (the quest running,
+  the player there or the defences built, the attack neither begun nor over: `ResumesAttackClock`, false once 130,
+  200, 290, 300 or 310 is done, so an attack the host already ended is never fought again in the friend's game), and
+  cancelled (`CancelTimerGameTime`) everywhere else: the game starts it itself as the player arrives, and one left
+  pending would set 130 up to 48 game hours later, on a stopped quest too (which starts it again). An attack this
+  game held is let go so whatever `PlayerIsWaiting` says (a wait that just ended cleared it); a loaded world's held
+  attack where it is set (no save is made during a wait, so a set `PlayerIsWaiting` there is the hold's), and with
+  quest sync off too (`RadiantSync::FrameUnsynced`). A game without the plugin can't: a save made while an attack was
+  held, loaded there, keeps the hold's timer, and `PlayerIsWaiting` set until its player next waits. The host's run
+  is turned down by a friend's game whose own attack of the same job at the same settlement has started already (its
+  130 done, its attackers out: `JoinsRunning`), which would make two waves; each player's own then. `net status`:
+  `radiants: ... attacksHeld= attackHolds= attacksLet= attacksResumed= attackTimersCancelled=`. *How this fits the
+  settlement attacks the host books for
   everyone* (`SettlementAttacks`, its `AttackBook`): that book is the random attacks (the `Workshop*Attack` quests),
   which it keeps out of these jobs, and these rows keep out of its quests; both make the host's attack the only one.
   Left alone, each player's own: the refugees job (MinRecruit09: two to five refugees made and enabled at random,

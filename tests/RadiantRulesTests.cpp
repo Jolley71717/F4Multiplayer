@@ -389,6 +389,90 @@ TEST("radiants: an attack let go starts its clock again only where it would be r
 	CHECK(!ResumesAttackClock(Stages{}));
 }
 
+TEST("radiants: an attack the host already ended is never fought again in the friend's game: its clock isn't started again once 200, 290, 300 or 310 is done")
+{
+	using Stages = std::vector<std::uint16_t>;
+	// The host's end of it is taken here (its 130 never is): the session over before the turn-in, the attack is over here too.
+	for (const std::uint16_t ended : { ATTACK_WON, ATTACK_SETTLERS_DEAD, ATTACK_RESOLVED, ATTACK_FAILED }) {
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, ended }));        // the player had arrived
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 120, ended }));       // the defences built
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 120, ended }));
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, ended }));
+		CHECK(AttackBegun(Stages{ 10, 20, 50, 100, 70, ended }));
+	}
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 200, 300 }));
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 120, 290, 300, 310 }));
+	CHECK(ATTACK_WON == 200);
+	CHECK(ATTACK_SETTLERS_DEAD == 290);
+	CHECK(ATTACK_RESOLVED == 300);
+	CHECK(ATTACK_FAILED == 310);
+	// Begun or over: this game's own start, or any end. Nothing before that.
+	CHECK(AttackBegun(Stages{ 10, 20, 50, 100, 130 }));
+	CHECK(!AttackBegun(Stages{ 10, 20, 50, 100, 70, 120 }));
+	CHECK(!AttackBegun(Stages{}));
+	// The reward's stages alone say nothing of the attack (they follow a 200 in the game).
+	CHECK(!AttackBegun(Stages{ 10, 20, 50, 100, 400, 450, 500 }));
+}
+
+TEST("radiants: an attack let go never keeps the hold's timer: started again for an hour where its clock resumes, cancelled everywhere else")
+{
+	using Stages = std::vector<std::uint16_t>;
+	const Stages taken{ 10, 20, 50, 100 }, arrived{ 10, 20, 50, 100, 70 }, defended{ 10, 20, 50, 100, 120 };
+	const Stages won{ 10, 20, 50, 100, 70, 200 }, turnedIn{ 10, 20, 50, 100, 70, 120, 200, 400, 450, 500 };
+	for (const bool waiting : { true, false }) {
+		// Held by this game until now: let go whatever PlayerIsWaiting says (a wait that just ended cleared it).
+		// The session over with the player there, or the defences built: the clock's hour, as alone.
+		CHECK(LetGo(true, waiting, true, arrived) == AttackClock::kResumed);
+		CHECK(LetGo(true, waiting, true, defended) == AttackClock::kResumed);
+		// The session over before the friend's player ever arrived: the game starts the timer on arrival, so none is left.
+		CHECK(LetGo(true, waiting, true, taken) == AttackClock::kCancelled);
+		// The host's attack over (its 200 taken here), the session over before the turn-in: no second attack.
+		CHECK(LetGo(true, waiting, true, won) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, true, Stages{ 10, 20, 50, 100, 70, 290, 300 }) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, true, Stages{ 10, 20, 50, 100, 120, 310 }) == AttackClock::kCancelled);
+		// The job turned in (the host's 400) and the quest stopped: a timer left would start the stopped quest again.
+		CHECK(LetGo(true, waiting, false, turnedIn) == AttackClock::kCancelled);
+		// Stopped any other way, the player there or not: never resumed on a quest that doesn't run.
+		CHECK(LetGo(true, waiting, false, arrived) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, false, taken) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, false, Stages{}) == AttackClock::kCancelled);
+	}
+	// A loaded world's (not known held here): one a save kept held has PlayerIsWaiting set, and is let go the same way.
+	CHECK(LetGo(false, true, true, arrived) == AttackClock::kResumed);
+	CHECK(LetGo(false, true, true, taken) == AttackClock::kCancelled);
+	CHECK(LetGo(false, true, true, won) == AttackClock::kCancelled);
+	CHECK(LetGo(false, true, false, turnedIn) == AttackClock::kCancelled);
+	// One that never was held (the host's own, a game of one's): its flag clear, its own timer is never touched.
+	CHECK(LetGo(false, false, true, arrived) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, true, taken) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, true, Stages{ 10, 20, 50, 100, 70, 130 }) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, false, turnedIn) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, false, Stages{}) == AttackClock::kLeft);
+}
+
+TEST("radiants: the host's attack isn't joined by a friend's game whose own attack of it has started already (no second wave)")
+{
+	using Stages = std::vector<std::uint16_t>;
+	const auto request = Find(0, MIN_RECRUIT01);
+	REQUIRE(request != nullptr);
+	for (const auto quest : ATTACKS) {
+		const auto attack = Find(0, quest);
+		REQUIRE(attack != nullptr);
+		// Running here with the same settlement, not begun: joined, and held.
+		CHECK(JoinsRunning(*attack, Stages{ 10, 20, 50, 100 }));
+		CHECK(JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 70, 120 }));
+		CHECK(JoinsRunning(*attack, Stages{}));
+		// This game's own attackers are out (130 is only ever its own): each player's own.
+		CHECK(!JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 70, 130 }));
+		CHECK(!JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 120, 130, 200 }));
+		// The host's end of an earlier sharing of the same run taken here, our own never begun (the host loaded a save
+		// and shares it again under a new number): joined again.
+		CHECK(JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 70, 200 }));
+	}
+	// Any other job: its stages are no attack's.
+	CHECK(JoinsRunning(*request, Stages{ 10, 130 }));
+}
+
 TEST("radiants: the attack's start and its damage roll are never taken from the host; the arrival, the dead and the failure are the host's to report")
 {
 	for (const auto quest : ATTACKS) {

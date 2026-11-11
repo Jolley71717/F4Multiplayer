@@ -1238,6 +1238,14 @@ namespace QuestSync
 					}
 				}
 			}
+			// Nothing is shared, but a settlement attack held back for a session (a save made then, loaded now) is still
+			// let go, once the loaded world has settled as for the reports below.
+			if (!reportFrom) {
+				reportFrom = now + SETTLE_TIME;
+			}
+			if (now >= *reportFrom) {
+				RadiantSync::FrameUnsynced();
+			}
 			return;
 		}
 
