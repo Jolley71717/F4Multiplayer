@@ -11,6 +11,7 @@
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 // What some quest stages' scripts do, for setting another player's stages here. Kept free of the
 // game so it can be tested.
@@ -101,9 +102,12 @@ namespace StageRules
 	// quest's alike: a friend's waits until none of that faction is near, and is never skipped (up to 0.16.1 these 18, DN036
 	// 500, DN049's x49, the Nucleus's 70, Acadia's 200, Far Harbor S02 210 and Kiddie Kingdom's 600, 700 and 740, were
 	// kMoves|kHostile rows, set only beside the friend who did it, else offered and then skipped, while the story's own
-	// hostile stages had no row and reached a far friend at once). A row with both kMoves and kHostile (none generated)
-	// moves the player too: the hold first, then the move's rules, and the offer to go with the friend says they are
-	// fighting. Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
+	// hostile stages had no row and reached a far friend at once). A kMoves row whose stage is HOSTILE's too (18 of them,
+	// no kBridge: MS17 465/467/470 into the Covenant's fight, InstMassFusion 30 the Brotherhood's kick-out, InstKickOut 100,
+	// RR304 20, BoSM02 2-9 and BoSM04 2-4 the airport's ghouls, Kiddie Kingdom's 6) moves the player too: the hold first,
+	// then the move's rules, and the offer to go with the friend says they are fighting; not gone with, the stage isn't set
+	// (it would move them) but the faction it turns on the player is turned on them here all the same (Verdict::kHostileOnly,
+	// HostileCall). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -1067,7 +1071,8 @@ namespace StageRules
 	// Stages of the shared quests that turn a faction on the player, with that faction: a kick-out, an ending, a story stage that
 	// sets a place's people on the player as its fight begins. A friend's such stage (StageRules::kHostile, which QuestSync adds to
 	// its rule from this table) is set live beside the friend who did it, as any stage, and otherwise waits, its quest with it, while
-	// any of that faction is near this player (alive, loaded and within HostileHold::RANGE) or they are fighting, and is set once
+	// any of that faction is near this player (alive, not disabled, not the player's own companion, loaded and within HostileHold::RANGE;
+	// a fight with anyone else is the capped combat hold's), and is set once
 	// none is: the chooser's choice is both players', near or far, live or caught up, and it is never skipped (the maintainer's
 	// rule, 2026-11-11, in place of "set only beside the friend, else offered, then skipped": a far friend's kick-out or ending
 	// split the saves for good, while the story's own 300-odd hostile stages, with no row, reached them at once; most of those
@@ -1081,7 +1086,15 @@ namespace StageRules
 	// Galactic Zone's start-up (every one of its enemy factions) by hand in the scan (its BY_HAND). One row per stage and faction,
 	// the first way found (DN049's x49 each turn one shop's robots). StartCombat on the player is a passing fight, not a faction's
 	// standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far Harbor's S02 210 adds
-	// Malcolm to Fallout4.esm's PlayerEnemyFaction. Sorted by file, quest and stage.
+	// Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
+	// a stage that also moves the player (a kMoves row, no kBridge) when the player didn't go with the friend: the stage is
+	// not set, the hostility is (Verdict::kHostileOnly). Sorted by file, quest and stage.
+	enum HostileCall : std::uint8_t
+	{
+		kSetEnemy,        // Faction.SetEnemy(PlayerFaction), neither side neutral: enemies both ways (or PlayerFaction.SetEnemy(the faction): the same)
+		kSetPlayerEnemy,  // Faction.SetPlayerEnemy(): the faction's player-enemy flag
+		kAddToFaction,    // an actor the stage's alias holds put into a PlayerEnemy faction: not made without the stage (no kMoves row is one)
+	};
 	struct Hostile
 	{
 		std::uint8_t  file;         // File: the quest's
@@ -1089,228 +1102,229 @@ namespace StageRules
 		std::uint16_t stage;
 		std::uint8_t  factionFile;  // File: the faction's
 		std::uint32_t faction;      // form ID in its file
+		HostileCall   call;         // how the script turns it on the player
 	};
 	inline constexpr Hostile HOSTILE[] = {
-		{ 0, 0x0229EC, 5, 0, 0x05E558 },  // MQ207: SetEnemy PlayerFaction temp4 (by 200) [by hand]
-		{ 0, 0x0229EC, 200, 0, 0x05E558 },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0229EE, 2, 0, 0x05E558 },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0)
-		{ 0, 0x0229EE, 400, 0, 0x05E558 },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0229EE, 1000, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
-		{ 0, 0x0229F6, 40, 0, 0x106CA3 },  // MS01: SetEnemy MS01BulletFaction PlayerFaction
-		{ 0, 0x0229FE, 232, 0, 0x14BF23 },  // MS07c: SetPlayerEnemy EddieFaction (by 240)
-		{ 0, 0x0229FE, 234, 0, 0x14BF23 },  // SetPlayerEnemy EddieFaction
-		{ 0, 0x0229FE, 240, 0, 0x14BF23 },  // SetPlayerEnemy EddieFaction
-		{ 0, 0x022A00, 1450, 0, 0x047EBD },  // MS09: SetEnemy PlayerFaction CrimeCabotHouse
-		{ 0, 0x022A02, 390, 0, 0x08C9DA },  // MS11: SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
-		{ 0, 0x022A02, 728, 0, 0x08C9DA },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
-		{ 0, 0x022A02, 800, 0, 0x08C9DA },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
-		{ 0, 0x022A02, 1050, 0, 0x08C9DB },  // SetEnemy pMS11IronsidesRobotsFaction pPlayerFaction (by 1100)
-		{ 0, 0x022A02, 1100, 0, 0x08C9DB },  // SetEnemy pMS11IronsidesRobotsFaction pPlayerFaction
-		{ 0, 0x022A02, 1200, 0, 0x08C9DA },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
-		{ 0, 0x022A02, 1275, 0, 0x08C9DA },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
-		{ 0, 0x022A02, 8990, 0, 0x08C9DB },  // SetEnemy pMS11IronsidesRobotsFaction pPlayerFaction
-		{ 0, 0x022A05, 60, 0, 0x0E356E },  // MS14: SetEnemy MS14BadGuyFaction PlayerFaction
-		{ 0, 0x022A07, 210, 0, 0x106C2F },  // MS16: AddToFaction pPlayerEnemyFaction
-		{ 0, 0x022A07, 220, 0, 0x106C2F },  // AddToFaction pPlayerEnemyFaction
-		{ 0, 0x022A08, 90, 0, 0x074794 },  // MS17: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
-		{ 0, 0x022A08, 315, 0, 0x074794 },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction
-		{ 0, 0x022A08, 331, 0, 0x074794 },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (by 315)
-		{ 0, 0x022A08, 420, 0, 0x0786F1 },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
-		{ 0, 0x022A08, 450, 0, 0x074794 },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (by 315)
-		{ 0, 0x022A08, 465, 0, 0x062030 },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
-		{ 0, 0x022A08, 467, 0, 0x062030 },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
-		{ 0, 0x022A08, 470, 0, 0x062030 },  // SetEnemy pCovenantFaction pPlayerFaction
-		{ 0, 0x022A08, 490, 0, 0x0786F1 },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
-		{ 0, 0x022A08, 760, 0, 0x02DFEF },  // AddToFaction pREPlayerEnemy
-		{ 0, 0x02633E, 0, 0, 0x19EC30 },  // DN079: SetEnemy DN079_CanneryTurretFaction PlayerFaction
-		{ 0, 0x02633E, 520, 0, 0x03EFAE },  // SetEnemy DN079_CanneryFaction PlayerFaction
-		{ 0, 0x027556, 435, 0, 0x128CF7 },  // MS04: SetEnemy pMS04KendraFaction pPlayerFaction
-		{ 0, 0x027556, 470, 0, 0x128CEF },  // SetEnemy pMS04AJFaction pPlayerFaction
-		{ 0, 0x027556, 510, 0, 0x128CEA },  // SetEnemy pMS04WayneDelancyFaction pPlayerFaction
-		{ 0, 0x027556, 820, 0, 0x186971 },  // SetEnemy pMS04SmilingKatesPosseFaction pPlayerFaction
-		{ 0, 0x027556, 1307, 0, 0x02B746 },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
-		{ 0, 0x027556, 1310, 0, 0x02B746 },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction
-		{ 0, 0x027556, 1320, 0, 0x02B746 },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
-		{ 0, 0x027556, 1340, 0, 0x02B746 },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
-		{ 0, 0x027556, 1345, 0, 0x02B746 },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
-		{ 0, 0x0284BC, 110, 0, 0x028FB0 },  // DN015: SetEnemy DN015_RobotFaction PlayerFaction
-		{ 0, 0x0284BC, 250, 0, 0x028FB2 },  // SetEnemy DN015_DirectorFaction PlayerFaction
-		{ 0, 0x02BF21, 1, 0, 0x091895 },  // BoS201: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x02BF21, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x02BF21, 3, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x02BF21, 4, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x033527, 650, 0, 0x106C2F },  // V81_03: AddToFaction PlayerEnemyFaction
-		{ 0, 0x03A457, 70, 0, 0x05E558 },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500)
-		{ 0, 0x03A457, 200, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 400)
-		{ 0, 0x03A457, 250, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 200)
-		{ 0, 0x03A457, 400, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 500)
-		{ 0, 0x03A457, 500, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 520)
-		{ 0, 0x03A457, 520, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 570)
-		{ 0, 0x03A457, 570, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by min02script.CheckRadioTransmitterStatus)
-		{ 0, 0x03A457, 600, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x043275, 1, 0, 0x05DE41 },  // RR303: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
-		{ 0, 0x043275, 100, 0, 0x19E9A6 },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction
-		{ 0, 0x043275, 1000, 0, 0x05DE41 },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
-		{ 0, 0x043275, 1010, 0, 0x05DE41 },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
-		{ 0, 0x043275, 1020, 0, 0x19E9A6 },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by 100)
-		{ 0, 0x043275, 1030, 0, 0x05DE41 },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
-		{ 0, 0x043275, 1150, 0, 0x05DE41 },  // SetPlayerEnemy pBrotherhoodofSteelFaction
-		{ 0, 0x04402C, 1, 0, 0x091895 },  // BoSM02: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
-		{ 0, 0x04402C, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 3, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 4, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 5, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 6, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 7, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 8, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 9, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x04402C, 255, 0, 0x0BC0F7 },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction (by 380)
-		{ 0, 0x04402C, 256, 0, 0x0BC0F7 },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction (by 380)
-		{ 0, 0x04402C, 280, 0, 0x0BC0F7 },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction (by 255)
-		{ 0, 0x04402C, 380, 0, 0x0BC0F7 },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction
-		{ 0, 0x04542B, 120, 0, 0x1AC2B4 },  // DN049: SetEnemy DN049MaddensChampFaction PlayerFaction
-		{ 0, 0x04542B, 149, 0, 0x0E5251 },  // SetEnemy DN049MaddensFaction PlayerFaction
-		{ 0, 0x04542B, 221, 0, 0x0EAC9C },  // SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
-		{ 0, 0x04542B, 249, 0, 0x0E8D59 },  // SetEnemy DN049OutletFaction PlayerFaction
-		{ 0, 0x04542B, 349, 0, 0x0E8D5D },  // SetEnemy DN049DinerFaction PlayerFaction
-		{ 0, 0x04542B, 449, 0, 0x0E8D4E },  // SetEnemy DN049FallonsFaction PlayerFaction
-		{ 0, 0x04542B, 549, 0, 0x0E7B5C },  // SetEnemy DN049BakeryFaction PlayerFaction
-		{ 0, 0x04542B, 649, 0, 0x0E7AFD },  // SetEnemy DN049SlocumFaction PlayerFaction
-		{ 0, 0x04542B, 749, 0, 0x0E933D },  // SetEnemy DN049BowlingAlleyFaction PlayerFaction
-		{ 0, 0x04542B, 849, 0, 0x0E990D },  // SetEnemy DN049DirectorFaction PlayerFaction
-		{ 0, 0x0457C6, 250, 0, 0x08AF6C },  // MS13FindPhoto: SetEnemy GoodneighborMarowskiFaction PlayerFaction
-		{ 0, 0x0459D2, 609, 0, 0x0994F6 },  // RR101: SetEnemy pPlayerFaction pRailroadFaction
-		{ 0, 0x0459D2, 1013, 0, 0x0994F6 },  // SetEnemy pRailroadFaction pPlayerFaction
-		{ 0, 0x04AD05, 55, 0, 0x0F17C1 },  // DN101: SetEnemy DN101_RaiderFaction PlayerFaction
-		{ 0, 0x04AD05, 60, 0, 0x0F17C1 },  // SetEnemy DN101_RaiderFaction PlayerFaction
-		{ 0, 0x0537FF, 1, 0, 0x091895 },  // BoS202: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0537FF, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x05DEE4, 220, 0, 0x05E558 },  // Min01: SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
-		{ 0, 0x05DEE4, 1500, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 2010)
-		{ 0, 0x05DEE4, 2000, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x05DEE4, 2010, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
-		{ 0, 0x068D7B, 1, 0, 0x091895 },  // BoS100Fight: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 99)
-		{ 0, 0x068D7B, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x068D7B, 20, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction
-		{ 0, 0x068D7B, 30, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 20)
-		{ 0, 0x068D7B, 99, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 20)
-		{ 0, 0x06F5C1, 1, 0, 0x091895 },  // BoS101: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x06F5C1, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x06F5C1, 140, 0, 0x248414 },  // SetPlayerEnemy DN017_CrimeFactionArcjet
-		{ 0, 0x07CC61, 210, 0, 0x10C4F4 },  // RR301: SetEnemy pRR301SynthFaction pPlayerFaction
-		{ 0, 0x0890B4, 300, 0, 0x074794 },  // DialogueCovenant: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
-		{ 0, 0x08FCED, 500, 0, 0x026DCF },  // DN036: SetEnemy DN036PhyllisFaction PlayerFaction
-		{ 0, 0x0A8257, 750, 0, 0x106C2F },  // InstM02: AddToFaction PlayerEnemyFaction
-		{ 0, 0x0A8258, 70, 0, 0x0EF224 },  // Inst302: SetEnemy BunkerHillInstituteFaction PlayerFaction
-		{ 0, 0x0A8258, 91, 0, 0x0EF224 },  // SetEnemy BunkerHillInstituteFaction PlayerFaction
-		{ 0, 0x0AA778, 980, 0, 0x05E558 },  // Min03: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x0AA778, 1000, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by 980)
-		{ 0, 0x0ADCE5, 1, 0, 0x091895 },  // BoSM04: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
-		{ 0, 0x0ADCE5, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x0ADCE5, 3, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x0ADCE5, 4, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
-		{ 0, 0x0AE51C, 1, 0, 0x091895 },  // BoS301: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0AE51C, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0AE51C, 3, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0AE51C, 4, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0AE51C, 178, 0, 0x144047 },  // SetEnemy DN166AtomFaction PlayerFaction
-		{ 0, 0x0B1D79, 1, 0, 0x091895 },  // BoSM01: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
-		{ 0, 0x0B1D79, 139, 0, 0x0B3D7D },  // SetEnemy BoSM01_BrandisFaction PlayerFaction (by 140)
-		{ 0, 0x0B1D79, 140, 0, 0x0B3D7D },  // SetEnemy BoSM01_BrandisFaction PlayerFaction
-		{ 0, 0x0B2D48, 790, 0, 0x05E558 },  // RR201: SetEnemy InstituteFaction PlayerFaction (by InstKickOut 0)
-		{ 0, 0x0B9F9D, 1, 0, 0x091895 },  // BoS302: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0B9F9D, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0B9F9D, 255, 0, 0x05DE41 },  // SetPlayerEnemy BrotherhoodofSteelFaction (by BoSDansePostGame 20)
-		{ 0, 0x0C9B0B, 10, 0, 0x05DE41 },  // MQ00: SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0C9B0B, 30, 0, 0x0994F6 },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0C9B0B, 40, 0, 0x05E558 },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0DDFDB, 1, 0, 0x05E558 },  // Min301: SetEnemy InstituteFaction PlayerFaction (by 0)
-		{ 0, 0x0E2058, 40, 0, 0x0E73CA },  // Inst301: AddToFaction Inst301PlayerEnemyFaction
-		{ 0, 0x0E2058, 50, 0, 0x0E73CA },  // AddToFaction Inst301PlayerEnemyFaction
-		{ 0, 0x0EF21C, 30, 0, 0x0EF225 },  // Inst302Combat: SetEnemy BunkerHillBoSFaction PlayerFaction
-		{ 0, 0x0FDC8C, 1, 0, 0x091895 },  // BoS303: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0FDC8C, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0FDC8C, 3, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x0FDC8C, 30, 0, 0x05E558 },  // SetPlayerEnemy InstituteFaction
-		{ 0, 0x0FDC8C, 250, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
-		{ 0, 0x1069A9, 75, 0, 0x106C2F },  // DialogueDrumlinDiner: AddToFaction PlayerEnemyFaction (by 100)
-		{ 0, 0x1069A9, 80, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction (by 200)
-		{ 0, 0x1069A9, 100, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction
-		{ 0, 0x1069A9, 200, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction
-		{ 0, 0x1069A9, 300, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction (by 100)
-		{ 0, 0x1069A9, 310, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction (by 100)
-		{ 0, 0x1069A9, 400, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction (by 200)
-		{ 0, 0x1069A9, 410, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction (by 200)
-		{ 0, 0x107A1C, 30, 0, 0x0994F6 },  // BoS302B: SetPlayerEnemy pRailroadFaction (by RRKickOut 100)
-		{ 0, 0x10C64A, 1910, 0, 0x05E558 },  // MQ302Min: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64A, 2000, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64B, 1000, 0, 0x05E558 },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64C, 1000, 0, 0x05E558 },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x136329, 200, 0, 0x05E558 },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
-		{ 0, 0x142FD3, 1, 0, 0x05DE41 },  // RR304: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by RR303 1)
-		{ 0, 0x142FD3, 20, 0, 0x05DE41 },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
-		{ 0, 0x142FD3, 25, 0, 0x05DE41 },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
-		{ 0, 0x142FD3, 30, 0, 0x05DE41 },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
-		{ 0, 0x15BD39, 30, 0, 0x05DE41 },  // InstMassFusion: SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 20)
-		{ 0, 0x16D036, 0, 0, 0x05E558 },  // InstKickOut: SetEnemy InstituteFaction PlayerFaction (by instkickoutquestscript.KickOut)
-		{ 0, 0x16D036, 100, 0, 0x05E558 },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x173ED9, 1, 0, 0x091895 },  // BoS304: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x173ED9, 2, 0, 0x091895 },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x173ED9, 255, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by InstKickOut 0)
-		{ 0, 0x1764DF, 150, 0, 0x106C2F },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
-		{ 0, 0x1764DF, 170, 0, 0x106C2F },  // AddToFaction PlayerEnemyFaction (by 150)
-		{ 1, 0x001B40, 570, 1, 0x01A213 },  // DLC03MQ02: SetPlayerEnemy pDLC03MQ02LoneChildAtomFaction
-		{ 1, 0x001B43, 800, 0, 0x106C2F },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction
-		{ 1, 0x001B43, 850, 1, 0x00463D },  // SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
-		{ 1, 0x001B44, 1, 1, 0x030DC4 },  // DLC03MQ06: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
-		{ 1, 0x001B44, 2, 1, 0x030DC4 },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
-		{ 1, 0x001B44, 3, 1, 0x030DC4 },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
-		{ 1, 0x004C8E, 70, 1, 0x004462 },  // DLC03CoA_DialogueNucleus: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
-		{ 1, 0x005BD7, 9000, 1, 0x005C7E },  // DLC03DialogueFarHarbor: SetEnemy pDLC03SettlementFarHarborFaction pPlayerFaction
-		{ 1, 0x00AEC3, 210, 0, 0x106C2F },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction
-		{ 1, 0x00AFB1, 700, 1, 0x004462 },  // DLC03AtomM01: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
-		{ 1, 0x013F39, 200, 1, 0x00463D },  // DLC03Acadia_BoS: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
-		{ 1, 0x013F3A, 200, 1, 0x00463D },  // DLC03Acadia_Institute: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
-		{ 1, 0x01536F, 405, 0, 0x106C2F },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction
-		{ 1, 0x01B0AF, 520, 0, 0x106C2F },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction
-		{ 1, 0x02127F, 1, 1, 0x030DC4 },  // DLC03MQ06a: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 10)
-		{ 1, 0x02127F, 95, 1, 0x022F6D },  // SetEnemy DLC03MQ06a_ChildrenofAtomFaction PlayerFaction
-		{ 1, 0x02127F, 755, 1, 0x004462 },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
-		{ 1, 0x02127F, 760, 1, 0x004462 },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
-		{ 1, 0x0316F2, 503, 1, 0x048012 },  // DLC03DialogueV118: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by 710)
-		{ 1, 0x0316F2, 710, 1, 0x048012 },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03dialoguev118script.StartConfrontationFight)
-		{ 1, 0x0316F2, 801, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 802, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 803, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 804, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 805, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 806, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 807, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
-		{ 1, 0x0316F2, 810, 1, 0x020629 },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by dlc03:dlc03dialoguev118script.SetKickout)
-		{ 1, 0x036763, 465, 1, 0x048012 },  // DLC03_V118_Quest: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
-		{ 1, 0x036763, 565, 1, 0x048012 },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
-		{ 1, 0x036763, 665, 1, 0x048012 },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
-		{ 1, 0x036763, 765, 1, 0x048012 },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
-		{ 1, 0x040A87, 100, 0, 0x05E558 },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400)
-		{ 1, 0x040A87, 400, 0, 0x05E558 },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest)
-		{ 2, 0x0010F5, 885, 2, 0x0008B5 },  // DLC01MQ05: SetEnemy DLC01MechanistFaction PlayerFaction (by DLC01Lair 1400)
-		{ 2, 0x0010F5, 890, 2, 0x0008B5 },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 885)
-		{ 3, 0x000800, 347, 3, 0x037BA6 },  // DLC04MQ00: SetEnemy DLC04HarveyHostileFaction PlayerFaction
-		{ 3, 0x000802, 1500, 3, 0x00F438 },  // DLC04MQ02: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by DLC04RaiderKickout 20)
-		{ 3, 0x000807, 99, 3, 0x00CC95 },  // DLC04MS02: SetEnemy DLC04HubologistFaction PlayerFaction
-		{ 3, 0x01E34A, 10, 3, 0x04A02F },  // DLC04GZMainQuest: SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A030 },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A02C },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A02D },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A033 },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A02E },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A031 },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x01E34A, 10, 3, 0x04A032 },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
-		{ 3, 0x03684F, 6, 3, 0x056F29 },  // DLC04_KiddieKingdomMain: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
-		{ 3, 0x03684F, 600, 3, 0x056F29 },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
-		{ 3, 0x03684F, 700, 3, 0x056F29 },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
-		{ 3, 0x03684F, 740, 3, 0x03E4F2 },  // SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
-		{ 3, 0x0431AB, 700, 0, 0x106C2F },  // DLC04DryRockGulch: AddToFaction PlayerEnemyFaction
+		{ 0, 0x0229EC, 5, 0, 0x05E558, kSetEnemy },  // MQ207: SetEnemy PlayerFaction temp4 (by 200) [by hand]
+		{ 0, 0x0229EC, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0)
+		{ 0, 0x0229EE, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x0229EE, 1000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x0229F6, 40, 0, 0x106CA3, kSetEnemy },  // MS01: SetEnemy MS01BulletFaction PlayerFaction
+		{ 0, 0x0229FE, 232, 0, 0x14BF23, kSetPlayerEnemy },  // MS07c: SetPlayerEnemy EddieFaction (by 240)
+		{ 0, 0x0229FE, 234, 0, 0x14BF23, kSetPlayerEnemy },  // SetPlayerEnemy EddieFaction
+		{ 0, 0x0229FE, 240, 0, 0x14BF23, kSetPlayerEnemy },  // SetPlayerEnemy EddieFaction
+		{ 0, 0x022A00, 1450, 0, 0x047EBD, kSetEnemy },  // MS09: SetEnemy PlayerFaction CrimeCabotHouse
+		{ 0, 0x022A02, 390, 0, 0x08C9DA, kSetEnemy },  // MS11: SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
+		{ 0, 0x022A02, 728, 0, 0x08C9DA, kSetEnemy },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
+		{ 0, 0x022A02, 800, 0, 0x08C9DA, kSetEnemy },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
+		{ 0, 0x022A02, 1050, 0, 0x08C9DB, kSetEnemy },  // SetEnemy pMS11IronsidesRobotsFaction pPlayerFaction (by 1100)
+		{ 0, 0x022A02, 1100, 0, 0x08C9DB, kSetEnemy },  // SetEnemy pMS11IronsidesRobotsFaction pPlayerFaction
+		{ 0, 0x022A02, 1200, 0, 0x08C9DA, kSetEnemy },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
+		{ 0, 0x022A02, 1275, 0, 0x08C9DA, kSetEnemy },  // SetEnemy pMS11ScavengersNPCFaction pPlayerFaction
+		{ 0, 0x022A02, 8990, 0, 0x08C9DB, kSetEnemy },  // SetEnemy pMS11IronsidesRobotsFaction pPlayerFaction
+		{ 0, 0x022A05, 60, 0, 0x0E356E, kSetEnemy },  // MS14: SetEnemy MS14BadGuyFaction PlayerFaction
+		{ 0, 0x022A07, 210, 0, 0x106C2F, kAddToFaction },  // MS16: AddToFaction pPlayerEnemyFaction
+		{ 0, 0x022A07, 220, 0, 0x106C2F, kAddToFaction },  // AddToFaction pPlayerEnemyFaction
+		{ 0, 0x022A08, 90, 0, 0x074794, kSetEnemy },  // MS17: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
+		{ 0, 0x022A08, 315, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction
+		{ 0, 0x022A08, 331, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (by 315)
+		{ 0, 0x022A08, 420, 0, 0x0786F1, kSetEnemy },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
+		{ 0, 0x022A08, 450, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (by 315)
+		{ 0, 0x022A08, 465, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
+		{ 0, 0x022A08, 467, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
+		{ 0, 0x022A08, 470, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction
+		{ 0, 0x022A08, 490, 0, 0x0786F1, kSetEnemy },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
+		{ 0, 0x022A08, 760, 0, 0x02DFEF, kAddToFaction },  // AddToFaction pREPlayerEnemy
+		{ 0, 0x02633E, 0, 0, 0x19EC30, kSetEnemy },  // DN079: SetEnemy DN079_CanneryTurretFaction PlayerFaction
+		{ 0, 0x02633E, 520, 0, 0x03EFAE, kSetEnemy },  // SetEnemy DN079_CanneryFaction PlayerFaction
+		{ 0, 0x027556, 435, 0, 0x128CF7, kSetEnemy },  // MS04: SetEnemy pMS04KendraFaction pPlayerFaction
+		{ 0, 0x027556, 470, 0, 0x128CEF, kSetEnemy },  // SetEnemy pMS04AJFaction pPlayerFaction
+		{ 0, 0x027556, 510, 0, 0x128CEA, kSetEnemy },  // SetEnemy pMS04WayneDelancyFaction pPlayerFaction
+		{ 0, 0x027556, 820, 0, 0x186971, kSetEnemy },  // SetEnemy pMS04SmilingKatesPosseFaction pPlayerFaction
+		{ 0, 0x027556, 1307, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1310, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction
+		{ 0, 0x027556, 1320, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1340, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1345, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x0284BC, 110, 0, 0x028FB0, kSetEnemy },  // DN015: SetEnemy DN015_RobotFaction PlayerFaction
+		{ 0, 0x0284BC, 250, 0, 0x028FB2, kSetEnemy },  // SetEnemy DN015_DirectorFaction PlayerFaction
+		{ 0, 0x02BF21, 1, 0, 0x091895, kSetEnemy },  // BoS201: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x02BF21, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x02BF21, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x02BF21, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x033527, 650, 0, 0x106C2F, kAddToFaction },  // V81_03: AddToFaction PlayerEnemyFaction
+		{ 0, 0x03A457, 70, 0, 0x05E558, kSetEnemy },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500)
+		{ 0, 0x03A457, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 400)
+		{ 0, 0x03A457, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 200)
+		{ 0, 0x03A457, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 500)
+		{ 0, 0x03A457, 500, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 520)
+		{ 0, 0x03A457, 520, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 570)
+		{ 0, 0x03A457, 570, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by min02script.CheckRadioTransmitterStatus)
+		{ 0, 0x03A457, 600, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
+		{ 0, 0x043275, 1, 0, 0x05DE41, kSetEnemy },  // RR303: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
+		{ 0, 0x043275, 100, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction
+		{ 0, 0x043275, 1000, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
+		{ 0, 0x043275, 1010, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
+		{ 0, 0x043275, 1020, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by 100)
+		{ 0, 0x043275, 1030, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
+		{ 0, 0x043275, 1150, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy pBrotherhoodofSteelFaction
+		{ 0, 0x04402C, 1, 0, 0x091895, kSetEnemy },  // BoSM02: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
+		{ 0, 0x04402C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 5, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 6, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 7, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 8, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 9, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x04402C, 255, 0, 0x0BC0F7, kSetEnemy },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction (by 380)
+		{ 0, 0x04402C, 256, 0, 0x0BC0F7, kSetEnemy },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction (by 380)
+		{ 0, 0x04402C, 280, 0, 0x0BC0F7, kSetEnemy },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction (by 255)
+		{ 0, 0x04402C, 380, 0, 0x0BC0F7, kSetEnemy },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction
+		{ 0, 0x04542B, 120, 0, 0x1AC2B4, kSetEnemy },  // DN049: SetEnemy DN049MaddensChampFaction PlayerFaction
+		{ 0, 0x04542B, 149, 0, 0x0E5251, kSetEnemy },  // SetEnemy DN049MaddensFaction PlayerFaction
+		{ 0, 0x04542B, 221, 0, 0x0EAC9C, kSetEnemy },  // SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
+		{ 0, 0x04542B, 249, 0, 0x0E8D59, kSetEnemy },  // SetEnemy DN049OutletFaction PlayerFaction
+		{ 0, 0x04542B, 349, 0, 0x0E8D5D, kSetEnemy },  // SetEnemy DN049DinerFaction PlayerFaction
+		{ 0, 0x04542B, 449, 0, 0x0E8D4E, kSetEnemy },  // SetEnemy DN049FallonsFaction PlayerFaction
+		{ 0, 0x04542B, 549, 0, 0x0E7B5C, kSetEnemy },  // SetEnemy DN049BakeryFaction PlayerFaction
+		{ 0, 0x04542B, 649, 0, 0x0E7AFD, kSetEnemy },  // SetEnemy DN049SlocumFaction PlayerFaction
+		{ 0, 0x04542B, 749, 0, 0x0E933D, kSetEnemy },  // SetEnemy DN049BowlingAlleyFaction PlayerFaction
+		{ 0, 0x04542B, 849, 0, 0x0E990D, kSetEnemy },  // SetEnemy DN049DirectorFaction PlayerFaction
+		{ 0, 0x0457C6, 250, 0, 0x08AF6C, kSetEnemy },  // MS13FindPhoto: SetEnemy GoodneighborMarowskiFaction PlayerFaction
+		{ 0, 0x0459D2, 609, 0, 0x0994F6, kSetEnemy },  // RR101: SetEnemy pPlayerFaction pRailroadFaction
+		{ 0, 0x0459D2, 1013, 0, 0x0994F6, kSetEnemy },  // SetEnemy pRailroadFaction pPlayerFaction
+		{ 0, 0x04AD05, 55, 0, 0x0F17C1, kSetEnemy },  // DN101: SetEnemy DN101_RaiderFaction PlayerFaction
+		{ 0, 0x04AD05, 60, 0, 0x0F17C1, kSetEnemy },  // SetEnemy DN101_RaiderFaction PlayerFaction
+		{ 0, 0x0537FF, 1, 0, 0x091895, kSetEnemy },  // BoS202: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0537FF, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x05DEE4, 220, 0, 0x05E558, kSetEnemy },  // Min01: SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
+		{ 0, 0x05DEE4, 1500, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 2010)
+		{ 0, 0x05DEE4, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
+		{ 0, 0x05DEE4, 2010, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
+		{ 0, 0x068D7B, 1, 0, 0x091895, kSetEnemy },  // BoS100Fight: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 99)
+		{ 0, 0x068D7B, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x068D7B, 20, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction
+		{ 0, 0x068D7B, 30, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 20)
+		{ 0, 0x068D7B, 99, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 20)
+		{ 0, 0x06F5C1, 1, 0, 0x091895, kSetEnemy },  // BoS101: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x06F5C1, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x06F5C1, 140, 0, 0x248414, kSetPlayerEnemy },  // SetPlayerEnemy DN017_CrimeFactionArcjet
+		{ 0, 0x07CC61, 210, 0, 0x10C4F4, kSetEnemy },  // RR301: SetEnemy pRR301SynthFaction pPlayerFaction
+		{ 0, 0x0890B4, 300, 0, 0x074794, kSetEnemy },  // DialogueCovenant: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
+		{ 0, 0x08FCED, 500, 0, 0x026DCF, kSetEnemy },  // DN036: SetEnemy DN036PhyllisFaction PlayerFaction
+		{ 0, 0x0A8257, 750, 0, 0x106C2F, kAddToFaction },  // InstM02: AddToFaction PlayerEnemyFaction
+		{ 0, 0x0A8258, 70, 0, 0x0EF224, kSetEnemy },  // Inst302: SetEnemy BunkerHillInstituteFaction PlayerFaction
+		{ 0, 0x0A8258, 91, 0, 0x0EF224, kSetEnemy },  // SetEnemy BunkerHillInstituteFaction PlayerFaction
+		{ 0, 0x0AA778, 980, 0, 0x05E558, kSetEnemy },  // Min03: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
+		{ 0, 0x0AA778, 1000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 980)
+		{ 0, 0x0ADCE5, 1, 0, 0x091895, kSetEnemy },  // BoSM04: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
+		{ 0, 0x0ADCE5, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x0ADCE5, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x0ADCE5, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
+		{ 0, 0x0AE51C, 1, 0, 0x091895, kSetEnemy },  // BoS301: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0AE51C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0AE51C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0AE51C, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0AE51C, 178, 0, 0x144047, kSetEnemy },  // SetEnemy DN166AtomFaction PlayerFaction
+		{ 0, 0x0B1D79, 1, 0, 0x091895, kSetEnemy },  // BoSM01: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
+		{ 0, 0x0B1D79, 139, 0, 0x0B3D7D, kSetEnemy },  // SetEnemy BoSM01_BrandisFaction PlayerFaction (by 140)
+		{ 0, 0x0B1D79, 140, 0, 0x0B3D7D, kSetEnemy },  // SetEnemy BoSM01_BrandisFaction PlayerFaction
+		{ 0, 0x0B2D48, 790, 0, 0x05E558, kSetEnemy },  // RR201: SetEnemy InstituteFaction PlayerFaction (by InstKickOut 0)
+		{ 0, 0x0B9F9D, 1, 0, 0x091895, kSetEnemy },  // BoS302: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0B9F9D, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0B9F9D, 255, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by BoSDansePostGame 20)
+		{ 0, 0x0C9B0B, 10, 0, 0x05DE41, kSetEnemy },  // MQ00: SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x0C9B0B, 30, 0, 0x0994F6, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x0C9B0B, 40, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x0DDFDB, 1, 0, 0x05E558, kSetEnemy },  // Min301: SetEnemy InstituteFaction PlayerFaction (by 0)
+		{ 0, 0x0E2058, 40, 0, 0x0E73CA, kAddToFaction },  // Inst301: AddToFaction Inst301PlayerEnemyFaction
+		{ 0, 0x0E2058, 50, 0, 0x0E73CA, kAddToFaction },  // AddToFaction Inst301PlayerEnemyFaction
+		{ 0, 0x0EF21C, 30, 0, 0x0EF225, kSetEnemy },  // Inst302Combat: SetEnemy BunkerHillBoSFaction PlayerFaction
+		{ 0, 0x0FDC8C, 1, 0, 0x091895, kSetEnemy },  // BoS303: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0FDC8C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0FDC8C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x0FDC8C, 30, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction
+		{ 0, 0x0FDC8C, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x1069A9, 75, 0, 0x106C2F, kAddToFaction },  // DialogueDrumlinDiner: AddToFaction PlayerEnemyFaction (by 100)
+		{ 0, 0x1069A9, 80, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
+		{ 0, 0x1069A9, 100, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction
+		{ 0, 0x1069A9, 200, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction
+		{ 0, 0x1069A9, 300, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 100)
+		{ 0, 0x1069A9, 310, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 100)
+		{ 0, 0x1069A9, 400, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
+		{ 0, 0x1069A9, 410, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
+		{ 0, 0x107A1C, 30, 0, 0x0994F6, kSetPlayerEnemy },  // BoS302B: SetPlayerEnemy pRailroadFaction (by RRKickOut 100)
+		{ 0, 0x10C64A, 1910, 0, 0x05E558, kSetEnemy },  // MQ302Min: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x10C64A, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x10C64B, 1000, 0, 0x05E558, kSetEnemy },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x10C64C, 1000, 0, 0x05E558, kSetEnemy },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x142FD3, 1, 0, 0x05DE41, kSetEnemy },  // RR304: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by RR303 1)
+		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 25, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 30, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x15BD39, 30, 0, 0x05DE41, kSetPlayerEnemy },  // InstMassFusion: SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 20)
+		{ 0, 0x16D036, 0, 0, 0x05E558, kSetEnemy },  // InstKickOut: SetEnemy InstituteFaction PlayerFaction (by instkickoutquestscript.KickOut)
+		{ 0, 0x16D036, 100, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x173ED9, 1, 0, 0x091895, kSetEnemy },  // BoS304: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x173ED9, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
+		{ 0, 0x173ED9, 255, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by InstKickOut 0)
+		{ 0, 0x1764DF, 150, 0, 0x106C2F, kAddToFaction },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
+		{ 0, 0x1764DF, 170, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 150)
+		{ 1, 0x001B40, 570, 1, 0x01A213, kSetPlayerEnemy },  // DLC03MQ02: SetPlayerEnemy pDLC03MQ02LoneChildAtomFaction
+		{ 1, 0x001B43, 800, 0, 0x106C2F, kAddToFaction },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction
+		{ 1, 0x001B43, 850, 1, 0x00463D, kSetEnemy },  // SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
+		{ 1, 0x001B44, 1, 1, 0x030DC4, kSetEnemy },  // DLC03MQ06: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
+		{ 1, 0x001B44, 2, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
+		{ 1, 0x001B44, 3, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
+		{ 1, 0x004C8E, 70, 1, 0x004462, kSetEnemy },  // DLC03CoA_DialogueNucleus: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x005BD7, 9000, 1, 0x005C7E, kSetEnemy },  // DLC03DialogueFarHarbor: SetEnemy pDLC03SettlementFarHarborFaction pPlayerFaction
+		{ 1, 0x00AEC3, 210, 0, 0x106C2F, kAddToFaction },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction
+		{ 1, 0x00AFB1, 700, 1, 0x004462, kSetEnemy },  // DLC03AtomM01: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x013F39, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_BoS: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
+		{ 1, 0x013F3A, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_Institute: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
+		{ 1, 0x01536F, 405, 0, 0x106C2F, kAddToFaction },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction
+		{ 1, 0x01B0AF, 520, 0, 0x106C2F, kAddToFaction },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction
+		{ 1, 0x02127F, 1, 1, 0x030DC4, kSetEnemy },  // DLC03MQ06a: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 10)
+		{ 1, 0x02127F, 95, 1, 0x022F6D, kSetEnemy },  // SetEnemy DLC03MQ06a_ChildrenofAtomFaction PlayerFaction
+		{ 1, 0x02127F, 755, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x02127F, 760, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x0316F2, 503, 1, 0x048012, kSetEnemy },  // DLC03DialogueV118: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by 710)
+		{ 1, 0x0316F2, 710, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03dialoguev118script.StartConfrontationFight)
+		{ 1, 0x0316F2, 801, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 802, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 803, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 804, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 805, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 806, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 807, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 810, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by dlc03:dlc03dialoguev118script.SetKickout)
+		{ 1, 0x036763, 465, 1, 0x048012, kSetEnemy },  // DLC03_V118_Quest: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
+		{ 1, 0x036763, 565, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
+		{ 1, 0x036763, 665, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
+		{ 1, 0x036763, 765, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
+		{ 1, 0x040A87, 100, 0, 0x05E558, kSetEnemy },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400)
+		{ 1, 0x040A87, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest)
+		{ 2, 0x0010F5, 885, 2, 0x0008B5, kSetEnemy },  // DLC01MQ05: SetEnemy DLC01MechanistFaction PlayerFaction (by DLC01Lair 1400)
+		{ 2, 0x0010F5, 890, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 885)
+		{ 3, 0x000800, 347, 3, 0x037BA6, kSetEnemy },  // DLC04MQ00: SetEnemy DLC04HarveyHostileFaction PlayerFaction
+		{ 3, 0x000802, 1500, 3, 0x00F438, kSetEnemy },  // DLC04MQ02: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by DLC04RaiderKickout 20)
+		{ 3, 0x000807, 99, 3, 0x00CC95, kSetEnemy },  // DLC04MS02: SetEnemy DLC04HubologistFaction PlayerFaction
+		{ 3, 0x01E34A, 10, 3, 0x04A02F, kSetEnemy },  // DLC04GZMainQuest: SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A030, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A02C, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A02D, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A033, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A02E, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A031, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x01E34A, 10, 3, 0x04A032, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x03684F, 6, 3, 0x056F29, kSetEnemy },  // DLC04_KiddieKingdomMain: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
+		{ 3, 0x03684F, 600, 3, 0x056F29, kSetEnemy },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
+		{ 3, 0x03684F, 700, 3, 0x056F29, kSetEnemy },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
+		{ 3, 0x03684F, 740, 3, 0x03E4F2, kSetEnemy },  // SetEnemy DLC04OswaldFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.StartFight)
+		{ 3, 0x0431AB, 700, 0, 0x106C2F, kAddToFaction },  // DLC04DryRockGulch: AddToFaction PlayerEnemyFaction
 	};
 
 	// The HOSTILE rows of a stage (none: it turns no faction on the player), in order.
@@ -1319,6 +1333,20 @@ namespace StageRules
 		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
 		const auto [first, last] = std::ranges::equal_range(HOSTILE, key, {}, [](const Hostile& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
 		return { first, last };
+	}
+
+	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_starting: the game runs the
+	// quest's start-up stage first, as Starting merges the RULES rows) its quest's stage 0's too (InstKickOut 0, DN079 0:
+	// the kick-out is the start-up's). Stage 0 itself: its own rows once.
+	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_starting)
+	{
+		const auto own = HostileOf(a_file, a_quest, a_stage);
+		std::vector<Hostile> rows(own.begin(), own.end());
+		if (a_starting && a_stage != 0) {
+			const auto start = HostileOf(a_file, a_quest, 0);
+			rows.insert(rows.begin(), start.begin(), start.end());
+		}
+		return rows;
 	}
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the
@@ -1358,6 +1386,7 @@ namespace StageRules
 		kOpeningWaits,  // not yet: it moves the player, and this game is still in the opening; other quests go on
 		kOffer,         // not yet: the player is offered to go with the friend who did it (the teleport key); its quest waits, other quests go on
 		kHostileWaits,  // not yet: it turns a faction on the player, and some of that faction are near (HOSTILE); its quest waits, other quests go on
+		kHostileOnly,   // never the stage: it moves the player, who didn't go with the friend; the faction it turns on the player is turned on them here all the same (HostileCall)
 	};
 
 	struct Situation
@@ -1365,8 +1394,8 @@ namespace StageRules
 		bool                           sharedStory = false;   // the host shares the main story and the factions'
 		bool                           live = false;          // it just happened in a friend's game (not caught up from the session)
 		bool                           nearFriend = false;    // the friend who did it is close by
-		bool                           factionNear = false;   // a kHostile stage: one of the faction it turns on the player is near, or the player is fighting (HostileHold)
-		bool                           held = false;          // caught-up stages wait now (the player is fighting)
+		bool                           factionNear = false;   // a kHostile stage: one of the faction it turns on the player is near (HostileHold)
+		bool                           held = false;          // caught-up stages wait now (the player is fighting; capped, QuestSync's MAX_COMBAT_HOLD)
 		bool                           releaseComing = true;  // a stage that takes the controls away: the one that gives them back is coming too
 		bool                           opening = false;       // this game is still in the opening (Story::InOpening)
 		bool                           friendInOpening = false;  // a friend's is (their status): it holds nothing here
@@ -1398,17 +1427,22 @@ namespace StageRules
 	// and it is set once they are beside the friend. Not taken up, it goes as before: skipped, or a bridge warned and set.
 	// Never offered for a stage caught up from the session (only a live one), nor while this game is in the opening.
 	// One that turns a faction on the player (kHostile: HOSTILE) is set live beside the friend who did it, as before (they
-	// are in that fight together), and otherwise waits, its quest with it, while any of that faction is near this player or
-	// they are fighting (Situation::factionNear, HostileHold), and is set once none is: the chooser's choice is both
-	// players', caught up or live, near or far, and it is never skipped (up to 0.16.1 a far friend's was offered, then
-	// skipped for good, so a kick-out or an ending split the saves).
+	// are in that fight together), and otherwise waits, its quest with it, while any of that faction is near this player
+	// (Situation::factionNear, HostileHold), and is set once none is: the chooser's choice is both players', caught up or
+	// live, near or far, and it is never skipped (up to 0.16.1 a far friend's was offered, then skipped for good, so a
+	// kick-out or an ending split the saves). A fight with anyone else holds it as it holds a caught-up stage (held: the
+	// capped combat hold), live or not: nothing that starts a fight is set mid-fight. One that moves the player too
+	// (kMoves, no kBridge) takes the move's path once the hold lets it through: offered live, set beside the friend; not
+	// gone with (the offer run out, nobody to follow, caught up), the stage is not set, but the faction is turned on the
+	// player here all the same (kHostileOnly: the chooser's choice, without the move).
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
 		if ((flags & kPays) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
 		}
-		if ((flags & kHostile) && a_now.factionNear && !(a_now.live && a_now.nearFriend)) {
+		const bool withFriend = a_now.live && a_now.nearFriend;
+		if ((flags & kHostile) && a_now.factionNear && !withFriend) {
 			return Verdict::kHostileWaits;
 		}
 		if ((flags & kMoves) && a_now.opening) {
@@ -1419,7 +1453,7 @@ namespace StageRules
 		}
 		const bool offerOpen = a_now.offered && *a_now.offered < OFFER_FOR;
 		if ((a_now.live || offerOpen) && (!(flags & kMoves) || a_now.nearFriend)) {
-			return Verdict::kSet;
+			return (flags & kHostile) && a_now.held && !a_now.nearFriend ? Verdict::kLater : Verdict::kSet;
 		}
 		if ((flags & kMoves) && a_now.followable && (offerOpen || (a_now.live && !a_now.offered))) {
 			return Verdict::kOffer;
@@ -1431,7 +1465,7 @@ namespace StageRules
 			return Verdict::kSet;
 		}
 		if (!(flags & kBridge)) {
-			return Verdict::kSkip;
+			return (flags & kHostile) ? Verdict::kHostileOnly : Verdict::kSkip;
 		}
 		if (!a_now.warned) {
 			return Verdict::kWarn;

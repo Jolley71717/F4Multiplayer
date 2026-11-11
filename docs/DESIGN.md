@@ -2108,9 +2108,17 @@ joiner, a load) never is, nor one from a friend not known to this game, nor whil
 teleport's own refusals stand (a conversation, a scene, furniture, Survival, a place this game lacks): when one holds at
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
 
-A stage that turns a faction on the player is not offered but held (next section); a row with kMoves and kHostile both
-(none generated) is offered worded as a fight, "<friend> is fighting in <quest>: hold <key> to join them", once the hold
-has let it through. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
+A stage that turns a faction on the player is not offered but held (next section); one that moves the player too (a
+kMoves row that is HOSTILE's as well, 18 of them, no bridge: the Covenant's MS17 465/467/470, the Brotherhood's kick-out
+through InstMassFusion 30, InstKickOut 100, RR304 20, the airport's ghouls in BoSM02 2-9 and BoSM04 2-4, Kiddie Kingdom's
+6) is offered worded as a fight, "<friend> is fighting in <quest>: hold <key> to join them", once the hold has let it
+through, and set beside the friend; not gone with (the offer run out, nobody to follow, or caught up from the session)
+the stage is not set, since it would move the player, but the faction it turns on the player is turned on them here all
+the same (Verdict::kHostileOnly: the same Papyrus call the stage's script makes, Faction.SetEnemy(PlayerFaction) or
+Faction.SetPlayerEnemy(), from the HOSTILE row's HostileCall, queued on the game's VM; the log says "not setting ... the
+faction it turns on the player is turned on them here all the same"). What else those stages do (the Brotherhood's
+BoSKickOut 20 behind InstMassFusion 30 fails the Brotherhood's quests and sends the player off the Prydwen) is the
+stage's, not made here. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
 
 ### The hostile hold (StageRules::HOSTILE, Verdict::kHostileWaits, src/game/HostileHold.h, QuestSync.cpp)
 
@@ -2121,18 +2129,28 @@ faction, itself or through what the stage calls and sets, with the faction resol
 MQ00's kick-out helper and the Galactic Zone's start-up; StartCombat is a passing fight, no row) is the chooser's choice
 for both players, near or far, live or caught up, and is never skipped. Live beside the friend who did it (NEAR_FRIEND) it
 is set at once, as any stage: they are in that fight together. Otherwise its quest waits (StageLog::Set::kQuestWaits:
-other quests go on, as behind a lock or a follow offer) while any member of that faction is near this player (alive, not
-a friend's stand-in, in the game's high process and within HostileHold::RANGE, 8192 units, two cells: one that near comes
-at the player the moment the faction turns; one farther, or in a cell that isn't loaded, doesn't know) or the player is
-in combat, and is set once none is, the log saying "after N s of play waiting for <faction> to be out of sight" and the
-HUD "<faction> turned on your group: <friend>'s choice" (a caught-up one names no friend). The wait counts play only (a
-menu or a loading screen doesn't), is logged as it begins and every 5 minutes after, and has no end of its own: the
-maintainer's rule (2026-11-11) is that the stage waits, however long, in place of the earlier "set only beside the friend,
-else offered and then skipped" (2026-11-06), which split the saves for good on every far kick-out or ending while the
-story's own hostile stages, with no row, reached a far friend at once. A load or a rejoin keeps nothing of the hold: the
-session's catch-up sends the stage again, it is not done here, and it holds again if the faction is still near (no new
-persistence). The rig's step_hostile (opt-in) sets the Nucleus's kick-out with the VM standing among the Children of
-Atom: the stage waits, and lands once the VM has left.
+other quests go on, as behind a lock or a follow offer; a bridge, one that starts another quest, holds what came after it
+too, StageLog::Set::kLater, as its offer would, so the quest it starts doesn't run here first) while any member of that
+faction is near this player (alive, not disabled, not a friend's stand-in, not the player's own companion, by the game's
+CurrentCompanionFaction mark, NpcSync::IsOurCompanion: Danse, Deacon or X6-88 following the player would hold their
+faction's kick-out for as long as they follow, and the kick-out's own script deals with them; in the game's high process and within HostileHold::RANGE, 8192 units, two cells: one that near comes
+at the player the moment the faction turns; one farther, or in a cell that isn't loaded, doesn't know), and is set once
+none is. A fight with anyone else holds it only as it holds any caught-up stage (the capped combat hold, 60 s and 5 s
+after: the game's combat state can stick on something out of reach), live or caught up; a member of the faction who is
+fighting the player is near by distance anyway. A stage that starts its quest here is held for its quest's start-up
+stage's faction too (InstKickOut 0, DN079 0), as Starting merges the start-up's RULES row. The log says "after N s of
+play waiting for <faction> to be out of sight" when it lands, and only then the HUD says "<faction> turned on your group:
+<friend>'s choice" (a caught-up one names no friend; a faction with no name is called by its quest's name): most of these
+stages set up a fight far away, and a joiner catching up would see one line per stage otherwise. The wait counts play
+only (a menu or a loading screen doesn't), is logged as it begins and every 5 minutes after, says once on the HUD after
+3 minutes "<quest> is waiting: <faction> nearby", and has no end of its own: the maintainer's rule (2026-11-11) is that
+the stage waits, however long, in place of the earlier "set only beside the friend, else offered and then skipped"
+(2026-11-06), which split the saves for good on every far kick-out or ending while the story's own hostile stages, with no
+row, reached a far friend at once. A load or a rejoin keeps nothing of the hold: the session's catch-up sends the stage
+again, it is not done here, and it holds again if the faction is still near (no new persistence). The rig's step_hostile
+(opt-in) sets the Nucleus's kick-out with the VM standing among the Children of Atom: the stage waits, and lands once the
+VM has left. Not held yet: Nuka-World's Power Play (DLC04MQ05 8) turns the snubbed gang on the player through a global
+the stage must carry (the change that shares DLC04MQ05); its three gangs' factions go in the scan's BY_HAND then.
 
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 

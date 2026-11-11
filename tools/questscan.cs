@@ -1873,6 +1873,11 @@ public static class HostileScan
     // (DLC04GZMainQuest 10's Startup sets each of GalacticZoneEnemyFactions on the player), read by hand in those
     // scripts: the quest and stage, the quest whose VMAD holds the array, the array property, and the index (-1: every
     // entry, one row each). Each prints with "[by hand]".
+    // Not here yet: DLC04MQ05 8 (Power Play) sets the snubbed gang on the player through DLC04GangSetup, which reads the gang
+    // from the DLC04EnemyGang global: one of the three gangs' factions (the Disciples, the Operators, the Pack), none of them
+    // a property the walk can name. Once the stage carries that global (the change that shares DLC04MQ05 with it), a
+    // BY_HAND entry listing the three gang factions makes the hold wait while any gang member is near; until then the
+    // stage has no row and lands at once far away.
     class ByHand { public string Quest; public int Stage; public string PropertyQuest; public string Property; public int Index; }
     static readonly ByHand[] BY_HAND = {
         new ByHand { Quest = "MQ00", Stage = 10, PropertyQuest = "MQ00", Property = "Factions", Index = 0 },
@@ -1953,10 +1958,14 @@ public static class HostileScan
                         if (passed.Count == 1) { found.Add(passed[0]); how = " [the call's argument]"; }
                         else { unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what, passed.Count > 1 ? " (several factions passed)" : "")); continue; }
                     }
+                    // The call that turns the faction on the player (StageRules.h HostileCall): what QuestSync makes itself, without
+                    // the stage, for a stage that also moves a player who didn't go with the friend (kMoves without kBridge).
+                    var call = effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
+                        : effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
                     foreach (var id in found)
                     {
-                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
-                            first ? quest.Edid + ": " : "", what, how));
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
+                            first ? quest.Edid + ": " : "", what, how, call));
                         first = false;
                         rows++;
                     }

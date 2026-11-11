@@ -15,23 +15,37 @@ namespace HostileHold
 {
 	using Clock = std::chrono::steady_clock;
 
-	// A member of the faction is near when it is alive, loaded and fully simulated (the game's high process: the loaded
-	// cells around the player outdoors, or the interior they stand in) and within RANGE game units of the player (two
-	// cells, about 115 m). One that near comes at the player the moment the faction turns; one farther, or in a cell that
-	// isn't loaded, doesn't know. A dead one, a disabled one or a friend's stand-in doesn't count (the caller leaves them
-	// out). The player in combat counts as near too (QuestSync: nothing that starts a fight is set mid-fight).
+	// A member of the faction is near when it counts (Counts) and is within RANGE game units of the player (two cells,
+	// about 115 m), read among the actors the game simulates fully (its high process: the loaded cells around the
+	// player outdoors, or the interior they stand in). One that near comes at the player the moment the faction turns;
+	// one farther, or in a cell that isn't loaded, doesn't know. A fight with anyone else is not "near": QuestSync's
+	// capped combat hold (MAX_COMBAT_HOLD) holds the stage through it, as it holds any caught-up stage, and a member of
+	// the faction who is fighting the player is near by distance anyway.
 	inline constexpr float RANGE = 8192.0f;
 
-	inline bool Near(float a_dx, float a_dy, float a_dz, bool a_alive)
+	// Whether a member of the faction counts at all: a dead one or a disabled one doesn't, nor a friend's stand-in (the
+	// caller leaves those out), nor the player's own companion (the game's CurrentCompanionFaction mark, NpcSync::
+	// IsOurCompanion: Danse in the Brotherhood's faction, Deacon in the Railroad's, X6-88 in the Institute's; always beside
+	// the player, so the kick-out would wait for as long as they follow, and the game's own kick-out script deals with them
+	// when the stage runs).
+	inline bool Counts(bool a_alive, bool a_disabled, bool a_teammate)
 	{
-		return a_alive && a_dx * a_dx + a_dy * a_dy + a_dz * a_dz <= RANGE * RANGE;
+		return a_alive && !a_disabled && !a_teammate;
+	}
+
+	inline bool Near(float a_dx, float a_dy, float a_dz)
+	{
+		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz <= RANGE * RANGE;
 	}
 
 	// How long a held stage has waited, in play (time paused or loading doesn't count: no actor moves then), and when to
-	// say so: a line as the hold begins, one every LOG_EVERY of play after (a player standing among the faction for an
-	// hour sees in the log why the quest doesn't move), and the whole wait when the stage lands. A hold has no end of its
-	// own: the maintainer's rule is that the stage waits, however long, and is never skipped.
+	// say so: a line in the log as the hold begins, one every LOG_EVERY of play after (a player standing among the faction
+	// for an hour sees in the log why the quest doesn't move), and the whole wait when the stage lands; and one HUD line
+	// once a hold has lasted NOTICE_AFTER of play, so a player who stays on the Prydwen knows why their quest doesn't
+	// move. A hold has no end of its own: the maintainer's rule is that the stage waits, however long, and is never
+	// skipped.
 	inline constexpr auto LOG_EVERY = std::chrono::minutes(5);
+	inline constexpr auto NOTICE_AFTER = std::chrono::minutes(3);
 
 	class Waits
 	{
@@ -39,9 +53,10 @@ namespace HostileHold
 		// A stage judged held now.
 		struct Judged
 		{
-			bool            begun = false;   // the first time: the hold begins
-			bool            logDue = false;  // a line is due (begun, or LOG_EVERY of play since the last)
-			Clock::duration played{};        // how long it has waited so far
+			bool            begun = false;      // the first time: the hold begins
+			bool            logDue = false;     // a line is due (begun, or LOG_EVERY of play since the last)
+			bool            noticeDue = false;  // the HUD line is due (NOTICE_AFTER of play, once)
+			Clock::duration played{};           // how long it has waited so far
 		};
 
 		// Each poll: the play since the last one is added to every held stage, unless the game was paused meanwhile.
@@ -57,27 +72,38 @@ namespace HostileHold
 			}
 		}
 
-		Judged Hold(std::uint64_t a_key)
+		// a_faction: the faction near now (the one with the most near, of a stage that turns several), for the landing line.
+		Judged Hold(std::uint64_t a_key, std::uint32_t a_faction = 0)
 		{
 			const auto [it, inserted] = stages.try_emplace(a_key);
 			auto&      held = it->second;
+			held.faction = a_faction;
 			const bool due = inserted || held.played - held.logged >= LOG_EVERY;
 			if (due) {
 				held.logged = held.played;
 			}
-			return { inserted, due, held.played };
+			const bool notice = !held.noticed && held.played >= NOTICE_AFTER;
+			if (notice) {
+				held.noticed = true;
+			}
+			return { inserted, due, notice, held.played };
 		}
 
-		// The stage was set, skipped or dropped: how long it waited, if it was held at all.
-		std::optional<Clock::duration> End(std::uint64_t a_key)
+		// The stage was set, skipped or dropped: how long it waited and the faction it last waited for, if it was held at all.
+		struct Ended
+		{
+			Clock::duration played{};
+			std::uint32_t   faction = 0;
+		};
+		std::optional<Ended> End(std::uint64_t a_key)
 		{
 			const auto it = stages.find(a_key);
 			if (it == stages.end()) {
 				return std::nullopt;
 			}
-			const auto played = it->second.played;
+			const Ended ended{ it->second.played, it->second.faction };
 			stages.erase(it);
-			return played;
+			return ended;
 		}
 
 		// Drops the held stages a_stillWaiting(key) says no (their quest went away: dropped, done by the player, finished).
@@ -101,6 +127,8 @@ namespace HostileHold
 		{
 			Clock::duration played{};
 			Clock::duration logged{};  // played as of the last line
+			std::uint32_t   faction = 0;  // the faction last near
+			bool            noticed = false;
 		};
 
 		std::unordered_map<std::uint64_t, Held> stages;
