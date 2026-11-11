@@ -157,15 +157,15 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 98: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
-	CHECK(std::size(QuestFilter::SAFE) == 98);
+	// 104: Fallout4.esm's 52, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
+	CHECK(std::size(QuestFilter::SAFE) == 104);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 46);
+	CHECK(perFile[0] == 52);
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
 	CHECK(perFile[3] == 13);
@@ -182,10 +182,18 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(QuestFilter::IsSafe(0, 0x0EBE71));  // MQ00MamaMurphy
 	// A stage that starts or sets a quest each game runs its own way (a repeatable one, PER_GAME) leaves its quest out:
 	// a friend's game would start that one there, unshared.
-	CHECK(!QuestFilter::IsSafe(0, 0x048516));  // DN054: starts the repeatable DN054Radio
 	CHECK(!QuestFilter::IsSafe(0, 0x0684D0));  // DN123: sets the repeatable Skylanes assault
-	CHECK(!QuestFilter::IsSafe(0, 0x145722));  // BoSM04Postquest: sets the repeatable DN053
 	CHECK(!QuestFilter::IsSafe(3, 0x010D91));  // DLC04DialogueRaiderBossOperators: sets DLC04RaidCoerce (PER_GAME)
+	// ... but for one tools/questscan.cs ALLOW_STARTS lets through: Atom Cats Garage's radio station, each game's own.
+	CHECK(QuestFilter::IsSafe(0, 0x048516));  // DN054: starts the repeatable DN054Radio
+	// A developer's quickstart stage 0 (no start-up stage, nothing in the game's files sets it) is not read: what it does
+	// only a console does (StageRules' kDebug row never sets it from a friend's game).
+	CHECK(QuestFilter::IsSafe(0, 0x0229FC));  // MS07, Detective Case Files: its 0 changes companions
+	CHECK(QuestFilter::IsSafe(0, 0x145722));  // BoSM04Postquest: its 0 sets the repeatable DN053
+	// A repeatable quest RUNS_ONCE names (read as started once in a game played through).
+	CHECK(QuestFilter::IsSafe(0, 0x028657));  // MS01MiscObj
+	CHECK(QuestFilter::IsSafe(0, 0x0704F4));  // MS01MiscObjSold
+	CHECK(QuestFilter::IsSafe(0, 0x0FCB15));  // DN143, Vault 75
 	// A stage that, itself or through the scripts it calls and the unshared quests' stages it sets, turns a faction on
 	// another or on the player, makes or lets someone be a companion, or changes a settlement's owner: each game's.
 	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ: Cait's and Tommy's ally faction, Cait recruitable
@@ -235,6 +243,27 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, MQ104));
 	CHECK(!QuestFilter::IsSafe(0, MS17));
 	CHECK(!QuestFilter::IsSafe(3, 0x000801));  // DLC04MQ01
+}
+
+TEST("quest filter: the repeatable quests read as running once are few, sorted, SAFE's, and only those (QuestFilter::RUNS_ONCE)")
+{
+	const auto key = [](const QuestFilter::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; };
+	CHECK(std::size(QuestFilter::RUNS_ONCE) == 3);
+	for (auto it = std::next(std::begin(QuestFilter::RUNS_ONCE)); it != std::end(QuestFilter::RUNS_ONCE); ++it) {
+		CHECK(key(*std::prev(it)) < key(*it));
+	}
+	// Each passes the rest of the rule: the scan reads this table, and a quest in it the rule leaves out for something
+	// else is not SAFE's.
+	for (const auto& once : QuestFilter::RUNS_ONCE) {
+		CHECK(QuestFilter::IsRunsOnce(once.file, once.quest));
+		CHECK(QuestFilter::IsSafe(once.file, once.quest));
+	}
+	CHECK(QuestFilter::IsRunsOnce(0, 0x028657));   // MS01MiscObj
+	CHECK(QuestFilter::IsRunsOnce(0, 0x0704F4));   // MS01MiscObjSold
+	CHECK(QuestFilter::IsRunsOnce(0, 0x0FCB15));   // DN143, Vault 75
+	CHECK(!QuestFilter::IsRunsOnce(1, 0x0FCB15));  // a form ID is the quest's only in its own file
+	CHECK(!QuestFilter::IsRunsOnce(0, 0x048516));  // DN054: it starts with the game (its flags say so)
+	CHECK(!QuestFilter::IsRunsOnce(0, 0x0229FC));  // MS07: run once by its flags
 }
 
 TEST("quest filter: the quests shared for their faction or settlement outcomes are SAFE's (tools/questscan.cs ALLOW_OUTCOMES; tools/questscan.ps1 -Safe)")

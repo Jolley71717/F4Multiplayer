@@ -409,6 +409,7 @@ namespace Spawns
 			const auto file = facts.official ? a_quest->GetFile(0) : nullptr;
 			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 			facts.perGame = index && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
+			facts.runsOnce = index && QuestFilter::IsRunsOnce(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
 			facts.shared = QuestSync::SharesHere(a_quest);
 			return facts;
 		}

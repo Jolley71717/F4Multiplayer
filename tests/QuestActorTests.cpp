@@ -98,6 +98,20 @@ TEST("quest actors: a quest pairs its creatures only while it runs, and only one
 	CHECK(!QuestPairs(with(0x0000)));
 }
 
+TEST("quest actors: a repeatable quest QuestFilter::RUNS_ONCE names pairs as one that runs once, while it runs")
+{
+	// A quest like DN143, Vault 75: running, with no run-once or start-up flag.
+	Quest vault75{ .shared = true, .official = true, .flags = 0x0001, .type = QUEST_TYPE_MISC };
+	CHECK(!QuestPairs(vault75));  // as the flags alone read it
+	vault75.runsOnce = true;      // QuestFilter::IsRunsOnce(0, 0x0FCB15), as Spawns fills it
+	CHECK(QuestPairs(vault75));
+	vault75.flags = 0x0000;  // not running here
+	CHECK(!QuestPairs(vault75));
+	vault75.flags = 0x0001;
+	vault75.shared = false;  // the session doesn't share it
+	CHECK(!QuestPairs(vault75));
+}
+
 TEST("quest actors: only a shared, running, run-once quest of the game's own of no story or faction line pairs its creatures")
 {
 	CHECK(QuestPairs(GunRun()));
