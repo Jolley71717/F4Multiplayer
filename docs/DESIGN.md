@@ -284,7 +284,8 @@
   `TESObjectREFR::AddInventoryItem`), or, with no mods on record, the item's default combination
   (`BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra`, useDefault): the console's `additem`
   rolled the object template for the receiver's level (a stock 10mm shown with a long barrel). A
-  change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`). Items with neither
+  change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`), its old copies taken
+  out the same way, stack by stack, before the new one goes in. Items with neither
   mods nor templates still go in by `additem`.
 - Weapon drawn/holstered follows the `kWeaponDrawn` state flag (`DrawWeaponMagicHands`).
 - Sneaking and moving (`kSneaking`): the weapon-away sneak (MTBehavior's `MTSneakIdleLocomotion_SM`) sets off

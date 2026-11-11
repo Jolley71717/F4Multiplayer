@@ -586,8 +586,15 @@ namespace Equipment
 				return true;
 			}
 			if (copy == StandInGear::Copy::kReplace) {
-				// Every copy it has: equipitem would pick any of them.
-				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
+				// Every copy it has (equipitem would pick any of them), taken out here and now, stack by stack, with the
+				// engine's own RemoveItem (InventoryStacks), as Apply empties the stand-in. This was the console's removeitem,
+				// which takes the item a moment after it is called: it could take the copy given just below with it, and the
+				// stand-in was left without the gun they swapped to. A quest's copy stays.
+				MainThread::Assert("Equipment::PutOn");
+				const auto taken = InventoryStacks::RemoveAllBut(a_actor, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+					return a_object->GetFormID() != a_item || InventoryStacks::QuestItem(a_extra);
+				});
+				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; {} stacks taken out, its new copy given now", a_item, id, taken);
 			}
 			// Given only when missing (or carrying other mods): every gear report used to add another copy.
 			if (copy != StandInGear::Copy::kKeep) {
