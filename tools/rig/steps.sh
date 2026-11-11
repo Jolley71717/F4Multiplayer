@@ -1751,6 +1751,9 @@ _rad_run() { dc "$1" "quests edid:$2" | tr ';' '\n' | grep -E " $2 " | grep -o '
 _rad_done() { dc "$1" "stages $2" | grep -o 'done([0-9]*)=[0-9a-z,]*' | sed 's/^done([0-9]*)=//'; }
 _rad_inv() { dc "$1" inventory | grep -o ' items=[0-9]*' | sed 's/ items=//'; }
 _rad_spawns() { dc "$1" 'net status' | grep -o 'spawns: ours=[0-9]* theirs=[0-9]* copies=[0-9]* reported=[0-9]* granted=[0-9]* refused=[0-9]* received=[0-9]* placed=[0-9]*'; }
+# What was ever made or placed (the counts that only grow): the live ones fall as a passing encounter's actors die.
+_rad_spawned() { _rad_spawns "$1" | grep -o 'reported=.*'; }
+_rad_same_done() { [ "$(_rad_done vm "$1")" = "$(_rad_done host "$1")" ]; }
 _rad_here() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ Ref [0-9]+ (Workshop|EventWorkshop|FoundWorkshop) " | grep -o 'here=[0-9A-F]*' | sort | tr '\n' ' '; }
 _rad_is_running() { [ "$(_rad_run "$1" "$2")" = running=true ]; }
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
@@ -1766,7 +1769,7 @@ step_radiants() {
 		if [ "$(_rad_run host "$edid")" != "running=false" ] || [ "$(_rad_run vm "$edid")" != "running=false" ] || [ "$(_rad_done host "$id")" != none ]; then
 			warn "radiants ($edid): not run: a game has run it already (it runs once: restart both games)" "host $(_rad_run host "$edid") vm $(_rad_run vm "$edid")"; continue
 		fi
-		h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"
+		h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawned host) / $(_rad_spawned vm)"
 		away=0; [[ " $RAD_AWAY " == *" $edid "* ]] && away=1
 		if [ "$away" = 1 ]; then
 			# The VM stays where it is: the host's run is started in its game with the host's fills.
@@ -1790,21 +1793,22 @@ step_radiants() {
 		if wait_for 20 _rad_shared host "$id" && wait_for 20 _rad_shared vm "$id"; then pass "radiants ($edid): the run is shared in both games" "$(_rad_here host "$id")"
 		else fail "radiants ($edid): the run is shared in both games" "host '$(dc host "stages $id" | cut -c1-90)' vm '$(dc vm "stages $id" | cut -c1-90)'"; continue; fi
 		expect_eq "radiants ($edid): the same settlement in both games" "$(_rad_here vm "$id")" "$(_rad_here host "$id")"
-		ns host; ns vm; h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"; st=$(_rad_taken vm)
+		ns host; ns vm; h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawned host) / $(_rad_spawned vm)"; st=$(_rad_taken vm)
 		dc host "console setstage $edid $mid" >/dev/null
 		if wait_for 12 _rad_stage_once vm "$id" "$mid"; then pass "radiants ($edid): the host's stage $mid is set in the other game" "vm done $(_rad_done vm "$id")"
 		else fail "radiants ($edid): the host's stage $mid is set in the other game" "host $(_rad_done host "$id") vm $(_rad_done vm "$id")"; fi
 		dc host "console setstage $edid $reward" >/dev/null
 		wait_for 12 _rad_stage_once vm "$id" "$reward"
 		[ "$end" != "$reward" ] && { dc host "console setstage $edid $end" >/dev/null; wait_for 12 _rad_stage_once vm "$id" "$end"; }
-		sleep 3
+		# The quest's shutdown stage is done as it stops, which the other game's does a few seconds after the host's.
+		sleep 3; wait_for 20 _rad_same_done "$id"
 		expect_eq "radiants ($edid): the same stages are done in both games" "$(_rad_done vm "$id")" "$(_rad_done host "$id")"
 		d0=$(_rad_done vm "$id" | tr ',' '\n' | sort | uniq -d | tr '\n' ' ')
 		expect_eq "radiants ($edid): no stage is set twice (the done list has each once)" "$d0" ""
 		expect_between "radiants ($edid): the other game took each stage of the host's once" "$(( $(_rad_taken vm) - st ))" 1 "$(( $(_rad_done host "$id" | tr ',' '\n' | wc -l) ))" stage
 		expect_ge "radiants ($edid): the reward is in the host's pack" "$(( $(_rad_inv host) - h0 ))" 1 item
 		expect_ge "radiants ($edid): the reward is in the other game's pack" "$(( $(_rad_inv vm) - v0 ))" 1 item
-		expect_eq "radiants ($edid): no spawns made or placed for it" "$(_rad_spawns host) / $(_rad_spawns vm)" "$s0"
+		expect_eq "radiants ($edid): no spawns made or placed for it" "$(_rad_spawned host) / $(_rad_spawned vm)" "$s0"
 	done
 }
 
