@@ -174,14 +174,28 @@ The commands it uses:
 - `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
   its option buttons shown, the input context it put up.
 - `key`, `mouse` and `click` send through Windows, which hands input to whatever window is in front. They
-  send only with the game in front (bringing it there first, a few tries) and drop the input otherwise,
-  rather than typing it into a console or the window someone at the PC is using. Their answer ends in
-  `front=yes`, or `front=no (<window> is in front)` as the command came in; `focus` asks for the front and
-  answers the same, with the tally of what became of the input so far (`input: sent= broughtFront=
-  dropped=` and the last one dropped). The loop checks `focus` before each pick: a pick that can't reach
-  the game is logged as such, not as an option the menu ignored. On the VM a scheduled task (a screenshot,
-  `input.ps1`) takes the front for a moment; a press sent then went nowhere, and on 2026-10-11 that was
-  read as a dialogue that no longer took input.
+  send only with the game's main window in front (bringing it there first, a few tries; a message box the
+  game itself raises does not count as the game) and drop the input otherwise, rather than typing it into
+  a console or the window someone at the PC is using. Their answer ends in `front=yes`, or
+  `front=no (<window> is in front)` as the command came in, the window named by its process and window
+  class (`WerFault [#32770] (kept on top)`), never its title, which can hold a person's name; `focus` asks
+  for the front and answers the same, with the tally of what became of the input so far (`input: sent=
+  broughtFront= dropped=` and the last one dropped, with what was in front or over the point instead). The
+  loop checks `focus` before each pick: a pick that can't reach the game is logged as such, not as an
+  option the menu ignored. On the VM a scheduled task (a screenshot, `input.ps1`) takes the front for a
+  moment; a press sent then went nowhere, and on 2026-10-11 that was read as a dialogue that no longer took
+  input.
+- `click` also goes to the window under the cursor, which is not always the game even with the game in
+  front: a window kept on top of every other one (a system error box from a compiler crash, 2026-11-10)
+  covers part of it. So before anything is sent the cursor is put on a point of the game's client area that
+  the game's main window is under, by `input.ps1 -Spot`'s rule and grid (its own point when that is one,
+  else the middle, else a grid over the area), and the click is refused when no point is free, the window
+  is off every screen, or, checked once more just before the press, something has come over the point
+  since. A refused click is dropped and tallied like a key that could not reach the game (`focus`:
+  `dropped=`, `lastDropped='click' over <what covered it>`) and logged as a warning; the `clicking ...`
+  answer itself can't say so, because the check hit-tests other windows and so runs off the game thread,
+  which a command never waits for. The rig's scripts check with `input.ps1 -Spot` before a run of clicks
+  anyway; this covers each click in between.
 - `pad`: a virtual gamepad of the game's own, for scripted movement that needs neither the window in front nor
   Windows' input (src/game/VirtualPad.h). The plugin hooks the game's XInput imports (Fallout4.exe takes
   `XInputGetState`, `XInputGetCapabilities` and `XInputSetState` from XINPUT1_3.dll, by ordinal); once a pad
