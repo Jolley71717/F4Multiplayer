@@ -355,12 +355,16 @@
   doubled again, so the copy fell that much further behind and then caught up; a state with no `sentMs` takes the
   arrival clock as before. If the owner's copy is in a
   different cell or worldspace (a companion that followed its player through a door), the local copy
-  is not moved there; it runs its own AI meanwhile. The same goes when the owner's copy is more than
+  is not moved there; it runs its own AI meanwhile. The same goes outdoors when the owner's copy is more than
   a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
-  our own current companion (two players can both have Dogmeat). A copy let go to its own AI walks its own way, and
+  our own current companion (two players can both have Dogmeat). In an interior a copy follows the owner's however far
+  across the cell it stands (`NpcPlace::LostWhy`): the whole cell is loaded. Held to 4096 units there, copies the host's
+  game had across Corvega's assembly plant after it restarted from a save (its raiders where the save had them, the
+  joiner's where the fight had left them) were never mirrored and stood still for minutes. A copy let go to its own AI walks its own way, and
   is put back where the owner has it when it is mirrored again: `net status` counts the fallbacks by reason
-  (`fallbackWhy=` elsewhere/silent/far, `NpcPlace::Lost`), those while the owner's status named a menu that stops
+  (`fallbackWhy=` elsewhere/silent/far, `NpcPlace::Lost`; a copy never mirrored yet counts once too, so one left
+  where it stood shows in the log), those while the owner's status named a menu that stops
   their game (`fallbacksPaused=`: their world stood still, so the copy's walk was for nothing), and the jumps of a
   body's length or more when mirrored again (`snapBacks=`, `snapMax=`), with the first few and every 50th in the log.
   Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
