@@ -523,21 +523,6 @@ namespace Spawns
 			return name && Encounters::IsEncounter(a_quest->data.questType, StoryStarts(a_quest), a_quest->eventID, name);
 		}
 
-		// Whether an alias of a_quest created our NPC (any quest's alias that makes its reference: an encounter's, an
-		// attack's Attackers collection).
-		bool CreatedBy(RE::Actor* a_actor, std::uint32_t a_quest)
-		{
-			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
-			if (!aliases) {
-				return false;
-			}
-			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
-			return std::ranges::any_of(aliases->aliasArray, [&](const auto& a_entry) {
-				return a_entry.quest && a_entry.alias && a_entry.alias->owningQuest == a_entry.quest && a_entry.quest->GetFormID() == a_quest &&
-				       static_cast<std::uint16_t>(a_entry.alias->fillType) == QuestActors::FILL_CREATED;
-			});
-		}
-
 		// The encounter quest whose alias created our NPC (IsEncounterQuest), running here or not (the caller asks:
 		// QuestRunningHere), and that alias. Quest 0 when it is no encounter's: an alias that found an NPC of ours rather
 		// than making it (a settler) names nothing.
@@ -578,7 +563,8 @@ namespace Spawns
 			}
 		}
 
-		// Whether the quest's own start made our NPC (ForCreators).
+		// Whether the quest's own start made our NPC (ForCreators): an alias of a_quest that makes its reference (an
+		// encounter's, an attack's Attackers collection, a radiant's).
 		bool CreatedBy(RE::Actor* a_actor, std::uint32_t a_quest)
 		{
 			bool created = false;
