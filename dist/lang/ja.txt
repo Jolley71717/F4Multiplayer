@@ -166,6 +166,7 @@ quest.hostile_waiting = {quest}は待機中：{faction}が近くにいます
 quest.hostile_waiting_quest = {quest}は待機中：関係者が近くにいます
 quest.a_friend = フレンド
 quest.hostile_companion = {player}の選択で{faction}が敵対します: ゲームの追放処理と同じく{companion}はあなたのもとを去ります
+quest.hostile_companion_unnamed = {player}の選択である勢力が敵対します: ゲームの追放処理と同じく{companion}はあなたのもとを去ります
 quest.a_companion = あなたの仲間
 workshop.rescued = フレンドのコンテナに入れていたアイテムはインベントリにあります
 drops.container_hint = コンテナに入れた武器と防具はあなたのゲームにだけ残ります。フレンドに渡すには、そのそばで捨ててください

@@ -10,6 +10,7 @@
 #include <span>
 #include <string_view>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,7 @@ namespace StageRules
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
 	inline constexpr std::uint8_t kHostile = 1 << 5;  // turns a faction on the player (HOSTILE): it waits until none of that faction is near, never skipped; with kMoves too, the follow offer says "fighting"
+	inline constexpr std::uint8_t kDebug = 1 << 6;   // a developer's quickstart, which only the console sets (IsDebug): never shared, neither reported nor set from a friend's
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -108,6 +110,10 @@ namespace StageRules
 	// then the move's rules, and the offer to go with the friend says they are fighting; not gone with, the stage isn't set
 	// (it would move them) but the faction it turns on the player is turned on them here all the same (Verdict::kHostileOnly,
 	// HostileCall). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
+	// The developers' quickstarts of two of those quests (DN084 1-9, Mass Fusion; Inst307Fight 2-8, the airport battle:
+	// each jumps the player to a later point of the quest and sets what play would have set by then, a faction's kick-out
+	// included, and the game never sets one in play: only the console does) are kDebug rows, by hand in the scan (RuleScan's
+	// DEBUG in tools/questscan.cs, which says why for each): never shared, see IsDebug.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -286,15 +292,15 @@ namespace StageRules
 		{ 0, 0x064C66, 190, 0, 30 },
 		{ 0, 0x064EC7, 0, kMoves | kBridge, 20 },  // BoSR01
 		{ 0, 0x068D7B, 0, kMoves, 20 },  // BoS100Fight
-		{ 0, 0x06D646, 1, kMoves, 20 },  // DN084: MoveTo DN084_BoS303QuickstartMarker
-		{ 0, 0x06D646, 2, kMoves, 20 },  // MoveTo temp21 (by InstMassFusion 30)
-		{ 0, 0x06D646, 3, kMoves, 60 },  // MoveTo DN084_DescentQuickstartMarker
-		{ 0, 0x06D646, 4, kMoves, 60 },  // MoveTo DN084_DescentQuickstartMarker
-		{ 0, 0x06D646, 5, kMoves, 20 },  // MoveTo DN084_LabQuickstartMarker
-		{ 0, 0x06D646, 6, kMoves, 20 },  // MoveTo DN084_LabQuickstartMarker
-		{ 0, 0x06D646, 7, kMoves, 20 },  // MoveTo DN084_FinalBattleQuickstartMarker
-		{ 0, 0x06D646, 8, kMoves, 20 },  // MoveTo DN084_FinalBattleQuickstartMarker
-		{ 0, 0x06D646, 9, kMoves, 0 },  // MoveTo DN084_DescentQuickstartMarker (by 3)
+		{ 0, 0x06D646, 1, kMoves | kDebug, 20 },  // DN084: MoveTo DN084_BoS303QuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 2, kMoves | kDebug, 20 },  // MoveTo temp21 (by InstMassFusion 30) [a quickstart]
+		{ 0, 0x06D646, 3, kMoves | kDebug, 60 },  // MoveTo DN084_DescentQuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 4, kMoves | kDebug, 60 },  // MoveTo DN084_DescentQuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 5, kMoves | kDebug, 20 },  // MoveTo DN084_LabQuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 6, kMoves | kDebug, 20 },  // MoveTo DN084_LabQuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 7, kMoves | kDebug, 20 },  // MoveTo DN084_FinalBattleQuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 8, kMoves | kDebug, 20 },  // MoveTo DN084_FinalBattleQuickstartMarker [a quickstart]
+		{ 0, 0x06D646, 9, kMoves | kDebug, 0 },  // MoveTo DN084_DescentQuickstartMarker (by 3) [a quickstart]
 		{ 0, 0x06D646, 225, 0, 45 },
 		{ 0, 0x06D646, 230, 0, 45 },
 		{ 0, 0x06D646, 242, 0, 20 },
@@ -472,13 +478,13 @@ namespace StageRules
 		{ 0, 0x173ED9, 57, 0, 10 },
 		{ 0, 0x173ED9, 255, 0, 20 },
 		{ 0, 0x174029, 1, kMoves, 0 },  // Inst307Fight: MoveTo temp30 (by Inst307 35)
-		{ 0, 0x174029, 2, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartTerminalEntrance
-		{ 0, 0x174029, 3, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartJammer1
-		{ 0, 0x174029, 4, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartJammer2
-		{ 0, 0x174029, 5, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartJammer3
-		{ 0, 0x174029, 6, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartPhase2
-		{ 0, 0x174029, 7, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartPhase3
-		{ 0, 0x174029, 8, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartFrontEntrance
+		{ 0, 0x174029, 2, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartTerminalEntrance [a quickstart]
+		{ 0, 0x174029, 3, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartJammer1 [a quickstart]
+		{ 0, 0x174029, 4, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartJammer2 [a quickstart]
+		{ 0, 0x174029, 5, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartJammer3 [a quickstart]
+		{ 0, 0x174029, 6, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartPhase2 [a quickstart]
+		{ 0, 0x174029, 7, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartPhase3 [a quickstart]
+		{ 0, 0x174029, 8, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartFrontEntrance [a quickstart]
 		{ 0, 0x1764DF, 40, kPays, 0 },  // FFDiamondCity10
 		{ 0, 0x17CA39, 10, kMoves | kBridge, 60 },  // Inst307ChangeLocation
 		{ 0, 0x182EAE, 0, 0, 70 },  // BoS305
@@ -815,6 +821,18 @@ namespace StageRules
 			return false;
 		}
 		return (a_quest == MQ102 && a_stage < MQ102_OUT_OF_THE_VAULT) || a_quest == DIALOGUE_VAULT111;
+	}
+
+	// A developer's quickstart (a kDebug row): a stage the game never sets in play, only the console does, which jumps the
+	// player to a later point of its quest and sets what play would have set by then (DN084 2: the relay to Mass Fusion's
+	// roof and the Brotherhood's kick-out with it). Not a player's progress and nobody's choice: never reported, left out
+	// of the host's baseline, and dropped when a friend's comes all the same (an older version's report, a session file
+	// that has one), as the opening's stages are; one that reached the queue is skipped (Judge). What such a stage did in
+	// the game that set it is still that game's progress: the stages it set there are reported as any other.
+	inline bool IsDebug(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto rule = Find(a_file, a_quest, a_stage);
+		return rule && (rule->flags & kDebug);
 	}
 
 	inline const Lock* FindLock(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
@@ -1417,7 +1435,7 @@ namespace StageRules
 		return rows;
 	}
 
-	// The three stages that move the player (kMoves, no kBridge) and are HOSTILE's as a faction's kick-out: not gone with
+	// The four stages that move the player (kMoves, no kBridge) and are HOSTILE's as a faction's kick-out: not gone with
 	// the friend (Verdict::kHostileOnly), the kick-out itself is run here in place of the row's bare call, since the kick-out
 	// moves nobody and everything else it does (the faction's quests failed, the player out of the faction, its companion
 	// dismissed, fast travel to its base refused) belongs here as much as the hostility. Read off the game's scripts
@@ -1437,12 +1455,15 @@ namespace StageRules
 	//    inside, stage 20 (leave; the relay out sets 100), outside, stage 10 with the map marker, the relay door locked and
 	//    MQ00's helper. So the quest is started here (its stage 0 judges this player's place itself) and 100 is not set;
 	//    a quest already started or run here was kicked out here already, and nothing is done.
-	//  - With the kick-outs' own quests shared (sQuests = safe: QuestFilter::SILENT), Mass Fusion's DN084 and the airport
-	//    battle Inst307Fight are movers of the same kind: Inst307Fight 1 (set by Inst307 35, which moves the player) sets
-	//    BoSKickOut 20; DN084's 1-9 and Inst307Fight's 2-8 are the developers' quickstarts, which the game never sets in
-	//    play and which reach a kick-out all the same (DN084 2, 4, 6, 8 BoSKickOut 30; its 1, 3, 5, 7, 9 the Institute's
-	//    through BoS303 30; Inst307Fight's through its 1). Each runs that kick-out here, so that no mover is left with a
-	//    bare SetPlayerEnemy (the player still in the faction, its companion still at their side).
+	//  - Inst307Fight 1 (the airport battle; its quest is shared with the kick-outs' own, sQuests = safe: QuestFilter::SILENT)
+	//    sets BoSKickOut 20 the same way, and Inst307's 10, 15, 30 and 35, the last of which relays the player to the
+	//    airport. So BoSKickOut 20 is run here, and Inst307Fight 1 is not.
+	// Mass Fusion's DN084 1-9 and Inst307Fight's 2-8 reach a kick-out too (DN084 2, 4, 6 and 8 BoSKickOut 30; its 1, 3, 5, 7
+	// and 9 the Institute's, through BoS303 30; Inst307Fight's through its 1), but they are the developers' quickstarts,
+	// which the game never sets in play: no row here, since they are never shared at all (kDebug, IsDebug; up to this they
+	// had rows, and a quickstart set from one player's console ran a kick-out in every friend's game on the strength of a
+	// stage nobody played). So no mover a friend's game can send is left with a bare SetPlayerEnemy (the player still in
+	// the faction, its companion still at their side): tests/HostileHoldTests.cpp checks that every one has a row here.
 	// A kick-out stage done here already (BoSKickOut 20 by RR304 1; a load of a save past it) is not run again.
 	struct KickOut
 	{
@@ -1453,26 +1474,10 @@ namespace StageRules
 		std::uint16_t kickStage;  // 0: start the quest (its start-up stage is the kick-out) rather than set a stage
 	};
 	inline constexpr KickOut KICKOUTS[] = {
-		{ 0, 0x06D646, 1, 0x16D036, 0 },     // DN084 1 (Mass Fusion's quickstart on the Brotherhood's path: sets BoS303 30) -> InstKickOut started
-		{ 0, 0x06D646, 2, 0x16FF04, 30 },    // DN084 2 (its quickstart on the Institute's path: sets InstMassFusion 30 and BoSKickOut 30) -> BoSKickOut 30
-		{ 0, 0x06D646, 3, 0x16D036, 0 },     // DN084 3, 5, 7, 9 (the Brotherhood's later quickstarts, as 1) -> InstKickOut started
-		{ 0, 0x06D646, 4, 0x16FF04, 30 },    // DN084 4, 6, 8 (the Institute's later quickstarts, as 2) -> BoSKickOut 30
-		{ 0, 0x06D646, 5, 0x16D036, 0 },
-		{ 0, 0x06D646, 6, 0x16FF04, 30 },
-		{ 0, 0x06D646, 7, 0x16D036, 0 },
-		{ 0, 0x06D646, 8, 0x16FF04, 30 },
-		{ 0, 0x06D646, 9, 0x16D036, 0 },
 		{ 0, 0x142FD3, 20, 0x16FF04, 20 },   // RR304 20 -> BoSKickOut 20 (through RR304 1)
 		{ 0, 0x15BD39, 30, 0x16FF04, 20 },   // InstMassFusion 30 -> BoSKickOut 20
 		{ 0, 0x16D036, 100, 0x16D036, 0 },   // InstKickOut 100 -> InstKickOut started (its 0 is the kick-out)
-		{ 0, 0x174029, 1, 0x16FF04, 20 },    // Inst307Fight 1 (the airport battle: Inst307 35 moves the player) -> BoSKickOut 20
-		{ 0, 0x174029, 2, 0x16FF04, 20 },    // Inst307Fight 2-8 (its quickstarts, each through 1) -> BoSKickOut 20
-		{ 0, 0x174029, 3, 0x16FF04, 20 },
-		{ 0, 0x174029, 4, 0x16FF04, 20 },
-		{ 0, 0x174029, 5, 0x16FF04, 20 },
-		{ 0, 0x174029, 6, 0x16FF04, 20 },
-		{ 0, 0x174029, 7, 0x16FF04, 20 },
-		{ 0, 0x174029, 8, 0x16FF04, 20 },
+		{ 0, 0x174029, 1, 0x16FF04, 20 },    // Inst307Fight 1 (the airport battle) -> BoSKickOut 20
 	};
 
 	// The kick-out a stage runs here in place of its hostility call, or null.
@@ -1489,16 +1494,23 @@ namespace StageRules
 	// The HOSTILE stages that take the faction's own companion with them: a faction's kick-out dismisses a companion of that
 	// faction who has ever followed the player, as the game has it (BoSKickOutScript.KickOut: Danse's affinity to -5000,
 	// COMDanse 91, and he joins the player's enemies unless exiled already; RRKickOut 100: Deacon; InstKickOutQuestScript.Kickout:
-	// X6-88), itself or through what the stage calls and sets (Inst307Fight 1 and InstMassFusion 30 set BoSKickOut 20, DN084 2
-	// its 30). A friend's such stage lands here as any (the maintainer's rule, 2026-11-11: the chooser's kick-out is both
-	// players', the companion included, as in the game), and the companion it dismisses is this player's loss too; the row
-	// names them (the companion quest the chain goes through and its unique alias: COMDanse's Danse, COMDeacon's Deacon,
-	// ComX688's X6-88, Nuka-World's DLC04COMGage's Gage, Far Harbor's Old Longfellow) so QuestSync warns the player once on
-	// the HUD, just before it lands or its kick-out is run (KICKOUTS), when that companion is the one following them
-	// (Companions::Following), and never for another companion or one not at their side. Generated with
-	// tools/questscan.ps1 -Hostile (its DISMISSES lines, SafeScan.StageDismisses and DismissedCompanion: a HOSTILE stage
-	// whose chain reaches DismissCompanion through a companion's quest; a dismissal in a script that is no companion quest's,
-	// DLC03WorkshopRadiantOwned05's workshop script, gets no row and no warning). Sorted by file, quest and stage.
+	// X6-88), itself or through what the stage calls and sets (InstMassFusion 30 and Inst307Fight 1 set BoSKickOut 20; the
+	// quickstarts' rows, DN084 1-9 and Inst307Fight 2-8, are never used: kDebug). A friend's such stage lands here as any
+	// (the maintainer's rule, 2026-11-11: the chooser's kick-out is both players', the companion included, as in the game),
+	// and the companion it dismisses is this player's loss too; the row names them (the companion quest the chain goes
+	// through and its unique alias: COMDanse's Danse, COMDeacon's Deacon, ComX688's X6-88, Nuka-World's DLC04COMGage's Gage,
+	// Far Harbor's Old Longfellow) so QuestSync warns the player once on the HUD, just before it lands or its kick-out is
+	// run (KICKOUTS), when that companion is the one following them (Companions::Following), and never for another
+	// companion or one not at their side.
+	// A row is conditional when its chain passes a function that goes on only on a condition of the game it runs in (the
+	// scan's CONDITIONAL: MinutemenCentralScript.CheckForMQAdvance, which every stage that moves the Minutemen on calls and
+	// which starts the Institute's kick-out only when the Minutemen are the story's last way on). Such a stage dismisses
+	// nobody in nearly every game, so it gives no warning and leaves the once-a-session warning unspent (DismissalWarnings):
+	// a line there would be false, and would use up the one a real kick-out later needs. When its condition does hold in
+	// the receiving game the companion leaves without the line; where the kick-out a friend's game ran reaches this game as
+	// its own stage (InstKickOut's), that row is not conditional, and warns.
+	// Generated with tools/questscan.ps1 -Hostile (its DISMISSES lines, SafeScan.StageDismisses and DismissedCompanion: a
+	// HOSTILE stage whose chain reaches DismissCompanion through a companion's quest). Sorted by file, quest and stage.
 	struct Dismissal
 	{
 		std::uint8_t  file;
@@ -1507,68 +1519,69 @@ namespace StageRules
 		std::uint8_t  companionFile;   // File: the companion quest's
 		std::uint32_t companionQuest;  // form ID in its file (COMDanse, COMDeacon, ComX688 ...)
 		std::uint16_t alias;           // its unique alias: the companion
+		bool          conditional;     // dismissed only on a condition of the game the stage runs in: no warning
 	};
 	inline constexpr Dismissal DISMISSES[] = {
-		{ 0, 0x0229EE, 2, 0, 0x0BBD95, 0 },  // MQ302: companion DismissCompanion (by Min301 0): ComX688's X688
-		{ 0, 0x0229EE, 1000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688
-		{ 0, 0x03A457, 70, 0, 0x0BBD95, 0 },  // Min02: companion DismissCompanion (by 500): ComX688's X688
-		{ 0, 0x03A457, 200, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 400): ComX688's X688
-		{ 0, 0x03A457, 250, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 200): ComX688's X688
-		{ 0, 0x03A457, 400, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 500): ComX688's X688
-		{ 0, 0x03A457, 500, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 520): ComX688's X688
-		{ 0, 0x03A457, 520, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 570): ComX688's X688
-		{ 0, 0x03A457, 570, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by min02script.CheckRadioTransmitterStatus): ComX688's X688
-		{ 0, 0x03A457, 600, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688
-		{ 0, 0x043275, 1, 0, 0x0BBD97, 0 },  // RR303: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
-		{ 0, 0x05DEE4, 220, 0, 0x0BBD95, 0 },  // Min01: companion DismissCompanion (by MinRecruit00 10): ComX688's X688
-		{ 0, 0x05DEE4, 1500, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 2010): ComX688's X688
-		{ 0, 0x05DEE4, 2000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688
-		{ 0, 0x05DEE4, 2010, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by MinRecruit00 10): ComX688's X688
-		{ 0, 0x06D646, 1, 0, 0x0BBD95, 0 },  // DN084: companion DismissCompanion (by BoS303 30): ComX688's X688
-		{ 0, 0x06D646, 2, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by InstMassFusion 30): COMDanse's Danse
-		{ 0, 0x06D646, 3, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by BoS303 30): ComX688's X688
-		{ 0, 0x06D646, 4, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
-		{ 0, 0x06D646, 5, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by BoS303 30): ComX688's X688
-		{ 0, 0x06D646, 6, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
-		{ 0, 0x06D646, 7, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by BoS303 30): ComX688's X688
-		{ 0, 0x06D646, 8, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
-		{ 0, 0x06D646, 9, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 3): ComX688's X688
-		{ 0, 0x0AA778, 980, 0, 0x0BBD95, 0 },  // Min03: companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688
-		{ 0, 0x0AA778, 1000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 980): ComX688's X688
-		{ 0, 0x0B2D48, 790, 0, 0x0BBD95, 0 },  // RR201: companion DismissCompanion (by InstKickOut 0): ComX688's X688
-		{ 0, 0x0DDFDB, 1, 0, 0x0BBD95, 0 },  // Min301: companion DismissCompanion (by 0): ComX688's X688
-		{ 0, 0x0FDC8C, 1, 0, 0x0BBD95, 0 },  // BoS303: companion DismissCompanion (by 30): ComX688's X688
-		{ 0, 0x0FDC8C, 2, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by DN084 3): ComX688's X688
-		{ 0, 0x0FDC8C, 30, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by InstKickOut 0): ComX688's X688
-		{ 0, 0x0FDC8C, 250, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688
-		{ 0, 0x107A1C, 30, 0, 0x0BBD9B, 0 },  // BoS302B: companion DismissCompanion (by RRKickOut 100): COMDeacon's Deacon
-		{ 0, 0x10C64A, 1910, 0, 0x0BBD95, 0 },  // MQ302Min: companion DismissCompanion (by MQ302 1000): ComX688's X688
-		{ 0, 0x10C64A, 2000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by MQ302 1000): ComX688's X688
-		{ 0, 0x10C64B, 1000, 0, 0x0BBD95, 0 },  // MQ302BoS: companion DismissCompanion (by MQ302 1000): ComX688's X688
-		{ 0, 0x10C64C, 1000, 0, 0x0BBD95, 0 },  // MQ302RR: companion DismissCompanion (by MQ302 1000): ComX688's X688
-		{ 0, 0x136329, 200, 0, 0x0BBD95, 0 },  // Min207: companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688
-		{ 0, 0x142FD3, 1, 0, 0x0BBD97, 0 },  // RR304: companion DismissCompanion (by RR303 1): COMDanse's Danse
-		{ 0, 0x142FD3, 20, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x142FD3, 25, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x142FD3, 30, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x15BD39, 30, 0, 0x0BBD97, 0 },  // InstMassFusion: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
-		{ 0, 0x16C207, 100, 0, 0x0BBD9B, 0 },  // RRKickOut: companion DismissCompanion (by COMDeacon 91): COMDeacon's Deacon
-		{ 0, 0x16D036, 0, 0, 0x0BBD95, 0 },  // InstKickOut: companion DismissCompanion (by instkickoutquestscript.KickOut): ComX688's X688
-		{ 0, 0x16FF04, 20, 0, 0x0BBD97, 0 },  // BoSKickOut: companion DismissCompanion (by boskickoutscript.KickOut): COMDanse's Danse
-		{ 0, 0x16FF04, 30, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by boskickoutscript.KickOut): COMDanse's Danse
-		{ 0, 0x173ED9, 255, 0, 0x0BBD95, 0 },  // BoS304: companion DismissCompanion (by InstKickOut 0): ComX688's X688
-		{ 0, 0x174029, 1, 0, 0x0BBD97, 0 },  // Inst307Fight: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
-		{ 0, 0x174029, 2, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x174029, 3, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x174029, 4, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x174029, 5, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x174029, 6, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x174029, 7, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 0, 0x174029, 8, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
-		{ 1, 0x005BD7, 9000, 1, 0x006E55, 0 },  // DLC03DialogueFarHarbor: companion DismissCompanion (by DLC03_COMOldLongfellow 91): DLC03_COMOldLongfellow's OldLongfellow
-		{ 1, 0x040A87, 100, 0, 0x0BBD95, 0 },  // DLC03WorkshopRadiantOwned05: companion DismissCompanion (by 400): ComX688's X688
-		{ 1, 0x040A87, 400, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest): ComX688's X688
-		{ 3, 0x000802, 1500, 3, 0x027715, 0 },  // DLC04MQ02: companion DismissCompanion (by DLC04RaiderKickout 20): DLC04COMGage's Gage
+		{ 0, 0x0229EE, 2, 0, 0x0BBD95, 0, true },  // MQ302: companion DismissCompanion (by Min301 0): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x0229EE, 1000, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 70, 0, 0x0BBD95, 0, true },  // Min02: companion DismissCompanion (by 500): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 200, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 400): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 250, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 200): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 400, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 500): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 500, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 520): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 520, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 570): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 570, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by min02script.CheckRadioTransmitterStatus): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 600, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x043275, 1, 0, 0x0BBD97, 0, false },  // RR303: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
+		{ 0, 0x05DEE4, 220, 0, 0x0BBD95, 0, true },  // Min01: companion DismissCompanion (by MinRecruit00 10): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 1500, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 2010): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 2000, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 2010, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by MinRecruit00 10): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x06D646, 1, 0, 0x0BBD95, 0, false },  // DN084: companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 2, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by InstMassFusion 30): COMDanse's Danse
+		{ 0, 0x06D646, 3, 0, 0x0BBD95, 0, false },  // companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 4, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
+		{ 0, 0x06D646, 5, 0, 0x0BBD95, 0, false },  // companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 6, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
+		{ 0, 0x06D646, 7, 0, 0x0BBD95, 0, false },  // companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 8, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
+		{ 0, 0x06D646, 9, 0, 0x0BBD95, 0, false },  // companion DismissCompanion (by 3): ComX688's X688
+		{ 0, 0x0AA778, 980, 0, 0x0BBD95, 0, true },  // Min03: companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x0AA778, 1000, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by 980): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x0B2D48, 790, 0, 0x0BBD95, 0, false },  // RR201: companion DismissCompanion (by InstKickOut 0): ComX688's X688
+		{ 0, 0x0DDFDB, 1, 0, 0x0BBD95, 0, true },  // Min301: companion DismissCompanion (by 0): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x0FDC8C, 1, 0, 0x0BBD95, 0, false },  // BoS303: companion DismissCompanion (by 30): ComX688's X688
+		{ 0, 0x0FDC8C, 2, 0, 0x0BBD95, 0, false },  // companion DismissCompanion (by DN084 3): ComX688's X688
+		{ 0, 0x0FDC8C, 30, 0, 0x0BBD95, 0, false },  // companion DismissCompanion (by InstKickOut 0): ComX688's X688
+		{ 0, 0x0FDC8C, 250, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x107A1C, 30, 0, 0x0BBD9B, 0, false },  // BoS302B: companion DismissCompanion (by RRKickOut 100): COMDeacon's Deacon
+		{ 0, 0x10C64A, 1910, 0, 0x0BBD95, 0, true },  // MQ302Min: companion DismissCompanion (by MQ302 1000): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64A, 2000, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by MQ302 1000): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64B, 1000, 0, 0x0BBD95, 0, true },  // MQ302BoS: companion DismissCompanion (by MQ302 1000): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64C, 1000, 0, 0x0BBD95, 0, true },  // MQ302RR: companion DismissCompanion (by MQ302 1000): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x136329, 200, 0, 0x0BBD95, 0, true },  // Min207: companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x142FD3, 1, 0, 0x0BBD97, 0, false },  // RR304: companion DismissCompanion (by RR303 1): COMDanse's Danse
+		{ 0, 0x142FD3, 20, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x142FD3, 25, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x142FD3, 30, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x15BD39, 30, 0, 0x0BBD97, 0, false },  // InstMassFusion: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
+		{ 0, 0x16C207, 100, 0, 0x0BBD9B, 0, false },  // RRKickOut: companion DismissCompanion (by COMDeacon 91): COMDeacon's Deacon
+		{ 0, 0x16D036, 0, 0, 0x0BBD95, 0, false },  // InstKickOut: companion DismissCompanion (by instkickoutquestscript.KickOut): ComX688's X688
+		{ 0, 0x16FF04, 20, 0, 0x0BBD97, 0, false },  // BoSKickOut: companion DismissCompanion (by boskickoutscript.KickOut): COMDanse's Danse
+		{ 0, 0x16FF04, 30, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by boskickoutscript.KickOut): COMDanse's Danse
+		{ 0, 0x173ED9, 255, 0, 0x0BBD95, 0, false },  // BoS304: companion DismissCompanion (by InstKickOut 0): ComX688's X688
+		{ 0, 0x174029, 1, 0, 0x0BBD97, 0, false },  // Inst307Fight: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
+		{ 0, 0x174029, 2, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 3, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 4, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 5, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 6, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 7, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 8, 0, 0x0BBD97, 0, false },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 1, 0x005BD7, 9000, 1, 0x006E55, 0, false },  // DLC03DialogueFarHarbor: companion DismissCompanion (by DLC03_COMOldLongfellow 91): DLC03_COMOldLongfellow's OldLongfellow
+		{ 1, 0x040A87, 100, 0, 0x0BBD95, 0, true },  // DLC03WorkshopRadiantOwned05: companion DismissCompanion (by 400): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 1, 0x040A87, 400, 0, 0x0BBD95, 0, true },  // companion DismissCompanion (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest): ComX688's X688 [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 3, 0x000802, 1500, 3, 0x027715, 0, false },  // DLC04MQ02: companion DismissCompanion (by DLC04RaiderKickout 20): DLC04COMGage's Gage
 	};
 
 	// The companion a HOSTILE stage dismisses (DISMISSES), or null.
@@ -1578,6 +1591,52 @@ namespace StageRules
 		const auto it = std::ranges::lower_bound(DISMISSES, key, {}, [](const Dismissal& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
 		return it != std::end(DISMISSES) && std::tuple{ it->file, it->quest, it->stage } == key ? &*it : nullptr;
 	}
+
+	// The faction whose kick-out drops each of those companions: the one the warning names. By hand, from the kick-outs'
+	// scripts (BoSKickOut, RRKickOut and InstKickOut turn their own faction on the player; Far Harbor's turn on the player
+	// sends Old Longfellow away; Nuka-World's Open Season, DLC04RaiderKickout, turns the gangs on the player, the Disciples
+	// the one HOSTILE names). Not the stage's HOSTILE row: a stage can turn another faction on the player on its way (Mass
+	// Fusion's lab security, the airport's feral ghouls) and reach the kick-out through another quest, and the line would
+	// name the wrong one. tests/HostileHoldTests.cpp checks every DISMISSES row against HOSTILE, those stages apart.
+	struct CompanionFaction
+	{
+		std::uint8_t  companionFile;   // File: the companion quest's
+		std::uint32_t companionQuest;  // form ID in its file
+		std::uint8_t  factionFile;     // File: the faction's
+		std::uint32_t faction;         // form ID in its file
+	};
+	inline constexpr CompanionFaction COMPANION_FACTIONS[] = {
+		{ 0, 0x0BBD95, 0, 0x05E558 },  // ComX688: InstituteFaction
+		{ 0, 0x0BBD97, 0, 0x05DE41 },  // COMDanse: BrotherhoodofSteelFaction
+		{ 0, 0x0BBD9B, 0, 0x0994F6 },  // COMDeacon: RailroadFaction
+		{ 1, 0x006E55, 1, 0x005C7E },  // DLC03_COMOldLongfellow: DLC03SettlementFarHarborFaction
+		{ 3, 0x027715, 3, 0x00F438 },  // DLC04COMGage: DLC04GangDisciplesFaction
+	};
+
+	// The faction whose kick-out drops a row's companion (COMPANION_FACTIONS), or null: the warning then names none.
+	inline const CompanionFaction* DismissalFaction(const Dismissal& a_row)
+	{
+		for (const auto& row : COMPANION_FACTIONS) {
+			if (row.companionFile == a_row.companionFile && row.companionQuest == a_row.companionQuest) {
+				return &row;
+			}
+		}
+		return nullptr;
+	}
+
+	// The warnings of a session: one for each companion, and none for a conditional row, which doesn't spend the
+	// companion's either (a false line would, and the real kick-out later in the session would land unannounced).
+	class DismissalWarnings
+	{
+	public:
+		// Whether this row's warning is due for the companion (a form ID) now; said, it is spent.
+		bool Due(const Dismissal& a_row, std::uint32_t a_companion) { return !a_row.conditional && warned.insert(a_companion).second; }
+
+		void Clear() { warned.clear(); }
+
+	private:
+		std::unordered_set<std::uint32_t> warned;
+	};
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the
 	// quest's start-up stage first, its 0 in the game's quests (MQ105's 0 moves the player): the stage is
@@ -1664,11 +1723,12 @@ namespace StageRules
 	// capped combat hold), live or not: nothing that starts a fight is set mid-fight. One that moves the player too
 	// (kMoves, no kBridge) takes the move's path once the hold lets it through: offered live, set beside the friend; not
 	// gone with (the offer run out, nobody to follow, caught up), the stage is not set, but the faction is turned on the
-	// player here all the same (kHostileOnly: the chooser's choice, without the move).
+	// player here all the same (kHostileOnly: the chooser's choice, without the move). A developer's quickstart (kDebug) is
+	// skipped before any of that, whatever else it does: it never gets this far (IsDebug), and if it did it is nobody's choice.
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
-		if ((flags & kPays) || ((flags & kStory) && !a_now.sharedStory)) {
+		if ((flags & (kPays | kDebug)) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
 		}
 		const bool withFriend = a_now.live && a_now.nearFriend;

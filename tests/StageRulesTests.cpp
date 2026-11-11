@@ -337,6 +337,40 @@ TEST("stage rules: the opening's stages (Vault 111) are every player's own, neve
 	CHECK(!IsOpening(File::kFallout4, 0x01F25E, 0));  // MQ104
 }
 
+TEST("stage rules: a developer's quickstart (Mass Fusion's 1 to 9, the airport battle's 2 to 8) is never shared, whatever else its row says")
+{
+	using namespace StageRules;
+	for (std::uint16_t stage = 1; stage <= 9; ++stage) {
+		CHECK(IsDebug(File::kFallout4, 0x06D646, stage));  // DN084
+		CHECK(FlagsOf(0x06D646, stage) == (kMoves | kDebug));
+	}
+	for (std::uint16_t stage = 2; stage <= 8; ++stage) {
+		CHECK(IsDebug(File::kFallout4, 0x174029, stage));  // Inst307Fight
+		CHECK(FlagsOf(0x174029, stage) == (kMoves | kDebug));
+	}
+	// What play sets of the two quests is not: Mass Fusion from its 10 on, the airport battle's 1 (set by the story's own
+	// stage) and its 10 on.
+	CHECK(!IsDebug(File::kFallout4, 0x06D646, 0));
+	CHECK(!IsDebug(File::kFallout4, 0x06D646, 10));
+	CHECK(!IsDebug(File::kFallout4, 0x06D646, 225));
+	CHECK(!IsDebug(File::kFallout4, 0x174029, 1));
+	CHECK(!IsDebug(File::kFallout4, 0x174029, 10));
+	// Only those rows of Fallout4.esm: no other file's, no stage without a row.
+	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
+	CHECK(!IsDebug(File::kFallout4, 0x01F25E, 0));  // MQ104
+	// Skipped like a payment, next to the friend who set it or far away, live or caught up, the story shared or not: never
+	// set, never the faction alone (kHostileOnly), never an offer to go along.
+	const auto quickstart = Find(0x06D646, 2);
+	REQUIRE(quickstart);
+	CHECK(Judge(quickstart, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(Judge(quickstart, { .sharedStory = true, .live = true, .nearFriend = false, .followable = true }) == Verdict::kSkip);
+	CHECK(Judge(quickstart, { .sharedStory = true, .live = false }) == Verdict::kSkip);
+	CHECK(Judge(quickstart, { .sharedStory = false, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	// A row of the flag alone is skipped too: the flag decides, not the move.
+	const StageRules::Rule debug{ 0, 0x000001, 1, kDebug, 0 };
+	CHECK(Judge(&debug, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+}
+
 TEST("stage rules: the fades and the endings' slides move the player")
 {
 	using namespace StageRules;
@@ -475,15 +509,16 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	// DLC04MQ00TransitCenter is no longer SILENT's (its 30 sets the repeatable DLC04TransitCenterAnnouncements): its 20,
 	// which sets DLC04MQ00 500, is no row.
 	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
-	// The base game's kick-outs and faction outcomes (SILENT's since the hostile hold): Mass Fusion's quickstarts and its 2
-	// (reached from InstMassFusion 30) move the player, its fragments' waits; the airport battle's 1 (Inst307 35 moves the
-	// player) and quickstarts. The kick-outs themselves have no RULES row: what they do is HOSTILE's and DISMISSES'.
-	CHECK(FlagsOf(0x06D646, 1) == kMoves);  // DN084
-	CHECK(FlagsOf(0x06D646, 2) == kMoves);
+	// The base game's kick-outs and faction outcomes (SILENT's since the hostile hold): Mass Fusion's quickstarts (its 2
+	// among them: it sets InstMassFusion 30) move the player and are never shared (kDebug), its fragments' waits; the
+	// airport battle's 1 (Inst307 35 moves the player) and its quickstarts, the same. The kick-outs themselves have no
+	// RULES row: what they do is HOSTILE's and DISMISSES'.
+	CHECK(FlagsOf(0x06D646, 1) == (kMoves | kDebug));  // DN084
+	CHECK(FlagsOf(0x06D646, 2) == (kMoves | kDebug));
 	REQUIRE(Find(0x06D646, 225));
 	CHECK(Find(0x06D646, 225)->wait == 45);
 	CHECK(FlagsOf(0x174029, 1) == kMoves);  // Inst307Fight
-	CHECK(FlagsOf(0x174029, 8) == kMoves);
+	CHECK(FlagsOf(0x174029, 8) == (kMoves | kDebug));
 	CHECK(!Find(0x174029, 0));  // its 0 is no start-up stage
 	CHECK(!Find(0x16FF04, 20));  // BoSKickOut
 	CHECK(!Find(0x16C207, 100));  // RRKickOut

@@ -151,6 +151,7 @@ quest.hostile_waiting = {quest} czeka: {faction} w pobliżu
 quest.hostile_waiting_quest = {quest} czeka: jej ludzie są w pobliżu
 quest.a_friend = znajomy
 quest.hostile_companion = Decyzja gracza {player} zwraca {faction} przeciw tobie: {companion} cię opuszcza, jak przy wyrzuceniu w grze
+quest.hostile_companion_unnamed = Decyzja gracza {player} zwraca jedną z frakcji przeciw tobie: {companion} cię opuszcza, jak przy wyrzuceniu w grze
 quest.a_companion = twój towarzysz
 workshop.rescued = To, co było w pojemniku znajomego, masz teraz w ekwipunku
 drops.container_hint = Broń i pancerze włożone do pojemnika zostają tylko w twojej grze. Aby dać coś znajomemu, upuść to obok niego

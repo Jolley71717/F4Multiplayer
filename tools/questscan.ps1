@@ -9,7 +9,8 @@
 # -Moves: the shared quests' stages that move the player, by their own fragment, a script it calls or a stage of any
 # quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories), what src/game/StageRules.h's kMoves is checked
 # against. With -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm,
-# 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so). With -PerGame:
+# 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so; a developer's
+# quickstart, DEBUG in tools/questscan.cs, gets kDebug: never shared). With -PerGame:
 # the quests shared by their type that the story manager starts with targets each game picks itself,
 # src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
 # shares, by the rule there; the quests in ALLOW_OUTCOMES in tools/questscan.cs pass it with stages that turn a faction
@@ -31,7 +32,9 @@
 # that turns a faction on the player, with that faction's form ID (HostileScan in tools/questscan.cs says how it is
 # found); a friend's such stage waits in this game until none of that faction is near. After them, its DISMISSES rows:
 # the HOSTILE stages that dismiss the faction's own companion too (the kick-outs; SafeScan.StageDismisses), with the companion
-# (its quest and alias), so the player is warned once before such a stage takes the one following them, as in the game.
+# (its quest and alias), so the player is warned once before such a stage takes the one following them, as in the game;
+# a row's last column says whether the game dismisses only on a condition (CONDITIONAL in tools/questscan.cs: a function
+# on the way that tests the story's state first), and such a row warns nobody.
 param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
 	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents, [switch]$Hostile,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))

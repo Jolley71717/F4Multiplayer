@@ -1731,12 +1731,25 @@ public static class ParentScan
 // cables, read from a property too) is checked by hand: a quest item stays unflagged. A stage 0 that isn't its quest's
 // start-up stage is left out (listed at the end): a developer's shortcut, never set in a game played through, by which
 // StageRules::Starting judges every stage that starts the quest (as MQ203's and MQ204's 0). Bridges (kBridge) and the
-// story (kStory) are not decided here. The Automatron and Nuka-World rows were made with it; the older rows of
-// Fallout4.esm and DLCCoast.esm were made before it, their payments traced by hand, and differ from its output in their
-// waits.
+// story (kStory) are not decided here; a developer's quickstart is, by hand (DEBUG: kDebug). The Automatron and
+// Nuka-World rows were made with it; the older rows of Fallout4.esm and DLCCoast.esm were made before it, their payments
+// traced by hand, and differ from its output in their waits.
 public static class RuleScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    // The developers' quickstarts among the shared quests' numbered stages: stages only a console's setstage sets (no
+    // fragment, script or other quest sets them from play: -SetsOther finds no setter but each other), each of which
+    // puts the player at a point of the quest and sets the story up to it, a faction's kick-out included. Read by hand
+    // in the fragments; the stage 0s of this kind are left out by the start-up rule above. Their rows get kDebug
+    // (StageRules.h: never shared, neither reported nor set from a friend's), and a row even when the stage neither
+    // moves, takes nor waits. Each prints with "[a quickstart]".
+    class Debug { public string Quest; public int From; public int To; public string Why; }
+    static readonly Debug[] DEBUG = {
+        new Debug { Quest = "DN084", From = 1, To = 9, Why = "Mass Fusion's quickstarts: each moves the player to a DN084_...QuickstartMarker (the lobby, the descent, the reactor, the battle, on the Brotherhood's path or the Institute's) and sets that path's stages up to it: 2, 4, 6 and 8 InstMassFusion's or BoSKickOut 30 (the Brotherhood's kick-out), 1, 3, 5, 7 and 9 BoS303's, its 30 the Institute's kick-out. In play the quest starts at 10" },
+        new Debug { Quest = "Inst307Fight", From = 2, To = 8, Why = "the airport battle's quickstarts: each sets its 1 (the Institute's faction, BoSKickOut 20, Inst307's stages) and moves the player to a point of the battle. In play the battle starts at 10, set by Inst307 30" },
+    };
+    static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
 
     static double Waits(GearScan.Func f)
     {
@@ -1778,7 +1791,8 @@ public static class RuleScan
                     // a stage that makes the player a faction's enemy is no row here: HostileScan's (StageRules.h HOSTILE)
                     var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
-                    if (moves == null && takes.Count == 0 && wait == 0) continue;
+                    bool debug = IsDebug(quest.Edid, stage);
+                    if (moves == null && takes.Count == 0 && wait == 0 && !debug) continue;
                     if (stage == 0 && !quest.Startup.Contains(0))
                     {
                         left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
@@ -1787,6 +1801,7 @@ public static class RuleScan
                     var flags = new List<string>();
                     if (moves != null) flags.Add("kMoves");
                     if (takes.Count > 0) flags.Add("kPays");
+                    if (debug) flags.Add("kDebug");
                     var what = new List<string>();
                     if (moves != null)
                     {
@@ -1796,7 +1811,7 @@ public static class RuleScan
                         what.Add(hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect);
                     }
                     if (takes.Count > 0) what.Add(string.Join(" ", takes.Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").Distinct().ToArray()));
-                    var comment = (first ? quest.Edid + (what.Count > 0 ? ": " : "") : "") + string.Join("; ", what.ToArray());
+                    var comment = (first ? quest.Edid + (what.Count > 0 ? ": " : "") : "") + string.Join("; ", what.ToArray()) + (debug ? " [a quickstart]" : "");
                     sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},{5}", file, quest.Id & 0xFFFFFF, stage, flags.Count > 0 ? string.Join(" | ", flags.ToArray()) : "0", wait,
                         comment.Length > 0 ? "  // " + comment : ""));
                     first = false;
@@ -1897,6 +1912,21 @@ public static class HostileScan
         new ByHand { Quest = "DLC04GZMainQuest", Stage = 10, PropertyQuest = "DLC04GZMainQuest", Property = "GalacticZoneEnemyFactions", Index = -1 },
     };
 
+    // Script functions on a dismissal's chain that go on only on a condition of the game they run in, read by hand: a
+    // stage whose chain to the dismissal passes one dismisses the companion in some games and not in others, so its
+    // DISMISSES row is marked (the last column; "[only if ...]" in the comment) and gives no HUD warning. The walk
+    // follows every call and stage a fragment or function names, whatever branch it is in, so a function that sets a
+    // kick-out behind a test has to be named here.
+    static readonly Dictionary<string, string> CONDITIONAL = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "MinutemenCentralScript.CheckForMQAdvance", "sets MinDefendCastle 15 (which starts the Institute's kick-out) only when the Minutemen are the story's last way on in the game it runs in: the main quest not done, the player thrown out of the Brotherhood and the Railroad or their quests failed, not yet the Institute's enemy, the Castle held with enough settlements and Old Guns or Taking Independence done. Every stage that moves the Minutemen on calls it (SetProgress, a recruitment done, MQ302's end), and nearly always it does nothing" },
+    };
+    // The CONDITIONAL function a chain passes, or null.
+    static string Conditional(string[] a_hops)
+    {
+        foreach (var hop in a_hops) foreach (var name in CONDITIONAL.Keys) if (Is(hop, name)) return name;
+        return null;
+    }
+
     // The factions a BY_HAND entry names for this quest's stage, or null.
     static List<uint> Hand(GearScan.Quest a_quest, int a_stage)
     {
@@ -1920,7 +1950,7 @@ public static class HostileScan
         var counts = new SortedDictionary<string, int>();
         int rows = 0, byEdid = 0;
         var dismisses = new StringBuilder();  // StageRules.h DISMISSES: the HOSTILE stages that turn the faction's companion on the player too
-        int dismissals = 0;
+        int dismissals = 0, conditionalDismissals = 0;
         var unresolvedDismissals = new List<string>();  // a dismissal whose chain names no companion quest: no row, read it by hand
         for (int file = 0; file < GearScan.MASTERS.Length; file++)
         {
@@ -1944,8 +1974,13 @@ public static class HostileScan
                         if (who == null)
                             unresolvedDismissals.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, deffect, dhops.Length > 1 ? " (by " + dhops[0] + ")" : ""));
                         else
-                            dismisses.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6}{7}{8}: {9}'s {10}", file, quest.Id & 0xFFFFFF, stage, who.Item2, who.Item1.Id & 0xFFFFFF, who.Item3,
-                                firstDismissal ? quest.Edid + ": " : "", deffect, dhops.Length > 1 ? " (by " + dhops[0] + ")" : "", who.Item1.Edid, alias.Name));
+                        {
+                            var condition = Conditional(dhops);
+                            if (condition != null) conditionalDismissals++;
+                            dismisses.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5}, {11} }},  // {6}{7}{8}: {9}'s {10}{12}", file, quest.Id & 0xFFFFFF, stage, who.Item2, who.Item1.Id & 0xFFFFFF, who.Item3,
+                                firstDismissal ? quest.Edid + ": " : "", deffect, dhops.Length > 1 ? " (by " + dhops[0] + ")" : "", who.Item1.Edid, alias.Name, condition != null ? "true" : "false",
+                                condition != null ? " [only if " + condition + " goes on]" : ""));
+                        }
                         firstDismissal = false;
                         dismissals++;
                     }
@@ -2012,7 +2047,7 @@ public static class HostileScan
         sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
         sb.AppendLine("# DISMISSES: the HOSTILE stages that turn the faction's own companion on the player too (SafeScan.StageDismisses)");
         sb.Append(dismisses.ToString());
-        sb.AppendLine("# " + dismissals + " rows");
+        sb.AppendLine("# " + dismissals + " rows (" + conditionalDismissals + " only on a condition: CONDITIONAL)");
         if (unresolvedDismissals.Count > 0)
         {
             sb.AppendLine("# dismissals whose chain names no companion quest (no row; read by hand):");
@@ -2345,19 +2380,19 @@ public static class SafeScan
     // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST). With them, by the maintainer's choice of 2026-11-11 (a
     // faction's kick-out is the chooser's for both; a far friend's hostile stage waits until none of the faction is near,
     // never skipped: StageRules.h HOSTILE), the base game's objective-less kick-outs and faction outcomes (SILENT's):
-    // BoSKickOut, BoSKickOutSoft and RRKickOut, DN084 (Mass Fusion, whose 2 sets the Brotherhood's kick-out, and its two
+    // BoSKickOut, BoSKickOutSoft and RRKickOut, DN084 (Mass Fusion, whose quickstarts set a kick-out, and its two
     // final battles), BoSDansePostGame, Inst307Fight, MS07cEddiePostQuestLines, DN028 and DN117 (a settlement given). A
     // kick-out that turns the faction's own companion on the player (Danse, Deacon) is ALLOW_KICKOUTS'. Far Harbor's
     // endings and kick-out and Nuka-World's come in another change.
     static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-        { "BoSKickOut", "the Brotherhood's kick-out (20, and 30 for Mass Fusion's: BoSKickOutScript.KickOut): the player out of the faction and its enemy, its quests failed, the airport's workshop taken, Danse too (ALLOW_KICKOUTS); set by Inst307Fight 1, InstMassFusion 30 and DN084 2" },
+        { "BoSKickOut", "the Brotherhood's kick-out (20, and 30 for Mass Fusion's: BoSKickOutScript.KickOut): the player out of the faction and its enemy, its quests failed, the airport's workshop taken, Danse too (ALLOW_KICKOUTS); set by InstMassFusion 30 and Inst307Fight 1, and by Mass Fusion's quickstarts (DN084 2, 4, 6, 8: RuleScan's DEBUG, never shared)" },
         { "BoSKickOutSoft", "the Brotherhood's soft expulsion (10: BoSKickOutSoftScript.SoftKickOut, for a player who sided against them without a fight): their quests failed or set past, BoSPostQuest 10; no faction turned, no companion dismissed (read in its script: up to 0.16.1 denied by hand as \"their companion's too\")" },
         { "RRKickOut", "the Railroad's kick-out (100): the player out of the faction and its enemy, its people made mortal, Deacon too (ALLOW_KICKOUTS), Curie's quest moved past the Railroad (COMCurieQuest 310 if it runs); 75 Glory out of her factions; 300 the Railroad's quests failed" },
-        { "DN084", "Mass Fusion: 2 sets BoSKickOut 30 (the Brotherhood's kick-out, by the Institute's path); 10 starts DN084_Overrides (ALLOW_STARTS, the followers' descent packages); the rest is the building's own fight and its agitator" },
+        { "DN084", "Mass Fusion: its quickstarts 1-9 (RuleScan's DEBUG, never shared) set a kick-out, 2, 4, 6 and 8 the Brotherhood's (BoSKickOut 30, or 20 through InstMassFusion 30), the others the Institute's through BoS303 30; 10 starts DN084_Overrides (ALLOW_STARTS, the followers' descent packages); the rest is the building's own fight and its agitator" },
         { "DN084_BoS303Battle", "Mass Fusion's final battle on the Brotherhood's side: 200 sets DN084 450" },
         { "DN084_Inst303Battle", "Mass Fusion's final battle on the Institute's side: 200 sets DN084 450" },
         { "BoSDansePostGame", "Danse after Blind Betrayal (set by BoS302 255): 10 clears him from the kick-out's alias, 20 takes him out of the Brotherhood, puts him in their enemies' faction and makes them hostile to the player while he follows them (DansePostQuestBoSHostilityScript, each game's own companion)" },
-        { "Inst307Fight", "the Institute's airport battle (Airship Down): 0 moves the player to the airport (kMoves), 1 puts them in the Institute's faction, out of the Brotherhood's and sets BoSKickOut 20 (the Brotherhood's kick-out) and Inst307's stages; the rest is the battle's waves" },
+        { "Inst307Fight", "the Institute's airport battle (Airship Down): 0 sets its 1 and moves the player to the airport (kMoves; no start-up stage), 1 puts them in the Institute's faction, out of the Brotherhood's and sets BoSKickOut 20 (the Brotherhood's kick-out) and Inst307's stages, 2-8 are its quickstarts (RuleScan's DEBUG, never shared); the rest is the battle's waves" },
         { "MS07cEddiePostQuestLines", "Eddie Winter after Long Time Coming: 20 turns his faction on the player" },
         { "DN028", "the D.B. Technical High School boss's room: 10 makes its raiders the other raiders' allies, 510 turns them on the player, 500 their scene" },
         { "DN117", "Spectacle Island: 10/11 give the player the manor's workbenches and take them back, 20/21 the exterior workshop (a settlement given or taken), 30/31 the build area" },
@@ -2382,7 +2417,7 @@ public static class SafeScan
     // the host's is theirs alone anyway (src/game/Companions).
     static readonly Dictionary<string, string> ALLOW_KICKOUTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "BoSKickOut COMDanse", "KickOut (20 and 30), only for a Danse who has been the player's companion (HasBeenCompanionFaction): his affinity to -5000, COMDanse 91 dismisses him for good; and he joins the player's enemies unless already exiled (BoSDansePostGame 10)" },
-        { "DN084 COMDanse", "2 sets BoSKickOut 30, whose KickOut reaches Danse as above" },
+        { "DN084 COMDanse", "its quickstarts 2, 4, 6 and 8 set the Brotherhood's kick-out, whose KickOut reaches Danse as above" },
         { "Inst307Fight COMDanse", "1 sets BoSKickOut 20, whose KickOut reaches Danse as above" },
         { "RRKickOut COMDeacon", "100: Deacon's affinity to -5000, COMDeacon 91 dismisses him for good, and he is made mortal with the Railroad's people" },
         { "RRKickOut COMCurieQuest", "100 sets COMCurieQuest 310 if it runs: the Caretaker's alias filled with a generic Railroad agent, so Curie's quest can go on without the Railroad (nothing of the player's companion)" },

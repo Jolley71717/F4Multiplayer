@@ -525,6 +525,103 @@ TEST("sim quests: a friend's stage that turns a faction on the player (the robot
 	CHECK((carol.Quests().Skipped() == History{ { DN049, 711 } }));
 }
 
+// ---- the developers' quickstarts ----------------------------------------------------------------------
+
+namespace
+{
+	constexpr std::uint32_t DN084 = 0x0006D646;         // Mass Fusion: its 1 to 9 are the developers' quickstarts, each of which runs a faction's kick-out
+	constexpr std::uint32_t INST307FIGHT = 0x00174029;  // the airport battle: its 2 to 8 are
+
+	// Mass Fusion and the airport battle, shared with the story; a_done: Mass Fusion's stages done in this game already.
+	void GiveQuickstartQuests(Client& a_player, Stages a_done = {})
+	{
+		auto massFusion = Started({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 30 });
+		massFusion.story = true;
+		for (const auto stage : a_done) {
+			massFusion.done.insert(stage);
+			massFusion.current = (std::max)(massFusion.current, stage);
+		}
+		a_player.GiveQuest(DN084, std::move(massFusion));
+		auto battle = Started({ 2, 3, 4, 5, 6, 7, 8, 15 });
+		battle.story = true;
+		a_player.GiveQuest(INST307FIGHT, std::move(battle));
+	}
+}
+
+TEST("sim quests: a developer's quickstart set at a player's console is never sent, with the host's progress or live; the stages play sets around it are")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	// Before hosting, the host jumped into Mass Fusion with a quickstart at the console (its 2) and played on to its 10.
+	GiveQuickstartQuests(host, { 2, 10 });
+	GiveQuickstartQuests(bob);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	s.PlayFor(10s);
+	CHECK(host.Quests().baselined == 1);  // its 10; not the quickstart
+	CHECK((Done(bob, DN084) == Stages{ 10 }));
+
+	// In the session the host sets more of them at the console, and plays a stage.
+	host.Stage(DN084, 4);
+	host.Stage(INST307FIGHT, 5);
+	host.Stage(DN084, 30);
+	s.PlayFor(10s);
+	CHECK(host.Quests().reported == 1);  // the 30
+	CHECK((Done(bob, DN084) == Stages{ 10, 30 }));
+	CHECK(Done(bob, INST307FIGHT).empty());
+	// Nothing of them ever left the host's game: Bob's has nothing to drop, skip or keep waiting.
+	CHECK(bob.Quests().debugDropped == 0);
+	CHECK(bob.Quests().Skipped().empty());
+	CHECK(bob.Quests().WaitingCount() == 0);
+	CHECK(bob.Quests().Notices().empty());
+	// The host's own game keeps what its console set.
+	CHECK((Done(host, DN084) == Stages{ 2, 4, 10, 30 }));
+	CHECK((Done(host, INST307FIGHT) == Stages{ 5 }));
+}
+
+TEST("sim quests: a quickstart that reaches a friend's game all the same (an older version's report) is never set there, live or caught up from the session, and holds nothing up")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	auto&   old = s.Player("Old");  // an older version's game: it reports the quickstarts its console sets
+	for (const auto player : { &host, &bob, &carol }) {
+		GiveQuickstartQuests(*player);
+	}
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	REQUIRE(old.Join());
+	old.Stage(DN084, 2);         // Mass Fusion on the Institute's path: the Brotherhood's kick-out
+	old.Stage(INST307FIGHT, 8);  // the airport battle's front entrance: the same
+	s.PlayFor(10s);
+	for (const auto player : { &host, &bob }) {
+		CHECK(Done(*player, DN084).empty());
+		CHECK(Done(*player, INST307FIGHT).empty());
+		CHECK(player->Quests().debugDropped == 2);  // dropped, not kept for later
+		CHECK(player->Quests().Skipped().empty());
+		CHECK(player->Quests().WaitingCount() == 0);
+		CHECK(player->Quests().Notices().empty());
+	}
+
+	// Play goes on past them: nothing waits behind a dropped quickstart.
+	host.Stage(DN084, 10);
+	s.PlayFor(5s);
+	CHECK((Done(bob, DN084) == Stages{ 10 }));
+
+	// Carol joins later: the session holds the old game's quickstarts, and her game drops them the same way.
+	REQUIRE(carol.Join());
+	s.PlayFor(10s);
+	CHECK((Done(carol, DN084) == Stages{ 10 }));
+	CHECK(Done(carol, INST307FIGHT).empty());
+	CHECK(carol.Quests().debugDropped == 2);
+	CHECK(carol.Quests().Skipped().empty());
+	CHECK(carol.Quests().WaitingCount() == 0);
+}
+
 // ---- catching up ------------------------------------------------------------------------------------
 
 TEST("sim quests: a friend who joins late catches up on the session's stages in order, isn't moved by a step from the session, and gets the achievement")

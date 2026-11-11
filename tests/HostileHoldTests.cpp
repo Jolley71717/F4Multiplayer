@@ -261,12 +261,12 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> known{
 		{ 0, 0x022A08, 465 }, { 0, 0x022A08, 467 }, { 0, 0x022A08, 470 },  // MS17: the Covenant
 		{ 0, 0x04402C, 2 }, { 0, 0x04402C, 3 }, { 0, 0x04402C, 4 }, { 0, 0x04402C, 5 }, { 0, 0x04402C, 6 }, { 0, 0x04402C, 7 }, { 0, 0x04402C, 8 }, { 0, 0x04402C, 9 },  // BoSM02: the airport's ghouls
-		{ 0, 0x06D646, 1 }, { 0, 0x06D646, 2 }, { 0, 0x06D646, 3 }, { 0, 0x06D646, 4 }, { 0, 0x06D646, 5 }, { 0, 0x06D646, 6 }, { 0, 0x06D646, 7 }, { 0, 0x06D646, 8 }, { 0, 0x06D646, 9 },  // DN084 (Mass Fusion): its quickstarts and its 2; the Institute on the Brotherhood's path, the Brotherhood's kick-out on the Institute's
+		{ 0, 0x06D646, 1 }, { 0, 0x06D646, 2 }, { 0, 0x06D646, 3 }, { 0, 0x06D646, 4 }, { 0, 0x06D646, 5 }, { 0, 0x06D646, 6 }, { 0, 0x06D646, 7 }, { 0, 0x06D646, 8 }, { 0, 0x06D646, 9 },  // DN084 (Mass Fusion): its quickstarts, never shared (kDebug); the Institute on the Brotherhood's path, the Brotherhood's kick-out on the Institute's
 		{ 0, 0x0ADCE5, 2 }, { 0, 0x0ADCE5, 3 }, { 0, 0x0ADCE5, 4 },  // BoSM04: the same
 		{ 0, 0x142FD3, 20 },                                        // RR304: the Brotherhood
 		{ 0, 0x15BD39, 30 },                                        // InstMassFusion: the Brotherhood's kick-out
 		{ 0, 0x16D036, 100 },                                       // InstKickOut: the Institute
-		{ 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },  // Inst307Fight: its 1 (Inst307 35 moves the player) and quickstarts; the Brotherhood's kick-out
+		{ 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },  // Inst307Fight: its 1 (Inst307 35 moves the player), the Brotherhood's kick-out, and its quickstarts, never shared (kDebug)
 		{ 3, 0x03684F, 6 },                                         // Kiddie Kingdom's quickstart: the hostile ghouls
 	};
 	CHECK(movers == known);
@@ -279,15 +279,17 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 TEST("hostile hold: the movers that are a faction's kick-out run the kick-out itself here, not gone with the friend (KICKOUTS)")
 {
 	using namespace StageRules;
-	// Each is one of the 35 movers (a kMoves row, no bridge, HOSTILE's), and its kick-out is a quest of the same file.
+	// Each is one of the 35 movers (a kMoves row, no bridge, HOSTILE's) that play can set (none a developer's quickstart),
+	// and its kick-out is a quest of the same file.
 	for (const auto& row : KICKOUTS) {
 		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
 		REQUIRE(rule != nullptr);
-		CHECK((rule->flags & (kMoves | kBridge)) == kMoves);
+		CHECK(rule->flags == kMoves);
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.stage));
 		CHECK(!HostileOf(static_cast<File>(row.file), row.quest, row.stage).empty());
 		CHECK(KickOutOf(static_cast<File>(row.file), row.quest, row.stage) == &row);
 	}
-	// The Brotherhood's kick-out, BoSKickOut 20, for InstMassFusion 30, RR304 20 and Inst307Fight 1, its 30 for DN084 2; the Institute's is its quest's start-up.
+	// The Brotherhood's kick-out, BoSKickOut 20, for InstMassFusion 30, RR304 20 and Inst307Fight 1; the Institute's is its quest's start-up.
 	const auto massFusion = KickOutOf(File::kFallout4, 0x15BD39, 30);
 	REQUIRE(massFusion != nullptr);
 	CHECK(massFusion->kickQuest == 0x16FF04 && massFusion->kickStage == 20);
@@ -300,29 +302,90 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 	const auto airport = KickOutOf(File::kFallout4, 0x174029, 1);
 	REQUIRE(airport != nullptr);
 	CHECK(airport->kickQuest == 0x16FF04 && airport->kickStage == 20);
-	const auto massFusionInstitute = KickOutOf(File::kFallout4, 0x06D646, 2);
-	REQUIRE(massFusionInstitute != nullptr);
-	CHECK(massFusionInstitute->kickQuest == 0x16FF04 && massFusionInstitute->kickStage == 30);
-	// Mass Fusion's quickstarts on the Brotherhood's path (DN084 1, 3, 5, 7, 9: BoS303 30) reach the Institute's kick-out: the quest is started.
-	for (const std::uint16_t stage : { 1, 3, 5, 7, 9 }) {
-		const auto quickstart = KickOutOf(File::kFallout4, 0x06D646, stage);
-		REQUIRE(quickstart != nullptr);
-		CHECK(quickstart->kickQuest == 0x16D036 && quickstart->kickStage == 0);
+	// The developers' quickstarts that reach a kick-out (Mass Fusion's DN084 1 to 9, the airport battle's Inst307Fight 2
+	// to 8) have no row: a stage only the console sets runs no kick-out in a friend's game.
+	for (std::uint16_t stage = 1; stage <= 9; ++stage) {
+		CHECK(!KickOutOf(File::kFallout4, 0x06D646, stage));
 	}
-	// The Brotherhood's kick-out through InstMassFusion 30 is a SetPlayerEnemy row: with the kick-out run here, no mover's
-	// bare call is one (a plain SetPlayerEnemy would leave the player in the faction and Danse at their side).
+	for (std::uint16_t stage = 2; stage <= 8; ++stage) {
+		CHECK(!KickOutOf(File::kFallout4, 0x174029, stage));
+	}
+	// The Brotherhood's kick-out through InstMassFusion 30 is a SetPlayerEnemy row: with the kick-out run here, no mover a
+	// friend's game can send has a bare call that is one (a plain SetPlayerEnemy would leave the player in the faction and
+	// Danse at their side). Only a stage marked a quickstart (kDebug) is let off, and only because it is never shared: it
+	// is never judged kHostileOnly, so its row's call is never made (the next test).
+	std::size_t bare = 0;
 	for (const auto& rule : RULES) {
 		if ((rule.flags & kMoves) && !(rule.flags & kBridge) && !KickOutOf(static_cast<File>(rule.file), rule.quest, rule.stage)) {
 			for (const auto& row : HostileOf(static_cast<File>(rule.file), rule.quest, rule.stage)) {
+				if (rule.flags & kDebug) {
+					bare += row.call == kSetPlayerEnemy;
+					continue;
+				}
 				CHECK(row.call == kSetEnemy);
 			}
 		}
 	}
-	// The other 15 movers have none: the Covenant, the airport's ferals and the park's ghouls have no companion and no quests to fail.
+	CHECK(bare > 0);  // the marking is what lets those through: without it the check above would fail for them
+	// The other 15 movers that play can set have none: the Covenant, the airport's ferals and the park's ghouls have no
+	// companion and no quests to fail.
 	CHECK(!KickOutOf(File::kFallout4, 0x022A08, 470));
 	CHECK(!KickOutOf(File::kFallout4, 0x04402C, 2));
 	CHECK(!KickOutOf(File::kNukaWorld, 0x03684F, 6));
-	CHECK(std::size(KICKOUTS) == 20);  // the three of the hold's review, DN084 2 and Inst307Fight 1, and the quickstarts (DN084 4/6/8 and Inst307Fight 2-8 as them; DN084 1/3/5/7/9 the Institute's)
+	CHECK(std::size(KICKOUTS) == 4);  // the three of the hold's review and Inst307Fight 1
+}
+
+TEST("hostile hold: a developer's quickstart is never shared: skipped whatever the situation, with no kick-out and no faction turned (kDebug)")
+{
+	using namespace StageRules;
+	// The 16 by hand in the scan (RuleScan's DEBUG): Mass Fusion's 1 to 9 and the airport battle's 2 to 8.
+	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> debug;
+	for (const auto& rule : RULES) {
+		if (rule.flags & kDebug) {
+			debug.emplace_back(rule.file, rule.quest, rule.stage);
+		}
+	}
+	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> known{
+		{ 0, 0x06D646, 1 }, { 0, 0x06D646, 2 }, { 0, 0x06D646, 3 }, { 0, 0x06D646, 4 }, { 0, 0x06D646, 5 }, { 0, 0x06D646, 6 }, { 0, 0x06D646, 7 }, { 0, 0x06D646, 8 }, { 0, 0x06D646, 9 },
+		{ 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },
+	};
+	CHECK(debug == known);
+	// Each is skipped in every situation a friend's stage can meet: next to the friend or far, live or caught up, the
+	// faction near or not, the story shared or not, the player warned or offered. Never set, never kHostileOnly (which
+	// would make its row's bare call), never held for later.
+	for (const auto& [file, quest, stage] : debug) {
+		CHECK(IsDebug(static_cast<File>(file), quest, stage));
+		CHECK(!KickOutOf(static_cast<File>(file), quest, stage));
+		const auto rule = Find(static_cast<File>(file), quest, stage);
+		REQUIRE(rule != nullptr);
+		for (unsigned bits = 0; bits < 256; ++bits) {
+			Situation now;
+			now.sharedStory = (bits & 1) != 0;
+			now.live = (bits & 2) != 0;
+			now.nearFriend = (bits & 4) != 0;
+			now.factionNear = (bits & 8) != 0;
+			now.held = (bits & 16) != 0;
+			now.followable = (bits & 32) != 0;
+			if (bits & 64) {
+				now.warned = WARNING;
+			}
+			if (bits & 128) {
+				now.offered = std::chrono::seconds(1);
+			}
+			CHECK(Judge(rule, now) == Verdict::kSkip);
+		}
+	}
+	// The stages of the same quests that play sets are not: Mass Fusion's 10 on, the airport battle's 1 (the kick-out) and 10.
+	CHECK(!IsDebug(File::kFallout4, 0x06D646, 0));
+	CHECK(!IsDebug(File::kFallout4, 0x06D646, 10));
+	CHECK(!IsDebug(File::kFallout4, 0x06D646, 225));
+	CHECK(!IsDebug(File::kFallout4, 0x174029, 1));
+	CHECK(!IsDebug(File::kFallout4, 0x174029, 10));
+	// Only Fallout4.esm's rows: the same form IDs in another file are other quests.
+	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
+	// No stage without a row, and no kick-out's own stage.
+	CHECK(!IsDebug(File::kFallout4, 0x16FF04, 20));
+	CHECK(!IsDebug(File::kFallout4, 0x16D036, 100));
 }
 
 TEST("hostile hold: the base game's kick-outs and faction outcomes are HOSTILE's, and the ones that dismiss a companion name them (DISMISSES; tools/questscan.ps1 -Hostile)")
@@ -334,7 +397,7 @@ TEST("hostile hold: the base game's kick-outs and faction outcomes are HOSTILE's
 	};
 	constexpr std::uint32_t BROTHERHOOD = 0x05DE41, RAILROAD = 0x0994F6, INSTITUTE = 0x05E558;
 	// The Brotherhood's kick-out (BoSKickOut 20, and 30 for Mass Fusion's), and what sets it: Inst307Fight 1 (the airport battle),
-	// InstMassFusion 30, DN084 2; the Railroad's (RRKickOut 100) and BoS302B 30, which sets it.
+	// InstMassFusion 30, Mass Fusion's quickstart DN084 2 (never shared); the Railroad's (RRKickOut 100) and BoS302B 30, which sets it.
 	CHECK(has(File::kFallout4, 0x16FF04, 20, BROTHERHOOD));
 	CHECK(has(File::kFallout4, 0x16FF04, 30, BROTHERHOOD));
 	CHECK(has(File::kFallout4, 0x174029, 1, BROTHERHOOD));
@@ -378,13 +441,15 @@ TEST("hostile hold: the base game's kick-outs and faction outcomes are HOSTILE's
 	CHECK(dismisses(File::kFallout4, 0x16D036, 0, COM_X688));     // InstKickOut 0
 	CHECK(dismisses(File::kFallout4, 0x174029, 1, COM_DANSE));    // Inst307Fight 1 (BoSKickOut 20)
 	CHECK(dismisses(File::kFallout4, 0x15BD39, 30, COM_DANSE));   // InstMassFusion 30 (BoSKickOut 20)
-	CHECK(dismisses(File::kFallout4, 0x06D646, 2, COM_DANSE));    // DN084 2 (BoSKickOut 30)
+	CHECK(dismisses(File::kFallout4, 0x06D646, 2, COM_DANSE));    // DN084 2 (BoSKickOut 30): a quickstart, never shared, so its row is never used
 	CHECK(dismisses(File::kFallout4, 0x107A1C, 30, COM_DEACON));  // BoS302B 30 (RRKickOut 100)
 	CHECK(dismisses(File::kFallout4, 0x043275, 1, COM_DANSE));    // RR303 1 (BoSKickOut 20)
 	CHECK(dismisses(File::kFallout4, 0x03A457, 70, COM_X688));    // Min02 70 (the Institute's, through the Minutemen's script)
-	// Every KICKOUTS mover's kick-out is a DISMISSES row too: the warning is given before the kick-out is run here.
+	// Every KICKOUTS mover's kick-out is a DISMISSES row too, and a sure one: the warning is given before the kick-out is run here.
 	for (const auto& kick : KICKOUTS) {
-		CHECK(DismissalOf(static_cast<File>(kick.file), kick.kickQuest, kick.kickStage) != nullptr);
+		const auto row = DismissalOf(static_cast<File>(kick.file), kick.kickQuest, kick.kickStage);
+		REQUIRE(row != nullptr);
+		CHECK(!row->conditional);
 	}
 	// A faction turned with no companion dismissed: Danse's exile, Eddie Winter, Phyllis, MQ00's helper (it sets the globals and
 	// SetEnemy only), the Nucleus's kick-out.
@@ -396,4 +461,118 @@ TEST("hostile hold: the base game's kick-outs and faction outcomes are HOSTILE's
 	// Not a HOSTILE stage at all.
 	CHECK(!DismissalOf(File::kFallout4, 0x082615, 10));
 	CHECK(!DismissalOf(File::kRobot, 0x16FF04, 20));
+}
+
+TEST("hostile hold: a stage that dismisses a companion only on a condition is marked, and gives no warning (DISMISSES' conditional; tools/questscan.ps1 -Hostile)")
+{
+	using namespace StageRules;
+	const auto conditional = [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage) {
+		const auto row = DismissalOf(a_file, a_quest, a_stage);
+		REQUIRE(row != nullptr);
+		return row->conditional;
+	};
+	// The kick-outs and the stages that set one outright dismiss the companion in every game.
+	CHECK(!conditional(File::kFallout4, 0x16FF04, 20));   // BoSKickOut 20
+	CHECK(!conditional(File::kFallout4, 0x16FF04, 30));   // BoSKickOut 30
+	CHECK(!conditional(File::kFallout4, 0x16C207, 100));  // RRKickOut 100
+	CHECK(!conditional(File::kFallout4, 0x16D036, 0));    // InstKickOut's start-up
+	CHECK(!conditional(File::kFallout4, 0x174029, 1));    // Inst307Fight 1
+	CHECK(!conditional(File::kFallout4, 0x15BD39, 30));   // InstMassFusion 30
+	CHECK(!conditional(File::kFallout4, 0x107A1C, 30));   // BoS302B 30
+	CHECK(!conditional(File::kFallout4, 0x043275, 1));    // RR303 1
+	// The Minutemen's and the story's stages that only move the Minutemen on reach the Institute's kick-out through
+	// MinutemenCentralScript.CheckForMQAdvance, which starts it only when the Minutemen are the story's last way on:
+	// X6-88 stays in nearly every game that sets them.
+	CHECK(conditional(File::kFallout4, 0x03A457, 70));    // Min02 70 (Taking Independence)
+	CHECK(conditional(File::kFallout4, 0x03A457, 600));   // Min02 600
+	CHECK(conditional(File::kFallout4, 0x0229EE, 2));     // MQ302 2
+	CHECK(conditional(File::kFallout4, 0x0229EE, 1000));  // MQ302 1000
+	std::size_t marked = 0;
+	for (const auto& row : DISMISSES) {
+		marked += row.conditional;
+		// All of them X6-88's: only the Institute's kick-out is behind that condition.
+		if (row.conditional) {
+			CHECK(row.companionFile == 0);
+			CHECK(row.companionQuest == 0x0BBD95);
+		}
+	}
+	CHECK(std::size(DISMISSES) == 60);
+	CHECK(marked == 25);
+}
+
+TEST("hostile hold: a conditional dismissal's false warning doesn't use up the companion's real one (DismissalWarnings)")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t X688 = 0x000BBDA0, DANSE = 0x0005DE4D;  // stand-ins for two companions' form IDs
+	const auto min02 = DismissalOf(File::kFallout4, 0x03A457, 70);       // conditional: X6-88, through the Minutemen's script
+	const auto kickOut = DismissalOf(File::kFallout4, 0x16D036, 0);      // the Institute's kick-out: X6-88, for sure
+	const auto brotherhood = DismissalOf(File::kFallout4, 0x16FF04, 20);  // the Brotherhood's: Danse
+	REQUIRE(min02 != nullptr);
+	REQUIRE(kickOut != nullptr);
+	REQUIRE(brotherhood != nullptr);
+	REQUIRE(min02->conditional);
+	REQUIRE(!kickOut->conditional);
+
+	DismissalWarnings warnings;
+	// A friend takes the Castle, then more of the Minutemen's stages: X6-88 follows the player and stays. No line.
+	CHECK(!warnings.Due(*min02, X688));
+	CHECK(!warnings.Due(*min02, X688));
+	// Later in the session the friend is thrown out of the Institute: the kick-out's warning is still there, once.
+	CHECK(warnings.Due(*kickOut, X688));
+	CHECK(!warnings.Due(*kickOut, X688));
+	CHECK(!warnings.Due(*min02, X688));
+	// Each companion has their own: Danse's is not spent by X6-88's.
+	CHECK(warnings.Due(*brotherhood, DANSE));
+	CHECK(!warnings.Due(*brotherhood, DANSE));
+	// A new session (or a load) starts over; a conditional row still gives none.
+	warnings.Clear();
+	CHECK(!warnings.Due(*min02, X688));
+	CHECK(warnings.Due(*kickOut, X688));
+	CHECK(warnings.Due(*brotherhood, DANSE));
+}
+
+TEST("hostile hold: the dismissal's warning names the faction whose kick-out drops the companion, not whichever the stage turns on the way (DismissalFaction)")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t BROTHERHOOD = 0x05DE41, RAILROAD = 0x0994F6, INSTITUTE = 0x05E558;
+	const auto factionOf = [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage) -> std::pair<std::uint8_t, std::uint32_t> {
+		const auto row = DismissalOf(a_file, a_quest, a_stage);
+		REQUIRE(row != nullptr);
+		const auto named = DismissalFaction(*row);
+		REQUIRE(named != nullptr);
+		return { named->factionFile, named->faction };
+	};
+	CHECK((factionOf(File::kFallout4, 0x16FF04, 20) == std::pair<std::uint8_t, std::uint32_t>{ 0, BROTHERHOOD }));  // BoSKickOut: Danse
+	CHECK((factionOf(File::kFallout4, 0x16C207, 100) == std::pair<std::uint8_t, std::uint32_t>{ 0, RAILROAD }));    // RRKickOut: Deacon
+	CHECK((factionOf(File::kFallout4, 0x16D036, 0) == std::pair<std::uint8_t, std::uint32_t>{ 0, INSTITUTE }));     // InstKickOut: X6-88
+	// InstMassFusion 30 turns the Brotherhood on the player and the kick-out drops Danse: the Brotherhood, whatever
+	// else the stage's rows hold.
+	CHECK((factionOf(File::kFallout4, 0x15BD39, 30) == std::pair<std::uint8_t, std::uint32_t>{ 0, BROTHERHOOD }));
+	CHECK((factionOf(File::kFallout4, 0x174029, 1) == std::pair<std::uint8_t, std::uint32_t>{ 0, BROTHERHOOD }));
+	// Every row names one, a faction of the companion's own file, and one per companion quest.
+	for (const auto& row : DISMISSES) {
+		const auto named = DismissalFaction(row);
+		REQUIRE(named != nullptr);
+		CHECK(named->faction != 0);
+		CHECK(named->factionFile == row.companionFile);
+	}
+	for (auto it = std::begin(COMPANION_FACTIONS); it != std::end(COMPANION_FACTIONS); ++it) {
+		for (auto other = std::next(it); other != std::end(COMPANION_FACTIONS); ++other) {
+			CHECK((std::pair{ it->companionFile, it->companionQuest } != std::pair{ other->companionFile, other->companionQuest }));
+		}
+	}
+	// That faction is one the stage turns on the player (HOSTILE), but for the stages that reach the kick-out through
+	// another quest and turn only another faction themselves: Mass Fusion's quickstart 8 (its lab's security; never
+	// shared) and BoS303's quickstarts 1 and 2 (the police station's feral ghouls). The first HOSTILE row of such a
+	// stage is what the line named before, and it is not the companion's faction.
+	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> elsewhere{ { 0, 0x06D646, 8 }, { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 } };
+	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> found;
+	for (const auto& row : DISMISSES) {
+		const auto named = DismissalFaction(row);
+		const auto rows = HostileOf(static_cast<File>(row.file), row.quest, row.stage);
+		if (!std::ranges::any_of(rows, [&](const Hostile& a_row) { return a_row.factionFile == named->factionFile && a_row.faction == named->faction; })) {
+			found.emplace_back(row.file, row.quest, row.stage);
+		}
+	}
+	CHECK(found == elsewhere);
 }

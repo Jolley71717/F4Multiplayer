@@ -2109,23 +2109,30 @@ teleport's own refusals stand (a conversation, a scene, furniture, Survival, a p
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
 
 A stage that turns a faction on the player is not offered but held (next section); one that moves the player too (a
-kMoves row that is HOSTILE's as well, 18 of them, no bridge: the Covenant's MS17 465/467/470, the Brotherhood's kick-out
-through InstMassFusion 30, InstKickOut 100, RR304 20, the airport's ghouls in BoSM02 2-9 and BoSM04 2-4, Kiddie Kingdom's
-6) is offered worded as a fight, "<friend> is fighting in <quest>: hold <key> to join them", once the hold has let it
+kMoves row that is HOSTILE's as well, 19 of them a friend's game can send, no bridge: the Covenant's MS17 465/467/470, the
+Brotherhood's kick-out through InstMassFusion 30 and the airport battle's Inst307Fight 1, InstKickOut 100, RR304 20, the
+airport's ghouls in BoSM02 2-9 and BoSM04 2-4, Kiddie Kingdom's 6) is offered worded as a fight, "<friend> is fighting in
+<quest>: hold <key> to join them", once the hold has let it
 through, and set beside the friend; not gone with (the offer run out, nobody to follow, or caught up from the session)
 the stage is not set, since it would move the player, but the faction it turns on the player is turned on them here all
 the same (Verdict::kHostileOnly: the same Papyrus call the stage's script makes, Faction.SetEnemy(PlayerFaction) or
 Faction.SetPlayerEnemy(), from the HOSTILE row's HostileCall, queued on the game's VM; the log says "not setting ... the
 faction it turns on the player is turned on them here all the same"; a call the VM wouldn't queue, a load on, is tried
 again at the next poll, the quest waiting, up to HostileHold::CALL_TRIES, and one made here this session isn't made twice).
-The three of them that are a faction's kick-out run the kick-out itself instead (StageRules::KICKOUTS, read off the game's
-scripts: BoSKickOut 20 for InstMassFusion 30 and RR304 20, whose BoSKickOutScript.KickOut moves nobody and tests nothing
+The four of them that are a faction's kick-out run the kick-out itself instead (StageRules::KICKOUTS, read off the game's
+scripts: BoSKickOut 20 for InstMassFusion 30, RR304 20 and Inst307Fight 1, whose BoSKickOutScript.KickOut moves nobody and tests nothing
 about where the player is, and the start of InstKickOut for InstKickOut 100, whose start-up stage is the kick-out and judges
 this player's place itself, inside or out, while 100 is the teleport out for a player inside): the faction's quests
 failed, the player out of the faction, its companion dismissed (Danse by COMDanse 91, X6-88 by ComX688 91), its base's
 fast travel refused, as the stage's script would; a kick-out that ran here already (BoSKickOut 20 through RR304 1, a bridge
 set here itself) is not run again. What else the other 15 do (the Covenant's fight scene, the airport's set-up) is the
-stage's, not made here. A stage whose hostility holds here already, by the game's own reading (the faction's and
+stage's, not made here. The developers' quickstarts among such stages (Mass Fusion's DN084 1 to 9, the airport battle's
+Inst307Fight 2 to 8: stages only a console's setstage sets, each of which jumps into the quest and runs a faction's
+kick-out on the way) are never shared at all: RULES' kDebug (StageRules::IsDebug; the scan's DEBUG list in
+tools/questscan.cs), not reported, not sent with a game's progress, and one that arrives all the same (an older
+version's report, a session file from one) is dropped on receipt with one INFO line, never set, never its faction
+turned, nothing waiting behind it. Before, a quickstart typed at one player's console ran a kick-out in every friend's
+game. A stage whose hostility holds here already, by the game's own reading (the faction's and
 PlayerFaction's reactions list each other as enemies, or the faction's player-enemy flag: a rejoin's catch-up, a load of a
 save past it, a stage behind one that turned the faction already), neither holds nor calls, and no HUD line says it
 turned. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
@@ -2172,9 +2179,10 @@ the chooser's for both): the Brotherhood's kick-out BoSKickOut (its 20, and 30 f
 faction and its enemy, their quests failed, the airport's workshop and the vertibird rides taken), its soft expulsion
 BoSKickOutSoft (their quests failed or set past, no faction turned: up to 0.16.1 denied by hand as "their companion's
 too", which its script does not do), the Railroad's RRKickOut (100: the player its enemy, its people made mortal, 300 its
-quests failed), Mass Fusion's DN084 (its 2 sets BoSKickOut 30 on the Institute's path; its followers' descent packages,
-DN084_Overrides, start in each game: the scan's ALLOW_STARTS) and its two final battles, the Institute's airport battle
-Inst307Fight (its 1 sets BoSKickOut 20; its 0 and quickstarts move the player: kMoves), Danse's exile BoSDansePostGame,
+quests failed), Mass Fusion's DN084 (from its 10 on: its 1 to 9 are quickstarts, never shared; its followers' descent
+packages, DN084_Overrides, start in each game: the scan's ALLOW_STARTS) and its two final battles, the Institute's
+airport battle Inst307Fight (its 1 sets BoSKickOut 20; its 0 moves the player: kMoves; its 2 to 8 are quickstarts, never
+shared), Danse's exile BoSDansePostGame,
 Eddie Winter's MS07cEddiePostQuestLines, the D.B. Technical boss room's DN028 and Spectacle Island's DN117 (a settlement
 given). Their stages that turn a faction on the player are HOSTILE rows (245 now), so a far friend's kick-out waits
 until none of the faction is near, and their moves and waits are RULES rows, their cross-quest stages SETS_ANOTHER's,
@@ -2189,12 +2197,19 @@ Brotherhood one, Mass Fusion's, the airport battle's), and when that companion i
 (Companions::Following) the HUD says so once per companion and session, just before the stage lands or its kick-out is
 run ("<friend>'s choice turns <faction> on you: <companion> leaves you, as the game's kick-out has it"), not again for
 another stage of the same kick-out nor after a load; a companion of another faction, or one not at the player's side,
-gets no line. Mass Fusion's 2 and the airport battle's 1 (and their quickstarts) are KICKOUTS movers too: far from the
-friend, the Brotherhood's kick-out itself is run here (BoSKickOut 30 or 20), as for InstMassFusion 30 (Mass Fusion's
-quickstarts on the Brotherhood's path, which the game never sets in play, start the Institute's). The rig's
-step_kickout (opt-in) sets the Brotherhood's kick-out with the VM far: the VM's Brotherhood turns once it is clear of
-them, and a companion of another faction at the VM's side is left alone (a Brotherhood one would be taken, with the
-line).
+gets no line. The faction the line names is the one whose kick-out drops that companion (StageRules::COMPANION_FACTIONS:
+the Institute for X6-88, the Brotherhood for Danse, the Railroad for Deacon, the add-ons' two), not whichever faction
+the stage's HOSTILE row happens to hold (a Mass Fusion row's is its laboratory's security); a faction with
+no name in this game gets the sentence without one ("<friend>'s choice turns a faction on you: ...",
+quest.hostile_companion_unnamed), never an empty name. A row whose dismissal the game makes only on a condition (the
+scan's CONDITIONAL: 25 rows, all X6-88's, through MinutemenCentralScript.CheckForMQAdvance, which kicks the player out
+of the Institute only when the Minutemen's story has got that far) gives no line and uses up nothing: the line said a
+companion was leaving who then stayed, and spent the one warning the real kick-out had (StageRules::DismissalWarnings
+holds who was warned). The airport battle's 1 is a KICKOUTS mover too: far from the friend, the Brotherhood's kick-out
+itself is run here (BoSKickOut 20), as for InstMassFusion 30. The rig's step_kickout (opt-in) sets the Brotherhood's
+kick-out with the VM at the police station, far from the host: the stage waits (a game that gives no answer is the
+rig's failure, not a pass), the VM walks away (real movement, walk_away), its Brotherhood turns once it is clear of them,
+and a companion of another faction at the VM's side is left alone (a Brotherhood one would be taken, with the line).
 
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 
