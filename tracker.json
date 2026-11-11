@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T04:31:21+00:00",
+ "updated": "2026-11-11T04:40:16+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -233,6 +233,14 @@
    "stage": 7,
    "note": "Merged; the owner keeps the kit, and the borrower gets out after a load",
    "pr": 224
+  },
+  {
+   "id": "3csp",
+   "title": "Stand-in gun swap: PutOn's replace path removes the old gun with console removeitem just before giving the new one (same race as Apply)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "3jt1",
@@ -1018,8 +1026,8 @@
    "title": "Settlement attacks: an attack's resolve stage rolls damage in each game where the settlement isn't loaded; a friend's game must not roll its own for a host settlement",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "PR open: the host's attack is both players', decided once by the host; in review"
   },
   {
    "id": "f9bz",
@@ -1167,7 +1175,7 @@
    "title": "Stale enemy copies after the host restarts mid-session",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "PR open: dead copies of NPCs alive elsewhere are raised; in review"
   },
   {
@@ -1902,8 +1910,8 @@
    "title": "Stand-in gear: Equipment::Apply and SwitchIntoPowerArmor empty with console removeallitems then add in the same frame; if the console call runs later it may take the gear just given",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "PR open: stand-ins emptied stack by stack with the engine's RemoveItem; in review"
   },
   {
    "id": "rrjm",
