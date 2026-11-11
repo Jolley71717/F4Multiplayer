@@ -2039,3 +2039,53 @@ step_companions_human() {
 	expect_eq "companions_human: the Companion alias is empty in both games at the end" "$(_ch_held host)$(_ch_held vm)" ""
 	expect_eq "companions_human: the server's book is empty at the end" "$(dc host companions | grep -oE 'known=[0-9]+')/$(dc vm companions | grep -oE 'known=[0-9]+')" "known=0/known=0"
 }
+
+# ---- quests_outcomes: the add-ons' endings and kick-outs, the chooser's for both (opt-in: smoke.sh --only quests_outcomes) -------------------
+# With the host's sQuests = safe, the quests whose stages decide a faction's or a settlement's fate are shared (tools/questscan.cs
+# ALLOW_OUTCOMES): the player who chooses decides for both, and the friend gets the outcome once near them (a stage that turns a
+# faction on the player is StageRules' kMoves|kHostile). One check per ending: the chooser's console sets the ending's stages, the other
+# game must have them done within QOUT_WAIT s, its player where it stood (nothing of these moves the player). Both players stand in
+# SanctuaryExt (console placement, said so in the report), near each other, so a kMoves stage is set at once; the far case is the follow
+# step's. The chooser alternates, the host for the first ending, the VM for the second, and so on; QOUT_SWAP=1 flips it, so a run with it
+# and one without, each on fresh throwaway saves, check every ending both ways. Quest stages are for good in a save, and these end the
+# add-ons' stories: run it on throwaway saves (backup.sh before, restore after); an ending already done in either game is a FAIL naming it.
+# ending: <editor ID>:<objective shown first, or ->:<stages set in order, the last the ending's>. A SAFE quest (objectives) is shared
+# only once the chooser has started it, so its objective is shown first; a SILENT one (none) is started in the other game by the stage.
+# The Children of Atom's kick-out comes before the nuke, whose 100 sets the kick-out's 700 as well.
+QOUT_ENDINGS=${QOUT_ENDINGS:-"DLC03AtomM01_CombatStop:-:1,100;DLC03CoA_Kickout:-:700;DLC03AcadiaDefense:-:100;DLC03MQ06_WindFarmHandling:-:50;DLC03MQ06_NukeHandling:-:100;DLC04SafariAdventureQuest:10:10,175;DLC04RaiderKickout:10:20"}
+QOUT_WAIT=${QOUT_WAIT:-30}; QOUT_SWAP=${QOUT_SWAP:-0}
+_qo_id() { dc "$1" "quests edid:$2" | tr ';' '\n' | awk -v e="$2" '$2 == e { print $1; exit }'; }
+_qo_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
+_qo_has() { case ",$(_qo_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
+_qo_all() { local s; for s in ${3//,/ }; do _qo_has "$1" "$2" "$s" || return 1; done; return 0; }   # _qo_all <who> <quest id> <stages,...>
+step_quests_outcomes() {
+	section "quests_outcomes (the add-ons' endings and kick-outs: the chooser's console setstage, the other game the same; console placement)"
+	local entries entry edid obj stages id ids="" line s i=0 from to pos0 moved
+	IFS=';' read -ra entries <<<"$QOUT_ENDINGS"
+	for entry in "${entries[@]}"; do
+		IFS=':' read -r edid obj stages <<<"$entry"
+		id=$(_qo_id host "$edid")
+		if [ -z "$id" ] || [ "$id" != "$(_qo_id vm "$edid")" ]; then fail "quests_outcomes: set-up: both games have $edid (the add-on loaded, the same form ID)" "host '$id', VM '$(_qo_id vm "$edid")'"; return; fi
+		line=$(dc host "stages $id")
+		case "$line" in *"sQuests = safe"*) ;; *) fail "quests_outcomes: set-up: the host shares $edid (sQuests = safe, a shared story)" "got '$line'"; return;; esac
+		s=${stages##*,}
+		if _qo_has host "$id" "$s" || _qo_has vm "$id" "$s"; then fail "quests_outcomes: set-up: neither game has $edid's ending $s done (a throwaway save from before it)" "host $(_qo_done host "$id"), VM $(_qo_done vm "$id")"; return; fi
+		ids="$ids $id"
+	done
+	enter_both SanctuaryExt 14
+	read -ra ids <<<"$ids"
+	for entry in "${entries[@]}"; do
+		IFS=':' read -r edid obj stages <<<"$entry"; id=${ids[$i]}
+		if [ $(( (i + QOUT_SWAP) % 2 )) = 0 ]; then from=host; to=vm; else from=vm; to=host; fi
+		i=$((i + 1))
+		pos0=$(dc $to pos)
+		[ "$obj" != - ] && { dc $from "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the chooser has the quest started
+		for s in ${stages//,/ }; do dc $from "console setstage $edid $s" >/dev/null; sleep 3; done
+		if ! wait_for 10 _qo_all $from "$id" "$stages"; then fail "quests_outcomes ($edid): set-up: the $from's console set ${stages//,/ then }" "$from done $(_qo_done $from "$id")"; continue; fi
+		if wait_for "$QOUT_WAIT" _qo_all $to "$id" "$stages"; then pass "quests_outcomes ($edid): the $from's ${stages//,/ and } is set in the $to's game" "$from done $(_qo_done $from "$id"), $to $(_qo_done $to "$id")"
+		else fail "quests_outcomes ($edid): the $from's ${stages//,/ and } is set in the $to's game" "$from done $(_qo_done $from "$id"), $to $(_qo_done $to "$id")"; fi
+		moved=$(_q_moved "$pos0" "$(dc $to pos)")
+		if is_num "$moved"; then expect_le "quests_outcomes ($edid): the $to's player stays where it was" "$moved" 64 u
+		else fail "quests_outcomes ($edid): the $to's player stays where it was" "no position read"; fi
+	done
+}

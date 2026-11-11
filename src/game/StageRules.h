@@ -104,7 +104,10 @@ namespace StageRules
 	// own stage). So DN036 500 (Phyllis), DN049's x49 (a shop's robots), the
 	// Nucleus's 70 and the Institute's Acadia 200 (through the kick-out and defence quests' stages they set), Far
 	// Harbor S02 210 (Malcolm), Kiddie Kingdom 740 (Oswald's fight), and its 600 and 700, whose quest script's
-	// one-time Init sets the hostile ghouls on the player as they already are. Their payments: DN049 711's pre-war
+	// one-time Init sets the hostile ghouls on the player as they already are; and Far Harbor's endings: the nuke's 100
+	// (the Children of Atom, through the kick-out's 700 it sets), the wind farm's 50 (Far Harbor's town, with its 5, a
+	// DisablePlayerControls, kMoves alone), the kick-out's 700 and Acadia's defence 100, and Nuka-World's raider
+	// kick-out 20 (the gangs, and Gage when he was a companion). Their payments: DN049 711's pre-war
 	// money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
@@ -487,6 +490,9 @@ namespace StageRules
 		{ 1, 0x013F3A, 200, kMoves | kHostile, 0 },  // DLC03Acadia_Institute: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 250, 0, 6 },
 		{ 1, 0x013F3A, 460, 0, 32 },
+		{ 1, 0x015366, 100, kMoves | kHostile, 35 },  // DLC03MQ06_NukeHandling: the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x01AC2B, 5, kMoves, 80 },  // DLC03MQ06_WindFarmHandling: DisablePlayerControls
+		{ 1, 0x01AC2B, 50, kMoves | kHostile, 0 },  // the player an enemy: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by DLC03MQ00 100)
 		{ 1, 0x01CBFA, 1, kMoves, 50 },  // DLC03MQ04_01: into DiMA's memories (MQ04Script.EnterVR)
 		{ 1, 0x01E3FE, 350, kMoves, 50 },  // DLC03MQ04_05: out of them
 		{ 1, 0x02127F, 1, kMoves | kBridge, 85 },  // DLC03MQ06a
@@ -498,6 +504,8 @@ namespace StageRules
 		{ 1, 0x023ACA, 230, 0, 50 },
 		{ 1, 0x0247B3, 45, 0, 5 },  // DLC03AtomM01_EncounterHandler
 		{ 1, 0x0247B3, 50, 0, 5 },
+		{ 1, 0x0323DE, 700, kMoves | kHostile, 0 },  // DLC03CoA_Kickout: the player an enemy: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction
+		{ 1, 0x032C24, 100, kMoves | kHostile, 0 },  // DLC03AcadiaDefense: the player an enemy: SetEnemy pDLC03AcadiaFaction pPlayerFaction
 		{ 1, 0x03389A, 15, 0, 20 },  // DLC03_V118_Intro
 		{ 1, 0x036763, 548, kMoves, 82 },  // DLC03_V118_Quest: the date (faded out, moved to it)
 		{ 1, 0x040AF0, 100, 0, 60 },  // DLC03MQ06_PlayerExitWindFarm
@@ -541,6 +549,7 @@ namespace StageRules
 		{ 3, 0x016E18, 95, 0, 10 },     // DLC04RaidSubdue
 		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
 		{ 3, 0x01AABF, 110, kPays, 0 },  // DLC04DialogueSettlement: RemoveItem(DLC04_MeatBloodworm x10)
+		{ 3, 0x027704, 20, kMoves | kHostile, 0 },  // DLC04RaiderKickout: the player an enemy: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by dlc04:dlc04koquestscript.DLC04SendKickOut)
 		{ 3, 0x0295C8, 50, 0, 100 },  // DLC04GZBattlezone
 		{ 3, 0x0295C8, 60, 0, 20 },
 		{ 3, 0x03684F, 6, kMoves, 50 },  // DLC04_KiddieKingdomMain: MoveTo temp6; the player an enemy: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
@@ -998,11 +1007,11 @@ namespace StageRules
 		{ 1, 0x001B42, 1 }, { 1, 0x001B42, 15 }, { 1, 0x001B42, 150 }, { 1, 0x001B42, 250 }, { 1, 0x001B42, 350 }, { 1, 0x001B42, 450 }, { 1, 0x001B42, 550 },  // DLC03MQ04
 		{ 1, 0x001B42, 1000 },
 		{ 1, 0x001B43, 0 }, { 1, 0x001B43, 1 }, { 1, 0x001B43, 50 }, { 1, 0x001B43, 60 }, { 1, 0x001B43, 105 }, { 1, 0x001B43, 120 }, { 1, 0x001B43, 125 },  // DLC03MQ05
-		{ 1, 0x001B43, 220 }, { 1, 0x001B43, 230 }, { 1, 0x001B43, 240 }, { 1, 0x001B43, 250 }, { 1, 0x001B43, 500 }, { 1, 0x001B43, 8900 },
+		{ 1, 0x001B43, 220 }, { 1, 0x001B43, 230 }, { 1, 0x001B43, 240 }, { 1, 0x001B43, 250 }, { 1, 0x001B43, 500 }, { 1, 0x001B43, 850 }, { 1, 0x001B43, 8900 },
 		{ 1, 0x001B44, 1 }, { 1, 0x001B44, 2 }, { 1, 0x001B44, 3 }, { 1, 0x001B44, 200 }, { 1, 0x001B44, 250 }, { 1, 0x001B44, 500 },  // DLC03MQ06
-		{ 1, 0x004C8E, 30 }, { 1, 0x004C8E, 52 }, { 1, 0x004C8E, 55 }, { 1, 0x004C8E, 57 }, { 1, 0x004C8E, 60 }, { 1, 0x004C8E, 75 }, { 1, 0x004C8E, 90 },  // DLC03CoA_DialogueNucleus
-		{ 1, 0x004C8E, 92 }, { 1, 0x004C8E, 96 }, { 1, 0x004C8E, 97 }, { 1, 0x004C8E, 98 }, { 1, 0x004C8E, 99 }, { 1, 0x004C8E, 115 }, { 1, 0x004C8E, 117 },
-		{ 1, 0x004C8E, 119 }, { 1, 0x004C8E, 120 }, { 1, 0x004C8E, 124 }, { 1, 0x004C8E, 125 }, { 1, 0x004C8E, 130 },
+		{ 1, 0x004C8E, 30 }, { 1, 0x004C8E, 52 }, { 1, 0x004C8E, 55 }, { 1, 0x004C8E, 57 }, { 1, 0x004C8E, 60 }, { 1, 0x004C8E, 70 }, { 1, 0x004C8E, 75 },  // DLC03CoA_DialogueNucleus
+		{ 1, 0x004C8E, 90 }, { 1, 0x004C8E, 92 }, { 1, 0x004C8E, 96 }, { 1, 0x004C8E, 97 }, { 1, 0x004C8E, 98 }, { 1, 0x004C8E, 99 }, { 1, 0x004C8E, 115 },
+		{ 1, 0x004C8E, 117 }, { 1, 0x004C8E, 119 }, { 1, 0x004C8E, 120 }, { 1, 0x004C8E, 124 }, { 1, 0x004C8E, 125 }, { 1, 0x004C8E, 130 },
 		{ 1, 0x004F2C, 145 }, { 1, 0x004F2C, 150 },  // DLC03MQPostQuest
 		{ 1, 0x005BD7, 700 }, { 1, 0x005BD7, 710 }, { 1, 0x005BD7, 720 }, { 1, 0x005BD7, 9000 },  // DLC03DialogueFarHarbor
 		{ 1, 0x00A990, 0 }, { 1, 0x00A990, 100 }, { 1, 0x00A990, 250 }, { 1, 0x00A990, 290 }, { 1, 0x00A990, 300 }, { 1, 0x00A990, 375 },  // DLC03FarHarborFF03a
@@ -1011,11 +1020,13 @@ namespace StageRules
 		{ 1, 0x00AB19, 150 }, { 1, 0x00AB19, 200 }, { 1, 0x00AB19, 350 },  // DLC03FarHarborS01Defend
 		{ 1, 0x00AEC3, 1 }, { 1, 0x00AEC3, 100 }, { 1, 0x00AEC3, 200 }, { 1, 0x00AEC3, 300 }, { 1, 0x00AEC3, 325 }, { 1, 0x00AEC3, 400 },  // DLC03FarHarborS02
 		{ 1, 0x00AEC4, 50 }, { 1, 0x00AEC4, 100 }, { 1, 0x00AEC4, 300 }, { 1, 0x00AEC4, 350 },  // DLC03FarHarborFF03b
-		{ 1, 0x00AFB1, 150 },  // DLC03AtomM01
+		{ 1, 0x00AFB1, 100 }, { 1, 0x00AFB1, 150 }, { 1, 0x00AFB1, 700 }, { 1, 0x00AFB1, 750 },  // DLC03AtomM01
 		{ 1, 0x01055C, 10 }, { 1, 0x01055C, 200 },  // DLC03CoA_FFNucleus01
 		{ 1, 0x013F39, 40 }, { 1, 0x013F39, 200 }, { 1, 0x013F39, 1000 },  // DLC03Acadia_BoS
 		{ 1, 0x013F3A, 40 }, { 1, 0x013F3A, 200 }, { 1, 0x013F3A, 1000 },  // DLC03Acadia_Institute
+		{ 1, 0x015366, 5 }, { 1, 0x015366, 7 }, { 1, 0x015366, 10 }, { 1, 0x015366, 15 }, { 1, 0x015366, 20 }, { 1, 0x015366, 100 }, { 1, 0x015366, 150 },  // DLC03MQ06_NukeHandling
 		{ 1, 0x01536F, 600 }, { 1, 0x01536F, 700 }, { 1, 0x01536F, 750 },  // DLC03AcadiaM01
+		{ 1, 0x01AC2B, 2 }, { 1, 0x01AC2B, 5 }, { 1, 0x01AC2B, 10 }, { 1, 0x01AC2B, 50 },  // DLC03MQ06_WindFarmHandling
 		{ 1, 0x01B0AF, 100 }, { 1, 0x01B0AF, 700 },  // DLC03AtomM02
 		{ 1, 0x01CBFA, 100 }, { 1, 0x01CBFA, 102 }, { 1, 0x01CBFA, 104 }, { 1, 0x01CBFA, 106 }, { 1, 0x01CBFA, 108 }, { 1, 0x01CBFA, 110 }, { 1, 0x01CBFA, 115 },  // DLC03MQ04_01
 		{ 1, 0x01CBFA, 120 }, { 1, 0x01CBFA, 160 }, { 1, 0x01CBFA, 250 }, { 1, 0x01CBFA, 300 },
@@ -1039,6 +1050,8 @@ namespace StageRules
 		{ 1, 0x0316F2, 803 }, { 1, 0x0316F2, 804 }, { 1, 0x0316F2, 805 }, { 1, 0x0316F2, 806 }, { 1, 0x0316F2, 807 }, { 1, 0x0316F2, 810 }, { 1, 0x0316F2, 820 },
 		{ 1, 0x0316F2, 830 }, { 1, 0x0316F2, 900 }, { 1, 0x0316F2, 950 }, { 1, 0x0316F2, 960 }, { 1, 0x0316F2, 970 }, { 1, 0x0316F2, 1350 }, { 1, 0x0316F2, 1370 },
 		{ 1, 0x0316F2, 1400 }, { 1, 0x0316F2, 1500 }, { 1, 0x0316F2, 2000 },
+		{ 1, 0x0323DE, 700 },  // DLC03CoA_Kickout
+		{ 1, 0x032C24, 100 }, { 1, 0x032C24, 200 },  // DLC03AcadiaDefense
 		{ 1, 0x03389A, 100 }, { 1, 0x03389A, 300 },  // DLC03_V118_Intro
 		{ 1, 0x034DEA, 10 },  // DLC03MQ06_WindFarmBuildingQuest
 		{ 1, 0x036762, 5 },  // DLC03_V118_PearlAvery
@@ -1057,8 +1070,8 @@ namespace StageRules
 		{ 2, 0x002833, 190 }, { 2, 0x002833, 255 },
 		{ 2, 0x00FF87, 40 }, { 2, 0x00FF87, 50 }, { 2, 0x00FF87, 100 },  // DLC01MQ01Caravan
 		{ 3, 0x000800, 520 }, { 3, 0x000800, 1000 },  // DLC04MQ00
-		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 1000 },  // DLC04MQ01
-		{ 3, 0x000802, 0 }, { 3, 0x000802, 1000 },  // DLC04MQ02
+		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 700 }, { 3, 0x000801, 1000 },  // DLC04MQ01
+		{ 3, 0x000802, 0 }, { 3, 0x000802, 1000 }, { 3, 0x000802, 1500 },  // DLC04MQ02
 		{ 3, 0x000803, 655 },  // DLC04MQ03
 		{ 3, 0x000804, 1 }, { 3, 0x000804, 2 }, { 3, 0x000804, 3 }, { 3, 0x000804, 4 }, { 3, 0x000804, 10 }, { 3, 0x000804, 50 }, { 3, 0x000804, 300 },  // DLC04MQ04
 		{ 3, 0x000804, 305 },
@@ -1071,6 +1084,8 @@ namespace StageRules
 		{ 3, 0x019088, 20 },  // DLC04RaidCoerce
 		{ 3, 0x01AABF, 47 }, { 3, 0x01AABF, 200 },  // DLC04DialogueSettlement
 		{ 3, 0x01E34A, 210 }, { 3, 0x01E34A, 212 }, { 3, 0x01E34A, 300 }, { 3, 0x01E34A, 1000 }, { 3, 0x01E34A, 1500 }, { 3, 0x01E34A, 1600 }, { 3, 0x01E34A, 2000 },  // DLC04GZMainQuest
+		{ 3, 0x0260E2, 117 }, { 3, 0x0260E2, 175 }, { 3, 0x0260E2, 176 }, { 3, 0x0260E2, 200 }, { 3, 0x0260E2, 250 }, { 3, 0x0260E2, 260 }, { 3, 0x0260E2, 300 },  // DLC04SafariAdventureQuest
+		{ 3, 0x0260E2, 1000 }, { 3, 0x0260E2, 1500 }, { 3, 0x0260E2, 1600 }, { 3, 0x0260E2, 2000 },
 		{ 3, 0x035791, 20 },  // DLC04MS01BradbertonDies
 		{ 3, 0x03684E, 1000 },  // DLC04_BottlingPlantMAIN
 		{ 3, 0x03684F, 780 }, { 3, 0x03684F, 795 }, { 3, 0x03684F, 800 }, { 3, 0x03684F, 820 }, { 3, 0x03684F, 1000 },  // DLC04_KiddieKingdomMain

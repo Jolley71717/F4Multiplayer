@@ -13,7 +13,9 @@
 # the quests shared by their type that the story manager starts with targets each game picks itself,
 # src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
 # shares, by the rule there; the quests in ALLOW_OUTCOMES in tools/questscan.cs pass it with stages that turn a faction
-# on the player or give a settlement, by the maintainer's choice), and what was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
+# on the player or give a settlement, by the maintainer's choice, ALLOW_STARTS lets some of them start a quest each
+# game runs its own way and ALLOW_KICKOUTS lets a kick-out turn a companion on the player too), and what was left out
+# and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
 # those quests alone (-Files 0,1,2,3; a stage of a SAFE or SILENT quest that makes the player an enemy is kMoves, set
 # only with the friend near); with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
 # -Safe also lists src/game/QuestFilter.h's SILENT after SAFE (the quests the rule passes but for their objectives,

@@ -139,14 +139,13 @@ namespace QuestFilter
 
 	// Quests SAFE leaves out whatever the rule it is made by (below) says: a backstop. Six are quests the rule passes that
 	// are each player's all the same (tools/questscan.ps1 -Safe prints them as "denied:": HC_Manager, CZ_Arena and the
-	// four DLC04 bookkeeping quests). The other three, MQ101, DogmeatQuest and DLC04RaiderKickout, the rule leaves out by
-	// itself, for a stage (empties the inventory, AllowCompanion, SetEnemy); they stay here in case the rule changes.
+	// four DLC04 bookkeeping quests). The other two, MQ101 and DogmeatQuest, the rule leaves out by itself, for a stage
+	// (empties the inventory, AllowCompanion); they stay here in case the rule changes.
 	inline constexpr Local DENIED[] = {
 		{ 0, 0x00080E },  // HC_Manager: survival mode's, each game's difficulty
 		{ 0, 0x01ED86 },  // MQ101: the opening, War Never Changes (every player's own; StageRules::IsOpening)
 		{ 0, 0x020748 },  // CZ_Arena: the Combat Zone's fight, its fighters filled by its script in each game
 		{ 0, 0x06DFAF },  // DogmeatQuest: each player's own dog
-		{ 3, 0x027704 },  // DLC04RaiderKickout: the gangs and Gage turned on the player, their settlements lost
 		{ 3, 0x032A4A },  // DLC04MQ04_RaiderOutpostTracker: each game's own raider outposts, their perks, the achievement
 		{ 3, 0x03C5A7 },  // DLC04PowerTracker: Nuka-World's park power, kept by each game's scripts
 		{ 3, 0x0447E8 },  // DLC04ParkPopulationHandler: who stands in the parks, each game's
@@ -179,10 +178,13 @@ namespace QuestFilter
 	// game shares anyway). A shared quest's stage it sets is not followed: that stage reaches a friend's game as the
 	// story's, SAFE or not. Less DENIED. And, by the maintainer's choice, the quests whose stages turn a faction hostile
 	// or friendly, make the player a faction's enemy or give or take a settlement (tools/questscan.cs ALLOW_OUTCOMES,
-	// each with why: ten, DN036's Egret Tours Marina, DN049's robot shops, Far Harbor's settlements S01, S02 and FF01,
-	// the Institute's Acadia quest, DLC03_ADV017, the Nucleus's talks, Kiddie Kingdom, Nuka-Town's traders): one
-	// player's outcome is both players', as the shared story's kick-outs already are, and with sQuests = story each
-	// keeps their own. For those the rule lets such a stage through (and what a settlement's own workshop scripts do
+	// each with why: seventeen, DN036's Egret Tours Marina, DN049's robot shops, Far Harbor's settlements S01, S02 and
+	// FF01, the Institute's Acadia quest, DLC03_ADV017, the Nucleus's talks, Kiddie Kingdom, Nuka-Town's traders, and
+	// Far Harbor's endings and kick-outs: the Nucleus's nuke and the wind farm's handlers, the Children of Atom's
+	// kick-out, the Atom fight's stop and Acadia's defence; Nuka-World's Safari Adventure and the raiders' kick-out,
+	// which also turns Gage on the player when he was a companion, ALLOW_KICKOUTS): one player's outcome is both
+	// players', as the shared story's kick-outs already are, and with sQuests = story each keeps their own. The chooser
+	// decides for both. For those the rule lets such a stage through (and what a settlement's own workshop scripts do
 	// once it is given or gains a settler) and holds for everything else; a stage of theirs that turns a faction on the
 	// player is StageRules' kMoves, set only with the friend who did it near, as one that moves them. Their stages that move
 	// or charge the player are StageRules' as the story's are; an item a stage gives is given in each game, as for
@@ -281,7 +283,9 @@ namespace QuestFilter
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement
 		{ 3, 0x01E34B },  // DLC04GZMiscObjective
 		{ 3, 0x025AE6 },  // DLC04MQ04MasonSceneQuest
+		{ 3, 0x0260E2 },  // DLC04SafariAdventureQuest
 		{ 3, 0x026169 },  // DLC04MQ04DixieSceneQuest
+		{ 3, 0x027704 },  // DLC04RaiderKickout
 		{ 3, 0x02B019 },  // DLC04MS01MiscObjectiveHolder
 		{ 3, 0x0337CC },  // DLC04PrestonWipeOutRaiders
 		{ 3, 0x03684E },  // DLC04_BottlingPlantMAIN
@@ -298,7 +302,9 @@ namespace QuestFilter
 
 	// Quests the rule above passes but for their objectives, which the host's sQuests = safe shares too: a place's own
 	// quest (DN035, the Vault 114 gear door's DN142, the Castle's waves DN029*), the Prydwen's arrival (BoSEnable), the
-	// add-ons' fights (DLC03MQ02Fight). With no objective a quest shows nothing, so one is shared as a dialogue quest
+	// add-ons' fights (DLC03MQ02Fight), Far Harbor's endings and kick-outs that SAFE's outcome rule lets through (the
+	// Nucleus's nuke and the wind farm's handlers, the Children of Atom's kick-out, the Atom fight's stop, Acadia's
+	// defence). With no objective a quest shows nothing, so one is shared as a dialogue quest
 	// is (QuestSync): started here once a friend's stage of it is set, its stages taken in any order, dropped once it
 	// ran and stopped. Less those that are no content both players should share, by name (tools/questscan.cs's
 	// DENY_PATTERNS: the game's systems, achievements, patches, tutorials, items and holotapes it hands out, the
@@ -389,10 +395,14 @@ namespace QuestFilter
 		{ 1, 0x00215E },  // DLC03MQ01ChangeLocationHandler
 		{ 1, 0x0052B7 },  // DLC03AcadiaDialogue
 		{ 1, 0x01445A },  // DLC03M4Quest
+		{ 1, 0x015366 },  // DLC03MQ06_NukeHandling
+		{ 1, 0x01AC2B },  // DLC03MQ06_WindFarmHandling
 		{ 1, 0x0247B3 },  // DLC03AtomM01_EncounterHandler
 		{ 1, 0x02B4FF },  // DLC03CoA_FFNucleus03_PumpHandler
 		{ 1, 0x02C8B2 },  // DLC03CoA_FFNucleusQuestObjHandler
 		{ 1, 0x02E058 },  // DLC03AtomM02Post
+		{ 1, 0x0323DE },  // DLC03CoA_Kickout
+		{ 1, 0x032C24 },  // DLC03AcadiaDefense
 		{ 1, 0x032D34 },  // DLC03_ADV011
 		{ 1, 0x034DEA },  // DLC03MQ06_WindFarmBuildingQuest
 		{ 1, 0x036762 },  // DLC03_V118_PearlAvery
@@ -404,6 +414,7 @@ namespace QuestFilter
 		{ 1, 0x053D16 },  // DLC03Acadia_BoSVertibird
 		{ 1, 0x054214 },  // DLC03_ADV08
 		{ 1, 0x056B62 },  // DLC03POIBuriedStash
+		{ 1, 0x05D37B },  // DLC03AtomM01_CombatStop
 		{ 1, 0x05D3E4 },  // DLC03_VimCaptainsBlendQuest
 		{ 2, 0x000805 },  // DLC01MQ00
 		{ 2, 0x00A162 },  // DLC01FortHagenSatelliteArrayQuest

@@ -498,9 +498,13 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 		{ File::kCoast, 0x004C8E, 70 },       // DLC03CoA_DialogueNucleus: sets DLC03CoA_Kickout 700
 		{ File::kCoast, 0x00AEC3, 210 },      // DLC03FarHarborS02: Malcolm
 		{ File::kCoast, 0x013F3A, 200 },      // DLC03Acadia_Institute: sets DLC03AcadiaDefense 100
+		{ File::kCoast, 0x01AC2B, 50 },       // DLC03MQ06_WindFarmHandling: the turbines stopped (sets DLC03MQ00 100)
+		{ File::kCoast, 0x0323DE, 700 },      // DLC03CoA_Kickout: the Children of Atom
+		{ File::kCoast, 0x032C24, 100 },      // DLC03AcadiaDefense: Acadia
 		{ File::kNukaWorld, 0x03684F, 600 },  // DLC04_KiddieKingdomMain: its script's one-time Init
 		{ File::kNukaWorld, 0x03684F, 700 },
 		{ File::kNukaWorld, 0x03684F, 740 },  // Oswald's fight
+		{ File::kNukaWorld, 0x027704, 20 },   // DLC04RaiderKickout: the gangs, and Gage when he was a companion
 	};
 	for (const auto& [file, quest, stage] : hostile) {
 		const auto rule = Find(quest, stage, file);
@@ -520,6 +524,15 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 		CHECK(Judge(rule, { .live = false, .nearFriend = true }) == Verdict::kSkip);
 		CHECK(Judge(rule, { .opening = true }) == Verdict::kOpeningWaits);
 	}
+	// The Nucleus nuked (Far Harbor's ending): kMoves and kHostile through the kick-out it sets, with the wait the scan
+	// read; the blast (150) no row: as in the game, a player still inside dies. The wind farm's code dug up (5) moves the
+	// player: kMoves alone.
+	CHECK(FlagsOf(0x015366, 100, File::kCoast) == (kMoves | kHostile));
+	CHECK(Judge(Find(0x015366, 100, File::kCoast), { .live = true, .nearFriend = true }) == Verdict::kSet);
+	CHECK(Judge(Find(0x015366, 100, File::kCoast), { .live = false }) == Verdict::kSkip);
+	CHECK(!Find(0x015366, 150, File::kCoast));
+	CHECK(FlagsOf(0x01AC2B, 5, File::kCoast) == kMoves);
+	CHECK(SetsAnother(File::kCoast, 0x015366, 100));  // DLC03CoA_Kickout 700
 	// The peace a stage makes is no row: DN049's x50 (SetEnemy(PlayerFaction, True, False), then StopCombat) and its 55.
 	CHECK(!Find(0x04542B, 50));
 	CHECK(!Find(0x04542B, 150));
