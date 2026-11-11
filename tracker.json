@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T18:58:10+00:00",
+ "updated": "2026-11-11T21:32:43+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -413,6 +413,14 @@
    "title": "Rig: older steps.sh input.ps1 callers ignore an input=refused line, so a covered game reads as the mod's failure",
    "kind": "feature",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "55nm",
+   "title": "Rig: integ-all.sh never restores the host's session file between steps (cause of most VM-done-none lines); rig steps to correct after the integ/next run",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -982,6 +990,14 @@
    "desc": "After being revived, a player can end up partly inside the ground on their own screen, while friends see them moving normally."
   },
   {
+   "id": "crvi",
+   "title": "Check: a live stage that starts its quest waits behind the joiner's whole catch-up queue (37-47 s with 150 persisted stages)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ctl",
    "title": "Some settlement pieces built in workshop mode don't show for a friend",
    "kind": "bug",
@@ -1024,6 +1040,15 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "dagm",
+   "title": "Kick-outs: BoS303 0-3 console quickstarts are still shared (PR 414 review at a16ad6caa)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "",
+   "pr": 414
   },
   {
    "id": "dmxn",
@@ -1556,8 +1581,9 @@
    "title": "Power Play 8 hostile hold waits on all three gangs, allies included",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 417
   },
   {
    "id": "j9dz",
@@ -1619,6 +1645,15 @@
    "note": "Fixed for the next release; not yet tried with real shots.",
    "pr": 170,
    "desc": "A player reported that enemies' death animations played late on the client's screen. The next release reports an enemy as dead as soon as it starts to fall, so friends see the death without a three second wait. On two real games a kill was counted once and the corpses ended up in the same place."
+  },
+  {
+   "id": "jtgy",
+   "title": "Shared workshop assign (PR 418): a friend is offered Command only on a settler its own game holds as a workshop NPC",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "",
+   "pr": 418
   },
   {
    "id": "ju8l",
@@ -1860,6 +1895,14 @@
    "note": ""
   },
   {
+   "id": "mo3d",
+   "title": "Shared radiant runs (PR 399): an alias forced onto our copy is never read back or retried, so the friend's quest keeps the removed reference (radiant-rr alias 5)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "mokv",
    "title": "Shared encounter lines: accusor's lines show as text with no voice",
    "kind": "bug",
@@ -2047,6 +2090,14 @@
    "note": "The VM's graphics driver, not the mod"
   },
   {
+   "id": "parw",
+   "title": "Quests: a kDebug stage-0 row made every friend's stage that starts its quest skipped as a quickstart (Inst307Fight 10/15 at PR 414 head a16ad6caa)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "paue",
    "title": "Weapons fired from inside power armor: laser tracers not shown, an inert laser hit a watcher",
    "kind": "bug",
@@ -2197,6 +2248,14 @@
    "stage": 7,
    "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 324
+  },
+  {
+   "id": "rf47",
+   "title": "Mass Fusion after a console quickstart: a friend's game takes the wrong side at DN084's later stages (DN084 11/12 not shared)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "rfba",
@@ -2542,6 +2601,14 @@
    "desc": "Some players hear a constant clicking after someone joins or leaves. We could not find the cause from the code alone, so the next release counts every sound the mod makes the game play and writes a line to the log when one repeats far more than normal play does. A friend's voice chat is the main suspect."
   },
   {
+   "id": "vhhm",
+   "title": "Shared workshop (PR 398): a friend's buried copy comes back alive after its cell reloads and stays in the friend's save (the unload writes a new record)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "vj8h",
    "title": "Host engine crash on console coc Vault81Entry during the 0.12.0-rc1 churn soak (TESTopicInfo null in TESTopic::InitItemImpl, no plugin frame)",
    "kind": "bug",
@@ -2561,6 +2628,14 @@
   {
    "id": "vr4m",
    "title": "PR 411 review blockers: friend's 48h defend-attack timer never cancelled; ResumesAttackClock restarts an attack after host's 200/290/300/310",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "vwa1",
+   "title": "Shared workshop (PR 379): WorkshopSync::HandOver runs off the main thread when a friend strings a real wire (ItemPlacedEvent on a job thread)",
    "kind": "bug",
    "priority": 1,
    "stage": 0,
@@ -2747,6 +2822,14 @@
    "note": ""
   },
   {
+   "id": "xus7",
+   "title": "Shared settlement: a friend can't repair the host's destroyed turret (actors are outside the piece damage mirror and the repair request)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "y1dj",
    "title": "Some explosions aren't shared, like gas canisters",
    "kind": "bug",
@@ -2915,6 +2998,15 @@
    "priority": 2,
    "stage": 3,
    "note": "PR open: five more quests shared; in review"
+  },
+  {
+   "id": "zbg2",
+   "title": "Workshop move: host moves any bench-linked reference without the engine's may-move test (PR 419 review at b8cfb96d0)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "",
+   "pr": 419
   },
   {
    "id": "zc9n",
