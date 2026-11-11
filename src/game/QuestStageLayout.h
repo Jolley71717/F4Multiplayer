@@ -66,6 +66,9 @@ namespace QuestStageLayout
 	// stages are marked changed for the save), not SetDone's walk of the log entries (a Complete Quest entry would complete
 	// the quest through the engine, with its quest XP) nor SetStage's script. For a friend's turn-in whose reward was given
 	// here (QuestSync::CloseTurnIn). False if the quest has no such stage or it is done already. Main thread only.
+	// The contract, for every caller: the done bit and nothing else. currentStage is left as it is (a caller that wants it
+	// moved does that itself: CloseTurnIn does, for an ordered quest only, since a dialogue quest's stages aren't steps), and
+	// true means newly marked here, not merely that the stage exists (a caller that needs the latter asks Has).
 	inline bool MarkDone(RE::TESQuest* a_quest, std::uint16_t a_stage)
 	{
 		bool marked = false;
