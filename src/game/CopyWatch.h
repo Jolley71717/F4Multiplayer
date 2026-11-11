@@ -54,6 +54,13 @@ namespace CopyWatch
 	// ... and it reads a_health once set (what the engine let it come to): where it stands from now on.
 	void HealthSet(std::uint32_t a_refId, float a_health);
 
+	// Our copy of the NPC (a_refId our game's form id) was raised from the dead (WorldSync's RaiseCopies, the engine's
+	// Actor::Resurrect): its book is forgotten, so where it stands is read afresh at its next Frame, as a copy first seen.
+	// Kept, the book would still hold the dead figure its fall booked (CopyHealth::Book::Fell), and the engine's full
+	// health after the raise would read as a gain no report gave it, taken back down to CopyHealth::MIN_LEFT a tenth of
+	// a second on; no report comes to set it right until the runner's game damages the NPC.
+	void Raised(std::uint32_t a_refId);
+
 	// Gives copies back what something other than our hits took, takes back what they gained with no report from their
 	// game (a legendary's mutation of a copy legendary only here), and logs the hits and deaths (so many a
 	// RollingLog::WINDOW) and the damage counters every WINDOW. Every frame.

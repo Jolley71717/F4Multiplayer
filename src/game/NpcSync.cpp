@@ -153,6 +153,10 @@ namespace NpcSync
 		std::unordered_set<std::uint32_t>                    keptOff, notBrought, notBroughtOver;
 		// Friends' NPCs our game has no reference of (Spawns::Absent) that our player hit, each logged once: no takeover asked.
 		std::unordered_set<std::uint32_t>                    absentFought;
+		// Plugin NPCs whose runner's game sent a state while our copy lay dead, and when (HeardDead): alive there, since a
+		// runner sends none for one dead or dying in its game.
+		std::unordered_map<std::uint32_t, Clock::time_point> heardDead;
+		constexpr std::size_t                                MAX_HEARD_DEAD = 256;
 		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
@@ -1908,6 +1912,10 @@ namespace NpcSync
 			if (!actor) {
 				continue;
 			}
+			// Our copy lies dead while its runner's game has the NPC alive: WorldSync raises it (CopyRevive.h).
+			if (!spawn && !absent && actor->IsDead(false) && (heardDead.size() < MAX_HEARD_DEAD || heardDead.contains(state.refId))) {
+				heardDead[state.refId] = now;
+			}
 			auto& mirror = mirrors[state.refId];
 			auto& snaps = mirror.snapshots;
 			const auto stamp = mirror.stamps.Next(now, state.sentMs);
@@ -1934,6 +1942,18 @@ namespace NpcSync
 	bool RunsLocally(std::uint32_t a_refId)
 	{
 		return owned.contains(a_refId);
+	}
+
+	std::vector<Heard> HeardDead()
+	{
+		const auto now = Clock::now();
+		std::erase_if(heardDead, [&](const auto& a_entry) { return now - a_entry.second > LOST_AFTER; });
+		std::vector<Heard> out;
+		out.reserve(heardDead.size());
+		for (const auto& [id, at] : heardDead) {
+			out.push_back({ id, at });
+		}
+		return out;
 	}
 
 	std::uint32_t TalkingTo()
@@ -2189,6 +2209,7 @@ namespace NpcSync
 		notBrought.clear();
 		notBroughtOver.clear();
 		absentFought.clear();
+		heardDead.clear();
 		localId = 0;
 		sentGear.clear();
 		knownGear.clear();

@@ -1916,9 +1916,27 @@ session has it dead" in the server log), and kills its copy (`WorldSync::TakeDea
 `killsRetried=`), so every game has it dead until the host's game brings it back; before, those reports were
 dropped without a word and the joiner fought a copy alive only there. The host's game is never told again: its
 offer is the revival. Whenever the server names a game that runs an NPC, every other game forgets that NPC's
-death (`SessionDeaths::Ledger::OnOwned`, `corrected=`), whether its copy is alive or still a corpse (the
-corpse lies until its own cell resets); a death a game reported itself in the last 3 s is kept, since the
-grant crossed the report. Hits by that NPC on a stand-in in the runner's game reach the player even while their
+death (`SessionDeaths::Ledger::OnOwned`, `corrected=`), whether its copy is alive or still a corpse; a death a game
+reported itself in the last 3 s is kept, since the grant crossed the report. A death a game reported itself that the
+server didn't take (from a game that wasn't fighting an NPC another game runs: its copy died of something only it saw,
+a throw's blast its runner's game deals itself where the NPC doesn't stand there, a drop no hit explains) is forgotten
+too once another game is still named its runner 5 s on (`Ledger::StillRun`, `NOT_TAKEN_AFTER`, `deathsNotTaken=`):
+no owner message comes for it, since the runner never changed, and up to 0.16.1 the NPC stayed dead in that game for
+good. A copy lying dead while its NPC lives in the runner's game (the runner's states for it still come: a runner
+sends none for one dead or dying, `NpcSync::HeardDead`) and alive for the session as its game knows it is raised once
+that has held for 3 s (`CopyRevive.h`, game-free and tested; WorldSync's `RaiseCopies`, the engine's
+`Actor::Resurrect` with its inventory kept), at most 3 tries, 10 s apart, then left with a warning
+(`copiesRaised=` tries/given up/story characters left). The raise itself waits, without spending a try, for a
+runner's state less than 1 s old (`HEARD_NOW`: one heard within 3 s may be falling there right now) and for our
+player's container menu on that body to close (`raisesHeld=` looks held for each). A character of a story (unique,
+essential or in a quest's alias, other than a random encounter's: a friend's encounter followed here holds our copies
+of its raiders in its aliases, `EncounterRuns`) is left as it lies. Before, the corpse lay until its own cell reset: on
+the rig a friend's grenade killed three copies the friend's game still had where the host's game had them before it
+restarted, while the raiders stood elsewhere in the host's game and lived on. A raised copy stands at the health its
+game gives it until the runner's next report, and CopyWatch's book of it goes with the raise (`CopyWatch::Raised`):
+kept, the dead figure its fall booked would read the full health as a gain no report gave it and take it back to
+1 health a tenth of a second on, with no report to set it right until the runner's game damaged the NPC. Hits by that
+NPC on a stand-in in the runner's game reach the player even while their
 copy is a corpse, on the other side of a door, not loaded or of a plugin they lack (`PlayerHits`: taken when
 the reporting friend is within 20000 units, `hits: unseen=`; before, `AttackerHere` dropped every such hit and
 the enemy could not hurt them at all). A dedicated server has no host's game, so nothing comes back there.
@@ -1932,8 +1950,8 @@ common/Server.cpp) and leaves them out of every world state it sends that game, 
 pickups; the corpse-position deaths sent ahead of the list skip them too. A save from after the kill has the corpse
 anyway (the host's found-dead check reports it again, which changes nothing). A save from before it, a quickload or a
 restart into an older save, has the NPC alive: nothing tells the host's game otherwise, it offers to run it, and the
-revival above takes it off the session's dead list for everyone (a friend's copy that died stays a corpse until its
-own cell resets, as with any revival). Before, the whole list went to the host's game after every load, so a kill
+revival above takes it off the session's dead list for everyone (a friend's copy that died is raised once the host's
+game's states for it come, as with any revival). Before, the whole list went to the host's game after every load, so a kill
 undone by a quickload was made again on every load, forever, and a cleared camp whose cell reset after a load (a
 radiant quest days later) had its raiders killed on entry: the death was learned anew with each load, so the game
 never took the reset for one. A death a friend's game reported still goes to the host's game, since that kill may be

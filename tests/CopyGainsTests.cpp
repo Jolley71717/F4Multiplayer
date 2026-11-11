@@ -191,3 +191,38 @@ TEST("copy gains: our hit in the tenth of a second after the copy's own heal sti
 	CHECK(book.Check(GHOUL, 90.0f, T0 + milliseconds{ 5000 } + CopyHealth::JUDGE_AFTER, 100.0f) == -65.0f);
 	CHECK(Took(book, GHOUL, T0 + milliseconds{ 5100 }) == 0.0f);
 }
+
+TEST("copy gains: a copy raised from the dead is first seen again (its book forgotten); kept, its fall's figure would take the raise back to 1 health")
+{
+	// Our player's grenade killed the copy here alone (its runner's game deals the blast itself, where the NPC stands
+	// elsewhere): a fall of ours (Fell), booked at the dead figure the rig saw. The server drops that death, and WorldSync
+	// raises the copy at full (RaiseCopies, Actor::Resurrect) some seconds on.
+	const auto fell = [](Book& a_book) {
+		CHECK(a_book.Check(GHOUL, 100.0f, T0, 100.0f) == 0.0f);
+		a_book.OurHit(GHOUL, T0 + milliseconds{ 50 }, 300.0f);
+		CHECK(!a_book.Fell(GHOUL, -232.0f, T0 + milliseconds{ 60 }));
+		CHECK(Near(a_book.Health(GHOUL), -232.0f));
+	};
+	const auto raised = T0 + milliseconds{ 8000 };
+
+	// Up to this fix: the book kept through the death, the full health is a gain no report gave it, and once it has stood
+	// JUDGE_AFTER it is taken back down to MIN_LEFT: 1 health, and the next scratch kills the copy again.
+	Book kept;
+	fell(kept);
+	CHECK(kept.Check(GHOUL, 100.0f, raised, 100.0f) == 0.0f);
+	CHECK(kept.Check(GHOUL, 100.0f, raised + CopyHealth::JUDGE_AFTER, 100.0f) == -(100.0f - CopyHealth::MIN_LEFT));
+
+	// Forgotten at the raise (CopyWatch::Raised): where it stands is read afresh, nothing is taken back, however long it
+	// stands, and nothing of the fall is sent again.
+	Book forgot;
+	fell(forgot);
+	forgot.Forget(GHOUL);
+	CHECK(forgot.Check(GHOUL, 100.0f, raised, 100.0f) == 0.0f);
+	CHECK(forgot.Check(GHOUL, 100.0f, raised + CopyHealth::JUDGE_AFTER, 100.0f) == 0.0f);
+	CHECK(forgot.Check(GHOUL, 100.0f, raised + milliseconds{ 1000 }, 100.0f) == 0.0f);
+	CHECK(Near(forgot.Health(GHOUL), 100.0f));
+	CHECK(Took(forgot, GHOUL, raised + milliseconds{ 1000 }) == 0.0f);
+	// And it is watched as any copy from then on: a drop no hit of ours explains is given back once judged.
+	CHECK(forgot.Check(GHOUL, 70.0f, raised + milliseconds{ 2000 }, 100.0f) == 0.0f);
+	CHECK(forgot.Check(GHOUL, 70.0f, raised + milliseconds{ 2000 } + CopyHealth::JUDGE_AFTER, 100.0f) == 30.0f);
+}
