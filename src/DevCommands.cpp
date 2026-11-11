@@ -2577,6 +2577,28 @@ namespace DevCommands
 			return "error: usage: wsres av <refHex> | mod <refHex> <av> base|perm|temp|damage <delta> | pip [text] | find <text> | can <refHex> | sum <benchHex> | state";
 		}
 
+		// wsnumbers [<benchHex>]: the host's settlement figures (WorkshopNumbers.h): the counters, and the figures at the
+		// workbench (none given: the one workshop mode is open at) as key=value; the host's game prints what it tells, a
+		// friend's what it heard, both what their own world's workbench counts (own...). wsnumbers bar on|off: a friend's
+		// workshop bar shows the host's figures, or asks the engine as if unpatched.
+		std::string WsNumbers(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "bar" && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetBarForDev(args[1] == "on");
+				return WorkshopSync::DescribeNumbers(nullptr);
+			}
+			if (args.empty()) {
+				return WorkshopSync::DescribeNumbers(nullptr);
+			}
+			if (args.size() == 1) {
+				if (const auto ref = LookupRef(args[0])) {
+					return WorkshopSync::DescribeNumbers(ref);
+				}
+			}
+			return "error: usage: wsnumbers [<benchHex>] | bar on|off";
+		}
+
 		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
 		std::string WsInfo(std::string_view a_args)
 		{
@@ -4799,6 +4821,7 @@ namespace DevCommands
 			Entry{ "wslink", WsLink },
 			Entry{ "wsinfo", WsInfo },
 			Entry{ "wsres", WsRes },
+			Entry{ "wsnumbers", WsNumbers },
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },

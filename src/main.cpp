@@ -1098,7 +1098,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 486 of 640 bytes used: twenty-five 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 668 of 832 bytes used: thirty-eight 14-byte call stubs (WorkshopSync::InstallNumbers' thirteen, one for each figure the
+	// workshop bar asks for; TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
 	// WorkshopSync::InstallPicks' seventeen calls share thirteen (the pick test, the store test, the store key, the scrap button,
 	// the scrap key, the move button, the menu's Accept, the general pick's run and filter, the wire pick's run and filter, and
@@ -1108,7 +1109,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 640 });
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 832 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
@@ -1148,6 +1149,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
 	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
 	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
+	WorkshopSync::InstallNumbers();   // a friend's workshop bar at the host's settlement shows the host's figures (WorkshopNumbers.h)
 	WorkshopSync::InstallPicks();     // the host's pieces at its settlement can be wired by a friend, never grabbed, stored or scrapped (SharedWorkshop.h)
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 	UiMainMenuEntry::Install();  // a Multiplayer entry in the main and pause menus, after Load (UiMainMenuPlace.h)

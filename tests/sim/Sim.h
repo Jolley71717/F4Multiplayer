@@ -1843,6 +1843,9 @@ namespace Sim
 		case MT::kSettlementAttack:
 			unless(Protocol::DecodeSettlementAttack(a_data).has_value());
 			break;
+		case MT::kBenchNumbers:  // the host's game left: its settlements' figures are forgotten
+			unless(Protocol::DecodeBenchNumbers(a_data).has_value());
+			break;
 		default:
 			unless(false);  // nothing a player's game knows
 			break;

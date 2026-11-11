@@ -2722,13 +2722,26 @@ namespace WorkshopSync
 			}
 		}
 
+		// The host's settlement figures as last heard (WorkshopNumbers.h; a friend's game). Locked: the workshop bar's hooks
+		// read them on whatever thread fills the bar.
+		std::mutex             numbersLock;
+		WorkshopNumbers::Heard numbersHeard;        // under numbersLock
+		std::size_t            numbersLeftOut = 0;  // workbenches the last Apply left out of the mirror: the host's figures show there (under numbersLock)
+
 		void PutResourcesOn(Clock::time_point a_now)
 		{
 			nextResourceApply = a_now + ResourceMirror::APPLY_EVERY;
 			SeeMainMenu();
 			TallyEngine tally;
 			BenchEngine benches;
-			if (const auto changed = onBenches.Apply(benches, theirResources.Totals(tally), a_now); changed > 0) {
+			// A settlement whose figures the host's game tells is the host's: no worth of copies goes on our workbench there, and
+			// what was on it comes off (WorkshopNumbers::WithoutHosts).
+			auto totals = theirResources.Totals(tally);
+			{
+				std::scoped_lock n{ numbersLock };
+				numbersLeftOut = WorkshopNumbers::WithoutHosts(totals, numbersHeard);
+			}
+			if (const auto changed = onBenches.Apply(benches, totals, a_now); changed > 0) {
 				resourceChanges += static_cast<std::uint32_t>(changed);
 				NoteResourcesOn();
 			}
@@ -5249,6 +5262,284 @@ namespace WorkshopSync
 		}
 	}
 
+	// ---- The host's settlement figures (WorkshopNumbers.h) ------------------------------------------------
+	namespace
+	{
+		// The workshop bar's fill (1.11.240: +B33110; called from the workshop menu's events, not every frame): it asks
+		// thirteen of the engine's Workshop getters about the open workbench, each a direct call (workbench in rcx, an int
+		// back). On a friend's game each answers with the host's figure while the host's game tells that settlement's.
+		constexpr REL::ID BAR_FILL{ 2225013 };
+		// The engine's list of every workshop (BSTArray<ObjectRefHandle>): what Workshop::QAllWorkshopsArray (2194992, a
+		// lea of this and a ret) hands the Pip-Boy's workshop page.
+		constexpr REL::ID ALL_WORKSHOPS{ 4797403 };
+		constexpr std::uint32_t MAX_WORKSHOPS = 2048;  // more than that is no list of workshops: not read
+
+		struct BarSite
+		{
+			WorkshopNumbers::Bar what;
+			std::size_t          offset;  // of the call in BAR_FILL
+			REL::ID              target;  // Workshop::Get...
+			const char*          figure;  // for the log
+		};
+		// In WorkshopNumbers::Bar's order (BarHook<Index> answers BAR_SITES[Index].what).
+		constexpr std::array<BarSite, WorkshopNumbers::BARS> BAR_SITES{ {
+			{ WorkshopNumbers::Bar::kPower, 0xCA, REL::ID(2194882), "the power made" },
+			{ WorkshopNumbers::Bar::kFood, 0xD8, REL::ID(2194883), "the food" },
+			{ WorkshopNumbers::Bar::kWater, 0xE6, REL::ID(2194884), "the water" },
+			{ WorkshopNumbers::Bar::kBeds, 0xF4, REL::ID(2194885), "the beds" },
+			{ WorkshopNumbers::Bar::kDefense, 0x100, REL::ID(2194886), "the defense" },
+			{ WorkshopNumbers::Bar::kPopulation, 0x10B, REL::ID(2194887), "the people" },
+			{ WorkshopNumbers::Bar::kHappiness, 0x116, REL::ID(2194888), "the happiness" },
+			{ WorkshopNumbers::Bar::kFoodRating, 0x122, REL::ID(2194893), "the food's rating" },
+			{ WorkshopNumbers::Bar::kWaterRating, 0x12D, REL::ID(2194894), "the water's rating" },
+			{ WorkshopNumbers::Bar::kDefenseRating, 0x13B, REL::ID(2194895), "the defense's rating" },
+			{ WorkshopNumbers::Bar::kBedsRating, 0x147, REL::ID(2194896), "the beds' rating" },
+			{ WorkshopNumbers::Bar::kHappinessChange, 0x153, REL::ID(2194890), "the happiness arrow" },
+			{ WorkshopNumbers::Bar::kPowerRating, 0x6BC, REL::ID(2194892), "the power's rating" },
+		} };
+		constexpr bool BarSitesInOrder()
+		{
+			for (std::size_t i = 0; i < BAR_SITES.size(); ++i) {
+				if (static_cast<std::size_t>(BAR_SITES[i].what) != i) {
+					return false;
+				}
+			}
+			return true;
+		}
+		static_assert(BarSitesInOrder());
+
+		// The getters take the workbench alone; the rest is passed on as it came, whatever a later game makes of it.
+		using BarGetter = int (*)(RE::TESObjectREFR*, void*, void*, void*);
+		std::array<BarGetter, WorkshopNumbers::BARS> barOriginals{};  // set before the calls are patched, never after
+		bool                                         barInstalled = false;
+		std::atomic<bool>                            barShown{ true };   // dev: off, the bar asks the engine as before
+		std::atomic<std::uint32_t>                   barAnswers{ 0 };    // getter calls of the bar answered with the host's figure
+
+		// On whatever thread fills the bar: only the locked figures. Nothing is written anywhere: the bar alone reads this.
+		template <std::size_t Index>
+		int BarHook(RE::TESObjectREFR* a_bench, void* a_2, void* a_3, void* a_4)
+		{
+			if (a_bench && barShown.load()) {
+				std::optional<int> shown;
+				{
+					std::scoped_lock n{ numbersLock };
+					shown = numbersHeard.OnBar(a_bench->GetFormID(), BAR_SITES[Index].what);
+				}
+				if (shown) {
+					++barAnswers;
+					return *shown;
+				}
+			}
+			const auto original = barOriginals[Index];
+			return original ? original(a_bench, a_2, a_3, a_4) : 0;
+		}
+
+		template <std::size_t Index>
+		void* BarHookAt()
+		{
+			const BarGetter hook = &BarHook<Index>;
+			return reinterpret_cast<void*>(hook);
+		}
+
+		template <std::size_t... Index>
+		std::array<void*, sizeof...(Index)> BarHooks(std::index_sequence<Index...>)
+		{
+			return { BarHookAt<Index>()... };
+		}
+
+		WorkshopNumbers::Reporter  numbersReporter;         // the host's game: what the session was told
+		WorkshopNumbers::Announcer numbersAnnouncer;        // a friend's game: the line said on entering workshop mode
+		bool                       numbersServed = false;   // the host's game told figures this session
+		bool                       numbersListWarned = false;
+		std::size_t                numbersLogged = 0;       // settlements told when the log last said how many
+		std::uint32_t              numbersTaken = 0;        // messages of the host's figures that changed what we hold
+		std::uint32_t              numbersSaid = 0;         // lines said
+		std::uint32_t              numbersUnsent = 0;       // messages that found the queue full (told again)
+
+		// The host's game: the figures of every settlement our player owns, as our workshop bar would show them there.
+		std::vector<WorkshopNumbers::Figures> OwnedFigures()
+		{
+			std::vector<WorkshopNumbers::Figures>                          out;
+			static REL::Relocation<RE::BSTArray<RE::ObjectRefHandle>*> all{ ALL_WORKSHOPS };
+			const auto*                                                    list = all.get();
+			if (!list || list->size() > MAX_WORKSHOPS) {
+				if (!std::exchange(numbersListWarned, true)) {
+					REX::WARN("WorkshopSync: the game's list of workshops isn't where 1.11.240 has it ({} entries); friends see their own games' settlement figures", list ? list->size() : 0);
+				}
+				return out;
+			}
+			for (const auto& handle : *list) {
+				const auto bench = handle.get();
+				// A workbench of a plugin only we load, or made in play, names nothing on a friend's game.
+				if (bench && !bench->IsDeleted() && Protocol::IsShareableRef(bench->GetFormID()) && OwnBench(bench.get())) {
+					out.push_back(WorkshopNumbers::Of(bench->GetFormID(), WorkshopResources::ReadFigures(*bench)));
+				}
+			}
+			return out;
+		}
+
+		void NumbersFrame(Clock::time_point a_now, bool a_host)
+		{
+			if (a_host) {
+				if (!Serves()) {
+					// The rule went off in the session: the friends' games go back to their own figures.
+					if (std::exchange(numbersServed, false)) {
+						if (HostRules::InSession()) {
+							PushShared(Protocol::Encode(Protocol::BenchNumbers{}));
+						}
+						numbersReporter.Forget();
+					}
+					return;
+				}
+				if (!numbersReporter.Due(a_now)) {
+					return;
+				}
+				numbersServed = true;
+				const auto owned = OwnedFigures();
+				bool       full = false;
+				for (const auto& word : numbersReporter.Update(owned)) {
+					if (!full) {
+						std::scoped_lock l{ outLock };
+						full = !outgoing.Push({ Protocol::Encode(word), 0 });
+					}
+					if (full) {
+						numbersReporter.Unsent(word);  // and those after it: never out of order
+						++numbersUnsent;
+					}
+				}
+				if (const auto told = numbersReporter.Benches(); told != numbersLogged) {
+					numbersLogged = told;
+					REX::INFO("WorkshopSync: the session is told the figures of {} settlements of ours ({} messages so far)", told, numbersReporter.Reports());
+				}
+				return;
+			}
+			std::optional<WorkshopNumbers::Figures> say;
+			const auto                              open = MenuWatch::IsOpen("WorkshopMenu"sv) ? OpenBench() : 0;
+			{
+				std::scoped_lock n{ numbersLock };
+				say = numbersAnnouncer.Update(open != 0, open, numbersHeard);
+			}
+			if (say) {
+				++numbersSaid;
+				Hud::Notify(Text::Format("workshop.shared.figures", { { "people", say->population }, { "food", say->food }, { "water", say->water }, { "power", say->power },
+																		 { "used", say->powerUsed }, { "safety", say->defense }, { "beds", say->beds }, { "happiness", say->happiness } }));
+				REX::INFO("WorkshopSync: workshop mode at the host's settlement {:08X}: its figures said (people {}, food {}, water {}, power {} of which {} in use, defense {}, beds {}, happiness {}); the bar shows {}",
+					say->bench, say->population, say->food, say->water, say->power, say->powerUsed, say->defense, say->beds, say->happiness,
+					barInstalled && barShown.load() ? "them" : "our own world's");
+			}
+		}
+	}
+
+	void InstallNumbers()
+	{
+		if (barInstalled) {
+			return;
+		}
+		// Every call as 1.11.240 has it, or none is patched: a bar with some figures the host's and some ours would lie.
+		const auto fill = BAR_FILL.address();
+		for (const auto& site : BAR_SITES) {
+			const auto                  where = fill + site.offset;
+			std::array<std::uint8_t, 5> bytes{};
+			std::memcpy(bytes.data(), reinterpret_cast<const void*>(where), bytes.size());
+			if (TextureFlush::CallTarget(bytes, where) != site.target.address()) {
+				REX::WARN("WorkshopSync: the workshop bar doesn't ask for {} ({:X}+{:X}) where 1.11.240 does (another plugin's patch?); the bar is not patched: at the host's settlement it shows this game's own figures, and the host's are said in a line",
+					site.figure, fill, site.offset);
+				return;
+			}
+		}
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < BAR_SITES.size() * CALL_STUB) {
+			REX::WARN("WorkshopSync: no room for the workshop bar's hooks ({} bytes free); at the host's settlement the bar shows this game's own figures, and the host's are said in a line",
+				trampoline.free_size());
+			return;
+		}
+		// Each call's own target is known (just checked): set before the patch, so a hook never finds none.
+		for (std::size_t i = 0; i < BAR_SITES.size(); ++i) {
+			barOriginals[i] = reinterpret_cast<BarGetter>(BAR_SITES[i].target.address());
+		}
+		const auto hooks = BarHooks(std::make_index_sequence<WorkshopNumbers::BARS>{});
+		for (std::size_t i = 0; i < BAR_SITES.size(); ++i) {
+			trampoline.write_call<5>(fill + BAR_SITES[i].offset, hooks[i]);
+		}
+		barInstalled = true;
+		REX::INFO("WorkshopSync: workshop bar hooked ({:X}, {} calls): at a settlement the host owns, a friend's bar shows the host's figures", fill, BAR_SITES.size());
+	}
+
+	void OnBenchNumbers(const Protocol::BenchNumbers& a_numbers)
+	{
+		if (hosting) {
+			return;  // our own game's figures are the session's
+		}
+		std::size_t held = 0;
+		bool        changed = false;
+		{
+			std::scoped_lock n{ numbersLock };
+			changed = numbersHeard.Take(a_numbers);
+			held = numbersHeard.Benches();
+		}
+		if (changed) {
+			++numbersTaken;
+			REX::INFO("WorkshopSync: the host's settlement figures: {} told, {} settlements held", a_numbers.benches.size(), held);
+		}
+	}
+
+	std::optional<Protocol::BenchFigures> HostFigures(std::uint32_t a_bench)
+	{
+		std::scoped_lock n{ numbersLock };
+		return numbersHeard.Of(a_bench);
+	}
+
+	void SetBarForDev(bool a_on)
+	{
+		barShown.store(a_on);
+	}
+
+	std::string DescribeNumbers(RE::TESObjectREFR* a_bench)
+	{
+		std::size_t heard = 0;
+		std::size_t leftOut = 0;
+		{
+			std::scoped_lock n{ numbersLock };
+			heard = numbersHeard.Benches();
+			leftOut = numbersLeftOut;
+		}
+		auto out = std::format("numbers: role={} serves={} hooks={} bar={} answers={} heard={} taken={} said={} benches={} reports={} unsent={} mirrorLeftOut={}",
+			hosting ? "host" : "friend", Serves(), barInstalled ? BAR_SITES.size() : std::size_t{ 0 }, barShown.load() ? "on" : "off", barAnswers.load(), heard, numbersTaken,
+			numbersSaid, numbersReporter.Benches(), numbersReporter.Reports(), numbersUnsent, leftOut);
+		RE::NiPointer<RE::TESObjectREFR> open;
+		auto*                            bench = a_bench;
+		if (!bench) {
+			static REL::Relocation<RE::ObjectRefHandle*> current{ CURRENT_WORKSHOP };
+			open = current->get();
+			bench = open.get();
+		}
+		if (!bench) {
+			return out + " bench=none";
+		}
+		// The figures this game shows or tells there (a friend's game: the host's, as heard; the host's game: its own, if the
+		// settlement is its player's), then what this world's own workbench counts (the engine's getters, never the bar's hooks).
+		const auto                              id = bench->GetFormID();
+		const auto                              own = WorkshopNumbers::Of(id, WorkshopResources::ReadFigures(*bench));
+		const bool                              owned = OwnBench(bench);
+		std::optional<WorkshopNumbers::Figures> shown;
+		if (!hosting) {
+			shown = HostFigures(id);
+		} else if (owned && Serves()) {
+			shown = own;
+		}
+		out += std::format(" bench={:08X} owned={} hosts={} mirrorOn={}", id, owned ? 1 : 0, shown ? 1 : 0, onBenches.On().contains(id) ? 1 : 0);
+		if (shown) {
+			out += std::format(" power={} powerUsed={} food={} water={} defense={} beds={} population={} happiness={} target={} flags={:02X}", shown->power, shown->powerUsed,
+				shown->food, shown->water, shown->defense, shown->beds, shown->population, shown->happiness, shown->happinessTarget, shown->flags);
+		}
+		if (hosting) {
+			out += std::format(" told={}", shown && numbersReporter.Told(id) == shown ? 1 : 0);
+		}
+		out += std::format(" ownPower={} ownPowerUsed={} ownFood={} ownWater={} ownDefense={} ownBeds={} ownPopulation={} ownHappiness={}", own.power, own.powerUsed, own.food,
+			own.water, own.defense, own.beds, own.population, own.happiness);
+		return out;
+	}
+
 	void InstallPicks()
 	{
 		if (picksInstalled) {
@@ -5404,6 +5695,13 @@ namespace WorkshopSync
 	{
 		hostId.store(a_hostId);
 		hostGone = false;
+		// The server's table of the host's settlement figures may be another session's: the host's game tells them all again,
+		// and a friend's game hears them again after this.
+		numbersReporter.Forget();
+		{
+			std::scoped_lock n{ numbersLock };
+			numbersHeard.Clear();
+		}
 		if (a_hostId == 0) {
 			REX::INFO("WorkshopSync: no host's game in the session (a dedicated server): the shared workshop asks nothing");
 		}
@@ -5813,6 +6111,7 @@ namespace WorkshopSync
 		PowerFrame(now);
 		ResourceFrame(now);
 		AuditFrame(now);
+		NumbersFrame(now, a_host);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending)
@@ -5962,6 +6261,15 @@ namespace WorkshopSync
 		ClearAudit();
 		reporter.Clear();
 		mirror.Clear();
+		// The host's settlement figures were the session's: our workshop bar shows our own world's again.
+		numbersReporter.Forget();
+		numbersAnnouncer = {};
+		numbersServed = false;
+		{
+			std::scoped_lock n{ numbersLock };
+			numbersHeard.Clear();
+			numbersLeftOut = 0;
+		}
 		TakeResourcesOff("leaving");
 		resources.Clear();
 		theirResources.Clear();
@@ -6047,6 +6355,9 @@ namespace WorkshopSync
 		// Our own pieces tracked were the world before's: a friend's game is told they count for nothing, and those this world
 		// has are found and sent again (a load in session, a death's reload, a new game; BeforeLoad did it for a load).
 		ForgetOwnPieces(a_newGame ? "a new game" : "a load");
+		// The host's game: the loaded world's settlements may be others, or count otherwise: "forget them all", then each again.
+		// A friend's game keeps what it heard: the host's world didn't load.
+		numbersReporter.Forget();
 	}
 
 	void AfterLoadWork(bool a_newGame)

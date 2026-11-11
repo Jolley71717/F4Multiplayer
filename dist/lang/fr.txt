@@ -173,6 +173,7 @@ workshop.shared.no_answer = Le jeu de l'hôte n'a pas répondu à temps : la pi�
 workshop.shared.pending = Le jeu de l'hôte est en train de construire ceci : attendez un instant avant de le déplacer
 workshop.shared.bench_unopened = L'hôte n'a pas encore ouvert l'atelier de cette colonie : la pièce est à vous
 workshop.shared.host_open_bench = Un ami a essayé de construire dans votre colonie : ouvrez son atelier une fois pour qu'il le puisse
+workshop.shared.figures = The host's settlement: people {people}, food {food}, water {water}, power {power} (in use {used}), defense {safety}, beds {beds}, happiness {happiness}
 workshop.shared.edit_off = The host doesn't let friends scrap or store their pieces here
 workshop.shared.scrap_pending = The host's game is scrapping that piece: wait a moment
 workshop.shared.scrap_refused = The host's game couldn't scrap that piece: it stands as it was

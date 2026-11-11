@@ -436,6 +436,31 @@ TEST("form translate: a workbench's supply lines leave out a workbench the other
 	CHECK(links->links == std::vector<std::uint32_t>{ SHARED });
 }
 
+TEST("form translate: the host's settlement figures leave out a settlement the other side lacks; none left drops them, and \"forget them all\" goes as it is")
+{
+	using Protocol::BenchFigures;
+	using Protocol::BenchNumbers;
+	const auto figures = [](std::uint32_t a_bench) { return BenchFigures{ a_bench, BenchFigures::kHosts, 5, 3, 2, 6, 8, 2, 3, 55, 50 }; };
+	for (const auto type : { MT::kReportBenchNumbers, MT::kBenchNumbers }) {
+		const auto packet = After(Encode(BenchNumbers{ { figures(SHARED), figures(MINE), figures(0x0001'2345) } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		CHECK((*packet)[0] == static_cast<std::uint8_t>(type));
+		const auto numbers = DecodeBenchNumbers(*packet);
+		REQUIRE(numbers);
+		CHECK((numbers->benches == std::vector<BenchFigures>{ figures(SESSION_SHARED), figures(0x0001'2345) }));
+		CHECK(!After(Encode(BenchNumbers{ { figures(MINE) } }, type), MISSING, Way::kToSession));
+		const auto forget = After(Encode(BenchNumbers{}, type), MISSING, Way::kToSession);
+		REQUIRE(forget);
+		CHECK(DecodeBenchNumbers(*forget) == BenchNumbers{});
+	}
+	// From the session: a settlement of a plugin we lack is left out, one we have comes in our numbering.
+	const auto in = After(Encode(BenchNumbers{ { figures(THEIRS), BenchFigures{ .bench = SESSION_SHARED } } }, MT::kBenchNumbers), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto numbers = DecodeBenchNumbers(*in);
+	REQUIRE(numbers);
+	CHECK(numbers->benches == std::vector<BenchFigures>{ BenchFigures{ .bench = SHARED } });
+}
+
 TEST("form translate: a Far Harbor radiant's start goes between games that load DLCCoast.esm at other places, and is dropped for a game without it")
 {
 	// Ours: DLCCoast.esm is load index 02. The session's: 05.

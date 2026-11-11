@@ -7,6 +7,7 @@
 #include "NpcHealths.h"
 #include "Name.h"
 #include "AttackBook.h"
+#include "BenchNumbersBook.h"
 #include "CompanionBook.h"
 #include "TimeScaleBook.h"
 #include "RewardBook.h"
@@ -513,6 +514,7 @@ void Server::Run()
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
 	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
+	BenchNumbersBook::Book                                benchNumbers;   // what the host's settlements' workshop bars show, as its game said (protocol 74; not saved: its game says again)
 	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
 	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
 	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
@@ -834,6 +836,7 @@ void Server::Run()
 		actorOwners.clear();
 		companionBook.Clear();
 		attackBook.Clear();
+		benchNumbers.Clear();
 		rewardLedger.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
@@ -1526,6 +1529,10 @@ void Server::Run()
 		if (a_player.local && a_player.welcomed) {
 			attackBook.Clear();
 			broadcast(Protocol::Encode(Protocol::SettlementOwner{ 0, false }, Protocol::MessageType::kSettlementOwner), true, a_player.key);
+			// ... and its settlements' figures: the others' workshop bars show their own again.
+			if (benchNumbers.Clear()) {
+				broadcast(Protocol::Encode(Protocol::BenchNumbers{}, Protocol::MessageType::kBenchNumbers), true, a_player.key);
+			}
 		}
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
@@ -1812,6 +1819,10 @@ void Server::Run()
 			}
 			for (const auto& attack : attackBook.Live()) {
 				send(a_player.key, Protocol::Encode(attack, Protocol::MessageType::kSettlementAttack), true);
+			}
+			// ... and what the host's settlements' workshop bars show.
+			for (const auto& figures : benchNumbers.All()) {
+				send(a_player.key, Protocol::Encode(figures, Protocol::MessageType::kBenchNumbers), true);
 			}
 		}
 		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
@@ -3578,6 +3589,23 @@ void Server::Run()
 		}
 	};
 
+	// The host's game says what its settlements' workshop bars show (src/game/WorkshopNumbers.h; protocol 74): those that
+	// changed, once a second at most, and all of them again now and then. Kept per workbench, and the others told what
+	// differs from what is kept (a telling-again of the same is told to nobody). From the host's game alone, and only
+	// while the host shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in them.
+	const auto handleBenchNumbers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player) || !a_player.local || !options.rules.sharedWorkshop) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchNumbers(a_data);
+		if (!report) {
+			return;
+		}
+		if (const auto changed = benchNumbers.Take(*report)) {
+			broadcast(Protocol::Encode(*changed, Protocol::MessageType::kBenchNumbers), true, a_player.key);
+		}
+	};
+
 	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
 	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most) and says it
 	// again every few seconds, so one the event cap dropped is not lost; the same word again is told to nobody.
@@ -4856,6 +4884,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportSettlementOwner:
 			handleSettlementOwner(a_player, a_data);
+			break;
+		case MessageType::kReportBenchNumbers:
+			handleBenchNumbers(a_player, a_data);
 			break;
 		case MessageType::kReportTimeScale:
 			handleTimeScale(a_player, a_data);

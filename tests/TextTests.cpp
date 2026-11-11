@@ -379,6 +379,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "workshop.shared.pending", {}, "The host's game is building this: wait a moment" },
 		{ "workshop.shared.bench_unopened", {}, "The host hasn't opened this settlement's workshop yet: the piece is your own" },
 		{ "workshop.shared.host_open_bench", {}, "A friend tried to build at your settlement: open its workshop once so they can" },
+		{ "workshop.shared.figures", { { "people", 3 }, { "food", 2 }, { "water", 6 }, { "power", 5 }, { "used", 3 }, { "safety", 8 }, { "beds", 2 }, { "happiness", 55 } }, "The host's settlement: people 3, food 2, water 6, power 5 (in use 3), defense 8, beds 2, happiness 55" },
 		{ "workshop.shared.edit_off", {}, "The host doesn't let friends scrap or store their pieces here" },
 		{ "workshop.shared.scrap_pending", {}, "The host's game is scrapping that piece: wait a moment" },
 		{ "workshop.shared.scrap_refused", {}, "The host's game couldn't scrap that piece: it stands as it was" },

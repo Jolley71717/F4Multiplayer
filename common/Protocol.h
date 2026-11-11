@@ -103,7 +103,13 @@ namespace Protocol
 	// 71: a friend's store of the host's piece is such a request too (WorkshopRequestOp::kStore, its target as a scrap's:
 	// the host's game stores the piece into its own stored list), and the host's bSharedWorkshopEdit says whether friends
 	// may scrap or store the host's pieces there. No new message ids, no welcome bytes. 70 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 71;
+	// 74: the host's settlement figures (src/game/WorkshopNumbers.h): the host's game reports what each settlement it owns
+	// shows in its workshop bar (kReportBenchNumbers: BenchNumbers: power made and needed, food, water, defense, beds,
+	// people, happiness and where it is heading, and which of them its bar shows short), on a change and at most once a
+	// second, and the server keeps them and tells the others (kBenchNumbers; a joiner, all of them after the settlement
+	// owners; none: the host left, forget them all). A friend's game shows them in its workshop bar there and puts no
+	// worth of copies on that workbench. No welcome bytes. 73 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 74;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -254,6 +260,7 @@ namespace Protocol
 		kReportTimeScale = 83,    // the sender's game is in VATS or not, and the time multiplier it runs at (TimeScale)
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
+		kReportBenchNumbers = 192,     // the host's game: what its settlements' workshop bars show, those that changed (BenchNumbers; none: forget them all)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -331,6 +338,7 @@ namespace Protocol
 		kWorkshopAnswer = 186,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
 		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
+		kBenchNumbers = 193,      // what the host's settlements' workshop bars show, as the host's game said (BenchNumbers); none: the host left or loaded, forget them all
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
@@ -5203,6 +5211,112 @@ namespace Protocol
 			return std::nullopt;
 		}
 		msg.hostOwned = owned != 0;
+		return msg;
+	}
+
+	// The host's settlement figures (src/game/WorkshopNumbers.h): what the workshop bar shows at a settlement the host owns
+	// is the host's game's alone. The host's game reports, for each settlement its player owns, the whole numbers its own
+	// bar would show (the engine's Workshop getters), the ones that changed since it last told them, at most once a second
+	// (kReportBenchNumbers); the server keeps the latest per workbench, from the host's game alone, and tells the others
+	// (kBenchNumbers), a joiner all of them. An entry without kHosts: that settlement isn't the host's any more (its
+	// figures all 0). No entries at all: every settlement's figures are forgotten (the host's game after its welcome and
+	// each load, before it tells them again; the server when the host leaves).
+	inline constexpr std::size_t MAX_BENCH_NUMBERS = 64;  // entries in one message (the game has some 40 settlements)
+
+	struct BenchFigures
+	{
+		enum Flags : std::uint8_t
+		{
+			kHosts = 1 << 0,         // the host's settlement: the figures are in force
+			kFoodShort = 1 << 1,     // the host's bar shows that figure as short (red)
+			kWaterShort = 1 << 2,
+			kDefenseShort = 1 << 3,
+			kBedsShort = 1 << 4,
+			kPowerShort = 1 << 5,
+			kAllFlags = (1 << 6) - 1,
+		};
+
+		std::uint32_t bench = 0;            // the settlement's workbench (WorkshopScript's reference)
+		std::uint8_t  flags = 0;
+		std::uint16_t power = 0;            // power made
+		std::uint16_t powerUsed = 0;        // power its pieces need
+		std::uint16_t food = 0;
+		std::uint16_t water = 0;
+		std::uint16_t defense = 0;
+		std::uint16_t beds = 0;
+		std::uint16_t population = 0;       // settlers, robots among them
+		std::uint8_t  happiness = 0;        // 0 to 100
+		std::uint8_t  happinessTarget = 0;  // 0 to 100: where happiness is heading
+
+		bool operator==(const BenchFigures&) const = default;
+	};
+
+	struct BenchNumbers
+	{
+		std::vector<BenchFigures> benches;  // at most MAX_BENCH_NUMBERS, each workbench once; none: forget them all
+
+		bool operator==(const BenchNumbers&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const BenchNumbers& a_msg, MessageType a_type = MessageType::kReportBenchNumbers)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.benches.size(), MAX_BENCH_NUMBERS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& figures = a_msg.benches[i];
+			w.U32(figures.bench);
+			w.U8(figures.flags);
+			w.U16(figures.power);
+			w.U16(figures.powerUsed);
+			w.U16(figures.food);
+			w.U16(figures.water);
+			w.U16(figures.defense);
+			w.U16(figures.beds);
+			w.U16(figures.population);
+			w.U8(figures.happiness);
+			w.U8(figures.happinessTarget);
+		}
+		return w.Data();
+	}
+
+	// None if a workbench isn't a reference every game shares or is named twice, a flag is unknown, happiness is past 100,
+	// or an entry without kHosts carries anything (a settlement that isn't the host's has no figures).
+	inline std::optional<BenchNumbers> DecodeBenchNumbers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_BENCH_NUMBERS) {
+			return std::nullopt;
+		}
+		BenchNumbers msg;
+		msg.benches.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			BenchFigures figures;
+			figures.bench = r.U32();
+			figures.flags = r.U8();
+			figures.power = r.U16();
+			figures.powerUsed = r.U16();
+			figures.food = r.U16();
+			figures.water = r.U16();
+			figures.defense = r.U16();
+			figures.beds = r.U16();
+			figures.population = r.U16();
+			figures.happiness = r.U8();
+			figures.happinessTarget = r.U8();
+			if (!r.Ok() || !IsShareableRef(figures.bench) || (figures.flags & ~BenchFigures::kAllFlags) != 0 || figures.happiness > 100 || figures.happinessTarget > 100 ||
+				std::ranges::any_of(msg.benches, [&](const BenchFigures& a_other) { return a_other.bench == figures.bench; })) {
+				return std::nullopt;
+			}
+			if ((figures.flags & BenchFigures::kHosts) == 0 && figures != BenchFigures{ .bench = figures.bench }) {
+				return std::nullopt;
+			}
+			msg.benches.push_back(figures);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
 		return msg;
 	}
 

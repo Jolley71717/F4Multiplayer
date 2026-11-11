@@ -37,6 +37,26 @@ namespace WorkshopSync
 	// patched unless all are as 1.11.240 has them.
 	void InstallPicks();
 
+	// ---- The host's settlement figures (WorkshopNumbers.h) ------------------------------------------------
+	//
+	// The host's game tells the session what its workshop bar shows at each settlement its player owns; a friend's game shows
+	// those at that settlement instead of its own world's, and puts no worth of copies on its workbench there.
+
+	// Patches the thirteen getter calls of the workshop bar's fill (2225013), so a friend's bar at a settlement the host owns
+	// shows the host's figures: display only, nothing is written to the workbench. At plugin load (it takes thirteen
+	// trampoline call stubs); no-op after. Every call's bytes are checked first: none patched unless all are as 1.11.240 has
+	// them (the figures are then said in a line on entering workshop mode, as they are anyway).
+	void InstallNumbers();
+	// A friend's game: the host's figures, as the server told them (kBenchNumbers). Main thread.
+	void OnBenchNumbers(const Protocol::BenchNumbers& a_numbers);
+	// A friend's game: the host's figures at that settlement (people, beds, happiness and the rest), or none: the host's game
+	// tells none for it (not its player's, the rule off, nothing heard yet). Never any on the host's own game. Any thread.
+	[[nodiscard]] std::optional<Protocol::BenchFigures> HostFigures(std::uint32_t a_bench);
+	// Dev: the counters, and the figures at the workbench (null: the one workshop mode is open at) as key=value.
+	[[nodiscard]] std::string DescribeNumbers(RE::TESObjectREFR* a_bench);
+	// Dev: off, the bar asks the engine as if unpatched (this game's own figures); on again shows the host's.
+	void SetBarForDev(bool a_on);
+
 	// ---- The shared workshop (SharedWorkshop.h) ----------------------------------------------------------
 	//
 	// A friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own pieces.
