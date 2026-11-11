@@ -56,7 +56,7 @@ for every level.
 Each build is logged for a session's first 32, for example
 `RollHook: 0001F0B1 built as the session's pick of 0001A000 ...`. Counters are in `net status` (`rolls` on the dev
 console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNoZone rollsCellZone rollsNotWhole
-rollsUnconsumed rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks
+rollsUnconsumed rollsStray rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks
 made for an NPC with no encounter zone at all (the pick then reads the lists at the session's level). `rollsCellZone=`
 counts picks that read the cell's own zone while the engine's own read gave another, because the cell's loaded copy
 of its zone wasn't made yet (below, "The zone"). `rolls show <ref>` gives the roll the session has for a ref, and
@@ -152,6 +152,24 @@ it has no early return before the build. So a decision armed in hook 1 is always
 thread. A decision still armed at the next resolve on that thread is dropped and counted
 (`rollsUnconsumed=`, which should stay at 0).
 
+**What runs between the two.** From +0xCB to the build's `CopyFromTemplateForms` at +0x5C6 the resolver calls the
+ref's `IsDead` (vfunc 0x600), the difficulty and the legendary multipliers, the leveled-list read for each slot
+(+317DE0, +30B560, +316BF0), the scrap heap, and, when the ref has 3D, the ref's vfunc 0x460 and 0x440 (its 3D let
+go) and, for an actor, +C85D70. Then `CreateFormOfType(NPC_)` and the new NPC's copy of the original (TESNPC vfunc
+0x1B0, +650FE0, whose `TESActorBaseData` part, +309090, copies `baseTemplateForm` and all 13 `templateForms` as they
+are). The direct calls alone reach about 4,000 functions within six calls, with over 100 virtual calls through slot 7
+of some vtable among them, and one direct path leads back into the resolver (vfunc 0x440 of a plain ref, +50C8D0, to
++C62710, which calls the resolver). So another NPC's `CopyFromTemplateForms` on the same thread before the resolver's
+own can't be ruled out from the code, and the held decision is keyed to its owner (`RollPairing.h`):
+- **The call.** The resolver keeps its 13 templates at rbp-0x20, and rbp is 0x100 above rsp at its +0xCB call, so
+  the array is 0xE8 above the slot that call pushed its return address into, which hook 1 reads
+  (`_AddressOfReturnAddress`). Hook 2 gets that array as its second argument. The resolver's prologue and its
+  `lea rdx, [rbp-0x20]` at +0x5BF are checked at install; if either differs, this part isn't checked.
+- **The NPC.** The ref's base NPC's `baseTemplateForm` and 13 `templateForms`, which the new NPC holds once copied
+  from it (above), and nothing changes before the build.
+A `CopyFromTemplateForms` that differs in either is built as the engine rolled it, logged once with both NPCs' ids
+and counted (`rollsStray=`, which should stay at 0); the decision stays held for the resolver's own call.
+
 **The legendary decision.** It is made only for a ref that is not dead (`IsDead(false)`, vfunc 0x600) and not deleted
 (formFlags bit 5). A cooldown counter at +30EB498 is compared with `countMult x` a game setting, and then
 `random(0,100) < legendChance->value x chanceMult` is drawn. The multipliers come from the difficulty.
@@ -195,10 +213,11 @@ The engine adds a small variance that it cycles through.
   original. If the original returns false (the ref is not resolved yet) and the hooks are enabled, it decides
   (above) and arms a thread_local POD.
 - **Hook 2** replaces TESNPC[1]'s slot 7, after checking that the slot holds ID 2207448's address. When a decision is
-  armed for this thread, it overwrites `templates[0..12]` (nullptr outside the roll's mask) and calls the original.
+  armed for this thread and the call is its owner's (above), it overwrites `templates[0..12]` (nullptr outside the
+  roll's mask) and calls the original.
   Then, for an NPC whose level is its player's times a multiplier (ACTOR_BASE_DATA `kPCLevelMult`), it sets the level
-  from the roll's report or from the session's level within the NPC's calculated bounds. It always clears the armed
-  decision.
+  from the roll's report or from the session's level within the NPC's calculated bounds. The owner's call clears the
+  armed decision; another NPC's leaves it armed.
 
 **Crash safety.** Both hooks check their bytes or slot at install. If either doesn't match, they are not installed,
 with a warning. The game's data is read under SEH (`ReadFacts`, `Pick`), which catches access violations only. A

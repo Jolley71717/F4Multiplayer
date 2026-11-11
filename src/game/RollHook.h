@@ -19,9 +19,9 @@ namespace RE
 // game runs once per reference, the first time it needs the NPC:
 // - its call to IsLeveledCreatureResolved (+0xCB): the reference is about to be rolled. We decide what it is to be (the
 //   session's roll of it, a friend's spawn's roll as we place our copy, or the session's deterministic pick) and hold it
-//   for this thread;
+//   for this thread, keyed to that resolver's call and the NPC it builds from (RollPairing.h);
 // - TESNPC's TESActorBaseData::CopyFromTemplateForms (its vtable's slot 7), which the resolver calls with the 13 templates
-//   it rolled: they are made ours before the NPC is put together from them, and the same array is what the engine then
+//   it rolled: for the held roll's owner alone, they are made ours before the NPC is put together from them, and the same array is what the engine then
 //   keeps on the reference (ExtraLeveledCreature), saves, and reports. A level that is its player's times a multiplier
 //   is made the roll's after.
 // Anything unexpected (bytes not as 1.11.240 has them, a template that is no NPC here, a fault reading the game's data)
