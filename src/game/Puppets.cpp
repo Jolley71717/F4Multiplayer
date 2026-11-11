@@ -854,7 +854,7 @@ namespace Puppets
 			REL::WriteSafeData(slot, hook);
 			REL::WriteSafeData(animationSlot, reinterpret_cast<std::uintptr_t>(&UpdateAnimationHook));
 			hookedVtable = vtable;
-			const auto base = REL::Module::get().base();
+			const auto base = reinterpret_cast<std::uintptr_t>(REX::W32::GetModuleHandleW(nullptr));  // the game's image, to log the RVA
 			REX::INFO("Puppets: hooked actor update (vtable {:X}) and its animation update (+{:X})", vtable,
 				reinterpret_cast<std::uintptr_t>(originalUpdateAnimation) - base);
 		}
