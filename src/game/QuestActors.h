@@ -62,15 +62,16 @@ namespace QuestActors
 		std::int8_t   type = 0;          // TESQuest::data.questType
 		bool          radiant = false;   // RadiantSync::IsRadiant (by file and form ID in it)
 		bool          perGame = false;   // QuestFilter::IsPerGame
+		bool          runsOnce = false;  // QuestFilter::IsRunsOnce: no run-once flag, but read in the game's files as running once
 	};
 
 	// Whether a quest's created creatures are paired across games. One that starts with the game but has no run-once flag
 	// (Fallout4.esm's MS13 and DN054, read from the file's flags) is taken as running once per game all the same: the new
-	// game starts it, and no event starts it again.
+	// game starts it, and no event starts it again. So is one QuestFilter::RUNS_ONCE names (Vault 75's DN143).
 	constexpr bool QuestPairs(const Quest& a_quest)
 	{
 		const bool typeOk = a_quest.type == QUEST_TYPE_NONE || a_quest.type == QUEST_TYPE_MISC || a_quest.type == QUEST_TYPE_SIDE;
-		const bool once = (a_quest.flags & (QUEST_RUN_ONCE | QUEST_STARTS_ENABLED)) != 0;
+		const bool once = (a_quest.flags & (QUEST_RUN_ONCE | QUEST_STARTS_ENABLED)) != 0 || a_quest.runsOnce;
 		return a_quest.shared && a_quest.official && (a_quest.flags & QUEST_RUNNING) != 0 && once && typeOk && !a_quest.radiant && !a_quest.perGame;
 	}
 

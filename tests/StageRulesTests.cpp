@@ -276,6 +276,56 @@ TEST("stage rules: a friend's stage that starts its quest here is judged and hel
 	CHECK((FlagsOf(0x0B8464, 400) & StageRules::kPays) != 0);
 }
 
+TEST("stage rules: a developer's quickstart stage 0 (kDebug) is never set from a friend's game, nor judged as its quest's start")
+{
+	using namespace StageRules;
+	const Rule debug{ 0, 0x1, 0, kDebug, 0 };
+	// Never, live or caught up, with the friend near or a warning given.
+	CHECK(Judge(&debug, {}) == Verdict::kSkip);
+	CHECK(Judge(&debug, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(Judge(&debug, { .sharedStory = true, .live = true, .warned = WARNING }) == Verdict::kSkip);
+	// A quest whose 0 is kDebug: the game doesn't run that 0 as the quest starts, so another stage starting it is judged
+	// by its own rule alone, and one with no rule is set.
+	const Rule waits{ 0, 0x1, 50, 0, 10 };
+	const auto alone = Starting(&debug, &waits);
+	REQUIRE(alone);
+	CHECK(alone->flags == 0);
+	CHECK(alone->wait == 10);
+	CHECK(!Starting(&debug, nullptr));
+	// ... and the 0 itself, starting it, is still skipped.
+	const auto itself = Starting(&debug, &debug);
+	REQUIRE(itself);
+	CHECK(Judge(&*itself, { .live = true }) == Verdict::kSkip);
+
+	// The rows (tools/questscan.ps1 -Safe -Rules, from SafeScan.QuickStart): the SAFE and SILENT quests whose 0 moves the
+	// player to a marker, is no start-up stage, and is set by nothing in the game's files. Each is a 0, and the only flag.
+	std::size_t rows = 0;
+	for (const auto& rule : RULES) {
+		if (!(rule.flags & kDebug)) {
+			continue;
+		}
+		++rows;
+		CHECK(rule.stage == 0);
+		CHECK(rule.flags == kDebug);
+		CHECK(rule.wait == 0);
+		CHECK((QuestFilter::IsSafe(rule.file, rule.quest) || QuestFilter::IsSilent(rule.file, rule.quest)));
+	}
+	CHECK(rows == 4);
+	CHECK(FlagsOf(0x0229FC, 0) == kDebug);  // MS07, Detective Case Files: MoveTo TestMQ201PlayerMarker (its 0 changes companions)
+	CHECK(FlagsOf(0x145722, 0) == kDebug);  // BoSM04Postquest: MoveTo BoS301IngramGantryMarker (its 0 sets the repeatable DN053)
+	CHECK(FlagsOf(0x0254B7, 0) == kDebug);  // DN154: MoveTo DN154_QuickstartMarker
+	CHECK(FlagsOf(0x16854F, 0) == kDebug);  // MS05BTapes (SILENT): MoveTo pPlayerTestMarker
+	// MS07's later stages start it with their own rules: its 50 waits 1 s, judged alone (no move).
+	const auto ms07 = Starting(Find(0x0229FC, 0), Find(0x0229FC, 50));
+	REQUIRE(ms07);
+	CHECK(ms07->flags == 0);
+	CHECK(Judge(&*ms07, {}) == Verdict::kSet);
+	// BoSM04Postquest's 2 moves the player to the gantry: only with the friend who did it.
+	CHECK(FlagsOf(0x145722, 2) == kMoves);
+	CHECK(Judge(Find(0x145722, 2), { .live = true, .nearFriend = true }) == Verdict::kSet);
+	CHECK(Judge(Find(0x145722, 2), {}) == Verdict::kSkip);
+}
+
 TEST("stage rules: a stage that moves the player through another quest it sets (Dangerous Minds' lounger into Kellogg's memory) is not caught up")
 {
 	using namespace StageRules;
@@ -413,12 +463,11 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
-	// Fallout4.esm's: Diamond City's caps, the treasure's cave (the Combat Zone's are gone with it, the Prydwen's gantry
-	// with BoSM04Postquest, which starts the repeatable DN053).
+	// Fallout4.esm's: Diamond City's caps, the treasure's cave, the Prydwen's gantry (the Combat Zone's are gone with it).
 	CHECK(!Find(0x02074B, 1));               // CZ
 	CHECK(FlagsOf(0x14191C, 10) == kFree);   // FFDiamondCity02: Home Plate, its price waived in a friend's game (PRICES)
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);   // DN070
-	CHECK(!Find(0x145722, 2));               // BoSM04Postquest
+	CHECK(FlagsOf(0x145722, 2) == kMoves);   // BoSM04Postquest: SAFE's again, its 0 a developer's quickstart
 	// Far Harbor's treasure dig fades the screen out.
 	CHECK(FlagsOf(0x04D2F5, 200, File::kCoast) == kMoves);  // DLC03PostQuestTreasureDig
 	// A quest's own item taken is left alone (only its script's wait kept): the fog condenser module.
@@ -428,11 +477,12 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(module->wait == 50);
 	CHECK(!Find(0x10CB94, 100));                   // FFGoodneighbor03: its own item, no wait
 	CHECK(!Find(0x02039A, 300, File::kCoast));     // DLC03FarHarborFF03c
-	// Their stage 0s that move the player are the developers' quickstarts, none the quest's start-up stage: left out.
-	CHECK(!Find(0x000803, 0, File::kNukaWorld));  // DLC04MQ03
+	// Their stage 0s that move the player are the developers' quickstarts, none the quest's start-up stage: kDebug where
+	// the scan proves nothing in the game's files sets them, left out otherwise.
+	CHECK(!Find(0x000803, 0, File::kNukaWorld));  // DLC04MQ03 (a property of its kick-out handler may set it)
 	CHECK(!Find(0x000805, 0, File::kNukaWorld));  // DLC04MQ05 (not SAFE's now either)
-	CHECK(!Find(0x0254B7, 0));                    // DN154
-	CHECK(!Find(0x145722, 0));                    // BoSM04Postquest
+	CHECK(FlagsOf(0x0254B7, 0) == kDebug);        // DN154
+	CHECK(FlagsOf(0x145722, 0) == kDebug);        // BoSM04Postquest
 
 	// A far friend's move is skipped; a payment is never made from a friend's game.
 	const auto pole = Find(0x000803, 1, File::kNukaWorld);

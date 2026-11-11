@@ -1126,6 +1126,79 @@ step_follow() {
 	fi
 }
 
+# ---- more quests sQuests = safe shares, set in the host's game (opt-in: smoke.sh --only quests_safe) ----------------------------------------
+# Quests QuestFilter::SAFE gained by three rules (src/game/QuestFilter.h, tools/questscan.cs): Atom Cats Garage (DN054, whose 1 starts the
+# garage's radio station, each game's own: ALLOW_STARTS), Vault 75 (DN143) and the Wasteland Refrigerator's two misc objectives
+# (MS01MiscObj, MS01MiscObjSold: repeatable by their flags, run once as the game starts them: RUNS_ONCE), and the Detective Case Files
+# (MS07, whose 0 is a developer's quickstart: StageRules' kDebug). Set-up by console, said so in the report: both games coc to
+# SanctuaryExt; the host's console sets each quest's QSAFE_QUESTS stages (in the order listed, a later one first where two are), and the
+# VM's game must reach the same stages within QSAFE_WAIT s, its player staying where it was. Vault 75: what its created aliases make are
+# the four ID cards in its key holders' inventories, not creatures, so nothing of it pairs (QuestActors pairs creatures only): checked is
+# that both games' created aliases hold their items alike, and that no pairing of it is counted. Last (QSAFE_DEBUG0=1, the default): the
+# host's console sets MS07's 0, the quickstart, which moves the host to a test marker; the VM's game must not set it (its log says why), and
+# the host's console coc's back to SanctuaryExt. Needs the host's sQuests = safe and a shared story (`rules`). Quest stages are for good in
+# a save: run it on throwaway saves from before these quests (backup.sh before, restore after); a stage already done in either game is a
+# FAIL naming it.
+QSAFE_QUESTS=${QSAFE_QUESTS:-"00048516:1 000FCB15:100 00028657:10 000704F4:10 000229FC:99,50"}
+QSAFE_MS07=${QSAFE_MS07:-000229FC}; QSAFE_VAULT75=${QSAFE_VAULT75:-000FCB15}
+QSAFE_WAIT=${QSAFE_WAIT:-25}; QSAFE_DEBUG0=${QSAFE_DEBUG0:-1}
+step_quests_safe() {
+	section "quests_safe (SAFE's new quests: the host's console setstage, the VM's game the same; console placement and setstage on the host)"
+	local item q stages s line pos0 moved hl vl hp vp all
+	for item in $QSAFE_QUESTS; do
+		q=${item%%:*}; stages=${item#*:}
+		line=$(dc host "stages $q")
+		case "$line" in *"sQuests = safe"*) ;; *) fail "quests_safe: set-up: the host shares $q (sQuests = safe, a shared story)" "got '$line'"; return;; esac
+		for s in ${stages//,/ }; do
+			if _qa_has host "$q" "$s" || _qa_has vm "$q" "$s"; then fail "quests_safe: set-up: neither game has $q stage $s done (a throwaway save from before it)" "host $(_qa_done host "$q"), VM $(_qa_done vm "$q")"; return; fi
+		done
+	done
+	if [ "$QSAFE_DEBUG0" = 1 ] && { _qa_has host "$QSAFE_MS07" 0 || _qa_has vm "$QSAFE_MS07" 0; }; then
+		fail "quests_safe: set-up: neither game has $QSAFE_MS07 stage 0 done" "host $(_qa_done host "$QSAFE_MS07"), VM $(_qa_done vm "$QSAFE_MS07")"; return
+	fi
+	enter_both SanctuaryExt 14
+	pos0=$(dc vm pos)
+	hp=$(_qa_paired host pairs); vp=$(_qa_paired vm pairs)
+	for item in $QSAFE_QUESTS; do
+		q=${item%%:*}; stages=${item#*:}
+		for s in ${stages//,/ }; do dc host "console setstage $q $s" >/dev/null; sleep 3; done
+		all=1; for s in ${stages//,/ }; do wait_for 10 _qa_has host "$q" "$s" || all=0; done
+		if [ $all = 0 ]; then fail "quests_safe: set-up: the host's console set $q ${stages//,/ then }" "host done $(_qa_done host "$q")"; continue; fi
+		all=1; for s in ${stages//,/ }; do wait_for "$QSAFE_WAIT" _qa_has vm "$q" "$s" || all=0; done
+		if [ $all = 1 ]; then pass "quests_safe: the VM's game set the host's $q ${stages//,/ and }" "host done $(_qa_done host "$q"), VM $(_qa_done vm "$q")"
+		else fail "quests_safe: the VM's game set the host's $q ${stages//,/ and }" "host done $(_qa_done host "$q"), VM $(_qa_done vm "$q")"; fi
+	done
+	moved=$(_q_moved "$pos0" "$(dc vm pos)")
+	if is_num "$moved"; then expect_le "quests_safe: the VM's player stays where it was" "$moved" 64 u
+	else fail "quests_safe: the VM's player stays where it was" "no position read"; fi
+
+	# Vault 75: its created aliases (the ID cards) filled alike in both games; nothing of it paired (no creature).
+	if _qa_started vm "$QSAFE_VAULT75"; then
+		sleep 5
+		hl=$(_qa_aliases host "$QSAFE_VAULT75" . 4 | awk '{print $1}' | sort | tr '\n' ' '); vl=$(_qa_aliases vm "$QSAFE_VAULT75" . 4 | awk '{print $1}' | sort | tr '\n' ' ')
+		if [ -n "$hl" ] && [ "$hl" = "$vl" ]; then pass "quests_safe: Vault 75's created aliases hold their items in both games" "aliases ${hl% }"
+		elif [ -z "$hl" ] && [ -z "$vl" ]; then warn "quests_safe: Vault 75's created aliases hold their items in both games" "neither game's \`aliases\` shows a reference for them (an item in an inventory may have none)"
+		else fail "quests_safe: Vault 75's created aliases hold their items in both games" "host '${hl% }', VM '${vl% }'"; fi
+		if [ "$(_qa_paired host pairs)" = "$hp" ] && [ "$(_qa_paired vm pairs)" = "$vp" ]; then pass "quests_safe: nothing of Vault 75 is paired (its created aliases are items, not creatures)" "pairs host $hp, VM $vp"
+		else warn "quests_safe: nothing of Vault 75 is paired (its created aliases are items, not creatures)" "pairs host $hp -> $(_qa_paired host pairs), VM $vp -> $(_qa_paired vm pairs) (another quest's pairing in the meantime?)"; fi
+	fi
+
+	# MS07's 0, the developer's quickstart: never set from a friend's game.
+	[ "$QSAFE_DEBUG0" = 1 ] || return 0
+	win_mark quests_safe vm
+	dc host "console setstage $QSAFE_MS07 0" >/dev/null
+	if ! wait_for 15 _qa_has host "$QSAFE_MS07" 0; then fail "quests_safe: set-up: the host's console set $QSAFE_MS07 0" "host done $(_qa_done host "$QSAFE_MS07")"
+	else
+		sleep "$QSAFE_WAIT"
+		if _qa_has vm "$QSAFE_MS07" 0; then fail "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $(_qa_done vm "$QSAFE_MS07")"
+		else pass "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $(_qa_done vm "$QSAFE_MS07"); $(grep -oE "QuestSync: not setting $QSAFE_MS07 .* stage 0: [^;]*" "$(win_read quests_safe vm)" | head -1)"; fi
+		moved=$(_q_moved "$pos0" "$(dc vm pos)")
+		if is_num "$moved"; then expect_le "quests_safe: the VM's player stays where it was after the host's quickstart" "$moved" 64 u
+		else fail "quests_safe: the VM's player stays where it was after the host's quickstart" "no position read"; fi
+	fi
+	dc host "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame host 30
+}
+
 # ---- a shared quest's created creatures, paired across games (src/game/QuestActors.h) ------------------------------------------------------
 # A quest the session shares (with the host's sQuests = safe: SAFE's Gun Run, SILENT's objective-less ones) creates its creatures in each
 # game's run; the game that shares one first names its alias, and the other game pairs its own creature from that alias with it (mirrored,

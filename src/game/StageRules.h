@@ -24,6 +24,7 @@ namespace StageRules
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
 	inline constexpr std::uint8_t kHostile = 1 << 5;  // with kMoves: what it does is turn a faction on the player, not move them (the follow offer says "fighting")
+	inline constexpr std::uint8_t kDebug = 1 << 6;    // a developer's quickstart stage 0 (no start-up stage; only a console sets it): never set from a friend's game, and not run as its quest starts
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -86,11 +87,13 @@ namespace StageRules
 	// for Brooks, FFGoodneighbor03's HalluciGen gas canister) is not, as for the story's quest items. Most of their
 	// moves are quickstarts too (DLC04MQ03 1-5); the others (DN070 5 into the treasure's cave, DLC04MS01 550,
 	// DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their stage 0s that
-	// move the player and are no start-up stage are left out: DN154, DLC04MQ03. BoSM04Postquest is no longer SAFE's (its
-	// 0 sets the repeatable DN053), so its gantry quickstart has no row. The
+	// move the player and are no start-up stage are kDebug where the scan proves them a developer's quickstart (nothing
+	// in the game's files sets them: SafeScan.QuickStart in tools/questscan.cs; DN154, MS07, BoSM04Postquest, whose 0
+	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game; the
+	// others are left out (DLC04MQ03's, which a property of its kick-out handler may set). The
 	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, one
-	// quickstart (DLC03MQ02Fight 5; its 0 is no start-up stage, left out with MS05BTapes's 0 and DLC04Grandchester's
-	// 0), and Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
+	// quickstart (DLC03MQ02Fight 5; its 0 is no start-up stage, left out with DLC04Grandchester's 0), and
+	// Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
 	// (DLC03CoA_FFNucleus03_PumpHandler 20 and 30) are the quest's own, as the fog condenser modules: no row. What
 	// their stages give (caps from a fight's prize or a reward) both players get, as a shared quest's reward.
 	// SAFE's quests shared for their outcomes (tools/questscan.cs ALLOW_OUTCOMES: a faction's hostility, a settlement)
@@ -158,6 +161,9 @@ namespace StageRules
 		{ 0, 0x0229F6, 0, kMoves, 20 },  // MS01
 		{ 0, 0x0229F6, 1050, 0, 50 },
 		{ 0, 0x0229F7, 17, kMoves, 0 },  // MS02: MS02Script.Freeze takes the controls
+		{ 0, 0x0229FC, 0, kDebug, 0 },  // MS07: a developer's quickstart (MoveTo TestMQ201PlayerMarker)
+		{ 0, 0x0229FC, 50, 0, 10 },
+		{ 0, 0x0229FC, 99, 0, 30 },
 		{ 0, 0x0229FD, 35, kMoves, 75 },  // MS07b
 		{ 0, 0x0229FD, 37, kMoves, 45 },
 		{ 0, 0x0229FE, 0, kMoves | kBridge | kStory, 30 },  // MS07c
@@ -205,6 +211,7 @@ namespace StageRules
 		{ 0, 0x022A08, 467, kMoves, 10 },
 		{ 0, 0x022A08, 470, kMoves, 10 },
 		{ 0, 0x022A0A, 60, kMoves, 0 },  // MS19: MS19Script.Freeze takes the controls
+		{ 0, 0x0254B7, 0, kDebug, 0 },  // DN154: a developer's quickstart (MoveTo DN154_QuickstartMarker)
 		{ 0, 0x026340, 1, kMoves, 20 },  // DN121
 		{ 0, 0x026340, 2, kMoves, 20 },
 		{ 0, 0x026340, 3, kMoves | kBridge, 20 },
@@ -440,6 +447,8 @@ namespace StageRules
 		{ 0, 0x142FD3, 100, 0, 1 },
 		{ 0, 0x142FD3, 800, 0, 1 },
 		{ 0, 0x142FD3, 1200, 0, 100 },
+		{ 0, 0x145722, 0, kDebug, 0 },  // BoSM04Postquest: a developer's quickstart (MoveTo BoS301IngramGantryMarker)
+		{ 0, 0x145722, 2, kMoves, 20 },  // MoveTo BoS301IngramGantryMarker
 		{ 0, 0x14B717, 25, 0, 5 },  // MS05B
 		{ 0, 0x14B717, 125, 0, 25 },
 		{ 0, 0x14B717, 157, 0, 10 },
@@ -450,6 +459,7 @@ namespace StageRules
 		{ 0, 0x15BD39, 30, kMoves, 80 },  // InstMassFusion
 		{ 0, 0x15BD39, 40, 0, 20 },
 		{ 0, 0x1666C5, 0, kMoves, 40 },  // COMCaitQuest
+		{ 0, 0x16854F, 0, kDebug, 0 },  // MS05BTapes: a developer's quickstart (MoveTo pPlayerTestMarker)
 		{ 0, 0x16D036, 100, kMoves, 60 },  // InstKickOut
 		{ 0, 0x173ED9, 0, kMoves | kBridge, 100 },  // BoS304
 		{ 0, 0x173ED9, 1, kMoves | kBridge, 100 },
@@ -836,6 +846,7 @@ namespace StageRules
 		{ 0, 0x0179F3, 5 }, { 0, 0x0179F3, 50 }, { 0, 0x0179F3, 200 },  // DialogueConcordArea
 		{ 0, 0x0190BC, 0 }, { 0, 0x0190BC, 22 }, { 0, 0x0190BC, 23 }, { 0, 0x0190BC, 25 }, { 0, 0x0190BC, 30 }, { 0, 0x0190BC, 40 }, { 0, 0x0190BC, 50 },  // DialogueDiamondCityEntrance
 		{ 0, 0x0190BC, 52 }, { 0, 0x0190BC, 55 }, { 0, 0x0190BC, 90 }, { 0, 0x0190BC, 200 }, { 0, 0x0190BC, 400 }, { 0, 0x0190BC, 1000 },
+		{ 0, 0x01CB51, 120 }, { 0, 0x01CB51, 200 }, { 0, 0x01CB51, 210 },  // MS07a
 		{ 0, 0x01CC2A, 0 }, { 0, 0x01CC2A, 8 }, { 0, 0x01CC2A, 10 }, { 0, 0x01CC2A, 34 }, { 0, 0x01CC2A, 38 }, { 0, 0x01CC2A, 40 }, { 0, 0x01CC2A, 55 },  // MQ102
 		{ 0, 0x01CC2A, 65 }, { 0, 0x01CC2A, 70 }, { 0, 0x01CC2A, 75 }, { 0, 0x01CC2A, 80 }, { 0, 0x01CC2A, 85 }, { 0, 0x01CC2A, 89 }, { 0, 0x01CC2A, 90 },
 		{ 0, 0x01CC2A, 100 }, { 0, 0x01CC2A, 110 }, { 0, 0x01CC2A, 115 }, { 0, 0x01CC2A, 122 }, { 0, 0x01CC2A, 123 }, { 0, 0x01CC2A, 130 }, { 0, 0x01CC2A, 140 },
@@ -856,8 +867,10 @@ namespace StageRules
 		{ 0, 0x0229EE, 357 }, { 0, 0x0229EE, 360 }, { 0, 0x0229EE, 400 }, { 0, 0x0229EE, 425 }, { 0, 0x0229EE, 430 }, { 0, 0x0229EE, 460 }, { 0, 0x0229EE, 500 },
 		{ 0, 0x0229EE, 600 }, { 0, 0x0229EE, 700 }, { 0, 0x0229EE, 710 }, { 0, 0x0229EE, 720 }, { 0, 0x0229EE, 730 }, { 0, 0x0229EE, 740 }, { 0, 0x0229EE, 800 },
 		{ 0, 0x0229EE, 900 }, { 0, 0x0229EE, 1000 },
+		{ 0, 0x0229F6, 10 }, { 0, 0x0229F6, 60 }, { 0, 0x0229F6, 70 }, { 0, 0x0229F6, 900 },  // MS01
 		{ 0, 0x0229F7, 9 }, { 0, 0x0229F7, 1000 },  // MS02
-		{ 0, 0x0229FD, 10 }, { 0, 0x0229FD, 19 },  // MS07b
+		{ 0, 0x0229FC, 0 }, { 0, 0x0229FC, 10 }, { 0, 0x0229FC, 40 },  // MS07
+		{ 0, 0x0229FD, 10 }, { 0, 0x0229FD, 19 }, { 0, 0x0229FD, 20 }, { 0, 0x0229FD, 35 }, { 0, 0x0229FD, 37 }, { 0, 0x0229FD, 40 },  // MS07b
 		{ 0, 0x0229FE, 0 }, { 0, 0x0229FE, 1 }, { 0, 0x0229FE, 190 }, { 0, 0x0229FE, 290 }, { 0, 0x0229FE, 300 }, { 0, 0x0229FE, 305 }, { 0, 0x0229FE, 500 },  // MS07c
 		{ 0, 0x0229FE, 600 },
 		{ 0, 0x022A00, 100 }, { 0, 0x022A00, 150 }, { 0, 0x022A00, 340 }, { 0, 0x022A00, 360 }, { 0, 0x022A00, 400 }, { 0, 0x022A00, 410 }, { 0, 0x022A00, 450 },  // MS09
@@ -968,6 +981,7 @@ namespace StageRules
 		{ 0, 0x142FD3, 300 }, { 0, 0x142FD3, 400 }, { 0, 0x142FD3, 500 }, { 0, 0x142FD3, 600 }, { 0, 0x142FD3, 700 }, { 0, 0x142FD3, 800 }, { 0, 0x142FD3, 900 },
 		{ 0, 0x142FD3, 950 }, { 0, 0x142FD3, 1000 }, { 0, 0x142FD3, 1100 }, { 0, 0x142FD3, 1200 }, { 0, 0x142FD3, 1300 }, { 0, 0x142FD3, 1400 }, { 0, 0x142FD3, 1500 },
 		{ 0, 0x142FD3, 1600 },
+		{ 0, 0x145722, 0 }, { 0, 0x145722, 1 },  // BoSM04Postquest
 		{ 0, 0x146C84, 200 },  // MS10b
 		{ 0, 0x14A24C, 300 },  // MS07cTapes
 		{ 0, 0x14B717, 7 }, { 0, 0x14B717, 25 }, { 0, 0x14B717, 50 }, { 0, 0x14B717, 125 }, { 0, 0x14B717, 150 }, { 0, 0x14B717, 157 }, { 0, 0x14B717, 225 },  // MS05B
@@ -1085,10 +1099,11 @@ namespace StageRules
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the
 	// quest's start-up stage first, its 0 in the game's quests (MQ105's 0 moves the player): the stage is
-	// judged and held for what both do. Null if neither does anything.
+	// judged and held for what both do. Null if neither does anything. A kDebug 0 is no start-up stage: the
+	// game doesn't run it as the quest starts, so the stage is judged alone.
 	inline std::optional<Rule> Starting(const Rule* a_start, const Rule* a_stage)
 	{
-		if (!a_start) {
+		if (!a_start || (a_start->flags & kDebug)) {
 			return a_stage ? std::optional<Rule>(*a_stage) : std::nullopt;
 		}
 		Rule rule = a_stage ? *a_stage : *a_start;
@@ -1160,7 +1175,7 @@ namespace StageRules
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
-		if ((flags & kPays) || ((flags & kStory) && !a_now.sharedStory)) {
+		if ((flags & (kPays | kDebug)) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
 		}
 		if ((flags & kMoves) && a_now.opening) {

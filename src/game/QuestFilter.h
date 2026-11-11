@@ -153,12 +153,30 @@ namespace QuestFilter
 		{ 3, 0x044993 },  // DLC04CollectVassalIncomeMiscQuest: a player's tribute from their raided settlements
 	};
 
+	// Quests flagged neither run-once nor start-enabled (TESQuest::data.flags) that the rule below takes as run-once all the
+	// same: the repeatable flag is all that keeps them out of SAFE, and the game starts each from one place that does not
+	// start it again, or a second run there is nothing but its own stage (no actor or item made at runtime travels). Each
+	// read in the game's files (tools/questscan.ps1 -Safe prints them with their verdict), with what starts it. QuestActors'
+	// gate takes them as run-once too (QuestActors::Quest::runsOnce: a second run's alias would be the first's on the wire).
+	// tools/questscan.cs reads this table. Sorted by file and form ID.
+	inline constexpr Local RUNS_ONCE[] = {
+		{ 0, 0x028657 },  // MS01MiscObj, Wasteland Refrigerator: MS01 10 starts it (or a caravan trader's tip, RETravelKMK08 40 and RETravelKMK12), MS01 100 or 1000 stops it; one objective, no alias made at runtime
+		{ 0, 0x0704F4 },  // MS01MiscObjSold, Save From Bullet: only MS01 70 starts it (MS01 starts with the game and runs once there), its 20 (set by MS01 900) stops it; one objective, no alias made at runtime
+		{ 0, 0x0FCB15 },  // DN143, Vault 75: only the vault's entry trigger starts it (DefaultRefOnTriggerEnter: its 100, then the trigger deletes itself), and nothing stops it (800 completes it); what its aliases make are the four ID cards in its key holders' inventories
+	};
+
+	inline bool IsRunsOnce(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		return std::ranges::binary_search(RUNS_ONCE, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
+	}
+
 	// Quests no session shares by their type that the host's sQuests = safe shares with the story
 	// (Protocol::QuestRule::kSafe; only with sStory = shared too): misc quests (type 6: Diamond City's and
 	// Goodneighbor's errands, the pointers to a quest's giver) and quests under no type with objectives (Far Harbor's
 	// and Nuka-World's own stories, Nuka-World's main line DLC04MQ03 among them) that a friend's stage can be set on
 	// here as it is, by a rule read off the game's files: a quest of the game's masters with objectives that is no
-	// radiant (RadiantRules.h), no PER_GAME and no companion's by its name; runs once or is started with the game;
+	// radiant (RadiantRules.h), no PER_GAME and no companion's by its name; runs once or is started with the game (or is
+	// in RUNS_ONCE);
 	// whose every alias is fixed (a forced reference or location, a unique actor, another quest's alias, one its
 	// scripts fill, or made at or found from one of those: none filled from the story manager's event or by its
 	// conditions, so it is the same in every game); and none of whose stages does any of these, in its own fragment, a
@@ -171,10 +189,15 @@ namespace QuestFilter
 	// SetOwnedByPlayer (a settlement's owner); calls RemoveAllItems or UnequipAll on the player; sends a story event
 	// (the story manager starts quests from it with each game's own picks); starts a quest each game runs its own way
 	// (a radiant, PER_GAME, a repeatable quest or one with an alias each game fills), by Start or by setting a stage of
-	// one the game doesn't start itself: a friend's game would start it there, unshared (DN054, DN123, BoSM04Postquest,
-	// DLC04DialogueRaiderBossOperators are left out so). A fixed, run-once quest it starts runs in the friend's game as
-	// the friend plays it. What it does not see: a scene a stage starts, a timer or event a script waits for, a call
-	// through a variable whose type has no script (an ObjectReference property's attached script), a quest matched by
+	// one the game doesn't start itself: a friend's game would start it there, unshared (DN123 and
+	// DLC04DialogueRaiderBossOperators are left out so; tools/questscan.cs ALLOW_STARTS lets one such start through, each
+	// with why: DN054's Atom Cats radio station, each game's own as every radio station is). A fixed, run-once quest it
+	// starts runs in the friend's game as the friend plays it. A stage 0 that is a developer's quickstart is not read
+	// (MS07's, BoSM04Postquest's): no start-up stage, its fragment moves the player to a marker, and nothing in the
+	// game's files sets it (no script that holds the quest, nor one of its own, its aliases' or a fragment whose owning
+	// quest it may be, sets its 0 or lets it out of reach; no scene sets it; none reads it by its form ID), so only a
+	// console sets it; StageRules' kDebug row never sets it from a friend's game. What it does not see: a scene a stage
+	// starts, a timer or event a script waits for, a call through a variable whose type has no script (an ObjectReference property's attached script), a quest matched by
 	// no property name, anything else a script changes (MQ00MamaMurphy 700 kills her with KillEssential: a death every
 	// game shares anyway). A shared quest's stage it sets is not followed: that stage reaches a friend's game as the
 	// story's, SAFE or not. Less DENIED. And, by the maintainer's choice, the quests whose stages turn a faction hostile
@@ -192,10 +215,14 @@ namespace QuestFilter
 	// SILENT's (below).
 	inline constexpr Local SAFE[] = {
 		{ 0, 0x02125F },  // FFDiamondCity03
+		{ 0, 0x0229FC },  // MS07
 		{ 0, 0x0254B7 },  // DN154
+		{ 0, 0x028657 },  // MS01MiscObj
 		{ 0, 0x04542B },  // DN049
+		{ 0, 0x048516 },  // DN054
 		{ 0, 0x04ACE8 },  // CZMisc
 		{ 0, 0x04F623 },  // FFDiamondCity01Misc
+		{ 0, 0x0704F4 },  // MS01MiscObjSold
 		{ 0, 0x0747C9 },  // MS16MiscObj
 		{ 0, 0x084E40 },  // MS13MarowskiRevenge
 		{ 0, 0x087304 },  // BoSM01Pointer
@@ -210,6 +237,7 @@ namespace QuestFilter
 		{ 0, 0x0EBE71 },  // MQ00MamaMurphy
 		{ 0, 0x0EC4D9 },  // MS09MiscParsons
 		{ 0, 0x0F491A },  // MS09MiscJackReward
+		{ 0, 0x0FCB15 },  // DN143
 		{ 0, 0x1073CE },  // DN138
 		{ 0, 0x10CB94 },  // FFGoodneighbor03
 		{ 0, 0x10D5A7 },  // FFGoodneighbor04
@@ -226,6 +254,7 @@ namespace QuestFilter
 		{ 0, 0x1437DB },  // FFDiamondCityWantedPosterMisc
 		{ 0, 0x143A15 },  // MS17MiscCovenant
 		{ 0, 0x144F6E },  // BoS100MiscCambridge
+		{ 0, 0x145722 },  // BoSM04Postquest
 		{ 0, 0x1488F7 },  // MS19MiscVault81
 		{ 0, 0x148BAC },  // MS10MiscTrinityTower
 		{ 0, 0x14B718 },  // MS05MiscSalem

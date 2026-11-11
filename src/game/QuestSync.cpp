@@ -535,6 +535,9 @@ namespace QuestSync
 
 		const char* WhySkipped(std::uint8_t a_flags)
 		{
+			if (a_flags & StageRules::kDebug) {
+				return "it is a developer's quickstart, set only from the console";
+			}
 			if (a_flags & StageRules::kPays) {
 				return "it takes caps or items from the player";
 			}
