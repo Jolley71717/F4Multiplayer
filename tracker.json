@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T18:32:23+00:00",
+ "updated": "2026-11-11T18:53:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -632,8 +632,9 @@
    "title": "Settlement attacks (PR 386): the friend's mirror of the host's attack never starts",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": ""
+   "stage": 2,
+   "note": "Fix in review: the friend's game now starts the host's settlement attack and shared radiant quests",
+   "pr": 416
   },
   {
    "id": "83dc",
@@ -777,6 +778,14 @@
    "priority": 1,
    "stage": 5,
    "note": "Merged; ships in the next release"
+  },
+  {
+   "id": "ak74",
+   "title": "RadiantSync: this game's own radiant run can't be started again after a friend's run of the same quest ends (from-event aliases have no event)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "atg2",
@@ -1371,6 +1380,14 @@
    "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
    "pr": 157,
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
+  },
+  {
+   "id": "hm82",
+   "title": "Attack mirror and shared radiant starts send no story event: the quest's OnStoryScript never runs in the friend's game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "hrbw",
