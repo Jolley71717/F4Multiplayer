@@ -1,6 +1,7 @@
 #include "game/WorldSync.h"
 
 #include "MainThread.h"
+#include "game/CopyRevive.h"
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
 #include "game/DeathReports.h"
@@ -699,6 +700,62 @@ namespace WorldSync
 			leftToEvent += static_cast<std::uint32_t>(later.size());
 			toCheck.clear();
 			toCheck.insert(later.begin(), later.end());
+		}
+
+		CopyRevive::Book  raises;
+		Clock::time_point nextRaiseLook{};
+		std::uint32_t     raisesLeft = 0;  // copies of story characters left as they lie (CopyRevive::Facts::story), each logged once
+		std::unordered_set<std::uint32_t> raisesLeftLogged;
+
+		// Copies lying dead here while the NPC lives in its runner's game (CopyRevive.h), once a second. First our own death
+		// reports the server did not take (SessionDeaths::Ledger::StillRun): no longer dead for us. Then the copies of NPCs
+		// alive in their runner's game (a state of it came while ours lay dead: NpcSync::HeardDead) and alive for the session
+		// as we know it are raised, so they are mirrored again. A copy whose death was forgotten when a game was named to
+		// run it (OnActorOwners, "lives after all") is raised the same way.
+		void RaiseCopies(Clock::time_point a_now)
+		{
+			if (a_now < nextRaiseLook) {
+				return;
+			}
+			nextRaiseLook = a_now + std::chrono::seconds(1);
+			const auto local = NpcSync::LocalPlayer();
+			if (local == 0) {
+				return;
+			}
+			const auto runsElsewhere = [local](std::uint32_t a_id) {
+				const auto owner = NpcSync::Owner(a_id);
+				return owner != 0 && owner != local;
+			};
+			for (const auto id : dead.StillRun(a_now, runsElsewhere)) {
+				reports.Forget(id);
+				essentialHeld.erase(id);
+				REX::INFO("WorldSync: {:08X} lives after all: our report of its death was not taken (player {} still runs it); its death is forgotten here", id, NpcSync::Owner(id));
+			}
+			for (const auto id : NpcSync::HeardDead()) {
+				const auto actor = LoadedActor(id);
+				if (!actor || actor->IsDeleted() || !actor->Get3D()) {
+					continue;
+				}
+				// Dead and done falling: a robot's fall can last 10 s, and nothing is raised mid-fall.
+				const bool lies = DeadHere(actor) && static_cast<std::int32_t>(static_cast<RE::ActorState&>(*actor).lifeState) != SessionDeaths::LIFE_DYING;
+				const bool story = FoundDead::IsStoryCharacter(DescribeDead(actor));
+				const auto verdict = raises.Judge(id, { .deadHere = lies, .deadForUs = dead.Contains(id), .runsElsewhere = runsElsewhere(id), .heardAlive = true, .story = story }, a_now);
+				if (story && lies && !dead.Contains(id) && raisesLeftLogged.insert(id).second) {
+					++raisesLeft;
+					REX::INFO("WorldSync: our copy of {:08X} lies dead while player {}'s game has it alive; a character of a story, it is left as it lies", id, NpcSync::Owner(id));
+				}
+				if (verdict == CopyRevive::Verdict::kRaise) {
+					// Its inventory as it is (what our player took from the corpse stays taken), its 3D put back. Health is the
+					// engine's (full) until the runner's next report; CopyWatch takes nothing back from a copy it first sees.
+					actor->Resurrect(false, true);
+					NpcSync::CountCommands(1);
+					REX::INFO("WorldSync: our copy of {:08X} lay dead while player {}'s game has it alive; raised ({}), so it is mirrored again", id, NpcSync::Owner(id),
+						DeadHere(actor) ? "still dead after it: tried again later" : "up");
+				} else if (verdict == CopyRevive::Verdict::kGiveUp) {
+					REX::WARN("WorldSync: our copy of {:08X} stays dead after {} tries to raise it, while player {}'s game has it alive", id, CopyRevive::TRIES, NpcSync::Owner(id));
+				}
+			}
+			raises.Prune(a_now - CopyRevive::FORGET_AFTER);
 		}
 
 		const RE::ActorValueInfo* HealthInfo()
@@ -2861,8 +2918,8 @@ namespace WorldSync
 			// A game runs one we have dead: it is alive there, so alive for the session (the host's game brought it back
 			// with a cell reset, or its death was undone, or what we knew was from another world: the server gives
 			// nobody a dead NPC). No longer dead here, whether our copy lives (its death was held: essential here, or
-			// not loaded yet) or lies dead (its own cell's reset brings it back; until then its hits on our stand-in in
-			// the runner's game count all the same: PlayerHits). Before, only a held death was forgotten: a joiner whose
+			// not loaded yet) or lies dead (RaiseCopies raises it once that game's states say it lives; meanwhile its hits on
+			// our stand-in in the runner's game count all the same: PlayerHits). Before, only a held death was forgotten: a joiner whose
 			// copy had died kept the NPC dead, and could neither hurt it nor be hurt by it once the host's game had it
 			// back. Not a death our own game reported a moment ago (SessionDeaths::OWNED_CROSSING).
 			if (owner.playerId != 0 && IsShareableRef(owner.refId) && dead.OnOwned(owner.refId, Clock::now())) {
@@ -2871,7 +2928,7 @@ namespace WorldSync
 				essentialHeld.erase(owner.refId);
 				const auto actor = LoadedActor(owner.refId);
 				REX::INFO("WorldSync: {:08X} lives after all (player {} runs it); its death is forgotten here{}", owner.refId, owner.playerId,
-					held ? " (it was held)" : actor && DeadHere(actor) ? "; our copy lies dead until its cell resets" : "");
+					held ? " (it was held)" : actor && DeadHere(actor) ? "; our copy lies dead, and is raised once that game is heard to have it alive (RaiseCopies)" : "");
 			}
 		}
 	}
@@ -2953,6 +3010,9 @@ namespace WorldSync
 
 		TrackLoads(newLoads);
 		CheckFoundDead(a_hosting);
+		if (CanApply()) {
+			RaiseCopies(Clock::now());
+		}
 
 		// Report the health of actors we hit last frame (damage has been applied by now).
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
@@ -3162,6 +3222,8 @@ namespace WorldSync
 	void Reset()
 	{
 		dead.Reset(Clock::now());
+		raises.Clear();
+		nextRaiseLook = {};
 		reports.Clear();
 		storyKillsLogged.clear();
 		essentialHeld.clear();
@@ -3286,6 +3348,7 @@ namespace WorldSync
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
+		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar);
 	}

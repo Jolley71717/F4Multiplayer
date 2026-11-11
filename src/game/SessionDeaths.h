@@ -9,6 +9,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // What our game knows of the session's deaths (WorldSync), and what NpcSync asks of it before offering to run
 // an NPC. A raider the session has dead can be alive in our game in two ways: our game has not caught up yet
@@ -52,6 +53,9 @@ namespace SessionDeaths
 	// A death told again for one we know dead (the session's reminder: our game had it alive) kills a copy alive here
 	// only this long after we learned of it: a kill issued just now hasn't landed yet.
 	constexpr auto KILL_RETRY_AFTER = std::chrono::seconds(2);
+	// The server ends the ownership of an NPC whose death it takes, at once (it names nobody for it): another game still
+	// named as its runner this long after our own report means the report was not taken (StillRun).
+	constexpr auto NOT_TAKEN_AFTER = std::chrono::seconds(5);
 
 	class Ledger
 	{
@@ -116,6 +120,29 @@ namespace SessionDeaths
 			dead.erase(it);
 			++corrected;
 			return true;
+		}
+
+		// Our own reports of deaths the server did not take: another player's game still runs the NPC (a_runsElsewhere)
+		// NOT_TAKEN_AFTER after we reported it. The server drops a death from a game that wasn't fighting an NPC another
+		// game runs (Server.cpp, handleDeath): our copy died of something only our game saw (a throw's blast its runner's
+		// game deals itself, at a spot where its NPC doesn't stand; a drop no hit of ours explains), and the NPC lives on.
+		// No owner comes for it (its runner never changed), so OnOwned never forgets it, and up to 0.16.1 it stayed dead
+		// for us for good: its health reports dropped, never offered, its corpse never raised. Forgotten now, as OnOwned
+		// would; returns those forgotten.
+		template <class RunsElsewhere>
+		std::vector<std::uint32_t> StillRun(Clock::time_point a_now, RunsElsewhere&& a_runsElsewhere)
+		{
+			std::vector<std::uint32_t> out;
+			for (auto it = dead.begin(); it != dead.end();) {
+				if (it->second.reported && a_now - it->second.learned >= NOT_TAKEN_AFTER && a_runsElsewhere(it->first)) {
+					out.push_back(it->first);
+					it = dead.erase(it);
+					++notTaken;
+				} else {
+					++it;
+				}
+			}
+			return out;
 		}
 
 		// Whether the death has been known for a_for or longer.
@@ -187,6 +214,7 @@ namespace SessionDeaths
 
 		[[nodiscard]] std::uint32_t Revived() const { return revived; }
 		[[nodiscard]] std::uint32_t Corrected() const { return corrected; }  // deaths forgotten because a game runs the NPC (OnOwned)
+		[[nodiscard]] std::uint32_t NotTaken() const { return notTaken; }    // our reports the server did not take (StillRun)
 
 	private:
 		struct Entry
@@ -203,5 +231,6 @@ namespace SessionDeaths
 		bool                                                 settled = false;
 		std::uint32_t                                        revived = 0;
 		std::uint32_t                                        corrected = 0;
+		std::uint32_t                                        notTaken = 0;
 	};
 }
