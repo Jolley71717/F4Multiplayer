@@ -2838,6 +2838,16 @@ namespace WorkshopSync
 		constexpr REL::ID     REQUEST_SCRAP_PLACEMENT_ITEM{ 2194966 };
 		constexpr std::size_t CAN_SCRAP_CALL = 0x188;
 		constexpr std::size_t REQUEST_SCRAP_CALL = 0x85;
+		// The engine's scrap confirmation (ExamineConfirmMenu, opened by Workshop::RequestScrapRef with the rewards worked out
+		// from the piece's recipe) runs Workshop::RequestScrapCallback::OnAccept (+3C19C0) on Yes, which calls
+		// Workshop::ScrapReference(ContextData&, NiPointer<TESObjectREFR>&, BSTArray<BSTTuple<TESBoundObject*, uint>>* rewards)
+		// (+393F30) at +0x107 (a 5-byte call). For a copy of the host's piece that call becomes a request of the host
+		// (ScrapAcceptHook); the rest of OnAccept (the menu's "ItemScrapped", the sound, back to the selected recipe) runs as the
+		// engine wrote it, harmless. The host's own game scraps for a friend with the same function, a null rewards pointer
+		// (the engine then works the yield out itself; an empty array would give nothing), inside the bench and budget scopes.
+		constexpr REL::ID     SCRAP_ACCEPT{ 2195603 };
+		constexpr REL::ID     SCRAP_REFERENCE{ 2195125 };
+		constexpr std::size_t SCRAP_ACCEPT_CALL = 0x107;
 		// The grab. Workshop::SetSelectedEditItem (2195119) is not it: the general pick calls it every frame for whatever the
 		// crosshair is on (the highlight; workshop mode's placement item, PLACEMENT_ITEM, is that piece at idle), and a copy must
 		// be highlighted to be wired. The menu's user event handler (+B2C170) grabs on Accept: with no new piece and nothing held,
@@ -2974,6 +2984,7 @@ namespace WorkshopSync
 		using CanScrapFn = bool (*)(RE::TESObjectREFR&, bool);
 		using CanSelectFn = bool (*)(RE::TESObjectREFR&);
 		using CanStoreItemFn = bool (*)();
+		using ScrapFn = void (*)(RE::Workshop::ContextData&, RE::NiPointer<RE::TESObjectREFR>&, RE::BSTArray<RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>>*);
 		using GeneralPickFn = void (*)(void*, RE::Workshop::ContextData&, bool);  // the pick's lambda, the context, "general"
 		using FindBodyRefFn = RE::TESObjectREFR* (*)(void*, std::uint32_t);      // hknpBSWorld&, hknpBodyId (four bytes, by value)
 		using GeneralFilterFn = bool (*)(void*, RE::TESObjectREFR&);
@@ -2983,6 +2994,7 @@ namespace WorkshopSync
 		CanScrapFn      originalCanScrap = nullptr;
 		CanSelectFn     originalCanSelect = nullptr;
 		CanStoreItemFn  originalCanStoreItem = nullptr;
+		ScrapFn         originalScrapReference = nullptr;
 		GeneralPickFn   originalGeneralPick = nullptr;
 		FindBodyRefFn   originalFindBodyRef = nullptr;
 		GeneralFilterFn originalGeneralFilter = nullptr;
@@ -3064,7 +3076,8 @@ namespace WorkshopSync
 		std::atomic<std::uint32_t> picksAdmitted{ 0 };  // the pick test let a copy through (every frame the crosshair is on one)
 		std::atomic<std::uint32_t> grabsRefused{ 0 };   // key presses only: Accept on a copy or a pending piece of ours,
 		std::atomic<std::uint32_t> storesRefused{ 0 };  // Cancel (the Store key) with a copy highlighted,
-		std::atomic<std::uint32_t> scrapsRefused{ 0 };  // and XButton (Scrap) on a copy
+		std::atomic<std::uint32_t> scrapsRefused{ 0 };  // and XButton (Scrap) on a copy (the host's setting off, or its scrap asked already)
+		std::atomic<std::uint32_t> scrapsAsked{ 0 };    // the scrap confirmation's Yes on a copy: asked of the host, nothing scrapped here
 		std::set<std::uint32_t>    notOwnedBenches;  // Benches::IsNotOwned, for the hooks (under copyIdsLock)
 
 		SharedWorkshop::Requests requests;  // ours, waiting for the host's answer
@@ -3091,6 +3104,7 @@ namespace WorkshopSync
 		std::vector<Making> making;
 		std::uint32_t       requestsServed = 0;
 		std::uint32_t       requestsRefused = 0;
+		std::uint32_t       scrapsServed = 0;  // our pieces scrapped for friends with the engine's own scrap
 		std::uint32_t       finishedHere = 0;
 		std::uint32_t       wiresMadeHere = 0;
 		std::uint32_t       finishSteps = 0;
@@ -3125,6 +3139,13 @@ namespace WorkshopSync
 		bool HandsOver()
 		{
 			return SharedWorkshop::HandsOver(RuleOn(), HostRules::InSession(), hosting) && hostId.load() != 0 && !hostGone;
+		}
+
+		// Whether friends may scrap the host's pieces at its settlements: the host's bSharedWorkshopEdit (in the welcome's rules
+		// for a friend; the host's own game reads its own). Any thread.
+		bool EditAllowed()
+		{
+			return HostRules::Get().sharedWorkshopEdit;
 		}
 
 		// Whether our copy with this ID is of one of the host's pieces (under copyIdsLock).
@@ -3535,9 +3556,14 @@ namespace WorkshopSync
 			return !AdmitsCopy(a_ref) && originalCanStore(a_ref);
 		}
 
+		// The Scrap hint on a copy: shown when the host allows a friend's scrap, by the engine's own test, as for any piece
+		// (a copy's base is its builder's: a piece a recipe makes passes); hidden when the host's setting is off.
 		bool CanScrapHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
-			return !AdmitsCopy(a_ref) && originalCanScrap(a_ref, a_flag);
+			if (AdmitsCopy(a_ref) && !EditAllowed()) {
+				return false;
+			}
+			return originalCanScrap(a_ref, a_flag);
 		}
 
 		bool CanSelectHook(RE::TESObjectREFR& a_ref)
@@ -3620,9 +3646,20 @@ namespace WorkshopSync
 		// the menu); one that does and is refused, the engine's scrap test refused the piece (its parts said).
 		bool ScrapKeyHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
-			if (AdmitsCopy(a_ref)) {
-				RefusedKey(scrapsRefused, "scrap", a_ref);
+			switch (SharedWorkshop::OnScrapKey(AdmitsCopy(a_ref), EditAllowed(), IsPendingPiece(a_ref.GetFormID()))) {
+			case SharedWorkshop::ScrapKey::kRefuseEditOff:
+				if (scrapsRefused.fetch_add(1) < 3) {
+					REX::INFO("WorkshopSync: workshop mode's scrap of copy {:08X} refused: the host's bSharedWorkshopEdit is off", a_ref.GetFormID());
+				}
+				Hud::Notify(Text::Get("workshop.shared.edit_off"));
 				return false;
+			case SharedWorkshop::ScrapKey::kRefusePending:
+				scrapsRefused.fetch_add(1);
+				Hud::Notify(Text::Get("workshop.shared.scrap_pending"));
+				return false;
+			case SharedWorkshop::ScrapKey::kAsk:  // the engine's test and its confirmation as for any piece; its Yes asks the host (ScrapAcceptHook)
+			case SharedWorkshop::ScrapKey::kEngine:
+				break;
 			}
 			const bool may = originalCanScrap(a_ref, a_flag);
 			scrapKeys.fetch_add(1);
@@ -3957,7 +3994,7 @@ namespace WorkshopSync
 				NoteOwned(a_pending.bench);
 			}
 			++(a_why == Protocol::WorkshopAnswer::Why::kApplied ? answersApplied : answersRefused);
-			REX::INFO("WorkshopSync: request {} ({}) at workbench {:08X}: {}{}", a_seq, a_op == Protocol::WorkshopRequestOp::kWire ? "wire" : "build", a_pending.bench, Protocol::Name(a_why),
+			REX::INFO("WorkshopSync: request {} ({}) at workbench {:08X}: {}{}", a_seq, Protocol::OpName(a_op), a_pending.bench, Protocol::Name(a_why),
 				a_made.second != 0 ? std::format(", the host's {:08X}", a_made.second) : std::string{});
 			if (verdict.notice) {
 				Hud::Notify(Text::Get(verdict.notice));
@@ -4064,6 +4101,51 @@ namespace WorkshopSync
 			return true;
 		}
 
+		// A copy of the host's piece the player confirmed to scrap (the engine's own confirmation said Yes): asked of the host as
+		// a numbered request, never scrapped here (the host's scrap of its piece comes back as its scrapped report, which takes
+		// the copy away). On the main thread (the confirmation's callback). A copy that can't be asked for stands as it was.
+		void AskScrap(RE::TESObjectREFR& a_copy)
+		{
+			MainThread::Assert("WorkshopSync::AskScrap");
+			const auto id = a_copy.GetFormID();
+			const auto key = KeyOfCopy(id);
+			const auto benchId = BenchOfCopy(a_copy);
+			if (IsPendingPiece(id)) {
+				Hud::Notify(Text::Get("workshop.shared.scrap_pending"));
+				return;
+			}
+			if (!HandsOver() || !EditAllowed() || !key || benchId == 0 || taught.IsNotOwned(benchId)) {
+				Hud::Notify(Text::Get("workshop.shared.scrap_refused"));
+				REX::INFO("WorkshopSync: the scrap of our copy {:08X} not asked ({})", id, WhyNotAdmitted(a_copy));
+				return;
+			}
+			const auto seq = requests.Open(Protocol::WorkshopRequestOp::kScrap, id, benchId, Clock::now());
+			if (!seq) {
+				Hud::Notify(Text::Get("workshop.shared.scrap_refused"));
+				return;
+			}
+			Protocol::WorkshopRequest request;
+			request.seq = *seq;
+			request.op = Protocol::WorkshopRequestOp::kScrap;
+			request.workshop = benchId;
+			request.target = key->second;
+			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			scrapsAsked.fetch_add(1);
+			REX::INFO("WorkshopSync: the scrap of our copy {:08X} of player {}'s {:08X} at workbench {:08X} asked of the host as request {} (nothing scrapped here)", id, key->first,
+				key->second, benchId, *seq);
+		}
+
+		// Workshop::RequestScrapCallback::OnAccept's call of Workshop::ScrapReference (SCRAP_ACCEPT_CALL): a copy of the host's
+		// piece is asked of the host instead, and never reaches the engine's scrap; anything else is scrapped as ever.
+		void ScrapAcceptHook(RE::Workshop::ContextData& a_context, RE::NiPointer<RE::TESObjectREFR>& a_ref, RE::BSTArray<RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>>* a_rewards)
+		{
+			if (a_ref && AdmitsCopy(*a_ref)) {
+				AskScrap(*a_ref);
+				return;
+			}
+			originalScrapReference(a_context, a_ref, a_rewards);
+		}
+
 		bool IsPendingPiece(std::uint32_t a_id)
 		{
 			if (requests.IsPending(a_id)) {
@@ -4078,7 +4160,7 @@ namespace WorkshopSync
 		{
 			++(a_why == Protocol::WorkshopAnswer::Why::kApplied ? requestsServed : requestsRefused);
 			REX::INFO("WorkshopSync: player {}'s request {} ({}) at workbench {:08X}: {}{}", a_request.playerId, a_request.seq,
-				a_request.op == Protocol::WorkshopRequestOp::kWire ? "wire" : "build", a_request.workshop, Protocol::Name(a_why), a_made != 0 ? std::format(", made {:08X}", a_made) : std::string{});
+				Protocol::OpName(a_request.op), a_request.workshop, Protocol::Name(a_why), a_made != 0 ? std::format(", {} {:08X}", a_request.op == Protocol::WorkshopRequestOp::kScrap ? "scrapped" : "made", a_made) : std::string{});
 			PushShared(Protocol::Encode(Protocol::WorkshopAnswer{ a_request.seq, a_request.playerId, a_request.op, a_why, a_request.workshop, a_made }, Protocol::MessageType::kReportWorkshopAnswer));
 		}
 
@@ -4344,6 +4426,20 @@ namespace WorkshopSync
 					spot.position[1] = from->data.location.y;
 					spot.position[2] = from->data.location.z;
 				}
+			} else if (a_request.op == Protocol::WorkshopRequestOp::kScrap) {
+				const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.target);
+				facts.editAllowed = EditAllowed();
+				facts.targetKnown = target && !target->IsDeleted() && !target->IsDisabled();
+				// One of this workbench's own pieces: linked to it, not a copy of a friend's (the friend's game scraps those), not the
+				// workbench itself (never a piece: ReportRef), and not a wire (no wire is scrapped by itself in any game: its end is).
+				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !IsWorkbenchAnchor(target) &&
+				                      !IsWire(target->GetObjectReference());
+				facts.targetHeld = facts.targetKnown && Held(*target);
+				if (facts.targetKnown) {
+					spot.position[0] = target->data.location.x;
+					spot.position[1] = target->data.location.y;
+					spot.position[2] = target->data.location.z;
+				}
 			} else {
 				const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_request.base);
 				facts.objectKnown = base != nullptr;
@@ -4356,8 +4452,62 @@ namespace WorkshopSync
 			return facts;
 		}
 
-		// A build or a wire waiting to be made (workshop mode open here, or the piece's 3D not there yet): made and answered
-		// when it may be, refused when it waited too long.
+		// The engine's own scrap of our piece (Workshop::ScrapReference, 1.11.240: it disables the piece, takes it off the
+		// workbench's grids and destroys the wires strung to it, clears its snaps and stacked children, puts the yield in the
+		// workbench, unlinks it, recounts the bench, takes it out of the budget, notifies ItemDestroyedEvent and deletes it), as
+		// SharedWorkshop::SCRAP_STEPS has it: inside the bench scope (the yield's container, the grids and the recount are
+		// workshop mode's current workbench's) and the budget scope (Budget::RemoveObject writes the running totals to the
+		// bench), with a null rewards pointer (the engine works the yield out from the piece's recipe, as workshop mode's own
+		// scrap does: half its components, floored, more with Scrapper, from this game's perks). Its destroyed events run our
+		// DestroyedSink inside the call: the piece and its wires are reported scrapped, so the friends' copies go. What ran.
+		std::string ScrapPiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench)
+		{
+			static REL::Relocation<ScrapFn> scrap{ SCRAP_REFERENCE };
+			const auto                      player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->parentCell) {
+				return "(no player cell)";
+			}
+			std::string log;
+			{
+				BenchScope bench{ a_bench };
+				log += SharedWorkshop::Name(SharedWorkshop::ScrapStep::kBench);
+				BudgetScope totals{ a_bench };
+				log += std::format(" {}", SharedWorkshop::Name(SharedWorkshop::ScrapStep::kBudget));
+				RE::Workshop::ContextData        context{ player };
+				RE::NiPointer<RE::TESObjectREFR> target{ &a_ref };
+				scrap(context, target, nullptr);
+				log += std::format(" {}", SharedWorkshop::Name(SharedWorkshop::ScrapStep::kScrap));
+			}
+			gridNamedFrame = ~0ull;  // the grids changed
+			++scrapsServed;
+			return log;
+		}
+
+		// A friend's scrap of one of our pieces: checked again now (the piece may have gone, or be in the host's hands since the
+		// request came), then the engine's own scrap of it, and answered with the piece's id (what the friend's copy is of).
+		void ServeScrap(const Protocol::WorkshopRequest& a_request)
+		{
+			const auto facts = FactsOf(a_request);
+			if (const auto why = SharedWorkshop::Refusal(a_request.op, facts)) {
+				Answer(a_request, *why, 0);
+				return;
+			}
+			const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.target);
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
+			if (!target || !bench) {
+				Answer(a_request, Protocol::WorkshopAnswer::Why::kNoSuchPiece, 0);
+				return;
+			}
+			const auto base = target->GetObjectReference();
+			const auto steps = ScrapPiece(*target, *bench);
+			const bool gone = target->IsDisabled() || target->IsDeleted();
+			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} scrapped for player {}'s request {}: {}{}", a_request.target, base ? base->GetFormID() : 0, a_request.workshop,
+				a_request.playerId, a_request.seq, steps, gone ? "" : " (the engine left it standing)");
+			Answer(a_request, gone ? Protocol::WorkshopAnswer::Why::kApplied : Protocol::WorkshopAnswer::Why::kFailed, gone ? a_request.target : 0);
+		}
+
+		// A build or a wire waiting to be made (workshop mode open here, or the piece's 3D not there yet), or a scrap waiting
+		// to be done: made and answered when it may be, refused when it waited too long.
 		void MakeRequests(Clock::time_point a_now)
 		{
 			if (making.empty() || answersHeld) {  // wsmode hold: taken, not made or answered yet
@@ -4367,6 +4517,10 @@ namespace WorkshopSync
 			// the engine's new-item byte itself: NewItemScope).
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
+				if (request.op == Protocol::WorkshopRequestOp::kScrap) {
+					ServeScrap(request);  // one engine call, now (out of the request's handler)
+					return true;
+				}
 				const bool  wire = request.op == Protocol::WorkshopRequestOp::kWire;
 				const auto  ref = wire ? RE::NiPointer<RE::TESObjectREFR>{} : a_making.ref.get();
 				if (!wire && !ref) {
@@ -4621,6 +4775,10 @@ namespace WorkshopSync
 		{
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
+				if (request.op == Protocol::WorkshopRequestOp::kScrap) {
+					ServeScrap(request);  // one engine call: done before the save rather than refused
+					return true;
+				}
 				const auto  ref = a_making.ref.get();
 				const auto  bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.workshop);
 				if (request.op == Protocol::WorkshopRequestOp::kBuild && ref && bench && ref->Get3D()) {
@@ -4664,7 +4822,7 @@ namespace WorkshopSync
 			const char*   what;
 		};
 		const auto at = [](auto& a_original) { return reinterpret_cast<void**>(&a_original); };
-		const std::array<Site, 9> sites{ {
+		const std::array<Site, 10> sites{ {
 			{ PICK_GENERAL, PICK_BLOCKED_CALL, IS_INTERACTION_BLOCKED, reinterpret_cast<void*>(&PickBlockedHook), at(originalIsBlocked), "the general pick's test" },
 			{ PICK_WIRE, PICK_BLOCKED_CALL, IS_INTERACTION_BLOCKED, reinterpret_cast<void*>(&PickBlockedHook), at(originalIsBlocked), "the wire pick's test" },
 			{ CAN_STORE_PLACEMENT_ITEM, CAN_STORE_CALL, CAN_STORE_REF, reinterpret_cast<void*>(&CanStoreHook), at(originalCanStore), "the store test" },
@@ -4674,6 +4832,7 @@ namespace WorkshopSync
 			{ CAN_SELECT_PLACEMENT_REF, CAN_SELECT_CALL, WORKSHOP_CAN_SELECT_REF, reinterpret_cast<void*>(&CanSelectHook), at(originalCanSelect), "the move button" },
 			{ WORKSHOP_MENU_EVENT, MENU_SELECT_CALL, WORKSHOP_CAN_SELECT_REF, reinterpret_cast<void*>(&SelectKeyHook), at(originalCanSelect), "the menu's Accept (the grab)" },
 			{ WORKSHOP_MENU_EVENT, MENU_STORE_CALL, CAN_STORE_PLACEMENT_ITEM, reinterpret_cast<void*>(&StoreKeyHook), at(originalCanStoreItem), "the menu's Store key" },
+			{ SCRAP_ACCEPT, SCRAP_ACCEPT_CALL, SCRAP_REFERENCE, reinterpret_cast<void*>(&ScrapAcceptHook), at(originalScrapReference), "the scrap confirmation's Yes" },
 		} };
 		// Every site as 1.11.240 has it (a call to the function the plugin expects), or none is patched: the hooks only make
 		// sense together (a copy picked but not refused at the gates could be scrapped for free).
@@ -4713,9 +4872,9 @@ namespace WorkshopSync
 				REX::WARN("WorkshopSync: {} ({:X}+{:X}) doesn't call what 1.11.240 calls there (another plugin's patch?); not watched", site.what, site.function.address(), site.offset);
 			}
 		}
-		// One call stub per distinct hook: seven, and the watch's six (both picks' casts share one, and both picks' hits).
+		// One call stub per distinct hook: eight, and the watch's six (both picks' casts share one, and both picks' hits).
 		auto& trampoline = REL::GetTrampoline();
-		if (trampoline.free_size() < 13 * CALL_STUB) {
+		if (trampoline.free_size() < 14 * CALL_STUB) {
 			REX::WARN("WorkshopSync: no room for the shared workshop's hooks ({} bytes free); the host's pieces can't be wired by friends", trampoline.free_size());
 			return;
 		}
@@ -4736,7 +4895,7 @@ namespace WorkshopSync
 			}
 		}
 		picksInstalled = true;
-		REX::INFO("WorkshopSync: workshop mode's picks hooked ({} sites, and {} of the picks' own calls): at a settlement the host owns, a friend can highlight and wire the host's pieces, and never grab, store or scrap them",
+		REX::INFO("WorkshopSync: workshop mode's picks hooked ({} sites, and {} of the picks' own calls): at a settlement the host owns, a friend can highlight and wire the host's pieces, never grab or store them, and their scrap of one is asked of the host",
 			sites.size(), watched);
 	}
 
@@ -4761,8 +4920,8 @@ namespace WorkshopSync
 			Answer(a_request, Protocol::WorkshopAnswer::Why::kHostBusy, 0);
 			return;
 		}
-		if (a_request.op == Protocol::WorkshopRequestOp::kWire) {
-			making.push_back({ a_request, {}, Clock::now() });  // made at the next frame (out of workshop mode)
+		if (a_request.op == Protocol::WorkshopRequestOp::kWire || a_request.op == Protocol::WorkshopRequestOp::kScrap) {
+			making.push_back({ a_request, {}, Clock::now() });  // made (or scrapped) at the next frame, out of the request's handler
 			return;
 		}
 		// The piece, where the friend's workshop mode put theirs; finished once its 3D is there (MakeRequests).
@@ -4807,7 +4966,7 @@ namespace WorkshopSync
 		}
 	}
 
-	std::string ScrapForDev(RE::TESObjectREFR* a_ref)
+	std::string ScrapForDev(RE::TESObjectREFR* a_ref, bool a_engine)
 	{
 		if (!a_ref || a_ref->IsDeleted()) {
 			return "error: no such reference, or deleted already";
@@ -4822,6 +4981,14 @@ namespace WorkshopSync
 			// dropped item), which must not be reported scrapped and deleted. Only a piece linked to a workbench is a piece.
 			REX::INFO("WorkshopSync: wsscrap {:08X} refused: not a workshop piece linked to a workbench", id);
 			return std::format("error: {:08X} is no workshop piece linked to a workbench: not scrapped", id);
+		}
+		if (a_engine) {
+			// The engine's own scrap, as a friend's request runs it (the yield into the workbench): the request path's probe.
+			if (Held(*a_ref)) {
+				return std::format("error: {:08X} is held in workshop mode: put it down first", id);
+			}
+			const auto steps = ScrapPiece(*a_ref, *bench);
+			return std::format("scrapped {:08X} (workbench {:08X}) with the engine's scrap: {} | disabled={} deleted={}", id, bench->GetFormID(), steps, a_ref->IsDisabled(), a_ref->IsDeleted());
 		}
 		// What the engine's scrap does, short of the yield: told to the workbench's scripts, off the grids and the links,
 		// out of the budget, unlinked, reported scrapped for the friends' copies, disabled and deleted.
@@ -5028,10 +5195,11 @@ namespace WorkshopSync
 
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={}",
-			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load(), grabsRefused.load(),
-			storesRefused.load(), scrapsRefused.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
-			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted);
+		return std::format("shared workshop: rule={} edit={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapsAsked={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={} scrapsServed={}",
+			HostRules::Get().sharedWorkshop, EditAllowed(), sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load(), grabsRefused.load(),
+			storesRefused.load(), scrapsRefused.load(), scrapsAsked.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
+			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted,
+			scrapsServed);
 	}
 
 	void InstallLights()

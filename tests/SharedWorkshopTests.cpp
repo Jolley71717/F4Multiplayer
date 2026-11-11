@@ -144,6 +144,31 @@ TEST("shared workshop: a build dropped before a save no longer waits, and its la
 	CHECK(requests.Waiting() == 0);
 }
 
+TEST("shared workshop: a scrap's pending piece is our copy: pending (not asked twice, not grabbed), but never dropped before a save or on leaving")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	const auto scrap = requests.Open(Op::kScrap, OTHER, BENCH, t0);
+	const auto build = requests.Open(Op::kBuild, PIECE, BENCH, t0);
+	REQUIRE(scrap && build);
+	CHECK(requests.IsPending(OTHER));
+	CHECK(requests.IsPending(PIECE));
+	CHECK(requests.Pieces() == std::vector<std::uint32_t>{ PIECE });  // the copy is not ours to delete
+	REQUIRE(requests.Builds().size() == 1);
+	CHECK(requests.Builds()[0].piece == PIECE);
+	const auto dropped = requests.DropBuilds();
+	REQUIRE(dropped.size() == 1);
+	CHECK(dropped[0].piece == PIECE);
+	CHECK(requests.IsPending(OTHER));  // the scrap still waits, its copy untouched
+	CHECK(requests.Waiting() == 1);
+	CHECK(requests.Dropped() == 1);
+	const auto answered = requests.Take(*scrap);
+	REQUIRE(answered);
+	CHECK(answered->op == Op::kScrap);
+	CHECK(answered->piece == OTHER);
+	CHECK(!requests.IsPending(OTHER));
+}
+
 TEST("shared workshop: no more than MAX_PENDING requests wait at once")
 {
 	Requests requests;
@@ -197,6 +222,33 @@ TEST("shared workshop: the answer's verdict: a build applied is adopted, refused
 		CHECK(!verdict.benchNotOwned);
 		CHECK(std::string{ verdict.notice } == "workshop.shared.wire_refused");
 	}
+}
+
+TEST("shared workshop: a scrap's verdict is nothing either way: applied without a notice (the engine said scrapped, the host's report takes the copy), refused with one")
+{
+	const auto scrapped = Judge(Op::kScrap, Why::kApplied);
+	CHECK(scrapped.outcome == Outcome::kNothing);
+	CHECK(!scrapped.benchNotOwned);
+	CHECK(scrapped.notice == nullptr);
+	CHECK(std::string{ Judge(Op::kScrap, Why::kNotAllowed).notice } == "workshop.shared.edit_off");
+	CHECK(std::string{ Judge(Op::kScrap, Why::kPieceBusy).notice } == "workshop.shared.piece_busy");
+	CHECK(std::string{ Judge(Op::kScrap, Why::kNoSuchPiece).notice } == "workshop.shared.scrap_no_piece");
+	for (const auto why : { Why::kNotHostOwned, Why::kBenchNotLoaded, Why::kBenchUnopened, Why::kHostAway, Why::kOff, Why::kFailed, Why::kNoAnswer, Why::kOverBudget }) {
+		const auto verdict = Judge(Op::kScrap, why);
+		CHECK(verdict.outcome == Outcome::kNothing);
+		CHECK(verdict.benchNotOwned == (why == Why::kNotHostOwned));
+		CHECK(std::string{ verdict.notice } == "workshop.shared.scrap_refused");
+	}
+}
+
+TEST("shared workshop: the Scrap key on the host's copy asks the host when the host allows it and no scrap of it waits; the engine's own otherwise")
+{
+	CHECK(OnScrapKey(false, true, false) == ScrapKey::kEngine);
+	CHECK(OnScrapKey(false, false, true) == ScrapKey::kEngine);  // our own piece: the host's setting is no concern of ours
+	CHECK(OnScrapKey(true, true, false) == ScrapKey::kAsk);
+	CHECK(OnScrapKey(true, false, false) == ScrapKey::kRefuseEditOff);
+	CHECK(OnScrapKey(true, true, true) == ScrapKey::kRefusePending);
+	CHECK(OnScrapKey(true, false, true) == ScrapKey::kRefuseEditOff);  // the rule first: it never changes mid-session
 }
 
 TEST("shared workshop: a wire ends only on a piece with the workshopPowerConnection value or the WorkshopPowerConnection keyword")
@@ -285,6 +337,45 @@ TEST("shared workshop: the host's game refuses in the order it looks: the settle
 	facts.endsAtBench = true;
 	facts.hostOwned = false;
 	CHECK(Refusal(Op::kWire, facts) == Why::kNotHostOwned);
+}
+
+TEST("shared workshop: a scrap is refused in order: the settlement and the host being there as for a build, then the host's setting, the piece, and the host's hands")
+{
+	Facts facts;
+	facts.benchKnown = true;
+	facts.hostOwned = true;
+	facts.benchLoaded = true;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kBenchUnopened);
+	facts.benchOpened = true;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNotAllowed);  // the host's bSharedWorkshopEdit off: nothing else is looked at
+	facts.targetKnown = true;
+	facts.targetAtBench = true;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNotAllowed);
+	facts.editAllowed = true;
+	CHECK(!Refusal(Op::kScrap, facts));
+	facts.targetHeld = true;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kPieceBusy);
+	facts.targetHeld = false;
+	facts.targetAtBench = false;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNoSuchPiece);  // another settlement's piece, a copy, or the workbench itself
+	facts.targetAtBench = true;
+	facts.targetKnown = false;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNoSuchPiece);
+	facts.targetKnown = true;
+	facts.hostOwned = false;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNotHostOwned);
+	CHECK(!Refusal(Op::kBuild, Facts{ .benchKnown = true, .hostOwned = true, .benchLoaded = true, .benchOpened = true, .objectKnown = true, .buildable = true, .inReach = true }));  // a build asks nothing of the scrap facts
+}
+
+TEST("shared workshop: the host's scrap for a friend is the engine's one call inside the bench and budget scopes")
+{
+	CHECK(SCRAP_STEPS.size() == 3);
+	CHECK(SCRAP_STEPS.front() == ScrapStep::kBench);
+	CHECK(SCRAP_STEPS.back() == ScrapStep::kScrap);
+	CHECK(std::ranges::find(SCRAP_STEPS, ScrapStep::kBudget) < std::ranges::find(SCRAP_STEPS, ScrapStep::kScrap));
+	for (const auto step : SCRAP_STEPS) {
+		CHECK(std::string{ Name(step) } != "?");
+	}
 }
 
 TEST("shared workshop: a piece is finished once its 3D is there (nothing of the host's workshop mode holds it off); one whose 3D never comes is refused")
