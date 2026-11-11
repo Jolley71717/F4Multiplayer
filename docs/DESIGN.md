@@ -2598,7 +2598,10 @@ again, it is not done here, and it holds again if the faction is still near (no 
 (opt-in) sets the Nucleus's kick-out with the VM standing among the Children of Atom: the stage waits, and lands once the
 VM has left. Nuka-World's Power Play (DLC04MQ05 8) turns the snubbed gang on the player through a global the stage
 carries (StageRules::CARRIES): which gang is known only as its script runs, so the stage has a row for each of the three
-gangs' factions (the scan's BY_HAND) and waits while a member of any of them is near. Its quickstarts 1-3 (kMoves) have
+gangs' factions (the scan's BY_HAND). The value comes with the stage, so the hold and the lines about it are for the
+gang it names alone (StageRules::HOSTILE_WHEN, HostileWith: DLC04EnemyGang 1 the Disciples, 2 the Operators, 3 the
+Pack; the other two stay allies, and held for them too a friend anywhere in Nuka-World waited for as long as any raider
+was near); for any of the three only when no such value came. Its quickstarts 1-3 (kMoves) have
 no row: not gone with, they are skipped as any move, since the call to make in the stage's place is not known here.
 
 ### Companions' quests (QuestFilter::COMPANION_QUESTS, StageRules kEach and EACH, QuestSync::SetEachHere)

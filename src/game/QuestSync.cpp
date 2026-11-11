@@ -1489,7 +1489,13 @@ namespace QuestSync
 			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
 			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
-			const auto  hostile = file ? StageRules::HostileRows(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING)) : std::vector<StageRules::Hostile>{};
+			// A stage whose script picks the faction by a global the stage carries (Power Play's 8: the gang DLC04EnemyGang
+			// names) is held for that faction alone, and its landing told by it (StageRules::HostileWith): the value came with
+			// the stage, kept in carriedValues until it is set. Without one, every faction the script could pick.
+			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING)) : std::vector<StageRules::Hostile>{};
+			if (const auto came = carriedValues.find(Key(a_quest, a_stage)); !hostile.empty() && came != carriedValues.end()) {
+				hostile = StageRules::HostileWith(std::move(hostile), came->second, a_quest);
+			}
 			if (!hostile.empty()) {
 				if (!judged) {
 					judged = StageRules::Rule{ static_cast<std::uint8_t>(*file), local, a_stage, 0, 0 };
