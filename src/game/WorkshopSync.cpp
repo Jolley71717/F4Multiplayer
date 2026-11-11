@@ -2311,6 +2311,15 @@ namespace WorkshopSync
 			return WorkshopPower::Drawing(reinterpret_cast<std::uintptr_t>(model), model->parent != nullptr, namesGraph, graph);
 		}
 
+		// The save's hush (BeforeSave), for its log line: what the game made of each copy shown unpowered (by Took), how long
+		// the longest took, and, while the dev channel asks (`wspower hushlog on`), a line for each copy before it is touched,
+		// so a crash in the middle of one names the copy in the log's last line.
+		constexpr std::size_t                 TOOK_KINDS = 8;  // WorkshopPower::Took's values
+		std::array<std::uint32_t, TOOK_KINDS> hushTook{};      // the last save's hush
+		std::int64_t                          hushUsLast = 0;
+		std::int64_t                          hushUsMax = 0;
+		bool                                  hushLogEach = false;
+
 		struct MirrorEngine
 		{
 			bool forSave = false;  // shows for a save's hush (ShowPoweredHow: a light's light is let be)
@@ -2356,7 +2365,16 @@ namespace WorkshopSync
 				if (!ref) {
 					return false;
 				}
+				if (forSave && hushLogEach) {
+					const auto base = ref->GetObjectReference();
+					const auto cell = ref->GetParentCell();
+					REX::INFO("WorkshopSync: hush: friend's piece {:08X} (player {} piece {:08X}, base {:08X}, cell {:08X}, graph {}) to be shown off for the save", ref->GetFormID(),
+						a_key.first, a_key.second, base ? base->GetFormID() : 0, cell ? cell->GetFormID() : 0, LoadedGraph(*ref) != 0 ? "loaded" : "none");
+				}
 				const auto took = ShowPoweredHow(*ref, a_on, forSave);
+				if (forSave && static_cast<std::size_t>(took) < TOOK_KINDS) {
+					++hushTook[static_cast<std::size_t>(took)];
+				}
 				if (showsLogged < SHOWS_LOGGED && took != Took::kNoModel) {
 					++showsLogged;
 					static constexpr std::array<const char*, 8> how{ "no 3D", "light switched", "graph took", "graph refused (tried again)", "no light, belt or graph",
@@ -3151,10 +3169,27 @@ namespace WorkshopSync
 		// save keeps it: ShowPoweredHow).
 		MirrorEngine engine;
 		engine.forSave = true;
-		const auto   hushed = mirror.Hush(engine, Clock::now());
-		if (hushed > 0) {
-			REX::INFO("WorkshopSync: {} friends' pieces shown unpowered for the save", hushed);
+		hushTook.fill(0);
+		const auto start = Clock::now();
+		mirror.Hush(engine, start);
+		hushUsLast = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
+		hushUsMax = (std::max)(hushUsMax, hushUsLast);
+		// What it touched and what it let be, whenever there is a copy to look at: a save in a big settlement says how many
+		// of its copies the save went through, and a crash just after has the count in the log before it.
+		const auto& t = mirror.LastHush();
+		if (t.kept > 0) {
+			const auto took = [](Took a_took) { return hushTook[static_cast<std::size_t>(a_took)]; };
+			REX::INFO("WorkshopSync: {} friends' pieces shown unpowered for the save (graph took {}, graph dark already {}, belt stopped {}, light or nothing to show {}) of {} "
+					  "kept, {} powered; let be: {} still hushed, {} not shown yet, {} not drawn here, {} the game refused; {:.2f} ms",
+				t.hushed, took(Took::kGraph), took(Took::kDark), took(Took::kBelt), took(Took::kLight) + took(Took::kNothing) + took(Took::kLit), t.kept, t.powered,
+				t.stillHushed, t.notShown, t.notDrawn, t.refused, static_cast<double>(hushUsLast) / 1000.0);
 		}
+	}
+
+	std::string SetHushLogForDev(bool a_each)
+	{
+		hushLogEach = a_each;
+		return std::format("hushlog={}", a_each ? "on" : "off");
 	}
 
 	void BeforeSaveResources()
@@ -3281,10 +3316,11 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} hushLast={}/{} hushMsLast={:.2f} hushMsMax={:.2f} hushLog={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
 			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips,
-			strays.Size(), strays.Hushed(), strays.GivenUp(), static_cast<double>(pollUsMax) / 1000.0);
+			strays.Size(), strays.Hushed(), strays.GivenUp(), mirror.LastHush().hushed, mirror.LastHush().powered, static_cast<double>(hushUsLast) / 1000.0,
+			static_cast<double>(hushUsMax) / 1000.0, hushLogEach ? "on" : "off", static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeResources()

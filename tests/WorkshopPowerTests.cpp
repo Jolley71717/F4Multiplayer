@@ -563,6 +563,56 @@ TEST("workshop power: a copy shown powered is shown unpowered for a save and pow
 	CHECK(game.shown.at(lit));
 }
 
+TEST("workshop power: a save's hush says what it touched and what it let be, and why (its log line)")
+{
+	Mirror     mirror;
+	FriendGame game;
+	constexpr std::uint32_t OTHER = 0xFF000B03;
+	constexpr std::uint32_t FAR = 0xFF000B04;
+	constexpr std::uint32_t DEAF = 0xFF000B05;
+	const Key  lit{ BUILDER, GENERATOR };     // shown powered, drawn: hushed
+	const Key  dark{ BUILDER, LIGHT };        // their game says unpowered: not looked at
+	const Key  waiting{ BUILDER, PYLON };     // powered, never drawn here: not shown yet
+	const Key  gone{ BUILDER, OTHER };        // shown powered, its cell gone since: not drawn here
+	const Key  far{ BUILDER + 1, FAR };       // another builder's, shown powered: hushed
+	const Key  deaf{ BUILDER + 1, DEAF };     // shown powered, the game won't take the hush
+	auto       t = Clock::now();
+	CHECK(mirror.LastHush() == HushTally{});  // no save yet
+	for (const auto& key : { lit, waiting, gone, far, deaf }) {
+		mirror.Set(key.first, { key.second, true });
+	}
+	mirror.Set(BUILDER, { LIGHT, false });
+	game.drawn[lit] = 0x1000;
+	game.drawn[dark] = 0x2000;
+	game.drawn[gone] = 0x3000;
+	game.drawn[far] = 0x4000;
+	game.drawn[deaf] = 0x5000;
+	CHECK(mirror.Refresh(game, t) == 5);
+	game.drawn.erase(gone);
+
+	struct HalfDeaf : FriendGame
+	{
+		Key deafTo;
+		bool Show(const Key& a_key, bool a_on) { return a_key == deafTo ? false : FriendGame::Show(a_key, a_on); }
+	};
+	HalfDeaf half;
+	half.drawn = game.drawn;
+	half.deafTo = deaf;
+	CHECK(mirror.Hush(half, t) == 2);
+	auto expected = HushTally{ .kept = 6, .powered = 5, .stillHushed = 0, .notShown = 1, .notDrawn = 1, .hushed = 2, .refused = 1 };
+	CHECK(mirror.LastHush() == expected);
+	CHECK(!half.shown.at(lit));
+	CHECK(!half.shown.at(far));
+	CHECK(!half.shown.contains(deaf));
+
+	// A second save before the first is over: the two hushed are left so (and still counted as powered), the refused one is
+	// tried again.
+	CHECK(mirror.Hush(game, t + REFRESH) == 1);
+	expected = HushTally{ .kept = 6, .powered = 5, .stillHushed = 2, .notShown = 1, .notDrawn = 1, .hushed = 1, .refused = 0 };
+	CHECK(mirror.LastHush() == expected);
+	CHECK(mirror.Hushed() == 3);  // the total over both saves
+}
+
 TEST("workshop power: a copy hushed for a save is shown again after HUSH_LIMIT if nothing says the save is over")
 {
 	Mirror     mirror;

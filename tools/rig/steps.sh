@@ -2059,3 +2059,217 @@ step_companions_human() {
 	expect_eq "companions_human: the Companion alias is empty in both games at the end" "$(_ch_held host)$(_ch_held vm)" ""
 	expect_eq "companions_human: the server's book is empty at the end" "$(dc host companions | grep -oE 'known=[0-9]+')/$(dc vm companions | grep -oE 'known=[0-9]+')" "known=0/known=0"
 }
+
+# ---- the save's hush in a big settlement (opt-in: smoke.sh --only hush-probe) ------------------------------------------------------------
+# Two crash reports from 0.10.1 (a host crashing at one fixed place and on fast travel; a crash entering Sanctuary, 0.10.0 fine) point at
+# the one save-time step 0.10.1 added: before every save, each copy of a friend's piece shown powered is shown unpowered and powered
+# again after (WorkshopSync::BeforeSave, WorkshopPower::Mirror::Hush), and Sanctuary holds the most. This loads that step as hard as a
+# big settlement does, both ways: the builder's game places HP_PIECES powered pieces at Sanctuary (wsreport place, as the workshop step
+# does: console placement, said so; the player is moved by setpos between rings of 12), the saver's game takes them as copies and is told
+# each is powered as their builder's game would say it (dev `wspower want`: the pieces are no workbench's items in the builder's game, so
+# its own power reports never say otherwise), and then, with `wspower hushlog on` (a log line for each copy before the hush touches it),
+# the saver makes HP_SAVES saves standing among them and HP_TRAVELS travels out to HP_AWAY and back (console coc: a cell change behind a
+# loading screen), each with a save 4 s after arriving, where the game's travel autosave comes (rig, 2026-11-03). After every save both
+# games must be up, and at the end no new crash log (Buffout 4 / Addictol's crash-*.log) and no new F4Multiplayer-crash-*.txt (the
+# plugin's own report) may be on either machine. Asserted too: each standing save's hush shows at least HP_MIN_HUSHED percent of the
+# pieces unpowered, with the hush's per-copy line for each. The pieces are scrapped by their builder at the end (the saver's copies go
+# with the report) and the saver's copies of them must be gone. The saves (HP_SAVE) are throwaway; back up the ini and session files
+# first (backup.sh save) and restore them after, as for any rig run: the session file holds the pieces until the scrap.
+# With PR 379's shared workshop merged (on by default), a piece a friend places at a settlement the host owns becomes the host's piece
+# (no copy of it in the host's game for the hush to touch), so both games are set to `wsmode off` for the probe and each is put back
+# to its own setting from before after it (_hp_wsmode_off, _hp_wsmode_back); a game without the command (before that merge) is left
+# alone.
+HP_PIECES=${HP_PIECES:-156}; HP_TRAVELS=${HP_TRAVELS:-30}; HP_SAVES=${HP_SAVES:-10}; HP_MIN_HUSHED=${HP_MIN_HUSHED:-90}
+# the construction light and the light box (activators lit by their graphs), the small generator, the light bulb (a LIGH): read from
+# Fallout4.esm's records; the set-up checks each with dev `edid`
+HP_BASES=${HP_BASES:-"000D38D4 001F59AC 00030386 000560DF"}
+HP_AWAY=${HP_AWAY:-RedRocketExt}; HP_SAVE=${HP_SAVE:-f4mp_hushprobe}
+HP_X=${HP_X:--80500}; HP_Y=${HP_Y:-89300}; HP_Z=${HP_Z:-7884}; HP_RING=${HP_RING:-300}   # the rings' grid: 4 a row, HP_RING apart
+_hp_id() { field "$(dc "$1" 'net status')" id; }
+# _hp_ours <who>: the plugin's own crash reports on that machine, "name mtime" a line after a first line "ok" (no "ok": unreadable)
+_hp_ours() {
+	local f out t
+	if [ "$1" = host ]; then
+		echo ok; for f in "$HOST_F4SE"/F4Multiplayer-crash-*.txt; do [ -e "$f" ] && echo "$(basename "$f") $(stat -c %Y "$f")"; done | LC_ALL=C sort; return
+	fi
+	for t in 1 2 3; do
+		out=$(ssh -i "$VM_KEY" -o LogLevel=ERROR -o ConnectTimeout=20 "$VM_SSH" '"ok"; Get-ChildItem "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE" -Filter "F4Multiplayer-crash-*.txt" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name + " " + [DateTimeOffset]::new($_.LastWriteTimeUtc).ToUnixTimeSeconds() }' 2>/dev/null | tr -d '\r')
+		case "$out" in ok*) echo ok; printf '%s\n' "$out" | grep '^F4Multiplayer-crash-' | LC_ALL=C sort; return;; esac
+		sleep 3
+	done
+}
+# _hp_ours_new <before> <after>: the names in <after> not in <before> (a new name, or the same name rewritten); nothing when either
+# listing is unreadable (the step stops before the probe when the first one is, so that never counts every old report as new)
+_hp_ours_new() {
+	case "$1" in ok*) ;; *) return 0;; esac; case "$2" in ok*) ;; *) return 0;; esac
+	comm -13 <(printf '%s\n' "$1" | LC_ALL=C sort) <(printf '%s\n' "$2" | LC_ALL=C sort) | grep '^F4Multiplayer-crash-' | cut -d' ' -f1
+}
+# _hp_fetch <who> <names...>: those files from that machine's F4SE folder copied to $A_OUT/hp-crash/<who>-<name>
+_hp_fetch() {
+	local w=$1 f; shift; mkdir -p "$A_OUT/hp-crash"
+	for f in "$@"; do
+		if [ "$w" = host ]; then cp -f "$HOST_F4SE/$f" "$A_OUT/hp-crash/host-$f" 2>/dev/null
+		else scp -q -i "$VM_KEY" -o LogLevel=ERROR -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$A_OUT/hp-crash/vm-$f" 2>/dev/null; fi
+	done
+}
+# _hp_crash_reports: the plugin's new crash reports (F4Multiplayer-crash-*.txt, against HP_H0/HP_V0) and the crash logger's new
+# crash-*.log (against crash_snapshot's) on both machines, named and copied to $A_OUT/hp-crash. A new report of the plugin's is a FAIL
+# here; a new crash log is crash_verdict's FAIL. Once a run: from _hp_up when a game goes down (before _rig_stop ends the run, which
+# it does with an exit), else at the end of the step.
+_hp_crash_reports() {
+	local h1 v1 hn vn hc vc
+	[ -n "$HP_CRASH_READ" ] && return 0; HP_CRASH_READ=1
+	sleep 5   # a game going down may still be writing its report
+	h1=$(_hp_ours host); v1=$(_hp_ours vm)
+	case "$v1" in ok*) ;; *) warn "hush-probe: the VM's crash reports (F4Multiplayer-crash-*.txt) are read" "the listing after was unreadable (ssh)";; esac
+	hn=$(_hp_ours_new "$HP_H0" "$h1"); vn=$(_hp_ours_new "$HP_V0" "$v1")
+	hc=$(crash_names "$(crash_new "$C_HOST0" "$(crash_list_host)" 2>/dev/null)"); vc=$(crash_names "$(crash_new "$C_VM0" "$(crash_list_vm)" 2>/dev/null)")
+	# shellcheck disable=SC2086   # names, one a line, never a space in one
+	{ [ -z "$hn$hc" ] || _hp_fetch host $hn $hc; [ -z "$vn$vc" ] || _hp_fetch vm $vn $vc; }
+	# shellcheck disable=SC2086
+	[ -z "$hc$vc" ] || echo "hush-probe: the crash logger's new crash logs (copied to $A_OUT/hp-crash):${hc:+ host $(echo $hc)}${vc:+ vm $(echo $vc)}"
+	# shellcheck disable=SC2086
+	if [ -z "$hn$vn" ]; then pass "hush-probe: no new crash report of the plugin's on either machine" "host $(grep -c '^F4Multiplayer-crash-' <<<"$h1"), vm $(grep -c '^F4Multiplayer-crash-' <<<"$v1") on disk"
+	else fail "hush-probe: no new crash report of the plugin's on either machine" "new:${hn:+ host $(echo $hn)}${vn:+ vm $(echo $vn)} (copied to $A_OUT/hp-crash)"; fi
+}
+# _hp_scrap [alive]: the pieces placed and not scrapped yet (HP_LIVE: "<builder> <saver> <refs file>") scrapped by their builder, and
+# the saver's hushlog put back off. Called on every way out of _hp_direction after
+# the placement, by _hp_up before a game down ends the run, and by the step's EXIT trap; once (HP_LIVE is cleared first). Given
+# alive's line, a game it says is down is left alone.
+_hp_scrap() {
+	local b s file r
+	[ -n "$HP_LIVE" ] || return 0
+	read -r b s file <<<"$HP_LIVE"; HP_LIVE=""
+	case "${1:-}" in *"$s=DOWN"*) ;; *) dc "$s" "wspower hushlog off" >/dev/null;; esac
+	case "${1:-}" in *"$b=DOWN"*) return 0;; esac
+	for r in $(cat "$file" 2>/dev/null); do dc "$b" "wsreport $r $SANCT_BENCH scrap" >/dev/null; dc "$b" "remove $r" >/dev/null; done
+}
+# _hp_wsmode_off: PR 379's shared workshop turned off in both games for the probe (`wsmode off`), each game's own setting before it
+# (dev=on|off|host, as plain `wsmode` shows it) kept in HP_WS for _hp_wsmode_back. A game whose `wsmode` shows no dev= (a build
+# without the command, before 379) is left alone: nothing to turn off, nothing to put back.
+_hp_wsmode_off() {
+	local w m; HP_WS=""
+	for w in host vm; do
+		m=$(field "$(dc "$w" wsmode)" dev)
+		case "$m" in on|off|host) dc "$w" "wsmode off" >/dev/null; HP_WS="$HP_WS $w=$m";; esac
+	done
+	echo "hush-probe: the shared workshop off for the probe:${HP_WS:- no wsmode command in either game, nothing to do}"
+}
+# _hp_wsmode_back [alive]: each game's shared-workshop setting from before the probe put back (`wsmode on|off|host`); once (HP_WS is
+# cleared first). Given alive's line, a game it says is down is left alone. Called at the step's end, by _hp_up before a game down
+# ends the run, and by the step's EXIT trap.
+_hp_wsmode_back() {
+	local saved=$HP_WS p w; HP_WS=""
+	for p in $saved; do
+		w=${p%%=*}
+		case "${1:-}" in *"$w=DOWN"*) continue;; esac
+		dc "$w" "wsmode ${p#*=}" >/dev/null
+	done
+}
+# _hp_copies <saver> <builder id> <refs file>: how many of the builder's pieces in the file the saver keeps a copy of
+_hp_copies() { dc "$1" "wspower copies" | grep -oE "=$2:[0-9A-F]{8}" | cut -d: -f2 | sort -u | comm -12 - <(sort -u "$3") | wc -l; }
+_hp_copies_at_least() { [ "$(_hp_copies "$1" "$2" "$3")" -ge "$4" ]; }
+_hp_copies_none() { [ "$(_hp_copies "$1" "$2" "$3")" = 0 ]; }
+# _hp_up <label>: both games up after a save. A game down ends the probe (and the run), but first the crash reports are read and
+# copied and the pieces scrapped in the builder's game if it is still up: _rig_stop ends with an exit
+_hp_up() {
+	local a; a=$(alive)
+	case "$a" in *DOWN*)
+		fail "$1: both games up" "$a: a game went down (a crash or a hang)"
+		_hp_crash_reports; _hp_scrap "$a"; _hp_wsmode_back "$a"
+		[ -z "$A_RIG_STOPPED" ] && _rig_stop "a game went down in the hush probe" "$a after $1"; return 1;; esac
+	return 0
+}
+# _hp_save <saver> <label>: a save; its hush's line from the saver's log goes to $A_OUT/hp-hushes-<saver>.txt. Prints "<hushed> <lines>":
+# how many copies the hush showed unpowered ("-" when the line is missing) and how many per-copy lines it logged
+_hp_save() {
+	local d line n
+	win_mark hp "$1"
+	dc "$1" "console save $HP_SAVE" >/dev/null; sleep 6; wait_ingame "$1" 30
+	d=$(win_read hp "$1")
+	line=$(grep -E "WorkshopSync: [0-9]+ friends' pieces shown unpowered for the save \(" "$d" | tail -1)
+	echo "$2: ${line:-no hush line}" >> "$A_OUT/hp-hushes-$1.txt"
+	n=$(sed -nE "s/.*WorkshopSync: ([0-9]+) friends' pieces shown unpowered for the save \(.*/\1/p" <<<"$line")
+	echo "${n:--} $(grep -c "WorkshopSync: hush: friend's piece" "$d")"
+}
+# _hp_build <builder> <refs file>: HP_PIECES pieces placed in rings of 12 around the builder's player, the bases in turn; prints how many
+_hp_build() {
+	local who=$1 file=$2 i=0 k=0 a out ref bases=($HP_BASES)
+	: > "$file"
+	while [ "$i" -lt "$HP_PIECES" ]; do
+		dc "$who" "console player.setpos x $((HP_X + (k % 4) * HP_RING))" >/dev/null; dc "$who" "console player.setpos y $((HP_Y + (k / 4) * HP_RING))" >/dev/null
+		dc "$who" "console player.setpos z $HP_Z" >/dev/null; sleep 1
+		for a in 0 30 60 90 120 150 180 210 240 270 300 330; do
+			[ "$i" -ge "$HP_PIECES" ] && break
+			dc "$who" "console player.setangle z $a" >/dev/null
+			out=$(dc "$who" "wsreport place ${bases[$((i % ${#bases[@]}))]} $SANCT_BENCH"); ref=$(grep -oE "reported [0-9A-F]{8}" <<<"$out" | cut -c10-)
+			[ -n "$ref" ] && echo "$ref" >> "$file"
+			i=$((i + 1))
+		done
+		k=$((k + 1))
+	done
+	wc -l < "$file" | tr -d ' '
+}
+# _hp_direction <builder> <saver>: one way round
+_hp_direction() {
+	local b=$1 s=$2 label="hush-probe ($2 saves among $1's pieces)" bid bhex file placed r n lines want i t="" ok=0 short="" refused
+	file="$A_OUT/hp-placed-$b.txt"; : > "$A_OUT/hp-hushes-$s.txt"
+	bid=$(_hp_id "$b"); [ -n "$bid" ] || { fail "$label: set-up: the builder's player id is read" "$(dc "$b" 'net status' | cut -c1-120)"; return 1; }
+	bhex=$(printf '%X' "$bid")
+	enter_both SanctuaryExt 14
+	HP_LIVE="$b $s $file"   # from here on every way out scraps what was placed (_hp_scrap)
+	placed=$(_hp_build "$b" "$file")
+	expect_ge "$label: set-up: the $b placed the pieces at Sanctuary (console placement)" "$placed" "$HP_PIECES"
+	want=$((placed * 95 / 100))
+	if wait_for 90 _hp_copies_at_least "$s" "$bid" "$file" "$want"; then pass "$label: set-up: the $s keeps copies of them" "$(_hp_copies "$s" "$bid" "$file") of $placed"
+	else fail "$label: set-up: the $s keeps copies of them" "$(_hp_copies "$s" "$bid" "$file") of $placed (want $want)"; _hp_scrap; return 1; fi
+	n=0; for r in $(cat "$file"); do case "$(dc "$s" "wspower want $bhex $r on")" in ok*) n=$((n + 1));; esac; done
+	expect_eq "$label: set-up: the $s is told each piece is powered (wspower want)" "$n" "$placed"
+	dc "$s" "wspower hushlog on" >/dev/null; sleep 5
+	echo "$label: $(dc "$s" wspower | grep -oE '(mirrored|shown|graphWaits|graphRefused)=[0-9]+' | tr '\n' ' ')"
+	# standing among them
+	for i in $(seq 1 "$HP_SAVES"); do
+		read -r n lines <<<"$(_hp_save "$s" "standing save $i")"
+		_hp_up "$label: standing save $i" || { _hp_scrap; return 1; }
+		if [ "$n" = - ] || [ $((n * 100)) -lt $((placed * HP_MIN_HUSHED)) ]; then short="$short $i:$n"
+		elif [ "$lines" -lt "$n" ]; then short="$short $i:lines=$lines<$n"; fi
+		sleep 4
+	done
+	if [ -z "$short" ]; then pass "$label: each of $HP_SAVES standing saves hushed at least $HP_MIN_HUSHED% of the $placed pieces, a log line for each" "$(tail -1 "$A_OUT/hp-hushes-$s.txt" | cut -c1-220)"
+	else fail "$label: each of $HP_SAVES standing saves hushed at least $HP_MIN_HUSHED% of the $placed pieces, a log line for each" "short (save:hushed):$short; $(tail -1 "$A_OUT/hp-hushes-$s.txt" | cut -c1-200)"; fi
+	# travels out and back, a save 4 s after each arrival (where the travel autosave comes)
+	for i in $(seq 1 "$HP_TRAVELS"); do
+		if [ $((i % 2)) = 1 ]; then t=$HP_AWAY; else t=SanctuaryExt; fi
+		dc "$s" "console coc $t" >/dev/null; sleep 6; wait_ingame "$s" 60; sleep 4
+		_hp_save "$s" "travel $i to $t" >/dev/null
+		_hp_up "$label: travel $i to $t and its save" || { _hp_scrap; return 1; }
+		ok=$((ok + 1))
+	done
+	expect_eq "$label: travels made, each with a save after it, both games up after each" "$ok" "$HP_TRAVELS"
+	echo "$label: the hush at each save ($A_OUT/hp-hushes-$s.txt):"; cut -c1-240 "$A_OUT/hp-hushes-$s.txt" | sed 's/^/  /'
+	refused=$(sed -nE 's/.* ([0-9]+) the game refused.*/\1/p' "$A_OUT/hp-hushes-$s.txt" | awk '{n+=$1} END{print n+0}')
+	if [ "$refused" = 0 ]; then pass "$label: no hush the game refused" "0"; else warn "$label: no hush the game refused" "$refused over all the saves"; fi
+	# back at Sanctuary, the builder scraps its pieces; the saver's copies go with the reports
+	[ "$t" = SanctuaryExt ] || { dc "$s" "console coc SanctuaryExt" >/dev/null; sleep 6; wait_ingame "$s" 60; }
+	_hp_scrap
+	if wait_for 60 _hp_copies_none "$s" "$bid" "$file"; then pass "$label: the pieces scrapped, the $s keeps no copy of them" "0 of $placed"
+	else fail "$label: the pieces scrapped, the $s keeps no copy of them" "$(_hp_copies "$s" "$bid" "$file") of $placed left"; fi
+	return 0
+}
+step_hush_probe() {
+	section "the save's hush among $HP_PIECES powered pieces of a friend's at Sanctuary, both ways (console placement and coc travel; throwaway saves)"
+	local o prev
+	for o in $HP_BASES; do
+		case "$(host "edid $o")" in error*|"") fail "hush-probe: set-up: base $o is in the host's game" "$(host "edid $o")"; return;; esac
+	done
+	crash_snapshot; HP_H0=$(_hp_ours host); HP_V0=$(_hp_ours vm); HP_CRASH_READ=""; HP_LIVE=""; HP_WS=""
+	# without the VM's listings before, a report or log the probe made can't be told from an old one: the rig is broken, no probe
+	case "$HP_V0" in ok*) ;; *) rig_broken ssh "hush-probe: the VM's crash reports (F4Multiplayer-crash-*.txt) are read before the probe" "the listing over ssh failed three times: no probe"; return;; esac
+	case "$C_VM0" in ok*) ;; *) rig_broken ssh "hush-probe: the VM's crash logs (crash-*.log) are read before the probe" "the listing over ssh failed three times: no probe"; return;; esac
+	prev=$(trap -p EXIT); trap '_hp_scrap; _hp_wsmode_back' EXIT   # a run ended part-way (an interrupt, the circuit breaker) still scraps the pieces
+	_hp_wsmode_off   # PR 379's shared workshop: the builder's pieces stay its own at Sanctuary, so the saver keeps copies to hush
+	_hp_direction vm host && _hp_direction host vm
+	_hp_scrap; _hp_wsmode_back; if [ -n "$prev" ]; then eval "$prev"; else trap - EXIT; fi
+	_hp_crash_reports
+	crash_verdict "hush-probe"
+}

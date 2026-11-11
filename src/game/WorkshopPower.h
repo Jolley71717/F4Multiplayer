@@ -447,6 +447,21 @@ namespace WorkshopPower
 		std::map<std::uint32_t, Entry> told;
 	};
 
+	// What a save's hush (Mirror::Hush) did with the copies kept, for the line the save's step writes: what it touched and
+	// what it let be, so a log (or a crash right after it) says how much of a settlement a save went through.
+	struct HushTally
+	{
+		std::size_t kept = 0;         // copies kept, every builder's
+		std::size_t powered = 0;      // ... their builder's game says powered
+		std::size_t stillHushed = 0;  // ... hushed for a save just before and not shown again yet: left so
+		std::size_t notShown = 0;     // ... powered, not shown so yet (not drawn yet, or given up): nothing to take back
+		std::size_t notDrawn = 0;     // ... shown powered, not drawn here now (its cell unloaded, its graph not loaded)
+		std::size_t hushed = 0;       // ... shown unpowered for the save
+		std::size_t refused = 0;      // ... the game didn't take it: left as it showed
+
+		[[nodiscard]] constexpr bool operator==(const HushTally&) const = default;
+	};
+
 	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once it is drawn
 	// (its 3D there and the graph it names loaded: Drawing) and the game took it, once more when that drawing has settled
 	// (SETTLE), and again whenever it is drawn anew (it came back into a loaded cell, was made again, or got a new graph):
@@ -514,25 +529,42 @@ namespace WorkshopPower
 		template <class Engine>
 		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
 		{
-			std::size_t hushed = 0;
+			HushTally tally;
+			tally.kept = wants.size();
 			saveDone = false;
 			for (auto& [key, want] : wants) {
+				tally.powered += want.powered;
 				if (want.hushed) {
 					want.hushedAt = a_now;  // still hushed from a save just before: this one's too
+					++tally.stillHushed;
 					continue;
 				}
-				if (!want.powered || !want.shown || a_engine.Drawn(key) == 0) {
+				if (!want.powered) {
+					continue;
+				}
+				if (!want.shown) {
+					++tally.notShown;
+					continue;
+				}
+				if (a_engine.Drawn(key) == 0) {
+					++tally.notDrawn;
 					continue;
 				}
 				if (a_engine.Show(key, false)) {
 					want.hushed = true;
 					want.hushedAt = a_now;
-					++hushed;
+					++tally.hushed;
+				} else {
+					++tally.refused;
 				}
 			}
-			hushedTotal += hushed;
-			return hushed;
+			hushedTotal += tally.hushed;
+			lastHush = tally;
+			return tally.hushed;
 		}
+
+		// What the last save's hush did with the copies it looked at.
+		[[nodiscard]] const HushTally& LastHush() const { return lastHush; }
 
 		// The save is over: what it hushed is shown powered again at the next look.
 		void SaveDone()
@@ -701,6 +733,7 @@ namespace WorkshopPower
 		std::size_t         givenUp = 0;
 		std::size_t         redrawsCapped = 0;
 		std::size_t         hushedTotal = 0;
+		HushTally           lastHush;
 		bool                saveDone = false;  // the save a hush was for is over (SaveDone)
 		Clock::time_point   nextRefresh{};
 	};
