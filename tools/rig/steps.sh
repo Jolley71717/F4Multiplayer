@@ -2055,9 +2055,10 @@ step_companions_human() {
 # pieces unpowered, with the hush's per-copy line for each. The pieces are scrapped by their builder at the end (the saver's copies go
 # with the report) and the saver's copies of them must be gone. The saves (HP_SAVE) are throwaway; back up the ini and session files
 # first (backup.sh save) and restore them after, as for any rig run: the session file holds the pieces until the scrap.
-# With PR 379's shared workshop merged, a piece a friend places at a settlement the host owns becomes the host's piece (no copy of it in
-# the host's game for the hush to touch), so the builder's game is set to `wsmode off` for the probe and back to `wsmode host` after (an
-# unknown command, harmlessly, before that merge).
+# With PR 379's shared workshop merged (on by default), a piece a friend places at a settlement the host owns becomes the host's piece
+# (no copy of it in the host's game for the hush to touch), so both games are set to `wsmode off` for the probe and each is put back
+# to its own setting from before after it (_hp_wsmode_off, _hp_wsmode_back); a game without the command (before that merge) is left
+# alone.
 HP_PIECES=${HP_PIECES:-156}; HP_TRAVELS=${HP_TRAVELS:-30}; HP_SAVES=${HP_SAVES:-10}; HP_MIN_HUSHED=${HP_MIN_HUSHED:-90}
 # the construction light and the light box (activators lit by their graphs), the small generator, the light bulb (a LIGH): read from
 # Fallout4.esm's records; the set-up checks each with dev `edid`
@@ -2112,7 +2113,7 @@ _hp_crash_reports() {
 	else fail "hush-probe: no new crash report of the plugin's on either machine" "new:${hn:+ host $(echo $hn)}${vn:+ vm $(echo $vn)} (copied to $A_OUT/hp-crash)"; fi
 }
 # _hp_scrap [alive]: the pieces placed and not scrapped yet (HP_LIVE: "<builder> <saver> <refs file>") scrapped by their builder, and
-# the probe's switches put back (the saver's hushlog off, the builder's wsmode host). Called on every way out of _hp_direction after
+# the saver's hushlog put back off. Called on every way out of _hp_direction after
 # the placement, by _hp_up before a game down ends the run, and by the step's EXIT trap; once (HP_LIVE is cleared first). Given
 # alive's line, a game it says is down is left alone.
 _hp_scrap() {
@@ -2122,7 +2123,28 @@ _hp_scrap() {
 	case "${1:-}" in *"$s=DOWN"*) ;; *) dc "$s" "wspower hushlog off" >/dev/null;; esac
 	case "${1:-}" in *"$b=DOWN"*) return 0;; esac
 	for r in $(cat "$file" 2>/dev/null); do dc "$b" "wsreport $r $SANCT_BENCH scrap" >/dev/null; dc "$b" "remove $r" >/dev/null; done
-	dc "$b" "wsmode host" >/dev/null
+}
+# _hp_wsmode_off: PR 379's shared workshop turned off in both games for the probe (`wsmode off`), each game's own setting before it
+# (dev=on|off|host, as plain `wsmode` shows it) kept in HP_WS for _hp_wsmode_back. A game whose `wsmode` shows no dev= (a build
+# without the command, before 379) is left alone: nothing to turn off, nothing to put back.
+_hp_wsmode_off() {
+	local w m; HP_WS=""
+	for w in host vm; do
+		m=$(field "$(dc "$w" wsmode)" dev)
+		case "$m" in on|off|host) dc "$w" "wsmode off" >/dev/null; HP_WS="$HP_WS $w=$m";; esac
+	done
+	echo "hush-probe: the shared workshop off for the probe:${HP_WS:- no wsmode command in either game, nothing to do}"
+}
+# _hp_wsmode_back [alive]: each game's shared-workshop setting from before the probe put back (`wsmode on|off|host`); once (HP_WS is
+# cleared first). Given alive's line, a game it says is down is left alone. Called at the step's end, by _hp_up before a game down
+# ends the run, and by the step's EXIT trap.
+_hp_wsmode_back() {
+	local saved=$HP_WS p w; HP_WS=""
+	for p in $saved; do
+		w=${p%%=*}
+		case "${1:-}" in *"$w=DOWN"*) continue;; esac
+		dc "$w" "wsmode ${p#*=}" >/dev/null
+	done
 }
 # _hp_copies <saver> <builder id> <refs file>: how many of the builder's pieces in the file the saver keeps a copy of
 _hp_copies() { dc "$1" "wspower copies" | grep -oE "=$2:[0-9A-F]{8}" | cut -d: -f2 | sort -u | comm -12 - <(sort -u "$3") | wc -l; }
@@ -2134,7 +2156,7 @@ _hp_up() {
 	local a; a=$(alive)
 	case "$a" in *DOWN*)
 		fail "$1: both games up" "$a: a game went down (a crash or a hang)"
-		_hp_crash_reports; _hp_scrap "$a"
+		_hp_crash_reports; _hp_scrap "$a"; _hp_wsmode_back "$a"
 		[ -z "$A_RIG_STOPPED" ] && _rig_stop "a game went down in the hush probe" "$a after $1"; return 1;; esac
 	return 0
 }
@@ -2174,7 +2196,6 @@ _hp_direction() {
 	file="$A_OUT/hp-placed-$b.txt"; : > "$A_OUT/hp-hushes-$s.txt"
 	bid=$(_hp_id "$b"); [ -n "$bid" ] || { fail "$label: set-up: the builder's player id is read" "$(dc "$b" 'net status' | cut -c1-120)"; return 1; }
 	bhex=$(printf '%X' "$bid")
-	dc "$b" "wsmode off" >/dev/null   # PR 379's shared workshop: the builder's pieces stay its own here, so the saver keeps copies
 	enter_both SanctuaryExt 14
 	HP_LIVE="$b $s $file"   # from here on every way out scraps what was placed (_hp_scrap)
 	placed=$(_hp_build "$b" "$file")
@@ -2221,13 +2242,14 @@ step_hush_probe() {
 	for o in $HP_BASES; do
 		case "$(host "edid $o")" in error*|"") fail "hush-probe: set-up: base $o is in the host's game" "$(host "edid $o")"; return;; esac
 	done
-	crash_snapshot; HP_H0=$(_hp_ours host); HP_V0=$(_hp_ours vm); HP_CRASH_READ=""; HP_LIVE=""
+	crash_snapshot; HP_H0=$(_hp_ours host); HP_V0=$(_hp_ours vm); HP_CRASH_READ=""; HP_LIVE=""; HP_WS=""
 	# without the VM's listings before, a report or log the probe made can't be told from an old one: the rig is broken, no probe
 	case "$HP_V0" in ok*) ;; *) rig_broken ssh "hush-probe: the VM's crash reports (F4Multiplayer-crash-*.txt) are read before the probe" "the listing over ssh failed three times: no probe"; return;; esac
 	case "$C_VM0" in ok*) ;; *) rig_broken ssh "hush-probe: the VM's crash logs (crash-*.log) are read before the probe" "the listing over ssh failed three times: no probe"; return;; esac
-	prev=$(trap -p EXIT); trap '_hp_scrap' EXIT   # a run ended part-way (an interrupt, the circuit breaker) still scraps the pieces
+	prev=$(trap -p EXIT); trap '_hp_scrap; _hp_wsmode_back' EXIT   # a run ended part-way (an interrupt, the circuit breaker) still scraps the pieces
+	_hp_wsmode_off   # PR 379's shared workshop: the builder's pieces stay its own at Sanctuary, so the saver keeps copies to hush
 	_hp_direction vm host && _hp_direction host vm
-	_hp_scrap; if [ -n "$prev" ]; then eval "$prev"; else trap - EXIT; fi
+	_hp_scrap; _hp_wsmode_back; if [ -n "$prev" ]; then eval "$prev"; else trap - EXIT; fi
 	_hp_crash_reports
 	crash_verdict "hush-probe"
 }
