@@ -2973,7 +2973,15 @@ never stops: show a copy on, save, `net leave`, load: the sound is there and not
 shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
 shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
 `HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
-`wspower`. A copy the save holds that no session keeps (a *stray*: one a save from before this wrote running, or one nobody
+`wspower`. Each save with a copy kept writes one line saying what the hush touched and what it let be (`WorkshopPower::HushTally`:
+shown unpowered, by what the game made of it; kept, powered; still hushed, not shown yet, not drawn here, refused; and the
+milliseconds it took), and `wspower` has the last one (`hushLast=<hushed>/<powered>`, `hushMsLast=`, `hushMsMax=`). The two
+crash reports from 0.10.1 (a host's fixed place and fast travel; entering Sanctuary) point at this step, the only new save-time
+work in 0.10.1, so the line is there for the next report. Read in 1.11.240, the two engine calls it makes are guarded:
+`SwitchLight` (+454790) queues its light change by the reference's handle (the task queue's message 0x7A), never a pointer,
+and the graph's notify (`BSAnimationGraphManager`, +130EED0) takes the manager's own lock and checks the graph's index
+against its count. `wspower hushlog on|off` (dev) logs each copy before the hush touches it, so a crash in the middle of one
+names it; the rig's `hush-probe` step (tools/rig/steps.sh) uses it. A copy the save holds that no session keeps (a *stray*: one a save from before this wrote running, or one nobody
 reports any more because its piece is gone from the friend's game, so no report adopts it) would show whatever the save kept,
 in a session or out of one. So every `STRAY_SWEEP` (5 s) the loaded cells near the player are looked through
 (`WorkshopPower::Strays`, `StrayEngine`) for marked references (the block keyword) made at runtime that are no copy we keep,

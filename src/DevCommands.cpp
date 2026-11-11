@@ -2405,6 +2405,9 @@ namespace DevCommands
 			if (args[0] == "copies" && args.size() == 1) {
 				return WorkshopSync::DescribeCopies();
 			}
+			if (args[0] == "hushlog" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				return WorkshopSync::SetHushLogForDev(args[1] == "on");
+			}
 			if (args[0] == "audit" && args.size() == 1) {
 				return WorkshopSync::AuditNow();
 			}
@@ -2423,7 +2426,7 @@ namespace DevCommands
 				}
 				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
 			}
-			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
+			return "error: usage: wspower [block on|off | audit | copies | hushlog on|off | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
 		}
 
 		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still

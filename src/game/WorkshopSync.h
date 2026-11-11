@@ -144,6 +144,10 @@ namespace WorkshopSync
 	// Dev: a friend's game said this piece of theirs is powered or not, as the server's relay would say (wspower want).
 	bool SetPowerWantForDev(std::uint32_t a_player, std::uint32_t a_ref, bool a_powered);
 
+	// Dev: a log line for each copy a save's hush is about to touch (wspower hushlog on|off; off by default): the rig's hush
+	// probe, so a crash in the middle of a hush names the copy in the log's last line. Says the new state.
+	std::string SetHushLogForDev(bool a_each);
+
 	// Whether the reference carries the keyword every workshop copy is given (the game's WorkshopBlockInteractionKeyword,
 	// since 0.9.0, saved with the copy): a power armor frame made at runtime that has it is a copy an older version's
 	// workshop sync made of a frame (FrameShare::Ghost), never a suit of the player's own.
