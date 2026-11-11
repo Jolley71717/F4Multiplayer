@@ -2,6 +2,7 @@
 
 #include "Background.h"
 #include "Config.h"
+#include "game/GameClock.h"
 #include "game/GameStop.h"
 #include "game/HostRules.h"
 #include "game/OpenMenus.h"
@@ -215,7 +216,7 @@ namespace RealTime
 		if (const auto setting = ShowTutorials()) {
 			text += std::format(" | showTutorials={}", setting->GetBinary());
 		}
-		text += std::format(" | session={} | {}", HostRules::InSession(), Status());
+		text += std::format(" | session={} | {} | {}", HostRules::InSession(), Status(), GameClock::Describe());
 		return text;
 	}
 }

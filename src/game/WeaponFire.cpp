@@ -1,6 +1,7 @@
 #include "game/WeaponFire.h"
 
 #include "game/BlastShield.h"
+#include "game/GameClock.h"
 #include "game/ClickWatch.h"
 #include "game/CopyWatch.h"
 #include "game/GhostLedger.h"
@@ -871,7 +872,7 @@ namespace WeaponFire
 	{
 		using Clock = std::chrono::steady_clock;
 		using namespace std::chrono_literals;
-		constexpr auto  EXPLOSION_WATCH = 8s;         // a frag grenade goes off within about 3 s; a mine when stepped on
+		constexpr auto  EXPLOSION_WATCH = 8s;         // of the world's time (GameClock): a frag grenade goes off within about 3 s of it; a mine when stepped on
 		constexpr float EXPLOSION_RANGE = RemoteEdits::EXPLOSION_RANGE;  // from the player, both for reporting and for setting off
 		constexpr float FRIEND_REACH = RemoteEdits::MAX_EXPLOSION_RADIUS + 1000.0f;  // around a friend: a blast that can reach them, and their walk since they said where they were
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
@@ -1081,6 +1082,8 @@ namespace WeaponFire
 				++deathBlasts;
 			} else if (by ? OursSetItOff(by) : watched) {
 				seen.ours = true;  // kept here alone, its blows on copies are ours (CopyWatch, with no hit events to say so)
+				// The gate's budget refills on the world's time too (a_now: GameClock), slower than the server's wall-clock
+				// one under the group's slow motion, so it never lets through more than the server passes on.
 				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
 					seen.fate = RemoteEdits::Fate::kShared;
 					what = "reported";
@@ -1114,7 +1117,7 @@ namespace WeaponFire
 
 	void ArmExplosionWatch(std::uint32_t a_thrower)
 	{
-		const auto until = Clock::now() + EXPLOSION_WATCH;
+		const auto until = GameClock::Now() + EXPLOSION_WATCH;
 		{
 			std::scoped_lock l{ throwLock };
 			throws.Arm(a_thrower, until);
@@ -1124,7 +1127,7 @@ namespace WeaponFire
 
 	void ArmShotWatch()
 	{
-		shotWatchUntil = Clock::now() + EXPLOSION_WATCH;
+		shotWatchUntil = GameClock::Now() + EXPLOSION_WATCH;
 	}
 
 	namespace
@@ -1155,20 +1158,20 @@ namespace WeaponFire
 	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius)
 	{
 		if (a_object) {
-			areaWatches.Arm(SpotOfRef(a_object), a_radius, Clock::now() + EXPLOSION_WATCH);
+			areaWatches.Arm(SpotOfRef(a_object), a_radius, GameClock::Now() + EXPLOSION_WATCH);
 		}
 	}
 
 	bool ExplosionsShared(std::uint32_t a_thrower)
 	{
 		std::scoped_lock l{ throwLock };
-		return throws.Shared(a_thrower, Clock::now());
+		return throws.Shared(a_thrower, GameClock::Now());
 	}
 
 	bool ThrewLately(std::uint32_t a_thrower)
 	{
 		std::scoped_lock l{ throwLock };
-		return throws.Shared(a_thrower, Clock::now(), THREW_LATELY);
+		return throws.Shared(a_thrower, GameClock::Now(), THREW_LATELY);
 	}
 
 	std::optional<RemoteEdits::Seen> BlastAt(RE::TESObjectREFR* a_target, std::uint32_t a_source)
@@ -1178,7 +1181,7 @@ namespace WeaponFire
 		if (!a_target || !player || !tes) {
 			return std::nullopt;
 		}
-		const auto now = Clock::now();
+		const auto now = GameClock::Now();  // the world's time: the blast log's and the book's (CopyWatch)
 		// The explosion may not have been looked at yet (the scan comes every 100 ms, and only while a watch is on): it is
 		// decided now, as the scan would have, so the hit and the report agree.
 		std::vector<RE::TESObjectREFR*> fresh;
@@ -1201,16 +1204,17 @@ namespace WeaponFire
 
 	void ScanExplosions()
 	{
-		const auto now = Clock::now();
+		const auto now = GameClock::Now();  // the watches and the blast log run on the world's time (GameClock)
+		const auto wall = Clock::now();      // ... the scan's pace on the wall's
 		blasts.Prune(now);
 		areaWatches.Prune(now);
 		if (now > watchUntil.load() && now > shotWatchUntil.load() && !areaWatches.Any(now)) {
 			return;
 		}
-		if (now < nextScan) {
+		if (wall < nextScan) {
 			return;
 		}
-		nextScan = now + 100ms;
+		nextScan = wall + 100ms;
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto cell = player ? player->GetParentCell() : nullptr;
 		if (!cell) {

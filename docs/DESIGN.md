@@ -403,7 +403,7 @@
   sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
   left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
   What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
-- A drop on a copy with no hit event of ours, in the second after our player's shot or swing aimed at it (the nearest copy
+- A drop on a copy with no hit event of ours, in the second (of the world's time, GameClock: a slowed game's second) after our player's shot or swing aimed at it (the nearest copy
   the view is on, `CopyHealth::NearestAimed`), is the shot's: sent to the owner's game as any hit's damage, not given back
   (`CopyHealth::SHOT_REACH`, `copyUnseen=`; the first logs a warning). Not with another hit on the copy in the 10 s
   before (its effect may still tick) or a blow of ours left to the owner around it. On the rig a host's shot took 24.6
@@ -2686,6 +2686,16 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   VATS slow motion on at x0.30` / `off`, `RealTime: our game runs slowed on its own`, and the server's `server: player
   N in VATS` / `out of VATS`. The dev `vatstime [pretend on|off]` shows the table, and `pretend on` counts our player as
   in VATS for the report and the group's slow motion without the game's VATS.
+  The windows that pair a blow with what dealt it run on the world's time, not the wall's (src/game/GameClock.h: a clock
+  stepped by BSTimer's delta, the multiplier in it, once a frame on the timer's mark, run on at the frame's rate between
+  frames for 250 ms at most, any thread; tests/GameClockTests.cpp): CopyHealth's SHOT_REACH, OURS_GRACE, JUDGE_AFTER
+  and EFFECT_WINDOW (CopyWatch stamps hits, shots, reports and friends' blasts with it, and judges drops by it),
+  WeaponFire's throw and shot watches (EXPLOSION_WATCH, THREW_LATELY) and its blast log (BlastAt's `when`, which the
+  book reads too). At the group's 0.3 a missile's 0.4 s flight took 1.3 s of wall time, outside SHOT_REACH and
+  OURS_GRACE, so its drop on a copy was "no hit of ours" and given back, and a frag's 3 s fuse ran 10 s, past the
+  throw's 8 s watch. BlastShield keeps the wall clock and its frame count (an explosion deals its blow in its first
+  frames once it is set off), as do the logs' rates, the damage send rate (SEND_EVERY) and the explosion scan's pace.
+  `timescale` shows `gameClock: rate= behind= steps=`.
 - VATS never targets a friend's stand-in (src/game/VatsTargets.cpp, src/game/VatsTargetRules.h; `bVatsSkipsFriends`,
   each player's own, on by default; no protocol). VATS lists, highlights and locks onto the nearest target first, which
   in a group was the stand-in of the friend in front. Every actor VATS can list or keep as a target is first asked of one
