@@ -421,8 +421,10 @@ TEST("reward receiver: a friend's turn-in reward before our own: given once, the
 TEST("reward turn-ins: every StageRules kPays row is in RewardLines::TURN_INS, and the scan read their ends")
 {
 	// tools/rewardscan.ps1 writes TURN_INS from StageRules' kPays rows: a row added there without running it again is caught here.
+	// The quests of each player's own sessions (QuestRewards::OWN_SESSIONS) are never a shared turn-in, and their kOwn rows
+	// (kPays's bit under its other name) are not the scan's.
 	for (const auto& rule : StageRules::RULES) {
-		if ((rule.flags & StageRules::kPays) == 0) {
+		if ((rule.flags & StageRules::kPays) == 0 || QuestRewards::IsOwnSessions(rule.file, rule.quest)) {
 			continue;
 		}
 		const bool listed = std::ranges::any_of(RewardLines::TURN_INS, [&](const RewardLines::TurnIn& a_turnIn) {
@@ -470,6 +472,29 @@ TEST("reward companions: no companion's quest is shared as a reward, its hire st
 			CHECK(rule.file == 0 && rule.quest == 0x027411 && (rule.stage == 30 || rule.stage == 40 || rule.stage == 50));
 		}
 	}
+}
+
+TEST("reward own sessions: the Hubologists' stages are never a shared turn-in, and no other quest has a kOwn row")
+{
+	// StageRules' kOwn is kPays's bit: without this list the rewards would claim the Hubologists' rads, rank and objective
+	// stages (and their donations) as turn-ins, hand what our player got there to the friends and mark the stage done in
+	// their saves, where each player has their own sessions to do.
+	using QuestRewards::IsOwnSessions;
+	CHECK(StageRules::kOwn == StageRules::kPays);
+	CHECK(IsOwnSessions(3, 0x00CBD0));   // DLC04DialogueHubologists
+	CHECK(!IsOwnSessions(0, 0x00CBD0));  // the file counts
+	CHECK(!IsOwnSessions(3, 0x000806));  // DLC04MS01 stays shared
+	CHECK(!QuestRewards::IsCompanionQuest(3, 0x00CBD0));
+	// Every kPays-bit row of theirs is covered, the donations (30-37) and the kOwn rows alike: 27 rows.
+	std::size_t own = 0;
+	for (const auto& rule : StageRules::RULES) {
+		own += (rule.flags & StageRules::kPays) != 0 && IsOwnSessions(rule.file, rule.quest) ? 1 : 0;
+	}
+	CHECK(own == 27);
+	// A paying row of any other quest is a turn-in the scan wrote (the test above), so a kOwn row added to another quest
+	// without naming it in OWN_SESSIONS fails there.
+	const auto& list = QuestRewards::OWN_SESSIONS;
+	CHECK(std::ranges::is_sorted(list, std::less<>{}, [](const QuestRewards::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; }));
 }
 
 TEST("reward turn-ins: a turn-in whose quest allows repeated stages is flagged, and each one is named here")

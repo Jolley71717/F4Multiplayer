@@ -62,6 +62,24 @@ namespace QuestRewards
 		return false;
 	}
 
+	// Quests whose paying stages are each player's own sessions, never a shared turn-in: the Hubologists' (their donations,
+	// and the rads, rank and objective stages that are StageRules kOwn rows, which share kPays's bit). A friend's game gets
+	// nothing for one, and above all its stage is not marked done there: that player has their own sessions to do. Sorted
+	// by file and form ID.
+	inline constexpr Local OWN_SESSIONS[] = {
+		{ 3, 0x00CBD0 },  // DLC04DialogueHubologists
+	};
+
+	[[nodiscard]] constexpr bool IsOwnSessions(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		for (const auto& local : OWN_SESSIONS) {
+			if (local.file == a_file && local.quest == a_quest) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Registers the event sinks (once, with the session's).
 	void Install();
 
@@ -69,7 +87,8 @@ namespace QuestRewards
 	void Frame(bool a_inSession);
 
 	// A stage of a quest the session shares, done here by our player (not a friend's set here), seen now: a turn-in if
-	// its StageRules row is a payment (kPays), which the friends' games never set, and its quest no companion's.
+	// its StageRules row is a payment (kPays), which the friends' games never set, and its quest no companion's nor one
+	// of each player's own sessions (OWN_SESSIONS).
 	void OnOwnStage(std::uint32_t a_quest, std::uint16_t a_stage, std::uint8_t a_ruleFlags);
 
 	// XP our player gained that is their own (Party's: not a friend's share given here, nor ours).

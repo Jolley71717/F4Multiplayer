@@ -2562,6 +2562,7 @@ public static class SafeScan
         { "DLC04MQ05 DLC04RaidCoerce", "the same" },
         { "DLC04GZTrackingQuest DLC04GZNukaGalaxy", "DLC04GZTrackingQuest 2000 (set by ParkPowerOn, Power Play's 6 and 120: Nuka-World's power on) sets the Nuka-Galaxy ride's 2000: its lighting and power markers on, the ride's pre-power scenes stopped; the parks' power is each game's own (DLC04PowerTracker is DENIED), and a friend's 120 runs ParkPowerOn there as the player's own would" },
         { "DLC04MQ05 DLC04_NUK001_CrowdManager", "DLC04GangSetup sets Nuka-Town's crowd manager's 11 (the crowd without the enemy gang) only if it is running (IsRunning): the crowd is each game's own, as ambient scenes are; not running, it is never started by it" },
+        { "DLC04DialogueHarvey DLC04REObjectCT03", "Harvey's 1000 (he leaves Nuka-Town for good: disabled, the quest stopped) sets DLC04REObjectCT03 1000, the end of his roadside encounter (repeatable, no objectives; the story manager starts it in each game as its player passes, its trigger an event alias): 1000 sends Harvey back to the market's marker unless its 30 is done, and rearms the encounter's own trigger. Run where no encounter runs, its aliases are empty and it does nothing, as a played-through game whose player never met him there" },
     };
 
     static bool AllowedStart(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to, string a_call)
@@ -2580,17 +2581,23 @@ public static class SafeScan
     // leave it out). It does not go into the workshop scripts a settlement given or taken (SetOwnedByPlayer) or a settler
     // added or removed (SETTLERS) runs: that is each game's workshop keeping its own settlement, as it does for any the
     // player owns there (the radio beacon's story event deep in WorkshopParentScript.UpdateRadioObject, which unassigning
-    // a settler reaches only for a radio beacon assigned to them).
+    // a settler reaches only for a radio beacon assigned to them). Nor is someone made available as a companion (AVAILABLE)
+    // a companion's change there: FollowersScript.SetAvailableToBeCompanion puts them in HasBeenCompanionFaction and shows
+    // the "available as a companion" message, nothing more (no recruit, no dismissal, no affinity), the outcome every
+    // played-through game has, and the first player to recruit them keeps them (src/game/Companions).
     static readonly HashSet<string> SETTLERS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
-    static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
-        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart, Skip = Skipped };
+    static readonly HashSet<string> AVAILABLE = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetAvailableToBeCompanion" };
+    static bool MadeAvailable(GearScan.Instr i) { return (i.Op == 23 || i.Op == 25) && AVAILABLE.Contains(i.Op == 25 ? i.Args[1] : i.Args[0]); }
+    static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c.Where(i => !MadeAvailable(i)).ToList(), false), Target = Target,
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) && !AVAILABLE.Contains(name),
+        Allows = AllowedStart, Skip = Skipped };
     // The same walk for an ALLOW_KICKOUTS quest: a companion's affinity and a dismissal are let through as well (Direct's
     // a_companions), and a stage of the companion's quest named with it (AllowedKickout: Open Season's to DLC04COMGage, not
     // any companion's); the rest of the rule holds.
     static readonly MoveScan.Walk kickout = new MoveScan.Walk {
-        Direct = c => Direct(c, false, true), Target = Target,
-        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name),
+        Direct = c => Direct(c.Where(i => !MadeAvailable(i)).ToList(), false, true), Target = Target,
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) && !AVAILABLE.Contains(name),
         Allows = (from, to, call) => AllowedStart(from, to, call) || AllowedKickout(from, to), Skip = Skipped };
 
     static bool AllowedKickout(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to)
@@ -2604,15 +2611,17 @@ public static class SafeScan
         return ALLOW_KICKOUTS.Keys.Any(k => k.StartsWith(a_edid + " ", StringComparison.OrdinalIgnoreCase));
     }
     // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
-    // settlement given or taken, or a settler added or removed (the first found).
+    // settlement given or taken, a settler added or removed, or someone made available as a companion (the first found).
     static readonly MoveScan.Walk outcome = new MoveScan.Walk {
         Direct = c => {
+            var a = c.FirstOrDefault(MadeAvailable);
+            if (a != null) return "companion available " + (a.Op == 25 ? a.Args[1] : a.Args[0]);
             var d = Direct(c, true);
             if (d != null && (d.StartsWith("factions ") || d.StartsWith("settlement "))) return d;
             var s = c.FirstOrDefault(i => i.Op == 23 && SETTLERS.Contains(i.Args[0]));
             return s == null ? null : "settlement " + s.Args[0];
         },
-        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) && !AVAILABLE.Contains(name) };
 
     // The quests with an alias filled by its conditions (an alias each game fills, as Why and EachGames read them) whose
     // fill is the same in every game all the same, by editor ID with why: the conditions read a global that comes with
@@ -2626,19 +2635,20 @@ public static class SafeScan
     // (2026-11-06): with sQuests = safe one player's outcome is both players', as the shared story's kick-outs already
     // are; with it off each keeps their own. By editor ID, with why, each read in its stage fragments (the stages each
     // flagged one sets too). Why lets a stage that does only that through (rest); the rest of the rule holds for them,
-    // and RuleScan makes a stage that turns a faction on the player kMoves (StageRules.h). These are the ones
-    // with objectives (SAFE). Read and left out: DLC04DialogueHubologists (its other stages are each player's own
-    // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
-    // bonus spells), and the ones the rule left out for another stage, a quest each game runs its own way it
-    // starts: DLC04DialogueHarvey 1000's DLC04REObjectCT03 still is; DLC04SafariAdventureQuest's
-    // DLC04SafariAdventurePOST and DLC04MQ05's park power and clean-up are let through now (ALLOW_STARTS, ALLOW_FILLS).
-    // With them, by the maintainer's choice of 2026-11-10 (the chooser decides for both, the friend gets the outcome
-    // once near the chooser, a faction's kick-out is shared): Far Harbor's endings and kick-out, objective-less
-    // (SILENT's), Nuka-World's Open Season and Safari Adventure, and DLC04MQ05 (Power Play) with DLC04MQ05Cleanup
-    // (Cleaning House): the enemy gang is the global DLC04EnemyGang, which its 5 (DLC04MakeEnemy) works out from the
-    // DLC04Rank* globals, each game's own (its own flag raises and raids, DLC04RaiderControllerQuest's), so the stage
-    // carries the chooser's values of them (src/game/StageRules.h CARRIES) and every game turns the same gang on its
-    // player. The other objective-less ones (DN084, DN117, BoSKickOut, RRKickOut) come in a later change.
+    // and a stage that turns a faction on the player is HOSTILE's (-Hostile; StageRules.h): it waits until none of that
+    // faction is near, and is never skipped. By the maintainer's choice of 2026-11-10 (the chooser decides for both, a
+    // faction's kick-out is shared): Far Harbor's endings and kick-out, objective-less (SILENT's), Nuka-World's Open Season
+    // and Safari Adventure (its DLC04SafariAdventurePOST let through: ALLOW_STARTS), and DLC04MQ05 (Power Play) with
+    // DLC04MQ05Cleanup (Cleaning House; the park's power and clean-up let through: ALLOW_STARTS, ALLOW_FILLS): the enemy
+    // gang is the global DLC04EnemyGang, which its 5 (DLC04MakeEnemy) works out from the DLC04Rank* globals, each game's
+    // own (its own flag raises and raids, DLC04RaiderControllerQuest's), so the stage carries the chooser's values of them
+    // (src/game/StageRules.h CARRIES) and every game turns the same gang on its player. The add-ons' other faction
+    // outcomes, Combat Zone's and the end of The Big Dig's (2026-11-11) are in too, SAFE's and SILENT's:
+    // DLC04DialogueHubologists, whose other stages are each player's own (StageRules.h kOwn rows: a friend's game never
+    // sets them), DLC04DialogueHarvey, whose 1000 starts the radiant DLC04REObjectCT03 (ALLOW_STARTS), CZ and
+    // FFGoodneighbor07, who make Cait and Hancock available as companions (AVAILABLE), and the objective-less DLC03MQ00,
+    // DLC03CoA_DialogueNucleusEntrance, DLC01MasterQuest, DLC01Lair (and DLC01Lair_ChangeLocation, which starts it) and
+    // DLC04MS01SierraAttacks. The other objective-less ones (DN084, DN117, the base game's kick-outs) come in other changes.
     static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "DN036", "Egret Tours Marina: 500 turns Phyllis on the player, 550/600/700 (each ending) give the player the marina's workshop" },
         { "DN049", "the robot-run shops: each shop's robots turned on the player (x49), made peaceful (x50), shut down (x55) or destroyed (x56) by the player's choices; 711's pre-war money is kPays" },
@@ -2658,6 +2668,16 @@ public static class SafeScan
         { "DLC04RaiderKickout", "Open Season, the raiders' kick-out: 20 (DLC04SendKickOut) turns the three gangs and Shank's crime faction on the player, unlocks the power plant (DLC04PowerTracker 100), makes Nuka-Town's traders the player's allies (DLC04DialogueSettlement 700) and takes the raiders' settlements from the player (ClearRaiderSettlementOwnership); 30-60 one boss each (their deaths are every game's), 100 the four dead; Gage's turn on the player is ALLOW_KICKOUTS'" },
         { "DLC04SafariAdventureQuest", "Safari Adventure: 195 sets Cito on the player (SetEnemy with both sides neutral, StartCombat), 175/176 give the custom item (DLC04_CustomItemQuest 40), 60 the holotape; 2000 starts Cito's after-quest (ALLOW_STARTS)" },
         { "DLC04MQ05", "Power Play: 8 turns the gang the player snubbed on them and clears its raider settlements' owners (DLC04GangSetup, by DLC04EnemyGang); the gang is the chooser's in every game, as the stage carries the globals its scripts decide by (src/game/StageRules.h CARRIES: DLC04MQ04 500 and MQ05 5 the three ranks DLC04MakeEnemy reads, 8 the enemy gang and the parks' DLC04MQ03Claimed*, 20/120/255 the enemy gang)" },
+        { "CZ", "Combat Zone: 100 puts Tommy's fighters on the player's side for the arena fight (390 takes them off), 250 (reached from 200-247) turns the arena's raiders on the player, 500 (and 510, which sets it) makes Cait available as a companion (AVAILABLE); 1 is the developers' quickstart (kMoves)" },
+        { "FFGoodneighbor07", "the end of The Big Dig (MS16 260 and 270 set it): 30 turns Bobbi on the player (her turrets' fight with it), 80 makes Hancock available as a companion (AVAILABLE); 52's caps are Bobbi's, the player's take, both players' as a shared quest's reward" },
+        { "DLC03MQ00", "Far Harbor's master quest: 0, its start-up, makes the island's factions allies of one another in every game; 100 is the Far Harbor kick-out (the town turned on the player, Pearl moved, its custom event to the town's and Acadia's quests), set by DLC03MQ06_WindFarmHandling 50" },
+        { "DLC03CoA_DialogueNucleusEntrance", "the Nucleus's door: 50 turns its guards on the player, 150 sets DLC03CoA_Kickout 700, the Children of Atom turned on the player as the Nucleus's 70; the story's DLC03MQ06 and DLC03AtomM01 set it too (its stopping early is STOPS_EARLY_READ's)" },
+        { "DLC01MasterQuest", "Automatron's master quest: 10, its start-up, makes the add-on's factions allies of one another in every game; 20 and 320 are the story's (DLC01MQ02 3000, DLC01MQ01 3000), 300 and 310 schematics the player can build; no bookkeeping, though its name is DENY_PATTERNS's" },
+        { "DLC01Lair", "the Mechanist's lair: 1400 (reached from 1350, and set by the story's DLC01MQ05 885 too) turns the Mechanist's robots on the player, 2000 gives the player the lair's workshop; 3-9 are the developers' quickstarts (kMoves)" },
+        { "DLC01Lair_ChangeLocation", "its 0 starts DLC01Lair (above) if it isn't running, and stops" },
+        { "DLC04MS01SierraAttacks", "Sierra Petrovita turned on the player: 10 puts her in PlayerEnemyFaction and starts her fight" },
+        { "DLC04DialogueHarvey", "Harvey: 200 turns him on the player; 1000, his leaving, sets the end of his roadside encounter (ALLOW_STARTS)" },
+        { "DLC04DialogueHubologists", "the Hubologists: 200 turns them on the player; their other stages are each player's own sessions (kOwn rows, never set from a friend's): the rads cast on the player and the extraction chair's idle played on them (20-27), the paid donations (30-37), the donation's objective (40, 41, 100) and the rank's global and bonus spells (50-57)" },
     };
 
     // The ALLOW_OUTCOMES quests whose kick-out turns a companion on the player as part of its outcome, by "<the kick-out
@@ -3130,16 +3150,23 @@ public static class SafeScan
     {
         if (q.Stages == 0) return "no objectives, no stages";
         var bare = System.Text.RegularExpressions.Regex.Replace(q.Edid, @"^DLC\d+_?", "");
+        var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);  // read by hand: its name is no reason (DLC01MasterQuest is no bookkeeping)
         foreach (var d in DENY_PATTERNS)
-            if (System.Text.RegularExpressions.Regex.IsMatch(bare, d.Item1)) return "denied by name: " + d.Item2;
+            if (!outcomes && System.Text.RegularExpressions.Regex.IsMatch(bare, d.Item1)) return "denied by name: " + d.Item2;
         string why;
         if (DENY_SILENT.TryGetValue(q.Edid, out why)) return "denied by hand: " + why;
         why = StopsEarly(q, a_file);
-        if (why != null) return STOPS_EARLY + why;
+        if (why != null && !STOPS_EARLY_READ.ContainsKey(q.Edid)) return STOPS_EARLY + why;
         return "";
     }
 
     const string STOPS_EARLY = "stops early: ";
+
+    // The quests StopsEarly finds that were read by hand and lose nothing that matters when a joiner's catch-up stops them
+    // early, with why: shared all the same.
+    static readonly Dictionary<string, string> STOPS_EARLY_READ = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DLC03CoA_DialogueNucleusEntrance", "250 stops it, below 750, a line at the Nucleus's door that ends the talks there and sets 250 itself: caught up, 250 comes first and 750 is dropped, so the joiner's two door guards keep their SetProtected and the Richter scene's trigger stays enabled, a trigger whose scene can't run once the quest (run once) has stopped. Live, 750 is set and sets 250 as in the friend's game" },
+    };
 
     // A stage whose own fragment stops the quest (Stop on itself) below a stage whose fragment does more than stop it, as
     // "<stop> stops it, below <stage>", or null. A friend catching up is sent the host's stages done before the session
@@ -3191,7 +3218,8 @@ public static class SafeScan
     }
 
     // The (file, quest, stage) of the rows of src/game/StageRules.h's RULES that have a flag (kPays, kFree): from
-    // "RULES[] = {" to its "};".
+    // "RULES[] = {" to its "};". kOwn (a stage each player has alone, never set from a friend's) is kPays's bit, and
+    // counts as it: one reached from a shared stage would run here all the same.
     public static HashSet<Tuple<int, uint, int>> Pays(string a_stageRules, string a_flag = "kPays")
     {
         var text = File.ReadAllText(a_stageRules);
@@ -3200,7 +3228,7 @@ public static class SafeScan
         var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
         var rows = new HashSet<Tuple<int, uint, int>>();
         foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+),\s*([^,}]+),\s*\d+\s*\}"))
-            if (m.Groups[4].Value.Contains(a_flag)) rows.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
+            if (m.Groups[4].Value.Contains(a_flag) || (a_flag == "kPays" && m.Groups[4].Value.Contains("kOwn"))) rows.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
         return rows;
     }
 
@@ -3324,6 +3352,8 @@ public static class SafeScan
             foreach (var v in a_verdicts) if (MoveScan.perFile[v.Key.Item1][v.Key.Item2].Edid.Equals(kv.Key, StringComparison.OrdinalIgnoreCase)) verdict = v.Value;
             sb.AppendLine(string.Format("#   {0} ({1}): {2}", kv.Key, verdict == null ? "not found" : verdict == "" ? "SAFE" : verdict == "silent" ? "SILENT" : "left out, " + verdict, kv.Value));
         }
+        sb.AppendLine(string.Format("# stopping early read by hand (STOPS_EARLY_READ): {0}", STOPS_EARLY_READ.Count));
+        foreach (var kv in STOPS_EARLY_READ) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
         return sb.ToString();
     }
 

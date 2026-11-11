@@ -201,16 +201,18 @@ namespace QuestFilter
 	// game shares anyway). A shared quest's stage it sets is not followed: that stage reaches a friend's game as the
 	// story's, SAFE or not. Less DENIED. And, by the maintainer's choice, the quests whose stages turn a faction hostile
 	// or friendly, make the player a faction's enemy or give or take a settlement (tools/questscan.cs ALLOW_OUTCOMES,
-	// each with why: seventeen, DN036's Egret Tours Marina, DN049's robot shops, Far Harbor's settlements S01, S02 and
-	// FF01, the Institute's Acadia quest, DLC03_ADV017, the Nucleus's talks, Kiddie Kingdom, Nuka-Town's traders, and
-	// Far Harbor's endings and kick-outs: the Nucleus's nuke and the wind farm's handlers, the Children of Atom's
-	// kick-out, the Atom fight's stop and Acadia's defence; Nuka-World's Safari Adventure and the raiders' kick-out,
-	// which also turns Gage on the player when he was a companion, ALLOW_KICKOUTS): one player's outcome is both
-	// players', as the shared story's kick-outs already are, and with sQuests = story each keeps their own. The chooser
-	// decides for both. For those the rule lets such a stage through (and what a settlement's own workshop scripts do
-	// once it is given or gains a settler) and holds for everything else; a stage of theirs that turns a faction on the
-	// player is StageRules' kMoves, set only with the friend who did it near, as one that moves them. Their stages that move
-	// or charge the player are StageRules' as the story's are; an item a stage gives is given in each game, as for
+	// each with why: DN036's Egret Tours Marina, DN049's robot shops, Far Harbor's settlements S01, S02 and FF01, the
+	// Institute's Acadia quest, DLC03_ADV017, the Nucleus's talks, Kiddie Kingdom, Nuka-Town's traders, Far Harbor's
+	// endings and kick-outs: the Nucleus's nuke and the wind farm's handlers, the Children of Atom's kick-out, the Atom
+	// fight's stop and Acadia's defence; Nuka-World's Safari Adventure and the raiders' kick-out, which also turns Gage
+	// on the player when he was a companion, ALLOW_KICKOUTS; and since 2026-11-11 Combat Zone, the end of The Big Dig,
+	// Harvey and the Hubologists): one player's outcome is both players', as the shared story's kick-outs already are,
+	// and with sQuests = story each keeps their own. The chooser decides for both. For those the rule lets such a stage
+	// through (and what a settlement's own workshop scripts do once it is given or gains a settler, and someone made
+	// available as a companion: Cait, Hancock) and holds for everything else; a stage of theirs that turns a faction on
+	// the player is StageRules' HOSTILE's, held while any of that faction is near this player and never skipped. Their
+	// stages that move or charge the player are StageRules' as the story's are (the Hubologists' sessions each player
+	// has alone are kOwn there); an item a stage gives is given in each game, as for
 	// every shared quest. A stage with a StageRules kPays or kEach row is not judged: a payment is skipped whole in a
 	// friend's game (FFDiamondCity08 100, Sheffield's Nuka-Cola and its affinity event) and a companion's owner's stage
 	// is marked done there without its script (MQ202NickPostSurgery 90); AllowCompanion with neither
@@ -222,6 +224,7 @@ namespace QuestFilter
 	// quest it left out for a stage. Sorted by file and form ID. The quests the rule passes but for their objectives are
 	// SILENT's (below).
 	inline constexpr Local SAFE[] = {
+		{ 0, 0x02074B },  // CZ
 		{ 0, 0x02125F },  // FFDiamondCity03
 		{ 0, 0x0229FC },  // MS07
 		{ 0, 0x0254B7 },  // DN154
@@ -258,6 +261,7 @@ namespace QuestFilter
 		{ 0, 0x122220 },  // FFBunkerHill01
 		{ 0, 0x122221 },  // FFBunkerHill02
 		{ 0, 0x1243D6 },  // DN083_Barney
+		{ 0, 0x1323AB },  // FFGoodneighbor07
 		{ 0, 0x1338B9 },  // V81_04
 		{ 0, 0x14191C },  // FFDiamondCity02
 		{ 0, 0x142434 },  // FFDiamondCity04
@@ -318,8 +322,10 @@ namespace QuestFilter
 		{ 3, 0x000803 },  // DLC04MQ03
 		{ 3, 0x000805 },  // DLC04MQ05
 		{ 3, 0x000806 },  // DLC04MS01
+		{ 3, 0x00CBD0 },  // DLC04DialogueHubologists
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement
 		{ 3, 0x01E34B },  // DLC04GZMiscObjective
+		{ 3, 0x0243A5 },  // DLC04DialogueHarvey
 		{ 3, 0x025AE6 },  // DLC04MQ04MasonSceneQuest
 		{ 3, 0x0260E2 },  // DLC04SafariAdventureQuest
 		{ 3, 0x026169 },  // DLC04MQ04DixieSceneQuest
@@ -356,7 +362,12 @@ namespace QuestFilter
 	// them, and the 350 would stop it there before the 400 ran), less the ones with no stages (nothing to share), less
 	// DENIED. The rule's start of a quest each game runs its own way leaves out the change-location hooks that send a
 	// Minutemen request's story event (DN121_ChangeLocation, DN151_ChangeLocation) or start the repeatable DN017 or
-	// DN053. A quest's own actors made at a marker (a "created" alias) are made in each game. Their stages that move or
+	// DN053. ALLOW_OUTCOMES holds here too (2026-11-11): Far Harbor's master quest DLC03MQ00 (its kick-out, 100), the
+	// Nucleus's door DLC03CoA_DialogueNucleusEntrance (its guards, the Children of Atom's kick-out; its 250 stopping it
+	// below its 750 read by hand: STOPS_EARLY_READ), Automatron's master quest DLC01MasterQuest (its name no reason: it
+	// is no bookkeeping), the Mechanist's lair DLC01Lair and DLC01Lair_ChangeLocation, which starts it, and Sierra
+	// Petrovita's attack DLC04MS01SierraAttacks; a stage of theirs that turns a faction on the player is StageRules'
+	// HOSTILE's. A quest's own actors made at a marker (a "created" alias) are made in each game. Their stages that move or
 	// charge the player are StageRules' as the story's are; the stages ScriptDoors works (DN142 50, BoSEnable 15) are
 	// its own, with either setting. Generated by tools/questscan.ps1 -Safe, which prints them after SAFE with what it
 	// denied and why. Sorted by file and form ID.
@@ -431,7 +442,9 @@ namespace QuestFilter
 		{ 0, 0x225917 },  // BoSPostQuestMMWon
 		{ 0, 0x23E9CC },  // DN088
 		{ 0, 0x246ECC },  // MS07cPostQuestTapes
+		{ 1, 0x001B3E },  // DLC03MQ00
 		{ 1, 0x00215E },  // DLC03MQ01ChangeLocationHandler
+		{ 1, 0x004C8F },  // DLC03CoA_DialogueNucleusEntrance
 		{ 1, 0x0052B7 },  // DLC03AcadiaDialogue
 		{ 1, 0x01445A },  // DLC03M4Quest
 		{ 1, 0x015366 },  // DLC03MQ06_NukeHandling
@@ -456,6 +469,9 @@ namespace QuestFilter
 		{ 1, 0x05D37B },  // DLC03AtomM01_CombatStop
 		{ 1, 0x05D3E4 },  // DLC03_VimCaptainsBlendQuest
 		{ 2, 0x000805 },  // DLC01MQ00
+		{ 2, 0x0008BA },  // DLC01MasterQuest
+		{ 2, 0x0008BB },  // DLC01Lair
+		{ 2, 0x004CD5 },  // DLC01Lair_ChangeLocation
 		{ 2, 0x00A162 },  // DLC01FortHagenSatelliteArrayQuest
 		{ 2, 0x00AE0D },  // DLC01LairJB
 		{ 2, 0x00F8EA },  // DLC01MQ04Post
@@ -466,6 +482,7 @@ namespace QuestFilter
 		{ 3, 0x0277CC },  // DLC04MQ04KeywordAssignment
 		{ 3, 0x0295C8 },  // DLC04GZBattlezone
 		{ 3, 0x03578F },  // DLC04MS01Post
+		{ 3, 0x035790 },  // DLC04MS01SierraAttacks
 		{ 3, 0x035791 },  // DLC04MS01BradbertonDies
 		{ 3, 0x03C12C },  // DLC04MQ04ShankFinalSceneOfferQuest
 		{ 3, 0x04430B },  // DLC04NukaSodas

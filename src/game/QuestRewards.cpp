@@ -54,6 +54,8 @@ namespace QuestRewards
 		std::unordered_map<std::uint64_t, std::uint8_t> turnIns;
 		// COMPANION_QUESTS by their form IDs in this game: never shared as rewards.
 		std::unordered_set<std::uint32_t>            companionQuests;
+		// OWN_SESSIONS by their form IDs in this game: each player's own sessions, never shared as rewards.
+		std::unordered_set<std::uint32_t>            ownSessions;
 		bool                                         linesBuilt = false;
 
 		std::uint64_t TurnInKey(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -111,6 +113,11 @@ namespace QuestRewards
 			for (const auto& local : COMPANION_QUESTS) {
 				if (const auto quest = handler->LookupFormID(local.quest, StageRules::FileName(static_cast<StageRules::File>(local.file)))) {
 					companionQuests.insert(quest);
+				}
+			}
+			for (const auto& local : OWN_SESSIONS) {
+				if (const auto quest = handler->LookupFormID(local.quest, StageRules::FileName(static_cast<StageRules::File>(local.file)))) {
+					ownSessions.insert(quest);
 				}
 			}
 			std::size_t missing = 0;
@@ -463,6 +470,12 @@ namespace QuestRewards
 			REX::INFO("QuestRewards: our player reached {:08X} stage {}, a companion's quest: not shared", a_quest, a_stage);
 			return;
 		}
+		// Each player's own sessions (the Hubologists' donations, rads and rank: OWN_SESSIONS): what our player got there is
+		// theirs alone, and a friend's game must not mark the stage done, or that player's own session would never run.
+		if (ownSessions.contains(a_quest)) {
+			REX::INFO("QuestRewards: our player reached {:08X} stage {}, each player's own sessions: not shared", a_quest, a_stage);
+			return;
+		}
 		const auto ends = EndsOf(a_quest, a_stage);
 		// Its quest allows repeated stages: a friend's game couldn't close it (the engine runs a stage done already again), so
 		// its player could turn it in too and get it twice. Not claimed (each player's own, as before rewards were shared).
@@ -486,6 +499,13 @@ namespace QuestRewards
 		if (companionQuests.contains(a_reward.quest)) {
 			++passed;
 			REX::INFO("QuestRewards: player {}'s reward {} ({:08X} {} {}) not given: a companion's quest, never shared", a_reward.playerId, a_reward.id,
+				a_reward.quest, a_reward.kind == RewardBook::Kind::kLine ? "line" : "stage", a_reward.source);
+			return;
+		}
+		// The same for each player's own sessions (OWN_SESSIONS).
+		if (ownSessions.contains(a_reward.quest)) {
+			++passed;
+			REX::INFO("QuestRewards: player {}'s reward {} ({:08X} {} {}) not given: each player's own sessions, never shared", a_reward.playerId, a_reward.id,
 				a_reward.quest, a_reward.kind == RewardBook::Kind::kLine ? "line" : "stage", a_reward.source);
 			return;
 		}

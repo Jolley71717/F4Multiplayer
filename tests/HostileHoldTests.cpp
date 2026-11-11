@@ -249,12 +249,12 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		setPlayerEnemy += row.call == kSetPlayerEnemy;
 		added += row.call == kAddToFaction;
 	}
-	CHECK(setEnemy == 193);
+	CHECK(setEnemy == 210);
 	CHECK(setPlayerEnemy == 13);
-	CHECK(added == 22);
+	CHECK(added == 23);
 }
 
-TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are the 18 known, and each can be made without the stage")
+TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are the 19 known, and each can be made without the stage")
 {
 	using namespace StageRules;
 	// A friend far away: the stage isn't set (it would move the player), its faction is turned on them by the row's call
@@ -275,6 +275,7 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 		{ 0, 0x142FD3, 20 },                                        // RR304: the Brotherhood
 		{ 0, 0x15BD39, 30 },                                        // InstMassFusion: the Brotherhood's kick-out
 		{ 0, 0x16D036, 100 },                                       // InstKickOut: the Institute
+		{ 2, 0x0008BB, 8 },                                         // DLC01Lair's quickstart: the Mechanist's robots (by 1350)
 		{ 3, 0x03684F, 6 },                                         // Kiddie Kingdom's quickstart: the hostile ghouls
 	};
 	CHECK(movers == known);
@@ -287,7 +288,7 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 TEST("hostile hold: the three movers that are a faction's kick-out run the kick-out itself here, not gone with the friend (KICKOUTS)")
 {
 	using namespace StageRules;
-	// Each is one of the 18 movers (a kMoves row, no bridge, HOSTILE's), and its kick-out is a quest of the same file.
+	// Each is one of the 19 movers (a kMoves row, no bridge, HOSTILE's), and its kick-out is a quest of the same file.
 	for (const auto& row : KICKOUTS) {
 		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
 		REQUIRE(rule != nullptr);
@@ -314,7 +315,7 @@ TEST("hostile hold: the three movers that are a faction's kick-out run the kick-
 			}
 		}
 	}
-	// The other 15 movers have none: the Covenant, the airport's ferals and the park's ghouls have no companion and no quests to fail.
+	// The other 16 movers have none: the Covenant, the airport's ferals, the park's ghouls and the lair's robots have no companion and no quests to fail.
 	CHECK(!KickOutOf(File::kFallout4, 0x022A08, 470));
 	CHECK(!KickOutOf(File::kFallout4, 0x04402C, 2));
 	CHECK(!KickOutOf(File::kNukaWorld, 0x03684F, 6));

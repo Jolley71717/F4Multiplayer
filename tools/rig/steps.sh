@@ -1387,6 +1387,70 @@ step_achievements() {
 	else pass "achievements: the caught-up stage's award never ran the game's call" "no 'the game's call runs' line for its fragment"; fi
 }
 
+# ---- the add-ons' other faction outcomes, Combat Zone's and the end of The Big Dig (opt-in: smoke.sh --only outcomes) ---------------------
+# The quests the host's sQuests = safe shares for their outcomes (tools/questscan.cs ALLOW_OUTCOMES; src/game/QuestFilter.h SAFE and
+# SILENT): one stage of each set by one game's console, the other game checked, in both directions, the other game's player beside the
+# setter (both coc to SanctuaryExt) or far from them (the setter's coc to OUTCOMES_FAR_CELL). Set-up by console, said so in the report:
+# the coc placements, the setter's setobjectivedisplayed for a quest with objectives (a quest the player never started isn't shared), and
+# the setstage. A case "set": the other game sets it (its log's "QuestSync: set", the stage done there): the hostile ones, whose faction
+# is nowhere near Sanctuary, land at once, never skipped and never offered (the hold while one is near is step_hostile's). A case "own":
+# the other game never sets it (its log's "not setting ... (kOwn)", the stage not done there): the Hubologists' sessions are each
+# player's own. Quest stages are for good in a save, and these end Bobbi, Harvey, the Hubologists, Far Harbor's town, the Children of
+# Atom's door and the Mechanist for the player: run it on throwaway saves (backup.sh before, restore after) with all three add-ons in
+# both games; a game with a stage done already is a FAIL naming it.
+# Each case: <setter> <placement: near|far> <quest editor ID> <stage> <objective to show first, - for none> <set|own>
+OUTCOMES_CASES=${OUTCOMES_CASES:-"host near CZ 250 290 set
+vm far FFGoodneighbor07 30 10 set
+host far DLC04DialogueHubologists 200 30 set
+vm near DLC04DialogueHubologists 21 30 own
+vm near DLC04DialogueHarvey 200 100 set
+host far DLC03MQ00 100 - set
+vm far DLC03CoA_DialogueNucleusEntrance 50 - set
+vm near DLC01MasterQuest 300 - set
+host near DLC01Lair 1400 - set
+vm far DLC01Lair_ChangeLocation 0 - set
+host far DLC04MS01SierraAttacks 10 - set"}
+OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:-30}; OUTCOMES_OWN=${OUTCOMES_OWN:-15}
+step_outcomes() {
+	section "outcomes (the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end, set by one game's console; console placement)"
+	local setter where edid stage obj expect other id line
+	while read -r setter where edid stage obj expect; do
+		[ -z "$setter" ] && continue
+		other=$(other_game "$setter")
+		id=$(_h_id "$setter" "$edid")
+		if [ -z "$id" ] || [ "$id" != "$(_h_id "$other" "$edid")" ]; then fail "outcomes: set-up: both games have $edid (its add-on loaded, the same form ID)" "$setter '$id', $other '$(_h_id "$other" "$edid")'"; continue; fi
+		line=$(dc host "stages $id")
+		case "$line" in *"sQuests = safe"*) ;; *) fail "outcomes: set-up: the host shares $edid (sQuests = safe, a shared story)" "got '$line'"; continue;; esac
+		if _f_has host "$id" "$stage" || _f_has vm "$id" "$stage"; then fail "outcomes: set-up: neither game has $edid stage $stage done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; continue; fi
+		enter_both SanctuaryExt 14
+		if [ "$where" = far ]; then
+			dc "$setter" "console coc $OUTCOMES_FAR_CELL" >/dev/null; sleep 14; wait_ingame "$setter" 30
+			if ! wait_for 20 _f_far; then fail "outcomes: set-up: the $setter's coc to $OUTCOMES_FAR_CELL put it far from the $other" "host $(dc host pos); VM $(dc vm pos)"; continue; fi
+		elif wait_for 5 _f_far; then fail "outcomes: set-up: both games' coc to SanctuaryExt put them side by side" "host $(dc host pos); VM $(dc vm pos)"; continue; fi
+		[ "$obj" != - ] && { dc "$setter" "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the setter has the quest started
+		win_mark outcomes "$other"
+		dc "$setter" "console setstage $edid $stage" >/dev/null
+		if ! wait_for 15 _f_has "$setter" "$id" "$stage"; then fail "outcomes: set-up: the $setter's console set $edid $stage" "$setter done $(_f_done "$setter" "$id")"; continue; fi
+		if [ "$expect" = own ]; then
+			if wait_for "$OUTCOMES_OWN" _o_log_has "$other" "QuestSync: not setting $id '[^']*' stage $stage: .*\(kOwn\)" && ! _f_has "$other" "$id" "$stage"; then
+				pass "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "$(grep -oE "QuestSync: not setting $id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
+			else
+				fail "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting) $id" "$A_OUT/windelta-outcomes-$other.txt" | tail -2 | tr '\n' '|')"
+			fi
+			continue
+		fi
+		if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: set $id '[^']*' stage $stage " && wait_for 10 _f_has "$other" "$id" "$stage"; then
+			pass "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
+		else
+			fail "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
+		fi
+		if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $stage" "$A_OUT/windelta-outcomes-$other.txt"; then
+			fail "outcomes: $edid $stage: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
+		fi
+	done <<<"$OUTCOMES_CASES"
+}
+_o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who> <regex>: the game's log since win_mark has it
+
 # ---- a shared quest's created creatures, paired across games (src/game/QuestActors.h) ------------------------------------------------------
 # A quest the session shares (with the host's sQuests = safe: SAFE's Gun Run, SILENT's objective-less ones) creates its creatures in each
 # game's run; the game that shares one first names its alias, and the other game pairs its own creature from that alias with it (mirrored,

@@ -758,7 +758,7 @@ namespace QuestSync
 				return "it is a developer's quickstart, set only from the console";
 			}
 			if (a_flags & StageRules::kPays) {
-				return "it takes caps or items from the player";
+				return "it takes caps or items from the player, or is what that player does alone (kOwn)";
 			}
 			if (a_flags & StageRules::kStory) {
 				return "it moves the main story or a faction's on, and the story isn't shared";
