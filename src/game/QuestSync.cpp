@@ -689,19 +689,42 @@ namespace QuestSync
 			return msg;
 		}
 
+		// Whether the stage a row needs first (StageRules::Carried::needs*, in the quest's file) is done here.
+		static bool NeedDone(const StageRules::Carried& a_row, std::uint32_t a_quest)
+		{
+			if (a_row.needsQuest == 0) {
+				return true;
+			}
+			const auto needs = RE::TESForm::GetFormByID<RE::TESQuest>((a_quest & 0xFF000000) | a_row.needsQuest);
+			return needs && QuestStageLayout::IsStageDone(needs, a_row.needsStage);
+		}
+
+		// Before a friend's stage is judged (SetHere): whether its row says it waits for now, the stage its quest needs first
+		// (Home Sweet Home's end for Power Play's) not done here. Its quest waits, judged again later (logged once). Asked
+		// before any follow offer: offered first, a far friend's 8 was taken up, the player teleported, and the stage then
+		// waited with the offer gone, so it was skipped when the parks were finally handed out here.
+		bool CarryWaits(std::uint32_t a_quest, std::uint16_t a_stage, std::optional<StageRules::File> a_file, std::uint32_t a_local, const char* a_name)
+		{
+			const auto row = a_file ? StageRules::FindCarried(*a_file, a_local, a_stage) : nullptr;
+			if (!row || !StageRules::CarryWaits(*row, NeedDone(*row, a_quest))) {
+				return false;
+			}
+			if (carryWaitLogged.insert(Key(a_quest, a_stage)).second) {
+				REX::INFO("QuestSync: {:08X} '{}' stage {} carries globals; waiting for {:08X} stage {}, which isn't done here (the parks must be handed out here first)",
+					a_quest, a_name ? a_name : "", a_stage, (a_quest & 0xFF000000) | row->needsQuest, row->needsStage);
+			}
+			return true;
+		}
+
 		// Before a friend's stage is set here: what its row says to write first (StageRules::PlanCarry), with the values that
-		// came with it. kSet: written here and there; kWait: its quest waits (logged once); kSkip: not set (logged).
+		// came with it. kSet: written here and there; kWait: its quest waits (CarryWaits said so before the stage was judged;
+		// logged there); kSkip: not set (logged).
 		StageRules::Carry PlanCarried(std::uint32_t a_quest, std::uint16_t a_stage, std::optional<StageRules::File> a_file, std::uint32_t a_local, const char* a_name)
 		{
 			const auto row = a_file ? StageRules::FindCarried(*a_file, a_local, a_stage) : nullptr;
 			const auto came = carriedValues.find(Key(a_quest, a_stage));
 			const std::span<const StageRules::GlobalValue> values = came != carriedValues.end() ? std::span<const StageRules::GlobalValue>{ came->second } : std::span<const StageRules::GlobalValue>{};
-			bool needDone = false;
-			if (row && row->needsQuest != 0) {
-				const auto needs = RE::TESForm::GetFormByID<RE::TESQuest>((a_quest & 0xFF000000) | row->needsQuest);
-				needDone = needs && QuestStageLayout::IsStageDone(needs, row->needsStage);
-			}
-			auto plan = StageRules::PlanCarry(row, values, a_quest, needDone);
+			auto plan = StageRules::PlanCarry(row, values, a_quest, row && NeedDone(*row, a_quest));
 			// A global to write that this game lacks: the stage can't be set as the chooser's.
 			for (const auto& write : plan.writes) {
 				if (!RE::TESForm::GetFormByID<RE::TESGlobal>(write.global)) {
@@ -718,10 +741,6 @@ namespace QuestSync
 			}
 			switch (plan.what) {
 			case StageRules::Carry::Do::kWait:
-				if (carryWaitLogged.insert(Key(a_quest, a_stage)).second) {
-					REX::INFO("QuestSync: {:08X} '{}' stage {} carries globals; waiting for {:08X} stage {}, which {} ({})", a_quest, a_name ? a_name : "", a_stage,
-						(a_quest & 0xFF000000) | row->needsQuest, row->needsStage, plan.why, "the parks must be handed out here first");
-				}
 				break;
 			case StageRules::Carry::Do::kSkip:
 				++carriedSkipped;
@@ -856,6 +875,12 @@ namespace QuestSync
 			const auto  lock = file ? StageRules::FindLock(*file, local, a_stage) : nullptr;
 			const auto  releaseId = lock ? (a_quest & 0xFF000000) | lock->releaseQuest : 0u;
 
+			// A stage that carries globals and waits for another first (Power Play's for Home Sweet Home's end here): its
+			// quest waits before it is judged, so no offer is made, and no price waived, for a stage that can't be set yet.
+			if (CarryWaits(a_quest, a_stage, file, local, name)) {
+				return StageLog::Set::kQuestWaits;
+			}
+
 			StageRules::Situation now;
 			now.sharedStory = Story::Shared();
 			const auto live = liveAt.find(Key(a_quest, a_stage));
@@ -968,7 +993,7 @@ namespace QuestSync
 			// The globals it carries (the chooser's), written just before it: its script decides here as it did for them.
 			const auto carry = PlanCarried(a_quest, a_stage, file, local, name);
 			switch (carry.what) {
-			case StageRules::Carry::Do::kWait:
+			case StageRules::Carry::Do::kWait:  // not after CarryWaits above; kept whole all the same
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Carry::Do::kSkip:
 				++skipped;

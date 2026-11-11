@@ -77,7 +77,12 @@ namespace Protocol
 	// aliases hold, or let go of (kReportCompanion: CompanionReport), and the server names the companion's owner to the
 	// reporter and to everyone (kCompanionOwner: CompanionOwner), first to recruit keeps them; a joiner gets the list after
 	// the owner table. No welcome bytes. 64 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 65;
+	// 66: a quest stage carries the globals its script decides by (QuestStage::globals: a count, then each one's form ID
+	// and value, after the stage in kReportQuestStage and kQuestStage; at most MAX_STAGE_GLOBALS), and kWorldState's
+	// stages gain a tail of per-stage globals after the lists, so Nuka-World's gang choice is the chooser's in every game
+	// (src/game/StageRules.h CARRIES); the server keeps them with the stage. No new message ids, no welcome bytes. 65 is
+	// refused at the hello.
+	inline constexpr std::uint16_t VERSION = 66;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -2049,7 +2054,7 @@ namespace Protocol
 		std::uint32_t            quest = 0;
 		std::uint16_t            stage = 0;
 		std::uint32_t            playerId = 0;
-		std::vector<StageGlobal> globals;  // the sender's values of the globals the stage carries (the protocol after 65), if any
+		std::vector<StageGlobal> globals;  // the sender's values of the globals the stage carries (protocol 66), if any
 
 		bool operator==(const QuestStage&) const = default;
 	};

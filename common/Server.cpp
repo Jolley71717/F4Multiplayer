@@ -4132,8 +4132,25 @@ void Server::Run()
 			return;
 		}
 		auto stage = Protocol::DecodeQuestStage(a_data);
-		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= maxWorldEntries ||
-			questStageKeys.contains(questKey(*stage)) || !withinShare(a_player, kQuestStages)) {
+		if (!stage || !Protocol::IsShareableRef(stage->quest) || !withinShare(a_player, kQuestStages)) {
+			return;
+		}
+		if (questStageKeys.contains(questKey(*stage))) {
+			// Kept already: the first report stays, but one kept bare (a session from before stages carried globals,
+			// Protocol 66, or a reporter whose game lacked one) takes the globals a later report of it carries, so a
+			// joiner's game sets it as the chooser's instead of skipping it. Not told to those in the session (they
+			// had it bare); a stage kept with globals keeps them, whatever comes after.
+			if (!stage->globals.empty()) {
+				const auto kept = std::ranges::find_if(questStages, [&](const Protocol::QuestStage& a_kept) { return a_kept.quest == stage->quest && a_kept.stage == stage->stage; });
+				if (kept != questStages.end() && kept->globals.empty()) {
+					kept->globals = stage->globals;
+					touched();
+					log(std::format("server: {:08X} stage {} was kept without its globals; player {}'s report of it fills in {}", stage->quest, stage->stage, a_player.id, kept->globals.size()));
+				}
+			}
+			return;
+		}
+		if (questStages.size() >= maxWorldEntries) {
 			return;
 		}
 		// Kept without a reporter: a WorldState (and so the session file) carries none, and a stage caught

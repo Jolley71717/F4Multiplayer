@@ -704,6 +704,10 @@ public static class MoveScan
         // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
         // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
         public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
+        // Told of each function the walk reaches, with the code it can reach there, whether or not Direct finds anything in
+        // it: for a scan that wants every answer along the walk, not the first (GlobalScan's every read). A walk whose
+        // Direct finds nothing caches nothing, so a function reached by several paths is told of each time.
+        public Action<GearScan.Func, List<GearScan.Instr>> Visit;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -717,6 +721,7 @@ public static class MoveScan
             if (funcs.TryGetValue(key, out cached)) return cached;
             if (!a_seen.Add(key)) return null;
             var code = Reachable(f, a_args);
+            if (Visit != null) Visit(f, code);
             string why = Direct(code);
             if (why != null) why = f.Obj + "." + f.Name + ": " + why;
             for (int n = 0; why == null && n < code.Count; n++)
@@ -2333,26 +2338,51 @@ public static class SafeScan
 // CARRIES was made from (the per-game globals among them, Nuka-World's gang ranks and parks, picked by hand; the rest,
 // GameDaysPassed, a park's star-core count, are the game's own bookkeeping or the same in every game). With a_quests
 // (a regular expression on the editor ID), those quests whether shared or not. One line per stage: file, form ID,
-// editor ID, shared how, stage, the chain to the read and the globals' names.
+// editor ID, shared how, stage, the chain to the first read found (as -Moves's chains) and then every global the whole
+// walk reads, each with the function that reads it (so a CARRIES row can be checked complete: MQ04 500's chain ends at
+// the outpost tracker's count, and the ranks DLC04MakeEnemy reads behind it are in its every-read list).
 public static class GlobalScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
     static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
 
-    static string Reads(List<GearScan.Instr> code)
+    // The globals a function's code reads, by name, or none.
+    static List<string> Names(List<GearScan.Instr> code)
     {
         var names = new List<string>();
         foreach (var i in code)
             if (i.Op == 23 && (Is(i.Args[0], "GetValue") || Is(i.Args[0], "GetValueInt")) && !i.Args[1].StartsWith("temp", StringComparison.OrdinalIgnoreCase) && !i.Args[1].StartsWith("::temp", StringComparison.OrdinalIgnoreCase))
                 names.Add(Bare(i.Args[1]));
-        return names.Count == 0 ? null : "reads " + string.Join(",", names.Distinct().ToArray());
+        return names.Distinct().ToList();
+    }
+
+    static string Reads(List<GearScan.Instr> code)
+    {
+        var names = Names(code);
+        return names.Count == 0 ? null : "reads " + string.Join(",", names.ToArray());
     }
 
     public static string Run(string a_quests)
     {
-        var walk = new MoveScan.Walk { Direct = Reads };
+        var first = new MoveScan.Walk { Direct = Reads };
+        // Every function the stage's walk reaches, and what each reads: Direct finds nothing, so the walk goes on past
+        // each read into everything the stage calls, sets or starts.
+        var byFunction = new SortedDictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var every = new MoveScan.Walk
+        {
+            Direct = c => null,
+            Visit = (f, code) =>
+            {
+                var names = Names(code);
+                if (names.Count == 0) return;
+                var key = f.Obj + "." + f.Name;
+                SortedSet<string> set;
+                if (!byFunction.TryGetValue(key, out set)) byFunction[key] = set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var n in names) set.Add(n);
+            }
+        };
         var sb = new StringBuilder();
-        sb.AppendLine("# file\tid\tedid\tshared\tstage\treads");
+        sb.AppendLine("# file\tid\tedid\tshared\tstage\tfirst read (the chain to it)\tevery read (by the function that reads it)");
         for (int file = 0; file < MoveScan.perFile.Count; file++)
             foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
             {
@@ -2360,8 +2390,12 @@ public static class GlobalScan
                 if (!string.IsNullOrEmpty(a_quests) ? !System.Text.RegularExpressions.Regex.IsMatch(q.Edid, a_quests) : shared == "not shared") continue;
                 foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
                 {
-                    var h = walk.Stage(file, q, stage);
-                    if (h != null) sb.AppendLine(string.Format("{0}\t0x{1:X6}\t{2}\t{3}\t{4}\t{5}", file, q.Id & 0xFFFFFF, q.Edid, shared, stage, h));
+                    var h = first.Stage(file, q, stage);
+                    if (h == null) continue;
+                    byFunction.Clear();
+                    every.Stage(file, q, stage);
+                    var all = string.Join("; ", byFunction.Select(kv => kv.Key + ": " + string.Join(",", kv.Value.ToArray())).ToArray());
+                    sb.AppendLine(string.Format("{0}\t0x{1:X6}\t{2}\t{3}\t{4}\t{5}\t{6}", file, q.Id & 0xFFFFFF, q.Edid, shared, stage, h, all));
                 }
             }
         return sb.ToString();

@@ -1287,6 +1287,14 @@ namespace StageRules
 		bool operator==(const Carry&) const = default;
 	};
 
+	// Whether a row's stage waits here for now: the stage its row needs first (needs*) isn't done. Asked before the stage is
+	// judged at all (QuestSync::SetHere, before StageRules::Judge), so no follow offer is made, and nobody teleports, for a
+	// stage that then waits: the offer would be gone by the time it could be set. a_needDone: as PlanCarry's.
+	inline bool CarryWaits(const Carried& a_row, bool a_needDone)
+	{
+		return a_row.needsQuest != 0 && !a_needDone;
+	}
+
 	// a_row: the stage's row here (none: the stage carries nothing a script here reads; whatever came is dropped). a_carried:
 	// what came with the stage. a_file: the quest's load bits (the form ID & 0xFF000000), which the row's globals and the
 	// values' IDs share. a_needDone: the row's needs* stage is done here (not looked at without one).
@@ -1297,7 +1305,7 @@ namespace StageRules
 			plan.dropped = a_carried.size();
 			return plan;
 		}
-		if (a_row->needsQuest != 0 && !a_needDone) {
+		if (CarryWaits(*a_row, a_needDone)) {
 			plan.what = Carry::Do::kWait;
 			plan.why = "the stage its quest needs first isn't done here";
 			return plan;

@@ -23,9 +23,11 @@
 # that has a kPays row in src/game/StageRules.h, or caps taken or the inventory emptied on the way; its
 # SHARED_REACHES_PAYS is that count, which tests/StageRulesTests.cpp checks is 0).
 # With -Globals: the globals each shared quest's stages read (GetValue/GetValueInt on a global property), itself or
-# through the functions it calls and the stages it sets or starts, walked as -Moves walks them; -Quests <regex> picks
+# through the functions it calls and the stages it sets or starts, walked as -Moves walks them: per stage the chain to
+# the first read, then every global the whole walk reads, each with the function that reads it; -Quests <regex> picks
 # quests by editor ID whether shared or not. What src/game/StageRules.h's CARRIES (the globals a stage carries to the
-# other players, Nuka-World's gang choice) was made from: -Globals -Quests '^DLC04MQ0[45]$'.
+# other players, Nuka-World's gang choice) was made from, and is checked complete against: -Globals -Quests
+# '^DLC04MQ0[45]$'.
 # The index of each master is src/game/StageRules.h's File. With -DisabledParents: writes src/game/DisabledParents.h (or
 # -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),

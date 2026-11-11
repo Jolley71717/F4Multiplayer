@@ -899,7 +899,16 @@ TEST("stage rules: a friend's stage is set with its globals written first, in it
 	CHECK((did == std::vector<std::string>{ "0100D370=3", "0103E418=1", "0103E419=3", "0103E41A=2", "0103E41B=1", "0103E41C=2", "setstage" }));
 
 	// Home Sweet Home's end isn't done here: Power Play's stages wait (its quest alone), judged again later; its own row
-	// needs nothing.
+	// needs nothing. CarryWaits says so before the stage is judged (no follow offer for a stage that then waits), and
+	// PlanCarry agrees.
+	CHECK(CarryWaits(*setup, false));
+	CHECK(!CarryWaits(*setup, true));
+	CHECK(!CarryWaits(*home, false));
+	CHECK(!CarryWaits(*home, true));
+	for (const auto& row : CARRIES) {
+		CHECK(CarryWaits(row, false) == (row.needsQuest != 0));
+		CHECK(CarryWaits(row, false) == (PlanCarry(&row, {}, FILE | row.quest, false).what == Carry::Do::kWait));
+	}
 	const auto waits = PlanCarry(setup, came, FILE | 0x000805, false);
 	CHECK(waits.what == Carry::Do::kWait);
 	CHECK(waits.writes.empty());
