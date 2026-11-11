@@ -368,6 +368,16 @@ namespace Companions
 		lastLook = {};
 	}
 
+	RE::Actor* Following()
+	{
+		if (!FindAliases()) {
+			return nullptr;
+		}
+		const auto quest = FollowersQuest();
+		const auto actor = quest ? Aliased(quest, aliasIds.companion) : nullptr;
+		return actor && !actor->IsDeleted() && !actor->IsDead(false) ? actor : nullptr;
+	}
+
 	std::string Describe()
 	{
 		return book.Describe() + std::format(" callsQueued={} callsRan={} callsCancelled={} callsRefused={} unsettledLooks={}", dismissCallsQueued, dismissCallsRan, dismissCallsCancelled,

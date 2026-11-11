@@ -759,6 +759,12 @@ public static class MoveScan
         // Whether a script function called is walked into (by its name): SafeScan's walk of an ALLOW_OUTCOMES quest does not
         // go into what a settlement's own scripts do once it is given or taken (SetOwnedByPlayer) or gains or loses a settler.
         public Func<string, bool> Enter = name => true;
+        // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
+        // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
+        public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
+        // Whether a start Allows lets through is left unwalked (the quest started, its file): a radiant shared by its run
+        // (RadiantRules.h), whose stages reach a friend's game as that run's, not as the stage's that set one (SafeScan).
+        public Func<GearScan.Quest, int, bool> Unwalked = (to, file) => false;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -783,9 +789,10 @@ public static class MoveScan
                     var own = Own(i.Args[1]);
                     var target = own ? a_quest : QuestOf(i.Args[1]);
                     if (target == null) continue;
-                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) ? null : Target(target.Item1, target.Item2, i.Args[0]);
+                    var allowed = !own && !(a_quest != null && target.Item1 == a_quest.Item1) && Allows(a_quest, target.Item1, i.Args[0]);
+                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) || allowed ? null : Target(target.Item1, target.Item2, i.Args[0]);
                     if (itself != null) { why = f.Obj + "." + f.Name + ": " + itself; break; }
-                    if (!own && !Follow(target.Item1, target.Item2)) continue;
+                    if (!own && (!Follow(target.Item1, target.Item2) || (allowed && Unwalked(target.Item1, target.Item2)))) continue;
                     var list = new List<int>();
                     int s;
                     if (Is(i.Args[0], "SetStage") && i.Args.Count > 3 && int.TryParse(i.Args[3], out s)) list.Add(s);
@@ -1912,17 +1919,36 @@ public static class HostileScan
         var unresolved = new List<string>();
         var counts = new SortedDictionary<string, int>();
         int rows = 0, byEdid = 0;
+        var dismisses = new StringBuilder();  // StageRules.h DISMISSES: the HOSTILE stages that turn the faction's companion on the player too
+        int dismissals = 0;
+        var unresolvedDismissals = new List<string>();  // a dismissal whose chain names no companion quest: no row, read it by hand
         for (int file = 0; file < GearScan.MASTERS.Length; file++)
         {
             foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
             {
                 var shared = QuestScan.Shared(quest, file);
                 if (shared == "not shared" || !QuestScan.ReachesFriend(quest, file)) continue;
-                bool first = true;
+                bool first = true, firstDismissal = true;
                 foreach (var stage in MoveScan.Fragments(file, quest.Id).Keys.OrderBy(k => k))
                 {
                     var chain = SafeScan.StageHostile(file, quest, stage);
                     if (chain == null) continue;
+                    var dismissal = SafeScan.StageDismisses(file, quest, stage);
+                    if (dismissal != null && (stage != 0 || quest.Startup.Contains(0)))
+                    {
+                        var dhops = dismissal.Split(new[] { " -> " }, StringSplitOptions.None);
+                        var deffect = dhops[dhops.Length - 1];
+                        deffect = deffect.Substring(deffect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
+                        var who = SafeScan.DismissedCompanion(dismissal);
+                        var alias = who == null ? null : who.Item1.Aliases.First(a => a.Id == who.Item3);
+                        if (who == null)
+                            unresolvedDismissals.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, deffect, dhops.Length > 1 ? " (by " + dhops[0] + ")" : ""));
+                        else
+                            dismisses.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6}{7}{8}: {9}'s {10}", file, quest.Id & 0xFFFFFF, stage, who.Item2, who.Item1.Id & 0xFFFFFF, who.Item3,
+                                firstDismissal ? quest.Edid + ": " : "", deffect, dhops.Length > 1 ? " (by " + dhops[0] + ")" : "", who.Item1.Edid, alias.Name));
+                        firstDismissal = false;
+                        dismissals++;
+                    }
                     var hops = chain.Split(new[] { " -> " }, StringSplitOptions.None);
                     var effect = hops[hops.Length - 1];
                     effect = effect.Substring(effect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
@@ -1984,6 +2010,14 @@ public static class HostileScan
             foreach (var u in unresolved) sb.AppendLine(u);
         }
         sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
+        sb.AppendLine("# DISMISSES: the HOSTILE stages that turn the faction's own companion on the player too (SafeScan.StageDismisses)");
+        sb.Append(dismisses.ToString());
+        sb.AppendLine("# " + dismissals + " rows");
+        if (unresolvedDismissals.Count > 0)
+        {
+            sb.AppendLine("# dismissals whose chain names no companion quest (no row; read by hand):");
+            foreach (var u in unresolvedDismissals) sb.AppendLine(u);
+        }
         return sb.ToString();
     }
 }
@@ -2108,9 +2142,13 @@ public static class SafeScan
     // (SendStoryEvent: the quests the story manager starts from it, DN121_ChangeLocation's Minutemen request for one, are
     // started in each game with that game's own picks, and are not followed). a_outcomes false: a faction's hostility and a
     // settlement's owner are not looked for (the walk of an ALLOW_OUTCOMES quest, for what else its stages do).
+    // a_companions true: a companion's affinity and who is a companion are not looked for either (the walk of an
+    // ALLOW_KICKOUTS quest, whose kick-out turns a companion on the player as its outcome).
     static string Direct(List<GearScan.Instr> a_code) { return Direct(a_code, true); }
 
-    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes)
+    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes) { return Direct(a_code, a_outcomes, false); }
+
+    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes, bool a_companions)
     {
         var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Func<string, bool> player = v => players.Contains(v) || Bare(v).IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -2119,17 +2157,17 @@ public static class SafeScan
             foreach (var a in i.Args)
             {
                 var b = Bare(a);
-                if (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase)) return "affinity " + b;
+                if (!a_companions && (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase))) return "affinity " + b;
             }
             if (i.Op != 23 && i.Op != 25 && i.Op != 13 && i.Op != 14) continue;
             if (i.Op == 13 || i.Op == 14) { if (player(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); continue; }
             var m = i.Op == 25 ? i.Args[1] : i.Args[0];
             if (i.Op == 25 && Is(i.Args[0], "game") && Is(m, "GetPlayer")) { players.Add(i.Args[2]); continue; }
-            if (COMPANIONS.Contains(m)) return "companion " + m;
+            if (COMPANIONS.Contains(m) && !a_companions) return "companion " + m;
             if (FACTIONS.Contains(m) && a_outcomes) return "factions " + m;
             if (SETTLEMENTS.Contains(m) && a_outcomes) return "settlement " + m + (i.Args.Count > 3 && Is(i.Args[3], "False") ? "(False)" : "");  // (False): the settlement is taken from the player
             if (Is(m, "SendStoryEvent") || Is(m, "SendStoryEventAndWait")) return "story " + m + " " + Bare(i.Op == 25 ? i.Args[0] : i.Args[1]);
-            if (m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
+            if (!a_companions && m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
             if (i.Op == 25) continue;
             if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0) && a_outcomes)
                 return "factions " + m + " " + Bare(i.Args[3]);
@@ -2174,7 +2212,39 @@ public static class SafeScan
     // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
     // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
     // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
-    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Allows = AllowedStart, Unwalked = Radiant };
+
+    // The starts of a quest each game runs its own way that are let through, by "<the quest whose stage starts it> <the quest
+    // started>", with why: what the started quest does is each game's own and harmless twice (each game running it for its
+    // own player is what a played-through game does). Its stages are walked as any other quest's (the rule holds for them),
+    // but a radiant's (RadiantRules.h, shared by its run: Radiant): its stages reach a friend's game as that run's, and
+    // a kick-out sets only a running one's failed stage (the walk doesn't see the IsRunning branch, and would read the
+    // radiant's start-up as its own start of what it starts).
+    static readonly Dictionary<string, string> ALLOW_STARTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DN084 DN084_Overrides", "Mass Fusion's 10 starts DN084_Overrides (repeatable, no objectives; its one stage has no fragment): the quest companion's, the player's companion's and Dogmeat's packages for the descent and the control room, each game's own followers in each game, as a played-through game does" },
+        { "BoSKickOut BoSMarshal", "KickOut sets BoSMarshal 255 if BoS304 runs (the Brotherhood's named people marshalled to the airport for the ending's battle, repeatable, no objectives): 255 reverts them to their real selves, a clean-up that runs only where the battle is on, as a played-through game does" },
+        { "Inst307Fight BoSMarshal", "10 sets BoSMarshal 255 (the same clean-up, as the airport battle begins)" },
+        { "BoSKickOut RECheckpoint*", "KickOut sets each running RECheckpoint* (the checkpoints' attackers after a faction's win, random encounters each game runs itself) to 600, which hides its objective and ends it, when this game's player won with the Brotherhood (RECheckpointMQWonBoS): a clean-up of each game's own encounters" },
+        { "RRKickOut RECheckpoint*", "100 sets each running RECheckpoint* to 600 when this game's player won with the Railroad (RECheckpointMQWonRR): the same clean-up" },
+        { "BoSKickOut BoSR*", "KickOut sets each running Brotherhood radiant (BoSR01-BoSR05: RadiantRules.h's, shared by their run) to its failed stage: a clean-up of a run this game has, as a played-through game does" },
+        { "RRKickOut RRR05", "300 sets RRR05 9000 (a Railroad radiant, RadiantRules.h's, shared by its run): its failed stage, the same clean-up" },
+        { "Inst307Fight Inst307FightCompanionOverrides", "10 sets Inst307FightCompanionOverrides 10 (repeatable, no objectives, named as a companion's but the airport battle's own: the player's companion's packages for the battle, each game's own follower in each game, as DN084_Overrides)" },
+        { "BoSKickOut VFT", "KickOut sets VFT 355 (the vertibird signal grenades' travel, repeatable): the player's vertibird calls end with their expulsion (BoSFastTravelCanUse 0 too), each game's own rides, the kick-out's outcome in both" },
+    };
+
+    // A key ending in * matches by its prefix (a family of quests: the RECheckpoint* encounters).
+    static bool AllowedStart(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to, string a_call)
+    {
+        if (a_from == null) return false;
+        var key = a_from.Item1.Edid + " " + a_to.Edid;
+        return ALLOW_STARTS.ContainsKey(key) || ALLOW_STARTS.Keys.Any(k => k.EndsWith("*") && key.StartsWith(k.Substring(0, k.Length - 1), StringComparison.OrdinalIgnoreCase));
+    }
+
+    // A radiant shared by its run (RadiantRules.h): a start of one that ALLOW_STARTS lets through is not walked into.
+    static bool Radiant(GearScan.Quest a_quest, int a_file)
+    {
+        return QuestScan.Radiants != null && QuestScan.Radiants.Contains(Tuple.Create(a_file, a_quest.Id & 0xFFFFFF));
+    }
     // The same walk for an ALLOW_OUTCOMES quest: what its stages do but turn a faction hostile or friendly or give or take
     // a settlement (a companion, affinity, the inventory emptied, a story event or a quest each game runs its own way still
     // leave it out). It does not go into the workshop scripts a settlement given or taken (SetOwnedByPlayer) or a settler
@@ -2184,7 +2254,74 @@ public static class SafeScan
     static readonly HashSet<string> SETTLERS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
     static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
-        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
+        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart, Unwalked = Radiant };
+    // The same walk for an ALLOW_KICKOUTS quest: a companion's affinity and a dismissal are let through as well (Direct's
+    // a_companions), and a stage of the companion's quest named with it (AllowedKickout: the Brotherhood's kick-out to
+    // COMDanse, not any companion's); the rest of the rule holds.
+    static readonly MoveScan.Walk kickout = new MoveScan.Walk {
+        Direct = c => Direct(c, false, true), Target = Target,
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name),
+        Allows = (from, to, call) => AllowedStart(from, to, call) || AllowedKickout(from, to), Unwalked = Radiant };
+
+    static bool AllowedKickout(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to)
+    {
+        return a_from != null && ALLOW_KICKOUTS.ContainsKey(a_from.Item1.Edid + " " + a_to.Edid);
+    }
+
+    // Whether a quest is an ALLOW_KICKOUTS kick-out (a key's first part).
+    static bool Kickout(string a_edid)
+    {
+        return ALLOW_KICKOUTS.Keys.Any(k => k.StartsWith(a_edid + " ", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // A stage that dismisses the player's companion, itself or through what it calls and sets (every stage it sets or starts,
+    // shared or not, a companion's quest's too, as the hostile walk follows them): a call of DISMISSALS (the kick-outs reach
+    // DismissCompanion through COMDanse 91, COMDeacon 91 and ComX688 91). HostileScan lists every HOSTILE stage that does as a
+    // StageRules.h DISMISSES row, with the companion's quest the chain goes through (the last companion's quest it names) and
+    // that quest's unique alias, the companion: a friend's such stage lands here as any, and the game's own kick-out takes
+    // this player's companion with it as it does the chooser's (the maintainer's rule, 2026-11-11: as in the game); the row
+    // only lets QuestSync warn the player once, before it lands, when the companion it dismisses is the one following them.
+    // Who may be a companion (SetAvailableToBeCompanion, AllowCompanion), a teammate for a quest (SetPlayerTeammate) or an
+    // affinity bump is no dismissal.
+    static readonly HashSet<string> DISMISSALS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "DismissCompanion", "ClearCompanion", "DismissDogmeatCompanion", "ClearDogmeatCompanion" };
+
+    static string Dismissal(List<GearScan.Instr> a_code)
+    {
+        foreach (var i in a_code)
+        {
+            if (i.Op != 23 && i.Op != 25) continue;
+            var m = i.Op == 25 ? i.Args[1] : i.Args[0];
+            if (DISMISSALS.Contains(m)) return "companion " + m;
+        }
+        return null;
+    }
+
+    // Not into what makes someone available as a companion or a teammate (COMPANIONS less the dismissals): Actor.AllowCompanion's
+    // own code reaches a dismissal (BoS302 255's Danse), which is no kick-out of the player's.
+    static readonly MoveScan.Walk dismisses = new MoveScan.Walk { Direct = Dismissal, Enter = name => !COMPANIONS.Contains(name) || DISMISSALS.Contains(name) };
+
+    // How a stage turns a companion against the player (the first way found), or null.
+    public static string StageDismisses(int a_file, GearScan.Quest a_quest, int a_stage) { return dismisses.Stage(a_file, a_quest, a_stage); }
+
+    // The companion StageDismisses' chain dismisses: the last companion's quest the chain names as a hop ("COMDanse 91 ->"), and
+    // the id of its unique alias (the companion: COMDanse's Danse, COMDeacon's Deacon, ComX688's X6-88), or null when the chain
+    // names none (a dismissal in a script that is no companion quest's, or a quest with no unique alias).
+    public static Tuple<GearScan.Quest, int, int> DismissedCompanion(string a_chain)
+    {
+        var hops = a_chain.Split(new[] { " -> " }, StringSplitOptions.None);
+        for (int k = hops.Length - 1; k >= 0; k--)
+        {
+            var parts = hops[k].Split(' ');
+            int s;
+            if (parts.Length != 2 || !int.TryParse(parts[1], out s)) continue;
+            var q = MoveScan.QuestByEdid(parts[0]);
+            if (q == null || !System.Text.RegularExpressions.Regex.IsMatch(System.Text.RegularExpressions.Regex.Replace(q.Item1.Edid, @"^DLC\d+_?", ""), COMPANION.ToString(), System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;  // ComX688 is a COM quest too
+            var alias = q.Item1.Aliases.FirstOrDefault(a => a.Fill == "unique");
+            return alias == null ? null : Tuple.Create(q.Item1, q.Item2, alias.Id);
+        }
+        return null;
+    }
     // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
     // settlement given or taken, or a settler added or removed (the first found).
     static readonly MoveScan.Walk outcome = new MoveScan.Walk {
@@ -2205,9 +2342,25 @@ public static class SafeScan
     // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
     // bonus spells), and three the rule still leaves out for another stage, a quest each game runs its own way it
     // starts (DLC04MQ05's park power and clean-up, DLC04DialogueHarvey 1000's DLC04REObjectCT03,
-    // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST). The objective-less ones (SILENT's: DN084, DN117, the
-    // kick-outs, Far Harbor's endings) come in a later change.
+    // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST). With them, by the maintainer's choice of 2026-11-11 (a
+    // faction's kick-out is the chooser's for both; a far friend's hostile stage waits until none of the faction is near,
+    // never skipped: StageRules.h HOSTILE), the base game's objective-less kick-outs and faction outcomes (SILENT's):
+    // BoSKickOut, BoSKickOutSoft and RRKickOut, DN084 (Mass Fusion, whose 2 sets the Brotherhood's kick-out, and its two
+    // final battles), BoSDansePostGame, Inst307Fight, MS07cEddiePostQuestLines, DN028 and DN117 (a settlement given). A
+    // kick-out that turns the faction's own companion on the player (Danse, Deacon) is ALLOW_KICKOUTS'. Far Harbor's
+    // endings and kick-out and Nuka-World's come in another change.
     static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "BoSKickOut", "the Brotherhood's kick-out (20, and 30 for Mass Fusion's: BoSKickOutScript.KickOut): the player out of the faction and its enemy, its quests failed, the airport's workshop taken, Danse too (ALLOW_KICKOUTS); set by Inst307Fight 1, InstMassFusion 30 and DN084 2" },
+        { "BoSKickOutSoft", "the Brotherhood's soft expulsion (10: BoSKickOutSoftScript.SoftKickOut, for a player who sided against them without a fight): their quests failed or set past, BoSPostQuest 10; no faction turned, no companion dismissed (read in its script: up to 0.16.1 denied by hand as \"their companion's too\")" },
+        { "RRKickOut", "the Railroad's kick-out (100): the player out of the faction and its enemy, its people made mortal, Deacon too (ALLOW_KICKOUTS), Curie's quest moved past the Railroad (COMCurieQuest 310 if it runs); 75 Glory out of her factions; 300 the Railroad's quests failed" },
+        { "DN084", "Mass Fusion: 2 sets BoSKickOut 30 (the Brotherhood's kick-out, by the Institute's path); 10 starts DN084_Overrides (ALLOW_STARTS, the followers' descent packages); the rest is the building's own fight and its agitator" },
+        { "DN084_BoS303Battle", "Mass Fusion's final battle on the Brotherhood's side: 200 sets DN084 450" },
+        { "DN084_Inst303Battle", "Mass Fusion's final battle on the Institute's side: 200 sets DN084 450" },
+        { "BoSDansePostGame", "Danse after Blind Betrayal (set by BoS302 255): 10 clears him from the kick-out's alias, 20 takes him out of the Brotherhood, puts him in their enemies' faction and makes them hostile to the player while he follows them (DansePostQuestBoSHostilityScript, each game's own companion)" },
+        { "Inst307Fight", "the Institute's airport battle (Airship Down): 0 moves the player to the airport (kMoves), 1 puts them in the Institute's faction, out of the Brotherhood's and sets BoSKickOut 20 (the Brotherhood's kick-out) and Inst307's stages; the rest is the battle's waves" },
+        { "MS07cEddiePostQuestLines", "Eddie Winter after Long Time Coming: 20 turns his faction on the player" },
+        { "DN028", "the D.B. Technical High School boss's room: 10 makes its raiders the other raiders' allies, 510 turns them on the player, 500 their scene" },
+        { "DN117", "Spectacle Island: 10/11 give the player the manor's workbenches and take them back, 20/21 the exterior workshop (a settlement given or taken), 30/31 the build area" },
         { "DN036", "Egret Tours Marina: 500 turns Phyllis on the player, 550/600/700 (each ending) give the player the marina's workshop" },
         { "DN049", "the robot-run shops: each shop's robots turned on the player (x49), made peaceful (x50), shut down (x55) or destroyed (x56) by the player's choices; 711's pre-war money is kPays" },
         { "DLC03FarHarborS01", "Uncle Ken's settlement: 500 adds its two settlers to the workshop (and gives its reward), 425 takes Ken out of it" },
@@ -2218,6 +2371,21 @@ public static class SafeScan
         { "DLC03CoA_DialogueNucleus", "the Nucleus's talks: 70 sets DLC03CoA_Kickout 700, the Children of Atom turned on the player, as the story's kick-outs" },
         { "DLC04_KiddieKingdomMain", "Kiddie Kingdom: 740 starts the fight with Oswald (his faction on the player); 600 and 700 run the quest script's one-time Init, which sets the hostile ghouls on the player as they are anyway" },
         { "DLC04DialogueSettlement", "Nuka-Town's traders: 700 makes the traders and visitors the hub raiders' enemies and the player's allies (the raiders' end); 110's bloodworm meat is kPays" },
+    };
+
+    // The ALLOW_OUTCOMES quests whose kick-out turns a companion on the player as part of its outcome, by "<the kick-out
+    // quest> <the companion's quest>", with why: their walk lets a companion's affinity, a dismissal and a stage of that
+    // companion's quest (no other's) through as well (kickout). The kick-out is shared (the maintainer's choice of
+    // 2026-11-11), and a friend's game runs it as the chooser's did, the companion included: as in the game, a Danse or
+    // Deacon who has followed this player is dismissed and turned by it, the friend's choice being both players'
+    // (StageRules.h DISMISSES only warns the player first, once, when the companion is the one following them); one who is
+    // the host's is theirs alone anyway (src/game/Companions).
+    static readonly Dictionary<string, string> ALLOW_KICKOUTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "BoSKickOut COMDanse", "KickOut (20 and 30), only for a Danse who has been the player's companion (HasBeenCompanionFaction): his affinity to -5000, COMDanse 91 dismisses him for good; and he joins the player's enemies unless already exiled (BoSDansePostGame 10)" },
+        { "DN084 COMDanse", "2 sets BoSKickOut 30, whose KickOut reaches Danse as above" },
+        { "Inst307Fight COMDanse", "1 sets BoSKickOut 20, whose KickOut reaches Danse as above" },
+        { "RRKickOut COMDeacon", "100: Deacon's affinity to -5000, COMDeacon 91 dismisses him for good, and he is made mortal with the Railroad's people" },
+        { "RRKickOut COMCurieQuest", "100 sets COMCurieQuest 310 if it runs: the Caretaker's alias filled with a generic Railroad agent, so Curie's quest can go on without the Railroad (nothing of the player's companion)" },
     };
 
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
@@ -2284,7 +2452,7 @@ public static class SafeScan
         var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
-            var each = (outcomes ? rest : walk).Stage(a_file, q, stage);
+            var each = (outcomes && Kickout(q.Edid) ? kickout : outcomes ? rest : walk).Stage(a_file, q, stage);
             if (each == null) continue;
             found[Tuple.Create(a_file, local)] = stage + " " + each;
             var last = each.Substring(each.LastIndexOf(": ", StringComparison.Ordinal) + 2);
@@ -2314,7 +2482,6 @@ public static class SafeScan
     static readonly Dictionary<string, string> DENY_SILENT = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "BoSDialoguePrydwen", "the player's Brotherhood rank and what it unlocks" },
         { "BoSDialogueSquire", "ambient chatter with the player" },
-        { "BoSKickOutSoft", "the player's expulsion from the Brotherhood, their companion's too" },
         { "CaravanBase", "each game's caravans, and it pays caps" },
         { "DLC03_V118_PearlHiring", "Pearl follows the player; factions' hostility to the player" },
         { "DLC04GZLocationLoaded", "a faction's hostility to the player" },
@@ -2524,6 +2691,10 @@ public static class SafeScan
         }
         sb.AppendLine(string.Format("# outcomes shared with the story (ALLOW_OUTCOMES): {0} quests, {1} SAFE, {2} SILENT", lines.Count, safe, silent));
         foreach (var l in lines) sb.AppendLine(l);
+        sb.AppendLine(string.Format("# kick-outs that turn a companion on the player too (ALLOW_KICKOUTS): {0}", ALLOW_KICKOUTS.Count));
+        foreach (var kv in ALLOW_KICKOUTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
+        sb.AppendLine(string.Format("# starts let through (ALLOW_STARTS): {0}", ALLOW_STARTS.Count));
+        foreach (var kv in ALLOW_STARTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
         return sb.ToString();
     }
 
