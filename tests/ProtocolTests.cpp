@@ -915,7 +915,122 @@ TEST("protocol: Revive, QuestDone, QuestStage round trip")
 		REQUIRE(q);
 		CHECK(*q == in);
 		CHECK(q->playerId == 9);
+		CHECK(q->globals.empty());
 	}
+}
+
+TEST("protocol: a quest stage carries the globals its script reads (the chooser's values), at most MAX_STAGE_GLOBALS, none named 0 and none with a value no global holds")
+{
+	// Power Play's 8: the enemy gang and the parks' owners, as the chooser's game had them.
+	QuestStage in{ 0x01000805, 8, 2 };
+	in.globals = { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f }, { 0x0103E419, 3.0f }, { 0x0103E41A, 0.0f }, { 0x0103E41B, 2.5f }, { 0x0103E41C, -1.0f } };
+	for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
+		const auto out = DecodeQuestStage(Encode(in, type));
+		REQUIRE(out);
+		CHECK(*out == in);
+		CHECK(out->globals.size() == 6);
+		CHECK(out->globals[0].global == 0x0100D370u);
+		CHECK(out->globals[0].value == 2.0f);
+		CHECK(out->globals[5].value == -1.0f);
+	}
+	// A bare stage is the old shape with a count of none after it.
+	CHECK(Encode(QuestStage{ 0x0001ED86, 10 }, MT::kQuestStage).size() == 1 + 4 + 2 + 4 + 1);
+	// More than a stage may carry: the encoder keeps the first MAX_STAGE_GLOBALS; a packet claiming more is refused.
+	QuestStage many{ 0x01000805, 8 };
+	for (std::uint32_t i = 0; i < MAX_STAGE_GLOBALS + 3; ++i) {
+		many.globals.push_back({ 0x01000100 + i, static_cast<float>(i) });
+	}
+	const auto capped = DecodeQuestStage(Encode(many, MT::kQuestStage));
+	REQUIRE(capped);
+	CHECK(capped->globals.size() == MAX_STAGE_GLOBALS);
+	CHECK(capped->globals.back().global == 0x01000100u + MAX_STAGE_GLOBALS - 1);
+	Writer claims{ MT::kQuestStage };
+	claims.U32(0x01000805);
+	claims.U16(8);
+	claims.U32(0);
+	claims.U8(static_cast<std::uint8_t>(MAX_STAGE_GLOBALS + 1));
+	for (std::uint32_t i = 0; i < MAX_STAGE_GLOBALS + 1; ++i) {
+		claims.U32(0x01000100 + i);
+		claims.F32(1.0f);
+	}
+	CHECK(!DecodeQuestStage(claims.Data()));
+	// A global named 0 is none; a value that isn't finite is no global's.
+	CHECK(!DecodeQuestStage(Encode(QuestStage{ 0x01000805, 8, 0, { { 0, 1.0f } } }, MT::kQuestStage)));
+	CHECK(!DecodeQuestStage(Encode(QuestStage{ 0x01000805, 8, 0, { { 0x0100D370, std::numeric_limits<float>::quiet_NaN() } } }, MT::kQuestStage)));
+	CHECK(!DecodeQuestStage(Encode(QuestStage{ 0x01000805, 8, 0, { { 0x0100D370, std::numeric_limits<float>::infinity() } } }, MT::kQuestStage)));
+	// A count larger than the data, and a global cut short.
+	Writer cut{ MT::kQuestStage };
+	cut.U32(0x01000805);
+	cut.U16(8);
+	cut.U32(0);
+	cut.U8(2);
+	cut.U32(0x0100D370);
+	cut.F32(2.0f);
+	CHECK(!DecodeQuestStage(cut.Data()));
+	const auto whole = Encode(in, MT::kQuestStage);
+	CHECK(!DecodeQuestStage(std::span<const std::uint8_t>{ whole.data(), whole.size() - 2 }));
+}
+
+TEST("protocol: a world state carries each stage's globals after its stages, once each in order, and refuses a tail that names a stage twice, out of order, past the end or with none")
+{
+	WorldState w;
+	w.questStages = { { 0x0001ED86, 10 }, { 0x01000804, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } }, { 0x0002A1B2, 30 },
+		{ 0x01000805, 255, 0, { { 0x0100D370, 2.0f } } } };
+	const auto out = DecodeWorldState(Encode(w));
+	REQUIRE(out);
+	CHECK(out->questStages == w.questStages);
+	REQUIRE(out->questStages.size() == 4);
+	CHECK(out->questStages[0].globals.empty());
+	CHECK(out->questStages[1].globals.size() == 3);
+	CHECK(out->questStages[2].globals.empty());
+	CHECK(out->questStages[3].globals.size() == 1);
+
+	// The tail by hand, after two stages: a count of stages that carry any, then each one's index and globals.
+	const auto packet = [](auto a_tail) {
+		Writer p{ MT::kWorldState };
+		p.U32(0);  // dead actors
+		p.U32(0);  // first container index
+		p.U32(0);  // container changes
+		p.U32(0);  // picked up
+		p.U32(0);  // ref states
+		p.U32(2);  // quest stages
+		p.U32(0x0001ED86);
+		p.U16(10);
+		p.U32(0x01000805);
+		p.U16(8);
+		a_tail(p);
+		return p.Data();
+	};
+	const auto one = [](Writer& a_p, std::uint32_t a_index) {
+		a_p.U32(a_index);
+		a_p.U8(1);
+		a_p.U32(0x0100D370);
+		a_p.F32(2.0f);
+	};
+	const auto good = DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); one(a_p, 1); }));
+	REQUIRE(good);
+	REQUIRE(good->questStages.size() == 2);
+	CHECK(good->questStages[0].globals.empty());
+	CHECK((good->questStages[1].globals == std::vector<StageGlobal>{ { 0x0100D370, 2.0f } }));
+	const auto both = DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(2); one(a_p, 0); one(a_p, 1); }));
+	REQUIRE(both);
+	CHECK(both->questStages[0].globals.size() == 1);
+	CHECK(both->questStages[1].globals.size() == 1);
+	CHECK(!DecodeWorldState(packet([&](Writer&) {})));                                                   // no tail: an older wire's
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(3); one(a_p, 0); one(a_p, 1); one(a_p, 1); })));  // more than the stages
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); one(a_p, 2); })));                         // past the end
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(2); one(a_p, 1); one(a_p, 0); })));            // out of order
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(2); one(a_p, 1); one(a_p, 1); })));            // twice
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); a_p.U32(1); a_p.U8(0); })));               // listed with none
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); a_p.U32(1); a_p.U8(1); a_p.U32(0); a_p.F32(1.0f); })));  // a global named 0
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); a_p.U32(1); })));                          // cut short
+	// The encoder lists only the stages that carry any, so a state with none has an empty tail.
+	WorldState bare;
+	bare.questStages = { { 0x0001ED86, 10 } };
+	const auto bareBytes = Encode(bare);
+	CHECK(bareBytes.size() == 1 + 4 * 5 + 4 + 6 + 4);
+	REQUIRE(DecodeWorldState(bareBytes));
+	CHECK(DecodeWorldState(bareBytes)->questStages[0].globals.empty());
 }
 
 TEST("protocol: WorldState round trips, with container indices and player IDs")

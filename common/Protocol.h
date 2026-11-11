@@ -95,7 +95,12 @@ namespace Protocol
 	// 69: VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h): each game reports whether its player is in VATS and
 	// the time multiplier it runs at (kReportTimeScale: TimeScale), and the server tells the others the table with the host's
 	// group VATS speed (kTimeScales: TimeScales; a joiner after its welcome). No welcome bytes. 68 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 69;
+	// 70: a quest stage carries the globals its script decides by (QuestStage::globals: a count, then each one's form ID
+	// and value, after the stage in kReportQuestStage and kQuestStage; at most MAX_STAGE_GLOBALS), and kWorldState's
+	// stages gain a tail of per-stage globals after the lists, so Nuka-World's gang choice is the chooser's in every game
+	// (src/game/StageRules.h CARRIES); the server keeps them with the stage. No new message ids, no welcome bytes. 69 is
+	// refused at the hello.
+	inline constexpr std::uint16_t VERSION = 70;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -2193,12 +2198,27 @@ namespace Protocol
 		std::uint32_t quest = 0;
 	};
 
+	// A global the sender's game had a value for when it reached a stage, carried with the stage (QuestStage::globals): the
+	// receiving game writes it just before it sets the stage, so a script that reads it there decides as it did for the
+	// sender (Nuka-World's gang choice; src/game/StageRules.h CARRIES says which stages carry which).
+	struct StageGlobal
+	{
+		std::uint32_t global = 0;
+		float         value = 0.0f;
+
+		bool operator==(const StageGlobal&) const = default;
+	};
+
+	// Globals one stage may carry (StageRules::CARRIES's longest row is six).
+	inline constexpr std::size_t MAX_STAGE_GLOBALS = 8;
+
 	// playerId is ignored client -> server (the server stamps who reported it), and not kept in a WorldState.
 	struct QuestStage
 	{
-		std::uint32_t quest = 0;
-		std::uint16_t stage = 0;
-		std::uint32_t playerId = 0;
+		std::uint32_t            quest = 0;
+		std::uint16_t            stage = 0;
+		std::uint32_t            playerId = 0;
+		std::vector<StageGlobal> globals;  // the sender's values of the globals the stage carries (protocol 70), if any
 
 		bool operator==(const QuestStage&) const = default;
 	};
@@ -6104,12 +6124,47 @@ namespace Protocol
 		return detail::DecodeDropList(a_data, true, true);
 	}
 
+	namespace detail
+	{
+		// A stage's carried globals: a count, then each one's form ID and value (QuestStage::globals).
+		inline void WriteStageGlobals(Writer& a_writer, const std::vector<StageGlobal>& a_globals)
+		{
+			const auto count = (std::min)(a_globals.size(), MAX_STAGE_GLOBALS);
+			a_writer.U8(static_cast<std::uint8_t>(count));
+			for (std::size_t i = 0; i < count; ++i) {
+				a_writer.U32(a_globals[i].global);
+				a_writer.F32(a_globals[i].value);
+			}
+		}
+
+		// False for more than a stage may carry, a global named 0 or a value no global can hold (not finite).
+		inline bool ReadStageGlobals(Reader& a_reader, std::vector<StageGlobal>& a_globals)
+		{
+			const auto count = a_reader.U8();
+			if (!a_reader.Ok() || count > MAX_STAGE_GLOBALS) {
+				return false;
+			}
+			a_globals.reserve(count);
+			for (std::uint8_t i = 0; i < count && a_reader.Ok(); ++i) {
+				StageGlobal global;
+				global.global = a_reader.U32();
+				global.value = a_reader.F32();
+				if (global.global == 0 || !std::isfinite(global.value)) {
+					return false;
+				}
+				a_globals.push_back(global);
+			}
+			return a_reader.Ok();
+		}
+	}
+
 	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
 		w.U32(a_msg.quest);
 		w.U16(a_msg.stage);
 		w.U32(a_msg.playerId);
+		detail::WriteStageGlobals(w, a_msg.globals);
 		return w.Data();
 	}
 
@@ -6121,7 +6176,7 @@ namespace Protocol
 		msg.quest = r.U32();
 		msg.stage = r.U16();
 		msg.playerId = r.U32();
-		if (!r.Ok() || !r.AtEnd()) {
+		if (!detail::ReadStageGlobals(r, msg.globals) || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
@@ -6212,7 +6267,39 @@ namespace Protocol
 		return msg;
 	}
 
+	namespace detail
+	{
+		// A world state: its lists, then, with a_globals, the globals its stages carry (a count of stages that carry any,
+		// then each one's index among the stages, ascending, and its globals as a QuestStage's), then, with a_pickers,
+		// who picked up each of pickedUp (a count, 0 or one for each, then the IDs). The wire's has the globals and no
+		// pickers; the session file's has what its layout says (SessionFile: pickers since 43, globals since 45).
+		inline std::vector<std::uint8_t> EncodeWorldState(const WorldState& a_msg, bool a_globals, bool a_pickers);
+		inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_globals, bool a_pickers);
+	}
+
 	inline std::vector<std::uint8_t> Encode(const WorldState& a_msg)
+	{
+		return detail::EncodeWorldState(a_msg, true, false);
+	}
+
+	// The server's session file's: with the pickers' tail since its layout 43 (SessionFile::PICKERS) and the stages' globals
+	// since 45 (SessionFile::STAGE_GLOBALS). A packet without the pickers' tail reads as one naming none.
+	inline std::vector<std::uint8_t> EncodeKeptWorldState(const WorldState& a_msg, bool a_globals, bool a_pickers)
+	{
+		return detail::EncodeWorldState(a_msg, a_globals, a_pickers);
+	}
+
+	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorldState(a_data, true, false);
+	}
+
+	inline std::optional<WorldState> DecodeKeptWorldState(std::span<const std::uint8_t> a_data, bool a_globals, bool a_pickers)
+	{
+		return detail::DecodeWorldState(a_data, a_globals, a_pickers);
+	}
+
+	inline std::vector<std::uint8_t> detail::EncodeWorldState(const WorldState& a_msg, bool a_globals, bool a_pickers)
 	{
 		Writer w{ MessageType::kWorldState };
 		const auto writeIds = [&](const std::vector<std::uint32_t>& a_ids) {
@@ -6247,44 +6334,31 @@ namespace Protocol
 			w.U32(a_msg.questStages[i].quest);
 			w.U16(a_msg.questStages[i].stage);
 		}
+		if (a_globals) {
+			std::uint32_t carrying = 0;
+			for (std::size_t i = 0; i < quests; ++i) {
+				carrying += !a_msg.questStages[i].globals.empty();
+			}
+			w.U32(carrying);
+			for (std::size_t i = 0; i < quests; ++i) {
+				if (!a_msg.questStages[i].globals.empty()) {
+					w.U32(static_cast<std::uint32_t>(i));
+					WriteStageGlobals(w, a_msg.questStages[i].globals);
+				}
+			}
+		}
+		if (a_pickers) {
+			const auto picked = (std::min)(a_msg.pickedUp.size(), MAX_WORLD_STATE_ACTORS);
+			const auto count = a_msg.pickers.empty() ? 0 : picked;
+			w.U32(static_cast<std::uint32_t>(count));
+			for (std::size_t i = 0; i < count; ++i) {
+				w.U32(i < a_msg.pickers.size() ? a_msg.pickers[i] : 0);
+			}
+		}
 		return w.Data();
 	}
 
-	// The server's session file since its layout 43 (SessionFile::PICKERS): kWorldState with, after it, the player who picked
-	// up each of its pickedUp (WorldState::pickers: a count, 0 or one for each, then the IDs). A packet without that tail
-	// reads as one naming none.
-	inline std::vector<std::uint8_t> EncodeKeptWorldState(const WorldState& a_msg)
-	{
-		auto       out = Encode(a_msg);
-		const auto picked = (std::min)(a_msg.pickedUp.size(), MAX_WORLD_STATE_ACTORS);
-		const auto count = a_msg.pickers.empty() ? 0 : picked;
-		Writer     w{ MessageType::kWorldState };
-		w.U32(static_cast<std::uint32_t>(count));
-		for (std::size_t i = 0; i < count; ++i) {
-			w.U32(i < a_msg.pickers.size() ? a_msg.pickers[i] : 0);
-		}
-		const auto tail = w.Data();
-		out.insert(out.end(), tail.begin() + 1, tail.end());  // past the type byte the writer starts with
-		return out;
-	}
-
-	namespace detail
-	{
-		// a_pickers: the session file's, followed by WorldState::pickers (EncodeKeptWorldState).
-		inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers);
-	}
-
-	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
-	{
-		return detail::DecodeWorldState(a_data, false);
-	}
-
-	inline std::optional<WorldState> DecodeKeptWorldState(std::span<const std::uint8_t> a_data)
-	{
-		return detail::DecodeWorldState(a_data, true);
-	}
-
-	inline std::optional<WorldState> detail::DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers)
+	inline std::optional<WorldState> detail::DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_globals, bool a_pickers)
 	{
 		Reader r{ a_data };
 		r.U8();
@@ -6343,6 +6417,21 @@ namespace Protocol
 			stage.quest = r.U32();
 			stage.stage = r.U16();
 			msg.questStages.push_back(stage);
+		}
+		if (a_globals) {
+			const auto carrying = r.U32();
+			if (!r.Ok() || carrying > quests) {
+				return std::nullopt;
+			}
+			std::uint32_t last = 0;
+			for (std::uint32_t i = 0; i < carrying && r.Ok(); ++i) {
+				const auto index = r.U32();
+				// Each stage once, in order, with globals (a stage with none isn't listed).
+				if (!r.Ok() || index >= quests || (i > 0 && index <= last) || !ReadStageGlobals(r, msg.questStages[index].globals) || msg.questStages[index].globals.empty()) {
+					return std::nullopt;
+				}
+				last = index;
+			}
 		}
 		if (a_pickers && r.Ok() && !r.AtEnd()) {  // (a packet that ends here names none, as a file before them has it)
 			const auto pickers = r.U32();

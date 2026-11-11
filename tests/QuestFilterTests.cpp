@@ -157,9 +157,10 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 108: Fallout4.esm's 54, Far Harbor's 38, Automatron's 1, Nuka-World's 15 (twelve of them shared for their outcomes, below). Fallout4.esm's
+	// 110: Fallout4.esm's 54, Far Harbor's 38, Automatron's 1, Nuka-World's 17 (thirteen of them shared for their outcomes, below,
+	// and Power Play's clean-up, whose alias fills by the enemy gang Power Play's stages carry). Fallout4.esm's
 	// hold Nick's quest after the Memory Den and Sheffield's Nuka-Cola (their companion stages kEach or kPays).
-	CHECK(std::size(QuestFilter::SAFE) == 108);
+	CHECK(std::size(QuestFilter::SAFE) == 110);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
@@ -169,7 +170,7 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(perFile[0] == 54);  // with Nick's quest after the Memory Den and Sheffield's Nuka-Cola
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 15);
+	CHECK(perFile[3] == 17);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
@@ -205,7 +206,10 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(QuestFilter::IsSafe(0, 0x0FAC86));  // MQ202NickPostSurgery: its 90 (ForceCompanion) kEach; its 100 allows him with neither flag, its affinity conditions the story's (by hand)
 	CHECK(QuestFilter::IsSafe(0, 0x0502AC));  // FFDiamondCity08: its 100 (the Nuka-Cola, an affinity event) kPays
 	CHECK(!QuestFilter::IsSafe(0, 0x0BBD95) && !QuestFilter::IsSilent(0, 0x0BBD95));  // ComX688: X6-88's own, as COMNick is Nick's
-	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
+	// ... but Power Play (DLC04GangSetup turns the snubbed gang on the player) is shared for its outcome, its globals carried
+	// (StageRules::CARRIES), and its clean-up with it, its outposts alias filled by the carried enemy gang (ALLOW_FILLS).
+	CHECK(QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05
+	CHECK(QuestFilter::IsSafe(3, 0x04990A));  // DLC04MQ05Cleanup
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
@@ -283,6 +287,7 @@ TEST("quest filter: the quests shared for their faction or settlement outcomes a
 		{ 1, 0x013F3A },  // DLC03Acadia_Institute
 		{ 1, 0x023ACB },  // DLC03FarHarborFF01: Dalton Farm
 		{ 1, 0x02C687 },  // DLC03_ADV017
+		{ 3, 0x000805 },  // DLC04MQ05: Power Play, its gang globals carried with its stages (StageRules::CARRIES)
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement: Nuka-Town's traders
 		{ 3, 0x0260E2 },  // DLC04SafariAdventureQuest: its POST quest let through (ALLOW_STARTS)
 		{ 3, 0x027704 },  // DLC04RaiderKickout: Gage turned on the player too (ALLOW_KICKOUTS), the Pack's fights let through
@@ -305,9 +310,10 @@ TEST("quest filter: the quests shared for their faction or settlement outcomes a
 		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
 	}
 	// Read and left out: the Hubologists' (their sessions are each player's: rads, the chair, donations, rank bonuses),
-	// and those the rule still leaves out for a stage that starts a quest each game runs its own way.
+	// and those the rule still leaves out for a stage that starts a quest each game runs its own way. Power Play's such
+	// starts (the raids' and the crowd manager's guarded stages in DLC04GangSetup, the Nuka-Galaxy ride's power from the
+	// tracking quest ParkPowerOn sets) are let through by name (ALLOW_STARTS).
 	CHECK(!QuestFilter::IsSafe(3, 0x00CBD0));  // DLC04DialogueHubologists
-	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: the park's power, DLC04GZNukaGalaxy
 	CHECK(!QuestFilter::IsSafe(3, 0x0243A5));  // DLC04DialogueHarvey: DLC04REObjectCT03
 	// Not in ALLOW_OUTCOMES: Power Play (DLC04MQ05, above) and Cleaning House, whose enemy gang each game picks for itself:
 	// the friend's game would turn the wrong one, or none, on the player.

@@ -316,6 +316,7 @@ namespace QuestFilter
 		{ 1, 0x04E77A },  // DLC03FarHarborM02
 		{ 2, 0x00AEDD },  // DLC01DialogueQuest
 		{ 3, 0x000803 },  // DLC04MQ03
+		{ 3, 0x000805 },  // DLC04MQ05
 		{ 3, 0x000806 },  // DLC04MS01
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement
 		{ 3, 0x01E34B },  // DLC04GZMiscObjective
@@ -329,6 +330,7 @@ namespace QuestFilter
 		{ 3, 0x03684F },  // DLC04_KiddieKingdomMain
 		{ 3, 0x03AC61 },  // DLC04SettlementFF02
 		{ 3, 0x03C5FA },  // DLC04FF01MiscObjectiveHolder
+		{ 3, 0x04990A },  // DLC04MQ05Cleanup
 		{ 3, 0x051012 },  // DLC04ShankMiscObjective
 	};
 

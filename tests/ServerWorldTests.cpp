@@ -1035,6 +1035,140 @@ TEST("server world: quest stages are relayed once, stamped with who did them, an
 	CHECK((world[0].questStages == std::vector<Protocol::QuestStage>{ { QUEST, 10 }, { QUEST2, 5 }, { QUEST, 20 } }));
 }
 
+TEST("server world: the globals a stage carries go with it to the others as it came, and to a late joiner with the session's stages")
+{
+	Fixture f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// Home Sweet Home's end with the gangs' ranks, then Power Play's 8 with the enemy gang and the parks' owners.
+	const Protocol::QuestStage end{ QUEST, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } };
+	const Protocol::QuestStage gangs{ QUEST2, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f }, { 0x0103E419, 3.0f } } };
+	f.fake->Deliver(1, Protocol::Encode(end, MT::kReportQuestStage));
+	f.fake->Deliver(1, Protocol::Encode(gangs, MT::kReportQuestStage));
+	f.fake->Deliver(1, Stage(QUEST2, 20));
+	// Again with other values: the session keeps the first (a stage is kept once).
+	f.fake->Deliver(2, Protocol::Encode(Protocol::QuestStage{ QUEST2, 8, 0, { { 0x0100D370, 3.0f } } }, MT::kReportQuestStage));
+
+	const auto toBob = Decoded(Received(f, 2), MT::kQuestStage, Protocol::DecodeQuestStage);
+	REQUIRE(toBob.size() == 3);
+	CHECK(toBob[0].playerId == alice);
+	CHECK(toBob[0].globals == end.globals);
+	CHECK(toBob[1].globals == gangs.globals);
+	CHECK(toBob[2].globals.empty());
+
+	JoinAs(f, 3, "Carol");
+	const auto world = WorldStates(Received(f, 3));
+	REQUIRE(world.size() == 1);
+	REQUIRE(world[0].questStages.size() == 3);
+	CHECK(world[0].questStages[0].globals == end.globals);
+	CHECK(world[0].questStages[1].globals == gangs.globals);
+	CHECK(world[0].questStages[2].globals.empty());
+	CHECK(world[0].questStages[1].playerId == 0);
+}
+
+TEST("server world: a stage kept without its globals takes them from a later report of it; one kept with them keeps them")
+{
+	Fixture f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// Home Sweet Home's end reported bare (an older build's report), then by the host with the ranks: the session takes
+	// them; a third report with other ranks changes nothing.
+	const Protocol::QuestStage bare{ QUEST, 500 };
+	const Protocol::QuestStage ranks{ QUEST, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } };
+	const Protocol::QuestStage other{ QUEST, 500, 0, { { 0x0100880C, 3.0f }, { 0x0100880D, 1.0f }, { 0x0100880E, 2.0f } } };
+	f.fake->Deliver(2, Protocol::Encode(bare, MT::kReportQuestStage));
+	f.fake->Deliver(1, Protocol::Encode(ranks, MT::kReportQuestStage));
+	f.fake->Deliver(1, Protocol::Encode(other, MT::kReportQuestStage));
+	CHECK(f.LoggedSoon(std::format("{:08X} stage 500 was kept without its globals; player {}'s report of it fills in 3", QUEST, alice)));
+
+	// Those in the session heard the bare one once and nothing since (they had it bare, or did it themselves).
+	const auto toAlice = Decoded(Received(f, 1), MT::kQuestStage, Protocol::DecodeQuestStage);
+	REQUIRE(toAlice.size() == 1);
+	CHECK(toAlice[0].globals.empty());
+	CHECK(Decoded(Received(f, 2), MT::kQuestStage, Protocol::DecodeQuestStage).empty());
+
+	// A joiner gets it with the ranks that filled it in.
+	JoinAs(f, 3, "Carol");
+	const auto world = WorldStates(Received(f, 3));
+	REQUIRE(world.size() == 1);
+	REQUIRE(world[0].questStages.size() == 1);
+	CHECK(world[0].questStages[0].globals == ranks.globals);
+
+	// A bare report of a stage kept with globals is nothing new either.
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(2, Protocol::Encode(bare, MT::kReportQuestStage));
+	CHECK(Decoded(Received(f, 1), MT::kQuestStage, Protocol::DecodeQuestStage).empty());
+	JoinAs(f, 4, "Dave");
+	const auto later = WorldStates(Received(f, 4));
+	REQUIRE(later.size() == 1);
+	REQUIRE(later[0].questStages.size() == 1);
+	CHECK(later[0].questStages[0].globals == ranks.globals);
+}
+
+TEST("server session file: a session saved with a bare stage (a file from before its layout 45) takes the globals the host reports for it after a restart, and keeps them")
+{
+	const TempSessionFile file;
+	Server::Options       options;
+	options.sessionFile = file.path.string();
+	const Protocol::QuestStage ranks{ QUEST, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } };
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		f.fake->Deliver(1, Stage(QUEST, 500));  // bare: written as layout 44, as a 0.16.x server wrote it
+		Clear(f, { 1 });
+	}
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		CHECK(f.Logged("loaded the saved session"));
+		f.fake->Deliver(1, Protocol::Encode(ranks, MT::kReportQuestStage));  // the host's baseline, with the ranks
+		Clear(f, { 1 });
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto world = WorldStates(Received(f, 2));
+		REQUIRE(world.size() == 1);
+		REQUIRE(world[0].questStages.size() == 1);
+		CHECK(world[0].questStages[0].globals == ranks.globals);
+	}
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto world = WorldStates(Received(f, 2));
+		REQUIRE(world.size() == 1);
+		REQUIRE(world[0].questStages.size() == 1);
+		CHECK(world[0].questStages[0].globals == ranks.globals);
+	}
+}
+
+TEST("server session file: a stage's globals survive a server restart with the session")
+{
+	const TempSessionFile file;
+	Server::Options       options;
+	options.sessionFile = file.path.string();
+	const Protocol::QuestStage gangs{ QUEST2, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f } } };
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		f.fake->Deliver(1, Stage(QUEST, 10));
+		f.fake->Deliver(1, Protocol::Encode(gangs, MT::kReportQuestStage));
+		Clear(f, { 1 });
+	}  // stopping saves
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		CHECK(f.Logged("loaded the saved session"));
+		const auto world = WorldStates(Received(f, 2));
+		REQUIRE(world.size() == 1);
+		REQUIRE(world[0].questStages.size() == 2);
+		CHECK(world[0].questStages[0].globals.empty());
+		CHECK(world[0].questStages[1].quest == QUEST2);
+		CHECK(world[0].questStages[1].globals == gangs.globals);
+	}
+}
+
 // The server doesn't order stages: it keeps every distinct stage it hears of, in the order it
 // heard them, and each game decides (QuestSync only ever moves a quest forward). Quest stages
 // needn't be set in numeric order, so an earlier number isn't necessarily stale.

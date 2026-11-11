@@ -568,6 +568,12 @@ TEST("property: a world state of any size reads back whole on the wire and in th
 		const auto stages = random.Int(0, 20);
 		for (int i = 0; i < stages; ++i) {
 			in.questStages.push_back({ random.U32(1, 0x00FFFFFF), static_cast<std::uint16_t>(random.U32(0, 0xFFFF)), random.U32(0, 10) });
+			if (random.Chance(0.3)) {  // a stage that carries globals (the chooser's values)
+				const auto n = random.Int(1, static_cast<int>(MAX_STAGE_GLOBALS));
+				for (int g = 0; g < n; ++g) {
+					in.questStages.back().globals.push_back({ random.U32(1, 0x00FFFFFF), random.Float(-1000.0f, 1000.0f) });
+				}
+			}
 		}
 		if (random.Chance(0.3)) {
 			in.pickers.clear();  // a session file from before pickers were kept
@@ -576,6 +582,11 @@ TEST("property: a world state of any size reads back whole on the wire and in th
 		auto stagesSaid = in.questStages;
 		for (auto& stage : stagesSaid) {
 			stage.playerId = 0;
+		}
+		// A file from before the stages' globals were kept (layout 44 and older) has the stages bare.
+		auto stagesBare = stagesSaid;
+		for (auto& stage : stagesBare) {
+			stage.globals.clear();
 		}
 
 		const auto wire = Encode(in);
@@ -595,20 +606,33 @@ TEST("property: a world state of any size reads back whole on the wire and in th
 		CHECK(onWire->pickers.empty());
 		CHECK(RefusesEveryPrefix(wire, [](auto a_d) { return DecodeWorldState(a_d); }));
 
-		const auto kept = EncodeKeptWorldState(in);
-		const auto inFile = DecodeKeptWorldState(kept);
+		const auto kept = EncodeKeptWorldState(in, true, true);
+		const auto inFile = DecodeKeptWorldState(kept, true, true);
 		REQUIRE(inFile);
 		CHECK(inFile->pickedUp == in.pickedUp);
 		CHECK(inFile->pickers == in.pickers);
 		CHECK(inFile->refStates == in.refStates);
 		CHECK(inFile->questStages == stagesSaid);
+		// The older layouts: 43 and 44 keep the pickers and no globals (the stages read back bare), before 43 neither (a wire
+		// packet of their day), each read with what its layout says and nothing else.
+		const auto kept44 = EncodeKeptWorldState(in, false, true);
+		const auto inFile44 = DecodeKeptWorldState(kept44, false, true);
+		REQUIRE(inFile44);
+		CHECK(inFile44->pickers == in.pickers);
+		CHECK(inFile44->questStages == stagesBare);
+		const auto kept42 = EncodeKeptWorldState(in, false, false);
+		const auto inFile42 = DecodeKeptWorldState(kept42, false, false);
+		REQUIRE(inFile42);
+		CHECK(inFile42->pickers.empty());
+		CHECK(inFile42->questStages == stagesBare);
+		CHECK(kept42.size() <= kept44.size() && kept44.size() <= kept.size());
 		// A kept state is a wire state with a tail (the pickers' count, 0 or one for each picked-up item, then their IDs). The
 		// wire decoder refuses the tail. The file decoder refuses every cut of the record but one: cut exactly before the tail
 		// it is a wire packet, which reads as a state naming no pickers (a session file from before pickers were kept has that
 		// shape), never as a different state.
 		CHECK(!DecodeWorldState(kept));
 		for (std::size_t n = 0; n < kept.size(); ++n) {
-			const auto cut = DecodeKeptWorldState(std::span<const std::uint8_t>{ kept.data(), n });
+			const auto cut = DecodeKeptWorldState(std::span<const std::uint8_t>{ kept.data(), n }, true, true);
 			if (n == wire.size()) {
 				if (!cut || !cut->pickers.empty() || cut->pickedUp != in.pickedUp || cut->questStages != stagesSaid) {
 					Test::Fail(__FILE__, __LINE__, std::format("round {}: the record without its tail didn't read as the wire's state", round));

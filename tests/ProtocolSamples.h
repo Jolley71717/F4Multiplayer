@@ -125,7 +125,7 @@ namespace ProtocolSamples
 		};
 		w.pickedUp = { 0x00055555, REF_B };
 		w.refStates = { { REF_A, RefState::kYes, RefState::kNo }, { REF_B, RefState::kUnknown, RefState::kYes } };
-		w.questStages = { { 0x0001ED86, 10 }, { 0x0002A1B2, 65535 } };
+		w.questStages = { { 0x0001ED86, 10 }, { 0x0002A1B2, 65535 }, { 0x01000805, 8, 0, { { 0x0100D370, 2.0f } } } };
 		return w;
 	}
 
@@ -264,6 +264,7 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
 			s.push_back({ "QuestStage", Encode(QuestStage{ 0x0001ED86, 30 }, type), D(DecodeQuestStage) });
+			s.push_back({ "QuestStage with globals", Encode(QuestStage{ 0x01000805, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f } } }, type), D(DecodeQuestStage) });
 		}
 		for (const auto type : { MT::kReportNpcEquipment, MT::kNpcEquipment }) {
 			s.push_back({ "NpcEquipment", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55, 0x000B3F4E } }, type), D(DecodeNpcEquipment) });

@@ -325,6 +325,17 @@ namespace FormTranslate
 			return true;
 		}
 
+		// A stage: its quest, or not at all; a global it carries that the other side can't name is left out (the receiver
+		// then sets no stage that needed it: StageRules::PlanCarry).
+		inline bool MapQuestStage(Context& a_ctx, Protocol::QuestStage& a_stage)
+		{
+			if (!a_ctx.Key(a_stage.quest)) {
+				return false;
+			}
+			a_ctx.Entries(a_stage.globals, [&](Protocol::StageGlobal& a_global) { return a_ctx.Key(a_global.global); });
+			return true;
+		}
+
 		inline bool MapWorldState(Context& a_ctx, Protocol::WorldState& a_msg)
 		{
 			a_ctx.Ids(a_msg.deadActors);
@@ -333,7 +344,7 @@ namespace FormTranslate
 			}
 			a_ctx.Ids(a_msg.pickedUp);
 			a_ctx.Entries(a_msg.refStates, [&](Protocol::RefState& a_state) { return a_ctx.Key(a_state.refId); });
-			a_ctx.Entries(a_msg.questStages, [&](Protocol::QuestStage& a_stage) { return a_ctx.Key(a_stage.quest); });
+			a_ctx.Entries(a_msg.questStages, [&](Protocol::QuestStage& a_stage) { return MapQuestStage(a_ctx, a_stage); });
 			return true;
 		}
 	}
@@ -515,7 +526,7 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportQuestStage:
 		case MessageType::kQuestStage:
-			Apply<QuestStage>(a_packet, ctx, DecodeQuestStage, [&](QuestStage& m) { return ctx.Key(m.quest); }, typed);
+			Apply<QuestStage>(a_packet, ctx, DecodeQuestStage, [&](QuestStage& m) { return detail::MapQuestStage(ctx, m); }, typed);
 			break;
 		case MessageType::kReportShot:
 		case MessageType::kShotFired:

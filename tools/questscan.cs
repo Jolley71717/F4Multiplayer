@@ -847,6 +847,10 @@ public static class MoveScan
         // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
         // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
         public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
+        // Told of each function the walk reaches, with the code it can reach there, whether or not Direct finds anything in
+        // it: for a scan that wants every answer along the walk, not the first (GlobalScan's every read). A walk whose
+        // Direct finds nothing caches nothing, so a function reached by several paths is told of each time.
+        public Action<GearScan.Func, List<GearScan.Instr>> Visit;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -860,6 +864,7 @@ public static class MoveScan
             if (funcs.TryGetValue(key, out cached)) return cached;
             if (!a_seen.Add(key)) return null;
             var code = Reachable(f, a_args);
+            if (Visit != null) Visit(f, code);
             string why = Direct(code);
             if (why != null) why = f.Obj + "." + f.Name + ": " + why;
             for (int n = 0; why == null && n < code.Count; n++)
@@ -2182,7 +2187,7 @@ public static class SafeScan
         if ((q.Flags & 0x101) == 0 && !RunsOnce(q, a_file)) return "repeatable";
         var aliases = new Dictionary<int, GearScan.Alias>();
         foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
-        if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        if (!ALLOW_FILLS.ContainsKey(q.Edid) && q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
         return null;
     }
 
@@ -2200,6 +2205,12 @@ public static class SafeScan
         { "DN054 DN054Radio", "Atom Cats Garage's 1 starts the Atom Cats' radio station (repeatable, no objectives) and sets RadioDCTrackReady: each game plays its own station, as every radio station is each game's (DENY_PATTERNS)" },
         { "DLC04RaiderKickout DLC04PackFights", "Open Season's 20 sets DLC04PackFights 75, the Pack's arena fights at Bradberton (repeatable, no objectives; the story manager starts one in each game as its player enters, CLOC): 75 puts the arena's animals in the Pack's faction, so they turn on the player with the gang. A run it starts in a friend's game, if none runs there, is the one that game starts by itself on entering" },
         { "DLC04SafariAdventureQuest DLC04SafariAdventurePOST", "Safari Adventure's 2000 (its end, every path's) sets DLC04SafariAdventurePOST 0, Cito's after-quest (repeatable, no objectives, no fragment at 0): its 5 (Cito turned on the player) and 10 (the cloned gazelles) are set by each game's own dialogue and global, so each game runs its own, as a played-through game does" },
+        { "DLC04MQ05 DLC04RaidSubdue", "DLC04GangSetup (Power Play's 8) sets a raid's 850 only if the raid is running (IsRunning) against the gang made the enemy: it ends the raid, each game's own as PER_GAME; a raid not running is never started by it" },
+        { "DLC04MQ05 DLC04RaidChaseOff", "the same" },
+        { "DLC04MQ05 DLC04RaidWipeOut", "the same" },
+        { "DLC04MQ05 DLC04RaidCoerce", "the same" },
+        { "DLC04GZTrackingQuest DLC04GZNukaGalaxy", "DLC04GZTrackingQuest 2000 (set by ParkPowerOn, Power Play's 6 and 120: Nuka-World's power on) sets the Nuka-Galaxy ride's 2000: its lighting and power markers on, the ride's pre-power scenes stopped; the parks' power is each game's own (DLC04PowerTracker is DENIED), and a friend's 120 runs ParkPowerOn there as the player's own would" },
+        { "DLC04MQ05 DLC04_NUK001_CrowdManager", "DLC04GangSetup sets Nuka-Town's crowd manager's 11 (the crowd without the enemy gang) only if it is running (IsRunning): the crowd is each game's own, as ambient scenes are; not running, it is never started by it" },
     };
 
     static bool AllowedStart(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to, string a_call)
@@ -2252,6 +2263,14 @@ public static class SafeScan
         },
         Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
 
+    // The quests with an alias filled by its conditions (an alias each game fills, as Why and EachGames read them) whose
+    // fill is the same in every game all the same, by editor ID with why: the conditions read a global that comes with
+    // the stage that starts the quest (src/game/StageRules.h CARRIES), so every game fills it as the chooser's did. Why
+    // and EachGames take them as fixed, and a Start of one is walked as any (Target).
+    static readonly Dictionary<string, string> ALLOW_FILLS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DLC04MQ05Cleanup", "its EnemyOutposts alias (a collection by conditions) holds the enemy gang's raider outposts, by DLC04EnemyGang, which DLC04MQ05 255, the stage that starts it, carries (StageRules::CARRIES): the same outposts in every game" },
+    };
+
     // The quests whose stages' faction or settlement outcomes are shared with the story, by the maintainer's choice
     // (2026-11-06): with sQuests = safe one player's outcome is both players', as the shared story's kick-outs already
     // are; with it off each keeps their own. By editor ID, with why, each read in its stage fragments (the stages each
@@ -2259,17 +2278,16 @@ public static class SafeScan
     // and RuleScan makes a stage that turns a faction on the player kMoves (StageRules.h). These are the ones
     // with objectives (SAFE). Read and left out: DLC04DialogueHubologists (its other stages are each player's own
     // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
-    // bonus spells), and three the rule still leaves out for another stage, a quest each game runs its own way it
-    // starts (DLC04MQ05's park power and clean-up, DLC04DialogueHarvey 1000's DLC04REObjectCT03,
-    // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST, which ALLOW_STARTS now lets through). With them, by the
-    // maintainer's choice of 2026-11-10 (the chooser decides for both, the friend gets the outcome once near the chooser,
-    // a faction's kick-out is shared): Far Harbor's endings and kick-out, objective-less (SILENT's), and Nuka-World's
-    // Open Season and Safari Adventure. Read and left out: DLC04MQ05 (Power Play) and DLC04MQ05Cleanup (Cleaning House):
-    // the enemy gang is the global DLC04EnemyGang, which its 5 (DLC04MakeEnemy) works out from the DLC04Rank* globals,
-    // each game's own (its own flag raises and raids, DLC04RaiderControllerQuest's), so a friend's game would turn
-    // another gang on its player or none, and its 8 (DLC04GangSetup) with no gang clears every raider settlement's
-    // owner; it needs those globals sent with the stage. The other objective-less ones (DN084, DN117, BoSKickOut,
-    // RRKickOut) come in a later change.
+    // bonus spells), and the ones the rule left out for another stage, a quest each game runs its own way it
+    // starts: DLC04DialogueHarvey 1000's DLC04REObjectCT03 still is; DLC04SafariAdventureQuest's
+    // DLC04SafariAdventurePOST and DLC04MQ05's park power and clean-up are let through now (ALLOW_STARTS, ALLOW_FILLS).
+    // With them, by the maintainer's choice of 2026-11-10 (the chooser decides for both, the friend gets the outcome
+    // once near the chooser, a faction's kick-out is shared): Far Harbor's endings and kick-out, objective-less
+    // (SILENT's), Nuka-World's Open Season and Safari Adventure, and DLC04MQ05 (Power Play) with DLC04MQ05Cleanup
+    // (Cleaning House): the enemy gang is the global DLC04EnemyGang, which its 5 (DLC04MakeEnemy) works out from the
+    // DLC04Rank* globals, each game's own (its own flag raises and raids, DLC04RaiderControllerQuest's), so the stage
+    // carries the chooser's values of them (src/game/StageRules.h CARRIES) and every game turns the same gang on its
+    // player. The other objective-less ones (DN084, DN117, BoSKickOut, RRKickOut) come in a later change.
     static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "DN036", "Egret Tours Marina: 500 turns Phyllis on the player, 550/600/700 (each ending) give the player the marina's workshop" },
         { "DN049", "the robot-run shops: each shop's robots turned on the player (x49), made peaceful (x50), shut down (x55) or destroyed (x56) by the player's choices; 711's pre-war money is kPays" },
@@ -2288,6 +2306,7 @@ public static class SafeScan
         { "DLC04DialogueSettlement", "Nuka-Town's traders: 700 makes the traders and visitors the hub raiders' enemies and the player's allies (the raiders' end); 110's bloodworm meat is kPays" },
         { "DLC04RaiderKickout", "Open Season, the raiders' kick-out: 20 (DLC04SendKickOut) turns the three gangs and Shank's crime faction on the player, unlocks the power plant (DLC04PowerTracker 100), makes Nuka-Town's traders the player's allies (DLC04DialogueSettlement 700) and takes the raiders' settlements from the player (ClearRaiderSettlementOwnership); 30-60 one boss each (their deaths are every game's), 100 the four dead; Gage's turn on the player is ALLOW_KICKOUTS'" },
         { "DLC04SafariAdventureQuest", "Safari Adventure: 195 sets Cito on the player (SetEnemy with both sides neutral, StartCombat), 175/176 give the custom item (DLC04_CustomItemQuest 40), 60 the holotape; 2000 starts Cito's after-quest (ALLOW_STARTS)" },
+        { "DLC04MQ05", "Power Play: 8 turns the gang the player snubbed on them and clears its raider settlements' owners (DLC04GangSetup, by DLC04EnemyGang); the gang is the chooser's in every game, as the stage carries the globals its scripts decide by (src/game/StageRules.h CARRIES: DLC04MQ04 500 and MQ05 5 the three ranks DLC04MakeEnemy reads, 8 the enemy gang and the parks' DLC04MQ03Claimed*, 20/120/255 the enemy gang)" },
     };
 
     // The ALLOW_OUTCOMES quests whose kick-out turns a companion on the player as part of its outcome, by "<the kick-out
@@ -2672,7 +2691,7 @@ public static class SafeScan
         if ((q.Flags & 0x101) == 0 && !RunsOnce(q, a_file)) return "repeatable";
         var aliases = new Dictionary<int, GearScan.Alias>();
         foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
-        if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        if (!ALLOW_FILLS.ContainsKey(q.Edid) && q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
         var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
@@ -2928,6 +2947,13 @@ public static class SafeScan
         foreach (var kv in ALLOW_KICKOUTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
         sb.AppendLine(string.Format("# starts let through (ALLOW_STARTS): {0}", ALLOW_STARTS.Count));
         foreach (var kv in ALLOW_STARTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
+        sb.AppendLine(string.Format("# fills taken as fixed (ALLOW_FILLS): {0}", ALLOW_FILLS.Count));
+        foreach (var kv in ALLOW_FILLS)
+        {
+            string verdict = null;
+            foreach (var v in a_verdicts) if (MoveScan.perFile[v.Key.Item1][v.Key.Item2].Edid.Equals(kv.Key, StringComparison.OrdinalIgnoreCase)) verdict = v.Value;
+            sb.AppendLine(string.Format("#   {0} ({1}): {2}", kv.Key, verdict == null ? "not found" : verdict == "" ? "SAFE" : verdict == "silent" ? "SILENT" : "left out, " + verdict, kv.Value));
+        }
         return sb.ToString();
     }
 
@@ -3227,6 +3253,75 @@ public static class CompanionScan
             }
         }
         sb.Append(rows);
+        return sb.ToString();
+    }
+}
+
+// Which globals each stage of the shared quests reads (GetValue/GetValueInt on a global property), itself or through
+// the functions it calls and the stages it sets or starts, walked as -Moves walks them: what src/game/StageRules.h's
+// CARRIES was made from (the per-game globals among them, Nuka-World's gang ranks and parks, picked by hand; the rest,
+// GameDaysPassed, a park's star-core count, are the game's own bookkeeping or the same in every game). With a_quests
+// (a regular expression on the editor ID), those quests whether shared or not. One line per stage: file, form ID,
+// editor ID, shared how, stage, the chain to the first read found (as -Moves's chains) and then every global the whole
+// walk reads, each with the function that reads it (so a CARRIES row can be checked complete: MQ04 500's chain ends at
+// the outpost tracker's count, and the ranks DLC04MakeEnemy reads behind it are in its every-read list).
+public static class GlobalScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+
+    // The globals a function's code reads, by name, or none.
+    static List<string> Names(List<GearScan.Instr> code)
+    {
+        var names = new List<string>();
+        foreach (var i in code)
+            if (i.Op == 23 && (Is(i.Args[0], "GetValue") || Is(i.Args[0], "GetValueInt")) && !i.Args[1].StartsWith("temp", StringComparison.OrdinalIgnoreCase) && !i.Args[1].StartsWith("::temp", StringComparison.OrdinalIgnoreCase))
+                names.Add(Bare(i.Args[1]));
+        return names.Distinct().ToList();
+    }
+
+    static string Reads(List<GearScan.Instr> code)
+    {
+        var names = Names(code);
+        return names.Count == 0 ? null : "reads " + string.Join(",", names.ToArray());
+    }
+
+    public static string Run(string a_quests)
+    {
+        var first = new MoveScan.Walk { Direct = Reads };
+        // Every function the stage's walk reaches, and what each reads: Direct finds nothing, so the walk goes on past
+        // each read into everything the stage calls, sets or starts.
+        var byFunction = new SortedDictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var every = new MoveScan.Walk
+        {
+            Direct = c => null,
+            Visit = (f, code) =>
+            {
+                var names = Names(code);
+                if (names.Count == 0) return;
+                var key = f.Obj + "." + f.Name;
+                SortedSet<string> set;
+                if (!byFunction.TryGetValue(key, out set)) byFunction[key] = set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var n in names) set.Add(n);
+            }
+        };
+        var sb = new StringBuilder();
+        sb.AppendLine("# file\tid\tedid\tshared\tstage\tfirst read (the chain to it)\tevery read (by the function that reads it)");
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
+            {
+                var shared = QuestScan.Shared(q, file);
+                if (!string.IsNullOrEmpty(a_quests) ? !System.Text.RegularExpressions.Regex.IsMatch(q.Edid, a_quests) : shared == "not shared") continue;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    var h = first.Stage(file, q, stage);
+                    if (h == null) continue;
+                    byFunction.Clear();
+                    every.Stage(file, q, stage);
+                    var all = string.Join("; ", byFunction.Select(kv => kv.Key + ": " + string.Join(",", kv.Value.ToArray())).ToArray());
+                    sb.AppendLine(string.Format("{0}\t0x{1:X6}\t{2}\t{3}\t{4}\t{5}\t{6}", file, q.Id & 0xFFFFFF, q.Edid, shared, stage, h, all));
+                }
+            }
         return sb.ToString();
     }
 }

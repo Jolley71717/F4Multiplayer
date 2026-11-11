@@ -240,6 +240,14 @@ namespace QuestSync
 		std::uint32_t                                    waivedPrices = 0;  // friends' purchases set here with their price at 0 (StageRules::PRICES)
 		std::uint32_t                                    eachStages = 0;    // companion quests' stages marked done here by their EACH acts (StageRules kEach)
 		std::uint32_t                                    drivenStages = 0;  // ... set with their script here: this game drives the quest (StageRules::DriveOf)
+		// The globals that came with friends' stages still waiting (quest << 16 | stage), written here just before each is set
+		// (StageRules::CARRIES, PlanCarry): the chooser's values, so the stage's script decides here as it did for them.
+		std::unordered_map<std::uint64_t, std::vector<StageRules::GlobalValue>> carriedValues;
+		std::unordered_set<std::uint64_t>                carryWaitLogged;  // stages logged as waiting for the stage their row needs
+		std::uint32_t                                    carriedSet = 0;      // stages set here with their globals written first
+		std::uint32_t                                    carriedSkipped = 0;  // stages not set: they came without a global their script reads
+		std::uint32_t                                    carriedDropped = 0;  // values that came with stages that no row here names
+		std::uint32_t                                    carriedSent = 0;     // our stages reported with their globals
 		std::unordered_map<std::uint32_t, std::uint16_t> miscStages;  // misc quests: stage changes only
 		Clock::time_point                                lastStageChange{};
 
@@ -680,6 +688,99 @@ namespace QuestSync
 			}
 		}
 
+		// The globals a stage of ours carries to the others (StageRules::CARRIES): their values here now, read when the
+		// stage is reported (live: as the script that read them saw them; the baseline: as they are when the session starts).
+		// One the game lacks leaves the stage bare, and the friends' games then don't set it (StageRules::PlanCarry).
+		Protocol::QuestStage WithCarried(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto id = a_quest->GetFormID();
+			Protocol::QuestStage msg{ id, a_stage };
+			const auto file = FileOf(a_quest);
+			const auto row = file ? StageRules::FindCarried(*file, id & 0x00FFFFFF, a_stage) : nullptr;
+			if (!row) {
+				return msg;
+			}
+			std::string listed;
+			for (const auto local : StageRules::GlobalsOf(*row)) {
+				const auto globalId = (id & 0xFF000000) | local;
+				const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(globalId);
+				if (!global) {
+					REX::WARN("QuestSync: {:08X} stage {} carries {:08X}, which isn't in this game; reported without its globals (friends won't set it)", id, a_stage, globalId);
+					msg.globals.clear();
+					return msg;
+				}
+				msg.globals.push_back({ globalId, global->value });
+				listed += std::format("{}{:08X}={}", listed.empty() ? "" : ", ", globalId, global->value);
+			}
+			++carriedSent;
+			REX::INFO("QuestSync: {:08X} stage {} reported with its globals ({}): the friends' games write them before setting it", id, a_stage, listed);
+			return msg;
+		}
+
+		// Whether the stage a row needs first (StageRules::Carried::needs*, in the quest's file) is done here.
+		static bool NeedDone(const StageRules::Carried& a_row, std::uint32_t a_quest)
+		{
+			if (a_row.needsQuest == 0) {
+				return true;
+			}
+			const auto needs = RE::TESForm::GetFormByID<RE::TESQuest>((a_quest & 0xFF000000) | a_row.needsQuest);
+			return needs && QuestStageLayout::IsStageDone(needs, a_row.needsStage);
+		}
+
+		// Before a friend's stage is judged (SetHere): whether its row says it waits for now, the stage its quest needs first
+		// (Home Sweet Home's end for Power Play's) not done here. Its quest waits, judged again later (logged once). Asked
+		// before any follow offer: offered first, a far friend's 8 was taken up, the player teleported, and the stage then
+		// waited with the offer gone, so it was skipped when the parks were finally handed out here.
+		bool CarryWaits(std::uint32_t a_quest, std::uint16_t a_stage, std::optional<StageRules::File> a_file, std::uint32_t a_local, const char* a_name)
+		{
+			const auto row = a_file ? StageRules::FindCarried(*a_file, a_local, a_stage) : nullptr;
+			if (!row || !StageRules::CarryWaits(*row, NeedDone(*row, a_quest))) {
+				return false;
+			}
+			if (carryWaitLogged.insert(Key(a_quest, a_stage)).second) {
+				REX::INFO("QuestSync: {:08X} '{}' stage {} carries globals; waiting for {:08X} stage {}, which isn't done here (the parks must be handed out here first)",
+					a_quest, a_name ? a_name : "", a_stage, (a_quest & 0xFF000000) | row->needsQuest, row->needsStage);
+			}
+			return true;
+		}
+
+		// Before a friend's stage is set here: what its row says to write first (StageRules::PlanCarry), with the values that
+		// came with it. kSet: written here and there; kWait: its quest waits (CarryWaits said so before the stage was judged;
+		// logged there); kSkip: not set (logged).
+		StageRules::Carry PlanCarried(std::uint32_t a_quest, std::uint16_t a_stage, std::optional<StageRules::File> a_file, std::uint32_t a_local, const char* a_name)
+		{
+			const auto row = a_file ? StageRules::FindCarried(*a_file, a_local, a_stage) : nullptr;
+			const auto came = carriedValues.find(Key(a_quest, a_stage));
+			const std::span<const StageRules::GlobalValue> values = came != carriedValues.end() ? std::span<const StageRules::GlobalValue>{ came->second } : std::span<const StageRules::GlobalValue>{};
+			auto plan = StageRules::PlanCarry(row, values, a_quest, row && NeedDone(*row, a_quest));
+			// A global to write that this game lacks: the stage can't be set as the chooser's.
+			for (const auto& write : plan.writes) {
+				if (!RE::TESForm::GetFormByID<RE::TESGlobal>(write.global)) {
+					REX::WARN("QuestSync: {:08X} '{}' stage {} came with {:08X}, which isn't in this game", a_quest, a_name ? a_name : "", a_stage, write.global);
+					plan.what = StageRules::Carry::Do::kSkip;
+					plan.why = "a global it came with isn't in this game";
+					plan.writes.clear();
+					break;
+				}
+			}
+			if (plan.dropped) {
+				carriedDropped += static_cast<std::uint32_t>(plan.dropped);
+				REX::INFO("QuestSync: {:08X} '{}' stage {} came with {} global(s) no row here names; not written", a_quest, a_name ? a_name : "", a_stage, plan.dropped);
+			}
+			switch (plan.what) {
+			case StageRules::Carry::Do::kWait:
+				break;
+			case StageRules::Carry::Do::kSkip:
+				++carriedSkipped;
+				REX::WARN("QuestSync: not setting {:08X} '{}' stage {}: {} (set as it came, its script would decide by this game's own globals)", a_quest, a_name ? a_name : "",
+					a_stage, plan.why);
+				break;
+			case StageRules::Carry::Do::kSet:
+				break;
+			}
+			return plan;
+		}
+
 		// Sets a stage here as one from another player: through the console (it runs a moment later),
 		// and not reported back.
 		void NoteSetHere(RE::TESQuest* a_quest, std::uint16_t a_stage);
@@ -1114,6 +1215,12 @@ namespace QuestSync
 			const auto  lock = file ? StageRules::FindLock(*file, local, a_stage) : nullptr;
 			const auto  releaseId = lock ? (a_quest & 0xFF000000) | lock->releaseQuest : 0u;
 
+			// A stage that carries globals and waits for another first (Power Play's for Home Sweet Home's end here): its
+			// quest waits before it is judged, so no offer is made, and no price waived, for a stage that can't be set yet.
+			if (CarryWaits(a_quest, a_stage, file, local, name)) {
+				return StageLog::Set::kQuestWaits;
+			}
+
 			StageRules::Situation now;
 			now.sharedStory = Story::Shared();
 			const auto live = liveAt.find(Key(a_quest, a_stage));
@@ -1270,8 +1377,38 @@ namespace QuestSync
 				}
 				return StageLog::Set::kQuestWaits;
 			}
+
+			// The globals it carries (the chooser's), written just before it: its script decides here as it did for them.
+			const auto carry = PlanCarried(a_quest, a_stage, file, local, name);
+			switch (carry.what) {
+			case StageRules::Carry::Do::kWait:  // not after CarryWaits above; kept whole all the same
+				return StageLog::Set::kQuestWaits;
+			case StageRules::Carry::Do::kSkip:
+				++skipped;
+				carriedValues.erase(Key(a_quest, a_stage));
+				return StageLog::Set::kSkipped;
+			case StageRules::Carry::Do::kSet:
+				break;
+			}
+			// Sets the stage with its script: the globals it carries first, then the stage (DoCarry).
+			const auto setCarried = [&]() {
+				std::string written;
+				StageRules::DoCarry(
+					carry,
+					[&](std::uint32_t a_global, float a_value) {
+						const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(a_global);  // checked in PlanCarried
+						written += std::format("{}{:08X} {} -> {}", written.empty() ? "" : ", ", a_global, global ? global->value : 0.0f, a_value);
+						SetGlobal(a_global, a_value);
+					},
+					[&]() { SetStageHere(quest, a_stage); });
+				if (!carry.writes.empty()) {
+					++carriedSet;
+					REX::INFO("QuestSync: before {:08X} '{}' stage {}, its globals set to the chooser's: {}", a_quest, name ? name : "", a_stage, written);
+				}
+			};
 			if (each && drive == StageRules::Drive::kMirror) {
 				eachStarts.erase(a_quest);
+				// Its script isn't run here, so nothing decides by the globals: none is written (no carried stage is a companion's).
 				const auto  was = quest->currentStage;
 				std::string body;
 				const auto  missed = SetEachHere(quest, *file, a_stage, a_now, body);
@@ -1280,16 +1417,18 @@ namespace QuestSync
 					now.live || !followed.empty() ? "" : " (catching up)", followed);
 			} else if (each) {
 				RenewBodies(quest, *file, a_stage);  // her script's reset builds her again: no kept roll of her old body forced on it
-				SetStageHere(quest, a_stage);
+				setCarried();
 				++drivenStages;
 				drivenHere.insert(a_quest);  // until a load: its script may not have left its mark yet
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}", a_quest, name ? name : "", a_stage,
 					quest->currentStage, driveText, now.live || !followed.empty() ? "" : " (catching up)", followed);
 			} else {
-				SetStageHere(quest, a_stage);
+				setCarried();
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live || !followed.empty() ? "" : " (catching up)",
 					starting ? " (starting the quest here for the session)" : "", followed);
 			}
+			carriedValues.erase(Key(a_quest, a_stage));
+			carryWaitLogged.erase(Key(a_quest, a_stage));
 			friendMoved.insert(a_quest);  // however it was set here: a friend's stage
 			if (starting) {
 				startedHere.insert(a_quest);
@@ -1623,6 +1762,14 @@ namespace QuestSync
 		if (a_live) {
 			liveAt[Key(a_stage.quest, a_stage.stage)] = Live{ Clock::now(), a_stage.playerId };
 		}
+		// What came with it, kept until it is set (SetHere writes them first) or skipped.
+		if (!a_stage.globals.empty()) {
+			auto& values = carriedValues[Key(a_stage.quest, a_stage.stage)];
+			values.clear();
+			for (const auto& global : a_stage.globals) {
+				values.push_back({ global.global, global.value });
+			}
+		}
 	}
 
 	std::vector<std::uint16_t> Waiting(std::uint32_t a_quest)
@@ -1771,8 +1918,9 @@ namespace QuestSync
 			QueueBaseline();
 		}
 		while (!baseline.empty() && outgoing.Size() < BASELINE_BATCH) {
-			outgoing.Add(Protocol::Encode(Protocol::QuestStage{ baseline.front().quest, baseline.front().stage }, Protocol::MessageType::kReportQuestStage),
-				baseline.front().story, baseline.front().safe);
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(baseline.front().quest);
+			const auto stage = quest ? WithCarried(quest, baseline.front().stage) : Protocol::QuestStage{ baseline.front().quest, baseline.front().stage };
+			outgoing.Add(Protocol::Encode(stage, Protocol::MessageType::kReportQuestStage), baseline.front().story, baseline.front().safe);
 			baseline.pop_front();
 			++baselined;
 		}
@@ -1888,7 +2036,7 @@ namespace QuestSync
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
 				}
-				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story, safe);
+				outgoing.Add(Protocol::Encode(WithCarried(quest, stage), Protocol::MessageType::kReportQuestStage), story, safe);
 				// A payment's stage (a delivery turned in) is never set in the friends' games: what it gave goes to them as a
 				// reward (QuestRewards).
 				if (const auto rule = RuleFor(id, stage); rule && a_inSession) {
@@ -1950,6 +2098,8 @@ namespace QuestSync
 		friendMoved.clear();
 		catchingUp.clear();
 		startHolds.clear();
+		carriedValues.clear();  // with the waiting stages they came with (a lock's quests carry none)
+		carryWaitLogged.clear();
 		RadiantSync::OnSessionEnded();  // the radiants go on, each player's own
 		EncounterRuns::EndFollowed();   // and the encounters: ours go on, a friend's we follow ends with its actors' copies
 		EncounterRuns::Clear();
@@ -2007,6 +2157,8 @@ namespace QuestSync
 		startedHere.clear();
 		catchingUp.clear();
 		startHolds.clear();
+		carriedValues.clear();
+		carryWaitLogged.clear();
 		baseline.clear();  // a host's game reports the loaded save's progress instead
 		baselineQueued = false;
 		RadiantSync::Rebaseline();
@@ -2065,6 +2217,7 @@ namespace QuestSync
 		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released,
 			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +
 		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe() + " " + EncounterRuns::Describe();

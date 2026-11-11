@@ -1,4 +1,4 @@
-# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -DisabledParents | -Companion]
+# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -Globals [-Quests <regex>] | -DisabledParents | -Companion]
 # [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
 # archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
 # unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
@@ -25,6 +25,12 @@
 # friend's stage is set on, SAFE's, SILENT's or the story's, the dialogue quests' and the radiants' (a stage it sets
 # that has a kPays row in src/game/StageRules.h, or caps taken or the inventory emptied on the way; its
 # SHARED_REACHES_PAYS is that count, which tests/StageRulesTests.cpp checks is 0).
+# With -Globals: the globals each shared quest's stages read (GetValue/GetValueInt on a global property), itself or
+# through the functions it calls and the stages it sets or starts, walked as -Moves walks them: per stage the chain to
+# the first read, then every global the whole walk reads, each with the function that reads it; -Quests <regex> picks
+# quests by editor ID whether shared or not. What src/game/StageRules.h's CARRIES (the globals a stage carries to the
+# other players, Nuka-World's gang choice) was made from, and is checked complete against: -Globals -Quests
+# '^DLC04MQ0[45]$'.
 # The index of each master is src/game/StageRules.h's File. With -DisabledParents: writes src/game/DisabledParents.h (or
 # -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
@@ -37,7 +43,7 @@
 # prints a game script function's code, for reading what a call does by hand; -Actors base,base (NickValentine) prints the
 # placed actors of those NPC bases from Fallout4.esm, for the references StageRules.h's DRIVERS name.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$DisabledParents,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -54,6 +60,7 @@ $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
 if ($Function) { [MoveScan]::Dump($Data, $Function); return }
 if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
 if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
+if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
 if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
 if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
 if ($Moves) { [MoveScan]::Run($Data) }
