@@ -1134,14 +1134,60 @@ step_follow() {
 # SanctuaryExt; the host's console sets each quest's QSAFE_QUESTS stages (in the order listed, a later one first where two are), and the
 # VM's game must reach the same stages within QSAFE_WAIT s, its player staying where it was. Vault 75: what its created aliases make are
 # the four ID cards in its key holders' inventories, not creatures, so nothing of it pairs (QuestActors pairs creatures only): checked is
-# that both games' created aliases hold their items alike, and that no pairing of it is counted. Last (QSAFE_DEBUG0=1, the default): the
-# host's console sets MS07's 0, the quickstart, which moves the host to a test marker; the VM's game must not set it (its log says why), and
-# the host's console coc's back to SanctuaryExt. Needs the host's sQuests = safe and a shared story (`rules`). Quest stages are for good in
+# that both games' created aliases hold their items alike, and that no pairing of it is counted. First (QSAFE_DEBUG0=1, the default), before
+# any other stage of MS07, while neither game has started it: the host's console sets MS07's 0, the quickstart, which moves the host to a
+# test marker and makes Nick its companion; the VM's game must log that it is not setting it (a developer's quickstart) and not have it,
+# and the host's console coc's back to SanctuaryExt. (Set after MS07's other stages, the VM's game would drop it as already settled, and
+# the check would pass without testing anything.) The quickstart's SetCompanion would ask the host which companion to let go, a menu a
+# scripted run can't answer: the host's companion and Dogmeat are dismissed by console first (quietly), Nick dismissed after, and the
+# host's own put back in their aliases by console. Needs the host's sQuests = safe and a shared story (`rules`). Quest stages are for good in
 # a save: run it on throwaway saves from before these quests (backup.sh before, restore after); a stage already done in either game is a
 # FAIL naming it.
 QSAFE_QUESTS=${QSAFE_QUESTS:-"00048516:1 000FCB15:100 00028657:10 000704F4:10 000229FC:99,50"}
 QSAFE_MS07=${QSAFE_MS07:-000229FC}; QSAFE_VAULT75=${QSAFE_VAULT75:-000FCB15}
 QSAFE_WAIT=${QSAFE_WAIT:-25}; QSAFE_DEBUG0=${QSAFE_DEBUG0:-1}
+_qs_log_has() { grep -qE "$2" "$(win_read quests_safe "$1")"; }   # _qs_log_has <who> <regex>: the game's log since win_mark has it
+_qs_companions_free() { [ -z "$(_ch_held host)" ] && [ -z "$(_c_held host)" ]; }   # the host's Companion and Dogmeat aliases both empty
+# _qs_quickstart <VM pos before>: the host's console sets MS07's 0 (before any other MS07 stage), the VM's game must skip it and say why.
+# The host's companion and Dogmeat are let go first and put back after (QS_HUMAN, QS_DOG: what the aliases held).
+_qs_quickstart() {
+	local pos0=$1 moved re nick
+	QS_HUMAN=$(_ch_held host); QS_DOG=$(_c_held host)
+	[ -n "$QS_HUMAN" ] && dc host "console cqf Followers \"FollowersScript.DismissCompanion\" $QS_HUMAN 0 1" >/dev/null
+	[ -n "$QS_DOG" ] && _c_dismiss host
+	if ! wait_for 15 _qs_companions_free; then
+		fail "quests_safe: set-up: the host's companion let go before $QSAFE_MS07 0 (its SetCompanion would ask which to dismiss)" "Companion '$(_ch_held host)', Dogmeat '$(_c_held host)'"
+		return 1
+	fi
+	win_mark quests_safe vm
+	dc host "console setstage $QSAFE_MS07 0" >/dev/null
+	if ! wait_for 15 _qa_has host "$QSAFE_MS07" 0; then
+		fail "quests_safe: set-up: the host's console set $QSAFE_MS07 0" "host done $(_qa_done host "$QSAFE_MS07")"
+	else
+		re="QuestSync: not setting $QSAFE_MS07 '[^']*' stage 0: it is a developer's quickstart"
+		if wait_for "$QSAFE_WAIT" _qs_log_has vm "$re" && ! _qa_has vm "$QSAFE_MS07" 0; then
+			pass "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is skipped in the VM's game" "VM done $(_qa_done vm "$QSAFE_MS07"); $(grep -oE "$re[^;]*" "$A_OUT/windelta-quests_safe-vm.txt" | head -1)"
+		else
+			fail "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is skipped in the VM's game" "VM done $(_qa_done vm "$QSAFE_MS07"); $(grep -E "QuestSync: (set|not setting|starting) .*$QSAFE_MS07" "$A_OUT/windelta-quests_safe-vm.txt" | tail -3 | tr '\n' '|')"
+		fi
+		moved=$(_q_moved "$pos0" "$(dc vm pos)")
+		if is_num "$moved"; then expect_le "quests_safe: the VM's player stays where it was after the host's quickstart" "$moved" 64 u
+		else fail "quests_safe: the VM's player stays where it was after the host's quickstart" "no position read"; fi
+	fi
+	dc host "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame host 30
+	# Put the host's companions back as they were: Nick (the quickstart's) let go, the host's own recruited again by console.
+	nick=$(_ch_held host)
+	if [ -n "$nick" ] && [ "$nick" != "$QS_HUMAN" ]; then dc host "console cqf Followers \"FollowersScript.DismissCompanion\" $nick 0 1" >/dev/null; sleep 4; fi
+	if [ -n "$QS_HUMAN" ] && [ "$(_ch_held host)" != "$QS_HUMAN" ]; then
+		dc host "console cqf Followers \"FollowersScript.SetCompanion\" $QS_HUMAN 1 1 1" >/dev/null; sleep 1; dc host "console $QS_HUMAN.evp" >/dev/null
+	fi
+	if [ -n "$QS_DOG" ] && [ "$(_c_held host)" != "$QS_DOG" ]; then
+		dc host "console cqf Followers \"FollowersScript.SetDogmeatCompanion\" $QS_DOG" >/dev/null; sleep 1; dc host "console $QS_DOG.evp" >/dev/null
+	fi
+	sleep 3
+	expect_eq "quests_safe: set-up: the host's companions as they were before the quickstart (Companion/Dogmeat)" "$(_ch_held host)/$(_c_held host)" "$QS_HUMAN/$QS_DOG"
+	return 0   # only a failed set-up before the quickstart (return 1) stops the step
+}
 step_quests_safe() {
 	section "quests_safe (SAFE's new quests: the host's console setstage, the VM's game the same; console placement and setstage on the host)"
 	local item q stages s line pos0 moved hl vl hp vp all
@@ -1158,6 +1204,9 @@ step_quests_safe() {
 	fi
 	enter_both SanctuaryExt 14
 	pos0=$(dc vm pos)
+	# MS07's 0, the developer's quickstart, first: neither game has started MS07, so the VM's game judges it as the quest's start
+	# (set after MS07's other stages, it would be dropped there as already settled, and the check would test nothing).
+	if [ "$QSAFE_DEBUG0" = 1 ]; then _qs_quickstart "$pos0" || return; fi
 	hp=$(_qa_paired host pairs); vp=$(_qa_paired vm pairs)
 	for item in $QSAFE_QUESTS; do
 		q=${item%%:*}; stages=${item#*:}
@@ -1182,21 +1231,6 @@ step_quests_safe() {
 		if [ "$(_qa_paired host pairs)" = "$hp" ] && [ "$(_qa_paired vm pairs)" = "$vp" ]; then pass "quests_safe: nothing of Vault 75 is paired (its created aliases are items, not creatures)" "pairs host $hp, VM $vp"
 		else warn "quests_safe: nothing of Vault 75 is paired (its created aliases are items, not creatures)" "pairs host $hp -> $(_qa_paired host pairs), VM $vp -> $(_qa_paired vm pairs) (another quest's pairing in the meantime?)"; fi
 	fi
-
-	# MS07's 0, the developer's quickstart: never set from a friend's game.
-	[ "$QSAFE_DEBUG0" = 1 ] || return 0
-	win_mark quests_safe vm
-	dc host "console setstage $QSAFE_MS07 0" >/dev/null
-	if ! wait_for 15 _qa_has host "$QSAFE_MS07" 0; then fail "quests_safe: set-up: the host's console set $QSAFE_MS07 0" "host done $(_qa_done host "$QSAFE_MS07")"
-	else
-		sleep "$QSAFE_WAIT"
-		if _qa_has vm "$QSAFE_MS07" 0; then fail "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $(_qa_done vm "$QSAFE_MS07")"
-		else pass "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $(_qa_done vm "$QSAFE_MS07"); $(grep -oE "QuestSync: not setting $QSAFE_MS07 .* stage 0: [^;]*" "$(win_read quests_safe vm)" | head -1)"; fi
-		moved=$(_q_moved "$pos0" "$(dc vm pos)")
-		if is_num "$moved"; then expect_le "quests_safe: the VM's player stays where it was after the host's quickstart" "$moved" 64 u
-		else fail "quests_safe: the VM's player stays where it was after the host's quickstart" "no position read"; fi
-	fi
-	dc host "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame host 30
 }
 
 # ---- a shared quest's created creatures, paired across games (src/game/QuestActors.h) ------------------------------------------------------
