@@ -620,8 +620,8 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(Judge(&nuke, { .live = false, .factionNear = false }) == Verdict::kSet);  // never skipped
 	CHECK(!Find(0x015366, 150, File::kCoast));
 	// Power Play's 8 (DLC04GangSetup) turns the snubbed gang on the player, picked as its script runs from the gang the
-	// stage carries (CARRIES): no RULES row, and a HOSTILE row for each of the three gangs (by hand in the scan), so it
-	// waits while a member of any of them is near.
+	// stage carries (CARRIES): no RULES row, and a HOSTILE row for each of the three gangs (by hand in the scan); it waits
+	// for the one the carried value names (HOSTILE_WHEN, its own test below).
 	CHECK(!Find(0x000805, 8, File::kNukaWorld));
 	const auto gangs = HostileOf(File::kNukaWorld, 0x000805, 8);
 	REQUIRE(gangs.size() == 3);
@@ -1807,6 +1807,85 @@ TEST("stage rules: a friend's stage is set with its globals written first, in it
 	DoCarry(
 		none, [&](std::uint32_t, float) { did.push_back("write"); }, [&]() { did.push_back("setstage"); });
 	CHECK((did == std::vector<std::string>{ "setstage" }));
+}
+
+TEST("stage rules: Power Play's 8 is held for, and its landing told by, the one gang the carried DLC04EnemyGang names (1 the Disciples, 2 the Operators, 3 the Pack); all three only when no such value came")
+{
+	using namespace StageRules;
+
+	constexpr std::uint32_t FILE = 0x01000000;  // DLCNukaWorld.esm loaded at 01
+	constexpr std::uint32_t QUEST = 0x000805, ENEMY_GANG = 0x00D370;
+	constexpr std::uint32_t DISCIPLES = 0x00F438, OPERATORS = 0x00F439, PACK = 0x00F43A;
+	const auto factions = [](const std::vector<Hostile>& a_rows) {
+		std::vector<std::uint32_t> ids;
+		for (const auto& row : a_rows) {
+			ids.push_back(row.faction);
+		}
+		return ids;
+	};
+	// The stage's rows as QuestSync has them, with what came with it: the enemy gang and the parks' owners.
+	const auto heldAt = [&](std::vector<GlobalValue> a_came, std::uint32_t a_file) { return factions(HostileWith(HostileRows(File::kNukaWorld, QUEST, 8, false), a_came, a_file | QUEST)); };
+	const auto held = [&](std::vector<GlobalValue> a_came) { return heldAt(std::move(a_came), FILE); };
+	const auto with = [](float a_gang) {
+		return std::vector<GlobalValue>{ { 0x0103E41C, 2.0f }, { 0x0100D370, a_gang }, { 0x0103E418, 1.0f }, { 0x0103E419, 3.0f }, { 0x0103E41A, 2.0f }, { 0x0103E41B, 1.0f } };
+	};
+	// The gang the chooser's game made the enemy, alone: the hold counts only its members, and the first row (the one the
+	// log's landing note names when nothing was waited for) is that gang's.
+	CHECK((held(with(1.0f)) == std::vector<std::uint32_t>{ DISCIPLES }));
+	CHECK((held(with(2.0f)) == std::vector<std::uint32_t>{ OPERATORS }));
+	CHECK((held(with(3.0f)) == std::vector<std::uint32_t>{ PACK }));
+	// The value alone, as its 20's row carries it, picks the same way.
+	CHECK((held({ { 0x0100D370, 3.0f } }) == std::vector<std::uint32_t>{ PACK }));
+	// No value (nothing came with the stage: an older session file's), or one that names no gang (0 before DLC04MakeEnemy
+	// ran, anything else): all three, as before.
+	const std::vector<std::uint32_t> all{ DISCIPLES, OPERATORS, PACK };
+	CHECK(held({}) == all);
+	CHECK(held(with(0.0f)) == all);
+	CHECK(held(with(4.0f)) == all);
+	CHECK(held(with(-1.0f)) == all);
+	CHECK(held(with(1.5f)) == all);
+	std::vector<GlobalValue> parks = with(2.0f);
+	std::erase_if(parks, [](const GlobalValue& a_value) { return a_value.global == 0x0100D370; });
+	CHECK(held(parks) == all);  // the parks' owners without the gang
+	// A global of another file with the same local ID is not the stage's; nor is the file the quest is loaded at another's.
+	CHECK((held({ { 0x0200D370, 2.0f } }) == all));
+	CHECK(heldAt(with(2.0f), 0x07000000) == all);
+	CHECK((heldAt({ { 0x0700D370, 2.0f } }, 0x07000000) == std::vector<std::uint32_t>{ OPERATORS }));
+	// Another global with a gang's number is not the enemy gang (a park's owner 1 with the enemy gang 3).
+	CHECK((held({ { 0x0103E418, 1.0f }, { 0x0100D370, 3.0f } }) == std::vector<std::uint32_t>{ PACK }));
+
+	// A stage no row here names keeps its rows whatever came with it; so do rows of other stages judged with one that is
+	// named (a start-up stage's, merged in by HostileRows), and no rows stay none.
+	const auto kiddie = HostileRows(File::kNukaWorld, 0x03684F, 740, false);
+	REQUIRE(kiddie.size() == 1);
+	CHECK(HostileWith(kiddie, with(2.0f), FILE | 0x03684F).size() == 1);
+	auto mixed = HostileRows(File::kNukaWorld, QUEST, 8, false);
+	mixed.insert(mixed.begin(), kiddie.front());
+	CHECK((factions(HostileWith(mixed, with(2.0f), FILE | QUEST)) == std::vector<std::uint32_t>{ kiddie.front().faction, OPERATORS }));
+	CHECK(HostileWith(mixed, {}, FILE | QUEST).size() == 4);
+	CHECK(HostileWith({}, with(2.0f), FILE | QUEST).empty());
+
+	// The table: each row is a HOSTILE row of its stage, its global one the stage carries (so the value is there before the
+	// stage is judged), and no faction is picked by two values of a global or a value picks two factions (one gang turns).
+	static_assert(std::size(HOSTILE_WHEN) == 3);
+	for (const auto& when : HOSTILE_WHEN) {
+		const auto rows = HostileOf(static_cast<File>(when.file), when.quest, when.stage);
+		CHECK(std::ranges::any_of(rows, [&](const Hostile& a_row) { return a_row.factionFile == when.factionFile && a_row.faction == when.faction; }));
+		const auto carried = FindCarried(static_cast<File>(when.file), when.quest, when.stage);
+		REQUIRE(carried);
+		CHECK(std::ranges::contains(GlobalsOf(*carried), when.global));
+		CHECK(std::ranges::count_if(HOSTILE_WHEN, [&](const HostileWhen& a_other) {
+			return a_other.file == when.file && a_other.quest == when.quest && a_other.stage == when.stage && a_other.global == when.global && a_other.value == when.value;
+		}) == 1);
+		CHECK(std::ranges::count_if(HOSTILE_WHEN, [&](const HostileWhen& a_other) {
+			return a_other.file == when.file && a_other.quest == when.quest && a_other.stage == when.stage && a_other.factionFile == when.factionFile && a_other.faction == when.faction;
+		}) == 1);
+	}
+	// Every row of Power Play's 8 is named: a gang the script can pick with no value that picks it would always be held for.
+	for (const auto& row : HostileOf(File::kNukaWorld, QUEST, 8)) {
+		CHECK(std::ranges::any_of(HOSTILE_WHEN, [&](const HostileWhen& a_when) { return a_when.stage == row.stage && a_when.quest == row.quest && a_when.faction == row.faction; }));
+	}
+	CHECK(HOSTILE_WHEN[0].global == ENEMY_GANG);
 }
 
 TEST("stage rules: the teleport quests shared with sQuests = safe move nobody without the follow offer (RRAct3Pickup, InstituteTeleportEffects, DN136_Attack; MQ302BoS 300, MQ302RR 330; the charge planted: MQ302 600, MQ302BoS 600, MQ302Min 1600, MQ302RR 600)")

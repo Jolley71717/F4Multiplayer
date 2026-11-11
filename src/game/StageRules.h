@@ -123,8 +123,8 @@ namespace StageRules
 	// kick-out's 700 it sets; its row here is the wait the scan read), the wind farm's 50 (Far Harbor's town; its 5, a
 	// DisablePlayerControls, is kMoves), the kick-out's 700 and Acadia's defence 100; and Nuka-World's raider kick-out 20
 	// (the gangs, and Gage when he was a companion) and Power Play's 8 (the snubbed gang, which its script picks from the
-	// DLC04EnemyGang the stage carries, CARRIES: a row for each of the three gangs; its quickstarts 1-3, kMoves, have
-	// none). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
+	// DLC04EnemyGang the stage carries, CARRIES: a row for each of the three gangs, held for the one the carried value
+	// names, HOSTILE_WHEN; its quickstarts 1-3, kMoves, have none). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
 	// The add-ons' other faction outcomes, Combat Zone's and the end of The Big Dig's (2026-11-11) bring the developers'
 	// quickstarts of CZ (1) and the Mechanist's lair (DLC01Lair 3-9), a few waits, and the Hubologists' rows: their
 	// donations (30-37) are kPays, and every other stage of theirs but 200 (turning them on the player, HOSTILE's) is kOwn,
@@ -1766,7 +1766,8 @@ namespace StageRules
 	// faction (then the faction is that one: a member of it near is an enemy already); the faction the script names, resolved in
 	// the VMAD of the quest whose script makes the call, and for MQ00's kick-out helper (a number into its Factions array) and the
 	// Galactic Zone's start-up (every one of its enemy factions) by hand in the scan (its BY_HAND), as Power Play's 8, whose
-	// script picks the snubbed gang as it runs (a row for each of the three gangs: the hold waits while any of them is near).
+	// script picks the snubbed gang as it runs (a row for each of the three gangs; the hold waits for the one the value the
+	// stage carries names, HOSTILE_WHEN and HostileWith below, and for any of the three only when no value came).
 	// One row per stage and faction,
 	// the first way found (DN049's x49 each turn one shop's robots). StartCombat on the player is a passing fight, not a faction's
 	// standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far Harbor's S02 210 adds
@@ -2525,5 +2526,59 @@ namespace StageRules
 			a_write(write.global, write.value);
 		}
 		a_set();
+	}
+
+	// ---- a faction turned by a carried value ----------------------------------------------------------------------------
+
+	// A HOSTILE stage whose script picks the faction it turns on the player by a global the stage carries (CARRIES) has a
+	// HOSTILE row for each faction it can pick, and a row here for each saying which value picks it. Power Play's 8
+	// (DLC04GangSetup) turns the gang DLC04EnemyGang names, 1 the Disciples, 2 the Operators, 3 the Pack (read in the
+	// script: tools/questscan.ps1 -Function DLC04:DLC04MQ05QuestScript.DLC04GangSetup, its three GetValue comparisons, each
+	// followed by that gang's SetPlayerEnemy), and the other two stay the player's allies. Held for all three, a friend
+	// anywhere in Nuka-World waited for as long as a raider of any gang was within range, most of the place, and the HUD
+	// could say the quest waited for a gang on their side. Written by hand, as CARRIES is. Each row is a HOSTILE row, and
+	// its global one its stage carries (tests/StageRulesTests.cpp holds both).
+	struct HostileWhen
+	{
+		std::uint8_t  file;         // File: the quest's
+		std::uint32_t quest;        // form ID in its file
+		std::uint16_t stage;
+		std::uint8_t  factionFile;  // File: the faction's, as its HOSTILE row's
+		std::uint32_t faction;      // form ID in its file
+		std::uint32_t global;       // a global the stage carries, in the quest's file
+		float         value;        // the script turns this faction when the global has this value
+	};
+	inline constexpr HostileWhen HOSTILE_WHEN[] = {
+		{ 3, 0x000805, 8, 3, 0x00F438, 0x00D370, 1.0f },  // DLC04MQ05 8: DLC04EnemyGang 1, DLC04GangDisciplesFaction
+		{ 3, 0x000805, 8, 3, 0x00F439, 0x00D370, 2.0f },  // 2, DLC04GangOperatorsFaction
+		{ 3, 0x000805, 8, 3, 0x00F43A, 0x00D370, 3.0f },  // 3, DLC04GangPackFaction
+	};
+
+	// The HOSTILE rows a friend's stage is held for and its landing is told by, given what came with it. a_rows: the
+	// stage's (HostileRows). a_carried: the values that came with the stage, as PlanCarry's. a_file: the quest's load bits
+	// (the form ID & 0xFF000000), which the globals share. A row HOSTILE_WHEN names stays only when the value that came for
+	// its global is the row's; a row it doesn't name always stays. When no named row's value came (nothing came with the
+	// stage, an older session file's; or a value no row is for), every row stays: the script could pick any of them, and
+	// the hold waits for each, as it did before.
+	inline std::vector<Hostile> HostileWith(std::vector<Hostile> a_rows, std::span<const GlobalValue> a_carried, std::uint32_t a_file)
+	{
+		const auto is = [](const HostileWhen& a_when, const Hostile& a_row) {
+			return a_when.file == a_row.file && a_when.quest == a_row.quest && a_when.stage == a_row.stage && a_when.factionFile == a_row.factionFile &&
+			       a_when.faction == a_row.faction;
+		};
+		const auto named = [&](const Hostile& a_row) { return std::ranges::any_of(HOSTILE_WHEN, [&](const HostileWhen& a_when) { return is(a_when, a_row); }); };
+		const auto picked = [&](const Hostile& a_row) {
+			return std::ranges::any_of(HOSTILE_WHEN, [&](const HostileWhen& a_when) {
+				if (!is(a_when, a_row)) {
+					return false;
+				}
+				const auto it = std::ranges::find(a_carried, (a_file & 0xFF000000u) | a_when.global, &GlobalValue::global);
+				return it != a_carried.end() && it->value == a_when.value;
+			});
+		};
+		if (std::ranges::any_of(a_rows, picked)) {
+			std::erase_if(a_rows, [&](const Hostile& a_row) { return named(a_row) && !picked(a_row); });
+		}
+		return a_rows;
 	}
 }

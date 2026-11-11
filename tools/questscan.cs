@@ -2182,8 +2182,9 @@ public static class HostileScan
     // Or the script picks the faction as it runs, and the walk names only the first it meets: DLC04MQ05 8 (Power Play) sets
     // the snubbed gang on the player through DLC04GangSetup, which reads the gang from the DLC04EnemyGang global the stage
     // carries (StageRules.h CARRIES): one of the three gangs' factions (the Disciples, the Operators, the Pack). Such an
-    // entry names the factions by editor ID (Factions), in place of what the walk found: one row each, so the hold waits
-    // while a member of any of the three gangs is near. Its quickstarts 1, 2 and 3 (a rank set, a MoveTo to the quest's
+    // entry names the factions by editor ID (Factions), in place of what the walk found: one row each. Which of them the
+    // hold waits for is the game's to say, by the value that came with the stage (StageRules.h HOSTILE_WHEN, by hand:
+    // DLC04EnemyGang 1, 2, 3 in that order), any of the three only when none came. Its quickstarts 1, 2 and 3 (a rank set, a MoveTo to the quest's
     // test mark, then its 5 and 8; kMoves rows, never set in a game played through) name none and get no row: a mover's
     // row is the call QuestSync makes without the stage, and which gang it would be is not known here.
     class ByHand { public string Quest; public int Stage; public string PropertyQuest; public string Property; public int Index; public string[] Factions; }
