@@ -145,6 +145,7 @@ quest.next = la missione successiva
 quest.completed = {player} ha completato {quest}
 quest.follow_offer = {player} sta entrando in {quest}: tieni premuto {key} entro {n} s per andare con lui
 quest.follow_fight = {player} sta combattendo in {quest}: tieni premuto {key} entro {n} s per unirti
+radiant.job_back = Non è rimasto nulla di {quest} del tuo amico; l'incarico è tornato a chi lo affida, che ne offre uno nuovo
 workshop.rescued = Quello che avevi nel contenitore di un amico è nel tuo inventario
 drops.container_hint = Armi e armature che metti in un contenitore restano solo nel tuo gioco. Per darne una a un amico, lasciala cadere vicino a lui
 drops.not_given = I tuoi amici non possono raccogliere questo oggetto: resta a terra solo nel tuo gioco

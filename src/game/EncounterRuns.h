@@ -29,6 +29,11 @@ namespace EncounterRuns
 	// A friend left the session: their runs we follow end here as their run's end would end them (RUN_END_WAIT).
 	void OnPlayerLeft(std::uint32_t a_id);
 
+	// A friend's game loaded a save: their runs we follow end here as when they leave (their load cleared their book, so
+	// no end comes for them, and their copies of our actors are gone; what their loaded world runs is announced anew),
+	// and our runs going are sent again, for them (OnPlayerJoined).
+	void OnPlayerReloaded(std::uint32_t a_id);
+
 	// The session ends (before Clear): the friends' runs we follow are stopped, their actors' copies gone with it.
 	void EndFollowed();
 

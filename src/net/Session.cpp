@@ -599,6 +599,7 @@ namespace Session
 					WorkshopSync::OnPlayerLeft(msg->playerId);  // their copies' power, shown no more
 					MovedObjects::OnPlayerLeft(msg->playerId);
 					EncounterRuns::OnPlayerLeft(msg->playerId);  // their encounters' runs we follow end here
+					RadiantSync::OnPlayerLeft(msg->playerId);    // their radiants' runs we follow with their actors are followed no more
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
@@ -606,7 +607,7 @@ namespace Session
 			case MessageType::kPlayerReloaded:
 				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
 					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
-					EncounterRuns::OnPlayerJoined();  // our encounters' runs too
+					EncounterRuns::OnPlayerReloaded(msg->playerId);  // their encounters' runs we follow end here; ours go again
 				}
 				break;
 			case MessageType::kExplosion:

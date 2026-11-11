@@ -58,6 +58,12 @@ namespace RadiantRules
 		// its own. Only where stopping it before it is given changes nothing else: nothing counted, enabled or hidden
 		// by its start, no stage run as it stops, and a quest that can run again (not "run once").
 		bool replace = false;
+		// Its actors are made at runtime (aliases its start creates: a courser, a patrol, a captive), so no game has the
+		// other's. The run's owner's stand in every game: its fills name them by their spawn ids once they are shared, sent
+		// again as that changes, and a friend's game forces its copies of them into those aliases as they are placed
+		// (ReferenceAlias.ForceRefTo), removing its own of the quest as they come (RadiantSync, Spawns: as a followed
+		// encounter's, EncounterRunBook.h). Its stages go by the run as any shared radiant's.
+		bool spawned = false;
 	};
 
 	// The radiants by file and form ID (tools/questscan.cs reads them; their aliases were read the same way). Fallout4.esm's first.
@@ -126,11 +132,15 @@ namespace RadiantRules
 		Entry{ 0, 0x0B26C2, "RRR04", Share::kShared, true },   // Mercer Safehouse: a settlement to build up (built in every game)
 		Entry{ 0, 0x0B926A, "RRR05", Share::kShared, true },   // Weathervane: a high point; the MILA made in each game; offered again when done
 		Entry{ 0, 0x1845F7, "RRR06", Share::kShared },         // Randolph Safehouse: a dead drop and a place, its bosses
-		Entry{ 0, 0x186C79, "RRR07", Share::kLeftAlone },   // Variable Removal: a courser made at runtime
-		Entry{ 0, 0x13A33D, "RRR08", Share::kLeftAlone },   // To the Mattresses: the bosses are made at runtime
-		Entry{ 0, 0x145F1A, "RRR09", Share::kLeftAlone },   // Lost Soul: the one to rescue is made at runtime
-		Entry{ 0, 0x14A34A, "RRR10", Share::kLeftAlone },   // A Clean Equation: a patrol made at runtime
-		Entry{ 0, 0x150577, "RRR11", Share::kLeftAlone },   // High Ground: a vertibird and its crew made at runtime
+		// PAM's, Desdemona's and Carrington's jobs whose actors are made at runtime (Entry::spawned): the place is picked by
+		// conditions and forced as any; the actors made there are the owner's, their copies forced into a friend's aliases.
+		// All four are offered at their 50 (counted) and taken at their 100 (To the Mattresses at its 75), so one stopped on
+		// offer is counted off (OFFERS).
+		Entry{ 0, 0x186C79, "RRR07", Share::kShared, true, true },  // Variable Removal: a courser made at the place
+		Entry{ 0, 0x13A33D, "RRR08", Share::kShared, true, true },  // To the Mattresses: the gang's boss made at the place (which one, each game's RRR08DisplayNumber)
+		Entry{ 0, 0x145F1A, "RRR09", Share::kShared, true, true },  // Lost Soul: the captive made at the place (its care package made in each game)
+		Entry{ 0, 0x14A34A, "RRR10", Share::kShared, true, true },  // A Clean Equation: the patrol made at its start (its collection filled from them)
+		Entry{ 0, 0x150577, "RRR11", Share::kLeftAlone },           // High Ground: a vertibird and its crew made at runtime, flown by a scene (QuestActors pairs no vertibird either)
 		// Diamond City's wanted posters (misc quests): a dungeon and its bosses, the poster's note made in each game. All
 		// three start with the game and run once, so a game whose own poster names another dungeon keeps its own.
 		Entry{ 0, 0x14182C, "FFDiamondCityWanted01", Share::kShared },
@@ -229,6 +239,10 @@ namespace RadiantRules
 		Offer{ 0x000B926B, 50, 100, Counted::kIfPositive, 0x000E1685 },  // Jackpot: once done before (RRR03Completed)
 		Offer{ 0x000B26C2, 50, 75 },                                      // Mercer Safehouse (its 100 and its 300 set 75)
 		Offer{ 0x000B926A, 50, 100, Counted::kIfZero, 0x000A59AC },      // Weathervane: while no MILA is placed (RRR05MILAsPlaced)
+		Offer{ 0x00186C79, 50, 100 },                                     // Variable Removal
+		Offer{ 0x0013A33D, 50, 75 },                                      // To the Mattresses (its 100 sets 75)
+		Offer{ 0x00145F1A, 50, 100 },                                     // Lost Soul
+		Offer{ 0x0014A34A, 50, 100 },                                     // A Clean Equation
 	};
 
 	inline const Offer* OfferOf(std::uint32_t a_quest)
@@ -1100,5 +1114,222 @@ namespace RadiantRules
 		std::set<Run>                                                            refused;
 		std::map<std::uint32_t, std::vector<Done>>                               done;  // the targets of runs finished here, by quest
 		std::uint32_t                                                            serial = 0;
+	};
+
+	// ---- Runs whose actors are the owner's (Entry::spawned) ------------------------------------------
+
+	// The friends' runs of quests whose actors are made at runtime, shared here and followed: the owner's actors stand
+	// here through our copies of them, forced into the run's aliases as they are placed, and our own actors of the quest
+	// are removed as they come (RadiantSync, Spawns). A run is followed from the moment it is shared here until its
+	// quest stops here, its owner leaves or loads a save (their copies go with them: nothing of theirs stands here any
+	// more; the run stays shared, so their send of the same run when they are back is followed again), or the session
+	// ends. A run's fills are the owner's as last sent (sent again as an actor of theirs is shared). The quests whose
+	// runs were followed here once are remembered (Once) until each stops here: only such a quest is ever run again as
+	// this game's own when it is left hollow (HollowClock); a player's own run never is.
+	class Followed
+	{
+	public:
+		using Time = std::chrono::steady_clock::time_point;
+
+		struct Entry
+		{
+			Run                                run;
+			std::vector<Protocol::RadiantFill> fills;
+			Time                               at{};  // when the run was last sent (followed, or followed again)
+		};
+
+		// The run is shared here with these fills (its start, or a newer send of it): followed from now on. True when it
+		// is new here (another run of the quest, or none, was followed before): what was forced for the old one is forgotten.
+		bool Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills, Time a_now = {})
+		{
+			auto&      entry = quests[a_quest];
+			const bool fresh = entry.run != a_run;
+			entry.run = a_run;
+			entry.fills.assign(a_fills.begin(), a_fills.end());
+			entry.at = a_now;
+			once.insert(a_quest);
+			return fresh;
+		}
+
+		[[nodiscard]] bool Follows(std::uint32_t a_quest) const { return quests.contains(a_quest); }
+
+		// Whether a friend's run of the quest was followed here once, and the quest hasn't stopped here since (whether or
+		// not it is followed now: the owner may be gone, or the session over).
+		[[nodiscard]] bool Once(std::uint32_t a_quest) const { return once.contains(a_quest); }
+
+		[[nodiscard]] const Entry* Find(std::uint32_t a_quest) const
+		{
+			const auto it = quests.find(a_quest);
+			return it != quests.end() ? &it->second : nullptr;
+		}
+
+		[[nodiscard]] const std::map<std::uint32_t, Entry>& Entries() const { return quests; }
+
+		// The player a_origin left the session or loaded a save: their runs are followed no more, but for one they sent
+		// again within a_grace of now (their send came after the load the word is of: the server holds the word of a
+		// second load within RELOAD_TOLD_EVERY of the first, and the owner's send from that load can come first; the run
+		// is one they still have). The quests of those followed no more.
+		std::vector<std::uint32_t> OwnerGone(std::uint32_t a_origin, Time a_now = {}, std::chrono::steady_clock::duration a_grace = {})
+		{
+			std::vector<std::uint32_t> out;
+			for (auto it = quests.begin(); it != quests.end();) {
+				if (it->second.run.origin == a_origin && !(a_grace > std::chrono::steady_clock::duration{} && a_now - it->second.at < a_grace)) {
+					out.push_back(it->first);
+					it = quests.erase(it);
+				} else {
+					++it;
+				}
+			}
+			return out;
+		}
+
+		// The quest stopped here, or was run again as this game's own: its run, and that one was followed, are forgotten.
+		void Ended(std::uint32_t a_quest)
+		{
+			quests.erase(a_quest);
+			once.erase(a_quest);
+		}
+
+		// Nothing is followed any more (the session over, or another server): what was followed once stays known, as the
+		// quests go on here.
+		void Clear() { quests.clear(); }
+
+		// Another world was loaded: nothing of this one's is known (its record says what was shared there).
+		void Reset()
+		{
+			quests.clear();
+			once.clear();
+		}
+
+		[[nodiscard]] std::size_t Size() const { return quests.size(); }
+
+	private:
+		std::map<std::uint32_t, Entry> quests;
+		std::set<std::uint32_t>        once;
+	};
+
+	// The server tells the others of a player's load at most this often (Server::Options::reloadToldEvery), holding the
+	// word of a sooner one until it is up: the owner's send of their runs from that load can come before the word of it.
+	inline constexpr auto RELOAD_TOLD_EVERY = std::chrono::seconds(2);
+	// A run its owner sent again within this of the word of their load is one they still have (Followed::OwnerGone).
+	inline constexpr auto RELOAD_GRACE = RELOAD_TOLD_EVERY + std::chrono::seconds(1);
+
+	// A run's start sent again (its fills changed: an actor of the owner's shared since names itself by its spawn id)
+	// while an earlier send of it waits its turn here, or is being started: the newer fills replace the older, and the
+	// stages it brings join those that came meanwhile (each is set once anyway, Book::Accept). True when it is the same
+	// run (otherwise nothing is changed).
+	inline bool Supersedes(Protocol::RadiantStart& a_pending, const Protocol::RadiantStart& a_newer)
+	{
+		if (a_pending.quest != a_newer.quest || a_pending.playerId != a_newer.playerId || a_pending.serial != a_newer.serial) {
+			return false;
+		}
+		a_pending.fills = a_newer.fills;
+		for (const auto stage : a_newer.stages) {
+			if (std::ranges::find(a_pending.stages, stage) == a_pending.stages.end()) {
+				a_pending.stages.push_back(stage);
+			}
+		}
+		return true;
+	}
+
+	// A job whose target is gone for good (hollow, below) is run again as this game's own once it has been so this long:
+	// a friend's run of it heard meanwhile (the owner back in the session, or their save loaded from inside the run)
+	// is followed again instead, and nothing is lost.
+	inline constexpr auto HOLLOW_JOB_WAIT = std::chrono::minutes(5);
+
+	// What a target of an objective says of the job (ObjectiveHere): nothing when its alias isn't a reference alias of
+	// the quest (a keyword, or none) or holds something that isn't an actor (a place's marker, filled by the start and
+	// standing whatever became of the actors: it is the actors the job is about); else the alias is a target, standing
+	// when its actor is here (enabled, not deleted; alive or dead), gone when it holds nothing or one that isn't.
+	enum class Target : std::uint8_t
+	{
+		kNone,
+		kGone,
+		kStanding,
+	};
+
+	inline Target TargetOf(bool a_refAlias, bool a_held, bool a_actor, bool a_stands)
+	{
+		if (!a_refAlias || (a_held && !a_actor)) {
+			return Target::kNone;
+		}
+		return a_held && a_stands ? Target::kStanding : Target::kGone;
+	}
+
+	// An objective of the quest as it is here (HollowJob): whether it is shown to the player and not done, and of the
+	// aliases it points at, how many are targets (TargetOf) and how many of those stand.
+	struct ObjectiveHere
+	{
+		bool        shown = false;
+		std::size_t targets = 0;
+		std::size_t standing = 0;
+
+		void Add(Target a_target)
+		{
+			targets += a_target != Target::kNone ? 1 : 0;
+			standing += a_target == Target::kStanding ? 1 : 0;
+		}
+	};
+
+	// BGSQuestObjective::state: displayed (1), with completed (2) or failed (4) set once done. Open: shown and not done.
+	inline bool ObjectiveOpen(std::int32_t a_state)
+	{
+		return (a_state & 1) != 0 && (a_state & 6) == 0;
+	}
+
+	// Whether a job with actors made at runtime is hollow here, its player left with an objective and nothing to do it
+	// to: an open objective points at nothing that stands, and none of the actors the quest's own start made stands
+	// either (a_createdStanding: an enabled one, alive or dead, in an alias the start created). Only a run that was
+	// followed looks so: its own actors were removed as they came and its target alias was forced onto the owner's copy,
+	// which no save keeps and which goes with the owner or the session. A job on offer shows no objective; one whose
+	// target was killed has that objective done and the corpse in the alias while the next points at the giver; a run
+	// of this game's own has its actor in the alias its start created, whether or not the target alias is forced yet
+	// (To the Mattresses makes seven bosses and keeps the six it didn't pick disabled: those count for nothing).
+	inline bool HollowJob(std::span<const ObjectiveHere> a_objectives, bool a_createdStanding)
+	{
+		return !a_createdStanding && std::ranges::any_of(a_objectives, [](const ObjectiveHere& a_objective) { return a_objective.shown && a_objective.targets > 0 && a_objective.standing == 0; });
+	}
+
+	// The jobs with actors made at runtime that are hollow here (HollowJob), and since when nothing has stood in for
+	// each. A job's clock runs only while it is hollow with no friend's run of it followed (their actors are what
+	// stands, and a followed job is often hollow: our own actors go as they come, and our copy of the owner's stands only
+	// while their game has it loaded) and no friend's start of it waiting its turn or under way (it fills the aliases
+	// itself), and starts over whenever one does. So a brief absence of the owner (a drop, a load, the session ending
+	// and coming back) never counts the time before it: the wait is a wait for the owner's return. Our run is to be run
+	// again as this game's own (the quest stopped and started again: its start picks a place and makes its actors afresh,
+	// on offer at the giver as a fresh job) once a_friends (a friend's run of it was followed here: a player's own run
+	// never is, whatever it looks like) and the clock reaches HOLLOW_JOB_WAIT.
+	class HollowClock
+	{
+	public:
+		using Time = std::chrono::steady_clock::time_point;
+
+		// The quest polled: hollow or not, with a friend's run standing in or not (followed, or starting), a friend's or
+		// not. True when it is to be run again now.
+		bool Poll(std::uint32_t a_quest, bool a_hollow, bool a_standsIn, bool a_friends, Time a_now)
+		{
+			if (!a_hollow || a_standsIn || !a_friends) {
+				since.erase(a_quest);
+				return false;
+			}
+			const auto start = since.try_emplace(a_quest, a_now).first->second;
+			return a_now - start >= HOLLOW_JOB_WAIT;
+		}
+
+		// How long the quest has been hollow with nothing standing in (none: it isn't, or it is still followed).
+		[[nodiscard]] std::optional<std::chrono::steady_clock::duration> HollowFor(std::uint32_t a_quest, Time a_now) const
+		{
+			const auto it = since.find(a_quest);
+			return it != since.end() ? std::optional{ a_now - it->second } : std::nullopt;
+		}
+
+		// The quest was run again (or stopped): counted from the start if it is ever hollow again.
+		void Forget(std::uint32_t a_quest) { since.erase(a_quest); }
+
+		// Another world was loaded: counted from the load.
+		void Clear() { since.clear(); }
+
+	private:
+		std::map<std::uint32_t, Time> since;
 	};
 }

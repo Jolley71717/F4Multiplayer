@@ -144,6 +144,7 @@ quest.next = 下一个任务
 quest.completed = {player} 完成了 {quest}
 quest.follow_offer = {player} 正在进入 {quest}：{n} 秒内按住 {key} 一同前往
 quest.follow_fight = {player} 正在 {quest} 中战斗：{n} 秒内按住 {key} 前去支援
+radiant.job_back = 好友的{quest}已无任何残留；任务已退回给委托人，可接新任务
 workshop.rescued = 你放在好友容器里的东西已回到你的物品栏
 drops.container_hint = 放进容器的武器和护甲只留在你的游戏里。要送给好友，请在他们附近丢弃
 drops.not_given = 好友无法拾取这件物品：它只留在你游戏里的地上

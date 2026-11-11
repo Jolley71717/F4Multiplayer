@@ -123,9 +123,22 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
 		CHECK(ShareOf(0, railroad) == Share::kShared);
 	}
-	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
-		CHECK(ShareOf(0, railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
+	// Variable Removal, To the Mattresses, Lost Soul, A Clean Equation: a courser, a boss, a captive, a patrol made at runtime
+	// at the place: shared by their run, the owner's actors standing in every game (Entry::spawned).
+	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au }) {
+		const auto entry = Find(0, railroad);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
 	}
+	CHECK(ShareOf(0, 0x00150577) == Share::kLeftAlone);  // High Ground: a vertibird and its crew made at runtime, flown by a scene
+	// Only a shared radiant's actors are the owner's; the ones shared before have none made at runtime that matter.
+	for (const auto& entry : RADIANTS) {
+		CHECK((!entry.spawned || entry.share == Share::kShared));
+	}
+	CHECK(!Find(0, RRR03)->spawned);
+	CHECK(!Find(0, MIN_RECRUIT01)->spawned);
 	// Diamond City's wanted posters (misc quests).
 	CHECK(ShareOf(0, 0x0014182C) == Share::kShared);
 	CHECK(ShareOf(0, 0x0018127D) == Share::kShared);
@@ -151,6 +164,11 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	CHECK(Replaces(RRR04, false, false, false));
 	CHECK(Replaces(RRR05, false, false, false));
 	CHECK(!Replaces(RRR06, false, false, false));
+	// The jobs with actors made at runtime are offered the same way (counted at 50, off at their take).
+	CHECK(Replaces(0x00186C79, false, false, false));   // Variable Removal
+	CHECK(Replaces(0x0013A33D, false, false, false));   // To the Mattresses
+	CHECK(!Replaces(0x00186C79, false, true, false));   // given here: ours goes on
+	CHECK(!Replaces(0x00150577, false, false, false));  // High Ground: left alone
 	CHECK(Replaces(BOSR05, false, false, false));
 	// The Minutemen's (their stop runs a stage of its own), and the radiants left alone or not radiants at all.
 	CHECK(!Replaces(MIN_RECRUIT01, false, false, false));
@@ -183,6 +201,14 @@ TEST("radiants: a Railroad job stopped for a friend's run while on offer is coun
 	// Weathervane only while no MILA is placed.
 	CHECK(LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	CHECK(!LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 2.0f));
+	// Variable Removal, Lost Soul and A Clean Equation count at their 50 and off at their 100; To the Mattresses off at its 75
+	// (which its 100 sets too).
+	CHECK(LeavesCounted(0x00186C79, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(0x00186C79, std::vector<std::uint16_t>{ 0, 50, 100 }, 0.0f));
+	CHECK(LeavesCounted(0x0013A33D, std::vector<std::uint16_t>{ 1, 50 }, 0.0f));
+	CHECK(!LeavesCounted(0x0013A33D, std::vector<std::uint16_t>{ 1, 50, 75, 100 }, 0.0f));
+	CHECK(LeavesCounted(0x00145F1A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(LeavesCounted(0x0014A34A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	// Concierge counts nothing; nor do the others.
 	CHECK(!LeavesCounted(RRR02A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	CHECK(!LeavesCounted(INSTR01, std::vector<std::uint16_t>{ 5 }, 0.0f));
@@ -703,6 +729,230 @@ TEST("radiants: a friend's run taken back from our save takes the stages their g
 	CHECK((starting.OnStart(MIN_RECRUIT01, theirs, false, fills) == Answer::kIgnore));
 	alice.Ended(MIN_RECRUIT01);
 	CHECK((alice.OnStart(MIN_RECRUIT01, theirs, false, fills) == Answer::kIgnore));
+}
+
+TEST("radiants: a friend's run with actors made at runtime is followed with their newest fills until its owner leaves or loads a save")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const Run               bobsNext{ 2, 41 };
+	const Run               carols{ 3, 7 };
+	const std::vector<RadiantFill> first{ { 2, 1, CORVEGA }, { 5, 0, RUNTIME_NPC } };  // the courser not shared yet
+	const std::vector<RadiantFill> shared{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };       // shared since: its spawn id
+	Followed                       followed;
+
+	// Bob's Variable Removal shared here: followed with its fills; sent again with the courser's spawn id, the newest kept.
+	CHECK(followed.Follow(RRR07, bobs, first));
+	REQUIRE(followed.Follows(RRR07));
+	REQUIRE(followed.Find(RRR07) != nullptr);
+	CHECK((followed.Find(RRR07)->fills == first));
+	CHECK(!followed.Follow(RRR07, bobs, shared));  // the same run: what was forced for it stands
+	CHECK((followed.Find(RRR07)->fills == shared));
+	CHECK(followed.Find(RRR07)->run == bobs);
+	// Another run of the quest (Bob loaded a save from before it and rolled it again): a fresh entry.
+	CHECK(followed.Follow(RRR07, bobsNext, first));
+	CHECK(followed.Find(RRR07)->run == bobsNext);
+	CHECK(followed.Follow(RRR09, carols, first));
+	CHECK(followed.Size() == 2);
+
+	// Bob leaves (or loads a save): his runs are followed no more; Carol's goes on. His send of the run when he is back
+	// follows it again.
+	CHECK((followed.OwnerGone(2) == std::vector<std::uint32_t>{ RRR07 }));
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Follows(RRR09));
+	CHECK(followed.OwnerGone(2).empty());
+	CHECK(followed.Follow(RRR07, bobsNext, shared));
+	// The quest stops here: over. The session ends: all over.
+	followed.Ended(RRR07);
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Follows(RRR09));
+	followed.Clear();
+	CHECK(followed.Size() == 0);
+	CHECK(!followed.Follows(RRR09));
+}
+
+TEST("radiants: a quest whose run was a friend's stays known as such after the owner or the session goes, until it stops here or another world is loaded")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR08 = 0x00186C7A;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const Run               carols{ 3, 7 };
+	const std::vector<RadiantFill> fills{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };
+	Followed                       followed;
+	CHECK(!followed.Once(RRR07));  // never followed: a run of this game's own, whatever it looks like
+	followed.Follow(RRR07, bobs, fills);
+	followed.Follow(RRR09, carols, fills);
+	CHECK(followed.Once(RRR07));
+	CHECK(!followed.Once(RRR08));
+	// Bob goes: his run is followed no more, but the quest is known to have been his.
+	followed.OwnerGone(2);
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Once(RRR07));
+	// The session ends: nothing is followed, both are still known.
+	followed.Clear();
+	CHECK(followed.Once(RRR07));
+	CHECK(followed.Once(RRR09));
+	// The quest stops here (or is run again as this game's own): forgotten.
+	followed.Ended(RRR07);
+	CHECK(!followed.Once(RRR07));
+	CHECK(followed.Once(RRR09));
+	// Another world loaded: nothing of this one's is known.
+	followed.Reset();
+	CHECK(!followed.Once(RRR09));
+}
+
+TEST("radiants: the word of an owner's load doesn't drop a run they sent again just before it")
+{
+	using namespace std::chrono_literals;
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const std::vector<RadiantFill> fills{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };
+	const Followed::Time           t0{};
+	Followed                       followed;
+	// Bob loads twice within two seconds: the server holds the word of the second load, and his send of Variable Removal
+	// from that load comes before it. The word of the first load drops his Concierge, sent long before.
+	followed.Follow(RRR09, bobs, fills, t0 - 1min);
+	followed.Follow(RRR07, bobs, fills, t0 - 1s);
+	CHECK((followed.OwnerGone(2, t0, RELOAD_GRACE) == std::vector<std::uint32_t>{ RRR09 }));
+	CHECK(followed.Follows(RRR07));
+	// The word of a load with no send within the grace drops the run; so does the word that he left, whenever he sent it.
+	CHECK((followed.OwnerGone(2, t0 + RELOAD_GRACE, RELOAD_GRACE) == std::vector<std::uint32_t>{ RRR07 }));
+	followed.Follow(RRR07, bobs, fills, t0);
+	CHECK((followed.OwnerGone(2, t0) == std::vector<std::uint32_t>{ RRR07 }));
+	CHECK(RELOAD_GRACE > RELOAD_TOLD_EVERY);
+}
+
+TEST("radiants: a run's start sent again while its first waits its turn keeps the newer fills and every stage")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	Protocol::RadiantStart  waiting{ 2, RRR07, 40, { { 2, 1, CORVEGA }, { 5, 0, RUNTIME_NPC } }, { 10, 50 } };
+	waiting.stages.push_back(100);  // a stage packet that came meanwhile, kept with it
+	const Protocol::RadiantStart newer{ 2, RRR07, 40, { { 2, 1, CORVEGA }, { 5, 0, SPAWN } }, { 10, 50, 100, 200 } };
+	REQUIRE(Supersedes(waiting, newer));
+	CHECK((waiting.fills == newer.fills));
+	CHECK((waiting.stages == std::vector<std::uint16_t>{ 10, 50, 100, 200 }));  // each once, in the order they came
+	// Another run of the quest, another player's, or another quest: not this one's; nothing changes.
+	const auto before = waiting;
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, RRR07, 41, {}, { 300 } }));
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 3, RRR07, 40, {}, { 300 } }));
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, RRR03, 40, {}, { 300 } }));
+	CHECK((waiting == before));
+}
+
+TEST("radiants: a Railroad job whose target is gone for good is run again as this game's own, after a wait, unless a friend's run of it stands in")
+{
+	using namespace std::chrono_literals;
+	using Objectives = std::vector<ObjectiveHere>;
+	// BGSQuestObjective::state: shown and not done is open; done (completed or failed), or not shown yet, is not.
+	CHECK(ObjectiveOpen(1));
+	CHECK(!ObjectiveOpen(0));
+	CHECK(!ObjectiveOpen(2));
+	CHECK(!ObjectiveOpen(3));
+	CHECK(!ObjectiveOpen(4));
+	CHECK(!ObjectiveOpen(5));
+
+	// On offer (no objective shown yet), with its courser made: never hollow. Taken, the courser standing in the alias the
+	// objective points at: not hollow, whether the target alias is forced yet (the created one holds it either way).
+	CHECK(!HollowJob(Objectives{ { false, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { true, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { true, 1, 0 } }, true));
+	// Followed, then the owner's copy gone (the session over, the owner gone, our save loaded alone): the objective points
+	// at nothing, and our own courser was removed: hollow.
+	CHECK(HollowJob(Objectives{ { true, 1, 0 } }, false));
+	// The courser killed: that objective is done, its corpse in the alias or cleaned up since; the next points at the
+	// giver, who stands. Never hollow.
+	CHECK(!HollowJob(Objectives{ { false, 1, 0 }, { true, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { false, 1, 0 }, { true, 1, 1 } }, false));
+	// An objective shown with no target at all (a text one) says nothing.
+	CHECK(!HollowJob(Objectives{ { true, 0, 0 } }, false));
+	// A patrol of three, one still standing: not hollow.
+	CHECK(!HollowJob(Objectives{ { true, 3, 1 } }, false));
+	CHECK(HollowJob(Objectives{ { true, 3, 0 } }, false));
+	CHECK(!HollowJob(Objectives{}, false));
+
+	// What an objective's target says: an alias that isn't a reference alias of the quest (a keyword, or none) says
+	// nothing; so does one that holds something that isn't an actor (the place's marker, which stands whatever became of
+	// the actors). An actor alias is a target: standing with its actor here (alive or dead), gone when it holds nothing
+	// or a disabled or deleted one.
+	CHECK(TargetOf(false, false, false, false) == Target::kNone);
+	CHECK(TargetOf(false, true, true, true) == Target::kNone);
+	CHECK(TargetOf(true, true, false, true) == Target::kNone);
+	CHECK(TargetOf(true, false, false, false) == Target::kGone);
+	CHECK(TargetOf(true, true, true, false) == Target::kGone);
+	CHECK(TargetOf(true, true, true, true) == Target::kStanding);
+	// The courser's alias empty, the place's marker standing: judged by the courser alone.
+	ObjectiveHere judged{ true, 0, 0 };
+	judged.Add(Target::kGone);
+	judged.Add(Target::kNone);
+	judged.Add(Target::kNone);
+	CHECK(judged.targets == 1);
+	CHECK(judged.standing == 0);
+	CHECK(HollowJob(Objectives{ judged }, false));
+	judged.Add(Target::kStanding);
+	CHECK(!HollowJob(Objectives{ judged }, false));
+
+	// Run again once hollow for HOLLOW_JOB_WAIT with nothing standing in all the while: not while a friend's run of it is
+	// followed (their actors stand in) or a friend's start of it waits its turn or is under way (it fills the aliases
+	// itself), and never when no friend's run of it is known (a player's own run, whatever it looks like).
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR08 = 0x00186C7A;
+	const HollowClock::Time t0{};
+	HollowClock             clock;
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(clock.HollowFor(RRR07, t0 + 1s) == 1s);
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + HOLLOW_JOB_WAIT - 1s));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + HOLLOW_JOB_WAIT));
+	clock.Forget(RRR07);  // run again
+	CHECK(!clock.HollowFor(RRR07, t0 + HOLLOW_JOB_WAIT).has_value());
+	// No longer hollow (its target stands again): counted from the start when it is hollow again.
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(!clock.Poll(RRR07, false, false, true, t0 + 4min));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 4min + 30s));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 5min));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + 9min + 30s));
+	clock.Forget(RRR07);
+
+	// The blocker of the second review: a followed job is often hollow (our copy of the owner's courser stands only while
+	// their game has it loaded). Hollow for an hour while followed, then the owner drops: nothing happens before
+	// HOLLOW_JOB_WAIT from the drop, so the owner's return within it (followed again) keeps the job, and a later drop
+	// counts from the start again. The wait is a wait for the owner's return.
+	CHECK(!clock.Poll(RRR07, true, true, true, t0));
+	CHECK(!clock.Poll(RRR07, true, true, true, t0 + 1h));
+	CHECK(!clock.HollowFor(RRR07, t0 + 1h).has_value());
+	const auto dropped = t0 + 1h;
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped));  // the owner drops
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped + HOLLOW_JOB_WAIT - 1s));
+	CHECK(!clock.Poll(RRR07, true, true, true, dropped + HOLLOW_JOB_WAIT - 1s));  // back just in time: followed again
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped + HOLLOW_JOB_WAIT));      // and gone again: a fresh wait
+	CHECK(clock.HollowFor(RRR07, dropped + HOLLOW_JOB_WAIT) == 0s);
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped + 2 * HOLLOW_JOB_WAIT - 1s));
+	CHECK(clock.Poll(RRR07, true, false, true, dropped + 2 * HOLLOW_JOB_WAIT));
+	clock.Forget(RRR07);
+	// A friend's start of it waiting its turn or under way stands in just the same.
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(!clock.Poll(RRR07, true, true, true, t0 + 4min));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 5min));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 9min + 59s));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + 10min));
+	clock.Forget(RRR07);
+
+	// A run of this game's own (no friend's run of the quest known): never, however long.
+	CHECK(!clock.Poll(RRR07, true, false, false, t0));
+	CHECK(!clock.Poll(RRR07, true, false, false, t0 + 1h));
+	CHECK(!clock.HollowFor(RRR07, t0 + 1h).has_value());
+
+	// Two hollow jobs at once (two givers' jobs followed, the session over): each on its own clock.
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(!clock.Poll(RRR08, true, false, true, t0 + 1min));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + HOLLOW_JOB_WAIT));
+	CHECK(!clock.Poll(RRR08, true, false, true, t0 + HOLLOW_JOB_WAIT));
+	CHECK(clock.Poll(RRR08, true, false, true, t0 + HOLLOW_JOB_WAIT + 1min));
+	clock.Clear();  // another world loaded: counted from the load
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 1h));
+	CHECK(clock.HollowFor(RRR07, t0 + 1h) == 0s);
 }
 
 TEST("radiants: a run of a session the player is not in (or where radiants aren't shared) is kept while it runs, and finished in its session once over")

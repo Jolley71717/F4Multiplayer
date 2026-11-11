@@ -43,6 +43,16 @@ namespace Encounters
 	// The owner's run ended (RUN_OVER) or the owner left: a friend's game still running it stops it this much later (its
 	// last stages, sent first, have time to end it the quest's own way).
 	inline constexpr auto RUN_END_WAIT = std::chrono::seconds(5);
+	// ... and longer while one of those last stages still waits in the quest queue (a combat hold keeps a friend's stage
+	// back: QuestSync), so a clean-up stage is set the quest's own way before the stop; but no longer than this.
+	inline constexpr auto RUN_END_LIMIT = std::chrono::seconds(60);
+	// Our run of a quest with none of the actors its start created (hollow: a save's of a run we followed, whose copies were
+	// never saved), shared by nobody, is stopped once it has run so this long with no friend's run of the quest heard (one
+	// heard replaces it once our player is near): nobody's actors will stand for it, and its objective would stay for good.
+	inline constexpr auto HOLLOW_WAIT = LISTEN_FOR;
+	// A followed run's alias that could not be forced onto a copy (the script VM would not take the call) is asked again on
+	// later polls, this many times in all for one copy.
+	inline constexpr std::uint32_t MAX_FORCE_TRIES = 3;
 	// A stage no quest has (the editor's stages go to 9999): sent under a run as its owner's quest stops, after its last
 	// stages. No new message type: an older game drops an encounter's run stage unread.
 	inline constexpr std::uint16_t RUN_OVER = 0xFFFF;
@@ -62,6 +72,79 @@ namespace Encounters
 	inline bool RunStands(std::optional<bool> a_bookStands, Clock::duration a_running)
 	{
 		return a_bookStands ? *a_bookStands : a_running >= Clock::duration{ STOP_WINDOW };
+	}
+
+	// Whether our game's run of a quest that is hollow (a_hollow: every alias its start created is empty, as a save's of a
+	// run we followed is after the load) and that no run in the book shares is to be stopped now: it has run so for
+	// HOLLOW_WAIT (a_running: since it was first seen running after the load) with no friend's run of the quest heard
+	// (a_heard: one heard makes way for theirs once our player is near, Verdict::kStopOurs). In a session or alone.
+	inline bool EndsHollow(bool a_hollow, bool a_heard, Clock::duration a_running)
+	{
+		return a_hollow && !a_heard && a_running >= HOLLOW_WAIT;
+	}
+
+	// A followed run's alias that names one of the owner's actors, as our game forces it onto its copies (RefillsOf,
+	// NoteForced): the copy last forced into it (or given up on after MAX_FORCE_TRIES failed asks), and the asks that
+	// failed for the copy being tried now. Used for an encounter's run (RunBook) and a radiant's with actors made at
+	// runtime (RadiantRules::Entry::spawned, RadiantSync) alike.
+	struct AliasForce
+	{
+		std::uint32_t alias = 0;
+		std::uint32_t copy = 0;
+		std::uint32_t trying = 0;
+		std::uint32_t tries = 0;
+	};
+
+	// A followed run's aliases that name the owner's actors (a_fills: the run's, as their game sent them) and do not hold
+	// our copy of the actor placed now: each (alias, copy) to force in (then NoteForced, with the outcome): once per copy
+	// when the ask is taken (a copy placed again after a save, or after our player came back, is a new reference), again
+	// on later polls when it is not, up to MAX_FORCE_TRIES. a_copy(spawn id): our copy placed now (0: none); a_here(alias):
+	// what fills it here (0: none).
+	template <class CopyFn, class HereFn>
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> RefillsOf(std::span<const Protocol::RadiantFill> a_fills, std::span<const AliasForce> a_forced, CopyFn&& a_copy, HereFn&& a_here)
+	{
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+		for (const auto& fill : a_fills) {
+			if (fill.kind != 0 || fill.form == Protocol::RADIANT_UNSHARED_REF || !Protocol::IsSpawnRef(fill.form)) {
+				continue;
+			}
+			const std::uint32_t local = a_copy(fill.form);
+			if (local == 0) {
+				continue;
+			}
+			const auto it = std::ranges::find(a_forced, fill.alias, &AliasForce::alias);
+			if (a_here(fill.alias) != local && (it == a_forced.end() || it->copy != local)) {
+				out.emplace_back(fill.alias, local);
+			}
+		}
+		return out;
+	}
+
+	// The outcome of an ask RefillsOf gave: taken (a_ok), the alias holds the copy from now on (never asked for it again);
+	// not taken, it is asked again next time, and given up on after MAX_FORCE_TRIES (the alias is left as it is until
+	// another copy is placed).
+	inline void NoteForced(std::vector<AliasForce>& a_forced, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
+	{
+		auto it = std::ranges::find(a_forced, a_alias, &AliasForce::alias);
+		if (it == a_forced.end()) {
+			a_forced.push_back({ a_alias });
+			it = std::prev(a_forced.end());
+		}
+		if (a_ok) {
+			it->copy = a_copy;
+			it->trying = 0;
+			it->tries = 0;
+			return;
+		}
+		if (it->trying != a_copy) {
+			it->trying = a_copy;
+			it->tries = 0;
+		}
+		if (++it->tries >= MAX_FORCE_TRIES) {
+			it->copy = a_copy;  // given up on
+			it->trying = 0;
+			it->tries = 0;
+		}
 	}
 
 	// One run: the player whose game rolled it and that game's number for it (as RadiantRules::Run).
@@ -122,8 +205,8 @@ namespace Encounters
 			Clock::time_point                  since{};  // heard, announced or started
 			std::optional<Clock::time_point>   near;     // when our player first came near it
 			std::optional<Clock::time_point>   ended;    // a friend's: when its owner's run ended (RUN_OVER) or the owner left
-			std::vector<std::pair<std::uint32_t, std::uint32_t>> forced;  // a friend's followed: alias, the copy last forced into it
-			bool                               resend = false;           // ours: to be sent again (someone joined or reloaded)
+			std::vector<AliasForce>            forced;   // a friend's followed: its aliases forced onto our copies (Refills, NoteForced)
+			bool                               resend = false;  // ours: to be sent again (someone joined or reloaded)
 		};
 
 		// a_seed: where this game's run numbers start (RadiantRules::SerialSeed).
@@ -183,6 +266,9 @@ namespace Encounters
 		std::vector<RunKey> Report(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			std::vector<RunKey> out;
+			if (a_stage == RUN_OVER) {
+				return out;  // the end marker's value is no stage of a run's (a quest's own 65535, had one such, would read as its end)
+			}
 			for (auto& run : runs) {
 				if (run.quest == a_quest && (run.state == State::kOurs || run.state == State::kFollowing) && !std::ranges::contains(run.done, a_stage)) {
 					AddDone(run, std::span{ &a_stage, 1 });
@@ -265,7 +351,9 @@ namespace Encounters
 			return true;
 		}
 
-		// A friend left the session: their runs we follow end as their RUN_OVER would end them; those heard are dropped.
+		// A friend left the session, or their game loaded a save (its book is cleared by the load, so no RUN_OVER comes for
+		// the runs it had; what it runs after the load is announced anew): their runs we follow end as their RUN_OVER
+		// would end them; those heard are dropped.
 		void OwnerLeft(std::uint32_t a_origin, Clock::time_point a_now)
 		{
 			std::vector<RunKey> heard;
@@ -284,16 +372,29 @@ namespace Encounters
 			}
 		}
 
-		// Friends' runs whose owner's ended RUN_END_WAIT ago: their quests to stop here if still running (then Drop).
-		[[nodiscard]] std::vector<RunKey> ToEnd(Clock::time_point a_now) const
+		// Friends' runs whose owner's ended RUN_END_WAIT ago: their quests to stop here if still running (then Drop). One
+		// whose quest still has a friend's stage waiting to be set here (a_queued(quest): the owner's last stages, held
+		// back by a combat hold) waits for it, up to RUN_END_LIMIT after the end: the stop would drop the stage, whose
+		// fragment may be the quest's own clean-up.
+		template <class QueuedFn>
+		[[nodiscard]] std::vector<RunKey> ToEnd(Clock::time_point a_now, QueuedFn&& a_queued) const
 		{
 			std::vector<RunKey> out;
 			for (const auto& run : runs) {
-				if (run.ended && a_now - *run.ended >= RUN_END_WAIT) {
-					out.push_back(run.key);
+				if (!run.ended || a_now - *run.ended < RUN_END_WAIT) {
+					continue;
 				}
+				if (a_now - *run.ended < RUN_END_LIMIT && a_queued(run.quest)) {
+					continue;
+				}
+				out.push_back(run.key);
 			}
 			return out;
+		}
+
+		[[nodiscard]] std::vector<RunKey> ToEnd(Clock::time_point a_now) const
+		{
+			return ToEnd(a_now, [](std::uint32_t) { return false; });
 		}
 
 		// Someone joined, or a friend's game loaded a save: our runs are to be sent again, each once its actors are shared
@@ -316,35 +417,19 @@ namespace Encounters
 		}
 
 		// A followed run's aliases that name the owner's actors and do not hold our copy of the actor placed now: each
-		// (alias, copy) to force in, once per copy (a copy placed again after a save, or after our player came back, is a
-		// new reference). a_copy(spawn id): our copy placed now (0: none); a_here(alias): what fills it here (0: none).
+		// (alias, copy) to force in, then NoteForced with the outcome (Encounters::RefillsOf, for a run followed here).
 		template <class CopyFn, class HereFn>
 		static std::vector<std::pair<std::uint32_t, std::uint32_t>> Refills(Run& a_run, CopyFn&& a_copy, HereFn&& a_here)
 		{
-			std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
 			if (a_run.state != State::kFollowing) {
-				return out;
+				return {};
 			}
-			for (const auto& fill : a_run.fills) {
-				if (fill.kind != 0 || fill.form == Protocol::RADIANT_UNSHARED_REF || !Protocol::IsSpawnRef(fill.form)) {
-					continue;
-				}
-				const std::uint32_t local = a_copy(fill.form);
-				if (local == 0) {
-					continue;
-				}
-				auto it = std::ranges::find(a_run.forced, fill.alias, &std::pair<std::uint32_t, std::uint32_t>::first);
-				if (it == a_run.forced.end()) {
-					a_run.forced.emplace_back(fill.alias, 0u);
-					it = std::prev(a_run.forced.end());
-				}
-				const std::uint32_t here = a_here(fill.alias);
-				if (here != local && it->second != local) {
-					out.emplace_back(fill.alias, local);
-				}
-				it->second = local;
-			}
-			return out;
+			return RefillsOf(a_run.fills, a_run.forced, std::forward<CopyFn>(a_copy), std::forward<HereFn>(a_here));
+		}
+
+		static void NoteForced(Run& a_run, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
+		{
+			Encounters::NoteForced(a_run.forced, a_alias, a_copy, a_ok);
 		}
 
 		// A run is done with: forgotten, and a friend's never followed again (its origin may send it again).
