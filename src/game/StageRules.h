@@ -7,9 +7,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 // What some quest stages' scripts do, for setting another player's stages here. Kept free of the
 // game so it can be tested.
@@ -524,6 +526,10 @@ namespace StageRules
 		{ 3, 0x000804, 3, kMoves, 100 },
 		{ 3, 0x000804, 4, kMoves, 20 },
 		{ 3, 0x000804, 500, 0, 50 },
+		{ 3, 0x000805, 1, kMoves, 20 },  // DLC04MQ05 (Power Play, SAFE's for its outcome; its gang globals carried: CARRIES): MoveTo DLC04MQ05Start, then 5 and 8
+		{ 3, 0x000805, 2, kMoves, 20 },  // MoveTo DLC04MQ05Start
+		{ 3, 0x000805, 3, kMoves, 20 },  // MoveTo DLC04MQ05PPTest
+		{ 3, 0x000805, 8, kMoves | kHostile, 0 },  // the player an enemy: SetPlayerEnemy the snubbed gang's faction (by dlc04:dlc04mq05questscript.DLC04GangSetup, which reads the carried DLC04EnemyGang)
 		{ 3, 0x000806, 75, kPays, 0 },  // DLC04MS01: a Nuka-Cola Quartz
 		{ 3, 0x000806, 400, 0, 50 },
 		{ 3, 0x000806, 450, 0, 20 },
@@ -1189,5 +1195,143 @@ namespace StageRules
 			return Verdict::kWarn;
 		}
 		return *a_now.warned >= WARNING ? Verdict::kSet : Verdict::kLater;
+	}
+
+	// ---- globals carried with a stage -----------------------------------------------------------------------------------
+
+	// A stage whose script decides by globals each game keeps for itself. Nuka-World's Power Play (DLC04MQ05) picks the gang
+	// that turns on the player from the three gangs' ranks (DLC04MQ05QuestScript.DLC04MakeEnemy: the rank the player snubbed,
+	// 3, else the lowest combination), writes DLC04EnemyGang, and from then on its stages, the park handler's gang switch
+	// (DLC04ParkPopulationHandler 10 -> DLC04PPHScript.GangSwitch: the enemy gang and the five parks' DLC04MQ03Claimed*
+	// owners) and DLC04GangSetup (the enemy gang's raider settlements cleared, its faction set on the player) read it. Set
+	// as it came, a friend's stage ran those scripts with the friend's own globals: the wrong gang turned hostile and the
+	// wrong raider settlements lost their owner. So the stage carries the chooser's values (Protocol::QuestStage::globals:
+	// the reporting game attaches its own at the time; the server keeps them with the stage for a joiner) and the receiving
+	// game writes them just before it sets the stage (PlanCarry, DoCarry; QuestSync), so the script decides as it did for
+	// the chooser: the chooser decides for both. Form IDs in the quest's file. Which stages read what: tools/questscan.ps1
+	// -Globals -Quests '^DLC04MQ0[45]$' (the walk of each stage's fragment, the functions it calls and the stages it sets,
+	// for GetValue/GetValueInt on a global property); the per-game globals among them are picked by hand, as the rows say.
+	// DLC04MQ04 500 (Home Sweet Home's end, a side quest shared by its type with any sQuests) sets DLC04MQ05 5 and so runs
+	// DLC04MakeEnemy in every game before a friend's MQ05 5 could arrive: it carries the ranks too, so with sQuests = story,
+	// which shares MQ04 and not MQ05, the gang is the chooser's all the same and each then plays Power Play against it.
+	// MQ05's quickstarts 0-3 (a rank set to 3, a MoveTo a debug marker, then 5 and 8) are never set in a game played
+	// through and are kMoves rows; DLC04PostQuestFlags' 0-2 (console set-ups that write every gang global) are no shared
+	// quest's. DLC04MQ05 70 and 75 read DLC04OpKills, the Operators the player killed: a count each game keeps, not a
+	// choice, left alone. A stage of MQ05 is set here only once DLC04MQ04 500 is done here (needs*): before it the parks
+	// are not handed out and MQ05 isn't the player's, and a friend's stage would start it with their choice nonetheless.
+	inline constexpr std::size_t MAX_CARRIED = 6;
+	struct Carried
+	{
+		std::uint8_t                           file;   // File
+		std::uint32_t                          quest;  // form ID in its file
+		std::uint16_t                          stage;
+		std::array<std::uint32_t, MAX_CARRIED> globals;     // the globals its script reads, in its file (0: unused)
+		std::uint32_t                          needsQuest;  // a stage that must be done here before it is set (0: none)
+		std::uint16_t                          needsStage;
+	};
+	// DLCNukaWorld.esm: DLC04RankPack 00880C, DLC04RankDisciples 00880D, DLC04RankOperators 00880E, DLC04EnemyGang 00D370,
+	// DLC04MQ03ClaimedGZ 03E418, DLC04MQ03ClaimedDRG 03E419, DLC04MQ03ClaimedKK 03E41A, DLC04MQ03ClaimedBP 03E41B,
+	// DLC04MQ03ClaimedSA 03E41C; DLC04MQ04 000804, DLC04MQ05 000805. Sorted by file, quest and stage.
+	inline constexpr Carried CARRIES[] = {
+		{ 3, 0x000804, 500, { 0x00880C, 0x00880D, 0x00880E }, 0, 0 },  // DLC04MQ04: sets DLC04MQ05 5 (DLC04MakeEnemy reads the ranks)
+		{ 3, 0x000805, 5, { 0x00880C, 0x00880D, 0x00880E }, 0x000804, 500 },  // DLC04MQ05: DLC04MakeEnemy picks DLC04EnemyGang from the ranks
+		{ 3, 0x000805, 8, { 0x00D370, 0x03E418, 0x03E419, 0x03E41A, 0x03E41B, 0x03E41C }, 0x000804, 500 },  // GangSwitch (the parks' owners), DLC04GangSetup and DLC04PostQuestFlags 10's ZoneReset read the enemy gang and the five Claimed
+		{ 3, 0x000805, 20, { 0x00D370 }, 0x000804, 500 },   // the enemy boss's scene by DLC04EnemyGang
+		{ 3, 0x000805, 120, { 0x00D370 }, 0x000804, 500 },  // DLC04DialogueSettlement 600/610/620 by DLC04EnemyGang
+		{ 3, 0x000805, 255, { 0x00D370 }, 0x000804, 500 },  // FinalRank, and DLC04MQ05Cleanup started (its outposts alias fills by the enemy gang)
+	};
+
+	inline const Carried* FindCarried(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
+		const auto it = std::ranges::lower_bound(CARRIES, key, {}, [](const Carried& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
+		return it != std::end(CARRIES) && std::tuple{ it->file, it->quest, it->stage } == key ? &*it : nullptr;
+	}
+
+	// A row's globals, without the unused slots.
+	inline std::span<const std::uint32_t> GlobalsOf(const Carried& a_row)
+	{
+		std::size_t n = 0;
+		while (n < a_row.globals.size() && a_row.globals[n] != 0) {
+			++n;
+		}
+		return { a_row.globals.data(), n };
+	}
+
+	// A global's value as it came with a stage, or as it is to be written: the full form ID (the quest's file's load bits on
+	// the row's), as the game has it.
+	struct GlobalValue
+	{
+		std::uint32_t global = 0;
+		float         value = 0.0f;
+
+		bool operator==(const GlobalValue&) const = default;
+	};
+
+	// What to do with a friend's stage for the globals it carries (or should): the writes to make, in the row's order, before
+	// the stage is set; or that the stage waits or is skipped instead.
+	struct Carry
+	{
+		enum class Do : std::uint8_t
+		{
+			kSet,   // write `writes` in order, then set the stage
+			kWait,  // not yet: the row's needs* stage isn't done here; its quest waits, judged again later
+			kSkip,  // never: the stage came without a value its row names (an older session file's, or a sender whose game
+			        // lacks the global): set as it came, its script would decide by this game's own
+		};
+		Do                       what = Do::kSet;
+		std::vector<GlobalValue> writes;
+		std::size_t              dropped = 0;  // values that came with it that no row here names: never written
+		const char*              why = nullptr;
+
+		bool operator==(const Carry&) const = default;
+	};
+
+	// a_row: the stage's row here (none: the stage carries nothing a script here reads; whatever came is dropped). a_carried:
+	// what came with the stage. a_file: the quest's load bits (the form ID & 0xFF000000), which the row's globals and the
+	// values' IDs share. a_needDone: the row's needs* stage is done here (not looked at without one).
+	inline Carry PlanCarry(const Carried* a_row, std::span<const GlobalValue> a_carried, std::uint32_t a_file, bool a_needDone)
+	{
+		Carry plan;
+		if (!a_row) {
+			plan.dropped = a_carried.size();
+			return plan;
+		}
+		if (a_row->needsQuest != 0 && !a_needDone) {
+			plan.what = Carry::Do::kWait;
+			plan.why = "the stage its quest needs first isn't done here";
+			return plan;
+		}
+		const auto named = GlobalsOf(*a_row);
+		for (const auto global : named) {
+			const auto id = (a_file & 0xFF000000u) | global;
+			const auto it = std::ranges::find(a_carried, id, &GlobalValue::global);
+			if (it == a_carried.end()) {
+				plan.what = Carry::Do::kSkip;
+				plan.why = "it came without a global its script reads";
+				plan.writes.clear();
+				return plan;
+			}
+			plan.writes.push_back({ id, it->value });
+		}
+		for (const auto& value : a_carried) {
+			if (std::ranges::find(named, value.global & 0x00FFFFFFu) == named.end() || (value.global & 0xFF000000u) != (a_file & 0xFF000000u)) {
+				++plan.dropped;
+			}
+		}
+		return plan;
+	}
+
+	// Does a plan: each write in order, then the stage. Nothing for a plan that waits or skips.
+	template <class Write, class Set>
+	void DoCarry(const Carry& a_plan, Write a_write, Set a_set)
+	{
+		if (a_plan.what != Carry::Do::kSet) {
+			return;
+		}
+		for (const auto& write : a_plan.writes) {
+			a_write(write.global, write.value);
+		}
+		a_set();
 	}
 }

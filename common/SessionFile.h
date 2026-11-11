@@ -67,7 +67,13 @@ namespace SessionFile
 	// 44 adds to 43 the deaths the host's own game reported (Snapshot::hostDeaths, a count and the ids after healable), which
 	// the server leaves out of the world state it sends that game: its save is the truth about its own kills. A session with
 	// none is written as before (43 or older); a file before 44 reads as one with none: every death goes to every game.
-	inline constexpr std::uint16_t FORMAT = 44;
+	// 45 adds to 44 the globals some of the session's stages carry (Protocol::QuestStage::globals: the chooser's values of
+	// what the stage's script reads, Nuka-World's gang choice; after each world state's stages, before its pickers:
+	// Protocol::EncodeKeptWorldState), so a joiner caught up from a restarted server's session gets them with the stage. A
+	// session with no such stage is written as before (44 or older); a file before 45 reads as one whose stages carry
+	// none, and a stage that needed them is then not set in a friend's game (StageRules::PlanCarry).
+	inline constexpr std::uint16_t FORMAT = 45;
+	inline constexpr std::uint16_t STAGE_GLOBALS = 45;
 	inline constexpr std::uint16_t HOST_DEATHS = 44;
 	inline constexpr std::uint16_t PICKERS = 43;
 	inline constexpr std::uint16_t WORKSHOP_CHARACTERS = 42;
@@ -88,7 +94,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 45 (35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 46 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -107,14 +113,18 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasWorkshopCharacters(std::uint16_t a_format) { return a_format >= WORKSHOP_CHARACTERS; }
 	[[nodiscard]] constexpr bool HasPickers(std::uint16_t a_format) { return a_format >= PICKERS; }
 	[[nodiscard]] constexpr bool HasHostDeaths(std::uint16_t a_format) { return a_format >= HOST_DEATHS; }
+	[[nodiscard]] constexpr bool HasStageGlobals(std::uint16_t a_format) { return a_format >= STAGE_GLOBALS; }
 
-	// The layout a snapshot is written in: the oldest that holds it, so a session without deaths the host's game reported
-	// (a_hostDeaths), known pickers (a_pickers), workshop characters or lost pieces (a_workshop), NPC rolls (a_rolls), gifts
-	// or drops with known characters (a_characters) or shared storage is still one an older build reads.
-	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false, bool a_pickers = false, bool a_hostDeaths = false)
+	// The layout a snapshot is written in: the oldest that holds it, so a session without a stage that carries globals
+	// (a_stageGlobals), deaths the host's game reported (a_hostDeaths), known pickers (a_pickers), workshop characters or
+	// lost pieces (a_workshop), NPC rolls (a_rolls), gifts or drops with known characters (a_characters) or shared storage
+	// is still one an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false, bool a_pickers = false, bool a_hostDeaths = false,
+		bool a_stageGlobals = false)
 	{
-		return a_hostDeaths ? HOST_DEATHS :
-		       a_pickers    ? PICKERS :
+		return a_stageGlobals ? STAGE_GLOBALS :
+		       a_hostDeaths   ? HOST_DEATHS :
+		       a_pickers      ? PICKERS :
 		       a_workshop   ? WORKSHOP_CHARACTERS :
 		       a_rolls      ? ROLLS :
 		       a_characters ? CHARACTERS :
@@ -209,9 +219,10 @@ namespace SessionFile
 			return a_item.character != 0 || a_item.op == Protocol::WorkshopOp::kLost;
 		});
 		const bool pickers = std::ranges::any_of(a_snapshot.pickers, [](std::uint32_t a_id) { return a_id != 0; });
+		const bool stageGlobals = std::ranges::any_of(a_snapshot.questStages, [](const Protocol::QuestStage& a_stage) { return !a_stage.globals.empty(); });
 		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
 			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop, pickers,
-			!a_snapshot.hostDeaths.empty());
+			!a_snapshot.hostDeaths.empty(), stageGlobals);
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -254,10 +265,8 @@ namespace SessionFile
 			if (HasPickers(layout)) {
 				world.pickers = slice(a_snapshot.pickers, offset);
 				world.pickers.resize(world.pickedUp.size(), 0);  // one for each (a list of the wrong length: the rest not known)
-				packet(Protocol::EncodeKeptWorldState(world));
-			} else {
-				packet(Protocol::Encode(world));
 			}
+			packet(Protocol::EncodeKeptWorldState(world, HasStageGlobals(layout), HasPickers(layout)));
 		}
 		if (a_snapshot.worldTime) {
 			packet(Protocol::Encode(*a_snapshot.worldTime, Protocol::MessageType::kWorldTime));
@@ -375,7 +384,7 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kWorldState: {
-				const auto world = HasPickers(version) ? Protocol::DecodeKeptWorldState(packet) : Protocol::DecodeWorldState(packet);
+				const auto world = Protocol::DecodeKeptWorldState(packet, HasStageGlobals(version), HasPickers(version));
 				if (!world) {
 					return std::nullopt;
 				}

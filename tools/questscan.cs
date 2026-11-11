@@ -701,6 +701,9 @@ public static class MoveScan
         // Whether a script function called is walked into (by its name): SafeScan's walk of an ALLOW_OUTCOMES quest does not
         // go into what a settlement's own scripts do once it is given or taken (SetOwnedByPlayer) or gains or loses a settler.
         public Func<string, bool> Enter = name => true;
+        // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
+        // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
+        public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -725,7 +728,7 @@ public static class MoveScan
                     var own = Own(i.Args[1]);
                     var target = own ? a_quest : QuestOf(i.Args[1]);
                     if (target == null) continue;
-                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) ? null : Target(target.Item1, target.Item2, i.Args[0]);
+                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) || Allows(a_quest, target.Item1, i.Args[0]) ? null : Target(target.Item1, target.Item2, i.Args[0]);
                     if (itself != null) { why = f.Obj + "." + f.Name + ": " + itself; break; }
                     if (!own && !Follow(target.Item1, target.Item2)) continue;
                     var list = new List<int>();
@@ -1892,7 +1895,7 @@ public static class SafeScan
         if ((q.Flags & 0x101) == 0) return "repeatable";
         var aliases = new Dictionary<int, GearScan.Alias>();
         foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
-        if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        if (!ALLOW_FILLS.ContainsKey(q.Edid) && q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
         return null;
     }
 
@@ -1900,7 +1903,7 @@ public static class SafeScan
     // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
     // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
     // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
-    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Allows = AllowedStart };
     // The same walk for an ALLOW_OUTCOMES quest: what its stages do but turn a faction hostile or friendly or give or take
     // a settlement (a companion, affinity, the inventory emptied, a story event or a quest each game runs its own way still
     // leave it out). It does not go into the workshop scripts a settlement given or taken (SetOwnedByPlayer) or a settler
@@ -1910,7 +1913,7 @@ public static class SafeScan
     static readonly HashSet<string> SETTLERS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
     static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
-        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
+        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart };
     // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
     // settlement given or taken, or a settler added or removed (the first found).
     static readonly MoveScan.Walk outcome = new MoveScan.Walk {
@@ -1929,10 +1932,35 @@ public static class SafeScan
     // and RuleScan makes a stage that turns a faction on the player kMoves (StageRules.h). These are the ones
     // with objectives (SAFE). Read and left out: DLC04DialogueHubologists (its other stages are each player's own
     // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
-    // bonus spells), and three the rule still leaves out for another stage, a quest each game runs its own way it
-    // starts (DLC04MQ05's park power and clean-up, DLC04DialogueHarvey 1000's DLC04REObjectCT03,
+    // bonus spells), and two the rule still leaves out for another stage, a quest each game runs its own way it
+    // starts (DLC04DialogueHarvey 1000's DLC04REObjectCT03,
     // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST). The objective-less ones (SILENT's: DN084, DN117, the
     // kick-outs, Far Harbor's endings) come in a later change.
+    // A start or SetStage of a quest each game runs its own way (Target: a radiant, PER_GAME, a repeatable quest or one with
+    // an alias each game fills) that is let through all the same, by the calling quest and the quest it starts ("from to"),
+    // with why, read in the script that makes the call: its stages are then walked as any.
+    static readonly Dictionary<string, string> ALLOW_STARTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DLC04MQ05 DLC04RaidSubdue", "DLC04GangSetup (Power Play's 8) sets a raid's 850 only if the raid is running (IsRunning) against the gang made the enemy: it ends the raid, each game's own as PER_GAME; a raid not running is never started by it" },
+        { "DLC04MQ05 DLC04RaidChaseOff", "the same" },
+        { "DLC04MQ05 DLC04RaidWipeOut", "the same" },
+        { "DLC04MQ05 DLC04RaidCoerce", "the same" },
+        { "DLC04GZTrackingQuest DLC04GZNukaGalaxy", "DLC04GZTrackingQuest 2000 (set by ParkPowerOn, Power Play's 6 and 120: Nuka-World's power on) sets the Nuka-Galaxy ride's 2000: its lighting and power markers on, the ride's pre-power scenes stopped; the parks' power is each game's own (DLC04PowerTracker is DENIED), and a friend's 120 runs ParkPowerOn there as the player's own would" },
+        { "DLC04MQ05 DLC04_NUK001_CrowdManager", "DLC04GangSetup sets Nuka-Town's crowd manager's 11 (the crowd without the enemy gang) only if it is running (IsRunning): the crowd is each game's own, as ambient scenes are; not running, it is never started by it" },
+    };
+
+    static bool AllowedStart(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to, string a_call)
+    {
+        return a_from != null && ALLOW_STARTS.ContainsKey(a_from.Item1.Edid + " " + a_to.Edid);
+    }
+
+    // The quests with an alias filled by its conditions (an alias each game fills, as Why and EachGames read them) whose
+    // fill is the same in every game all the same, by editor ID with why: the conditions read a global that comes with
+    // the stage that starts the quest (src/game/StageRules.h CARRIES), so every game fills it as the chooser's did. Why
+    // and EachGames take them as fixed, and a Start of one is walked as any (Target).
+    static readonly Dictionary<string, string> ALLOW_FILLS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DLC04MQ05Cleanup", "its EnemyOutposts alias (a collection by conditions) holds the enemy gang's raider outposts, by DLC04EnemyGang, which DLC04MQ05 255, the stage that starts it, carries (StageRules::CARRIES): the same outposts in every game" },
+    };
+
     static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "DN036", "Egret Tours Marina: 500 turns Phyllis on the player, 550/600/700 (each ending) give the player the marina's workshop" },
         { "DN049", "the robot-run shops: each shop's robots turned on the player (x49), made peaceful (x50), shut down (x55) or destroyed (x56) by the player's choices; 711's pre-war money is kPays" },
@@ -1944,6 +1972,7 @@ public static class SafeScan
         { "DLC03CoA_DialogueNucleus", "the Nucleus's talks: 70 sets DLC03CoA_Kickout 700, the Children of Atom turned on the player, as the story's kick-outs" },
         { "DLC04_KiddieKingdomMain", "Kiddie Kingdom: 740 starts the fight with Oswald (his faction on the player); 600 and 700 run the quest script's one-time Init, which sets the hostile ghouls on the player as they are anyway" },
         { "DLC04DialogueSettlement", "Nuka-Town's traders: 700 makes the traders and visitors the hub raiders' enemies and the player's allies (the raiders' end); 110's bloodworm meat is kPays" },
+        { "DLC04MQ05", "Power Play: 8 turns the gang the player snubbed on them and clears its raider settlements' owners (DLC04GangSetup, by DLC04EnemyGang); the gang is the chooser's in every game, as the stage carries the globals its scripts decide by (src/game/StageRules.h CARRIES: DLC04MQ04 500 and MQ05 5 the three ranks DLC04MakeEnemy reads, 8 the enemy gang and the parks' DLC04MQ03Claimed*, 20/120/255 the enemy gang)" },
     };
 
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
@@ -1987,7 +2016,7 @@ public static class SafeScan
         if ((q.Flags & 0x101) == 0) return "repeatable";
         var aliases = new Dictionary<int, GearScan.Alias>();
         foreach (var a in q.Aliases) if (!aliases.ContainsKey(a.Id)) aliases[a.Id] = a;
-        if (q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
+        if (!ALLOW_FILLS.ContainsKey(q.Edid) && q.Aliases.Any(a => PerGame(aliases, a.Id, 0))) return "an alias each game fills";
         var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
@@ -2231,6 +2260,15 @@ public static class SafeScan
         }
         sb.AppendLine(string.Format("# outcomes shared with the story (ALLOW_OUTCOMES): {0} quests, {1} SAFE, {2} SILENT", lines.Count, safe, silent));
         foreach (var l in lines) sb.AppendLine(l);
+        sb.AppendLine(string.Format("# starts let through (ALLOW_STARTS): {0}", ALLOW_STARTS.Count));
+        foreach (var kv in ALLOW_STARTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
+        sb.AppendLine(string.Format("# fills taken as fixed (ALLOW_FILLS): {0}", ALLOW_FILLS.Count));
+        foreach (var kv in ALLOW_FILLS)
+        {
+            string verdict = null;
+            foreach (var v in a_verdicts) if (MoveScan.perFile[v.Key.Item1][v.Key.Item2].Edid.Equals(kv.Key, StringComparison.OrdinalIgnoreCase)) verdict = v.Value;
+            sb.AppendLine(string.Format("#   {0} ({1}): {2}", kv.Key, verdict == null ? "not found" : verdict == "" ? "SAFE" : verdict == "silent" ? "SILENT" : "left out, " + verdict, kv.Value));
+        }
         return sb.ToString();
     }
 
@@ -2286,6 +2324,46 @@ public static class SafeScan
             }
         }
         sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
+        return sb.ToString();
+    }
+}
+
+// Which globals each stage of the shared quests reads (GetValue/GetValueInt on a global property), itself or through
+// the functions it calls and the stages it sets or starts, walked as -Moves walks them: what src/game/StageRules.h's
+// CARRIES was made from (the per-game globals among them, Nuka-World's gang ranks and parks, picked by hand; the rest,
+// GameDaysPassed, a park's star-core count, are the game's own bookkeeping or the same in every game). With a_quests
+// (a regular expression on the editor ID), those quests whether shared or not. One line per stage: file, form ID,
+// editor ID, shared how, stage, the chain to the read and the globals' names.
+public static class GlobalScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+
+    static string Reads(List<GearScan.Instr> code)
+    {
+        var names = new List<string>();
+        foreach (var i in code)
+            if (i.Op == 23 && (Is(i.Args[0], "GetValue") || Is(i.Args[0], "GetValueInt")) && !i.Args[1].StartsWith("temp", StringComparison.OrdinalIgnoreCase) && !i.Args[1].StartsWith("::temp", StringComparison.OrdinalIgnoreCase))
+                names.Add(Bare(i.Args[1]));
+        return names.Count == 0 ? null : "reads " + string.Join(",", names.Distinct().ToArray());
+    }
+
+    public static string Run(string a_quests)
+    {
+        var walk = new MoveScan.Walk { Direct = Reads };
+        var sb = new StringBuilder();
+        sb.AppendLine("# file\tid\tedid\tshared\tstage\treads");
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
+            {
+                var shared = QuestScan.Shared(q, file);
+                if (!string.IsNullOrEmpty(a_quests) ? !System.Text.RegularExpressions.Regex.IsMatch(q.Edid, a_quests) : shared == "not shared") continue;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    var h = walk.Stage(file, q, stage);
+                    if (h != null) sb.AppendLine(string.Format("{0}\t0x{1:X6}\t{2}\t{3}\t{4}\t{5}", file, q.Id & 0xFFFFFF, q.Edid, shared, stage, h));
+                }
+            }
         return sb.ToString();
     }
 }

@@ -157,8 +157,9 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 98: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
-	CHECK(std::size(QuestFilter::SAFE) == 98);
+	// 100: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 15 (eleven of them shared for their outcomes, below,
+	// and Power Play's clean-up, whose alias fills by the enemy gang Power Play's stages carry).
+	CHECK(std::size(QuestFilter::SAFE) == 100);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
@@ -168,7 +169,7 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(perFile[0] == 46);
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 13);
+	CHECK(perFile[3] == 15);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
@@ -191,8 +192,11 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ: Cait's and Tommy's ally faction, Cait recruitable
 	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07: SetEnemy, Hancock recruitable
 	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: a stage of Nick's companion quest
-	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
 	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout: DLC04SendKickOut, through its quest's script
+	// ... but Power Play (DLC04GangSetup turns the snubbed gang on the player) is shared for its outcome, its globals carried
+	// (StageRules::CARRIES), and its clean-up with it, its outposts alias filled by the carried enemy gang (ALLOW_FILLS).
+	CHECK(QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05
+	CHECK(QuestFilter::IsSafe(3, 0x04990A));  // DLC04MQ05Cleanup
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
@@ -249,6 +253,7 @@ TEST("quest filter: the quests shared for their faction or settlement outcomes a
 		{ 1, 0x013F3A },  // DLC03Acadia_Institute
 		{ 1, 0x023ACB },  // DLC03FarHarborFF01: Dalton Farm
 		{ 1, 0x02C687 },  // DLC03_ADV017
+		{ 3, 0x000805 },  // DLC04MQ05: Power Play, its gang globals carried with its stages (StageRules::CARRIES)
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement: Nuka-Town's traders
 		{ 3, 0x03684F },  // DLC04_KiddieKingdomMain
 	};
@@ -257,9 +262,10 @@ TEST("quest filter: the quests shared for their faction or settlement outcomes a
 		CHECK(!QuestFilter::IsSilent(quest.file, quest.quest));
 	}
 	// Read and left out: the Hubologists' (their sessions are each player's: rads, the chair, donations, rank bonuses),
-	// and those the rule still leaves out for a stage that starts a quest each game runs its own way.
+	// and those the rule still leaves out for a stage that starts a quest each game runs its own way. Power Play's such
+	// starts (the raids' and the crowd manager's guarded stages in DLC04GangSetup, the Nuka-Galaxy ride's power from the
+	// tracking quest ParkPowerOn sets) are let through by name (ALLOW_STARTS).
 	CHECK(!QuestFilter::IsSafe(3, 0x00CBD0));  // DLC04DialogueHubologists
-	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: the park's power, DLC04GZNukaGalaxy
 	CHECK(!QuestFilter::IsSafe(3, 0x0243A5));  // DLC04DialogueHarvey: DLC04REObjectCT03
 	CHECK(!QuestFilter::IsSafe(3, 0x0260E2));  // DLC04SafariAdventureQuest: DLC04SafariAdventurePOST
 	// Not in ALLOW_OUTCOMES, so still left out for their faction stage: the Combat Zone, Goodneighbor's 07, the Institute's

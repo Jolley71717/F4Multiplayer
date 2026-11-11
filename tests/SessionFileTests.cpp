@@ -713,11 +713,11 @@ TEST("session file: who picked up each item survives the file, and a session wit
 	const auto wire = Protocol::DecodeWorldState(Protocol::Encode(world));
 	REQUIRE(wire);
 	CHECK(wire->pickers.empty());
-	const auto kept = Protocol::DecodeKeptWorldState(Protocol::EncodeKeptWorldState(world));
+	const auto kept = Protocol::DecodeKeptWorldState(Protocol::EncodeKeptWorldState(world, true, true), true, true);
 	REQUIRE(kept);
 	CHECK(kept->pickers == world.pickers);
-	CHECK(!Protocol::DecodeWorldState(Protocol::EncodeKeptWorldState(world)));  // the tail is no wire packet's
-	const auto untailed = Protocol::DecodeKeptWorldState(Protocol::Encode(world));
+	CHECK(!Protocol::DecodeWorldState(Protocol::EncodeKeptWorldState(world, true, true)));  // the tail is no wire packet's
+	const auto untailed = Protocol::DecodeKeptWorldState(Protocol::Encode(world), true, true);
 	REQUIRE(untailed);
 	CHECK(untailed->pickers.empty());
 	// A count that matches nothing is damage.
@@ -725,7 +725,64 @@ TEST("session file: who picked up each item survives the file, and a session wit
 	const std::uint32_t one = 1;
 	bad.insert(bad.end(), reinterpret_cast<const std::uint8_t*>(&one), reinterpret_cast<const std::uint8_t*>(&one) + sizeof(one));
 	bad.insert(bad.end(), 4, 0);
-	CHECK(!Protocol::DecodeKeptWorldState(bad));
+	CHECK(!Protocol::DecodeKeptWorldState(bad, true, true));
+}
+
+TEST("session file: the globals a stage carries survive the file as layout 45, a session with none is still 44, and a 44 file reads with its stages bare")
+{
+	const auto layoutOf = [](const std::vector<std::uint8_t>& a_bytes) {
+		std::uint16_t version = 0;
+		std::memcpy(&version, a_bytes.data() + 4, sizeof(version));
+		return version;
+	};
+	auto in = MakeSnapshot();
+	in.pickers = { 1 };
+	in.hostDeaths = { 0x0004B2BA };
+	// Power Play's gang choice: Home Sweet Home's end with the ranks, Power Play's 8 with the enemy gang and the parks.
+	in.questStages.push_back({ 0x01000804, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } });
+	in.questStages.push_back({ 0x01000805, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f } } });
+	in.questStages.push_back({ 0x01000805, 20, 0, { { 0x0100D370, 2.0f } } });
+	const auto bytes = SessionFile::Encode(in);
+	CHECK(layoutOf(bytes) == SessionFile::STAGE_GLOBALS);
+	CHECK(SessionFile::Readable(SessionFile::STAGE_GLOBALS));
+	CHECK(!SessionFile::Readable(SessionFile::FORMAT + 1));  // a later build's
+	auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->questStages == in.questStages);
+	CHECK(out->hostDeaths == in.hostDeaths);
+	CHECK(out->pickers == in.pickers);
+	CHECK(SessionFile::Encode(*out) == bytes);
+
+	// None: the layout an older build reads, byte for byte what 44 wrote, read with every stage bare.
+	auto none = in;
+	for (auto& stage : none.questStages) {
+		stage.globals.clear();
+	}
+	const auto noneBytes = SessionFile::Encode(none);
+	CHECK(layoutOf(noneBytes) == SessionFile::HOST_DEATHS);
+	out = SessionFile::Decode(noneBytes);
+	REQUIRE(out);
+	CHECK(out->questStages == none.questStages);
+	CHECK(out->questStages.size() == in.questStages.size());
+
+	// A 44 file (0.16.1's) with a stage that now carries globals: it reads bare, and a friend's game then doesn't set it
+	// (StageRules::PlanCarry), rather than set it with its own values.
+	auto bare = SessionFile::Decode(noneBytes);
+	REQUIRE(bare);
+	CHECK(std::ranges::none_of(bare->questStages, [](const Protocol::QuestStage& a_stage) { return !a_stage.globals.empty(); }));
+	// A stage's globals ride in the world state's packets beside the stage, so a session big enough for several packets
+	// keeps each with its own stage.
+	auto many = in;
+	many.questStages.clear();
+	for (std::uint32_t i = 0; i < Protocol::WORLD_STATE_CHUNK + 5; ++i) {
+		many.questStages.push_back({ 0x00010000 + i, static_cast<std::uint16_t>(i % 100) });
+		if (i % 1000 == 7) {
+			many.questStages.back().globals = { { 0x0100D370, static_cast<float>(i) } };
+		}
+	}
+	const auto manyOut = SessionFile::Decode(SessionFile::Encode(many));
+	REQUIRE(manyOut);
+	CHECK(manyOut->questStages == many.questStages);
 }
 
 // Layout 44 adds the deaths the host's own game reported (the server never sends those back to it: its save is the truth
@@ -745,7 +802,7 @@ TEST("session file: the host's own deaths survive the file, and a session with n
 	const auto bytes = SessionFile::Encode(in);
 	CHECK(layoutOf(bytes) == SessionFile::HOST_DEATHS);
 	CHECK(SessionFile::Readable(SessionFile::HOST_DEATHS));
-	CHECK(!SessionFile::Readable(SessionFile::HOST_DEATHS + 1));  // a later build's
+	CHECK(!SessionFile::Readable(SessionFile::FORMAT + 1));  // a later build's
 	auto out = SessionFile::Decode(bytes);
 	REQUIRE(out);
 	CHECK(out->hostDeaths == in.hostDeaths);

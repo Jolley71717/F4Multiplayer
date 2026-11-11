@@ -3,10 +3,15 @@
 #include "game/QuestFilter.h"
 #include "game/StageRules.h"
 
+#include "Protocol.h"
+
 #include <chrono>
+#include <format>
 #include <iterator>
 #include <tuple>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -407,9 +412,9 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	for (std::uint16_t stage = 1; stage <= 5; ++stage) {
 		CHECK(FlagsOf(0x000803, stage, File::kNukaWorld) == kMoves);
 	}
-	// DLC04MQ05 is no longer SAFE's (its 8 turns the gangs on the player), so its quickstarts have no rows.
-	CHECK(!Find(0x000805, 1, File::kNukaWorld));
-	CHECK(!Find(0x000805, 3, File::kNukaWorld));
+	// DLC04MQ05 is SAFE's again (shared for its outcome, its gang globals carried: CARRIES), so its quickstarts have rows.
+	CHECK(FlagsOf(0x000805, 1, File::kNukaWorld) == kMoves);
+	CHECK(FlagsOf(0x000805, 3, File::kNukaWorld) == kMoves);
 	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
@@ -501,6 +506,7 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 		{ File::kNukaWorld, 0x03684F, 600 },  // DLC04_KiddieKingdomMain: its script's one-time Init
 		{ File::kNukaWorld, 0x03684F, 700 },
 		{ File::kNukaWorld, 0x03684F, 740 },  // Oswald's fight
+		{ File::kNukaWorld, 0x000805, 8 },    // DLC04MQ05: DLC04GangSetup sets the snubbed gang on the player (its gang carried: CARRIES)
 	};
 	for (const auto& [file, quest, stage] : hostile) {
 		const auto rule = Find(quest, stage, file);
@@ -537,6 +543,12 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == kMoves);
 	CHECK(Judge(Find(0x03684F, 6, File::kNukaWorld), { .live = false }) == Verdict::kSkip);
 	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == kMoves);
+	// Power Play's quickstarts (a rank set to 3, a MoveTo, then its 5 and 8); its 0 is no start-up stage and has no row.
+	for (const auto stage : { 1, 2, 3 }) {
+		CHECK(FlagsOf(0x000805, static_cast<std::uint16_t>(stage), File::kNukaWorld) == kMoves);
+	}
+	CHECK(!Find(0x000805, 0, File::kNukaWorld));
+	CHECK(!Find(0x000805, 5, File::kNukaWorld));  // DLC04MakeEnemy: nothing a rule holds back, the ranks carried instead
 	// Their payments: DN049's pre-war money, the bloodworm meat Nuka-Town's trader takes.
 	CHECK(FlagsOf(0x04542B, 711) == kPays);
 	CHECK(FlagsOf(0x01AABF, 110, File::kNukaWorld) == kPays);
@@ -805,4 +817,130 @@ TEST("price waiver: every way it ends hands back the value it began with, whiche
 			CHECK(!waiver.On());
 		}
 	}
+}
+
+TEST("stage rules: the stages that carry globals (Nuka-World's gang choice) are sorted, once each, with the globals DLC04MakeEnemy, GangSwitch and DLC04GangSetup read (tools/questscan.ps1 -Globals)")
+{
+	using namespace StageRules;
+	for (auto it = std::next(std::begin(CARRIES)); it != std::end(CARRIES); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::tuple{ before.file, before.quest, before.stage } < std::tuple{ it->file, it->quest, it->stage }));
+	}
+	for (const auto& row : CARRIES) {
+		const auto globals = GlobalsOf(row);
+		CHECK(!globals.empty());
+		CHECK(globals.size() <= MAX_CARRIED);
+		CHECK(globals.size() <= Protocol::MAX_STAGE_GLOBALS);
+		for (const auto global : globals) {
+			CHECK(global != 0);
+			CHECK(global <= 0x00FFFFFF);  // in the quest's file
+		}
+		for (std::size_t i = globals.size(); i < row.globals.size(); ++i) {
+			CHECK(row.globals[i] == 0);  // the unused slots after the used ones
+		}
+		// Every row of Power Play is the one that carries a value a script of the stage reads (the ranks, the enemy gang
+		// and the parks' owners): each a stage with a StageRules row too, or of the quest shared by its type.
+		CHECK(row.file == static_cast<std::uint8_t>(File::kNukaWorld));
+		CHECK((row.needsQuest == 0) == (row.quest == 0x000804));  // MQ05's wait for MQ04 500; MQ04 500 itself needs nothing
+	}
+	constexpr std::uint32_t RANK_PACK = 0x00880C, RANK_DISCIPLES = 0x00880D, RANK_OPERATORS = 0x00880E, ENEMY_GANG = 0x00D370;
+	// Home Sweet Home's end sets Power Play's 5, whose DLC04MakeEnemy reads the ranks: the ranks go with both.
+	const auto home = FindCarried(File::kNukaWorld, 0x000804, 500);
+	const auto make = FindCarried(File::kNukaWorld, 0x000805, 5);
+	REQUIRE(home);
+	REQUIRE(make);
+	CHECK((GlobalsOf(*home).size() == 3 && GlobalsOf(*home)[0] == RANK_PACK && GlobalsOf(*home)[1] == RANK_DISCIPLES && GlobalsOf(*home)[2] == RANK_OPERATORS));
+	CHECK(std::ranges::equal(GlobalsOf(*home), GlobalsOf(*make)));
+	CHECK(make->needsQuest == 0x000804 && make->needsStage == 500);
+	// 8: the enemy gang and the five parks' owners (GangSwitch, DLC04GangSetup, ZoneReset).
+	const auto setup = FindCarried(File::kNukaWorld, 0x000805, 8);
+	REQUIRE(setup);
+	CHECK(GlobalsOf(*setup).size() == 6);
+	CHECK(GlobalsOf(*setup)[0] == ENEMY_GANG);
+	for (const auto claimed : { 0x03E418u, 0x03E419u, 0x03E41Au, 0x03E41Bu, 0x03E41Cu }) {
+		CHECK(std::ranges::contains(GlobalsOf(*setup), claimed));
+	}
+	// 20, 120 and 255 read the enemy gang alone.
+	for (const auto stage : { 20, 120, 255 }) {
+		const auto row = FindCarried(File::kNukaWorld, 0x000805, static_cast<std::uint16_t>(stage));
+		REQUIRE(row);
+		CHECK(GlobalsOf(*row).size() == 1);
+		CHECK(GlobalsOf(*row)[0] == ENEMY_GANG);
+	}
+	// The quickstarts (0-3) set a rank themselves and are kMoves rows; 10 reads none; DLC04PostQuestFlags isn't shared.
+	for (const auto stage : { 0, 1, 2, 3, 10, 70, 75 }) {
+		CHECK(!FindCarried(File::kNukaWorld, 0x000805, static_cast<std::uint16_t>(stage)));
+	}
+	CHECK(!FindCarried(File::kNukaWorld, 0x04690A, 10));
+	CHECK(!FindCarried(File::kFallout4, 0x000805, 8));  // the same form ID in another file is another quest's
+}
+
+TEST("stage rules: a friend's stage is set with its globals written first, in its row's order; waits for the stage its row needs; and is not set when one it reads didn't come")
+{
+	using namespace StageRules;
+
+	constexpr std::uint32_t FILE = 0x01000000;  // DLCNukaWorld.esm loaded at 01
+	const auto setup = FindCarried(File::kNukaWorld, 0x000805, 8);
+	const auto home = FindCarried(File::kNukaWorld, 0x000804, 500);
+	REQUIRE(setup && home);
+	// What came with Power Play's 8, in any order, with one more no row names.
+	const std::vector<GlobalValue> came{ { 0x0103E41C, 2.0f }, { 0x0100D370, 3.0f }, { 0x0103E418, 1.0f }, { 0x0103E41A, 2.0f }, { 0x0100F446, 9.0f }, { 0x0103E419, 3.0f },
+		{ 0x0103E41B, 1.0f } };
+	const auto plan = PlanCarry(setup, came, FILE | 0x000805, true);
+	CHECK(plan.what == Carry::Do::kSet);
+	CHECK(plan.dropped == 1);  // DLC04OpKills: not the row's
+	// Written in the row's order, with the full form IDs.
+	CHECK((plan.writes == std::vector<GlobalValue>{ { 0x0100D370, 3.0f }, { 0x0103E418, 1.0f }, { 0x0103E419, 3.0f }, { 0x0103E41A, 2.0f }, { 0x0103E41B, 1.0f }, { 0x0103E41C, 2.0f } }));
+
+	// The order it happens in: every write, then the stage, nothing else.
+	std::vector<std::string> did;
+	DoCarry(
+		plan, [&](std::uint32_t a_global, float a_value) { did.push_back(std::format("{:08X}={}", a_global, a_value)); }, [&]() { did.push_back("setstage"); });
+	CHECK((did == std::vector<std::string>{ "0100D370=3", "0103E418=1", "0103E419=3", "0103E41A=2", "0103E41B=1", "0103E41C=2", "setstage" }));
+
+	// Home Sweet Home's end isn't done here: Power Play's stages wait (its quest alone), judged again later; its own row
+	// needs nothing.
+	const auto waits = PlanCarry(setup, came, FILE | 0x000805, false);
+	CHECK(waits.what == Carry::Do::kWait);
+	CHECK(waits.writes.empty());
+	CHECK(waits.why != nullptr);
+	did.clear();
+	DoCarry(
+		waits, [&](std::uint32_t, float) { did.push_back("write"); }, [&]() { did.push_back("setstage"); });
+	CHECK(did.empty());
+	const std::vector<GlobalValue> ranks{ { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } };
+	CHECK(PlanCarry(home, ranks, FILE | 0x000804, false).what == Carry::Do::kSet);
+	CHECK(PlanCarry(home, ranks, FILE | 0x000804, false).writes.size() == 3);
+
+	// A value the row names didn't come (an older session file's stage, or none at all): not set, nothing written.
+	std::vector<GlobalValue> short_ = came;
+	std::erase_if(short_, [](const GlobalValue& a_value) { return a_value.global == 0x0103E419; });
+	const auto skip = PlanCarry(setup, short_, FILE | 0x000805, true);
+	CHECK(skip.what == Carry::Do::kSkip);
+	CHECK(skip.writes.empty());
+	CHECK(skip.why != nullptr);
+	CHECK(PlanCarry(setup, {}, FILE | 0x000805, true).what == Carry::Do::kSkip);
+	did.clear();
+	DoCarry(
+		skip, [&](std::uint32_t, float) { did.push_back("write"); }, [&]() { did.push_back("setstage"); });
+	CHECK(did.empty());
+	// A value of another file's global with the same local ID is not the row's.
+	std::vector<GlobalValue> other = came;
+	for (auto& value : other) {
+		value.global = (value.global & 0x00FFFFFF) | 0x02000000;
+	}
+	CHECK(PlanCarry(setup, other, FILE | 0x000805, true).what == Carry::Do::kSkip);
+
+	// No row: set as it is, whatever came is dropped (a sender's row this build lacks), and nothing is written.
+	const auto none = PlanCarry(nullptr, came, FILE | 0x000805, false);
+	CHECK(none.what == Carry::Do::kSet);
+	CHECK(none.writes.empty());
+	CHECK(none.dropped == came.size());
+	const auto bare = PlanCarry(nullptr, {}, FILE | 0x000805, false);
+	CHECK(bare.what == Carry::Do::kSet);
+	CHECK(bare.dropped == 0);
+	did.clear();
+	DoCarry(
+		none, [&](std::uint32_t, float) { did.push_back("write"); }, [&]() { did.push_back("setstage"); });
+	CHECK((did == std::vector<std::string>{ "setstage" }));
 }
