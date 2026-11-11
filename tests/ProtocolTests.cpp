@@ -371,6 +371,12 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		REQUIRE(scrapped);
 		CHECK(*scrapped == scrap);
 		CHECK(scrapped->target == RUNTIME_REF + 2);
+		const WorkshopRequest store{ 3, 44, WorkshopRequestOp::kStore, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF + 3 };
+		const auto            stored = DecodeWorkshopRequest(Encode(store, type));
+		REQUIRE(stored);
+		CHECK(*stored == store);
+		CHECK(stored->op == WorkshopRequestOp::kStore);
+		CHECK(stored->target == RUNTIME_REF + 3);
 		const WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 };
 		const auto            wired = DecodeWorkshopRequest(Encode(wire, type));
 		REQUIRE(wired);
@@ -429,6 +435,23 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		bad = good;
 		bad.target = RUNTIME_REF;
 		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		// A store is laid out and checked as a scrap is: its target and nothing else.
+		WorkshopRequest store{ 3, 44, WorkshopRequestOp::kStore, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+		CHECK(DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		CHECK(WorkshopRequestOp::IsEdit(WorkshopRequestOp::kStore) && WorkshopRequestOp::IsEdit(WorkshopRequestOp::kScrap));
+		CHECK(!WorkshopRequestOp::IsEdit(WorkshopRequestOp::kBuild) && !WorkshopRequestOp::IsEdit(WorkshopRequestOp::kWire));
+		store.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		store.target = RUNTIME_REF;
+		store.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		store.base = 0;
+		store.wireTo = RUNTIME_REF + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		store.wireTo = 0;
+		store.op = WorkshopRequestOp::LAST + 1;  // an op this build doesn't know
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		CHECK(std::string{ OpName(WorkshopRequestOp::kStore) } == "store");
 	}
 	// A workshop answer: the request's number and whose, applied with the piece made, or refused and why.
 	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {

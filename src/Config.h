@@ -165,9 +165,11 @@ namespace Config
 		// host's power grid; the friend sees a copy, as of any of the host's pieces (SharedWorkshop.h). Off: a friend's piece
 		// there stays their own, which can't be wired to the host's.
 		bool sharedWorkshop = true;
-		// ...and friends may scrap the host's pieces there (the host's game scraps them, the yield into the host's settlement
-		// workbench, which friends see only with sharedStorage), as any player scraps in the vanilla game. Not wires. Off:
-		// friends build and wire there, nothing more.
+		// ...and friends may scrap or store the host's pieces there (the host's game scraps or stores them: the yield into the
+		// host's settlement workbench, which friends see only with sharedStorage; a stored piece into the host's stored list, the
+		// host's to place again free), as any player does in the vanilla game. Not wires. Off: friends build and wire there,
+		// nothing more.
+
 		bool sharedWorkshopEdit = true;
 		// A weapon or armor put in a container is given: any friend can take it from their copy of it, once (GiftBook.h).
 		bool containerGifts = false;

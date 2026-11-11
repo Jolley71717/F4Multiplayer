@@ -124,6 +124,7 @@ run radiants  step_radiants
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
 run sharedws-power step_sharedws_power  # opt-in (--only sharedws-power): the shared workshop's build and wire hand-over, with in-session saves (throwaway saves)
 run sharedws-scrap step_sharedws_scrap  # opt-in (--only sharedws-scrap): a friend's scrap of the host's piece as a request (the real Scrap key and confirmation; throwaway saves)
+run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a friend's store of the host's piece as a request (the real Store key and yes/no box), placed back from the host's stored list (throwaway saves)
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run reconnect step_reconnect

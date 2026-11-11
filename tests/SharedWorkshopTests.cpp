@@ -406,6 +406,137 @@ TEST("shared workshop: the host's scrap for a friend is the engine's one call in
 	}
 }
 
+TEST("shared workshop: a store's pending piece is our copy, as a scrap's: pending (not asked twice, not grabbed), never dropped before a save, and its op is known")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	const auto store = requests.Open(Op::kStore, OTHER, BENCH, t0);
+	const auto scrap = requests.Open(Op::kScrap, WIRE, BENCH, t0);
+	const auto build = requests.Open(Op::kBuild, PIECE, BENCH, t0);
+	REQUIRE(store && scrap && build);
+	CHECK(requests.IsPending(OTHER));
+	CHECK(requests.PendingOp(OTHER) == Op::kStore);
+	CHECK(requests.PendingOp(WIRE) == Op::kScrap);
+	CHECK(requests.PendingOp(PIECE) == Op::kBuild);
+	CHECK(!requests.PendingOp(0));
+	CHECK(!requests.PendingOp(0xFF009999));
+	CHECK(requests.Pieces() == std::vector<std::uint32_t>{ PIECE });  // the copies are not ours to delete
+	CHECK(requests.Builds().size() == 1);
+	CHECK(requests.DropBuilds().size() == 1);
+	CHECK(requests.IsPending(OTHER));  // the store still waits, its copy untouched
+	CHECK(requests.Waiting() == 2);
+	const auto answered = requests.Take(*store);
+	REQUIRE(answered);
+	CHECK(answered->op == Op::kStore);
+	CHECK(answered->piece == OTHER);
+	CHECK(!requests.IsPending(OTHER));
+	CHECK(!requests.PendingOp(OTHER));
+	// The notice for a key on a copy something is asked of: what is asked of it.
+	CHECK(std::string{ PendingNotice(Op::kStore) } == "workshop.shared.store_pending");
+	CHECK(std::string{ PendingNotice(Op::kScrap) } == "workshop.shared.scrap_pending");
+}
+
+TEST("shared workshop: a store's verdict is nothing either way, as a scrap's: applied without a notice, refused with the store's own")
+{
+	const auto stored = Judge(Op::kStore, Why::kApplied);
+	CHECK(stored.outcome == Outcome::kNothing);
+	CHECK(!stored.benchNotOwned);
+	CHECK(stored.notice == nullptr);
+	CHECK(std::string{ Judge(Op::kStore, Why::kNotAllowed).notice } == "workshop.shared.edit_off");
+	CHECK(std::string{ Judge(Op::kStore, Why::kPieceBusy).notice } == "workshop.shared.piece_busy");
+	CHECK(std::string{ Judge(Op::kStore, Why::kNoSuchPiece).notice } == "workshop.shared.store_no_piece");
+	for (const auto why : { Why::kNotHostOwned, Why::kBenchNotLoaded, Why::kBenchUnopened, Why::kHostAway, Why::kOff, Why::kFailed, Why::kNoAnswer, Why::kOverBudget, Why::kHostBusy, Why::kNotWorkshopItem }) {
+		const auto verdict = Judge(Op::kStore, why);
+		CHECK(verdict.outcome == Outcome::kNothing);
+		CHECK(verdict.benchNotOwned == (why == Why::kNotHostOwned));
+		CHECK(std::string{ verdict.notice } == "workshop.shared.store_refused");
+	}
+	CHECK(std::string{ Judge(Op::kScrap, Why::kNoSuchPiece).notice } == "workshop.shared.scrap_no_piece");  // the scrap's own stay its own
+}
+
+TEST("shared workshop: the Store key on the host's copy decides as the Scrap key does")
+{
+	for (const bool copy : { false, true }) {
+		for (const bool allowed : { false, true }) {
+			for (const bool wire : { false, true }) {
+				for (const bool pending : { false, true }) {
+					CHECK(OnStoreKey(copy, allowed, wire, pending) == OnScrapKey(copy, allowed, wire, pending));
+				}
+			}
+		}
+	}
+	CHECK(OnStoreKey(true, true, false, false) == ScrapKey::kAsk);
+	CHECK(OnStoreKey(true, false, false, false) == ScrapKey::kRefuseEditOff);
+	CHECK(OnStoreKey(true, true, true, false) == ScrapKey::kRefuseWire);  // the host's wire: never asked (the host's game refuses it)
+	CHECK(OnStoreKey(true, true, false, true) == ScrapKey::kRefusePending);
+	CHECK(OnStoreKey(false, false, true, true) == ScrapKey::kEngine);
+	// The box's Yes is judged as the scrap confirmation's: gone first, then a copy asked while admitted, else the engine.
+	CHECK(OnScrapAccept(true, true, true) == ScrapAccept::kRefuseGone);
+	CHECK(OnScrapAccept(false, true, false) == ScrapAccept::kRefuseCopy);
+	CHECK(OnScrapAccept(false, false, false) == ScrapAccept::kEngine);
+}
+
+TEST("shared workshop: a store is refused in order: the settlement and the host being there, the host's setting, its workshop mode elsewhere, the piece, the engine's own store test, its 3D, and the host's hands")
+{
+	Facts facts;
+	facts.benchKnown = true;
+	facts.hostOwned = true;
+	facts.benchLoaded = true;
+	CHECK(Refusal(Op::kStore, facts) == Why::kBenchUnopened);
+	facts.benchOpened = true;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNotAllowed);  // the host's bSharedWorkshopEdit off: nothing else is looked at
+	facts.editAllowed = true;
+	facts.otherBenchOpen = true;
+	CHECK(Refusal(Op::kStore, facts) == Why::kHostBusy);  // the engine's store would fill the host's workshop menu's list from this bench
+	facts.otherBenchOpen = false;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNoSuchPiece);
+	facts.targetKnown = true;
+	facts.targetAtBench = true;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNotWorkshopItem);  // the engine's own store test refused it (a settler, a pre-placed piece)
+	facts.targetStorable = true;
+	CHECK(Refusal(Op::kStore, facts) == Why::kBenchNotLoaded);  // its 3D not in: its grid would keep naming a deleted reference
+	facts.targetLoaded = true;
+	CHECK(!Refusal(Op::kStore, facts));
+	facts.targetScrappable = false;  // the scrap's own test is no concern of a store's
+	CHECK(!Refusal(Op::kStore, facts));
+	facts.targetHeld = true;
+	CHECK(Refusal(Op::kStore, facts) == Why::kPieceBusy);
+	facts.targetHeld = false;
+	facts.inWorkshopMode = true;  // the host in workshop mode at this very bench: no concern of a store's
+	CHECK(!Refusal(Op::kStore, facts));
+	facts.targetAtBench = false;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNoSuchPiece);
+	facts.targetAtBench = true;
+	facts.targetKnown = false;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNoSuchPiece);
+	facts.targetKnown = true;
+	facts.hostOwned = false;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNotHostOwned);
+	facts.hostOwned = true;
+	facts.benchLoaded = false;
+	CHECK(Refusal(Op::kStore, facts) == Why::kBenchNotLoaded);
+	// A scrap asks nothing of the store's own test (and a store nothing of the scrap's); the rest they share.
+	facts.benchLoaded = true;
+	facts.targetStorable = false;
+	facts.targetScrappable = true;
+	CHECK(!Refusal(Op::kScrap, facts));
+	facts.otherBenchOpen = true;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kHostBusy);
+	CHECK(Refusal(Op::kStore, facts) == Why::kHostBusy);
+}
+
+TEST("shared workshop: the host's store for a friend is the engine's one call inside the bench and budget scopes, as the scrap")
+{
+	CHECK(STORE_STEPS.size() == 3);
+	CHECK(STORE_STEPS.front() == StoreStep::kBench);
+	CHECK(STORE_STEPS.back() == StoreStep::kStore);
+	CHECK(std::ranges::find(STORE_STEPS, StoreStep::kBudget) < std::ranges::find(STORE_STEPS, StoreStep::kStore));
+	for (const auto step : STORE_STEPS) {
+		CHECK(std::string{ Name(step) } != "?");
+	}
+	CHECK(std::string{ Name(StoreStep::kStore) } == "store");
+}
+
 TEST("shared workshop: a piece is finished once its 3D is there (nothing of the host's workshop mode holds it off); one whose 3D never comes is refused")
 {
 	CHECK(Ready(true, 0s) == Readiness::kReady);

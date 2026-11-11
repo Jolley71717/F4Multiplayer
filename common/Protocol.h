@@ -79,10 +79,10 @@ namespace Protocol
 	// the owner table. No welcome bytes. 64 is refused at the hello.
 	// 66: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
 	// the byte after 64's groupDifficulty), then the host's own game's id (Welcome::hostId, the welcome's last four bytes);
-	// a friend's build, wire or scrap at a settlement the host owns is a numbered request the host's game performs on its own
-	// pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
+	// a friend's build, wire, scrap or store at a settlement the host owns is a numbered request the host's game performs on its
+	// own pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
 	// kWorkshopAnswer: WorkshopAnswer); the host's bSharedWorkshopEdit (SessionRules::sharedWorkshopEdit, the byte after
-	// sharedWorkshop) says whether friends may scrap the host's pieces there. 65 is refused at the hello.
+	// sharedWorkshop) says whether friends may scrap or store the host's pieces there. 65 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 66;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -515,7 +515,7 @@ namespace Protocol
 		// host's game as the host's own piece, and the friend sees a copy, as of any of the host's pieces (bSharedWorkshop; on
 		// by default; protocol 66, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
 		bool sharedWorkshop = true;
-		// ...and whether a friend may scrap (later: store and move) the host's pieces there, a request the host's game performs
+		// ...and whether a friend may scrap or store (later: move) the host's pieces there, a request the host's game performs
 		// on its own piece (bSharedWorkshopEdit; on by default; protocol 66, the byte after sharedWorkshop). Off: a friend's
 		// workshop mode refuses the key on the host's piece, as phase 1 did, and the host's game refuses the request too.
 		bool sharedWorkshopEdit = true;
@@ -1426,18 +1426,23 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_RESOURCE_ENTRIES = 128;
 
-	// The shared workshop (SessionRules::sharedWorkshop, src/game/SharedWorkshop.h): a friend's build, wire or scrap at a
-	// settlement the host owns is a numbered request (seq: the sender's own count), which the server sends to the host's game
+	// The shared workshop (SessionRules::sharedWorkshop, src/game/SharedWorkshop.h): a friend's build, wire, scrap or store at
+	// a settlement the host owns is a numbered request (seq: the sender's own count), which the server sends to the host's game
 	// alone (kWorkshopRequest, playerId the friend), and which that game performs on its own pieces and answers
 	// (WorkshopAnswer). A build names the piece as the friend's workshop mode placed it (base, where, how big); a wire names
 	// its two ends as the host's references, which the friend knows as its copies' keys; a scrap names the host's piece the
-	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench.
+	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench;
+	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list.
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
 		inline constexpr std::uint8_t kWire = 1;
 		inline constexpr std::uint8_t kScrap = 2;
-		inline constexpr std::uint8_t LAST = kScrap;
+		inline constexpr std::uint8_t kStore = 3;
+		inline constexpr std::uint8_t LAST = kStore;
+
+		// A scrap or a store: a request naming one of the host's pieces (target), done to it by the host's engine.
+		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore; }
 	}
 
 	constexpr const char* OpName(std::uint8_t a_op)
@@ -1449,6 +1454,8 @@ namespace Protocol
 			return "wire";
 		case WorkshopRequestOp::kScrap:
 			return "scrap";
+		case WorkshopRequestOp::kStore:
+			return "store";
 		}
 		return "?";
 	}
@@ -1465,7 +1472,7 @@ namespace Protocol
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
-		std::uint32_t        target = 0;    // kScrap: the host's piece
+		std::uint32_t        target = 0;    // kScrap, kStore: the host's piece
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1502,7 +1509,7 @@ namespace Protocol
 		std::uint8_t  op = WorkshopRequestOp::kBuild;
 		Why           why = Why::kApplied;
 		std::uint32_t workshop = 0;  // the workbench asked about
-		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap: the piece scrapped)
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away)
 
 		bool operator==(const WorkshopAnswer&) const = default;
 	};
@@ -4227,13 +4234,13 @@ namespace Protocol
 	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
-	// no object; a scrap names its target and nothing else. None names a workbench of 0, nor a number of 0.
+	// no object; a scrap or a store names its target and nothing else. None names a workbench of 0, nor a number of 0.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
 		if (a_msg.seq == 0 || a_msg.workshop == 0 || a_msg.op > WorkshopRequestOp::LAST) {
 			return false;
 		}
-		if (a_msg.op == WorkshopRequestOp::kScrap) {
+		if (WorkshopRequestOp::IsEdit(a_msg.op)) {
 			return a_msg.target != 0 && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
 		}
 		if (a_msg.target != 0) {

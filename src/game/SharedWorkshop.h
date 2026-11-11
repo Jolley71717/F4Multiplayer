@@ -28,7 +28,8 @@
 //   it may reach a save) and asked of the host instead; the host's wire comes back as a copy, drawn from its shape. A scrap
 //   of a copy (the Scrap key, the engine's own confirmation) is asked of the host instead of done (ScrapKey): the friend's
 //   engine never scraps the copy; the host's scrap of its piece comes back as the usual scrapped report, which takes the
-//   copy away.
+//   copy away. A store of a copy (the Store key, the engine's own yes/no box) goes the same way (OnStoreKey): the host's
+//   stored list gains the piece, the friend's never does, and the host's destroyed report takes the copy away.
 // - The host's side. A request is checked (Refusal), the piece made where the friend's stood, and finished with the engine's
 //   own placement steps, each a plain function, in the engine's order (FINISH_STEPS, Finish): what workshop mode does after
 //   the ghost is confirmed, minus the cost and XP (the friend paid), the stacking and the move bookkeeping.
@@ -97,7 +98,7 @@ namespace SharedWorkshop
 	struct Pending
 	{
 		std::uint8_t      op = Protocol::WorkshopRequestOp::kBuild;
-		std::uint32_t     piece = 0;  // a build: our own piece as workshop mode placed it (a wire: 0, it is gone already; a scrap: our copy)
+		std::uint32_t     piece = 0;  // a build: our own piece as workshop mode placed it (a wire: 0, it is gone already; a scrap or a store: our copy)
 		std::uint32_t     bench = 0;
 		Clock::time_point sentAt{};
 		bool              dropped = false;  // a build whose piece went before its answer came (a save): kept open, so the answer is matched
@@ -145,18 +146,24 @@ namespace SharedWorkshop
 		}
 
 		// Whether this piece waits for an answer (a build of ours: its moves and scraps are not reported meanwhile; a copy
-		// whose scrap was asked: not asked again, not grabbed). A dropped build's piece is gone: it waits for nothing.
+		// whose scrap or store was asked: not asked again, not grabbed). A dropped build's piece is gone: it waits for nothing.
 		[[nodiscard]] bool IsPending(std::uint32_t a_piece) const
 		{
+			return PendingOp(a_piece).has_value();
+		}
+
+		// What is asked of this piece and still waits (the op of its open request), or none.
+		[[nodiscard]] std::optional<std::uint8_t> PendingOp(std::uint32_t a_piece) const
+		{
 			if (a_piece == 0) {
-				return false;
+				return std::nullopt;
 			}
 			for (const auto& [seq, request] : pending) {
 				if (request.piece == a_piece && !request.dropped) {
-					return true;
+					return request.op;
 				}
 			}
-			return false;
+			return std::nullopt;
 		}
 
 		// The builds' pieces still waiting (leaving the session: none may stay ours). A scrap's piece is a copy: not ours to drop.
@@ -224,8 +231,8 @@ namespace SharedWorkshop
 	{
 		kAdopt,    // our piece becomes our copy of the host's (the answer names it)
 		kKeepOwn,  // our piece is reported as our own, as before the rule
-		kNothing,  // a wire: ours went when it was asked; the host's comes back as a copy, or nothing does. A scrap: applied, the
-		           // host's scrapped report takes our copy; refused, the copy stands as it did (nothing was done to it)
+		kNothing,  // a wire: ours went when it was asked; the host's comes back as a copy, or nothing does. A scrap or a store:
+		           // applied, the host's destroyed report takes our copy; refused, the copy stands as it did (nothing was done to it)
 	};
 
 	struct Verdict
@@ -239,14 +246,15 @@ namespace SharedWorkshop
 	{
 		const bool wire = a_op == Protocol::WorkshopRequestOp::kWire;
 		const bool scrap = a_op == Protocol::WorkshopRequestOp::kScrap;
+		const bool store = a_op == Protocol::WorkshopRequestOp::kStore;
 		if (a_why == Why::kApplied) {
-			if (scrap) {
-				return { Outcome::kNothing, false, nullptr };  // the engine's own "scrapped" was shown; the copy goes with the host's report
+			if (scrap || store) {
+				return { Outcome::kNothing, false, nullptr };  // the engine's own UI said scrapped (or stored); the copy goes with the host's report
 			}
 			return { wire ? Outcome::kNothing : Outcome::kAdopt, false, wire ? "workshop.shared.wired" : "workshop.shared.built" };
 		}
-		Verdict verdict{ wire || scrap ? Outcome::kNothing : Outcome::kKeepOwn, a_why == Why::kNotHostOwned, nullptr };
-		if (scrap) {
+		Verdict verdict{ wire || scrap || store ? Outcome::kNothing : Outcome::kKeepOwn, a_why == Why::kNotHostOwned, nullptr };
+		if (scrap || store) {
 			switch (a_why) {
 			case Why::kNotAllowed:
 				verdict.notice = "workshop.shared.edit_off";
@@ -255,10 +263,10 @@ namespace SharedWorkshop
 				verdict.notice = "workshop.shared.piece_busy";
 				break;
 			case Why::kNoSuchPiece:
-				verdict.notice = "workshop.shared.scrap_no_piece";
+				verdict.notice = store ? "workshop.shared.store_no_piece" : "workshop.shared.scrap_no_piece";
 				break;
 			default:
-				verdict.notice = "workshop.shared.scrap_refused";
+				verdict.notice = store ? "workshop.shared.store_refused" : "workshop.shared.scrap_refused";
 				break;
 			}
 			return verdict;
@@ -349,6 +357,21 @@ namespace SharedWorkshop
 		return ScrapAccept::kEngine;
 	}
 
+	// The Store key (Cancel with nothing held, the highlighted piece) decides as the Scrap key does: the engine's own test and
+	// its yes/no box for anything but the host's copy; for the host's copy, the same test and box with Yes asking the host
+	// (the host's setting on, no wire, nothing asked of that copy yet), else refused with a notice. The box's Yes is judged as
+	// the scrap confirmation's is (OnScrapAccept: gone, a copy no longer admitted, or the player's own piece).
+	[[nodiscard]] constexpr ScrapKey OnStoreKey(bool a_hostsCopy, bool a_editAllowed, bool a_wire, bool a_pending)
+	{
+		return OnScrapKey(a_hostsCopy, a_editAllowed, a_wire, a_pending);
+	}
+
+	// The notice for a key pressed on a copy something is asked of already: what is asked of it (the scrap or the store waits).
+	[[nodiscard]] constexpr const char* PendingNotice(std::uint8_t a_pendingOp)
+	{
+		return a_pendingOp == Protocol::WorkshopRequestOp::kStore ? "workshop.shared.store_pending" : "workshop.shared.scrap_pending";
+	}
+
 	// ---- A wire's ends -----------------------------------------------------------------------------------
 
 	// What a wire the friend's workshop mode just strung is: ours as ever (both ends our own pieces: reported as before), a
@@ -392,6 +415,7 @@ namespace SharedWorkshop
 		bool targetAtBench = false;     // ...one of this workbench's own pieces (not a copy, not the workbench, not a wire)
 		bool targetScrappable = false;  // ...no actor, and one the engine's own scrap test lets a player scrap (WorkshopCanScrapRef)
 		bool targetLoaded = false;      // ...with its 3D in (FinishDestroyItem takes a piece off the grids only then)
+		bool targetStorable = false;    // a store: no actor, and one the engine's own store test lets a player store (CanStoreRef); scrappable is the scrap's
 		bool targetHeld = false;        // ...and the host holds it in workshop mode (the placement item, grabbed)
 	};
 
@@ -450,6 +474,27 @@ namespace SharedWorkshop
 			}
 			if (a_facts.targetHeld) {
 				return Why::kPieceBusy;  // the engine's own scrap of a held piece cancels the hold first; a friend's request waits instead
+			}
+			return std::nullopt;
+		}
+		if (a_op == Protocol::WorkshopRequestOp::kStore) {
+			if (!a_facts.editAllowed) {
+				return Why::kNotAllowed;
+			}
+			if (a_facts.otherBenchOpen) {
+				return Why::kHostBusy;  // as for a scrap: the engine's store ends by filling workshop mode's build list from this bench
+			}
+			if (!a_facts.targetKnown || !a_facts.targetAtBench) {
+				return Why::kNoSuchPiece;
+			}
+			if (!a_facts.targetStorable) {
+				return Why::kNotWorkshopItem;  // a settler, a companion, a pre-placed piece: what the engine's own Store refuses, a request never names
+			}
+			if (!a_facts.targetLoaded) {
+				return Why::kBenchNotLoaded;  // its 3D not in yet: FinishDestroyItem takes a piece off the grids only then
+			}
+			if (a_facts.targetHeld) {
+				return Why::kPieceBusy;
 			}
 			return std::nullopt;
 		}
@@ -693,6 +738,38 @@ namespace SharedWorkshop
 			return "budget";
 		case ScrapStep::kScrap:
 			return "scrap";
+		}
+		return "?";
+	}
+
+	// ---- The host's store for a friend --------------------------------------------------------------------
+
+	// The host's game stores its piece for a friend with the engine's own store, Workshop::DestroyItem (1.11.240: 2195122) with
+	// its store flag, one call: it adds the piece's base to the current workbench's stored list (ExtraData::AddDeletedItem: what
+	// the build menu shows as "stored", placed again free), takes the piece off the grids and destroys the wires strung to it
+	// (FinishDestroyItem, as a scrap), puts a container piece's contents in the workbench, unlinks the piece, recounts the
+	// bench, notifies ItemDestroyedEvent (Papyrus; the host's sink reports it, so the friends' copies go), takes it out of the
+	// budget and deletes it. It reads workshop mode's current workbench for the stored list, the grids and the recount, and the
+	// budget's globals: so the call sits inside the bench scope and the budget scope, as a scrap does. Quiet: the store's sound
+	// is the friend's to hear, not the host's.
+	enum class StoreStep : std::uint8_t
+	{
+		kBench,   // the bench scope: workshop mode's current workbench set to the piece's
+		kBudget,  // the budget scope: the bench's own totals loaded, and written back after
+		kStore,   // Workshop::DestroyItem(context, piece, store = true, onlyDisconnect = false, quiet = true)
+	};
+
+	inline constexpr std::array<StoreStep, 3> STORE_STEPS{ StoreStep::kBench, StoreStep::kBudget, StoreStep::kStore };
+
+	[[nodiscard]] constexpr const char* Name(StoreStep a_step)
+	{
+		switch (a_step) {
+		case StoreStep::kBench:
+			return "bench";
+		case StoreStep::kBudget:
+			return "budget";
+		case StoreStep::kStore:
+			return "store";
 		}
 		return "?";
 	}

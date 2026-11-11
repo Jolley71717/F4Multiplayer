@@ -2502,6 +2502,28 @@ namespace DevCommands
 			return WorkshopSync::ScrapForDev(ref, args.size() == 2);
 		}
 
+		// wsstore <refHex>: a piece of ours stored with the engine's own store (Workshop::DestroyItem with its store flag inside the
+		// bench and budget scopes: into the workbench's stored list), the way a friend's store request is served: its probe outside
+		// workshop mode.
+		std::string WsStore(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? WorkshopSync::StoreForDev(ref) : "error: usage: wsstore <refHex>";
+		}
+
+		// wsstored <benchHex> [use <refHex>]: the workbench's stored list (each base and its count); "use <ref>" takes one of that
+		// reference's base off the list as placing a stored piece does (the rig's stand-in for the host placing a stored piece back).
+		std::string WsStored(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto bench = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto use = args.size() == 3 && args[1] == "use" ? LookupRef(args[2]) : nullptr;
+			if (!bench || (args.size() != 1 && (args.size() != 3 || !use))) {
+				return "error: usage: wsstored <benchHex> [use <refHex>]";
+			}
+			return WorkshopSync::StoredForDev(bench, use);
+		}
+
 		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
 		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught). wsmode hold|serve, on the
 		// host's game: its friends' requests are taken but not made or answered until serve (the rig's save in the pending
@@ -4566,6 +4588,8 @@ namespace DevCommands
 			Entry{ "wsfinish", WsFinish },
 			Entry{ "wsmode", WsMode },
 			Entry{ "wsscrap", WsScrap },
+			Entry{ "wsstore", WsStore },
+			Entry{ "wsstored", WsStored },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },

@@ -2639,6 +2639,123 @@ step_sharedws_scrap() {
 	_sws_cleanup
 }
 
+# ---- the shared workshop's store request: a friend stores the host's piece (opt-in: smoke.sh --only sharedws-store) ----------------
+# The host builds a generator, the VM a construction light wired to it (the one-way set-up: the host's pieces, the VM's copies).
+# Then the VM, in workshop mode, aims at its copy of the host's generator and presses the real Store key (Cancel): the engine's own
+# test passes the copy (the host's bSharedWorkshopEdit on), its yes/no box (MessageBoxMenu) opens and is answered Yes with the real
+# key; the Yes asks the host instead of storing (WorkshopSync's StoreAcceptHook), and the host's game stores its generator with the
+# engine's own store (Workshop::DestroyItem with its store flag inside the bench and budget scopes). Asserted: the VM's game stored
+# nothing itself (its own stored list, bench and inventory unchanged), the host's generator and the wire to it are gone, the host's
+# stored list holds one more of the generator's base, the host's bench holds no more items than before (a store yields nothing), the
+# VM's copies of both are gone, both games' grids name no deleted reference, and the VM's grids are clean after an in-session save and
+# loaded alone (no stray generator). Then the host places the generator back from its stored list by the dev stand-in (console
+# placement, the finish, and the stored entry taken off the list as the engine's own placement from the store takes it: wsstored use)
+# and the VM gets a copy of it again. Console placement and SetOwnedByPlayer, said so; throwaway saves on both.
+SWS_STORE_SAVE=${SWS_STORE_SAVE:-f4mp_sharedws_store}
+_sws_stored_count() { dc "$1" "wsstored $SANCT_BENCH" | grep -oE "$2x[0-9]+" | cut -dx -f2 | awk '{ s += $1 } END { print s + 0 }'; }   # that game's Sanctuary stored list: how many of that base (0 without workshop data)
+_sws_store_asked() { grep -qE "WorkshopSync: the store of our copy $2 of player [0-9]+'s [0-9A-F]{8} at workbench [0-9A-F]{8} asked of the host as request [0-9]+" "$(win_read sws "$1")"; }
+_sws_store_answered() { grep -qE "WorkshopSync: request [0-9]+ \(store\) at workbench [0-9A-F]{8}: $2" "$(win_read sws "$1")"; }
+_sws_msgbox_open() { dc "$1" menus | grep -q 'MessageBoxMenu:'; }
+step_sharedws_store() {
+	section "shared workshop: a friend stores the host's piece (the real Store key and the engine's yes/no box; console placement, SetOwnedByPlayer and throwaway saves on both)"
+	local r label="sharedws-store"
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then fail "$label: set-up: the host's bSharedWorkshopEdit is on" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
+	if [ "$(field "$(vm wsmode)" hooks)" != true ]; then fail "$label: set-up: the VM's pick hooks are installed (the store box's call among them)" "$(vm wsmode | cut -c1-160)"; return; fi
+	if [ "$(field "$(vm wsmode)" edit)" != true ]; then fail "$label: set-up: the VM has the host's bSharedWorkshopEdit from the welcome" "$(vm wsmode | cut -c1-160)"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	_sws_keys vm || return
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	# the host's generator, the VM's light built as the host's and wired to it (the VM's copies of all three)
+	_sws_one_way host vm || return
+	local hg=$SWS_HG vg=$SWS_VG hl w vw c0 c1 vc0 vc1 inv0 a0 s0 st0 vst0 o0 gbase=$SWS_GENERATOR
+	hl=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_WIRED_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)
+	w=$(host "wsinfo ${hl:-0}" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
+	vw=$(_sws_copy_of vm "${w:-0}")
+	if [ -z "$hg" ] || [ -z "$vg" ]; then fail "$label: set-up: the host's generator and the VM's copy of it" "generator '$hg' copy '$vg'"; return; fi
+	crash_snapshot
+	win_mark sws host; win_mark sws vm
+	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash)
+	st0=$(_sws_stored_count host "$gbase"); vst0=$(_sws_stored_count vm "$gbase")
+	a0=$(_sws_counter vm storesAsked); s0=$(_sws_counter host storesServed); o0=$(field "$(vm status)" offThread)
+	# the real Store key (Cancel) on the copy, then the engine's own yes/no box, answered Yes with the real key (Accept, else E)
+	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
+	if ! _sws_put_away vm "$label"; then wait_for 8 _no_msgbox vm; _ws_exit vm; return; fi
+	if _sws_aim_press vm "$vg" "$WS_KEY_STORE" select "$label"; then
+		if wait_for 6 _sws_msgbox_open vm; then
+			pass "$label: the VM's Store on its copy of the host's generator asks to confirm (the engine's own yes/no box, the host allowing it)" "pressed with $SWS_LAST_PRESS"
+			local how=Accept kr
+			kr=$(dc vm "key $WS_KEY_SELECT 80"); sleep 1
+			if _sws_msgbox_open vm; then
+				how=Activate; kr="$kr; then $(dc vm "key 45 80")"; sleep 1
+			fi
+			if _sws_msgbox_open vm; then fail "$label: set-up: the VM answers the box Yes" "the box stayed open after Accept ($WS_KEY_SELECT) and E: $kr; $(vm menus | grep -oE 'open=[^ ]*')"; dc vm "menu MessageBoxMenu hide" >/dev/null; sleep 1
+			else pass "$label: set-up: the VM answers the box Yes" "with $how: $kr"; fi
+		else
+			fail "$label: the VM's Store on its copy of the host's generator asks to confirm (the engine's own yes/no box, the host allowing it)" "never opened: pressed with $SWS_LAST_PRESS; now $(vm menus | grep -oE 'open=[^ ]*'); $(grep -oE "WorkshopSync: (workshop mode's store of copy|the store) $vg[^;]*" "$(win_read sws vm)" | tail -1 | cut -c1-260)"
+		fi
+	fi
+	sleep 2; wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 2
+	# asked, not stored here; served by the host's engine; answered applied
+	if wait_for 10 _sws_store_asked vm "$vg"; then pass "$label: the box's Yes asked the host instead of storing the copy" "$(grep -oE "WorkshopSync: the store of our copy $vg[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-200)"
+	else fail "$label: the box's Yes asked the host instead of storing the copy" "no 'asked of the host' line on the VM: $(grep -E 'WorkshopSync: (the store|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+	expect_eq "$label: the VM counts one store asked" "$(( $(_sws_counter vm storesAsked) - ${a0:-0} ))" 1
+	expect_eq "$label: the box's Yes ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(vm status)" offThread)" "${o0:-0}"
+	if wait_for 20 _sws_store_answered vm applied; then pass "$label: the host's game stored its generator and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(store\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+	else fail "$label: the host's game stored its generator and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
+	if grep -qE "WorkshopSync: our $hg \(base $gbase\) at workbench [0-9A-F]{8} stored for player [0-9]+'s request [0-9]+: bench budget store" "$(win_read sws host)"; then pass "$label: the host ran the engine's store inside the bench and budget scopes" "$(grep -oE "WorkshopSync: our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-200)"
+	else fail "$label: the host ran the engine's store inside the bench and budget scopes" "$(grep -E "WorkshopSync: (our $hg|player)" "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+	expect_eq "$label: the host counts one store served" "$(( $(_sws_counter host storesServed) - ${s0:-0} ))" 1
+	# the host's generator gone, the wire with it (the engine's store destroys the wires strung to a piece, as its scrap does), its grid clean
+	if wait_for 5 _sws_gone host "$hg"; then pass "$label: the host's generator is gone" "$(host "refinfo $hg" | cut -c1-120)"; else fail "$label: the host's generator is gone" "$(host "refinfo $hg" | cut -c1-200)"; fi
+	if [ -n "$w" ]; then if wait_for 5 _sws_gone host "$w"; then pass "$label: the wire to it went with it" "$(host "refinfo $w" | cut -c1-120)"; else fail "$label: the wire to it went with it" "$(host "refinfo $w" | cut -c1-200)"; fi; fi
+	local g; g=$(host "wsgrid $SANCT_BENCH")
+	if grep -q "gone named=0" <<<"$g"; then pass "$label: the host's grids name no deleted reference after the store" "$(grep -oE 'copies named=[0-9]+ gone named=[0-9]+' <<<"$g")"; else fail "$label: the host's grids name no deleted reference after the store" "$(cut -c1-200 <<<"$g")"; fi
+	# the stored list: the host's holds one more of the generator; the VM's own is unchanged; no yield anywhere (a store gives nothing back)
+	expect_eq "$label: the host's stored list holds one more of the generator (the host's to place back free)" "$(( $(_sws_stored_count host "$gbase") - ${st0:-0} ))" 1
+	expect_eq "$label: the VM's own stored list is unchanged (nothing was stored there)" "$(_sws_stored_count vm "$gbase")" "$vst0"
+	c1=$(_sws_stacks host); vc1=$(_sws_stacks vm)
+	if is_int "$c1" && is_int "$c0" && [ "$c1" -le "$c0" ]; then pass "$label: the host's workbench holds no more items than before (a store yields nothing)" "$c0 -> $c1"; else fail "$label: the host's workbench holds no more items than before (a store yields nothing)" "$c0 -> $c1: $(host "contents $SANCT_BENCH" | cut -c1-200)"; fi
+	expect_eq "$label: the VM's own workbench is unchanged" "$vc1" "$vc0"
+	expect_eq "$label: the VM's inventory is unchanged" "$(field "$(vm inventory)" hash)" "$inv0"
+	# the VM's copies of the generator and the wire gone with the host's report
+	if wait_for 15 _sws_no_copy vm "$hg"; then pass "$label: the VM's copy of the generator went with the host's report" "no copy of $hg (was $vg)"; else fail "$label: the VM's copy of the generator went with the host's report" "$(vm "refinfo $vg" | cut -c1-160); $(vm 'wspower copies' | cut -c1-160)"; fi
+	if [ -n "$w" ] && [ -n "$vw" ]; then if wait_for 10 _sws_no_copy vm "$w"; then pass "$label: ... and its copy of the wire" "no copy of $w (was $vw)"; else fail "$label: ... and its copy of the wire" "$(vm "refinfo $vw" | cut -c1-160)"; fi; fi
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after the store"
+	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in after the store"
+	# an in-session save on the VM, then loaded alone: no stray generator, grids clean
+	vm "console save $SWS_STORE_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	_sws_grid_clean vm "$label: after an in-session save, the VM's grids still name no copy and no runtime reference"
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_STORE_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
+	_sws_grid_clean vm "$label: loaded alone, the VM's grids name no copy and no runtime reference"
+	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy with power links"
+	if _sws_gone vm "$vg"; then pass "$label: loaded alone, the VM's old copy of the generator is not back (no stray in the save)" "$(vm "refinfo $vg" | cut -c1-120)"; else fail "$label: loaded alone, the VM's old copy of the generator is not back (no stray in the save)" "$(vm "refinfo $vg" | cut -c1-200)"; fi
+	_vm_restart_rejoin
+	enter_both SanctuaryExt 14
+	# the host places the generator back from its stored list (the dev stand-in: console placement, the finish, the stored entry
+	# taken off the list as the engine's own placement from the store takes it), and the VM gets a copy of it again
+	win_mark sws host; win_mark sws vm
+	local out g2; out=$(host "wsreport place $gbase $SANCT_BENCH"); g2=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -n "$g2" ]; then
+		_sws_placed host "$g2"; sleep 2; host "wsfinish $g2 $SANCT_BENCH" >/dev/null; sleep 1
+		out=$(host "wsstored $SANCT_BENCH use $g2")
+		if grep -q "taken=true" <<<"$out"; then pass "$label: the host placed the generator back from its stored list (console placement, the finish, and the stored entry taken)" "$out"; else fail "$label: the host placed the generator back from its stored list (console placement, the finish, and the stored entry taken)" "$out"; fi
+		expect_eq "$label: the host's stored list is back to what it was" "$(_sws_stored_count host "$gbase")" "${st0:-0}"
+		if wait_for 15 _sws_has_copy vm "$g2"; then pass "$label: the VM has a copy of the generator placed back" "copy $(_sws_copy_of vm "$g2") of $g2"; else fail "$label: the VM has a copy of the generator placed back" "$(vm 'wspower copies' | cut -c1-200)"; fi
+	else
+		fail "$label: set-up: the generator is placed back" "$out"
+	fi
+	_sws_cleanup
+}
+
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
 _rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* joined=[^ ]* declined=[^ ]* sent=[^ ]* taken=[0-9]*" | sed "s/.*taken=//"; }
 _rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }

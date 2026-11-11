@@ -59,6 +59,12 @@ namespace WorkshopSync
 	// deleted reference): told to the workbench's scripts, off the grids, links, budget and workbench, reported, deleted. With
 	// a_engine, the engine's own scrap instead, as a friend's request runs it (wsscrap <ref> engine: the yield into the workbench).
 	[[nodiscard]] std::string ScrapForDev(RE::TESObjectREFR* a_ref, bool a_engine = false);
+	// Dev: a piece of ours stored with the engine's own store, as a friend's store request runs it (wsstore: into the
+	// workbench's stored list, inside the bench and budget scopes); what ran, and the stored list's count of its base before and after.
+	[[nodiscard]] std::string StoreForDev(RE::TESObjectREFR* a_ref);
+	// Dev: a workbench's stored list (wsstored <bench>: each base and its count); with a_use, one of that reference's base taken off
+	// it as placing a stored piece does (wsstored <bench> use <ref>: the dev stand-in for placing it back from the store).
+	[[nodiscard]] std::string StoredForDev(RE::TESObjectREFR* a_bench, RE::TESObjectREFR* a_use);
 	// Dev: the finish steps run now on a reference of ours, as one of the workbench's pieces (wsfinish); what each did.
 	[[nodiscard]] std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
 	// Dev: the shared workshop forced on or off for this game (none: the host's rule), and its state (wsmode).
