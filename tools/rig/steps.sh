@@ -2573,7 +2573,7 @@ step_sharedws_scrap() {
 	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
 	# the host's generator, the VM's light built as the host's and wired to it (the VM's copies of all three)
 	_sws_one_way host vm || return
-	local hg=$SWS_HG vg=$SWS_VG hl w vw c0 c1 vc0 vc1 inv0 a0 s0 g0
+	local hg=$SWS_HG vg=$SWS_VG hl w vw c0 c1 vc0 vc1 inv0 a0 s0 g0 o0
 	hl=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_WIRED_LIGHT\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)
 	w=$(host "wsinfo ${hl:-0}" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
 	vw=$(_sws_copy_of vm "${w:-0}")
@@ -2581,7 +2581,7 @@ step_sharedws_scrap() {
 	crash_snapshot
 	win_mark sws host; win_mark sws vm
 	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash)
-	a0=$(_sws_counter vm scrapsAsked); s0=$(_sws_counter host scrapsServed); g0=$(_sws_counter host served)
+	a0=$(_sws_counter vm scrapsAsked); s0=$(_sws_counter host scrapsServed); g0=$(_sws_counter host served); o0=$(field "$(vm status)" offThread)
 	# the real Scrap key on the copy, then the engine's own confirmation, confirmed with the real key (Accept, else E)
 	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
 	if ! _sws_put_away vm "$label"; then wait_for 8 _no_msgbox vm; _ws_exit vm; return; fi
@@ -2605,6 +2605,7 @@ step_sharedws_scrap() {
 	if wait_for 10 _sws_scrap_asked vm "$vg"; then pass "$label: the confirmation's Yes asked the host instead of scrapping the copy" "$(grep -oE "WorkshopSync: the scrap of our copy $vg[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-200)"
 	else fail "$label: the confirmation's Yes asked the host instead of scrapping the copy" "no 'asked of the host' line on the VM: $(grep -E 'WorkshopSync: (the scrap|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
 	expect_eq "$label: the VM counts one scrap asked" "$(( $(_sws_counter vm scrapsAsked) - ${a0:-0} ))" 1
+	expect_eq "$label: the confirmation's Yes ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(vm status)" offThread)" "${o0:-0}"
 	if wait_for 20 _sws_scrap_answered vm applied; then pass "$label: the host's game scrapped its generator and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(scrap\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
 	else fail "$label: the host's game scrapped its generator and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
 	if grep -qE "WorkshopSync: our $hg \(base $SWS_GENERATOR\) at workbench [0-9A-F]{8} scrapped for player [0-9]+'s request [0-9]+: bench budget scrap" "$(win_read sws host)"; then pass "$label: the host ran the engine's scrap inside the bench and budget scopes" "$(grep -oE "WorkshopSync: our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-200)"

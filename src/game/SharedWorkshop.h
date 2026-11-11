@@ -298,16 +298,17 @@ namespace SharedWorkshop
 
 	// What the friend's workshop mode does when its Scrap key (or the Scrap hint's test) meets a reference: the engine's own
 	// test and scrap (not a copy of the host's, or the rule off here), a request of the host (a copy, the host allowing it, no
-	// scrap of it asked already), or a refusal with its notice.
+	// wire, no scrap of it asked already), or a refusal with its notice.
 	enum class ScrapKey : std::uint8_t
 	{
 		kEngine,         // not the host's copy: the engine's own scrap test, and its own scrap if it says yes
 		kAsk,            // the host's copy: the engine's test and confirmation open as for any piece, and Yes asks the host
 		kRefuseEditOff,  // the host's copy, and the host's bSharedWorkshopEdit is off: refused with a notice
+		kRefuseWire,     // the host's wire: not served (the host's game refuses it), so refused here with a notice that says so
 		kRefusePending,  // the host's copy, its scrap asked already: refused with a notice until the answer comes
 	};
 
-	[[nodiscard]] constexpr ScrapKey OnScrapKey(bool a_hostsCopy, bool a_editAllowed, bool a_pending)
+	[[nodiscard]] constexpr ScrapKey OnScrapKey(bool a_hostsCopy, bool a_editAllowed, bool a_wire, bool a_pending)
 	{
 		if (!a_hostsCopy) {
 			return ScrapKey::kEngine;
@@ -315,7 +316,37 @@ namespace SharedWorkshop
 		if (!a_editAllowed) {
 			return ScrapKey::kRefuseEditOff;
 		}
+		if (a_wire) {
+			return ScrapKey::kRefuseWire;
+		}
 		return a_pending ? ScrapKey::kRefusePending : ScrapKey::kAsk;
+	}
+
+	// What the confirmation's Yes does with the reference it resolved (Workshop::RequestScrapCallback::OnAccept's call of
+	// Workshop::ScrapReference, hooked in both games). The confirmation is modal and can stay open for as long as the player
+	// likes, so the reference is judged again now, not as it was when the key was pressed: one gone meanwhile (disabled or
+	// deleted: the host's scrap of it for a friend, the host's scrapped report taking the friend's copy) is never scrapped
+	// again (the host would yield twice; the friend would make items from nothing and delete a copy outside the plugin's
+	// bookkeeping); a copy, or a reference that was one (the block-interaction keyword, the copy sets, the graveyard), is
+	// asked of the host if it is still admitted, else refused (the host left, the server said the rule is off, the bench was
+	// learned not the host's); anything else is the player's own piece, scrapped by the engine as ever.
+	enum class ScrapAccept : std::uint8_t
+	{
+		kEngine,       // the player's own piece: the engine's scrap
+		kAsk,          // an admitted copy of the host's piece: asked of the host, nothing scrapped here
+		kRefuseGone,   // disabled or deleted since the key: nothing to scrap (a notice says it went already)
+		kRefuseCopy,   // a copy (or once one) no longer admitted: refused with a notice; it stands as it is
+	};
+
+	[[nodiscard]] constexpr ScrapAccept OnScrapAccept(bool a_gone, bool a_copy, bool a_admitted)
+	{
+		if (a_gone) {
+			return ScrapAccept::kRefuseGone;
+		}
+		if (a_copy || a_admitted) {
+			return a_admitted ? ScrapAccept::kAsk : ScrapAccept::kRefuseCopy;
+		}
+		return ScrapAccept::kEngine;
 	}
 
 	// ---- A wire's ends -----------------------------------------------------------------------------------
@@ -355,10 +386,13 @@ namespace SharedWorkshop
 		bool endsAtBench = false;  // ...each one of this workbench's pieces, and neither a wire
 		bool endsTakeWire = false;  // ...each one a piece a wire can end on (TakesWire)
 		bool alreadyWired = false;  // ...and the workbench's grids already join the two (Joined)
-		bool editAllowed = false;   // a scrap: the host's bSharedWorkshopEdit is on
-		bool targetKnown = false;   // ...the piece is a reference here, neither deleted nor disabled
-		bool targetAtBench = false; // ...one of this workbench's own pieces (not a copy, not the workbench)
-		bool targetHeld = false;    // ...and the host holds it in workshop mode (the placement item, grabbed)
+		bool editAllowed = false;       // a scrap: the host's bSharedWorkshopEdit is on
+		bool otherBenchOpen = false;    // ...workshop mode is open here at another workbench (its own build list would show this one's)
+		bool targetKnown = false;       // ...the piece is a reference here, neither deleted nor disabled
+		bool targetAtBench = false;     // ...one of this workbench's own pieces (not a copy, not the workbench, not a wire)
+		bool targetScrappable = false;  // ...no actor, and one the engine's own scrap test lets a player scrap (WorkshopCanScrapRef)
+		bool targetLoaded = false;      // ...with its 3D in (FinishDestroyItem takes a piece off the grids only then)
+		bool targetHeld = false;        // ...and the host holds it in workshop mode (the placement item, grabbed)
 	};
 
 	// Whether a wire can end on a piece, by the engine's own rule (Workshop's wire filter, 2195584 in 1.11.240: the reference's
@@ -399,8 +433,20 @@ namespace SharedWorkshop
 			if (!a_facts.editAllowed) {
 				return Why::kNotAllowed;
 			}
+			if (a_facts.otherBenchOpen) {
+				// The engine's scrap ends by filling workshop mode's own build list from the current workbench, which the bench scope
+				// makes this one: the host's menu at the other settlement would then show this one's stock (and build from it for
+				// free). Refused outright, not kept waiting: the friend presses again once the host is out of workshop mode.
+				return Why::kHostBusy;
+			}
 			if (!a_facts.targetKnown || !a_facts.targetAtBench) {
 				return Why::kNoSuchPiece;
+			}
+			if (!a_facts.targetScrappable) {
+				return Why::kNotWorkshopItem;  // a settler, a companion, a piece with the scrap-block keyword: never from a request (crafted or mistranslated)
+			}
+			if (!a_facts.targetLoaded) {
+				return Why::kBenchNotLoaded;  // the piece's 3D not in yet: its grid would keep naming a deleted reference
 			}
 			if (a_facts.targetHeld) {
 				return Why::kPieceBusy;  // the engine's own scrap of a held piece cancels the hold first; a friend's request waits instead

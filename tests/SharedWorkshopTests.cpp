@@ -243,12 +243,26 @@ TEST("shared workshop: a scrap's verdict is nothing either way: applied without 
 
 TEST("shared workshop: the Scrap key on the host's copy asks the host when the host allows it and no scrap of it waits; the engine's own otherwise")
 {
-	CHECK(OnScrapKey(false, true, false) == ScrapKey::kEngine);
-	CHECK(OnScrapKey(false, false, true) == ScrapKey::kEngine);  // our own piece: the host's setting is no concern of ours
-	CHECK(OnScrapKey(true, true, false) == ScrapKey::kAsk);
-	CHECK(OnScrapKey(true, false, false) == ScrapKey::kRefuseEditOff);
-	CHECK(OnScrapKey(true, true, true) == ScrapKey::kRefusePending);
-	CHECK(OnScrapKey(true, false, true) == ScrapKey::kRefuseEditOff);  // the rule first: it never changes mid-session
+	CHECK(OnScrapKey(false, true, false, false) == ScrapKey::kEngine);
+	CHECK(OnScrapKey(false, false, true, true) == ScrapKey::kEngine);  // our own piece (a wire too): the host's setting is no concern of ours
+	CHECK(OnScrapKey(true, true, false, false) == ScrapKey::kAsk);
+	CHECK(OnScrapKey(true, false, false, false) == ScrapKey::kRefuseEditOff);
+	CHECK(OnScrapKey(true, true, false, true) == ScrapKey::kRefusePending);
+	CHECK(OnScrapKey(true, false, false, true) == ScrapKey::kRefuseEditOff);  // the rule first: it never changes mid-session
+	CHECK(OnScrapKey(true, true, true, false) == ScrapKey::kRefuseWire);      // the host's wire: never asked (the host's game refuses it)
+	CHECK(OnScrapKey(true, true, true, true) == ScrapKey::kRefuseWire);       // ...so never pending either
+	CHECK(OnScrapKey(true, false, true, false) == ScrapKey::kRefuseEditOff);
+}
+
+TEST("shared workshop: the scrap confirmation's Yes judges the reference as it is now: gone is never scrapped, a copy is asked while admitted, else refused; one's own piece goes to the engine")
+{
+	CHECK(OnScrapAccept(false, false, false) == ScrapAccept::kEngine);
+	CHECK(OnScrapAccept(false, true, true) == ScrapAccept::kAsk);
+	CHECK(OnScrapAccept(false, false, true) == ScrapAccept::kAsk);        // admitted says copy: asked
+	CHECK(OnScrapAccept(false, true, false) == ScrapAccept::kRefuseCopy);  // the host left, the rule off, the bench learned not the host's
+	CHECK(OnScrapAccept(true, false, false) == ScrapAccept::kRefuseGone);  // the host's own piece, scrapped for a friend while the confirmation stood
+	CHECK(OnScrapAccept(true, true, false) == ScrapAccept::kRefuseGone);   // the friend's copy, taken by the host's scrapped report meanwhile
+	CHECK(OnScrapAccept(true, true, true) == ScrapAccept::kRefuseGone);    // gone first, whatever else is true
 }
 
 TEST("shared workshop: a wire ends only on a piece with the workshopPowerConnection value or the WorkshopPowerConnection keyword")
@@ -339,7 +353,7 @@ TEST("shared workshop: the host's game refuses in the order it looks: the settle
 	CHECK(Refusal(Op::kWire, facts) == Why::kNotHostOwned);
 }
 
-TEST("shared workshop: a scrap is refused in order: the settlement and the host being there as for a build, then the host's setting, the piece, and the host's hands")
+TEST("shared workshop: a scrap is refused in order: the settlement and the host being there as for a build, then the host's setting, its workshop mode elsewhere, the piece, the engine's scrap test, its 3D, and the host's hands")
 {
 	Facts facts;
 	facts.benchKnown = true;
@@ -350,14 +364,28 @@ TEST("shared workshop: a scrap is refused in order: the settlement and the host 
 	CHECK(Refusal(Op::kScrap, facts) == Why::kNotAllowed);  // the host's bSharedWorkshopEdit off: nothing else is looked at
 	facts.targetKnown = true;
 	facts.targetAtBench = true;
+	facts.targetScrappable = true;
+	facts.targetLoaded = true;
 	CHECK(Refusal(Op::kScrap, facts) == Why::kNotAllowed);
 	facts.editAllowed = true;
 	CHECK(!Refusal(Op::kScrap, facts));
+	facts.inWorkshopMode = true;
+	CHECK(!Refusal(Op::kScrap, facts));  // the host in workshop mode at this very workbench: the engine's scrap fills its list from the right bench
+	facts.otherBenchOpen = true;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kHostBusy);  // ...at another workbench: refused outright (its list would show this one's stock)
+	facts.otherBenchOpen = false;
+	facts.inWorkshopMode = false;
 	facts.targetHeld = true;
 	CHECK(Refusal(Op::kScrap, facts) == Why::kPieceBusy);
 	facts.targetHeld = false;
+	facts.targetLoaded = false;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kBenchNotLoaded);  // the piece's 3D not in: its grid would keep naming a deleted reference
+	facts.targetLoaded = true;
+	facts.targetScrappable = false;
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNotWorkshopItem);  // a settler, a companion, the scrap-block keyword: the engine's own test says no
+	facts.targetScrappable = true;
 	facts.targetAtBench = false;
-	CHECK(Refusal(Op::kScrap, facts) == Why::kNoSuchPiece);  // another settlement's piece, a copy, or the workbench itself
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNoSuchPiece);  // another settlement's piece, a copy, a wire, or the workbench itself
 	facts.targetAtBench = true;
 	facts.targetKnown = false;
 	CHECK(Refusal(Op::kScrap, facts) == Why::kNoSuchPiece);

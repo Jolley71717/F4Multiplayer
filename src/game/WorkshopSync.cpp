@@ -3557,10 +3557,11 @@ namespace WorkshopSync
 		}
 
 		// The Scrap hint on a copy: shown when the host allows a friend's scrap, by the engine's own test, as for any piece
-		// (a copy's base is its builder's: a piece a recipe makes passes); hidden when the host's setting is off.
+		// (a copy's base is its builder's: a piece a recipe makes passes); hidden when the host's setting is off, and on a
+		// copy of the host's wire (the host's game doesn't scrap a wire for a friend: ScrapKeyHook says so when pressed).
 		bool CanScrapHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
-			if (AdmitsCopy(a_ref) && !EditAllowed()) {
+			if (AdmitsCopy(a_ref) && (!EditAllowed() || IsWire(a_ref.GetObjectReference()))) {
 				return false;
 			}
 			return originalCanScrap(a_ref, a_flag);
@@ -3646,12 +3647,18 @@ namespace WorkshopSync
 		// the menu); one that does and is refused, the engine's scrap test refused the piece (its parts said).
 		bool ScrapKeyHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
-			switch (SharedWorkshop::OnScrapKey(AdmitsCopy(a_ref), EditAllowed(), IsPendingPiece(a_ref.GetFormID()))) {
+			switch (SharedWorkshop::OnScrapKey(AdmitsCopy(a_ref), EditAllowed(), IsWire(a_ref.GetObjectReference()), IsPendingPiece(a_ref.GetFormID()))) {
 			case SharedWorkshop::ScrapKey::kRefuseEditOff:
 				if (scrapsRefused.fetch_add(1) < 3) {
 					REX::INFO("WorkshopSync: workshop mode's scrap of copy {:08X} refused: the host's bSharedWorkshopEdit is off", a_ref.GetFormID());
 				}
 				Hud::Notify(Text::Get("workshop.shared.edit_off"));
+				return false;
+			case SharedWorkshop::ScrapKey::kRefuseWire:
+				if (scrapsRefused.fetch_add(1) < 3) {
+					REX::INFO("WorkshopSync: workshop mode's scrap of copy {:08X} refused: a wire of the host's (not served)", a_ref.GetFormID());
+				}
+				Hud::Notify(Text::Get("workshop.shared.wire_no_scrap"));
 				return false;
 			case SharedWorkshop::ScrapKey::kRefusePending:
 				scrapsRefused.fetch_add(1);
@@ -4135,13 +4142,38 @@ namespace WorkshopSync
 				key->second, benchId, *seq);
 		}
 
-		// Workshop::RequestScrapCallback::OnAccept's call of Workshop::ScrapReference (SCRAP_ACCEPT_CALL): a copy of the host's
-		// piece is asked of the host instead, and never reaches the engine's scrap; anything else is scrapped as ever.
+		// Workshop::RequestScrapCallback::OnAccept's call of Workshop::ScrapReference (SCRAP_ACCEPT_CALL), in both games. The
+		// confirmation is modal and may have stood open a long while since the key: the reference is judged as it is now
+		// (SharedWorkshop::OnScrapAccept). One disabled or deleted meanwhile (the host's: a friend's request scrapped it first;
+		// the friend's copy: the host's scrapped report took it, which forgets the copy but leaves the handle resolving) is never
+		// given to the engine's scrap (the host would yield twice; the friend would put the rewards into its bench from nothing
+		// and delete a copy outside the plugin's bookkeeping). A copy, or a reference that was one (the block-interaction
+		// keyword every copy keeps, the copy sets, the graveyard), is asked of the host while it is still admitted, else refused
+		// with a notice. Anything else is the player's own piece: scrapped as ever. The main thread (the menu's callback).
 		void ScrapAcceptHook(RE::Workshop::ContextData& a_context, RE::NiPointer<RE::TESObjectREFR>& a_ref, RE::BSTArray<RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>>* a_rewards)
 		{
-			if (a_ref && AdmitsCopy(*a_ref)) {
-				AskScrap(*a_ref);
-				return;
+			if (a_ref) {
+				MainThread::Assert("WorkshopSync::ScrapAcceptHook");
+				const auto id = a_ref->GetFormID();
+				const bool gone = a_ref->IsDisabled() || a_ref->IsDeleted();
+				const bool copy = Blocked(*a_ref) || IsCopy(a_ref.get()) || InGraveyard(a_ref.get());
+				switch (SharedWorkshop::OnScrapAccept(gone, copy, AdmitsCopy(*a_ref))) {
+				case SharedWorkshop::ScrapAccept::kRefuseGone:
+					scrapsRefused.fetch_add(1);
+					REX::INFO("WorkshopSync: the scrap confirmation's Yes on {:08X} refused: {} already (copy={}); nothing scrapped", id, a_ref->IsDeleted() ? "deleted" : "disabled", copy);
+					Hud::Notify(Text::Get("workshop.shared.scrap_gone"));
+					return;
+				case SharedWorkshop::ScrapAccept::kRefuseCopy:
+					scrapsRefused.fetch_add(1);
+					REX::INFO("WorkshopSync: the scrap confirmation's Yes on copy {:08X} refused: no longer admitted ({}, hostGone={}); nothing scrapped", id, WhyNotAdmitted(*a_ref), hostGone);
+					Hud::Notify(Text::Get("workshop.shared.scrap_refused"));
+					return;
+				case SharedWorkshop::ScrapAccept::kAsk:
+					AskScrap(*a_ref);
+					return;
+				case SharedWorkshop::ScrapAccept::kEngine:
+					break;
+				}
 			}
 			originalScrapReference(a_context, a_ref, a_rewards);
 		}
@@ -4429,11 +4461,19 @@ namespace WorkshopSync
 			} else if (a_request.op == Protocol::WorkshopRequestOp::kScrap) {
 				const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.target);
 				facts.editAllowed = EditAllowed();
+				// Workshop mode open here at another workbench: the engine's scrap would fill its build list from this one (Refusal).
+				facts.otherBenchOpen = facts.inWorkshopMode && OpenBench() != 0 && OpenBench() != a_request.workshop;
 				facts.targetKnown = target && !target->IsDeleted() && !target->IsDisabled();
 				// One of this workbench's own pieces: linked to it, not a copy of a friend's (the friend's game scraps those), not the
-				// workbench itself (never a piece: ReportRef), and not a wire (no wire is scrapped by itself in any game: its end is).
+				// workbench itself (never a piece: ReportRef), and not a wire (ScrapReference's spline branches are untried from here;
+				// the friend's Scrap key refuses a copy of a wire with a notice before it asks).
 				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !IsWorkbenchAnchor(target) &&
 				                      !IsWire(target->GetObjectReference());
+				// The engine's own scrap test, as the friend's key ran it on the copy (WorkshopCanScrapRef with false, the Scrap key's
+				// flag): a settler or a companion assigned here is linked to the bench like a piece, and only a crafted or mistranslated
+				// request names one (copies have keys, actors have none), so no actor passes, whatever the test says.
+				facts.targetScrappable = facts.targetAtBench && !target->As<RE::Actor>() && CanScrap(*target);
+				facts.targetLoaded = facts.targetKnown && target->Get3D() != nullptr;
 				facts.targetHeld = facts.targetKnown && Held(*target);
 				if (facts.targetKnown) {
 					spot.position[0] = target->data.location.x;
@@ -4776,7 +4816,10 @@ namespace WorkshopSync
 			std::erase_if(making, [&](Making& a_making) {
 				const auto& request = a_making.request;
 				if (request.op == Protocol::WorkshopRequestOp::kScrap) {
-					ServeScrap(request);  // one engine call: done before the save rather than refused
+					// Nothing half done to finish: the piece stands as it did. The engine's scrap (a Papyrus event, a deferred delete,
+					// havok) is not run inside the pre-save hook; the friend presses again.
+					REX::INFO("WorkshopSync: save: player {}'s request {} (scrap of {:08X}) refused as busy rather than scrapped inside the save", request.playerId, request.seq, request.target);
+					Answer(request, Protocol::WorkshopAnswer::Why::kHostBusy, 0);
 					return true;
 				}
 				const auto  ref = a_making.ref.get();

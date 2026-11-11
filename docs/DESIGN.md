@@ -3233,17 +3233,32 @@ confirmation, and the confirmation's Yes asks the host instead of scrapping. The
 key's test on a copy are the engine's own (`WorkshopCanScrapRef` 2194959: a copy's base is its builder's, so a piece a recipe
 makes passes), and `Workshop::RequestScrapRef` 2195194 opens the ExamineConfirmMenu with the rewards it worked out from the
 piece's recipe (the friend's own perks; the host gives what its perks say, a Scrapper mismatch shows a slightly different list);
-with the setting off, or a scrap of that copy already asked, the key is refused with a notice (`SharedWorkshop::OnScrapKey`).
+with the setting off, a copy of the host's wire (not served: `ScrapReference`'s spline branches are untried from a request),
+or a scrap of that copy already asked, the key is refused with a notice (`SharedWorkshop::OnScrapKey`).
 On Yes, `Workshop::RequestScrapCallback::OnAccept` 2195603 calls `Workshop::ScrapReference` 2195125 at +0x107; that call is
-hooked (`write_call<5>`, the tenth site of `InstallPicks`, all or none): for an admitted copy the friend's game sends
-`kReportWorkshopRequest` op `kScrap` naming the host's piece (`WorkshopRequest::target`, the copy's key) and returns without
-scrapping (`AskScrap`; the rest of OnAccept, the menu's "ItemScrapped" and its sound, runs as the engine wrote it); anything
-else goes to the engine's scrap as ever. The request's piece is the copy: pending until the answer (not asked twice, not
-grabbed), never dropped before a save or on leaving (`Requests::Builds` and `DropBuilds` take builds only). The host's game
-checks it (`Refusal`: the workbench as for a build, then its setting (`kNotAllowed`), the piece one of that workbench's own
-and no wire (`kNoSuchPiece`), and not in the host's hands in workshop mode (`kPieceBusy`)) and at the next frame scraps it
-with the engine's own scrap, one call (`SharedWorkshop::SCRAP_STEPS`, `ScrapPiece`): `Workshop::ScrapReference(ContextData(
-player), piece, nullptr)` inside the bench scope and the budget scope. Read in 1.11.240, it disables the piece, notifies
+hooked (`write_call<5>`, the tenth site of `InstallPicks`, all or none), in both games, and judges the reference as it is now,
+not as it was when the key was pressed (the confirmation is modal and can stand open; `SharedWorkshop::OnScrapAccept`): one
+disabled or deleted meanwhile (the host's piece, scrapped for a friend's request first; the friend's copy, taken by the host's
+scrapped report) never reaches the engine's scrap (a second scrap would yield twice on the host, and on the friend put the
+rewards into its bench from nothing and delete a copy outside the plugin's bookkeeping): a notice says it went already. For an
+admitted copy the friend's game sends `kReportWorkshopRequest` op `kScrap` naming the host's piece (`WorkshopRequest::target`,
+the copy's key) and returns without scrapping (`AskScrap`; the rest of OnAccept, the menu's "ItemScrapped" and its sound, runs
+as the engine wrote it); a copy (or a reference that was one: the block-interaction keyword, the copy sets, the graveyard) no
+longer admitted (the host left, the rule off, the bench learned not the host's) is refused with a notice; anything else is
+the player's own piece and goes to the engine's scrap as ever. The request's piece is the copy: pending until the answer (not
+asked twice, not grabbed), never dropped before a save or on leaving (`Requests::Builds` and `DropBuilds` take builds only).
+The host's game checks it (`Refusal`: the workbench as for a build, then its setting (`kNotAllowed`), its own workshop mode
+open at another workbench (`kHostBusy`: the engine's scrap ends by filling workshop mode's build list from the current
+workbench, which the bench scope makes the piece's, so the host's menu at Red Rocket would show Sanctuary's stock and build
+from it for free; refused outright, the friend presses again), the piece one of that workbench's own and no wire
+(`kNoSuchPiece`), no actor and one the engine's own scrap test lets a player scrap (`WorkshopCanScrapRef`, `kNotWorkshopItem`:
+a settler or a companion assigned there is linked to the bench like a piece, and a crafted request could name one; honest ones
+can't, only copies have keys), its 3D in (`kBenchNotLoaded`: `FinishDestroyItem` takes a piece off the grids only then), and
+not in the host's hands in workshop mode (`kPieceBusy`)) and at the next frame scraps it with the engine's own scrap, one call
+(`SharedWorkshop::SCRAP_STEPS`, `ScrapPiece`): `Workshop::ScrapReference(ContextData(player), piece, nullptr)` inside the
+bench scope and the budget scope. A scrap still waiting when a save starts is answered `kHostBusy`, not run inside the
+pre-save hook (a Papyrus event, a deferred delete and havok there are untried; nothing is half done, the friend presses again).
+Read in 1.11.240, `ScrapReference` disables the piece, notifies
 `ItemScrappedEvent`, `FinishDestroyItem` 2195123 (off the current bench's grids, every wire strung to it destroyed with its own
 destroyed event, snaps and stacked children cleared, the havok bodies out), the yield into the current workbench's container
 (a null rewards pointer makes it work the yield out itself through `ForEachScrapRewardItem` 2195268: half the recipe's
@@ -3254,8 +3269,9 @@ power and resources, `Budget::RemoveObject`, `ItemDestroyedEvent{bench, piece}` 
 it), `DeleteWorkshopItem` 2195121 and `RefillSharedWorkshopContainer`. Without the bench scope none of the yield, the grid work or
 the recount would happen (it reads workshop mode's current workbench for all of them). The answer names the piece
 (`refId`); applied, the friend's game does nothing (the host's scrapped report took the copy, the engine's own UI said scrapped);
-refused, the copy stands as it was, with a notice. One pile: with `bSharedStorage` the yield is both players' through the shared
-bench. The host's dev `wsscrap <ref> engine` is the probe. The rig check `sharedws-scrap` (opt-in): the host builds a generator
+refused, the copy stands as it was, with a notice. The yield lands in the host's workbench; friends see it there only with
+`bSharedStorage` on (one shared workbench pile at the host's settlements is a later step, not here). The host's dev
+`wsscrap <ref> engine` is the probe. The rig check `sharedws-scrap` (opt-in): the host builds a generator
 and a construction light wired to it, the VM scraps the generator's copy with the real Scrap key and the confirmation's Yes,
 and asserts the host's generator and the wire gone, the host's bench up by the yield, the VM's copies of both gone, nothing
 added to the VM's own stash, and the VM's grids clean after an in-session save and a solo load.
