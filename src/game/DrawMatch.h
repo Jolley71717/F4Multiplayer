@@ -11,7 +11,7 @@
 // again, or the stand-in's gear changes (a redraw); only a holster is still asked, every SLOW_HOLSTER, so a weapon
 // never stays out on a friend who put theirs away. A state that held for STABLE gives the next mismatch its asks
 // back. Kept free of the game so it can be tested.
-// A stand-in whose holster stalled half-way kept its gun out all the same (bead e4m9). Asked to put its gun away, the
+// A stand-in whose holster stalled half-way kept its gun out all the same. Asked to put its gun away, the
 // engine sets the weapon state to "wants to sheathe" and has the graph play the holster; the gun goes to the holster
 // at that animation's own event, which also ends the state. A graph that does not take the holster (busy with a
 // replayed throw, a reload, a stagger) leaves the state wanting to sheathe with the gun still in the hand. That state

@@ -9,7 +9,7 @@
 #include <string>
 
 // How often each thing the plugin does that the game answers with a sound happens, so a repeating sound (a constant
-// clicking reported after a friend joined or left, bead F4Multiplayer-v7mg) shows in the log and the status line by
+// clicking reported after a friend joined or left) shows in the log and the status line by
 // name instead of being guessed at. Each source counts what it does in windows of WINDOW; a window with more than the
 // source's LIMIT is one a sound repeated in, and the first such is reported, then one every REPORT_EVERY (one report for all
 // the sources together, so the log holds a line a minute at most however many repeat). The limits are

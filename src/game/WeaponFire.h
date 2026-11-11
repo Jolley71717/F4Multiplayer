@@ -157,7 +157,7 @@ namespace WeaponFire
 	void DropHandThrowables();
 
 	// A friend's stand-in, each frame (looked at every HandThrowable::SWEEP_EVERY): the grenade the engine keeps culled in
-	// its left hand between throws is culled again when it is found drawn with no throw going on (bead krne). Runs whatever
+	// its left hand between throws is culled again when it is found drawn with no throw going on. Runs whatever
 	// bGrenadeInHand says. Main thread.
 	void SweepHand(RE::Actor* a_standIn);
 

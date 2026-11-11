@@ -945,7 +945,7 @@ namespace Session
 
 			// Stamped with the time of the engine's last frame (FrameClock.h, EngineClock.h), which moved the player here,
 			// rather than this moment of our work, which comes up to a frame off that pace in a game that skips frames
-			// unevenly: so stamped, an even run went out as a stand and a leap (F4Multiplayer-ktmu).
+			// unevenly: so stamped, an even run went out as a stand and a leap.
 			const auto  at = FrameClock::StampAt(a_now);
 			const auto& pos = player->data.location;
 			float       speed = 0.0f;

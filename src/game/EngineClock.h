@@ -9,7 +9,7 @@
 // The engine moves everything by its speed times that frame time. That is not the time between the moments our work
 // runs in two frames: those come earlier or later with the work before them, and a game that skips frames unevenly
 // (one 16 ms apart, the next 46) runs it up to a frame off the engine's pace. Stamped with those moments, the player's
-// even run went out as a stand and a leap every few frames, and friends drew it so (F4Multiplayer-ktmu). On this time
+// even run went out as a stand and a leap every few frames, and friends drew it so. On this time
 // the place goes evenly, and a stand-in placed at it steps as far each frame as the engine moves all else.
 //
 // Pulled toward the wall clock a little each frame, so it never wanders from it, and set to it when it is more than

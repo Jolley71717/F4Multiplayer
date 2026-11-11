@@ -1,6 +1,6 @@
 // The mod's own autosaves, what a player is told a death does, and what the log says of each save and load
 // (src/game/AutoSaveRules.h, which AutoSave.cpp and Downed.cpp follow): a death loads the newest save, and in a
-// session that save was often ten minutes old (F4Multiplayer-qx9n).
+// session that save was often ten minutes old.
 
 #include "Test.h"
 
