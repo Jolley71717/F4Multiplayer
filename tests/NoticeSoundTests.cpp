@@ -105,11 +105,13 @@ TEST("notice sound: every HUD notice goes out through Hud.cpp with the null soun
 	CHECK(calls >= 1);
 }
 
-TEST("notice sound: the plugin plays a menu sound only on its own menu's presses")
+TEST("notice sound: the plugin plays a menu sound only on its own menu's presses, or counted")
 {
 	// A press plays one: these never repeat on their own. A new caller that can play one without a press is a source of
 	// repeating sounds: count it in ClickWatch (src/game/ClickRates.h) and add it here.
-	const std::map<std::string, int> allowed{ { "src/game/UiMainMenuEntry.cpp", 1 }, { "src/game/UiPanel.cpp", 4 } };
+	// WorkshopSync.cpp's one is the workshop's store sound when the host's game answers that it stored the piece a friend's
+	// Store asked for (the press was the friend's, the sound waits for the answer): one an answer, counted as storeSounds.
+	const std::map<std::string, int> allowed{ { "src/game/UiMainMenuEntry.cpp", 1 }, { "src/game/UiPanel.cpp", 4 }, { "src/game/WorkshopSync.cpp", 1 } };
 	const auto                       root = SourceTree::Root();
 	REQUIRE(root);
 	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {

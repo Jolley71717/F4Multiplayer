@@ -4104,6 +4104,22 @@ TEST("shared workshop: a friend's request goes to the host's own game alone and 
 		CHECK(Count(Received(f, 3), MT::kWorkshopAnswer) == 0);
 		CHECK(Count(Received(f, 1), MT::kWorkshopAnswer) == 0);
 
+		// A store (and a scrap) is relayed the same way, its target with it: the server reads none of the op's own fields.
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 9, Op::kStore, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
+		const auto stores = requests(Received(f, 1));
+		REQUIRE(stores.size() == 1);
+		CHECK(stores[0].playerId == alice);
+		CHECK(stores[0].seq == 9);
+		CHECK(stores[0].op == Op::kStore);
+		CHECK(stores[0].target == MADE);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 9, alice, Op::kStore, Why::kApplied, BENCH, MADE }, MT::kReportWorkshopAnswer));
+		const auto storeAnswers = answers(Received(f, 2));
+		REQUIRE(storeAnswers.size() == 1);
+		CHECK(storeAnswers[0].op == Op::kStore);
+		CHECK(storeAnswers[0].refId == MADE);
+
 		// The host's own game asking is refused by the server (its pieces are its own already).
 		f.fake->Deliver(1, build(6));
 		const auto own = answers(Received(f, 1));
