@@ -1773,8 +1773,10 @@ namespace QuestSync
 			if (!fresh.empty()) {
 				lastStageChange = now;
 				// A companion quest's owner's stage (kEach) done by this game's own play: its script ran here, so this game
-				// drives the quest (drivenHere). One set here from a friend's is never fresh: NoteSetHere knew it first.
-				const auto companionFile = IsCompanion(quest) ? FileOf(quest) : std::nullopt;
+				// drives the quest (drivenHere). One set here from a friend's is never fresh: NoteSetHere knew it first. Any
+				// quest with a driver (StageRules::DRIVERS): the companions' own, and the others' with kEach stages (Cait's).
+				const auto questFile = FileOf(quest);
+				const auto companionFile = questFile && (IsCompanion(quest) || StageRules::DriverOf(*questFile, id & 0x00FFFFFF)) ? questFile : std::nullopt;
 				if (companionFile && std::ranges::any_of(fresh, [&](std::uint16_t a_stage) { return StageRules::IsEach(*companionFile, id & 0x00FFFFFF, a_stage); }) &&
 					drivenHere.insert(id).second) {
 					REX::INFO("QuestSync: {:08X} '{}': one of its companion's owner's stages ran here by this game's own play; this game drives it until a load", id,
@@ -1936,7 +1938,7 @@ namespace QuestSync
 
 	std::string DriveText(RE::TESQuest* a_quest)
 	{
-		const auto file = a_quest && IsCompanion(a_quest) ? FileOf(a_quest) : std::nullopt;
+		const auto file = a_quest && Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
 		if (!file || !StageRules::DriverOf(*file, a_quest->GetFormID() & 0x00FFFFFF)) {
 			return {};
 		}

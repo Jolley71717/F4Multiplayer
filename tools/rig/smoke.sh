@@ -133,6 +133,7 @@ run hush-probe step_hush_probe  # opt-in (--only hush-probe): the save's hush am
 run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Sanctuary by radiantstart, on throwaway saves
 run quests_outcomes step_quests_outcomes  # opt-in (--only quests_outcomes): the add-ons' endings set for good, on throwaway saves (QOUT_SWAP=1 the other way)
 run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
+run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quests_2): Cait's quest, Nick's after the Memory Den and MS07c 305 then MS07cPostQuest 20 by console setstage, on throwaway saves
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

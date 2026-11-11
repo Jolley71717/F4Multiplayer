@@ -44,11 +44,12 @@ public static class GearScan
         public List<string> Scripts = new List<string>();  // the scripts attached to the quest itself (its VMAD), not its stage fragments' or aliases'
         public List<string> Fills = new List<string>();  // each alias's fill, name=forced, unique, external, created, event, fromalias, matching or empty
         public List<Alias> Aliases = new List<Alias>();  // the same, with each alias's ID and the alias it is filled from
+        public List<int> Complete = new List<int>();  // the stages whose log entry completes the quest (QSDT flag 0x1)
     }
 
-    // An alias: its ID (references and locations share one numbering), name, fill (Fill) and the alias it is made at or
-    // found from (ALFA, ALNA, ALCA; -1 none).
-    public class Alias { public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; }
+    // An alias: its ID (references and locations share one numbering), name, fill (Fill), the alias it is made at or
+    // found from (ALFA, ALNA, ALCA; -1 none) and the reference it is forced to (ALFR; 0 none), as the file writes it.
+    public class Alias { public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; public uint Forced; }
 
     // How an alias is filled, by the subrecords it has up to its ALED: forced to a reference or location, a unique
     // actor, another quest's alias, created at runtime, from the event that starts the quest, from another alias, or
@@ -137,7 +138,7 @@ public static class GearScan
                         var q = new Quest();
                         q.Id = (id & 0x00FFFFFF) | ((uint)fileIndex << 24);
                         int s = bo; int se = bo + bl; int big = -1;
-                        HashSet<string> alias = null; string aliasName = ""; int aliasId = -1, aliasSource = -1;
+                        HashSet<string> alias = null; string aliasName = ""; int aliasId = -1, aliasSource = -1; uint aliasForced = 0; int lastStage = -1;
                         while (s < se)
                         {
                             string st = Encoding.ASCII.GetString(body, s, 4);
@@ -150,23 +151,25 @@ public static class GearScan
                                 if (st == "EDID") q.Edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                                 if (st == "DNAM" && ss >= 12) { q.Flags = BitConverter.ToUInt16(body, d); q.Type = body[d + 8]; }
                                 if (st == "ENAM" && ss >= 4) q.Event = Encoding.ASCII.GetString(body, d, 4);
-                                if (st == "INDX") { q.Stages++; if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(BitConverter.ToUInt16(body, d)); }
+                                if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); }
+                                if (st == "QSDT" && ss >= 1 && (body[d] & 0x01) != 0 && lastStage >= 0 && !q.Complete.Contains(lastStage)) q.Complete.Add(lastStage);
                                 if (st == "QOBJ") q.Objectives++;
                                 if (st == "VMAD") q.Scripts = ParentScan.OwnScripts(body, d, ss);
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
-                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; }
+                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; }
                             else if (alias != null)
                             {
                                 if (st == "ALID") aliasName = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                                 if ((st == "ALFA" || st == "ALNA") && ss >= 4) aliasSource = BitConverter.ToInt32(body, d);
                                 if (st == "ALCA" && ss >= 2) aliasSource = BitConverter.ToInt16(body, d);
+                                if (st == "ALFR" && ss >= 4) aliasForced = BitConverter.ToUInt32(body, d);
                                 alias.Add(st);
                                 if (st == "ALED")
                                 {
                                     var fill = Fill(alias);
                                     q.Fills.Add(aliasName + "=" + fill);
-                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource });
+                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource, Forced = aliasForced });
                                     alias = null;
                                 }
                             }
@@ -835,6 +838,9 @@ public static class MoveScan
         // Said of each stage a function sets or starts (file, quest, stage; its own quest's too) before it is walked: what
         // is wrong with the stage itself, or null (the walk goes on into it). Not said of the stage Stage was asked about.
         public Func<int, GearScan.Quest, int, string> Reaches;
+        // Whether a stage a function sets or starts (file, quest, stage) is left out of the walk altogether: neither judged nor
+        // walked into (SafeScan: a stage a friend's game never runs, kPays or kEach, or one left unjudged by hand).
+        public Func<int, GearScan.Quest, int, bool> Skip = (file, q, stage) => false;
         // Whether a script function called is walked into (by its name): SafeScan's walk of an ALLOW_OUTCOMES quest does not
         // go into what a settlement's own scripts do once it is given or taken (SetOwnedByPlayer) or gains or loses a settler.
         public Func<string, bool> Enter = name => true;
@@ -874,6 +880,7 @@ public static class MoveScan
                     if (!own) list.AddRange(target.Item1.Startup);  // starts it, if it isn't running
                     foreach (var st in list)
                     {
+                        if (Skip(target.Item2, target.Item1, st)) continue;
                         var w = Reaches == null ? null : Reaches(target.Item2, target.Item1, st);
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
                         w = Stage(target.Item2, target.Item1, st, a_seen);
@@ -933,6 +940,22 @@ public static class MoveScan
 
     // How a stage of a quest moves the player (the first way found), or null.
     public static string StageMoves(int a_file, GearScan.Quest a_quest, int a_stage) { return Stage(a_file, a_quest, a_stage, new HashSet<string>()); }
+
+    // A script function's code, one instruction per line ("op args..."), for reading what a game function does by hand
+    // (-Function Script.Function: FollowersScript.AllowCompanion). Found through the script's parents as a call is.
+    public static string Dump(string data, string a_name)
+    {
+        Load(data);
+        int dot = a_name.LastIndexOf('.');
+        if (dot < 0) return "# usage: -Function <Script>.<Function>";
+        string owner;
+        var f = Find(a_name.Substring(0, dot), a_name.Substring(dot + 1), out owner);
+        if (f == null) return "# " + a_name + ": no such function";
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Format("# {0}.{1}({2}) in {3}", owner, f.Name, string.Join(", ", f.Params.ToArray()), f.State));
+        foreach (var i in f.Code) sb.AppendLine(string.Format("{0,3} {1}", i.Op, string.Join(" ", i.Args.ToArray())));
+        return sb.ToString();
+    }
 
     // A quest's stage fragments, by stage (none: an empty one).
     public static Dictionary<int, List<GearScan.Func>> Fragments(int a_file, uint a_quest)
@@ -1353,6 +1376,7 @@ public static class ParentScan
             if (type == "SCEN" && sceneSets.Count > 0) sceneStages.Add(Tuple.Create("SCEN " + edid, new List<uint>(scenePnams), new List<int>(sceneSets)));
             scenePnams.Clear(); sceneSets.Clear();
             if (placed) r.Edid = edid;
+            if (type == "NPC_" && edid.Length > 0) npcEdids[key] = edid;
             if (vmadAt >= 0) Vmad(type, key, body, vmadAt, vmadSize, masters, a_file, type + " " + (edid.Length > 0 ? edid : key.ToString("X8")));
             pos = next;
         }
@@ -1628,6 +1652,25 @@ public static class ParentScan
     }
 
     public class Result { public string Header; public string Report; public int Count; }
+
+    // The NPC bases' editor IDs, by form key, for Actors.
+    static readonly Dictionary<uint, string> npcEdids = new Dictionary<uint, string>();
+
+    // The placed actors (ACHR) of the given NPC bases (by editor ID), read from Fallout4.esm: "<base> <ref form ID>", one per
+    // line (-Actors NickValentine,CompanionCait: the companions' references StageRules.h's DRIVERS name).
+    public static string Actors(string a_data, string[] a_bases)
+    {
+        Esm(Path.Combine(a_data, FILES[0]), FILES[0]);
+        var wanted = new HashSet<string>(a_bases ?? new string[0], StringComparer.OrdinalIgnoreCase);
+        var sb = new StringBuilder();
+        foreach (var kv in refs.OrderBy(kv => kv.Key))
+        {
+            string edid;
+            if (kv.Value.Actor && npcEdids.TryGetValue(kv.Value.Base, out edid) && wanted.Contains(edid))
+                sb.AppendLine(string.Format("{0} {1:X8}{2}", edid, kv.Key, kv.Value.Edid.Length > 0 ? " " + kv.Value.Edid : ""));
+        }
+        return sb.Length > 0 ? sb.ToString() : "# none found";
+    }
 
     public static Result Run(string a_data)
     {
@@ -2014,7 +2057,16 @@ public static class SafeScan
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
     static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
 
-    static readonly System.Text.RegularExpressions.Regex COMPANION = new System.Text.RegularExpressions.Regex("^(COM|Followers|CA_|CIS_|.*Affinity|.*Companion)");
+    static readonly System.Text.RegularExpressions.Regex COMPANION = new System.Text.RegularExpressions.Regex("^(COM|Followers|CA_|CIS_|.*Affinity|.*Companion)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);  // ComX688 is X6-88's own, as COMNick is Nick's
+
+    // FollowersScript.AllowCompanion(actor, MakeCompanionIfNoneCurrently, ForceCompanion) with both flags False: the actor
+    // is only taken out of DisallowedCompanionFaction (with either True, SetCompanion or SetDogmeatCompanion). In a friend's
+    // game that touches only their own copy of the NPC, who is nobody's companion there (DisallowCompanion is the same:
+    // its DismissCompanion returns unless the actor is the current companion). Not a companion change.
+    public static bool AllowsOnly(GearScan.Instr i)
+    {
+        return i.Op == 23 && Is(i.Args[0], "AllowCompanion") && i.Args.Count >= 5 && Is(i.Args[3], "False") && Is(i.Args[4], "False");
+    }
 
     // The (file, form ID) rows of a table in a header: from "a_name[] = {" to its "};".
     static HashSet<Tuple<int, uint>> Table(string a_header, string a_name)
@@ -2042,6 +2094,13 @@ public static class SafeScan
     static readonly HashSet<string> COMPANIONS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
         "SetCompanion", "DismissCompanion", "AddToPlayerFaction", "SetAvailableToBeCompanion", "SetPlayerTeammate", "AllowCompanion",
         "DisallowCompanion", "ClearCompanion", "ReleaseCompanion", "SetDogmeatCompanion", "DismissDogmeatCompanion", "ClearDogmeatCompanion" };
+    // The stages src/game/StageRules.h's RULES flag kPays or kEach: never run in a friend's game (a payment is skipped whole;
+    // a companion's owner's stage is marked done there without its script), so what their fragments do doesn't make
+    // their quest each player's (FFDiamondCity08's Nuka-Cola for Sheffield, MQ202NickPostSurgery's recruit of Nick).
+    static readonly HashSet<Tuple<int, uint, int>> skipped = new HashSet<Tuple<int, uint, int>>();
+    // Stages left unjudged by hand, with why: what they touch is every game's already.
+    static readonly Dictionary<Tuple<int, uint, int>, string> SKIPPED_BY_HAND = new Dictionary<Tuple<int, uint, int>, string> {
+        { Tuple.Create(0, 0x0FAC86u, 100), "MQ202NickPostSurgery 100: Nick's affinity conditions (Valentine_AffinityCondition_HatredAllowed, Valentine_MurderToggle), which the story's MQ204 200 sets in every game through its 95 anyway; its AllowCompanion has neither flag" } };
     static readonly HashSet<string> FACTIONS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetEnemy", "SetAlly", "SetReaction", "SetPlayerEnemy" };
     static readonly HashSet<string> SETTLEMENTS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetOwnedByPlayer" };
 
@@ -2081,6 +2140,7 @@ public static class SafeScan
             if (i.Op == 13 || i.Op == 14) { if (player(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); continue; }
             var m = i.Op == 25 ? i.Args[1] : i.Args[0];
             if (i.Op == 25 && Is(i.Args[0], "game") && Is(m, "GetPlayer")) { players.Add(i.Args[2]); continue; }
+            if (AllowsOnly(i)) { players.Remove(i.Args[2]); continue; }
             if (COMPANIONS.Contains(m) && !a_companions) return "companion " + m;
             if (FACTIONS.Contains(m) && a_outcomes) return "factions " + m;
             if (SETTLEMENTS.Contains(m) && a_outcomes) return "settlement " + m + (i.Args.Count > 3 && Is(i.Args[3], "False") ? "(False)" : "");  // (False): the settlement is taken from the player
@@ -2130,7 +2190,8 @@ public static class SafeScan
     // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
     // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
     // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
-    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Allows = AllowedStart };
+    static bool Skipped(int a_file, GearScan.Quest q, int a_stage) { return skipped.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF, a_stage)); }
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Allows = AllowedStart, Skip = Skipped };
 
     // The starts of a quest each game runs its own way that are let through, by "<the quest whose stage starts it> <the quest
     // started>", with why: what the started quest does is each game's own and harmless twice (each game running it for its
@@ -2161,14 +2222,14 @@ public static class SafeScan
     static readonly HashSet<string> SETTLERS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
     static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
-        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart };
+        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart, Skip = Skipped };
     // The same walk for an ALLOW_KICKOUTS quest: a companion's affinity and a dismissal are let through as well (Direct's
     // a_companions), and a stage of the companion's quest named with it (AllowedKickout: Open Season's to DLC04COMGage, not
     // any companion's); the rest of the rule holds.
     static readonly MoveScan.Walk kickout = new MoveScan.Walk {
         Direct = c => Direct(c, false, true), Target = Target,
         Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name),
-        Allows = (from, to, call) => AllowedStart(from, to, call) || AllowedKickout(from, to) };
+        Allows = (from, to, call) => AllowedStart(from, to, call) || AllowedKickout(from, to), Skip = Skipped };
 
     static bool AllowedKickout(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to)
     {
@@ -2615,6 +2676,7 @@ public static class SafeScan
         var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
+            if (skipped.Contains(Tuple.Create(a_file, local, stage))) continue;  // never run in a friend's game: a payment (kPays) or its companion's owner's (kEach); the walks skip them too
             if (stage == 0 && QuickStart(q, a_file)) continue;
             var each = (outcomes && Kickout(q.Edid) ? kickout : outcomes ? rest : walk).Stage(a_file, q, stage);
             if (each == null) continue;
@@ -2708,11 +2770,15 @@ public static class SafeScan
 
     // Makes the SAFE set (QuestScan.Safe) and the SILENT one (QuestScan.Silent), less DENIED, and returns each quest's
     // verdict, by file and form ID: "" SAFE, "silent" SILENT.
-    public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules)
+    public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
         MoveScan.Load(data);
         QuestScan.Safe = null;
         QuestScan.Silent = null;
+        skipped.Clear();
+        skipped.UnionWith(Pays(a_stageRules, "kPays"));
+        skipped.UnionWith(Pays(a_stageRules, "kEach"));
+        skipped.UnionWith(SKIPPED_BY_HAND.Keys);
         var radiants = new HashSet<Tuple<int, uint>>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*(\\d),\\s*0x([0-9A-Fa-f]+),\\s*\"")
             .Cast<System.Text.RegularExpressions.Match>().Select(m => Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16) & 0xFFFFFF)));
         var perGame = Table(a_questFilter, "PER_GAME");
@@ -2868,7 +2934,7 @@ public static class SafeScan
     // SAFE's rows, SILENT's, then what was left out and why.
     public static string Run(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
-        var verdicts = Load(data, a_questFilter, a_radiantRules);
+        var verdicts = Load(data, a_questFilter, a_radiantRules, a_stageRules);
         var sb = new StringBuilder();
         var byFile = new int[GearScan.MASTERS.Length];
         int stages = 0;
@@ -2937,12 +3003,58 @@ public static class SafeScan
             }
         }
         sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
+        foreach (var kv in SKIPPED_BY_HAND) sb.AppendLine(string.Format("# left unjudged by hand: {0}", kv.Value));
+        sb.Append(SetsEach(a_questFilter, a_stageRules));
+        return sb.ToString();
+    }
+
+    // The shared stages (of every quest a friend's stage is set on: those shared by their type (QuestScan.ReachesFriend), SAFE's,
+    // SILENT's and the companions' (COMPANION_QUESTS)) that aren't kEach themselves and set, in their own fragment or through
+    // the functions and stages it reaches (walked as -Moves walks them), a kEach stage of a quest with a driver (StageRules.h
+    // DRIVERS): each with how it gets there, then the count, StageRules.h's SHARED_SETS_EACH (tests/StageRulesTests.cpp checks
+    // it is 0). Such a stage would run the owner's stage with its script in a friend's game, and QuestSync's fresh-stage rule
+    // would take that game for the quest's driver: MS07c 305 sets MS07cPostQuest 5 so (that quest stays unshared) and MQ204 200
+    // sets MQ202NickPostSurgery 95 (so its 95 and 100 are plain).
+    static string SetsEach(string a_questFilter, string a_stageRules)
+    {
+        var drivers = new HashSet<Tuple<int, uint>>();
+        var text = File.ReadAllText(a_stageRules);
+        int at = text.IndexOf("DRIVERS[] = {", StringComparison.Ordinal);
+        if (at < 0) throw new Exception("DRIVERS not found in " + a_stageRules);
+        var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*0x"))
+            drivers.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16)));
+        var each = Pays(a_stageRules, "kEach");
+        var targets = new HashSet<Tuple<int, uint, int>>(each.Where(e => drivers.Contains(Tuple.Create(e.Item1, e.Item2))));
+        var companions = Table(a_questFilter, "COMPANION_QUESTS");
+        var walk = new MoveScan.Walk {
+            Direct = c => null,
+            Reaches = (file, q, stage) => targets.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": the owner's (kEach)" : null };
+        var hits = new List<string>();
+        int walked = 0;
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values)
+            {
+                var key = Tuple.Create(file, q.Id & 0xFFFFFF);
+                if (!(QuestScan.ReachesFriend(q, file) || QuestScan.Safe.Contains(key) || QuestScan.Silent.Contains(key) || companions.Contains(key))) continue;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    if (each.Contains(Tuple.Create(file, key.Item2, stage))) continue;
+                    walked++;
+                    var r = walk.Stage(file, q, stage);
+                    if (r != null) hits.Add(string.Format("#   {0} 0x{1:X6} {2} {3}: {4}", file, key.Item2, q.Edid, stage, r));
+                }
+            }
+        var sb = new StringBuilder();
+        foreach (var h in hits) sb.AppendLine(h);
+        sb.AppendLine(string.Format("# shared stages that set an owner's stage (a kEach row of a quest with a driver; {0} stages walked): {1} (StageRules.h SHARED_SETS_EACH)", walked, hits.Count));
         return sb.ToString();
     }
 }
 
-// The companions' quests a session shares as side quests (src/game/QuestFilter.h's COMPANION_QUESTS, read from it): every
-// stage of theirs with what its own fragment does, and src/game/StageRules.h's RULES rows for them. A stage is kEach when
+// The companions' quests a session shares as side quests (src/game/QuestFilter.h's COMPANION_QUESTS, read from it), every
+// quest with a kEach row in src/game/StageRules.h's RULES (Nick's and Cait's, shared by their type or as SAFE's) and any
+// given with -Quests file:hex: every stage of theirs with what its own fragment does, and RULES rows for them. A stage is kEach when
 // its fragment does what is the companion's owner's alone: who is or can be a companion (SafeScan's COMPANIONS), their
 // affinity (an argument or call named *Affinity*, CA_*), their keywords, perks or factions (AddKeyword, RemoveKeyword,
 // AddPerk, RemovePerk, AddToFaction, RemoveFromFaction, SetFactionRank on an actor that isn't the player), a stage of
@@ -2981,6 +3093,7 @@ public static class CompanionScan
             var m = i.Op == 25 ? i.Args[1] : i.Args[0];
             var on = i.Op == 25 ? i.Args[0] : Bare(i.Args[1]);
             a_calls.Add(m + "(" + on + (i.Args.Count > 3 ? ", " + string.Join(", ", i.Args.Skip(3).Select(Bare).ToArray()) : "") + ")");
+            if (SafeScan.AllowsOnly(i)) continue;  // AllowCompanion(actor, False, False): allowed again, nobody recruited; a friend's copy only
             if (COMPANIONS.Contains(m)) why.Add("companion " + m);
             else if (TRAITS.Contains(m) && !players.Contains(i.Args[1])) why.Add("traits " + m + " " + string.Join(" ", i.Args.Skip(3).Select(Bare).ToArray()));
             else if (Is(m, "SetStage") && System.Text.RegularExpressions.Regex.IsMatch(Bare(i.Args[1]), "^p?(COM|Followers)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
@@ -2993,6 +3106,38 @@ public static class CompanionScan
 
     // Stages decided by hand, with why (the scan's own verdict is printed beside it).
     static readonly Dictionary<Tuple<int, uint, int>, Tuple<string, string>> HAND = new Dictionary<Tuple<int, uint, int>, Tuple<string, string>> {
+        // Nick's Long Time Coming: his dismissal (DisallowCompanion's DismissCompanion returns unless he is this game's companion), the
+        // affinity events (to this game's current companion, not Nick in a friend's game) and the quest's own script (the fight's
+        // timers, the raiders) touch a friend's copy of him and the world: the world's half is the script's.
+        { Tuple.Create(0, 0x0229FEu, 10), Tuple.Create("plain", "the holotapes, the terminals seen (its quest's script): the world's") },
+        { Tuple.Create(0, 0x0229FEu, 200), Tuple.Create("plain", "the station's raiders' faction: the world's") },
+        { Tuple.Create(0, 0x0229FEu, 205), Tuple.Create("plain", "the tapes taken (its quest's script, in each game from its own player)") },
+        { Tuple.Create(0, 0x0229FEu, 210), Tuple.Create("plain", "Nick runs to Eddie's bunker: DisallowCompanion dismisses him only where he is the companion; Eddie, the triggers and the raiders are the world's") },
+        { Tuple.Create(0, 0x0229FEu, 220), Tuple.Create("plain", "the bunker fight's factions and door timer: the world's (kMoves: the controls)") },
+        { Tuple.Create(0, 0x0229FEu, 230), Tuple.Create("plain", "the bunker door, the timer cancelled: the world's") },
+        { Tuple.Create(0, 0x0229FEu, 233), Tuple.Create("plain", "the raiders' combat stopped: the world's") },
+        { Tuple.Create(0, 0x0229FEu, 240), Tuple.Create("plain", "the raiders' faction, Eddie on the player: the world's") },
+        { Tuple.Create(0, 0x0229FEu, 250), Tuple.Create("plain", "Nick's fight faction, the trap door; the affinity event goes to this game's companion") },
+        { Tuple.Create(0, 0x0229FEu, 260), Tuple.Create("plain", "the raiders' faction, the objectives, his timer to the grave; the affinity bump is on this game's copy of him") },
+        { Tuple.Create(0, 0x0229FEu, 280), Tuple.Create("plain", "an affinity event to this game's companion") },
+        { Tuple.Create(0, 0x0229FEu, 290), Tuple.Create("plain", "AllowCompanion(Nick, False, False): allowed again, a friend's copy only; the objectives") },
+        { Tuple.Create(0, 0x0229FEu, 300), Tuple.Create("plain", "the same, and MS07cPostQuest 100") },
+        { Tuple.Create(0, 0x0229FEu, 305), Tuple.Create("plain", "the same, and MS07cPostQuest 5") },
+        // Cait: her chair would take her from a friend she followed, her cure would give her to a friend with no companion.
+        { Tuple.Create(0, 0x1666C5u, 60), Tuple.Create("kEach", "DisallowCompanion(Cait, True): dismissed for the chair (DisallowedCompanionFaction, the driving game's mark until 255); her chair scene is the owner's") },
+        { Tuple.Create(0, 0x1666C5u, 255), Tuple.Create("kEach", "AllowCompanion(Cait, True, False): SetCompanion where none follows; her chem conditions and affinity global the owner's; EACH: objective 50, the quest completed") },
+        // Danse: nothing recruits or dismisses; the Brotherhood's ending is the world's.
+        { Tuple.Create(0, 0x0B9F9Du, 10), Tuple.Create("plain", "Danse out of the Brotherhood's faction into the bunker's: the world's") },
+        { Tuple.Create(0, 0x0B9F9Du, 25), Tuple.Create("plain", "Haylen placed (its quest's script): the world's") },
+        { Tuple.Create(0, 0x0B9F9Du, 125), Tuple.Create("plain", "Maxson's keyword, the vertibird: the world's") },
+        { Tuple.Create(0, 0x0B9F9Du, 255), Tuple.Create("plain", "AllowCompanion(Danse, False, False): allowed again, a friend's copy only; the ending's quests, his X-01, the achievement: the world's") },
+        // Nick after the Memory Den: only the forced recruit is the owner's.
+        { Tuple.Create(0, 0x0FAC86u, 90), Tuple.Create("kEach", "AllowCompanion(Nick, True, True): ForceCompanion, recruited to whoever runs it; then its 100") },
+        { Tuple.Create(0, 0x0FAC86u, 95), Tuple.Create("plain", "the objective hidden, then its 100; the story's MQ204 200 sets it in every game (SafeScan.SetsEach)") },
+        { Tuple.Create(0, 0x0FAC86u, 100), Tuple.Create("plain", "AllowCompanion(Nick, False, False): allowed again; his affinity conditions, which MQ204 200 sets in every game through 95 anyway (SKIPPED_BY_HAND); the objective, Stop") },
+        // Nick after Long Time Coming (MS07cPostQuest, -Quests 0:18817F) stays unshared: MS07c's 305, a plain shared stage,
+        // sets its 5 in every game, so a friend's game would run its timer and drive it, and the owner's 20 (COMNick 80:
+        // SetCompanion) would recruit a second Nick there (SafeScan.SetsEach, StageRules.h SHARED_SETS_EACH).
         { Tuple.Create(0, 0x027411u, 5), Tuple.Create("plain", "MacCready out of Goodneighbor's crime faction, his intro scene: the world's, whoever recruits him (and never reported: no objective yet)") },
         { Tuple.Create(0, 0x027411u, 60), Tuple.Create("plain", "the factions are Barnes's and Winlock's, made Gunners: the world's") },
         { Tuple.Create(0, 0x16454Eu, 400), Tuple.Create("kEach", "its operation scene runs on the aliases 300 changed in the owner's game only") },
@@ -3000,23 +3145,44 @@ public static class CompanionScan
         { Tuple.Create(0, 0x16454Eu, 620), Tuple.Create("kStory", "sets the Railroad's RR101 110 (kStory is decided by hand, as -Rules leaves it)") },
     };
 
-    public static string Run(string data, string a_questFilter)
+    // The quests scanned: QuestFilter.h's COMPANION_QUESTS, every quest with a kEach row in StageRules.h's RULES (the
+    // companions' stages of quests shared another way: Nick's, Cait's, Danse's, Dogmeat's), and any given by hand
+    // (-Quests file:hex, for a look at a candidate before its rows exist).
+    static List<Tuple<int, uint>> Quests(string a_questFilter, string a_stageRules, string[] a_extra)
     {
-        MoveScan.Load(data);
+        var quests = new List<Tuple<int, uint>>();
         var text = File.ReadAllText(a_questFilter);
         int at = text.IndexOf("COMPANION_QUESTS[] = {", StringComparison.Ordinal);
         if (at < 0) throw new Exception("COMPANION_QUESTS not found in " + a_questFilter);
         var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+)\s*\}"))
+            quests.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16)));
+        foreach (var row in SafeScan.Pays(a_stageRules, "kEach").OrderBy(r => r.Item1).ThenBy(r => r.Item2))
+            if (!quests.Contains(Tuple.Create(row.Item1, row.Item2))) quests.Add(Tuple.Create(row.Item1, row.Item2));
+        foreach (var extra in a_extra ?? new string[0])
+        {
+            var parts = extra.Split(':');
+            var q = Tuple.Create(int.Parse(parts[0]), Convert.ToUInt32(parts[1], 16));
+            if (!quests.Contains(q)) quests.Add(q);
+        }
+        return quests;
+    }
+
+    public static string Run(string data, string a_questFilter, string a_stageRules, string[] a_extra)
+    {
+        MoveScan.Load(data);
         var sb = new StringBuilder();
         var rows = new StringBuilder();
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+)\s*\}"))
+        foreach (var q in Quests(a_questFilter, a_stageRules, a_extra))
         {
-            int file = int.Parse(m.Groups[1].Value);
-            uint local = Convert.ToUInt32(m.Groups[2].Value, 16);
+            int file = q.Item1;
+            uint local = q.Item2;
             GearScan.Quest quest;
             if (!MoveScan.perFile[file].TryGetValue(local, out quest)) { sb.AppendLine(string.Format("# {0} {1:X6}: no such quest", file, local)); continue; }
-            sb.AppendLine(string.Format("# {0} {1:X6} {2} type {3}, flags {4:X4}, {5} objectives, start-up {6}", file, local, quest.Edid, quest.Type, quest.Flags,
-                quest.Objectives, string.Join(",", quest.Startup.Select(s => s.ToString()).ToArray())));
+            sb.AppendLine(string.Format("# {0} {1:X6} {2} type {3}, flags {4:X4}, {5} objectives, start-up {6}, completes at {7}", file, local, quest.Edid, quest.Type, quest.Flags,
+                quest.Objectives, string.Join(",", quest.Startup.Select(s => s.ToString()).ToArray()), string.Join(",", quest.Complete.Select(s => s.ToString()).ToArray())));
+            // The aliases, for EACH rows and DRIVERS by hand: id, name, fill, and the reference a forced one holds.
+            sb.AppendLine("#   aliases: " + string.Join(" ", quest.Aliases.Select(a => a.Id + ":" + a.Name + "(" + a.Fill + (a.Forced != 0 ? " " + a.Forced.ToString("X8") : "") + ")").ToArray()));
             var stages = MoveScan.Fragments(file, quest.Id);
             var calls = new Dictionary<int, List<string>>();
             var why = new Dictionary<int, List<string>>();
