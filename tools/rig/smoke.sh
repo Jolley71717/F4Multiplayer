@@ -126,6 +126,7 @@ run companions step_companions  # opt-in (--only companions): recruits and dismi
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Sanctuary by console and sets their stages, on throwaway saves
 run hush-probe step_hush_probe  # opt-in (--only hush-probe): the save's hush among 150+ powered pieces at Sanctuary, travels and saves both ways (throwaway saves)
+run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Sanctuary by radiantstart, on throwaway saves
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

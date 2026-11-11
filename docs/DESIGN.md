@@ -837,8 +837,11 @@ with the claims); the rig's opt-in `companions` step drives both games.
 
 How the game runs one (read off the scripts): WorkshopScript.DailyUpdate rolls an attack on a settlement its player
 owns; WorkshopParentScript.TriggerAttack sends the WorkshopEventAttack story event with the workbench, and the story
-manager starts one of thirteen Workshop*Attack quests (raiders, gunners, super mutants, ferals, mirelurks, and the
-creature ones), all WorkshopAttackScript and REScript. Stage 10 starts a 24 game-hour timer; its end begins the attack
+manager starts one of the Workshop*Attack quests: thirteen in Fallout4.esm (raiders, gunners, super mutants, ferals,
+mirelurks, and the creature ones), Far Harbor's trappers, Automatron's four robot and rust-devil attacks and
+Nuka-World's six on the raider outposts (the Minutemen's and the Brotherhood's), all WorkshopAttackScript and REScript
+with the same aliases and stages (read off their files, none overriding the script's start and done stages;
+AttackBook::ATTACKS names each by its file and ID there). Stage 10 starts a 24 game-hour timer; its end begins the attack
 (stage 20: the created Attackers are enabled, and with the settlement unloaded and the player's, the "under attack"
 message and objective 10). Stage 100 is set when they are dead. Stage 1000, the shutdown stage, runs
 CheckResolveAttack: with 100 not done and the workbench not 3D-loaded it rolls the damage
@@ -885,8 +888,15 @@ What a friend's game does:
   and the friend's attack is kept: one is never stopped on a guess.
 - A friend's own settlement (one the host doesn't own) keeps its own attacks, as before.
 
-Left out for now: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure branch, affinity), the
-Castle's defence, and the add-ons' attacks (Nuka-World's Brotherhood ones bring a vertibird and its crew). The mirror's
+The add-ons' attacks are the same shape and go the same way: Automatron's merge their robots into the Attackers
+collection at stage 10; Nuka-World's turn the outpost's turrets on the attackers (DLC04WorkshopParent.MakeTurretsHostile
+at stage 20, Minutemen 03's at stage 10, so a mirror's outpost does the same as the host's); the Brotherhood's 02 and 03
+there make a vertibird and its crew as created aliases, enabled at stages 20 and 22, which a mirror never reaches (it
+goes from 10 to 100), so a friend's game flies none of its own, and the host's bird and crew reach it as any runtime
+actors the host's game has loaded (as a vertibird encounter's do). An add-on a game lacks is logged once and its attacks
+aren't looked for there. Left out for now: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
+branch, affinity), the Castle's defence, and VRWorkshopShared_AttackQuest (a Creation Club VR workshop's wave: no
+settlement, no WorkshopAttackScript, no story-manager event). The mirror's
 Attackers collection holds its own disabled actors, not the copies of the host's (CommonLibF4 doesn't expose a
 collection alias's contents), so its objective follows the host's game and copies near the workbench, not its own count. A friend alone
 at the settlement while the host is elsewhere sees no attackers: the host's game has them unloaded, so none are

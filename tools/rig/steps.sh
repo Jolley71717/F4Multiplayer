@@ -2080,7 +2080,12 @@ step_companions_human() {
 ATTACK_BENCH=${ATTACK_BENCH:-$SANCT_BENCH}; ATTACK_CELL=${ATTACK_CELL:-SanctuaryExt}
 ATTACK_AWAY_CELL=${ATTACK_AWAY_CELL:-SuperDuperMart01}   # where the VM waits in round 2: an interior, Sanctuary unloaded there
 ATTACK_SETTLE=${ATTACK_SETTLE:-30}   # s, for a phase to reach the other game and its mirror to take a step (looks every 0.5 s, steps again every 5 s, a start waits 15 s)
+# ATTACK_QUEST: an attack quest's editor ID (an add-on's, say DLC01WorkshopRobotAttack01): the host's game starts that one at the
+# bench with its Workshop alias and location forced (radiantstart) instead of letting the story manager roll one (its roll at
+# Sanctuary picks only Fallout4.esm's). Empty: the roll.
+ATTACK_QUEST=${ATTACK_QUEST:-}
 _at_list() { dc "$1" attacks; }   # entries end in "; ", then the attacks: counters
+_at_form_of() { dc "$1" "forms 80 $2" | grep -oE "[0-9A-F]{8}:$2:" | head -1 | cut -c1-8; }   # _at_form_of <who> <questEditorId>: its form ID in that game ("" when it has no such quest: the add-on isn't installed)
 _at_entry() { _at_list "$1" | tr ';' '\n' | grep -E "^ ?$2 .* workshop=$ATTACK_BENCH " | head -1; }   # _at_entry <who> <quest>: that quest's entry at the bench ("" when not running there)
 _at_quest_at() { _at_list "$1" | tr ';' '\n' | grep -E " workshop=$ATTACK_BENCH " | grep -E "$2" | grep -oE '^ ?[0-9A-F]{8}' | tr -d ' ' | head -1; }   # _at_quest_at <who> <own|mirror>: the quest running at the bench
 _at_none_at() { ! _at_list "$1" | tr ';' '\n' | grep -qE " workshop=$ATTACK_BENCH "; }   # no attack quest runs at the bench in that game
@@ -2091,9 +2096,18 @@ _at_count() { field "$(dc "$1" 'net status' | grep -oE 'attacks: [^|]*' | head -
 _at_tail() { grep -E 'SettlementAttacks:' "$A_OUT/windelta-attacks-$1.txt" 2>/dev/null | tail -3 | tr '\n' '|'; }
 # _at_order <who> <first regex> <then regex>: in that game's window, a line matching the first comes before one matching the second
 _at_order() { awk -v a="$2" -v b="$3" '$0 ~ a && !x {x=NR} $0 ~ b && x && NR>x {ok=1} END{exit !ok}' "$A_OUT/windelta-attacks-$1.txt"; }
-# _at_roll_host: the host's game rolls an attack on the bench (forced); echoes the quest that runs there, "" when none did
+# _at_roll_host: the host's game rolls an attack on the bench (forced), or starts ATTACK_QUEST there; echoes the quest that runs
+# there, "" when none did
 _at_roll_host() {
-	local q="" i
+	local q="" i id
+	if [ -n "$ATTACK_QUEST" ]; then
+		id=$(_at_form_of host "$ATTACK_QUEST")
+		if [ -z "$id" ]; then echo ""; return; fi
+		# Alias 1 (Workshop) is filled from the location alias, not the event, so it is named; the location is the bench's own.
+		host "radiantstart $id $ATTACK_BENCH - 1=$ATTACK_BENCH" >/dev/null
+		for i in $(seq 1 40); do q=$(_at_entry host "$id" | grep -oE '^ ?[0-9A-F]{8}' | tr -d ' '); [ -n "$q" ] && break; sleep 0.5; done
+		echo "$q"; return
+	fi
 	host "console $ATTACK_BENCH.cf \"WorkshopScript.CheckForAttack\" 1" >/dev/null
 	for i in $(seq 1 40); do q=$(_at_quest_at host own); [ -n "$q" ] && break; sleep 0.5; done
 	if [ -z "$q" ]; then   # TestForceAttack: the same call on the workshop the player stands in
@@ -2102,12 +2116,15 @@ _at_roll_host() {
 	fi
 	echo "$q"
 }
-_at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls, begins, (defends if at) and ends; the VM mirrors
-	local tag=$1 where=$2 q vs0 ve0 cp0 cp1 outcome
+_at_mirror_round() {  # _at_mirror_round <round label> <at|away> [optional]: the host rolls, begins, (defends if at) and ends; the VM mirrors. optional: a start that doesn't run is a WARN (return 2), not a FAIL
+	local tag=$1 where=$2 optional=${3:-} q vs0 ve0 cp0 cp1 outcome
 	vs0=$(_at_count vm mirrorStarts); ve0=$(_at_count vm mirrorsEnded); cp0=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2)
 	win_mark attacks host; win_mark attacks vm
 	q=$(_at_roll_host)
-	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
+	if [ -z "$q" ]; then
+		if [ -n "$optional" ]; then warn "attacks ($tag): set-up: the host's game starts the attack on Sanctuary" "not run: no attack quest runs at $ATTACK_BENCH (a location alias its conditions found nothing for at Sanctuary?): $(_at_list host | cut -c1-160)"; return 2; fi
+		fail "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1
+	fi
 	pass "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "$(_at_entry host "$q" | cut -c1-120)"
 	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*' on $ATTACK_BENCH .*: phase 0"; then pass "attacks ($tag): the host's game reports its attack (rolled)" "$q"
 	else fail "attacks ($tag): the host's game reports its attack (rolled)" "$(_at_tail host)"; fi
@@ -2489,4 +2506,35 @@ step_hush_probe() {
 	_hp_scrap; _hp_wsmode_back; if [ -n "$prev" ]; then eval "$prev"; else trap - EXIT; fi
 	_hp_crash_reports
 	crash_verdict "hush-probe"
+}
+
+# attacks-addons (opt-in, --only attacks-addons): the add-ons' settlement attacks, one of each add-on installed on both machines
+# (ATTACK_ADDON_QUESTS), each started on the host's Sanctuary by `radiantstart` with its Workshop alias and location forced (the
+# story manager's own roll at Sanctuary picks only Fallout4.esm's, and Nuka-World's run only on a raider outpost), then round 1 of
+# the attacks step with the VM there: the host reports it, the VM mirrors it at the same bench, takes stage 100 as it runs, is
+# shown the objective with the host's attackers copied in, and stops with the host's run. A quest whose start doesn't run at
+# Sanctuary (a location alias of its own finding nothing there: the Brotherhood's vertibird start) is a WARN, not a FAIL. Throwaway
+# saves (Sanctuary owned).
+ATTACK_ADDON_QUESTS=${ATTACK_ADDON_QUESTS:-"DLC03WorkshopTrapperAttack01 DLC01WorkshopBotRaiderAttack02 DLC04WorkshopMinutemenAttack01 DLC04WorkshopBOSAttack02"}
+step_attacks_addons() {
+	section "attacks-addons (the add-ons' settlement attacks shared: one each, started on the host's Sanctuary by radiantstart; console set-up)"
+	local ok q n ran=0
+	enter_both "$ATTACK_CELL" 14
+	n=$(_at_list host); if [[ ! $n =~ hosting=true ]]; then fail "attacks-addons: set-up: the host's game hosts and reads attacks" "'$(cut -c1-160 <<<"$n")' (an old build?)"; return; fi
+	expect_match "attacks-addons: set-up: the VM's game is a friend's" "$(_at_list vm)" "hosting=false"
+	host "console $ATTACK_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	ok=$(host "scriptvars $ATTACK_BENCH WorkshopScript OwnedByPlayer")
+	if [ "$(field "$ok" OwnedByPlayer)" != true ]; then fail "attacks-addons: set-up: Sanctuary is the host's" "$ok"; return; fi
+	if ! _at_none_at host || ! _at_none_at vm; then fail "attacks-addons: set-up: no attack runs at Sanctuary in either game" "host '$(_at_list host | cut -c1-120)' VM '$(_at_list vm | cut -c1-120)'"; return; fi
+	crash_snapshot
+	for q in $ATTACK_ADDON_QUESTS; do
+		if [ -z "$(_at_form_of host "$q")" ] || [ -z "$(_at_form_of vm "$q")" ]; then
+			warn "attacks-addons ($q): its add-on is installed on both machines" "not run: host '$(_at_form_of host "$q")' VM '$(_at_form_of vm "$q")' (the game's `forms 80 $q`)"; continue
+		fi
+		ATTACK_QUEST=$q _at_mirror_round "$q" at optional; case $? in 1) crash_verdict attacks; return;; 0) ran=$((ran + 1));; esac
+		sleep 3
+	done
+	expect_ge "attacks-addons: at least one add-on's attack ran" "$ran" 1 quest
+	crash_verdict attacks
+	expect_eq "attacks-addons: no attack runs at Sanctuary in either game at the end" "$(_at_none_at host && echo none)/$(_at_none_at vm && echo none)" "none/none"
 }
