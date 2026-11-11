@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T04:57:49+00:00",
+ "updated": "2026-11-11T06:00:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -37,6 +37,14 @@
    "stage": 7,
    "note": "Shipped in 0.14.0 (2026-11-08, GitHub + Nexus)",
    "pr": 333
+  },
+  {
+   "id": "04l0",
+   "title": "A host's console quickstart still reaches the friend through the stages it sets (BoSM04Postquest stage 1 moves two BoS quests on; MS07 stage 0 sets a Diamond City dialogue stage that moves a main quest on)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "06fy",
@@ -506,6 +514,14 @@
    "pr": 300
   },
   {
+   "id": "700o",
+   "title": "Nick's, Cait's and Danse's quests: stages that recruit, dismiss or change affinity aren't marked kEach yet (run in the friend's game)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "78ri",
    "title": "Frame watch warns 'no game work for 15 s' on ordinary loading screens (false positive)",
    "kind": "bug",
@@ -612,6 +628,14 @@
    "stage": 7,
    "note": "",
    "pr": 282
+  },
+  {
+   "id": "9j0p",
+   "title": "Rig: host clicks land on a window kept on top (compiler error box over the game), hits preflight stops on 'host's click fired nothing'",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "9r15",
@@ -1026,7 +1050,7 @@
    "title": "Settlement attacks: an attack's resolve stage rolls damage in each game where the settlement isn't loaded; a friend's game must not roll its own for a host settlement",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "PR open: the host's attack is both players', decided once by the host; in review"
   },
   {
@@ -1069,6 +1093,14 @@
    "priority": 2,
    "stage": 7,
    "note": "Shipped in 0.16.1."
+  },
+  {
+   "id": "fys2",
+   "title": "Quest scan: quests held in a struct, read from an array, reached through an alias or a form list are invisible to the console-only stage-0 proof",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "fywn",
@@ -1264,6 +1296,14 @@
    "title": "Multiplayer menu: a press may drop while the main page redraws",
    "kind": "bug",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "iqd6",
+   "title": "Curie's quest: a friend who carries it on after stage 300 keeps her pre-swap aliases, so 500 and 600 act on an empty alias",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -1538,6 +1578,14 @@
    "desc": "If players quit while in power armor and start a session later, others saw them without a suit until they got out and back in. 0.9.2 fixes the sending side, so a player who loads a save in power armor is seen in it. We have not tried it in a real game, and there may be other reasons a frame is missing on the receiving side."
   },
   {
+   "id": "ml6p",
+   "title": "Quest scan misses StartCombat as a hostile stage (Safari 195 sets Cito on the player); teaching it changes 12 already-shared stages",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "mlno",
    "title": "The character fires when you click in another window",
    "kind": "bug",
@@ -1642,7 +1690,7 @@
    "title": "Friends run at full speed while you're in VATS slow motion",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "PR open: slow-mo stays local; optional group slow-mo for the host; in review",
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
   },
@@ -1832,6 +1880,14 @@
    "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
+  },
+  {
+   "id": "r2hz",
+   "title": "Curie's quest: between 200 and 600 the owner's game dismisses her, freeing her in the companion book; a friend could recruit their copy then",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "r4al",
@@ -2052,6 +2108,14 @@
    "note": ""
   },
   {
+   "id": "t7kj",
+   "title": "Companion quests: kEach stages write no journal entry in the friend's game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "t8kx",
    "title": "Moved objects don't reach a friend who loads the area later",
    "kind": "bug",
@@ -2106,6 +2170,22 @@
    "stage": 7,
    "note": "A robot killed in one game can stay alive in the other",
    "pr": 275
+  },
+  {
+   "id": "u8gk",
+   "title": "Nuka-World Power Play and Cleaning House can't be shared yet: each game works out the enemy gang from its own globals",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "u9p4",
+   "title": "Curie's quest: a friend left alone at stage 200 waits for the owner's 24-hour timer to reach 300",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ub47",
@@ -2225,6 +2305,14 @@
    "stage": 7,
    "note": "Shipped in 0.16.0",
    "pr": 337
+  },
+  {
+   "id": "w088",
+   "title": "Achievements tied to shared quest stages also fire in the friend's game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "w0qg",
@@ -2480,8 +2568,8 @@
    "title": "Quest sharing batch 1: Detective Case Files, A Loose End's postquest, Atom Cats Garage, Vault 75, Wasteland Refrigerator objectives",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "PR open: five more quests shared; in review"
   },
   {
    "id": "zr1r",
