@@ -831,11 +831,27 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   killed has that objective done, so neither is ever hollow. High Ground (RRR11) stays each player's own: its
   vertibird and crew are flown by a scene. `net status`: `radiants: ... followedActors= unfollowed= refilled=
   refillsFailed= resentFills= hollowRestarted=`.
+- *The Institute's and the Brotherhood's (the same `Entry::spawned`).* Appropriation (InstR03NEW) makes its assault's
+  defenders at its site's markers, Reclamation (InstR04) its synth at its dungeon's marker, Leading by Example (BoSR03)
+  its squire and Learning Curve (BoSR04) its scribe at the airport as the job is taken. They are shared as the
+  Railroad's above, with two more rules. A shared radiant's own actors are shared **calm too**, from the moment they
+  stand (`Spawns::OwnedRadiantOf`, `radiantActors=`; `Spawns::Share` shares a runtime NPC otherwise only hostile or
+  fighting), since a squire, a scribe or a restrained synth never fights, and a friend's copy of one is placed whatever
+  its base (`RadiantSync::FollowsSpawn`, as an encounter's named character is), to be forced into the alias there. The
+  escort walks with its owner in every game: a copy is a puppet (its packages idle), so the quest's `FollowerFollow`
+  on it does nothing, and no game makes a friend's copy its player's teammate. The escort is sent home (the squire's
+  45, the scribe's 65 disable it) by the owner reaching the Prydwen alone: a friend's game sets its own as its player
+  does, but never reports it (`RadiantRules::OWNER_STAGES`, `Reports`), so a friend home first does not send the owner's
+  escort away mid-job. The scribe's reading of the data is a story event (BoSR04_AO_Scribe) that fires where its AI
+  runs, the owner's game; its stages only set Learning Curve's, which go by the run, so it is left alone. The item each
+  job makes (the tech, the recall code) is each game's own, given and taken in each as the stages come; the synth is
+  talked to by the owner (a copy can't be activated). A job on offer shows no objective, so the squire, the scribe and
+  the synth, made disabled until the job is taken, never make one hollow.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the Minutemen's
-  defences, the Brotherhood's and the Institute's escorts, the add-ons'); High Ground's vertibird; To the Mattresses
-  shows each game its own objective text (its `RRR08DisplayNumber`, which boss this is, is each game's, though the
-  stages and the boss are the owner's); a calm actor the owner's game never shares (Lost Soul's captive, who is not
-  hostile, is shared only once fighting) stands in the owner's game alone, the friend's own of it removed.
+  defences, the add-ons'); High Ground's vertibird; To the Mattresses shows each game its own objective text (its
+  `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
+  actor of a run shared before this rule (Lost Soul's captive) is shared from the moment it stands now too, as the
+  Institute's synth is.
 - Not yet (fight encounters): a run's quest script acts on the copies it is forced to (the checkpoint's attackers get
   their actor values and packages set in the friend's game too, where NpcSync drives them anyway); an alias collection
   can't be forced, so its members in the friend's game are its own (removed); a save in the friend's game holds the

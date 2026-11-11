@@ -111,14 +111,30 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 	CHECK(ShareOf(0, BOSR01) == Share::kShared);
 	CHECK(ShareOf(0, BOSR02) == Share::kShared);
 	CHECK(ShareOf(0, BOSR05) == Share::kShared);
-	CHECK(ShareOf(0, 0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
-	CHECK(ShareOf(0, 0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
+	// Leading by Example and Learning Curve: the squire and the scribe made at the airport walk with the owner (Entry::spawned);
+	// the scribe's reading event (BoSR04_AO_Scribe) only sets Learning Curve's stages, which go by that run: left alone.
+	for (const std::uint32_t brotherhood : { 0x000C8675u, 0x000CF3E2u }) {
+		const auto entry = Find(0, brotherhood);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
+	}
+	CHECK(ShareOf(0, 0x000CF3E3) == Share::kLeftAlone);
 	// The Institute's: Pest Control, Hypothesis, Political Leanings.
 	CHECK(ShareOf(0, INSTR01) == Share::kShared);
 	CHECK(ShareOf(0, 0x000EB268) == Share::kShared);
 	CHECK(ShareOf(0, 0x000F0D8C) == Share::kShared);
-	CHECK(ShareOf(0, 0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
-	CHECK(ShareOf(0, 0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
+	// Appropriation and Reclamation: the assault's defenders and the synth made at the start are the owner's (Entry::spawned).
+	for (const std::uint32_t institute : { 0x000EDCEFu, 0x000EDE28u }) {
+		const auto entry = Find(0, institute);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
+	}
+	CHECK(ShareOf(0, 0x000E8D19) == Share::kLeftAlone);  // InstR01_OLD, InstR03_OLD: not used by the game
+	CHECK(ShareOf(0, 0x000EC1E9) == Share::kLeftAlone);
 	// The Railroad's: Butcher's Bill (both parts), Concierge, Jackpot, Mercer and Randolph Safehouse, Weathervane.
 	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
 		CHECK(ShareOf(0, railroad) == Share::kShared);
@@ -186,6 +202,36 @@ TEST("radiants: the Brotherhood's developer shortcut (its 0, which makes the pla
 	CHECK(Takes(BOSR01, 50));  // the reward: once in each game
 	CHECK(Takes(MIN_RECRUIT01, 0));
 	CHECK(Takes(INSTR01, 0));
+}
+
+TEST("radiants: the Brotherhood's escort goes home (the squire's 45, the scribe's 65) on the owner's word alone; every other stage is reported by whoever reaches it")
+{
+	constexpr std::uint32_t BOSR03 = 0x000C8675;  // Leading by Example
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;  // Learning Curve
+	// Our own run: every stage of ours is reported, the escort's going home too.
+	CHECK(Reports(BOSR03, 45, true));
+	CHECK(Reports(BOSR04, 65, true));
+	// A friend's run we follow: its player walking into the Prydwen first sends its own 45 or 65 nowhere (the owner's escort
+	// stays with the owner), and reports the rest (the dungeon cleared, the reward) as any shared radiant's.
+	CHECK(!Reports(BOSR03, 45, false));
+	CHECK(!Reports(BOSR04, 65, false));
+	for (const std::uint16_t stage : { 20, 25, 30, 40, 50, 255 }) {
+		CHECK(Reports(BOSR03, stage, false));
+	}
+	for (const std::uint16_t stage : { 10, 30, 40, 50, 60, 70, 80, 255 }) {
+		CHECK(Reports(BOSR04, stage, false));
+	}
+	// The other jobs with actors made at runtime have no such stage.
+	CHECK(Reports(0x000EDCEF, 1000, false));  // Appropriation's clean-up
+	CHECK(Reports(0x000EDE28, 1000, false));  // Reclamation's turn-in
+	CHECK(Reports(0x00186C79, 200, false));   // Variable Removal's kill
+	// Every owner-only stage belongs to a shared job whose actors are made at runtime (they are the only ones followed).
+	for (const auto& owner : OWNER_STAGES) {
+		const auto entry = Find(0, owner.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+	}
 }
 
 TEST("radiants: a Railroad job stopped for a friend's run while on offer is counted off the jobs on offer, as its take would have")
