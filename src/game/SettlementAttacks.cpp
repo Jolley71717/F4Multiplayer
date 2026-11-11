@@ -56,9 +56,11 @@ namespace SettlementAttacks
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		Clock::time_point                      lastLook{};
 
-		// AttackBook::ATTACKS in this game (a quest not found is skipped).
-		std::vector<RE::TESQuest*> quests;
-		bool                       resolved = false;
+		// AttackBook::ATTACKS in this game (a quest not found is skipped), and the add-ons not installed here (their attacks
+		// aren't looked for).
+		std::vector<RE::TESQuest*>    quests;
+		std::vector<std::string_view> missingFiles;
+		bool                          resolved = false;
 
 		// The host's game.
 		AttackBook::HostRuns  hostRuns;
@@ -142,10 +144,20 @@ namespace SettlementAttacks
 				return;
 			}
 			for (const auto& attack : AttackBook::ATTACKS) {
-				if (const auto quest = handler->LookupForm<RE::TESQuest>(attack.quest, "Fallout4.esm")) {
+				if (std::ranges::contains(missingFiles, attack.file)) {
+					continue;
+				}
+				if (!handler->LookupLoadedModByName(attack.file)) {
+					// An add-on this game doesn't have (a friend's game without it drops the host's reports of its attacks, as any
+					// message naming a form of a file it lacks).
+					missingFiles.push_back(attack.file);
+					REX::INFO("SettlementAttacks: {} isn't installed here: its attacks aren't looked for", attack.file);
+					continue;
+				}
+				if (const auto quest = handler->LookupForm<RE::TESQuest>(attack.quest, attack.file)) {
 					quests.push_back(quest);
 				} else {
-					REX::WARN("SettlementAttacks: {} ({:06X}) is not in Fallout4.esm here; its attacks are each game's own", attack.editorId, attack.quest);
+					REX::WARN("SettlementAttacks: {} ({:06X}) is not in {} here; its attacks are each game's own", attack.editorId, attack.quest, attack.file);
 				}
 			}
 			resolved = true;
@@ -895,6 +907,13 @@ namespace SettlementAttacks
 		}
 		if (out.empty()) {
 			out = "no attack running here; ";
+		}
+		if (!missingFiles.empty()) {
+			out += "add-ons not installed here (their attacks aren't looked for):";
+			for (const auto file : missingFiles) {
+				out += std::format(" {}", file);
+			}
+			out += "; ";
 		}
 		for (const auto& live : view.AllLive()) {
 			out += std::format("host's {:08X} at {:08X} phase {}; ", live.quest, live.workshop, std::to_underlying(live.phase));

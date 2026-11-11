@@ -5,7 +5,10 @@
 
 #include "AttackBook.h"
 
+#include <cctype>
+#include <map>
 #include <set>
+#include <string>
 
 using namespace std::chrono_literals;
 using namespace AttackBook;
@@ -34,24 +37,50 @@ namespace
 	}
 }
 
-TEST("attack book: the attacks are Fallout4.esm's random settlement attacks, each once, found by their ID there")
+TEST("attack book: the attacks are the game's and the add-ons' random settlement attacks, each once, found by their file and ID there")
 {
-	std::set<std::uint32_t> ids;
+	std::set<std::pair<std::string_view, std::uint32_t>> ids;
+	std::map<std::string_view, int>                      perFile;
 	for (const auto& attack : ATTACKS) {
 		CHECK(attack.quest != 0 && (attack.quest >> 24) == 0);
-		CHECK(attack.editorId.starts_with("Workshop") && attack.editorId.find("Attack") != std::string_view::npos);
-		ids.insert(attack.quest);
-		const auto found = Find(attack.quest);
+		CHECK(attack.file == FALLOUT4 || attack.file == FAR_HARBOR || attack.file == AUTOMATRON || attack.file == NUKA_WORLD);
+		// Fallout4.esm's are Workshop*Attack*; an add-on's carry its prefix (DLC01, DLC03, DLC04) before the same.
+		CHECK(attack.editorId.find("Workshop") != std::string_view::npos && attack.editorId.find("Attack") != std::string_view::npos);
+		CHECK((attack.file == FALLOUT4) == attack.editorId.starts_with("Workshop"));
+		ids.insert({ attack.file, attack.quest });
+		++perFile[attack.file];
+		const auto found = Find(attack.file, attack.quest);
 		REQUIRE(found);
 		CHECK(found->editorId == attack.editorId);
-		// Whatever load index the game gives the file, the ID there is the same.
-		CHECK(Find(attack.quest | 0x01000000) == found);
+		// Whatever load index the game gives the file, the ID there is the same; the file's name is matched as the game does.
+		CHECK(Find(attack.file, attack.quest | 0x01000000) == found);
+		CHECK(Find(attack.file, attack.quest | 0x05000000) == found);
+		std::string upper{ attack.file };
+		for (auto& c : upper) {
+			c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+		}
+		CHECK(Find(upper, attack.quest) == found);
 	}
 	CHECK(ids.size() == ATTACKS.size());
-	CHECK(Find(RAIDERS)->editorId == "WorkshopRaiderAttack01");
-	// Preston's "Defend X" job is no random attack here (each player's own for now), nor is any other quest.
-	CHECK(!Find(0x000A1412));  // MinRadiantOwned01
-	CHECK(!Find(0x000289E4));  // Followers
+	CHECK(perFile[FALLOUT4] == 13);
+	CHECK(perFile[FAR_HARBOR] == 1);
+	CHECK(perFile[AUTOMATRON] == 4);
+	CHECK(perFile[NUKA_WORLD] == 6);
+	CHECK(Find(FALLOUT4, RAIDERS)->editorId == "WorkshopRaiderAttack01");
+	CHECK(Find(FAR_HARBOR, 0x0004B651)->editorId == "DLC03WorkshopTrapperAttack01");
+	CHECK(Find(AUTOMATRON, 0x0000FD1B)->editorId == "DLC01WorkshopBotRaiderAttack02");
+	// Nuka-World's Brotherhood attacks with a vertibird and its crew are in: a mirror never reaches the stages that enable them.
+	CHECK(Find(NUKA_WORLD, 0x00035F1D)->editorId == "DLC04WorkshopBOSAttack02");
+	CHECK(Find(NUKA_WORLD, 0x0003638B)->editorId == "DLC04WorkshopBOSAttack03");
+	// An ID is its file's: the same number in another file is no attack.
+	CHECK(!Find(AUTOMATRON, RAIDERS));
+	CHECK(!Find(FALLOUT4, 0x0000FD1B));
+	CHECK(!Find("DLCworkshop03.esm", 0x0004B651));
+	// Preston's "Defend X" job is no random attack here (each player's own for now), nor is any other quest, nor the Creation
+	// Club VR workshop's wave (no settlement, no WorkshopAttackScript).
+	CHECK(!Find(FALLOUT4, 0x000A1412));  // MinRadiantOwned01
+	CHECK(!Find(FALLOUT4, 0x000289E4));  // Followers
+	CHECK(!Find(FALLOUT4, 0x0024A38D));  // VRWorkshopShared_AttackQuest
 }
 
 TEST("attack book: the host's game reports a run as it is rolled, begins, is defended and ends, each once")
