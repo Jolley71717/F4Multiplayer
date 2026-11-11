@@ -2,7 +2,6 @@
 
 #include "game/EncounterRunBook.h"
 #include "game/Encounters.h"
-#include "game/Papyrus.h"
 #include "game/QuestActors.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
@@ -301,35 +300,10 @@ namespace EncounterRuns
 			++stagesSet;
 		}
 
-		// Forces our copy of a friend's actor into a reference alias of a quest running here (ReferenceAlias.ForceRefTo,
-		// run by the script VM a frame or so later). False when it could not be asked.
-		bool ForceAlias(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
-		{
-			RE::BGSRefAlias* alias = nullptr;
-			for (const auto entry : a_quest->aliases) {
-				const char* type = entry && entry->aliasID == a_alias ? entry->QType().c_str() : nullptr;
-				if (type && std::string_view{ type } == RE::BGSRefAlias::TYPE) {
-					alias = static_cast<RE::BGSRefAlias*>(entry);
-					break;
-				}
-			}
-			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local);
-			if (!alias || !ref || ref->IsDeleted()) {
-				return false;
-			}
-			// A copy, made at runtime, may have no script object yet (as a stand-in: Puppets); an alias no script is attached
-			// to has one made as Quest.GetAlias would.
-			const auto self = Papyrus::BoundObject(alias, "ReferenceAlias", true);
-			const auto target = Papyrus::BoundObject(ref, "ObjectReference", true);
-			return self && target && Papyrus::CallOn(self, "ForceRefTo", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
-				a_out[0] = target;
-			});
-		}
-
 		// The runs we follow: their aliases that name the owner's actors hold our copies placed now. A save deletes every
 		// copy (no copy is ever saved: Spawns::DiscardCopies) and places them again as new references; so does our player
-		// coming back after their copies were let go. Each such alias is forced onto the new copy, once per copy.
+		// coming back after their copies were let go. Each such alias is forced onto the new copy (RadiantSync::ForceAliasRef),
+		// once per copy; our own actor of the quest it still holds (made by our start for it, not seen loaded yet) goes first.
 		void Refill()
 		{
 			for (auto& run : book.Runs()) {
@@ -344,8 +318,11 @@ namespace EncounterRuns
 						return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
 					});
 				for (const auto& [alias, local] : refills) {
-					const bool ok = ForceAlias(quest, alias, local);
-					RunBook::Forced(run, alias, local, ok);  // not taken: asked again next poll, MAX_FORCE_TRIES times in all
+					if (const auto held = quest->GetAliasedRef(alias).get(); held && !held->IsDeleted() && Protocol::IsSpawnRef(held->GetFormID()) && Spawns::CopyIdOf(held->GetFormID()) == 0) {
+						Spawns::RemoveFollowedActor(held->GetFormID(), run.quest);
+					}
+					const bool ok = RadiantSync::ForceAliasRef(quest, alias, local);
+					RunBook::NoteForced(run, alias, local, ok);  // not taken: asked again next poll, MAX_FORCE_TRIES times in all
 					if (ok) {
 						++refilled;
 						if (refilled <= LOGGED) {

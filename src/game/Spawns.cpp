@@ -541,6 +541,27 @@ namespace Spawns
 			return {};
 		}
 
+		// The radiant quest whose alias created our NPC, when our game follows a friend's run of it whose actors are theirs
+		// (RadiantSync::FollowsActors: a courser, a patrol made at runtime in each game): ours of it is not what stands there,
+		// and is removed as it comes (Share). 0 otherwise.
+		std::uint32_t FollowedRadiantOf(RE::Actor* a_actor)
+		{
+			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return 0;
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				if (!entry.quest || !entry.alias || entry.alias->owningQuest != entry.quest || static_cast<std::uint16_t>(entry.alias->fillType) != QuestActors::FILL_CREATED) {
+					continue;
+				}
+				if (const auto id = entry.quest->GetFormID(); RadiantSync::FollowsActors(id)) {
+					return id;
+				}
+			}
+			return 0;
+		}
+
 		// Friends' encounter spawns as the book judges them: where their game had each as it was shared (its encounter's
 		// spot) and where their game has it now (its states), its number in the server's order, and whether it is over.
 		// One whose encounter ended is shared on plain (Add), and is no encounter spawn here any more (Encounters::TheirsOf).
@@ -1232,7 +1253,14 @@ namespace Spawns
 		// companion (an encounter's actor recruited while its quest still runs is the companion handling's). An actor of
 		// an encounter that ended (its quest stopped, by its own script) is an NPC as any: one shared already is shared on
 		// plain (CheckRuns), one not shared yet goes as a fight's spawn would, hostile or fighting.
-		auto encounter = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) ? EncounterOf(a_actor) : AliasKey{};
+		const bool mayFollow = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor);
+		if (const auto radiant = mayFollow ? FollowedRadiantOf(a_actor) : 0u) {
+			// A radiant whose run our game follows with the owner's actors (RadiantSync::FollowsActors): theirs stand there, our
+			// copies in its aliases; ours made for it (its start made one for each alias) is removed as it comes, never offered.
+			followRemovals.push_back({ a_actor->GetHandle(), radiant });
+			return 0;
+		}
+		auto encounter = mayFollow ? EncounterOf(a_actor) : AliasKey{};
 		if (encounter.quest != 0 && EncounterRuns::Follows(encounter.quest)) {
 			// A friend's run of the encounter that our game follows (EncounterRuns.h): its actors are theirs, our copies in
 			// its aliases; one our game made for it (an alias their game left unshared: a reinforcement still disabled
@@ -1407,6 +1435,19 @@ namespace Spawns
 	std::uint32_t CopyIdOf(std::uint32_t a_local)
 	{
 		return theirs.IdOf(a_local);
+	}
+
+	void RemoveFollowedActor(std::uint32_t a_local, std::uint32_t a_quest)
+	{
+		const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_local);
+		if (!actor || actor->IsDeleted() || !Protocol::IsSpawnRef(a_local) || theirs.IdOf(a_local) != 0 || NpcSync::IsOurCompanion(actor) || Leaving(a_local)) {
+			return;
+		}
+		++followRemoved;
+		if (followRemoved <= LOGGED) {
+			REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', goes: its alias is forced onto our copy of the owner's actor", a_local, a_quest, QuestName(a_quest));
+		}
+		RemoveActor(actor, a_quest);
 	}
 
 	void Add(const Protocol::Spawn& a_given)

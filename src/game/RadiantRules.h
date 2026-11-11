@@ -58,6 +58,12 @@ namespace RadiantRules
 		// its own. Only where stopping it before it is given changes nothing else: nothing counted, enabled or hidden
 		// by its start, no stage run as it stops, and a quest that can run again (not "run once").
 		bool replace = false;
+		// Its actors are made at runtime (aliases its start creates: a courser, a patrol, a captive), so no game has the
+		// other's. The run's owner's stand in every game: its fills name them by their spawn ids once they are shared, sent
+		// again as that changes, and a friend's game forces its copies of them into those aliases as they are placed
+		// (ReferenceAlias.ForceRefTo), removing its own of the quest as they come (RadiantSync, Spawns: as a followed
+		// encounter's, EncounterRunBook.h). Its stages go by the run as any shared radiant's.
+		bool spawned = false;
 	};
 
 	// The radiants by file and form ID (tools/questscan.cs reads them; their aliases were read the same way). Fallout4.esm's first.
@@ -126,11 +132,15 @@ namespace RadiantRules
 		Entry{ 0, 0x0B26C2, "RRR04", Share::kShared, true },   // Mercer Safehouse: a settlement to build up (built in every game)
 		Entry{ 0, 0x0B926A, "RRR05", Share::kShared, true },   // Weathervane: a high point; the MILA made in each game; offered again when done
 		Entry{ 0, 0x1845F7, "RRR06", Share::kShared },         // Randolph Safehouse: a dead drop and a place, its bosses
-		Entry{ 0, 0x186C79, "RRR07", Share::kLeftAlone },   // Variable Removal: a courser made at runtime
-		Entry{ 0, 0x13A33D, "RRR08", Share::kLeftAlone },   // To the Mattresses: the bosses are made at runtime
-		Entry{ 0, 0x145F1A, "RRR09", Share::kLeftAlone },   // Lost Soul: the one to rescue is made at runtime
-		Entry{ 0, 0x14A34A, "RRR10", Share::kLeftAlone },   // A Clean Equation: a patrol made at runtime
-		Entry{ 0, 0x150577, "RRR11", Share::kLeftAlone },   // High Ground: a vertibird and its crew made at runtime
+		// PAM's, Desdemona's and Carrington's jobs whose actors are made at runtime (Entry::spawned): the place is picked by
+		// conditions and forced as any; the actors made there are the owner's, their copies forced into a friend's aliases.
+		// All four are offered at their 50 (counted) and taken at their 100 (To the Mattresses at its 75), so one stopped on
+		// offer is counted off (OFFERS).
+		Entry{ 0, 0x186C79, "RRR07", Share::kShared, true, true },  // Variable Removal: a courser made at the place
+		Entry{ 0, 0x13A33D, "RRR08", Share::kShared, true, true },  // To the Mattresses: the gang's boss made at the place (which one, each game's RRR08DisplayNumber)
+		Entry{ 0, 0x145F1A, "RRR09", Share::kShared, true, true },  // Lost Soul: the captive made at the place (its care package made in each game)
+		Entry{ 0, 0x14A34A, "RRR10", Share::kShared, true, true },  // A Clean Equation: the patrol made at its start (its collection filled from them)
+		Entry{ 0, 0x150577, "RRR11", Share::kLeftAlone },           // High Ground: a vertibird and its crew made at runtime, flown by a scene (QuestActors pairs no vertibird either)
 		// Diamond City's wanted posters (misc quests): a dungeon and its bosses, the poster's note made in each game. All
 		// three start with the game and run once, so a game whose own poster names another dungeon keeps its own.
 		Entry{ 0, 0x14182C, "FFDiamondCityWanted01", Share::kShared },
@@ -229,6 +239,10 @@ namespace RadiantRules
 		Offer{ 0x000B926B, 50, 100, Counted::kIfPositive, 0x000E1685 },  // Jackpot: once done before (RRR03Completed)
 		Offer{ 0x000B26C2, 50, 75 },                                      // Mercer Safehouse (its 100 and its 300 set 75)
 		Offer{ 0x000B926A, 50, 100, Counted::kIfZero, 0x000A59AC },      // Weathervane: while no MILA is placed (RRR05MILAsPlaced)
+		Offer{ 0x00186C79, 50, 100 },                                     // Variable Removal
+		Offer{ 0x0013A33D, 50, 75 },                                      // To the Mattresses (its 100 sets 75)
+		Offer{ 0x00145F1A, 50, 100 },                                     // Lost Soul
+		Offer{ 0x0014A34A, 50, 100 },                                     // A Clean Equation
 	};
 
 	inline const Offer* OfferOf(std::uint32_t a_quest)

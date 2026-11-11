@@ -123,9 +123,22 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
 		CHECK(ShareOf(0, railroad) == Share::kShared);
 	}
-	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
-		CHECK(ShareOf(0, railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
+	// Variable Removal, To the Mattresses, Lost Soul, A Clean Equation: a courser, a boss, a captive, a patrol made at runtime
+	// at the place: shared by their run, the owner's actors standing in every game (Entry::spawned).
+	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au }) {
+		const auto entry = Find(0, railroad);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
 	}
+	CHECK(ShareOf(0, 0x00150577) == Share::kLeftAlone);  // High Ground: a vertibird and its crew made at runtime, flown by a scene
+	// Only a shared radiant's actors are the owner's; the ones shared before have none made at runtime that matter.
+	for (const auto& entry : RADIANTS) {
+		CHECK((!entry.spawned || entry.share == Share::kShared));
+	}
+	CHECK(!Find(0, RRR03)->spawned);
+	CHECK(!Find(0, MIN_RECRUIT01)->spawned);
 	// Diamond City's wanted posters (misc quests).
 	CHECK(ShareOf(0, 0x0014182C) == Share::kShared);
 	CHECK(ShareOf(0, 0x0018127D) == Share::kShared);
@@ -151,6 +164,11 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	CHECK(Replaces(RRR04, false, false, false));
 	CHECK(Replaces(RRR05, false, false, false));
 	CHECK(!Replaces(RRR06, false, false, false));
+	// The jobs with actors made at runtime are offered the same way (counted at 50, off at their take).
+	CHECK(Replaces(0x00186C79, false, false, false));   // Variable Removal
+	CHECK(Replaces(0x0013A33D, false, false, false));   // To the Mattresses
+	CHECK(!Replaces(0x00186C79, false, true, false));   // given here: ours goes on
+	CHECK(!Replaces(0x00150577, false, false, false));  // High Ground: left alone
 	CHECK(Replaces(BOSR05, false, false, false));
 	// The Minutemen's (their stop runs a stage of its own), and the radiants left alone or not radiants at all.
 	CHECK(!Replaces(MIN_RECRUIT01, false, false, false));
@@ -183,6 +201,14 @@ TEST("radiants: a Railroad job stopped for a friend's run while on offer is coun
 	// Weathervane only while no MILA is placed.
 	CHECK(LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	CHECK(!LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 2.0f));
+	// Variable Removal, Lost Soul and A Clean Equation count at their 50 and off at their 100; To the Mattresses off at its 75
+	// (which its 100 sets too).
+	CHECK(LeavesCounted(0x00186C79, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(0x00186C79, std::vector<std::uint16_t>{ 0, 50, 100 }, 0.0f));
+	CHECK(LeavesCounted(0x0013A33D, std::vector<std::uint16_t>{ 1, 50 }, 0.0f));
+	CHECK(!LeavesCounted(0x0013A33D, std::vector<std::uint16_t>{ 1, 50, 75, 100 }, 0.0f));
+	CHECK(LeavesCounted(0x00145F1A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(LeavesCounted(0x0014A34A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	// Concierge counts nothing; nor do the others.
 	CHECK(!LeavesCounted(RRR02A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	CHECK(!LeavesCounted(INSTR01, std::vector<std::uint16_t>{ 5 }, 0.0f));

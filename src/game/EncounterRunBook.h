@@ -83,6 +83,70 @@ namespace Encounters
 		return a_hollow && !a_heard && a_running >= HOLLOW_WAIT;
 	}
 
+	// A followed run's alias that names one of the owner's actors, as our game forces it onto its copies (RefillsOf,
+	// NoteForced): the copy last forced into it (or given up on after MAX_FORCE_TRIES failed asks), and the asks that
+	// failed for the copy being tried now. Used for an encounter's run (RunBook) and a radiant's with actors made at
+	// runtime (RadiantRules::Entry::spawned, RadiantSync) alike.
+	struct AliasForce
+	{
+		std::uint32_t alias = 0;
+		std::uint32_t copy = 0;
+		std::uint32_t trying = 0;
+		std::uint32_t tries = 0;
+	};
+
+	// A followed run's aliases that name the owner's actors (a_fills: the run's, as their game sent them) and do not hold
+	// our copy of the actor placed now: each (alias, copy) to force in (then NoteForced, with the outcome): once per copy
+	// when the ask is taken (a copy placed again after a save, or after our player came back, is a new reference), again
+	// on later polls when it is not, up to MAX_FORCE_TRIES. a_copy(spawn id): our copy placed now (0: none); a_here(alias):
+	// what fills it here (0: none).
+	template <class CopyFn, class HereFn>
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> RefillsOf(std::span<const Protocol::RadiantFill> a_fills, std::span<const AliasForce> a_forced, CopyFn&& a_copy, HereFn&& a_here)
+	{
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+		for (const auto& fill : a_fills) {
+			if (fill.kind != 0 || fill.form == Protocol::RADIANT_UNSHARED_REF || !Protocol::IsSpawnRef(fill.form)) {
+				continue;
+			}
+			const std::uint32_t local = a_copy(fill.form);
+			if (local == 0) {
+				continue;
+			}
+			const auto it = std::ranges::find(a_forced, fill.alias, &AliasForce::alias);
+			if (a_here(fill.alias) != local && (it == a_forced.end() || it->copy != local)) {
+				out.emplace_back(fill.alias, local);
+			}
+		}
+		return out;
+	}
+
+	// The outcome of an ask RefillsOf gave: taken (a_ok), the alias holds the copy from now on (never asked for it again);
+	// not taken, it is asked again next time, and given up on after MAX_FORCE_TRIES (the alias is left as it is until
+	// another copy is placed).
+	inline void NoteForced(std::vector<AliasForce>& a_forced, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
+	{
+		auto it = std::ranges::find(a_forced, a_alias, &AliasForce::alias);
+		if (it == a_forced.end()) {
+			a_forced.push_back({ a_alias });
+			it = std::prev(a_forced.end());
+		}
+		if (a_ok) {
+			it->copy = a_copy;
+			it->trying = 0;
+			it->tries = 0;
+			return;
+		}
+		if (it->trying != a_copy) {
+			it->trying = a_copy;
+			it->tries = 0;
+		}
+		if (++it->tries >= MAX_FORCE_TRIES) {
+			it->copy = a_copy;  // given up on
+			it->trying = 0;
+			it->tries = 0;
+		}
+	}
+
 	// One run: the player whose game rolled it and that game's number for it (as RadiantRules::Run).
 	struct RunKey
 	{
@@ -130,16 +194,6 @@ namespace Encounters
 			kFollowing,  // a friend's, running here: its stages are set both ways
 		};
 
-		// A followed run's alias that names one of the owner's actors: the copy last forced into it (or given up on after
-		// MAX_FORCE_TRIES failed asks), and the asks that failed for the copy being tried now.
-		struct Forced
-		{
-			std::uint32_t alias = 0;
-			std::uint32_t copy = 0;
-			std::uint32_t trying = 0;
-			std::uint32_t tries = 0;
-		};
-
 		struct Run
 		{
 			std::uint32_t                      quest = 0;
@@ -151,7 +205,7 @@ namespace Encounters
 			Clock::time_point                  since{};  // heard, announced or started
 			std::optional<Clock::time_point>   near;     // when our player first came near it
 			std::optional<Clock::time_point>   ended;    // a friend's: when its owner's run ended (RUN_OVER) or the owner left
-			std::vector<Forced>                forced;   // a friend's followed: its aliases forced onto our copies (Refills, Forced)
+			std::vector<AliasForce>            forced;   // a friend's followed: its aliases forced onto our copies (Refills, NoteForced)
 			bool                               resend = false;  // ours: to be sent again (someone joined or reloaded)
 		};
 
@@ -363,57 +417,19 @@ namespace Encounters
 		}
 
 		// A followed run's aliases that name the owner's actors and do not hold our copy of the actor placed now: each
-		// (alias, copy) to force in (then Forced, with the outcome): once per copy when the ask is taken (a copy placed again
-		// after a save, or after our player came back, is a new reference), again on later polls when it is not, up to
-		// MAX_FORCE_TRIES. a_copy(spawn id): our copy placed now (0: none); a_here(alias): what fills it here (0: none).
+		// (alias, copy) to force in, then NoteForced with the outcome (Encounters::RefillsOf, for a run followed here).
 		template <class CopyFn, class HereFn>
 		static std::vector<std::pair<std::uint32_t, std::uint32_t>> Refills(Run& a_run, CopyFn&& a_copy, HereFn&& a_here)
 		{
-			std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
 			if (a_run.state != State::kFollowing) {
-				return out;
+				return {};
 			}
-			for (const auto& fill : a_run.fills) {
-				if (fill.kind != 0 || fill.form == Protocol::RADIANT_UNSHARED_REF || !Protocol::IsSpawnRef(fill.form)) {
-					continue;
-				}
-				const std::uint32_t local = a_copy(fill.form);
-				if (local == 0) {
-					continue;
-				}
-				const auto it = std::ranges::find(a_run.forced, fill.alias, &Forced::alias);
-				if (a_here(fill.alias) != local && (it == a_run.forced.end() || it->copy != local)) {
-					out.emplace_back(fill.alias, local);
-				}
-			}
-			return out;
+			return RefillsOf(a_run.fills, a_run.forced, std::forward<CopyFn>(a_copy), std::forward<HereFn>(a_here));
 		}
 
-		// The outcome of an ask Refills gave: taken (a_ok), the alias holds the copy from now on (never asked for it again);
-		// not taken, it is asked again next time, and given up on after MAX_FORCE_TRIES (the alias is left as it is until
-		// another copy is placed).
-		static void Forced(Run& a_run, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
+		static void NoteForced(Run& a_run, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
 		{
-			auto it = std::ranges::find(a_run.forced, a_alias, &Forced::alias);
-			if (it == a_run.forced.end()) {
-				a_run.forced.push_back({ a_alias });
-				it = std::prev(a_run.forced.end());
-			}
-			if (a_ok) {
-				it->copy = a_copy;
-				it->trying = 0;
-				it->tries = 0;
-				return;
-			}
-			if (it->trying != a_copy) {
-				it->trying = a_copy;
-				it->tries = 0;
-			}
-			if (++it->tries >= MAX_FORCE_TRIES) {
-				it->copy = a_copy;  // given up on
-				it->trying = 0;
-				it->tries = 0;
-			}
+			Encounters::NoteForced(a_run.forced, a_alias, a_copy, a_ok);
 		}
 
 		// A run is done with: forgotten, and a friend's never followed again (its origin may send it again).

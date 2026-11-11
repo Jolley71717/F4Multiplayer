@@ -801,6 +801,28 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   `MAX_FORCE_TRIES` (3) times in all for one copy. Under the session's radiant sharing (`RadiantSync::Enabled`).
   `net status`: `encounterRuns: ours= waiting= following= shared= heard= started= followed= dropped= startsFailed=
   stagesSent= stagesSet= endedHere= hollowStopped= hollowEnded= refilled= refillsFailed= lateStages=`.
+- *Radiants whose actors are made at runtime (src/game/RadiantRules.h `Entry::spawned`, RadiantSync).* The Railroad's
+  Variable Removal, To the Mattresses, Lost Soul and A Clean Equation (RRR07 to RRR10) pick their place by conditions
+  and make their courser, boss, captive or patrol there as the quest starts, so no game has another's: they were each
+  player's own. They are shared by their run as the other radiants are (the same messages, the same forced start with
+  the place, the same stages once each way, the same Railroad offer count, `OFFERS`), and their actors are the owner's
+  as a followed encounter's are: the owner's fills name each by its spawn id once its game shares it (hostile and
+  loaded as the owner comes to it; `RADIANT_UNSHARED_REF` before), and the run is sent again whenever its fills change
+  (`resentFills=`), which a friend's game takes as a known run's (`Book::Answer::kTake`) and keeps as the run's fills.
+  A friend's game starts the quest at once with the place (its own copy of the actor forced in only if placed already;
+  otherwise its start makes its own actor for the alias), and from then on forces its copy of each of the owner's
+  actors into that alias as the copy is placed (`ReferenceAlias.ForceRefTo`, the same `Encounters::RefillsOf` and
+  retries as an encounter's run, `refilled=`), removing its own actor of the quest first (`Spawns::RemoveFollowedActor`)
+  and any other it made for the quest as it loads (`Spawns::FollowedRadiantOf`, `followRemoved=`): the owner's
+  courser is the one courser in both games, killed once, its death shared as any spawn's. A friend who goes alone
+  finds nobody there until the owner's game has the actor loaded; the quest completes for both by the owner's stages
+  either way. High Ground (RRR11) stays each player's own: its vertibird and crew are flown by a scene. `net status`:
+  `radiants: ... followedActors= refilled= refillsFailed= resentFills=`.
+- Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the Minutemen's
+  defences, the Brotherhood's and the Institute's escorts, the add-ons'); High Ground's vertibird; To the Mattresses
+  shows each game its own objective text (its `RRR08DisplayNumber`, which boss this is, is each game's, though the
+  stages and the boss are the owner's); a calm actor the owner's game never shares (Lost Soul's captive, who is not
+  hostile, is shared only once fighting) stands in the owner's game alone, the friend's own of it removed.
 - Not yet (fight encounters): a run's quest script acts on the copies it is forced to (the checkpoint's attackers get
   their actor values and packages set in the friend's game too, where NpcSync drives them anyway); an alias collection
   can't be forced, so its members in the friend's game are its own (removed); a save in the friend's game holds the

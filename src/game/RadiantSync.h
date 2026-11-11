@@ -59,6 +59,15 @@ namespace RadiantSync
 	// Whether this radiant's run here is shared with friends now (its friends' stages are set here).
 	[[nodiscard]] bool Shares(std::uint32_t a_quest);
 
+	// Whether the run of this radiant shared here is a friend's whose actors are made at runtime and theirs
+	// (RadiantRules::Entry::spawned): our game's own actors made for the quest are not what stands there (Spawns removes
+	// them as they come), and our copies of theirs are forced into its aliases as they are placed (Frame).
+	[[nodiscard]] bool FollowsActors(std::uint32_t a_quest);
+
+	// Forces our reference a_local into the quest's reference alias a_alias (ReferenceAlias.ForceRefTo, run by the script
+	// VM a frame or so later). False when it could not be asked. For a followed run's aliases (here, and EncounterRuns).
+	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local);
+
 	// Stages of a radiant done here by this player (QuestSync's poll): reported under the runs shared here.
 	void OnDone(const RE::TESQuest* a_quest, std::span<const std::uint16_t> a_stages);
 

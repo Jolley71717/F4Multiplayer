@@ -1169,7 +1169,7 @@ TEST("encounters: a followed run's aliases are forced again onto the owner's act
 	// SPAWN2's copy placed later (our game had made its own for the alias, removed): forced in, once the ask is taken.
 	copies[SPAWN2] = 0xFF100002;
 	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 11, 0xFF100002 } }));
-	RunBook::Forced(run, 11, 0xFF100002, true);
+	RunBook::NoteForced(run, 11, 0xFF100002, true);
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // asked once; the script VM runs it a frame or so later
 	here[11] = 0xFF100002;
 
@@ -1180,8 +1180,8 @@ TEST("encounters: a followed run's aliases are forced again onto the owner's act
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // none placed yet
 	copies = { { SPAWN, 0xFF100003 }, { SPAWN2, 0xFF100004 } };
 	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100003 }, { 11, 0xFF100004 } }));
-	RunBook::Forced(run, 9, 0xFF100003, true);
-	RunBook::Forced(run, 11, 0xFF100004, true);
+	RunBook::NoteForced(run, 9, 0xFF100003, true);
+	RunBook::NoteForced(run, 11, 0xFF100004, true);
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
 
 	// An ask the VM did not take is made again on later polls, MAX_FORCE_TRIES times in all; then the copy is given up on
@@ -1190,13 +1190,13 @@ TEST("encounters: a followed run's aliases are forced again onto the owner's act
 	copies[SPAWN] = 0xFF100005;
 	for (std::uint32_t i = 0; i < Encounters::MAX_FORCE_TRIES; ++i) {
 		CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100005 } }));
-		RunBook::Forced(run, 9, 0xFF100005, false);
+		RunBook::NoteForced(run, 9, 0xFF100005, false);
 	}
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // given up on
 	copies[SPAWN] = 0xFF100006;
 	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100006 } }));
-	RunBook::Forced(run, 9, 0xFF100006, false);
-	RunBook::Forced(run, 9, 0xFF100006, true);  // taken on the second ask
+	RunBook::NoteForced(run, 9, 0xFF100006, false);
+	RunBook::NoteForced(run, 9, 0xFF100006, true);  // taken on the second ask
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
 }
 
