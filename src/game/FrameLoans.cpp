@@ -6,6 +6,7 @@
 #include "game/Equipment.h"
 #include "game/FrameLoan.h"
 #include "game/Hud.h"
+#include "game/InventoryStacks.h"
 #include "game/ItemCopies.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
@@ -339,19 +340,13 @@ namespace FrameLoans
 			return std::nullopt;
 		}
 
-		// That stack out of a_ref: gone, or into a_to.
+		// That stack out of a_ref: gone, or into a_to (the engine's own RemoveItem, InventoryStacks).
 		void RemoveStack(RE::TESObjectREFR* a_ref, const Hit& a_hit, RE::TESObjectREFR* a_to = nullptr)
 		{
-			RE::TESObjectREFR::RemoveItemData data{ a_hit.object, a_hit.count };
-			data.stackData.push_back(a_hit.stack);
-			if (a_to) {
-				data.otherContainer = a_to;
-				data.reason = RE::ITEM_REMOVE_REASON::kStoreContainer;
-			}
-			a_ref->RemoveItem(data);
+			InventoryStacks::RemoveStack(a_ref, { .object = a_hit.object, .stack = a_hit.stack, .count = a_hit.count }, a_to);
 		}
 
-		constexpr int MAX_STACKS = 64;  // stacks looked at once each at most, in case one does not go
+		constexpr int MAX_STACKS = InventoryStacks::MAX_STACKS;
 
 		// Every lent item in a_ref (our copy, or our player) found, its condition noted, and removed.
 		void Gather(RE::TESObjectREFR* a_ref, const std::vector<FrameLoan::Tag>& a_tags, std::vector<FrameLoan::Found>& a_found)
@@ -465,24 +460,8 @@ namespace FrameLoans
 		// Every stack in a_ref that a_keep does not take (given its base and extra data) removed, there and then: the
 		// engine's own RemoveItem, as the return's Gather removes. Not the console's removeallitems: by all the rig shows it
 		// empties the reference a moment after it is called, as the console's disable does (HavokGuard), so the kit put in
-		// right after it went with it (see OnFrameLent). How many stacks went.
-		template <class F>
-		std::uint32_t RemoveAllBut(RE::TESObjectREFR* a_ref, F&& a_keep)
-		{
-			std::uint32_t removed = 0;
-			for (int i = 0; i < MAX_STACKS; ++i) {
-				const auto hit = FindStack(a_ref, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) -> std::optional<Hit> {
-					return a_keep(a_object, a_extra) ? std::nullopt : std::optional<Hit>{ Hit{} };
-				});
-				if (!hit) {
-					return removed;
-				}
-				RemoveStack(a_ref, *hit);
-				++removed;
-			}
-			REX::WARN("FrameLoans: {:08X} still holds stacks after {} were removed", a_ref->GetFormID(), removed);
-			return removed;
-		}
+		// right after it went with it (see OnFrameLent). How many stacks went: InventoryStacks::RemoveAllBut, which Equipment
+		// empties a friend's stand-in and its frame copy with too.
 
 		// The lent items seen while our player is in the frame (Borrowed::held), looked for in our copy and on our player
 		// (FrameLoan::LooksForHeld: as they get in, just before a save, and for a while after they got in until each has
@@ -1533,7 +1512,7 @@ namespace FrameLoans
 		// goes in, should it go again. Our copy was emptied as it was placed (RemotePlayers' PlaceCopy), long before a press
 		// could ask for it; this takes what got in since.
 		const bool hadList = copy->inventoryList != nullptr;
-		const auto emptied = RemoveAllBut(copy.get(), [](RE::TESBoundObject*, RE::ExtraDataList*) { return false; });
+		const auto emptied = InventoryStacks::RemoveAllBut(copy.get(), [](RE::TESBoundObject*, RE::ExtraDataList*) { return false; });
 		const auto owner = RemotePlayers::NameOf(a_lending.ownerId);
 		bool       coreMade = false;
 		for (const auto& item : a_lending.kit) {
@@ -1575,7 +1554,7 @@ namespace FrameLoans
 				return FrameLoan::IsTagged(a_tag, a_object->GetFormID(), NameOf(a_extra)) ? std::optional<Hit>{ Hit{} } : std::nullopt;
 			}).has_value();
 		});
-		const auto strays = RemoveAllBut(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+		const auto strays = InventoryStacks::RemoveAllBut(copy.get(), [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
 			return FrameLoan::KeepsAfterLend(borrowed.tags, a_object->GetFormID(), NameOf(a_extra), allNamed);
 		});
 		borrowed.owner = a_lending.ownerId;

@@ -3536,7 +3536,7 @@ namespace RemotePlayers
 			}
 
 			// Dressed as the engine has it (ArmorFrames::ChooseDress; StandInGear::Dress says what goes on). Apply empties the
-			// inventory first, which in its frame would take the frame the engine put on it, so in a frame only the pieces and
+			// inventory first (it keeps the frame item, but would take the rest of what the frame put on it), so in a frame only the pieces and
 			// weapons are put on; what it wears besides them is not looked at there. In its frame but still on its own body
 			// (the rebuild the switch-in queued has not run), nothing is put on or looked at: the pieces would hang off the
 			// wrong skeleton. A change they reported while it is dressed is put on over what it wears (WearOnStandIn takes off what
@@ -3549,7 +3549,9 @@ namespace RemotePlayers
 				[&](const std::vector<std::uint32_t>& a_worn) { return StandInGear::Wears(Wearable(shown()), Wearable(Kept(a_worn, dress)), HandWeapon); });
 			switch (dressing.put) {
 			case StandInGear::Put::kApply:
-				Equipment::Apply(actor, Outfit(remote, dress), remote.gear.mods);
+				if (Equipment::Apply(actor, Outfit(remote, dress), remote.gear.mods)) {
+					StandInGear::TookAway(remote.gear, now);
+				}
 				break;
 			case StandInGear::Put::kWear:
 				if (Equipment::WearOnStandIn(actor, Outfit(remote, dress), remote.gear.mods)) {

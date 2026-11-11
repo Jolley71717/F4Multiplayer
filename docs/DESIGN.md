@@ -275,13 +275,17 @@
   not) would bring its scripts and factions along, so it is shown as the receiver's default.
 - Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second),
   with the mods on each equipped copy that has a `BGSObjectInstanceExtra` (OMOD form, attach index,
-  rank, and the extra's item index; protocol 29). The puppet gets `removeallitems` + `equipitem` via
-  the console; each item is given built with the owner's mods (a new `BGSObjectInstanceExtra` with
+  rank, and the extra's item index; protocol 29). The puppet is emptied stack by stack with the
+  engine's `RemoveItem`, there and then (src/game/InventoryStacks.h; the console's `removeallitems`
+  empties a moment after it is called and could take the gear given right after it), a quest's item
+  and a gun of theirs it has on already kept, then gets `equipitem` via the console; its frame copy is
+  emptied the same way before it gets in; each item is given built with the owner's mods (a new `BGSObjectInstanceExtra` with
   `AddMod`, its `ExtraInstanceData` from `TESBoundObject::ApplyMods`, then
   `TESObjectREFR::AddInventoryItem`), or, with no mods on record, the item's default combination
   (`BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra`, useDefault): the console's `additem`
   rolled the object template for the receiver's level (a stock 10mm shown with a long barrel). A
-  change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`). Items with neither
+  change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`), its old copies taken
+  out the same way, stack by stack, before the new one goes in. Items with neither
   mods nor templates still go in by `additem`.
 - Weapon drawn/holstered follows the `kWeaponDrawn` state flag (`DrawWeaponMagicHands`).
 - Sneaking and moving (`kSneaking`): the weapon-away sneak (MTBehavior's `MTSneakIdleLocomotion_SM`) sets off
