@@ -11,7 +11,7 @@
 // marks its awards' stages too (AchievementGate::Marks::CaughtUp): the game sets those stages from this one's fragment,
 // and their fragments make the calls. Generated with tools/questscan.ps1 -Safe -Achievements from the quest fragment
 // scripts of Fallout4.esm, DLCCoast.esm, DLCRobot.esm and DLCNukaWorld.esm (the stage sets of each fragment's own code,
-// followed as far as they go; the ids after the colon are the game's NEW_ACHIEVEMENT_<id>_0). Left out, 185 stages that
+// followed as far as they go; the ids after the colon are the game's NEW_ACHIEVEMENT_<id>_0). Left out, 190 stages that
 // reach an award only through a script function, the game's own doing from its own state, not the stage's: a companion
 // set (FollowersScript, the Achievements quest's 320), a settlement's settlers and happiness (WorkshopParentScript),
 // the Minutemen's recruitment and ally count (MinRecruitQuestScript, MinutemenCentralScript), Far Harbor's settlement
@@ -136,6 +136,7 @@ namespace AchievementStages
 		{ 0, 0x173ED9, 2, 0, 0x0B9F9D, 255 },  // BoS304 2 -> BoS302 255: 17
 		{ 0, 0x173ED9, 255, 0, 0x173ED9, 255 },  // BoS304 255: 18
 		{ 0, 0x1A001C, 1000, 0, 0x1A001C, 1000 },  // Min00 1000: 2
+		{ 0, 0x215CC7, 10, 0, 0x0229EE, 1000 },  // MQ302Post 10 -> MQ302 1000: 8,50
 		{ 1, 0x001B3F, 500, 1, 0x001B3F, 500 },  // DLC03MQ01 500: 59
 		{ 1, 0x001B40, 650, 1, 0x057152, 67 },  // DLC03MQ02 650 -> DLC03_Achievements 67: 67
 		{ 1, 0x001B40, 675, 1, 0x057152, 67 },  // DLC03MQ02 675 -> DLC03_Achievements 67: 67
@@ -159,6 +160,8 @@ namespace AchievementStages
 		{ 1, 0x00AB19, 200, 1, 0x057152, 67 },  // DLC03FarHarborS01Defend 200 -> DLC03_Achievements 67: 67
 		{ 1, 0x00AEC3, 400, 1, 0x057152, 67 },  // DLC03FarHarborS02 400 -> DLC03_Achievements 67: 67
 		{ 1, 0x00AEC3, 425, 1, 0x057152, 67 },  // DLC03FarHarborS02 425 -> DLC03_Achievements 67: 67
+		{ 1, 0x015366, 150, 1, 0x001B44, 250 },  // DLC03MQ06_NukeHandling 150 -> DLC03MQ06 250: 62
+		{ 1, 0x01AC2B, 50, 1, 0x001B44, 535 },  // DLC03MQ06_WindFarmHandling 50 -> DLC03MQ06 535: 62
 		{ 1, 0x02127F, 290, 1, 0x001B44, 555 },  // DLC03MQ06a 290 -> DLC03MQ06 555: 62
 		{ 1, 0x02127F, 300, 1, 0x001B44, 555 },  // DLC03MQ06a 300 -> DLC03MQ06 555: 62
 		{ 1, 0x023ACB, 220, 1, 0x057152, 67 },  // DLC03FarHarborFF01 220 -> DLC03_Achievements 67: 67
@@ -166,6 +169,22 @@ namespace AchievementStages
 		{ 2, 0x000801, 0, 0, 0x01CC2A, 10 },  // DLC01MQ02 0 -> MQ102 10: 1
 		{ 2, 0x000801, 0, 2, 0x000806, 3000 },  // DLC01MQ02 0 -> DLC01MQ01 3000: 51
 		{ 2, 0x000806, 3000, 2, 0x000806, 3000 },  // DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 0, 2, 0x000806, 3000 },  // DLC01Lair 0 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 0, 2, 0x002833, 255 },  // DLC01Lair 0 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 1, 2, 0x000806, 3000 },  // DLC01Lair 1 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 1, 2, 0x002833, 255 },  // DLC01Lair 1 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 3, 2, 0x000806, 3000 },  // DLC01Lair 3 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 3, 2, 0x002833, 255 },  // DLC01Lair 3 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 4, 2, 0x000806, 3000 },  // DLC01Lair 4 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 4, 2, 0x002833, 255 },  // DLC01Lair 4 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 5, 2, 0x000806, 3000 },  // DLC01Lair 5 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 5, 2, 0x002833, 255 },  // DLC01Lair 5 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 6, 2, 0x000806, 3000 },  // DLC01Lair 6 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 6, 2, 0x002833, 255 },  // DLC01Lair 6 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 7, 2, 0x000806, 3000 },  // DLC01Lair 7 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 7, 2, 0x002833, 255 },  // DLC01Lair 7 -> DLC01MQ04 255: 52
+		{ 2, 0x0008BB, 8, 2, 0x000806, 3000 },  // DLC01Lair 8 -> DLC01MQ01 3000: 51
+		{ 2, 0x0008BB, 8, 2, 0x002833, 255 },  // DLC01Lair 8 -> DLC01MQ04 255: 52
 		{ 2, 0x0010F5, 0, 0, 0x01CC2A, 10 },  // DLC01MQ05 0 -> MQ102 10: 1
 		{ 2, 0x0010F5, 0, 2, 0x000806, 3000 },  // DLC01MQ05 0 -> DLC01MQ01 3000: 51
 		{ 2, 0x0010F5, 0, 2, 0x002833, 255 },  // DLC01MQ05 0 -> DLC01MQ04 255: 52
@@ -189,5 +208,6 @@ namespace AchievementStages
 		{ 3, 0x000804, 3, 3, 0x000801, 1000 },  // DLC04MQ04 3 -> DLC04MQ01 1000: 81
 		{ 3, 0x000804, 4, 3, 0x000801, 1000 },  // DLC04MQ04 4 -> DLC04MQ01 1000: 81
 		{ 3, 0x000804, 500, 3, 0x000804, 500 },  // DLC04MQ04 500: 83
+		{ 3, 0x000805, 255, 3, 0x000805, 255 },  // DLC04MQ05 255: 84
 	};
 }
