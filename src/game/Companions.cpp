@@ -268,6 +268,12 @@ namespace Companions
 		}
 	}
 
+	bool AliasesReadable()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		return Hud::IsSettled() && !Hud::LoadingScreenUp() && player && player->GetParentCell();
+	}
+
 	void Frame()
 	{
 		const auto now = Clock::now();
@@ -284,8 +290,7 @@ namespace Companions
 		// the session still up): the aliases read then can come back empty, a let-go the owner never made, which the
 		// server would act on (the companion freed, a friend's waiting copy granted first, the owner's refused after the
 		// load). A dismissal queued then would run against the state before the load.
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		const bool settled = Hud::IsSettled() && !Hud::LoadingScreenUp() && player && player->GetParentCell();
+		const bool settled = AliasesReadable();
 		if (!settled) {
 			++unsettledLooks;
 			(void)book.Look({}, now, false);  // nothing is read, reported or changed; the next settled look says it all

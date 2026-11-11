@@ -2123,25 +2123,36 @@ and the affinity is theirs alone. A friend's game gets the stages as any shared 
 recruits, dismisses, allows or disallows the companion, changes their affinity or its globals, gives them keywords,
 perks or factions, or plays a scene on aliases such a stage changed, is kEach: a friend's game does only what EACH lists
 for it (the objectives it shows and completes, the world's half, the quest's XP and its completion) through the console,
-and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit, the current stage, the
-quest's stages change flag for the save; no journal entry). A done stage is never set again, so its XP is given once.
+and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit and the quest's stages
+change flag for the save; SetEachHere moves the quest's current stage up to it, as a set stage would; no journal entry).
+A done stage is never set again, so its XP is given once.
 The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
 hire's caps (MacCready's 30/40/50) are payments, never a friend's.
 
 Which game drives (StageRules::DriveOf, QuestSync::DriveHere): the companion's owner's game runs the real scripts of a
 kEach stage, every other game mirrors it, and the driving game never marks one done without its script. The driver
-leaves a mark its save keeps: MacCready's is a hire stage (30, 40 or 50) done, which a friend's game never sets; Curie's
-is her actor in DisallowedCompanionFaction with her 200 done (her 200 puts her in it, her 600 takes her out). A stage
-from a friend runs its script here when this game is marked; else it is mirrored when this game has mirrored the quest
-so far (one of its kEach stages done); else it runs its script when the companion is ours now (our Followers alias holds
-them and the book doesn't say they are another's); else it is mirrored. So the owner's own autosave, reloaded, runs
-300 to 600 with its own scripts (the mark), a friend's game stays a mirror once it has been one, and a friend who
-recruits the companion after the owner's hold lapses and before any kEach stage reached them drives it from then on.
-The mark is the save's, so the rule needs no protocol: tests/StageRulesTests.cpp plays an owner, a friend, a reload, a
-friend's own save and late recruits through it. While the driving game holds Curie between her 200 and her 600
-(StageRules::HeldByQuest), Companions reports her held, so the server's book keeps her the owner's and no friend
-recruits her robot body meanwhile. A mirror whose quest isn't running starts it (`startquest`) and waits; after 10
-tries over 30 s it gives up and leaves that quest's kEach stages out (a WARN), until a load or the session's end.
+leaves a mark its save keeps that none of the quest's later stages clears: MacCready's is a hire stage (30, 40 or 50)
+done, which a friend's game never sets; Curie's is her actor in DisallowedCompanionFaction with her 200 done (her 200
+puts her in it, her 600 takes her out), or, from her 300 on, her actor in the quest's NewCurieBody alias with her 300
+done. Her 300 resets her actor (`Reset`), which may take her out of the faction; NewCurieBody has no fill of its own and
+only that script's `ForceRefTo` puts her there, so a mirror never has it. A stage from a friend runs its script here
+when this game is marked, or when one of the quest's kEach stages ran with its script here since the last load (set
+here from a friend's, or by this game's own play: drivenHere; a stage reads done before its script has run, so Curie's
+200 set here reads done before its DisallowCompanion has put the mark there, and her 300, judged at once, must not be
+mirrored); else it is mirrored when this game has mirrored the quest so far (one of its kEach stages done); else it
+runs its script when the companion is ours now (our Followers alias holds them and the book doesn't say they are
+another's); else it is mirrored. The kEach stages wait while the game settles after a load (Companions::AliasesReadable):
+the Followers aliases read empty then, and a companion of ours would read as nobody's. So the owner's own autosave,
+reloaded, runs its remaining stages with its own scripts (the faction before 300, NewCurieBody after: the Memory Den
+autosave too), a friend's game stays a mirror once it has been one, and a friend who recruits the companion after the
+owner's hold lapses and before any kEach stage reached them drives it from then on. The mark is the save's, so the rule
+needs no protocol: tests/StageRulesTests.cpp plays an owner, a friend, a reload before 300 and one after it, the 200
+read done before its script ran, a friend's own save and late recruits through it. `stages` shows how this game would
+set a kEach stage now (`drive=scripts marked=... driven=... mirrored=... ours=...`). While the driving game holds Curie
+between her 200 and her 600 (StageRules::HeldByQuest, by either mark), Companions reports her held, so the server's
+book keeps her the owner's and no friend recruits her robot body meanwhile. A mirror whose quest isn't running starts
+it (`startquest`) and waits; after 10 tries over 30 s it gives up and leaves that quest's kEach stages out (a WARN),
+until a load or the session's end.
 
 Curie's new body (300) is the one stage that changes the world in the same script that moves her affinity over. In a
 mirror the lounger and its chair are enabled, and, where her body changes here (StageRules::BodyOf: her actor is
@@ -2168,8 +2179,20 @@ owner's; starting it in a mirror would run the owner's 300 script there, the ver
 friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
 alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
 while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
-completion XP is not yet seen in a game. Nick's (MS07c), Cait's (COMCaitQuest) and Danse's (BoS302) quests were shared
-before by their type or as a finale, and their stages that recruit, dismiss or change affinity are not kEach yet.
+completion XP is not yet seen in a game; a save made in the second between a mirror's reset of Curie and her dressing
+keeps her without her outfit, affinity and factions (a load drops the dressing still to come). What a mirrored quest
+leaves in a friend's world for later, read from the game's files and not yet seen in a game: Curie is never disallowed
+there (a mirror's 200 doesn't DisallowCompanion) and her COMCurie 50 is only the owner's `SetCompanion`, so a friend
+who met her can still recruit her in their own save, in the body the mirror gave her; MacCready's hire's greeting
+stays (his quest is completed, not stopped). But the companions' affinity conditions are globals their quests' kEach
+stages set (Curie_AffinityCondition_PlayerCompletedQuest at 600; MacCready's PlayerCompletedQuestA at 120 and B at
+255), and each is the ConditionalGlobal of affinity thresholds in the companion's own CompanionActorScript data: in a
+friend's game they stay 0, so a friend who later has that companion in their own save can't pass those thresholds,
+and the quest can't be done again there. Whether to set them in a friend's game too (the player did finish the quest
+with the owner) is the maintainer's call. An owner's game reloaded from before MacCready's hire, with his 120 already
+in the session: 30 is a payment (skipped) and nothing marks it, so 120 is mirrored there (unlikely with autosaves).
+Nick's (MS07c), Cait's (COMCaitQuest) and Danse's (BoS302) quests were shared before by their type or as a finale, and
+their stages that recruit, dismiss or change affinity are not kEach yet.
 
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 

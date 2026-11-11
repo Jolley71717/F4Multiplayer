@@ -26,7 +26,11 @@ namespace Companions
 	// The session ended.
 	void Reset();
 
-	// Whether our Followers aliases hold the NPC now (read now; any session or none).
+	// Whether the Followers aliases can be read now: no save or load on, no loading screen, not settling after a load, our
+	// player in a cell. Read otherwise, they can come back empty.
+	[[nodiscard]] bool AliasesReadable();
+
+	// Whether our Followers aliases hold the NPC now (read now; any session or none; check AliasesReadable first).
 	[[nodiscard]] bool Follows(std::uint32_t a_refId);
 
 	// Whether the NPC is our player's companion: our aliases hold them, and the server's book doesn't say they are another's.

@@ -1645,8 +1645,10 @@ namespace DevCommands
 				return out.empty() ? std::string("none") : out;
 			};
 			const auto done = QuestStageLayout::Done(quest);
+			const auto drive = QuestSync::DriveText(quest);  // a companion's quest: how its owner's stages would be set here now
 			return std::format("stage={} flags={:04X} type={} shared={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
-				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
+				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID()))) +
+			       (drive.empty() ? std::string{} : " " + drive);
 		}
 
 		// global <globalHex>: a global variable's value (read only).

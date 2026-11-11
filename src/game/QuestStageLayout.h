@@ -5,7 +5,7 @@
 // CommonLibF4 only declares TESQuestStage; this mirror has the engine's layout (1.11.240), read from
 // TESQuest::IsStageDone (+66B700), which finds a stage in TESQuest::stages (+100) by the index at +18
 // and tests bit 0 of the flags at +1A, and TESQuestStage::SetDone (+683340), which sets that bit and
-// walks the log entries at +00. Read, and written only by MarkDone (a companion quest's kEach stage).
+// walks the log entries at +00. Read, and written only by MarkDone.
 namespace QuestStageLayout
 {
 	struct Mirror
@@ -62,6 +62,29 @@ namespace QuestStageLayout
 		});
 	}
 
+	// Marks the quest's stage done without setting it: the done bit alone, as IsStageDone and the save read it (the quest's
+	// stages are marked changed for the save), not SetDone's walk of the log entries (a Complete Quest entry would complete
+	// the quest through the engine, with its quest XP) nor SetStage's script. For a friend's turn-in whose reward was given
+	// here (QuestSync::CloseTurnIn). False if the quest has no such stage or it is done already. Main thread only.
+	inline bool MarkDone(RE::TESQuest* a_quest, std::uint16_t a_stage)
+	{
+		bool marked = false;
+		for (const auto stage : a_quest->stages) {
+			if (!stage) {
+				continue;
+			}
+			auto& mirror = *reinterpret_cast<Mirror*>(stage);
+			if (mirror.data.index == a_stage && !IsDone(mirror)) {
+				mirror.data.flags.set(RE::QUEST_STAGE_DATA::Flags::kDone);
+				marked = true;
+			}
+		}
+		if (marked) {
+			a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+		}
+		return marked;
+	}
+
 	// Whether the quest has this stage at all (setting one it doesn't have does nothing: TESQuest::SetStage
 	// finds no entry for it in the quest's stage table).
 	inline bool Has(const RE::TESQuest* a_quest, std::uint16_t a_stage)
@@ -73,25 +96,5 @@ namespace QuestStageLayout
 	inline std::size_t Count(const RE::TESQuest* a_quest)
 	{
 		return a_quest->stages.size();
-	}
-
-	// Marks a stage done here without setting it (StageRules kEach: a companion quest's stage whose script is its owner's):
-	// the done bit, the quest's current stage (TESQuest::SetStage leaves it at the stage set) and the quest's stages
-	// change flag (CHANGE_TYPES kQuestStages), so a save keeps it. Its log entry is not written (the journal has none
-	// for it) and its fragment never runs. False if the quest has no such stage.
-	inline bool MarkDone(RE::TESQuest* a_quest, std::uint16_t a_stage)
-	{
-		bool found = false;
-		for (const auto stage : a_quest->stages) {
-			if (stage && Of(stage)->data.index == a_stage) {
-				reinterpret_cast<Mirror*>(stage)->data.flags.set(RE::QUEST_STAGE_DATA::Flags::kDone);
-				found = true;
-			}
-		}
-		if (found) {
-			a_quest->currentStage = (std::max)(a_quest->currentStage, a_stage);
-			a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
-		}
-		return found;
 	}
 }

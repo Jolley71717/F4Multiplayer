@@ -28,8 +28,8 @@ namespace StageRules
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
 	inline constexpr std::uint8_t kHostile = 1 << 5;  // with kMoves: what it does is turn a faction on the player, not move them (the follow offer says "fighting")
-	inline constexpr std::uint8_t kEach = 1 << 6;     // a companion's quest: its script is the owner's (recruits, affinity, perks); a friend's game does only its EACH acts
-	                                                  // (objectives, the world) and marks it done without running it
+	inline constexpr std::uint8_t kEach = 1 << 7;     // a companion's quest: its script is the owner's (recruits, affinity, perks); a friend's game does only its EACH acts
+	                                                  // (objectives, the world) and marks it done without running it. Bit 7: bit 6 is kDebug's; the byte is full
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -1190,10 +1190,14 @@ namespace StageRules
 	// script, the owner's stages too (a rejoin's catch-up re-sends them all, and an owner who reloaded an older save must
 	// get them with their scripts: Curie's 600 is what lets her be a companion again after her 200 disallowed it). Every
 	// other game mirrors the owner's stages (kEach: marked done, EACH's acts alone). A game drives the quest when its save
-	// carries the driver's mark (Marked: a stage only the driving game's own script sets, a hire a friend's game never
-	// pays; or the companion in the faction the owner's stage put them in, until the stage that takes them out). Without
-	// the mark, a game that mirrored one of the quest's owner's stages goes on mirroring it, and one that hasn't drives it
-	// if the companion is our player's companion now (CompanionBook: the first to recruit them).
+	// carries the driver's mark (Marked), or when it ran one of the quest's owner's stages with its script since the last
+	// load (DriveFacts::driven: that stage's script may not have left its mark yet). The mark is what only the owner's own
+	// scripts leave and none of the quest's later stages clears: a stage only the driving game's own script sets (a hire a
+	// friend's game never pays); or the companion in the faction the owner's stage put them in, from that stage on; or the
+	// companion in an alias that starts empty and that only the owner's stage's script fills (Curie's 300 resets her actor,
+	// which may take her out of the faction, and forces her into NewCurieBody). Without the mark, a game that mirrored one
+	// of the quest's owner's stages goes on mirroring it, and one that hasn't drives it if the companion is our player's
+	// companion now (CompanionBook: the first to recruit them).
 	struct Driver
 	{
 		std::uint8_t                 file;
@@ -1202,7 +1206,9 @@ namespace StageRules
 		std::array<std::uint16_t, 3> ran{};      // stages only the driving game sets (a hire: kPays, never a friend's); any done here is the mark (0: none)
 		std::uint32_t                faction = 0;  // or the companion in this faction (0: none) ...
 		std::uint16_t                from = 0;     // ... with this stage done (whose script put them in it) ...
-		std::uint16_t                until = 0;    // ... and this one not (whose script takes them out): meanwhile they are this game's player's (HeldByQuest)
+		std::uint16_t                until = 0;    // ... and, for HeldByQuest, this one not (whose script takes them out): meanwhile they are this game's player's
+		std::uint16_t                moved = 0;    // or this stage done (0: none) ...
+		std::int16_t                 alias = NO_ALIAS;  // ... and the companion in this alias of the quest, which only that stage's script fills
 		std::uint32_t                metQuest = 0;  // the stage that frees the companion in a world (0: always free): without it, or their ever being
 		std::uint16_t                metStage = 0;  // this player's companion, their new body is left as it is (BodyOf)
 	};
@@ -1212,9 +1218,10 @@ namespace StageRules
 
 	inline constexpr Driver DRIVERS[] = {
 		{ 0, 0x027411, 0x02A8A7, { 30, 40, 50 } },  // COMMacCreadyQuest, CompMacCreadyRef: the hire (250, 200 or 100 caps)
-		// COMCurieQuest, CurieRef: DisallowedCompanionFaction from 200 (DisallowCompanion) to 600 (RemoveFromFaction); MS19 750
-		// opens her room in Vault 81 and takes her out of CaptiveFaction.
-		{ 0, 0x16454E, 0x102249, {}, 0x075D56, 200, 600, 0x022A0A, 750 },
+		// COMCurieQuest, CurieRef: DisallowedCompanionFaction from 200 (DisallowCompanion) to 600 (RemoveFromFaction); from 300
+		// in NewCurieBody (alias 3, filled by no condition: 300's ForceRefTo alone, after her Reset); MS19 750 opens her room in
+		// Vault 81 and takes her out of CaptiveFaction.
+		{ 0, 0x16454E, 0x102249, {}, 0x075D56, 200, 600, 300, 3, 0x022A0A, 750 },
 	};
 
 	inline const Driver* DriverOf(File a_file, std::uint32_t a_quest)
@@ -1223,28 +1230,38 @@ namespace StageRules
 		return it != std::end(DRIVERS) ? &*it : nullptr;
 	}
 
-	// Whether this save carries the driver's mark. a_done(stage): the stage is done here; a_inFaction: the companion is in
-	// the driver's faction here.
+	// What the save shows of the companion for the mark, read in the game.
+	struct MarkFacts
+	{
+		bool inFaction = false;  // the companion is in the driver's faction
+		bool inAlias = false;    // the driver's alias holds the companion
+	};
+
+	// Whether this save carries the driver's mark. a_done(stage): the stage is done here.
 	template <class Done>
-	bool Marked(const Driver& a_driver, Done&& a_done, bool a_inFaction)
+	bool Marked(const Driver& a_driver, Done&& a_done, const MarkFacts& a_facts)
 	{
 		for (const auto stage : a_driver.ran) {
 			if (stage && a_done(stage)) {
 				return true;
 			}
 		}
-		return a_driver.faction && a_inFaction && a_done(a_driver.from);
+		if (a_driver.faction && a_facts.inFaction && a_done(a_driver.from)) {
+			return true;
+		}
+		return a_driver.moved && a_driver.alias != NO_ALIAS && a_facts.inAlias && a_done(a_driver.moved);
 	}
 
 	// Whether the companion is kept this game's player's by their quest now (the driving game, between from and until: Curie
 	// at the lab, dismissed and disallowed by her 200 until her 600), so no friend recruits her meanwhile (the book).
 	template <class Done>
-	bool HeldByQuest(const Driver& a_driver, Done&& a_done, bool a_inFaction)
+	bool HeldByQuest(const Driver& a_driver, Done&& a_done, const MarkFacts& a_facts)
 	{
-		return a_driver.faction && a_driver.until && a_inFaction && a_done(a_driver.from) && !a_done(a_driver.until);
+		return a_driver.faction && a_driver.until && a_done(a_driver.from) && !a_done(a_driver.until) && Marked(a_driver, a_done, a_facts);
 	}
 
-	// Whether one of the quest's owner's stages (kEach) is done here: with no mark, this game has mirrored the quest so far.
+	// Whether one of the quest's owner's stages (kEach) is done here: with no mark and none driven here, this game has
+	// mirrored the quest so far.
 	template <class Done>
 	bool MirroredSoFar(File a_file, std::uint32_t a_quest, Done&& a_done)
 	{
@@ -1262,13 +1279,14 @@ namespace StageRules
 	struct DriveFacts
 	{
 		bool marked = false;    // the save carries the driver's mark (Marked)
+		bool driven = false;    // one of the quest's kEach stages ran with its script here since the last load (set from a friend's here, or this game's own)
 		bool mirrored = false;  // a kEach stage of the quest is done here (MirroredSoFar)
 		bool ours = false;      // the companion is our player's companion now (our Followers alias holds them, and the server's book doesn't say another's)
 	};
 
 	inline Drive DriveOf(const DriveFacts& a_facts)
 	{
-		if (a_facts.marked) {
+		if (a_facts.marked || a_facts.driven) {
 			return Drive::kScripts;  // its own scripts took it: never a stage done here without its script
 		}
 		if (a_facts.mirrored) {
@@ -1276,6 +1294,7 @@ namespace StageRules
 		}
 		return a_facts.ours ? Drive::kScripts : Drive::kMirror;
 	}
+
 
 	// Whether a mirroring game changes the companion's body (the acts marked body). Not in a world where the companion
 	// was never freed (Curie still in her Vault 81 room: a friend who never did its secret), nor while she follows our

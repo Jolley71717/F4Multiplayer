@@ -77,6 +77,11 @@ namespace QuestSync
 	// server's book keeps them ours and no friend recruits her robot body meanwhile.
 	[[nodiscard]] std::vector<std::uint32_t> HeldByQuests();
 
+	// For a companion's quest with a driver (StageRules::DRIVERS), how a kEach stage of it would be set here now
+	// ("drive=scripts marked=true driven=false mirrored=true ours=false", or "drive=unsettled"); empty for any other quest.
+	// For `stages`.
+	[[nodiscard]] std::string DriveText(RE::TESQuest* a_quest);
+
 	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
 	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();
 

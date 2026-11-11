@@ -2049,7 +2049,9 @@ step_companions_human() {
 # after); a game with either quest's stages already done is a FAIL naming them.
 # Curie (the host the owner): 100 starts it in the VM's game; the VM holds Codsworth as its companion (console recruit), and the
 # host's 200 (ClearCompanion, DisallowCompanion in its script) leaves him with the VM: the per-stage skip; the host's 200 put her
-# in DisallowedCompanionFaction (the mark of the game that drives her quest), the VM's didn't. Both games coc to the Memory Den
+# in DisallowedCompanionFaction (the mark of the game that drives her quest), the VM's didn't (`stages`: drive=scripts in the host's game,
+# drive=mirror in the VM's); after the host's 300 (her reset) NewCurieBody holds her there and not in the VM's, the mark a reload
+# before 600 keeps. Both games coc to the Memory Den
 # and Curie is put by the player in each (console moveto: loaded near both players for 300, as at the lab); in the VM, by
 # console, she is made met (HasBeenCompanionFaction), given an affinity and a stack of rounds. 300, her new body, sets the VM's
 # globals her base reads (synth 100, robot 0), enables the memory lounger, moves her items into the robot body (alias
@@ -2059,7 +2061,8 @@ step_companions_human() {
 # MacCready (the VM the owner): the VM's 30 (the hire, by console: the mark of the driving game) is never set in the host's game;
 # 60 starts it in the host's game; 120 leaves the host's affinity global at 0; the VM's game is then killed (the owner leaving
 # mid-quest) and the host carries on with its own 140 (its script runs: its own stage); the VM's game restarts and rejoins and
-# catches 140 up, with its script when its game holds the hire, without when it doesn't; the host's coc to FOLLOW_HOST_CELL
+# catches 140 up as a plain shared stage; its game drives his quest (`stages`) when its save holds the hire, mirrors it when it
+# doesn't, and a 120 caught up is set accordingly; the host's coc to FOLLOW_HOST_CELL
 # puts it far, and the VM's 150 (a stage that moves nobody) is set in the host's game without a follow offer; the VM's 255
 # completes it in the host's game but leaves it running (his hire's greeting stays in the host's own save), his second
 # affinity global there 0. A friend recruiting the companion once the 5-minute hold lapses is a hand test.
@@ -2118,6 +2121,8 @@ step_companion_quests() {
 	expect_match "companion_quests: the host's 200 put Curie in DisallowedCompanionFaction (its game drives her quest)" "$(dc host "factions $CQ_CURIE_REF")" " $CQ_DISALLOWED:"
 	if dc vm "factions $CQ_CURIE_REF" | grep -q " $CQ_DISALLOWED:"; then fail "companion_quests: the VM's mirrored 200 left Curie out of DisallowedCompanionFaction" "$(dc vm "factions $CQ_CURIE_REF")"
 	else pass "companion_quests: the VM's mirrored 200 left Curie out of DisallowedCompanionFaction" "$(dc vm "factions $CQ_CURIE_REF")"; fi
+	expect_match "companion_quests: after its 200 the host's game drives Curie's quest (the faction's mark)" "$(dc host "stages $CQ_CURIE")" "drive=scripts marked=true"
+	expect_match "companion_quests: after its mirrored 200 the VM's game mirrors Curie's quest" "$(dc vm "stages $CQ_CURIE")" "drive=mirror marked=false"
 	# Her new body near both players (console placement): the Memory Den, Curie put by the player in each game.
 	enter_both "$CQ_LAB_CELL" 14
 	for w in host vm; do dc "$w" "console $CQ_CURIE_REF.moveto player" >/dev/null; done
@@ -2143,6 +2148,14 @@ step_companion_quests() {
 	expect_eq "companion_quests: her new body keeps her affinity in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
 	fac1=$(_cq_factions vm)
 	expect_eq "companion_quests: her new body keeps her factions in the VM's game" "$fac1" "$fac0"
+	# The host's own 300 resets her actor, which may take her out of DisallowedCompanionFaction; the mark a reload from between
+	# its 300 and 600 keeps is NewCurieBody (which only its 300's script fills) holding her. Its drive stays the script's.
+	echo "-- the host's Curie after its own 300 (her reset): $(dc host "factions $CQ_CURIE_REF")"
+	expect_eq "companion_quests: the host's 300 put Curie in NewCurieBody" "$(_qa_aliases host "$CQ_CURIE" NewCurieBody | awk '{print $2; exit}')" "$CQ_CURIE_REF"
+	if [ -n "$(_qa_aliases vm "$CQ_CURIE" NewCurieBody)" ]; then fail "companion_quests: the VM's mirrored 300 left NewCurieBody empty" "$(_qa_aliases vm "$CQ_CURIE" NewCurieBody)"
+	else pass "companion_quests: the VM's mirrored 300 left NewCurieBody empty" "empty"; fi
+	expect_match "companion_quests: after its 300 the host's game still drives Curie's quest (what a reload before 600 keeps)" "$(dc host "stages $CQ_CURIE")" "drive=scripts marked=true"
+	expect_match "companion_quests: after its mirrored 300 the VM's game still mirrors Curie's quest" "$(dc vm "stages $CQ_CURIE")" "drive=mirror marked=false"
 	robot=$(_qa_aliases vm "$CQ_CURIE" FakeCurieRobot | awk '{print $2; exit}')
 	if [ -z "$robot" ]; then fail "companion_quests: her items are in the robot body in the VM's game" "no FakeCurieRobot in the VM's aliases: $(dc vm "aliases $CQ_CURIE" | cut -c1-200)"
 	else expect_match "companion_quests: her items are in the robot body in the VM's game" "$(dc vm "contents $robot")" " ${CQ_MARK_ITEM}x$CQ_MARK_N"; fi
@@ -2180,16 +2193,23 @@ step_companion_quests() {
 	pass "companion_quests: the VM's game alone is restarted and rejoins the host's session" "$(field "$(vm 'net status')" status)"
 	if wait_for 90 _f_has vm "$CQ_MAC" 140; then pass "companion_quests: the rejoined VM catches the host's 140 up" "VM done $(_f_done vm "$CQ_MAC")"
 	else fail "companion_quests: the rejoined VM catches the host's 140 up" "VM done $(_f_done vm "$CQ_MAC")"; fi
-	# Which game drives: the restarted game's save holds the hire or not (whichever save in-vm-3-game.ps1 loaded); the 140 runs its
-	# script when it does, and is mirrored when it doesn't.
+	# 140 is no owner's stage (not kEach): set as any shared stage, with its script, whichever game drives.
+	if _cq_log_has vm "QuestSync: set $CQ_MAC '[^']*' stage 140 \(was [0-9]+\)" && ! _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 140 .*its script"; then
+		pass "companion_quests: the rejoined VM sets the host's 140 as a plain shared stage" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"
+	else fail "companion_quests: the rejoined VM sets the host's 140 as a plain shared stage" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"; fi
+	# Which game drives: the restarted game's save holds the hire or not (whichever save in-vm-3-game.ps1 loaded). With it, the
+	# drive is the script's (and a 120 caught up runs its script: his first affinity global 1 there, from the save or the catch-up);
+	# without it, the VM mirrors (a 120 caught up is marked done without its script).
 	if _f_has vm "$CQ_MAC" 30; then
-		if _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 140 .*with its script: this game drives"; then pass "companion_quests: the hirer's game runs the host's 140 with its script" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"
-		else fail "companion_quests: the hirer's game runs the host's 140 with its script" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"; fi
+		expect_match "companion_quests: the hirer's restarted game drives MacCready's quest" "$(dc vm "stages $CQ_MAC")" "drive=scripts marked=true"
+		if _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 120 .*without its script"; then fail "companion_quests: the hirer's game never mirrors the session's 120" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 120 .*")"
+		else pass "companion_quests: the hirer's game never mirrors the session's 120" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 120 .*")"; fi
 		expect_eq "companion_quests: his first affinity global after the rejoin (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_A)/$(_cq_global host $CQ_MAC_AFFINITY_A)" "1/0"
 	else
-		echo "-- the VM's restarted game loaded a save from before its hire: its 140 is a mirror's"
-		if _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 140 .*without its script"; then pass "companion_quests: a game without the hire mirrors the host's 140" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"
-		else fail "companion_quests: a game without the hire mirrors the host's 140" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"; fi
+		echo "-- the VM's restarted game loaded a save from before its hire: it mirrors his quest"
+		expect_match "companion_quests: a restarted game without the hire mirrors MacCready's quest" "$(dc vm "stages $CQ_MAC")" "drive=mirror marked=false"
+		if _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 120 .*with its script"; then fail "companion_quests: a game without the hire never runs the session's 120 with its script" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 120 .*")"
+		else pass "companion_quests: a game without the hire never runs the session's 120 with its script" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 120 .*")"; fi
 	fi
 	# Far apart: a stage that moves nobody is set without an offer.
 	dc vm "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame vm 30

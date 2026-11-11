@@ -180,6 +180,7 @@ namespace QuestSync
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
 		std::unordered_set<std::uint64_t>                eachWaitLogged;  // companion quests' kEach stages logged as waiting for their quest to start here
+		std::unordered_set<std::uint64_t>                eachSettleLogged;  // ... and as waiting for the game to settle (Companions::AliasesReadable)
 		// Stages logged as never done in time, once each while the game runs; gaveUp counts the rest. A stage that was to
 		// start its quest, which didn't start (000190BC's 0, Diamond City's entrance scene, at each load away from Diamond
 		// City), is logged as that instead (StageLog::Queue::FailedStarts), once per quest.
@@ -707,18 +708,40 @@ namespace QuestSync
 			return a_actor && faction && a_actor->IsInFaction(faction);
 		}
 
+		// What this save shows of a companion quest's driver's mark (StageRules::Marked): the companion in the driver's
+		// faction, or in the alias only the owner's stage's script fills.
+		StageRules::MarkFacts MarkFactsOf(RE::TESQuest* a_quest, const StageRules::Driver& a_driver, const RE::Actor* a_companion)
+		{
+			StageRules::MarkFacts facts;
+			if (!a_companion) {
+				return facts;
+			}
+			facts.inFaction = a_driver.faction && InFaction(a_companion, (a_quest->GetFormID() & 0xFF000000) | a_driver.faction);
+			if (a_driver.alias != StageRules::NO_ALIAS) {
+				const auto held = a_quest->GetAliasedRef(static_cast<std::uint32_t>(a_driver.alias));
+				facts.inAlias = held && held.get() == a_companion;
+			}
+			return facts;
+		}
+
+		// Companions' quests one of whose owner's stages (kEach) ran with its script here since the last load: set here with
+		// it (from a friend's), or done by this game's own play. Driven here whatever their save shows yet: the stage's
+		// script may not have left its mark (Curie's 200 reads done before its DisallowCompanion has run), and the next
+		// stage, judged as soon as it reads done, must not take the quest for a mirror (StageRules::DriveFacts::driven).
+		std::unordered_set<std::uint32_t> drivenHere;
+
 		// Whether this game drives a companion's quest (StageRules::DriveOf): its owner's stages are set here with their
-		// scripts. The facts, for the log.
+		// scripts. The facts, for the log. The aliases must be readable (Companions::AliasesReadable).
 		StageRules::Drive DriveHere(RE::TESQuest* a_quest, StageRules::File a_file, StageRules::DriveFacts& a_facts)
 		{
 			const auto driver = StageRules::DriverOf(a_file, a_quest->GetFormID() & 0x00FFFFFF);
 			if (!driver) {
 				return StageRules::Drive::kMirror;
 			}
-			const auto plugin = a_quest->GetFormID() & 0xFF000000;
 			const auto done = [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(a_quest, a_stage); };
 			const auto companion = CompanionOf(a_quest, *driver);
-			a_facts.marked = StageRules::Marked(*driver, done, InFaction(companion, driver->faction ? plugin | driver->faction : 0u));
+			a_facts.marked = StageRules::Marked(*driver, done, MarkFactsOf(a_quest, *driver, companion));
+			a_facts.driven = drivenHere.contains(a_quest->GetFormID());
 			a_facts.mirrored = StageRules::MirroredSoFar(a_file, a_quest->GetFormID() & 0x00FFFFFF, done);
 			a_facts.ours = companion && Companions::Ours(companion->GetFormID());
 			return StageRules::DriveOf(a_facts);
@@ -832,7 +855,14 @@ namespace QuestSync
 				body = BodyHere(a_quest, a_file);
 				a_body = std::format(", her body {}", BodyText(*body));
 			}
-			std::size_t missed = QuestStageLayout::MarkDone(a_quest, a_stage) ? 0 : 1;
+			// The done bit, then the quest's current stage as TESQuest::SetStage leaves it (the companions' quests are ordered;
+			// MarkDone leaves it), saved with the stages.
+			const bool  marked = QuestStageLayout::MarkDone(a_quest, a_stage) || QuestStageLayout::IsStageDone(a_quest, a_stage);
+			std::size_t missed = marked ? 0 : 1;
+			if (marked && a_stage > a_quest->currentStage) {
+				a_quest->currentStage = a_stage;
+				a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+			}
 			for (const auto& each : acts) {
 				using StageRules::Act;
 				if (each.body && body != StageRules::Body::kChange) {
@@ -1109,11 +1139,19 @@ namespace QuestSync
 			}
 
 			// A companion quest's stage whose script is its owner's: in the game that drives the quest, set with its script as
-			// any stage; in the others only its EACH acts, and marked done.
+			// any stage; in the others only its EACH acts, and marked done. Judged only once the Followers aliases can be read
+			// (after a load they can come back empty, and the companion then reads as nobody's).
 			StageRules::DriveFacts driveFacts;
 			const bool             each = file && StageRules::IsEach(*file, local, a_stage);
-			const auto             drive = each ? DriveHere(quest, *file, driveFacts) : StageRules::Drive::kScripts;
-			const auto             driveText = std::format("marked={} mirrored={} ours={}", driveFacts.marked, driveFacts.mirrored, driveFacts.ours);
+			if (each && !Companions::AliasesReadable()) {
+				if (eachSettleLogged.insert(Key(a_quest, a_stage)).second) {
+					REX::INFO("QuestSync: {:08X} '{}' stage {} is a companion quest's: waiting for the game to settle before judging which game drives it", a_quest,
+						name ? name : "", a_stage);
+				}
+				return StageLog::Set::kQuestWaits;
+			}
+			const auto drive = each ? DriveHere(quest, *file, driveFacts) : StageRules::Drive::kScripts;
+			const auto driveText = std::format("marked={} driven={} mirrored={} ours={}", driveFacts.marked, driveFacts.driven, driveFacts.mirrored, driveFacts.ours);
 			if (each && drive == StageRules::Drive::kMirror && !(quest->data.flags & QUEST_RUNNING)) {
 				// Started first; its aliases are filled as it starts. Given up on if it doesn't (StageRules::GiveUpStart).
 				if (eachStartsGaveUp.contains(a_quest)) {
@@ -1146,6 +1184,7 @@ namespace QuestSync
 			} else if (each) {
 				SetStageHere(quest, a_stage);
 				++drivenStages;
+				drivenHere.insert(a_quest);  // until a load: its script may not have left its mark yet
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}", a_quest, name ? name : "", a_stage,
 					quest->currentStage, driveText, now.live || !followed.empty() ? "" : " (catching up)", followed);
 			} else {
@@ -1651,6 +1690,14 @@ namespace QuestSync
 			}
 			if (!fresh.empty()) {
 				lastStageChange = now;
+				// A companion quest's owner's stage (kEach) done by this game's own play: its script ran here, so this game
+				// drives the quest (drivenHere). One set here from a friend's is never fresh: NoteSetHere knew it first.
+				const auto companionFile = IsCompanion(quest) ? FileOf(quest) : std::nullopt;
+				if (companionFile && std::ranges::any_of(fresh, [&](std::uint16_t a_stage) { return StageRules::IsEach(*companionFile, id & 0x00FFFFFF, a_stage); }) &&
+					drivenHere.insert(id).second) {
+					REX::INFO("QuestSync: {:08X} '{}': one of its companion's owner's stages ran here by this game's own play; this game drives it until a load", id,
+						quest->GetFullName() ? quest->GetFullName() : "");
+				}
 			} else if (!unstarted.Has(id)) {
 				continue;
 			}
@@ -1731,6 +1778,7 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		eachWaitLogged.clear();
+		eachSettleLogged.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		waitLogged.clear();
@@ -1780,9 +1828,11 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		eachWaitLogged.clear();
+		eachSettleLogged.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
-		newBody.reset();  // the loaded save's actor was never reset by it
+		newBody.reset();  // the loaded save's actor is as that save has it (one made in the second between a reset and its dressing keeps her undressed: DESIGN's limits)
+		drivenHere.clear();  // the loaded save's marks decide again
 		waitLogged.clear();
 		unstarted.Clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
@@ -1795,6 +1845,21 @@ namespace QuestSync
 		RadiantSync::Rebaseline();
 	}
 
+	std::string DriveText(RE::TESQuest* a_quest)
+	{
+		const auto file = a_quest && IsCompanion(a_quest) ? FileOf(a_quest) : std::nullopt;
+		if (!file || !StageRules::DriverOf(*file, a_quest->GetFormID() & 0x00FFFFFF)) {
+			return {};
+		}
+		if (!Companions::AliasesReadable()) {
+			return "drive=unsettled";
+		}
+		StageRules::DriveFacts facts;
+		const auto             drive = DriveHere(a_quest, *file, facts);
+		return std::format("drive={} marked={} driven={} mirrored={} ours={}", drive == StageRules::Drive::kScripts ? "scripts" : "mirror", facts.marked, facts.driven,
+			facts.mirrored, facts.ours);
+	}
+
 	std::vector<std::uint32_t> HeldByQuests()
 	{
 		std::vector<std::uint32_t> out;
@@ -1805,7 +1870,7 @@ namespace QuestSync
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(driver.quest);
 			const auto companion = quest ? CompanionOf(quest, driver) : nullptr;
 			const auto done = [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(quest, a_stage); };
-			if (companion && StageRules::HeldByQuest(driver, done, InFaction(companion, driver.faction))) {
+			if (companion && StageRules::HeldByQuest(driver, done, MarkFactsOf(quest, driver, companion))) {
 				out.push_back(companion->GetFormID());
 			}
 		}

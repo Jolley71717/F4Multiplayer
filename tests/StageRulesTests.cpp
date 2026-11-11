@@ -816,6 +816,9 @@ TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are
 	using namespace StageRules;
 	constexpr std::uint32_t CURIE = 0x16454E;     // COMCurieQuest, Emergent Behavior
 	constexpr std::uint32_t MACCREADY = 0x027411;  // COMMacCreadyQuest, Long Road Ahead
+	// The flag's own bit: 7 (6 is kDebug's), shared with no other flag.
+	CHECK(kEach == 1 << 7);
+	CHECK((kEach & (kMoves | kBridge | kPays | kStory | kFree | kHostile | (1 << 6))) == 0);
 	// The table is sorted (a stage's acts kept in their order), every row's stage is kEach, and only the companions'
 	// quests have kEach stages.
 	for (auto it = std::next(std::begin(EACH)); it != std::end(EACH); ++it) {
@@ -971,24 +974,32 @@ TEST("stage rules: a kEach stage's acts as console lines")
 namespace
 {
 	// One game's companion quest as the drive rule sees it: its done stages, whether the companion is in the driver's
-	// faction, whether our Followers alias holds them. Each stage that arrives is set as QuestSync sets it: with its script
-	// in the driving game (what the script does to the faction done here), or marked done in a mirroring one.
+	// faction or alias, whether our Followers alias holds them, the quests driven here since the last load. Each stage
+	// that arrives is set as QuestSync sets it: with its script in the driving game, or marked done in a mirroring one. A
+	// stage reads done before its script has run (Papyrus runs it a moment later): with lazy set, what a script does waits
+	// for RunScripts.
 	struct CompanionGame
 	{
-		std::uint32_t                quest;
-		std::vector<std::uint16_t>   done;
-		bool                         inFaction = false;
-		bool                         ours = false;
-		std::vector<std::uint16_t>   mirrored;  // stages marked done without their script
+		std::uint32_t              quest;
+		std::vector<std::uint16_t> done;
+		bool                       inFaction = false;
+		bool                       ours = false;
+		std::vector<std::uint16_t> mirrored;  // stages marked done without their script
+		bool                       inAlias = false;  // the driver's alias holds the companion (Curie's NewCurieBody)
+		bool                       driven = false;   // a kEach stage ran with its script here since the last load (QuestSync's drivenHere)
+		bool                       lazy = false;
+		std::vector<std::uint16_t> pending;  // scripts not run yet (lazy)
 
 		bool Done(std::uint16_t a_stage) const { return std::ranges::find(done, a_stage) != done.end(); }
 
-		StageRules::Drive Drive() const
+		StageRules::DriveFacts Facts() const
 		{
 			const auto driver = StageRules::DriverOf(StageRules::File::kFallout4, quest);
 			const auto isDone = [&](std::uint16_t a_stage) { return Done(a_stage); };
-			return StageRules::DriveOf({ StageRules::Marked(*driver, isDone, inFaction), StageRules::MirroredSoFar(StageRules::File::kFallout4, quest, isDone), ours });
+			return { StageRules::Marked(*driver, isDone, { inFaction, inAlias }), driven, StageRules::MirroredSoFar(StageRules::File::kFallout4, quest, isDone), ours };
 		}
+
+		StageRules::Drive Drive() const { return StageRules::DriveOf(Facts()); }
 
 		void Arrives(std::uint16_t a_stage)
 		{
@@ -1002,18 +1013,56 @@ namespace
 			}
 			if (each && Drive() == StageRules::Drive::kMirror) {
 				mirrored.push_back(a_stage);
-			} else {
-				ScriptRuns(a_stage);
+				done.push_back(a_stage);
+				return;
 			}
+			driven = driven || each;
 			done.push_back(a_stage);
+			Script(a_stage);
 		}
 
-		// What the stage's own script does to the driver's mark (Curie's 200 and 600).
+		// A stage this game's own play sets (a timer, a dialogue): its script runs here.
+		void OwnPlay(std::uint16_t a_stage)
+		{
+			driven = driven || StageRules::IsEach(StageRules::File::kFallout4, quest, a_stage);
+			done.push_back(a_stage);
+			Script(a_stage);
+		}
+
+		void Script(std::uint16_t a_stage)
+		{
+			pending.push_back(a_stage);
+			if (!lazy) {
+				RunScripts();
+			}
+		}
+
+		void RunScripts()
+		{
+			for (const auto stage : std::exchange(pending, {})) {
+				ScriptRuns(stage);
+			}
+		}
+
+		// The save this game makes now, loaded: what its scripts did is kept, what was only known since the last load is not.
+		CompanionGame Loaded() const
+		{
+			auto loaded = *this;
+			loaded.driven = false;
+			loaded.pending.clear();
+			return loaded;
+		}
+
+		// What the stage's own script does to the driver's mark (Curie's 200, 300 and 600).
 		void ScriptRuns(std::uint16_t a_stage)
 		{
 			if (quest == 0x16454E && a_stage == 200) {
 				inFaction = true;  // DisallowCompanion
 				ours = false;      // ClearCompanion
+			}
+			if (quest == 0x16454E && a_stage == 300) {
+				inFaction = false;  // Reset(aTrueCurie): taken as clearing her faction changes (the worst case)
+				inAlias = true;     // ForceRefTo(Alias_NewCurieBody, aTrueCurie)
 			}
 			if (quest == 0x16454E && a_stage == 600) {
 				inFaction = false;  // RemoveFromFaction DisallowedCompanionFaction
@@ -1042,15 +1091,35 @@ TEST("stage rules: a companion's quest is driven by the game whose own scripts t
 			CHECK(IsEach(File::kFallout4, driver.quest, driver.from));  // the owner's stage that puts them in it: never run in a mirror
 			CHECK(IsEach(File::kFallout4, driver.quest, driver.until));
 		}
+		if (driver.moved) {
+			CHECK(driver.alias != NO_ALIAS);
+			CHECK(IsEach(File::kFallout4, driver.quest, driver.moved));  // the owner's stage whose script fills the alias: never run in a mirror
+			CHECK((!driver.faction || (driver.from < driver.moved && driver.moved < driver.until)));  // one mark or the other the whole hold
+		}
+	}
+	const auto& curieDriver = *DriverOf(File::kFallout4, CURIE);
+	CHECK(curieDriver.moved == 300 && curieDriver.alias == 3);  // NewCurieBody: no fill of its own; 300's ForceRefTo(aTrueCurie) after her Reset
+	// The new body's acts never touch that alias in a mirror (Curie's alias is 0, the robot body's 7).
+	for (const auto& each : EACH) {
+		CHECK((each.alias != curieDriver.alias || each.quest != CURIE));
+		CHECK((each.items != curieDriver.alias || each.quest != CURIE));
 	}
 
 	// The rule itself.
 	CHECK(DriveOf({ .marked = true }) == Drive::kScripts);
 	CHECK(DriveOf({ .marked = true, .mirrored = true }) == Drive::kScripts);
 	CHECK(DriveOf({ .marked = true, .ours = false }) == Drive::kScripts);
+	CHECK(DriveOf({ .driven = true, .mirrored = true }) == Drive::kScripts);  // ran one of them with its script here: its mark may not be there yet
 	CHECK(DriveOf({ .ours = true }) == Drive::kScripts);
 	CHECK(DriveOf({}) == Drive::kMirror);
 	CHECK(DriveOf({ .mirrored = true, .ours = true }) == Drive::kMirror);
+	const auto doneIn = [](std::vector<std::uint16_t> a_done) { return [a_done](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); }; };
+	CHECK(Marked(curieDriver, doneIn({ 200 }), { .inFaction = true }));
+	CHECK(!Marked(curieDriver, doneIn({ 100 }), { .inFaction = true }));    // in the faction before her 200: not the quest's
+	CHECK(Marked(curieDriver, doneIn({ 200, 300 }), { .inAlias = true }));  // her reset took the faction; the alias holds
+	CHECK(!Marked(curieDriver, doneIn({ 200, 300 }), {}));                  // a mirror: neither
+	CHECK(!Marked(curieDriver, doneIn({ 200 }), { .inAlias = true }));      // the alias without its stage: not the mark
+	CHECK(Marked(*DriverOf(File::kFallout4, MACCREADY), doneIn({ 40 }), {}));  // the hire
 
 	// Curie, played through: the owner (Curie theirs) drives, the friend (never had her) mirrors.
 	const std::vector<std::uint16_t> curieStages{ 100, 150, 200, 300, 400, 500, 600, 610, 700 };
@@ -1063,7 +1132,7 @@ TEST("stage rules: a companion's quest is driven by the game whose own scripts t
 	CHECK(owner.mirrored.empty());
 	CHECK(!owner.inFaction && owner.ours);  // 600 ran: she is a companion again
 	CHECK((friendGame.mirrored == std::vector<std::uint16_t>{ 200, 300, 400, 500, 600 }));
-	CHECK(!friendGame.inFaction);  // nothing of the owner's DisallowCompanion here
+	CHECK(!friendGame.inFaction && !friendGame.inAlias);  // nothing of the owner's DisallowCompanion or new body's aliases here
 
 	// The owner's game crashes after the 24-hour wait and they reload the autosave with 200 done (her in
 	// DisallowedCompanionFaction, no alias holds her): the rejoin's catch-up re-sends every stage. Each runs its script here.
@@ -1078,6 +1147,56 @@ TEST("stage rules: a companion's quest is driven by the game whose own scripts t
 	// The same reload with the book already free of her (no alias, nobody's): the mark alone decides.
 	CompanionGame reloadedAfterTimer{ CURIE, { 100, 150, 200, 300 }, true, false };
 	CHECK(reloadedAfterTimer.Drive() == Drive::kScripts);
+
+	// The owner's own timer runs her 300 (her reset takes her out of the faction), and they reload the autosave made on
+	// entering the Memory Den for the operation, after it: the rejoin's catch-up re-sends 400, 500 and 600. The alias her
+	// 300 filled is the mark now: each runs its script, 600's too.
+	CompanionGame timer{ CURIE, {}, false, true };
+	for (const auto stage : std::initializer_list<std::uint16_t>{ 100, 150, 200 }) {
+		timer.Arrives(stage);
+	}
+	timer.OwnPlay(300);
+	CHECK(!timer.inFaction && timer.inAlias);
+	auto memoryDen = timer.Loaded();
+	CHECK(memoryDen.Facts().marked && !memoryDen.Facts().driven && memoryDen.Facts().mirrored && !memoryDen.ours);
+	CHECK(memoryDen.Drive() == Drive::kScripts);
+	for (const auto stage : curieStages) {
+		memoryDen.Arrives(stage);
+	}
+	CHECK(memoryDen.mirrored.empty());
+	CHECK(!memoryDen.inFaction && memoryDen.ours);  // 600's RemoveFromFaction and COMCurie 50 ran: not lost for good
+	// Held by her quest from 200 to 600 in that game, through her reset.
+	CHECK(HeldByQuest(curieDriver, doneIn(timer.done), { timer.inFaction, timer.inAlias }));
+
+	// The owner reloads a save from before her 200, Curie following (theirs), and the session has 200 and 300. 200 runs
+	// with its script; it reads done at once, before its DisallowCompanion and ClearCompanion have run, and 300 is judged
+	// then. It is driven here (200 ran with its script), not mirrored, and so are 400 to 600.
+	CompanionGame early{ CURIE, { 100, 150 }, false, true };
+	early.lazy = true;
+	early.Arrives(200);
+	CHECK(!early.inFaction);        // its script hasn't run yet: no mark
+	CHECK(early.Facts().mirrored);  // 200 done here, as a mirror's would be
+	CHECK(early.Drive() == Drive::kScripts);
+	early.Arrives(300);
+	early.RunScripts();
+	for (const auto stage : curieStages) {
+		early.Arrives(stage);
+		early.RunScripts();
+	}
+	CHECK(early.mirrored.empty());
+	CHECK(!early.inFaction && early.ours);
+	// Without what was driven here (the same moment seen by the old rule) 300 would have been mirrored, and 600's
+	// RemoveFromFaction would have found no NewCurieBody: Curie disallowed for good.
+	CompanionGame racing{ CURIE, { 100, 150, 200 }, false, false };
+	CHECK(racing.Drive() == Drive::kMirror);
+	// This game's own play does the same: its own 200 (her dialogue) drives the quest at once.
+	CompanionGame ownDialogue{ CURIE, { 100, 150 }, false, true };
+	ownDialogue.lazy = true;
+	ownDialogue.OwnPlay(200);
+	CHECK(ownDialogue.Drive() == Drive::kScripts);
+	// A load forgets what was driven: the save's marks decide (the scripts of a save made after them have run).
+	ownDialogue.RunScripts();
+	CHECK(ownDialogue.Loaded().Drive() == Drive::kScripts);
 
 	// A friend whose own save ran her 200 earlier (her in the faction there): their game drives it too, and their Curie gets
 	// her 600 with its script.
@@ -1096,15 +1215,15 @@ TEST("stage rules: a companion's quest is driven by the game whose own scripts t
 	CHECK(recruitedLate.Drive() == Drive::kMirror);
 	recruitedLate.Arrives(300);
 	CHECK((recruitedLate.mirrored == std::vector<std::uint16_t>{ 200, 300 }));
+	CHECK(recruitedLate.Loaded().Drive() == Drive::kMirror);
 
 	// The driving game keeps her its player's from 200 to 600 (the book): held by her quest only with the mark.
-	const auto curie = *DriverOf(File::kFallout4, CURIE);
-	const auto doneIn = [](std::vector<std::uint16_t> a_done) { return [a_done](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); }; };
-	CHECK(!HeldByQuest(curie, doneIn({ 100, 150 }), false));
-	CHECK(HeldByQuest(curie, doneIn({ 100, 150, 200 }), true));
-	CHECK(HeldByQuest(curie, doneIn({ 100, 150, 200, 300, 400, 500 }), true));
-	CHECK(!HeldByQuest(curie, doneIn({ 100, 150, 200, 300, 400, 500, 600 }), false));
-	CHECK(!HeldByQuest(curie, doneIn({ 100, 150, 200, 300 }), false));  // a mirror: 200 done, not in the faction
+	CHECK(!HeldByQuest(curieDriver, doneIn({ 100, 150 }), {}));
+	CHECK(HeldByQuest(curieDriver, doneIn({ 100, 150, 200 }), { .inFaction = true }));
+	CHECK(HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300, 400, 500 }), { .inFaction = true }));
+	CHECK(HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300, 400, 500 }), { .inAlias = true }));  // her reset took the faction
+	CHECK(!HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300, 400, 500, 600 }), { .inAlias = true }));
+	CHECK(!HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300 }), {}));  // a mirror: 200 done, neither mark
 
 	// MacCready: the owner hired him (30, a payment: never a friend's). Their game restarts without a save after its own 60
 	// and 120, and the catch-up re-sends 120: its script runs (the caps given back, his affinity's condition).
