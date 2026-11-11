@@ -160,6 +160,14 @@ if (-not $game) {
 }
 if ($Spot) { Set-ClickSpot $game; exit 0 }
 
+# A click's spot is checked before anything is sent: a refused click sends nothing at all, not even the Alt tap below (which
+# goes to whatever window is in front). Checked again before each press.
+if ($Click -or $RightClick) {
+	$s = Set-ClickSpot $game
+	if ($s -notlike 'spot=ok*' -and $s -notlike 'spot=moved*') { "input=refused ($s): no click was sent"; exit 3 }
+	if ($s -notlike 'spot=ok*') { Write-Host $s }
+}
+
 # Windows only lets the foreground process change the foreground window; Alt held across the call lifts that. Its release
 # comes after the game has the front, so it goes to the game. Not done when the game is in front already (the rig's scripts
 # bring it to the front through the dev channel first, so this is the rare case).
@@ -170,11 +178,6 @@ if (-not (Test-GameInFront $game)) {
 	Start-Sleep -Milliseconds 400
 }
 
-if ($Click -or $RightClick) {
-	$s = Set-ClickSpot $game
-	if ($s -notlike 'spot=ok*' -and $s -notlike 'spot=moved*') { "input=refused ($s): no click was sent"; exit 3 }
-	if ($s -notlike 'spot=ok*') { Write-Host $s }
-}
 for ($i = 0; $i -lt $Times; $i++) {
 	if (($Click -or $RightClick) -and -not (Test-CursorOnGame $game)) {
 		$c = New-Object F4Input+POINT; [F4Input]::GetCursorPos([ref]$c) | Out-Null; $at = Get-RootAt $c.X $c.Y
