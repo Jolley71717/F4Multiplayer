@@ -1,4 +1,4 @@
-﻿#include "game/QuestSync.h"
+#include "game/QuestSync.h"
 #include "game/Official.h"
 
 #include "Config.h"
@@ -20,6 +20,7 @@
 #include "game/RemotePlayers.h"
 #include "game/SceneHold.h"
 #include "game/ScriptDoors.h"
+#include "game/Spawns.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 #include "game/Story.h"
@@ -220,6 +221,7 @@ namespace QuestSync
 		std::uint32_t                                    unknown = 0;   // stages the quest doesn't have
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
+		std::uint32_t                                    encounterStartsRefused = 0;  // an encounter's stage that would have started it (SetHere)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -765,6 +767,15 @@ namespace QuestSync
 				return StageLog::Set::kSkipped;
 			}
 			const char* name = quest->GetFullName();
+			// A random encounter's stage (its run's: EncounterRuns.h) never starts its quest: started so, it would run without
+			// its trigger or the owner's actors forced in. One that waited here past its quest's stop is dropped.
+			if (!(quest->data.flags & QUEST_RUNNING) && Spawns::IsEncounter(quest)) {
+				if (encounterStartsRefused++ < 20) {
+					REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: a random encounter's, and it no longer runs here (a stage never starts one)", a_quest, name ? name : "",
+						a_stage);
+				}
+				return StageLog::Set::kSkipped;
+			}
 			const auto  file = FileOf(quest);
 			const auto  local = a_quest & 0x00FFFFFF;
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
@@ -1472,7 +1483,8 @@ namespace QuestSync
 		catchingUp.clear();
 		startHolds.clear();
 		RadiantSync::OnSessionEnded();  // the radiants go on, each player's own
-		EncounterRuns::Clear();  // and the encounters
+		EncounterRuns::EndFollowed();   // and the encounters: ours go on, a friend's we follow ends with its actors' copies
+		EncounterRuns::Clear();
 		// A host's game reports its progress again once its server welcomes it back (QueueBaseline).
 		baseline.clear();
 		baselineQueued = false;

@@ -768,25 +768,39 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   relays `kReportRadiantStart` and `kReportRadiantStage` as it does a radiant's, keeping nothing; a game without this
   ignores them, since RadiantSync takes only the radiants it shares). Our run is sent once it stands
   (`Book::Stands`: settled, hurt, or past its window; a run with no live actor, a treasure hunt, by its time running,
-  `Encounters::RunStands`) and every live actor of it loaded is shared (so the fills name spawn ids, not actors the
-  friend's game would make for itself): its fills as the friends' games name them (`RadiantSync::FillsHere`: a plugin's
-  reference as it is, our NPC by its spawn id) and its stages done. A friend's game keeps it waiting (`RunBook`,
-  game-free and tested) until its player comes near (a copy of one of its actors placed, or a reference it names within
-  `COLLIDE_RANGE`), then starts the same quest with those aliases forced (`RadiantSync::StartWithEvent`: the trigger,
-  the places, its copies of the owner's attackers; a copy not placed yet is waited for `FILL_WAIT`, 5 s, then left to
-  the game) and follows it: the owner's stages are set (`QuestSync::ApplyRadiant`), each stage done in either game
-  goes to the other under the run once, and its own actors of the quest (an alias the owner left unshared: a
-  reinforcement still disabled there) are removed as they come (`followRemoved=`). It is dropped if the owner's game no
+  `Encounters::RunStands`) and every live, enabled actor of it is shared, loaded or not (so the fills name spawn ids,
+  not actors the friend's game would make for itself; after our load none is until it is seen again): its fills as the
+  friends' games name them (`RadiantSync::FillsHere`: a plugin's reference as it is, our NPC by its spawn id) and its
+  stages done. It is sent again to a game that joins or reloads on the first poll that holds the same (`TakeResend`).
+  A friend's game keeps it waiting (`RunBook`, game-free and tested) until its player comes near: a run that names the
+  owner's actors only once a copy of one of them is placed (the owner's actors stand there, or nobody's would: its
+  own are removed); one that names none, a treasure hunt, also by a reference it names within `COLLIDE_RANGE`. It then
+  starts the same quest with those aliases forced (`RadiantSync::StartWithEvent`: the trigger, the places, its copies
+  of the owner's attackers; a copy not placed yet is waited for `FILL_WAIT`, 5 s, then left to the game) and follows
+  it: the owner's stages are set (`QuestSync::ApplyRadiant`), each stage done in either game goes to the other under
+  the run once (the stages its own start set are taken as done, never sent back: the owner's game could take another
+  branch of the quest from one), and its own actors of the quest (an alias the owner left unshared: a reinforcement
+  still disabled there) are removed as they come (`followRemoved=`). A stage is set only while the quest runs: one
+  that comes after it stopped never starts it again without its trigger (EncounterRuns and QuestSync both refuse,
+  `lateStages=`). Its aliases that name the owner's actors are forced again (`ReferenceAlias.ForceRefTo`) onto a copy
+  placed anew, once per copy (`refilled=`): a save deletes every copy (none is ever saved) and places them again as new
+  references, and so does our player coming back after theirs were let go. The owner's quest that stops sends its last
+  stages (a final or clean-up stage that stops it within the poll, read after the stop) and then `RUN_OVER` (stage
+  65535, no quest's) under the run: the friend's quest still running `RUN_END_WAIT` (5 s) later is stopped
+  (`endedHere=`); so is it when the owner leaves, and when our session ends (our copies of their actors go with it). A
+  friend's run that stops in its game passes nothing on: the owner's goes on. It is dropped if the owner's game no
   longer shares a live actor of it, if its player never comes near in `LISTEN_FOR` (5 min), or if its own game runs
-  that quest as its own (unless its own run is giving way: it waits for the stop); a run is followed once. Under the
-  session's radiant sharing (`RadiantSync::Enabled`). `net status`: `encounterRuns: ours= waiting= following= shared=
-  heard= started= followed= dropped= startsFailed= stagesSent= stagesSet=`.
+  that quest as its own (unless its own run is giving way: it waits for the stop; or is hollow, every actor its start
+  created gone, as a save's of a run it followed: stopped for theirs once near, `hollowStopped=`, and never shared as
+  ours); a run is followed once. Under the session's radiant sharing (`RadiantSync::Enabled`). `net status`:
+  `encounterRuns: ours= waiting= following= shared= heard= started= followed= dropped= startsFailed= stagesSent=
+  stagesSet= endedHere= hollowStopped= refilled= refillsFailed= lateStages=`.
 - Not yet (fight encounters): a run's quest script acts on the copies it is forced to (the checkpoint's attackers get
   their actor values and packages set in the friend's game too, where NpcSync drives them anyway); an alias collection
-  can't be forced, so its members in the friend's game are its own (removed); the owner's clean-up stage, set in the
-  friend's game, ends its run there too. DN123 (the Skylanes flight) is left for when its own row in the quest tables
-  can be added: its stages read the assault encounter's (REAssaultSC01_DN123SkylanesAssault), which shows no objective
-  and is shared by its actors alone.
+  can't be forced, so its members in the friend's game are its own (removed); a save in the friend's game holds the
+  followed quest with its copies' aliases empty (the hollow run above). DN123 (the Skylanes flight) is left for when
+  its own row in the quest tables can be added: its stages read the assault encounter's
+  (REAssaultSC01_DN123SkylanesAssault), which shows no objective and is shared by its actors alone.
 - Not yet (random encounters): two encounters both already running as the world came up (a load, a session's start)
   are both settled and run side by side until one ends on its own, their actors shared both ways; idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
   pointed gun's pose are not played; `AIProcess::PlayIdle` would, given a hook on the owner's `SetupSpecialIdle`);

@@ -22,9 +22,15 @@ namespace EncounterRuns
 	bool OnStart(const Protocol::RadiantStart& a_start);
 	bool OnStage(const Protocol::RadiantStage& a_stage);
 
-	// Someone joined, or a friend's game loaded a save: our runs going are sent again with their stages (a game that
-	// knows one ignores it).
+	// Someone joined, or a friend's game loaded a save: our runs going are sent again with their stages, each once its
+	// actors are all shared (a game that knows one ignores it).
 	void OnPlayerJoined();
+
+	// A friend left the session: their runs we follow end here as their run's end would end them (RUN_END_WAIT).
+	void OnPlayerLeft(std::uint32_t a_id);
+
+	// The session ends (before Clear): the friends' runs we follow are stopped, their actors' copies gone with it.
+	void EndFollowed();
 
 	// Whether the quest's stages go by a run now (ours shared, or a friend's we follow): QuestSync sets a friend's stages
 	// of it then.

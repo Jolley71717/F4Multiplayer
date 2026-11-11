@@ -2,7 +2,8 @@
 // line said by a spawn, the server granting two games' actors of one encounter quest and relaying a spawn's line from
 // its sharer alone, and the book that stops our run of an encounter where a friend's already runs, from the server's
 // order, as the real server sends it; a fight's shorter window and the run that hurt its player, and an encounter with an
-// objective shared by its run (EncounterRunBook.h): ours sent once it stands, a friend's followed once near, each stage once.
+// objective shared by its run (EncounterRunBook.h): ours sent once it stands, a friend's followed once near (with one of the
+// owner's actors here), each stage once, the owner's end ending it here too, and its aliases kept on the owner's actors' copies.
 
 #include "ServerFixture.h"
 
@@ -11,6 +12,7 @@
 #include "game/SpawnBook.h"
 
 #include <array>
+#include <unordered_map>
 #include <vector>
 
 using namespace TestServer;
@@ -829,6 +831,13 @@ TEST("encounters: which encounters are shared by their run, and the run on the w
 	REQUIRE(back);
 	CHECK(back->fills == start.fills);
 	CHECK(back->stages == start.stages);
+
+	// The run's end goes as a stage no quest has, RUN_OVER, under the run, as any of its stages.
+	const auto over = Protocol::DecodeRadiantStage(Protocol::Encode(Protocol::RadiantStage{ 0, CHECKPOINT, HOST, 77, Encounters::RUN_OVER }, MT::kReportRadiantStage));
+	REQUIRE(over);
+	CHECK(over->stage == Encounters::RUN_OVER);
+	CHECK(over->origin == HOST);
+	CHECK(over->serial == 77);
 }
 
 TEST("encounters: a friend's run is followed here once near, and each stage goes once each way")
@@ -951,4 +960,224 @@ TEST("encounters: our run that stands is shared once, and a friend's stages of i
 	}
 	CHECK(book.Runs().size() == Encounters::MAX_RUNS);
 	CHECK(!book.Hear(HostRun(500), now));
+}
+
+TEST("encounters: a friend's run that names the owner's actors starts only with one of them here")
+{
+	using Encounters::RunBook;
+	using Encounters::Verdict;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(HostRun(77), now));
+	auto* run = book.Find({ HOST, 77 });
+	REQUIRE(run);
+
+	// The trigger is close but none of the owner's actors is placed here (theirs away, or our copies not made yet): it
+	// waits, past FILL_WAIT too; our own actors of it would be removed with nothing to stand in their place.
+	Encounters::HeardFacts facts;
+	facts.namesActors = true;
+	facts.near = true;
+	facts.waiting = 2;
+	const auto none = book.Judge(*run, facts, now + 1s);
+	CHECK(none.verdict == Verdict::kWait);
+	CHECK(none.why == "none of the owner's actors is placed here yet");
+	CHECK(book.Judge(*run, facts, now + 1s + 2 * Encounters::FILL_WAIT).verdict == Verdict::kWait);
+	CHECK(!run->near);  // not near yet: FILL_WAIT counts from the first copy placed
+
+	// One copy placed: the rest have FILL_WAIT to come, then it starts without them.
+	facts.placed = 1;
+	facts.waiting = 1;
+	CHECK(book.Judge(*run, facts, now + 30s).verdict == Verdict::kWait);
+	CHECK(book.Judge(*run, facts, now + 30s + Encounters::FILL_WAIT).verdict == Verdict::kStart);
+	facts.waiting = 0;
+	CHECK(book.Judge(*run, facts, now + 31s).verdict == Verdict::kStart);
+
+	// A run that names none of the owner's actors (a treasure hunt's corpse and note) starts by its trigger alone.
+	RunBook hunt{ 1000 };
+	hunt.SetSelf(FRIEND);
+	REQUIRE(hunt.Hear(HostRun(5), now));
+	Encounters::HeardFacts trigger;
+	trigger.near = true;
+	CHECK(hunt.Judge(*hunt.Find({ HOST, 5 }), trigger, now + 1s).verdict == Verdict::kStart);
+	trigger.near = false;
+	trigger.placed = 1;  // not counted for a run that names none
+	CHECK(hunt.Judge(*hunt.Find({ HOST, 5 }), trigger, now + 1s).verdict == Verdict::kWait);
+}
+
+TEST("encounters: our game's hollow run of a quest (a save's of one we followed) makes way for the friend's")
+{
+	using Encounters::RunBook;
+	using Encounters::Verdict;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(HostRun(77), now));
+	auto* run = book.Find({ HOST, 77 });
+	REQUIRE(run);
+
+	Encounters::HeardFacts facts;
+	facts.runningHere = true;
+	facts.oursHollow = true;
+	facts.namesActors = true;
+	CHECK(book.Judge(*run, facts, now + 1s).verdict == Verdict::kWait);  // not near: left as it is meanwhile
+	facts.near = true;
+	facts.placed = 1;
+	CHECK(book.Judge(*run, facts, now + 2s).verdict == Verdict::kStopOurs);
+	facts.oursGivingWay = true;  // ours being stopped already: wait for it
+	CHECK(book.Judge(*run, facts, now + 2s).verdict == Verdict::kWait);
+	facts.oursGivingWay = false;
+	facts.oursHollow = false;  // ours with its actors: theirs is dropped, as before
+	CHECK(book.Judge(*run, facts, now + 2s).verdict == Verdict::kDrop);
+	// Stopped: next time ours no longer runs, and theirs starts.
+	facts.runningHere = false;
+	CHECK(book.Judge(*run, facts, now + 3s).verdict == Verdict::kStart);
+}
+
+TEST("encounters: the stages our own start set are never sent back to the run's owner")
+{
+	using Encounters::RunBook;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(HostRun(77, { 10, 200 }), now));
+	book.Started({ HOST, 77 }, now);
+	// Our quest's start set 10 (the host's too) and 15 (a variant picked by our start alone).
+	const std::array<std::uint16_t, 2> doneHere{ 10, 15 };
+	const auto                         toSet = book.Following({ HOST, 77 }, doneHere);
+	CHECK((toSet == std::vector<std::uint16_t>{ 10, 200 }));
+	CHECK(book.Report(CHECKPOINT, 15).empty());
+	CHECK(book.Report(CHECKPOINT, 10).empty());
+	CHECK(book.Report(CHECKPOINT, 300).size() == 1);  // what our player does from then on goes
+	CHECK(!book.TakeStage(CHECKPOINT, { HOST, 77 }, 15));  // and theirs of 15 is not set twice
+}
+
+TEST("encounters: the owner's run ends in the friend's game too, and a run that ended is never started again")
+{
+	using Encounters::RunBook;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+
+	// RUN_OVER is no stage: never taken, never reported.
+	REQUIRE(book.Hear(HostRun(77), now));
+	CHECK(!book.TakeStage(CHECKPOINT, { HOST, 77 }, Encounters::RUN_OVER));
+
+	// Heard only (our player never came near): dropped for good, never started.
+	CHECK(!book.OwnerEnded(CHECKPOINT, { HOST, 77 }, now));
+	CHECK(!book.Find({ HOST, 77 }));
+	CHECK(!book.Hear(HostRun(77), now));
+
+	// Followed: it ends here RUN_END_WAIT later (its last stages first), unless its quest stopped by itself meanwhile.
+	REQUIRE(book.Hear(HostRun(78), now));
+	book.Started({ HOST, 78 }, now);
+	book.Following({ HOST, 78 });
+	CHECK(!book.OwnerEnded(LC01, { HOST, 78 }, now));  // under another quest
+	CHECK(!book.OwnerEnded(CHECKPOINT, { HOST, 99 }, now));
+	CHECK(book.OwnerEnded(CHECKPOINT, { HOST, 78 }, now + 1s));
+	CHECK(book.OwnerEnded(CHECKPOINT, { HOST, 78 }, now + 3s));  // again: the first time counts
+	CHECK(book.ToEnd(now + 1s + Encounters::RUN_END_WAIT - 1ms).empty());
+	const auto end = book.ToEnd(now + 1s + Encounters::RUN_END_WAIT);
+	REQUIRE(end.size() == 1);
+	CHECK((end[0] == Encounters::RunKey{ HOST, 78 }));
+	CHECK(book.TakeStage(CHECKPOINT, { HOST, 78 }, 400));  // a last stage still set meanwhile (the quest runs)
+	book.Drop(end[0]);
+	CHECK(!book.Follows(CHECKPOINT));
+	CHECK(!book.Hear(HostRun(78), now + 1min));
+
+	// Ours: only our game ends it.
+	RunBook host{ 1000 };
+	host.SetSelf(HOST);
+	const auto ours = host.Announce(CHECKPOINT, {}, now);
+	REQUIRE(ours);
+	CHECK(!host.OwnerEnded(CHECKPOINT, *ours, now));
+	CHECK(host.ToEnd(now + 1h).empty());
+}
+
+TEST("encounters: a friend who leaves ends their runs we follow, and drops those heard")
+{
+	using Encounters::RunBook;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(HostRun(77), now));
+	REQUIRE(book.Hear(HostRun(78), now));
+	auto third = HostRun(5);
+	third.playerId = 3;
+	REQUIRE(book.Hear(third, now));
+	book.Started({ HOST, 78 }, now);
+	book.Following({ HOST, 78 });
+	const auto ours = book.Announce(LC01, {}, now);
+	REQUIRE(ours);
+
+	book.OwnerLeft(HOST, now + 1s);
+	CHECK(!book.Find({ HOST, 77 }));  // heard: dropped
+	REQUIRE(book.Find({ HOST, 78 }));
+	CHECK(book.Find({ HOST, 78 })->ended == now + 1s);
+	CHECK(book.Find({ 3, 5 }));  // another player's: theirs still
+	CHECK(!book.Find({ 3, 5 })->ended);
+	CHECK(book.Find(*ours));
+	const auto end = book.ToEnd(now + 1s + Encounters::RUN_END_WAIT);
+	REQUIRE(end.size() == 1);
+	CHECK((end[0] == Encounters::RunKey{ HOST, 78 }));
+	book.OwnerLeft(FRIEND, now + 2s);  // our own id: our runs are never ended so
+	CHECK(book.Find(*ours));
+}
+
+TEST("encounters: our run is sent again to a game that joined or reloaded only once its actors are shared")
+{
+	using Encounters::RunBook;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(HOST);
+	const auto key = book.Announce(CHECKPOINT, {}, now);
+	REQUIRE(key);
+	REQUIRE(book.Hear(Protocol::RadiantStart{ FRIEND, LC01, 3, {}, {} }, now));
+	auto& ours = *book.Find(*key);
+	auto& theirs = *book.Find({ FRIEND, 3 });
+	CHECK(!RunBook::TakeResend(ours, true));  // nobody asked
+
+	book.ResendOurs();
+	CHECK(!RunBook::TakeResend(theirs, true));  // a friend's is theirs to send
+	CHECK(!RunBook::TakeResend(ours, false));   // an actor of it unshared (unloaded since our load): not yet
+	CHECK(RunBook::TakeResend(ours, true));
+	CHECK(!RunBook::TakeResend(ours, true));  // once
+}
+
+TEST("encounters: a followed run's aliases are forced again onto the owner's actors' copies placed anew")
+{
+	using Encounters::RunBook;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(Protocol::RadiantStart{ HOST, CHECKPOINT, 77,
+		{ { 0, 0, TRIGGER }, { 9, 0, SPAWN }, { 10, 0, Protocol::RADIANT_UNSHARED_REF }, { 11, 0, SPAWN2 }, { 4, 1, 0x0001F228 } }, {} }, now));
+	auto& run = *book.Find({ HOST, 77 });
+
+	std::unordered_map<std::uint32_t, std::uint32_t> copies{ { SPAWN, 0xFF100001 } };  // SPAWN2's copy not placed
+	std::unordered_map<std::uint32_t, std::uint32_t> here{ { 9, 0xFF100001 }, { 0, TRIGGER } };
+	const auto copyOf = [&](std::uint32_t a_spawn) { return copies.contains(a_spawn) ? copies[a_spawn] : 0u; };
+	const auto hereOf = [&](std::uint32_t a_alias) { return here.contains(a_alias) ? here[a_alias] : 0u; };
+	using Pairs = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // heard, not followed: nothing
+	book.Started({ HOST, 77 }, now);
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // starting: the start forces them
+	book.Following({ HOST, 77 });
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // each alias holds its copy, or has none placed
+
+	// SPAWN2's copy placed later (our game had made its own for the alias, removed): forced in, once.
+	copies[SPAWN2] = 0xFF100002;
+	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 11, 0xFF100002 } }));
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // asked once; the script VM runs it a frame or so later
+	here[11] = 0xFF100002;
+
+	// A save: every copy deleted (the aliases hold nothing the game knows) and placed again under new references.
+	here.erase(9);
+	here.erase(11);
+	copies.clear();
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // none placed yet
+	copies = { { SPAWN, 0xFF100003 }, { SPAWN2, 0xFF100004 } };
+	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100003 }, { 11, 0xFF100004 } }));
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
 }

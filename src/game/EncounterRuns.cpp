@@ -2,6 +2,7 @@
 
 #include "game/EncounterRunBook.h"
 #include "game/Encounters.h"
+#include "game/Papyrus.h"
 #include "game/QuestActors.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
@@ -39,6 +40,9 @@ namespace EncounterRuns
 		std::unordered_map<std::uint32_t, Clock::time_point> runningSince;
 
 		std::uint32_t announced = 0, heard = 0, started = 0, followed = 0, dropped = 0, startsFailed = 0, stagesSent = 0, stagesSet = 0, logged = 0;
+		// Runs ended here as their owner's did (RUN_OVER, or the owner left); our hollow runs stopped for a friend's; aliases
+		// forced again onto copies placed anew (after a save); stages that came for a quest no longer running (not set).
+		std::uint32_t endedHere = 0, hollowStopped = 0, refilled = 0, refillsFailed = 0, lateStages = 0;
 
 		RE::TESQuest* QuestOf(std::uint32_t a_quest)
 		{
@@ -100,9 +104,9 @@ namespace EncounterRuns
 			return RemoteEdits::Within(RemoteEdits::Distance(SpotOf(player), SpotOf(a_ref)), Encounters::COLLIDE_RANGE);
 		}
 
-		// Whether every actor our game made for the quest that stands loaded and alive is shared already (a spawn id the
-		// friends' copies go by): only then is the run sent, or a friend's game would make its own for the alias.
-		bool ActorsShared(RE::TESQuest* a_quest)
+		// A quest's reference aliases its own start creates (FILL_CREATED: the encounter's actors, a treasure hunt's corpse).
+		template <class Fn>
+		void ForCreated(RE::TESQuest* a_quest, Fn&& a_fn)
 		{
 			for (const auto alias : a_quest->aliases) {
 				if (!alias || alias->fillType != QuestActors::FILL_CREATED) {
@@ -113,13 +117,35 @@ namespace EncounterRuns
 					continue;
 				}
 				const auto ref = a_quest->GetAliasedRef(alias->aliasID).get();
-				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
-				if (actor && Protocol::IsSpawnRef(actor->GetFormID()) && !actor->IsDead(false) && !actor->IsDisabled() && !actor->IsDeleted() && actor->Get3D() &&
-					Spawns::OwnIdOf(actor->GetFormID()) == 0) {
-					return false;
-				}
+				a_fn(ref && !ref->IsDeleted() ? ref.get() : nullptr);
 			}
-			return true;
+		}
+
+		// Whether every actor our game made for the quest that is alive and enabled is shared already (a spawn id the
+		// friends' copies go by), loaded or not: only then is the run sent, or a friend's game would hear none of the
+		// actors and stand an empty run (an unloaded one shared a while ago keeps its id; after a load none has one).
+		bool ActorsShared(RE::TESQuest* a_quest)
+		{
+			bool shared = true;
+			ForCreated(a_quest, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				if (actor && Protocol::IsSpawnRef(actor->GetFormID()) && !actor->IsDead(false) && !actor->IsDisabled() && Spawns::OwnIdOf(actor->GetFormID()) == 0) {
+					shared = false;
+				}
+			});
+			return shared;
+		}
+
+		// A run of the quest here with none of the actors its start created (every such alias empty): a save's of a run we
+		// followed (our copies are never saved), never shared as ours; a friend's run of it near us replaces it.
+		bool Hollow(RE::TESQuest* a_quest)
+		{
+			std::size_t created = 0, filled = 0;
+			ForCreated(a_quest, [&](RE::TESObjectREFR* a_ref) {
+				++created;
+				filled += a_ref != nullptr;
+			});
+			return created > 0 && filled == 0;
 		}
 
 		void SendStart(std::uint32_t a_quest, RunKey a_key, std::span<const std::uint16_t> a_done)
@@ -128,6 +154,38 @@ namespace EncounterRuns
 			auto       stages = std::vector<std::uint16_t>(a_done.begin(), a_done.end());
 			outgoing.push_back(Protocol::Encode(Protocol::RadiantStart{ 0, a_quest, a_key.serial, RadiantSync::FillsHere(quest), std::move(stages) },
 				Protocol::MessageType::kReportRadiantStart));
+		}
+
+		void SendStage(std::uint32_t a_quest, RunKey a_key, std::uint16_t a_stage)
+		{
+			outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, a_quest, a_key.origin, a_key.serial, a_stage }, Protocol::MessageType::kReportRadiantStage));
+			++stagesSent;
+		}
+
+		// Our run of a quest that stopped here: the stages its last moments set (a clean-up or final stage whose fragment
+		// stops the quest, within the poll) go to the friends, then RUN_OVER, so a friend's game following it ends it too.
+		// A friend's run we follow that stopped here passes nothing on: their game's quest goes on as theirs.
+		void EndOurs(std::uint32_t a_id, RE::TESQuest* a_quest)
+		{
+			std::vector<RunKey> ours;
+			for (const auto& run : book.Runs()) {
+				if (run.quest == a_id && run.state == State::kOurs) {
+					ours.push_back(run.key);
+				}
+			}
+			if (ours.empty()) {
+				return;
+			}
+			for (const auto stage : QuestStageLayout::Done(a_quest)) {  // still read after a stop, until the quest is reset
+				for (const auto key : book.Report(a_id, stage)) {
+					if (std::ranges::contains(ours, key)) {
+						SendStage(a_id, key, stage);
+					}
+				}
+			}
+			for (const auto key : ours) {
+				SendStage(a_id, key, Encounters::RUN_OVER);
+			}
 		}
 
 		// Our encounters with an objective: one that stands is shared as a run, once; one that stopped running ends our
@@ -139,6 +197,9 @@ namespace EncounterRuns
 				const auto quest = QuestOf(id);
 				if (!Running(quest)) {
 					runningSince.erase(id);
+					if (quest) {
+						EndOurs(id, quest);
+					}
 					for (const auto key : book.Over(id)) {
 						if (Log()) {
 							REX::INFO("EncounterRuns: {:08X} '{}' no longer runs here: {} run of it is over", id, NameOf(id), key.origin == book.Self() ? "our" : std::format("player {}'s", key.origin));
@@ -147,10 +208,17 @@ namespace EncounterRuns
 					continue;
 				}
 				const auto since = runningSince.try_emplace(id, a_now).first->second;
+				// Ours sent again to someone who joined or reloaded, once its actors are shared (one unloaded while ours were let
+				// go, after our load, would go as none: their game would stand an empty run).
+				for (auto& run : book.Runs()) {
+					if (run.quest == id && RunBook::TakeResend(run, ActorsShared(quest))) {
+						SendStart(run.quest, run.key, run.done);
+					}
+				}
 				if (book.Shares(id)) {
 					continue;  // ours shared already, or a friend's followed
 				}
-				if (Spawns::EncounterGivingWay(id) || !Encounters::RunStands(Spawns::EncounterStands(id), a_now - since) || !ActorsShared(quest)) {
+				if (Spawns::EncounterGivingWay(id) || !Encounters::RunStands(Spawns::EncounterStands(id), a_now - since) || !ActorsShared(quest) || Hollow(quest)) {
 					continue;
 				}
 				const auto done = QuestStageLayout::Done(quest);
@@ -180,19 +248,103 @@ namespace EncounterRuns
 				}
 				for (const auto stage : QuestStageLayout::Done(quest)) {
 					for (const auto key : book.Report(id, stage)) {
-						outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, id, key.origin, key.serial, stage }, Protocol::MessageType::kReportRadiantStage));
-						++stagesSent;
+						SendStage(id, key, stage);
 					}
 				}
 			}
 		}
 
+		// A stage of a run set here: only while its quest runs here. One that comes just after it stopped (before the
+		// next poll ends the run) would start it again from that stage, without its trigger or the owner's actors forced
+		// in; QuestSync refuses that too, for one that waits in its queue past the stop.
 		void SetHere(std::uint32_t a_quest, std::uint16_t a_stage, std::uint32_t a_from)
 		{
 			const auto quest = QuestOf(a_quest);
-			if (quest && !QuestStageLayout::IsStageDone(quest, a_stage)) {
-				QuestSync::ApplyRadiant(a_quest, a_stage, a_from, true);
-				++stagesSet;
+			if (!quest || QuestStageLayout::IsStageDone(quest, a_stage)) {
+				return;
+			}
+			if (!Running(quest)) {
+				if (lateStages++ < LOGGED) {
+					REX::INFO("EncounterRuns: {:08X} '{}' stage {} from player {} not set: the quest no longer runs here", a_quest, NameOf(a_quest), a_stage, a_from);
+				}
+				return;
+			}
+			QuestSync::ApplyRadiant(a_quest, a_stage, a_from, true);
+			++stagesSet;
+		}
+
+		// Forces our copy of a friend's actor into a reference alias of a quest running here (ReferenceAlias.ForceRefTo,
+		// run by the script VM a frame or so later). False when it could not be asked.
+		bool ForceAlias(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
+		{
+			RE::BGSRefAlias* alias = nullptr;
+			for (const auto entry : a_quest->aliases) {
+				const char* type = entry && entry->aliasID == a_alias ? entry->QType().c_str() : nullptr;
+				if (type && std::string_view{ type } == RE::BGSRefAlias::TYPE) {
+					alias = static_cast<RE::BGSRefAlias*>(entry);
+					break;
+				}
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local);
+			if (!alias || !ref || ref->IsDeleted()) {
+				return false;
+			}
+			// A copy, made at runtime, may have no script object yet (as a stand-in: Puppets); an alias no script is attached
+			// to has one made as Quest.GetAlias would.
+			const auto self = Papyrus::BoundObject(alias, "ReferenceAlias", true);
+			const auto target = Papyrus::BoundObject(ref, "ObjectReference", true);
+			return self && target && Papyrus::CallOn(self, "ForceRefTo", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
+				a_out[0] = target;
+			});
+		}
+
+		// The runs we follow: their aliases that name the owner's actors hold our copies placed now. A save deletes every
+		// copy (no copy is ever saved: Spawns::DiscardCopies) and places them again as new references; so does our player
+		// coming back after their copies were let go. Each such alias is forced onto the new copy, once per copy.
+		void Refill()
+		{
+			for (auto& run : book.Runs()) {
+				const auto quest = run.state == State::kFollowing ? QuestOf(run.quest) : nullptr;
+				if (!Running(quest)) {
+					continue;
+				}
+				const auto refills = RunBook::Refills(
+					run, [](std::uint32_t a_spawn) { return Spawns::CopyFor(a_spawn).local; },
+					[&](std::uint32_t a_alias) {
+						const auto ref = quest->GetAliasedRef(a_alias).get();
+						return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
+					});
+				for (const auto& [alias, local] : refills) {
+					if (ForceAlias(quest, alias, local)) {
+						++refilled;
+						if (refilled <= LOGGED) {
+							REX::INFO("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} forced again onto our copy {:08X} (placed anew)", run.key.origin, run.quest,
+								NameOf(run.quest), run.key.serial, alias, local);
+						}
+					} else if (refillsFailed++ < LOGGED) {
+						REX::WARN("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} could not be forced onto our copy {:08X}", run.key.origin, run.quest, NameOf(run.quest),
+							run.key.serial, alias, local);
+					}
+				}
+			}
+		}
+
+		// Friends' runs whose owner's ended (RUN_OVER, or they left) RUN_END_WAIT ago: stopped here if still running (their
+		// last stages had their time to end them), then over.
+		void EndTheirs(Clock::time_point a_now)
+		{
+			for (const auto key : book.ToEnd(a_now)) {
+				const auto run = book.Find(key);
+				const auto id = run ? run->quest : 0;
+				if (Running(QuestOf(id))) {
+					RE::Console::ExecuteCommand(std::format("stopquest {:08X}", id).c_str());
+					++endedHere;
+					if (Log()) {
+						REX::INFO("EncounterRuns: player {}'s {:08X} '{}' (run {}) ended in their game: stopped here too", key.origin, id, NameOf(id), key.serial);
+					}
+				}
+				book.Drop(key);
 			}
 		}
 
@@ -203,6 +355,7 @@ namespace EncounterRuns
 		{
 			std::vector<std::pair<std::uint32_t, std::uint32_t>> named;
 			std::size_t                                          waiting = 0;
+			std::size_t                                          placed = 0;
 			bool                                                 near = false;
 			bool                                                 namesSpawns = false;
 		};
@@ -226,6 +379,7 @@ namespace EncounterRuns
 					if (copy.local != 0) {
 						out.named.emplace_back(fill.alias, copy.local);
 						out.near = true;  // a copy is placed only near our player
+						++out.placed;
 					} else if (!copy.over) {
 						++out.waiting;
 					}
@@ -268,9 +422,21 @@ namespace EncounterRuns
 				facts.ownerLive = !resolved.namesSpawns || Spawns::TheirEncounterLive(run.key.origin, run.quest);
 				facts.runningHere = Running(quest);
 				facts.oursGivingWay = facts.runningHere && Spawns::EncounterGivingWay(run.quest);
+				facts.oursHollow = facts.runningHere && Hollow(quest);
 				facts.near = resolved.near;
+				facts.namesActors = resolved.namesSpawns;
+				facts.placed = resolved.placed;
 				facts.waiting = resolved.waiting;
 				const auto judged = book.Judge(run, facts, a_now);
+				if (judged.verdict == Encounters::Verdict::kStopOurs) {
+					// Ours is a save's of a run we followed, with none of its actors: it makes way for theirs (started next time).
+					RE::Console::ExecuteCommand(std::format("stopquest {:08X}", run.quest).c_str());
+					if (++hollowStopped <= LOGGED) {  // asked again each poll until it has stopped
+						REX::INFO("EncounterRuns: our {:08X} '{}' runs with none of its actors (a save's): stopped for player {}'s run {}", run.quest, NameOf(run.quest),
+							run.key.origin, run.key.serial);
+					}
+					continue;
+				}
 				if (judged.verdict == Encounters::Verdict::kDrop) {
 					drop.push_back(run.key);
 					++dropped;
@@ -312,7 +478,11 @@ namespace EncounterRuns
 			for (const auto key : running) {
 				const auto run = book.Find(key);
 				const auto quest = run ? run->quest : 0;
-				const auto stages = book.Following(key);
+				// The stages our quest's own start set are done under the run, never sent back (the owner's game could take
+				// another branch of it from one).
+				const auto here = QuestOf(quest);
+				const auto doneHere = here ? QuestStageLayout::Done(here) : StageLog::Stages{};
+				const auto stages = book.Following(key, doneHere);
 				++followed;
 				if (Log()) {
 					REX::INFO("EncounterRuns: player {}'s {:08X} '{}' runs here: followed, {} of their stage(s) to set", key.origin, quest, NameOf(quest), stages.size());
@@ -354,7 +524,19 @@ namespace EncounterRuns
 		if (!quest || !Spawns::IsEncounter(quest)) {
 			return false;
 		}
-		if (RadiantSync::Enabled() && book.TakeStage(a_stage.quest, { a_stage.origin, a_stage.serial }, a_stage.stage)) {
+		if (!RadiantSync::Enabled()) {
+			return true;
+		}
+		const RunKey key{ a_stage.origin, a_stage.serial };
+		if (a_stage.stage == Encounters::RUN_OVER) {
+			// The owner's run ended there (after its last stages): ours of it ends RUN_END_WAIT from now if it still runs.
+			if (a_stage.origin == a_stage.playerId && book.OwnerEnded(a_stage.quest, key, Clock::now()) && Log()) {
+				REX::INFO("EncounterRuns: player {}'s {:08X} '{}' (run {}) ended in their game: ends here in {} s unless it has already", key.origin, a_stage.quest,
+					NameOf(a_stage.quest), key.serial, std::chrono::duration_cast<std::chrono::seconds>(Encounters::RUN_END_WAIT).count());
+			}
+			return true;
+		}
+		if (book.TakeStage(a_stage.quest, key, a_stage.stage)) {
 			SetHere(a_stage.quest, a_stage.stage, a_stage.playerId);
 		}
 		return true;
@@ -362,12 +544,23 @@ namespace EncounterRuns
 
 	void OnPlayerJoined()
 	{
-		if (!RadiantSync::Enabled()) {
-			return;
-		}
+		book.ResendOurs();  // each sent on the next poll its actors are all shared at (LookAtOurs)
+	}
+
+	void OnPlayerLeft(std::uint32_t a_id)
+	{
+		book.OwnerLeft(a_id, Clock::now());
+	}
+
+	void EndFollowed()
+	{
+		// Our copies of the owners' actors went with the session (Spawns::Reset): a quest left running here would hold
+		// nothing. Our own actors of it were removed as they came, so it ends.
 		for (const auto& run : book.Runs()) {
-			if (run.state == State::kOurs && Running(QuestOf(run.quest))) {
-				SendStart(run.quest, run.key, run.done);
+			if ((run.state == State::kFollowing || run.state == State::kStarting) && Running(QuestOf(run.quest))) {
+				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", run.quest).c_str());
+				++endedHere;
+				REX::INFO("EncounterRuns: player {}'s {:08X} '{}' (run {}) followed here: stopped as the session ends", run.key.origin, run.quest, NameOf(run.quest), run.key.serial);
 			}
 		}
 	}
@@ -394,6 +587,8 @@ namespace EncounterRuns
 		polled = now;
 		LookAtOurs(now);
 		LookAtTheirs(now);
+		EndTheirs(now);
+		Refill();
 		ReportStages();
 	}
 
@@ -417,7 +612,9 @@ namespace EncounterRuns
 			waiting += run.state == State::kHeard;
 			following += run.state == State::kFollowing || run.state == State::kStarting;
 		}
-		return std::format("encounterRuns: ours={} waiting={} following={} shared={} heard={} started={} followed={} dropped={} startsFailed={} stagesSent={} stagesSet={}", ours,
-			waiting, following, announced, heard, started, followed, dropped, startsFailed, stagesSent, stagesSet);
+		return std::format("encounterRuns: ours={} waiting={} following={} shared={} heard={} started={} followed={} dropped={} startsFailed={} stagesSent={} stagesSet={} "
+		                   "endedHere={} hollowStopped={} refilled={} refillsFailed={} lateStages={}",
+			ours, waiting, following, announced, heard, started, followed, dropped, startsFailed, stagesSent, stagesSet, endedHere, hollowStopped, refilled, refillsFailed,
+			lateStages);
 	}
 }

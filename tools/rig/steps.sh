@@ -1802,10 +1802,18 @@ step_radiants() {
 # rolled by the host's console there when neither game rolled a checkpoint. Asserted: one game shares its run ("EncounterRuns: our ...
 # stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
 # killed by its console (set-up: the fight part tested the shooting), the defenders' victory stage ENC_CP_WIN is done in both games.
-# Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after).
+# Mid-run, before the kills: every attacker and defender alias filled in the owner's game is filled in the other's (with its copies:
+# none of the owner's actors removed there); the other game saves (`console save`) and its aliases are filled again (the copies a save
+# deletes are forced back in); it loads that save and follows the run again (its save's run of the quest, with none of its actors,
+# makes way). Then both coc away (set-up, said so) to ENC_AWAY_CELL: once the owner's checkpoint quest stops, the other's stops too
+# (a WARN if the owner's never stops in ENC_AWAY_WAIT s). Last, a fresh checkpoint run at the same trigger, followed, and the owner's
+# link dropped (`net drop`; when the host owns it, the VM's own drop ends its session instead): the other's followed quest stops, and
+# the VM rejoins. Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after); the step also
+# writes the save ENC_SAVE in the other game.
 ENC_FIGHT_CELL=${ENC_FIGHT_CELL:-CorvegaAssemblyPlantExt03}; ENC_FIGHT_TRIGGER=${ENC_FIGHT_TRIGGER:-00187334}; ENC_FIGHT_QUEST=${ENC_FIGHT_QUEST:-0002672B}  # REAssaultSC02
 ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AC4D4}; ENC_CP_WIN=${ENC_CP_WIN:-400}
 ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
+ENC_AWAY_CELL=${ENC_AWAY_CELL:-SanctuaryExt}; ENC_AWAY_WAIT=${ENC_AWAY_WAIT:-120}; ENC_SAVE=${ENC_SAVE:-f4mpencf}
 _e_log() { win_read encf "$1"; }   # the game's log since the step's mark
 # _e_runs <who>: the encounter quests that game shared actors of since the mark ("Spawns: sharing ... our encounter <quest>")
 _e_runs() { sed -nE "s/.*Spawns: sharing [0-9A-F]{8} .* as [0-9A-F]{8}, our encounter ([0-9A-F]{8}) .*/\1/p" "$(_e_log "$1")" | sort -u; }
@@ -1839,6 +1847,35 @@ _e_cp_any() { [ -n "$(_e_cp_running host)$(_e_cp_running vm)" ]; }
 _e_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
 _e_has() { case ",$(_e_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
 _e_followed() { grep -qE "EncounterRuns: player [0-9]+'s $2 '[^']*' runs here: followed" "$(_e_log "$1")"; }
+_e_followed_n() { grep -cE "EncounterRuns: player [0-9]+'s $2 '[^']*' runs here: followed" "$(_e_log "$1")"; }
+_e_followed_more() { [ "$(_e_followed_n "$1" "$2")" -gt "$3" ]; }   # _e_followed_more <who> <quest> <count before>
+# _e_filled <who> <quest>: the ids of the quest's attacker and defender aliases filled in that game (dev `aliases`), one a line
+_e_filled() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ Ref [0-9]+ (Attacker|Defender)[A-Za-z0-9_]* " | grep -vE 'here=0*( |$)' | awk '{print $2}' | sort -u; }
+# _e_filled_like <who> <quest> <ids>: every alias in ids is filled in that game
+_e_filled_like() { local id have; have=" $(_e_filled "$1" "$2" | tr '\n' ' ') "; for id in $3; do case "$have" in *" $id "*) ;; *) return 1;; esac; done; return 0; }
+_e_cp_runs() { case " $(_e_cp_running "$1" | tr '\n' ' ') " in *" $2 "*) return 0;; esac; return 1; }
+_e_cp_stopped() { ! _e_cp_runs "$1" "$2"; }
+_e_joined() { ns vm; [ "$(nsf vm status)" = joined ]; }
+# _e_cp_share: a checkpoint is rolled at ENC_CP_TRIGGER (by the host's console if neither game rolls one) and one game shares it by its
+# run; sets owner, other and cp. Only lines after the mark count.
+_e_cp_share() {
+	local a who
+	if ! wait_for "$ENC_ROLL" _e_cp_any; then
+		dc host "radiantstart $ENC_CP_QUEST $ENC_CP_TRIGGER" >/dev/null
+		echo "encounter-fight: neither game rolled a checkpoint at $ENC_CP_TRIGGER; the host's console rolled $ENC_CP_QUEST there (set-up)"
+		if ! wait_for "$ENC_ROLL" _e_cp_any; then fail "encounter-fight: a checkpoint runs at the trigger$1" "none in $ENC_ROLL s"; return 1; fi
+	fi
+	owner=""
+	for a in $(seq 1 "$((ENC_SETTLE * 2))"); do
+		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
+		sleep 1
+	done
+	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run$1" "no 'EncounterRuns: our ... stands' in either log"; return 1; fi
+	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
+	pass "encounter-fight: the $owner shares its checkpoint $cp by its run$1" "ok"
+	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; return 0; fi
+	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
+}
 step_encounter_fight() {
 	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, roll and kills as set-up)"
 	local owner other q standH standV a who local spawn copy n shot hostile dead xp0 xp1 cpH cpV cp
@@ -1887,24 +1924,32 @@ step_encounter_fight() {
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_CP_CELL" 16
 	_e_walk_both "$ENC_CP_TRIGGER" || return
-	if ! wait_for "$ENC_ROLL" _e_cp_any; then
-		dc host "radiantstart $ENC_CP_QUEST $ENC_CP_TRIGGER" >/dev/null
-		echo "encounter-fight: neither game rolled a checkpoint at $ENC_CP_TRIGGER; the host's console rolled $ENC_CP_QUEST there (set-up)"
-		if ! wait_for "$ENC_ROLL" _e_cp_any; then fail "encounter-fight: a checkpoint runs at the trigger" "none in $ENC_ROLL s"; return; fi
-	fi
-	owner=""
-	for a in $(seq 1 "$((ENC_SETTLE * 2))"); do
-		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
-		sleep 1
-	done
-	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run" "no 'EncounterRuns: our ... stands' in either log"; return; fi
-	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
-	pass "encounter-fight: the $owner shares its checkpoint $cp by its run" "ok"
-	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp" "ok"
-	else fail "encounter-fight: the $other follows the $owner's $cp" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return; fi
+	_e_cp_share "" || return
 	cpH=$(_e_cp_running host | tr '\n' ' '); cpV=$(_e_cp_running vm | tr '\n' ' ')
 	expect_eq "encounter-fight: one checkpoint quest runs in the host's game" "${cpH% }" "$cp"
 	expect_eq "encounter-fight: the same one checkpoint quest runs in the VM's game" "${cpV% }" "$cp"
+	# Mid-run: the other's aliases hold the owner's actors' copies; a save there keeps them; a load of it follows the run again.
+	local filled followed0
+	sleep 5; filled=$(_e_filled "$owner" "$cp" | tr '\n' ' ')
+	if [ -z "${filled// }" ]; then warn "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner's own has no attacker or defender alias filled: not checked"
+	elif wait_for 20 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: the $other's $cp aliases hold the $owner's actors" "aliases $filled; $(field "$(dc "$other" 'net status')" followRemoved) of its own removed"
+	else fail "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner fills [$filled], the $other [$(_e_filled "$other" "$cp" | tr '\n' ' ')]"; fi
+	dc "$other" "console save $ENC_SAVE" >/dev/null; sleep 10
+	echo "encounter-fight: the $other saved ($ENC_SAVE) mid-run"
+	if [ -n "${filled// }" ]; then
+		if wait_for 40 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: after a save the $other's $cp aliases hold the copies again" "$(grep -cE "EncounterRuns: .* forced again onto our copy" "$(_e_log "$other")") forced again"
+		else fail "encounter-fight: after a save the $other's $cp aliases hold the copies again" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled]; $(grep -E "EncounterRuns: .*(forced|could not be forced)" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
+	fi
+	followed0=$(_e_followed_n "$other" "$cp")
+	dc "$other" "console load $ENC_SAVE" >/dev/null
+	[ "$other" = host ] && { sleep 8; host "key 0x0D 100" >/dev/null; }
+	sleep 20; wait_ingame "$other" 30
+	echo "encounter-fight: the $other loaded $ENC_SAVE mid-run"
+	if wait_for 90 _e_followed_more "$other" "$cp" "$followed0"; then pass "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -cE "EncounterRuns: our $cp .* none of its actors" "$(_e_log "$other")") hollow run(s) of it stopped"
+	else fail "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; fi
+	if [ -n "${filled// }" ] && ! wait_for 30 _e_filled_like "$other" "$cp" "$filled"; then
+		warn "encounter-fight: after the load the $other's $cp aliases hold the $owner's actors" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled] (actors killed meanwhile leave theirs)"
+	fi
 	for a in $(dc "$owner" "aliases $cp" | tr '|' '\n' | grep -E "^ Ref [0-9]+ Attacker[0-9]+ " | grep -o 'here=[0-9A-F]*' | sed 's/here=//' | grep -v '^0*$'); do
 		dc "$owner" "console $a.kill" >/dev/null
 	done
@@ -1913,6 +1958,31 @@ step_encounter_fight() {
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; return; fi
 	if wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"; fi
+
+	# Both leave the area (console coc, set-up): the owner's checkpoint ends, and the other's with it (its last stages, then its end).
+	enter_both "$ENC_AWAY_CELL" 16
+	echo "encounter-fight: both left for $ENC_AWAY_CELL by console (set-up)"
+	if ! wait_for "$ENC_AWAY_WAIT" _e_cp_stopped "$owner" "$cp"; then
+		warn "encounter-fight: leaving ends the checkpoint in both games" "the $owner's $cp still runs $ENC_AWAY_WAIT s after both left (the $other's: $(_e_cp_runs "$other" "$cp" && echo running || echo stopped))"
+	elif wait_for 30 _e_cp_stopped "$other" "$cp"; then pass "encounter-fight: leaving ends the checkpoint in both games" "the $owner's $cp stopped, then the $other's"
+	else fail "encounter-fight: leaving ends the checkpoint in both games" "the $owner's $cp stopped; the $other's still runs 30 s later: $(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
+
+	# A fresh run, followed, and the owner's link dropped mid-run: the other's followed quest stops (nothing left of the owner's there).
+	win_mark encf host; win_mark encf vm
+	enter_both "$ENC_CP_CELL" 16
+	_e_walk_both "$ENC_CP_TRIGGER" || return
+	_e_cp_share " (a second run)" || { pads_off; return; }
+	if [ "$owner" = vm ]; then
+		dc vm "net drop" >/dev/null
+		echo "encounter-fight: the owner (vm) dropped its link mid-run"
+	else
+		dc vm "net drop" >/dev/null
+		echo "encounter-fight: the host owns the run (its drop would end the session): the follower (vm) dropped its link instead, ending its session"
+	fi
+	if wait_for 30 _e_cp_stopped "$other" "$cp"; then pass "encounter-fight: the $other's followed $cp stops once the link drops" "$(grep -E "EncounterRuns: .*$cp .*(ended|session ends)" "$(_e_log "$other")" | tail -1 | cut -c1-160)"
+	else fail "encounter-fight: the $other's followed $cp stops once the link drops" "still running 30 s later"; fi
+	if wait_for 90 _e_joined; then pass "encounter-fight: the VM rejoins after its drop" "ok"
+	else rig_fault state "encounter-fight: the VM rejoins after its drop" "net status: $(nsf vm status)"; fi
 	pads_off
 }
 
