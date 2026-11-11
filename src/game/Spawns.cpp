@@ -80,6 +80,8 @@ namespace Spawns
 		std::unordered_set<std::uint32_t> calmHeldNoted;
 		// Runs of ours to stop for a friend's (StopEncounter): stopped from Frame, never from inside the actor scan.
 		std::vector<std::uint32_t> pendingStops;
+		// Runs whose actors go and whose quest keeps running (StopQuestRun's a_actorsOnly): done with the stops.
+		std::vector<std::uint32_t> pendingSweeps;
 		// Our encounter actors as seen in the scan, by their ids, with their handles: the book names a stopped run's
 		// actors by id, and the id alone could name another NPC by the time the stop is done (RemoveDoomed). Pruned as
 		// their handles stop resolving (CheckRuns); never many (Encounters::MAX_ACTORS a run).
@@ -508,6 +510,21 @@ namespace Spawns
 			return name && Encounters::IsEncounter(a_quest->data.questType, StoryStarts(a_quest), a_quest->eventID, name);
 		}
 
+		// Whether an alias of a_quest created our NPC (any quest's alias that makes its reference: an encounter's, an
+		// attack's Attackers collection).
+		bool CreatedBy(RE::Actor* a_actor, std::uint32_t a_quest)
+		{
+			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return false;
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			return std::ranges::any_of(aliases->aliasArray, [&](const auto& a_entry) {
+				return a_entry.quest && a_entry.alias && a_entry.alias->owningQuest == a_entry.quest && a_entry.quest->GetFormID() == a_quest &&
+				       static_cast<std::uint16_t>(a_entry.alias->fillType) == QuestActors::FILL_CREATED;
+			});
+		}
+
 		// The encounter quest whose alias created our NPC (IsEncounterQuest), running here or not (the caller asks:
 		// QuestRunningHere), and that alias. Quest 0 when it is no encounter's: an alias that found an NPC of ours rather
 		// than making it (a settler) names nothing.
@@ -622,6 +639,18 @@ namespace Spawns
 		{
 			std::vector<Removal> removals;
 			const auto           lists = RE::ProcessLists::GetSingleton();
+			// The sweeps' loaded actors (their quest runs on; what its aliases hold of them is theirs to drop).
+			for (const auto quest : pendingSweeps) {
+				if (lists) {
+					for (const auto& handle : lists->highActorHandles) {
+						const auto ptr = handle.get();
+						if (const auto actor = ptr.get(); actor && CreatedBy(actor, quest)) {
+							removals.push_back({ actor->GetHandle(), quest });
+						}
+					}
+				}
+			}
+			pendingSweeps.clear();
 			for (const auto quest : pendingStops) {
 				if (const auto form = RE::TESForm::GetFormByID<RE::TESQuest>(quest)) {
 					for (const auto alias : form->aliases) {
@@ -641,7 +670,7 @@ namespace Spawns
 				if (lists) {
 					for (const auto& handle : lists->highActorHandles) {
 						const auto ptr = handle.get();
-						if (const auto actor = ptr.get(); actor && EncounterOf(actor).quest == quest) {
+						if (const auto actor = ptr.get(); actor && CreatedBy(actor, quest)) {
 							removals.push_back({ actor->GetHandle(), quest });
 						}
 					}
@@ -1499,6 +1528,14 @@ namespace Spawns
 		return id != 0 && theirs.Died(id) != 0 ? id : 0;  // our copy, killed here first: the kill is ours to report
 	}
 
+	void StopQuestRun(std::uint32_t a_quest, bool a_actorsOnly)
+	{
+		auto& list = a_actorsOnly ? pendingSweeps : pendingStops;
+		if (a_quest != 0 && !std::ranges::contains(list, a_quest)) {
+			list.push_back(a_quest);
+		}
+	}
+
 	void Frame()
 	{
 		// Our encounters first: runs booked for a stop are stopped here, outside the actor scan that found them, and runs
@@ -1693,6 +1730,32 @@ namespace Spawns
 		return true;
 	}
 
+	std::size_t CopiesNear(const RE::TESObjectREFR* a_anchor, float a_radius)
+	{
+		if (!a_anchor || !a_anchor->GetParentCell()) {
+			return 0;
+		}
+		const auto  anchor = SpotOf(a_anchor);
+		std::size_t near = 0;
+		for (const auto& [id, copy] : placed) {
+			const auto spawn = theirs.Find(id);
+			if (!spawn || spawn->dead || spawn->gone || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+				continue;
+			}
+			const auto ref = copy.handle.get();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || !actor->Get3D() || !actor->GetParentCell()) {
+				continue;
+			}
+			const auto at = SpotOf(actor);
+			const float dx = at.x - anchor.x, dy = at.y - anchor.y, dz = at.z - anchor.z;
+			if (at.cell == anchor.cell && at.worldspace == anchor.worldspace && dx * dx + dy * dy + dz * dz <= a_radius * a_radius) {
+				++near;
+			}
+		}
+		return near;
+	}
+
 	std::vector<RE::ObjectRefHandle> FrameCopies()
 	{
 		std::vector<RE::ObjectRefHandle> out;
@@ -1728,6 +1791,7 @@ namespace Spawns
 		calmOffered.clear();
 		calmHeldNoted.clear();
 		pendingStops.clear();  // a quest of the world left behind
+		pendingSweeps.clear();
 		pendingRemovals.clear();
 		encounterActors.clear();
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
@@ -1774,6 +1838,7 @@ namespace Spawns
 		calmOffered.clear();
 		calmHeldNoted.clear();
 		pendingStops.clear();
+		pendingSweeps.clear();
 		pendingRemovals.clear();
 		encounterActors.clear();
 		settleRuns = true;  // the next session's world is settled as it comes up

@@ -138,6 +138,8 @@ namespace Config
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bSharedRadiants") {
 				settings.sharedRadiants = ParseBool(value);
+			} else if (key == "bSharedAttacks") {
+				settings.sharedAttacks = ParseBool(value);
 			} else if (key == "bRevive") {
 				settings.revive = ParseBool(value);
 			} else if (key == "iBleedOutSeconds") {

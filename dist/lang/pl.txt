@@ -327,3 +327,7 @@ mods.full_here = {name} (u ciebie pełna wtyczka, u hosta lekka)
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} to towarzysz gracza {player}
 companion.someone = innego gracza
+attack.under = Atak: {place}
+attack.defended = Atak odparty: {place}
+attack.lost = Atak nieodparty: {place}
+attack.a_settlement = osada

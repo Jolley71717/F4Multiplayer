@@ -329,3 +329,7 @@ mods.full_here = {name} (plugin complet chez vous, léger chez l'hôte)
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} est le compagnon de {player}
 companion.someone = un autre joueur
+attack.under = Attaque en cours : {place}
+attack.defended = Attaque repoussée : {place}
+attack.lost = Attaque non repoussée : {place}
+attack.a_settlement = une colonie

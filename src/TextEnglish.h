@@ -149,6 +149,10 @@ namespace Text
 		// --- Companions: one owner each ---
 		{ "companion.theirs", "{npc} is {player}'s companion" },
 		{ "companion.someone", "another player" },
+		{ "attack.under", "{place} is under attack" },
+		{ "attack.defended", "{place} was defended" },
+		{ "attack.lost", "{place} wasn't defended" },
+		{ "attack.a_settlement", "A settlement" },
 		{ "down.revives_left", "Revives left: {n}" },
 		{ "down.last_revive", "That was your last revive for now: the next lethal hit kills you" },
 		{ "down.revives_back", "Your revives are back: a friend can help you up again" },

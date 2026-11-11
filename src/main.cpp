@@ -40,6 +40,7 @@
 #include "Platform.h"
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
+#include "game/SettlementAttacks.h"
 #include "game/SyncAnimMark.h"
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
@@ -569,6 +570,7 @@ namespace
 						};
 						step("the settlements' numbers", [] { WorkshopSync::BeforeSaveResources(); });  // first, on its own: no friend's piece's worth is saved on our workbenches
 						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // before the rest: an unworn loan's copy and kit go with it, before Spawns discards copies
+						step("the settlement attacks", [] { SettlementAttacks::BeforeSave(); });  // no save holds a run of the host's attack that rolls damage in ours
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved

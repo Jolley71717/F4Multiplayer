@@ -347,3 +347,7 @@ mods.full_here = {name} (full in your game, light in the host's)
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} is {player}'s companion
 companion.someone = another player
+attack.under = {place} is under attack
+attack.defended = {place} was defended
+attack.lost = {place} wasn't defended
+attack.a_settlement = A settlement

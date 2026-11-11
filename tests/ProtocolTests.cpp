@@ -1323,6 +1323,76 @@ TEST("protocol: a companion report and an owner's word round trip, and bad ones 
 	}
 }
 
+TEST("protocol: a settlement attack and the host's word on a settlement round trip, and bad ones are refused")
+{
+	for (const auto& attack : { SettlementAttack{ REF_A, 0x001125E2, 0x0001F228, AttackPhase::kRolled, AttackOutcome::kNone },
+			 SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kDefended, AttackOutcome::kNone },
+			 SettlementAttack{ REF_B, 0x000C97A8, 0x0001F228, AttackPhase::kOver, AttackOutcome::kCalledOff } }) {
+		for (const auto type : { MT::kReportSettlementAttack, MT::kSettlementAttack }) {
+			const auto back = DecodeSettlementAttack(Encode(attack, type));
+			REQUIRE(back);
+			CHECK(back->workshop == attack.workshop);
+			CHECK(back->quest == attack.quest);
+			CHECK(back->location == attack.location);
+			CHECK(back->phase == attack.phase);
+			CHECK(back->outcome == attack.outcome);
+		}
+	}
+	// Only an attack that is over has an outcome, and it has one.
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kUnderway, AttackOutcome::kDefended })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kOver, AttackOutcome::kNone })));
+	// A runtime form, the player or nothing is no settlement, quest or location both games know.
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ 0, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ 0xFF000123, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0xFF000001, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ PLAYER_REF_ID, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	{
+		Writer w{ MT::kReportSettlementAttack };
+		w.U32(REF_A);
+		w.U32(0x001125E2);
+		w.U32(0);
+		w.U8(std::to_underlying(AttackPhase::kOver) + 1);
+		w.U8(0);
+		CHECK(!DecodeSettlementAttack(w.Data()));
+		Writer outcome{ MT::kReportSettlementAttack };
+		outcome.U32(REF_A);
+		outcome.U32(0x001125E2);
+		outcome.U32(0);
+		outcome.U8(std::to_underlying(AttackPhase::kOver));
+		outcome.U8(std::to_underlying(AttackOutcome::kCalledOff) + 1);
+		CHECK(!DecodeSettlementAttack(outcome.Data()));
+		Writer shorter{ MT::kReportSettlementAttack };
+		shorter.U32(REF_A);
+		shorter.U32(0x001125E2);
+		shorter.U8(0);
+		CHECK(!DecodeSettlementAttack(shorter.Data()));
+	}
+
+	for (const auto& owner : { SettlementOwner{ REF_A, true }, SettlementOwner{ REF_B, false }, SettlementOwner{ 0, false } }) {
+		for (const auto type : { MT::kReportSettlementOwner, MT::kSettlementOwner }) {
+			const auto back = DecodeSettlementOwner(Encode(owner, type));
+			REQUIRE(back);
+			CHECK(back->workshop == owner.workshop);
+			CHECK(back->hostOwned == owner.hostOwned);
+		}
+	}
+	// Settlement 0 is "forget them all", which names no owner; a runtime reference is no settlement.
+	CHECK(!DecodeSettlementOwner(Encode(SettlementOwner{ 0, true })));
+	CHECK(!DecodeSettlementOwner(Encode(SettlementOwner{ 0xFF000123, true })));
+	{
+		Writer w{ MT::kReportSettlementOwner };
+		w.U32(REF_A);
+		w.U8(2);
+		CHECK(!DecodeSettlementOwner(w.Data()));
+		Writer longer{ MT::kReportSettlementOwner };
+		longer.U32(REF_A);
+		longer.U8(1);
+		longer.U8(0);
+		CHECK(!DecodeSettlementOwner(longer.Data()));
+	}
+}
+
 TEST("protocol: claims with an unknown reason are rejected")
 {
 	Writer w{ MT::kClaimActors };

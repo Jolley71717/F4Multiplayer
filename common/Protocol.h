@@ -77,7 +77,13 @@ namespace Protocol
 	// aliases hold, or let go of (kReportCompanion: CompanionReport), and the server names the companion's owner to the
 	// reporter and to everyone (kCompanionOwner: CompanionOwner), first to recruit keeps them; a joiner gets the list after
 	// the owner table. No welcome bytes. 64 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 65;
+	// 66: settlement attacks are the host's (common/AttackBook.h, src/game/SettlementAttacks.h): the host's game reports
+	// each attack on a settlement and its phases (kReportSettlementAttack), which the server passes on (kSettlementAttack);
+	// a friend's game asks whose settlement its own attack is at (kReportSettlementAttack, rolled), the host's game answers
+	// (kReportSettlementOwner) and the server tells the others (kSettlementOwner). A friend's game mirrors the host's
+	// attack (the same quest, never fighting or resolving on its own) and stops a roll of its own at the host's settlement.
+	// No welcome bytes. 65 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 66;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -223,6 +229,8 @@ namespace Protocol
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
+		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
+		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
 
 		// server -> client
 		kWelcome = 101,
@@ -294,6 +302,8 @@ namespace Protocol
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
 		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
+		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
+		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
 	};
 
 	enum StateFlags : std::uint8_t
@@ -4790,6 +4800,103 @@ namespace Protocol
 		if ((msg.state == CompanionState::kFree || msg.state == CompanionState::kFull) != (msg.playerId == 0)) {
 			return std::nullopt;
 		}
+		return msg;
+	}
+
+	// Settlement attacks (common/AttackBook.h): an attack on the host's settlement is the host's, and its outcome is the host
+	// game's alone. The host's game reports each attack its game runs (a Workshop*Attack quest the story manager starts
+	// from WorkshopParent's roll), as it is rolled, as it begins, as its attackers die and as it is over, and the server
+	// passes them on (kSettlementAttack): a friend's game runs the same quest at the same settlement as a mirror that never
+	// fights or resolves on its own, and stops a roll of its own there. A friend's game reports an attack its own game
+	// rolled (kRolled alone) as a question: is that settlement the host's? The server answers from what the host's game
+	// said (kSettlementOwner) or asks the host's game (kSettlementAttack to it), whose answer (kReportSettlementOwner) goes
+	// to everyone.
+	enum class AttackPhase : std::uint8_t
+	{
+		kRolled = 0,    // the quest runs: its attackers are made, not yet there
+		kUnderway = 1,  // the attack began (its start stage is done): the message, the attackers at the settlement
+		kDefended = 2,  // its attackers are dead (its done stage is done); the quest still runs
+		kOver = 3,      // the quest stopped (the outcome says how)
+	};
+
+	enum class AttackOutcome : std::uint8_t
+	{
+		kNone = 0,      // not over
+		kDefended = 1,  // the attackers died (its done stage is done)
+		kResolved = 2,  // it began and ended undefended: the game rolled the damage
+		kCalledOff = 3, // it ended before it began
+	};
+
+	struct SettlementAttack
+	{
+		std::uint32_t workshop = 0;  // the settlement's workbench (WorkshopScript's reference)
+		std::uint32_t quest = 0;     // the attack quest
+		std::uint32_t location = 0;  // the location the story event gave the quest (its myLocation alias); 0: none known
+		AttackPhase   phase = AttackPhase::kRolled;
+		AttackOutcome outcome = AttackOutcome::kNone;
+	};
+
+	struct SettlementOwner
+	{
+		std::uint32_t workshop = 0;  // the settlement's workbench; 0 with hostOwned false: the host left, forget every answer
+		bool          hostOwned = false;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const SettlementAttack& a_msg, MessageType a_type = MessageType::kReportSettlementAttack)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.workshop);
+		w.U32(a_msg.quest);
+		w.U32(a_msg.location);
+		w.U8(std::to_underlying(a_msg.phase));
+		w.U8(std::to_underlying(a_msg.outcome));
+		return w.Data();
+	}
+
+	inline std::optional<SettlementAttack> DecodeSettlementAttack(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		SettlementAttack msg;
+		msg.workshop = r.U32();
+		msg.quest = r.U32();
+		msg.location = r.U32();
+		const auto phase = r.U8();
+		const auto outcome = r.U8();
+		// A plugin's workbench, quest and location: a runtime form is one game's alone.
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.workshop) || !IsShareableRef(msg.quest) || (msg.location != 0 && !IsShareableRef(msg.location)) ||
+			phase > std::to_underlying(AttackPhase::kOver) ||
+			outcome > std::to_underlying(AttackOutcome::kCalledOff)) {
+			return std::nullopt;
+		}
+		msg.phase = static_cast<AttackPhase>(phase);
+		msg.outcome = static_cast<AttackOutcome>(outcome);
+		// Only an attack that is over has an outcome, and one that is over has one.
+		if ((msg.phase == AttackPhase::kOver) != (msg.outcome != AttackOutcome::kNone)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const SettlementOwner& a_msg, MessageType a_type = MessageType::kReportSettlementOwner)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.workshop);
+		w.U8(a_msg.hostOwned ? 1 : 0);
+		return w.Data();
+	}
+
+	inline std::optional<SettlementOwner> DecodeSettlementOwner(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		SettlementOwner msg;
+		msg.workshop = r.U32();
+		const auto owned = r.U8();
+		if (!r.Ok() || !r.AtEnd() || owned > 1 || (msg.workshop != 0 && !IsShareableRef(msg.workshop)) || (msg.workshop == 0 && owned != 0)) {
+			return std::nullopt;
+		}
+		msg.hostOwned = owned != 0;
 		return msg;
 	}
 

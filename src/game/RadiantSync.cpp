@@ -384,6 +384,7 @@ namespace RadiantSync
 			std::uint32_t      quest = 0;
 			std::vector<Saved> saved;
 			Clock::time_point  since{};
+			std::string        who;  // for the log
 		};
 		std::optional<DevStart> devStart;
 
@@ -987,7 +988,8 @@ namespace RadiantSync
 		return IsRadiant(RE::TESForm::GetFormByID<RE::TESQuest>(a_questId));
 	}
 
-	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases)
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
+		std::string_view a_who)
 	{
 		if (!a_quest || !Calibrated()) {
 			return "error: no such quest, or this game's aliases can't be read";
@@ -1040,10 +1042,23 @@ namespace RadiantSync
 		const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
 		// The definitions stay forced until the quest runs or 10 s have passed (Frame): a start's alias fill can come after the console
 		// call returns, as for a friend's run (StartHere, FinishStart).
-		devStart = DevStart{ a_quest->GetFormID(), std::move(saved), Clock::now() };
+		devStart = DevStart{ a_quest->GetFormID(), std::move(saved), Clock::now(), std::string{ a_who } };
 		return running ? std::format("ok: {:08X} '{}' is running with {} alias(es) forced (put back shortly)", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size())
 		               : std::format("pending: {:08X} '{}' isn't running yet with {} alias(es) forced; they are put back when it runs or after 10 s: ask `quests edid:` for the outcome",
 			                 a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
+	}
+
+	bool CancelStart(std::uint32_t a_quest)
+	{
+		if (!devStart || devStart->quest != a_quest) {
+			return false;
+		}
+		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+		const bool running = quest && (quest->data.flags & QUEST_RUNNING);
+		Restore(devStart->saved);
+		REX::INFO("RadiantSync: {} of {:08X} '{}' is given up{}; its forced aliases are put back", devStart->who, a_quest, QuestName(quest), running ? " (it runs already)" : "");
+		devStart.reset();
+		return !running;
 	}
 
 	void SetLocalPlayer(std::uint32_t a_id)
@@ -1143,7 +1158,7 @@ namespace RadiantSync
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(devStart->quest);
 			if ((quest && (quest->data.flags & QUEST_RUNNING)) || now - devStart->since >= START_TIMEOUT) {
 				Restore(devStart->saved);
-				REX::INFO("RadiantSync: the developer's start of {:08X} '{}': {}; its forced aliases are put back", devStart->quest, QuestName(quest),
+				REX::INFO("RadiantSync: {} of {:08X} '{}': {}; its forced aliases are put back", devStart->who, devStart->quest, QuestName(quest),
 					quest && (quest->data.flags & QUEST_RUNNING) ? "it runs" : "it didn't start");
 				devStart.reset();
 			}

@@ -6,6 +6,7 @@
 #include "FormIds.h"
 #include "NpcHealths.h"
 #include "Name.h"
+#include "AttackBook.h"
 #include "CompanionBook.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
@@ -505,6 +506,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
+	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -820,6 +822,7 @@ void Server::Run()
 		traps.clear();
 		actorOwners.clear();
 		companionBook.Clear();
+		attackBook.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
 		spawns.clear();
@@ -1502,6 +1505,12 @@ void Server::Run()
 			tellCompanions(changes, a_player.key);
 		}
 		answerRoutedTo(a_player.id);
+		// The host's game: what it said of settlements, and its attacks, go with it. The others forget them all (their
+		// mirrors of its attacks end, defused); its game says again when it is back.
+		if (a_player.local && a_player.welcomed) {
+			attackBook.Clear();
+			broadcast(Protocol::Encode(Protocol::SettlementOwner{ 0, false }, Protocol::MessageType::kSettlementOwner), true, a_player.key);
+		}
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
@@ -1770,6 +1779,15 @@ void Server::Run()
 			tellCompanions(changes, a_player.key);
 			for (const auto& entry : companionBook.All()) {
 				send(a_player.key, Protocol::Encode(entry), true);
+			}
+		}
+		// ... and what the host's game said of settlements, then its attacks going on (a friend's game mirrors them).
+		if (!a_player.local) {
+			for (const auto& owner : attackBook.Owners(Clock::now())) {
+				send(a_player.key, Protocol::Encode(owner, Protocol::MessageType::kSettlementOwner), true);
+			}
+			for (const auto& attack : attackBook.Live()) {
+				send(a_player.key, Protocol::Encode(attack, Protocol::MessageType::kSettlementAttack), true);
 			}
 		}
 		// ... and what those NPCs are wearing, as their owners reported it.
@@ -3383,6 +3401,79 @@ void Server::Run()
 		tellCompanions(changes, report->recruited ? a_player.key : 0);  // a recruit's reporter had its answer; a dismissal's hears it free with everyone
 	};
 
+	// An attack on a settlement in the player's game (common/AttackBook.h). The host's game reports its own attacks, each
+	// phase, and the others hear them (their games mirror them). A friend's game reports a roll of its own (kRolled alone)
+	// as a question, whose settlement it is: answered at once only when the host's game said "the host's" within
+	// AttackBook::OWNER_FOR; otherwise asked of the host's game (at most once per AttackBook::Book::ASK_EVERY a settlement),
+	// whose answer reaches the friend: a "not the host's" said before may be stale (the host can take a settlement later);
+	// with no host's game (a dedicated server) every settlement is the friend's own. The host's game away from a hosted
+	// server: no answer, and the friend's game keeps its attack.
+	const auto handleSettlementAttack = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto attack = Protocol::DecodeSettlementAttack(a_data);
+		if (!attack) {
+			return;
+		}
+		if (a_player.local) {
+			if (attackBook.OnHostAttack(*attack, Clock::now())) {
+				log(std::format("server: the host's attack {:08X} on settlement {:08X}: phase {} outcome {}", attack->quest, attack->workshop, std::to_underlying(attack->phase),
+					std::to_underlying(attack->outcome)));
+				broadcast(Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true, a_player.key);
+			}
+			return;
+		}
+		if (attack->phase != Protocol::AttackPhase::kRolled) {
+			return;  // a friend's game's attacks are its own business; only its question is taken
+		}
+		const auto now = Clock::now();
+		if (attackBook.OwnerOf(attack->workshop, now) == true) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, true }, Protocol::MessageType::kSettlementOwner), true);
+			return;
+		}
+		if (options.hostIdentity == 0) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, false }, Protocol::MessageType::kSettlementOwner), true);
+			return;
+		}
+		const auto host = hostPlayer();
+		if (!host) {
+			return;
+		}
+		attackBook.Awaits(attack->workshop, a_player.id);  // the answer reaches them, asked now or by an earlier question
+		if (!attackBook.Ask(attack->workshop, now)) {
+			return;
+		}
+		log(std::format("server: player {} rolled attack {:08X} on settlement {:08X}: the host's game is asked whose it is", a_player.id, attack->quest, attack->workshop));
+		send(host->key, Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true);
+	};
+
+	// The host's game says whether a settlement is the host's (an answer to a friend's question, with its own attack, or a
+	// change of owner it noticed): kept, and everyone else told when it is news; when it isn't, the friends who asked are
+	// told. From the host's game alone.
+	const auto handleSettlementOwner = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player) || !a_player.local) {
+			return;
+		}
+		const auto owner = Protocol::DecodeSettlementOwner(a_data);
+		if (!owner || owner->workshop == 0) {
+			return;
+		}
+		attackBook.Answered(owner->workshop);
+		const auto waiting = attackBook.TakeAwaiting(owner->workshop);
+		const auto packet = Protocol::Encode(*owner, Protocol::MessageType::kSettlementOwner);
+		if (attackBook.SetOwner(owner->workshop, owner->hostOwned, Clock::now())) {
+			log(std::format("server: settlement {:08X} is {}the host's", owner->workshop, owner->hostOwned ? "" : "not "));
+			broadcast(packet, true, a_player.key);
+			return;
+		}
+		for (const auto id : waiting) {
+			if (const auto asker = playerById(id); asker && asker->welcomed && !asker->local) {
+				send(asker->key, packet, true);
+			}
+		}
+	};
+
 	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
 	// of it, and the game that made it runs it for good. Under the spawn id its game picked: one another player's spawn
 	// has is refused (the answer names that player, and the game picks another id), and so is one past the player's or the
@@ -4584,6 +4675,12 @@ void Server::Run()
 		case MessageType::kReportCompanion:
 			handleCompanion(a_player, a_data);
 			break;
+		case MessageType::kReportSettlementAttack:
+			handleSettlementAttack(a_player, a_data);
+			break;
+		case MessageType::kReportSettlementOwner:
+			handleSettlementOwner(a_player, a_data);
+			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
 			break;
@@ -4792,6 +4889,9 @@ void Server::Run()
 			std::vector<CompanionBook::Change> freed;
 			companionBook.Expire(now, freed);
 			tellCompanions(freed, 0);
+		}
+		if (const auto dropped = attackBook.Expire(now); dropped != 0) {
+			log(std::format("server: {} of the host's attacks never told over in {} h are forgotten", dropped, std::chrono::duration_cast<std::chrono::hours>(AttackBook::Book::LIVE_FOR).count()));
 		}
 		if (tick % 64 == 0) {
 			objectMovers.Prune(now);  // moves over (about once a second)

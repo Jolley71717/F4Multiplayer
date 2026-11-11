@@ -325,3 +325,7 @@ mods.full_here = {name} (plugin completo en tu juego, ligero en el del anfitrió
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} es el compañero de {player}
 companion.someone = otro jugador
+attack.under = Ataque en {place}
+attack.defended = Ataque rechazado en {place}
+attack.lost = Nadie defendió {place}
+attack.a_settlement = un asentamiento
