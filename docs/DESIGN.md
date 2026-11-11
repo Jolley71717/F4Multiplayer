@@ -867,8 +867,39 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   giver). A friend left there without the owner finds the site empty (its own defenders went as they came, the owner's
   copies with the owner), but the item is in its container in each game (its 150 puts it there) and the job goes on by
   it, read off the quest's data, not seen in a game.
-- Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the Minutemen's
-  defences, the add-ons'); High Ground's vertibird; To the Mattresses shows each game its own objective text (its
+- *The Minutemen's (src/game/RadiantRules.h `Entry::spawned`, `Entry::attack`).* The synth boss job (MinRecruit08)
+  makes its synth at its dungeon's boss as it starts: shared as the Railroad's above (the owner's synth in every game,
+  forced into a friend's alias, the friend's own removed as it loads). It is started by Preston's story event, which
+  can't start a quest that runs, so a hollow one is stopped and left to Preston (`NOT_RESTARTED`). Preston's
+  "defend the settlement" jobs (MinRadiantOwned01, 04_BOS, 05, 08, 09ChangeLocOnly and 11) are attacks: their
+  attackers are made at runtime, disabled, at the settlement's attack marker, and `WorkshopAttackScript.StartAttack`
+  (their 130) enables them. One game's attackers are copies in its friends' games already (Spawns), so the attack is
+  the **host's**: only the game that hosts the session shares its run (`RadiantRules::Begins`, `QuestSync::Frame`'s
+  hosting flag; on a dedicated server none is shared, and a friend's own run stays the friend's, as every attack was
+  before), and the host's game turns down a friend's (`Joins`). A friend's game sharing the host's run starts the quest
+  with the settlement, takes its stages, and never starts its own attack: its 130 and its 300 (which rolls the
+  settlement's damage, `CheckResolveAttack`, when the attackers aren't dead and the settlement isn't loaded) are never
+  taken (`UNTAKEN`), and its own `TryToStartAttack` (from its attack timer, started as its player arrives, and from its
+  120, the defences built, which comes from the host) is held: `RadiantSync::HoldAttacks` keeps the script's
+  `PlayerIsWaiting` set (`ShouldStartAttack` then starts nothing) and pushes its timer 48 game hours out every 10 s, so
+  a timer due during a wait never fires as the wait ends. Its attackers stay disabled where its start made them; the
+  host's, copies there, are the attack, and their deaths come back as the host's 200. The friend's arrival (70, which
+  starts the attack's clock), its own dead counts (200, 290) and its failure (310) are never reported
+  (`OWNER_STAGES`): the host's attack starts when the host gets there and ends by the host's count. The reward (400)
+  is either player's turn-in. Out of the session (the run no longer shared) the hold is let go, `PlayerIsWaiting`
+  cleared and the clock started again for an hour where it would be running in a game of one (the player there or the
+  defences built, the attack not begun: `ResumesAttackClock`); a loaded world's held attack is let go the same way
+  (no save is made during a wait, so a set `PlayerIsWaiting` there is the hold's). `net status`: `radiants: ...
+  attacksHeld= attackHolds= attacksLet= attacksResumed=`. *How this fits the settlement attacks the host books for
+  everyone* (`SettlementAttacks`, its `AttackBook`): that book is the random attacks (the `Workshop*Attack` quests),
+  which it keeps out of these jobs, and these rows keep out of its quests; both make the host's attack the only one.
+  Left alone, each player's own: the refugees job (MinRecruit09: two to five refugees made and enabled at random,
+  added to the settlement's settlers at its 400 from its own alias collection, which can't be forced) and the Castle's
+  siege (MinDefendCastle, its starter and its waves' helper: scripted waves from a holding cell, belonging with the
+  attacks the host books, not with a job shared by its run).
+- Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
+  the Minutemen's refugees and the Castle's siege; a friend's random attack at the settlement where the host's
+  "defend the settlement" runs (each is the host's alone, but nothing stops the two meeting); High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
   actor of a run shared before this rule (Lost Soul's captive) is shared from the moment it stands now too, as the
   Institute's synth is.

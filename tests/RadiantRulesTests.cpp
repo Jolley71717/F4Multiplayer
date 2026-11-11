@@ -69,14 +69,14 @@ namespace
 	}
 }
 
-TEST("radiants: the Minutemen's settlement requests are shared by their run; attacks and the factions' other radiants are left alone")
+TEST("radiants: the Minutemen's settlement requests are shared by their run; the Castle's siege and the factions' other radiants are left alone")
 {
 	CHECK(ShareOf(0, MIN_RECRUIT01) == Share::kShared);
 	CHECK(ShareOf(0, MIN_RECRUIT02) == Share::kShared);
 	CHECK(ShareOf(0, 0x0003DF95) == Share::kShared);  // MinRadiantOwned02: raiders near a settlement of the player's
 	CHECK(ShareOf(0, 0x0003E0C1) == Share::kShared);  // MinRadiantOwned03: kidnapping
-	// Each game simulates its own attack: the attackers are made at the settlement.
-	CHECK(ShareOf(0, MIN_OWNED01) == Share::kLeftAlone);
+	// A settlement attacked: the host's run shared (Entry::attack). The Castle's siege: each game's own.
+	CHECK(ShareOf(0, MIN_OWNED01) == Share::kShared);
 	CHECK(ShareOf(0, MIN_DEFEND_CASTLE) == Share::kLeftAlone);
 	// Not radiants: QuestFilter decides.
 	CHECK(ShareOf(0, MQ104) == Share::kNotRadiant);
@@ -101,12 +101,30 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 	for (const std::uint32_t minutemen : { 0x00106F05u, 0x0015F03Fu, 0x0015F040u, 0x00161D1Du, 0x00162F44u, 0x00109D73u }) {
 		CHECK(ShareOf(0, minutemen) == Share::kShared);
 	}
-	CHECK(ShareOf(0, 0x00157577) == Share::kLeftAlone);  // a synth boss made at runtime
-	CHECK(ShareOf(0, 0x00164167) == Share::kLeftAlone);  // refugees made at runtime
-	// Every settlement attack: the attackers are made at runtime.
-	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u, 0x000BDB04u }) {
-		CHECK(ShareOf(0, attack) == Share::kLeftAlone);
+	// The synth boss made at runtime is the owner's (Entry::spawned); the refugees, who become settlers, are each game's own.
+	const auto synthBoss = Find(0, 0x00157577);
+	REQUIRE(synthBoss != nullptr);
+	CHECK(synthBoss->share == Share::kShared);
+	CHECK(synthBoss->spawned);
+	CHECK(!synthBoss->replace);
+	CHECK(!synthBoss->attack);
+	CHECK(ShareOf(0, 0x00164167) == Share::kLeftAlone);
+	// Preston's settlement attacks: the host's run (Entry::attack); its attackers are copies in the friends' games already,
+	// so none is followed or forced (not spawned), and a friend's own run is never stopped for it.
+	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u }) {
+		const auto entry = Find(0, attack);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->attack);
+		CHECK(!entry->spawned);
+		CHECK(!entry->replace);
 	}
+	// The Castle's siege, its starter and its waves' helper: each game's own.
+	for (const std::uint32_t castle : { 0x000BDB04u, 0x00176328u, 0x0022FD6Eu }) {
+		CHECK(ShareOf(0, castle) == Share::kLeftAlone);
+	}
+	// Only those six are attacks.
+	CHECK(std::ranges::count_if(RADIANTS, [](const Entry& a_entry) { return a_entry.attack; }) == 6);
 	// The Brotherhood's: Cleansing the Commonwealth, Quartermastery, Feeding the Troops.
 	CHECK(ShareOf(0, BOSR01) == Share::kShared);
 	CHECK(ShareOf(0, BOSR02) == Share::kShared);
@@ -228,11 +246,12 @@ TEST("radiants: the developers' shortcuts (the Brotherhood's 0, which makes the 
 	}
 }
 
-TEST("radiants: Learning Curve, whose giver offers it only while it isn't running, is never started again by this game; the others are")
+TEST("radiants: Learning Curve and the Minutemen's synth boss, offered only while they aren't running, are never started again by this game; the others are")
 {
 	constexpr std::uint32_t BOSR03 = 0x000C8675;
 	constexpr std::uint32_t BOSR04 = 0x000CF3E2;
 	CHECK(!Restarts(BOSR04));
+	CHECK(!Restarts(0x00157577));  // MinRecruit08: Preston's story event starts it; one started by hand sits mute
 	CHECK(Restarts(BOSR03));      // Kells offers it at its start-up stage 5
 	CHECK(Restarts(0x000EDCEF));  // Appropriation
 	CHECK(Restarts(0x000EDE28));  // Reclamation
@@ -292,12 +311,105 @@ TEST("radiants: the Brotherhood's escort goes home (the squire's 45, the scribe'
 	CHECK(Reports(0x000EDCEF, 1000, false));  // Appropriation's clean-up
 	CHECK(Reports(0x000EDE28, 1000, false));  // Reclamation's turn-in
 	CHECK(Reports(0x00186C79, 200, false));   // Variable Removal's kill
-	// Every owner-only stage belongs to a shared job whose actors are made at runtime (they are the only ones followed).
+	// Every owner-only stage belongs to a shared job whose actors are the owner's: made at runtime and followed, or an attack
+	// (the host's, its attackers copies in the friends' games).
 	for (const auto& owner : OWNER_STAGES) {
 		const auto entry = Find(0, owner.quest);
 		REQUIRE(entry != nullptr);
 		CHECK(entry->share == Share::kShared);
-		CHECK(entry->spawned);
+		CHECK((entry->spawned || entry->attack));
+	}
+}
+
+namespace
+{
+	// Preston's settlement attacks (Entry::attack).
+	constexpr std::array<std::uint32_t, 6> ATTACKS{ 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u };
+}
+
+TEST("radiants: a settlement attack Preston hands out is shared only from the host's game; a friend's own stays the friend's")
+{
+	const auto attack = Find(0, MIN_OWNED01);
+	const auto request = Find(0, MIN_RECRUIT01);
+	const auto castle = Find(0, MIN_DEFEND_CASTLE);
+	REQUIRE(attack != nullptr);
+	REQUIRE(request != nullptr);
+	REQUIRE(castle != nullptr);
+	// The host's run of it is shared; a friend's game keeps its own (and on a dedicated server, where no game hosts, every
+	// player keeps theirs).
+	CHECK(Begins(*attack, true));
+	CHECK(!Begins(*attack, false));
+	// Any other shared job is shared by whoever is given it; one left alone by nobody.
+	CHECK(Begins(*request, true));
+	CHECK(Begins(*request, false));
+	CHECK(!Begins(*castle, true));
+	CHECK(!Begins(*castle, false));
+	// A friend's attack sent to the host's game is turned down there (only the host's is shared); a friend's game takes the
+	// host's. Other jobs are taken wherever they come from.
+	CHECK(!Joins(*attack, true));
+	CHECK(Joins(*attack, false));
+	CHECK(Joins(*request, true));
+	CHECK(Joins(*request, false));
+}
+
+TEST("radiants: a friend's game holds its own attack back while the host's run of it is shared there, and lets it go after")
+{
+	const auto attack = Find(0, 0x001533A9);  // MinRadiantOwned11: synths (WorkshopSynthAttackScript, extending the attack script)
+	const auto squire = Find(0, 0x000C8675);  // Leading by Example: followed, but no attack
+	REQUIRE(attack != nullptr);
+	REQUIRE(squire != nullptr);
+	// The host's run, shared here and running: held.
+	CHECK(HoldsAttack(attack, true, false, true));
+	// Our own (we host): our attack is the one.
+	CHECK(!HoldsAttack(attack, true, true, true));
+	// Not shared here (out of the session, or a friend's own run of it): the game's own attack, as in a game of one.
+	CHECK(!HoldsAttack(attack, false, false, true));
+	// Stopped here: nothing to hold.
+	CHECK(!HoldsAttack(attack, true, false, false));
+	// Not an attack, or not a radiant.
+	CHECK(!HoldsAttack(squire, true, false, true));
+	CHECK(!HoldsAttack(nullptr, true, false, true));
+	// The timer is pushed out past the longest wait (24 hours), and well within it again: every few seconds of play is a
+	// few game minutes.
+	CHECK(ATTACK_TIMER_HELD > 24.0f);
+	CHECK(ATTACK_TIMER_EVERY <= std::chrono::seconds{ 30 });
+	CHECK(ATTACK_TIMER == 0);
+	CHECK(ATTACK_SCRIPT == "WorkshopAttackScript");
+	CHECK(ATTACK_WAITING == "PlayerIsWaiting");
+}
+
+TEST("radiants: an attack let go starts its clock again only where it would be running alone: the player there or the defences built, and the attack not begun")
+{
+	using Stages = std::vector<std::uint16_t>;
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100 }));            // taken, nobody there yet: the game starts it on arrival
+	CHECK(ResumesAttackClock(Stages{ 10, 20, 50, 100, 70 }));         // the player arrived (CheckLocation's hour)
+	CHECK(ResumesAttackClock(Stages{ 10, 20, 50, 100, 120 }));        // the defences built
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 130 }));   // begun (the host's 130 is never taken, so only ours)
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 120, 130 }));
+	CHECK(!ResumesAttackClock(Stages{}));
+}
+
+TEST("radiants: the attack's start and its damage roll are never taken from the host; the arrival, the dead and the failure are the host's to report")
+{
+	for (const auto quest : ATTACKS) {
+		// Its 130 starts this game's own attack, its 300 rolls the settlement's damage: never from a friend.
+		CHECK(!Takes(quest, ATTACK_STARTED));
+		CHECK(!Takes(quest, 300));
+		// The offer, the take, the defences built, the attackers dead, the failure and the reward come from the host.
+		for (const std::uint16_t stage : { 10, 20, 50, 70, 100, 120, 150, 200, 290, 310, 400, 450, 500 }) {
+			CHECK(Takes(quest, stage));
+		}
+		// A friend's arrival never starts the host's attack's clock, and a friend's own count never ends it: the host's.
+		for (const std::uint16_t stage : { ATTACK_ARRIVED, std::uint16_t{ 200 }, std::uint16_t{ 290 }, std::uint16_t{ 310 } }) {
+			CHECK(!Reports(quest, stage, false));
+			CHECK(Reports(quest, stage, true));
+		}
+		// The rest is reported by whoever reaches it: the defences built, the reward (either player's turn-in).
+		for (const std::uint16_t stage : { 50, 100, 120, 150, 400, 450, 500 }) {
+			CHECK(Reports(quest, stage, false));
+		}
+		// Never run again here (never stopped for a friend's run, never hollow), so not listed with those that aren't.
+		CHECK(Restarts(quest));
 	}
 }
 

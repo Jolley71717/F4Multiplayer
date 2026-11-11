@@ -76,6 +76,16 @@ namespace RadiantSync
 		constexpr std::uint32_t                                            LOGGED = 20;
 		std::uint32_t                                                      refilled = 0, refillsFailed = 0, resentFills = 0, unfollowed = 0, hollowRestarted = 0;
 
+		// Preston's attacks (RadiantRules::Entry::attack). Whether this game hosts the session (only the host's attack is
+		// shared), the attacks of the host's runs held back here (RadiantRules::HoldsAttack), when their timers were last
+		// pushed out, and whether a loaded world's are still to be let go (a save made while one was held keeps its
+		// PlayerIsWaiting set: no save is made while the player waits, so set then, it is ours).
+		bool                    hosting = false;
+		std::set<std::uint32_t> attacksHeld;
+		Clock::time_point       attackPushed{};
+		bool                    attacksLoaded = false;
+		std::uint32_t           attackHolds = 0, attacksLet = 0, attacksResumed = 0;
+
 		// A friend's run of such a quest shared here: followed with its fills from now on (a newer send of it keeps the newest).
 		void Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
 		{
@@ -441,6 +451,118 @@ namespace RadiantSync
 			return std::ranges::any_of(book.Ours(self), [&](const auto& a_run) { return a_run.first == a_quest; });
 		}
 
+		// The quest's WorkshopAttackScript object (MinRadiantOwned11's extends it), as the VM's ForEachBoundObject visits
+		// the quest's scripts: FindBoundObject by name misses one whose type extends the name.
+		RE::BSTSmartPointer<RE::BSScript::Object> AttackScriptOf(RE::TESQuest* a_quest)
+		{
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!vm || !a_quest) {
+				return {};
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESQuest>(), a_quest);
+			if (handle == handles.EmptyHandle()) {
+				return {};
+			}
+			RE::BSTSmartPointer<RE::BSScript::Object>                                                 found;
+			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+				for (auto type = a_object ? a_object->type.get() : nullptr; type; type = type->GetParent()) {
+					const char* name = type->GetName();
+					if (name && _stricmp(name, RadiantRules::ATTACK_SCRIPT.data()) == 0) {
+						found = RE::BSTSmartPointer<RE::BSScript::Object>{ a_object };
+						return Papyrus::BOUND_DONE;
+					}
+				}
+				return Papyrus::BOUND_NEXT;
+			} };
+			vm->ForEachBoundObject(handle, visit);
+			return found;
+		}
+
+		// A script variable of the object by name (PlayerIsWaiting is one, not a property): the object's variables hold its
+		// types' in turn, the oldest parent's first.
+		RE::BSScript::Variable* VariableOf(RE::BSScript::Object& a_object, std::string_view a_name)
+		{
+			std::vector<const RE::BSScript::ObjectTypeInfo*> chain;
+			for (const RE::BSScript::ObjectTypeInfo* type = a_object.type.get(); type; type = type->GetParent()) {
+				chain.insert(chain.begin(), type);
+			}
+			const std::string plain{ a_name };
+			const std::string mangled = std::format("::{}_var", a_name);
+			std::uint32_t     offset = 0;
+			for (const auto type : chain) {
+				const auto infos = type->GetVariableIter();
+				for (std::uint32_t i = 0; infos && i < type->GetNumVariables(); ++i) {
+					const char* name = infos[i].name.c_str();
+					if (name && (_stricmp(name, plain.c_str()) == 0 || _stricmp(name, mangled.c_str()) == 0)) {
+						return std::addressof(a_object.variables[offset + i]);
+					}
+				}
+				offset += type->GetNumVariables();
+			}
+			return nullptr;
+		}
+
+		// The attack's timer (ID 0) started again a_hours of game time from now.
+		void StartAttackTimer(const RE::BSTSmartPointer<RE::BSScript::Object>& a_script, float a_hours)
+		{
+			Papyrus::CallOn(a_script, "StartTimerGameTime", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+				a_out[0] = a_hours;
+				a_out[1] = RadiantRules::ATTACK_TIMER;
+			});
+		}
+
+		// This game's own attack of the host's run held back (RadiantRules::ATTACK_*): the script told the player waits, and
+		// (a_push) its timer pushed out of reach. Set at once as the host's run is shared here, before the stages that came
+		// with it (its 120 among them) are set, and again every poll.
+		void HoldAttack(RE::TESQuest* a_quest, bool a_push)
+		{
+			const auto script = AttackScriptOf(a_quest);
+			const auto waiting = script ? VariableOf(*script, RadiantRules::ATTACK_WAITING) : nullptr;
+			if (!waiting || !waiting->is<bool>()) {
+				if (attacksHeld.insert(a_quest->GetFormID()).second) {
+					REX::WARN("RadiantSync: {:08X} '{}': no {}.{} to hold its own attack back with", a_quest->GetFormID(), QuestName(a_quest), RadiantRules::ATTACK_SCRIPT,
+						RadiantRules::ATTACK_WAITING);
+				}
+				return;
+			}
+			if (!RE::BSScript::get<bool>(*waiting)) {
+				*waiting = true;
+			}
+			if (a_push) {
+				StartAttackTimer(script, RadiantRules::ATTACK_TIMER_HELD);
+			}
+			if (attacksHeld.insert(a_quest->GetFormID()).second) {
+				++attackHolds;
+				REX::INFO("RadiantSync: {:08X} '{}' is the host's attack: this game's own is held back (its attackers stay disabled)", a_quest->GetFormID(),
+					QuestName(a_quest));
+			}
+		}
+
+		// A held attack let go (the host's run no longer shared here, or a loaded world's): the script told the player isn't
+		// waiting, and the attack's clock started again where it would be running in a game of one
+		// (RadiantRules::ResumesAttackClock). The quest is then the player's own, as any after its session.
+		void LetAttackGo(RE::TESQuest* a_quest)
+		{
+			const auto script = AttackScriptOf(a_quest);
+			const auto waiting = script ? VariableOf(*script, RadiantRules::ATTACK_WAITING) : nullptr;
+			if (!waiting || !waiting->is<bool>() || !RE::BSScript::get<bool>(*waiting)) {
+				return;
+			}
+			*waiting = false;
+			++attacksLet;
+			const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
+			const bool resumes = running && RadiantRules::ResumesAttackClock(QuestStageLayout::Done(a_quest));
+			if (resumes) {
+				StartAttackTimer(script, RadiantRules::ATTACK_TIMER_RESUMED);
+				++attacksResumed;
+			}
+			REX::INFO("RadiantSync: {:08X} '{}': its own attack is let go{}", a_quest->GetFormID(), QuestName(a_quest),
+				resumes ? ", its clock started again (an hour)" : running ? "" : " (it isn't running)");
+		}
+
 		void Restore(std::vector<Saved>& a_saved)
 		{
 			for (auto& saved : a_saved) {
@@ -650,6 +772,9 @@ namespace RadiantSync
 				Follow(a_quest, a_run, a_fills);
 			}
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+			if (const auto entry = RadiantSync::EntryOf(quest); quest && a_run.origin != self && entry && entry->attack) {
+				HoldAttack(quest, true);  // the host's attack: ours held back before its stages (its 120 among them) are set here
+			}
 			if (again && quest) {
 				// Shared here already under another run: the same one shared again under a new number (its game loaded a save
 				// from inside it). The stages done here that its start lacks go to it under the new number, or its game falls
@@ -837,6 +962,10 @@ namespace RadiantSync
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_start.quest);
 			const Run  run{ a_start.playerId, a_start.serial };
 			if (!quest || !Official::IsOfficialForm(quest)) {
+				return;
+			}
+			if (const auto entry = RadiantSync::EntryOf(quest); entry && !RadiantRules::Joins(*entry, hosting)) {
+				Decline(a_start.quest, run, "a settlement attack is the host's to share, and this game hosts");
 				return;
 			}
 			const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
@@ -1161,6 +1290,40 @@ namespace RadiantSync
 				radiantQuests[i] = quest ? quest->GetFormID() : 0;
 			}
 			radiantsResolved = true;
+		}
+
+		// Preston's attacks of the host's runs shared here, held back every poll (RadiantRules::HoldsAttack: the script may
+		// have set PlayerIsWaiting false as a wait ended), their timers pushed out every ATTACK_TIMER_EVERY; and those no
+		// longer held (the run over or no longer shared here, the session over) or a loaded world's let go. In a session or
+		// out of one.
+		void HoldAttacks(Clock::time_point a_now)
+		{
+			ResolveRadiants();
+			const bool              push = a_now - attackPushed >= RadiantRules::ATTACK_TIMER_EVERY;
+			std::set<std::uint32_t> holding;
+			for (std::size_t i = 0; i < RadiantRules::RADIANTS.size(); ++i) {
+				const auto  id = radiantQuests[i];
+				const auto& entry = RadiantRules::RADIANTS[i];
+				if (id == 0 || !entry.attack) {
+					continue;
+				}
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				if (!quest) {
+					continue;
+				}
+				const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
+				if (RadiantRules::HoldsAttack(&entry, Enabled() && book.Shares(id), OursRun(id), running)) {
+					HoldAttack(quest, push);
+					holding.insert(id);
+				} else if (attacksHeld.contains(id) || attacksLoaded) {
+					LetAttackGo(quest);
+				}
+			}
+			if (push) {
+				attackPushed = a_now;
+			}
+			attacksHeld = std::move(holding);
+			attacksLoaded = false;
 		}
 
 		// Our runs of quests whose actors are made at runtime that are hollow (RadiantRules::HollowJob: the player has an
@@ -1489,9 +1652,10 @@ namespace RadiantSync
 		}
 	}
 
-	void Frame(bool a_inSession)
+	void Frame(bool a_inSession, bool a_hosting)
 	{
 		inSession = a_inSession;
+		hosting = a_hosting;
 		const auto now = Clock::now();  // QuestSync polls twice a second
 		if (devStart) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(devStart->quest);
@@ -1573,6 +1737,7 @@ namespace RadiantSync
 		if (!Story::InOpening()) {
 			SweepHollow(now);  // a hollow job of ours is nobody's, in or out of a session
 		}
+		HoldAttacks(now);  // the host's attack the only one: ours held back while theirs is shared here, let go after
 
 		if (!a_inSession || !Enabled() || self == 0 || Story::InOpening()) {
 			if (!Enabled()) {
@@ -1593,12 +1758,13 @@ namespace RadiantSync
 			Process(next);
 		}
 
-		// Runs of ours: a shared radiant handed out here (an objective shown), not one of a friend's.
+		// Runs of ours: a shared radiant handed out here (an objective shown), not one of a friend's. An attack only if this
+		// game hosts (RadiantRules::Begins).
 		ResolveRadiants();
 		for (std::size_t i = 0; i < RadiantRules::RADIANTS.size(); ++i) {
 			const auto  id = radiantQuests[i];  // 0: the add-on is not in this load order
 			const auto& entry = RadiantRules::RADIANTS[i];
-			if (id == 0 || entry.share != RadiantRules::Share::kShared || book.Shares(id) || book.IsStarting(id)) {
+			if (id == 0 || !RadiantRules::Begins(entry, a_hosting) || book.Shares(id) || book.IsStarting(id)) {
 				continue;
 			}
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
@@ -1663,6 +1829,8 @@ namespace RadiantSync
 		forced.clear();
 		sentFills.clear();
 		hollow.Clear();  // counted from the load
+		attacksHeld.clear();
+		attacksLoaded = true;  // a held attack the save kept is let go, unless its run is shared here again (HoldAttacks)
 		stopped.clear();
 		outgoing.clear();
 		{
@@ -1724,9 +1892,9 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} resentFills={} hollowRestarted={}{}",
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={}{}",
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, resentFills,
-			hollowRestarted, starting ? " starting" : "");
+			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, starting ? " starting" : "");
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
