@@ -821,21 +821,28 @@ TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are
 	static_assert(kEach == 1 << 7);
 	static_assert((kEach & (kMoves | kBridge | kPays | kStory | kFree | kHostile | (1 << 6))) == 0);
 	// The table is sorted (a stage's acts kept in their order), every row's stage is kEach, and only the companions'
-	// quests have kEach stages.
+	// quests have kEach stages: those shared as the companions' (COMPANION_QUESTS), Nick's and Cait's shared by their
+	// type, and Nick's two misc quests shared as SAFE's.
+	const auto companions = [](std::uint8_t a_file, std::uint32_t a_quest) {
+		return QuestFilter::IsCompanionQuest(a_file, a_quest) ||
+		       (a_file == 0 && (a_quest == 0x0229FE || a_quest == 0x1666C5 || a_quest == 0x0FAC86 || a_quest == 0x18817F));  // MS07c, COMCaitQuest, MQ202NickPostSurgery, MS07cPostQuest
+	};
 	for (auto it = std::next(std::begin(EACH)); it != std::end(EACH); ++it) {
 		const auto& before = *std::prev(it);
 		CHECK((std::tuple{ before.file, before.quest, before.stage } <= std::tuple{ it->file, it->quest, it->stage }));
 	}
 	for (const auto& each : EACH) {
 		CHECK(IsEach(static_cast<File>(each.file), each.quest, each.stage));
-		CHECK(QuestFilter::IsCompanionQuest(each.file, each.quest));
+		CHECK(companions(each.file, each.quest));
 	}
 	for (const auto& rule : RULES) {
 		if (rule.flags & kEach) {
-			CHECK(QuestFilter::IsCompanionQuest(rule.file, rule.quest));
+			CHECK(companions(rule.file, rule.quest));
 			CHECK(rule.wait == 0);  // no script runs here to wait for
+			CHECK(!(rule.flags & (kMoves | kPays | kStory)));  // nothing of its script runs in a mirror: no move, no payment, no story step
 		}
 	}
+	CHECK(QuestFilter::IsSafe(0, 0x0FAC86) && QuestFilter::IsSafe(0, 0x18817F));  // Nick's misc quests: shared as SAFE's
 
 	// Curie: the owner's recruit, affinity and perks, kEach; her new body the world's half here.
 	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 1, 5, 200, 300, 400, 500, 600 }) {
@@ -1094,8 +1101,167 @@ namespace
 				inFaction = false;  // RemoveFromFaction DisallowedCompanionFaction
 				ours = true;        // COMCurie 50: SetCompanion
 			}
+			if (quest == 0x1666C5 && a_stage == 60) {
+				inFaction = true;  // DisallowCompanion(Cait, True): the faction, and DismissCompanion if she followed
+				ours = false;
+			}
+			if (quest == 0x1666C5 && a_stage == 255) {
+				inFaction = false;  // AllowCompanion(Cait, True, False): out of the faction, and SetCompanion when none follows
+				ours = true;
+			}
+			if (quest == 0x0FAC86 && a_stage == 90) {
+				ours = true;  // AllowCompanion(Nick, True, True): ForceCompanion
+			}
 		}
 	};
+}
+
+TEST("stage rules: Nick's, Cait's and Danse's quests: only a stage that would recruit or dismiss a friend's companion is the owner's (kEach); allowing and disallowing a friend's copy is left to run")
+{
+	using namespace StageRules;
+	using namespace std::chrono_literals;
+	constexpr std::uint32_t NICK = 0x0229FE;         // MS07c, Long Time Coming
+	constexpr std::uint32_t CAIT = 0x1666C5;         // COMCaitQuest, Benign Intervention
+	constexpr std::uint32_t DANSE = 0x0B9F9D;        // BoS302, Blind Betrayal
+	constexpr std::uint32_t NICK_DEN = 0x0FAC86;     // MQ202NickPostSurgery
+	constexpr std::uint32_t NICK_AFTER = 0x18817F;   // MS07cPostQuest
+	constexpr std::uint32_t SHEFFIELD = 0x0502AC;    // FFDiamondCity08
+	constexpr std::uint32_t NICK_REF = 0x002F25;     // NickValentineREF
+	constexpr std::uint32_t CAIT_REF = 0x079305;     // CaitRef
+	constexpr std::uint32_t DISALLOWED = 0x075D56;   // DisallowedCompanionFaction
+
+	// Nick's Long Time Coming: the quickstarts (SetCompanion with his affinity at 999, a MoveTo) are kEach, nothing of them
+	// in a friend's game, and no driver: mirrored everywhere, a console quickstart never runs in another game. None is a
+	// start-up stage, so a friend's first stage of it (10) is judged plain while the quest isn't running here.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 0, 1, 190 }) {
+		CHECK(FlagsOf(NICK, stage) == kEach);
+		CHECK(EachOf(File::kFallout4, NICK, stage).empty());
+	}
+	CHECK(!DriverOf(File::kFallout4, NICK));
+	const auto first = Starting(Find(NICK, 0), Find(NICK, 10));
+	CHECK(first && !(first->flags & (kMoves | kStory)) && first->wait == 0);
+	CHECK(Judge(&*first, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
+	// 210 (DisallowCompanion(Nick, True): Nick runs to Eddie's bunker, with its Eddie, triggers and raiders), 250 and 260 (his
+	// factions for the fight, affinity events to the current companion) and 290-305 (AllowCompanion(Nick, False, False)) run
+	// in both games: FollowersScript's DismissCompanion returns unless he is that game's companion, and AllowCompanion with
+	// neither flag only takes him out of DisallowedCompanionFaction.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 200, 205, 210, 220, 230, 250, 260, 280, 290, 300, 305, 600 }) {
+		CHECK(!IsEach(File::kFallout4, NICK, stage));
+	}
+	CHECK(FlagsOf(NICK, 220) == kMoves);  // as before: the bunker's controls
+
+	// Cait's Benign Intervention: her chair (60, DisallowCompanion: would dismiss her from a friend she followed) and her
+	// cure (255, AllowCompanion(Cait, True, False): would recruit her to a friend with no companion) are the owner's; the
+	// rest (Vault 95's map marker, the scenes, the objectives) runs in both games.
+	CHECK(FlagsOf(CAIT, 0) == kMoves);  // the quickstart moves the player; no companion call
+	CHECK(FlagsOf(CAIT, 60) == kEach);
+	CHECK(FlagsOf(CAIT, 255) == kEach);
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 20, 30, 40, 50, 70, 80, 90, 100, 110, 355 }) {
+		CHECK(!Find(CAIT, stage));
+	}
+	CHECK(EachOf(File::kFallout4, CAIT, 60).empty());  // her chair scene is on her alias: the owner's; no objective of its own
+	const auto cure = EachOf(File::kFallout4, CAIT, 255);
+	CHECK(cure.size() == 2);
+	CHECK(cure[0].act == Act::kComplete && cure[0].value == 50);
+	CHECK(cure[1].act == Act::kCompleteQuest);  // the stage has the complete flag, as MacCready's 255
+	const auto& cait = *DriverOf(File::kFallout4, CAIT);
+	CHECK(cait.companion == CAIT_REF && cait.faction == DISALLOWED && cait.from == 60 && cait.until == 255 && cait.moved == 0 && cait.metQuest == 0);
+	const auto doneIn = [](std::vector<std::uint16_t> a_done) { return [a_done](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); }; };
+	CHECK(Marked(cait, doneIn({ 10, 60 }), { .inFaction = true }));
+	CHECK(!Marked(cait, doneIn({ 10 }), { .inFaction = true }));  // disallowed by something else before her 60
+	CHECK(!Marked(cait, doneIn({ 10, 60 }), {}));                  // a mirror's 60: not in the faction there
+	CHECK(HeldByQuest(cait, doneIn({ 10, 60, 70, 110 }), { .inFaction = true }));  // in the chair: the book keeps her the owner's
+	CHECK(!HeldByQuest(cait, doneIn({ 10, 60, 70, 110, 255 }), { .inFaction = true }));
+	CHECK(!HeldByQuest(cait, doneIn({ 10, 60 }), {}));
+	// Played through: the owner (Cait theirs) runs both with their scripts; the friend mirrors both and never had her
+	// disallowed, so no AllowCompanion is owed to their copy of her.
+	const std::vector<std::uint16_t> caitStages{ 10, 20, 60, 70, 80, 90, 100, 110, 255 };
+	CompanionGame owner{ CAIT, {}, false, true };
+	CompanionGame friendGame{ CAIT };
+	for (const auto stage : caitStages) {
+		owner.Arrives(stage);
+		friendGame.Arrives(stage);
+	}
+	CHECK(owner.mirrored.empty());
+	CHECK(!owner.inFaction && owner.ours);  // 255 ran: she followed them again
+	CHECK((friendGame.mirrored == std::vector<std::uint16_t>{ 60, 255 }));
+	CHECK(!friendGame.inFaction && !friendGame.ours);
+	// The owner reloads a save made while she sat in the chair (60 done, her in the faction, following nobody): the catch-up's
+	// 255 runs its script there, by the mark.
+	CompanionGame chair{ CAIT, { 10, 20, 60, 70, 80 }, true, false };
+	CHECK(chair.Drive() == Drive::kScripts);
+	chair.Arrives(255);
+	CHECK(chair.mirrored.empty() && chair.ours);
+	// A friend who mirrored her 60 stays a mirror, as a friend of Curie's does.
+	CompanionGame mirror{ CAIT, { 10, 20, 60 }, false, false };
+	CHECK(mirror.Drive() == Drive::kMirror);
+
+	// Danse's Blind Betrayal: no stage recruits or dismisses; its 255 (AllowCompanion(Danse, False, False), the Brotherhood's
+	// ending, his X-01) runs in both games as before.
+	CHECK(!DriverOf(File::kFallout4, DANSE));
+	for (const auto& rule : RULES) {
+		CHECK((rule.quest != DANSE || rule.file != 0 || !(rule.flags & kEach)));
+	}
+
+	// Nick after the Memory Den: 90 (AllowCompanion(Nick, True, True): ForceCompanion, Nick recruited to whoever runs it) is the
+	// owner's, with no acts of its own (its own 100 follows); 95 hides the objective; 100 (his affinity conditions) allows him
+	// again here by an act (MQ202 12, run in both games, disallowed each game's copy of him), completes the objective and stops
+	// the quest.
+	CHECK(FlagsOf(NICK_DEN, 90) == kEach && FlagsOf(NICK_DEN, 95) == kEach && FlagsOf(NICK_DEN, 100) == kEach);
+	CHECK(EachOf(File::kFallout4, NICK_DEN, 90).empty());
+	CHECK(!Find(NICK_DEN, 20));
+	const auto denHidden = EachOf(File::kFallout4, NICK_DEN, 95);
+	CHECK(denHidden.size() == 1 && denHidden[0].act == Act::kHide && denHidden[0].value == 10);
+	const auto denEnd = EachOf(File::kFallout4, NICK_DEN, 100);
+	CHECK(denEnd.size() == 3 && denEnd[0].act == Act::kAllow && denEnd[0].alias == 12 && denEnd[1].act == Act::kComplete && denEnd[1].value == 10 && denEnd[2].act == Act::kStopQuest);
+	CHECK(Commands(denEnd[0], 0x000FAC86, 0x00002F25, 0) == std::vector<std::string>{ "cqf Followers \"FollowersScript.AllowCompanion\" 00002F25 0 0" });
+	CHECK(Commands(denEnd[0], 0x000FAC86, 0, 0).empty());  // the alias empty here: not done (counted)
+	for (const auto& each : EACH) {
+		CHECK((each.act != Act::kAllow || each.alias != NO_ALIAS));  // an allow is always on the quest's companion alias
+	}
+	const auto& den = *DriverOf(File::kFallout4, NICK_DEN);
+	CHECK(den.companion == NICK_REF && den.faction == 0 && den.ran[0] == 0 && den.moved == 0);  // no mark of its own: ours, driven or mirrored decides
+	// The owner (Nick dismissed at the lounger by MQ202 12: not following) sets 90 by talking to him: driven here. A reload
+	// of a save from before that, with 90 in the session, mirrors it (the known limit: 100's act still allows him there, and
+	// the owner recruits him by his dialogue).
+	CompanionGame den1{ NICK_DEN, { 20 }, false, false };
+	den1.OwnPlay(90);
+	CHECK(den1.Drive() == Drive::kScripts && den1.ours);
+	CompanionGame den2{ NICK_DEN, { 20 }, false, false };
+	CHECK(den2.Drive() == Drive::kMirror);
+
+	// Nick after Long Time Coming: his quest script's timer (5), his COMNick stages (10: let go, 20: kept), the timer run out
+	// (50) and its end (100) are the owner's; a friend's game shows, hides and completes the one objective and stops the
+	// quest (no complete flag: the script's Stop).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 5, 10, 20, 50, 100 }) {
+		CHECK(FlagsOf(NICK_AFTER, stage) == kEach);
+	}
+	CHECK(!Find(NICK_AFTER, 7));
+	const auto shown = EachOf(File::kFallout4, NICK_AFTER, 5);
+	CHECK(shown.size() == 1 && shown[0].act == Act::kShow && shown[0].value == 5);
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 20 }) {
+		const auto acts = EachOf(File::kFallout4, NICK_AFTER, stage);
+		CHECK(acts.size() == 1 && acts[0].act == Act::kComplete && acts[0].value == 5);
+	}
+	const auto hidden = EachOf(File::kFallout4, NICK_AFTER, 50);
+	CHECK(hidden.size() == 1 && hidden[0].act == Act::kHide && hidden[0].value == 5);
+	const auto ended = EachOf(File::kFallout4, NICK_AFTER, 100);
+	CHECK(ended.size() == 2 && ended[0].act == Act::kComplete && ended[1].act == Act::kStopQuest);
+	CHECK(DriverOf(File::kFallout4, NICK_AFTER)->companion == NICK_REF);
+	CHECK(Commands(hidden[0], 0x0018817F, 0, 0) == std::vector<std::string>{ "setobjectivedisplayed 0018817F 5 0" });
+	CHECK(Commands(ended[1], 0x0018817F, 0, 0) == std::vector<std::string>{ "stopquest 0018817F" });
+
+	// Sheffield's Nuka-Cola (FFDiamondCity08 100): a payment with its affinity event, never a friend's; the quest is SAFE's.
+	CHECK(FlagsOf(SHEFFIELD, 100) == kPays);
+	CHECK(Judge(Find(SHEFFIELD, 100), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(QuestFilter::IsSafe(0, SHEFFIELD));
+
+	// Left out: Dogmeat's quest (DENIED: the shared MQ105 410 runs his recruit in each game) and X6-88's own (ComX688: his
+	// recruit, dismissal and affinity talks, each player's as every COM<Name> quest).
+	for (const auto& rule : RULES) {
+		CHECK((rule.file != 0 || (rule.quest != 0x06DFAF && rule.quest != 0x0BBD95)));
+	}
+	CHECK(!QuestFilter::IsSafe(0, 0x06DFAF) && !QuestFilter::IsSilent(0, 0x0BBD95) && !QuestFilter::IsSafe(0, 0x0BBD95));
 }
 
 TEST("stage rules: a companion's quest is driven by the game whose own scripts took it; its owner's stages are never marked done there without their script")
@@ -1104,9 +1270,14 @@ TEST("stage rules: a companion's quest is driven by the game whose own scripts t
 	constexpr std::uint32_t CURIE = 0x16454E;
 	constexpr std::uint32_t MACCREADY = 0x027411;
 	CHECK(DriverOf(File::kFallout4, CURIE) && DriverOf(File::kFallout4, MACCREADY));
-	CHECK(!DriverOf(File::kFallout4, 0x1666C5));  // COMCaitQuest: not a companion's quest of this table
+	CHECK(DriverOf(File::kFallout4, 0x1666C5));   // COMCaitQuest: Cait's, shared by its type, with kEach stages
+	CHECK(!DriverOf(File::kFallout4, 0x0229FE));  // MS07c: its kEach stages are quickstarts, mirrored in every other game
+	CHECK(!DriverOf(File::kFallout4, 0x0B9F9D));  // BoS302: no kEach stage
 	for (const auto& driver : DRIVERS) {
-		CHECK(QuestFilter::IsCompanionQuest(driver.file, driver.quest));
+		// A quest with owner's stages: one of the companions' own, or one with kEach rows of its own.
+		CHECK((QuestFilter::IsCompanionQuest(driver.file, driver.quest) || std::ranges::any_of(RULES, [&](const Rule& a_rule) {
+			return a_rule.file == driver.file && a_rule.quest == driver.quest && (a_rule.flags & kEach);
+		})));
 		CHECK(driver.file == static_cast<std::uint8_t>(File::kFallout4));  // QuestSync::HeldByQuests reads Fallout4.esm's ids as they are
 		for (const auto stage : driver.ran) {
 			if (stage) {

@@ -158,14 +158,14 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
 	// 98: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
-	CHECK(std::size(QuestFilter::SAFE) == 98);
+	CHECK(std::size(QuestFilter::SAFE) == 101);  // 98 and Nick's two misc quests and Sheffield's Nuka-Cola (their companion stages kEach or kPays)
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 46);
+	CHECK(perFile[0] == 49);  // 46 and Nick's two misc quests and Sheffield's Nuka-Cola
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
 	CHECK(perFile[3] == 13);
@@ -190,7 +190,12 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	// another or on the player, makes or lets someone be a companion, or changes a settlement's owner: each game's.
 	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ: Cait's and Tommy's ally faction, Cait recruitable
 	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07: SetEnemy, Hancock recruitable
-	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: a stage of Nick's companion quest
+	// ... unless that stage is StageRules' kPays (skipped whole in a friend's game) or kEach (marked done there without its
+	// script), or its AllowCompanion neither makes nor forces a companion: Nick's two misc quests and Sheffield's Nuka-Cola.
+	CHECK(QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: its COMNick stages and its timer are kEach
+	CHECK(QuestFilter::IsSafe(0, 0x0FAC86));  // MQ202NickPostSurgery: its 90 (ForceCompanion), 95 and 100 (his affinity conditions) kEach
+	CHECK(QuestFilter::IsSafe(0, 0x0502AC));  // FFDiamondCity08: its 100 (the Nuka-Cola, an affinity event) kPays
+	CHECK(!QuestFilter::IsSafe(0, 0x0BBD95) && !QuestFilter::IsSilent(0, 0x0BBD95));  // ComX688: X6-88's own, as COMNick is Nick's
 	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
 	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout: DLC04SendKickOut, through its quest's script
 	// A form ID is the quest's only in its own file.

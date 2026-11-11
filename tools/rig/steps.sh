@@ -2258,3 +2258,105 @@ step_companion_quests() {
 	expect_eq "companion_quests: his second affinity global is the VM's alone (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_B)/$(_cq_global host $CQ_MAC_AFFINITY_B)" "1/0"
 	crash_verdict "companion_quests"
 }
+
+# ---- companion_quests_2: Cait's quest and Nick's after the Memory Den (opt-in: smoke.sh --only companion_quests_2) -------------------
+# The other companions' quests (StageRules.h: Nick's, Cait's, Danse's; the SAFE MQ202NickPostSurgery and MS07cPostQuest): only a
+# stage that would recruit or dismiss a friend's companion is its owner's (kEach). Set-up by console, said so in the report: both
+# games coc to SanctuaryExt, Cait and Nick moved to the players (console moveto), the owner recruits by console (cqf Followers
+# SetCompanion), the stages are set by console setstage in the owner's game. Quest stages are for good in a save: run it on
+# throwaway saves (backup.sh before, restore after); a game with either quest's stages done is a FAIL naming them. Nick's quest
+# is SAFE's: the host must share the safe quests (sQuests = safe), else the step fails its set-up.
+# Cait (the host the owner, the VM with no companion): the host's 60 (DisallowCompanion in its script) dismisses her from the
+# host and puts her in DisallowedCompanionFaction (the mark: `stages` says drive=scripts marked=true in the host's game,
+# drive=mirror in the VM's), the VM's 60 is marked done without its script and leaves its copy of her out of the faction; the
+# host's 255 (AllowCompanion(Cait, True, False)) gives her back to the host, and the VM's 255, marked done without its script,
+# leaves the VM's Companion alias empty (a plain 255 would have recruited her there: nobody follows the VM) and completes the
+# quest in the VM's game.
+# Nick (the VM the owner, nobody's companion in either game): the VM's 90 (AllowCompanion(Nick, True, True): ForceCompanion)
+# recruits him to the VM and is marked done without its script in the host's game, whose Companion alias stays empty; its
+# script's 100 reaches the host as the owner's too (Nick's affinity conditions), its acts allowing the host's copy of him again
+# (cqf AllowCompanion with neither flag; MQ202 12 disallowed him in both games), completing the objective and stopping the quest.
+CQ2_CAIT=${CQ2_CAIT:-001666C5}; CQ2_NICK_DEN=${CQ2_NICK_DEN:-000FAC86}
+CQ2_CAIT_REF=00079305; CQ2_NICK_REF=00002F25; CQ2_DISALLOWED=00075D56
+_cq2_log_has() { grep -qE "$2" "$(win_read companion_quests_2 "$1")"; }
+_cq2_line() { grep -oE "$2" "$(win_read companion_quests_2 "$1")" | head -1; }
+_cq2_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetCompanion\" $2 1 1 1" >/dev/null; sleep 1; dc "$1" "console $2.evp" >/dev/null; }   # _cq2_recruit <who> <ref>
+_cq2_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissCompanion\" $2 0 1" >/dev/null; }   # _cq2_dismiss <who> <ref>
+_cq2_holds() { [ "$(_ch_held "$1")" = "$2" ]; }   # _cq2_holds <who> <ref>: that game's Companion alias holds the ref now
+_cq2_empty() { [ -z "$(_ch_held "$1")" ]; }
+_cq2_free_both() {  # both Companion aliases empty, whoever they hold
+	local w h; for w in host vm; do h=$(_ch_held "$w"); if [ -n "$h" ]; then _cq2_dismiss "$w" "$h"; sleep 4; fi; [ -z "$(_ch_held "$w")" ] || return 1; done
+}
+step_companion_quests_2() {
+	section "companion_quests_2 (Cait's quest, Nick's after the Memory Den; console placement, console recruits and console setstage for set-up)"
+	local w q kind
+	for w in host vm; do
+		kind=$(dc "$w" "stages $CQ2_NICK_DEN")
+		case "$kind" in *"shared=safe (shared"*) ;; *) fail "companion_quests_2: set-up: $w shares Nick's quest after the Memory Den (sQuests = safe)" "got '$kind'"; return;; esac
+		for q in "$CQ2_CAIT" "$CQ2_NICK_DEN"; do
+			if [ "$(_f_done "$w" "$q")" != none ]; then fail "companion_quests_2: set-up: no stage of $q done in $w's game (a throwaway save from before it)" "done $(_f_done "$w" "$q")"; return; fi
+		done
+	done
+	enter_both SanctuaryExt 14
+	crash_snapshot
+	for w in host vm; do dc "$w" "console $CQ2_CAIT_REF.moveto player" >/dev/null; dc "$w" "console $CQ2_NICK_REF.moveto player" >/dev/null; done
+	sleep 4
+	if ! wait_for 20 _cq2_free_both; then fail "companion_quests_2: set-up: the Companion alias empty in both games" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
+
+	# Cait, the host the owner: recruited there by console; the VM follows nobody.
+	_cq2_recruit host "$CQ2_CAIT_REF"
+	if ! wait_for 20 _cq2_holds host "$CQ2_CAIT_REF"; then fail "companion_quests_2: set-up: the host's console recruit of Cait" "alias '$(_ch_held host)'"; return; fi
+	win_mark companion_quests_2 vm
+	win_mark companion_quests_2 host
+	_cq_set host vm "$CQ2_CAIT" 10 || return
+	_cq_set host vm "$CQ2_CAIT" 60
+	if wait_for 10 _cq2_log_has vm "QuestSync: set $CQ2_CAIT .* stage 60 .*without its script"; then pass "companion_quests_2: the VM's 60 (Cait's chair) is marked done without its script (kEach)" "$(_cq2_line vm "QuestSync: set $CQ2_CAIT .* stage 60 .*")"
+	else fail "companion_quests_2: the VM's 60 (Cait's chair) is marked done without its script (kEach)" "no such line in the VM's log"; fi
+	if wait_for 15 _cq2_empty host; then pass "companion_quests_2: the host's 60 dismissed Cait (DisallowCompanion in its script)" "alias empty"
+	else fail "companion_quests_2: the host's 60 dismissed Cait (DisallowCompanion in its script)" "alias '$(_ch_held host)'"; fi
+	expect_match "companion_quests_2: the host's 60 put Cait in DisallowedCompanionFaction (its game drives her quest)" "$(dc host "factions $CQ2_CAIT_REF")" " $CQ2_DISALLOWED:"
+	if dc vm "factions $CQ2_CAIT_REF" | grep -q " $CQ2_DISALLOWED:"; then fail "companion_quests_2: the VM's mirrored 60 left its Cait out of DisallowedCompanionFaction" "$(dc vm "factions $CQ2_CAIT_REF")"
+	else pass "companion_quests_2: the VM's mirrored 60 left its Cait out of DisallowedCompanionFaction" "$(dc vm "factions $CQ2_CAIT_REF")"; fi
+	expect_match "companion_quests_2: after its 60 the host's game drives Cait's quest (the faction's mark)" "$(dc host "stages $CQ2_CAIT")" "drive=scripts marked=true"
+	expect_match "companion_quests_2: after its mirrored 60 the VM's game mirrors Cait's quest" "$(dc vm "stages $CQ2_CAIT")" "drive=mirror marked=false"
+	for q in 70 80 90 100 110; do _cq_set host vm "$CQ2_CAIT" "$q"; done
+	if _cq2_log_has vm "QuestSync: set $CQ2_CAIT .* stage (70|80|90|100|110) .*its script"; then fail "companion_quests_2: Cait's 70-110 are set in the VM's game as plain shared stages" "$(_cq2_line vm "QuestSync: set $CQ2_CAIT .* stage (70|80|90|100|110) .*its script.*")"
+	else pass "companion_quests_2: Cait's 70-110 are set in the VM's game as plain shared stages" "no owner's line for them"; fi
+	_cq_set host vm "$CQ2_CAIT" 255
+	if wait_for 10 _cq2_log_has vm "QuestSync: set $CQ2_CAIT .* stage 255 .*without its script"; then pass "companion_quests_2: the VM's 255 (Cait's cure) is marked done without its script (kEach)" "$(_cq2_line vm "QuestSync: set $CQ2_CAIT .* stage 255 .*")"
+	else fail "companion_quests_2: the VM's 255 (Cait's cure) is marked done without its script (kEach)" "no such line in the VM's log"; fi
+	if wait_for 15 _cq2_holds host "$CQ2_CAIT_REF"; then pass "companion_quests_2: the host's 255 gave Cait back to the host (AllowCompanion with MakeCompanionIfNoneCurrently)" "alias $(_ch_held host)"
+	else fail "companion_quests_2: the host's 255 gave Cait back to the host (AllowCompanion with MakeCompanionIfNoneCurrently)" "alias '$(_ch_held host)'"; fi
+	sleep 5
+	expect_eq "companion_quests_2: the VM's mirrored 255 recruited nobody (a plain 255 would have, with nobody following the VM)" "$(_ch_held vm)" ""
+	if wait_for 15 _cq_completed vm "$CQ2_CAIT"; then pass "companion_quests_2: Cait's quest is completed in the VM's game" "$(dc vm "stages $CQ2_CAIT" | cut -c1-80)"
+	else fail "companion_quests_2: Cait's quest is completed in the VM's game" "$(dc vm "stages $CQ2_CAIT" | cut -c1-120)"; fi
+	expect_match "companion_quests_2: after its 255 the host's game still drives Cait's quest (driven since its 60)" "$(dc host "stages $CQ2_CAIT")" "drive=scripts"
+	_cq2_dismiss host "$CQ2_CAIT_REF"; sleep 4
+
+	# Nick after the Memory Den, the VM the owner: nobody's companion in either game before its 90.
+	if ! wait_for 20 _cq2_free_both; then fail "companion_quests_2: set-up: the Companion alias empty in both games before Nick's quest" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
+	win_mark companion_quests_2 host
+	_cq_set vm host "$CQ2_NICK_DEN" 20 || return
+	_cq_set vm host "$CQ2_NICK_DEN" 90
+	if wait_for 10 _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 90 .*without its script"; then pass "companion_quests_2: the host's 90 (Nick's forced recruit) is marked done without its script (kEach)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 90 .*")"
+	else fail "companion_quests_2: the host's 90 (Nick's forced recruit) is marked done without its script (kEach)" "no such line in the host's log"; fi
+	if wait_for 15 _cq2_holds vm "$CQ2_NICK_REF"; then pass "companion_quests_2: the VM's 90 recruited Nick to the VM (ForceCompanion in its script)" "alias $(_ch_held vm)"
+	else fail "companion_quests_2: the VM's 90 recruited Nick to the VM (ForceCompanion in its script)" "alias '$(_ch_held vm)'"; fi
+	sleep 5
+	expect_eq "companion_quests_2: the host's mirrored 90 recruited nobody (a plain 90 would have forced Nick on the host)" "$(_ch_held host)" ""
+	if wait_for "$CQ_SET" _f_has host "$CQ2_NICK_DEN" 100; then pass "companion_quests_2: the VM's 100 (set by its 90's script) is done in the host's game" "done $(_f_done host "$CQ2_NICK_DEN")"
+	else fail "companion_quests_2: the VM's 100 (set by its 90's script) is done in the host's game" "host done $(_f_done host "$CQ2_NICK_DEN")"; fi
+	if wait_for 10 _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*without its script"; then pass "companion_quests_2: the host's 100 (Nick's affinity conditions) is marked done without its script (kEach)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"
+	else fail "companion_quests_2: the host's 100 (Nick's affinity conditions) is marked done without its script (kEach)" "no such line in the host's log"; fi
+	if _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*could not be"; then fail "companion_quests_2: every act of the host's 100 is done (Nick allowed again, the objective, the quest stopped)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"
+	else pass "companion_quests_2: every act of the host's 100 is done (Nick allowed again, the objective, the quest stopped)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*acts.*")"; fi
+	sleep 5
+	if dc host "factions $CQ2_NICK_REF" | grep -q " $CQ2_DISALLOWED:"; then fail "companion_quests_2: the host's mirrored 100 took its Nick out of DisallowedCompanionFaction (the act's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"
+	else pass "companion_quests_2: the host's mirrored 100 took its Nick out of DisallowedCompanionFaction (the act's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"; fi
+	if _cq_running host "$CQ2_NICK_DEN"; then fail "companion_quests_2: the host's mirrored 100 stopped Nick's quest there (the act's stopquest)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"
+	else pass "companion_quests_2: the host's mirrored 100 stopped Nick's quest there (the act's stopquest)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"; fi
+	expect_eq "companion_quests_2: Nick stays the VM's after its 100" "$(_ch_held vm)" "$CQ2_NICK_REF"
+	_cq2_dismiss vm "$CQ2_NICK_REF"; sleep 4
+	crash_verdict "companion_quests_2"
+}
