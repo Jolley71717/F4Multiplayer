@@ -40,6 +40,11 @@ namespace RadiantSync
 	// isn't running yet (it may still start a moment later, with what the aliases find then).
 	bool CancelStart(std::uint32_t a_quest);
 
+	// What fills a quest's reference and location aliases in our game, as the friends' games name it (a plugin's form as
+	// it is, our runtime NPC by the spawn id it is shared under or as one the session doesn't share, the player left
+	// out): what a run is shared with (EncounterRuns.h shares encounters' runs so).
+	std::vector<Protocol::RadiantFill> FillsHere(RE::TESQuest* a_quest);
+
 	// This player's id in the session (the welcome's).
 	void SetLocalPlayer(std::uint32_t a_id);
 	// Welcomed into a_session (after SetLocalPlayer and the story's sharing are set): the runs this world shared in it

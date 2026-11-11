@@ -1,10 +1,11 @@
-﻿#include "game/QuestSync.h"
+#include "game/QuestSync.h"
 #include "game/Official.h"
 
 #include "Config.h"
 #include "game/Achievements.h"
 #include "game/CatchUpMenus.h"
 #include "game/Companions.h"
+#include "game/EncounterRuns.h"
 #include "game/FadeWatch.h"
 #include "game/GameStop.h"
 #include "game/HostRules.h"
@@ -22,6 +23,7 @@
 #include "game/RollHook.h"
 #include "game/SceneHold.h"
 #include "game/ScriptDoors.h"
+#include "game/Spawns.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 #include "game/Story.h"
@@ -227,6 +229,7 @@ namespace QuestSync
 		std::uint32_t                                    unknown = 0;   // stages the quest doesn't have
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
+		std::uint32_t                                    encounterStartsRefused = 0;  // an encounter's stage that would have started it (SetHere)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -402,7 +405,8 @@ namespace QuestSync
 		// those too (sQuests = safe). A radiant's while its run here is shared (RadiantSync).
 		bool Shared(const RE::TESQuest* a_quest)
 		{
-			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest)) && (SafeShared() || !IsSafe(a_quest))) || RadiantSync::Shares(a_quest->GetFormID());
+			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest)) && (SafeShared() || !IsSafe(a_quest))) || RadiantSync::Shares(a_quest->GetFormID()) ||
+			       EncounterRuns::Shares(a_quest->GetFormID());
 		}
 
 		const StageRules::Rule* RuleFor(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -483,7 +487,7 @@ namespace QuestSync
 			here.busy = busy;
 			here.inSession = inSession && Shared(quest);
 			here.ranBefore = !here.running && RanBefore(quest);
-			here.startedHere = startedHere.contains(a_quest) || RadiantSync::Shares(a_quest);  // a shared run: started here for the session
+			here.startedHere = startedHere.contains(a_quest) || RadiantSync::Shares(a_quest) || EncounterRuns::Shares(a_quest);  // a shared run: started here for the session
 			const auto wait = StageLog::WaitsFor(here);
 			if (wait == StageLog::Wait::kNone) {
 				waitLogged.erase(a_quest);
@@ -1087,11 +1091,20 @@ namespace QuestSync
 				return StageLog::Set::kSkipped;
 			}
 			const char* name = quest->GetFullName();
+			// A random encounter's stage (its run's: EncounterRuns.h) never starts its quest: started so, it would run without
+			// its trigger or the owner's actors forced in. One that waited here past its quest's stop is dropped.
+			if (!(quest->data.flags & QUEST_RUNNING) && Spawns::IsEncounter(quest)) {
+				if (encounterStartsRefused++ < 20) {
+					REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: a random encounter's, and it no longer runs here (a stage never starts one)", a_quest, name ? name : "",
+						a_stage);
+				}
+				return StageLog::Set::kSkipped;
+			}
 			const auto  file = FileOf(quest);
 			const auto  local = a_quest & 0x00FFFFFF;
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
-			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest));
+			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
 			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
 			const auto  judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			const auto  rule = judged ? &*judged : nullptr;
@@ -1724,6 +1737,7 @@ namespace QuestSync
 		// so a run begun now takes the stages done so far with its start).
 		if (report) {
 			RadiantSync::Frame(a_inSession);
+			EncounterRuns::Frame(a_inSession);  // encounters shown by an objective, shared by their run as a radiant is
 		}
 
 		unstarted.Expire(now);
@@ -1832,6 +1846,9 @@ namespace QuestSync
 		for (auto& packet : RadiantSync::TakeOutgoing()) {
 			outgoing.Add(std::move(packet), true);
 		}
+		for (auto& packet : EncounterRuns::TakeOutgoing()) {
+			outgoing.Add(std::move(packet), true);
+		}
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession)
@@ -1844,6 +1861,7 @@ namespace QuestSync
 	{
 		outgoing.NewSession();
 		RadiantSync::OnServerChanged();
+		EncounterRuns::Clear();
 	}
 
 	void OnSessionEnded()
@@ -1877,6 +1895,8 @@ namespace QuestSync
 		catchingUp.clear();
 		startHolds.clear();
 		RadiantSync::OnSessionEnded();  // the radiants go on, each player's own
+		EncounterRuns::EndFollowed();   // and the encounters: ours go on, a friend's we follow ends with its actors' copies
+		EncounterRuns::Clear();
 		// A host's game reports its progress again once its server welcomes it back (QueueBaseline).
 		baseline.clear();
 		baselineQueued = false;
@@ -1934,6 +1954,7 @@ namespace QuestSync
 		baseline.clear();  // a host's game reports the loaded save's progress instead
 		baselineQueued = false;
 		RadiantSync::Rebaseline();
+		EncounterRuns::Clear();
 	}
 
 	std::string DriveText(RE::TESQuest* a_quest)
@@ -1990,6 +2011,6 @@ namespace QuestSync
 			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +
-		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe();
+		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe() + " " + EncounterRuns::Describe();
 	}
 }

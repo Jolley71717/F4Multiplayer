@@ -934,6 +934,8 @@ namespace WorldSync
 								a_event.hitData.weapon.object ? a_event.hitData.weapon.object->GetFormID() : 0, a_event.projectileFormID,
 								a_event.usesHitData ? a_event.hitData.totalDamage : -1.0f, a_event.usesHitData ? a_event.hitData.flags.underlying() : 0u, n);
 						}
+					} else if (by && Protocol::IsSpawnRef(attacker)) {
+						Spawns::OnPlayerHitBy(attacker);  // an encounter's actor that hurt our player: its run stands (Spawns' next frame)
 					}
 				}
 				// Our player shot a loose object: where it comes to rest is ours to report (MovedObjects). Or a destructible one

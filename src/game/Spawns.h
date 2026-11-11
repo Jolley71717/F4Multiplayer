@@ -3,6 +3,7 @@
 #include "Protocol.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,28 @@ namespace Spawns
 	// first, loaded or not, so none is shared on as a fight's spawn. a_actorsOnly: its actors removed, the quest left
 	// running (a mirror of the host's attack whose own timer began it: its attackers are not the host's).
 	void StopQuestRun(std::uint32_t a_quest, bool a_actorsOnly = false);
+
+	// Random encounters (Encounters.h), for their runs shared (EncounterRuns.h): whether a quest is an encounter in our
+	// game's files; whether our run of one stands for good (Encounters::Book::Stands; nothing when the book knows no run
+	// of it: none of its actors seen alive); whether ours is giving way (stopped lately, or within its window still);
+	// whether a_player's game still shares a live actor of their run of it.
+	[[nodiscard]] bool                IsEncounter(const RE::TESQuest* a_quest);
+	[[nodiscard]] std::optional<bool> EncounterStands(std::uint32_t a_quest);
+	[[nodiscard]] bool                EncounterGivingWay(std::uint32_t a_quest);
+	[[nodiscard]] bool                TheirEncounterLive(std::uint32_t a_player, std::uint32_t a_quest);
+
+	// Our copy of a friend's spawn as a run's alias can take it: the copy placed now (0: none yet), and whether the spawn
+	// is over (dead, let go of, or unknown here), so no copy is to be waited for.
+	struct CopyHere
+	{
+		std::uint32_t local = 0;
+		bool          over = false;
+	};
+	[[nodiscard]] CopyHere CopyFor(std::uint32_t a_id);
+
+	// An NPC hit our player (WorldSync's hit watch; any thread): if it is an actor of an encounter run of ours, the run
+	// stands from now on (Encounters::Book::OursHurt), seen to on the next Frame.
+	void OnPlayerHitBy(std::uint32_t a_local);
 
 	// Places and deletes copies. Every frame while in a session.
 	void Frame();
