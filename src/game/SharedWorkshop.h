@@ -519,6 +519,28 @@ namespace SharedWorkshop
 		return done;
 	}
 
+	// ---- A held wire's status -----------------------------------------------------------------------------
+
+	// What the engine's spline status (1.11.240: Workshop's 2195059, run by the placement update each frame a wire is held)
+	// left in the byte Workshop::CanPlaceItem reads: 1, the wire may be put down; else why not. Named for the logs and the rig.
+	[[nodiscard]] constexpr const char* WireStatusName(std::uint8_t a_status)
+	{
+		switch (a_status) {
+		case 1:
+			return "ok";
+		case 2:
+			return "no-end";  // no second end the wire pick's filter passed, or it is the first end
+		case 3:
+			return "blocked";  // the engine's cast along the wire met something between the ends
+		case 6:
+			return "too-long";
+		case 8:
+			return "already-wired";  // the first end's power links already hold the target
+		default:
+			return "other";
+		}
+	}
+
 	// ---- The budget's totals -----------------------------------------------------------------------------
 
 	// Whether the engine's budget totals are the workbench's own right now, so an add or remove may use them as they are:

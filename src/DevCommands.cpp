@@ -2496,6 +2496,11 @@ namespace DevCommands
 		std::string WsMode(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
+			// wsmode scraptest <refHex>: the engine's scrap test of that reference, as the Scrap key asks it, and its parts.
+			if (!args.empty() && args[0] == "scraptest") {
+				const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+				return ref ? WorkshopSync::ScrapTestForDev(ref) : "error: usage: wsmode scraptest <refHex>";
+			}
 			if (!args.empty() && args[0] == "pick") {
 				if (args.size() == 1) {
 					return WorkshopSync::PickForDev(std::nullopt);
@@ -2511,7 +2516,7 @@ namespace DevCommands
 			} else if (args.size() == 1 && (args[0] == "hold" || args[0] == "serve")) {
 				WorkshopSync::HoldAnswersForDev(args[0] == "hold");
 			} else if (!args.empty()) {
-				return "error: usage: wsmode [on|off|host|hold|serve|pick [<refHex>|off]]";
+				return "error: usage: wsmode [on|off|host|hold|serve|pick [<refHex>|off]|scraptest <refHex>]";
 			}
 			return WorkshopSync::DescribeShared();
 		}

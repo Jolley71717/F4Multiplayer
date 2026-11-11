@@ -1983,10 +1983,15 @@ _sws_host_budget_cases() {
 	# never runs while one is held, so Cancel puts it away first
 	if ! _sws_put_away host "$label (wire)"; then _ws_exit host; return 1; fi
 	# The engine's Scrap only asks: Workshop::RequestScrapRef (1.11.240) opens ExamineConfirmMenu with what the scrap gives back,
-	# and the scrap is that menu's confirm. So Scrap on the highlighted wire, then Accept in the confirmation.
+	# and the scrap is that menu's confirm. So Scrap on the highlighted wire, then Accept in the confirmation. Before the press, the
+	# engine's own scrap test of the wire (wsmode scraptest: its answer and what it reads); the press itself counts in scrapKeys
+	# only if it got past Workshop::RequestScrapPlacementItem's gate (scrapGate= must be 0) to the test, and the host logs the
+	# test's answer ("Scrap key on <ref>").
+	local st sk0 sk1
+	st=$(dc host "wsmode scraptest $w"); sk0=$(_sws_counter host scrapKeys)
 	if _sws_aim_press host "$w" "$HWS_KEY_SCRAP" select "$label (wire)"; then
 		if wait_for 6 _menu_open host ExamineConfirmMenu; then
-			pass "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS"
+			pass "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS; $st"
 			local how=Accept kr
 			kr=$(dc host "key $HWS_KEY_SELECT 80"); sleep 1
 			if ! wait_for 5 _menu_closed host ExamineConfirmMenu; then
@@ -1996,7 +2001,8 @@ _sws_host_budget_cases() {
 			if _menu_open host ExamineConfirmMenu; then fail "$label (wire): set-up: the host confirms its scrap" "the confirmation stayed open after Accept ($HWS_KEY_SELECT) and E: $kr; $(host menus | grep -oE 'open=[^ ]*')"; dc host "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
 			else pass "$label (wire): set-up: the host confirms its scrap" "with $how: $kr"; fi
 		else
-			fail "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; now $(host menus | grep -oE 'open=[^ ]*'); $(host workshop | grep -oE '(held|selected|newItem|editing)=[^ ]*' | tr '\n' ' ')(the engine's scrap test refused the wire, or the key never reached the game: front= above)"
+			sk1=$(_sws_counter host scrapKeys)
+			fail "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; now $(host menus | grep -oE 'open=[^ ]*'); $(host workshop | grep -oE '(held|selected|newItem|editing|scrapGate)=[^ ]*' | tr '\n' ' ')| before the press: $st | scrapKeys $sk0 -> $sk1 ($( [ "${sk1:-0}" -gt "${sk0:-0}" ] 2>/dev/null && echo "the press reached the engine's scrap test: $(grep -oE "WorkshopSync: workshop mode's Scrap key on $w[^;]*" "$(win_read sws host)" | tail -1 | cut -c1-260)" || echo "the press never reached the scrap test: the gate (scrapGate=1 above), the menu, or the key (front= above)"))"
 		fi
 	fi
 	sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
@@ -2007,7 +2013,7 @@ _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
 SWS_WIRE=${SWS_WIRE:-0001D971}   # the workshop's power wire (what Attach Wire strings)
 _menu_open() { dc "$1" menus | grep -qE "open=([^ ]*,)?$2:"; }
 _menu_closed() { ! _menu_open "$@"; }
-_sws_fields() { grep -oE '(^| )(held|heldBase|newItem|selected|editing|canPlace)=[^ ]*' <<<"$1" | tr -d ' ' | tr '\n' ' '; }   # dev workshop's fields, on one line
+_sws_fields() { grep -oE '(^| )(held|heldBase|newItem|selected|editing|canPlace|placeStatus|wireStatus|wireFrom|wireTarget|scrapGate)=[^ ]*' <<<"$1" | tr -d ' ' | tr '\n' ' '; }   # dev workshop's fields, on one line
 # What workshop mode holds decides what can be picked. While it holds a piece (a new piece's ghost, a wire being strung, or a
 # grabbed piece: dev workshop's held=) the general pick never runs (Workshop::UpdateForegroundReferenceJob, 1.11.240, skips it while
 # the new-item byte is 0 or an edit is active), so nothing is highlighted and selected= is the held piece itself; only a held wire's
@@ -2036,9 +2042,12 @@ _sws_put_away() {
 # wire, newItem=true), the engine says the wire may be put down now (canPlace=true, Workshop::IsSplineValid's verdict: its wire pick
 # found a second end it accepts), twice 0.4 s apart. Never pressed on whatever happens to be under the crosshair: holding the wrong
 # thing, a turn the game refused, or a reference never reached is a loud set-up failure, and false. The failure leads with where the
-# reference stood from the general pick's last ray (radius, miss: how far its centre is off the ray, inCast: whether the cast met its
-# body, and how old that ray is: the pick runs only while nothing is held), then the pick's whole last run. SWS_LAST_PRESS says what
-# workshop mode had just before the key, and the key's answer (front=: whether the game was in front to take it).
+# reference stood from the last ray of the pick that runs in that state (radius, miss: how far its centre is off the ray, inCast:
+# whether the cast met its body, and how old that ray is): "select", the general pick's (it runs only while nothing is held);
+# "wire", the wire pick's (it runs instead while a wire is held: reached=, whether its search met the reference, target=, whether
+# its filter took it as the second end) with the engine's spline status (wireStatus=: no-end, blocked, too-long, already-wired)
+# and the wire's ends; then that pick's whole last run. SWS_LAST_PRESS says what workshop mode had just before the key, and the
+# key's answer (front=: whether the game was in front to take it).
 SWS_LAST_PRESS=""
 _sws_aim_press() {
 	local who=$1 ref=$2 vk=$3 how=${4:-select} label=${5:-sharedws (real hooks)} t dz f r w w2 pk ok="" ago where c0 c1
@@ -2071,6 +2080,14 @@ _sws_aim_press() {
 		fi
 	done
 	pk=$(dc "$who" "wsmode pick off")
+	if [ -z "$ok" ] && [ "$how" = wire ]; then
+		# the wire pick's evidence, not the general pick's (which doesn't run while the wire is held: its ray is stale)
+		ago=$(grep -oE 'wire run [0-9]+ ms ago' <<<"$pk" | grep -oE '[0-9]+')
+		where=$(grep -oE "wire $ref: [^|]*" <<<"$pk" | grep -oE '(radius|along|miss)=[0-9-]+|(inCast|reached|target)=[a-z]+' | tr '\n' ' ')
+		c1=$(_sws_counter "$who" picksAdmitted)
+		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never, heights tried within radius $r: ${where:-no measure of $ref} from the wire pick's last ray, ${ago:-?} ms old$( { is_int "$ago" && [ "$ago" -gt 3000 ]; } && echo ' (stale: the wire pick is not running; no wire held?)'); the engine's verdict: $(grep -oE '(canPlace|placeStatus|wireStatus|wireFrom|wireTarget)=[^ ]*' <<<"$w" | tr '\n' ' ')(wireStatus no-end: no second end its filter took; blocked: its cast along the wire met something; too-long; already-wired); picksAdmitted +$(( ${c1:-0} - ${c0:-0} )) while aiming; last turnto '$(grep -oE 'aim .*' <<<"$t")' | $(grep -oE 'wire pick runs=[^|]*' <<<"$pk" | cut -c1-1200)"
+		return 1
+	fi
 	if [ -z "$ok" ]; then
 		ago=$(grep -oE 'last run [0-9]+ ms ago' <<<"$pk" | grep -oE '[0-9]+')
 		where="$(grep -oE "$ref: center [^|]*" <<<"$pk" | grep -oE '(radius|along|miss)=[0-9-]+' | tr '\n' ' ')$(grep -oE "$ref: bodies [^|]*" <<<"$pk" | grep -oE 'inCast=[a-z]+')"

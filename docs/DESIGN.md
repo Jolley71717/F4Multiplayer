@@ -3150,6 +3150,28 @@ search reached (`pickCopyHits`), those the test refused (`pickCopyRefused`, the 
 tests), those admitted at the filter (`filterAdmitted`) and those of another bench (`filterOtherBench`). The rig's `turnto ...
 aim` aims from that same eye.
 
+While a wire is held the general pick doesn't run: the job calls the wire pick instead (2194909 +0xCC, the same lambda and
+context, the flag 0), so its run is watched the same way (three more sites: that call, its cast's sort at +0x3ED, and its own
+filter, Workshop's wire filter 2195584 at +0x511). The wire filter, read whole in 1.11.240, passes a reference with the
+`workshopPowerConnection` actor value (the base's property sheet counts, so a copy has it) or the power keyword 4797192, passes
+the wire's first end (4797240) itself, and refuses only a reference the bench's grids already connect to the first end; it asks
+nothing of owners, workbenches or the build area, so it is watched, never overridden. What it passes is the wire's target
+(4797239), and the placement update's spline status (2195059) puts its verdict in the byte `CanPlaceItem` reads: 1 ok, 2 no
+second end (or the first end itself), 3 the engine's cast along the wire met something, 6 too long, 8 the ends already wired
+(`SharedWorkshop::WireStatusName`). Dev `workshop` shows it (`placeStatus`, `wireStatus`, `wireFrom`, `wireTarget`), and `wsmode
+pick` the wire pick's last run (`wire run`, its `target`) and where the watched piece stands from its ray (`| wire <ref>:`); the
+copies the wire filter refuses are counted (`wireFilterCopyNo`) and the first five logged with its tests. The rig judges a wire's
+second end by that, not by the general pick's ray, which is stale while the wire is held.
+
+The Scrap key's engine path, read whole in 1.11.240: the menu's XButton (release, not in new-item mode) calls
+`RequestScrapPlacementItem`, which asks `WorkshopCanScrapRef` only while the byte 4797148 is 0 (set to 1 by the placement job
+2195216 after the menu's Accept on a new piece asks for it, back to 0 at the placement), and `RequestScrapRef` then always opens
+ExamineConfirmMenu. For a reference that is no actor and no inventory item (a wire), `WorkshopCanScrapRef` refuses for keyword
+4797212 and otherwise reads only the base (`inGameFormFlags` bit 0, or a MISC with components): the host's wire for a friend has
+the engine's wire base and no keyword of ours. Each press that reaches the test is counted (`scrapKeys`, `scrapKeyNo`) and logged
+with the answer and its parts ("Scrap key on"); `wsmode scraptest <ref>` asks the test directly, and dev `workshop` shows the gate
+(`scrapGate`).
+
 The engine then strings the wire on the friend's bench (`ConnectSpline`, `AddPowerLink`, `AddConnection`: the one moment the
 engine adds something of the session to a friend's grid), and its placed event, in the same frame on the main thread, takes it off
 again through the exact Detach path (`DetachWire`: `DisconnectSpline`, `RemoveItem` off every grid naming the wire and each copy

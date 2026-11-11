@@ -65,16 +65,23 @@ namespace WorkshopSync
 	// Dev, the host's game: friends' requests taken but not made or answered while held (wsmode hold), then served (wsmode serve).
 	void                      HoldAnswersForDev(bool a_hold);
 	// Dev: what workshop mode holds and highlights, for the workshop dev command: "held=<ref> heldBase=<base> newItem=<bool>
-	// selected=<ref> editing=<bool> canPlace=<bool>". held is a new piece's ghost or a grabbed piece (00000000: nothing held);
-	// selected is the placement item whatever it is (the highlighted piece at idle); canPlace is Workshop::CanPlaceItem.
+	// selected=<ref> editing=<bool> canPlace=<bool> placeStatus=<n> [wireStatus=<name> wireFrom=<ref> wireTarget=<ref>]
+	// scrapGate=<n>". held is a new piece's ghost or a grabbed piece (00000000: nothing held); selected is the placement item
+	// whatever it is (the highlighted piece at idle); canPlace is Workshop::CanPlaceItem (placeStatus == 1). While a wire is
+	// held (its first end set), placeStatus is the spline status by name (SharedWorkshop::WireStatusName) and the wire's ends.
+	// scrapGate: the byte the Scrap key needs 0 in before the engine's scrap test is asked.
 	[[nodiscard]] std::string HeldForDev();
+	// Dev (wsmode scraptest <ref>): the engine's scrap test of the reference (WorkshopCanScrapRef, as the Scrap key asks it)
+	// and what it reads: the base, its flag, the keyword that refuses, the gate before it.
+	[[nodiscard]] std::string ScrapTestForDev(RE::TESObjectREFR* a_ref);
 	[[nodiscard]] std::string DescribeShared();
 	// Dev: workshop mode's general pick watched (wsmode pick): a_watch set, a reference to watch (each run whose search reaches
 	// something else then logged, and an unchanged one every 2 s, at most four a second) or none (null) to stop; then the
 	// pick's counts, its last run (the ray, each hit the search reached near to far with what the pick made of it, what it
 	// picked, and every hit of the cast: body, reference, layer, distance) and where the watched piece (or with null, the one
 	// that was watched) stands from that ray (miss: how far its bound's center is off the ray, against its radius), with its
-	// own bodies and whether the cast hit one (inCast).
+	// own bodies and whether the cast hit one (inCast). Then the wire pick's (it runs instead while a wire is held): its counts,
+	// last run and target (what its filter passed), and where the watched piece stands from its ray ("| wire <ref>: ...").
 	[[nodiscard]] std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch);
 
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on

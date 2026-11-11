@@ -6,6 +6,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // The shared workshop (src/game/SharedWorkshop.h): a friend's build or wire at the host's settlement as a numbered request the
@@ -423,4 +424,15 @@ TEST("shared workshop: the friend's grids may name none of the in-session pieces
 	CHECK(Strays(grids, elsewhere).empty());
 	CHECK(Strays(grids, three) == sorted);
 	CHECK(Strays(grids, wireOnly) == justWire);  // a deleted wire's id still on a grid
+}
+
+TEST("shared workshop: a held wire's status is named as the engine's spline status sets it")
+{
+	CHECK(std::string_view{ WireStatusName(1) } == "ok");
+	CHECK(std::string_view{ WireStatusName(2) } == "no-end");
+	CHECK(std::string_view{ WireStatusName(3) } == "blocked");
+	CHECK(std::string_view{ WireStatusName(6) } == "too-long");
+	CHECK(std::string_view{ WireStatusName(8) } == "already-wired");
+	CHECK(std::string_view{ WireStatusName(0) } == "other");  // never set by it: no wire held, or another piece's verdict
+	CHECK(std::string_view{ WireStatusName(4) } == "other");
 }
