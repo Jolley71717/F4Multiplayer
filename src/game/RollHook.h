@@ -62,6 +62,10 @@ namespace RollHook
 	// life's, and the roll we kept of it goes. True when that is news (a death we hadn't counted).
 	bool SetLives(const Protocol::RollLife& a_life);
 
+	// a_refId starts a new life without dying (Curie's new body at her quest's 300, one SharedRoll::RolledByGlobals): any
+	// roll we kept of it goes, before the engine builds it again. Main thread.
+	void Renew(std::uint32_t a_refId);
+
 	// Main thread, once a frame: the session's rolls written on our references that have one of their own but are not
 	// loaded, so the next time their cell loads they are the session's (Rolls::Apply's write; counted as prewritten).
 	void Frame();

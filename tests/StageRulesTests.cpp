@@ -1,6 +1,7 @@
 #include "Test.h"
 
 #include "game/QuestFilter.h"
+#include "game/SharedRoll.h"
 #include "game/StageRules.h"
 
 #include <algorithm>
@@ -817,8 +818,8 @@ TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are
 	constexpr std::uint32_t CURIE = 0x16454E;     // COMCurieQuest, Emergent Behavior
 	constexpr std::uint32_t MACCREADY = 0x027411;  // COMMacCreadyQuest, Long Road Ahead
 	// The flag's own bit: 7 (6 is kDebug's), shared with no other flag.
-	CHECK(kEach == 1 << 7);
-	CHECK((kEach & (kMoves | kBridge | kPays | kStory | kFree | kHostile | (1 << 6))) == 0);
+	static_assert(kEach == 1 << 7);
+	static_assert((kEach & (kMoves | kBridge | kPays | kStory | kFree | kHostile | (1 << 6))) == 0);
 	// The table is sorted (a stage's acts kept in their order), every row's stage is kEach, and only the companions'
 	// quests have kEach stages.
 	for (auto it = std::next(std::begin(EACH)); it != std::end(EACH); ++it) {
@@ -872,6 +873,23 @@ TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are
 	CHECK(Judge(body, { .live = false, .held = true }) == Verdict::kLater);
 }
 
+
+TEST("stage rules: a companion given a new body is one the engine rolls by her quest's globals, never a session's stored roll")
+{
+	using namespace StageRules;
+	std::size_t bodies = 0;
+	for (const auto& each : EACH) {
+		if (each.act != Act::kNewBody) {
+			continue;
+		}
+		++bodies;
+		const auto driver = DriverOf(static_cast<File>(each.file), each.quest);
+		CHECK(driver != nullptr);
+		// The quest's companion is in the act's alias (0, Companion) and Fallout4.esm's: her runtime id is her own.
+		CHECK(driver && each.file == static_cast<std::uint8_t>(File::kFallout4) && SharedRoll::RolledByGlobals(driver->companion));
+	}
+	CHECK(bodies == 1);
+}
 
 TEST("stage rules: Curie's new body in a friend's game: the globals her base reads, then her items moved and her actor reset, then dressed with her affinity and factions as they were")
 {

@@ -312,6 +312,14 @@ TEST("shared rolls: what can't be rolled whole is left to the game, and says why
 	}
 }
 
+// Curie's leveled base (LCharCurie) rolls the robot or the synth by her quest's globals, which every game sets alike
+// at her 300: the engine's own roll of her, never a session's stored one (RollHook::Decide), so her new body isn't
+// forced back to the robot in any game.
+static_assert(SharedRoll::RolledByGlobals(0x00102249));   // CurieRef
+static_assert(!SharedRoll::RolledByGlobals(0x0002A8A7));  // MacCready: an ordinary roll
+static_assert(!SharedRoll::RolledByGlobals(0x00000014));
+static_assert(!SharedRoll::RolledByGlobals(0x01102249));  // the same id in another plugin isn't her
+
 // ---- keys --------------------------------------------------------------------------------------------------------
 
 TEST("shared rolls: a reference is keyed by its plugin's name and its id there, whatever the load order or the name's case")

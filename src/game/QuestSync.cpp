@@ -11,6 +11,7 @@
 #include "game/Hud.h"
 #include "game/MenuInput.h"
 #include "game/MenuMessages.h"
+#include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/QuestFilter.h"
@@ -18,6 +19,7 @@
 #include "game/RadiantRules.h"
 #include "game/RadiantSync.h"
 #include "game/RemotePlayers.h"
+#include "game/RollHook.h"
 #include "game/SceneHold.h"
 #include "game/ScriptDoors.h"
 #include "game/StageLog.h"
@@ -718,7 +720,7 @@ namespace QuestSync
 			}
 			facts.inFaction = a_driver.faction && InFaction(a_companion, (a_quest->GetFormID() & 0xFF000000) | a_driver.faction);
 			if (a_driver.alias != StageRules::NO_ALIAS) {
-				const auto held = a_quest->GetAliasedRef(static_cast<std::uint32_t>(a_driver.alias));
+				const auto held = a_quest->GetAliasedRef(static_cast<std::uint32_t>(a_driver.alias)).get();
 				facts.inAlias = held && held.get() == a_companion;
 			}
 			return facts;
@@ -804,14 +806,40 @@ namespace QuestSync
 			newBody.reset();
 		}
 
+		// A companion given a new body without dying (Curie's 300 resets her, and the engine builds her again from her leveled
+		// list, which her quest's globals now roll as the synth): the rolls kept of her go first, so nothing forces her old body
+		// back (RollHook keeps none of her: SharedRoll::RolledByGlobals; NpcSync's report of her old body is forgotten). The
+		// game that runs her reports her new body as it changes (NpcSync's SendOwnedRolls).
+		void RenewRoll(std::uint32_t a_ref)
+		{
+			RollHook::Renew(a_ref);
+			NpcSync::ForgetRoll(a_ref);
+			REX::INFO("QuestSync: {:08X} gets a new body: the rolls kept of her old one are forgotten", a_ref);
+		}
+
+		// RenewRoll for the actor of each of a_stage's kNewBody acts, before (or as) the stage's own script gives her the body.
+		void RenewBodies(RE::TESQuest* a_quest, StageRules::File a_file, std::uint16_t a_stage)
+		{
+			for (const auto& each : StageRules::EachOf(a_file, a_quest->GetFormID() & 0x00FFFFFF, a_stage)) {
+				if (each.act != StageRules::Act::kNewBody || each.alias < 0) {
+					continue;
+				}
+				if (const auto ref = a_quest->GetAliasedRef(static_cast<std::uint32_t>(each.alias)).get()) {
+					RenewRoll(ref->GetFormID());
+				}
+			}
+		}
+
 		// The new body's first half, now: what the reset clears read first (her affinity, her factions), her items into the
-		// body she leaves, the reset. False if it can't be done (no body to take her items).
+		// body she leaves, the rolls kept of her old body forgotten, the reset. False if it can't be done (no body to take her
+		// items).
 		bool StartNewBody(RE::Actor* a_actor, RE::TESObjectREFR* a_items, RE::TESObjectREFR* a_destination, std::uint32_t a_outfit, Clock::time_point a_now)
 		{
 			const auto lines = StageRules::NewBodyBefore(a_actor->GetFormID(), a_items ? a_items->GetFormID() : 0u, a_destination ? a_destination->GetFormID() : 0u);
 			if (lines.empty()) {
 				return false;
 			}
+			RenewRoll(a_actor->GetFormID());
 			NewBody body;
 			body.ref = a_actor->GetFormID();
 			body.outfit = a_outfit;
@@ -1182,6 +1210,7 @@ namespace QuestSync
 					driveText, StageRules::EachOf(*file, local, a_stage).size(), missed ? std::format(", {} could not be done", missed) : std::string{}, body,
 					now.live || !followed.empty() ? "" : " (catching up)", followed);
 			} else if (each) {
+				RenewBodies(quest, *file, a_stage);  // her script's reset builds her again: no kept roll of her old body forced on it
 				SetStageHere(quest, a_stage);
 				++drivenStages;
 				drivenHere.insert(a_quest);  // until a load: its script may not have left its mark yet
@@ -1697,6 +1726,11 @@ namespace QuestSync
 					drivenHere.insert(id).second) {
 					REX::INFO("QuestSync: {:08X} '{}': one of its companion's owner's stages ran here by this game's own play; this game drives it until a load", id,
 						quest->GetFullName() ? quest->GetFullName() : "");
+				}
+				if (companionFile) {
+					for (const auto stage : fresh) {
+						RenewBodies(quest, *companionFile, stage);  // her own play's new body: what we kept of her old one goes
+					}
 				}
 			} else if (!unstarted.Has(id)) {
 				continue;

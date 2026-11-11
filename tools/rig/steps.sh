@@ -2055,8 +2055,9 @@ step_companions_human() {
 # and Curie is put by the player in each (console moveto: loaded near both players for 300, as at the lab); in the VM, by
 # console, she is made met (HasBeenCompanionFaction), given an affinity and a stack of rounds. 300, her new body, sets the VM's
 # globals her base reads (synth 100, robot 0), enables the memory lounger, moves her items into the robot body (alias
-# FakeCurieRobot), and gives her new body back her affinity and her factions. The VM saves and loads: 300 is still done, and
-# not set again (one "without its script" line). 600 completes the quest in the VM's game while her affinity's global there
+# FakeCurieRobot), and gives her new body back her affinity and her factions. In both games her new body is the synth (`rolls
+# show`: her templates; no session roll of her kept to force the robot back). The VM saves and loads: 300 is still done, not set
+# again (one "without its script" line), and she is still the synth. 600 completes the quest in the VM's game while her affinity's global there
 # stays 0 (the host's is 1).
 # MacCready (the VM the owner): the VM's 30 (the hire, by console: the mark of the driving game) is never set in the host's game;
 # 60 starts it in the host's game; 120 leaves the host's affinity global at 0; the VM's game is then killed (the owner leaving
@@ -2069,6 +2070,7 @@ step_companions_human() {
 CQ_CURIE=${CQ_CURIE:-0016454E}; CQ_MAC=${CQ_MAC:-00027411}
 CQ_CURIE_SYNTH=0010BD4C; CQ_CURIE_ROBOT=001846CD; CQ_CURIE_AFFINITY=00204C21; CQ_LOUNGER=0017FC1C
 CQ_MAC_AFFINITY_A=001C53D5; CQ_MAC_AFFINITY_B=000576D9
+CQ_SYNTH_NPC=001647C6; CQ_ROBOT_NPC=001846CB   # the NPCs LCharCurie rolls by her globals: her synth body, her robot one
 CQ_CURIE_REF=00102249; CQ_DISALLOWED=00075D56; CQ_HAS_BEEN=000A1B85; CQ_CA_AFFINITY=000A1B80; CQ_LAB_CELL=${CQ_LAB_CELL:-GoodneighborTheMemoryDen}
 CQ_AFF=${CQ_AFF:-321}; CQ_MARK_ITEM=0001F276; CQ_MARK_N=37   # her affinity and a stack of 10mm rounds, given in the VM before 300
 CQ_SET=${CQ_SET:-30}   # s, for a stage set in one game to be done in the other
@@ -2082,6 +2084,12 @@ _cq_completed() {  # _cq_completed <who> <quest>: the quest's QUEST_COMPLETED fl
 _cq_factions() { dc "$1" "factions $CQ_CURIE_REF" | grep -oE '[0-9A-F]{8}:-?[0-9]+' | sort | tr '\n' ' '; }   # her faction changes, sorted
 _cq_running() { local f; f=$(dc "$1" "stages $2" | sed -nE 's/.*flags=([0-9A-F]+).*/\1/p'); [ -n "$f" ] && [ $(( 16#$f & 1 )) -ne 0 ]; }   # QUEST_ENABLED (0x1)
 _cq_count() { grep -cE "$2" "$(win_read companion_quests "$1")"; }
+_cq_synth() {  # _cq_synth <who> <when>: Curie built as her synth body in that game (rolls show: her templates), no session roll kept of her
+	local r; r=$(dc "$1" "rolls show $CQ_CURIE_REF")
+	if echo "$r" | grep -qE "templates=[0-9A-F,]*$CQ_SYNTH_NPC" && ! echo "$r" | grep -qE "templates=[0-9A-F,]*$CQ_ROBOT_NPC" && echo "$r" | grep -q " session=none"; then
+		pass "companion_quests: $2 Curie is her synth body in $1's game, not a stored roll of the robot" "$(echo "$r" | cut -c1-200)"
+	else fail "companion_quests: $2 Curie is her synth body in $1's game, not a stored roll of the robot" "$(echo "$r" | cut -c1-240)"; fi
+}
 _cq_set() {  # _cq_set <owner> <friend> <quest> <stage>: the owner's console sets it; within CQ_SET s the friend's game has it done
 	dc "$1" "console setstage $3 $4" >/dev/null
 	if ! wait_for 15 _f_has "$1" "$3" "$4"; then fail "companion_quests: set-up: $1's console set $3 $4" "$1 done $(_f_done "$1" "$3")"; return 1; fi
@@ -2148,6 +2156,8 @@ step_companion_quests() {
 	expect_eq "companion_quests: her new body keeps her affinity in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
 	fac1=$(_cq_factions vm)
 	expect_eq "companion_quests: her new body keeps her factions in the VM's game" "$fac1" "$fac0"
+	# Her new body is rolled by the globals her 300 set, in both games (RollHook leaves her to the engine's roll): the synth.
+	for w in host vm; do _cq_synth "$w" "after 300"; done
 	# The host's own 300 resets her actor, which may take her out of DisallowedCompanionFaction; the mark a reload from between
 	# its 300 and 600 keeps is NewCurieBody (which only its 300's script fills) holding her. Its drive stays the script's.
 	echo "-- the host's Curie after its own 300 (her reset): $(dc host "factions $CQ_CURIE_REF")"
@@ -2170,6 +2180,7 @@ step_companion_quests() {
 	n=$(_cq_count vm "QuestSync: set $CQ_CURIE .* stage 300 .*without its script")
 	expect_eq "companion_quests: the session's 300 is not set again in the VM's loaded game" "$n" "1"
 	expect_eq "companion_quests: her affinity after the load in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
+	_cq_synth vm "after a save and a load"
 	_cq_set host vm "$CQ_CURIE" 400; _cq_set host vm "$CQ_CURIE" 500; _cq_set host vm "$CQ_CURIE" 600
 	if wait_for 15 _cq_completed vm "$CQ_CURIE"; then pass "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-80)"
 	else fail "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-120)"; fi

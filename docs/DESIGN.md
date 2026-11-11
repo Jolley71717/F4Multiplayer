@@ -2159,7 +2159,8 @@ mirror the lounger and its chair are enabled, and, where her body changes here (
 there, this game's player has met her, by Vault 81's 750 or by her ever having been a companion, and she isn't our
 player's companion now), it is done as the script does it: the robot body she leaves (FakeCurieRobot) enabled, the
 globals her levelled base reads set (synth 100, robot 0), her affinity and her factions read, her items moved into the
-robot body (`removeallitems`, keeping their owner), her actor reset (`recycleactor`, to Doctor Amari) so it picks the
+robot body (`removeallitems`, keeping their owner), the rolls kept of her old body forgotten (in the driving game too:
+no stored roll forces the robot back; docs/SHARED-ROLLS.md), her actor reset (`recycleactor`, to Doctor Amari) so it picks the
 synth body, and a second later (the script's wait) her human outfit, her affinity and her factions put back as they
 were, since the reset clears them. A Curie this game's player never met keeps her vault body; one following our player
 is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the aliases and the
