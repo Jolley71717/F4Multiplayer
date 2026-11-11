@@ -88,7 +88,11 @@ namespace Protocol
 	// a friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own
 	// pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
 	// kWorkshopAnswer: WorkshopAnswer). 66 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 67;
+	// 68: a friend's scrap of the host's piece is such a request too (WorkshopRequestOp::kScrap, its target last on
+	// WorkshopRequest; WorkshopAnswer::Why gains kNotAllowed and kPieceBusy), and the host's bSharedWorkshopEdit in the
+	// welcome (SessionRules::sharedWorkshopEdit, the byte after sharedWorkshop, before the host's id) says whether friends
+	// may scrap the host's pieces there. 67 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 68;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -524,6 +528,10 @@ namespace Protocol
 		// host's game as the host's own piece, and the friend sees a copy, as of any of the host's pieces (bSharedWorkshop; on
 		// by default; protocol 67, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
 		bool sharedWorkshop = true;
+		// ...and whether a friend may scrap (later: store and move) the host's pieces there, a request the host's game performs
+		// on its own piece (bSharedWorkshopEdit; on by default; protocol 68, the byte after sharedWorkshop). Off: a friend's
+		// workshop mode refuses the key on the host's piece, as phase 1 did, and the host's game refuses the request too.
+		bool sharedWorkshopEdit = true;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -1431,16 +1439,31 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_RESOURCE_ENTRIES = 128;
 
-	// The shared workshop (SessionRules::sharedWorkshop, src/game/SharedWorkshop.h): a friend's build or wire at a settlement
-	// the host owns is a numbered request (seq: the sender's own count), which the server sends to the host's game alone
-	// (kWorkshopRequest, playerId the friend), and which that game performs on its own pieces and answers (WorkshopAnswer).
-	// A build names the piece as the friend's workshop mode placed it (base, where, how big); a wire names its two ends as the
-	// host's references, which the friend knows as its copies' keys.
+	// The shared workshop (SessionRules::sharedWorkshop, src/game/SharedWorkshop.h): a friend's build, wire or scrap at a
+	// settlement the host owns is a numbered request (seq: the sender's own count), which the server sends to the host's game
+	// alone (kWorkshopRequest, playerId the friend), and which that game performs on its own pieces and answers
+	// (WorkshopAnswer). A build names the piece as the friend's workshop mode placed it (base, where, how big); a wire names
+	// its two ends as the host's references, which the friend knows as its copies' keys; a scrap names the host's piece the
+	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench.
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
 		inline constexpr std::uint8_t kWire = 1;
-		inline constexpr std::uint8_t LAST = kWire;
+		inline constexpr std::uint8_t kScrap = 2;
+		inline constexpr std::uint8_t LAST = kScrap;
+	}
+
+	constexpr const char* OpName(std::uint8_t a_op)
+	{
+		switch (a_op) {
+		case WorkshopRequestOp::kBuild:
+			return "build";
+		case WorkshopRequestOp::kWire:
+			return "wire";
+		case WorkshopRequestOp::kScrap:
+			return "scrap";
+		}
+		return "?";
 	}
 
 	struct WorkshopRequest
@@ -1455,6 +1478,7 @@ namespace Protocol
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
+		std::uint32_t        target = 0;    // kScrap: the host's piece
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1481,15 +1505,17 @@ namespace Protocol
 			kNotWireEnd,       // the host's game: a wire's end takes no wire (neither the workshopPowerConnection value nor the keyword)
 			kAlreadyWired,     // the host's game: its grids already join the wire's two ends (it would be a second wire between them)
 			kNoAnswer,        // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
+			kNotAllowed,      // the host's game: its bSharedWorkshopEdit is off (friends build and wire there, nothing more)
+			kPieceBusy,       // the host's game: the host holds that very piece in workshop mode
 		};
-		static constexpr Why LAST_WHY = Why::kNoAnswer;
+		static constexpr Why LAST_WHY = Why::kPieceBusy;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
 		std::uint8_t  op = WorkshopRequestOp::kBuild;
 		Why           why = Why::kApplied;
 		std::uint32_t workshop = 0;  // the workbench asked about
-		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire)
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap: the piece scrapped)
 
 		bool operator==(const WorkshopAnswer&) const = default;
 	};
@@ -1527,6 +1553,10 @@ namespace Protocol
 			return "its ends are wired already";
 		case WorkshopAnswer::Why::kNoAnswer:
 			return "no answer in time";
+		case WorkshopAnswer::Why::kNotAllowed:
+			return "the host doesn't allow it";
+		case WorkshopAnswer::Why::kPieceBusy:
+			return "the host holds that piece";
 		}
 		return "unknown";
 	}
@@ -2742,6 +2772,7 @@ namespace Protocol
 		w.U8(rules.catchUpXp);  // protocol 64
 		w.U8(rules.groupDifficulty);
 		w.U8(rules.sharedWorkshop ? 1 : 0);  // protocol 67
+		w.U8(rules.sharedWorkshopEdit ? 1 : 0);  // protocol 68
 		w.U32(a_msg.hostId);
 		return w.Data();
 	}
@@ -2780,6 +2811,7 @@ namespace Protocol
 			const auto catchUpXp = r.U8();  // protocol 64
 			const auto groupDifficulty = r.U8();
 			const auto sharedWorkshop = r.U8();  // protocol 67
+			const auto sharedWorkshopEdit = r.U8();  // protocol 68
 			msg.hostId = r.U32();
 			if (!r.Ok()) {
 				return std::nullopt;
@@ -2790,6 +2822,7 @@ namespace Protocol
 			rules.catchUpXp = catchUpXp;
 			rules.groupDifficulty = groupDifficulty;
 			rules.sharedWorkshop = sharedWorkshop != 0;
+			rules.sharedWorkshopEdit = sharedWorkshopEdit != 0;
 			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}
 		return msg;
@@ -4207,10 +4240,16 @@ namespace Protocol
 	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
-	// no object. Neither names a workbench of 0, nor a number of 0.
+	// no object; a scrap names its target and nothing else. None names a workbench of 0, nor a number of 0.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
 		if (a_msg.seq == 0 || a_msg.workshop == 0 || a_msg.op > WorkshopRequestOp::LAST) {
+			return false;
+		}
+		if (a_msg.op == WorkshopRequestOp::kScrap) {
+			return a_msg.target != 0 && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
+		}
+		if (a_msg.target != 0) {
 			return false;
 		}
 		if (a_msg.op == WorkshopRequestOp::kWire) {
@@ -4245,6 +4284,7 @@ namespace Protocol
 		w.F32(a_msg.scale);
 		w.U32(a_msg.wireFrom);
 		w.U32(a_msg.wireTo);
+		w.U32(a_msg.target);
 		return w.Data();
 	}
 
@@ -4267,6 +4307,7 @@ namespace Protocol
 		msg.scale = r.F32();
 		msg.wireFrom = r.U32();
 		msg.wireTo = r.U32();
+		msg.target = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsValid(msg)) {
 			return std::nullopt;
 		}

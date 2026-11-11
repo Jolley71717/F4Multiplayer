@@ -170,6 +170,8 @@ namespace Config
 				settings.sharedStorage = ParseBool(value);
 			} else if (key == "bSharedWorkshop") {
 				settings.sharedWorkshop = ParseBool(value);
+			} else if (key == "bSharedWorkshopEdit") {
+				settings.sharedWorkshopEdit = ParseBool(value);
 			} else if (key == "bContainerGifts") {
 				settings.containerGifts = ParseBool(value);
 			} else if (key == "bSaveOnDown") {

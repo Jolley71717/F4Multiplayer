@@ -33,6 +33,25 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(!rules.containerGifts);    // a weapon put in a chest stays its player's own, as in 0.9.2
 	CHECK(!rules.saveOnDown);        // no autosave on going down, as in 0.9.2
 	CHECK(rules.sharedWorkshop);     // a friend's build at the host's settlement is the host's piece (0.17.0), unless the host turns it off
+	CHECK(rules.sharedWorkshopEdit); // ...and friends may scrap the host's pieces there, unless the host turns that off
+}
+
+TEST("session rules: the host's bSharedWorkshopEdit is on by default and off by its key, and the welcome carries it")
+{
+	Config::Settings settings;
+	CHECK(settings.sharedWorkshopEdit);
+	settings.sharedWorkshopEdit = false;
+	const auto off = HostRules::FromSettings(settings);
+	CHECK(!off.sharedWorkshopEdit);
+	CHECK(off.sharedWorkshop);  // its own switch: building and wiring stay shared
+	CHECK(HostRules::Describe(off).find("sharedWorkshopEdit=false") != std::string::npos);
+	for (const bool on : { true, false }) {
+		Protocol::Welcome welcome;
+		welcome.rules.sharedWorkshopEdit = on;
+		const auto back = Protocol::DecodeWelcome(Protocol::Encode(welcome));
+		REQUIRE(back);
+		CHECK(back->rules.sharedWorkshopEdit == on);
+	}
 }
 
 TEST("session rules: the host's bSharedWorkshop is on by default and off by its key, and the welcome carries it")
