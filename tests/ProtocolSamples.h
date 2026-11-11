@@ -187,6 +187,14 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {
 			s.push_back({ "DamageAnswer", Encode(DamageAnswer{ REF_A, 7, 3, DamageAnswer::Why::kHeldTooLong, 0.25f }, type), D(DecodeDamageAnswer) });
 		}
+		for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
+			s.push_back({ "WorkshopRequest build", Encode(WorkshopRequest{ 3, 9, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f, 0, 0 }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest wire", Encode(WorkshopRequest{ 3, 10, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 }, type), D(DecodeWorkshopRequest) });
+		}
+		for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
+			s.push_back({ "WorkshopAnswer applied", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kBuild, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer refused", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kWire, WorkshopAnswer::Why::kNoSuchPiece, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+		}
 		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
 		s.push_back({ "IndexedContainerChange", Encode(IndexedContainerChange{ 17, 2, { REF_A, 0x0000000F, 5 } }), D(DecodeIndexedContainerChange) });
 		for (const auto type : { MT::kReportPickup, MT::kRefPickedUp }) {
@@ -429,6 +437,8 @@ namespace ProtocolSamples
 		case MT::kReportHealth:
 		case MT::kReportDamage:
 		case MT::kReportDamageAnswer:
+		case MT::kReportWorkshopRequest:
+		case MT::kReportWorkshopAnswer:
 		case MT::kReportContainer:
 		case MT::kReportPickup:
 		case MT::kReportRefState:
@@ -491,6 +501,8 @@ namespace ProtocolSamples
 		case MT::kActorHealth:
 		case MT::kActorDamaged:
 		case MT::kDamageAnswer:
+		case MT::kWorkshopRequest:
+		case MT::kWorkshopAnswer:
 		case MT::kContainerChanged:
 		case MT::kRefPickedUp:
 		case MT::kRefStateChanged:

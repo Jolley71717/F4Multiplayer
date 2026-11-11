@@ -263,8 +263,12 @@ namespace DevCommands
 			return DescribeRef(RE::PlayerCharacter::GetSingleton());
 		}
 
-		// turnto <refHex> <ms> [pitchDeg]: turns the player to face a reference over a time, like a hand on
-		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame().
+		// turnto <refHex> <ms> [pitchDeg | aim [dz [side]]]: turns the player to face a reference over a time, like a hand on
+		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame(). With "aim", the
+		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it, side units to
+		// the right of the line from the eye): yaw and pitch
+		// from the camera, not the feet, which is what workshop mode's pick casts its ray from (600 units long: the reply
+		// says the distance and whether it is inside that).
 		struct Turn
 		{
 			float startYaw = 0.0f, endYaw = 0.0f, startPitch = 0.0f, endPitch = 0.0f;
@@ -279,11 +283,40 @@ namespace DevCommands
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			if (!player || !ref || args.size() < 2) {
-				return "error: usage: turnto <refHex> <ms> [pitchDeg]";
+				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz [side]]]";
 			}
-			const auto& me = player->data.location;
-			const auto& to = ref->data.location;
 			constexpr float DEG = 180.0f / std::numbers::pi_v<float>;
+			constexpr float PICK_REACH = 600.0f;  // workshop mode's general pick ray (1.11.240: the constant at +2483E54)
+			const bool      aim = args.size() > 2 && args[2] == "aim";
+			RE::NiPoint3    me = player->data.location;
+			RE::NiPoint3    to = ref->data.location;
+			std::string     aimed;
+			if (aim) {
+				// From the eye workshop mode's pick casts from (Workshop::ContextData: GetEyeVector without the camera's offset),
+				// not the camera: in third person, or with the camera bobbing, the two differ, and a ray aimed past the piece
+				// from the camera can miss it from the eye.
+				RE::NiPoint3 eye{}, looking{};
+				player->GetEyeVector(eye, looking, false);
+				const bool fromEye = eye.x != 0.0f || eye.y != 0.0f || eye.z != 0.0f;
+				me = fromEye ? eye : RE::NiPoint3{ me.x, me.y, me.z + 120.0f };
+				const auto root = ref->Get3D();
+				to = root ? root->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
+				if (args.size() > 3) {
+					to.z += std::stof(std::string{ args[3] });
+				}
+				if (args.size() > 4) {
+					// side: that many units to the right of the line from the eye (left when negative), level: the rig tries a
+					// piece's sides when a nearer piece stands in front of its middle
+					const float side = std::stof(std::string{ args[4] });
+					const float flatX = to.x - me.x, flatY = to.y - me.y;
+					const float flatLen = (std::max)(std::hypot(flatX, flatY), 1.0f);
+					to.x += side * flatY / flatLen;
+					to.y -= side * flatX / flatLen;
+				}
+				const float dist = std::sqrt((to.x - me.x) * (to.x - me.x) + (to.y - me.y) * (to.y - me.y) + (to.z - me.z) * (to.z - me.z));
+				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromEye ? "eye" : "feet+120", root ? "bound" : "origin+60",
+					root ? root->worldBound.fRadius : 0.0f, dist, dist <= PICK_REACH);
+			}
 			float yaw = std::atan2(to.x - me.x, to.y - me.y) * DEG;
 			if (yaw < 0.0f) {
 				yaw += 360.0f;
@@ -296,18 +329,21 @@ namespace DevCommands
 			turn.startYaw = startYaw;
 			turn.endYaw = startYaw + delta;
 			turn.startPitch = player->data.angle.x * DEG;
-			// Pitch: given in degrees, or toward the target's chest from the player's eyes (down is positive).
-			if (args.size() > 2) {
+			// Pitch: given in degrees, at the 3D's middle from the eye (aim), or toward the target's chest from the player's
+			// eyes (down is positive).
+			const float flat = (std::max)(std::hypot(to.x - me.x, to.y - me.y), 1.0f);
+			if (aim) {
+				turn.endPitch = -std::atan2(to.z - me.z, flat) * DEG;
+			} else if (args.size() > 2) {
 				turn.endPitch = std::stof(std::string{ args[2] });
 			} else {
 				const float dz = (to.z + 60.0f) - (me.z + 120.0f);  // measured: shots at a standing raider 240 away land from 6 to 18 degrees down, auto was 5
-				const float flat = std::hypot(to.x - me.x, to.y - me.y);
-				turn.endPitch = -std::atan2(dz, (std::max)(flat, 1.0f)) * DEG;
+				turn.endPitch = -std::atan2(dz, flat) * DEG;
 			}
 			turn.start = std::chrono::steady_clock::now();
 			turn.end = turn.start + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			turn.active = true;
-			return std::format("turning {:.1f} -> {:.1f} over {} ms", startYaw, turn.endYaw, args[1]);
+			return std::format("turning {:.1f} -> {:.1f} over {} ms (pitch {:.1f}){}", startYaw, turn.endYaw, args[1], turn.endPitch, aimed);
 		}
 
 		// key <vk> <holdMs>: presses a key inside the game process (down now, up after holdMs, stepped by
@@ -2238,13 +2274,16 @@ namespace DevCommands
 			return std::format("friend light form {:08X}", *id);
 		}
 
-		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]: reports a reference (or a
+		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap|quiet]: reports a reference (or a
 		// new one of that base, put a step in front of the player) as if just placed (or scrapped) in workshop mode.
-		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there.
+		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there. "quiet" only
+		// makes the reference and prints it, for wsfinish to place it with the engine's own steps (the rig's stand-in for a
+		// build in workshop mode: the budget, the scripts and the placed event as the engine does them).
 		std::string WsReport(std::string_view a_args)
 		{
 			auto args = SplitArgs(a_args);
 			RE::TESObjectREFR* ref = nullptr;
+			const bool quiet = args.size() >= 4 && args[0] == "place" && args[3] == "quiet";
 			if (args.size() >= 2 && args[0] == "place") {
 				const auto baseId = ParseHex(args[1]);
 				const auto base = baseId ? RE::TESForm::GetFormByID<RE::TESBoundObject>(*baseId) : nullptr;
@@ -2273,7 +2312,10 @@ namespace DevCommands
 				}
 			}
 			if (!ref) {
-				return "error: usage: wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]";
+				return "error: usage: wsreport <refHex> [workshopHex] [scrap|quiet] | place <baseHex> <workshopHex> [scrap|quiet]";
+			}
+			if (quiet) {
+				return std::format("placed {:08X} (not reported)", ref->GetFormID());
 			}
 			const auto workshop = !args.empty() && args[0] != "scrap" ? LookupRef(args[0]) : nullptr;
 			const bool scrap = !args.empty() && args.back() == "scrap";
@@ -2293,6 +2335,11 @@ namespace DevCommands
 			const auto to = args.size() == 2 ? LookupRef(args[1]) : nullptr;
 			if (!from || !to || from == to) {
 				return "error: usage: wswire <fromHex> <toHex>";
+			}
+			// Under the shared workshop's rule, a wire between two copies of the host's pieces is asked of the host, as workshop
+			// mode's wiring is (SharedWorkshop.h): no wire of ours.
+			if (const auto asked = WorkshopSync::RequestWireForDev(from, to)) {
+				return *asked;
 			}
 			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
 			const auto bench = keyword ? from->GetLinkedRef(keyword) : nullptr;
@@ -2442,6 +2489,64 @@ namespace DevCommands
 				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
 			}
 			return "error: usage: wspower [block on|off | audit | copies | hushlog on|off | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
+		}
+
+		// wsfinish <refHex> <benchHex>: the shared workshop's finish (SharedWorkshop::FINISH_STEPS, the engine's own placement steps)
+		// run now on a reference of ours (a console-placed piece) as one of the workbench's pieces: linked, budgeted, static,
+		// snapped, wireless, terminals, navmesh, power and resources recounted, and the placed event (our sink reports it). For the
+		// rig's probe of the host's side without a friend's request.
+		std::string WsFinish(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto bench = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!ref || !bench || !WorkshopSync::IsWorkbenchAnchor(bench)) {
+				return "error: usage: wsfinish <refHex> <benchHex> (a workbench)";
+			}
+			return WorkshopSync::FinishForDev(ref, bench);
+		}
+
+		// wsscrap <refHex>: a piece of ours scrapped as the engine's scrap does, short of the yield (the rig's cleanup of test
+		// pieces: off the grids, links, budget and workbench, told to the workshop scripts, reported for the friends' copies, deleted).
+		std::string WsScrap(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? WorkshopSync::ScrapForDev(ref) : "error: usage: wsscrap <refHex>";
+		}
+
+		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
+		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught). wsmode hold|serve, on the
+		// host's game: its friends' requests are taken but not made or answered until serve (the rig's save in the pending
+		// window: the friend's piece pending for as long as the check needs; a friend's request unanswered for
+		// SharedWorkshop::ANSWER_WAIT is taken as refused there). Leaving the session serves again. wsmode pick [<refHex>|off]:
+		// workshop mode's general pick, its last run (the ray, each hit and what the pick made of it) and where the watched piece
+		// stands from it; with a reference, that piece watched (each change of what the pick hits logged), off to stop.
+		std::string WsMode(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			// wsmode scraptest <refHex>: the engine's scrap test of that reference, as the Scrap key asks it, and its parts.
+			if (!args.empty() && args[0] == "scraptest") {
+				const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+				return ref ? WorkshopSync::ScrapTestForDev(ref) : "error: usage: wsmode scraptest <refHex>";
+			}
+			if (!args.empty() && args[0] == "pick") {
+				if (args.size() == 1) {
+					return WorkshopSync::PickForDev(std::nullopt);
+				}
+				if (args.size() == 2 && args[1] == "off") {
+					return WorkshopSync::PickForDev(nullptr);
+				}
+				const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+				return ref ? WorkshopSync::PickForDev(ref) : "error: usage: wsmode pick [<refHex>|off]";
+			}
+			if (args.size() == 1 && (args[0] == "on" || args[0] == "off" || args[0] == "host")) {
+				WorkshopSync::SetSharedModeForDev(args[0] == "host" ? std::nullopt : std::optional{ args[0] == "on" });
+			} else if (args.size() == 1 && (args[0] == "hold" || args[0] == "serve")) {
+				WorkshopSync::HoldAnswersForDev(args[0] == "hold");
+			} else if (!args.empty()) {
+				return "error: usage: wsmode [on|off|host|hold|serve|pick [<refHex>|off]|scraptest <refHex>]";
+			}
+			return WorkshopSync::DescribeShared();
 		}
 
 		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
@@ -3924,6 +4029,23 @@ namespace DevCommands
 				return "error: no control map";
 			}
 			auto out = std::format("stack={}", ContextStack());
+			if (a_args == "workshop") {
+				// controls workshop: workshop mode's keyboard bindings (the Workshop and WorkshopAddendum input contexts), as
+				// "event=vk" in hex: the engine's keyboard mappings hold the virtual key itself (Tab is 9, Enter D, R 52), which
+				// is what `key` takes, for the rig to press the real keys. The events are the pad's names: workshop mode's menu
+				// handler (1.11.240) stores on Cancel, scraps on XButton, strings a wire on YButton, and grabs, repairs or assigns
+				// on Accept (or Activate), by what is highlighted.
+				for (const auto context : { RE::UserEvents::INPUT_CONTEXT_ID::kWorkshop, RE::UserEvents::INPUT_CONTEXT_ID::kWorkshopAddendum }) {
+					const auto mappings = map->controlMaps[std::to_underlying(context)];
+					if (!mappings) {
+						continue;
+					}
+					for (const auto& mapping : mappings->deviceMappings[std::to_underlying(RE::INPUT_DEVICE::kKeyboard)]) {
+						out += std::format(" {}={:X}", mapping.eventID.c_str(), static_cast<std::uint32_t>(mapping.inputKey));
+					}
+				}
+				return out;
+			}
 			if (a_args.empty()) {
 				// The input enable layers (scripts' DisablePlayerControls, a conversation's, the game's own)
 				// in use, by debug name, with each one's user event and other event flags.
@@ -3977,9 +4099,9 @@ namespace DevCommands
 			const auto args = SplitArgs(a_args);
 			const auto bench = RE::Workshop::FindNearestValidWorkshop(*player);
 			const auto mode = [&] {
-				return std::format("menu={} for={:.1f} bench={:08X} inArea={}", MenuWatch::IsOpen("WorkshopMenu"sv),
+				return std::format("menu={} for={:.1f} bench={:08X} inArea={} {}", MenuWatch::IsOpen("WorkshopMenu"sv),
 					std::chrono::duration<float>(MenuWatch::OpenFor("WorkshopMenu"sv)).count(), bench ? bench->GetFormID() : 0,
-					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location));
+					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location), WorkshopSync::HeldForDev());
 			};
 			if (args.empty()) {
 				return mode();
@@ -4469,6 +4591,9 @@ namespace DevCommands
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },
+			Entry{ "wsfinish", WsFinish },
+			Entry{ "wsmode", WsMode },
+			Entry{ "wsscrap", WsScrap },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },

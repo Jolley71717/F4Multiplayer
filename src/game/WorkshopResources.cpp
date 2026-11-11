@@ -26,6 +26,11 @@ namespace WorkshopResources
 			Named{ "happiness", &RE::ActorValue::resourceHappiness },
 			Named{ "power", &RE::ActorValue::powerGenerated },
 			Named{ "powerreq", &RE::ActorValue::powerRequired },
+			// The build budget (workshop mode's totals, written to the workbench: SharedWorkshop's BudgetScope).
+			Named{ "triangles", &RE::ActorValue::workshopCurrentTriangles },
+			Named{ "draws", &RE::ActorValue::workshopCurrentDraws },
+			Named{ "maxtriangles", &RE::ActorValue::workshopMaxTriangles },
+			Named{ "maxdraws", &RE::ActorValue::workshopMaxDraws },
 		};
 
 		RE::ActorValueInfo* AvByName(std::string_view a_name)

@@ -582,8 +582,8 @@ TEST("shared rolls: the welcome carries the host's NPC level rule, and the sessi
 	}
 	// Rules this build doesn't know are the defaults.
 	auto odd = Protocol::Encode(Protocol::Welcome{ 3, SESSION, false, true, Protocol::SessionRules{ .npcLevel = Protocol::NpcLevelRule::kOwn, .legendary = Protocol::LegendaryRule::kOwn } });
-	odd[odd.size() - 5] = 9;  // npcLevel, legendary, then quests (protocol 58), catch-up XP and group difficulty (protocol 64)
-	odd[odd.size() - 4] = 9;
+	odd[odd.size() - 10] = 9;  // npcLevel, legendary, then quests (protocol 58), catch-up XP and group difficulty (protocol 64),
+	odd[odd.size() - 9] = 9;   // the shared workshop and the host's four-byte id (protocol 67)
 	const auto read = Protocol::DecodeWelcome(odd);
 	REQUIRE(read);
 	CHECK(read->rules.npcLevel == Protocol::NpcLevelRule::kAverage);

@@ -29,6 +29,62 @@ namespace WorkshopSync
 	// no-op after.
 	void InstallLights();
 
+	// Patches workshop mode's pick tests and gates for the shared workshop (SharedWorkshop.h): at a settlement the host owns,
+	// our copy of one of the host's pieces may be picked and highlighted, to wire it (the pick test, 2195179, at the general and
+	// the wire pick), and never grabbed or repaired (Workshop::WorkshopCanSelectRef, where the menu's Accept asks it), stored
+	// (Workshop::CanStoreRef) or scrapped (Workshop::WorkshopCanScrapRef); a key's refusal is counted and said, a button hint's
+	// is silent. At plugin load (it takes trampoline call stubs); no-op after. Each site's bytes are checked first: none
+	// patched unless all are as 1.11.240 has them.
+	void InstallPicks();
+
+	// ---- The shared workshop (SharedWorkshop.h) ----------------------------------------------------------
+	//
+	// A friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own pieces.
+
+	// Welcomed: the host's own game's player id (0: none, a dedicated server: no game hands over), whose pieces a friend may wire
+	// and whose game takes the requests.
+	void OnWelcome(std::uint32_t a_hostId);
+
+	// The host's game: a friend asks for a build or a wire (kWorkshopRequest). Checked, made and finished over the next frames
+	// (Frame), and answered.
+	void OnRequest(const Protocol::WorkshopRequest& a_request);
+
+	// A friend's game: the host's game (or the server) answered one of our requests (kWorkshopAnswer).
+	void OnAnswer(const Protocol::WorkshopAnswer& a_answer);
+
+	// Dev: a wire between two of our copies of one friend's pieces asked of the host, as workshop mode's wiring is under the rule
+	// (wswire takes this path first); what was asked, or none when the rule doesn't apply or the ends aren't such copies.
+	[[nodiscard]] std::optional<std::string> RequestWireForDev(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to);
+	// Dev: a piece of ours scrapped as the engine's scrap does, short of the yield (wsscrap: the rig's cleanup, so no grid names a
+	// deleted reference): told to the workbench's scripts, off the grids, links, budget and workbench, reported, deleted.
+	[[nodiscard]] std::string ScrapForDev(RE::TESObjectREFR* a_ref);
+	// Dev: the finish steps run now on a reference of ours, as one of the workbench's pieces (wsfinish); what each did.
+	[[nodiscard]] std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
+	// Dev: the shared workshop forced on or off for this game (none: the host's rule), and its state (wsmode).
+	void                      SetSharedModeForDev(std::optional<bool> a_on);
+	// Dev, the host's game: friends' requests taken but not made or answered while held (wsmode hold), then served (wsmode serve).
+	void                      HoldAnswersForDev(bool a_hold);
+	// Dev: what workshop mode holds and highlights, for the workshop dev command: "held=<ref> heldBase=<base> newItem=<bool>
+	// selected=<ref> editing=<bool> canPlace=<bool> placeStatus=<n> [wireStatus=<name> wireFrom=<ref> wireTarget=<ref>]
+	// scrapGate=<n>". held is a new piece's ghost or a grabbed piece (00000000: nothing held); selected is the placement item
+	// whatever it is (the highlighted piece at idle); canPlace is Workshop::CanPlaceItem (placeStatus == 1). While a wire is
+	// held (its first end set), placeStatus is the spline status by name (SharedWorkshop::WireStatusName) and the wire's ends.
+	// scrapGate: the byte the Scrap key needs 0 in before the engine's scrap test is asked.
+	[[nodiscard]] std::string HeldForDev();
+	// Dev (wsmode scraptest <ref>): the engine's scrap test of the reference (WorkshopCanScrapRef, as the Scrap key asks it)
+	// and what it reads: "failed=<field>" first, the test that refused it (SharedWorkshop::ScrapFailName: none, base,
+	// blockKeyword, loose, looseNotItem, recipe; a wire is always recipe), then each part, and the gate before it.
+	[[nodiscard]] std::string ScrapTestForDev(RE::TESObjectREFR* a_ref);
+	[[nodiscard]] std::string DescribeShared();
+	// Dev: workshop mode's general pick watched (wsmode pick): a_watch set, a reference to watch (each run whose search reaches
+	// something else then logged, and an unchanged one every 2 s, at most four a second) or none (null) to stop; then the
+	// pick's counts, its last run (the ray, each hit the search reached near to far with what the pick made of it, what it
+	// picked, and every hit of the cast: body, reference, layer, distance) and where the watched piece (or with null, the one
+	// that was watched) stands from that ray (miss: how far its bound's center is off the ray, against its radius), with its
+	// own bodies and whether the cast hit one (inCast). Then the wire pick's (it runs each frame the placement item is a wire, held or highlighted): its counts,
+	// last run and target (what its filter passed), and where the watched piece stands from its ray ("| wire <ref>: ...").
+	[[nodiscard]] std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch);
+
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.

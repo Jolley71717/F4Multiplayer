@@ -1702,7 +1702,15 @@ void Server::Run()
 		closeOwnViews(a_player);
 		a_player.worldAsked = 1;
 		a_player.storageSettled = !options.rules.sharedStorage;
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
+		// The host's own game's id (the game this server runs in, welcomed first; none on a dedicated server): whose game the
+		// shared workshop asks, and whose pieces it wires.
+		std::uint32_t hostId = local ? a_player.id : 0;
+		for (const auto& [key, other] : players) {
+			if (hostId == 0 && other.welcomed && other.local) {
+				hostId = other.id;
+			}
+		}
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped(), hostId }), true);
 		// The level and legendary chance the session's NPCs are rolled at, before any of them (none with the rule "own").
 		{
 			const auto rules = options.rules.Clamped();
@@ -3268,6 +3276,68 @@ void Server::Run()
 		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
 	};
 
+	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
+	// host's own game alone, which performs it on its pieces and answers. Only the host's own game (local: the game this server
+	// runs in) can own a settlement, so with none here (a dedicated server, the host's game not yet in) the friend is told so
+	// at once, and their piece stays their own. Against the event budget, as any report; the answer is not (a reply to a
+	// request the server itself sent on, bounded by the asker's budget).
+	const auto localHost = [&]() -> const Player* {
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.local) {
+				return &other;
+			}
+		}
+		return nullptr;
+	};
+
+	const auto handleWorkshopRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto request = Protocol::DecodeWorkshopRequest(a_data);
+		if (!request) {
+			return;
+		}
+		const auto refuse = [&](Protocol::WorkshopAnswer::Why a_why) {
+			send(a_player.key, Protocol::Encode(Protocol::WorkshopAnswer{ request->seq, 0, request->op, a_why, request->workshop, 0 }, Protocol::MessageType::kWorkshopAnswer), true);
+		};
+		if (!options.rules.sharedWorkshop) {
+			refuse(Protocol::WorkshopAnswer::Why::kOff);
+			return;
+		}
+		if (!allowEvent(a_player)) {
+			refuse(Protocol::WorkshopAnswer::Why::kOverBudget);
+			return;
+		}
+		const auto host = localHost();
+		if (!host || host->id == a_player.id) {
+			refuse(Protocol::WorkshopAnswer::Why::kHostAway);
+			return;
+		}
+		auto out = *request;
+		out.playerId = a_player.id;
+		send(host->key, Protocol::Encode(out, Protocol::MessageType::kWorkshopRequest), true);
+	};
+
+	// The host's game answers a friend's request (playerId: whose). Only the host's own game answers; anyone else's answer
+	// would turn a friend's piece into a copy of nothing.
+	const auto handleWorkshopAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !a_player.local) {
+			return;
+		}
+		const auto answer = Protocol::DecodeWorkshopAnswer(a_data);
+		if (!answer || answer->playerId == 0 || answer->playerId == a_player.id) {
+			return;
+		}
+		const auto key = keyOfPlayer(answer->playerId);
+		if (key == 0) {
+			return;  // the asker left: nothing to tell
+		}
+		auto out = *answer;
+		out.playerId = a_player.id;
+		send(key, Protocol::Encode(out, Protocol::MessageType::kWorkshopAnswer), true);
+	};
+
 	// What a player's own workshop pieces count for in their settlement: passed on as theirs, and not kept (as power: the player
 	// sends all of them again when someone joins, and now and then).
 	const auto handleWorkshopResources = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -4707,6 +4777,12 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopPower:
 			handleWorkshopPower(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopRequest:
+			handleWorkshopRequest(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopAnswer:
+			handleWorkshopAnswer(a_player, a_data);
 			break;
 		case MessageType::kReportWorkshopResources:
 			handleWorkshopResources(a_player, a_data);

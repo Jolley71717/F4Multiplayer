@@ -3127,6 +3127,231 @@ workshop's reset has run, as it does when the player enters the settlement; unti
 now assigned" yet assigns nobody, so a test that loads straight into a settlement it then owns by console runs
 `cqf WorkshopParent ResetWorkshop <bench>` first).
 
+## Shared workshop (src/game/SharedWorkshop.h, WorkshopSync.cpp)
+
+**The ask.** Two players want to build one settlement: a friend's light on the host's generator, a friend's conveyor
+feeding the host's sorter. Settlement power (above) mirrors numbers across games; it can't put two players' pieces on one
+grid, because there are two engines and two grids. The shared workshop (0.17.0, the host's `bSharedWorkshop`, on by
+default; protocol 67, `SessionRules::sharedWorkshop`, a byte after `groupDifficulty`) makes a settlement the host owns one grid run by
+one engine: *every piece anyone builds there is built in the host's game and is the host's piece*. A friend sees it as a copy,
+exactly as they see any of the host's pieces today, and their workshop actions there are requests the host's game performs.
+It composes with what exists: with `bSharedStorage` the components come from and go to the host's bench, the power mirror
+lights the friend's copies, the resource mirror counts the host's pieces at the friend's bench, and the host's settlers work
+the host's crops.
+
+**Host-owned.** A settlement whose workbench the player's NPC or PlayerFaction owns in the host's game (what
+`WorkshopScript.SetOwnedByPlayer` sets; Storage.cpp's `OwnBench`). The host's game decides per request; a friend's game
+remembers a workbench refused as "not the host's" and builds there as its own from then on (`SharedWorkshop::Benches`,
+cleared when the session ends). The welcome names the host's own game's player id (`Welcome::hostId`, after the session id):
+the copies a friend may wire are the host's alone (another friend's copies, or two builders' pieces whose runtime ids happen
+to agree, are never asked), and with none (0: a dedicated server) nothing is handed over at all, no round trip, no notice; a
+server answer of "no host's game" or "the rule is off" likewise stops the asking for the session. Turrets and robots stay
+their builder's own, quietly (not in phase 1).
+
+**A build (phase 1).** The friend's workshop mode places the piece as ever (they paid for it, from the shared bench when
+storage is shared). Its placed event, under the rule, becomes a numbered request instead of a report
+(`kReportWorkshopRequest`, `WorkshopRequest`: the workbench, the object, where and how big), which the server sends to the
+host's own game alone (`kWorkshopRequest`, the asker's id on it; against the asker's event budget). The host's game checks it in
+order (`SharedWorkshop::Refusal`: the workbench is a workbench of a settlement the host owns, its cell at the spot is loaded,
+the object is one workshop mode builds and the spot within the bench's reach), makes the reference where the friend's stands
+(`TESDataHandler::CreateReferenceAtLocation`, the scale set), and once its 3D is there (`SharedWorkshop::Ready`; no 3D in
+10 s: refused, the reference deleted; nothing of the host's workshop mode holds a finish off, building together is the point)
+finishes it with the engine's "new item mode" byte 2661518 set to 0 for the steps and put back after (`NewItemScope`: the
+byte is 0 only while a new piece is being placed and 1 otherwise, at idle and after a load too, as `QNewItemMode`'s "byte
+== 0" and the rig's reads say; `MakeReferenceStatic` reads it at +0x133 and +0x162 and, with 0, starts the piece's scripts,
+sends its loaded event and sets its power's initial state, as for any new piece). A workbench without workshop data (the
+engine makes `Workshop::ExtraData` when the workshop is first opened and saves it with the bench; a settlement taken by
+console has none) refuses the request as such (`kBenchUnopened`): the friend's piece stays their own, and the host is told
+once per bench to open the workshop. Made by us it would be a struct of the engine's we never saw made. Then the finish runs
+with the engine's own placement steps, each a plain function with explicit arguments, in the engine's order
+(`SharedWorkshop::FINISH_STEPS`, `Finish`; what `Workshop::PlaceCurrentReference` 2195155 does after the ghost is confirmed,
+read in 1.11.240): `Workshop::SetIsWorkshopItem(piece, true, bench)` 2194972 (the bench link, the location's special ref);
+`Workshop::Budget::AddObject` 2195107; `Workshop::MakeReferenceStatic` 2195055 (the havok body into the cell's world, the 3D
+under the cell, `InitScripts`, the loaded event, `PowerUtils::SetInitialState`, a turret's AI); `Workshop::SetFurnitureUsed(piece,
+false)` 2195158; `Workshop::CheckSnappedPowerConnections` 2195213 with a `PlacementItemData` of our own (engine memory,
+`Set` 2195643 off the 3D's connect points, `Clear` 2195555 after: a conduit or pylon snapped to a powered wall is connected);
+`Workshop::ExtraData::AddItem` 2194996 (the wireless radiators); `TerminalUtils::EstablishTerminalLinks` 2195102;
+`TESObjectREFR::UpdateDynamicNavmesh(true)` 2201206; `Workshop::CalculatePowerRating` 2194985 and `RecalculateResources` 2194984
+on the bench; and `ItemPlacedEvent{bench, piece}` through `Workshop::QSource<ItemPlacedEvent>()` 2195289, so Papyrus registers the
+piece (`OnWorkshopObjectPlaced`) and our own sink reports it as the host's piece, which every friend's game places as a copy.
+Workshop mode's current-workbench static (4797241) is set to the bench for the steps and put back after (`BenchScope`),
+whatever happens in between. Skipped on purpose: the cost and XP (the friend paid), `CheckStackItem` and the moving-stack
+commit (moves only). Not called: 2195155 itself, which dereferences the menu tree's first node without a null check (a host that
+never opened workshop mode this run has none) and charges whatever recipe the stale tree selects.
+
+The answer (`kReportWorkshopAnswer`, `WorkshopAnswer`: the number, applied with the piece's id, or refused and why; relayed
+to the asker as `kWorkshopAnswer`, only from the host's own game) decides the friend's piece (`SharedWorkshop::Judge`).
+Applied: it is *adopted* as the friend's copy of the host's piece, under the host's key (`Adopt`): off the friend's workshop
+through the engine's own paths (`SplineUtils::DisconnectSpline` for any power links, `Workshop::ExtraData::RemoveItem` off
+every grid naming it, `Workshop::Budget::RemoveObject` 2195108, the bench link cleared, the bench's power and resources
+recounted), given the block keyword, kept in `copies` and noted in `madeHere`. The host's own report of the piece then finds the
+copy kept, or (if it came first) found the friend's piece standing at the spot and made none (WorkshopApply's `OursAt`): either
+order works. The engine's own placed event had already run Papyrus for the piece as the friend's (`OnWorkshopObjectPlaced`: a
+settler assigned to a bed or a crop, the workshop's counts), which a save would keep for a reference that is the host's now:
+adoption notifies the destroyed event (`Workshop::QSource<ItemDestroyedEvent>()` 2195286, what `FinishDestroyItem` notifies),
+which the workshop scripts answer as for a scrap (the assignment cleared, the counts down); our own sink sees a copy by then
+and reports nothing. The cost: Papyrus runs its destroy handler once per adopted piece. A piece the player is holding in
+workshop mode when the answer comes (the placement item 4797235 with the active-edit byte 4797147 set: grabbed, not merely
+highlighted) is adopted once put down (the engine's drop would link it to the bench and count it again), and a grab of a pending
+piece is refused with a notice. Refused: the piece is reported as the
+friend's own, as before the rule, with a notice saying why (`workshop.shared.*`); no answer in 15 s counts as refused ("didn't
+answer in time", not "no host"). A friend's piece whose answer is still pending is not reported moved or scrapped meanwhile,
+and goes when the session ends: *nothing a friend built at a host-owned settlement stays in their save* (the maintainer's
+call), neither as a copy nor as a pending piece. Nor in a save made mid-way: before every save (`kPreSaveGame`) the host
+finishes the pieces it has made whose 3D is there (unless it holds a piece of its own: those are refused as busy) and deletes
+and refuses the rest, and a friend's pending pieces go, with the destroyed event, as on leaving. Their requests stay open,
+marked dropped (`Requests::DropBuilds`; `wsmode` counts them as `dropped=`, not `pending=`), so the host's late answer is still
+matched: an "applied" finds ours dropped and lets the host's copy come on its own, and a dropped piece is never adopted or
+reported (its runtime id may name another reference by then). The budget is taken out only for what the engine counted in: an adopted
+build and a detached wire (`Budget::RemoveObject` 2195108), never a copy a wire's end was linked to (the engine's wire
+placement counts the wire alone and only links the ends). And the budget's totals are workshop mode's globals, loaded from a
+workbench only when workshop mode is entered there (`Workshop::Budget::Initialize` 2195106 reads the bench's maximum and
+current triangles and draws into 4797248, 4797252, 4797162 and 4797163), and written back to the current workbench by
+`AddObject` and `RemoveObject`: so every add or remove outside workshop mode at that bench runs in a `BudgetScope`, which saves
+the four globals, loads them from the bench, sets the bench current, and restores them after (with workshop mode open at that
+very bench the live totals are used as they are). A wire the host made for a friend is counted once its spline is drawn, as
+the engine counts a placed wire's drawn 3D (counting it bare would put 0 in and take the real count out at a scrap): counted
+only when `AddObject` added to the totals (its walk counts the 3D's drawn geometry), tried again each frame until 10 s, then
+let be with a warning that describes the 3D (`wiresUncounted`). Mods
+that listen for `WorkshopObjectDestroyed` (Workshop Framework, Sim Settlements) hear an adopted or dropped piece of a friend's
+as scrapped; it does go from the friend's workshop, so that reading is right, and the host's piece is a placement there.
+
+**A wire (phase 1).** Workshop mode's picks are hooked (`WorkshopSync::InstallPicks`, nine `write_call<5>` sites, each byte-checked
+first, none patched unless all are as 1.11.240 has them): the general pick (2195314) and the wire pick (2195312) ask
+`Workshop::IsInteractionBlocked` 2195179 at +0x4FA (the reference in rcx), and the hook answers "not blocked" for our copy of a
+friend's piece at a workbench not refused as not the host's, while the rule is on here; so a copy can be the first end of a wire
+(the general pick's reference: `SetPowerConnectionItem` then `CreateNewReference`) and its second end (the wire pick). The general
+pick then highlights the copy as any piece (`Workshop::SetSelectedEditItem` 2195119, called every frame for whatever the crosshair
+is on: the highlight, not the grab; workshop mode's placement item 4797235 is that piece at idle). The other actions on a copy
+are refused at their own gates, silently where the menu's button hints ask every frame and with a notice and a count where a key
+asks once: `Workshop::CanStoreRef` 2195195 as `CanStorePlacementItem` (+0x80) and `RequestStorePlacementItem` (+0x8E) ask it
+(silent), and the Store key is the workshop menu's user event handler (2224981) asking `CanStorePlacementItem` 2194963 at +0xA5B
+on Cancel (counted when the selected piece is a copy, said when it could be stored were it ours); `Workshop::WorkshopCanScrapRef`
+2194959 as `CanScrapPlacementRef` (+0x188, silent) and `RequestScrapPlacementItem` (+0x85, the XButton's only path: counted and
+said) ask it; and the grab is the same handler asking `Workshop::WorkshopCanSelectRef` 2194958 of the highlighted piece at
++0x148D on Accept, before it repairs the piece or picks it up (`UpdateActiveEdit`, the ItemGrabbedEvent): refused with a notice
+(and a pending piece of ours too), while `CanSelectPlacementRef` (2194964 +0x80, the Move hint) is refused silently. The general
+filter (2195585) refuses a copy (it is no workshop item of ours), so the general pick's own call of it is hooked too and admits
+the copy there (the pick watch, below). The snap magnet (2195313) is not
+hooked: a copy is never snapped to.
+
+**The pick watch, and what stopped the pick.** The first rig runs of the real keys never highlighted a copy (`picksAdmitted`
+stayed 0 with the copy 170 to 220 units in front of the eye), so the picks' own calls are hooked too (five more sites, each
+patched only if 1.11.240's call is there, none needed for the rest): `Workshop::UpdateForegroundReferenceJob` 2194909 calling
+the general pick at +0x46 (rcx its lambda, rdx the `Workshop::ContextData`, whose ray is the player's `GetEyeVector` without the
+camera offset, not the camera; it runs only while workshop mode holds no new piece), the pick's sort of its cast's hits (the
+collector's sort 2256236 at +0x3ED: every hit of the cast, near to far, read for the watch), its
+`TESHavokUtilities::FindBodyIdRef` 2208693 at +0x469 (each hit the search reaches) and the wire pick's at the same offset, and
+the general filter 2195585 at +0x511.
+
+The pick's loop, read whole in 1.11.240: a trigger is skipped, a body with no reference that is static or terrain ends the
+search, the player (the `PlayerCharacter` singleton, by address), a marker or a primitive is skipped, a door is taken as its
+linked reference, and the first reference left goes to the test and the filter. In the general pick that reference ends the
+search whatever they answer: highlighted if both pass, nothing highlighted if either refuses it. The rig's run at 98d80fd3
+showed it: whichever way the VM looked, the search reached the player twice, a body with no reference, then the host's
+stand-in, which the filter refused, and stopped (both players stand at the same map marker, so the eye is inside the stand-in).
+A friend's stand-in is no player to the engine, so in play too it hid every piece behind it from workshop mode. The hits' hook
+answers the player for a stand-in (`Puppets::IsPuppet`, a remote player's stand-in, not a mirrored NPC), in both picks, so the
+engine passes it by exactly as it passes the player; counted (`standInsPassed`) and the first three logged. Only workshop mode's
+picks see this: the stand-in is the same actor everywhere else.
+
+A copy the test admits is refused by the filter (no workshop item of ours), so the filter's call admits it too, when the copy
+belongs to the workbench workshop mode is open at (`CURRENT_WORKSHOP` 4797241, the handle the filter reads itself): the filter's
+build-area test kept, so a copy of another of the host's settlements in the ray's reach is never highlighted or wired
+(`filterOtherBench`, the first three logged). The used-furniture test it skips only allows a highlight: Accept, Store and Scrap on
+a copy are refused at their own hooks.
+
+Each run is kept: the ray, each hit the search reached with what the pick made of it (skipped before the test, a stand-in passed
+by, blocked, admitted, refused by the filter, another bench's copy, picked), what it picked, and every hit of the cast (body id,
+its reference while a piece is watched, layer, distance), so a hit the search never reached is still seen. `wsmode pick
+[<ref>|off]` shows the last run and how far off the ray a watched piece's bound stands, with that piece's own bodies (id, layer,
+whether it is in the cell's havok world) and whether the cast hit one (`inCast`); with a piece watched each change of what the
+search reached is logged ("pick watch"), and an unchanged run every 2 s. `wsmode` counts the runs (`pickRuns`), the copies the
+search reached (`pickCopyHits`), those the test refused (`pickCopyRefused`, the first three logged with each of `AdmitsCopy`'s
+tests), those admitted at the filter (`filterAdmitted`) and those of another bench (`filterOtherBench`). The rig's `turnto ...
+aim` aims from that same eye.
+
+The job (2194909) calls the wire pick at +0xCC (the same lambda and context, the flag 0) every frame the placement item is a wire
+(`TESObjectREFR::IsSpline`): one held, and also one only highlighted at idle, when the general pick has already run in the same
+frame (the job runs the general pick only with nothing selected or its byte 430f6ee8 0, at idle; a held wire runs the wire pick
+alone). Its run is watched the same way (three more sites: that call, its cast's sort at +0x3ED, and its own filter, Workshop's
+wire filter 2195584 at +0x511). The wire filter, read whole in 1.11.240, passes a reference with the `workshopPowerConnection`
+actor value or the power keyword 4797192 (both read from the base, so a copy of a piece that has one has it too), passes the
+wire's first end (4797240) itself, and refuses a reference the bench's grids already connect to the first end; it asks nothing
+of owners, workbenches or the build area, so it is watched, never overridden. A piece with neither (a light bulb, 000560DF) is no
+wire end in any game, the host's own or a copy: the filter refuses it for the friend exactly as for the host. What it passes is the wire's target
+(4797239), and the placement update's spline status (2195059) puts its verdict in the byte `CanPlaceItem` reads: 1 ok, 2 no
+second end (or the first end itself), 3 the engine's cast along the wire met something, 6 too long, 8 the ends already wired
+(`SharedWorkshop::WireStatusName`). Dev `workshop` shows it (`placeStatus`, `wireStatus`, `wireFrom`, `wireTarget`), and `wsmode
+pick` the wire pick's last run (`wire run`, its `target`) and where the watched piece stands from its ray (`| wire <ref>:`); the
+copies the wire filter passes and refuses are counted (`wireFilterCopyYes`, `wireFilterCopyNo`) and the first five of each logged
+with its tests ("admitted copy", "refused copy": no wire end in any game, or already connected to the first end). The rig judges a wire's
+second end by that, not by the general pick's ray, which is stale while the wire is held.
+
+The Scrap key's engine path, read whole in 1.11.240: the menu's XButton (release, not in new-item mode) calls
+`RequestScrapPlacementItem`, which asks `WorkshopCanScrapRef` only while the byte 4797148 is 0 (set to 1 by the placement job
+2195216 after the menu's Accept on a new piece asks for it, back to 0 at the placement), and `RequestScrapRef` then always opens
+ExamineConfirmMenu. `WorkshopCanScrapRef`, read whole, in its order: no base, refused; keyword 4797212, refused; a thing one carries (not a
+projectile, and `TESContainer::ContainerCanHoldForm` of the base) is refused when asked with the flag, and without it unless an
+armor, misc item or weapon; then the base's `inGameFormFlags` bit 0 passes it, or a MISC with components; else a thing one carries
+asked without the flag passes with an object instance, and anything else is refused. The bit's only setter is
+`BGSConstructibleObject::InitItemImpl`: the created object of each workshop recipe (and each member of a form list one makes).
+No recipe in the game makes the wire (`BlackWireSpline01`, 0001D971, the `WorkshopSplineObject` default object), so no wire in
+any game passes, a player's own included: workshop mode never scraps wires one by one, they go with an end that is scrapped or
+stored. The host's wire for a friend is refused for the same reason (`failed=recipe`), not for anything of ours.
+`SharedWorkshop::ScrapRefusal` mirrors the test and names the field that refused (`failed=`). Each press that reaches the test is
+counted (`scrapKeys`, `scrapKeyNo`) and logged with the answer, `failed=` and the parts ("Scrap key on"); `wsmode scraptest
+<ref>` asks the test directly and prints the same, and dev `workshop` shows the gate (`scrapGate`).
+
+The engine then strings the wire on the friend's bench (`ConnectSpline`, `AddPowerLink`, `AddConnection`: the one moment the
+engine adds something of the session to a friend's grid), and its placed event, in the same frame on the main thread, takes it off
+again through the exact Detach path (`DetachWire`: `DisconnectSpline`, `RemoveItem` off every grid naming the wire and each copy
+end, the bench links cleared, `Disable` and `SetDelete`) and sends a wire request naming the ends as the host's reference ids
+(the copies' keys). No save can fall between (saves run on the main thread, and `kPreSaveGame` runs the audits first). A wire with
+one end the friend's own piece and one a copy is taken off and refused (`KindOfWire`: nothing can string it in one game); one
+between the friend's own pieces is theirs as ever. The host's game strings its wire as `wswire` does (`SplineUtils::ConnectSpline`,
+`Workshop::ExtraData::AddConnection` 2194998, `QueueRebuildBendableSpline`; rig-proven to power) plus the steps of the engine's
+own wiring that leave its grid alone: `Workshop::SetIsWorkshopItem` for the bench link, the budget counted once the
+spline is drawn (so a later scrap takes out what was put in), `MakeReferenceStatic` on the wire, the bench recounted and the placed
+event (`SharedWorkshop::StringWire`, `WIRE_STEPS`). `AddConnection` decides the ends' power (it merges the grids and evaluates
+them at once), and no step after it may decide it again. The engine's own wiring has one more step: `Workshop::PlaceCurrentReference`
+(1.11.240), for a placed spline, runs `PowerUtils::UpdateMovingWirelessItem` (2195088) on both ends right after `AddConnection`,
+then the totals. It does that inside workshop mode, where a wired light still ends up lit. The host strings a friend's
+wire outside workshop mode: there, on a wired light no radiator reaches, the call takes it out of its grid's powered set and
+fires its PowerOff (the wired edge stays), and nothing turns the light back on. The first version copied the
+engine's order, and on the rig the light a friend wired stayed dark on the host and on the friend's copy while the host's grid
+kept both edges and said powered. So the call is left out, and adding it back "for parity with the engine" unpowers the light on
+this path (`KeepsEndPower` holds the order to that; its test's fake engine encodes this reading, so it guards the order, not the
+engine). A radiator end (a conduit or pylon) should lose nothing by it: `MakeReferenceStatic` already runs the same call on each
+piece as it is placed, which connects a radiator's receivers in range, and `AddConnection` carries those connections along when
+it merges the grids (the sharedws-power rig step's pylon check, `_sws_radiator`, is there to prove it; not yet run). The wire is reported again with its shape
+once drawn (the moved-wire check), and comes back to the friend as a copy drawn from its `WireShape`, unconnected, as wire copies
+are today.
+
+**The nets.** Everything above is gated by the rule: off, every path is byte for byte what it was. The three existing layers
+stay (the block keyword on every copy, the 2 s and pre-save audit, Retire-never-delete), and a fourth is added for the mode
+(`AuditStrays`, with the audit): no grid of the friend's may name an in-session piece of theirs the host took over or a wire taken
+off (`madeHere`); one that does is a WARN and taken off again. The host's game never holds a copy at its own settlement, so its
+grids never name one (unchanged). A friend who crashes mid-session leaves what any crash leaves (copies adopted or cleaned at the
+next session); a request in flight is never answered. The host crashing: its save holds its own pieces; the friend's copies go
+when the session ends.
+
+**Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
+game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
+pending window); `workshop` shows what workshop mode holds (`held=`, `heldBase=`: a new piece's ghost or a grabbed piece, 0
+otherwise; `newItem=`, `editing=`), what it highlights (`selected=`) and whether the ghost may be put down (`canPlace=`);
+`turnto <ref> <ms> aim [dz]` points the camera at the middle of a reference's 3D, as the pick casts its ray; `controls workshop` lists workshop mode's
+keyboard bindings as `event=vk` (the engine's keyboard mappings hold the virtual key; the events are the pad's names: Cancel
+stores, XButton scraps, YButton strings a wire, Accept grabs, repairs or assigns); `wsfinish <ref> <bench>` runs
+the finish steps on a console-placed piece of ours (the host's probe); `wsgrid`, `wsinfo` and `wspower` as before. The rig check
+`sharedws-power` (tools/rig/steps.sh, opt-in like `follow`) builds a generator on the host, a light from the VM, wires them from
+the VM through the request path, and asserts the host's grid holds all three, the VM's copies show powered, and the VM's grids
+name no copy and no runtime reference before and after an in-session save.
+
+**Phase 2 (not here).** Move, store and scrap of a copy as requests, with the yield taken back; a refusal re-placing the copy
+from the server's kept report. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
+adopted; per-workbench owners for dedicated servers.
+
 ## A friend's pieces count in your settlement (src/game/ResourceMirror.h, WorkshopResources.cpp, WorkshopSync.cpp)
 
 Crops, water pumps, turrets and generators a friend built count in your settlement's food, water, defense and power,
@@ -3253,7 +3478,7 @@ base, permanent, temporary, damage), `wsres sum <bench>` (its pieces as its reco
 
 ## Status (2026-10-09)
 
-Protocol VERSION 66 (66: settlement attacks are the host's, kReportSettlementAttack 88, kReportSettlementOwner 89, kSettlementAttack 188 and kSettlementOwner 189 (`SettlementAttack`: a settlement's workbench, the attack quest, its location, phase and outcome; `SettlementOwner`: whether a settlement is the host's), see "Settlement attacks"; 65 is refused at the hello; 65: one owner per companion, kReportCompanion 80 and kCompanionOwner 184 (`CompanionReport`: an NPC the sender's Followers aliases hold now, or let go of; `CompanionOwner`: whose it is, with `CompanionState` free, owner, held for one who left, or full), see "Companions: one owner each"; 64 is refused at the hello; 64: the host's `iCatchUpXp` and `iGroupDifficulty` in the welcome, `SessionRules::catchUpXp` and `groupDifficulty`, two bytes after `sQuests`' (past 100 and 200 they are 100 and 200), see "Catch-up XP" and "Group difficulty" under Party; 63: a spawn's kind, `Spawn::kind` a byte last on kReportSpawn and kSpawned (plain, a quest actor, a random encounter's actor), see "Random encounters shared calm" under Spawns, the twin refusal for quest actors alone, and a line's speaker may be a spawn id (`Line::speaker`, `IsActorRef`), which the server takes from the game that shares the spawn alone; 62: the host's supply lines at a friend's builds, kReportBenchLinks 79 and kBenchLinks 183 (`BenchLinks`: a workbench and the workbenches the keeper's supply lines link to it), see "The host's supply lines"; 61: a spawn names the quest alias that created it, `Spawn::quest` and `alias` last on kReportSpawn and kSpawned, see "A quest alias's creatures" under Spawns, and the server refuses another game's report of an alias a live spawn names; and a player's choices at a quest's terminals, kReportTerminalChoice 78 and kTerminalChoice 182 (`TerminalChoice`: a row of src/game/TerminalRules.h, its value and the choice's age), see "Quest terminals"; 60: with bSharedStorage the host's workbenches are viewed from friends' workshop and crafting menus, no message of its own; 59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
+Protocol VERSION 67 (67: the shared workshop, the host's `bSharedWorkshop` in the welcome, `SessionRules::sharedWorkshop`, a byte after 64's `groupDifficulty` (on by default), the host's own game's player id in the welcome after it, the welcome's last four bytes (`Welcome::hostId`, 0 on a dedicated server), and a friend's build or wire at a settlement the host owns as a numbered request the host's game performs on its own pieces and answers, kReportWorkshopRequest 81 and kWorkshopRequest 185 (`WorkshopRequest`: the number, build or wire, the workbench, a build's object, spot, rotation and scale, a wire's two ends as the host's references) and kReportWorkshopAnswer 82 and kWorkshopAnswer 186 (`WorkshopAnswer`: the number, whose, applied with the piece made or refused and why), see "Shared workshop"; 66 is refused at the hello; 66: settlement attacks are the host's, kReportSettlementAttack 88, kReportSettlementOwner 89, kSettlementAttack 188 and kSettlementOwner 189 (`SettlementAttack`: a settlement's workbench, the attack quest, its location, phase and outcome; `SettlementOwner`: whether a settlement is the host's), see "Settlement attacks"; 65 is refused at the hello; 65: one owner per companion, kReportCompanion 80 and kCompanionOwner 184 (`CompanionReport`: an NPC the sender's Followers aliases hold now, or let go of; `CompanionOwner`: whose it is, with `CompanionState` free, owner, held for one who left, or full), see "Companions: one owner each"; 64 is refused at the hello; 64: the host's `iCatchUpXp` and `iGroupDifficulty` in the welcome, `SessionRules::catchUpXp` and `groupDifficulty`, two bytes after `sQuests`' (past 100 and 200 they are 100 and 200), see "Catch-up XP" and "Group difficulty" under Party; 63: a spawn's kind, `Spawn::kind` a byte last on kReportSpawn and kSpawned (plain, a quest actor, a random encounter's actor), see "Random encounters shared calm" under Spawns, the twin refusal for quest actors alone, and a line's speaker may be a spawn id (`Line::speaker`, `IsActorRef`), which the server takes from the game that shares the spawn alone; 62: the host's supply lines at a friend's builds, kReportBenchLinks 79 and kBenchLinks 183 (`BenchLinks`: a workbench and the workbenches the keeper's supply lines link to it), see "The host's supply lines"; 61: a spawn names the quest alias that created it, `Spawn::quest` and `alias` last on kReportSpawn and kSpawned, see "A quest alias's creatures" under Spawns, and the server refuses another game's report of an alias a live spawn names; and a player's choices at a quest's terminals, kReportTerminalChoice 78 and kTerminalChoice 182 (`TerminalChoice`: a row of src/game/TerminalRules.h, its value and the choice's age), see "Quest terminals"; 60: with bSharedStorage the host's workbenches are viewed from friends' workshop and crafting menus, no message of its own; 59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

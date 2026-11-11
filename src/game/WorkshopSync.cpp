@@ -9,6 +9,7 @@
 #include "game/SavedScraps.h"
 #include "game/SaveStrays.h"
 #include "game/SendPacer.h"
+#include "game/SharedWorkshop.h"
 #include "game/WorkshopApply.h"
 #include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
@@ -25,6 +26,7 @@
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
+#include "game/Puppets.h"
 #include "game/Story.h"
 #include "game/TextureFlush.h"
 #include "MainThread.h"
@@ -77,6 +79,12 @@ namespace WorkshopSync
 
 		bool IsWorkshopObject(const RE::TESObjectREFR* a_ref);
 		void ForgetGraphTold(std::uint32_t a_copy);
+		// The shared workshop (defined with it, below): a piece our workshop mode placed taken as a request of the host, and
+		// whether a piece of ours waits for the host's answer (its moves and scraps are not reported meanwhile).
+		bool HandOver(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench);
+		bool IsPendingPiece(std::uint32_t a_id);
+		void AuditStrays(std::string_view a_when);
+		void SharedBeforeSave();
 
 		// The copy's reference: through its handle, or, once that names nothing (its cell unloaded), the reference under its
 		// ID while that is the copy (WorkshopApply::SameCopy) and no workshop object of ours (an ID something else freed
@@ -171,18 +179,22 @@ namespace WorkshopSync
 		// The workbench each copy's report named, for the crafting menus' gather (CraftingWorkshop.h), which runs on the
 		// menu's thread. Under copyIdsLock, in step with copyIds.
 		CraftingWorkshop::Benches copyBenches;
+		// Whose piece each copy is (the builder's player id), for the shared workshop's picks (which run on whatever thread
+		// workshop mode's pick does). Under copyIdsLock, in step with copyIds.
+		std::unordered_map<std::uint32_t, std::uint32_t> copyBuilders;
 
 		// Our copies of friends' lights (LIGH) shown powered, by form ID: their light is made as the game makes a powered
 		// workshop light's (LightPoweredHook). Under its own lock: the game makes lights on its loading threads too.
 		std::mutex                        litLock;
 		std::unordered_set<std::uint32_t> litCopies;
 
-		void NoteCopy(const Copy& a_copy, std::uint32_t a_bench)
+		void NoteCopy(const Copy& a_copy, std::uint32_t a_bench, std::uint32_t a_builder)
 		{
 			if (a_copy.id != 0) {
 				std::scoped_lock l{ copyIdsLock };
 				copyIds.insert(a_copy.id);
 				copyBenches.Note(a_copy.id, a_bench);
+				copyBuilders[a_copy.id] = a_builder;
 			}
 		}
 
@@ -194,6 +206,7 @@ namespace WorkshopSync
 					std::scoped_lock l{ copyIdsLock };
 					copyIds.erase(a_copy.id);
 					copyBenches.Forget(a_copy.id);
+					copyBuilders.erase(a_copy.id);
 				}
 				std::scoped_lock l{ litLock };
 				litCopies.erase(a_copy.id);
@@ -206,6 +219,7 @@ namespace WorkshopSync
 				std::scoped_lock l{ copyIdsLock };
 				copyIds.clear();
 				copyBenches.Clear();
+				copyBuilders.clear();
 			}
 			std::scoped_lock l{ litLock };
 			litCopies.clear();
@@ -500,6 +514,9 @@ namespace WorkshopSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemPlacedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>*) override
 			{
 				LogEvent("placed", a_event.placedItem.get(), a_event.workshop.get());
+				if (HandOver(a_event.placedItem.get(), a_event.workshop.get())) {
+					return RE::BSEventNotifyControl::kContinue;  // asked of the host (or taken off): not ours to report
+				}
 				if (ReportRef(a_event.placedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
 					SettleLater(a_event.placedItem.get(), a_event.workshop.get());
 				}
@@ -513,6 +530,9 @@ namespace WorkshopSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemMovedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemMovedEvent>*) override
 			{
 				LogEvent("moved", a_event.movedItem.get(), a_event.workshop.get());
+				if (a_event.movedItem && IsPendingPiece(a_event.movedItem->GetFormID())) {
+					return RE::BSEventNotifyControl::kContinue;  // asked of the host where it was placed: the host's piece is where it stands
+				}
 				if (ReportRef(a_event.movedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
 					SettleLater(a_event.movedItem.get(), a_event.workshop.get());
 				}
@@ -534,6 +554,9 @@ namespace WorkshopSync
 				const auto bench = a_event.workshop.get();
 				if (Drops::OnScrapped(id, bench ? bench->GetFormID() : 0)) {
 					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (IsPendingPiece(id)) {
+					return RE::BSEventNotifyControl::kContinue;  // never reported placed: nothing to report scrapped (the host's piece, if made, stands)
 				}
 				// The wires strung to it go with it: the game takes them away and tells of no scrap of theirs.
 				if (ref && !IsWire(ref->GetObjectReference())) {
@@ -1039,6 +1062,7 @@ namespace WorkshopSync
 			if (!stuck.empty() && stuckWarned++ < 8) {
 				REX::WARN("WorkshopSync: {}: copy {:08X} stays tied into our power; it won't be deleted", a_when, stuck.front());
 			}
+			AuditStrays(a_when);  // the shared workshop's: nothing in-session of ours the host took over stays on a grid
 		}
 
 		WorkshopApply::Kind KindOf(RE::TESObjectREFR* a_ref)
@@ -1394,7 +1418,7 @@ namespace WorkshopSync
 			// the workbench its report names, which a crafting station's copy reads as its settlement (CraftingWorkshop.h).
 			void Keep(const Copy& a_copy, const Protocol::WorkshopItem& a_item)
 			{
-				NoteCopy(a_copy, a_item.workshop);
+				NoteCopy(a_copy, a_item.workshop, a_item.playerId);
 				if (const auto ref = Live(a_copy)) {
 					BlockInteraction(*ref);
 				}
@@ -2795,6 +2819,2239 @@ namespace WorkshopSync
 		}
 	}
 
+	namespace
+	{
+		// ---- The shared workshop (SharedWorkshop.h) ------------------------------------------------------
+		//
+		// At a settlement the host owns, a friend's build or wire is a numbered request the host's game performs on its own
+		// pieces (docs/DESIGN.md "Shared workshop"). The friend's side: its placed event becomes a request, and the answer
+		// adopts its piece as a copy of the host's (Adopt) or leaves it the friend's own; a wire it strung between two copies
+		// is taken off in the same frame (DetachWire) and asked of the host. The host's side: the request is checked, the
+		// piece made where the friend's stood and finished with the engine's own placement steps (FinishEngine), then
+		// answered. The hooks (InstallPicks) let workshop mode pick a copy to wire it, and refuse to grab, store or scrap it.
+		//
+		// The game's own functions (1.11.240), by their PDB names:
+
+		// The two picks of Workshop::UpdateForegroundReferenceJob that ask Workshop::IsInteractionBlocked (2195179: the
+		// reference has WorkshopBlockInteractionKeyword) at +0x4FA (a 5-byte call, the reference in rcx): the general pick
+		// (+3ABF60; what E, Store, Scrap and the wire's first end act on) and the wire pick (+3AB130; the wire's second end).
+		// The third, the snap magnet (2195313), is left as it is: a copy is never snapped to.
+		constexpr REL::ID     PICK_GENERAL{ 2195314 };
+		constexpr REL::ID     PICK_WIRE{ 2195312 };
+		constexpr REL::ID     IS_INTERACTION_BLOCKED{ 2195179 };
+		constexpr std::size_t PICK_BLOCKED_CALL = 0x4FA;
+		// Workshop::CanStoreRef(TESObjectREFR&) (+39F0A0), asked by Workshop::CanStorePlacementItem (+384BD0, which the menu's
+		// button hints ask every frame, and the Cancel key once) at +0x80 and by Workshop::RequestStorePlacementItem (+3853F0) at
+		// +0x8E. Both refuse a copy silently: the key's refusal is counted and said where the menu asks (MENU_STORE_CALL).
+		constexpr REL::ID     CAN_STORE_PLACEMENT_ITEM{ 2194963 };
+		constexpr REL::ID     REQUEST_STORE_PLACEMENT_ITEM{ 4477212 };
+		constexpr REL::ID     CAN_STORE_REF{ 2195195 };
+		constexpr std::size_t CAN_STORE_CALL = 0x80;
+		constexpr std::size_t REQUEST_STORE_CALL = 0x8E;
+		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool) (CAN_SCRAP_REF above), asked by Workshop::CanScrapPlacementRef(bool)
+		// (+39E830, the Scrap button: the hints ask it every frame) at +0x188, refused silently, and by
+		// Workshop::RequestScrapPlacementItem (+385310; only the menu's XButton calls it) at +0x85, refused, counted and said.
+		// Its other callers (the general filter, the navmesh) are left alone: a copy must pass the general filter.
+		constexpr REL::ID     CAN_SCRAP_PLACEMENT_REF{ 2195192 };
+		constexpr REL::ID     REQUEST_SCRAP_PLACEMENT_ITEM{ 2194966 };
+		constexpr std::size_t CAN_SCRAP_CALL = 0x188;
+		constexpr std::size_t REQUEST_SCRAP_CALL = 0x85;
+		// The grab. Workshop::SetSelectedEditItem (2195119) is not it: the general pick calls it every frame for whatever the
+		// crosshair is on (the highlight; workshop mode's placement item, PLACEMENT_ITEM, is that piece at idle), and a copy must
+		// be highlighted to be wired. The menu's user event handler (+B2C170) grabs on Accept: with no new piece and nothing held,
+		// it asks Workshop::WorkshopCanSelectRef(TESObjectREFR&) (+384880; a hash list of bases the player may never move,
+		// which a copy passes) of the highlighted piece at +0x148D, and only then repairs it (RequestRepairItem) or picks it up
+		// (UpdateActiveEdit, the ItemGrabbedEvent). Refused there, counted and said. Workshop::CanSelectPlacementRef (+384CD0, the
+		// Move button's hint, every frame) asks it at +0x80: refused silently.
+		constexpr REL::ID     WORKSHOP_MENU_EVENT{ 2224981 };
+		constexpr REL::ID     WORKSHOP_CAN_SELECT_REF{ 2194958 };
+		constexpr REL::ID     CAN_SELECT_PLACEMENT_REF{ 2194964 };
+		constexpr std::size_t MENU_SELECT_CALL = 0x148D;
+		constexpr std::size_t CAN_SELECT_CALL = 0x80;
+		// The menu's Cancel with nothing held and not placing a new piece asks Workshop::CanStorePlacementItem() at +0xA5B, and
+		// stores the highlighted piece when it may (else workshop mode's own Cancel): the Store key's one call, where its
+		// refusal of a copy is counted and said.
+		constexpr std::size_t MENU_STORE_CALL = 0xA5B;
+		// The general pick, read whole (1.11.240): Workshop::UpdateForegroundReferenceJob (2194909, +3820F0), run each frame by a
+		// job (JobListManager, +BD5980) with a Workshop::ContextData made from the player (+3897F0: the ray is the player's
+		// GetEyeVector(origin, direction, false), not the camera), calls it at +0x46 while no new piece is being placed and none
+		// is held. It casts a 0.1-unit shape 600 units along that ray through the cell's havok world (hknpWorld::castShape, every
+		// layer but the actor zone and the navcut), sorts the hits near to far (the collector's sort, 2256236, at +0x3ED), and
+		// for each: a trigger body is skipped; one with no reference (TESHavokUtilities::FindBodyIdRef, 2208693, at +0x469) that
+		// is static or terrain ends the search; the player (the PlayerCharacter singleton, by address), a marker or a primitive
+		// is skipped; a door is taken as its linked reference; then the pick test (IsInteractionBlocked, +0x4FA, hooked above)
+		// and the general filter (2195585, +3BF6F0, at +0x511: a workshop item, or one the player could scrap, build, store or
+		// carry, inside the open workbench's build area, never a used furniture marker). The first reference to reach the test
+		// ends the search: highlighted (+3B7D30, Workshop::SetSelectedEditItem's caller) if it passes both, nothing highlighted
+		// if either refuses it (the "general" flag, r13b, sets the stop at +0x5CD). So whatever stands in front, refused, hides
+		// what is behind it. A friend's stand-in is no player to the engine: standing between the eye and a piece (or on the
+		// player's own spot, where the cast starts inside it) it was refused by the filter and ended every search (the rig's
+		// run at 98d80fd3: "00000014:skipped 00000014:skipped body3413:no-ref FF00103A:filter-no", FF00103A the host's
+		// stand-in, whichever way the VM looked). The hits' call names a stand-in the player, so the engine passes it by as it
+		// passes the player, in the general pick and the wire pick (2195312, the same loop: its FindBodyIdRef call is at +0x469
+		// too). The filter's own call admits a copy the test admitted (a copy is no workshop item of ours, and the filter's other
+		// tests were never written for one), when the copy belongs to the open workbench (the filter's build-area test, kept).
+		constexpr REL::ID     FOREGROUND_JOB{ 2194909 };
+		constexpr std::size_t FOREGROUND_PICK_CALL = 0x46;
+		constexpr REL::ID     FIND_BODY_REF{ 2208693 };
+		constexpr std::size_t PICK_HIT_CALL = 0x469;
+		constexpr REL::ID     GENERAL_FILTER{ 2195585 };
+		constexpr std::size_t PICK_FILTER_CALL = 0x511;
+		// The wire pick's run (1.11.240): the job calls it at +0xCC (the same lambda and context, the flag 0) every frame the
+		// placement item is a wire (TESObjectREFR::IsSpline): one held, and also one only highlighted at idle, when the general
+		// pick has run first in the same frame (the job runs the general pick only with nothing selected or its byte 430f6ee8
+		// 0, at idle; a held wire runs the wire pick alone). Its loop is the general pick's, with its own filter at +0x511:
+		// Workshop's wire filter (2195584, +3BF4B0) passes a reference with the workshopPowerConnection actor value or the
+		// power keyword (4797192, read below; both the base's, so a copy of a piece that has one has it too), passes the
+		// wire's first end, and refuses a reference the bench's grids already connect to the first end. A piece with neither
+		// (a light bulb, 000560DF) is no wire end in any game: the filter refuses it, copy or not.
+		// It asks nothing of owners, workbenches or the build area. What it passes is the wire's target (SetWireTarget,
+		// 2195498, at +0x5C1: its handle in WIRE_TARGET), and the placement update's spline status (2195059) says whether the
+		// wire may go there: CAN_PLACE below is that status (SharedWorkshop::WireStatusName). Watched only: a copy needs nothing
+		// at the wire filter that the pick test (hooked above) doesn't already give it.
+		constexpr std::size_t FOREGROUND_WIRE_CALL = 0xCC;
+		constexpr REL::ID     WIRE_FILTER{ 2195584 };
+		constexpr REL::ID     WIRE_FIRST_END{ 4797240 };  // an ObjectRefHandle: the end the wire was started at
+		constexpr REL::ID     WIRE_TARGET{ 4797239 };     // an ObjectRefHandle: the second end the wire pick found (none: 0)
+		constexpr REL::ID     POWER_KEYWORD{ 4797192 };   // a BGSKeyword*: the wire filter's other way to pass
+		// Workshop::RequestScrapPlacementItem asks its scrap test only while this byte is 0 (1.11.240: the placement job,
+		// 2195216, sets it to 1 when the menu's Accept on a new piece asks it to, 2195215; the placement, 2195151, 2195152 and
+		// PlaceCurrentReference put it back to 0). A 1 left there turns every Scrap key away before the test, silently.
+		constexpr REL::ID SCRAP_GATE{ 4797148 };
+		// The keyword WorkshopCanScrapRef refuses a reference for. Short of it, for a reference that is no actor and no
+		// inventory item (a wire), the test reads only its base: inGameFormFlags bit 0, or a MISC with components.
+		constexpr REL::ID SCRAP_BLOCK_KEYWORD{ 4797212 };
+		// TESContainer::ContainerCanHoldForm(TESBoundObject*) (+30E570): WorkshopCanScrapRef's "a thing one carries" test.
+		constexpr REL::ID CONTAINER_CAN_HOLD_FORM{ 2193008 };
+		// The cast's hits, read for the pick watch once sorted: the collector (hknpAllHitsCollector) holds them at +0x20 and
+		// their count at +0x28; each is a hknpCollisionResult of 0x60 bytes: the hit's position in havok units at +0x00, the
+		// fraction of the cast at +0x20, the body id at +0x40 and its shape's collision filter info at +0x4C (the layer in its
+		// low seven bits), as the pick's loop reads them.
+		constexpr REL::ID     PICK_SORT{ 2256236 };
+		constexpr std::size_t PICK_SORT_CALL = 0x3ED;
+		constexpr std::size_t CAST_HITS = 0x20;
+		constexpr std::size_t CAST_COUNT = 0x28;
+		constexpr std::size_t CAST_STRIDE = 0x60;
+		constexpr std::size_t CAST_FRACTION = 0x20;
+		constexpr float       CAST_REACH = 600.0f;  // the cast's length (the constant at +2483E54): a fraction of it is a distance
+		constexpr std::size_t CAST_BODY = 0x40;
+		constexpr std::size_t CAST_FILTER = 0x4C;
+
+		// The engine's own finish of a placed piece (SharedWorkshop::FINISH_STEPS), each a plain function:
+		constexpr REL::ID SET_IS_WORKSHOP_ITEM{ 2194972 };     // Workshop::SetIsWorkshopItem(TESObjectREFR&, bool, TESObjectREFR* bench)
+		constexpr REL::ID BUDGET_ADD_OBJECT{ 2195107 };        // Workshop::Budget::AddObject(TESObjectREFR&)
+		constexpr REL::ID BUDGET_REMOVE_OBJECT{ 2195108 };     // Workshop::Budget::RemoveObject(TESObjectREFR&) (an adopted piece off our budget)
+		// The budget's running totals are workshop mode's globals, loaded from a workbench's actor values when workshop mode
+		// is entered there (Workshop::Budget::Initialize(TESObjectREFR& bench), 2195106, +390330: the maximum triangles and draws
+		// into 4797248 and 4797252, the current ones into 4797162 and 4797163, each a 32-bit integer; read in 1.11.240). AddObject
+		// and RemoveObject add to the current totals and, with the current workbench set, write them to that workbench. So
+		// outside workshop mode at the bench the totals are loaded first and put back after (BudgetScope), or a stale figure
+		// (another settlement's, or 0 after a load) would be written onto the bench, into the host's save.
+		constexpr REL::ID BUDGET_INITIALIZE{ 2195106 };
+		constexpr REL::ID BUDGET_TRIANGLES{ 4797162 };
+		constexpr REL::ID BUDGET_DRAWS{ 4797163 };
+		constexpr REL::ID BUDGET_MAX_TRIANGLES{ 4797248 };
+		constexpr REL::ID BUDGET_MAX_DRAWS{ 4797252 };
+		constexpr REL::ID MAKE_REFERENCE_STATIC{ 2195055 };    // Workshop::MakeReferenceStatic(TESObjectREFR&)
+		constexpr REL::ID SET_FURNITURE_USED{ 2195158 };       // Workshop::SetFurnitureUsed(TESObjectREFR&, bool)
+		constexpr REL::ID CHECK_SNAPPED_POWER{ 2195213 };      // Workshop::CheckSnappedPowerConnections(ContextData&, TESObjectREFR&, PlacementItemData&)
+		constexpr REL::ID PLACEMENT_DATA_CLEAR{ 2195555 };     // Workshop::PlacementItemData::Clear()
+		constexpr REL::ID EXTRA_ADD_ITEM{ 2194996 };           // Workshop::ExtraData::AddItem(TESObjectREFR&)
+		constexpr REL::ID ESTABLISH_TERMINAL_LINKS{ 2195102 }; // TerminalUtils::EstablishTerminalLinks(TESObjectREFR&)
+		constexpr REL::ID UPDATE_DYNAMIC_NAVMESH{ 2201206 };   // TESObjectREFR::UpdateDynamicNavmesh(bool)
+		constexpr REL::ID CALCULATE_POWER_RATING{ 2194985 };   // Workshop::CalculatePowerRating(TESObjectREFR& bench)
+		constexpr REL::ID RECALCULATE_RESOURCES{ 2194984 };    // Workshop::RecalculateResources(TESObjectREFR& bench)
+		constexpr REL::ID PLACED_EVENT_SOURCE{ 2195289 };      // Workshop::QSource<Workshop::ItemPlacedEvent>()
+		constexpr REL::ID ADD_CONNECTION{ 2194998 };           // Workshop::ExtraData::AddConnection(TESObjectREFR&, TESObjectREFR&, TESObjectREFR* wire)
+		// Workshop mode's current workbench (an ObjectRefHandle; null outside workshop mode): the budget, MakeReferenceStatic and
+		// the snapped-power check read it. Set to the piece's workbench for the finish, and put back after (BenchScope).
+		constexpr REL::ID CURRENT_WORKSHOP{ 4797241 };
+		// Workshop mode's "new item mode" byte (+2EDEF38; Workshop::QNewItemMode is "byte == 0"): 0 only while a new piece is
+		// being placed, 1 otherwise, at idle and after a load too (the rig read it so). MakeReferenceStatic reads it twice
+		// (+0x133, +0x162): with 0 the piece gets InitScripts, the loaded event and its power's initial state (a new piece);
+		// with 1 it is put back as a moved one. So the finish sets it to 0 for its steps and puts it back (NewItemScope); it
+		// says nothing about what the host holds.
+		constexpr REL::ID MOVING_ITEM{ 2661518 };
+		// Workshop mode's placement item (an ObjectRefHandle; Workshop::SetSelectedEditItem's): the new piece's ghost while one is
+		// placed, the grabbed piece while one is held, and otherwise the piece merely highlighted under the crosshair. Held in
+		// the player's hands only with the active-edit byte set (Workshop::HasActiveEditItem: the handle and +30F6EE8 != 0);
+		// Workshop::CanPlaceItem is the handle and +30F6EE7 == 1 (the ghost green; while a wire is held, the update copies the
+		// spline status there, whose other values say why not). A pending piece of ours held is not adopted until it is put down.
+		constexpr REL::ID PLACEMENT_ITEM{ 4797235 };
+		constexpr REL::ID ACTIVE_EDIT{ 4797147 };
+		constexpr REL::ID CAN_PLACE{ 4797146 };
+		// Workshop::QSource<Workshop::ItemDestroyedEvent>(): what the game's scrap notifies, which Papyrus answers by undoing
+		// what it did for the piece (a settler's assignment to a bed or a crop, the workshop's counts); an adopted piece gets
+		// it, so our save keeps no assignment to a reference that is the host's now.
+		constexpr REL::ID DESTROYED_EVENT_SOURCE{ 2195286 };
+		// The workshop's power wire (what the wire tool strings).
+		constexpr std::uint32_t WIRE_BASE = 0x0001D971;
+
+		using IsBlockedFn = bool (*)(RE::TESObjectREFR&);
+		using CanStoreFn = bool (*)(RE::TESObjectREFR&);
+		using CanScrapFn = bool (*)(RE::TESObjectREFR&, bool);
+		using CanSelectFn = bool (*)(RE::TESObjectREFR&);
+		using CanStoreItemFn = bool (*)();
+		using GeneralPickFn = void (*)(void*, RE::Workshop::ContextData&, bool);  // the pick's lambda, the context, "general"
+		using FindBodyRefFn = RE::TESObjectREFR* (*)(void*, std::uint32_t);      // hknpBSWorld&, hknpBodyId (four bytes, by value)
+		using GeneralFilterFn = bool (*)(void*, RE::TESObjectREFR&);
+		using PickSortFn = void (*)(void*);                                       // the cast's collector
+		IsBlockedFn     originalIsBlocked = nullptr;
+		CanStoreFn      originalCanStore = nullptr;
+		CanScrapFn      originalCanScrap = nullptr;
+		CanSelectFn     originalCanSelect = nullptr;
+		CanStoreItemFn  originalCanStoreItem = nullptr;
+		GeneralPickFn   originalGeneralPick = nullptr;
+		FindBodyRefFn   originalFindBodyRef = nullptr;
+		GeneralFilterFn originalGeneralFilter = nullptr;
+		GeneralPickFn   originalWirePick = nullptr;
+		GeneralFilterFn originalWireFilter = nullptr;
+		PickSortFn      originalPickSort = nullptr;
+		bool            picksInstalled = false;
+
+		// ---- The pick watch: what the general pick's ray hit, frame by frame (on whatever thread the job runs) -------------
+		enum class HitVerdict : std::uint8_t
+		{
+			kNoRef,        // a body no reference owns (the search ends there if it is static or terrain)
+			kSkipped,      // never asked the pick test: the player, a marker, a primitive, a trigger, or the search had ended
+			kStandIn,      // a friend's stand-in, named the player to the engine: passed by as the player is
+			kBlocked,      // the pick test refused it (the keyword; not a copy we admit): the search ends here
+			kTested,       // the pick test let it through, then the filter wasn't asked (should not happen)
+			kAdmitted,     // a copy the pick test let through
+			kFilterNo,     // the general filter refused it: the search ends here
+			kOtherBench,   // ... a copy the test admitted, of another workbench than the open one: not admitted, the search ends
+			kPicked,       // the general filter took it: the highlight
+			kPickedCopy,   // ... a copy the filter refused, admitted at the filter's call
+		};
+		struct PickHit
+		{
+			std::uint32_t ref = 0;
+			std::uint32_t body = 0;
+			bool          blockedKeyword = false;
+			HitVerdict    verdict = HitVerdict::kSkipped;
+		};
+		// One of the cast's hits, as the collector holds them (sorted near to far), whether or not the search reached it.
+		struct CastHit
+		{
+			std::uint32_t body = 0;
+			std::uint32_t ref = 0;   // FindBodyIdRef's answer, asked by the watch (0: none, or not asked: a trigger)
+			std::uint8_t  layer = 0;
+			float         distance = 0.0f;  // from the ray's start, game units
+		};
+		struct PickRun
+		{
+			RE::NiPoint3                 from{};
+			RE::NiPoint3                 dir{};
+			std::uint32_t                cell = 0;
+			void*                        world = nullptr;  // the cell's hknpBSWorld (only while a piece is watched)
+			std::array<PickHit, 8>       hits{};
+			std::uint32_t                count = 0;  // hits the search reached (FindBodyIdRef's calls; only the first hits.size() kept)
+			std::array<CastHit, 12>      cast{};
+			std::int32_t                 castCount = -1;  // the cast's hits, all of them (-1: not read)
+			std::uint32_t                picked = 0;
+			std::chrono::steady_clock::time_point at{};
+		};
+		thread_local PickRun*      currentPick = nullptr;  // set by GeneralPickHook (or WirePickHook) for the call's length
+		// Each pick's last run, and its watch's last line (under pickLock).
+		struct PickRecord
+		{
+			PickRun                               last;
+			std::string                           logged;
+			std::chrono::steady_clock::time_point loggedAt{};
+		};
+		std::mutex                 pickLock;
+		PickRecord                 generalPick;            // under pickLock
+		PickRecord                 wirePick;               // under pickLock
+		std::atomic<std::uint32_t> wirePickRuns{ 0 };      // the wire pick's calls (each frame the placement item is a wire)
+		std::atomic<std::uint32_t> wireTargets{ 0 };       // ... that found a second end the wire filter passed
+		std::atomic<std::uint32_t> wireFilterCopyNo{ 0 };   // copies the wire filter refused (the first few logged, with why)
+		std::atomic<std::uint32_t> wireFilterCopyYes{ 0 };  // ... and admitted, each frame one is the target (the first few logged)
+		std::atomic<std::uint32_t> scrapKeys{ 0 };         // the Scrap key's scrap test asked (the gate before it open)
+		std::atomic<std::uint32_t> scrapKeyNo{ 0 };        // ... and the engine's test said no
+		std::atomic<std::uint32_t> pickWatch{ 0 };     // wsmode pick <ref>: that reference watched, its runs logged
+		std::atomic<std::uint32_t> pickRuns{ 0 };      // the general pick's calls (each frame workshop mode is up and idle)
+		std::atomic<std::uint32_t> pickCopyHits{ 0 };  // ray hits on a copy (a body of one, whatever came of it)
+		std::atomic<std::uint32_t> pickCopyRefused{ 0 };  // ... that the pick test refused (not admitted: why is logged)
+		std::atomic<std::uint32_t> filterAdmitted{ 0 };   // admitted copies the general filter refused, admitted at its call
+		std::atomic<std::uint32_t> filterOtherBench{ 0 };  // ... not admitted there: another workbench's copy than the open one
+		std::atomic<std::uint32_t> standInsPassed{ 0 };   // hits on a friend's stand-in, passed by as the player (either pick)
+
+		std::optional<bool>        sharedDev;             // wsmode: the rule forced on or off
+		bool                       hosting = false;       // Frame's a_host
+		std::atomic<bool>          admitsCopies{ false };  // the hooks' gate: the rule on, in a session, not the host (set each frame)
+		std::atomic<std::uint32_t> picksAdmitted{ 0 };  // the pick test let a copy through (every frame the crosshair is on one)
+		std::atomic<std::uint32_t> grabsRefused{ 0 };   // key presses only: Accept on a copy or a pending piece of ours,
+		std::atomic<std::uint32_t> storesRefused{ 0 };  // Cancel (the Store key) with a copy highlighted,
+		std::atomic<std::uint32_t> scrapsRefused{ 0 };  // and XButton (Scrap) on a copy
+		std::set<std::uint32_t>    notOwnedBenches;  // Benches::IsNotOwned, for the hooks (under copyIdsLock)
+
+		SharedWorkshop::Requests requests;  // ours, waiting for the host's answer
+		SharedWorkshop::Benches  taught;    // what the answers taught
+		std::set<std::uint32_t>  madeHere;  // our pieces adopted as copies, and our wires taken off: no grid of ours may name them
+		std::uint32_t            requestsSent = 0;
+		std::uint32_t            wiresAsked = 0;
+		std::uint32_t            wiresMixed = 0;  // wires with one end ours and one a copy: taken off, refused
+		std::uint32_t            wiresDetached = 0;
+		std::uint32_t            answersApplied = 0;
+		std::uint32_t            answersRefused = 0;
+		std::uint32_t            answersLate = 0;     // no answer in ANSWER_WAIT: taken as refused
+		std::uint32_t            answersUnknown = 0;  // answers to no request of ours
+		std::uint32_t            adoptedHere = 0;     // our pieces that became copies of the host's
+		std::uint32_t            adoptMissing = 0;    // ...that were gone by the time the answer came
+		std::uint32_t            straysFound = 0;     // in-session pieces of ours a grid still named (AuditStrays)
+		// The host's side.
+		struct Making
+		{
+			Protocol::WorkshopRequest request;
+			RE::ObjectRefHandle       ref;  // a build: the piece made, waiting for its 3D (and for workshop mode to close)
+			Clock::time_point         since;
+		};
+		std::vector<Making> making;
+		std::uint32_t       requestsServed = 0;
+		std::uint32_t       requestsRefused = 0;
+		std::uint32_t       finishedHere = 0;
+		std::uint32_t       wiresMadeHere = 0;
+		std::uint32_t       finishSteps = 0;
+		bool                answersHeld = false;  // wsmode hold (dev): requests taken, not made or answered until wsmode serve
+		// The host's own game's player id, from the welcome (0: none, a dedicated server: nothing is handed over). The copies a
+		// friend may wire are the host's alone, and a wire's ends are the host's references: another friend's copies, or two
+		// builders' pieces whose runtime ids collide, are never asked.
+		std::atomic<std::uint32_t> hostId{ 0 };
+		bool                       hostGone = false;  // the server said no host's game answers (kHostAway, kOff): nothing more is asked this session
+		// Answers to builds whose piece the player was holding in workshop mode when they came (the placement item): adopted
+		// once it is put down (the engine's drop links a held piece to the bench and adds it again).
+		std::vector<std::pair<SharedWorkshop::Pending, Key>> adoptLater;
+		std::uint32_t                                        adoptsDeferred = 0;
+		// The host's wires made for friends, counted in the budget once drawn (MakeWire, CountWiresLater).
+		struct WireToCount
+		{
+			RE::ObjectRefHandle wire;
+			std::uint32_t       bench;
+			Clock::time_point   since;
+		};
+		std::vector<WireToCount> wiresToCount;
+		std::uint32_t            wiresCounted = 0;
+		std::uint32_t            wiresUncounted = 0;  // drawn, but the budget's AddObject added nothing for them by WIRE_COUNT_GIVE_UP
+		constexpr auto           WIRE_COUNT_GIVE_UP = std::chrono::seconds(10);
+		std::set<std::uint32_t>  unopenedTold;  // workbenches the host was told to open once (a notice each)
+
+		bool RuleOn()
+		{
+			return sharedDev.value_or(HostRules::Get().sharedWorkshop);
+		}
+
+		bool HandsOver()
+		{
+			return SharedWorkshop::HandsOver(RuleOn(), HostRules::InSession(), hosting) && hostId.load() != 0 && !hostGone;
+		}
+
+		// Whether our copy with this ID is of one of the host's pieces (under copyIdsLock).
+		bool HostsCopy(std::uint32_t a_id)
+		{
+			const auto it = copyBuilders.find(a_id);
+			return it != copyBuilders.end() && it->second == hostId.load();
+		}
+
+		// Workshop mode's placement item and its state (PLACEMENT_ITEM): what the crosshair highlights, a new piece's ghost, or
+		// the piece held.
+		struct Placement
+		{
+			std::uint32_t handle = 0;
+			bool          newItem = false;  // a new piece's ghost (Workshop::QNewItemMode)
+			bool          editing = false;  // a piece held (Workshop::HasActiveEditItem)
+			bool          canPlace = false;  // Workshop::CanPlaceItem: the ghost or the held piece may be put down where it is
+			std::uint8_t  status = 0;        // the byte CanPlaceItem reads (a held wire: SharedWorkshop::WireStatusName)
+
+			[[nodiscard]] bool Holds() const { return handle != 0 && (newItem || editing); }
+		};
+
+		Placement PlacementNow()
+		{
+			static REL::Relocation<std::uint32_t*> placement{ PLACEMENT_ITEM };
+			static REL::Relocation<std::uint8_t*>  moving{ MOVING_ITEM };
+			static REL::Relocation<std::uint8_t*>  active{ ACTIVE_EDIT };
+			static REL::Relocation<std::uint8_t*>  canPlace{ CAN_PLACE };
+			Placement p;
+			p.handle = *placement;
+			p.newItem = *moving == 0;
+			p.editing = p.handle != 0 && *active != 0;
+			p.status = *canPlace;
+			p.canPlace = p.handle != 0 && p.status == 1;
+			return p;
+		}
+
+		// The piece workshop mode highlights or holds, if any.
+		RE::NiPointer<RE::TESObjectREFR> PlacementRef()
+		{
+			static REL::Relocation<RE::ObjectRefHandle*> placement{ PLACEMENT_ITEM };
+			return placement->get();
+		}
+
+		// Whether the player holds this piece of ours in workshop mode (grabbed: the placement item is it, with an active edit).
+		// Merely highlighted, it is not held: the crosshair on it is no reason to wait.
+		bool Held(RE::TESObjectREFR& a_ref)
+		{
+			const auto p = PlacementNow();
+			return p.editing && p.handle == a_ref.GetHandle().get_handle();
+		}
+
+		bool Serves()
+		{
+			return SharedWorkshop::Serves(RuleOn(), HostRules::InSession(), hosting);
+		}
+
+		// Whether workshop mode may pick the reference though it is a copy: the rule on here, our copy of a friend's piece, at a
+		// workbench the host's game hasn't refused as not its own. On whatever thread the pick runs: only the locked sets.
+		bool AdmitsCopy(const RE::TESObjectREFR& a_ref)
+		{
+			if (!admitsCopies.load()) {
+				return false;
+			}
+			std::scoped_lock l{ copyIdsLock };
+			const auto       id = a_ref.GetFormID();
+			return copyIds.contains(id) && HostsCopy(id) && !notOwnedBenches.contains(copyBenches.Of(id));
+		}
+
+		// The workbench our copy belongs to (0: none known). Any thread.
+		std::uint32_t BenchOfCopy(const RE::TESObjectREFR& a_ref)
+		{
+			std::scoped_lock l{ copyIdsLock };
+			return copyBenches.Of(a_ref.GetFormID());
+		}
+
+		// The workbench workshop mode is open at (CURRENT_WORKSHOP, the handle the general filter reads too), or 0. Any thread.
+		std::uint32_t OpenBench()
+		{
+			static REL::Relocation<RE::ObjectRefHandle*> bench{ CURRENT_WORKSHOP };
+			const auto                                   ref = bench->get();
+			return ref ? ref->GetFormID() : 0;
+		}
+
+		// A remote player's stand-in (not a mirrored NPC). Any thread: Puppets' locked registry.
+		bool IsStandIn(RE::TESObjectREFR& a_ref)
+		{
+			const auto actor = a_ref.As<RE::Actor>();
+			return actor && Puppets::IsPuppet(actor);
+		}
+
+		// Why AdmitsCopy says no, for the log: each of its tests.
+		std::string WhyNotAdmitted(const RE::TESObjectREFR& a_ref)
+		{
+			std::scoped_lock l{ copyIdsLock };
+			const auto       id = a_ref.GetFormID();
+			const auto       builder = copyBuilders.find(id);
+			return std::format("rule={} copy={} builder={} host={} bench={:08X} notOwned={}", admitsCopies.load(), copyIds.contains(id),
+				builder != copyBuilders.end() ? builder->second : 0, hostId.load(), copyBenches.Of(id), notOwnedBenches.contains(copyBenches.Of(id)));
+		}
+
+		// The pick watch's record of this call (GeneralPickHook), the latest hit of that reference.
+		PickHit* PickHitOf(std::uint32_t a_ref)
+		{
+			if (!currentPick) {
+				return nullptr;
+			}
+			const auto kept = (std::min)(currentPick->count, static_cast<std::uint32_t>(currentPick->hits.size()));
+			for (auto i = kept; i > 0; --i) {
+				if (currentPick->hits[i - 1].ref == a_ref) {
+					return &currentPick->hits[i - 1];
+				}
+			}
+			// A door's linked reference stands in for it: noted as its own hit while there is room. Past the kept hits a test or
+			// filter call on one of them is no new hit, so nothing is counted for it (the count is FindBodyIdRef's calls).
+			if (currentPick->count < currentPick->hits.size()) {
+				auto& hit = currentPick->hits[currentPick->count++];
+				hit.ref = a_ref;
+				return &hit;
+			}
+			return nullptr;
+		}
+
+		bool PickBlockedHook(RE::TESObjectREFR& a_ref)
+		{
+			const bool blocked = originalIsBlocked(a_ref);
+			const bool admit = blocked && AdmitsCopy(a_ref);
+			if (const auto hit = PickHitOf(a_ref.GetFormID())) {
+				hit->verdict = !blocked ? HitVerdict::kTested : admit ? HitVerdict::kAdmitted : HitVerdict::kBlocked;
+			}
+			if (!blocked) {
+				return false;
+			}
+			if (!admit) {
+				if (currentPick && IsCopy(&a_ref) && pickCopyRefused.fetch_add(1) < 3) {
+					REX::INFO("WorkshopSync: workshop mode's pick reached copy {:08X} and its test refused it: {}", a_ref.GetFormID(), WhyNotAdmitted(a_ref));
+				}
+				return true;
+			}
+			picksAdmitted.fetch_add(1);
+			return false;
+		}
+
+		// Each body the pick's cast hit, as the engine names its reference (the general pick's and the wire pick's calls). A
+		// friend's stand-in is named the player: the engine passes the player by (by address), and would otherwise refuse the
+		// stand-in at its filter and end the general pick's search there, hiding every piece behind it (or every piece at all,
+		// with the stand-in on the player's own spot).
+		RE::TESObjectREFR* PickHitHook(void* a_world, std::uint32_t a_body)
+		{
+			auto       ref = originalFindBodyRef(a_world, a_body);
+			const bool standIn = ref && IsStandIn(*ref);
+			if (currentPick) {
+				if (currentPick->count < currentPick->hits.size()) {
+					auto& hit = currentPick->hits[currentPick->count];
+					hit.ref = ref ? ref->GetFormID() : 0;
+					hit.body = a_body;
+					hit.blockedKeyword = ref && Blocked(*ref);
+					hit.verdict = standIn ? HitVerdict::kStandIn : ref ? HitVerdict::kSkipped : HitVerdict::kNoRef;
+				}
+				++currentPick->count;
+				if (ref && Blocked(*ref) && IsCopy(ref)) {
+					pickCopyHits.fetch_add(1);
+				}
+			}
+			if (standIn) {
+				if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+					if (standInsPassed.fetch_add(1) < 3) {
+						REX::INFO("WorkshopSync: workshop mode's pick passed by a friend's stand-in ({:08X}, body {}) as it passes the player", ref->GetFormID(), a_body);
+					}
+					ref = player;
+				}
+			}
+			return ref;
+		}
+
+		// The general filter, at the pick's call: a copy the pick test admitted is admitted here too, when it belongs to the
+		// workbench workshop mode is open at (the filter's build-area test, which a copy of another of the host's settlements
+		// in the ray's reach would fail).
+		bool PickFilterHook(void* a_lambda, RE::TESObjectREFR& a_ref)
+		{
+			bool       pass = originalGeneralFilter(a_lambda, a_ref);
+			const auto hit = PickHitOf(a_ref.GetFormID());
+			if (pass) {
+				if (hit) {
+					hit->verdict = HitVerdict::kPicked;
+				}
+			} else if (AdmitsCopy(a_ref)) {
+				const auto bench = BenchOfCopy(a_ref);
+				const auto open = OpenBench();
+				if (bench != 0 && bench == open) {
+					pass = true;
+					if (hit) {
+						hit->verdict = HitVerdict::kPickedCopy;
+					}
+					if (filterAdmitted.fetch_add(1) < 3) {
+						REX::INFO("WorkshopSync: workshop mode's general filter refused copy {:08X} (no workshop item of ours); admitted at its call", a_ref.GetFormID());
+					}
+				} else {
+					if (hit) {
+						hit->verdict = HitVerdict::kOtherBench;
+					}
+					if (filterOtherBench.fetch_add(1) < 3) {
+						REX::INFO("WorkshopSync: workshop mode's general filter refused copy {:08X} of workbench {:08X}, and so do we: workshop mode is open at {:08X}", a_ref.GetFormID(), bench, open);
+					}
+				}
+			} else if (hit) {
+				hit->verdict = HitVerdict::kFilterNo;
+			}
+			if (pass && currentPick) {
+				currentPick->picked = a_ref.GetFormID();
+			}
+			return pass;
+		}
+
+		const char* VerdictName(HitVerdict a_verdict)
+		{
+			switch (a_verdict) {
+			case HitVerdict::kNoRef:
+				return "no-ref";
+			case HitVerdict::kSkipped:
+				return "skipped";
+			case HitVerdict::kStandIn:
+				return "stand-in";
+			case HitVerdict::kOtherBench:
+				return "other-bench";
+			case HitVerdict::kBlocked:
+				return "blocked";
+			case HitVerdict::kTested:
+				return "tested";
+			case HitVerdict::kAdmitted:
+				return "admitted";
+			case HitVerdict::kFilterNo:
+				return "filter-no";
+			case HitVerdict::kPicked:
+				return "picked";
+			case HitVerdict::kPickedCopy:
+				return "picked-copy";
+			}
+			return "?";
+		}
+
+		// "N hits: ref:verdict ..." (a body with no reference by its id), near to far as the cast sorted them.
+		std::string DescribeHits(const PickRun& a_run)
+		{
+			std::string out = std::format("{} hits:", a_run.count);
+			const auto  kept = (std::min)(a_run.count, static_cast<std::uint32_t>(a_run.hits.size()));
+			for (std::uint32_t i = 0; i < kept; ++i) {
+				const auto& hit = a_run.hits[i];
+				if (hit.ref) {
+					out += std::format(" {:08X}{}:{}", hit.ref, hit.blockedKeyword ? "(blocked)" : "", VerdictName(hit.verdict));
+				} else {
+					out += std::format(" body{}:{}", hit.body, VerdictName(hit.verdict));
+				}
+			}
+			return out;
+		}
+
+		// "cast N hits: b<body>[=<ref>]:L<layer>@<distance> ...": every hit of the cast, near to far, whether the search reached
+		// it or not (a reference only while a piece is watched; a trigger's body never asked).
+		std::string DescribeCast(const PickRun& a_run)
+		{
+			if (a_run.castCount < 0) {
+				return "cast: no hits (or its sort unhooked)";
+			}
+			std::string out = std::format("cast {} hits:", a_run.castCount);
+			const auto  kept = (std::min)(static_cast<std::size_t>(a_run.castCount), a_run.cast.size());
+			for (std::size_t i = 0; i < kept; ++i) {
+				const auto& hit = a_run.cast[i];
+				out += hit.ref ? std::format(" b{}={:08X}:L{}@{:.0f}", hit.body, hit.ref, hit.layer, hit.distance) : std::format(" b{}:L{}@{:.0f}", hit.body, hit.layer, hit.distance);
+			}
+			if (static_cast<std::size_t>(a_run.castCount) > kept) {
+				out += " ...";
+			}
+			return out;
+		}
+
+		// The cast's collector, sorted (the pick's call at +0x3ED, right before its search): the watch reads every hit.
+		void PickSortHook(void* a_collector)
+		{
+			originalPickSort(a_collector);
+			const auto run = currentPick;
+			if (!run || !a_collector) {
+				return;
+			}
+			const auto         collector = static_cast<const std::byte*>(a_collector);
+			const std::byte*   hits = nullptr;
+			std::int32_t       count = 0;
+			std::memcpy(&hits, collector + CAST_HITS, sizeof(hits));
+			std::memcpy(&count, collector + CAST_COUNT, sizeof(count));
+			run->castCount = (std::max)(count, 0);
+			if (!hits || count <= 0) {
+				return;
+			}
+			const auto kept = (std::min)(static_cast<std::size_t>(count), run->cast.size());
+			for (std::size_t i = 0; i < kept; ++i) {
+				const auto    hit = hits + i * CAST_STRIDE;
+				float         fraction = 0.0f;
+				std::uint32_t filter = 0;
+				auto&         c = run->cast[i];
+				std::memcpy(&fraction, hit + CAST_FRACTION, sizeof(fraction));
+				std::memcpy(&c.body, hit + CAST_BODY, sizeof(c.body));
+				std::memcpy(&filter, hit + CAST_FILTER, sizeof(filter));
+				c.layer = static_cast<std::uint8_t>(filter & 0x7F);
+				c.distance = fraction * CAST_REACH;
+				// The search's own lookup, after the cast let go of the world as the search's calls are (a trigger never asked).
+				if (run->world && originalFindBodyRef && c.layer != 12) {
+					const auto ref = originalFindBodyRef(run->world, c.body);
+					c.ref = ref ? ref->GetFormID() : 0;
+				}
+			}
+		}
+
+		// One run of a pick (the general pick, or the wire pick): its ray and hits recorded in a_record; with a reference watched,
+		// the run logged when what the search reached changes, and again every 2 s while it doesn't (at most four lines a second).
+		void WatchPick(GeneralPickFn a_original, void* a_lambda, RE::Workshop::ContextData& a_context, bool a_general, PickRecord& a_record, const char* a_what)
+		{
+			const auto watched = pickWatch.load();
+			PickRun    run;
+			run.from = a_context.lookPos;
+			run.dir = a_context.lookDir;
+			run.cell = a_context.parentCell ? a_context.parentCell->GetFormID() : 0;
+			if (watched && a_context.parentCell) {
+				if (const auto world = a_context.parentCell->GetbhkWorld()) {
+					run.world = world->m_worldNP.get();  // what the pick casts through ([bhkWorld+0x60], as it reads it)
+				}
+			}
+			run.at = std::chrono::steady_clock::now();
+			currentPick = &run;
+			a_original(a_lambda, a_context, a_general);
+			currentPick = nullptr;
+			run.world = nullptr;
+			std::scoped_lock l{ pickLock };
+			a_record.last = run;
+			if (watched == 0) {
+				return;
+			}
+			auto hits = DescribeHits(run);
+			if ((hits == a_record.logged && run.at - a_record.loggedAt < std::chrono::seconds(2)) || run.at - a_record.loggedAt < std::chrono::milliseconds(250)) {
+				return;
+			}
+			REX::INFO("WorkshopSync: {} watch {:08X}: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}) in cell {:08X}; {}; picked {:08X}; {}", a_what, watched, run.from.x,
+				run.from.y, run.from.z, run.dir.x, run.dir.y, run.dir.z, run.cell, hits, run.picked, DescribeCast(run));
+			a_record.logged = std::move(hits);
+			a_record.loggedAt = run.at;
+		}
+
+		// The general pick (each frame workshop mode is up and idle).
+		void GeneralPickHook(void* a_lambda, RE::Workshop::ContextData& a_context, bool a_general)
+		{
+			WatchPick(originalGeneralPick, a_lambda, a_context, a_general, generalPick, "pick");
+			pickRuns.fetch_add(1);
+		}
+
+		// The wire pick (each frame the placement item is a wire: one held, or one highlighted at idle): what it reached for the
+		// wire's second end, and what it took (picked: the wire filter passed it, the target).
+		void WirePickHook(void* a_lambda, RE::Workshop::ContextData& a_context, bool a_general)
+		{
+			WatchPick(originalWirePick, a_lambda, a_context, a_general, wirePick, "wire pick");
+			wirePickRuns.fetch_add(1);
+		}
+
+		// The wire filter's tests of this reference as the engine reads them, and so why it refused it: no wire end for anyone
+		// (neither test passes: the base can't take a wire, in any game, copy or not), or one the bench's grids already connect
+		// to the wire's first end.
+		std::string WireEndParts(const RE::TESObjectREFR& a_ref, bool a_refused)
+		{
+			static REL::Relocation<RE::BGSKeyword**>     keyword{ POWER_KEYWORD };
+			static REL::Relocation<RE::ObjectRefHandle*> firstEnd{ WIRE_FIRST_END };
+			const auto                                   values = RE::ActorValue::GetSingleton();
+			const auto                                   info = values ? values->workshopPowerConnection : nullptr;
+			const auto                                   from = firstEnd->get();
+			const auto                                   base = a_ref.GetObjectReference();
+			const float                                  connection = info ? a_ref.GetActorValue(*info) : 0.0f;
+			const bool                                   powerKeyword = *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword);
+			const char* why = !a_refused                     ? "a wire end"
+			                  : connection == 0 && !powerKeyword ? "no wire end in any game: its base has neither the workshopPowerConnection value nor the power keyword"
+			                                                     : "the bench's grids connect it to the first end already";
+			return std::format("{} (base={:08X} powerConnection={} powerKeyword={} firstEnd={:08X})", why, base ? base->GetFormID() : 0, info ? std::format("{:.0f}", connection) : "?",
+				powerKeyword, from ? from.get()->GetFormID() : 0);
+		}
+
+		// The wire filter, at the wire pick's call: watched (its verdict on each hit, the target), never changed. A copy is
+		// judged by the engine's own rule, as the host's own piece would be: one that can take a wire passes (counted, the
+		// first few logged as admitted), one that can't is refused (counted, the first few logged with why).
+		bool WireFilterHook(void* a_lambda, RE::TESObjectREFR& a_ref)
+		{
+			const bool pass = originalWireFilter(a_lambda, a_ref);
+			if (const auto hit = PickHitOf(a_ref.GetFormID())) {
+				hit->verdict = pass ? HitVerdict::kPicked : HitVerdict::kFilterNo;
+			}
+			if (pass) {
+				if (currentPick) {
+					currentPick->picked = a_ref.GetFormID();
+				}
+				wireTargets.fetch_add(1);
+				if (IsCopy(&a_ref) && wireFilterCopyYes.fetch_add(1) < 5) {
+					REX::INFO("WorkshopSync: workshop mode's wire filter admitted copy {:08X} as the wire's second end: {}", a_ref.GetFormID(), WireEndParts(a_ref, false));
+				}
+			} else if (IsCopy(&a_ref) && wireFilterCopyNo.fetch_add(1) < 5) {
+				REX::INFO("WorkshopSync: workshop mode's wire filter refused copy {:08X} as the wire's second end: {}", a_ref.GetFormID(), WireEndParts(a_ref, true));
+			}
+			return pass;
+		}
+
+		// The button hints' tests (every frame): a copy is refused, silently.
+		bool CanStoreHook(RE::TESObjectREFR& a_ref)
+		{
+			return !AdmitsCopy(a_ref) && originalCanStore(a_ref);
+		}
+
+		bool CanScrapHook(RE::TESObjectREFR& a_ref, bool a_flag)
+		{
+			return !AdmitsCopy(a_ref) && originalCanScrap(a_ref, a_flag);
+		}
+
+		bool CanSelectHook(RE::TESObjectREFR& a_ref)
+		{
+			return !AdmitsCopy(a_ref) && originalCanSelect(a_ref);
+		}
+
+		// A key on a copy, refused: counted, the first few logged, and (a_say) said on the HUD (one press, one notice).
+		void RefusedKey(std::atomic<std::uint32_t>& a_counter, const char* a_what, const RE::TESObjectREFR& a_ref, bool a_say = true)
+		{
+			if (a_counter.fetch_add(1) < 3) {
+				REX::INFO("WorkshopSync: workshop mode's {} of copy {:08X} refused: the host's piece", a_what, a_ref.GetFormID());
+			}
+			if (a_say) {
+				Hud::Notify(Text::Get("workshop.shared.no_grab"));
+			}
+		}
+
+		// The menu's Accept on the highlighted piece (the grab, or a repair): on the main thread (the menu's user event handler).
+		bool SelectKeyHook(RE::TESObjectREFR& a_ref)
+		{
+			if (AdmitsCopy(a_ref)) {
+				RefusedKey(grabsRefused, "grab", a_ref);
+				return false;
+			}
+			// A piece of ours still waiting for the host's answer: picked up, it would be put down as a moved piece (linked to
+			// our bench again, snapped again) just as it becomes the host's. On the main thread, where the requests live.
+			if (HandsOver() && IsPendingPiece(a_ref.GetFormID())) {
+				grabsRefused.fetch_add(1);
+				Hud::Notify(Text::Get("workshop.shared.pending"));
+				return false;
+			}
+			return originalCanSelect(a_ref);
+		}
+
+		// The menu's Store key (Cancel with nothing held): the engine's answer, the copy refused by CanStoreHook inside it.
+		// Counted on a copy whatever it is; said only when the refusal is ours (the piece could be stored were it ours):
+		// Cancel on a piece that can't be stored is workshop mode's own Cancel, as before, with no notice.
+		bool StoreKeyHook()
+		{
+			const bool may = originalCanStoreItem();
+			if (!may) {
+				if (const auto ref = PlacementRef(); ref && AdmitsCopy(*ref)) {
+					RefusedKey(storesRefused, "store", *ref, originalCanStore(*ref));
+				}
+			}
+			return may;
+		}
+
+		// WorkshopCanScrapRef's parts for this reference, as the engine reads them (CAN_SCRAP_REF, SCRAP_BLOCK_KEYWORD,
+		// CONTAINER_CAN_HOLD_FORM), and the test that refused it (SharedWorkshop::ScrapRefusal, its order the engine's): for
+		// a_flag as the caller asks it (the Scrap key and the Scrap button ask false). A wire fails at recipe=false in any
+		// game: no recipe makes BlackWireSpline01, so the engine never marks its base (inGameFormFlags bit 0).
+		std::string ScrapParts(const RE::TESObjectREFR& a_ref, bool a_flag = false)
+		{
+			static REL::Relocation<RE::BGSKeyword**> keyword{ SCRAP_BLOCK_KEYWORD };
+			static REL::Relocation<std::uint8_t*>    gate{ SCRAP_GATE };
+			using hold_t = bool (*)(RE::TESBoundObject*);
+			static REL::Relocation<hold_t> canHold{ CONTAINER_CAN_HOLD_FORM };
+			const auto                     base = a_ref.GetObjectReference();
+			SharedWorkshop::ScrapFacts     facts;
+			facts.base = base != nullptr;
+			facts.blockKeyword = *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword);
+			if (base) {
+				const auto type = base->GetFormType();
+				facts.inventoryType = type == RE::ENUM_FORM_ID::kARMO || type == RE::ENUM_FORM_ID::kMISC || type == RE::ENUM_FORM_ID::kWEAP;
+				facts.loose = a_ref.IsProjectile() == nullptr && canHold(base);
+				facts.recipe = (base->inGameFormFlags & 1) != 0;  // an actor's is its actor base's: close enough for a log
+				facts.miscComponents = type == RE::ENUM_FORM_ID::kMISC && static_cast<const RE::TESObjectMISC*>(base)->componentData != nullptr;
+			}
+			facts.objectInstance = a_ref.extraList && a_ref.extraList->HasType(RE::EXTRA_DATA_TYPE::kObjectInstance);
+			const auto fail = SharedWorkshop::ScrapRefusal(facts, a_flag);
+			return std::format("failed={} (base={:08X} baseType={:02X} blockKeyword={} inventoryType={} loose={} recipe={} miscComponents={} objectInstance={} actor={} gate={})",
+				SharedWorkshop::ScrapFailName(fail), base ? base->GetFormID() : 0, base ? std::to_underlying(base->GetFormType()) : 0, facts.blockKeyword, facts.inventoryType, facts.loose,
+				facts.recipe, facts.miscComponents, facts.objectInstance, a_ref.GetFormType() == RE::ENUM_FORM_ID::kACHR, *gate);
+		}
+
+		// The Scrap key (Workshop::RequestScrapPlacementItem, only the menu's XButton calls it, and only past its gate,
+		// SCRAP_GATE). Each press logged with the engine's answer: a press that never comes here never got past the gate (or
+		// the menu); one that does and is refused, the engine's scrap test refused the piece (its parts said).
+		bool ScrapKeyHook(RE::TESObjectREFR& a_ref, bool a_flag)
+		{
+			if (AdmitsCopy(a_ref)) {
+				RefusedKey(scrapsRefused, "scrap", a_ref);
+				return false;
+			}
+			const bool may = originalCanScrap(a_ref, a_flag);
+			scrapKeys.fetch_add(1);
+			if (!may) {
+				scrapKeyNo.fetch_add(1);
+			}
+			REX::INFO("WorkshopSync: workshop mode's Scrap key on {:08X}: the engine's scrap test said {} ({})", a_ref.GetFormID(), may ? "yes (its confirmation opens)" : "no",
+				ScrapParts(a_ref, a_flag));
+			return may;
+		}
+
+		void NoteNotOwned(std::uint32_t a_bench)
+		{
+			taught.NotOwned(a_bench);
+			std::scoped_lock l{ copyIdsLock };
+			notOwnedBenches.insert(a_bench);
+		}
+
+		void NoteOwned(std::uint32_t a_bench)
+		{
+			taught.Owned(a_bench);
+			std::scoped_lock l{ copyIdsLock };
+			notOwnedBenches.erase(a_bench);
+		}
+
+		// A settlement the host's game owns: the way a settlement becomes the player's (WorkshopScript.SetOwnedByPlayer) makes the
+		// player's NPC the workbench's owner, and losing it clears that; PlayerFaction counts too (Storage.cpp's OwnBench).
+		bool OwnBench(RE::TESObjectREFR* a_bench)
+		{
+			const auto owner = a_bench ? a_bench->GetOwner() : nullptr;
+			return owner && (owner->GetFormID() == 0x00000007 || owner->GetFormID() == 0x0001C21C);
+		}
+
+		void PushShared(std::vector<std::uint8_t> a_packet)
+		{
+			std::scoped_lock l{ outLock };
+			if (!outgoing.Push({ std::move(a_packet), 0 })) {
+				++dropped;
+			}
+		}
+
+		// The ends of a wire: the references its power links name that are no wire.
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> EndsOf(const RE::TESObjectREFR& a_wire)
+		{
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> ends;
+			const auto                                    links = a_wire.extraList ? a_wire.extraList->GetByType<RE::ExtraPowerLinks>() : nullptr;
+			if (!links) {
+				return ends;
+			}
+			for (const auto& link : links->powerLinks) {
+				RE::NiPointer<RE::TESObjectREFR> end{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(link.formID) };
+				if (end && !IsWire(end->GetObjectReference())) {
+					ends.push_back(end);
+				}
+			}
+			return ends;
+		}
+
+		// The key of our copy with this ID, if it is one.
+		std::optional<Key> KeyOfCopy(std::uint32_t a_id)
+		{
+			for (const auto& [key, copy] : copies) {
+				if (copy.id == a_id) {
+					return key;
+				}
+			}
+			return std::nullopt;
+		}
+
+		// Workshop mode's current workbench set to a_bench while this lives, and put back after (the engine's finish reads it).
+		// How many of our BenchScopes are open, and what the engine itself held as current before the outermost one set the
+		// piece's bench there: the budget's "live" decision must read the engine's own value, never ours (a finish runs inside
+		// a BenchScope, so the static always names the piece's bench then).
+		std::uint32_t benchScopes = 0;
+		std::uint32_t engineBench = 0;
+
+		struct BenchScope
+		{
+			std::uint32_t* current;
+			std::uint32_t  before;
+
+			explicit BenchScope(RE::TESObjectREFR& a_bench)
+			{
+				static REL::Relocation<std::uint32_t*> handle{ CURRENT_WORKSHOP };
+				current = handle.get();
+				before = *current;
+				if (benchScopes++ == 0) {
+					engineBench = before;
+				}
+				*current = a_bench.GetHandle().get_handle();
+			}
+
+			~BenchScope()
+			{
+				*current = before;
+				--benchScopes;
+			}
+
+			BenchScope(const BenchScope&) = delete;
+			BenchScope& operator=(const BenchScope&) = delete;
+		};
+
+		// The workbench the engine itself holds as current: the static, unless one of our scopes has set it (then what it was before).
+		std::uint32_t EngineBench()
+		{
+			static REL::Relocation<std::uint32_t*> current{ CURRENT_WORKSHOP };
+			return benchScopes > 0 ? engineBench : *current;
+		}
+
+		// The budget's totals made the workbench's for an AddObject or RemoveObject on one of its pieces, and put back after:
+		// live as they are when workshop mode is open at this very workbench (the engine loaded them there); otherwise the
+		// four globals saved, loaded from the workbench (Budget::Initialize, as workshop mode's entry does), and restored,
+		// with the current workbench set meanwhile so the result is written to the bench.
+		struct BudgetScope
+		{
+			bool                                  live;
+			std::array<std::uint32_t*, 4>         globals{};
+			std::array<std::uint32_t, 4>          saved{};
+			std::optional<BenchScope>             bench;
+
+			explicit BudgetScope(RE::TESObjectREFR& a_bench)
+			{
+				using init_t = void (*)(RE::TESObjectREFR&);
+				static REL::Relocation<std::uint32_t*> current{ CURRENT_WORKSHOP };
+				static REL::Relocation<std::uint32_t*> triangles{ BUDGET_TRIANGLES };
+				static REL::Relocation<std::uint32_t*> draws{ BUDGET_DRAWS };
+				static REL::Relocation<std::uint32_t*> maxTriangles{ BUDGET_MAX_TRIANGLES };
+				static REL::Relocation<std::uint32_t*> maxDraws{ BUDGET_MAX_DRAWS };
+				static REL::Relocation<init_t>         initialize{ BUDGET_INITIALIZE };
+				// The engine's own current workbench (what it had before any scope of ours, which a finish runs inside), and the menu
+				// open: then the totals are this bench's, live (SharedWorkshop::BudgetLive).
+				live = SharedWorkshop::BudgetLive(EngineBench(), a_bench.GetHandle().get_handle(), MenuWatch::IsOpen("WorkshopMenu"sv));
+				if (live) {
+					return;
+				}
+				globals = { triangles.get(), draws.get(), maxTriangles.get(), maxDraws.get() };
+				for (std::size_t i = 0; i < globals.size(); ++i) {
+					saved[i] = *globals[i];
+				}
+				bench.emplace(a_bench);
+				initialize(a_bench);
+			}
+
+			~BudgetScope()
+			{
+				if (!live) {
+					for (std::size_t i = 0; i < globals.size(); ++i) {
+						*globals[i] = saved[i];
+					}
+				}
+			}
+
+			BudgetScope(const BudgetScope&) = delete;
+			BudgetScope& operator=(const BudgetScope&) = delete;
+		};
+
+		// Workshop mode's "new item mode" byte set to 0 (a new piece being placed) for the finish of a piece of ours, as the
+		// engine has it while a ghost is confirmed, and put back after: MakeReferenceStatic then starts the piece's scripts,
+		// sends its loaded event and sets its power's initial state, as for any new piece.
+		struct NewItemScope
+		{
+			std::uint8_t* byte;
+			std::uint8_t  before;
+
+			NewItemScope()
+			{
+				static REL::Relocation<std::uint8_t*> moving{ MOVING_ITEM };
+				byte = moving.get();
+				before = *byte;
+				*byte = 0;
+			}
+
+			~NewItemScope() { *byte = before; }
+
+			NewItemScope(const NewItemScope&) = delete;
+			NewItemScope& operator=(const NewItemScope&) = delete;
+		};
+
+		// Takes a piece off our workshop: off every grid that names it, its power links, its workbench and, a_budgeted, its
+		// budget. For a piece of ours adopted as the host's copy, and for a wire of ours taken off the moment it was strung
+		// (both counted in the budget by the engine's placement: taken out again), and for a copy the engine's wiring tied in
+		// (never counted: a wire's placement adds only the wire, and links the ends; the budget is left alone). Not a word of
+		// the power audit's warnings: this is the rule's own doing.
+		void Unbuild(RE::TESObjectREFR& a_ref, RE::TESObjectREFR* a_bench, bool a_budgeted)
+		{
+			using remove_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
+			using disconnect_t = void (*)(RE::TESObjectREFR&);
+			using budget_t = void (*)(RE::TESObjectREFR&);
+			static REL::Relocation<remove_t>     removeItem{ REMOVE_GRID_ITEM };
+			static REL::Relocation<disconnect_t> disconnect{ DISCONNECT_SPLINE };
+			static REL::Relocation<budget_t>     budgetRemove{ BUDGET_REMOVE_OBJECT };
+			const auto                           id = a_ref.GetFormID();
+			if (a_bench) {
+				powerBenches.insert(a_bench->GetFormID());
+			}
+			if (HasPowerLinks(a_ref)) {
+				disconnect(a_ref);  // a wire: out of its ends' links; a piece: its wires' and snapped neighbours' links dropped
+			}
+			for (const auto other : PowerBenches()) {
+				if (GridsName(other, id)) {
+					removeItem(WorkshopDataOf(other), a_ref);
+				}
+			}
+			if (a_budgeted && a_bench && a_ref.Get3D()) {
+				BudgetScope scope{ *a_bench };  // the bench's own totals, less this piece, written to the bench
+				budgetRemove(a_ref);
+			}
+			if (const auto keyword = WorkshopItemKeyword(); keyword && BenchOf(a_ref)) {
+				a_ref.SetLinkedRef(nullptr, keyword);
+			}
+			gridNamedFrame = ~0ull;  // the grids changed
+		}
+
+		void RecountBench(RE::TESObjectREFR& a_bench)
+		{
+			using bench_t = void (*)(RE::TESObjectREFR&);
+			static REL::Relocation<bench_t> powerRating{ CALCULATE_POWER_RATING };
+			static REL::Relocation<bench_t> recount{ RECALCULATE_RESOURCES };
+			powerRating(a_bench);
+			recount(a_bench);
+		}
+
+		// A wire our workshop mode just strung to (or between) copies: off our grid, its ends' links and our workbench, and
+		// gone, in this same frame, so no save can hold it (the audit nets what this misses). The ends that are copies are
+		// taken off whatever the engine's placement tied them into (the grid, a bench link).
+		void DetachWire(RE::TESObjectREFR& a_wire, const std::vector<RE::NiPointer<RE::TESObjectREFR>>& a_ends, RE::TESObjectREFR* a_bench)
+		{
+			Unbuild(a_wire, a_bench, true);  // the engine's placement counted the wire in the budget
+			for (const auto& end : a_ends) {
+				if (IsCopy(end.get())) {
+					Unbuild(*end, a_bench, false);  // ...and only linked the ends: never counted, so never taken out
+				}
+			}
+			if (const auto keyword = WorkshopItemKeyword(); keyword && BenchOf(a_wire)) {
+				a_wire.SetLinkedRef(nullptr, keyword);
+			}
+			a_wire.Disable();
+			a_wire.SetDelete(true);
+			// Our bench's power rating and resources once more without it (as Adopt does): the engine's placement counted the
+			// copy ends as powered through the wire, which our grid no longer holds.
+			if (a_bench) {
+				RecountBench(*a_bench);
+			}
+			madeHere.insert(a_wire.GetFormID());
+			++wiresDetached;
+		}
+
+		// Our piece becomes our copy of the host's (the answer named it): off our workshop, blocked from workshop mode and kept
+		// under the host's key, as any copy. The host's own report of it (its placed event) finds the copy kept, or found
+		// ours standing at the spot already and made none.
+		// The destroyed event for a piece of ours that stops being ours (adopted as the host's, or deleted before a save or on
+		// leaving): what Workshop::FinishDestroyItem notifies for a scrap, which the workshop scripts answer with
+		// OnWorkshopObjectDestroyed, undoing what the placed event did for the piece as ours (a settler's assignment to a bed
+		// or a crop, the workshop's counts). Without it a save keeps the assignment for a reference that is the host's, or
+		// gone. Mods listening for WorkshopObjectDestroyed hear it as a scrap (docs/DESIGN.md).
+		void NotifyDestroyed(RE::TESObjectREFR* a_bench, RE::TESObjectREFR& a_ref)
+		{
+			if (!a_bench) {
+				return;
+			}
+			using source_t = RE::BSTEventSource<RE::Workshop::ItemDestroyedEvent>* (*)();
+			static REL::Relocation<source_t> source{ DESTROYED_EVENT_SOURCE };
+			if (const auto events = source()) {
+				RE::Workshop::ItemDestroyedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ a_bench }, RE::NiPointer<RE::TESObjectREFR>{ &a_ref } };
+				events->Notify(event);
+			}
+		}
+
+		// False if it has to wait: the player holds the piece in workshop mode (the engine's drop would link it to our bench and
+		// count it again), so it is adopted once put down (adoptLater, SharedFrame).
+		bool Adopt(const SharedWorkshop::Pending& a_pending, const Key& a_key)
+		{
+			const auto                             a_piece = a_pending.piece;
+			const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_piece) };
+			// (A dropped build's piece is gone, and its runtime id may name another reference by now: never adopted.)
+			if (a_pending.dropped || !ref || ref->IsDeleted() || IsCopy(ref.get())) {
+				++adoptMissing;
+				REX::INFO("WorkshopSync: the host built our {:08X} as its {:08X}, but ours is gone ({}): the host's copy comes on its own", a_piece, a_key.second,
+					a_pending.dropped ? "dropped before a save, while it waited" : "or a copy already");
+				return true;
+			}
+			if (Held(*ref)) {
+				return false;
+			}
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.bench);
+			Unbuild(*ref, bench, true);  // the engine's placement counted it in the budget
+			if (bench) {
+				RecountBench(*bench);
+			}
+			reporter.Forget(a_piece);
+			if (const auto it = copies.find(a_key); it != copies.end()) {
+				// The host's report came first and made a copy of its own at the spot (ours stood there, so it should not have:
+				// WorkshopApply's OursAt), or an earlier session's: ours stands in for it, and that one goes.
+				EngineWorld world;
+				world.Discard(it->second);
+				copies.erase(it);
+			}
+			auto copy = MakeCopy(ref->GetHandle(), Clock::now());
+			copies.emplace(a_key, copy);
+			NoteCopy(copy, a_pending.bench, a_key.first);
+			BlockInteraction(*ref);
+			madeHere.insert(a_piece);
+			++adoptedHere;
+			++counts.adopted;
+			// The engine's own placed event already ran Papyrus for the piece as ours, and a save would keep that for a reference
+			// that is the host's now: undone as a scrap undoes it. Our own sink sees a copy by then and reports nothing.
+			NotifyDestroyed(bench, *ref);
+			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) is the host's piece now: adopted as our copy of player {}'s {:08X} at workbench {:08X}", a_piece, copy.base, a_key.first,
+				a_key.second, a_pending.bench);
+			return true;
+		}
+
+		// A piece of ours still waiting for an answer, or a build the answer refused, is ours as before the rule: reported.
+		void KeepOwn(const SharedWorkshop::Pending& a_pending)
+		{
+			if (a_pending.dropped) {
+				return;  // gone before the save (and its runtime id may name another reference by now)
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.piece);
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.bench);
+			if (ref && bench && !ref->IsDeleted() && !ref->IsDisabled() && ReportRef(ref, bench, Protocol::WorkshopOp::kPlaced)) {
+				SettleLater(ref, bench);
+			}
+		}
+
+		void Answered(std::uint32_t a_seq, std::uint8_t a_op, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending, const Key& a_made)
+		{
+			const auto verdict = SharedWorkshop::Judge(a_op, a_why);
+			if (verdict.benchNotOwned) {
+				NoteNotOwned(a_pending.bench);
+			} else if (a_why == Protocol::WorkshopAnswer::Why::kApplied) {
+				NoteOwned(a_pending.bench);
+			}
+			++(a_why == Protocol::WorkshopAnswer::Why::kApplied ? answersApplied : answersRefused);
+			REX::INFO("WorkshopSync: request {} ({}) at workbench {:08X}: {}{}", a_seq, a_op == Protocol::WorkshopRequestOp::kWire ? "wire" : "build", a_pending.bench, Protocol::Name(a_why),
+				a_made.second != 0 ? std::format(", the host's {:08X}", a_made.second) : std::string{});
+			if (verdict.notice) {
+				Hud::Notify(Text::Get(verdict.notice));
+			}
+			switch (verdict.outcome) {
+			case SharedWorkshop::Outcome::kAdopt:
+				if (!Adopt(a_pending, a_made)) {
+					adoptLater.emplace_back(a_pending, a_made);  // held in the player's hands: once put down
+					++adoptsDeferred;
+				}
+				break;
+			case SharedWorkshop::Outcome::kKeepOwn:
+				KeepOwn(a_pending);
+				break;
+			case SharedWorkshop::Outcome::kNothing:
+				break;
+			}
+		}
+
+		// A piece (or a wire) our workshop mode just placed, under the rule: true if it was taken as a request (or taken off),
+		// and so is not reported as ours.
+		bool HandOver(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench)
+		{
+			if (!HandsOver() || !a_item || !a_bench || IsCopy(a_item) || !IsWorkbenchAnchor(a_bench)) {
+				return false;
+			}
+			const auto base = a_item->GetObjectReference();
+			if (!base || (base->GetFormID() >> 24) == 0xFF || !WorkshopApply::Shared(true, Equipment::IsPowerArmorFrame(base)) || base->As<RE::TESNPC>()) {
+				return false;  // (a turret or a robot stays its builder's own, quietly: not in phase 1)
+			}
+			MainThread::Assert("WorkshopSync::HandOver");
+			const auto benchId = a_bench->GetFormID();
+			if (IsWire(base)) {
+				const auto ends = EndsOf(*a_item);
+				const auto from = ends.size() == 2 ? KeyOfCopy(ends[0]->GetFormID()) : std::nullopt;
+				const auto to = ends.size() == 2 ? KeyOfCopy(ends[1]->GetFormID()) : std::nullopt;
+				if (ends.size() != 2) {
+					// Its ends can't be read (one of them gone already?): not a wire of ours to report, nor one to ask for.
+					DetachWire(*a_item, ends, a_bench);
+					Hud::Notify(Text::Get("workshop.shared.wire_refused"));
+					REX::INFO("WorkshopSync: wire {:08X} taken off: {} ends found", a_item->GetFormID(), ends.size());
+					return true;
+				}
+				// Both ends the host's pieces (the copies a friend may wire: AdmitsCopy): another friend's copies are never asked,
+				// nor two builders' pieces whose runtime ids happen to agree.
+				switch (SharedWorkshop::KindOfWire(from.has_value(), to.has_value(), from && to && from->first == to->first && from->first == hostId.load())) {
+				case SharedWorkshop::WireKind::kOwn:
+					return false;
+				case SharedWorkshop::WireKind::kMixed:
+					DetachWire(*a_item, ends, a_bench);
+					++wiresMixed;
+					Hud::Notify(Text::Get("workshop.shared.wire_mixed"));
+					REX::INFO("WorkshopSync: wire {:08X} from {:08X} to {:08X} taken off: one end is ours and one a friend's copy", a_item->GetFormID(), ends[0]->GetFormID(), ends[1]->GetFormID());
+					return true;
+				case SharedWorkshop::WireKind::kRequest:
+					break;
+				}
+				DetachWire(*a_item, ends, a_bench);
+				if (taught.IsNotOwned(benchId)) {
+					Hud::Notify(Text::Get("workshop.shared.wire_refused"));
+					return true;
+				}
+				const auto seq = requests.Open(Protocol::WorkshopRequestOp::kWire, 0, benchId, Clock::now());
+				if (!seq) {
+					Hud::Notify(Text::Get("workshop.shared.wire_refused"));
+					return true;
+				}
+				Protocol::WorkshopRequest request;
+				request.seq = *seq;
+				request.op = Protocol::WorkshopRequestOp::kWire;
+				request.workshop = benchId;
+				request.wireFrom = from->second;
+				request.wireTo = to->second;
+				PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+				++wiresAsked;
+				REX::INFO("WorkshopSync: wire {:08X} between copies of player {}'s {:08X} and {:08X} taken off and asked of the host as request {}", a_item->GetFormID(), from->first,
+					from->second, to->second, *seq);
+				return true;
+			}
+			if (taught.IsNotOwned(benchId)) {
+				return false;  // the host's game said this settlement isn't its own: ours, as before
+			}
+			if (IsPendingPiece(a_item->GetFormID())) {
+				return true;  // asked already (its placed event after wsreport's hand-over): one request, not two
+			}
+			const auto seq = requests.Open(Protocol::WorkshopRequestOp::kBuild, a_item->GetFormID(), benchId, Clock::now());
+			if (!seq) {
+				return false;
+			}
+			Protocol::WorkshopRequest request;
+			request.seq = *seq;
+			request.op = Protocol::WorkshopRequestOp::kBuild;
+			request.workshop = benchId;
+			request.base = base->GetFormID();
+			request.position = { a_item->data.location.x, a_item->data.location.y, a_item->data.location.z };
+			request.rotation = { a_item->data.angle.x, a_item->data.angle.y, a_item->data.angle.z };
+			request.scale = a_item->refScale / 100.0f;
+			if (!Protocol::IsValid(request)) {
+				return false;
+			}
+			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			++requestsSent;
+			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {}", a_item->GetFormID(), base->GetFormID(), benchId, *seq);
+			return true;
+		}
+
+		bool IsPendingPiece(std::uint32_t a_id)
+		{
+			if (requests.IsPending(a_id)) {
+				return true;
+			}
+			return std::ranges::any_of(adoptLater, [&](const auto& a_later) { return a_later.first.piece == a_id; });  // answered, not yet ours to adopt: still not ours to report
+		}
+
+		// ---- The host's side ------------------------------------------------------------------------------
+
+		void Answer(const Protocol::WorkshopRequest& a_request, Protocol::WorkshopAnswer::Why a_why, std::uint32_t a_made)
+		{
+			++(a_why == Protocol::WorkshopAnswer::Why::kApplied ? requestsServed : requestsRefused);
+			REX::INFO("WorkshopSync: player {}'s request {} ({}) at workbench {:08X}: {}{}", a_request.playerId, a_request.seq,
+				a_request.op == Protocol::WorkshopRequestOp::kWire ? "wire" : "build", a_request.workshop, Protocol::Name(a_why), a_made != 0 ? std::format(", made {:08X}", a_made) : std::string{});
+			PushShared(Protocol::Encode(Protocol::WorkshopAnswer{ a_request.seq, a_request.playerId, a_request.op, a_why, a_request.workshop, a_made }, Protocol::MessageType::kReportWorkshopAnswer));
+		}
+
+		// The engine's placement steps on a piece of ours, as SharedWorkshop::Finish drives them.
+		struct FinishEngine
+		{
+			RE::TESObjectREFR& ref;
+			RE::TESObjectREFR& bench;
+			std::string        log;
+
+			BenchScope Bench() { return BenchScope{ bench }; }
+
+			void Do(SharedWorkshop::Step a_step)
+			{
+				using ref_t = void (*)(RE::TESObjectREFR&);
+				using link_t = void (*)(RE::TESObjectREFR&, bool, RE::TESObjectREFR*);
+				using furniture_t = void (*)(RE::TESObjectREFR&, bool);
+				using snapped_t = void (*)(RE::Workshop::ContextData&, RE::TESObjectREFR&, RE::Workshop::PlacementItemData&);
+				using clear_t = void (*)(RE::Workshop::PlacementItemData*);
+				using extra_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
+				using navmesh_t = void (*)(RE::TESObjectREFR*, bool);
+				using source_t = RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>* (*)();
+				static REL::Relocation<link_t>      link{ SET_IS_WORKSHOP_ITEM };
+				static REL::Relocation<ref_t>       budget{ BUDGET_ADD_OBJECT };
+				static REL::Relocation<ref_t>       makeStatic{ MAKE_REFERENCE_STATIC };
+				static REL::Relocation<furniture_t> furniture{ SET_FURNITURE_USED };
+				static REL::Relocation<snapped_t>   snapped{ CHECK_SNAPPED_POWER };
+				static REL::Relocation<clear_t>     clear{ PLACEMENT_DATA_CLEAR };
+				static REL::Relocation<extra_t>     addItem{ EXTRA_ADD_ITEM };
+				static REL::Relocation<ref_t>       terminals{ ESTABLISH_TERMINAL_LINKS };
+				static REL::Relocation<navmesh_t>   navmesh{ UPDATE_DYNAMIC_NAVMESH };
+				static REL::Relocation<ref_t>       powerRating{ CALCULATE_POWER_RATING };
+				static REL::Relocation<ref_t>       recount{ RECALCULATE_RESOURCES };
+				static REL::Relocation<source_t>    source{ PLACED_EVENT_SOURCE };
+				log += std::format("{}{}", log.empty() ? "" : " ", SharedWorkshop::Name(a_step));
+				switch (a_step) {
+				case SharedWorkshop::Step::kLink:
+					link(ref, true, &bench);
+					break;
+				case SharedWorkshop::Step::kBudget: {
+					BudgetScope totals{ bench };  // the bench's own totals (not another settlement's, nor 0 after a load), plus this piece
+					budget(ref);
+					break;
+				}
+				case SharedWorkshop::Step::kStatic:
+					makeStatic(ref);
+					break;
+				case SharedWorkshop::Step::kFurniture:
+					furniture(ref, false);
+					break;
+				case SharedWorkshop::Step::kSnap: {
+					// A placement data of our own for the piece's connect points (PlacementItemData::Set reads them off the 3D):
+					// the engine's memory, never run through a C++ destructor, cleared by the engine's own Clear (which frees
+					// what Set made).
+					const auto player = RE::PlayerCharacter::GetSingleton();
+					if (!player || !player->parentCell) {
+						log += "(no player cell)";
+						break;
+					}
+					const auto memory = RE::aligned_alloc(alignof(RE::Workshop::PlacementItemData), sizeof(RE::Workshop::PlacementItemData));
+					if (!memory) {
+						log += "(no memory)";
+						break;
+					}
+					std::memset(memory, 0, sizeof(RE::Workshop::PlacementItemData));
+					const auto data = static_cast<RE::Workshop::PlacementItemData*>(memory);
+					RE::Workshop::ContextData context{ player };
+					data->Set(ref);
+					snapped(context, ref, *data);
+					clear(data);
+					RE::aligned_free(memory);
+					break;
+				}
+				case SharedWorkshop::Step::kAddItem:
+					if (const auto data = WorkshopDataOf(&bench)) {
+						addItem(data, ref);
+					} else {
+						log += "(no workshop data)";
+					}
+					break;
+				case SharedWorkshop::Step::kTerminals:
+					terminals(ref);
+					break;
+				case SharedWorkshop::Step::kNavmesh:
+					navmesh(&ref, true);
+					break;
+				case SharedWorkshop::Step::kPower:
+					powerRating(bench);
+					break;
+				case SharedWorkshop::Step::kResources:
+					recount(bench);
+					break;
+				case SharedWorkshop::Step::kEvent:
+					if (const auto events = source()) {
+						RE::Workshop::ItemPlacedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ &bench }, RE::NiPointer<RE::TESObjectREFR>{ &ref } };
+						events->Notify(event);
+					} else {
+						log += "(no event source)";
+					}
+					break;
+				}
+			}
+		};
+
+		// Finishes a piece of ours at the workbench with the engine's steps; what ran.
+		std::string FinishPiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench)
+		{
+			// With our own workshop mode open, what it holds before and after the finish (said once per finish): the host's ghost
+			// must come out of a friend's build as it went in (the same piece, still new, still placeable where it stood).
+			const bool menu = MenuWatch::IsOpen("WorkshopMenu"sv);
+			const auto before = PlacementNow();
+			std::size_t done = 0;
+			FinishEngine engine{ a_ref, a_bench };
+			{
+				NewItemScope newItem;  // a new piece: its scripts started, its loaded event sent, its power's initial state set
+				done = SharedWorkshop::Finish(engine);
+			}
+			finishSteps += static_cast<std::uint32_t>(done);
+			++finishedHere;
+			if (menu) {
+				const auto after = PlacementNow();
+				const bool same = after.handle == before.handle && after.newItem == before.newItem && after.editing == before.editing && after.canPlace == before.canPlace;
+				REX::INFO("WorkshopSync: {:08X} finished while our workshop mode is open: its placement item {} (handle {:08X} -> {:08X}, newItem {} -> {}, editing {} -> {}, canPlace {} -> {})",
+					a_ref.GetFormID(), same ? "unchanged" : "CHANGED", before.handle, after.handle, before.newItem, after.newItem, before.editing, after.editing, before.canPlace,
+					after.canPlace);
+			}
+			return engine.log;
+		}
+
+		// A wire between two of our pieces, strung with SharedWorkshop::StringWire's steps: as wswire strings one (SplineUtils::
+		// ConnectSpline, Workshop::ExtraData::AddConnection, the bench link, the spline rebuilt), plus the wire static, the bench's
+		// totals and the placed event. Nothing after the connection decides an end's power again (SharedWorkshop.h, WireStep).
+		// The engine's own wiring (Workshop::PlaceCurrentReference) does run PowerUtils::UpdateMovingWirelessItem on both ends
+		// after AddConnection, but inside workshop mode; this path runs outside it, where nothing re-evaluates the light
+		// afterwards. The first version made that call here, and on the rig it unpowered the light the friend wired (out of the
+		// grid's powered set, PowerOff fired, the wired edge kept): don't add it back for parity. Its shape is reported once
+		// drawn (the moved-wire check), as a moved piece's wires are.
+		struct WireEngine
+		{
+			RE::TESObjectREFR&       from;
+			RE::TESObjectREFR&       to;
+			RE::TESObjectREFR&       bench;
+			RE::TESObjectREFR&       wire;
+			RE::Workshop::ExtraData& data;
+			std::string              log;
+
+			BenchScope Bench() { return BenchScope{ bench }; }
+
+			void Do(SharedWorkshop::WireStep a_step)
+			{
+				using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&, RE::TESObjectREFR&, RE::TESObjectREFR*);
+				using ref_t = void (*)(RE::TESObjectREFR&);
+				using link_t = void (*)(RE::TESObjectREFR&, bool, RE::TESObjectREFR*);
+				using source_t = RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>* (*)();
+				static REL::Relocation<add_t>    addConnection{ ADD_CONNECTION };
+				static REL::Relocation<ref_t>    makeStatic{ MAKE_REFERENCE_STATIC };
+				static REL::Relocation<link_t>   link{ SET_IS_WORKSHOP_ITEM };
+				static REL::Relocation<source_t> source{ PLACED_EVENT_SOURCE };
+				log += std::format("{}{}", log.empty() ? "" : " ", SharedWorkshop::Name(a_step));
+				switch (a_step) {
+				case SharedWorkshop::WireStep::kLink:
+					link(wire, true, &bench);  // as the engine's wiring links a wire: the bench link and the location's special ref
+					break;
+				case SharedWorkshop::WireStep::kSpline:
+					RE::SplineUtils::ConnectSpline(&from, 0, &to, 0, &wire);
+					break;
+				case SharedWorkshop::WireStep::kConnect:
+					addConnection(&data, from, to, &wire);  // the grids merged and evaluated: the ends' power decided here
+					break;
+				case SharedWorkshop::WireStep::kCount:
+					// Counted in the budget once its spline is drawn (CountWiresLater): the engine counts a placed wire's drawn 3D, and
+					// ours has none yet (a count of 0 now, the real count off at a later scrap, would drift the budget down).
+					wiresToCount.push_back({ wire.GetHandle(), bench.GetFormID(), Clock::now() });
+					break;
+				case SharedWorkshop::WireStep::kRebuild:
+					if (const auto tasks = RE::TaskQueueInterface::GetSingleton()) {
+						tasks->QueueRebuildBendableSpline(wire, false, nullptr);
+					}
+					break;
+				case SharedWorkshop::WireStep::kStatic:
+					makeStatic(wire);
+					break;
+				case SharedWorkshop::WireStep::kResources:
+					RecountBench(bench);
+					break;
+				case SharedWorkshop::WireStep::kEvent:
+					if (const auto events = source()) {
+						RE::Workshop::ItemPlacedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ &bench }, RE::NiPointer<RE::TESObjectREFR>{ &wire } };
+						events->Notify(event);
+					} else {
+						log += "(no event source)";
+					}
+					break;
+				case SharedWorkshop::WireStep::kEndWireless:
+					break;  // never in WIRE_STEPS: it would undo the power the connection gave the ends
+				}
+			}
+		};
+
+		RE::TESObjectREFR* MakeWire(RE::TESObjectREFR& a_from, RE::TESObjectREFR& a_to, RE::TESObjectREFR& a_bench)
+		{
+			const auto data = WorkshopDataOf(&a_bench);
+			const auto spline = RE::TESForm::GetFormByID<RE::TESBoundObject>(WIRE_BASE);
+			const auto cell = a_from.GetParentCell();
+			if (!data || !spline || !cell) {
+				return nullptr;
+			}
+			RE::NEW_REFR_DATA place;
+			place.location = a_from.data.location;
+			place.direction = a_from.data.angle;
+			place.object = spline;
+			place.interior = cell->IsInterior() ? cell : nullptr;
+			place.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+			place.clearStillLoadingFlag = true;
+			const auto handle = EngineRefs::CreateReferenceAtLocation(place);
+			const auto wire = handle.get();
+			if (!wire) {
+				return nullptr;
+			}
+			{
+				NewItemScope newItem;  // a new piece for MakeReferenceStatic
+				WireEngine   engine{ a_from, a_to, a_bench, *wire, *data, {} };
+				SharedWorkshop::StringWire(engine);  // the bench set as workshop mode's current one for every step
+			}
+			CheckWiresLater(&a_from, &a_bench);  // reported again with its shape once drawn
+			++wiresMadeHere;
+			return wire.get();
+		}
+
+		// Whether a wire can end on this piece, read as the engine's wire filter reads it (SharedWorkshop::TakesWire).
+		bool TakesWire(const RE::TESObjectREFR& a_ref)
+		{
+			static REL::Relocation<RE::BGSKeyword**> keyword{ POWER_KEYWORD };
+			const auto                               values = RE::ActorValue::GetSingleton();
+			const auto                               info = values ? values->workshopPowerConnection : nullptr;
+			const float                              connection = info ? a_ref.GetActorValue(*info) : 0.0f;
+			return SharedWorkshop::TakesWire(connection, *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword));
+		}
+
+		// What the host's game finds of a request (SharedWorkshop::Refusal looks in this order).
+		SharedWorkshop::Facts FactsOf(const Protocol::WorkshopRequest& a_request)
+		{
+			SharedWorkshop::Facts facts;
+			const auto            bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
+			facts.benchKnown = IsWorkbenchAnchor(bench);
+			facts.hostOwned = facts.benchKnown && OwnBench(bench);
+			facts.benchOpened = facts.benchKnown && WorkshopDataOf(bench) != nullptr;  // made by the engine when the workshop is first opened; saved with the bench
+			facts.inWorkshopMode = MenuWatch::IsOpen("WorkshopMenu"sv);
+			Protocol::WorkshopItem spot;
+			spot.workshop = a_request.workshop;
+			if (a_request.op == Protocol::WorkshopRequestOp::kWire) {
+				const auto from = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.wireFrom);
+				const auto to = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.wireTo);
+				facts.endsKnown = from && to && !from->IsDeleted() && !to->IsDeleted() && !from->IsDisabled() && !to->IsDisabled();
+				facts.endsAtBench = facts.endsKnown && bench && BenchOf(*from) == bench && BenchOf(*to) == bench && !IsWire(from->GetObjectReference()) &&
+				                    !IsWire(to->GetObjectReference()) && !IsCopy(from) && !IsCopy(to) && from != to;
+				// The vanilla rules workshop mode's own wiring keeps (its wire filter): both ends take a wire, and no wire joins them
+				// yet. Read again when the wire is made: two requests for one wire both pass here before either is strung.
+				facts.endsTakeWire = facts.endsAtBench && TakesWire(*from) && TakesWire(*to);
+				facts.alreadyWired = facts.endsAtBench && SharedWorkshop::Joined(GridsOf(bench), from->GetFormID(), to->GetFormID());
+				if (facts.endsKnown) {
+					spot.position[0] = from->data.location.x;
+					spot.position[1] = from->data.location.y;
+					spot.position[2] = from->data.location.z;
+				}
+			} else {
+				const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_request.base);
+				facts.objectKnown = base != nullptr;
+				facts.buildable = base && Buildable(base) && WorkshopApply::Shared(true, Equipment::IsPowerArmorFrame(base)) && !base->As<RE::TESNPC>();
+				std::copy(a_request.position.begin(), a_request.position.end(), spot.position);
+				facts.inReach = InReach(spot);
+			}
+			EngineWorld world;
+			facts.benchLoaded = facts.benchKnown && world.Loaded(spot);
+			return facts;
+		}
+
+		// A build or a wire waiting to be made (workshop mode open here, or the piece's 3D not there yet): made and answered
+		// when it may be, refused when it waited too long.
+		void MakeRequests(Clock::time_point a_now)
+		{
+			if (making.empty() || answersHeld) {  // wsmode hold: taken, not made or answered yet
+				return;
+			}
+			// The host building in workshop mode is the point: nothing of its workshop mode holds a finish off (the finish sets
+			// the engine's new-item byte itself: NewItemScope).
+			std::erase_if(making, [&](Making& a_making) {
+				const auto& request = a_making.request;
+				const bool  wire = request.op == Protocol::WorkshopRequestOp::kWire;
+				const auto  ref = wire ? RE::NiPointer<RE::TESObjectREFR>{} : a_making.ref.get();
+				if (!wire && !ref) {
+					Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
+					return true;
+				}
+				switch (SharedWorkshop::Ready(wire || ref->Get3D() != nullptr, a_now - a_making.since)) {
+				case SharedWorkshop::Readiness::kWait:
+					return false;
+				case SharedWorkshop::Readiness::kNoModel:
+					if (ref) {
+						ref->Disable();
+						ref->SetDelete(true);
+					}
+					Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
+					return true;
+				case SharedWorkshop::Readiness::kReady:
+					break;
+				}
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.workshop);
+				if (!bench) {
+					if (ref) {
+						ref->Disable();
+						ref->SetDelete(true);
+					}
+					Answer(request, Protocol::WorkshopAnswer::Why::kBenchNotLoaded, 0);
+					return true;
+				}
+				if (wire) {
+					const auto facts = FactsOf(request);
+					if (const auto why = SharedWorkshop::Refusal(request.op, facts)) {
+						Answer(request, *why, 0);
+						return true;
+					}
+					const auto made = MakeWire(*RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.wireFrom), *RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.wireTo), *bench);
+					Answer(request, made ? Protocol::WorkshopAnswer::Why::kApplied : Protocol::WorkshopAnswer::Why::kFailed, made ? made->GetFormID() : 0);
+					return true;
+				}
+				const auto steps = FinishPiece(*ref, *bench);
+				REX::INFO("WorkshopSync: {:08X} (base {:08X}) built for player {} at workbench {:08X}: {}", ref->GetFormID(), request.base, request.playerId, request.workshop, steps);
+				Answer(request, Protocol::WorkshopAnswer::Why::kApplied, ref->GetFormID());
+				return true;
+			});
+		}
+
+		// What a 3D holds, for the wire count's log: its root's name and type, its geometries, and how many of those (and of the
+		// nodes) are culled (NiAVObject's app-culled flag, which Budget::AddObject's walk skips).
+		std::string Describe3D(RE::NiAVObject* a_root)
+		{
+			if (!a_root) {
+				return "no 3D";
+			}
+			std::size_t nodes = 0, geometries = 0, culledNodes = 0, culledGeometries = 0;
+			std::vector<RE::NiAVObject*> todo{ a_root };
+			while (!todo.empty() && nodes + geometries < 4096) {
+				const auto object = todo.back();
+				todo.pop_back();
+				if (object->IsGeometry()) {
+					++geometries;
+					culledGeometries += object->GetAppCulled();
+				} else {
+					++nodes;
+					culledNodes += object->GetAppCulled();
+				}
+				if (const auto node = object->IsNode()) {
+					for (const auto& child : node->children) {  // the array runs to its capacity: empty slots are null
+						if (child) {
+							todo.push_back(child.get());
+						}
+					}
+				}
+			}
+			return std::format("root '{}' ({}) culled={}: {} nodes ({} culled), {} geometries ({} culled), bound radius {:.0f}", a_root->name.c_str() ? a_root->name.c_str() : "",
+				a_root->GetRTTI() && a_root->GetRTTI()->GetName() ? a_root->GetRTTI()->GetName() : "?", a_root->GetAppCulled(), nodes, culledNodes, geometries, culledGeometries,
+				a_root->worldBound.fRadius);
+		}
+
+		// The host's wires made for friends, counted in the budget once their spline is drawn (WIRE_SETTLE after they were
+		// made, as the moved-wire check waits). Counted only when the budget's AddObject added something (its walk counts the
+		// 3D's drawn geometry: a spline not built yet adds 0), else tried again each frame until WIRE_COUNT_GIVE_UP, then let
+		// be with a warning that says what the 3D held (wiresUncounted).
+		void CountWiresLater(Clock::time_point a_now)
+		{
+			if (wiresToCount.empty()) {
+				return;
+			}
+			using ref_t = void (*)(RE::TESObjectREFR&);
+			static REL::Relocation<ref_t>          budget{ BUDGET_ADD_OBJECT };
+			static REL::Relocation<std::uint32_t*> triangles{ BUDGET_TRIANGLES };
+			static REL::Relocation<std::uint32_t*> draws{ BUDGET_DRAWS };
+			std::erase_if(wiresToCount, [&](const WireToCount& a_wire) {
+				if (a_now - a_wire.since < WIRE_SETTLE) {
+					return false;
+				}
+				const auto wire = a_wire.wire.get();
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_wire.bench);
+				if (!wire || wire->IsDeleted() || !bench) {
+					return true;
+				}
+				const bool giveUp = a_now - a_wire.since >= WIRE_COUNT_GIVE_UP;
+				const auto root = wire->Get3D();
+				if (!root) {
+					if (giveUp) {
+						++wiresUncounted;
+						REX::WARN("WorkshopSync: our wire {:08X} for a friend has no 3D after {} s: not counted in workbench {:08X}'s budget", wire->GetFormID(),
+							std::chrono::duration_cast<std::chrono::seconds>(WIRE_COUNT_GIVE_UP).count(), a_wire.bench);
+					}
+					return giveUp;
+				}
+				std::int64_t addedTriangles = 0, addedDraws = 0;
+				{
+					BudgetScope totals{ *bench };
+					const auto  t0 = *triangles;
+					const auto  d0 = *draws;
+					budget(*wire);
+					addedTriangles = static_cast<std::int64_t>(*triangles) - t0;
+					addedDraws = static_cast<std::int64_t>(*draws) - d0;
+				}
+				if (addedTriangles == 0 && addedDraws == 0) {
+					if (giveUp) {
+						++wiresUncounted;
+						REX::WARN("WorkshopSync: our wire {:08X} for a friend added nothing to workbench {:08X}'s budget in {} s (the budget's walk found no drawn geometry): {}",
+							wire->GetFormID(), a_wire.bench, std::chrono::duration_cast<std::chrono::seconds>(WIRE_COUNT_GIVE_UP).count(), Describe3D(root));
+					}
+					return giveUp;
+				}
+				RecountBench(*bench);  // the power rating once more with the wire drawn (the rig saw the light powered late)
+				++wiresCounted;
+				REX::INFO("WorkshopSync: our wire {:08X} for a friend counted in workbench {:08X}'s budget after {} ms: triangles {:+}, draws {:+} ({})", wire->GetFormID(), a_wire.bench,
+					std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_wire.since).count(), addedTriangles, addedDraws, Describe3D(root));
+				return true;
+			});
+		}
+
+		// Every frame, in a session: the host's requests made, ours expired.
+		void SharedFrame(Clock::time_point a_now, bool a_host)
+		{
+			hosting = a_host;
+			admitsCopies.store(HandsOver());
+			if (Serves()) {
+				MakeRequests(a_now);
+				CountWiresLater(a_now);
+			} else if (!making.empty()) {
+				for (auto& item : making) {
+					if (const auto ref = item.ref.get()) {
+						ref->Disable();
+						ref->SetDelete(true);
+					}
+				}
+				making.clear();
+			}
+			for (const auto& [seq, pending] : requests.Expire(a_now)) {
+				++answersLate;
+				REX::WARN("WorkshopSync: request {} at workbench {:08X} got no answer in {} s (dropped on the way, or the host's game stuck): taken as refused", seq, pending.bench,
+					std::chrono::duration_cast<std::chrono::seconds>(SharedWorkshop::ANSWER_WAIT).count());
+				Answered(seq, pending.op, Protocol::WorkshopAnswer::Why::kNoAnswer, pending, {});
+			}
+			// Builds answered while the player held the piece: adopted once it is put down (or gone).
+			std::erase_if(adoptLater, [&](const auto& a_later) { return Adopt(a_later.first, a_later.second); });
+		}
+
+		// No grid of ours may name an in-session piece of ours that became the host's (adopted) or went (a wire taken off): one
+		// that does is taken off again, and said. With the copy audit, before every save and every few seconds.
+		void AuditStrays(std::string_view a_when)
+		{
+			if (madeHere.empty()) {
+				return;
+			}
+			PowerEngine engine;
+			const auto  named = SharedWorkshop::Strays(engine.Grids(), madeHere);
+			for (const auto id : named) {
+				++straysFound;
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+				REX::WARN("WorkshopSync: {}: a grid of ours still names {:08X}, our piece the host's game took over (or our wire taken off): taken off again{}", a_when, id,
+					ref ? "" : " (no reference under its ID now)");
+				if (ref) {
+					Unbuild(*ref, BenchOf(*ref), false);  // its budget was settled when it was adopted or taken off
+				}
+			}
+		}
+
+		// A piece of ours still waiting for the host's answer goes (a save, or leaving): told to its workbench's scripts as a
+		// scrap (its settler freed), off our workshop and budget, and deleted.
+		void DropPending(const SharedWorkshop::Pending& a_pending, const char* a_when)
+		{
+			const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.piece) };
+			if (!ref || ref->IsDeleted() || IsCopy(ref.get())) {
+				return;
+			}
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.bench);
+			NotifyDestroyed(bench ? bench : BenchOf(*ref), *ref);
+			Unbuild(*ref, bench ? bench : BenchOf(*ref), true);
+			ref->Disable();
+			ref->SetDelete(true);
+			REX::INFO("WorkshopSync: {}: our {:08X}, still waiting for the host's answer, goes (the host's copy comes if it was built)", a_when, a_pending.piece);
+		}
+
+		// Leaving the session: our pieces still waiting for an answer go (nothing we built at the host's settlements stays in
+		// our game), and the host's unfinished pieces for friends go too.
+		void ResetShared()
+		{
+			for (const auto& build : requests.Builds()) {
+				DropPending(build, "leaving");
+			}
+			for (const auto& later : adoptLater) {
+				DropPending(later.first, "leaving");
+			}
+			adoptLater.clear();
+			wiresToCount.clear();
+			requests.Clear();
+			taught.Clear();
+			{
+				std::scoped_lock l{ copyIdsLock };
+				notOwnedBenches.clear();
+			}
+			madeHere.clear();
+			for (auto& item : making) {
+				if (const auto ref = item.ref.get()) {
+					ref->Disable();
+					ref->SetDelete(true);
+				}
+			}
+			making.clear();
+			unopenedTold.clear();
+			// The dev hold (wsmode hold) ends with the session: a run aborted while holding must not leave this game taking
+			// every friend's request in the next session and letting it time out as refused.
+			if (answersHeld) {
+				REX::INFO("WorkshopSync: leaving the session: the held answers (wsmode hold) are served again");
+				answersHeld = false;
+			}
+			hostGone = false;
+			hostId.store(0);
+			admitsCopies.store(false);
+		}
+
+		// A save was loaded, or the world is gone: what waited was the old world's.
+		void ForgetShared()
+		{
+			requests.Clear();
+			adoptLater.clear();
+			making.clear();
+			madeHere.clear();
+		}
+
+		// A save is about to be written (kPreSaveGame, the main thread): nothing half-made may go into it. The host's pieces
+		// made for friends and not finished yet are finished now if their 3D is there, else deleted and refused; a friend's
+		// pieces still waiting for the host's answer go (nothing a friend built at the host's settlement stays in their save;
+		// an answer "applied" after this finds ours gone and lets the host's copy come on its own, a refusal finds nothing to
+		// keep). Both windows are short (a 3D is there within a frame or two, an answer within a round trip), so this is
+		// rarely more than nothing.
+		void SharedBeforeSave()
+		{
+			std::erase_if(making, [&](Making& a_making) {
+				const auto& request = a_making.request;
+				const auto  ref = a_making.ref.get();
+				const auto  bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(request.workshop);
+				if (request.op == Protocol::WorkshopRequestOp::kBuild && ref && bench && ref->Get3D()) {
+					const auto steps = FinishPiece(*ref, *bench);
+					REX::INFO("WorkshopSync: save: {:08X} built for player {} finished before it: {}", ref->GetFormID(), request.playerId, steps);
+					Answer(request, Protocol::WorkshopAnswer::Why::kApplied, ref->GetFormID());
+					return true;
+				}
+				if (ref) {
+					ref->Disable();
+					ref->SetDelete(true);
+				}
+				Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
+				return true;
+			});
+			// Marked dropped, not taken out: the host may have built them already, and its answer must still be matched (the
+			// host's copy then comes on its own). They no longer count as waiting (wsmode pending=; dropped= until answered).
+			for (const auto& build : requests.DropBuilds()) {
+				DropPending(build, "save");
+			}
+			std::erase_if(adoptLater, [&](const auto& a_later) { return Adopt(a_later.first, a_later.second); });
+			for (const auto& later : adoptLater) {
+				DropPending(later.first, "save");  // still held: gone rather than saved half ours
+			}
+			adoptLater.clear();
+		}
+	}
+
+	void InstallPicks()
+	{
+		if (picksInstalled) {
+			return;
+		}
+		struct Site
+		{
+			REL::ID       function;
+			std::size_t   offset;
+			REL::ID       target;
+			void*         hook;
+			void**        original;  // where the call's own target goes (the first site of each hook)
+			const char*   what;
+		};
+		const auto at = [](auto& a_original) { return reinterpret_cast<void**>(&a_original); };
+		const std::array<Site, 9> sites{ {
+			{ PICK_GENERAL, PICK_BLOCKED_CALL, IS_INTERACTION_BLOCKED, reinterpret_cast<void*>(&PickBlockedHook), at(originalIsBlocked), "the general pick's test" },
+			{ PICK_WIRE, PICK_BLOCKED_CALL, IS_INTERACTION_BLOCKED, reinterpret_cast<void*>(&PickBlockedHook), at(originalIsBlocked), "the wire pick's test" },
+			{ CAN_STORE_PLACEMENT_ITEM, CAN_STORE_CALL, CAN_STORE_REF, reinterpret_cast<void*>(&CanStoreHook), at(originalCanStore), "the store test" },
+			{ REQUEST_STORE_PLACEMENT_ITEM, REQUEST_STORE_CALL, CAN_STORE_REF, reinterpret_cast<void*>(&CanStoreHook), at(originalCanStore), "the store request's test" },
+			{ CAN_SCRAP_PLACEMENT_REF, CAN_SCRAP_CALL, CAN_SCRAP_REF, reinterpret_cast<void*>(&CanScrapHook), at(originalCanScrap), "the scrap button" },
+			{ REQUEST_SCRAP_PLACEMENT_ITEM, REQUEST_SCRAP_CALL, CAN_SCRAP_REF, reinterpret_cast<void*>(&ScrapKeyHook), at(originalCanScrap), "the scrap key" },
+			{ CAN_SELECT_PLACEMENT_REF, CAN_SELECT_CALL, WORKSHOP_CAN_SELECT_REF, reinterpret_cast<void*>(&CanSelectHook), at(originalCanSelect), "the move button" },
+			{ WORKSHOP_MENU_EVENT, MENU_SELECT_CALL, WORKSHOP_CAN_SELECT_REF, reinterpret_cast<void*>(&SelectKeyHook), at(originalCanSelect), "the menu's Accept (the grab)" },
+			{ WORKSHOP_MENU_EVENT, MENU_STORE_CALL, CAN_STORE_PLACEMENT_ITEM, reinterpret_cast<void*>(&StoreKeyHook), at(originalCanStoreItem), "the menu's Store key" },
+		} };
+		// Every site as 1.11.240 has it (a call to the function the plugin expects), or none is patched: the hooks only make
+		// sense together (a copy picked but not refused at the gates could be scrapped for free).
+		for (const auto& site : sites) {
+			const auto                  where = site.function.address() + site.offset;
+			std::array<std::uint8_t, 5> bytes{};
+			std::memcpy(bytes.data(), reinterpret_cast<const void*>(where), bytes.size());
+			if (TextureFlush::CallTarget(bytes, where) != site.target.address()) {
+				REX::WARN("WorkshopSync: {} ({:X}+{:X}) doesn't call what 1.11.240 calls there (another plugin's patch?); the shared workshop's picks are not patched, so the host's pieces can't be wired by friends",
+					site.what, site.function.address(), site.offset);
+				return;
+			}
+		}
+		// The picks' own calls: each pick's run (the pick watch's ray) and its cast's sorted hits (the watch's view of the whole
+		// cast), each hit's reference in both picks (a friend's stand-in named the player: passed by), the general filter, which
+		// admits the copies the test above admitted, and the wire filter (watched: its verdicts and the wire's target). Each
+		// patched only if 1.11.240's call is there: without them the picks still work, unwatched, a stand-in in front hides what
+		// is behind it, and a copy the general filter refuses stays unpicked.
+		const std::array<Site, 8> watch{ {
+			{ FOREGROUND_JOB, FOREGROUND_PICK_CALL, PICK_GENERAL, reinterpret_cast<void*>(&GeneralPickHook), at(originalGeneralPick), "the general pick's run" },
+			{ PICK_GENERAL, PICK_SORT_CALL, PICK_SORT, reinterpret_cast<void*>(&PickSortHook), at(originalPickSort), "the general pick's cast" },
+			{ PICK_GENERAL, PICK_HIT_CALL, FIND_BODY_REF, reinterpret_cast<void*>(&PickHitHook), at(originalFindBodyRef), "the general pick's hits" },
+			{ PICK_WIRE, PICK_HIT_CALL, FIND_BODY_REF, reinterpret_cast<void*>(&PickHitHook), at(originalFindBodyRef), "the wire pick's hits" },
+			{ PICK_GENERAL, PICK_FILTER_CALL, GENERAL_FILTER, reinterpret_cast<void*>(&PickFilterHook), at(originalGeneralFilter), "the general pick's filter" },
+			{ FOREGROUND_JOB, FOREGROUND_WIRE_CALL, PICK_WIRE, reinterpret_cast<void*>(&WirePickHook), at(originalWirePick), "the wire pick's run" },
+			{ PICK_WIRE, PICK_SORT_CALL, PICK_SORT, reinterpret_cast<void*>(&PickSortHook), at(originalPickSort), "the wire pick's cast" },
+			{ PICK_WIRE, PICK_FILTER_CALL, WIRE_FILTER, reinterpret_cast<void*>(&WireFilterHook), at(originalWireFilter), "the wire filter" },
+		} };
+		std::array<bool, 8> watchable{};
+		for (std::size_t i = 0; i < watch.size(); ++i) {
+			const auto&                 site = watch[i];
+			const auto                  where = site.function.address() + site.offset;
+			std::array<std::uint8_t, 5> bytes{};
+			std::memcpy(bytes.data(), reinterpret_cast<const void*>(where), bytes.size());
+			watchable[i] = TextureFlush::CallTarget(bytes, where) == site.target.address();
+			if (!watchable[i]) {
+				REX::WARN("WorkshopSync: {} ({:X}+{:X}) doesn't call what 1.11.240 calls there (another plugin's patch?); not watched", site.what, site.function.address(), site.offset);
+			}
+		}
+		// One call stub per distinct hook: seven, and the watch's six (both picks' casts share one, and both picks' hits).
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < 13 * CALL_STUB) {
+			REX::WARN("WorkshopSync: no room for the shared workshop's hooks ({} bytes free); the host's pieces can't be wired by friends", trampoline.free_size());
+			return;
+		}
+		for (const auto& site : sites) {
+			const auto original = trampoline.write_call<5>(site.function.address() + site.offset, site.hook);
+			if (!*site.original) {
+				*site.original = reinterpret_cast<void*>(original);
+			}
+		}
+		std::size_t watched = 0;
+		for (std::size_t i = 0; i < watch.size(); ++i) {
+			if (watchable[i]) {
+				const auto original = trampoline.write_call<5>(watch[i].function.address() + watch[i].offset, watch[i].hook);
+				if (!*watch[i].original) {
+					*watch[i].original = reinterpret_cast<void*>(original);
+				}
+				++watched;
+			}
+		}
+		picksInstalled = true;
+		REX::INFO("WorkshopSync: workshop mode's picks hooked ({} sites, and {} of the picks' own calls): at a settlement the host owns, a friend can highlight and wire the host's pieces, and never grab, store or scrap them",
+			sites.size(), watched);
+	}
+
+	void OnRequest(const Protocol::WorkshopRequest& a_request)
+	{
+		if (!Serves()) {
+			Answer(a_request, hosting ? Protocol::WorkshopAnswer::Why::kOff : Protocol::WorkshopAnswer::Why::kHostAway, 0);
+			return;
+		}
+		const auto facts = FactsOf(a_request);
+		if (const auto why = SharedWorkshop::Refusal(a_request.op, facts)) {
+			if (*why == Protocol::WorkshopAnswer::Why::kBenchUnopened && unopenedTold.insert(a_request.workshop).second) {
+				// The engine makes a workbench's workshop data (its grids, its stored items) when its workshop is first opened,
+				// and saves it with the bench; a settlement the host took by console (or never built at) has none. Made by
+				// us it would be a struct of the engine's we never saw made: the host opens the workshop once instead.
+				Hud::Notify(Text::Get("workshop.shared.host_open_bench"));
+			}
+			Answer(a_request, *why, 0);
+			return;
+		}
+		if (making.size() >= SharedWorkshop::MAX_PENDING) {
+			Answer(a_request, Protocol::WorkshopAnswer::Why::kHostBusy, 0);
+			return;
+		}
+		if (a_request.op == Protocol::WorkshopRequestOp::kWire) {
+			making.push_back({ a_request, {}, Clock::now() });  // made at the next frame (out of workshop mode)
+			return;
+		}
+		// The piece, where the friend's workshop mode put theirs; finished once its 3D is there (MakeRequests).
+		Protocol::WorkshopItem item;
+		item.workshop = a_request.workshop;
+		item.base = a_request.base;
+		std::copy(a_request.position.begin(), a_request.position.end(), item.position);
+		std::copy(a_request.rotation.begin(), a_request.rotation.end(), item.rotation);
+		item.scale = a_request.scale;
+		const auto made = Create(item);
+		if (!made || !made->ref.get()) {
+			Answer(a_request, Protocol::WorkshopAnswer::Why::kFailed, 0);
+			return;
+		}
+		making.push_back({ a_request, made->ref, Clock::now() });
+	}
+
+	void OnAnswer(const Protocol::WorkshopAnswer& a_answer)
+	{
+		const auto pending = requests.Take(a_answer.seq);
+		if (!pending) {
+			++answersUnknown;
+			return;
+		}
+		if (a_answer.why == Protocol::WorkshopAnswer::Why::kOff) {
+			// The rule is off at the server: nothing more is asked this session, so no build waits a round trip for the same
+			// answer. (A "no host's game" is not held against the session: the server also says it in the moments the host's
+			// game isn't welcomed, and the welcome's host id already keeps a dedicated server from being asked at all.)
+			if (!std::exchange(hostGone, true)) {
+				REX::INFO("WorkshopSync: the server answered '{}': nothing more is asked of the host this session", Protocol::Name(a_answer.why));
+			}
+		}
+		Answered(a_answer.seq, pending->op, a_answer.why, *pending, Key{ a_answer.playerId, a_answer.refId });
+	}
+
+	void OnWelcome(std::uint32_t a_hostId)
+	{
+		hostId.store(a_hostId);
+		hostGone = false;
+		if (a_hostId == 0) {
+			REX::INFO("WorkshopSync: no host's game in the session (a dedicated server): the shared workshop asks nothing");
+		}
+	}
+
+	std::string ScrapForDev(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->IsDeleted()) {
+			return "error: no such reference, or deleted already";
+		}
+		if (IsCopy(a_ref)) {
+			return "error: a copy of a friend's piece: its builder's game scraps it";
+		}
+		const auto bench = BenchOf(*a_ref);
+		const auto id = a_ref->GetFormID();
+		if (!bench) {
+			// Runtime ids are each game's own: on another machine the same id names something else (an NPC, a stand-in, a
+			// dropped item), which must not be reported scrapped and deleted. Only a piece linked to a workbench is a piece.
+			REX::INFO("WorkshopSync: wsscrap {:08X} refused: not a workshop piece linked to a workbench", id);
+			return std::format("error: {:08X} is no workshop piece linked to a workbench: not scrapped", id);
+		}
+		// What the engine's scrap does, short of the yield: told to the workbench's scripts, off the grids and the links,
+		// out of the budget, unlinked, reported scrapped for the friends' copies, disabled and deleted.
+		NotifyDestroyed(bench, *a_ref);
+		Unbuild(*a_ref, bench, true);
+		ReportRef(a_ref, bench, Protocol::WorkshopOp::kScrapped);
+		a_ref->Disable();
+		a_ref->SetDelete(true);
+		gridNamedFrame = ~0ull;
+		return std::format("scrapped {:08X} (workbench {:08X}): off the grids, the budget and the workbench, reported, deleted", id, bench ? bench->GetFormID() : 0);
+	}
+
+	std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench)
+	{
+		if (!a_ref || !a_bench) {
+			return "error: no such reference";
+		}
+		if (IsCopy(a_ref)) {
+			return "error: a copy of a friend's piece is never finished as ours";
+		}
+		if (!a_ref->Get3D()) {
+			return "error: the reference has no 3D yet";
+		}
+		const auto steps = FinishPiece(*a_ref, *a_bench);
+		return std::format("finished {:08X} at {:08X}: {} | {}", a_ref->GetFormID(), a_bench->GetFormID(), steps, DescribeRef(a_ref));
+	}
+
+	void SetSharedModeForDev(std::optional<bool> a_on)
+	{
+		sharedDev = a_on;
+		admitsCopies.store(HandsOver());
+	}
+
+	void HoldAnswersForDev(bool a_hold)
+	{
+		answersHeld = a_hold;
+	}
+
+	std::string HeldForDev()
+	{
+		static REL::Relocation<RE::ObjectRefHandle*> firstEnd{ WIRE_FIRST_END };
+		static REL::Relocation<RE::ObjectRefHandle*> target{ WIRE_TARGET };
+		static REL::Relocation<std::uint8_t*>        gate{ SCRAP_GATE };
+		const auto                                   p = PlacementNow();
+		const auto                                   ref = PlacementRef();
+		const auto                                   base = ref ? ref->GetObjectReference() : nullptr;
+		const auto                                   id = ref ? ref->GetFormID() : 0;
+		const auto                                   from = firstEnd->get();
+		const auto                                   to = target->get();
+		// The wire's own state while one is held (its first end set): the spline status by name, its ends.
+		const auto wire = from ? std::format(" wireStatus={} wireFrom={:08X} wireTarget={:08X}", SharedWorkshop::WireStatusName(p.status), from->GetFormID(), to ? to->GetFormID() : 0) :
+		                         std::string{};
+		return std::format("held={:08X} heldBase={:08X} newItem={} selected={:08X} editing={} canPlace={} placeStatus={}{} scrapGate={}", p.Holds() ? id : 0,
+			p.Holds() && base ? base->GetFormID() : 0, p.newItem, id, p.editing, p.canPlace, p.status, wire, *gate);
+	}
+
+	std::string ScrapTestForDev(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) {
+			return "error: no such reference";
+		}
+		// The engine's own test, as the Scrap key asks it (CAN_SCRAP_REF itself is not hooked: its callers are).
+		return std::format("scraptest {:08X}: engine={} {} copy={} admitted={}", a_ref->GetFormID(), CanScrap(*a_ref), ScrapParts(*a_ref), IsCopy(a_ref), AdmitsCopy(*a_ref));
+	}
+
+	namespace
+	{
+		// The watched piece's bodies (each collision object under its 3D: the body id, its layer, whether it is in the cell's
+		// havok world), for matching against a pick's cast.
+		struct Bodies
+		{
+			std::vector<std::uint32_t> ids;
+			std::string                text;
+		};
+
+		Bodies BodiesOf(RE::TESObjectREFR& a_ref, RE::NiAVObject* a_root)
+		{
+			const auto                   refCell = a_ref.GetParentCell();
+			const auto                   world = refCell ? refCell->GetbhkWorld() : nullptr;
+			Bodies                       out;
+			std::vector<RE::NiAVObject*> stack{ a_root };
+			std::size_t                  walked = 0;
+			while (!stack.empty() && walked++ < 4096) {
+				const auto node = stack.back();
+				stack.pop_back();
+				const auto object = node->collisionObject.get();
+				if (const auto collision = object ? object->IsbhkNPCollisionObject() : nullptr) {
+					RE::hknpBodyId id{};
+					collision->GetBodyId(id);
+					std::uint32_t raw = 0;
+					std::memcpy(&raw, &id, sizeof(raw));
+					const auto body = collision->GetBody();
+					const auto layer = body ? (body->m_collisionFilterInfo & 0x7F) : 0xFFu;
+					const bool added = world && raw != 0x7FFFFFFF && world->IsBodyAdded(id);
+					out.ids.push_back(raw);
+					if (out.ids.size() <= 6) {
+						out.text += std::format("{}b{}:L{}{}", out.text.empty() ? "" : ",", raw, layer, added ? "" : "(not in world)");
+					}
+				}
+				if (const auto parent = node->IsNode()) {
+					for (const auto& child : parent->children) {
+						if (child.get()) {
+							stack.push_back(child.get());
+						}
+					}
+				}
+			}
+			return out;
+		}
+
+		// Whether the run's cast hit one of these bodies at all, its reference or not.
+		bool InCast(const PickRun& a_run, const Bodies& a_bodies)
+		{
+			const auto kept = (std::min)(static_cast<std::size_t>((std::max)(a_run.castCount, 0)), a_run.cast.size());
+			for (std::size_t i = 0; i < kept; ++i) {
+				if (std::ranges::find(a_bodies.ids, a_run.cast[i].body) != a_bodies.ids.end()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Where a point stands from the run's ray: how far along it, and how far off it.
+		std::pair<float, float> AlongAndMiss(const PickRun& a_run, const RE::NiPoint3& a_point)
+		{
+			const auto  to = RE::NiPoint3{ a_point.x - a_run.from.x, a_point.y - a_run.from.y, a_point.z - a_run.from.z };
+			const float length = std::sqrt(a_run.dir.x * a_run.dir.x + a_run.dir.y * a_run.dir.y + a_run.dir.z * a_run.dir.z);
+			const auto  unit = length > 0.0f ? RE::NiPoint3{ a_run.dir.x / length, a_run.dir.y / length, a_run.dir.z / length } : RE::NiPoint3{};
+			const float along = to.x * unit.x + to.y * unit.y + to.z * unit.z;
+			const auto  off = RE::NiPoint3{ to.x - along * unit.x, to.y - along * unit.y, to.z - along * unit.z };
+			return { along, std::sqrt(off.x * off.x + off.y * off.y + off.z * off.z) };
+		}
+
+		// Whether the run's search reached the reference (its hits as the search met them).
+		bool SearchReached(const PickRun& a_run, std::uint32_t a_ref)
+		{
+			const auto kept = (std::min)(a_run.count, static_cast<std::uint32_t>(a_run.hits.size()));
+			for (std::uint32_t i = 0; i < kept; ++i) {
+				if (a_run.hits[i].ref == a_ref) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch)
+	{
+		// The piece described below: the one watched now, or with "off" the one that was (the last runs are of it).
+		auto watched = pickWatch.load();
+		if (a_watch) {
+			const auto was = pickWatch.exchange(*a_watch ? (*a_watch)->GetFormID() : 0);
+			watched = *a_watch ? (*a_watch)->GetFormID() : was;
+		}
+		PickRun run;
+		PickRun wire;
+		{
+			std::scoped_lock l{ pickLock };
+			run = generalPick.last;
+			wire = wirePick.last;
+		}
+		const auto now = std::chrono::steady_clock::now();
+		auto       out = std::format("pick watch={:08X} runs={} copyHits={} copyRefused={} picksAdmitted={} filterAdmitted={} filterOtherBench={} standInsPassed={} openBench={:08X}",
+				  pickWatch.load(), pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), picksAdmitted.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(),
+				  OpenBench());
+		const bool ran = run.at != std::chrono::steady_clock::time_point{};
+		if (ran) {
+			const auto ago = std::chrono::duration_cast<std::chrono::milliseconds>(now - run.at).count();
+			out += std::format(" | last run {} ms ago: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}) cell={:08X}; {}; picked={:08X}; {}", ago, run.from.x, run.from.y,
+				run.from.z, run.dir.x, run.dir.y, run.dir.z, run.cell, DescribeHits(run), run.picked, DescribeCast(run));
+		} else {
+			out += " | no run yet (workshop mode not up, idle and unhooked?)";
+		}
+		// The wire pick's last run (it runs each frame the placement item is a wire): picked is the wire's target.
+		const bool wireRan = wire.at != std::chrono::steady_clock::time_point{};
+		out += std::format(" | wire pick runs={} targets={} copyYes={} copyNo={}", wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load());
+		if (wireRan) {
+			const auto ago = std::chrono::duration_cast<std::chrono::milliseconds>(now - wire.at).count();
+			out += std::format(": wire run {} ms ago: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}); {}; target={:08X}; {}", ago, wire.from.x, wire.from.y, wire.from.z,
+				wire.dir.x, wire.dir.y, wire.dir.z, DescribeHits(wire), wire.picked, DescribeCast(wire));
+		}
+		// Where the watched piece stands from each ray: how far along it, how far off it (its bound's center), against its radius.
+		const auto ref = watched ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(watched) : nullptr;
+		const auto root = ref ? ref->Get3D() : nullptr;
+		if (!root) {
+			return watched ? out + std::format(" | {:08X}: no 3D", watched) : out;
+		}
+		const auto bodies = BodiesOf(*ref, root);
+		const auto center = root->worldBound.center;
+		const auto cell = ref->GetParentCell();
+		if (ran) {
+			const auto [along, miss] = AlongAndMiss(run, center);
+			out += std::format(" | {:08X}: bodies {} [{}] inCast={}", watched, bodies.ids.size(), bodies.ids.empty() ? "none: no collision" : bodies.text, InCast(run, bodies));
+			out += std::format(" | {:08X}: center ({:.0f}, {:.0f}, {:.0f}) radius={:.0f} along={:.0f} miss={:.0f} cell={:08X} copy={} blocked={} hit={}", watched, center.x, center.y, center.z,
+				root->worldBound.fRadius, along, miss, cell ? cell->GetFormID() : 0, IsCopy(ref), Blocked(*ref), SearchReached(run, watched));
+		}
+		if (wireRan) {
+			const auto [along, miss] = AlongAndMiss(wire, center);
+			out += std::format(" | wire {:08X}: radius={:.0f} along={:.0f} miss={:.0f} inCast={} reached={} target={}", watched, root->worldBound.fRadius, along, miss, InCast(wire, bodies),
+				SearchReached(wire, watched), wire.picked == watched);
+		}
+		return out;
+	}
+
+	std::string DescribeShared()
+	{
+		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={}",
+			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load(), grabsRefused.load(),
+			storesRefused.load(), scrapsRefused.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
+			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted);
+	}
+
 	void InstallLights()
 	{
 		if (originalLightPowered) {
@@ -2899,6 +5156,7 @@ namespace WorkshopSync
 		CheckSettled(now);
 		ReportMovedWires(now);
 		DrawShapedWires(now);
+		SharedFrame(now, a_host);
 		PowerFrame(now);
 		ResourceFrame(now);
 		AuditFrame(now);
@@ -2981,7 +5239,45 @@ namespace WorkshopSync
 
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
 	{
+		// Under the shared workshop's rule a placed piece goes the way workshop mode's own goes: asked of the host (wsreport
+		// place is the rig's stand-in for a build).
+		if (a_op == Protocol::WorkshopOp::kPlaced && HandOver(a_ref, a_workshop)) {
+			return;
+		}
 		ReportRef(a_ref, a_workshop, a_op);
+	}
+
+	std::optional<std::string> RequestWireForDev(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to)
+	{
+		if (!HandsOver() || !a_from || !a_to) {
+			return std::nullopt;
+		}
+		const auto from = KeyOfCopy(a_from->GetFormID());
+		const auto to = KeyOfCopy(a_to->GetFormID());
+		if (SharedWorkshop::KindOfWire(from.has_value(), to.has_value(), from && to && from->first == to->first && from->first == hostId.load()) != SharedWorkshop::WireKind::kRequest) {
+			return std::nullopt;
+		}
+		std::uint32_t benchId = 0;
+		{
+			std::scoped_lock l{ copyIdsLock };
+			benchId = copyBenches.Of(a_from->GetFormID());
+		}
+		if (benchId == 0 || taught.IsNotOwned(benchId)) {
+			return std::format("error: the copies' workbench {:08X} is none the host owns", benchId);
+		}
+		const auto seq = requests.Open(Protocol::WorkshopRequestOp::kWire, 0, benchId, Clock::now());
+		if (!seq) {
+			return std::string{ "error: too many requests wait" };
+		}
+		Protocol::WorkshopRequest request;
+		request.seq = *seq;
+		request.op = Protocol::WorkshopRequestOp::kWire;
+		request.workshop = benchId;
+		request.wireFrom = from->second;
+		request.wireTo = to->second;
+		PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+		++wiresAsked;
+		return std::format("requested seq={} wire between player {}'s {:08X} and {:08X} at workbench {:08X}", *seq, from->first, from->second, to->second, benchId);
 	}
 
 	void Reset()
@@ -3019,6 +5315,7 @@ namespace WorkshopSync
 		keptTied.clear();
 		powerBenches.clear();
 		benchWorld = 0;
+		ResetShared();
 		std::scoped_lock l{ outLock };
 		outgoing.Clear();
 	}
@@ -3069,6 +5366,7 @@ namespace WorkshopSync
 			outgoing.Fence();
 		}
 		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
+		ForgetShared();  // what waited for the host's answer, or for its 3D, was the old world's
 		copies.clear();
 		strays.Clear();  // the loaded world's are looked for afresh
 		twins.clear();  // the session's building sent again twins them again with the copies found
@@ -3112,6 +5410,7 @@ namespace WorkshopSync
 	void OnWorldGone()
 	{
 		ClearAudit();
+		ForgetShared();
 		copies.clear();
 		strays.Clear();
 		twins.clear();
@@ -3163,6 +5462,7 @@ namespace WorkshopSync
 
 	void BeforeSave()
 	{
+		SharedBeforeSave();  // nothing half-made of the shared workshop goes into the save (then the audits net the rest)
 		AuditPower("save");
 		// A copy shown powered is saved running (its graph keeps the state), and a load brings it back running with no
 		// session to stop it: shown unpowered for the save, powered again after (AfterSave). A light's light is let be (no

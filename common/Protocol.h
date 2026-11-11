@@ -83,7 +83,12 @@ namespace Protocol
 	// (kReportSettlementOwner) and the server tells the others (kSettlementOwner). A friend's game mirrors the host's
 	// attack (the same quest, never fighting or resolving on its own) and stops a roll of its own at the host's settlement.
 	// No welcome bytes. 65 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 66;
+	// 67: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
+	// the byte after 64's groupDifficulty), then the host's own game's id (Welcome::hostId, the welcome's last four bytes);
+	// a friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own
+	// pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
+	// kWorkshopAnswer: WorkshopAnswer). 66 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 67;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -229,6 +234,8 @@ namespace Protocol
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
+		kReportWorkshopRequest = 81,  // the sender built or wired something at a settlement the host owns: the host's game is asked to make it its own (WorkshopRequest)
+		kReportWorkshopAnswer = 82,   // the host's game answers one of those: made, or refused and why (WorkshopAnswer)
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
 
@@ -302,6 +309,8 @@ namespace Protocol
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
 		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
+		kWorkshopRequest = 185,   // to the host's game alone: a friend asks for a build or a wire at one of the host's settlements (WorkshopRequest, playerId the friend)
+		kWorkshopAnswer = 186,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
 		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
 	};
@@ -511,6 +520,10 @@ namespace Protocol
 		// beyond the first, as every game's hits taking that much less off NPCs (iGroupDifficulty; protocol 64, the byte
 		// after catchUpXp). 0: off.
 		std::uint8_t groupDifficulty = 0;
+		// The shared workshop (src/game/SharedWorkshop.h): at a settlement the host owns, a friend's build or wire is made by the
+		// host's game as the host's own piece, and the friend sees a copy, as of any of the host's pieces (bSharedWorkshop; on
+		// by default; protocol 67, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
+		bool sharedWorkshop = true;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -646,6 +659,10 @@ namespace Protocol
 		bool          friendlyFire = false;  // players can hurt each other
 		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 		SessionRules  rules;
+		// The host's own game's player id (protocol 67, the welcome's last four bytes, after the rules): whose pieces the
+		// shared workshop wires, and whose game takes its requests. 0: none in the session (a dedicated server), so no game
+		// hands over.
+		std::uint32_t hostId = 0;
 	};
 
 	struct Reject
@@ -1413,6 +1430,106 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_RESOURCE_ENTRIES = 128;
+
+	// The shared workshop (SessionRules::sharedWorkshop, src/game/SharedWorkshop.h): a friend's build or wire at a settlement
+	// the host owns is a numbered request (seq: the sender's own count), which the server sends to the host's game alone
+	// (kWorkshopRequest, playerId the friend), and which that game performs on its own pieces and answers (WorkshopAnswer).
+	// A build names the piece as the friend's workshop mode placed it (base, where, how big); a wire names its two ends as the
+	// host's references, which the friend knows as its copies' keys.
+	namespace WorkshopRequestOp
+	{
+		inline constexpr std::uint8_t kBuild = 0;
+		inline constexpr std::uint8_t kWire = 1;
+		inline constexpr std::uint8_t LAST = kWire;
+	}
+
+	struct WorkshopRequest
+	{
+		std::uint32_t        playerId = 0;  // who asks (the server sets it)
+		std::uint32_t        seq = 0;       // the sender's number for this request (never 0)
+		std::uint8_t         op = WorkshopRequestOp::kBuild;
+		std::uint32_t        workshop = 0;  // the settlement's workbench
+		std::uint32_t        base = 0;      // kBuild: the object to build
+		std::array<float, 3> position{};    // kBuild: where
+		std::array<float, 3> rotation{};
+		float                scale = 1.0f;
+		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
+		std::uint32_t        wireTo = 0;
+
+		bool operator==(const WorkshopRequest&) const = default;
+	};
+
+	// The answer: the host's game made it (kApplied, refId the piece it made, which the friend's own piece becomes a copy of),
+	// or it was refused, by the host's game or by the server, and why. kReportWorkshopAnswer is the host's game's (playerId:
+	// whose request); kWorkshopAnswer the server's to the friend (playerId: who answered, 0 the server).
+	struct WorkshopAnswer
+	{
+		enum class Why : std::uint8_t
+		{
+			kApplied = 0,
+			kOff,              // the server: the host's rule is off
+			kHostAway,         // the server: no host's game is in the session (a dedicated server), or the host left before answering
+			kNotHostOwned,     // the host's game: that settlement isn't the host's (a friend's own, or nobody's)
+			kBenchNotLoaded,   // the host's game: the host isn't near that settlement
+			kHostBusy,         // the host's game: the host is in workshop mode there, for too long to wait
+			kNoSuchPiece,      // the host's game: a wire's end isn't one of its pieces at that settlement
+			kNotWorkshopItem,  // the host's game: the object isn't one workshop mode builds, or its game lacks it
+			kOverBudget,       // the server: the sender's event budget was spent
+			kOutOfReach,       // the host's game: the spot is too far from the workbench
+			kFailed,           // the host's game: the engine made no piece
+			kBenchUnopened,    // the host's game: that workbench has no workshop data yet (the host never opened its workshop in this game)
+			kNotWireEnd,       // the host's game: a wire's end takes no wire (neither the workshopPowerConnection value nor the keyword)
+			kAlreadyWired,     // the host's game: its grids already join the wire's two ends (it would be a second wire between them)
+			kNoAnswer,        // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
+		};
+		static constexpr Why LAST_WHY = Why::kNoAnswer;
+
+		std::uint32_t seq = 0;
+		std::uint32_t playerId = 0;
+		std::uint8_t  op = WorkshopRequestOp::kBuild;
+		Why           why = Why::kApplied;
+		std::uint32_t workshop = 0;  // the workbench asked about
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire)
+
+		bool operator==(const WorkshopAnswer&) const = default;
+	};
+
+	constexpr const char* Name(WorkshopAnswer::Why a_why)
+	{
+		switch (a_why) {
+		case WorkshopAnswer::Why::kApplied:
+			return "applied";
+		case WorkshopAnswer::Why::kOff:
+			return "the rule is off";
+		case WorkshopAnswer::Why::kHostAway:
+			return "no host's game";
+		case WorkshopAnswer::Why::kNotHostOwned:
+			return "not the host's settlement";
+		case WorkshopAnswer::Why::kBenchNotLoaded:
+			return "the host isn't near the settlement";
+		case WorkshopAnswer::Why::kHostBusy:
+			return "the host is in workshop mode";
+		case WorkshopAnswer::Why::kNoSuchPiece:
+			return "no such piece of the host's";
+		case WorkshopAnswer::Why::kNotWorkshopItem:
+			return "not something workshop mode builds";
+		case WorkshopAnswer::Why::kOverBudget:
+			return "over budget";
+		case WorkshopAnswer::Why::kOutOfReach:
+			return "too far from the workbench";
+		case WorkshopAnswer::Why::kFailed:
+			return "the engine made no piece";
+		case WorkshopAnswer::Why::kBenchUnopened:
+			return "the host hasn't opened that workshop yet";
+		case WorkshopAnswer::Why::kNotWireEnd:
+			return "an end takes no wire";
+		case WorkshopAnswer::Why::kAlreadyWired:
+			return "its ends are wired already";
+		case WorkshopAnswer::Why::kNoAnswer:
+			return "no answer in time";
+		}
+		return "unknown";
+	}
 
 	// A destructible object placed by a plugin (a car, an explosive barrel, a gas pump: a reference whose base has
 	// destruction data, IsShareableRef), damaged in the sender's game: its health there (the engine's, in its own units: a
@@ -2624,6 +2741,8 @@ namespace Protocol
 		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
 		w.U8(rules.catchUpXp);  // protocol 64
 		w.U8(rules.groupDifficulty);
+		w.U8(rules.sharedWorkshop ? 1 : 0);  // protocol 67
+		w.U32(a_msg.hostId);
 		return w.Data();
 	}
 
@@ -2660,6 +2779,8 @@ namespace Protocol
 			const auto quests = r.U8();  // protocol 58
 			const auto catchUpXp = r.U8();  // protocol 64
 			const auto groupDifficulty = r.U8();
+			const auto sharedWorkshop = r.U8();  // protocol 67
+			msg.hostId = r.U32();
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
@@ -2668,6 +2789,7 @@ namespace Protocol
 			rules.quests = static_cast<QuestRule>(quests);
 			rules.catchUpXp = catchUpXp;
 			rules.groupDifficulty = groupDifficulty;
+			rules.sharedWorkshop = sharedWorkshop != 0;
 			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}
 		return msg;
@@ -4074,6 +4196,111 @@ namespace Protocol
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// How far a request's piece may stand from where the sender says, and how big it may be: what workshop mode itself allows,
+	// with room (the host's game checks the workbench's reach besides).
+	inline constexpr float MAX_REQUEST_COORDINATE = 1.0e6f;
+	inline constexpr float MIN_REQUEST_SCALE = 0.01f;
+	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
+
+	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
+	// no object. Neither names a workbench of 0, nor a number of 0.
+	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
+	{
+		if (a_msg.seq == 0 || a_msg.workshop == 0 || a_msg.op > WorkshopRequestOp::LAST) {
+			return false;
+		}
+		if (a_msg.op == WorkshopRequestOp::kWire) {
+			return a_msg.wireFrom != 0 && a_msg.wireTo != 0 && a_msg.wireFrom != a_msg.wireTo && a_msg.base == 0;
+		}
+		if (a_msg.base == 0 || (a_msg.base >> 24) == 0xFF || a_msg.wireFrom != 0 || a_msg.wireTo != 0) {
+			return false;
+		}
+		for (std::size_t i = 0; i < 3; ++i) {
+			if (!std::isfinite(a_msg.position[i]) || std::abs(a_msg.position[i]) > MAX_REQUEST_COORDINATE || !std::isfinite(a_msg.rotation[i])) {
+				return false;
+			}
+		}
+		return std::isfinite(a_msg.scale) && a_msg.scale >= MIN_REQUEST_SCALE && a_msg.scale <= MAX_REQUEST_SCALE;
+	}
+
+	// kReportWorkshopRequest (client -> server) or kWorkshopRequest (server -> the host's game).
+	inline std::vector<std::uint8_t> Encode(const WorkshopRequest& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.seq);
+		w.U8(a_msg.op);
+		w.U32(a_msg.workshop);
+		w.U32(a_msg.base);
+		for (const float v : a_msg.position) {
+			w.F32(v);
+		}
+		for (const float v : a_msg.rotation) {
+			w.F32(v);
+		}
+		w.F32(a_msg.scale);
+		w.U32(a_msg.wireFrom);
+		w.U32(a_msg.wireTo);
+		return w.Data();
+	}
+
+	inline std::optional<WorkshopRequest> DecodeWorkshopRequest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorkshopRequest msg;
+		msg.playerId = r.U32();
+		msg.seq = r.U32();
+		msg.op = r.U8();
+		msg.workshop = r.U32();
+		msg.base = r.U32();
+		for (float& v : msg.position) {
+			v = r.F32();
+		}
+		for (float& v : msg.rotation) {
+			v = r.F32();
+		}
+		msg.scale = r.F32();
+		msg.wireFrom = r.U32();
+		msg.wireTo = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsValid(msg)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// kReportWorkshopAnswer (client -> server) or kWorkshopAnswer (server -> client).
+	inline std::vector<std::uint8_t> Encode(const WorkshopAnswer& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.seq);
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.op);
+		w.U8(std::to_underlying(a_msg.why));
+		w.U32(a_msg.workshop);
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<WorkshopAnswer> DecodeWorkshopAnswer(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorkshopAnswer msg;
+		msg.seq = r.U32();
+		msg.playerId = r.U32();
+		msg.op = r.U8();
+		const auto why = r.U8();
+		msg.why = static_cast<WorkshopAnswer::Why>(why);
+		msg.workshop = r.U32();
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.seq == 0 || msg.op > WorkshopRequestOp::LAST || why > std::to_underlying(WorkshopAnswer::LAST_WHY) ||
+			(msg.why == WorkshopAnswer::Why::kApplied) != (msg.refId != 0)) {
+			return std::nullopt;  // an applied answer names what was made, and a refusal names nothing
 		}
 		return msg;
 	}

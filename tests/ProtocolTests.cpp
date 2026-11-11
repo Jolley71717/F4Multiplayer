@@ -358,6 +358,90 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 			CHECK(out->health == 0.125f);
 		}
 	}
+	// A workshop request: a build (the object, where, how big) or a wire (the host's pieces at each end), numbered by its sender.
+	for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
+		const WorkshopRequest build{ 3, 41, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 10.0f, -20.0f, 30.0f }, { 0.1f, 0.2f, 0.3f }, 1.25f, 0, 0 };
+		const auto            packet = Encode(build, type);
+		CHECK(PeekType(packet) == type);
+		const auto out = DecodeWorkshopRequest(packet);
+		REQUIRE(out);
+		CHECK(*out == build);
+		const WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 };
+		const auto            wired = DecodeWorkshopRequest(Encode(wire, type));
+		REQUIRE(wired);
+		CHECK(*wired == wire);
+	}
+	{
+		// Refused: no number, no workbench, an unknown op, a build of a runtime object or with wire ends, a wire with one end or
+		// the same end twice, a spot or a size no workshop allows.
+		const WorkshopRequest good{ 3, 41, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 };
+		CHECK(DecodeWorkshopRequest(Encode(good, MT::kWorkshopRequest)));
+		auto bad = good;
+		bad.seq = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.workshop = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.op = WorkshopRequestOp::LAST + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.base = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.base = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.wireTo = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.position[1] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.scale = 50.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.scale = 0.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF };
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		wire.wireTo = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		wire.wireTo = RUNTIME_REF + 1;
+		wire.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+	}
+	// A workshop answer: the request's number and whose, applied with the piece made, or refused and why.
+	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
+		for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNotHostOwned, WorkshopAnswer::LAST_WHY }) {
+			const bool applied = why == WorkshopAnswer::Why::kApplied;
+			const WorkshopAnswer answer{ 41, 2, WorkshopRequestOp::kBuild, why, REF_A, applied ? RUNTIME_REF : 0u };
+			const auto           packet = Encode(answer, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeWorkshopAnswer(packet);
+			REQUIRE(out);
+			CHECK(*out == answer);
+		}
+	}
+	{
+		// An unknown reason, no number, an applied answer naming no piece, or a refusal naming one, is refused.
+		const WorkshopAnswer good{ 41, 2, WorkshopRequestOp::kBuild, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF };
+		auto                 packet = Encode(good, MT::kWorkshopAnswer);
+		CHECK(DecodeWorkshopAnswer(packet));
+		packet[1 + 4 + 4 + 1] = std::to_underlying(WorkshopAnswer::LAST_WHY) + 1;
+		CHECK(!DecodeWorkshopAnswer(packet));
+		auto bad = good;
+		bad.seq = 0;
+		CHECK(!DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+		bad = good;
+		bad.refId = 0;
+		CHECK(!DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+		bad = good;
+		bad.why = WorkshopAnswer::Why::kHostAway;
+		CHECK(!DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+		bad.refId = 0;
+		CHECK(DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+	}
 	{
 		// An unknown reason, or damage outside 0..1, is refused.
 		auto packet = Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, 0.5f }, MT::kDamageAnswer);
@@ -2209,18 +2293,19 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
-	// The byte after legendary's (the welcome's last up to 63; 64's two bytes follow it).
+	// The byte after legendary's, before 64's two bytes and 67's (the shared workshop's byte and the host's id).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
-	auto& questsByte = bytes[bytes.size() - 3];
+	auto& questsByte = bytes[bytes.size() - 8];
 	CHECK(questsByte == static_cast<std::uint8_t>(QuestRule::kSafe));
 	questsByte = QUEST_RULES;
 	const auto odd = DecodeWelcome(bytes);
 	REQUIRE(odd);
 	CHECK(odd->rules.quests == QuestRule::kStory);
 	CHECK(odd->rules.legendary == LegendaryRule::kHost);
+	CHECK(odd->rules.sharedWorkshop);
 	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
-	// A welcome of 57's, without it (nor 64's bytes), is short.
-	bytes.resize(bytes.size() - 3);
+	// A welcome of 57's, without it (nor 64's and 67's bytes), is short.
+	bytes.resize(bytes.size() - 8);
 	CHECK(!DecodeWelcome(bytes));
 }
 
@@ -2236,22 +2321,57 @@ TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (
 		CHECK(out->rules.groupDifficulty == percent * 2);
 		CHECK(out->rules.quests == QuestRule::kSafe);
 	}
-	// The two bytes after quests', the welcome's last; past their limits they are their limits (a level behind doubles
-	// the XP already; two players thrice as tough is enough).
+	// The two bytes after quests', before 67's (the shared workshop's byte and the host's four); past their limits they
+	// are their limits (a level behind doubles the XP already; two players thrice as tough is enough).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10, .groupDifficulty = 50 } });
-	CHECK(bytes[bytes.size() - 2] == 10);
-	CHECK(bytes.back() == 50);
-	bytes[bytes.size() - 2] = 250;
-	bytes.back() = 255;
+	auto& catchUpByte = bytes[bytes.size() - 7];
+	auto& difficultyByte = bytes[bytes.size() - 6];
+	CHECK(catchUpByte == 10);
+	CHECK(difficultyByte == 50);
+	catchUpByte = 250;
+	difficultyByte = 255;
 	const auto wild = DecodeWelcome(bytes);
 	REQUIRE(wild);
 	CHECK(wild->rules.catchUpXp == SessionRules::MAX_CATCH_UP_XP);
 	CHECK(wild->rules.groupDifficulty == SessionRules::MAX_GROUP_DIFFICULTY);
 	CHECK(SessionRules{ .catchUpXp = 101 }.Clamped().catchUpXp == 100);
 	CHECK(SessionRules{ .groupDifficulty = 201 }.Clamped().groupDifficulty == 200);
-	// A welcome of 63's, without them, is short.
+	// A welcome of 63's, without them (nor 67's bytes), is short; so is one cut between them.
+	bytes.resize(bytes.size() - 5);
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
+}
+
+TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's own game's id (protocol 67), last; a welcome without them is short")
+{
+	static_assert(VERSION >= 67);  // both came in 67
+	CHECK(SessionRules{}.sharedWorkshop);  // on unless the host says otherwise
+	// The host's own game's id: 0 on a dedicated server.
+	for (const std::uint32_t hostId : { 0u, 1u, 7u, 0xA1B2C3D4u }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 20, .groupDifficulty = 30 }, hostId }));
+		REQUIRE(out);
+		CHECK(out->hostId == hostId);
+		CHECK(out->playerId == 3);
+		CHECK(out->sessionId == 4);
+		CHECK(out->rules.catchUpXp == 20);  // 64's bytes still before 67's
+		CHECK(out->rules.groupDifficulty == 30);
+	}
+	for (const bool on : { false, true }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .sharedWorkshop = on } }));
+		REQUIRE(out);
+		CHECK(out->rules.sharedWorkshop == on);
+	}
+	// The shared workshop's byte after 64's groupDifficulty, then the host's id, little-endian, the welcome's last four.
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .groupDifficulty = 50, .sharedWorkshop = true }, 0x01020304u });
+	CHECK(bytes[bytes.size() - 6] == 50);
+	CHECK(bytes[bytes.size() - 5] == 1);
+	CHECK(bytes[bytes.size() - 4] == 0x04);
+	CHECK(bytes.back() == 0x01);
+	// A welcome of 65's, without them, is short; so is one cut anywhere in the host's id.
+	for (int i = 0; i < 5; ++i) {
+		bytes.pop_back();
+		CHECK(!DecodeWelcome(bytes));
+	}
 }
