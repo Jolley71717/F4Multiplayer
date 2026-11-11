@@ -1783,7 +1783,7 @@ void Server::Run()
 		}
 		// ... and what the host's game said of settlements, then its attacks going on (a friend's game mirrors them).
 		if (!a_player.local) {
-			for (const auto& owner : attackBook.Owners()) {
+			for (const auto& owner : attackBook.Owners(Clock::now())) {
 				send(a_player.key, Protocol::Encode(owner, Protocol::MessageType::kSettlementOwner), true);
 			}
 			for (const auto& attack : attackBook.Live()) {
@@ -3403,9 +3403,11 @@ void Server::Run()
 
 	// An attack on a settlement in the player's game (common/AttackBook.h). The host's game reports its own attacks, each
 	// phase, and the others hear them (their games mirror them). A friend's game reports a roll of its own (kRolled alone)
-	// as a question, whose settlement it is: answered from what the host's game said, or asked of the host's game (at most
-	// once per AttackBook::Book::ASK_EVERY a settlement); with no host's game (a dedicated server) every settlement is the
-	// friend's own. The host's game away from a hosted server: no answer, and the friend's game keeps its attack.
+	// as a question, whose settlement it is: answered at once only when the host's game said "the host's" within
+	// AttackBook::OWNER_FOR; otherwise asked of the host's game (at most once per AttackBook::Book::ASK_EVERY a settlement),
+	// whose answer reaches the friend: a "not the host's" said before may be stale (the host can take a settlement later);
+	// with no host's game (a dedicated server) every settlement is the friend's own. The host's game away from a hosted
+	// server: no answer, and the friend's game keeps its attack.
 	const auto handleSettlementAttack = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -3425,8 +3427,9 @@ void Server::Run()
 		if (attack->phase != Protocol::AttackPhase::kRolled) {
 			return;  // a friend's game's attacks are its own business; only its question is taken
 		}
-		if (const auto owned = attackBook.OwnerOf(attack->workshop)) {
-			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, *owned }, Protocol::MessageType::kSettlementOwner), true);
+		const auto now = Clock::now();
+		if (attackBook.OwnerOf(attack->workshop, now) == true) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, true }, Protocol::MessageType::kSettlementOwner), true);
 			return;
 		}
 		if (options.hostIdentity == 0) {
@@ -3434,15 +3437,20 @@ void Server::Run()
 			return;
 		}
 		const auto host = hostPlayer();
-		if (!host || !attackBook.Ask(attack->workshop, Clock::now())) {
+		if (!host) {
+			return;
+		}
+		attackBook.Awaits(attack->workshop, a_player.id);  // the answer reaches them, asked now or by an earlier question
+		if (!attackBook.Ask(attack->workshop, now)) {
 			return;
 		}
 		log(std::format("server: player {} rolled attack {:08X} on settlement {:08X}: the host's game is asked whose it is", a_player.id, attack->quest, attack->workshop));
 		send(host->key, Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true);
 	};
 
-	// The host's game says whether a settlement is the host's (an answer to a friend's question, or with its own attack):
-	// kept, and everyone else told when it is news. From the host's game alone.
+	// The host's game says whether a settlement is the host's (an answer to a friend's question, with its own attack, or a
+	// change of owner it noticed): kept, and everyone else told when it is news; when it isn't, the friends who asked are
+	// told. From the host's game alone.
 	const auto handleSettlementOwner = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player) || !a_player.local) {
 			return;
@@ -3451,9 +3459,18 @@ void Server::Run()
 		if (!owner || owner->workshop == 0) {
 			return;
 		}
-		if (attackBook.SetOwner(owner->workshop, owner->hostOwned)) {
+		attackBook.Answered(owner->workshop);
+		const auto waiting = attackBook.TakeAwaiting(owner->workshop);
+		const auto packet = Protocol::Encode(*owner, Protocol::MessageType::kSettlementOwner);
+		if (attackBook.SetOwner(owner->workshop, owner->hostOwned, Clock::now())) {
 			log(std::format("server: settlement {:08X} is {}the host's", owner->workshop, owner->hostOwned ? "" : "not "));
-			broadcast(Protocol::Encode(*owner, Protocol::MessageType::kSettlementOwner), true, a_player.key);
+			broadcast(packet, true, a_player.key);
+			return;
+		}
+		for (const auto id : waiting) {
+			if (const auto asker = playerById(id); asker && asker->welcomed && !asker->local) {
+				send(asker->key, packet, true);
+			}
 		}
 	};
 

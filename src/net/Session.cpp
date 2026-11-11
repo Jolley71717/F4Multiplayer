@@ -1603,8 +1603,10 @@ namespace Session
 			RollHook::Frame();  // the session's rolls written on our NPCs that aren't loaded
 			Spawns::Frame();
 			Companions::Frame();  // what our Followers aliases hold, and a refused recruit's dismissal
-			SettlementAttacks::Frame();  // the host's attacks reported, a friend's mirrored, a friend's own roll at the host's settlement stopped
 		}
+		// In a session: the host's attacks reported, a friend's mirrored, a friend's own roll at the host's settlement stopped.
+		// Out of one too: what a session left behind (a load's leftovers, the runs being closed down as it ended).
+		SettlementAttacks::Frame(welcomed);
 		for (auto& packet : Companions::TakeOutgoing()) {
 			if (welcomed) {
 				SendOut(std::move(packet), true);

@@ -349,5 +349,5 @@ companion.theirs = {npc} is {player}'s companion
 companion.someone = another player
 attack.under = {place} is under attack
 attack.defended = {place} was defended
-attack.lost = {place} wasn't defended and took damage
+attack.lost = {place} wasn't defended
 attack.a_settlement = A settlement

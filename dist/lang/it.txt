@@ -328,5 +328,5 @@ companion.theirs = {npc} è il compagno di {player}
 companion.someone = un altro giocatore
 attack.under = Attacco a {place}
 attack.defended = Attacco respinto a {place}
-attack.lost = Nessuno ha difeso {place}, che ha subito danni
+attack.lost = Nessuno ha difeso {place}
 attack.a_settlement = un insediamento

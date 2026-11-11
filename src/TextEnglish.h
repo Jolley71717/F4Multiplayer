@@ -151,7 +151,7 @@ namespace Text
 		{ "companion.someone", "another player" },
 		{ "attack.under", "{place} is under attack" },
 		{ "attack.defended", "{place} was defended" },
-		{ "attack.lost", "{place} wasn't defended and took damage" },
+		{ "attack.lost", "{place} wasn't defended" },
 		{ "attack.a_settlement", "A settlement" },
 		{ "down.revives_left", "Revives left: {n}" },
 		{ "down.last_revive", "That was your last revive for now: the next lethal hit kills you" },

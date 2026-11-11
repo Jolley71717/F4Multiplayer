@@ -327,5 +327,5 @@ companion.theirs = {npc} ist der Begleiter von {player}
 companion.someone = einem anderen Spieler
 attack.under = {place} wird angegriffen
 attack.defended = {place} wurde verteidigt
-attack.lost = {place} wurde nicht verteidigt und hat Schaden genommen
+attack.lost = {place} wurde nicht verteidigt
 attack.a_settlement = Eine Siedlung

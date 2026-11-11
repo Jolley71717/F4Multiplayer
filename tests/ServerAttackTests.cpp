@@ -97,7 +97,7 @@ TEST("server attacks: a joiner hears the host's settlements and the attacks goin
 	CHECK(Count(Received(f, 3), MT::kSettlementAttack) == 0);
 }
 
-TEST("server attacks: a friend's roll is asked of the host's game once, its answer reaches everyone, and later rolls are answered from it")
+TEST("server attacks: a friend's roll is asked of the host's game once, its answer reaches everyone, and \"the host's\" answers later rolls")
 {
 	Fixture f{ Hosted() };
 	JoinHost(f, 1);
@@ -122,12 +122,97 @@ TEST("server attacks: a friend's roll is asked of the host's game once, its answ
 	f.fake->Deliver(1, Owner(SANCTUARY, true));  // the same word: nobody hears it again
 	CHECK(Owners(f, 2).empty());
 
-	// Bob rolls there again: answered by the server at once, the host's game not asked.
+	// Bob rolls there again: answered by the server at once (the host's, said within OWNER_FOR), the host's game not asked.
 	f.fake->Deliver(2, Attack(SANCTUARY, Phase::kRolled));
 	const auto words = Owners(f, 2);
 	REQUIRE(words.size() == 1);
 	CHECK(words[0].hostOwned);
 	CHECK(Attacks(f, 1).empty());
+}
+
+TEST("server attacks: \"not the host's\" is never answered from the book: the host's game is asked again, and its answer reaches the asker even when no news")
+{
+	Fixture f{ Hosted() };
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	JoinAs(f, 3, "Carol", 0x33);
+	Clear(f, { 1, 2, 3 });
+
+	f.fake->Deliver(2, Attack(RED_ROCKET, Phase::kRolled));
+	REQUIRE(Attacks(f, 1).size() == 1);
+	f.fake->Deliver(1, Owner(RED_ROCKET, false));
+	for (const PeerId peer : { 2, 3 }) {
+		const auto words = Owners(f, peer);
+		REQUIRE(words.size() == 1);
+		CHECK(words[0].workshop == RED_ROCKET && !words[0].hostOwned);
+	}
+
+	// Bob's game asks again while its roll runs: the host's game is asked again (it may have taken the settlement since).
+	f.fake->Deliver(2, Attack(RED_ROCKET, Phase::kRolled));
+	CHECK(Owners(f, 2).empty());  // no answer from the book
+	const auto asks = Attacks(f, 1);
+	REQUIRE(asks.size() == 1);
+	CHECK(asks[0].workshop == RED_ROCKET);
+	// The same answer: no news for everyone, but Bob, who asked, hears it.
+	f.fake->Deliver(1, Owner(RED_ROCKET, false));
+	const auto words = Owners(f, 2);
+	REQUIRE(words.size() == 1);
+	CHECK(words[0].workshop == RED_ROCKET && !words[0].hostOwned);
+	CHECK(Owners(f, 3).empty());
+	CHECK(Owners(f, 1).empty());
+}
+
+TEST("server attacks: the host's game telling a change of owner reaches everyone, and later rolls there are answered from it")
+{
+	Fixture f{ Hosted() };
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	JoinAs(f, 3, "Carol", 0x33);
+	f.fake->Deliver(1, Owner(RED_ROCKET, false));
+	Clear(f, { 1, 2, 3 });
+
+	// The host takes Red Rocket: their game says so unasked.
+	f.fake->Deliver(1, Owner(RED_ROCKET, true));
+	for (const PeerId peer : { 2, 3 }) {
+		const auto words = Owners(f, peer);
+		REQUIRE(words.size() == 1);
+		CHECK(words[0].workshop == RED_ROCKET && words[0].hostOwned);
+	}
+	CHECK(Owners(f, 1).empty());
+	CHECK(f.LoggedSoon(std::format("server: settlement {:08X} is the host's", RED_ROCKET)));
+
+	f.fake->Deliver(3, Attack(RED_ROCKET, Phase::kRolled));
+	const auto words = Owners(f, 3);
+	REQUIRE(words.size() == 1);
+	CHECK(words[0].hostOwned);
+	CHECK(Attacks(f, 1).empty());
+}
+
+TEST("server attacks: the host's word on a settlement expires after OWNER_FOR: a roll there is asked of the host's game again, and a joiner hears no stale word")
+{
+	Fixture f{ Hosted() };
+	f.HoldClock();
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	f.fake->Deliver(1, Owner(SANCTUARY, true));
+	Clear(f, { 1, 2 });
+
+	f.Advance(std::chrono::duration_cast<std::chrono::milliseconds>(AttackBook::OWNER_FOR));
+	f.fake->Deliver(2, Attack(SANCTUARY, Phase::kRolled));
+	CHECK(Owners(f, 2).empty());
+	const auto asks = Attacks(f, 1);
+	REQUIRE(asks.size() == 1);
+	CHECK(asks[0].workshop == SANCTUARY);
+	JoinAs(f, 3, "Carol", 0x33);
+	CHECK(Count(Received(f, 3), MT::kSettlementOwner) == 0);
+
+	// The host's game says it again (the same word, gone stale): told to everyone again.
+	f.fake->Deliver(1, Owner(SANCTUARY, true));
+	for (const PeerId peer : { 2, 3 }) {
+		const auto words = Owners(f, peer);
+		REQUIRE(words.size() == 1);
+		CHECK(words[0].workshop == SANCTUARY && words[0].hostOwned);
+	}
 }
 
 TEST("server attacks: a friend can't speak for the host: its phases, and its word on a settlement, are dropped")

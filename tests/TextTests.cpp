@@ -323,7 +323,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "companion.someone", {}, "another player" },
 		{ "attack.under", { { "place", "Sanctuary" } }, "Sanctuary is under attack" },
 		{ "attack.defended", { { "place", "Sanctuary" } }, "Sanctuary was defended" },
-		{ "attack.lost", { { "place", "Sanctuary" } }, "Sanctuary wasn't defended and took damage" },
+		{ "attack.lost", { { "place", "Sanctuary" } }, "Sanctuary wasn't defended" },
 		{ "attack.a_settlement", {}, "A settlement" },
 		{ "down.revives_left", { { "n", 2 } }, "Revives left: 2" },
 		{ "down.last_revive", {}, "That was your last revive for now: the next lethal hit kills you" },

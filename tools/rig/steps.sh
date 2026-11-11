@@ -2043,16 +2043,20 @@ step_companions_human() {
 # ---- attacks: the host's settlement attack, shared (opt-in: smoke.sh --only attacks) ----------------------------------------------
 # A random attack on a settlement the host owns is the host's (src/game/SettlementAttacks.cpp, common/AttackBook.h): the VM's game
 # runs the host's exact quest as a mirror (same quest, same workbench) whose own timer never begins it, takes stage 100 (the
-# attack's done stage) as the host's is defended or ends, so its shutdown stage rolls no damage in the VM's save, and stops with
-# the host's run; a roll of the VM's own at the host's settlement is defused and stopped. All set-up is by console and said so:
+# attack's done stage) as soon as it runs, so neither its shutdown stage nor any save of the VM's rolls the host's damage, shows
+# "Defend Sanctuary" only while the VM's player and the host's attackers are there, and stops with the host's run; a roll of the
+# VM's own at the host's settlement is defused and stopped. All set-up is by console and said so:
 # both games coc to Sanctuary; Sanctuary is made the host's (WorkshopScript.SetOwnedByPlayer, as the bench step does); the host's
 # attack is rolled with WorkshopScript.CheckForAttack(true) on the workbench (WorkshopParentScript.TestForceAttack's own call; the
 # random roll is its unforced form); its 24 game-hour wait is cut short with `setstage <quest> 20`; the fight's end is
 # `setstage <quest> 100` (in the game the attackers' deaths set it); the run's end is `stopquest` (its shutdown stage, 1000, as
 # when its aliases unload). Round 1: the VM at Sanctuary (it sees the attack: objective shown, the host's attackers shared).
 # Round 2: the VM away in an interior (Sanctuary not loaded there: the case where a run of its own would roll damage), the host's
-# run ending undefended. Round 3: the VM's own forced roll at Sanctuary (a WARN, not a FAIL, when its story manager starts no
-# quest: the VM's save does not own Sanctuary). It changes the host's save (Sanctuary owned): throwaway saves only.
+# run ending undefended; the VM's own Sanctuary (its resources, and 500 caps put in its workbench by console) is the same after.
+# Round 3: the VM's own forced roll at Sanctuary (a WARN, not a FAIL, when its story manager starts no quest: the VM's save does
+# not own Sanctuary). Round 4: the VM, away, saves (`save f4mpattacks`) while it mirrors the host's attack and leaves (`net
+# leave`); its save, loaded solo, has the mirror stopped and plays no attack out; the VM joins the host's lobby again. It changes
+# both saves (Sanctuary owned, caps, a save written on the VM): throwaway saves only.
 ATTACK_BENCH=${ATTACK_BENCH:-$SANCT_BENCH}; ATTACK_CELL=${ATTACK_CELL:-SanctuaryExt}
 ATTACK_AWAY_CELL=${ATTACK_AWAY_CELL:-SuperDuperMart01}   # where the VM waits in round 2: an interior, Sanctuary unloaded there
 ATTACK_SETTLE=${ATTACK_SETTLE:-30}   # s, for a phase to reach the other game and its mirror to take a step (looks every 0.5 s, steps again every 5 s, a start waits 15 s)
@@ -2093,26 +2097,32 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 	else fail "attacks ($tag): the VM runs the host's quest at the same workbench as a mirror" "VM: $(_at_list vm | cut -c1-200); $(_at_tail vm)"; return 1; fi
 	if _at_log_has vm "SettlementAttacks: settlement $ATTACK_BENCH is the host's"; then pass "attacks ($tag): the VM hears Sanctuary is the host's" "ok"
 	else fail "attacks ($tag): the VM hears Sanctuary is the host's" "$(_at_tail vm)"; fi
+	# Defused as soon as it runs (stage 100 before the host's attack even begins): no save of the VM's ever holds a mirror
+	# whose 1000 would roll the host's damage.
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our mirror $q '.*': stage 100 \(defused as it runs"; then pass "attacks ($tag): the VM's mirror takes stage 100 as soon as it runs" "$(_at_entry vm "$q" | cut -c1-140)"
+	else fail "attacks ($tag): the VM's mirror takes stage 100 as soon as it runs" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; fi
 
 	# Begun: the 24 game-hour wait cut short in the host's game (set-up). The mirror never begins on its own.
 	host "console setstage $q 20" >/dev/null
 	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 1"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
 	else fail "attacks ($tag): the host's attack begins and the VM hears it" "host: $(_at_entry host "$q" | cut -c1-120); $(_at_tail vm)"; fi
 	sleep 3
-	expect_match "attacks ($tag): the VM's mirror has not begun on its own (no attackers of its own)" "$(_at_entry vm "$q")" "begun=false done=false"
+	expect_match "attacks ($tag): the VM's mirror has not begun on its own (no attackers of its own) and is defused" "$(_at_entry vm "$q")" "begun=false done=true"
 	if [ "$where" = at ]; then
-		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH during the host's attack: our mirror's objective 10 is shown"; then pass "attacks ($tag): the VM at Sanctuary is shown the attack's objective" "ok"
-		else fail "attacks ($tag): the VM at Sanctuary is shown the attack's objective" "$(_at_tail vm)"; fi
+		# "Defend Sanctuary" is shown only while the VM's player and the host's attackers (their copies) are there.
+		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH during the host's attack.*: our mirror's objective 10 is shown"; then pass "attacks ($tag): the VM at Sanctuary with the host's attackers there is shown the attack's objective" "ok"
+		else fail "attacks ($tag): the VM at Sanctuary with the host's attackers there is shown the attack's objective" "$(_at_tail vm)"; fi
 		# The host's attackers are the VM's to fight: Spawns shares them while the host's game has them loaded.
 		sleep 10; cp1=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2)
 		if is_int "$cp0" && is_int "$cp1"; then expect_ge "attacks ($tag): the host's attackers are copied into the VM's game" "$((cp1 - cp0))" 1 copy
 		else fail "attacks ($tag): the host's attackers are copied into the VM's game" "spawns copies '$cp0' then '$cp1'"; fi
-		# Defended: the fight's end set in the host's game (set-up); the VM's mirror takes stage 100 from it.
+		# Defended: the fight's end set in the host's game (set-up); the VM's objective is completed with it.
 		host "console setstage $q 100" >/dev/null
 		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 2"; then pass "attacks ($tag): the host's defence reaches the VM" "ok"
 		else fail "attacks ($tag): the host's defence reaches the VM" "$(_at_tail host) / $(_at_tail vm)"; fi
-		if wait_for "$ATTACK_SETTLE" _at_entry_is vm "$q" "done=true"; then pass "attacks ($tag): the VM's mirror takes stage 100 from the host's defence" "$(_at_entry vm "$q" | cut -c1-140)"
-		else fail "attacks ($tag): the VM's mirror takes stage 100 from the host's defence" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; fi
+		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our mirror's objective 10 at $ATTACK_BENCH is completed"; then pass "attacks ($tag): the VM's objective is completed with the host's defence" "ok"
+		else fail "attacks ($tag): the VM's objective is completed with the host's defence" "$(_at_tail vm)"; fi
+		expect_match "attacks ($tag): the VM's mirror stays defused through the host's defence" "$(_at_entry vm "$q")" "done=true"
 		outcome=1
 	else
 		if _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH"; then fail "attacks ($tag): the VM away is not shown the attack's objective" "it was"
@@ -2121,7 +2131,7 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 		outcome=2   # begun and never defended: the host's run resolves (the host's own roll where Sanctuary isn't loaded there)
 	fi
 
-	# The run ends in the host's game (stopquest: its shutdown stage). The VM's mirror takes stage 100 first, then stops.
+	# The run ends in the host's game (stopquest: its shutdown stage). The VM's mirror, defused since it ran, stops with it.
 	host "console stopquest $q" >/dev/null
 	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*': phase 3, outcome $outcome"; then pass "attacks ($tag): the host's game reports the end (outcome $outcome)" "ok"
 	else fail "attacks ($tag): the host's game reports the end (outcome $outcome)" "$(_at_tail host)"; fi
@@ -2140,9 +2150,60 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 	wait_for 20 _at_gone host "$q" || fail "attacks ($tag): the host's run has stopped" "$(_at_entry host "$q" | cut -c1-120)"
 	return 0
 }
+# _at_res <who>: that game's own Sanctuary: its food, water, safety and power, and the caps in its workbench
+_at_res() {
+	local v k out=""
+	v=$(dc "$1" "wsres av $ATTACK_BENCH")
+	for k in food water safety power; do out+="$k=$(grep -oE "; $k\[[^]]*\]=-?[0-9.]+" <<<"$v" | grep -oE -- '-?[0-9.]+$') "; done
+	echo "${out}caps=$(dc "$1" "count $ATTACK_BENCH 0000000F")"
+}
+# _at_save_leave_round: the VM, away from Sanctuary, saves while it mirrors the host's attack and leaves the session (its mirror
+# is closed down: timer cancelled, stopped); the host's run ends without it; the VM's save loaded solo holds the mirror defused
+# (stage 100 done, 20 not), which is stopped on the load, and no attack plays out at the VM's own Sanctuary. The VM then joins
+# the host's lobby again (`steam join`, the host's game left as it is).
+_at_save_leave_round() {
+	local tag="VM saves and leaves" q r0 r1 d lobby i
+	dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40
+	win_mark attacks host; win_mark attacks vm
+	q=$(_at_roll_host)
+	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
+	if wait_for 45 _at_entry_is vm "$q" "done=true .*mirror\(host phase 0\)"; then pass "attacks ($tag): the VM mirrors the host's attack, defused" "$(_at_entry vm "$q" | cut -c1-140)"
+	else fail "attacks ($tag): the VM mirrors the host's attack, defused" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; host "console stopquest $q" >/dev/null; return 1; fi
+	r0=$(_at_res vm)
+	dc vm "console save f4mpattacks" >/dev/null; sleep 8
+	dc vm "net leave" >/dev/null
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: $q '.*' at $ATTACK_BENCH is closed down \(the session ended"; then pass "attacks ($tag): leaving, the VM closes its mirror down (timer cancelled, stopped)" "ok"
+	else fail "attacks ($tag): leaving, the VM closes its mirror down (timer cancelled, stopped)" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; fi
+	expect_eq "attacks ($tag): no attack quest runs at Sanctuary in the VM's game after it left" "$(_at_none_at vm && echo none)" "none"
+	host "console stopquest $q" >/dev/null   # the host's run ends while the VM is away
+	wait_for 20 _at_gone host "$q" || fail "attacks ($tag): the host's run has stopped" "$(_at_entry host "$q" | cut -c1-120)"
+
+	# The save made mid-mirror, loaded solo: the run it holds is stopped at once, its timer cancelled first.
+	win_mark attacks vm
+	dc vm "console load f4mpattacks" >/dev/null; sleep 20; wait_ingame vm 60
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the loaded game holds $q '.*' at $ATTACK_BENCH defused by a session"; then pass "attacks ($tag): the VM's save loaded solo holds the mirror defused, and stops it" "ok"
+	else fail "attacks ($tag): the VM's save loaded solo holds the mirror defused, and stops it" "$(_at_list vm | cut -c1-160); $(_at_tail vm)"; fi
+	if wait_for "$ATTACK_SETTLE" _at_none_at vm; then pass "attacks ($tag): the VM's save plays no attack out: nothing runs at Sanctuary" "ok"
+	else fail "attacks ($tag): the VM's save plays no attack out: nothing runs at Sanctuary" "$(_at_list vm | cut -c1-160)"; fi
+	d=$(_rad_done vm "$q")
+	if [[ ",$d," == *",20,"* ]]; then fail "attacks ($tag): the attack never began in the VM's save (stage 20 not done)" "stages done '$d'"
+	else pass "attacks ($tag): the attack never began in the VM's save (stage 20 not done)" "stages done '$d'"; fi
+	sleep 10; r1=$(_at_res vm)
+	expect_eq "attacks ($tag): the VM's own Sanctuary is as it was" "$r1" "$r0"
+
+	# Back in the session (the host's game left as it is).
+	lobby=$(field "$(host 'net status')" lobby)
+	if ! is_num "$lobby" || [ "$lobby" = 0 ]; then rig_broken game "attacks ($tag): the VM joins the host's lobby again" "the host hosts no lobby ('$lobby')"; return 1; fi
+	vm "steam join $lobby" >/dev/null
+	for i in $(seq 1 30); do vm 'net status' | grep -q 'status=joined' && break; sleep 3; done
+	if vm 'net status' | grep -q 'status=joined'; then pass "attacks ($tag): the VM joins the host's session again" "ok"
+	else rig_broken game "attacks ($tag): the VM joins the host's session again" "$(vm 'net status' | cut -c1-120)"; return 1; fi
+	sleep 3
+	return 0
+}
 step_attacks() {
 	section "attacks (the host's settlement attack shared: Sanctuary; console placement, console set-up of the attack's stages)"
-	local ok q d0 n
+	local ok q d0 n r0 r1
 	enter_both "$ATTACK_CELL" 14
 	n=$(_at_list host); if [[ ! $n =~ hosting=true ]]; then fail "attacks: set-up: the host's game hosts and reads attacks" "'$(cut -c1-160 <<<"$n")' (an old build?)"; return; fi
 	expect_match "attacks: set-up: the VM's game is a friend's" "$(_at_list vm)" "hosting=false"
@@ -2155,9 +2216,17 @@ step_attacks() {
 	# Round 1: both at Sanctuary; the host's attack is defended.
 	_at_mirror_round "VM there" at || { crash_verdict attacks; return; }
 
-	# Round 2: the VM away in an interior; the host's run ends undefended.
+	# Round 2: the VM away in an interior; the host's run ends undefended. The VM's own Sanctuary takes nothing from it: its
+	# food, water, safety and power, and the caps put in its workbench first (an attack the attackers win takes from it), are
+	# the same after. (A run of the VM's own that rolled would hurt them only when its attackers won the roll: a pass here is
+	# no proof on its own; the stage-100 checks are.)
+	dc vm "console $ATTACK_BENCH.additem F 500" >/dev/null; sleep 2
 	dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40
+	r0=$(_at_res vm)
 	_at_mirror_round "VM away" away
+	sleep 5; r1=$(_at_res vm)
+	if [[ $r0 =~ food=[0-9] ]] && [[ $r0 =~ caps=[1-9] ]]; then expect_eq "attacks (VM away): the VM's own Sanctuary takes no damage and loses no caps" "$r1" "$r0"
+	else fail "attacks (VM away): the VM's own Sanctuary takes no damage and loses no caps" "couldn't read them: '$r0'"; fi
 
 	# Round 3: the VM's own forced roll at Sanctuary (the host's): defused, then stopped, its attackers removed; the host's game
 	# never takes it as an attack.
@@ -2180,6 +2249,9 @@ step_attacks() {
 		n="$(_at_count vm ownDefused)/$(_at_count vm ownStopped)"
 		if [ "$n" != "$d0" ]; then pass "attacks (VM's own roll): the VM's net status counts it" "$d0 -> $n"; else fail "attacks (VM's own roll): the VM's net status counts it" "$d0 -> $n"; fi
 	fi
+
+	# Round 4: the VM saves while it mirrors the host's attack and leaves; its save, loaded solo, plays no attack out.
+	_at_save_leave_round
 	crash_verdict attacks
 	dc vm "console coc $ATTACK_CELL" >/dev/null; sleep 12; wait_ingame vm 40
 	expect_eq "attacks: no attack runs at Sanctuary in either game at the end" "$(_at_none_at host && echo none)/$(_at_none_at vm && echo none)" "none/none"

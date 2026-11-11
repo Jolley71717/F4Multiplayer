@@ -109,6 +109,10 @@ namespace Spawns
 	// Our copies of friends' frames now (RemotePlayers tells the container menu's hook which our player is kept out of).
 	[[nodiscard]] std::vector<RE::ObjectRefHandle> FrameCopies();
 
+	// How many of our copies of friends' NPCs stand alive and 3D-loaded within a_radius of a_anchor (in its cell or
+	// worldspace): SettlementAttacks asks whether the host's attackers are at a settlement here.
+	[[nodiscard]] std::size_t CopiesNear(const RE::TESObjectREFR* a_anchor, float a_radius);
+
 	// A save was loaded: our NPCs' ids name the loaded game's now, and our copies went before it.
 	void OnGameLoaded();
 

@@ -117,12 +117,17 @@ TEST("attack book: a run seen first mid-attack is reported at its phase; one tha
 	CHECK(early.Look({ Running(RAIDERS, SANCTUARY) }).size() == 1);
 }
 
-TEST("attack book: a friend's game keeps its own run on a settlement the host doesn't own, and asks when it doesn't know")
+TEST("attack book: a friend's game keeps its own run on a settlement the host doesn't own, and asks again each time while it runs")
 {
-	CHECK(Judge({ .word = Word::kNotHost }) == Verdict::kKeep);
 	CHECK(Judge({ .word = Word::kUnknown }) == Verdict::kAsk);
 	CHECK(Judge({ .word = Word::kUnknown, .askedLately = true }) == Verdict::kKeep);  // never stopped on a guess
-	CHECK(Judge({ .word = Word::kNotHost, .begun = true, .loadedHere = true }) == Verdict::kKeep);
+	// "Not the host's" is no answer for good: the host may take the settlement later, so it is asked again each ASK_AGAIN.
+	CHECK(Judge({ .word = Word::kNotHost }) == Verdict::kAsk);
+	CHECK(Judge({ .word = Word::kNotHost, .askedLately = true }) == Verdict::kKeep);
+	CHECK(Judge({ .word = Word::kNotHost, .begun = true, .loadedHere = true }) == Verdict::kAsk);
+	CHECK(Judge({ .word = Word::kNotHost, .begun = true, .loadedHere = true, .askedLately = true }) == Verdict::kKeep);
+	// The answer changed to the host's: defused at once.
+	CHECK(Judge({ .word = Word::kHost, .askedLately = true }) == Verdict::kDefuse);
 }
 
 TEST("attack book: a friend's own run at the host's settlement is defused first, wherever their player is, then stopped")
@@ -142,7 +147,7 @@ TEST("attack book: a friend's own run at the host's settlement is defused first,
 	CHECK(Judge({ .word = Word::kHost, .begun = true, .done = true, .loadedHere = true }) == Verdict::kHold);
 }
 
-TEST("attack book: a mirror starts with the host's run, never begins or resolves on its own, and stops defused when the host's run ends")
+TEST("attack book: a mirror starts with the host's run, is defused as soon as it runs, and stops when the host's run ends")
 {
 	// Not running here: started, unless the host's run is over, ours runs elsewhere, or a start is under way.
 	CHECK(Next({ .hostPhase = Phase::kRolled }) == MirrorStep::kStart);
@@ -151,33 +156,97 @@ TEST("attack book: a mirror starts with the host's run, never begins or resolves
 	CHECK(Next({ .hostPhase = Phase::kRolled, .elsewhere = true }) == MirrorStep::kNone);
 	CHECK(Next({ .hostPhase = Phase::kRolled, .startTried = true }) == MirrorStep::kNone);
 
-	// Running: waits for the host while their run is rolled.
-	CHECK(Next({ .hostPhase = Phase::kRolled, .running = true }) == MirrorStep::kNone);
-	// Our own timer beat the cancel and began it: defused at once.
-	CHECK(Next({ .hostPhase = Phase::kRolled, .running = true, .begun = true }) == MirrorStep::kDefuse);
-	// The host's attack is on: "Defend X" shown here only with our player at the settlement.
-	CHECK(Next({ .hostPhase = Phase::kUnderway, .running = true }) == MirrorStep::kNone);
-	CHECK(Next({ .hostPhase = Phase::kUnderway, .running = true, .loadedHere = true }) == MirrorStep::kShowObjective);
-	CHECK(Next({ .hostPhase = Phase::kUnderway, .running = true, .objectiveShown = true, .loadedHere = true }) == MirrorStep::kNone);
-	// Defended there: our done stage, which completes the objective.
-	CHECK(Next({ .hostPhase = Phase::kDefended, .running = true }) == MirrorStep::kDefuse);
+	// Running and not defused: stage 100 at once, whatever the host's run is at, so no save of ours holds a mirror that
+	// rolls damage.
+	for (const auto phase : { Phase::kRolled, Phase::kUnderway, Phase::kDefended, Phase::kOver }) {
+		CHECK(Next({ .hostPhase = phase, .running = true }) == MirrorStep::kDefuse);
+		CHECK(Next({ .hostPhase = phase, .running = true, .begun = true }) == MirrorStep::kDefuse);
+		CHECK(Next({ .hostPhase = phase, .running = true, .hasObjective = true, .loadedHere = true, .hostAttackersHere = true }) == MirrorStep::kDefuse);
+	}
+	// Defused, it waits for the host while their run is rolled or defended.
+	CHECK(Next({ .hostPhase = Phase::kRolled, .running = true, .done = true }) == MirrorStep::kNone);
 	CHECK(Next({ .hostPhase = Phase::kDefended, .running = true, .done = true }) == MirrorStep::kNone);
-	// Over: defused first, then stopped.
-	CHECK(Next({ .hostPhase = Phase::kOver, .running = true }) == MirrorStep::kDefuse);
+	// Over: stopped (defused: its 1000 rolls nothing).
 	CHECK(Next({ .hostPhase = Phase::kOver, .running = true, .done = true }) == MirrorStep::kStop);
 	CHECK(Next({ .hostPhase = Phase::kOver, .running = true, .begun = true, .done = true, .loadedHere = true }) == MirrorStep::kStop);
+}
+
+TEST("attack book: a mirror shows \"Defend X\" only while our player and the host's attackers are at the settlement")
+{
+	const MirrorFacts on{ .hostPhase = Phase::kUnderway, .running = true, .done = true, .hasObjective = true, .loadedHere = true, .hostAttackersHere = true };
+	CHECK(Next(on) == MirrorStep::kShowObjective);
+	// Not with our player away, nor without the host's attackers there (the host's game hasn't them loaded), nor before
+	// the attack begins, nor for a quest with no objective (the creature attacks).
+	auto away = on;
+	away.loadedHere = false;
+	CHECK(Next(away) == MirrorStep::kNone);
+	auto alone = on;
+	alone.hostAttackersHere = false;
+	CHECK(Next(alone) == MirrorStep::kNone);
+	auto rolled = on;
+	rolled.hostPhase = Phase::kRolled;
+	CHECK(Next(rolled) == MirrorStep::kNone);
+	auto creatures = on;
+	creatures.hasObjective = false;
+	CHECK(Next(creatures) == MirrorStep::kNone);
+
+	// Shown: kept while they are there, hidden once either leaves.
+	auto shown = on;
+	shown.objectiveShown = true;
+	CHECK(Next(shown) == MirrorStep::kNone);
+	auto left = shown;
+	left.loadedHere = false;
+	CHECK(Next(left) == MirrorStep::kHideObjective);
+	auto gone = shown;
+	gone.hostAttackersHere = false;
+	CHECK(Next(gone) == MirrorStep::kHideObjective);
+
+	// The host's attackers died: completed. The host's run ended defended: completed, then stopped; undefended: hidden
+	// (stage 1000 says "won" for an objective shown and not completed), then stopped.
+	auto defended = shown;
+	defended.hostPhase = Phase::kDefended;
+	CHECK(Next(defended) == MirrorStep::kCompleteObjective);
+	auto overWon = shown;
+	overWon.hostPhase = Phase::kOver;
+	overWon.outcome = Outcome::kDefended;
+	CHECK(Next(overWon) == MirrorStep::kCompleteObjective);
+	auto overLost = shown;
+	overLost.hostPhase = Phase::kOver;
+	overLost.outcome = Outcome::kResolved;
+	CHECK(Next(overLost) == MirrorStep::kHideObjective);
+	overLost.objectiveShown = false;
+	CHECK(Next(overLost) == MirrorStep::kStop);
+}
+
+TEST("attack book: a run a session left defused is a leftover: stage 100 done and 20 not, running")
+{
+	CHECK(Leftover(Running(RAIDERS, SANCTUARY, false, true)));
+	CHECK(!Leftover(Running(RAIDERS, SANCTUARY)));              // the game's own roll, waiting
+	CHECK(!Leftover(Running(RAIDERS, SANCTUARY, true)));        // the game's own attack, on
+	CHECK(!Leftover(Running(RAIDERS, SANCTUARY, true, true)));  // the game's own attack, defended
+	CHECK(!Leftover(Stopped(RAIDERS, false, true)));
+}
+
+TEST("attack book: a run is closed down defused first, its timer cancelled, and stopped a look later")
+{
+	CHECK(NextClose({ .running = false }) == CloseStep::kNone);
+	CHECK(NextClose({ .running = false, .done = true, .timerCancelled = true }) == CloseStep::kNone);
+	CHECK(NextClose({ .running = true }) == CloseStep::kDefuse);
+	CHECK(NextClose({ .running = true, .timerCancelled = true }) == CloseStep::kDefuse);  // never stopped undefended
+	CHECK(NextClose({ .running = true, .done = true }) == CloseStep::kCancelTimer);
+	CHECK(NextClose({ .running = true, .done = true, .timerCancelled = true }) == CloseStep::kStop);
 }
 
 TEST("attack book: a friend's view keeps the host's word and live attacks, takes their settlements as the host's, and forgets all when the host leaves")
 {
 	View view;
 	const auto now = Clock::now();
-	CHECK(view.WordOn(SANCTUARY) == Word::kUnknown);
-	view.OnOwner({ RED_ROCKET, false });
-	CHECK(view.WordOn(RED_ROCKET) == Word::kNotHost);
+	CHECK(view.WordOn(SANCTUARY, now) == Word::kUnknown);
+	view.OnOwner({ RED_ROCKET, false }, now);
+	CHECK(view.WordOn(RED_ROCKET, now) == Word::kNotHost);
 
 	CHECK(!view.OnAttack(HostAttack(RAIDERS, SANCTUARY, Phase::kRolled), now));
-	CHECK(view.WordOn(SANCTUARY) == Word::kHost);
+	CHECK(view.WordOn(SANCTUARY, now) == Word::kHost);
 	CHECK(view.LiveAt(SANCTUARY));
 	CHECK(view.LiveOf(RAIDERS)->phase == Phase::kRolled);
 	CHECK(view.OnAttack(HostAttack(RAIDERS, SANCTUARY, Phase::kUnderway), now) == Phase::kRolled);
@@ -185,16 +254,16 @@ TEST("attack book: a friend's view keeps the host's word and live attacks, takes
 	CHECK(view.OnAttack(HostAttack(RAIDERS, SANCTUARY, Phase::kOver, Outcome::kDefended), now) == Phase::kUnderway);
 	CHECK(!view.LiveAt(SANCTUARY));
 	CHECK(!view.LiveOf(RAIDERS));
-	CHECK(view.WordOn(SANCTUARY) == Word::kHost);
+	CHECK(view.WordOn(SANCTUARY, now) == Word::kHost);
 
 	// The host's game said otherwise of a settlement it attacked: its word stands.
-	view.OnOwner({ SANCTUARY, false });
-	CHECK(view.WordOn(SANCTUARY) == Word::kNotHost);
+	view.OnOwner({ SANCTUARY, false }, now);
+	CHECK(view.WordOn(SANCTUARY, now) == Word::kNotHost);
 
 	(void)view.OnAttack(HostAttack(GUNNERS, RED_ROCKET, Phase::kUnderway), now);
-	view.OnOwner({ 0, false });
-	CHECK(view.WordOn(SANCTUARY) == Word::kUnknown);
-	CHECK(view.WordOn(RED_ROCKET) == Word::kUnknown);
+	view.OnOwner({ 0, false }, now);
+	CHECK(view.WordOn(SANCTUARY, now) == Word::kUnknown);
+	CHECK(view.WordOn(RED_ROCKET, now) == Word::kUnknown);
 	CHECK(view.LiveCount() == 0);
 }
 
@@ -210,7 +279,7 @@ TEST("attack book: a friend's view forgets a live attack never told over after L
 	CHECK(view.LiveCount() == 0);
 
 	for (std::uint32_t i = 0; i < View::MAX_OWNERS + 10; ++i) {
-		view.OnOwner({ 0x00100000 + i, true });
+		view.OnOwner({ 0x00100000 + i, true }, now);
 	}
 	CHECK(view.Owners() == View::MAX_OWNERS);
 	for (std::uint32_t i = 0; i < View::MAX_LIVE + 5; ++i) {
@@ -235,11 +304,11 @@ TEST("attack book: the server's book keeps the host's word and live attacks, pas
 {
 	Book       book;
 	const auto now = Clock::now();
-	CHECK(!book.OwnerOf(SANCTUARY));
-	CHECK(book.SetOwner(SANCTUARY, true));
-	CHECK(!book.SetOwner(SANCTUARY, true));
-	CHECK(book.SetOwner(SANCTUARY, false));
-	CHECK(book.OwnerOf(SANCTUARY) == false);
+	CHECK(!book.OwnerOf(SANCTUARY, now));
+	CHECK(book.SetOwner(SANCTUARY, true, now));
+	CHECK(!book.SetOwner(SANCTUARY, true, now));
+	CHECK(book.SetOwner(SANCTUARY, false, now));
+	CHECK(book.OwnerOf(SANCTUARY, now) == false);
 
 	CHECK(book.OnHostAttack(HostAttack(RAIDERS, SANCTUARY, Phase::kRolled), now));
 	CHECK(!book.OnHostAttack(HostAttack(RAIDERS, SANCTUARY, Phase::kRolled), now));
@@ -252,16 +321,135 @@ TEST("attack book: the server's book keeps the host's word and live attacks, pas
 	CHECK(!book.Ask(RED_ROCKET, now + Book::ASK_EVERY - 1s));
 	CHECK(book.Ask(RED_ROCKET, now + Book::ASK_EVERY));
 	CHECK(book.Ask(SANCTUARY, now));
+	CHECK(!book.Ask(SANCTUARY, now));
+	book.Answered(SANCTUARY);  // the host's game spoke: the next question goes at once
+	CHECK(book.Ask(SANCTUARY, now));
 
 	(void)book.OnHostAttack(HostAttack(GUNNERS, RED_ROCKET, Phase::kRolled), now);
 	CHECK(book.Expire(now + Book::LIVE_FOR - 1s) == 0);
 	CHECK(book.Expire(now + Book::LIVE_FOR) == 1);
 
 	for (std::uint32_t i = 0; i < Book::MAX_OWNERS + 10; ++i) {
-		CHECK(book.SetOwner(0x00100000 + i, true));  // past the cap: told, not kept
+		CHECK(book.SetOwner(0x00100000 + i, true, now));  // past the cap: told, not kept
 	}
 	CHECK(book.OwnersKept() == Book::MAX_OWNERS);
 	book.Clear();
 	CHECK(book.OwnersKept() == 0);
-	CHECK(book.Owners().empty());
+	CHECK(book.Owners(now).empty());
+}
+
+TEST("attack book: the server's word on a settlement expires after OWNER_FOR; said again, it is news again")
+{
+	Book       book;
+	const auto now = Clock::now();
+	CHECK(book.SetOwner(SANCTUARY, false, now));
+	CHECK(book.OwnerOf(SANCTUARY, now + OWNER_FOR - 1s) == false);
+	CHECK(!book.OwnerOf(SANCTUARY, now + OWNER_FOR));
+	CHECK(book.Owners(now + OWNER_FOR - 1s).size() == 1);
+	CHECK(book.Owners(now + OWNER_FOR).empty());  // a joiner hears no stale word
+	CHECK(book.SetOwner(SANCTUARY, false, now + OWNER_FOR));  // the same word after it expired: told again
+	CHECK(book.OwnerOf(SANCTUARY, now + OWNER_FOR) == false);
+
+	// Expire drops the words gone stale as well as the live attacks.
+	CHECK(book.SetOwner(RED_ROCKET, true, now));
+	(void)book.Expire(now + OWNER_FOR + 1s);
+	CHECK(book.OwnersKept() == 1);  // Sanctuary's, said again later
+	(void)book.Expire(now + 2 * OWNER_FOR + 1s);
+	CHECK(book.OwnersKept() == 0);
+
+	// Past the cap, stale words make room.
+	for (std::uint32_t i = 0; i < Book::MAX_OWNERS; ++i) {
+		(void)book.SetOwner(0x00100000 + i, true, now);
+	}
+	CHECK(book.OwnersKept() == Book::MAX_OWNERS);
+	CHECK(book.SetOwner(SANCTUARY, true, now + OWNER_FOR));
+	CHECK(book.OwnerOf(SANCTUARY, now + OWNER_FOR) == true);
+	CHECK(book.OwnersKept() == 1);
+}
+
+TEST("attack book: the friends waiting for the host's word on a settlement are kept once each until it comes")
+{
+	Book book;
+	CHECK(book.TakeAwaiting(SANCTUARY).empty());
+	book.Awaits(SANCTUARY, 2);
+	book.Awaits(SANCTUARY, 3);
+	book.Awaits(SANCTUARY, 2);  // asked twice: told once
+	book.Awaits(RED_ROCKET, 2);
+	const auto waiting = book.TakeAwaiting(SANCTUARY);
+	REQUIRE(waiting.size() == 2);
+	CHECK(waiting[0] == 2);
+	CHECK(waiting[1] == 3);
+	CHECK(book.TakeAwaiting(SANCTUARY).empty());
+	CHECK(book.TakeAwaiting(RED_ROCKET).size() == 1);
+
+	for (std::uint32_t i = 0; i < Book::MAX_ASKERS + 4; ++i) {
+		book.Awaits(SANCTUARY, 100 + i);
+	}
+	CHECK(book.TakeAwaiting(SANCTUARY).size() == Book::MAX_ASKERS);
+	book.Awaits(SANCTUARY, 2);
+	book.Clear();
+	CHECK(book.TakeAwaiting(SANCTUARY).empty());
+}
+
+TEST("attack book: a friend's view of the host's word expires after OWNER_FOR, and the host's attack refreshes a stale one")
+{
+	View       view;
+	const auto now = Clock::now();
+	view.OnOwner({ SANCTUARY, false }, now);
+	CHECK(view.WordOn(SANCTUARY, now + OWNER_FOR - 1s) == Word::kNotHost);
+	CHECK(view.WordOn(SANCTUARY, now + OWNER_FOR) == Word::kUnknown);
+	// Said again (an answer, or the host's game telling a change): trusted again from then.
+	view.OnOwner({ SANCTUARY, true }, now + OWNER_FOR);
+	CHECK(view.WordOn(SANCTUARY, now + OWNER_FOR) == Word::kHost);
+	CHECK(view.WordOn(SANCTUARY, now + 2 * OWNER_FOR) == Word::kUnknown);
+	// The host's attack there makes a stale word the host's; it doesn't override a fresh one.
+	(void)view.OnAttack(HostAttack(RAIDERS, SANCTUARY, Phase::kRolled), now + 2 * OWNER_FOR);
+	CHECK(view.WordOn(SANCTUARY, now + 2 * OWNER_FOR) == Word::kHost);
+	view.OnOwner({ RED_ROCKET, false }, now);
+	(void)view.OnAttack(HostAttack(GUNNERS, RED_ROCKET, Phase::kRolled), now);
+	CHECK(view.WordOn(RED_ROCKET, now) == Word::kNotHost);
+}
+
+TEST("attack book: the host's game tells a change of owner of a settlement it spoke of, once, and leaves alone what it can't read")
+{
+	HostWords  words;
+	const auto now = Clock::now();
+	CHECK(!words.Due(now));  // nothing said: nothing to read
+	words.Said(SANCTUARY, false);
+	words.Said(RED_ROCKET, true);
+	words.Said(0, true);  // no settlement: not kept
+	CHECK(words.Size() == 2);
+	CHECK(words.Due(now));
+
+	bool       sanctuaryOwned = false;
+	const auto read = [&](std::uint32_t a_workshop) -> std::optional<bool> {
+		if (a_workshop == SANCTUARY) {
+			return sanctuaryOwned;
+		}
+		return std::nullopt;  // Red Rocket's workbench can't be read now: left as it was
+	};
+	CHECK(words.Recheck(now, read).empty());
+	CHECK(!words.Due(now + HostWords::CHECK_EVERY - 1s));
+	CHECK(words.Due(now + HostWords::CHECK_EVERY));
+
+	// The host takes Sanctuary (the Minutemen): told once.
+	sanctuaryOwned = true;
+	auto changes = words.Recheck(now + HostWords::CHECK_EVERY, read);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].workshop == SANCTUARY && changes[0].hostOwned);
+	CHECK(words.Recheck(now + 2 * HostWords::CHECK_EVERY, read).empty());
+
+	// Said again as an answer: the next change is from that.
+	words.Said(SANCTUARY, false);
+	changes = words.Recheck(now + 3 * HostWords::CHECK_EVERY, read);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].hostOwned);
+
+	for (std::uint32_t i = 0; i < HostWords::MAX + 10; ++i) {
+		words.Said(0x00100000 + i, true);
+	}
+	CHECK(words.Size() == HostWords::MAX);
+	words.Reset();
+	CHECK(words.Size() == 0);
+	CHECK(!words.Due(now));
 }

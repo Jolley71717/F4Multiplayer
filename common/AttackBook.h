@@ -23,11 +23,14 @@
 // workbench's food, water, scrap and caps).
 //
 // The host decides: their game's run is the attack, and its outcome the only one. A friend's game runs the same quest at
-// the same settlement as a mirror (Mirror) that never begins, fights or resolves on its own: its timer is cancelled, its
-// attackers stay disabled (the host's are the friend's to fight, shared as spawns while the host's game has them loaded),
-// stage 100 is set before it stops, so its 1000 never rolls damage. A friend's own roll at a settlement the host owns, or
-// at one the host's attack is at, is stopped the same way (Judge). Pure, so it is tested on its own and with the server
-// (tests/AttackBookTests.cpp, tests/ServerAttackTests.cpp); src/game/SettlementAttacks.cpp reads the game for it.
+// the same settlement as a mirror (Mirror) that never begins, fights or resolves on its own: stage 100 is set as soon as it
+// runs, so no save ever holds it able to roll damage (stage 100's own fragment only registers for RECheckForCleanup,
+// completes objective 10 and clears WorkshopActorAlert; it never stops the quest), its timer is pushed out, its attackers
+// stay disabled (the host's are the friend's to fight, shared as spawns while the host's game has them loaded), and its
+// timer is cancelled before it stops. A friend's own roll at a settlement the host owns, or at one the host's attack is
+// at, is stopped the same way (Judge). A mirror left behind (a session that ended out of the world, a save loaded later)
+// has stage 100 done and stage 20 not: every load stops such a run (Leftover). Pure, so it is tested on its own and with
+// the server (tests/AttackBookTests.cpp, tests/ServerAttackTests.cpp); src/game/SettlementAttacks.cpp reads the game for it.
 namespace AttackBook
 {
 	using Clock = std::chrono::steady_clock;
@@ -96,6 +99,44 @@ namespace AttackBook
 		return a_done ? Phase::kDefended : a_begun ? Phase::kUnderway : Phase::kRolled;
 	}
 
+	// A run a session left defused in this game: stage 100 done, stage 20 not. Only a mirror (defused as it runs) or a
+	// friend's own roll at the host's settlement (defused before it is stopped) is ever so: the game's own runs reach 100
+	// only through their attackers' deaths, which come after 20. Stopped on every load, in a session or not, so its pushed
+	// timer never begins an attack in a save of its own.
+	[[nodiscard]] constexpr bool Leftover(const Seen& a_seen)
+	{
+		return a_seen.running && a_seen.done && !a_seen.begun;
+	}
+
+	// Closing a run of ours that is the host's to decide (a mirror, or our own roll at the host's settlement) down: stage
+	// 100 first (its 1000 then rolls nothing), then its WorkshopAttackScript timer cancelled (a timer that outlived the stop
+	// would SetStage(20), which starts a stopped quest again), then a look later the stop.
+	struct CloseFacts
+	{
+		bool running = false;         // the quest runs (at the run's settlement)
+		bool done = false;            // DONE_STAGE is done
+		bool timerCancelled = false;  // its timer's cancel was asked a look ago or more
+	};
+
+	enum class CloseStep : std::uint8_t
+	{
+		kNone,         // not running: closed
+		kDefuse,       // set DONE_STAGE
+		kCancelTimer,  // CancelTimerGameTime(0) on its WorkshopAttackScript
+		kStop,         // stopquest
+	};
+
+	[[nodiscard]] constexpr CloseStep NextClose(const CloseFacts& a_facts)
+	{
+		if (!a_facts.running) {
+			return CloseStep::kNone;
+		}
+		if (!a_facts.done) {
+			return CloseStep::kDefuse;
+		}
+		return a_facts.timerCancelled ? CloseStep::kStop : CloseStep::kCancelTimer;
+	}
+
 	// The host's game: its runs, reported as each is rolled, begins, is defended and ends. Every attack quest is looked at
 	// each time (running or not); a run that stops, or moves to another settlement between looks, is over.
 	class HostRuns
@@ -148,6 +189,59 @@ namespace AttackBook
 		std::unordered_map<std::uint32_t, Protocol::SettlementAttack> runs;  // by quest: a quest runs once at a time
 	};
 
+	// The host's game: the settlements it has spoken of (an answer, or with an attack of its own), read again every
+	// CHECK_EVERY. A change of owner (the host took a settlement through the Minutemen, or lost one) is told at once with
+	// the same word (kSettlementOwner), so no friend's game keeps a word that is no longer true.
+	class HostWords
+	{
+	public:
+		static constexpr std::size_t MAX = 256;
+		static constexpr auto        CHECK_EVERY = std::chrono::seconds(2);
+
+		void Said(std::uint32_t a_workshop, bool a_hostOwned)
+		{
+			if (a_workshop != 0 && (said.size() < MAX || said.contains(a_workshop))) {
+				said[a_workshop] = a_hostOwned;
+			}
+		}
+
+		// Whether it is time to read them again.
+		[[nodiscard]] bool Due(Clock::time_point a_now) const { return !said.empty() && a_now - checked >= CHECK_EVERY; }
+
+		// a_read(workshop): whether the host owns it now (none: it can't be read now, as when its workbench isn't
+		// loaded as a form here: left as it was). The words that changed, to tell.
+		template <class Read>
+		[[nodiscard]] std::vector<Protocol::SettlementOwner> Recheck(Clock::time_point a_now, Read&& a_read)
+		{
+			checked = a_now;
+			std::vector<Protocol::SettlementOwner> changed;
+			for (auto& [workshop, owned] : said) {
+				const std::optional<bool> now = a_read(workshop);
+				if (now && *now != owned) {
+					owned = *now;
+					changed.push_back({ workshop, owned });
+				}
+			}
+			return changed;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return said.size(); }
+
+		void Reset()
+		{
+			said.clear();
+			checked = {};
+		}
+
+	private:
+		std::unordered_map<std::uint32_t, bool> said;  // workbench -> the host's, as last told
+		Clock::time_point                       checked{};
+	};
+
+	// How long a word on a settlement is trusted without being said again. The host's game tells changes as they come
+	// (HostWords), so this is the backstop for a change it missed.
+	constexpr auto OWNER_FOR = std::chrono::minutes(5);
+
 	// What the host's game said of a settlement, as a friend's game has it.
 	enum class Word : std::uint8_t
 	{
@@ -165,15 +259,18 @@ namespace AttackBook
 		// A live attack never told over (its host's game crashed mid-run) is forgotten after this.
 		static constexpr auto LIVE_FOR = std::chrono::hours(3);
 
-		void OnOwner(const Protocol::SettlementOwner& a_owner)
+		void OnOwner(const Protocol::SettlementOwner& a_owner, Clock::time_point a_now)
 		{
 			if (a_owner.workshop == 0) {
 				owners.clear();  // the host left: nothing they said stands
 				live.clear();
 				return;
 			}
+			if (owners.size() >= MAX_OWNERS && !owners.contains(a_owner.workshop)) {
+				std::erase_if(owners, [&](const auto& a_entry) { return a_now - a_entry.second.since >= OWNER_FOR; });
+			}
 			if (owners.size() < MAX_OWNERS || owners.contains(a_owner.workshop)) {
-				owners[a_owner.workshop] = a_owner.hostOwned;
+				owners[a_owner.workshop] = Owned{ a_owner.hostOwned, a_now };
 			}
 		}
 
@@ -188,9 +285,13 @@ namespace AttackBook
 				}
 				return before;
 			}
-			// The host owns where their attack is, as far as a friend's game cares: a roll of its own there gives way.
+			// The host owns where their attack is, as far as a friend's game cares: a roll of its own there gives way. (The
+			// host's game's own word, sent with the roll, stands over this.)
 			if (owners.size() < MAX_OWNERS || owners.contains(a_attack.workshop)) {
-				owners.try_emplace(a_attack.workshop, true);
+				const auto [owner, fresh] = owners.try_emplace(a_attack.workshop, Owned{ true, a_now });
+				if (!fresh && a_now - owner->second.since >= OWNER_FOR) {
+					owner->second = Owned{ true, a_now };
+				}
 			}
 			if (it != live.end()) {
 				it->second.attack = a_attack;  // a phase on, or the quest moved to another settlement (a new roll)
@@ -203,10 +304,14 @@ namespace AttackBook
 			return before;
 		}
 
-		[[nodiscard]] Word WordOn(std::uint32_t a_workshop) const
+		// The word on a settlement; one older than OWNER_FOR is no word.
+		[[nodiscard]] Word WordOn(std::uint32_t a_workshop, Clock::time_point a_now) const
 		{
 			const auto it = owners.find(a_workshop);
-			return it == owners.end() ? Word::kUnknown : it->second ? Word::kHost : Word::kNotHost;
+			if (it == owners.end() || a_now - it->second.since >= OWNER_FOR) {
+				return Word::kUnknown;
+			}
+			return it->second.host ? Word::kHost : Word::kNotHost;
 		}
 
 		// The host's live attack by its quest, or at a settlement.
@@ -259,9 +364,14 @@ namespace AttackBook
 			Protocol::SettlementAttack attack;
 			Clock::time_point          since{};
 		};
+		struct Owned
+		{
+			bool              host = false;
+			Clock::time_point since{};  // when it was said
+		};
 
-		std::unordered_map<std::uint32_t, bool> owners;  // workbench -> the host's
-		std::unordered_map<std::uint32_t, Live> live;    // by quest
+		std::unordered_map<std::uint32_t, Owned> owners;  // by workbench
+		std::unordered_map<std::uint32_t, Live>  live;    // by quest
 	};
 
 	// A friend's game: what to do with a run of its own (not a mirror) at a settlement.
@@ -280,7 +390,7 @@ namespace AttackBook
 	enum class Verdict : std::uint8_t
 	{
 		kKeep,     // our own: the host doesn't own the settlement, or no word yet (an attack is never stopped on a guess)
-		kAsk,      // ask the server whose settlement it is
+		kAsk,      // ask the server whose settlement it is (again every ASK_AGAIN while the answer is "not the host's")
 		kDefuse,   // the host's: set DONE_STAGE first, so its 1000 rolls no damage (whether or not our player is there)
 		kHold,     // the host's, defused, and a fight of its own is on around our player: stopped once they leave
 		kStop,     // the host's, defused: stopped, its attackers removed
@@ -294,7 +404,9 @@ namespace AttackBook
 			}
 			return a_facts.begun && a_facts.loadedHere ? Verdict::kHold : Verdict::kStop;
 		}
-		if (a_facts.word == Word::kUnknown && !a_facts.askedLately) {
+		// "Not the host's" is asked again too: the host may have taken the settlement since (the Minutemen), and a word
+		// kept from before would let this roll do damage on a settlement the host owns.
+		if (!a_facts.askedLately) {
 			return Verdict::kAsk;
 		}
 		return Verdict::kKeep;
@@ -304,23 +416,28 @@ namespace AttackBook
 	// is, by the host's word and what our run has.
 	struct MirrorFacts
 	{
-		Phase hostPhase = Phase::kRolled;  // kOver: the host's run ended (or the host left)
-		bool  running = false;             // our quest runs, at the host's settlement
-		bool  elsewhere = false;           // our quest runs at another settlement (our own roll of it): no mirror
-		bool  begun = false;               // our START_STAGE is done (we never set it: our own timer beat the cancel)
-		bool  done = false;                // our DONE_STAGE is done
-		bool  objectiveShown = false;      // we showed OBJECTIVE
-		bool  loadedHere = false;          // the workbench is 3D-loaded here: our player is at the settlement
-		bool  startTried = false;          // a start was asked and hasn't run (or gave up)
+		Phase   hostPhase = Phase::kRolled;     // kOver: the host's run ended (or the host left)
+		Outcome outcome = Outcome::kNone;       // the host's run's, once it is over
+		bool    running = false;                // our quest runs, at the host's settlement
+		bool    elsewhere = false;              // our quest runs at another settlement (our own roll of it): no mirror
+		bool    begun = false;                  // our START_STAGE is done (we never set it: our own timer beat the push)
+		bool    done = false;                   // our DONE_STAGE is done
+		bool    hasObjective = false;           // the quest has OBJECTIVE (the creature attacks have none)
+		bool    objectiveShown = false;         // we show OBJECTIVE now
+		bool    loadedHere = false;             // the workbench is 3D-loaded here: our player is at the settlement
+		bool    hostAttackersHere = false;      // copies of friends' NPCs, alive, stand at the settlement here lately
+		bool    startTried = false;             // a start was asked and hasn't run (or gave up)
 	};
 
 	enum class MirrorStep : std::uint8_t
 	{
 		kNone,
-		kStart,          // start our quest with the host's settlement and location forced
-		kDefuse,         // set DONE_STAGE: the host's attack was defended, or ours begun on its own, or it is ending
-		kShowObjective,  // the host's attack is on and our player is at the settlement: "Defend X" here too
-		kStop,           // the host's run ended: ours stops (defused: its 1000 rolls nothing)
+		kStart,              // start our quest with the host's settlement and location forced
+		kDefuse,             // set DONE_STAGE at once: a mirror never holds a damage roll, in this game or in a save
+		kShowObjective,      // the host's attack is on, its attackers and our player at the settlement: "Defend X" here too
+		kHideObjective,      // shown, and our player or the host's attackers left (or the host's run ended undefended)
+		kCompleteObjective,  // shown, and the host's attackers are dead: completed, as the host's
+		kStop,               // the host's run ended: ours stops (defused: its 1000 rolls nothing)
 	};
 
 	[[nodiscard]] constexpr MirrorStep Next(const MirrorFacts& a_facts)
@@ -328,20 +445,32 @@ namespace AttackBook
 		if (!a_facts.running) {
 			return a_facts.hostPhase != Phase::kOver && !a_facts.elsewhere && !a_facts.startTried ? MirrorStep::kStart : MirrorStep::kNone;
 		}
-		const bool ending = a_facts.hostPhase == Phase::kOver;
-		if (!a_facts.done && (ending || a_facts.begun || a_facts.hostPhase == Phase::kDefended)) {
+		if (!a_facts.done) {
 			return MirrorStep::kDefuse;
+		}
+		const bool ending = a_facts.hostPhase == Phase::kOver;
+		if (a_facts.objectiveShown) {
+			// Ended with it shown: completed if the host's attackers died, hidden otherwise (stage 1000 shows "won" for an
+			// objective displayed and not completed).
+			if (a_facts.hostPhase == Phase::kDefended || (ending && a_facts.outcome == Outcome::kDefended)) {
+				return MirrorStep::kCompleteObjective;
+			}
+			if (ending || a_facts.hostPhase != Phase::kUnderway || !a_facts.loadedHere || !a_facts.hostAttackersHere) {
+				return MirrorStep::kHideObjective;
+			}
 		}
 		if (ending) {
 			return MirrorStep::kStop;
 		}
-		if (a_facts.hostPhase == Phase::kUnderway && a_facts.loadedHere && !a_facts.objectiveShown && !a_facts.done) {
+		if (a_facts.hostPhase == Phase::kUnderway && a_facts.hasObjective && a_facts.loadedHere && a_facts.hostAttackersHere && !a_facts.objectiveShown) {
 			return MirrorStep::kShowObjective;
 		}
 		return MirrorStep::kNone;
 	}
 
-	// The notice a friend's game shows for the host's attack, by its text key (TextEnglish.h), or none.
+	// The notice a friend's game shows for the host's attack, by its text key (TextEnglish.h), or none. An attack that
+	// began and ended undefended says only that: the host's game rolls its damage only if the settlement wasn't loaded
+	// there at the end, and the roll may go the settlers' way.
 	[[nodiscard]] constexpr std::string_view NoticeFor(Phase a_phase, Outcome a_outcome, bool a_toldUnderway)
 	{
 		if (a_phase == Phase::kUnderway) {
@@ -359,7 +488,9 @@ namespace AttackBook
 		return {};  // over after a defence: told when it was defended
 	}
 
-	// The server's book: what the host's game said of settlements, and its live attacks (for joiners).
+	// The server's book: what the host's game said of settlements, and its live attacks (for joiners). A friend's question
+	// is answered from it only with "the host's", said within OWNER_FOR; "not the host's" goes to the host's game every
+	// time (at most once per ASK_EVERY a settlement), whose answer reaches the friends who asked even when it is no news.
 	class Book
 	{
 	public:
@@ -368,27 +499,59 @@ namespace AttackBook
 		static constexpr auto        LIVE_FOR = View::LIVE_FOR;
 		// A friend's question about one settlement goes to the host's game at most this often.
 		static constexpr auto ASK_EVERY = std::chrono::seconds(10);
+		// The friends waiting for an answer about one settlement, at most.
+		static constexpr std::size_t MAX_ASKERS = 16;
 
-		// The host's game's word on a settlement. Whether to tell everyone: new or changed (or past the cap: told, not kept).
-		bool SetOwner(std::uint32_t a_workshop, bool a_hostOwned)
+		// The host's game's word on a settlement. Whether to tell everyone: new, changed or said again after it had
+		// expired (or past the cap: told, not kept).
+		bool SetOwner(std::uint32_t a_workshop, bool a_hostOwned, Clock::time_point a_now)
 		{
 			if (const auto it = owners.find(a_workshop); it != owners.end()) {
-				if (it->second == a_hostOwned) {
-					return false;
-				}
-				it->second = a_hostOwned;
-				return true;
+				const bool news = it->second.host != a_hostOwned || a_now - it->second.since >= OWNER_FOR;
+				it->second = Owned{ a_hostOwned, a_now };
+				return news;
+			}
+			if (owners.size() >= MAX_OWNERS) {
+				std::erase_if(owners, [&](const auto& a_entry) { return a_now - a_entry.second.since >= OWNER_FOR; });
 			}
 			if (owners.size() < MAX_OWNERS) {
-				owners.emplace(a_workshop, a_hostOwned);
+				owners.emplace(a_workshop, Owned{ a_hostOwned, a_now });
 			}
 			return true;
 		}
 
-		[[nodiscard]] std::optional<bool> OwnerOf(std::uint32_t a_workshop) const
+		// The word on a settlement, said within OWNER_FOR (none: never said, or too long ago).
+		[[nodiscard]] std::optional<bool> OwnerOf(std::uint32_t a_workshop, Clock::time_point a_now) const
 		{
 			const auto it = owners.find(a_workshop);
-			return it != owners.end() ? std::optional{ it->second } : std::nullopt;
+			if (it == owners.end() || a_now - it->second.since >= OWNER_FOR) {
+				return std::nullopt;
+			}
+			return it->second.host;
+		}
+
+		// A friend (its player id) waits for the host's game's word on a settlement.
+		void Awaits(std::uint32_t a_workshop, std::uint32_t a_player)
+		{
+			if (!askers.contains(a_workshop) && askers.size() >= MAX_OWNERS) {
+				return;
+			}
+			auto& waiting = askers[a_workshop];
+			if (waiting.size() < MAX_ASKERS && !std::ranges::contains(waiting, a_player)) {
+				waiting.push_back(a_player);
+			}
+		}
+
+		// The friends waiting for the word on a settlement, who get it now.
+		[[nodiscard]] std::vector<std::uint32_t> TakeAwaiting(std::uint32_t a_workshop)
+		{
+			const auto it = askers.find(a_workshop);
+			if (it == askers.end()) {
+				return {};
+			}
+			auto waiting = std::move(it->second);
+			askers.erase(it);
+			return waiting;
 		}
 
 		// The host's attack, a phase of it. Whether to pass it on: a phase it had already isn't.
@@ -415,7 +578,8 @@ namespace AttackBook
 			return true;
 		}
 
-		// Whether a friend's question about a settlement goes to the host's game now (once per ASK_EVERY).
+		// Whether a friend's question about a settlement goes to the host's game now (once per ASK_EVERY, or at once after
+		// the host's game spoke of it: Answered).
 		bool Ask(std::uint32_t a_workshop, Clock::time_point a_now)
 		{
 			if (const auto it = asked.find(a_workshop); it != asked.end() && a_now - it->second < ASK_EVERY) {
@@ -431,11 +595,18 @@ namespace AttackBook
 			return true;
 		}
 
-		[[nodiscard]] std::vector<Protocol::SettlementOwner> Owners() const
+		// The host's game spoke of a settlement: the next question about it goes to the host's game at once (one question
+		// waits for an answer at a time, so friends' rolls can't flood it).
+		void Answered(std::uint32_t a_workshop) { asked.erase(a_workshop); }
+
+		// The words still trusted (for a joiner).
+		[[nodiscard]] std::vector<Protocol::SettlementOwner> Owners(Clock::time_point a_now) const
 		{
 			std::vector<Protocol::SettlementOwner> out;
 			for (const auto& [workshop, owned] : owners) {
-				out.push_back({ workshop, owned });
+				if (a_now - owned.since < OWNER_FOR) {
+					out.push_back({ workshop, owned.host });
+				}
 			}
 			return out;
 		}
@@ -449,9 +620,11 @@ namespace AttackBook
 			return out;
 		}
 
-		// Live attacks never told over after LIVE_FOR are dropped (their host's game went without a word).
+		// Live attacks never told over after LIVE_FOR are dropped (their host's game went without a word); words older
+		// than OWNER_FOR go too. The live attacks dropped.
 		std::size_t Expire(Clock::time_point a_now)
 		{
+			std::erase_if(owners, [&](const auto& a_entry) { return a_now - a_entry.second.since >= OWNER_FOR; });
 			return std::erase_if(live, [&](const auto& a_entry) { return a_now - a_entry.second.since >= LIVE_FOR; });
 		}
 
@@ -463,6 +636,7 @@ namespace AttackBook
 			owners.clear();
 			live.clear();
 			asked.clear();
+			askers.clear();
 		}
 
 	private:
@@ -471,9 +645,15 @@ namespace AttackBook
 			Protocol::SettlementAttack attack;
 			Clock::time_point          since{};
 		};
+		struct Owned
+		{
+			bool              host = false;
+			Clock::time_point since{};  // when the host's game said it last
+		};
 
-		std::unordered_map<std::uint32_t, bool>              owners;
-		std::unordered_map<std::uint32_t, Booked>            live;  // by quest
-		std::unordered_map<std::uint32_t, Clock::time_point> asked;
+		std::unordered_map<std::uint32_t, Owned>                      owners;
+		std::unordered_map<std::uint32_t, Booked>                     live;  // by quest
+		std::unordered_map<std::uint32_t, Clock::time_point>          asked;
+		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> askers;  // by workbench: friends' player ids
 	};
 }

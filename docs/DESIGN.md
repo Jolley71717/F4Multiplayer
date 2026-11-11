@@ -838,34 +838,48 @@ while the host's game has them loaded, and either player fights them with the us
 
 What a friend's game does:
 - It runs the host's attack as a mirror: the same quest started with the host's workbench and location forced
-  (RadiantSync::StartWithEvent's forced fills). The mirror never begins on its own. Its WorkshopAttackScript timer
-  (id 0) is pushed out to 48 game hours, and again every 10 minutes while the host's run is on, so it runs out only in a
-  save that kept a mirror past its session (the quest is never stuck there). Its own attackers stay disabled; if its
-  timer began it anyway, they are removed. With the friend's player at the settlement during the host's attack,
-  objective 10 is shown. As the host's attackers die, its stage 100 is set (the objective completes). When the host's
-  run ends, stage 100 first if it isn't done, then the quest stops: its 1000 never rolls damage in the friend's save,
-  wherever the friend is. A friend elsewhere gets one notice as the attack begins and one as it ends (defended, or not
-  defended with the damage the host's game rolled), not the game's own message box.
+  (RadiantSync::StartWithEvent's forced fills). Its stage 100 is set as soon as it runs (safe: the stage's fragment only
+  completes objective 10 and clears the settlement's alert), so its 1000 never rolls damage, in the friend's game or in
+  any save of it, wherever the friend is. The mirror never begins on its own: its WorkshopAttackScript timer (id 0) is
+  pushed out to 48 game hours, and again every 10 minutes while the host's run is on; its own attackers stay disabled,
+  and if its timer began it anyway, they are removed. Objective 10 ("Defend X") is shown only while the friend's player
+  and the host's attackers (live copies near the workbench) are at the settlement, hidden when either leaves, and
+  completed when the host's attackers die. When the host's run ends, the mirror's timer is cancelled and the quest
+  stopped a look later (a timer outliving the stop would set stage 20, which starts a stopped quest again). A friend
+  elsewhere gets one notice as the attack begins and one as it ends (defended, or not defended: the host's game rolls
+  damage only where its own settlement wasn't loaded, and the roll may go the settlers' way), not the game's own message
+  box.
+- Before every save (autosaves too), every run the host decides that hasn't stage 100 takes it. When the session ends,
+  even out of the world, every mirror and every own roll at the host's settlement is closed down (stage 100, timer
+  cancelled, stopped), at once or once the world is back; a mirror's start still waiting is given up (its forced fills
+  put back). On every load, in a session or not, any attack quest with stage 100 done and 20 not (only a session leaves
+  one so: the game's own runs reach 100 through their attackers' deaths, after 20) is stopped, its timer cancelled first.
 - A roll of its own at a settlement the host's game says is the host's, or where the host's attack is, is defused the
   same way (stage 100, so its 1000 rolls nothing) and stopped, its loaded attackers removed (Spawns::StopQuestRun). An
   attack whose fight is already on around the friend's player is left to finish and stopped once they leave. A roll at
-  a settlement the host's game hasn't spoken of is a question (kReportSettlementAttack, rolled): the server answers
-  from the word it has, or asks the host's game, at most once in 10 s per settlement. On a dedicated server (no host's
-  game) every settlement is the friend's own. With the host's game away from a hosted server there is no answer, and
-  the friend's attack is kept: one is never stopped on a guess.
+  a settlement the host's game hasn't spoken of is a question (kReportSettlementAttack, rolled), asked again every
+  minute while the run goes on and the answer is "not the host's" (the host may take the settlement later, as the
+  Minutemen's quests do). The server answers at once only with "the host's", said within 5 minutes; otherwise it asks the
+  host's game (one question at a time per settlement, at most once in 10 s), whose answer reaches the friends who asked
+  even when it is no news. Every word expires after 5 minutes, on the server and in a friend's game, and the host's game
+  rereads every settlement it has spoken of every 2 s and tells a change of owner as it comes. On a dedicated server (no
+  host's game) every settlement is the friend's own. With the host's game away from a hosted server there is no answer,
+  and the friend's attack is kept: one is never stopped on a guess.
 - A friend's own settlement (one the host doesn't own) keeps its own attacks, as before.
 
 Left out for now: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure branch, affinity), the
 Castle's defence, and the add-ons' attacks (Nuka-World's Brotherhood ones bring a vertibird and its crew). The mirror's
 Attackers collection holds its own disabled actors, not the copies of the host's (CommonLibF4 doesn't expose a
-collection alias's contents), so its stage 100 comes from the host's game and not from its own count. A friend alone
+collection alias's contents), so its objective follows the host's game and copies near the workbench, not its own count. A friend alone
 at the settlement while the host is elsewhere sees no attackers: the host's game has them unloaded, so none are
 shared, and its run resolves as the game's off-screen attack does. `net status` has `attacks: hosting= live= mirrors=
-reported= answered= asked= mirrorStarts= mirrorsEnded= ownDefused= ownStopped= timerPushes=`, and the dev channel's
+reported= answered= ownerChanges= asked= mirrorStarts= mirrorsEnded= ownDefused= ownStopped= timerPushes= closing= closedDown=
+leftovers= savedDefused=`, and the dev channel's
 `attacks` lists the attack quests running and what the host's game said. Tested in tests/AttackBookTests.cpp (the
 rules), ServerAttackTests.cpp (against the server) and ProtocolTests.cpp; the rig's opt-in `attacks` step forces one on
-the host at Sanctuary by console (with the friend there, then away) and a friend's own roll there, and checks both games'
-logs, lists and stages. The protocol number for these messages is set at merge.
+the host at Sanctuary by console (with the friend there, then away, its own Sanctuary's resources and caps unchanged), a
+friend's own roll there, and a friend's save made mid-mirror and loaded solo after leaving, and checks both games' logs,
+lists and stages. The protocol number for these messages is set at merge.
 
 ## Quest terminals (src/game/TerminalRules.h, TerminalSync.cpp)
 

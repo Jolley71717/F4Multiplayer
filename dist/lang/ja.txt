@@ -346,5 +346,5 @@ companion.theirs = {npc}は{player}の仲間です
 companion.someone = 別のプレイヤー
 attack.under = {place}が攻撃を受けています
 attack.defended = {place}の防衛に成功しました
-attack.lost = {place}は防衛されず、被害を受けました
+attack.lost = {place}は防衛されませんでした
 attack.a_settlement = 居住地

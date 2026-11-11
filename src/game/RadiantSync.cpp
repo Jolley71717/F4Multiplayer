@@ -1048,6 +1048,19 @@ namespace RadiantSync
 			                 a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
 	}
 
+	bool CancelStart(std::uint32_t a_quest)
+	{
+		if (!devStart || devStart->quest != a_quest) {
+			return false;
+		}
+		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+		const bool running = quest && (quest->data.flags & QUEST_RUNNING);
+		Restore(devStart->saved);
+		REX::INFO("RadiantSync: {} of {:08X} '{}' is given up{}; its forced aliases are put back", devStart->who, a_quest, QuestName(quest), running ? " (it runs already)" : "");
+		devStart.reset();
+		return !running;
+	}
+
 	void SetLocalPlayer(std::uint32_t a_id)
 	{
 		self = a_id;

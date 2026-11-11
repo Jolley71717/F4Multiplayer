@@ -1730,6 +1730,32 @@ namespace Spawns
 		return true;
 	}
 
+	std::size_t CopiesNear(const RE::TESObjectREFR* a_anchor, float a_radius)
+	{
+		if (!a_anchor || !a_anchor->GetParentCell()) {
+			return 0;
+		}
+		const auto  anchor = SpotOf(a_anchor);
+		std::size_t near = 0;
+		for (const auto& [id, copy] : placed) {
+			const auto spawn = theirs.Find(id);
+			if (!spawn || spawn->dead || spawn->gone || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+				continue;
+			}
+			const auto ref = copy.handle.get();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || !actor->Get3D() || !actor->GetParentCell()) {
+				continue;
+			}
+			const auto at = SpotOf(actor);
+			const float dx = at.x - anchor.x, dy = at.y - anchor.y, dz = at.z - anchor.z;
+			if (at.cell == anchor.cell && at.worldspace == anchor.worldspace && dx * dx + dy * dy + dz * dz <= a_radius * a_radius) {
+				++near;
+			}
+		}
+		return near;
+	}
+
 	std::vector<RE::ObjectRefHandle> FrameCopies()
 	{
 		std::vector<RE::ObjectRefHandle> out;

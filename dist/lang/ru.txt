@@ -352,5 +352,5 @@ companion.theirs = {npc} — напарник игрока {player}
 companion.someone = другого игрока
 attack.under = Нападение: {place}
 attack.defended = Нападение отбито: {place}
-attack.lost = Нападение не отбито, есть потери: {place}
+attack.lost = Нападение не отбито: {place}
 attack.a_settlement = поселение

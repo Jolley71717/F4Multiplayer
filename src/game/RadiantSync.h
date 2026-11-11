@@ -35,6 +35,11 @@ namespace RadiantSync
 	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
 		std::string_view a_who = "the developer's start");
 
+	// A start of a_quest by StartWithEvent still waiting for the quest to run is given up: its forced aliases are put back
+	// now (SettlementAttacks, as a session ends with a mirror's start pending). True when one was waiting and its quest
+	// isn't running yet (it may still start a moment later, with what the aliases find then).
+	bool CancelStart(std::uint32_t a_quest);
+
 	// This player's id in the session (the welcome's).
 	void SetLocalPlayer(std::uint32_t a_id);
 	// Welcomed into a_session (after SetLocalPlayer and the story's sharing are set): the runs this world shared in it
