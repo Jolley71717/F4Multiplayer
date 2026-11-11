@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,8 @@ namespace QuestRewards
 		std::unordered_map<std::uint32_t, LineInfo> lines;
 		// RewardLines::TURN_INS' ends (kCompletes, kStops) by the quest's form ID in this game << 16 | the stage.
 		std::unordered_map<std::uint64_t, std::uint8_t> turnIns;
+		// COMPANION_QUESTS by their form IDs in this game: never shared as rewards.
+		std::unordered_set<std::uint32_t>            companionQuests;
 		bool                                         linesBuilt = false;
 
 		std::uint64_t TurnInKey(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -105,8 +108,18 @@ namespace QuestRewards
 				return;
 			}
 			linesBuilt = true;
+			for (const auto& local : COMPANION_QUESTS) {
+				if (const auto quest = handler->LookupFormID(local.quest, StageRules::FileName(static_cast<StageRules::File>(local.file)))) {
+					companionQuests.insert(quest);
+				}
+			}
 			std::size_t missing = 0;
+			std::size_t companions = 0;  // rows of a companion's quest: left out (COMPANION_QUESTS)
 			for (const auto& row : RewardLines::ROWS) {
+				if (IsCompanionQuest(row.questFile, row.quest)) {
+					++companions;
+					continue;
+				}
 				const auto info = handler->LookupFormID(row.info, StageRules::FileName(static_cast<StageRules::File>(row.infoFile)));
 				const auto quest = handler->LookupFormID(row.quest, StageRules::FileName(static_cast<StageRules::File>(row.questFile)));
 				const auto item = handler->LookupFormID(row.item, StageRules::FileName(static_cast<StageRules::File>(row.itemFile)));
@@ -119,11 +132,16 @@ namespace QuestRewards
 				line.wants.push_back({ item, row.count });
 			}
 			for (const auto& row : RewardLines::TURN_INS) {
+				if (IsCompanionQuest(row.file, row.quest)) {
+					++companions;
+					continue;
+				}
 				if (const auto quest = handler->LookupFormID(row.quest, StageRules::FileName(static_cast<StageRules::File>(row.file)))) {
 					turnIns[TurnInKey(quest, row.stage)] = row.ends;
 				}
 			}
-			REX::INFO("QuestRewards: {} dialogue lines that give a reward ({} rows not in this game's files), {} turn-in stages", lines.size(), missing, turnIns.size());
+			REX::INFO("QuestRewards: {} dialogue lines that give a reward ({} rows not in this game's files), {} turn-in stages; {} rows of {} companions' quests left out",
+				lines.size(), missing, turnIns.size(), companions, companionQuests.size());
 		}
 
 		// Menus whose items come from nowhere and are no quest's: crafting, cooking, building, trading, a container's.
@@ -311,11 +329,11 @@ namespace QuestRewards
 
 		void Give(const Protocol::QuestReward& a_reward)
 		{
+			const char* kind = a_reward.kind == RewardBook::Kind::kLine ? "line" : "stage";
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_reward.quest);
 			const bool stageDone = quest && a_reward.kind == RewardBook::Kind::kStage && QuestStageLayout::IsStageDone(quest, static_cast<std::uint16_t>(a_reward.source));
 			const bool finishedOnOwn = quest && (quest->data.flags & StageLog::QUEST_COMPLETED) != 0 && !QuestSync::FriendMoved(a_reward.quest);
 			const auto verdict = receiver.Judge(a_reward, stageDone, finishedOnOwn, Clock::now());
-			const char* kind = a_reward.kind == RewardBook::Kind::kLine ? "line" : "stage";
 			if (verdict != RewardBook::Verdict::kGive) {
 				++passed;
 				REX::INFO("QuestRewards: player {}'s reward {} ({:08X} {} {}) not given: {}", a_reward.playerId, a_reward.id, a_reward.quest, kind, a_reward.source,
@@ -439,6 +457,12 @@ namespace QuestRewards
 			return;
 		}
 		BuildLines();
+		// A companion's quest (MacCready's hire): the pickups around it are our player's alone, and a friend's game must not
+		// mark the stage done (COMPANION_QUESTS).
+		if (companionQuests.contains(a_quest)) {
+			REX::INFO("QuestRewards: our player reached {:08X} stage {}, a companion's quest: not shared", a_quest, a_stage);
+			return;
+		}
 		const auto ends = EndsOf(a_quest, a_stage);
 		// Its quest allows repeated stages: a friend's game couldn't close it (the engine runs a stage done already again), so
 		// its player could turn it in too and get it twice. Not claimed (each player's own, as before rewards were shared).
@@ -456,6 +480,15 @@ namespace QuestRewards
 
 	void OnReward(const Protocol::QuestReward& a_reward)
 	{
+		// A companion's quest (from a build that claimed one): nothing given, and above all its stage not marked done here (it
+		// would say this game hired the companion). Passed at once, not held behind its quest's stages.
+		BuildLines();
+		if (companionQuests.contains(a_reward.quest)) {
+			++passed;
+			REX::INFO("QuestRewards: player {}'s reward {} ({:08X} {} {}) not given: a companion's quest, never shared", a_reward.playerId, a_reward.id,
+				a_reward.quest, a_reward.kind == RewardBook::Kind::kLine ? "line" : "stage", a_reward.source);
+			return;
+		}
 		if (pending.size() >= MAX_PENDING) {
 			++dropped;
 			REX::WARN("QuestRewards: {} friends' rewards waiting already; reward {} dropped", pending.size(), a_reward.id);

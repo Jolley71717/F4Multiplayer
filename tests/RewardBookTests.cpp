@@ -5,11 +5,14 @@
 #include "Test.h"
 
 #include "RewardBook.h"
+#include "game/QuestRewards.h"
 #include "game/RewardLines.h"
 #include "game/StageRules.h"
 
 #include <algorithm>
+#include <functional>
 #include <string_view>
+#include <utility>
 
 using namespace std::chrono_literals;
 using RewardBook::Capture;
@@ -430,6 +433,43 @@ TEST("reward turn-ins: every StageRules kPays row is in RewardLines::TURN_INS, a
 	CHECK(TurnInEnds(0, 0x02125F, 30) == (RewardLines::kCompletes | RewardLines::kStops));  // FFDiamondCity03: the fern flower; completes, Stop()
 	CHECK(TurnInEnds(0, 0x099848, 90) == 0);  // MinRecruit02: the ransom; its 450, set in turn, completes the quest
 	CHECK(TurnInEnds(0, 0x033527, 3) == 0);   // V81_03: a Jet sold
+}
+
+TEST("reward companions: no companion's quest is shared as a reward, its hire stages and lines included")
+{
+	// A companion is each player's own. MacCready's hire is paid at COMMacCreadyQuest 30/40/50 (a StageRules kPays row each
+	// once the companion quests are shared): sharing it would hand the hirer's pickups around it to the friends and mark the
+	// stage done in their saves, where a hire stage done is how a game knows it hired him (and drives his quest). So the
+	// companions' quests are left out of the rewards (QuestRewards::COMPANION_QUESTS), keyed on the quest, whatever its rows.
+	using QuestRewards::IsCompanionQuest;
+	CHECK(IsCompanionQuest(0, 0x027411));  // COMMacCreadyQuest: the hire and Long Road Ahead
+	CHECK(IsCompanionQuest(0, 0x16454E));  // COMCurieQuest
+	CHECK(IsCompanionQuest(0, 0x0BBD9C));  // COMMacCready: his toy soldier line (RewardLines) is his gift, not shared
+	CHECK(IsCompanionQuest(3, 0x027715));  // DLC04COMGage
+	// The file counts: the same form ID in another master is another quest.
+	CHECK(!IsCompanionQuest(1, 0x027411));
+	// The rest stay shared: DialogueDiamondCity, FFDiamondCity03 (the rig's turn-in), DLC04MS01.
+	CHECK(!IsCompanionQuest(0, 0x003648));
+	CHECK(!IsCompanionQuest(0, 0x02125F));
+	CHECK(!IsCompanionQuest(3, 0x000806));
+	// Sorted by file and form ID, no repeats.
+	const auto& list = QuestRewards::COMPANION_QUESTS;
+	CHECK(std::ranges::is_sorted(list, std::less<>{}, [](const QuestRewards::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; }));
+	CHECK(std::ranges::adjacent_find(list, [](const QuestRewards::Local& a, const QuestRewards::Local& b) { return a.file == b.file && a.quest == b.quest; }) ==
+		  std::ranges::end(list));
+	// The game skips each row of a companion's quest by its quest: the toy soldier's line is one today.
+	std::size_t lines = 0;
+	for (const auto& row : RewardLines::ROWS) {
+		lines += IsCompanionQuest(row.questFile, row.quest) ? 1 : 0;
+	}
+	CHECK(lines >= 1);
+	// The only payment rows of a companion's quest are MacCready's hire stages (none before the companion quests are shared):
+	// another one is looked at, and named here, before it ships.
+	for (const auto& rule : StageRules::RULES) {
+		if ((rule.flags & StageRules::kPays) != 0 && IsCompanionQuest(rule.file, rule.quest)) {
+			CHECK(rule.file == 0 && rule.quest == 0x027411 && (rule.stage == 30 || rule.stage == 40 || rule.stage == 50));
+		}
+	}
 }
 
 TEST("reward turn-ins: a turn-in whose quest allows repeated stages is flagged, and each one is named here")

@@ -14,6 +14,54 @@
 // and activation sinks queue under a lock).
 namespace QuestRewards
 {
+	// A quest by the file it comes from (StageRules::File: 0 Fallout4.esm, 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm)
+	// and its form ID there.
+	struct Local
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+	};
+
+	// The companions' quests: each companion's own (hire, dismissal, affinity and the gifts it brings) and their personal
+	// quests. Never shared as rewards, either way: our player's pickups around one of their payment stages are not claimed
+	// (MacCready's hire is paid at COMMacCreadyQuest 30/40/50), a line of theirs is not claimed (his toy soldier), and a
+	// friend's reward for one is not given nor its stage marked done here. A companion is each player's own, and a stage of
+	// theirs done in a friend's save would say that game hired them (the stage the game that drives a companion's quest is
+	// told by). Read from the four masters' QUST records; sorted by file and form ID.
+	inline constexpr Local COMPANION_QUESTS[] = {
+		{ 0, 0x0229FE },  // MS07c: Long Time Coming (Nick)
+		{ 0, 0x027411 },  // COMMacCreadyQuest: his hire and Long Road Ahead
+		{ 0, 0x07921A },  // COMCait
+		{ 0, 0x07925B },  // COMPreston
+		{ 0, 0x0B9F9D },  // BoS302: Blind Betrayal (Danse)
+		{ 0, 0x0BBD94 },  // COMCodsworth
+		{ 0, 0x0BBD95 },  // ComX688
+		{ 0, 0x0BBD96 },  // COMPiper
+		{ 0, 0x0BBD97 },  // COMDanse
+		{ 0, 0x0BBD98 },  // COMNick
+		{ 0, 0x0BBD99 },  // COMStrong
+		{ 0, 0x0BBD9A },  // COMCurie
+		{ 0, 0x0BBD9B },  // COMDeacon
+		{ 0, 0x0BBD9C },  // COMMacCready
+		{ 0, 0x126048 },  // COMHancock
+		{ 0, 0x16454E },  // COMCurieQuest: Emergent Behavior
+		{ 0, 0x1666C5 },  // COMCaitQuest: Benign Intervention
+		{ 1, 0x006E55 },  // DLC03_COMOldLongfellow
+		{ 2, 0x0024DE },  // DLC01COMRobotCompanion
+		{ 2, 0x0087BE },  // DLC01COMAda
+		{ 3, 0x027715 },  // DLC04COMGage
+	};
+
+	[[nodiscard]] constexpr bool IsCompanionQuest(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		for (const auto& local : COMPANION_QUESTS) {
+			if (local.file == a_file && local.quest == a_quest) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Registers the event sinks (once, with the session's).
 	void Install();
 
@@ -21,7 +69,7 @@ namespace QuestRewards
 	void Frame(bool a_inSession);
 
 	// A stage of a quest the session shares, done here by our player (not a friend's set here), seen now: a turn-in if
-	// its StageRules row is a payment (kPays), which the friends' games never set.
+	// its StageRules row is a payment (kPays), which the friends' games never set, and its quest no companion's.
 	void OnOwnStage(std::uint32_t a_quest, std::uint16_t a_stage, std::uint8_t a_ruleFlags);
 
 	// XP our player gained that is their own (Party's: not a friend's share given here, nor ours).

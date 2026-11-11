@@ -2160,6 +2160,12 @@ here). The closing relies on the engine not running a stage done already again, 
 Repeated Stages (DNAM flag 0x0008), so tools/rewardscan.ps1 records that flag too (`kRepeats` in TURN_INS): no game
 claims such a turn-in, and a test names each one, so a new one fails until it is looked at. The only one is DLC04MS01
 75 (the Quartz goes to Sierra; the player gets nothing back).
+The companions' quests (`QuestRewards::COMPANION_QUESTS`: each companion's own quest and their personal quests) are
+never shared as rewards, either way, whatever their rows in the tables: a companion is each player's own. MacCready's
+hire is paid at COMMacCreadyQuest 30/40/50; shared, the hirer's pickups in the window around it would go to the
+friends, and closing the stage in their saves would mark the hire done there, which is how a game knows it hired him.
+So no game claims a stage or line of one (his toy soldier included), and a friend's reward for one is neither given nor
+closed.
 The other way round (taking back what a later own turn-in gives twice) was not chosen: a stage's script takes and
 gives in one go, and its items can't be told from others' afterwards.
 
