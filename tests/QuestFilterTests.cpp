@@ -262,17 +262,35 @@ TEST("quest filter: the quests shared for their faction or settlement outcomes a
 	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: the park's power, DLC04GZNukaGalaxy
 	CHECK(!QuestFilter::IsSafe(3, 0x0243A5));  // DLC04DialogueHarvey: DLC04REObjectCT03
 	CHECK(!QuestFilter::IsSafe(3, 0x0260E2));  // DLC04SafariAdventureQuest: DLC04SafariAdventurePOST
-	// Not in ALLOW_OUTCOMES, so still left out for their faction stage: the Combat Zone, Goodneighbor's 07, the Institute's
-	// fight, Nuka-World's raider kick-out and Sierra's attacks.
+	// Not in ALLOW_OUTCOMES, so still left out for their faction stage: the Combat Zone, Goodneighbor's 07, Nuka-World's
+	// raider kick-out and Sierra's attacks.
 	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ
 	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07
-	CHECK(!QuestFilter::IsSafe(0, 0x174029));  // Inst307Fight
 	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout
 	CHECK(!QuestFilter::IsSafe(3, 0x035790));  // DLC04MS01SierraAttacks
-	// The objective-less ones (the kick-outs, DN084, DN117, Far Harbor's endings) are not shared yet: neither table's.
-	CHECK(!QuestFilter::IsSilent(0, 0x16FF04));  // BoSKickOut
-	CHECK(!QuestFilter::IsSilent(0, 0x082615));  // DN117
-	CHECK(!QuestFilter::IsSafe(0, 0x082615));
+	// The base game's objective-less kick-outs and faction outcomes are ALLOW_OUTCOMES' too, so SILENT's (the scan's
+	// "SILENT" verdict on each): the Brotherhood's kick-out and soft expulsion, the Railroad's, Mass Fusion and its two
+	// final battles, the airport battle, Danse's exile, Eddie Winter's, the D.B. Technical boss room, Spectacle Island.
+	const QuestFilter::Local kickouts[] = {
+		{ 0, 0x16FF04 },  // BoSKickOut
+		{ 0, 0x16426D },  // BoSKickOutSoft (up to 0.16.1 denied by hand)
+		{ 0, 0x16C207 },  // RRKickOut
+		{ 0, 0x06D646 },  // DN084
+		{ 0, 0x0F8D39 },  // DN084_BoS303Battle
+		{ 0, 0x0F8D3A },  // DN084_Inst303Battle
+		{ 0, 0x174029 },  // Inst307Fight
+		{ 0, 0x01E5E7 },  // BoSDansePostGame
+		{ 0, 0x144FCA },  // MS07cEddiePostQuestLines
+		{ 0, 0x07E1BB },  // DN028
+		{ 0, 0x082615 },  // DN117
+	};
+	for (const auto& quest : kickouts) {
+		CHECK(QuestFilter::IsSilent(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+	}
+	// Far Harbor's endings and kick-out and Nuka-World's are not shared yet: neither table's.
+	CHECK(!QuestFilter::IsSilent(1, 0x0323DE));  // DLC03CoA_Kickout
+	CHECK(!QuestFilter::IsSafe(1, 0x0323DE));
 }
 
 TEST("quest filter: the objective-less quests sQuests = safe shares are the rule's less those denied, sorted, none shared another way (tools/questscan.ps1 -Safe)")
@@ -281,8 +299,8 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	for (auto it = std::next(std::begin(QuestFilter::SILENT)); it != std::end(QuestFilter::SILENT); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 106: Fallout4.esm's 70, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
-	CHECK(std::size(QuestFilter::SILENT) == 106);
+	// 117: Fallout4.esm's 81, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
+	CHECK(std::size(QuestFilter::SILENT) == 117);
 	std::size_t perFile[4]{};
 	for (const auto& silent : QuestFilter::SILENT) {
 		REQUIRE(silent.file <= 3);
@@ -297,7 +315,7 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 		}
 		CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return a_radiant.file == silent.file && a_radiant.quest == silent.quest; }) == std::end(RadiantRules::RADIANTS));
 	}
-	CHECK(perFile[0] == 70);
+	CHECK(perFile[0] == 81);
 	CHECK(perFile[1] == 19);
 	CHECK(perFile[2] == 5);
 	CHECK(perFile[3] == 12);
@@ -329,7 +347,9 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	CHECK(!QuestFilter::IsSilent(0, 0x0E6AB0));  // DN151_ChangeLocation
 	CHECK(!QuestFilter::IsSilent(0, 0x0DEDDD));  // DN017_ChangeLocation
 	CHECK(!QuestFilter::IsSilent(0, 0x0AEC4E));  // DN053_ChangeLocation
-	CHECK(!QuestFilter::IsSilent(0, 0x0F8D39));  // DN084_BoS303Battle: its 200 sets DN084, whose 10 starts a repeatable one
+	// DN084_BoS303Battle's 200 sets DN084, whose 10 starts the repeatable DN084_Overrides (the followers' descent packages): that
+	// start is let through (tools/questscan.cs ALLOW_STARTS), so both are SILENT's now, with the base game's kick-outs.
+	CHECK(QuestFilter::IsSilent(0, 0x0F8D39));
 	// A stage that stops the quest below one that does more: a friend catching up on the host's stages, lowest first,
 	// would stop it before MS07Intro's 400 starts Nick's case files.
 	CHECK(!QuestFilter::IsSilent(0, 0x0282A7));  // MS07Intro

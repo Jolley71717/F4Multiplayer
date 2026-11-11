@@ -30,6 +30,10 @@ namespace Companions
 	// The session ended.
 	void Reset();
 
+	// The companion following our player now (the Followers quest's Companion alias; not Dogmeat), or null. Main thread.
+	// QuestSync: a friend's kick-out that dismisses them (StageRules::DISMISSES) warns the player once before it lands.
+	[[nodiscard]] RE::Actor* Following();
+
 	// For `net status`.
 	[[nodiscard]] std::string Describe();
 
